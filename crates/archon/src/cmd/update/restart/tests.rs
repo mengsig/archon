@@ -5,6 +5,8 @@ use super::*;
 
 struct Fake {
     calls: RefCell<Vec<&'static str>>,
+    /// The drain and requeue of each restart archond was asked for.
+    asked: RefCell<Vec<(u64, bool)>>,
     aether: anyhow::Result<AetherUpdate>,
     running: Option<Running>,
     seen: RefCell<VecDeque<Seen>>,
@@ -21,6 +23,7 @@ impl Fake {
     fn new(seen: Vec<Seen>) -> Self {
         Self {
             calls: RefCell::default(),
+            asked: RefCell::default(),
             aether: Ok(AetherUpdate {
                 changed: false,
                 line: "aether same".into(),
@@ -58,7 +61,10 @@ impl Steps for Fake {
         self.log("running").await;
         Ok(self.running.clone())
     }
-    async fn request_restart(&self, _: &Plan) -> anyhow::Result<()> {
+    async fn request_restart(&self, plan: &Plan) -> anyhow::Result<()> {
+        self.asked
+            .borrow_mut()
+            .push((plan.drain_secs, plan.requeue));
         self.log("request").await;
         Ok(())
     }
@@ -292,8 +298,8 @@ async fn an_archond_still_draining_its_own_work_restarts_later_without_holding_t
     );
     let said = outcome.lines.join("\n");
     assert!(
-        said.contains("restarts on archon 1.4.2 by itself"),
-        "{said}"
+        said.contains("restarts on archon 1.4.2 once they end, or restarts anyway"),
+        "an older archond is asked to requeue: {said}"
     );
     let calls = fake.calls.borrow().clone();
     assert!(!calls.contains(&"orchestrator"), "{calls:?}");
@@ -528,5 +534,34 @@ fn only_an_answer_starting_with_n_declines() {
     }
     for no in ["n", "No", " no "] {
         assert!(!is_yes(no), "{no:?}");
+    }
+}
+
+#[tokio::test]
+async fn an_archond_that_waits_for_its_agents_is_asked_to_restart_anyway_soon() {
+    for (version, asked, warned) in [
+        ("archon 1.4.8", (10, true), true),
+        ("not a version", (10, true), true),
+        ("1.4.9", (1800, false), false),
+        ("archon 1.5.0", (1800, false), false),
+    ] {
+        let mut fake = Fake::new(vec![Seen::New]);
+        fake.running = Some(Running {
+            pid: 7,
+            version: version.into(),
+        });
+        let plan = Plan {
+            drain_secs: 1800,
+            ..plan(true)
+        };
+        let outcome = apply(&fake, &plan, &Progress::new()).await.unwrap();
+        assert!(outcome.restarted, "{version}: {outcome:?}");
+        assert_eq!(*fake.asked.borrow(), [asked], "{version}");
+        let said = outcome.lines.join("\n");
+        assert_eq!(
+            said.contains("restarts anyway"),
+            warned,
+            "{version}: {said}"
+        );
     }
 }

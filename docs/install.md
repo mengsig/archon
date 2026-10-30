@@ -174,7 +174,10 @@ their stages as after any daemon restart; and `archon orchestrator
 restart`, which gives the orchestrator the new tools. It never waits for
 stage agents to finish. archond waits only for its own spawns, merges and
 deliveries under way (at most `--wait`); one still busy after 30 seconds
-restarts by itself once they end, and the update says so and returns. When
+restarts by itself once they end, or gives up at `--wait` unless
+`--requeue`, and the update says so and returns. An archond older than
+1.4.9 waits for its stage agents too, so it is given 10 seconds and then
+restarts anyway; they keep running all the same. When
 `aether update` installed a new Aether, archond is then asked to restart
 Archon's own aetherd in the background, once its stage agents finish (at
 most `--wait`, `--requeue` to restart anyway). In shared mode your own

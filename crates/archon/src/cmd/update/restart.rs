@@ -19,6 +19,7 @@ use archon_core::protocol::{ErrorCode, OrchestratorInfo, Reply, Request};
 
 use super::interrupt::Interrupt;
 use super::tools;
+use super::version::Version;
 use crate::cmd::doctor::find_program;
 use crate::connect::{connect_existing, connect_running, unexpected};
 use crate::instance::AETHER_PROGRAM;
@@ -28,6 +29,11 @@ const POLL: Duration = Duration::from_secs(1);
 /// How long the update waits for archond to come back on the installed
 /// archon. One still finishing its own work restarts by itself after it.
 pub(super) const SWITCH_LIMIT: Duration = Duration::from_secs(30);
+/// The first archond whose restart keeping Aether leaves stage agents out of its drain.
+const AGENTS_OUT_OF_DRAIN_SINCE: &str = "1.4.9";
+/// How long an older archond, which waits for its stage agents, waits before
+/// it restarts anyway: they keep running in Aether all the same.
+const OLDER_ARCHOND_DRAIN: Duration = Duration::from_secs(10);
 const AETHER_UPDATE_TIMEOUT: Duration = Duration::from_secs(600);
 const MCP_REFRESH_TIMEOUT: Duration = Duration::from_secs(60);
 /// Asking archond to restart Archon's own aetherd later; it answers at once.
@@ -327,15 +333,10 @@ async fn switch_archond(
         old.pid,
         SWITCH_LIMIT.as_secs()
     );
+    let plan = &for_archond(plan, old, outcome);
     progress.enter(Phase::AskingArchond, &detail);
     if restart(steps, plan, old, SWITCH_LIMIT, progress).await? == Switched::Later {
-        outcome.lines.push(format!(
-            "archond (pid {}) still drains its own work after {}s; it restarts on archon {} by \
-             itself, and its stage agents keep running (`archon status` shows when).",
-            old.pid,
-            SWITCH_LIMIT.as_secs(),
-            plan.installed
-        ));
+        outcome.lines.push(restarts_later(plan, old));
         return Ok(false);
     }
     outcome
@@ -344,6 +345,53 @@ async fn switch_archond(
     renew_orchestrator(steps, plan, outcome, progress).await?;
     outcome.restarted = true;
     Ok(true)
+}
+
+/// The request for `old`. An archond before [`AGENTS_OUT_OF_DRAIN_SINCE`]
+/// waits for stage agents even when it keeps Aether, so it waits briefly and
+/// restarts anyway: keeping Aether, that stops no agent.
+fn for_archond(plan: &Plan, old: &Running, outcome: &mut Outcome) -> Plan {
+    let first: Version = AGENTS_OUT_OF_DRAIN_SINCE
+        .parse()
+        .expect("a release version");
+    let version = bare_version(&old.version).parse::<Version>();
+    if version.is_ok_and(|version| version >= first) {
+        return plan.clone();
+    }
+    let wait = OLDER_ARCHOND_DRAIN.as_secs();
+    assert!(
+        wait < SWITCH_LIMIT.as_secs(),
+        "the update outwaits the drain"
+    );
+    outcome.lines.push(format!(
+        "archond {} waits for its stage agents before a restart, so it is given {wait}s and \
+         then restarts anyway; they keep running in Aether.",
+        old.version
+    ));
+    Plan {
+        drain_secs: wait.min(plan.drain_secs),
+        requeue: true,
+        ..plan.clone()
+    }
+}
+
+/// What happens to an archond still draining its own work when the update returns.
+fn restarts_later(plan: &Plan, old: &Running) -> String {
+    let then = match plan.requeue {
+        true => "restarts anyway".to_owned(),
+        false => format!(
+            "gives the restart up after {}s, saying why in `archon log`",
+            plan.drain_secs
+        ),
+    };
+    format!(
+        "archond (pid {}) still drains its own spawns, merges or deliveries after {}s; it \
+         restarts on archon {} once they end, or {then}. Its stage agents keep running; \
+         `archon status` shows the version it runs.",
+        old.pid,
+        SWITCH_LIMIT.as_secs(),
+        plan.installed
+    )
 }
 
 /// A new Aether runs once its aetherd restarts. archond restarts its own in

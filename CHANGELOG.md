@@ -151,13 +151,18 @@
   30 minutes, and 1.4.7 also ignored Ctrl-C there. A restart that keeps
   Aether now waits only for archond's own spawns, merges and deliveries; the
   update waits 30 seconds for it at most, and an archond still busy then
-  restarts by itself, which the update says before it returns. A new Aether
+  restarts by itself once they end, or gives up at `--wait`, which the
+  update says before it returns. An archond older than 1.4.9 still waits
+  for its agents, so the update gives it 10 seconds and has it restart
+  anyway, keeping them running. A new Aether
   restarts Archon's own aetherd in the background, after its stage agents
   finish. Ctrl-C at launch exits instead of opening the old archon. The
   question no longer says it waits for running agents, and the install
   report names no commands to type. The update from 1.4.8 still runs 1.4.8's
-  restart: to skip its wait, run `archon update --no-restart`, then `archon
-  daemon restart --keep-aether --wait 10 --requeue`.
+  own restart: to skip its wait, run `archon update --no-restart`, then
+  `archon update --yes`, which restarts the 1.4.8 archond in about 10
+  seconds. `scripts/simulate-update.sh` runs both updates end to end in a
+  sandbox with a stage agent running.
 - Stage gates and delegated reviews read verdicts with one tolerant
   parser: a structured `verdict` key, whatever it holds, then a structured
   `result` or `status` that opens with a verdict word or a `VERDICT:`

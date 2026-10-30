@@ -112,8 +112,8 @@ A failed orchestrator is not a timeout: `archon tui` opens the TUI on it, so its
 
 ## `archon update` seems to hang
 
-archond restarts at once and never waits for stage agents, which keep running in Aether; each step says on stderr how long it may take. An updater from 1.4.8 or earlier waits for running stage agents to finish, up to 30 minutes (1.4.7 ignores Ctrl-C there); from 1.4.8, run `archon update --no-restart`, then `archon daemon restart --keep-aether --wait 10 --requeue`.
+archond restarts at once and never waits for stage agents, which keep running in Aether; each step says on stderr how long it may take. The update from 1.4.8 or earlier is that release's own code, which waits for running stage agents to finish, up to 30 minutes (1.4.7 ignores Ctrl-C there). From 1.4.8 run `archon update --no-restart`, then `archon update --yes`: the new archon restarts the old archond in about 10 seconds, keeping its stage agents running. An update of 1.4.8 already waiting can be ended with Ctrl-C; the new archon is installed, and archond restarts on it by itself once its stage agents finish, or gives up, after which `archon update --yes` restarts it.
 
-- **"still drains its own work"** archond is finishing spawns, merges or deliveries it had under way, and restarts by itself once they end; `archon status` shows when it runs the new version.
+- **"still drains its own spawns, merges or deliveries"** archond is finishing work it had under way, and restarts by itself once it ends, or gives the restart up at `--wait` (the line says which); `archon status` shows the version it runs, and `archon log` why it gave up.
 - **"gave up the restart: its own spawns, merges or deliveries still ran after"** Nothing was restarted. Ask again with `archon update --wait <SECS>`, or `archon update --requeue` to restart anyway.
 - **"see its startup log with"** No new archond answered after the restart. Read `archond.log` (see the first section) and run `archon daemon status`.

@@ -2,6 +2,53 @@
 
 ## Unreleased
 
+## 1.4.9
+
+Released 2026-10-31.
+
+A patch release on 1.4.8. "Update and restart" no longer hangs the terminal
+(#335): archond restarts at once while Aether and its stage agents keep
+running. Stage agents get more time and are told their deadline, stop only
+the processes they started, and can keep a server up for a later stage;
+archond cleans up the `lavish-axi poll` processes and Compose stacks that
+items left behind (#321, #323). The mobile web app renders Markdown safely
+(#319), the README gains a get-started section driven through the chat
+(#322), reviewer effort is a floor and verdicts are read by one tolerant
+parser, short ship hashes are accepted, and a stage agent Aether blocked for
+inspection is resumed.
+
+Archon 1.4.9 needs **Aether 1.2.8**: it is released with and tested on that
+release. Neither the installer nor `archon update` pins an Aether version.
+The installer installs the latest Aether release only when it finds no
+`aether`, and keeps one it finds. `archon update` runs `aether update
+--yes`, which installs the latest release, only on a confirmed update:
+after a yes, or with `--yes`; `--check`, `--requirements`, `--no-restart`
+and a declined question leave Aether as it is. Check with `aether
+--version` and update an older one with `aether update`. Aether 1.2.8
+serves protocol 25 (was 24) and still serves 17 to 24; Archon keeps asking
+for 24 and accepting down to 17, so neither constant moves. Protocol 25
+only adds a `credentials` exhaustion class, which Aether shows a client on
+24 as `usage_limit`. The daemon protocol stays 23 and the store schema
+stays 18: a 1.4.8 store opens unchanged, and going back to 1.4.8 needs no
+copy of the data directory.
+
+**Upgrading from 1.4.8**: the 1.4.8 updater still runs its own restart,
+which waits for every running stage agent to finish, up to 30 minutes
+(#335). Run `archon update --no-restart` first, which installs 1.4.9
+alone, then `archon update --yes`: the new archon restarts the 1.4.8
+archond in about 10 seconds, keeping its stage agents running, runs
+`aether update` (the latest Aether, 1.2.8 at this release) and renews the
+orchestrator. An update from 1.4.8 already waiting can be ended with
+Ctrl-C. From 1.4.9 on, `archon update` and its yes restart archond in
+seconds, keeping Aether and its stage agents running; the #335 entry under
+Fixed says when a busy archond restarts later. A new Aether runs only once
+its aetherd restarts. In dedicated mode, when archond runs the new archon
+before the update returns, the update asks it to restart Archon's own
+aetherd in the background after its stage agents finish, as `--wait` and
+`--requeue` allow. An archond that restarts only later is not asked:
+whenever that aetherd still runs the old Aether, `archon daemon restart`
+restarts it. In shared mode, restart your aetherd yourself.
+
 ### Cleanup
 
 - archond runs at most one `lavish-axi poll` per report, and stops it once
@@ -156,7 +203,8 @@
   for its agents, so the update gives it 10 seconds and has it restart
   anyway, keeping them running. A new Aether
   restarts Archon's own aetherd in the background, after its stage agents
-  finish. Ctrl-C at launch exits instead of opening the old archon. The
+  finish, when archond runs the new archon before the update returns;
+  otherwise `archon daemon restart` does it. Ctrl-C at launch exits instead of opening the old archon. The
   question no longer says it waits for running agents, and the install
   report names no commands to type. The update from 1.4.8 still runs 1.4.8's
   own restart: to skip its wait, run `archon update --no-restart`, then
@@ -210,6 +258,13 @@
   repository, its settings and `/answer` confirmations, queueing, watching
   and merging work, standing directives, Lavish review pages, `/watch`,
   `/questions` and `/lessons`, all from the orchestrator's chat (#322).
+
+### Tests
+
+- Three tests that failed under load are de-flaked: the slow-start wait
+  test logs steadily for 3 s against a 2 s silence limit, the full-check
+  limit test gives its command 3 s, and three fake `gh` scripts are written
+  so that a fork on another test thread cannot hold them open (#332).
 
 ## 1.4.8
 

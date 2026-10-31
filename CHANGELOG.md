@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Review
+
+- A re-review after a fix reads only what changed, keeping the gate whole.
+  Since 1.4.9 every re-review read the whole change again, so a `strict`
+  review replaced all three reviewers after each fix (one smoke trial
+  delegated nine medium reviewers and ran out of time). The stage contract
+  now asks, after a fix, for one new whole-change read at the new head
+  and, where the level asks for more passes, delta reads from the head the
+  earlier reviews read; a commit after passes needs only deltas. On a
+  blocking fail the lead lets the reviewers still reading finish before it
+  edits, instead of cancelling them, so one fix answers every finding and
+  their passes anchor the deltas. The review gate is tightened to match:
+  as many passes as the level asks for must have read the branch head
+  itself, whole or as an anchored delta. A pass of an earlier head still
+  holds beside them and anchors a delta, but no longer counts toward the
+  level, so a strict review is three reviewers of the final head. The
+  reviewer effort floor (#329) is unchanged.
+
 ## 1.4.9
 
 Released 2026-10-31.

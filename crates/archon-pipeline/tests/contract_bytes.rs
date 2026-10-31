@@ -23,7 +23,7 @@ const REVIEW_BUDGET: usize = 3_550;
 const RECORD_BUDGET: usize = 1_550;
 /// What holding a review adds: the record, and the verdict and risk call
 /// each reviewer returns.
-const REVIEW_HOLDER_BUDGET: usize = 1_350;
+const REVIEW_HOLDER_BUDGET: usize = 1_550;
 /// What a work stage of a team pipeline adds: committing where the roles fork.
 const RUN_TREE_BUDGET: usize = 550;
 /// What judging the change's risk adds: the rubric, to the record stage and

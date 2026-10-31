@@ -321,9 +321,11 @@ into each reviewer's instructions: call Aether's `complete_task` with a concise
 `summary` and the verdict object in the tool's `structured` argument. Each
 reviewer gives its own verdict on the commits it read, where `base` is the
 commit its diff starts from
-(the merge base for the whole change; the contract asks a re-review of a
-fix to read the whole change too, though Archon still counts a delta read
-from an earlier reviewer's head):
+(the merge base for the whole change, or an earlier reviewer's head for a
+delta read). After a fix the contract asks for one new whole-change read at
+the new head and, when the level asks for more passes, delta reads of what
+changed for the rest; a reviewer still reading finishes before the lead
+edits, so its pass can anchor a delta:
 
 ```json
 {"verdict": "pass", "head": "<commit>", "base": "<commit>", "findings": []}
@@ -363,10 +365,12 @@ A pass is not taken on the agent's word. As the stage ends, Archon lists
 the agents it delegated to (one Aether call) and reads the task result of
 each one named. Every named agent must be a different direct child that
 completed with a verdict; a builder or researcher that returned none is not
-a reviewer. Archon then holds the verdicts to the run branch: a pass counts
-when its reviewer read the branch head, or an earlier head whose later
-commits a passing reviewer read as a delta. A fail never counts, and it
-stands until such a pass read past it, or a later reviewer read past it and
+a reviewer. Archon then holds the verdicts to the run branch: as many passes
+as the level asks for must have read the branch head itself, whole or as a
+delta. A pass of an earlier head holds beside them while passing reviewers
+read every commit after it, and it anchors a delta from there, but it does
+not count toward the level. A fail never counts, and it
+stands until a pass that holds read past it, or a later reviewer read past it and
 failed in turn, and that fail was answered: a fix of a fix is reviewed as a
 delta too. A verdict on a commit the branch no
 longer holds (the agent amended or rebased it away) is superseded: it is
@@ -380,9 +384,9 @@ and are recorded as `review.implicit_reviewer_agents`. It does so only when
 the agent ran no other attempt of the run, once every reviewer it delegated
 to has ended (wait for or cancel one still running before completing), and
 when Aether shows each of their results. When the stage also writes the ship
-record, the branch head must hold the record's `tree`. With fewer counted
-passes than the level asks for, the run fails at that stage with each reason. Archon
-records the counted reviewers as `review.reviewer_agents` and the models
+record, the branch head must hold the record's `tree`. With fewer passes
+of the head than the level asks for, the run fails at that stage with each reason.
+Archon records the named reviewers whose passes hold as `review.reviewer_agents` and the models
 Aether ran them on as `review.reviewer_models`, replacing anything the
 agent wrote there.
 
@@ -1163,10 +1167,11 @@ verifies and fixes the change. Its prompt has it spend where spending pays:
   stake.
 - **Fixes.** Blocking findings are fixed in new commits and the affected
   checks rerun; the full suite runs again only for a fix with broad impact
-  or where the project's policy demands it. A second look, by a new child
-  that reads the whole change again at the new head, is owed after a failed
-  verdict, and after a pass only when a later commit changes production
-  behaviour, security or an invariant, or adds scope. Advisory findings
+  or where the project's policy demands it. A second look, by new children
+  at the new head, is owed after a failed verdict, and after a pass only
+  when a later commit changes production behaviour, security or an
+  invariant, or adds scope: after a fail one reads the whole change again,
+  and any other the level needs reads only what changed. Advisory findings
   are listed and left. Two fix and re-review rounds are allowed before the
   lead must fail visibly; only an unresolved blocking finding, a failed
   check or a review that did not run fails the stage.

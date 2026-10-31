@@ -593,17 +593,19 @@ Use `\"fail\"` with findings for failures.\n\n";
 pub const REVIEW_ROUNDS_BEFORE_NOTICE: usize = 4;
 
 const REVIEW_CHECK_RULES: &str = "\
-- Delegate with `wait: false`, then use `wait_for` with `any: true`. On a blocking \
-fail, `cancel_agent` the reviewers still reading before you edit: they share your \
-workspace, and cancelled reviews do not count. Then fix and commit. Replace each \
-cancelled reviewer with a new whole-change read at the new head. Every re-review \
-after a fix, a completed fail's too, is a whole-change read at the new head with \
-`base` at the change's start; one such pass covers all earlier reads.\n\
+- Delegate with `wait: false`, then use `wait_for`. On a blocking fail, edit nothing \
+until the reviewers still reading finish (they share your workspace); one you cancel \
+counts for nothing and needs a whole-change replacement. Fix every finding and commit, \
+then re-review only what changed: one new whole-change read at the new head (`base` \
+at the change's start), and for each further pass the review asks a new delta read, \
+`base` at the head the earlier reviews read, given their findings and the fix. A \
+commit after passes needs only delta reads from the head they passed; an amend or \
+rebase needs whole-change reads.\n\
 - Archon checks a pass against Aether and the branch. Each agent named must be a \
 different one you delegated to yourself that completed with that verdict, and as many \
-as the review asks must have passed the branch head, or an earlier head whose later \
-commits a passing reviewer read with `base` at or before it. A fail stands until such \
-a pass, or after an amend or rebase until a pass of the whole change. Name every \
+as the review asks must have passed the branch head itself: whole, or as a delta whose \
+`base` a named reviewer read the change up to. A pass of an earlier head only anchors \
+such a delta. A fail stands until a pass read past it, or after an amend or rebase until a pass of the whole change. Name every \
 reviewer that coverage rests on, earlier whole-change passes included. Anything else \
 fails the run, and nothing ships. Never report `pass` for a \
 review that did not run or did not pass: with a blocking finding open, call \
@@ -1050,19 +1052,21 @@ mod tests {
     }
 
     #[test]
-    fn review_holders_fix_early_and_re_review_the_whole_change() {
+    fn review_holders_re_review_the_whole_change_once_and_the_fix_as_deltas() {
         for reviewers in [1, 3] {
             let text = work_contract(owing(reviewers, false));
             for said in [
-                "Delegate with `wait: false`",
-                "use `wait_for` with `any: true`",
-                "On a blocking fail, `cancel_agent` the reviewers still reading before you edit",
-                "cancelled reviews do not count. Then fix and commit",
-                "Replace each cancelled reviewer with a new whole-change read at the new head",
-                "Every re-review after a fix, a completed fail's too, is a whole-change read at the new head",
-                "with `base` at the change's start; one such pass covers all earlier reads",
-                "a passing reviewer read with `base` at or before it",
-                "A fail stands until such a pass",
+                "Delegate with `wait: false`, then use `wait_for`",
+                "On a blocking fail, edit nothing until the reviewers still reading finish",
+                "one you cancel counts for nothing and needs a whole-change replacement",
+                "Fix every finding and commit, then re-review only what changed",
+                "one new whole-change read at the new head (`base` at the change's start)",
+                "for each further pass the review asks a new delta read",
+                "A commit after passes needs only delta reads from the head they passed",
+                "an amend or rebase needs whole-change reads",
+                "must have passed the branch head itself",
+                "A pass of an earlier head only anchors such a delta",
+                "A fail stands until a pass read past it",
             ] {
                 assert!(text.contains(said), "missing {said:?} in {text}");
             }
@@ -1562,7 +1566,7 @@ mod tests {
             "{\"verdict\": \"pass\", \"head\": \"<commit>\", \"base\": \"<commit>\"",
             "Use `\"fail\"` with findings for failures",
             "Each agent named must be a different one you delegated to yourself",
-            "a passing reviewer read with `base` at or before it",
+            "must have passed the branch head itself",
             "Name every reviewer that coverage rests on, earlier whole-change passes included",
             "write no `REVIEW:` line yourself",
         ] {

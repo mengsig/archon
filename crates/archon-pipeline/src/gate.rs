@@ -14,6 +14,8 @@ pub const MAX_FEEDBACK_CHARS: usize = 32_000;
 
 const SHIP_REFUSAL: &str = "the ship record archond delivers is not on record";
 const REVIEW_REFUSAL: &str = "the review this pipeline declares is not on record";
+/// Most characters of an unreadable verdict quoted in a gate's refusal.
+const MAX_QUOTED_VERDICT_CHARS: usize = 160;
 
 /// The refusal a failed run's `error` reports when the run failed only
 /// because the gate refused the ship record or review a finished stage owes;
@@ -27,6 +29,12 @@ pub fn record_refusal(error: &str) -> Option<&str> {
             prefix.starts_with("stage `") && prefix.contains("` failed") && prefix.ends_with(": ");
         is_stage_failure.then(|| headline_block[at..].trim())
     })
+}
+
+/// Whether `refusal`, as [`record_refusal`] gives it, refuses the ship
+/// record rather than the review: the work and its review may well stand.
+pub fn refuses_ship_record(refusal: &str) -> bool {
+    refusal.starts_with(SHIP_REFUSAL)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -215,8 +223,8 @@ fn member_report(stage: &StageSpec, member: &StageRun) -> String {
     match &member.state {
         StageState::Completed => {
             let verdict = match verdict_of(member) {
-                Verdict::Fail => "fail",
-                _ => "missing or unreadable (counts as fail)",
+                Verdict::Fail => "fail".to_owned(),
+                _ => unreadable_verdict(member),
             };
             let findings = findings_text(member.structured.as_ref());
             format!("{label}: verdict {verdict}**\n\n{summary}\n{findings}")
@@ -231,6 +239,23 @@ fn member_report(stage: &StageSpec, member: &StageRun) -> String {
             unreachable!("evaluate() asserts every member is terminal")
         }
     }
+}
+
+/// Why a completed member's verdict counts as fail, quoting what it said.
+fn unreadable_verdict(member: &StageRun) -> String {
+    let summary = member.summary.as_deref().unwrap_or_default();
+    let Some(said) = Verdict::stated(summary, member.structured.as_ref()) else {
+        return "missing (counts as fail)".to_owned();
+    };
+    let quoted: String = said.chars().take(MAX_QUOTED_VERDICT_CHARS).collect();
+    if member
+        .structured
+        .as_ref()
+        .is_some_and(Verdict::lists_blocking)
+    {
+        return format!("{quoted:?} beside a blocking finding (counts as fail)");
+    }
+    format!("{quoted:?} unreadable as pass or fail (counts as fail)")
 }
 
 /// How long the member ran, from its own record: the deadline it had may be
@@ -304,8 +329,10 @@ mod tests {
             record_refusal(&review),
             Some("the review this pipeline declares is not on record: no review object")
         );
+        assert!(!refuses_ship_record(record_refusal(&review).unwrap()));
         let ship = format!("stage `a` failed after 2 of 2 fix loop(s): {SHIP_REFUSAL}: bad tree");
         assert!(record_refusal(&ship).unwrap().ends_with("bad tree"));
+        assert!(refuses_ship_record(record_refusal(&ship).unwrap()));
         assert_eq!(
             record_refusal("stage `a` failed: 1 of 1 agent(s) did not complete"),
             None

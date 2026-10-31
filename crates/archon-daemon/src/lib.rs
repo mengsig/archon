@@ -8,6 +8,7 @@ mod chat_answer;
 mod chat_merge;
 mod chat_ops;
 mod command_notice;
+pub mod compose;
 pub mod context;
 pub mod disk;
 pub mod dispatcher;

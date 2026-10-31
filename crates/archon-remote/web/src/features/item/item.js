@@ -4,6 +4,7 @@ import { h } from '../../ui/dom.js';
 import { icon } from '../../ui/icons.js';
 import { screenHeader, section, card, row, chip, emptyState, errorNote, loadErrorNotes, skeletonRows } from '../../ui/components.js';
 import { stateLook, usd, priorityLabel, dateTime, shortId, safeHttpUrl, isTerminal, waitsOnOperator, prUrlOf, namesItem } from '../../core/format.js';
+import { renderMarkdown, clampedMarkdown } from '../../ui/markdown.js';
 import { stagesTimeline } from './stages.js';
 import { artifactsSection } from './artifacts.js';
 import { itemActions } from './actions.js';
@@ -164,7 +165,7 @@ function outcomeCallout(detail) {
 function callout(tone, title, text, extra = null) {
   return h('div', { class: ['callout', `callout-${tone}`], role: 'note' },
     h('p', { class: 'callout-title', text: title }),
-    text ? h('p', { class: 'callout-text', text }) : null, extra);
+    text ? renderMarkdown(text, { className: 'callout-text' }) : null, extra);
 }
 
 function detailsCard(detail, summary) {
@@ -184,18 +185,7 @@ function detailsCard(detail, summary) {
 }
 
 function briefCard(brief) {
-  const text = brief ?? '';
-  const long = text.length > BRIEF_CLAMP_CHARS;
-  const body = h('p', { class: 'brief', text: long ? `${text.slice(0, BRIEF_CLAMP_CHARS).trimEnd()}…` : text });
-  if (!long) return card(body);
-  const toggle = h('button', { class: 'link-button', type: 'button', 'aria-expanded': 'false' }, 'Show full brief');
-  toggle.addEventListener('click', () => {
-    const open = toggle.getAttribute('aria-expanded') === 'true';
-    body.textContent = open ? `${text.slice(0, BRIEF_CLAMP_CHARS).trimEnd()}…` : text;
-    toggle.setAttribute('aria-expanded', String(!open));
-    toggle.textContent = open ? 'Show full brief' : 'Show less';
-  });
-  return card(body, toggle);
+  return card(clampedMarkdown(brief ?? '', { limit: BRIEF_CLAMP_CHARS, more: 'Show full brief', className: 'brief' }));
 }
 
 function gatesSection(detail) {

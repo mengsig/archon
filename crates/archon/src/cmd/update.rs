@@ -67,17 +67,20 @@ impl Step {
 
 /// Before `archon`, `archon chat` or `archon tui` opens: check for newer
 /// releases and offer the one-step update. After an accepted update this
-/// process is replaced by the new archon with the same arguments.
-pub async fn before_launch() -> anyhow::Result<()> {
+/// process is replaced by the installed archon with the same arguments; an
+/// update a signal ended returns the code to exit with instead.
+pub async fn before_launch() -> anyhow::Result<Option<ExitCode>> {
     use std::os::unix::process::CommandExt as _;
     // Resolved first: once the update replaces it, the running file has no path.
     let bin = archon_bin()?;
     // A broken config is reported by the command that follows.
     let Ok(config) = Config::load_default() else {
-        return Ok(());
+        return Ok(None);
     };
-    if launch::offer(&config.update).await != launch::Launch::Again {
-        return Ok(());
+    match launch::offer(&config.update).await {
+        launch::Launch::Go => return Ok(None),
+        launch::Launch::Exit(code) => return Ok(Some(code)),
+        launch::Launch::Again => {}
     }
     let error = std::process::Command::new(bin)
         .args(std::env::args_os().skip(1))
@@ -553,21 +556,28 @@ async fn aether_report(
     }
 }
 
-/// Whether an archond is running, and what to do about it after an update.
-/// Never fails: what cannot be asked stops no update.
+/// Whether an archond is running, and what happens to it after an update:
+/// `restarts` when this update restarts it next. Never fails: what cannot
+/// be asked stops no update.
 async fn archond_report(new: &Version, restarts: bool) -> (Option<bool>, String) {
-    const BY_HAND: &str = "run `archon daemon stop --keep-aether`, then `archon aether mcp refresh archon` \
-                           and `archon orchestrator restart`";
-    const BELOW: &str = "`--yes` restarts it now";
-    let restart = if restarts { BELOW } else { BY_HAND };
+    const BY_HAND: &str = "run `archon daemon restart --keep-aether`, which keeps running stage \
+                           agents and gives the orchestrator the new tools";
+    const NEXT: &str = "it restarts next, and its running stage agents keep running in Aether";
+    let restart = if restarts { NEXT } else { BY_HAND };
     match connect_existing().await {
         Ok(Some(client)) => {
             let welcome = client.welcome();
-            let line = format!(
-                "archond (pid {}) still runs {}, and the update itself interrupts no running \
-                 item; to switch it to {new}, {restart}.",
-                welcome.pid, welcome.daemon_version
-            );
+            let line = match restarts {
+                true => format!(
+                    "archond (pid {}) runs {}; {restart}.",
+                    welcome.pid, welcome.daemon_version
+                ),
+                false => format!(
+                    "archond (pid {}) still runs {}, and the update itself interrupts no running \
+                     item; to switch it to {new}, {restart}.",
+                    welcome.pid, welcome.daemon_version
+                ),
+            };
             (Some(true), line)
         }
         Ok(None) => {

@@ -21,7 +21,7 @@ use archon_core::Timestamp;
 use archon_core::aether_ids::{AetherAgentId, AetherRunId, AetherTaskId};
 use archon_core::config::Config;
 use archon_core::error::ArchonError;
-use archon_core::id::{PipelineRunId, QueueItemId};
+use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
 use archon_core::model::{Effort, ModelChoice, ModelPlan};
 use archon_core::notify::{FeedEntry, NotificationKind};
 use archon_core::ports::{
@@ -505,6 +505,15 @@ pub fn fake_disk(free: &Arc<AtomicU64>) -> DiskWatch {
     DiskWatch::new(probe, std::time::Duration::ZERO)
 }
 
+/// A test never reaches the host's Docker; one that tests teardowns names
+/// its fake `docker`.
+pub fn without_host_docker(mut config: Config) -> Config {
+    if config.worktrees.docker == Path::new("docker") {
+        config.worktrees.docker = "/nonexistent/archon-test/docker".into();
+    }
+    config
+}
+
 /// Build a context like `archon_daemon::run` does, rooted at `root`.
 pub fn context(
     root: &Path,
@@ -515,6 +524,7 @@ pub fn context(
     disk: DiskWatch,
     ops: &Arc<fake_ops::FakeOps>,
 ) -> DaemonContext {
+    let config = without_host_docker(config);
     let data_dir = root.join("data");
     let paths = DaemonPaths {
         socket: root.join("archond.sock"),
@@ -756,6 +766,10 @@ struct FakeState {
     lost_node_replies: u32,
     /// Agents `is_live` reports dead: cancelled ones and those `kill` took.
     dead: BTreeSet<AetherAgentId>,
+    /// Agents Aether holds as failed, which `wake` revives; it refuses others.
+    failed: BTreeSet<AetherAgentId>,
+    /// Agents `wake` revived, in order; live until cancelled or killed.
+    woken: Vec<AetherAgentId>,
     /// Every `is_live` call, in order.
     live_checks: Vec<AetherAgentId>,
     next_node: u32,
@@ -767,6 +781,7 @@ struct FakeState {
     /// Agents a stage agent delegated to, as Aether holds them.
     delegated: Vec<Descendant>,
     descendant_failures: VecDeque<ArchonError>,
+    pulse_failures: VecDeque<ArchonError>,
     /// Every `descendants` call, in order.
     descendant_checks: Vec<AetherAgentId>,
     /// What a kept agent said to end the turn it was resumed in.
@@ -775,6 +790,13 @@ struct FakeState {
     stalls: Vec<(String, Arc<tokio::sync::Semaphore>)>,
     /// What `pulse` reports of an agent's tree; an empty pulse otherwise.
     pulses: BTreeMap<AetherAgentId, TreePulse>,
+    /// Every `clear_inspection` that resumed a tree: its lead and the note.
+    inspections_cleared: Vec<(AetherAgentId, String)>,
+    /// Each failure, and whether another client resumed the agent just before.
+    inspection_failures: VecDeque<(ArchonError, bool)>,
+    /// Runs once, after the next `update_agent` is recorded: what else
+    /// happened while that update was in flight.
+    update_hook: Option<Box<dyn FnOnce() + Send>>,
 }
 
 impl FakeState {
@@ -967,12 +989,30 @@ impl FakeBackend {
         std::mem::take(&mut self.state().live_checks)
     }
 
+    /// Aether holds `agent` as failed, so `wake` revives it once.
+    pub fn fail_agent(&self, agent: &AetherAgentId) {
+        let mut state = self.state();
+        assert!(state.knows(agent), "only a created agent fails");
+        state.failed.insert(agent.clone());
+        state.in_turn.remove(agent);
+    }
+
+    /// Every agent `wake` revived, in order.
+    pub fn woken(&self) -> Vec<AetherAgentId> {
+        self.state().woken.clone()
+    }
+
     /// Aether forgot `agent`: `is_live` reports it dead from now on.
     pub fn kill(&self, agent: &AetherAgentId) {
         let mut state = self.state();
         assert!(state.knows(agent), "kill knows only created agents");
         state.dead.insert(agent.clone());
         state.in_turn.remove(agent);
+    }
+
+    /// Run `hook` once, right after the next `update_agent` is recorded.
+    pub fn on_next_update(&self, hook: impl FnOnce() + Send + 'static) {
+        self.state().update_hook = Some(Box::new(hook));
     }
 
     /// `pulse` reports `pulse` for `agent`'s tree from now on.
@@ -1087,6 +1127,13 @@ impl FakeBackend {
         state.unreadable.insert(task, error.to_owned());
     }
 
+    /// The delegated agent's own deadline is `at`, as copied at its spawn.
+    pub fn limit_delegated(&self, agent: &AetherAgentId, at: Timestamp) {
+        let mut state = self.state();
+        let delegated = state.delegated.iter_mut().find(|d| d.agent == *agent);
+        delegated.expect("a delegated agent").deadline = Some(at);
+    }
+
     /// The delegated agent ended as `ended`.
     pub fn end_delegated(&self, agent: &AetherAgentId, ended: DescendantState) {
         assert_ne!(ended, DescendantState::Live, "an ended agent is not live");
@@ -1098,6 +1145,27 @@ impl FakeBackend {
     /// The next `descendants` calls fail with these errors, in order.
     pub fn fail_next_descendants(&self, error: ArchonError) {
         self.state().descendant_failures.push_back(error);
+    }
+
+    /// The next `pulse` calls fail with these errors, in order.
+    pub fn fail_next_pulse(&self, error: ArchonError) {
+        self.state().pulse_failures.push_back(error);
+    }
+
+    /// The next `clear_inspection` calls fail with these errors, in order.
+    pub fn fail_next_inspection(&self, error: ArchonError) {
+        self.state().inspection_failures.push_back((error, false));
+    }
+
+    /// The next `clear_inspection` finds the agent resumed by another client
+    /// since the tree was read, and is refused with `error`.
+    pub fn resume_elsewhere_before_next_inspection(&self, error: ArchonError) {
+        self.state().inspection_failures.push_back((error, true));
+    }
+
+    /// The leads whose trees `clear_inspection` resumed, with the note each got.
+    pub fn inspections_cleared(&self) -> Vec<(AetherAgentId, String)> {
+        self.state().inspections_cleared.clone()
     }
 
     /// Hold every spawn whose objective contains `text` until the returned
@@ -1225,7 +1293,19 @@ impl AgentBackend for FakeBackend {
         if state.dead.contains(agent) {
             return Ok(false);
         }
-        Ok(state.is_node(agent) || state.in_turn.contains(agent) || state.is_kept(agent))
+        let woken = state.woken.contains(agent);
+        Ok(state.is_node(agent) || state.in_turn.contains(agent) || state.is_kept(agent) || woken)
+    }
+
+    async fn wake(&self, agent: &AetherAgentId) -> Result<(), ArchonError> {
+        let mut state = self.state();
+        if state.dead.contains(agent) || !state.failed.remove(agent) {
+            return Err(ArchonError::Invalid(format!(
+                "aether: agent {agent} did not fail; only a failed agent is woken"
+            )));
+        }
+        state.woken.push(agent.clone());
+        Ok(())
     }
 
     async fn cancel(&self, agent: &AetherAgentId, _reason: &str) -> Result<(), ArchonError> {
@@ -1269,12 +1349,21 @@ impl AgentBackend for FakeBackend {
         if let Some(error) = state.update_failures.pop_front() {
             return Err(error);
         }
-        if !state.knows(agent) || state.dead.contains(agent) {
+        let helper = state
+            .delegated
+            .iter()
+            .any(|d| d.agent == *agent && d.state == DescendantState::Live);
+        if !(state.knows(agent) || helper) || state.dead.contains(agent) {
             return Err(ArchonError::NotFound(format!(
                 "aether: no live agent {agent}"
             )));
         }
         state.updates.push((agent.clone(), update));
+        let hook = state.update_hook.take();
+        drop(state);
+        if let Some(hook) = hook {
+            hook();
+        }
         Ok(())
     }
 
@@ -1322,11 +1411,40 @@ impl AgentBackend for FakeBackend {
     }
 
     async fn pulse(&self, agent: &AetherAgentId) -> Result<Option<TreePulse>, ArchonError> {
-        let state = self.state();
+        let mut state = self.state();
+        if let Some(error) = state.pulse_failures.pop_front() {
+            return Err(error);
+        }
         if !state.knows(agent) {
             return Ok(None);
         }
         Ok(Some(state.pulses.get(agent).copied().unwrap_or_default()))
+    }
+
+    /// The lead is the blocked agent; its pulse no longer reports one.
+    async fn clear_inspection(
+        &self,
+        lead: &AetherAgentId,
+        note: &str,
+        _idempotency_key: &str,
+    ) -> Result<Vec<AetherAgentId>, ArchonError> {
+        let mut state = self.state();
+        if let Some((error, resumed_elsewhere)) = state.inspection_failures.pop_front() {
+            if let Some(pulse) = state.pulses.get_mut(lead).filter(|_| resumed_elsewhere) {
+                pulse.inspection = false;
+                pulse.running = true;
+            }
+            return Err(error);
+        }
+        let blocked = state.pulses.get_mut(lead).filter(|pulse| pulse.inspection);
+        let Some(pulse) = blocked else {
+            return Ok(Vec::new());
+        };
+        pulse.inspection = false;
+        state
+            .inspections_cleared
+            .push((lead.clone(), note.to_owned()));
+        Ok(vec![lead.clone()])
     }
 
     async fn task_outcome(&self, task: &AetherTaskId) -> Result<Option<StageOutcome>, ArchonError> {
@@ -1431,14 +1549,38 @@ pub async fn age_settlements_except(h: &Harness, run: &PipelineRunId, minutes: i
 /// Move `stage`'s persisted deadline two hours into the past, as if its
 /// agent had outlived it; returns the new deadline.
 pub async fn expire_deadline(h: &Harness, stage: &StageRun) -> Timestamp {
-    let key = format!("spawn_request:{}", stage.id);
-    let mut store = h.ctx.store.lock().await;
+    let past = archon_core::now() - chrono::Duration::hours(2);
+    set_deadline(h, stage, past).await;
+    past
+}
+
+/// Set `stage`'s persisted deadline to `at`.
+pub async fn set_deadline(h: &Harness, stage: &StageRun, at: Timestamp) {
+    write_deadline(&mut *h.ctx.store.lock().await, &stage.id, at);
+}
+
+/// Set the deadline in stage run `id`'s stored request to `at`, as a steer does.
+pub fn write_deadline(store: &mut Store, id: &StageRunId, at: Timestamp) {
+    let key = format!("spawn_request:{id}");
     let raw = store.kv_get(&key).expect("kv").expect("stored spawn");
     let mut spawn: serde_json::Value = serde_json::from_str(&raw).expect("json");
-    let past = archon_core::now() - chrono::Duration::hours(2);
-    spawn["request"]["deadline"] = serde_json::to_value(past).expect("timestamp");
+    spawn["request"]["deadline"] = serde_json::to_value(at).expect("timestamp");
     store.kv_set(&key, &spawn.to_string()).expect("kv set");
-    past
+}
+
+/// `stage`'s persisted deadline.
+pub async fn stored_deadline(h: &Harness, stage: &StageRun) -> Option<Timestamp> {
+    let key = format!("spawn_request:{}", stage.id);
+    let raw = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .kv_get(&key)
+        .expect("kv")
+        .expect("stored spawn");
+    let spawn: serde_json::Value = serde_json::from_str(&raw).expect("json");
+    serde_json::from_value(spawn["request"]["deadline"].clone()).expect("a deadline or null")
 }
 
 /// The `--exact` filter for test `name` in the module at `module_path`

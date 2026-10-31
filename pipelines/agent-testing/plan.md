@@ -24,10 +24,11 @@ never change product code.
    is about a change). Identify who the users are and what they are trying to
    do.
 2. **Make it runnable.** Work out how to build and start the product, and do
-   it once to confirm that it works. Write the exact commands, with the stop
-   or cleanup commands, to `.archon/agent-testing/run.md`. If it cannot run
-   without a secret or an external account you do not have, call `fail_task`
-   with `BLOCKED:` and name exactly what is needed.
+   it once to confirm that it works. Write the exact commands, with stop
+   commands that stop by recorded PID or Compose project, to
+   `.archon/agent-testing/run.md`. If it cannot run without a secret or an
+   external account you do not have, call `fail_task` with `BLOCKED:` and
+   name exactly what is needed.
 3. **Write charters** to `.archon/agent-testing/plan.md`. Write at least two,
    numbered `Charter 1`, `Charter 2`, and so on, each with a distinct focus so
    testers do not overlap. Good splits are "main user journeys" against "edge

@@ -373,8 +373,10 @@ pub struct UpdateArgs {
     /// Install archon only: update no Aether and restart nothing.
     #[arg(long, conflicts_with_all = ["check", "requirements"])]
     pub no_restart: bool,
-    /// Longest wait, in seconds, for running stage agents to finish before
-    /// archond restarts.
+    /// Longest wait, in seconds, archond gives what a restart would cut
+    /// short: its own spawns, merges and deliveries before it restarts
+    /// (stage agents keep running), and the stage agents in Archon's own
+    /// aetherd before a new Aether restarts it, in the background.
     #[arg(long, value_name = "SECS", default_value_t = archon_core::ops::DEFAULT_DRAIN_SECS)]
     pub wait: u64,
     /// When the wait runs out, restart anyway: stages stopped with aetherd
@@ -1086,7 +1088,8 @@ pub enum DaemonCommand {
     Restart {
         #[command(flatten)]
         drain: DrainArgs,
-        /// Restart archond alone; stage agents keep running in Aether.
+        /// Restart archond alone, waiting only for its own spawns, merges and
+        /// deliveries: stage agents keep running in Aether.
         #[arg(long)]
         keep_aether: bool,
     },

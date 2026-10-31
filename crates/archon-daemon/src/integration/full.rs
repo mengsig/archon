@@ -261,27 +261,26 @@ mod tests {
         let dir = dir.path().canonicalize().unwrap();
         let slot = Slot::acquire(&dir.join("slot.lock")).await.unwrap();
         let log = dir.join("slow.log");
+        // The run is niced, so on a loaded host its first `echo` can take
+        // far longer than a few hundred milliseconds.
+        let limit = Duration::from_secs(3);
         let started = std::time::Instant::now();
         let ran = run(
             slot,
             "the full check",
-            "echo started; sleep 30",
+            "echo started; sleep 60",
             &dir,
             &log,
-            Duration::from_millis(300),
+            limit,
         );
         let ran = ran.await.unwrap();
+        let took = started.elapsed();
         assert!(
-            started.elapsed() < Duration::from_secs(10),
-            "ended at its limit"
+            took >= limit && took < Duration::from_secs(30),
+            "ended at its limit, not its end: {took:?}"
         );
         assert!(!ran.passed);
-        assert!(
-            ran.excerpt
-                .starts_with("started\n[the full check was ended"),
-            "{}",
-            ran.excerpt
-        );
+        assert_eq!(ran.excerpt, "started\n[the full check was ended after 3s]");
     }
 
     /// Two daemons' worth of runs at once, each holding the slot through

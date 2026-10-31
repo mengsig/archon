@@ -132,7 +132,8 @@ fn pick(
 }
 
 /// Set `stage`'s cost to what the ledger charged its agent and every agent beneath it
-/// during this attempt, from hand-off to hand-off of a kept agent; the split, when it delegated.
+/// during this attempt, from hand-off to hand-off of a kept or woken agent; the split, when it
+/// delegated.
 pub(super) fn charge(
     store: &Store,
     stage: &mut StageRun,
@@ -142,8 +143,14 @@ pub(super) fn charge(
         return Ok(None);
     };
     let handoffs = store.agent_handoffs(agent, estimates)?;
-    let from = handoffs.iter().find(|h| h.attempt == stage.attempt);
-    let until = handoffs.iter().find(|h| h.attempt > stage.attempt);
+    // A run starts at its own hand-off (none for a fresh agent) and ends at the next.
+    let at = (stage.attempt, store.wakes_before(stage)?);
+    let from = handoffs.iter().find(|h| h.at() == at);
+    let until = handoffs.iter().find(|h| h.at() > at);
+    assert!(
+        from.is_none_or(|h| until.is_none_or(|u| h.at() < u.at())),
+        "a run ends after it starts"
+    );
     let span = |agent: &AetherAgentId, now: f64| {
         let start = from.map_or(0.0, |h| h.spent_by(agent));
         let end = until.map_or(now, |h| h.spent_by(agent));

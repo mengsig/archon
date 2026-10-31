@@ -40,12 +40,12 @@ profile, and it never touches Archon's configuration or data.
 Set these in the environment of `sh`, after the pipe:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mengsig/archon/main/install.sh | ARCHON_VERSION=v1.4.8 sh
+curl -fsSL https://raw.githubusercontent.com/mengsig/archon/main/install.sh | ARCHON_VERSION=v1.4.9 sh
 ```
 
 | Variable | Effect |
 | --- | --- |
-| `ARCHON_VERSION` | Install this release, such as `v1.4.8`, instead of the latest. |
+| `ARCHON_VERSION` | Install this release, such as `v1.4.9`, instead of the latest. |
 | `ARCHON_INSTALL_DIR` | Install here instead of `~/.local/bin`. The directory must be yours to write. |
 | `ARCHON_SKIP_AETHER=1` | Do not install Aether; print the command that does. |
 | `ARCHON_NONINTERACTIVE=1` | Ask nothing: a missing Aether is installed without a question. |
@@ -81,15 +81,25 @@ aether schema | grep -E '^  "(min_)?protocol_version"'
 
 Update an Aether that is too old with `aether update`.
 
-Archon 1.4.8 needs **Aether 1.2.7**: it is released with and tested on that
-release, which the installer and `archon update` install. Archon checks
-Aether's protocol (24), not its version, so it does not refuse an older
-aetherd that serves protocol 24, but only Aether 1.2.7 is supported with it.
-Aether 1.2.7 adds two features Archon uses when they are offered:
-`subtree_update`, which raises a steer's deadline or budget for a stage
-agent and its helpers in one request (an older aetherd gets one request per
-helper), and `history_expired`, which reports expired event history by its
-own code (an older one is read from the refusal's text).
+Archon 1.4.9 needs **Aether 1.2.8**: it is released with and tested on that
+release. Neither the installer nor `archon update` pins an Aether version:
+the installer installs the latest Aether release only when it finds no
+`aether`, and keeps one it finds. `archon update` runs `aether update
+--yes`, which installs the latest release, only on a confirmed update
+(after a yes, or with `--yes`); `--check`, `--requirements`, `--no-restart`
+and a declined question leave Aether as it is.
+Check with `aether --version` and update an older one with `aether update`.
+Archon checks
+Aether's protocol, not its version: it asks for protocol 24 and accepts down
+to 17. Aether 1.2.8 serves protocols 17 to 25, so it answers Archon on 24;
+protocol 25 only adds a `credentials` exhaustion class, which a client on 24
+sees as `usage_limit`. Archon does not refuse an older aetherd that serves
+protocol 24, but only Aether 1.2.8 is supported with it. Since Aether 1.2.7,
+Archon uses two features when they are offered: `subtree_update`, which
+raises a steer's deadline or budget for a stage agent and its helpers in one
+request (an older aetherd gets one request per helper), and
+`history_expired`, which reports expired event history by its own code (an
+older one is read from the refusal's text).
 
 ## Other programs Archon uses
 
@@ -120,7 +130,7 @@ Every release carries, for each archive, a `.sha256` file, and one
 `SHA256SUMS` file that lists all of them.
 
 ```sh
-tag=v1.4.8
+tag=v1.4.9
 target=x86_64-unknown-linux-musl
 base=https://github.com/mengsig/archon/releases/download/$tag
 curl -fsSLO "$base/archon-$target.tar.gz"
@@ -141,7 +151,7 @@ archive holds `LICENSE` and `THIRD-PARTY-NOTICES`; the installer and
 ```sh
 archon update            # install the latest release when it is newer
 archon update --check    # only report: exit 0 when up to date, 10 when a newer release exists
-archon update --version v1.4.8    # install exactly this release
+archon update --version v1.4.9    # install exactly this release
 ```
 
 `archon update` downloads the same archive as the installer, makes the same
@@ -167,13 +177,25 @@ archon update --yes                  # install, update Aether, restart everythin
 archon update --yes --wait 600 --requeue
 ```
 
-An accepted restart does, in order: `aether update`; the drained restart
-of `archond` and, in dedicated mode, Archon's own aetherd (`archon daemon
-restart`, with the same `--wait` and `--requeue`: running items resume as
-after any daemon restart); and `archon orchestrator restart`, which gives
-the orchestrator the new tools. In shared mode your own aetherd is never
-restarted; Archon's tools in it are refreshed with `aether mcp refresh
-archon`. Nothing is restarted when `archond` is not running: the next
+An accepted restart does, in order: `aether update`; the restart of
+`archond` alone, at once (`archon daemon restart --keep-aether`): Aether and
+the stage agents running in it keep running, and the new archond takes up
+their stages as after any daemon restart; and `archon orchestrator
+restart`, which gives the orchestrator the new tools. It never waits for
+stage agents to finish. archond waits only for its own spawns, merges and
+deliveries under way (at most `--wait`); one still busy after 30 seconds
+restarts by itself once they end, or gives up at `--wait` unless
+`--requeue`, and the update says so and returns. An archond older than
+1.4.9 waits for its stage agents too, so it is given 10 seconds and then
+restarts anyway; they keep running all the same. When
+`aether update` installed a new Aether and archond runs the new archon
+before the update returns, archond is then asked to restart Archon's own
+aetherd in the background, once its stage agents finish (at most `--wait`,
+`--requeue` to restart anyway). An archond that restarts only later is not
+asked: run `archon daemon restart` once it is back, and Archon's own aetherd
+restarts on the new Aether after its stage agents finish. In shared mode your own
+aetherd is never restarted; Archon's tools in it are refreshed with `aether
+mcp refresh archon`. Nothing is restarted when `archond` is not running: the next
 command that needs it starts the new version. When `archond` already runs
 the installed version, only an orchestrator another archon created is
 restarted (an earlier update cut short after archond's restart leaves one).
@@ -181,6 +203,10 @@ An archond restarted on a release with another daemon protocol refuses the
 running update at hello; that refusal is taken as the restart done, and the
 orchestrator is restarted by the installed `archon` (an updater from 1.4.7
 or earlier waits out its deadline instead: run `archon update --yes` again).
+The updater of 1.4.8 still waits for every running stage agent before it
+restarts archond, up to 30 minutes: to update from 1.4.8, run `archon update
+--no-restart`, then `archon update --yes`, which restarts the 1.4.8 archond
+in about 10 seconds with its stage agents kept running.
 A failed `aether update` is reported as a warning (exit 1) after the
 restart. Where some of Archon's config directory, data directory and
 socket are moved from their defaults (`ARCHON_CONFIG_DIR`,
@@ -189,23 +215,22 @@ installed but nothing is restarted, and the command fails naming them: the
 archond it would reach may be another setup's.
 
 Each step is said on stderr as it starts (`archon: update: restarting
-archond (pid 4242, for at most 2100s)`), and each has a deadline: the
-archond restart `--wait` plus five minutes, the question to a current
-archond about which archon created the orchestrator one minute, the
-orchestrator restart three minutes. With `--yes` and a running `archond`, the command exits 0 only
-once archond runs the new version and the orchestrator, if one runs, is in
-a generation the new version created; otherwise it exits non-zero naming
-the step that did not finish.
+archond (pid 4242, for at most 30s; running stage agents keep running)`),
+and each has a deadline: `aether update` ten minutes, the archond restart
+30 seconds, the question to a current archond about which archon created
+the orchestrator one minute, the orchestrator restart three minutes. With
+`--yes` and a running `archond`, the command exits 0 once archond runs the
+new version and the orchestrator, if one runs, is in a generation the new
+version created, or once archond said it restarts by itself; otherwise it
+exits non-zero naming the step that did not finish.
 The install report then names no commands to run by hand. Ctrl-C (SIGINT),
 SIGTERM or SIGHUP ends it at any step, the question included: it names the
 step it stopped, says what finishes the restart by hand, and exits 128 plus
-the signal (130 for Ctrl-C). Without `--yes`, off a terminal, the command
-prints what to run by hand:
+the signal (130 for Ctrl-C); at launch it then exits instead of opening.
+Without `--yes`, off a terminal, the command prints what to run by hand:
 
 ```sh
-archon daemon stop --keep-aether
-archon aether mcp refresh archon
-archon orchestrator restart
+archon daemon restart --keep-aether
 ```
 
 It also reports whether your Aether serves what the new version needs, and
@@ -217,11 +242,12 @@ Each `archon`, `archon tui` and `archon chat` on a terminal looks for a
 newer release of Archon and of Aether before it opens, and offers:
 
 ```text
-Archon 1.4.9 is available (this is 1.4.8).
+Archon 1.4.10 is available (this is 1.4.9).
 Update and restart now? [Y/n/s] (s: skip these versions)
 ```
 
-`Y` (or Enter) runs `archon update --yes` and then starts the new `archon`;
+`Y` (or Enter) runs `archon update --yes` and then starts the new `archon`
+against the restarted archond;
 `n` goes on and asks again at the next launch; `s` skips these versions
 until a newer one is released. The check waits at most 1.5 seconds for
 GitHub, reuses an answer for `[update] cache_for` (an hour), is silent
@@ -244,7 +270,8 @@ archon daemon restart                              # the same drained restart, i
 ```
 
 archond holds dispatch until running stage agents finish or `--wait`
-seconds pass, then installs (`<program> update` for an installer's binary,
+seconds pass (with `--keep-aether`, only its own spawns, merges and
+deliveries: stage agents keep running in Aether), then installs (`<program> update` for an installer's binary,
 `cargo install --locked --git` for one in cargo's bin directory) and
 restarts itself and Archon's own aetherd through a detached helper and
 reports the old and new versions in `archon log`. When the wait runs out it

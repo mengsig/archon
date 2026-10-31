@@ -5,6 +5,8 @@ use super::*;
 
 struct Fake {
     calls: RefCell<Vec<&'static str>>,
+    /// The drain and requeue of each restart archond was asked for.
+    asked: RefCell<Vec<(u64, bool)>>,
     aether: anyhow::Result<AetherUpdate>,
     running: Option<Running>,
     seen: RefCell<VecDeque<Seen>>,
@@ -21,6 +23,7 @@ impl Fake {
     fn new(seen: Vec<Seen>) -> Self {
         Self {
             calls: RefCell::default(),
+            asked: RefCell::default(),
             aether: Ok(AetherUpdate {
                 changed: false,
                 line: "aether same".into(),
@@ -58,7 +61,10 @@ impl Steps for Fake {
         self.log("running").await;
         Ok(self.running.clone())
     }
-    async fn request_restart(&self, _: &Plan) -> anyhow::Result<()> {
+    async fn request_restart(&self, plan: &Plan) -> anyhow::Result<()> {
+        self.asked
+            .borrow_mut()
+            .push((plan.drain_secs, plan.requeue));
         self.log("request").await;
         Ok(())
     }
@@ -83,6 +89,10 @@ impl Steps for Fake {
             true => anyhow::bail!("no link"),
             false => Ok(self.created_by.to_owned()),
         }
+    }
+    async fn restart_aether_later(&self, _: &Plan) -> anyhow::Result<String> {
+        self.log("aether restart").await;
+        Ok("Accepted a drained restart.".to_owned())
     }
     async fn pause(&self) {}
 }
@@ -142,7 +152,8 @@ async fn a_shared_aetherd_is_refreshed_never_restarted() {
     let calls = fake.calls.borrow().clone();
     assert_eq!(calls.last(), Some(&"orchestrator"));
     assert!(calls.contains(&"mcp"), "{calls:?}");
-    assert!(outcome.lines.contains(&"Restarted archond.".to_owned()));
+    let said = outcome.lines.join("\n");
+    assert!(said.contains("stage agents kept running"), "{said}");
 }
 
 #[tokio::test]
@@ -227,27 +238,73 @@ async fn an_orchestrator_check_that_never_answers_ends_at_its_deadline() {
     assert_eq!(progress.current(), Phase::CheckingOrchestrator);
 }
 
-#[tokio::test]
-async fn a_newer_aether_restarts_an_archond_that_is_current() {
-    let mut fake = Fake::new(vec![Seen::New]);
+fn newer_aether(fake: &mut Fake) {
     fake.aether = Ok(AetherUpdate {
         changed: true,
         line: "aether newer".into(),
     });
-    fake.running = Some(Running {
-        pid: 7,
-        version: "1.4.2".into(),
-    });
-    let current = Plan {
-        archon_changed: false,
-        ..plan(true)
-    };
+}
+
+#[tokio::test]
+async fn a_newer_aether_restarts_archons_own_aetherd_in_the_background() {
+    let (mut fake, current) = current_archond();
+    newer_aether(&mut fake);
+    let outcome = apply(&fake, &current, &Progress::new()).await.unwrap();
+    let calls = fake.calls.borrow().clone();
+    assert_eq!(calls, ["aether", "running", "creator", "aether restart"]);
+    let said = outcome.lines.join("\n");
     assert!(
-        apply(&fake, &current, &Progress::new())
-            .await
-            .unwrap()
-            .restarted
+        said.contains("restarts on the new Aether in the background"),
+        "{said}"
     );
+
+    let mut fake = Fake::new(vec![Seen::New]);
+    newer_aether(&mut fake);
+    let outcome = apply(&fake, &plan(true), &Progress::new()).await.unwrap();
+    let calls = fake.calls.borrow().clone();
+    assert_eq!(
+        calls.last(),
+        Some(&"aether restart"),
+        "after archond: {calls:?}"
+    );
+    assert!(
+        outcome.restarted && outcome.warnings.is_empty(),
+        "{outcome:?}"
+    );
+
+    let mut fake = Fake::new(vec![Seen::New]);
+    newer_aether(&mut fake);
+    let outcome = apply(&fake, &plan(false), &Progress::new()).await.unwrap();
+    assert!(!fake.calls.borrow().contains(&"aether restart"));
+    let said = outcome.lines.join("\n");
+    assert!(
+        said.contains("once you restart it"),
+        "the operator's: {said}"
+    );
+}
+
+#[tokio::test]
+async fn an_archond_still_draining_its_own_work_restarts_later_without_holding_the_update() {
+    let fake = Fake::new(vec![Seen::Old { upgrading: true }; 100]);
+    let started = std::time::Instant::now();
+    let outcome = apply(&fake, &plan(true), &Progress::new()).await.unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "the fake pauses for nothing"
+    );
+    assert!(
+        !outcome.restarted && outcome.warnings.is_empty(),
+        "{outcome:?}"
+    );
+    let said = outcome.lines.join("\n");
+    assert!(
+        said.contains("restarts on archon 1.4.2 once they end, or restarts anyway"),
+        "an older archond is asked to requeue: {said}"
+    );
+    let calls = fake.calls.borrow().clone();
+    assert!(!calls.contains(&"orchestrator"), "{calls:?}");
+    let polls = calls.iter().filter(|call| **call == "observe").count();
+    assert_eq!(polls as u64, SWITCH_LIMIT.as_secs(), "one poll a second");
 }
 
 #[tokio::test]
@@ -321,11 +378,11 @@ async fn an_archond_poll_that_never_answers_ends_at_the_restart_deadline() {
     let mut fake = Fake::new(vec![]);
     fake.hangs = Some("observe");
     let started = tokio::time::Instant::now();
-    let limit = Duration::from_secs(plan(true).drain_secs) + RESTART_MARGIN;
+    let limit = SWITCH_LIMIT;
     let error = hung_apply_error(&fake, &plan(true), &Progress::new(), limit).await;
     assert_eq!(started.elapsed(), limit, "ended at the deadline");
     assert!(
-        error.contains("no new one answered within 310s")
+        error.contains("no new one answered within 30s")
             && error.contains("the last poll got no answer"),
         "{error}"
     );
@@ -337,11 +394,11 @@ async fn a_restart_request_that_never_answers_ends_at_the_restart_deadline() {
     let mut fake = Fake::new(vec![]);
     fake.hangs = Some("request");
     let started = tokio::time::Instant::now();
-    let limit = Duration::from_secs(plan(true).drain_secs) + RESTART_MARGIN;
+    let limit = SWITCH_LIMIT;
     let error = hung_apply_error(&fake, &plan(true), &Progress::new(), limit).await;
     assert_eq!(started.elapsed(), limit, "ended at the deadline");
     assert!(
-        error.contains("was not asked to restart within 310s")
+        error.contains("was not asked to restart within 30s")
             && error.contains("did not answer the request"),
         "{error}"
     );
@@ -387,7 +444,7 @@ async fn an_interrupt_ends_a_waiting_step_at_once_and_names_it() {
     let after = Duration::from_secs(5);
     for (hangs, phase) in [
         ("aether", Phase::UpdatingAether),
-        ("request", Phase::RestartingArchond),
+        ("request", Phase::AskingArchond),
         ("observe", Phase::RestartingArchond),
         ("orchestrator", Phase::RestartingOrchestrator),
     ] {
@@ -424,10 +481,12 @@ fn every_phase_names_itself_and_how_to_finish_by_hand() {
         Asking,
         UpdatingAether,
         FindingArchond,
+        AskingArchond,
         RestartingArchond,
         CheckingOrchestrator,
         RefreshingTools,
         RestartingOrchestrator,
+        RestartingAether,
     ] {
         assert!(!phase.describe().is_empty(), "{phase:?}");
         assert!(phase.remedy().contains('`'), "{phase:?}: a command to run");
@@ -437,6 +496,8 @@ fn every_phase_names_itself_and_how_to_finish_by_hand() {
             .remedy()
             .contains("archon orchestrator restart")
     );
+    assert!(AskingArchond.remedy().contains("may not have been asked"));
+    assert!(RestartingArchond.remedy().contains("as it was asked"));
 }
 
 #[test]
@@ -447,13 +508,19 @@ fn the_announcement_names_each_restart_and_spares_the_operators_aetherd() {
     };
     let text = announce(&plan(true), Some(&archond));
     for part in [
-        "archond (pid 7)",
-        "Archon's own aetherd",
+        "archond (pid 7), at once",
+        "stage agents keep running",
+        "Archon's own aetherd restarts",
+        "in the background",
         "orchestrator",
         "Your own aetherd is not touched",
     ] {
         assert!(text.contains(part), "{part}: {text}");
     }
+    assert!(
+        !text.contains("after the running stage agents finish"),
+        "{text}"
+    );
     let shared = announce(&plan(false), Some(&archond));
     assert!(!shared.contains("Archon's own aetherd"), "{shared}");
     assert!(shared.contains("shared"), "{shared}");
@@ -467,5 +534,28 @@ fn only_an_answer_starting_with_n_declines() {
     }
     for no in ["n", "No", " no "] {
         assert!(!is_yes(no), "{no:?}");
+    }
+}
+
+#[tokio::test]
+async fn an_archond_that_waits_for_its_agents_is_asked_to_restart_anyway_soon() {
+    for (version, asked) in [
+        ("archon 1.4.8", (10, true)),
+        ("not a version", (10, true)),
+        ("1.4.9", (1800, false)),
+        ("archon 1.5.0", (1800, false)),
+    ] {
+        let mut fake = Fake::new(vec![Seen::New]);
+        fake.running = Some(Running {
+            pid: 7,
+            version: version.into(),
+        });
+        let plan = Plan {
+            drain_secs: 1800,
+            ..plan(true)
+        };
+        let outcome = apply(&fake, &plan, &Progress::new()).await.unwrap();
+        assert!(outcome.restarted, "{version}: {outcome:?}");
+        assert_eq!(*fake.asked.borrow(), [asked], "{version}");
     }
 }

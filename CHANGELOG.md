@@ -2,6 +2,270 @@
 
 ## Unreleased
 
+## 1.4.9
+
+Released 2026-10-31.
+
+A patch release on 1.4.8. "Update and restart" no longer hangs the terminal
+(#335): archond restarts at once while Aether and its stage agents keep
+running. Stage agents get more time and are told their deadline, stop only
+the processes they started, and can keep a server up for a later stage;
+archond cleans up the `lavish-axi poll` processes and Compose stacks that
+items left behind (#321, #323). The mobile web app renders Markdown safely
+(#319), the README gains a get-started section driven through the chat
+(#322), reviewer effort is a floor and verdicts are read by one tolerant
+parser, short ship hashes are accepted, and a stage agent Aether blocked for
+inspection is resumed.
+
+Archon 1.4.9 needs **Aether 1.2.8**: it is released with and tested on that
+release. Neither the installer nor `archon update` pins an Aether version.
+The installer installs the latest Aether release only when it finds no
+`aether`, and keeps one it finds. `archon update` runs `aether update
+--yes`, which installs the latest release, only on a confirmed update:
+after a yes, or with `--yes`; `--check`, `--requirements`, `--no-restart`
+and a declined question leave Aether as it is. Check with `aether
+--version` and update an older one with `aether update`. Aether 1.2.8
+serves protocol 25 (was 24) and still serves 17 to 24; Archon keeps asking
+for 24 and accepting down to 17, so neither constant moves. Protocol 25
+only adds a `credentials` exhaustion class, which Aether shows a client on
+24 as `usage_limit`. The daemon protocol stays 23 and the store schema
+stays 18: a 1.4.8 store opens unchanged, and going back to 1.4.8 needs no
+copy of the data directory.
+
+**Upgrading from 1.4.8**: the 1.4.8 updater still runs its own restart,
+which waits for every running stage agent to finish, up to 30 minutes
+(#335). Run `archon update --no-restart` first, which installs 1.4.9
+alone, then `archon update --yes`: the new archon restarts the 1.4.8
+archond in about 10 seconds, keeping its stage agents running, runs
+`aether update` (the latest Aether, 1.2.8 at this release) and renews the
+orchestrator. An update from 1.4.8 already waiting can be ended with
+Ctrl-C. From 1.4.9 on, `archon update` and its yes restart archond in
+seconds, keeping Aether and its stage agents running; the #335 entry under
+Fixed says when a busy archond restarts later. A new Aether runs only once
+its aetherd restarts. In dedicated mode, when archond runs the new archon
+before the update returns, the update asks it to restart Archon's own
+aetherd in the background after its stage agents finish, as `--wait` and
+`--requeue` allow. An archond that restarts only later is not asked:
+whenever that aetherd still runs the old Aether, `archon daemon restart`
+restarts it. In shared mode, restart your aetherd yourself.
+
+### Cleanup
+
+- archond runs at most one `lavish-axi poll` per report, and stops it once
+  the report settles: its session ended, its item ended, a newer page of
+  the same title replaced it, or 24 hours passed since it was shown, even
+  while a gate waits on it (answer that in the chat). Reports
+  without an item, such as the orchestrator's merged pull request pages,
+  were followed forever before, and every restart started their polls again
+  (#323, #321).
+- archond tears down the Docker Compose stacks an item's worktree started
+  when its run ends, before a fresh retry sets its worktree aside, and
+  before the worktree is removed; no run starts in that worktree, a retry's
+  included, until it is done, and a worktree another live item (a restack
+  fix or refresh) still works in is left alone. Only projects whose every container runs from
+  inside that worktree, with symlinks resolved, are touched: archond checks
+  that again just before it acts, stops and removes only the containers it
+  checked, and removes the project's networks once none of its containers
+  is left. Volumes are always kept: Docker cannot tell whose a volume is
+  when another checkout reuses the project's name. Without Docker it does
+  nothing. `[worktrees] docker` names the CLI (#321).
+- `archon doctor` lists the Compose stacks left in worktrees of items that
+  ended, and the `lavish-axi poll` processes beyond the reports archond
+  follows, each with the command that clears them; a project that runs from
+  more than one item's worktree gets no `down` command, which would stop
+  every one of them (#321).
+- Stage agents working in a worktree are told to stop every server and
+  Compose stack they started before they finish, unless the agent or brief
+  that gave them the task asked to leave it running; then they report what
+  still runs and how to stop it (#321).
+
+### Stage time
+
+- Built-in stages that build and test get longer timeouts: `direct`'s
+  `implement` 180 minutes (was 60, now as long as `adaptive`'s `build`),
+  `e2e-testing`'s `setup` and `swarm`'s `plan` 120 (were 60), and
+  `agent-testing`'s `plan`, `code-audit`'s `scope` and `refactor`'s
+  `review` 90 (were 45, 45 and 60). An ordinary change with a full check
+  and a reviewer no longer runs into a hard stop at an hour. The deadline
+  still stops the stage when it passes.
+- Every stage agent's contract names its deadline: the time Archon stops it
+  and every agent it delegated to, and how many minutes after its start that
+  is, with an item's own `stage_timeouts` applied. A `work` or `team` stage
+  in a worktree is told that, if its task has it commit, it commits each
+  working step as it goes, so a retry builds on it. An
+  agent resumed for a fix is told its new deadline with the findings.
+  Before, an agent saw its deadline only if it asked Aether.
+
+### Review experiments
+
+- A reviewer's ad-hoc experiment (a mutant, probe or repro) that times out
+  is inconclusive, never a finding or a detection on its own, and one that
+  compiles gets `timeout 120s` instead of 30s. A timeout counted as
+  detected before, so a mutant or repro whose build ran past 30 seconds
+  was reported as a hang it never showed.
+
+### Stage processes
+
+- Every stage contract tells the agent to stop only processes it started,
+  by the PID it recorded, its process group or its Compose project, and
+  never by name or pattern (`pkill`, `killall`, `pgrep -f … | xargs kill`):
+  agents run as the operator's user, so such a kill reached the operator's
+  archond and aetherd and every stage they ran. A delegating agent passes
+  the rule on to its children.
+- `e2e-testing`'s setup writes a `stop.sh` that stops what `start.sh`
+  recorded and nothing found by name, and setup and e2e confirm that none
+  of those recorded processes or containers still runs, not that nothing
+  runs at all. `agent-testing`'s plan records stop commands the same way.
+- A stage can keep a server up for a later stage of its run by starting it
+  under `setsid` and writing its PID to `.archon/services/<name>.pid` in the
+  worktree it works in, a team role's own included. The stage-end reap
+  spares that process, the process group it leads and its descendants while
+  the run goes on (not a group it only joined, which `cmd &` shares with
+  the engine's every stray), and the run's end reaps what still runs from
+  the worktree. Before, the reap stopped every process a stage left, so
+  setup could not hand a running app to the next stage. A malformed PID
+  file keeps nothing. The PID files do not count as a change when the run
+  ships, and a team role's are left out of the commit Archon makes of its
+  uncommitted work, so two roles can declare the same name.
+
+### Mobile web app
+
+- Markdown renders in the mobile web app: chat bubbles and feed lines,
+  stage summaries and errors, question text, notifications and item
+  briefs show headings, emphasis, code, lists, task lists, quotes, tables
+  and links instead of raw `**` and `#`. The renderer has no dependencies
+  and builds every node as text, so raw HTML shows as written, links allow
+  only `http`, `https` and `mailto` (opened with `noopener noreferrer`),
+  and images become links that never load (#319, by @AmmarBattah in #327).
+
+### Agents
+
+- A ship record whose `commit` or `tree` is an abbreviated hash, as
+  `git commit` prints one, is resolved in the run worktree and stored in
+  full instead of failing the run; only a prefix that names no single
+  object of that type is refused, and the refusal says so.
+- The automatic repair asks only for what was refused: a refused ship
+  record alone gets a note to hand in a new record with full hashes and
+  change nothing, and a reviewer only when the stage owes one. A delivery
+  refused for what the record stage can fix in its worktree (uncommitted
+  changes, a tree that is not the record's, files that must not ship, a
+  foreign commit identity or an attribution trailer) is now repaired too; a foreign identity is still
+  refused until the commits carry the repository's own.
+- An infrastructure failure wakes the failed agent in place, with a note
+  that names the failure and its new deadline, when Aether still has it; it keeps its worktree
+  and history. A fresh agent starts only when Aether refuses the wake, and
+  a wake that took does not use up the stage's infrastructure retry. A
+  failure that names a passing cause (an unavailable engine, a rate or
+  usage limit, a refused login) is retried after 5 minutes, with the
+  deadline moved by the wait.
+- A stage whose agent Aether holds `blocked` (a usage limit, credentials)
+  or waiting on an approval is no longer timed out: its deadline is moved
+  on while it is held.
+- A stage agent that Aether `blocked` for inspection no longer sits idle
+  until its deadline. Aether does this when a command's outcome was lost,
+  as when an older aetherd restarted mid-command. Once the stage has been
+  silent for `limits.stall_minutes`, with no gate or question open, the
+  agent gets a note to check the state before it repeats the command, and
+  is resumed. If Aether refuses the resume and the agent is still blocked,
+  the stage fails as infrastructure at once, so its infrastructure retry
+  wakes or replaces the agent. While the watchdog is on, an inspection holds the deadline like
+  any other hold.
+- Some holds have no cause Aether names: not an approval, a usage limit or
+  credentials. When such a hold has been silent for
+  `limits.stall_fallback_minutes`, with no gate or question open, the
+  orchestrator is told once. The stage is never stopped for it.
+- A Claude Code stage under a subscription login no longer gets Aether's
+  hard dollar cap. Archon detects the login from the 5-hour and weekly
+  usage windows Aether reports for it, when they are fresh and have headroom
+  left. The dollars it would be stopped on are list-price, not billed. Its interim usage is not refused as
+  unaccounted either. Its cost is still recorded and shown, and Archon's
+  ledger budgets still count it. When Archon cannot tell whether a Claude
+  Code login bills, the cap stays, and a stop on it is labelled "notional
+  cost".
+- A kept agent resumed for a later attempt, or a failed one woken, gets an
+  Aether cost cap of what it was charged so far plus its new grant. The
+  cap read that spend from stage costs Archon never stored, so it was the
+  grant alone and could stop the agent soon after it went on.
+
+### Fixed
+
+- "Update and restart" no longer hangs the terminal (#335). After a yes, at
+  launch or with `archon update --yes`, archond restarts at once while Aether
+  and its stage agents keep running (the `--keep-aether` restart), and the
+  new archond takes up their stages; the update then renews the
+  orchestrator and opens what you ran against the new archond, in seconds.
+  Before, the restart waited for every running stage agent to finish, up to
+  30 minutes, and 1.4.7 also ignored Ctrl-C there. A restart that keeps
+  Aether now waits only for archond's own spawns, merges and deliveries; the
+  update waits 30 seconds for it at most, and an archond still busy then
+  restarts by itself once they end, or gives up at `--wait`, which the
+  update says before it returns. An archond older than 1.4.9 still waits
+  for its agents, so the update gives it 10 seconds and has it restart
+  anyway, keeping them running. A new Aether
+  restarts Archon's own aetherd in the background, after its stage agents
+  finish, when archond runs the new archon before the update returns;
+  otherwise `archon daemon restart` does it. Ctrl-C at launch exits instead of opening the old archon. The
+  question no longer says it waits for running agents, and the install
+  report names no commands to type. The update from 1.4.8 still runs 1.4.8's
+  own restart: to skip its wait, run `archon update --no-restart`, then
+  `archon update --yes`, which restarts the 1.4.8 archond in about 10
+  seconds. `scripts/simulate-update.sh` runs both updates end to end in a
+  sandbox with a stage agent running.
+- Stage gates and delegated reviews read verdicts with one tolerant
+  parser: a structured `verdict` key, whatever it holds, then a structured
+  `result` or `status` that opens with a verdict word or a `VERDICT:`
+  label (an unreadable one counting as fail), then the summary's last
+  `VERDICT:` line at column 0 outside block
+  quotes (and the lines that continue one) and fences, in any letter case and
+  through markdown emphasis (`**Verdict:** PASS`), with `passed`, `approved`,
+  `failed` and `rejected` read as pass and fail. A test stage that passed
+  with `{"findings": []}` and `**Verdict:** PASS` in its summary no longer
+  fails its gate, and a reviewer whose `structured` gives no verdict is read
+  from its summary, its `head:` and `base:` lines only at the top level;
+  a review whose `structured`, summary JSON or `head:`/`base:` lines name
+  different commits is refused, a structured verdict included. A summary's JSON verdict counts only in a column-0
+  fenced block, never an example nested in a list, indented or quoted. An unreadable verdict, a choice or hedge such as
+  `PASS or FAIL`, `PASS, but two failed` or `PASS (pending fixes)` included
+  (any word between the verdict and a `—`, `:` or `.`), or a pass
+  explained in anything but plain success words and numbers
+  (`PASS — all 214 tests pass` counts; `PASS — merge only with green CI`
+  does not), or followed in the summary by any line but `head:` and `base:`,
+  still counts as fail,
+  and the refusal now quotes it. A structured pass beside a summary
+  whose final `VERDICT:` line or JSON verdict (`verdict`, `result` or
+  `status`) does not pass counts as fail too, and so does any pass beside
+  a finding of `blocking`, `blocker`, `critical` or `high` severity in
+  `structured` or the summary's JSON; a summary written as the
+  `{summary, structured}` arguments has its inner summary read too.
+- A reviewer plan's effort is a floor, not a ceiling. The delegation
+  watchdog cancelled a reviewer delegated above the planned effort in the
+  middle of its review, and let one below it run, which is how
+  thirty-second low-effort reviews passed. A reviewer at or above the plan,
+  up to the model policy's `max_effort`, now runs; one below it is
+  cancelled as it spawns, before it does work, with a message naming the
+  floor, and the contract states the floor so the lead delegates at it.
+  Reviewers no plan names are asked for at least medium effort, and at
+  least high when the lead rates the change's risk medium or high, whatever
+  `[review] default_effort` says, within the policy's cap. A re-review after
+  a fix now reads the whole change from its base, in the contract and in
+  the `adaptive`, `swarm` and `direct` prompts; Archon still counts delta
+  reads.
+
+### Documentation
+
+- A "Get started in the chat" section in the README and a
+  [getting started](docs/getting-started.md) walk-through: registering a
+  repository, its settings and `/answer` confirmations, queueing, watching
+  and merging work, standing directives, Lavish review pages, `/watch`,
+  `/questions` and `/lessons`, all from the orchestrator's chat (#322).
+
+### Tests
+
+- Three tests that failed under load are de-flaked: the slow-start wait
+  test logs steadily for 3 s against a 2 s silence limit, the full-check
+  limit test gives its command 3 s, and three fake `gh` scripts are written
+  so that a fork on another test thread cannot hold them open (#332).
+
 ## 1.4.8
 
 Released 2026-10-29.

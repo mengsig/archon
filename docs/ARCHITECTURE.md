@@ -147,7 +147,7 @@ protocol 17 and later alone do not imply support.
 
 ```json
 {"req":1,"cmd":"hello","protocol_version":24,"client_name":"archon",
- "client_version":"1.4.8","features":["history_expired"]}
+ "client_version":"1.4.9","features":["history_expired"]}
 ```
 
 The reply is `Welcome {protocol_version, daemon_version, instance_id,
@@ -968,6 +968,30 @@ reports dollar cost: Claude Code reports it, Codex does not, and an HTTP
 model needs pricing. Provider names may be customized. Protocols v14 to v17
 expose no explicit `reports_cost` flag; missing model/provider metadata or
 an unknown engine conservatively omits the hard cap and requires estimates.
+How Archon decides whether those dollars are billed (the stored request's
+`cost_billing`):
+- An HTTP provider (`engine: false`) with model pricing is `billed`.
+- A Claude Code provider is `subscription` when Aether's `providers` reply
+  shows a `five_hour` or `seven_day` usage window that is fresh (not
+  `stale`), and every such window has headroom left. Claude Code reports
+  those windows only for a subscription login, never for an API key. Aether
+  caches them by provider, so after a switch to an API key they go stale
+  (`usage_stale_after`, 15 min by default). An exhausted subscription, the
+  likeliest one to be switched, counts as `unknown`.
+  Such a stage gets no Aether hard cap, since its list-price dollars are
+  notional. Its interim usage is not refused as unaccounted, because Claude
+  Code completes its cost at turn end. Its dollars are still recorded, shown
+  and counted by the ledger checks below.
+- A Claude Code provider without those windows is `unknown` and keeps the
+  hard cap. A stop on that cap adds "(notional cost: …)" to its error,
+  because the dollars may not have been billed.
+- Codex and other engines have no billing mode: Aether reports no dollars
+  for them to cap.
+Known limitation: Aether names no plan for the current login, so a login
+switched from a subscription with headroom to an API key is still read as a
+subscription until its windows go stale. A stage started in that time has
+no hard cap. The ledger still counts its dollars and stops the run once the
+item budget is used up, but only when Claude Code reports cost, at turn end.
 The decision is persisted before creation so a keyed retry keeps its frame;
 Archon's original grant remains stored for accounting and team replacements.
 
@@ -1418,9 +1442,39 @@ in a new worktree off the base branch (§13).
   a garbled reply, Aether's `internal`) waits for the next sweep; a refused
   one settles `timed_out`. The watchdog's
   `infra` stall failure follows the same rule.
+  A tree Aether holds (an agent `blocked` on a usage limit or credentials,
+  or waiting for an approval) is suspended, not failed: when its deadline
+  is less than 10 min away, read at most once a minute, or already past,
+  archond moves it to 30 min from now, in Aether (the lead and every live
+  agent beneath it whose deadline is lower, one by one when Aether cannot
+  update a subtree) and in the stored request, and
+  never times it out while held. A later deadline a steer stored is kept,
+  and sent to Aether again if the steer landed while the move was in flight.
+  An agent `blocked` for inspection is moved on in the same way only while
+  the stage watchdog is on, because the watchdog resumes it or fails its
+  stage. With the watchdog off it keeps its deadline, so it cannot wait
+  forever.
 - `infra` failures (`agent.failed` before its task settles, or Aether restart
   recovery failures) get `limits.infra_retries` (default 1) automatic
-  re-spawns. These retries do not count against a stage's `max_attempts`.
+  retries. These retries do not count against a stage's `max_attempts`.
+  The first one wakes the failed agent in place (Aether's `wake_agent`) when
+  Aether still has it, with a note that names the failure and asks it to
+  continue: it keeps its worktree, transcript and history. A woken agent has
+  no task, so it answers with its final message, read like a resumed
+  attempt's (§6.7), and is stopped once that settles. An end of its agent
+  dated before the woken or resumed run started, such as the failure it was
+  woken from replayed after a crash, ended the earlier run and is ignored;
+  a failed agent the sweep finds keeps Aether's error, so its retry still
+  waits out a passing cause. Only when Aether
+  refuses the wake does a fresh agent start. A kept agent resumed for a
+  later attempt is woken the same way, and its cost splits at each hand-off
+  and wake. A stall, and a failure of an agent already woken, gets a fresh
+  agent. The wake is tried once per slot,
+  and a wake that took counts apart from the cold retries: it does not use
+  up the slot's re-spawn. A failure whose error names a cause that clears
+  with time (an unavailable or overloaded engine, a rate or usage limit, a
+  refused login or credentials) is waited out: the retry is issued 5 min
+  later, and its deadline moves by the same wait.
 - **Stage watchdog.** Each sweep checks every `running` stage's agent tree.
   A tree is stalled when Aether holds one of its agents `running`, none of
   its engines is alive, and no Aether event of the tree (archond's stream or
@@ -1433,7 +1487,30 @@ in a new worktree off the base branch (§13).
   reported alive (a turn in flight), or while none of its agents is
   `running` (it waits on a wake: a task, a message or a deadline). Archond
   starts a tree's silence when it first looks, so a restart restarts the
-  watch, and reads a silent tree from Aether at most once a minute. A stalled stage is cancelled and settles as an `infra` failure
+  watch, and reads a silent tree from Aether at most once a minute.
+  An agent Aether `blocked` for inspection is not held: no person is asked
+  about it. Aether blocks an agent for inspection when one of its tool calls
+  has no known outcome, as when an older aetherd restarted mid-command. Once
+  archond's own stream has heard nothing of the tree for `stall_minutes`
+  (Aether's `last_event_at` is not used here, as moving a held deadline
+  restarts it), and no gate or question of
+  its item is open, archond sends each such agent a note and then resumes it
+  (Aether's `resume`, not a subtree resume). The note says the command's
+  outcome is unknown, so the agent should check the state it would have
+  changed before repeating it. The feed tells of each resume. If Aether
+  refuses to resume an agent, archond reads that agent again; if it is no
+  longer blocked for inspection, someone else resumed it, and the others are
+  still resumed. If the tree then has no agent blocked for inspection, the
+  stage goes on.
+  Otherwise the stage fails at once as `infra` ("agent stalled: Aether
+  blocked it for inspection … and refused to resume it: …"), so
+  `limits.infra_retries` wakes or replaces it. If Aether does not answer,
+  the next sweep tries again.
+  Some holds have no cause Aether names: not an approval, a usage or quota
+  limit (`exhausted`), or credentials. When such a hold, with no gate or
+  question open, has been silent for `stall_fallback_minutes`, the
+  orchestrator gets one escalation message per stage run. The stage is
+  never stopped for it. A stalled stage is cancelled and settles as an `infra` failure
   ("agent stalled: no engine and no events for N min"; recorded before the
   cancel goes out, so the cancel's own events settle it the same way), so
   `limits.infra_retries` re-spawns it on the same worktree once; a second
@@ -2101,8 +2178,10 @@ its tier.
 `<stage>.review` in `model_plan` and `model_reasons`, with at most as many
 `{model, effort}` entries as the strict level has reviewers (taken in turn).
 The stage contract tells the lead to delegate reviewers with role `reviewer` on
-those models, and the delegation watchdog (§7.4) cancels a child with such a
-role on another model or a higher effort. This check relies on the lead using
+those models, each effort a floor and the model policy's `max_effort` the
+only ceiling: the delegation watchdog (§7.4) cancels a child with such a role
+on another model or below its model's effort as it spawns, before it does
+any work, and the contract states the floor so the lead delegates at it. This check relies on the lead using
 the required reviewer role; children with other roles follow the general model
 policy. The role matches `reviewer` exactly (case-insensitively); a reviewer
 with missing or unrecognised effort is refused. If Aether no longer has the
@@ -2110,7 +2189,9 @@ child when the watchdog reads it, only its event model can be checked: its role
 and effort are unavailable. With no such key the contract names the models the
 item's effective policy allows, as it stands when the lead spawns, other than the
 lead's, or the lead's own when the policy allows no other, and the watchdog holds
-reviewers only to the model policy.
+reviewers only to the model policy. The `[review]` profile's contract asks such
+reviewers for at least medium effort, and at least high when the lead rates the
+change's risk medium or high, within the policy's `max_effort`.
 
 **Stage timeouts.** `enqueue`, `update_item` and `steer_item` take `stage_timeouts`, a
 `{"<stage-id>": minutes}` map for the item: each stage it names runs with that
@@ -2286,8 +2367,13 @@ its verdict on the commits it read:
 Where Aether auto-completes a Codex reviewer from its final text, the verdict
 object arrives as the whole `summary` with no `structured`, alone or as the
 `structured` of a written-out `complete_task` call (`{summary, structured}`);
-Archon reads it only then, and an explicit `structured` always wins. Prose or
-a fenced block is no verdict.
+Archon reads it only then, and a `structured` that states a verdict always
+wins, though a structured pass whose summary's `VERDICT:` line or JSON
+verdict does not pass is refused. A `VERDICT:` line beside `head:` and `base:` lines is read too, each
+at the top level as the verdict line is. Any verdict, a structured one
+included, whose `structured` `head`/`base`, summary JSON and top-level
+`head:`/`base:` lines name different commits is refused. Summary JSON with
+no `verdict` key is evidence, not a verdict. Prose is no verdict.
 
 A completion without the record, with any other verdict, or with a pass
 that names fewer reviewers than the level asks for fails the run at that
@@ -2427,9 +2513,34 @@ its contract carries no delegation section.
 > Propose stages change nothing, write only
 > `.archon/reports/proposal/index.html`, and list it in `structured.reports`.
 
+Every contract also tells the agent to stop only processes it started, by
+the PID it recorded, its process group or its Compose project, and never
+by name or pattern (`pkill`, `killall`, `pgrep -f … | xargs kill`): stage
+agents run as the operator's user, so a pattern kill reaches the
+operator's archond and aetherd and every stage they run.
+A stage in a worktree is also told how to keep a server up for a later
+stage: it starts it under `setsid` and writes the PID to
+`.archon/services/<name>.pid` in its worktree, a team role in its own. On
+Linux the stage-end reap spares that process, the process group it leads
+and its descendants while the run goes on, but not a group it only joined:
+`cmd &` leaves a server in its shell's group, often the engine's, with every
+stray of the stage. The run's end reaps them with the rest of what runs
+from the worktree; a service whose working directory and executable both
+lie outside it is not found, like any other process. A team role's PID
+files are left out of the commit of its uncommitted work.
+
 A team stage's contract names the agent's role and the other roles, keeps
 it to its own worktree and role, and asks it to commit on its branch
 without pushing: only commits are merged.
+
+Every stage agent's contract also gets a `## Deadline` section, written
+when the daemon builds the spawn request: the time its deadline falls
+(the stage's `timeout_minutes`, or the item's `stage_timeouts` entry, after
+its start), that Archon then stops it and everything it delegated, and,
+for a `work` or `team` stage in a worktree, that if its task has it commit
+it commits each working step, so a retry builds on it; a stage whose
+prompt says not to commit keeps to that. A kept agent resumed for a fix (§6.7) gets its new
+deadline after the findings.
 
 A stage agent that can delegate also gets a `## Delegation` section. The
 daemon writes it when it builds the spawn request, from what the agent can
@@ -2464,8 +2575,9 @@ states:
   a parent's instructions to a delegated child (§17), so the contract does
   not reach one: work only in the workspace it is given and never touch
   other worktrees, other branches or the operator's checkout; do not push;
-  never override the git identity; ask the operator nothing; and read only,
-  for a reviewer always and for every child of a read-only stage.
+  never override the git identity; ask the operator nothing; stop only
+  processes it started, never by name or pattern; and read only, for a
+  reviewer always and for every child of a read-only stage.
 
 The stage a pipeline's declared review names (§8.2) gets a
 `## Review on record` section in its contract: how many reviewers the
@@ -2475,8 +2587,22 @@ itself. The stage `[pipeline.ship]` names gets `## Ship record` (§8.7).
 Like the contract, all of this binds by instruction only; what Archon
 enforces is named where it is enforced.
 
-`Verdict::extract` reads the structured `verdict` field first, then the last
-`VERDICT:` line.
+`Verdict::extract` reads a structured `verdict` key first (a blank, null or
+unreadable one is `Unknown`), then a structured `result` or `status` that
+opens with a verdict word or a `VERDICT:` label (`Unknown` when its value is
+unreadable), then the summary's last
+`VERDICT:` line that starts at column 0 outside block quotes (a line lazily
+continuing one included) and fences, in any letter case and through
+markdown emphasis. A verdict word followed by any word, in parentheses
+too, before the first `—`, `:`, `;`, `.`, ` - ` or line break is a choice or
+a condition and reads as `Unknown`, as does a pass explained in any word but
+a few plain success words and numbers, or a summary's pass line followed by
+any line but `head:` and `base:`. A structured pass beside a summary
+`VERDICT:` line or JSON `verdict`, `result` or `status` that does not pass
+is `Unknown`, as is any pass beside a `blocking`, `blocker`, `critical` or
+`high` finding in `structured` or the summary's JSON
+(`Verdict::pass_disputed`), the inner summary of a `{summary, structured}`
+wrapper included. Reviewers' verdicts (§8.2) go through the same parser.
 
 Two error prefixes end a run at once, with no loop, no infra retry and the
 stage's live siblings cancelled (`StageOutcome::ends_run`):
@@ -2514,7 +2640,12 @@ returns:
 ```
 
 `ShipRecord::read` requires full object ids, a one-line title of at most
-256 characters and a non-empty body. The gate checks the record before the
+256 characters and a non-empty body. An abbreviated id (7 to 63 hex digits,
+as `git commit` prints one) is first resolved in the run worktree with
+`git rev-parse --verify <id>^{commit}` (or `^{tree}`), and the full id is
+what archond stores and delivers; one that names no single object of that
+type is refused, saying so. 40 digits are resolved too, as in a SHA-256
+worktree they abbreviate; elsewhere they stay the full SHA-1 id. The gate checks the record before the
 review: a pass without one fails the run at that stage, so no delivery is
 ever asked for without it. Stages after the record stage cannot commit
 (§8.2), so what they verified is that tree.

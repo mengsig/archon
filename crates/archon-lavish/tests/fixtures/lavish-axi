@@ -1,7 +1,8 @@
 #!/bin/sh
 # Fake lavish-axi. Tests symlink it into a scratch dir holding canned replies:
 # `<cmd>.<n>` (or `<cmd>`) is printed for the n-th call; `<cmd>.<n>.exit` fails it,
-# and `<cmd>.<n>.hold` keeps it running until the file is removed.
+# and `<cmd>.<n>.hold` keeps it running until the file is removed. Each call
+# leaves its pid in `<cmd>.<n>.pid`.
 dir=$(dirname "$0")
 case "$1" in
   poll|end) cmd=$1 ;;
@@ -9,6 +10,7 @@ case "$1" in
 esac
 n=$(( $(cat "$dir/$cmd.count" 2>/dev/null || echo 0) + 1 ))
 echo "$n" > "$dir/$cmd.count"
+echo "$$" > "$dir/$cmd.$n.pid"
 # Logged once counted, so a call seen in `calls` keeps its number if killed.
 echo "$*" >> "$dir/calls"
 if [ "$cmd" = poll ] && [ "$3" = --agent-reply-file ]; then

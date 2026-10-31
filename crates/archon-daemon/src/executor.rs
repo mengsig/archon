@@ -17,11 +17,14 @@ pub(crate) mod frozen;
 mod gate_news;
 mod gates;
 pub(crate) mod gh;
+mod held;
 pub(crate) mod initiative_ship;
+mod inspection;
 mod landed;
 mod lanes;
 mod local_merge;
 mod naming;
+mod notional;
 pub(crate) mod onto;
 pub(crate) mod operator_merge;
 mod pages;
@@ -131,6 +134,16 @@ pub(crate) struct Cleanup {
     pub snapshot: bool,
 }
 
+/// The Compose stacks an ended run may have left in its worktree, `tree`.
+/// `mark` holds dispatch off the worktree's owner, so no retry starts a
+/// stack there that this teardown would stop, until it is dropped.
+#[derive(Debug)]
+pub(crate) struct Teardown {
+    pub item: QueueItemId,
+    pub tree: PathBuf,
+    pub mark: crate::gc::Mark,
+}
+
 /// An item's cargo target directory, owed deletion when the item ends.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct ItemBuild {
@@ -166,6 +179,8 @@ pub(crate) struct FollowUp {
     /// Runs whose team roster may be owed to their running roles.
     pub roster: Vec<PipelineRunId>,
     pub cleanup: Vec<Cleanup>,
+    /// Ended runs' worktrees whose Compose stacks to tear down.
+    pub stacks: Vec<Teardown>,
     /// Items that ended, whose own cargo target directory to delete once
     /// their agents are stopped.
     pub release_builds: Vec<ItemBuild>,
@@ -209,6 +224,7 @@ impl FollowUp {
         self.reap.extend(other.reap);
         self.roster.extend(other.roster);
         self.cleanup.extend(other.cleanup);
+        self.stacks.extend(other.stacks);
         self.release_builds.extend(other.release_builds);
         self.discard.extend(other.discard);
         self.gates.extend(other.gates);
@@ -233,6 +249,7 @@ impl FollowUp {
             && self.reap.is_empty()
             && self.roster.is_empty()
             && self.cleanup.is_empty()
+            && self.stacks.is_empty()
             && self.release_builds.is_empty()
             && self.discard.is_empty()
             && self.gates.is_empty()
@@ -390,14 +407,18 @@ pub(crate) async fn check_item_budget(
                 .into_iter()
                 .find(|run| !run.state.is_terminal());
             // A hard cap can account at the end of a turn. Do not reject its
-            // interim, incomplete usage while Aether still enforces that cap.
+            // interim, incomplete usage while Aether still enforces that cap,
+            // nor a subscription's, whose engine reports cost the same way.
             let unaccounted_usage = if unaccounted_usage && budget.is_some() && run.is_some() {
                 match stage {
                     Some(stage) => {
                         match spawn::load_spawn(&store, stage) {
                             Ok(spawn) => {
-                                spawn.request.cost_budget_usd.is_none()
-                                    || spawn.request.aether_cost_budget == Some(false)
+                                let request = &spawn.request;
+                                let subscription = request.cost_billing
+                                    == Some(archon_core::ports::CostBilling::Subscription);
+                                request.cost_budget_usd.is_none()
+                                    || (request.aether_cost_budget == Some(false) && !subscription)
                             }
                             // Settled requests may already have been pruned.
                             Err(ArchonError::NotFound(_)) => true,
@@ -604,6 +625,15 @@ async fn deliver_and_tidy(ctx: &DaemonContext, round: &mut Round, follow: Follow
     for shipped in lanes::run(ships, |run| async move { ship::deliver(ctx, &run).await }).await {
         round.record(shipped);
     }
+    // One per owner, as each holds its owner's mark; before the cleanups, which mark it too.
+    for Teardown { item, tree, mark } in follow.stacks {
+        let torn = crate::compose::tear_down(ctx, &item, &tree, "after its run ended").await;
+        // The services its stages declared, and whatever else they left.
+        let reaped = reap::run_end(ctx, &tree).await;
+        drop(mark);
+        round.record(torn.map(|()| FollowUp::default()));
+        round.record(reaped);
+    }
     for build in dedup(follow.release_builds) {
         round.record(release_item_build(ctx, build).await);
     }
@@ -738,11 +768,14 @@ async fn remove_ended_worktree(
         true => "after its run ended",
         false => "after its run succeeded",
     };
+    // While the worktree exists, its symlinks show where its stacks run from.
+    crate::compose::tear_down(ctx, &cleanup.item, &cleanup.worktree, when).await?;
     finish::remove_worktree(ctx, cleanup, when, Some(mark)).await?;
     Ok(FollowUp::default())
 }
 
-/// The spawns to issue now. While dispatch is held for disk space only those
+/// The spawns to issue now: not one an infrastructure retry holds back for
+/// a while. While dispatch is held for disk space only those
 /// of finished runs are, so a run cancelled meanwhile retires at once. On a
 /// full disk only their never-sent ones are, which settle without Aether: a
 /// spawn that may have reached Aether would hit the full disk again, so it
@@ -751,7 +784,7 @@ async fn issuable(
     ctx: &DaemonContext,
     issue: Vec<StageRunId>,
 ) -> Result<BTreeSet<StageRunId>, ArchonError> {
-    let issue = dedup(issue);
+    let issue = due(ctx, dedup(issue)).await?;
     if issue.is_empty() || !ctx.disk.holding() {
         return Ok(issue);
     }
@@ -776,6 +809,24 @@ async fn issuable(
     );
     debug_assert!(finished.is_subset(&issue));
     Ok(finished)
+}
+
+/// The spawns of `issue` no retry holds back; the sweep issues the rest
+/// once their wait is over. A finished run's are due, so they settle.
+async fn due(
+    ctx: &DaemonContext,
+    issue: BTreeSet<StageRunId>,
+) -> Result<BTreeSet<StageRunId>, ArchonError> {
+    let now = archon_core::now();
+    let store = ctx.store.lock().await;
+    let mut due = BTreeSet::new();
+    for id in issue {
+        let run = store.stage_run(&id)?.run;
+        if spawn::due(&store, &id, now)? || store.run(&run)?.state.is_terminal() {
+            due.insert(id);
+        }
+    }
+    Ok(due)
 }
 
 fn dedup<T: Ord>(items: Vec<T>) -> BTreeSet<T> {

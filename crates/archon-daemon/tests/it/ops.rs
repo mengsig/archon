@@ -1,7 +1,7 @@
 //! The operator's drained upgrade and restart against a fake installer and
 //! restart helper: the drain holds dispatch and waits for running stage
-//! agents, gives up or restarts when its wait runs out, an install failure
-//! holds nothing, and only the operator may ask.
+//! agents (not for one that keeps Aether), gives up or restarts when its
+//! wait runs out, an install failure holds nothing, and only the operator may ask.
 
 use crate::common;
 
@@ -120,6 +120,42 @@ async fn a_restart_holds_dispatch_until_running_work_finishes() {
     assert!(h.ctx.ops.draining(), "the hold lasts until archond stops");
     assert_eq!(h.ops.snapshot().installs, [], "a restart installs nothing");
     assert_ne!(first.id, waiting.id);
+    worker.abort();
+}
+
+#[tokio::test]
+async fn a_restart_that_keeps_aether_hands_off_at_once_while_a_stage_agent_runs() {
+    let h = Harness::new().await;
+    h.enqueue("keeps running in Aether").await;
+    h.dispatch().await;
+    let running = h.running().await;
+    assert_eq!(running.len(), 1, "one stage agent runs");
+    let worker = worker(&h);
+
+    let started = tokio::time::Instant::now();
+    let request = UpgradeRequest {
+        keep_aether: true,
+        ..restart(60, false)
+    };
+    start(&h, request).await;
+    handed_off(&h).await;
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "waited {:?} for an agent Aether keeps",
+        started.elapsed()
+    );
+    let plan = RestartPlan {
+        restart_aether: false,
+    };
+    assert_eq!(h.ops.snapshot().restarts, [plan], "aetherd keeps running");
+    assert_eq!(h.running().await, running, "the stage agent still runs");
+    let lines = system_lines(&h).await;
+    assert!(
+        lines
+            .iter()
+            .any(|t| t.contains("the 1 stage agents still running keep running in Aether")),
+        "{lines:?}"
+    );
     worker.abort();
 }
 

@@ -139,7 +139,7 @@ pub(super) fn question(offers: &[Offer], source: &Source) -> String {
         }
     }
     text.push_str(
-        "Updating waits for running agents to finish, then restarts archond and Aether \
+        "Updating restarts archond at once; running agents keep running in Aether \
          (`archon update` does the same later).\n\
          Update and restart now? [Y/n/s] (s: skip these versions) ",
     );
@@ -245,11 +245,13 @@ fn unix_now() -> u64 {
 }
 
 /// What a launch does after the offer.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum Launch {
     Go,
-    /// The update installed a new archon: run it in this one's place.
+    /// The update ran: run the installed archon in this one's place.
     Again,
+    /// A signal ended the update: exit with this code, opening nothing.
+    Exit(std::process::ExitCode),
 }
 
 /// Check, and offer, for a launch on a terminal. Never fails the launch: a
@@ -306,13 +308,15 @@ async fn ask(path: &Path, mut cache: Cache, found: &[Offer], source: &Source) ->
         }
         Choice::Update => match super::run(UpdateArgs::everything(), false).await {
             Ok(code) if code == std::process::ExitCode::SUCCESS => Launch::Again,
+            Ok(code) if super::interrupt::Interrupt::ended(code).is_some() => Launch::Exit(code),
+            // Opened by the installed archon, which also drops the update's signal handlers.
             Ok(_) => {
                 eprintln!("archon: the update did not finish cleanly; opening anyway");
-                Launch::Go
+                Launch::Again
             }
             Err(error) => {
                 eprintln!("archon: the update failed: {error:#}; opening anyway");
-                Launch::Go
+                Launch::Again
             }
         },
     }
@@ -462,7 +466,8 @@ mod tests {
             text.contains("What's new: https://example.test/releases/tag/v1.4.2"),
             "{text}"
         );
-        assert!(text.contains("waits for running agents"), "{text}");
+        assert!(!text.contains("waits for running agents"), "{text}");
+        assert!(text.contains("running agents keep running"), "{text}");
         assert!(text.contains("Update and restart now? [Y/n/s]"), "{text}");
         assert_eq!(choice(""), Choice::Update);
         assert_eq!(choice("Yes\n"), Choice::Update);

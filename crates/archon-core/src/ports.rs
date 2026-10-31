@@ -37,6 +37,20 @@ impl NetworkPolicy {
 }
 
 /// Everything needed to start one stage agent (ARCHITECTURE §4.5).
+/// Whether the dollars an engine reports are what the provider bills.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CostBilling {
+    /// Billed per use: an HTTP provider at its configured price.
+    Billed,
+    /// Notional: a subscription with no marginal cost, which Aether shows by
+    /// reporting the login's usage windows (Claude Code's 5-hour and weekly).
+    Subscription,
+    /// Reported, but the login may be a subscription or an API key: enforced,
+    /// and a stop on it is labelled notional cost.
+    Unknown,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SpawnRequest {
     /// The stage run id: Aether dedupes a retried create under it.
@@ -69,6 +83,10 @@ pub struct SpawnRequest {
     /// before create_agent so capability changes cannot alter a keyed retry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aether_cost_budget: Option<bool>,
+    /// Whether the engine bills the dollars it reports, resolved with
+    /// `aether_cost_budget`; `None` when it reports none or was not asked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_billing: Option<CostBilling>,
     pub deadline: Option<Timestamp>,
     /// Attach to this Aether run (all stages of one pipeline run share one).
     pub attach_run: Option<AetherRunId>,
@@ -216,9 +234,15 @@ pub struct TreePulse {
     pub engine_alive: Option<bool>,
     /// The latest `last_event_at` over the tree; `None` when none reports one.
     pub last_event_at: Option<Timestamp>,
-    /// An agent of the tree waits for an approval or is `blocked` on a
-    /// person or a quota: silence is expected then.
+    /// An agent of the tree waits for an approval or is `blocked` for any
+    /// reason but inspection: silence is expected then.
     pub held: bool,
+    /// Some hold is one Aether names a lasting cause for: an approval, a
+    /// usage or quota limit, or credentials.
+    pub held_for_cause: bool,
+    /// An agent of the tree is `blocked` for inspection: a tool call it
+    /// started has no known outcome, as after an Aether restart. Not `held`.
+    pub inspection: bool,
     /// Aether holds an agent of the tree `running`, so it owes events.
     pub running: bool,
 }
@@ -281,6 +305,10 @@ pub trait AgentBackend: Send + Sync {
     /// Aether no longer knows is `false`, not an error.
     async fn is_live(&self, agent: &AetherAgentId) -> Result<bool, ArchonError>;
 
+    /// Revive the failed `agent` in place, with its transcript and session;
+    /// `Err` when Aether refuses, as it does for an agent that did not fail.
+    async fn wake(&self, agent: &AetherAgentId) -> Result<(), ArchonError>;
+
     /// Ask Aether to cancel an agent and its live descendants. Aether cancels
     /// cooperatively: `Ok` means accepted, not that any of them has ended.
     async fn cancel(&self, agent: &AetherAgentId, reason: &str) -> Result<(), ArchonError>;
@@ -335,6 +363,20 @@ pub trait AgentBackend: Send + Sync {
     /// longer knows `agent`. A backend that cannot tell reports an empty pulse.
     async fn pulse(&self, _agent: &AetherAgentId) -> Result<Option<TreePulse>, ArchonError> {
         Ok(Some(TreePulse::default()))
+    }
+
+    /// Resume every agent of `lead`'s tree that Aether blocked for
+    /// inspection, each told `note` first; the agents resumed. `Err` when
+    /// Aether refuses or does not answer.
+    async fn clear_inspection(
+        &self,
+        _lead: &AetherAgentId,
+        _note: &str,
+        _idempotency_key: &str,
+    ) -> Result<Vec<AetherAgentId>, ArchonError> {
+        Err(ArchonError::Invalid(
+            "this backend cannot resume an agent blocked for inspection".into(),
+        ))
     }
 
     /// `None` while the task is still open; the settled outcome otherwise.

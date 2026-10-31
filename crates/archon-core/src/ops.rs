@@ -204,7 +204,7 @@ impl Versions {
             .collect();
         (!named.is_empty()).then(|| {
             format!(
-                "update available ({}); run `archon update` (waits for running agents)",
+                "update available ({}); run `archon update` (running agents keep running)",
                 named.join(", ")
             )
         })

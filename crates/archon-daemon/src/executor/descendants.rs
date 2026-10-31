@@ -57,9 +57,10 @@ fn parse(key: &str, raw: &str) -> Result<OwedStop, ArchonError> {
     serde_json::from_str(raw).map_err(|e| ArchonError::Corrupt(format!("kv {key} = {raw:?}: {e}")))
 }
 
-/// Owe the stop of what `settled`'s agent delegated, if it could delegate. Call
-/// it before storing the settle: a crash leaves a stop too many, not too few.
-pub(super) fn owe(store: &mut Store, settled: &StageRun) -> Result<bool, ArchonError> {
+/// Owe the stop of what `settled`'s agent delegated, if it could delegate; an agent
+/// `woken` in place keeps its own life. Call it before storing the settle: a crash
+/// leaves a stop too many, not too few.
+pub(super) fn owe(store: &mut Store, settled: &StageRun, woken: bool) -> Result<bool, ArchonError> {
     assert!(
         settled.state.is_terminal(),
         "only a settled stage owes a stop"
@@ -87,7 +88,7 @@ pub(super) fn owe(store: &mut Store, settled: &StageRun) -> Result<bool, ArchonE
         })?,
         cancelled_at: None,
         reported: false,
-        keep: kept && settled.state == StageState::Completed,
+        keep: woken || (kept && settled.state == StageState::Completed),
     };
     store.kv_set(&stop_key(&settled.id), &serde_json::to_string(&owed)?)?;
     Ok(true)

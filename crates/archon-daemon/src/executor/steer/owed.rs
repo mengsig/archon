@@ -62,14 +62,15 @@ impl Delivery {
 }
 
 /// One lock per stage run being delivered to, kept while anyone holds or
-/// awaits it, so a handler's delivery and the sweep's never make one step twice.
+/// awaits it, so a handler's delivery and the sweep's never make one step twice,
+/// and a held stage's deadline never moves while a steer's is sent.
 #[derive(Debug, Default)]
 pub(in crate::executor) struct Locks {
     by_stage: std::sync::Mutex<BTreeMap<StageRunId, Arc<Mutex<()>>>>,
 }
 
 impl Locks {
-    async fn hold(&self, stage: &StageRunId) -> OwnedMutexGuard<()> {
+    pub(in crate::executor) async fn hold(&self, stage: &StageRunId) -> OwnedMutexGuard<()> {
         let lock = {
             let mut by_stage = self.by_stage.lock().unwrap_or_else(PoisonError::into_inner);
             // An entry only this map refers to is neither held nor awaited.
@@ -227,6 +228,7 @@ async fn update_choice(
 ) -> Result<(), ArchonError> {
     assert_eq!(stage.aether_agent.as_ref(), Some(agent));
     assert!(!stage.state.is_terminal());
+    let delivery = &no_earlier(&*ctx.store.lock().await, &stage.id, delivery)?;
     let patch = delivery.patch();
     if !patch.is_empty() {
         patch_lead(ctx, agent, delivery).await?;
@@ -241,6 +243,29 @@ async fn update_choice(
         }
     }
     Ok(())
+}
+
+/// `delivery` with a deadline no earlier than the one stored for `stage`,
+/// which a held stage's sweep may have moved past it since the steer (§6.3).
+fn no_earlier(
+    store: &Store,
+    stage: &StageRunId,
+    delivery: &Delivery,
+) -> Result<Delivery, ArchonError> {
+    let Some(deadline) = delivery.deadline else {
+        return Ok(delivery.clone());
+    };
+    let stored = match crate::executor::load_spawn(store, stage) {
+        Ok(spawn) => spawn.request.deadline,
+        Err(ArchonError::NotFound(_)) => None,
+        Err(error) => return Err(error),
+    };
+    let later = stored.map_or(deadline, |stored| stored.max(deadline));
+    assert!(later >= deadline, "a steer's deadline is only ever raised");
+    Ok(Delivery {
+        deadline: Some(later),
+        ..delivery.clone()
+    })
 }
 
 /// Patch the lead. A deadline or budget it sets also raises every live agent

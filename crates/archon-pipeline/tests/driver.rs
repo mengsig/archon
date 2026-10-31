@@ -72,7 +72,7 @@ fn linear_pipeline_runs_each_stage_once_and_succeeds() {
         plan.instructions.contains("/archon/worktrees/demo/w1"),
         "contract names the workspace"
     );
-    assert_eq!(plan.timeout_minutes, 60);
+    assert_eq!(plan.timeout_minutes, 180);
 
     let next = sim.settle(
         "implement",
@@ -229,8 +229,40 @@ fn majority_gate_fails_with_one_of_three_reviewers() {
         "{error}"
     );
     assert!(
-        error.contains("missing or unreadable"),
+        error.contains("verdict missing (counts as fail)"),
         "unknown verdict counts as fail: {error}"
+    );
+}
+
+#[test]
+fn an_unreadable_verdict_fails_the_gate_quoting_what_it_said() {
+    let mut sim = majority_sim();
+    sim.start();
+    sim.settle("build", 0, Agent::Done("built"));
+    sim.settle("review", 0, Agent::Pass);
+    sim.settle("review", 1, Agent::Fail("wrong"));
+    let unclear = serde_json::json!({"verdict": "lgtm mostly"});
+    let actions = sim.settle("review", 2, Agent::DoneStructured("Read it.", unclear));
+    let (_, error) = failed(&actions);
+    assert!(
+        error.contains(r#"verdict "lgtm mostly" unreadable as pass or fail (counts as fail)"#),
+        "{error}"
+    );
+    let mut sim = majority_sim();
+    sim.start();
+    sim.settle("build", 0, Agent::Done("built"));
+    sim.settle("review", 0, Agent::Pass);
+    sim.settle("review", 1, Agent::Fail("wrong"));
+    let skipped = serde_json::json!({"result": "done"});
+    let actions = sim.settle(
+        "review",
+        2,
+        Agent::DoneStructured("VERDICT: unsure", skipped),
+    );
+    let (_, error) = failed(&actions);
+    assert!(
+        error.contains(r#"verdict "VERDICT: unsure" unreadable"#),
+        "{error}"
     );
 }
 
@@ -404,6 +436,55 @@ fn e2e_failure_loops_to_setup_once_then_fails() {
     let (stage, error) = failed(&sim.settle("e2e", 0, Agent::Fail("login page 500")));
     assert_eq!(stage, "e2e");
     assert!(error.contains("after 1 of 1 fix loop(s)"), "{error}");
+}
+
+#[test]
+fn a_markdown_summary_verdict_beside_structured_findings_passes_the_gate() {
+    let mut sim = sim("e2e-testing");
+    sim.start();
+    sim.settle("setup", 0, Agent::Done("start.sh ready"));
+    let report = sim.settle(
+        "e2e",
+        0,
+        Agent::DoneStructured(
+            "Ran the suite.\n\n**Verdict:** PASS — all 214 tests pass",
+            serde_json::json!({"findings": []}),
+        ),
+    );
+    assert_eq!(spawned(&report), slots(&[("report", 1, 0)]));
+}
+
+#[test]
+fn a_blank_structured_verdict_or_a_quoted_pass_fails_the_gate() {
+    for (summary, structured) in [
+        ("VERDICT: PASS", serde_json::json!({"verdict": ""})),
+        (
+            "Example:\n> VERDICT: PASS\n\nVERDICT: not passed",
+            serde_json::json!({"findings": []}),
+        ),
+        ("VERDICT: PASS or FAIL", serde_json::json!({})),
+        ("VERDICT: PASS, or FAIL", serde_json::json!({})),
+        (
+            "VERDICT: PASS",
+            serde_json::json!({"result": "FAIL — tests failed"}),
+        ),
+        (
+            "```text\n```not-a-close\nVERDICT: PASS\n```",
+            serde_json::json!({}),
+        ),
+        ("```\n    ```\nVERDICT: PASS\n```", serde_json::json!({})),
+        (
+            "VERDICT: PASS",
+            serde_json::json!({"status": "FAIL — tests failed\nVERDICT: PASS"}),
+        ),
+        ("````\n~~~\nVERDICT: PASS\n```\n````", serde_json::json!({})),
+    ] {
+        let mut sim = sim("e2e-testing");
+        sim.start();
+        sim.settle("setup", 0, Agent::Done("start.sh ready"));
+        let back = sim.settle("e2e", 0, Agent::DoneStructured(summary, structured));
+        assert_eq!(spawned(&back), slots(&[("setup", 2, 0)]), "{summary}");
+    }
 }
 
 #[test]

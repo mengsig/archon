@@ -18,8 +18,8 @@ const EXPERIMENTS: &str = "/experiments";
 const POLICY: &str = "any model the policy allows";
 
 /// Byte budgets, a little above what the built-ins weigh today.
-const PLAIN_BUDGET: usize = 2_650;
-const REVIEW_BUDGET: usize = 3_250;
+const PLAIN_BUDGET: usize = 3_350;
+const REVIEW_BUDGET: usize = 3_550;
 const RECORD_BUDGET: usize = 1_550;
 /// What holding a review adds: the record, and the verdict and risk call
 /// each reviewer returns.

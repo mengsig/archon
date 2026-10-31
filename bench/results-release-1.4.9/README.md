@@ -1,7 +1,13 @@
 # Release 1.4.9 smoke gate
 
-**Verdict: FAIL. The Haiku cost increase is confirmed. The release stops
-here.** The release head is `6fbc077a` (1.4.9). v1.4.8 runs on Aether 1.2.7.
+**Verdict: PASS with an accepted cost increase. The operator accepted the
+Haiku review-cost rise (x2.2, from #329's reviewer effort floor) as
+intended on 2026-10-31; pass rate is unchanged (4/4 in the last three head
+runs).** The release head is `6fbc077a` (1.4.9). v1.4.8 runs on Aether 1.2.7.
+
+- **History.** The gate first recorded FAIL: by the release rule a
+  confirmed cost increase stops the release until the operator decides.
+  The numbers below are that gate's, unchanged.
 
 - **Haiku cost.** On the published Aether 1.2.8 the head cost $0.2314 and
   $0.2347 per Archon run, against $0.0989 and $0.1163 for v1.4.8. That is
@@ -11,14 +17,14 @@ here.** The release head is `6fbc077a` (1.4.9). v1.4.8 runs on Aether 1.2.7.
   - The miss is head run 1's `quality-ledger-transfer`. It used `strict`
     review and hit the 1200 s trial limit while its ninth reviewer was
     still reading. The code it left grades as a pass, so this run's smoke
-    is FAIL.
+    was first recorded as FAIL.
   - Head run 2 (the confirmation) and both runs on the published Aether
     passed 4/4. The pass-rate drop did not reproduce.
 - **Luna.** Both builds passed 4/4. The head's estimate is lower: $0.0440
   against $0.0682.
 - **Stop.** Head runs 3 and 4 confirmed the cost increase. By the release
-  rule the gate stopped there, so Luna was not rerun on the published
-  Aether 1.2.8.
+  rule the gate stopped there for the operator's decision, so Luna was not
+  rerun on the published Aether 1.2.8.
 
 **Cause: the reviewer effort floor from #329.** It is a deliberate change,
 but its cost is the gate's to report.
@@ -39,9 +45,11 @@ but its cost is the gate's to report.
   and ≥ $0.293.
 - Standard review costs more too. `quality-ledger-transfer` cost $0.0751
   on the head under `standard`, against $0.0344 and $0.0479 on v1.4.8.
-- **What the operator must decide.** Either accept the higher review cost
-  as the price of #329 and rerun the gate's acceptance, or bring the
-  reviewer floor or the strict re-review back down before 1.4.9.
+- **Decision.** The gate asked the operator to either accept the higher
+  review cost as the price of #329 or bring the reviewer floor or the
+  strict re-review back down before 1.4.9. On 2026-10-31 the operator
+  accepted the cost as intended and released 1.4.9. A 1.4.10 follow-up is
+  to make strict re-reviews after a fix reread only what changed.
 
 `make ci` passed on `6fbc077a`, with the inherited Archon and Aether
 variables unset: 3671 tests passed, 0 failed and 9 ignored. `make e2e`

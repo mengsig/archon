@@ -188,9 +188,12 @@ restarts by itself once they end, or gives up at `--wait` unless
 `--requeue`, and the update says so and returns. An archond older than
 1.4.9 waits for its stage agents too, so it is given 10 seconds and then
 restarts anyway; they keep running all the same. When
-`aether update` installed a new Aether, archond is then asked to restart
-Archon's own aetherd in the background, once its stage agents finish (at
-most `--wait`, `--requeue` to restart anyway). In shared mode your own
+`aether update` installed a new Aether and archond runs the new archon
+before the update returns, archond is then asked to restart Archon's own
+aetherd in the background, once its stage agents finish (at most `--wait`,
+`--requeue` to restart anyway). An archond that restarts only later is not
+asked: run `archon daemon restart` once it is back, and Archon's own aetherd
+restarts on the new Aether after its stage agents finish. In shared mode your own
 aetherd is never restarted; Archon's tools in it are refreshed with `aether
 mcp refresh archon`. Nothing is restarted when `archond` is not running: the next
 command that needs it starts the new version. When `archond` already runs

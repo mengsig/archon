@@ -213,6 +213,12 @@ fn place_one(
             short(&base)
         )));
     }
+    if base == read {
+        return Ok(Err(format!(
+            "read from its own head {}, an empty diff",
+            short(&read)
+        )));
+    }
     let mut whole = false;
     for fork in forks {
         whole |= history.holds(&base, fork)?;
@@ -977,6 +983,40 @@ mod tests {
             Some(upstream.as_str()),
             "without the fetched base the same read is only a delta"
         );
+    }
+
+    /// A delta from its own head read nothing, so it neither counts nor anchors.
+    #[test]
+    fn a_read_from_its_own_head_is_refused_as_an_empty_diff() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().canonicalize().unwrap();
+        git(&repo, &["init", "-q", "--initial-branch=main"]);
+        commit(&repo, "base.txt");
+        git(&repo, &["checkout", "-q", "-b", "run"]);
+        let first = commit(&repo, "change1.txt");
+        let head = commit(&repo, "change2.txt");
+        let verdict = |base: &str| Verdict {
+            pass: true,
+            head: head.clone(),
+            base: Some(base.to_owned()),
+            findings: None,
+            titles: Vec::new(),
+        };
+        let base = Base {
+            branch: "main",
+            onto_head: None,
+        };
+        let mut history = History::new(&repo);
+        let empty = [("agt_empty".to_owned(), verdict(&head))];
+        let refused = place(&mut history, base, &empty, &[]).unwrap().unwrap_err();
+        assert!(
+            refused.starts_with("reviewer agt_empty read from its own head"),
+            "{refused}"
+        );
+        assert!(refused.ends_with("an empty diff"), "{refused}");
+        let delta = [("agt_delta".to_owned(), verdict(&first))];
+        let (_, placed) = place(&mut history, base, &delta, &[]).unwrap().unwrap();
+        assert_eq!(placed[0].base.as_deref(), Some(first.as_str()));
     }
 
     /// A pull request of two commits on `main`, and a run branch of two commits

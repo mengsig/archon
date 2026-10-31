@@ -367,7 +367,8 @@ each one named. Every named agent must be a different direct child that
 completed with a verdict; a builder or researcher that returned none is not
 a reviewer. Archon then holds the verdicts to the run branch: as many passes
 as the level asks for must have read the branch head itself, whole or as a
-delta. A pass of an earlier head holds beside them while passing reviewers
+delta (a delta from its own head read nothing and is refused). A pass of
+an earlier head holds beside them while passing reviewers
 read every commit after it, and it anchors a delta from there, but it does
 not count toward the level. A fail never counts, and it
 stands until a pass that holds read past it, or a later reviewer read past it and

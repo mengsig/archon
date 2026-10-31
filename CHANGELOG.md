@@ -17,7 +17,8 @@
   as many passes as the level asks for must have read the branch head
   itself, whole or as an anchored delta. A pass of an earlier head still
   holds beside them and anchors a delta, but no longer counts toward the
-  level, so a strict review is three reviewers of the final head. The
+  level, so a strict review is three reviewers of the final head. A delta
+  whose `base` is its own head read an empty diff and is refused. The
   reviewer effort floor (#329) is unchanged.
 
 ## 1.4.9

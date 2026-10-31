@@ -20,10 +20,11 @@ inspection is resumed.
 Archon 1.4.9 needs **Aether 1.2.8**: it is released with and tested on that
 release. Neither the installer nor `archon update` pins an Aether version.
 The installer installs the latest Aether release only when it finds no
-`aether`, and keeps one it finds; `archon update` runs `aether update
---yes`, which installs the latest release, except with `--no-restart`.
-Check with `aether --version` and update an older one with `aether update`.
-Aether 1.2.8
+`aether`, and keeps one it finds. `archon update` runs `aether update
+--yes`, which installs the latest release, only on a confirmed update:
+after a yes, or with `--yes`; `--check`, `--requirements`, `--no-restart`
+and a declined question leave Aether as it is. Check with `aether
+--version` and update an older one with `aether update`. Aether 1.2.8
 serves protocol 25 (was 24) and still serves 17 to 24; Archon keeps asking
 for 24 and accepting down to 17, so neither constant moves. Protocol 25
 only adds a `credentials` exhaustion class, which Aether shows a client on
@@ -39,11 +40,15 @@ archond in about 10 seconds, keeping its stage agents running, runs
 `aether update` (the latest Aether, 1.2.8 at this release) and renews the
 orchestrator. An update from 1.4.8 already waiting can be ended with
 Ctrl-C. From 1.4.9 on, `archon update` and its yes restart archond in
-seconds, keeping Aether and its stage agents running; an archond busy with
-its own spawns, merges or deliveries restarts by itself once they end. When
-the update installed a new Aether, archond restarts its own aetherd
-(dedicated mode) in the background after its stage agents finish; in shared
-mode you restart your aetherd yourself.
+seconds, keeping Aether and its stage agents running. An archond still
+busy with its own spawns, merges or deliveries after 30 seconds restarts by
+itself once they end, or at `--wait` gives up (with `--requeue`, restarts
+anyway); the update says which.
+When the update installed a new Aether and archond restarted, archond
+restarts its own aetherd (dedicated mode) in the background once its stage
+agents finish, if they do within `--wait`. In every other case, and always in shared
+mode, the new Aether runs only once you restart its aetherd: the update
+says so, and `archon daemon restart` does it for Archon's own.
 
 ### Cleanup
 

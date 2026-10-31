@@ -84,8 +84,10 @@ Update an Aether that is too old with `aether update`.
 Archon 1.4.9 needs **Aether 1.2.8**: it is released with and tested on that
 release. Neither the installer nor `archon update` pins an Aether version:
 the installer installs the latest Aether release only when it finds no
-`aether`, and keeps one it finds; `archon update` runs `aether update
---yes`, which installs the latest release, except with `--no-restart`.
+`aether`, and keeps one it finds. `archon update` runs `aether update
+--yes`, which installs the latest release, only on a confirmed update
+(after a yes, or with `--yes`); `--check`, `--requirements`, `--no-restart`
+and a declined question leave Aether as it is.
 Check with `aether --version` and update an older one with `aether update`.
 Archon checks
 Aether's protocol, not its version: it asks for protocol 24 and accepts down

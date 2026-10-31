@@ -42,10 +42,12 @@ orchestrator. An update from 1.4.8 already waiting can be ended with
 Ctrl-C. From 1.4.9 on, `archon update` and its yes restart archond in
 seconds, keeping Aether and its stage agents running; the #335 entry under
 Fixed says when a busy archond restarts later. A new Aether runs only once
-its aetherd restarts. In dedicated mode, once archond runs the new archon,
-the update asks it to restart Archon's own aetherd in the background after
-its stage agents finish, as `--wait` and `--requeue` allow; whenever that
-aetherd still runs the old Aether, `archon daemon restart` restarts it. In shared mode, restart your aetherd yourself.
+its aetherd restarts. In dedicated mode, when archond runs the new archon
+before the update returns, the update asks it to restart Archon's own
+aetherd in the background after its stage agents finish, as `--wait` and
+`--requeue` allow. An archond that restarts only later is not asked:
+whenever that aetherd still runs the old Aether, `archon daemon restart`
+restarts it. In shared mode, restart your aetherd yourself.
 
 ### Cleanup
 
@@ -201,7 +203,8 @@ aetherd still runs the old Aether, `archon daemon restart` restarts it. In share
   for its agents, so the update gives it 10 seconds and has it restart
   anyway, keeping them running. A new Aether
   restarts Archon's own aetherd in the background, after its stage agents
-  finish. Ctrl-C at launch exits instead of opening the old archon. The
+  finish, when archond runs the new archon before the update returns;
+  otherwise `archon daemon restart` does it. Ctrl-C at launch exits instead of opening the old archon. The
   question no longer says it waits for running agents, and the install
   report names no commands to type. The update from 1.4.8 still runs 1.4.8's
   own restart: to skip its wait, run `archon update --no-restart`, then

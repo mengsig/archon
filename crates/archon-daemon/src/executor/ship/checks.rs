@@ -60,8 +60,14 @@ pub(super) struct Target {
     /// The branch the change is for: the stack parent's, else the repository's.
     pub base: String,
     /// The commit the run's own commits start after, when not `base`: the
-    /// frozen head of the pull request an `onto` item delivers into.
+    /// frozen head of the pull request an `onto` item delivers into, or the
+    /// reviewed head of the pull request it is stacked on. Only commits after
+    /// it must carry the repository's identity.
     pub since: Option<String>,
+    /// For a stack on a reviewed head (`since`), `origin`'s head of `base`
+    /// read at delivery: a commit after `since` it lacks must carry the
+    /// identity even when a local ref or a remote holds it.
+    pub reviewed_base: Option<String>,
     /// The addresses a commit the run adds may carry, recorded at registration.
     pub allowed: Vec<String>,
     /// The repository's attribution policy at delivery.
@@ -121,7 +127,8 @@ pub(super) fn check(
             target.branch
         )));
     }
-    if let Err(refusal) = foreign_commits(tree, &base, &target.allowed)? {
+    let held = held_elsewhere(target);
+    if let Err(refusal) = foreign_commits(tree, &base, &held, &target.allowed)? {
         return Ok(Err(refusal));
     }
     if target.attribution == Attribution::None
@@ -391,7 +398,8 @@ fn floor(tree: &Path, target: &Target) -> Result<Result<String, String>, ArchonE
         Some(0) => Ok(Ok(since.clone())),
         Some(1) => Ok(Err(format!(
             "the run branch `{}` does not hold {since}, the head of the pull request it \
-             delivers into, so it cannot be pushed there by fast-forward",
+             delivers into or is stacked on: its commits must stay as they are, beneath the \
+             run's own",
             target.branch
         ))),
         _ => Err(held.failure()),
@@ -413,11 +421,30 @@ fn base_ref(tree: &Path, base: &str) -> Result<Option<String>, ArchonError> {
     Ok(None)
 }
 
-/// Refuse a commit the run adds, one neither `base` nor a remote holds, that
+/// Where commits beyond the floor may already be, exempt from the identity
+/// check: any remote, or for a reviewed stack only `origin`'s base head as
+/// read at delivery, which no ref in the worktree can stand in for.
+fn held_elsewhere(target: &Target) -> Vec<String> {
+    let Some(base) = &target.reviewed_base else {
+        return vec!["--remotes".to_owned()];
+    };
+    assert!(
+        target.since.is_some(),
+        "a reviewed stack starts at the reviewed head"
+    );
+    assert!(
+        crate::worktree::stack::is_commit_id(base),
+        "origin's base head is a full commit id"
+    );
+    vec![base.clone()]
+}
+
+/// Refuse a commit the run adds, one neither `base` nor `held` holds, that
 /// was not made under the repository's git identity or the daemon's own.
 fn foreign_commits(
     tree: &Path,
     base: &str,
+    held: &[String],
     allowed: &[String],
 ) -> Result<Result<(), String>, ArchonError> {
     assert!(
@@ -425,8 +452,14 @@ fn foreign_commits(
         "the daemon's own address is always allowed"
     );
     assert!(is_floor(base), "a full ref name or a commit id");
+    assert!(
+        held.iter().all(|h| h == "--remotes" || is_floor(h)),
+        "remotes or full ref names"
+    );
     let format = "--format=%H%x09%ae%x09%ce";
-    let log = git(tree, &["log", format, "HEAD", "--not", base, "--remotes"])?;
+    let mut args = vec!["log", format, "HEAD", "--not", base];
+    args.extend(held.iter().map(String::as_str));
+    let log = git(tree, &args)?;
     let mut foreign = Vec::new();
     for line in log.lines() {
         let fields: Vec<&str> = line.split('\t').collect();

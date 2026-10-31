@@ -124,9 +124,12 @@ pub enum Command {
     },
     /// Merge a succeeded item's pull request now. archond merges only an
     /// open, mergeable pull request at the reviewed commit, on its base,
-    /// with green checks; never with --admin or --auto. For a repository
-    /// that ships `local` it fast-forwards the base branch to the item's
-    /// branch instead, refusing when the base moved or has local changes.
+    /// with green checks; never with --admin or --auto. Another's pull
+    /// request, a fork's too, merges through the succeeded `review` item
+    /// queued onto it, only while its head is the one that item passed.
+    /// For a repository that ships `local` it fast-forwards the base branch
+    /// to the item's branch instead, refusing when the base moved or has
+    /// local changes.
     Merge {
         /// The item's qi_… id, or enough of its start to name one item.
         item: String,
@@ -969,6 +972,7 @@ pub struct QueueAddArgs {
     pub depends_on: Vec<String>,
     /// Deliver into this open pull request instead of opening one: an item
     /// (`qi_…`) that delivered it, its number (`123` or `#123`), or its head branch.
+    /// The `review` pipeline pushes nothing, so it may take a fork's pull request.
     /// In a `ship = local` repository, commit onto a finished item's branch instead.
     #[arg(long, value_name = "ITEM|NUMBER|BRANCH")]
     pub onto: Option<String>,

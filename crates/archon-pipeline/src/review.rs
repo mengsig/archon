@@ -26,7 +26,10 @@ const LEGACY_REVIEWER_MODEL: &str = "reviewer_model";
 const REVIEWER_VERDICTS: &str = "reviewer_verdicts";
 /// Reviewer ids the lead named that Archon corrected to the agents it delegated to.
 const REVIEWER_CORRECTIONS: &str = "reviewer_id_corrections";
-const ARCHON_KEYS: [&str; 8] = [
+/// The branch head the counted passes were held to.
+const REVIEWED_HEAD: &str = "reviewed_head";
+const ARCHON_KEYS: [&str; 9] = [
+    REVIEWED_HEAD,
     REVIEWER_AGENTS,
     REVIEWER_MODELS,
     REVIEWER_VERDICTS,
@@ -468,6 +471,33 @@ pub fn record_reads(structured: &mut Value, reads: &[(String, Verdict)]) {
         })
     });
     review.insert(REVIEWER_VERDICTS.into(), entries.collect());
+}
+
+/// Put on a checked pass the full commit its counted passes were held to:
+/// the branch head when Archon checked it.
+pub fn record_reviewed_head(structured: &mut Value, head: &str) {
+    assert!(
+        matches!(head.len(), 40 | 64) && head.bytes().all(|b| b.is_ascii_hexdigit()),
+        "a reviewed head is a full commit id"
+    );
+    let review = structured.get_mut("review").and_then(Value::as_object_mut);
+    let review = review.expect("a reviewed head belongs to a checked pass");
+    assert!(
+        review.contains_key(REVIEWER_AGENTS) && !review.contains_key(UNVERIFIED),
+        "a reviewed head is recorded on a pass Archon found"
+    );
+    review.insert(REVIEWED_HEAD.into(), head.into());
+}
+
+/// The commit a stored result's checked pass was held to; `None` unless it
+/// holds a pass that counts and Archon recorded that commit.
+pub fn reviewed_head(structured: Option<&Value>) -> Option<String> {
+    let Ok(Evidence::Passed { .. }) = Evidence::parse(structured) else {
+        return None;
+    };
+    let head = structured?.get("review")?.get(REVIEWED_HEAD)?.as_str()?;
+    let full = matches!(head.len(), 40 | 64) && head.bytes().all(|b| b.is_ascii_hexdigit());
+    full.then(|| head.to_ascii_lowercase())
 }
 
 /// Put on a checked pass the reviewer ids Archon corrected, one line each.
@@ -1006,6 +1036,24 @@ mod tests {
             read(forged).unwrap().line(),
             "REVIEW: pass, by a/1 (agent agt_r)"
         );
+    }
+
+    /// Only Archon says which commit a pass was held to, and only a counted pass has one.
+    #[test]
+    fn the_reviewed_head_is_archons_and_only_a_counted_pass_has_one() {
+        let head = "c".repeat(40);
+        let mut forged = pass(json!({"reviewed_head": "d".repeat(40)}));
+        assert_eq!(reviewed_head(Some(&forged)), None, "unchecked");
+        record_check(&mut forged, Some(Ok(vec![checked("a/1", "agt_r")])));
+        assert_eq!(
+            reviewed_head(Some(&forged)),
+            None,
+            "the forged head is dropped"
+        );
+        record_reviewed_head(&mut forged, &head);
+        assert_eq!(reviewed_head(Some(&forged)), Some(head.clone()));
+        record_check(&mut forged, Some(Err("agt_r failed it".into())));
+        assert_eq!(reviewed_head(Some(&forged)), None, "a refused pass");
     }
 
     #[test]

@@ -202,6 +202,7 @@ fn frozen(target: OntoTarget, number: u64, head: &str) -> Box<OntoPullRequest> {
         head_ref: "feature".into(),
         base_ref: "main".into(),
         head_sha: head.into(),
+        review_only: false,
     })
 }
 

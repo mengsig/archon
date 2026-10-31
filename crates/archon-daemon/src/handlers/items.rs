@@ -225,8 +225,13 @@ pub(super) async fn freeze_onto(
         return Ok(None);
     };
     let repo = check_onto(env, spec, has_dependencies)?;
-    let frozen = executor::onto::freeze(ctx, repo, target).await?;
+    let review_only = !spec.delivers();
+    let frozen = executor::onto::freeze(ctx, repo, target, review_only).await?;
     assert_eq!(&frozen.target, target, "frozen as asked");
+    assert_eq!(
+        frozen.review_only, review_only,
+        "frozen as the pipeline works"
+    );
     Ok(Some(frozen))
 }
 
@@ -746,7 +751,30 @@ fn check_retryable(store: &archon_queue::Store, item: &QueueItem) -> Result<(), 
             item.id
         )));
     }
-    Ok(())
+    check_review_unstacked(store, item)
+}
+
+/// A succeeded `review` item that another item depends on keeps its pass:
+/// a stack on it ships the contributor's commits on the strength of that pass.
+fn check_review_unstacked(
+    store: &archon_queue::Store,
+    item: &QueueItem,
+) -> Result<(), ArchonError> {
+    let reviewed = item.onto.as_deref().is_some_and(|onto| onto.review_only);
+    if !reviewed || !matches!(item.state, QueueState::Succeeded { .. }) {
+        return Ok(());
+    }
+    let dependents = store.dependents(&item.id)?;
+    let Some(dependent) = dependents.first() else {
+        return Ok(());
+    };
+    assert_ne!(dependent, &item.id, "no item depends on itself");
+    Err(ArchonError::InvalidTransition(format!(
+        "{} passed a review that {dependent} depends on, and a stack on it ships those \
+         commits on the strength of that pass; queue a new `review` item onto the pull \
+         request to review it again",
+        item.id
+    )))
 }
 
 /// The repository a fresh retry starts again in: only a pipeline that works

@@ -386,7 +386,8 @@ pub struct ChecksSeen {
 }
 
 impl ChecksSeen {
-    fn of(checks: &[Check]) -> Self {
+    /// What `checks` add up to: which passed, failed or are pending.
+    pub fn of(checks: &[Check]) -> Self {
         let mut seen = Self::default();
         for check in checks {
             match check.outcome {

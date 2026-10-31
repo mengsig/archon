@@ -716,9 +716,25 @@ fn adaptive_declares_the_review_its_lead_holds_and_round_trips() {
         .collect();
     assert_eq!(
         holders,
-        ["adaptive", "direct", "swarm"],
+        ["adaptive", "direct", "review", "swarm"],
         "the rest gate their review"
     );
+}
+
+#[test]
+fn review_holds_a_review_and_delivers_nothing() {
+    let catalog = Catalog::builtin();
+    let spec = catalog.get("review").unwrap();
+    let stage = spec.stage("review").unwrap();
+    assert!(spec.holds_review(stage));
+    assert!(spec.reviews_only(), "no ship, so a fork's head is allowed");
+    assert!(!spec.delivers());
+    assert_eq!(spec.ship_record_stage(), None);
+    for delivering in ["adaptive", "direct", "swarm", "refactor"] {
+        let spec = catalog.get(delivering).unwrap();
+        assert!(spec.delivers(), "{delivering}");
+        assert!(!spec.reviews_only(), "{delivering}");
+    }
 }
 
 /// What `adaptive` tells its lead decides what a run costs and what is

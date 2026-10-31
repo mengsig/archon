@@ -1380,7 +1380,9 @@ The legal edges are implemented in `QueueState::can_transition_to`:
   pull request it has, and the retry is a `retry_after_done` correction of
   the run that had passed (§19), written with the transition. A dependent
   still queued waits for it to succeed again; one that already started goes
-  on. Until it is retried, a `succeeded` item takes no steer or update.
+  on. A `succeeded` review-only item (§18.6) that any item depends on is
+  never retried, as a stack on it ships on the strength of its pass. Until
+  it is retried, a `succeeded` item takes no steer or update.
 
 When a dependency fails or is cancelled, its dependents move to `blocked` and
 the orchestrator gets an `item_blocked` trigger. When a dependency is retried,
@@ -2471,6 +2473,7 @@ literal `{{`.
 | `agent-testing` | plan → exercise (fan_out 2, report) → report | Agents drive the product as a user would and report defects. workspace = worktree |
 | `code-audit` | scope (work) → audit (fan_out 3, report) → report | Security, reliability and maintainability lenses produce HTML with high/critical issue drafts. No code changes or ship. workspace = worktree, tier = strong, independent_reviewers. Use `ask` for one question. |
 | `e2e-testing` | setup → e2e (test gate, goto setup ×1) → report | The report stage produces HTML and screenshots under `.archon/reports/` for Lavish. |
+| `review` | review (work, `allow_delegation`, holds the review) | tier = balanced, independent_reviewers. Queued `onto` someone else's pull request, a fork's included; no `[pipeline.ship]`, so it commits and pushes nothing. Its lead has the frozen head reviewed at the item's review level, `standard` unless the item asks (§8.2); a pass lets the operator merge that pull request at that head (§18.6). |
 | `ask` | answer | workspace = repo-readonly (a disposable snapshot of the repository's `HEAD` commit, §13), requires_repo = false, tier = balanced |
 | `errand` | errand (report) | workspace = scratch, requires_repo = false, tier = balanced. A small job answered in its summary and optionally as one self-contained Lavish page. No repository changes or outward side effects; read an attached checkout only, and run code on a throwaway copy in scratch. Other files are temporary and collected after `worktrees.gc_after` (default 7d; §13.2). |
 | `design-doc` | research → critique (1, all_pass, goto research ×2) → report (HTML design/RFC) | workspace = worktree, requires_repo = true, tier = strong, independent_reviewers. Before a large or ambiguous change; no product-code changes or shipping. Use `proposal: lavish` for design and implementation in one item. |
@@ -5238,6 +5241,57 @@ state,isDraft,headRefOid,baseRefName,mergeable,statusCheckRollup` shows:
   restacked after its parent merged has a new head, so it needs a retry.
 - Every check is green, unless the operator acknowledged them with
   `--ignore-checks` or `yes ignore-checks`.
+
+**Another's pull request.** An item delivered `onto` an owner's pull
+request is never merged: it carries commits Archon never reviewed. A
+pull request Archon did not open, a fork's included, merges only through a
+succeeded item of a pipeline that pushes nothing (the built-in `review`)
+queued `onto` it. At enqueue such an item freezes the pull request with
+`review_only` set, which alone admits a fork or a repository `gh` cannot
+push to; its branch starts at the frozen head (a fork's fetched from
+`refs/pull/<n>/head`) and its review covers the whole pull request from its
+merge base, the fork point with the base commit GitHub shows for that
+pull request (`baseRefOid`), fetched by id: no local ref, tracking ref or
+remote URL moves it. A pull request retargeted since enqueue, so that
+GitHub shows a base branch other than the frozen one, passes nothing.
+When the review is counted
+(§8.2), archond records the branch head it passed as `reviewed_head` in
+the stage's structured result, a key no agent can write; a branch moved
+off the frozen head is refused. A merge of that item then needs, besides
+the above:
+
+- a recorded `reviewed_head` equal to the frozen head, and GitHub's head
+  still at it: a head that moved since is refused naming both commits;
+- every check green: `--ignore-checks`, `yes ignore-checks` and
+  `merge_waive_checks` do not apply, and `merge = auto` never does. The
+  checks are read again after the merge method, as the last read before
+  `gh pr merge`. Known limit: GitHub cannot pin check states to a merge,
+  so a check that turns red in the round trip after that read is not
+  seen (Archon's own merges share this window). Branch protection or a
+  ruleset with required checks closes it. Likewise the fork the review
+  covered is not checked against the base at merge: a base branch
+  force-pushed back past commits of the pull request after the review
+  brings those commits in unread. Branch protection that forbids
+  force-pushes to the base closes it.
+
+The method is chosen as for any merge, and no author is passed, so GitHub
+credits the pull request's author. An item that `depends_on` such a review
+item starts from its reviewed head and opens its own pull request into
+that pull request's base; at ship, `gh` must show the reviewed pull request
+open, or merged, at that head, which becomes the floor of the attribution
+and foreign commit checks (§8.7): those commits must be ancestors of the
+item's head, unchanged, and every other foreign commit is still refused. Past that
+floor only commits in `origin`'s head of the reviewed pull request's base
+branch, read with `ls-remote` and fetched at delivery, are exempt: no local
+or tracking ref counts, nor a stack parent's branch. A
+refresh of such an item, or a fix of its stack, keeps that floor, and so
+does an item stacked on it, at any depth, through `depends_on`. The
+restack sweep (§8.8) never merges a moved or merged parent into such an
+item's branch in place, nor does a refresh merge a landed parent there:
+the branch stays as delivered, the operator is told once per head, and once
+no parent is open `archon queue refresh` restacks it through a refresh
+item whose delivery checks that floor. Nothing is ever pushed to the
+reviewed pull request's branch.
 
 **The merge.** A `merge_requests` row (store V13) is written before any
 GitHub write, and an item has at most one open. archond then runs `gh pr

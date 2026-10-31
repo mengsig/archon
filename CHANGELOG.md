@@ -18,7 +18,12 @@ parser, short ship hashes are accepted, and a stage agent Aether blocked for
 inspection is resumed.
 
 Archon 1.4.9 needs **Aether 1.2.8**: it is released with and tested on that
-release, which the installer and `archon update` install. Aether 1.2.8
+release. Neither the installer nor `archon update` pins an Aether version.
+The installer installs the latest Aether release only when it finds no
+`aether`, and keeps one it finds; `archon update` runs `aether update
+--yes`, which installs the latest release, except with `--no-restart`.
+Check with `aether --version` and update an older one with `aether update`.
+Aether 1.2.8
 serves protocol 25 (was 24) and still serves 17 to 24; Archon keeps asking
 for 24 and accepting down to 17, so neither constant moves. Protocol 25
 only adds a `credentials` exhaustion class, which Aether shows a client on
@@ -30,11 +35,15 @@ copy of the data directory.
 which waits for every running stage agent to finish, up to 30 minutes
 (#335). Run `archon update --no-restart` first, which installs 1.4.9
 alone, then `archon update --yes`: the new archon restarts the 1.4.8
-archond in about 10 seconds, keeping its stage agents running, updates
-Aether to 1.2.8 and renews the orchestrator. An update from 1.4.8 already
-waiting can be ended with Ctrl-C. From 1.4.9 on, `archon update` and its
-yes restart both daemons, archond and, in dedicated mode, Archon's own
-aetherd, in seconds.
+archond in about 10 seconds, keeping its stage agents running, runs
+`aether update` (the latest Aether, 1.2.8 at this release) and renews the
+orchestrator. An update from 1.4.8 already waiting can be ended with
+Ctrl-C. From 1.4.9 on, `archon update` and its yes restart archond in
+seconds, keeping Aether and its stage agents running; an archond busy with
+its own spawns, merges or deliveries restarts by itself once they end. When
+the update installed a new Aether, archond restarts its own aetherd
+(dedicated mode) in the background after its stage agents finish; in shared
+mode you restart your aetherd yourself.
 
 ### Cleanup
 

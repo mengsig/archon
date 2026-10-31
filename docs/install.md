@@ -82,7 +82,12 @@ aether schema | grep -E '^  "(min_)?protocol_version"'
 Update an Aether that is too old with `aether update`.
 
 Archon 1.4.9 needs **Aether 1.2.8**: it is released with and tested on that
-release, which the installer and `archon update` install. Archon checks
+release. Neither the installer nor `archon update` pins an Aether version:
+the installer installs the latest Aether release only when it finds no
+`aether`, and keeps one it finds; `archon update` runs `aether update
+--yes`, which installs the latest release, except with `--no-restart`.
+Check with `aether --version` and update an older one with `aether update`.
+Archon checks
 Aether's protocol, not its version: it asks for protocol 24 and accepts down
 to 17. Aether 1.2.8 serves protocols 17 to 25, so it answers Archon on 24;
 protocol 25 only adds a `credentials` exhaustion class, which a client on 24

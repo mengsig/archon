@@ -56,49 +56,6 @@ async fn a_failed_check_is_a_kept_refusal_quoting_its_output() {
     assert!(matches!(gates.status(&run), Status::Idle));
 }
 
-/// A later run of a tree the check passed on reuses the pass; another tree,
-/// another selected command, or a check that failed, runs again.
-#[tokio::test]
-async fn a_pass_on_a_tree_holds_for_a_later_run_of_that_tree_and_command() {
-    let tree = tempfile::tempdir().unwrap();
-    let mut gates = Gates::default();
-    let wake = Arc::new(Notify::new());
-    let counted = "echo ran >> count";
-    let runs = || std::fs::read_to_string(tree.path().join("count")).unwrap();
-    let mut run_with = async |check: Check| {
-        let run = PipelineRunId::new();
-        gates.start(&run, check, Arc::clone(&wake));
-        let Status::Finished(Ok(verdict)) = finished(&mut gates, &run, &wake).await else {
-            panic!("a verdict")
-        };
-        verdict
-    };
-    let first = run_with(check(tree.path(), counted)).await;
-    assert_eq!(first.refusal, None);
-    let reused = run_with(check(tree.path(), counted)).await;
-    assert_eq!(reused, first);
-    assert_eq!(runs(), "ran\n", "the check ran once");
-
-    let other_tree = Check {
-        tree: "tree-2".into(),
-        ..check(tree.path(), counted)
-    };
-    run_with(other_tree).await;
-    assert_eq!(runs(), "ran\nran\n", "another tree runs the check");
-    run_with(check(tree.path(), "echo ran >> count; true")).await;
-    assert_eq!(runs(), "ran\nran\nran\n", "another command runs");
-
-    let failing = "echo ran >> count; exit 1";
-    for _ in 0..2 {
-        let verdict = run_with(check(tree.path(), failing)).await;
-        assert!(
-            verdict.refusal.is_some(),
-            "a failure is never reused as a pass"
-        );
-    }
-    assert_eq!(runs().lines().count(), 5, "a failed check runs again");
-}
-
 #[tokio::test]
 async fn forgetting_a_running_gate_kills_its_check() {
     let tree = tempfile::tempdir().unwrap();

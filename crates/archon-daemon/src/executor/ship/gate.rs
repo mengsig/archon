@@ -4,7 +4,7 @@
 //! one at a time on this host; the delivery waits for its verdict, then
 //! proves the worktree again before anything leaves it.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -44,17 +44,11 @@ pub(super) enum Status {
     Finished(Result<Verdict, ArchonError>),
 }
 
-/// The commands that passed on each tree: the same command on the same tree
-/// passes again, whichever run, base or selection led to it.
-type Passed = Arc<std::sync::Mutex<BTreeSet<(String, String)>>>;
-
-/// Every run's gate, the one slot their checks share, and the checks that
-/// passed, so a later run of the same tree reuses the pass.
+/// Every run's gate, and the one slot their checks share.
 #[derive(Debug)]
 pub struct Gates {
     by_run: BTreeMap<PipelineRunId, Gate>,
     slot: Arc<Semaphore>,
-    passed: Passed,
 }
 
 impl Default for Gates {
@@ -62,7 +56,6 @@ impl Default for Gates {
         Self {
             by_run: BTreeMap::new(),
             slot: Arc::new(Semaphore::new(1)),
-            passed: Passed::default(),
         }
     }
 }
@@ -97,10 +90,9 @@ impl Gates {
         );
         let (sender, result) = oneshot::channel();
         let slot = Arc::clone(&self.slot);
-        let passed = Arc::clone(&self.passed);
         let id = run.clone();
         let task = tokio::spawn(async move {
-            let verdict = gated(&id, check, slot, &passed).await;
+            let verdict = gated(&id, check, slot).await;
             // A gate forgotten meanwhile dropped the receiver: nobody waits.
             let _ = sender.send(verdict);
             wake.notify_one();
@@ -151,7 +143,6 @@ async fn gated(
     run: &PipelineRunId,
     check: Check,
     slot: Arc<Semaphore>,
-    passed: &Passed,
 ) -> Result<Verdict, ArchonError> {
     let _permit = slot
         .acquire_owned()
@@ -179,39 +170,14 @@ async fn gated(
             });
         }
     };
-    tracing::info!(%run, %command, units = ?affected.units, "fast check selected");
-    ran(run, check, command, passed).await
-}
-
-/// Run the expanded `command` on `check`'s tree, unless it passed on that
-/// tree before; a pass is kept for the next run of the same command and tree.
-async fn ran(
-    run: &PipelineRunId,
-    check: Check,
-    command: String,
-    passed: &Passed,
-) -> Result<Verdict, ArchonError> {
-    assert!(!command.trim().is_empty(), "an expanded check is a command");
-    let key = (check.tree.clone(), command);
-    if passed
-        .lock()
-        .expect("fast check passes lock")
-        .contains(&key)
-    {
-        tracing::info!(%run, tree = %check.tree, "the fast check passed on this tree before; reused");
-        return Ok(Verdict {
-            tree: check.tree,
-            refusal: None,
-        });
-    }
-    let command = &key.1;
     let envs: Vec<(&str, &std::path::Path)> = check
         .target_dir
         .as_deref()
         .map(|dir| ("CARGO_TARGET_DIR", dir))
         .into_iter()
         .collect();
-    let ran = fast_check::run(command, &check.workspace, &envs, fast_check::RUN_LIMIT).await?;
+    tracing::info!(%run, %command, units = ?affected.units, "running the fast check");
+    let ran = fast_check::run(&command, &check.workspace, &envs, fast_check::RUN_LIMIT).await?;
     let refusal = match &ran.ended {
         fast_check::Ended::Passed => None,
         fast_check::Ended::Failed(why) => Some(format!(
@@ -221,13 +187,6 @@ async fn ran(
         )),
     };
     tracing::info!(%run, %command, passed = refusal.is_none(), "fast check ended");
-    if refusal.is_none() {
-        passed
-            .lock()
-            .expect("fast check passes lock")
-            .insert(key.clone());
-    }
-    assert_eq!(key.0, check.tree, "the verdict is on the tree checked");
     Ok(Verdict {
         tree: check.tree,
         refusal,

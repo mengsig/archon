@@ -62,11 +62,14 @@
   - At the third failed round in one stage attempt Archon stops the stage
     with an `ESCALATE:` failure listing the open blocking findings, each
     with its place and remedy, which hands the item to the orchestrator; a
-    lead that settles before the cancel lands, or a stall found meanwhile,
-    still ends in that escalation. The fourth-round operator notice is gone.
+    lead that settles before the cancel lands, or a stall found before or
+    after, still ends in that escalation. The fourth-round operator notice
+    is gone. A finding's `"blocking"` mark outranks its `severity`, which
+    decides only for a finding with no mark.
   - A passing check of a tree holds for any later head with that tree: the
     stage contract says so, and the ship gate reuses a passing fast check
-    for a later run of the same tree, base and command. After a passing full
+    when a later run selects the same command (its units expanded) for the
+    same tree, kept in memory until archond restarts. After a passing full
     check, a diff touching only Markdown, `CHANGELOG` or docs needs only the
     link and notice checks.
 

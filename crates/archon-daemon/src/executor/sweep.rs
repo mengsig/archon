@@ -259,24 +259,27 @@ pub(super) async fn stop_review_loop(
 
 /// Cancel a `running` stage's agent and settle it failed with `reason`, or
 /// with the escalation it is already marked with, which outlasts a stall.
-/// Marked first so the cancel's own events cannot settle it as cancelled.
+/// Marked first so the cancel's own events cannot settle it as cancelled,
+/// and under the run table, so a settle in flight sees the mark or the
+/// stage is already settled.
 async fn stop_marked(
     ctx: &DaemonContext,
     id: &StageRunId,
     reason: &str,
 ) -> Result<FollowUp, ArchonError> {
     assert!(!reason.trim().is_empty(), "a stop names its reason");
-    let stage = ctx.store.lock().await.stage_run(id)?;
-    if stage.state != StageState::Running {
-        return Ok(FollowUp::default());
-    }
-    assert_eq!(stage.id, *id, "the stage asked for");
-    let reason = {
+    let (stage, reason) = {
+        let _table = ctx.runs.lock().await;
         let mut store = ctx.store.lock().await;
+        let stage = store.stage_run(id)?;
+        if stage.state != StageState::Running {
+            return Ok(FollowUp::default());
+        }
         let reason = stall::prevailing(&store, id, reason)?;
         stall::mark_intent(&mut store, id, &reason)?;
-        reason
+        (stage, reason)
     };
+    assert_eq!(stage.id, *id, "the stage asked for");
     let failed = || StageOutcome::Failed {
         error: reason.clone(),
         infra: stall::is_stall(&reason),

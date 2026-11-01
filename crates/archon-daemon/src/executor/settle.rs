@@ -24,10 +24,15 @@ pub(super) async fn settle(
     id: &StageRunId,
     outcome: StageOutcome,
 ) -> Result<FollowUp, ArchonError> {
-    let outcome = stall::intended(&*ctx.store.lock().await, id, outcome)?;
-    if !matches!(outcome, StageOutcome::Completed { .. }) {
+    let completed = matches!(outcome, StageOutcome::Completed { .. });
+    // A completion of a stage the review cap already stopped is not verified.
+    if !completed || stall::escalation_marked(&*ctx.store.lock().await, id)? {
         let mut table = ctx.runs.lock().await;
-        let outcome = notional::label(&*ctx.store.lock().await, id, outcome)?;
+        let outcome = {
+            let store = ctx.store.lock().await;
+            let outcome = stall::intended(&store, id, outcome)?;
+            notional::label(&store, id, outcome)?
+        };
         return settle_locked(ctx, &mut table, id, outcome).await;
     }
     let (stage, run, review, daemon_ships, planner, record_stage) = {
@@ -82,6 +87,12 @@ pub(super) async fn settle(
             // Cancellation, another settle or a driver decision won the race.
             // Its outcome takes precedence over this verification result.
             return Ok(FollowUp::poke());
+        }
+        // So does the review cap's stop, marked while this was verified.
+        if stall::escalation_marked(&store, id)? {
+            let escalated = stall::intended(&store, id, outcome)?;
+            drop(store);
+            return settle_locked(ctx, &mut table, id, escalated).await;
         }
         let all = store.stage_runs(&current_run.id)?;
         assert_eq!(

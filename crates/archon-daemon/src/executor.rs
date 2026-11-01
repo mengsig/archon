@@ -377,7 +377,7 @@ pub async fn reviewer_settled(
     let Some(capped) = review::reviewer_settled(ctx, lead, reviewer).await? else {
         return Ok(());
     };
-    if stall::marked(&*ctx.store.lock().await, &capped.stage)? {
+    if stall::escalation_marked(&*ctx.store.lock().await, &capped.stage)? {
         return Ok(());
     }
     let follow = sweep::stop_review_loop(ctx, &capped.stage, &capped.reason).await?;

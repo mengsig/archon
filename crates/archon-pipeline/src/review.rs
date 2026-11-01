@@ -944,6 +944,17 @@ mod tests {
         assert!(!Verdict::read_result("", Some(&empty)).unwrap().pass);
         let marked_high = json!([{"title": "x", "blocking": false, "severity": "high"}]);
         let data = json!({"verdict": "fail", "head": HEAD, "findings": marked_high});
+        assert!(
+            Verdict::read_result("", Some(&data)).unwrap().pass,
+            "the mark decides"
+        );
+        let data = json!({"verdict": "pass", "head": HEAD, "findings": marked_high});
+        assert!(
+            Verdict::read_result("", Some(&data)).unwrap().pass,
+            "nor disputes a pass"
+        );
+        let unmarked_high = json!([{"title": "x", "severity": "high"}]);
+        let data = json!({"verdict": "fail", "head": HEAD, "findings": unmarked_high});
         assert!(!Verdict::read_result("", Some(&data)).unwrap().pass);
         let pass_blocking = json!([{"title": "x", "blocking": true}]);
         let data = json!({"verdict": "pass", "head": HEAD, "findings": pass_blocking});

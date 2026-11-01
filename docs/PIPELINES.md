@@ -338,9 +338,9 @@ Each finding is marked `"blocking": true` or `false`. Blocking findings are
 correctness bugs, security or safety issues, failing or missing tests for
 changed behaviour, and broken documented behaviour; a brief may narrow or
 extend the class. The rest are follow-ups the lead lists in its summary and
-`pr.body`: a `fail` whose every finding is marked `"blocking": false` (and
-has no blocking `severity`) counts as a pass, and a `pass` with a finding
-marked `"blocking": true` is refused. A finding with no mark blocks.
+`pr.body`: a `fail` whose every finding is marked `"blocking": false`,
+whatever its `severity`, counts as a pass, and a `pass` with a finding
+marked `"blocking": true` is refused. A finding with no mark blocks a `fail`.
 
 For providers that auto-complete a task from final text, Archon also accepts
 this object as the entire `summary` when `structured` states no verdict, or the
@@ -875,9 +875,9 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   A structured pass counts only when the summary's last `VERDICT:` line
   and its JSON (the whole summary or its one fenced block) `verdict`,
   `result` or `status`, where it has them, pass too. No pass, wherever it
-  is stated, counts beside a finding marked `"blocking": true` or of
-  `blocking`, `blocker`, `critical` or `high` severity in `structured` or
-  the summary's JSON. A summary
+  is stated, counts beside a finding marked `"blocking": true`, or one
+  with no mark of `blocking`, `blocker`, `critical` or `high` severity, in
+  `structured` or the summary's JSON. A summary
   written as `{summary, structured}` has its inner summary read the same
   way. The gate's refusal quotes what the agent wrote.
   Known limitation: of CommonMark, the parser models only block quotes,

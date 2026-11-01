@@ -2724,7 +2724,10 @@ table and delivers it off every lock:
    `CARGO_TARGET_DIR`, in its own process group, killed with everything it
    started after 30 minutes or when its run ends; the last 16 KiB of each
    stream are kept. The delivery stays queued meanwhile, and the verdict,
-   kept for the tree it checked, wakes the dispatcher. The worktree is then
+   kept for the tree it checked, wakes the dispatcher. A pass is also kept
+   in memory by tree and expanded command: a later run that selects the
+   same command for the same tree reuses it without running it, and a
+   failure is never reused. The worktree is then
    proved again, so a check that changed it is refused, before the verdict
    is read: a failed check refuses the item with the command, how it ended
    and the last lines of its output. Restarting archond runs it again.

@@ -95,11 +95,11 @@ impl Verdict {
         findings.iter().any(Self::blocks)
     }
 
-    /// Whether `finding` is marked `"blocking": true` or has a `severity`
-    /// that blocks a pass.
+    /// Whether `finding` blocks a pass: its `"blocking"` mark when it has one,
+    /// else a blocking `severity`, as findings were judged before the mark.
     pub fn blocks(finding: &serde_json::Value) -> bool {
-        if finding.get("blocking") == Some(&serde_json::Value::Bool(true)) {
-            return true;
+        if let Some(marked) = finding.get("blocking").and_then(serde_json::Value::as_bool) {
+            return marked;
         }
         let severity = finding.get("severity").and_then(|s| s.as_str());
         let severity = severity.unwrap_or_default().trim();
@@ -109,10 +109,14 @@ impl Verdict {
     }
 
     /// Whether `finding` is a follow-up that never fails a review: marked
-    /// `"blocking": false`, with no `severity` that [blocks](Self::blocks).
+    /// `"blocking": false`, whatever its `severity`.
     pub fn is_follow_up(finding: &serde_json::Value) -> bool {
         let marked = finding.get("blocking") == Some(&serde_json::Value::Bool(false));
-        marked && !Self::blocks(finding)
+        assert!(
+            !(marked && Self::blocks(finding)),
+            "a follow-up never blocks"
+        );
+        marked
     }
 
     /// The first `result` or `status` that states a verdict, and that verdict.
@@ -1303,13 +1307,17 @@ mod tests {
     }
 
     #[test]
-    fn only_a_finding_marked_non_blocking_without_a_blocking_severity_is_a_follow_up() {
+    fn the_blocking_mark_decides_and_severity_only_without_one() {
         assert!(Verdict::is_follow_up(
             &json!({"blocking": false, "severity": "low"})
         ));
-        assert!(!Verdict::is_follow_up(
-            &json!({"blocking": false, "severity": "high"})
-        ));
+        let high_follow_up = json!({"blocking": false, "severity": "high"});
+        assert!(Verdict::is_follow_up(&high_follow_up));
+        assert!(
+            !Verdict::blocks(&high_follow_up),
+            "the mark outranks severity"
+        );
+        assert!(Verdict::blocks(&json!({"severity": "high"})));
         assert!(!Verdict::is_follow_up(&json!({"severity": "low"})));
         assert!(!Verdict::is_follow_up(&json!({"blocking": "no"})));
         assert!(Verdict::blocks(

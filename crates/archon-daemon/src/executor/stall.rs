@@ -396,9 +396,11 @@ pub(super) fn owed_escalations(
     Ok(owed)
 }
 
-/// Whether archond already marked `stage` to stop.
-pub(super) fn marked(store: &Store, stage: &StageRunId) -> Result<bool, ArchonError> {
-    Ok(store.kv_get(&intent_key(stage))?.is_some())
+/// Whether archond already marked `stage` to stop for an escalation; a
+/// stall's mark does not count, as the round cap replaces it.
+pub(super) fn escalation_marked(store: &Store, stage: &StageRunId) -> Result<bool, ArchonError> {
+    let marked = store.kv_get(&intent_key(stage))?;
+    Ok(marked.is_some_and(|reason| is_escalation(&reason)))
 }
 
 fn is_escalation(reason: &str) -> bool {

@@ -3654,6 +3654,114 @@ async fn a_capped_stage_whose_cancel_went_unanswered_is_stopped_by_the_sweep() {
     assert!(error.starts_with("ESCALATE:"), "{error}");
 }
 
+/// Reviewer `n` fails as in [`review_round_fails`], settled with no event, so
+/// nothing is heard from the lead's tree.
+async fn review_round_fails_quietly(h: &Harness, lead: &StageRun, n: usize) {
+    let event = review_round_event(h, lead, n);
+    let reviewer = event.agent.expect("a reviewer's event");
+    executor::reviewer_settled(&h.ctx, &lead_agent(lead), &reviewer)
+        .await
+        .unwrap();
+}
+
+/// The lead looks stalled to the watchdog: silent an hour with no engine.
+fn lead_looks_stalled(h: &Harness, lead: &StageRun) {
+    let agent = lead_agent(lead);
+    h.ctx
+        .activity
+        .saw(&agent, archon_core::now() - chrono::Duration::minutes(60));
+    let dead = archon_core::ports::TreePulse {
+        engine_alive: Some(false),
+        last_event_at: None,
+        held: false,
+        held_for_cause: false,
+        inspection: false,
+        running: true,
+    };
+    h.backend.set_pulse(&agent, dead);
+}
+
+/// The watchdog's stop of a stalled lead went unanswered when its third
+/// review round failed: the round cap replaces the stall and escalates.
+#[tokio::test]
+async fn the_round_cap_replaces_a_stall_whose_cancel_went_unanswered() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    for n in 1..=2 {
+        review_round_fails_quietly(&h, &lead, n).await;
+    }
+    lead_looks_stalled(&h, &lead);
+    h.backend.fail_next_cancel(unreachable_aether());
+    h.dispatch().await;
+    assert_eq!(
+        escalated(&h, &lead).await,
+        None,
+        "the stall's cancel went unanswered"
+    );
+    review_round_fails_quietly(&h, &lead, 3).await;
+    let error = escalated(&h, &lead).await.expect("the cap stops it");
+    assert!(
+        error.starts_with("ESCALATE:") && error.contains("finding 3"),
+        "{error}"
+    );
+}
+
+/// A capped stage whose cancel went unanswered also looks stalled: the
+/// watchdog leaves it to the escalation, which the next sweep delivers.
+#[tokio::test]
+async fn a_stall_found_while_the_caps_cancel_is_owed_keeps_the_escalation() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    for n in 1..=2 {
+        review_round_fails_quietly(&h, &lead, n).await;
+    }
+    h.backend.fail_next_cancel(unreachable_aether());
+    review_round_fails_quietly(&h, &lead, 3).await;
+    lead_looks_stalled(&h, &lead);
+    h.backend.fail_next_cancel(unreachable_aether());
+    h.dispatch().await;
+    assert_eq!(
+        escalated(&h, &lead).await,
+        None,
+        "the retried cancel went unanswered"
+    );
+    h.dispatch().await;
+    let error = escalated(&h, &lead).await.expect("the sweep stops it");
+    assert!(error.starts_with("ESCALATE:"), "not the stall: {error}");
+}
+
+/// The cap stops the stage while its lead's completion is being verified:
+/// the stop outranks the verified result when it is persisted.
+#[tokio::test]
+async fn a_cap_marked_while_a_completion_is_verified_still_escalates() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let (built, _) = reviewed_by_one(&h, "Verified; one reviewer passed it").await;
+    let gate = h.backend.hold_next_descendants();
+    let checks_before = h.backend.descendant_checks().len();
+    let (ctx, agent) = (h.ctx.clone(), lead_agent(&lead));
+    let settling = tokio::spawn(async move { executor::stage_settled(&ctx, &agent, built).await });
+    let held = async {
+        while h.backend.descendant_checks().len() == checks_before {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(10), held)
+        .await
+        .expect("the completion's verification reads the lead's tree");
+    let at_hold = h.ctx.store.lock().await.stage_run(&lead.id).unwrap().state;
+    assert_eq!(at_hold, StageState::Running, "held while it is verified");
+    let reason = "ESCALATE: the review failed 3 rounds";
+    let key = format!("stall_intent:{}", lead.id);
+    h.ctx.store.lock().await.kv_set(&key, reason).unwrap();
+    gate.add_permits(1);
+    settling.await.unwrap().unwrap();
+    assert_eq!(escalated(&h, &lead).await.as_deref(), Some(reason));
+}
+
 /// The cap's cancel went unanswered and the lead then completed on its own:
 /// the cap already stopped the stage, so it still escalates.
 #[tokio::test]

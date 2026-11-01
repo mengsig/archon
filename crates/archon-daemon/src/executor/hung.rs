@@ -29,6 +29,11 @@ const LONG_CHECKS: &[&str] = &[
     "make ci",
     "make check",
     "make test",
+    "make e2e",
+    "make bench",
+    "make release",
+    "build-release",
+    "package-release",
     "cargo test",
     "cargo nextest",
     "cargo build",
@@ -102,19 +107,16 @@ pub struct Hung {
 }
 
 /// `Some` when `call` has gone `limits`' time at `now` with no output,
-/// outcome or other event of its agent.
+/// outcome or other event of its agent. Aether's clock may step, so the
+/// newer of its two times counts.
 pub fn judge(limits: &Limits, call: &OpenToolCall, now: Timestamp) -> Option<Hung> {
-    assert!(
-        call.requested_at <= call.last_event_at,
-        "the call is among the agent's events"
-    );
+    assert!(!call.name.is_empty(), "a call names its tool");
     assert!(limits.tool <= limits.check, "a long check never gets less");
     if waits_by_design(&call.name) {
         return None;
     }
-    let silent = (now - call.last_event_at)
-        .to_std()
-        .unwrap_or(Duration::ZERO);
+    let quiet_since = call.last_event_at.max(call.requested_at);
+    let silent = (now - quiet_since).to_std().unwrap_or(Duration::ZERO);
     let limit = limits.of_call(call);
     (silent >= limit).then(|| Hung {
         call: call.clone(),
@@ -134,16 +136,14 @@ pub enum Step {
 
 /// The step for `hung` given when this stage run's agent was interrupted
 /// for an earlier hang: one interrupt per stage run, and a stop only once
-/// the interrupted agent has had the hang's limit to recover.
+/// the interrupted agent has had the hang's limit to recover. A mark from
+/// a clock now behind counts as just made.
 pub fn step(interrupted_at: Option<Timestamp>, hung: &Hung, now: Timestamp) -> Step {
+    assert!(!hung.limit.is_zero(), "a check that is on has a limit");
     assert!(hung.silent >= hung.limit, "only a hang past its limit");
     let Some(at) = interrupted_at else {
         return Step::Interrupt;
     };
-    assert!(
-        at <= now + chrono::Duration::seconds(5),
-        "an interrupt is not from the future"
-    );
     let since = (now - at).to_std().unwrap_or(Duration::ZERO);
     match since >= hung.limit {
         true => Step::Stop,
@@ -163,17 +163,16 @@ pub(super) async fn act(
     assert_eq!(stage.state, StageState::Running, "only a running stage");
     assert_eq!(stage.aether_agent.as_ref(), Some(lead), "the stage's lead");
     let marked = ctx.store.lock().await.kv_get(&key(&stage.id))?;
-    let interrupted_at = marked
-        .map(|raw| {
-            raw.parse::<Timestamp>()
-                .map_err(|e| ArchonError::Corrupt(format!("hung-call mark {raw:?}: {e}")))
-        })
-        .transpose()?;
+    let mark = marked.as_deref().map(Mark::parse).transpose()?;
     let minutes = hung.silent.as_secs() / 60;
     let call = describe(&hung.call);
-    match step(interrupted_at, hung, now) {
+    match step(mark.map(|m| m.interrupted_at), hung, now) {
         Step::Wait => Ok(None),
         Step::Interrupt => interrupt(ctx, stage, lead, hung, now).await,
+        // A stop whose cancel went unanswered is retried without a new message.
+        Step::Stop if mark.is_some_and(|m| m.stopped) => {
+            Ok(Some(stall::hung_again(&call, minutes)))
+        }
         Step::Stop => {
             tracing::warn!(stage = %stage.id, %lead, %call, minutes, "tool call hung again; stopping the stage");
             let text = format!(
@@ -182,8 +181,47 @@ pub(super) async fn act(
                  infrastructure failure.",
                 stage.stage_id, stage.id
             );
-            tell(ctx, stage, lead, text, None).await?;
+            let interrupted_at = mark.expect("a stop follows an interrupt").interrupted_at;
+            let stopped = Mark {
+                interrupted_at,
+                stopped: true,
+            };
+            tell(ctx, stage, lead, text, Some(&stopped.render())).await?;
             Ok(Some(stall::hung_again(&call, minutes)))
+        }
+    }
+}
+
+/// What the stage run's kv mark holds: when its agent was interrupted, and
+/// whether the stage was then stopped for a second hang.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Mark {
+    interrupted_at: Timestamp,
+    stopped: bool,
+}
+
+impl Mark {
+    const STOPPED: &str = " stopped";
+
+    fn parse(raw: &str) -> Result<Self, ArchonError> {
+        let (at, stopped) = match raw.strip_suffix(Self::STOPPED) {
+            Some(at) => (at, true),
+            None => (raw, false),
+        };
+        let interrupted_at = at
+            .parse::<Timestamp>()
+            .map_err(|e| ArchonError::Corrupt(format!("hung-call mark {raw:?}: {e}")))?;
+        Ok(Self {
+            interrupted_at,
+            stopped,
+        })
+    }
+
+    fn render(&self) -> String {
+        let at = self.interrupted_at.to_rfc3339();
+        match self.stopped {
+            true => format!("{at}{}", Self::STOPPED),
+            false => at,
         }
     }
 }
@@ -233,24 +271,27 @@ async fn interrupt(
          stage as an infrastructure failure.",
         stage.stage_id, stage.id
     );
-    let interrupted_at = now.to_rfc3339();
-    tell(ctx, stage, lead, text, Some(&interrupted_at)).await?;
+    let mark = Mark {
+        interrupted_at: now,
+        stopped: false,
+    };
+    tell(ctx, stage, lead, text, Some(&mark.render())).await?;
     Ok(None)
 }
 
-/// Post `text` as a stage `info` message to the orchestrator, recording
-/// the interrupt time with it when given.
+/// Post `text` as a stage `info` message to the orchestrator, writing the
+/// stage run's mark with it when given.
 async fn tell(
     ctx: &DaemonContext,
     stage: &StageRun,
     lead: &AetherAgentId,
     text: String,
-    interrupted_at: Option<&str>,
+    mark: Option<&str>,
 ) -> Result<(), ArchonError> {
     assert!(!text.trim().is_empty(), "a message says something");
-    let mark = key(&stage.id);
-    let updates: Vec<(&str, &str)> = interrupted_at
-        .map(|at| (mark.as_str(), at))
+    let mark_key = key(&stage.id);
+    let updates: Vec<(&str, &str)> = mark
+        .map(|value| (mark_key.as_str(), value))
         .into_iter()
         .collect();
     let mut store = ctx.store.lock().await;
@@ -372,6 +413,33 @@ mod tests {
             step(Some(at(20)), &again, at(400)),
             Step::Stop,
             "an interrupted stage run is never interrupted again"
+        );
+    }
+
+    #[test]
+    fn a_mark_round_trips_and_a_clock_step_neither_panics_nor_stops_early() {
+        for stopped in [false, true] {
+            let mark = Mark {
+                interrupted_at: at(20),
+                stopped,
+            };
+            assert_eq!(Mark::parse(&mark.render()).unwrap(), mark);
+        }
+        assert!(Mark::parse("not a time").is_err());
+        let hung = judge(&limits(), &call(STUCK), at(20)).unwrap();
+        assert_eq!(
+            step(Some(at(90)), &hung, at(20)),
+            Step::Wait,
+            "a mark from a clock now behind counts as just made"
+        );
+        let stepped = OpenToolCall {
+            requested_at: at(10),
+            ..call(STUCK)
+        };
+        assert_eq!(
+            judge(&limits(), &stepped, at(29)),
+            None,
+            "the newer time counts"
         );
     }
 

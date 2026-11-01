@@ -85,9 +85,9 @@ pub(crate) fn open_in(
                     name: text(call.get("name"), "tool.requested call.name")?.to_owned(),
                     command: command_of(call.get("input")),
                     requested_at: event.at,
-                    last_event_at,
+                    // Aether's clock may step back; nothing is newer than the call.
+                    last_event_at: last_event_at.max(event.at),
                 };
-                assert!(found.requested_at <= found.last_event_at, "newest first");
                 return Ok(Some(found));
             }
             "agent.message" | "agent.usage_updated" => {}

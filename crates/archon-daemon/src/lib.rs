@@ -12,6 +12,7 @@ pub mod compose;
 pub mod context;
 pub mod disk;
 pub mod dispatcher;
+pub mod engine_login;
 pub mod executor;
 mod experiments;
 pub mod feed;
@@ -519,6 +520,8 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
     }
     let mut store = open_store(&paths, &config)?;
     tracked::interrupt_left_pending(&mut store)?;
+    let engines = engine_login::EngineLoginWatch::system();
+    engines.restore(&mut store, std::time::Instant::now())?;
     let readers = readers::Readers::open(&store, &paths.store, readers::READERS)?;
     let (operator_settings, unreadable) = settings::SettingsBook::load_lenient(&store)?;
     for (key, error) in &unreadable {
@@ -567,6 +570,7 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
         github: GithubState::default(),
         started_at: archon_core::now(),
         disk: disk::DiskWatch::system(),
+        engines,
         host: host_load::HostWatch::system(),
         standby: std::sync::OnceLock::new(),
         recovery: Default::default(),

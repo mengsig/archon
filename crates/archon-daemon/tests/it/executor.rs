@@ -948,17 +948,18 @@ async fn a_woken_agent_that_fails_again_gets_the_cold_retry() {
 }
 
 /// An infrastructure failure that names a cause which clears with time, a
-/// login Aether's engine refused, is retried only once a wait is over, and
-/// the wait does not come out of the agent's working time.
+/// provider's rate limit, is retried only once a wait is over, and the wait
+/// does not come out of the agent's working time. A refused login holds its
+/// engine instead (`engine_login.rs`).
 #[tokio::test]
-async fn an_infra_failure_from_a_refused_login_waits_before_its_retry() {
+async fn an_infra_failure_from_a_rate_limit_waits_before_its_retry() {
     let mut h = Harness::new().await;
-    h.enqueue("engine logged out").await;
+    h.enqueue("engine rate limited").await;
     h.dispatch().await;
     let agent = h.running().await.remove(0).aether_agent.unwrap();
     h.backend.fail_agent(&agent);
     h.settle_running(|_| StageOutcome::Failed {
-        error: "model error from claude-code/opus: Auth: not logged in".into(),
+        error: "model error from claude-code/opus: RateLimit: slow down".into(),
         infra: true,
     })
     .await;
@@ -971,7 +972,7 @@ async fn an_infra_failure_from_a_refused_login_waits_before_its_retry() {
     assert!(
         notices
             .iter()
-            .any(|n| n.contains("in 5 min, waiting for the login to be renewed")),
+            .any(|n| n.contains("in 5 min, waiting for the rate limit to lift")),
         "{notices:?}"
     );
     let held = h.live_stages().await.remove(0);
@@ -1011,7 +1012,7 @@ async fn an_infra_failure_from_a_refused_login_waits_before_its_retry() {
 #[tokio::test]
 async fn a_waiting_wake_keeps_the_request_its_cap_is_read_from() {
     let h = Harness::new().await;
-    let item = h.enqueue("budgeted, a reviewer logged out").await;
+    let item = h.enqueue("budgeted, a reviewer rate limited").await;
     let patch = archon_core::protocol::ItemPatch {
         budget_usd: Some(10.0),
         ..Default::default()
@@ -1030,7 +1031,7 @@ async fn a_waiting_wake_keeps_the_request_its_cap_is_read_from() {
     h.backend.fail_agent(&agent);
     h.settle_running(|s| match s.fan_index {
         0 => StageOutcome::Failed {
-            error: "model error from codex/gpt-5: Auth: not logged in".into(),
+            error: "model error from codex/gpt-5: RateLimit: slow down".into(),
             infra: true,
         },
         _ => verdict(true),

@@ -98,7 +98,11 @@ pub(super) fn read(
         .ctx("query model evidence")?;
     let mut attempts = Vec::new();
     while let Some(row) = rows.next().ctx("read model evidence")? {
-        attempts.push(attempt(row)?);
+        let attempt = attempt(row)?;
+        // A failed engine login says nothing of the model: it is no attempt.
+        if !attempt.stage.failed_on_engine_login() {
+            attempts.push(attempt);
+        }
     }
     Ok(ModelEvidenceSnapshot {
         attempts,

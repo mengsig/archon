@@ -3,9 +3,10 @@
 //! `archon_queue::plan_dispatch`, and executes the plan. No dispatch while
 //! Aether is disconnected or start-up recovery runs. Each pass first checks
 //! free disk space, and while that holds dispatch, collects what finished
-//! runs left first.
+//! runs left first; then probes each engine held for a failed login.
 
 mod disk_hold;
+mod engine_hold;
 mod snapshot;
 
 pub(crate) use disk_hold::{check as check_disk, read as read_disk};
@@ -105,6 +106,7 @@ pub async fn dispatch_once(ctx: &DaemonContext) -> Result<DispatchPlan, ArchonEr
     if crate::gc::before_dispatch(ctx).await? {
         disk_hold::check(ctx).await?;
     }
+    engine_hold::check(ctx).await?;
     keep_error(&mut first_error, executor::sweep_live_stages(ctx).await)?;
     let mut merged = DispatchPlan::default();
     let mut last = None;

@@ -75,6 +75,10 @@ pub(crate) struct StoredSpawn {
     /// Aether was asked to wake it; one asked again refuses, as it is awake.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub wake_asked: bool,
+    /// It replaces a failure on the engine's login and waits on the engine:
+    /// it spends no infrastructure retry and is not the slot's one wake.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub login_wake: bool,
     /// Not issued before this: an infrastructure retry waits out a cause
     /// that clears with time, such as an engine or login that is down.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -160,6 +164,8 @@ pub(super) struct Retry {
     pub wake: Option<KeptAgent>,
     /// A deadline wake's own deadline, this long after the replacement starts.
     pub extension: Option<chrono::Duration>,
+    /// It replaces a failure on its engine's login (`StoredSpawn::login_wake`).
+    pub engine_login: bool,
 }
 
 /// Move the deadline in stage run `id`'s stored request to `until`, as
@@ -719,6 +725,11 @@ fn reserve_one(
         Takeover::Replace(agent) => (None, Some(agent)),
     };
     let extension = retry.as_ref().and_then(|r| r.extension);
+    let retry_login = retry.as_ref().is_some_and(|r| r.engine_login);
+    assert!(
+        !retry_login || not_before.is_none(),
+        "a login retry waits on its engine, not a clock"
+    );
     if let Some(extension) = extension {
         assert!(not_before.is_none(), "a deadline wake waits for nothing");
         assert!(
@@ -749,6 +760,7 @@ fn reserve_one(
         replaces,
         woken,
         wake_asked: false,
+        login_wake: retry_login,
         not_before,
         deadline_wake: extension.is_some(),
         deadline_warned: false,

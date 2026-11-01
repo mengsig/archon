@@ -1483,9 +1483,15 @@ in a new worktree off the base branch (§13).
   agent. The wake is tried once per slot,
   and a wake that took counts apart from the cold retries: it does not use
   up the slot's re-spawn. A failure whose error names a cause that clears
-  with time (an unavailable or overloaded engine, a rate or usage limit, a
-  refused login or credentials) is waited out: the retry is issued 5 min
-  later, and its deadline moves by the same wait.
+  with time (an unavailable or overloaded engine, a rate or usage limit) is
+  waited out: the retry is issued 5 min later, and its deadline moves by the
+  same wait. A failure on the engine's login (`Auth:`, `authenticat`,
+  `unauthorized`, `not logged in`, `login expired`, `oauth`, `credential`)
+  holds the engine instead (§7.3): its replacement wakes the same agent
+  once the engine logs in again, spends no `limits.infra_retries` and is
+  not the slot's one infrastructure wake. A slot is woken so up to 48
+  times; past that the failure is final. Such failures are no model
+  evidence: `model_evidence` leaves them out.
 - **Stage watchdog.** Each sweep checks every `running` stage's agent tree.
   A tree is stalled when Aether holds one of its agents `running`, none of
   its engines is alive, and no Aether event of the tree (archond's stream or
@@ -2017,6 +2023,26 @@ the free space again, so the space finished runs hold comes back before
 anything waits for it. The pass stops after 30 seconds so it does not hold
 the dispatch pass up; the worktree it was collecting is finished off the
 dispatcher, which that sweep pokes as it ends, and a later pass goes on.
+
+**Engine-login hold.** A stage agent that fails as infrastructure on its
+engine's login (§6.3) holds that engine, daemon-wide, and posts one
+`Blocker` naming the engine and the error. While it holds, no
+never-sent spawn on that engine is issued: the failed stage's replacement,
+which wakes the same agent, and every fresh stage on it stay `spawning`.
+Spawns that may already have reached Aether, those of finished runs, and
+every other engine's go on. Each dispatch pass probes a held engine whose
+probe is due through Aether's `auth_status`, first a minute after the hold
+starts, then waiting twice as long each time up to 30 minutes; a probe
+Aether does not answer within 10 s counts as failed. Once one finds the
+engine logged in, the spawns that waited get their stored deadline moved by
+the time they waited (and the woken agent is told the new one), the hold
+lifts with one `System` line, and the sweep that follows wakes each agent
+once with Aether's `wake_agent`; one Aether refuses gets a fresh agent. A
+hold that starts again within 10 minutes of a lift (the probe found the
+login, yet the woken agents failed on it again, as in a provider-side
+outage) is a relapse: it keeps the longer wait and posts no new `Blocker`.
+The holds are kept in `kv.engine_login_holds`, so a restart holds the same
+engines again, with no new `Blocker`, and probes them a minute later.
 
 The daemon re-plans on: enqueue, update, cancel and retry of an item, a
 stage settled, a gate answered, a run finished, an agent's turn or life

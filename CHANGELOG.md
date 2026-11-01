@@ -14,6 +14,16 @@
 
 ### Fixed
 
+- An engine whose login fails no longer fails every running item. On
+  2026-10-31 an OAuth outage of one engine failed each item that ran on it,
+  and each needed a retry by hand: a login failure waited 5 minutes but
+  spent `limits.infra_retries`, so the second was final. A stage agent that
+  fails on its engine's login now holds that engine: its stage waits, no
+  new agent starts on it, and one `Blocker` says so. Archon probes the
+  login, waiting longer each time up to 30 minutes, and once it works it
+  lifts the hold with one line and wakes the same agents, each once, with
+  their context and their deadline moved by the wait. Login failures spend
+  no infra retry and are no model evidence; other engines keep dispatching.
 - Every failed review round of a stage attempt counts toward the cap of
   three, once, even one whose reviewer event archond missed (a lost wakeup,
   a restart, a result not readable yet). The tally added only the reviewer

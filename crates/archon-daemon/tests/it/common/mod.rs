@@ -538,7 +538,12 @@ pub fn context(
         data_dir,
     };
     create_context_dirs(&paths);
-    let store = Store::open(&paths.store).expect("store");
+    let mut store = Store::open(&paths.store).expect("store");
+    // Probed at once, so a test need not wait out the first probe.
+    let engines = archon_daemon::engine_login::EngineLoginWatch::new(std::time::Duration::ZERO);
+    engines
+        .restore(&mut store, std::time::Instant::now())
+        .expect("engine holds");
     let readers = archon_daemon::readers::Readers::open(&store, &paths.store, 2).expect("readers");
     let operator_settings = archon_daemon::settings::SettingsBook::load(&store).expect("settings");
     let (feed, _) = broadcast::channel(1024);
@@ -578,6 +583,7 @@ pub fn context(
         github: archon_daemon::github::GithubState::default(),
         started_at: archon_core::now(),
         disk,
+        engines,
         host: archon_daemon::host_load::HostWatch::system(),
         standby: OnceLock::new(),
         recovery: Default::default(),
@@ -770,6 +776,10 @@ struct FakeState {
     failed: BTreeSet<AetherAgentId>,
     /// Agents `wake` revived, in order; live until cancelled or killed.
     woken: Vec<AetherAgentId>,
+    /// Engines whose login fails, with what `engine_login` says of each.
+    logged_out: BTreeMap<String, String>,
+    /// Every `engine_login` probe, in order.
+    login_probes: Vec<String>,
     /// Every `is_live` call, in order.
     live_checks: Vec<AetherAgentId>,
     next_node: u32,
@@ -1002,6 +1012,22 @@ impl FakeBackend {
     /// Every agent `wake` revived, in order.
     pub fn woken(&self) -> Vec<AetherAgentId> {
         self.state().woken.clone()
+    }
+
+    /// `provider`'s engine login fails, as `engine_login` says, until `log_in`.
+    pub fn log_out(&self, provider: &str, why: &str) {
+        let mut state = self.state();
+        state.logged_out.insert(provider.to_owned(), why.to_owned());
+    }
+
+    /// `provider`'s engine login works again.
+    pub fn log_in(&self, provider: &str) {
+        self.state().logged_out.remove(provider);
+    }
+
+    /// Every engine `engine_login` probed, in order.
+    pub fn login_probes(&self) -> Vec<String> {
+        self.state().login_probes.clone()
     }
 
     /// Aether forgot `agent`: `is_live` reports it dead from now on.
@@ -1316,6 +1342,12 @@ impl AgentBackend for FakeBackend {
         }
         state.woken.push(agent.clone());
         Ok(())
+    }
+
+    async fn engine_login(&self, provider: &str) -> Result<Option<String>, ArchonError> {
+        let mut state = self.state();
+        state.login_probes.push(provider.to_owned());
+        Ok(state.logged_out.get(provider).cloned())
     }
 
     async fn cancel(&self, agent: &AetherAgentId, _reason: &str) -> Result<(), ArchonError> {

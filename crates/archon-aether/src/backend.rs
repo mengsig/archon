@@ -590,6 +590,12 @@ impl AgentBackend for AetherBackend {
         self.link.client()?.wake(agent).await.map(|_| ())
     }
 
+    async fn engine_login(&self, provider: &str) -> Result<Option<String>, ArchonError> {
+        assert!(!provider.is_empty(), "a model names its provider");
+        let auth = self.link.client()?.auth_status().await?;
+        Ok(crate::auth::login_problem(provider, &auth))
+    }
+
     async fn update_agent(
         &self,
         agent: &AetherAgentId,

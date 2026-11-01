@@ -11,6 +11,7 @@ pub mod coordination;
 mod dependencies;
 mod descendants;
 mod discard;
+pub(crate) mod engine_wait;
 pub(crate) mod fast_check;
 mod finish;
 mod forewarn;
@@ -805,7 +806,7 @@ async fn remove_ended_worktree(
 }
 
 /// The spawns to issue now: not one an infrastructure retry holds back for
-/// a while. While dispatch is held for disk space only those
+/// a while, nor a never-sent one on an engine held for its login. While dispatch is held for disk space only those
 /// of finished runs are, so a run cancelled meanwhile retires at once. On a
 /// full disk only their never-sent ones are, which settle without Aether: a
 /// spawn that may have reached Aether would hit the full disk again, so it
@@ -815,6 +816,7 @@ async fn issuable(
     issue: Vec<StageRunId>,
 ) -> Result<BTreeSet<StageRunId>, ArchonError> {
     let issue = due(ctx, dedup(issue)).await?;
+    let issue = engine_wait::ready(ctx, issue).await?;
     if issue.is_empty() || !ctx.disk.holding() {
         return Ok(issue);
     }

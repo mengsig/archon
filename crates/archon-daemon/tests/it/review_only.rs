@@ -462,7 +462,8 @@ async fn a_review_whose_branch_moved_off_the_frozen_head_is_refused() {
     else {
         panic!("a change: {changed:?}");
     };
-    let verdict = json!({"verdict": "pass", "head": made["commit"], "findings": []});
+    let fork = git(&origin_of(&h), &["rev-parse", "main"]);
+    let verdict = json!({"verdict": "pass", "head": made["commit"], "base": fork, "findings": []});
     h.backend.complete_delegated(&reviewer, verdict);
     h.settle_running(|_| changed.clone()).await;
     h.dispatch().await;
@@ -550,6 +551,35 @@ async fn a_review_of_the_tail_against_a_mirror_s_base_passes_nothing() {
 
     let state = h.state(&item.id).await;
     assert!(matches!(state, QueueState::Failed { .. }), "{state:?}");
+    assert!(h.orchestrator(request_merge(&item)).await.is_err());
+    assert!(!gh.calls().iter().any(|c| c.starts_with("pr merge")));
+}
+
+/// A reviewer that names no base may have read only a tail a local base ref
+/// pointed it to: its pass of a whole pull request counts for nothing.
+#[tokio::test]
+async fn a_pass_of_a_whole_pull_request_naming_no_base_passes_nothing() {
+    let (h, gh, head) = fork_pull_request().await;
+    grant_merge(&h).await;
+    let item = review_item(&h, &head, ReviewLevel::Standard).await;
+
+    let lead = h.running().await.remove(0);
+    let reviewer = h
+        .backend
+        .delegate(lead.aether_agent.as_ref().unwrap(), REVIEW_MODEL);
+    let unbased = json!({"verdict": "pass", "head": head, "findings": []});
+    h.backend.complete_delegated(&reviewer, unbased);
+    let passed = StageOutcome::Completed {
+        summary: format!("Reviewed {FORK_PR} at {head}; checks green"),
+        structured: Some(json!({"review": {"verdict": "pass", "reviewers": [reviewer.as_str()]}})),
+    };
+    h.settle_running(|_| passed.clone()).await;
+    h.dispatch().await;
+
+    let QueueState::Failed { error, .. } = h.state(&item.id).await else {
+        panic!("refused: {:?}", h.state(&item.id).await);
+    };
+    assert!(error.contains("without naming the base"), "{error}");
     assert!(h.orchestrator(request_merge(&item)).await.is_err());
     assert!(!gh.calls().iter().any(|c| c.starts_with("pr merge")));
 }

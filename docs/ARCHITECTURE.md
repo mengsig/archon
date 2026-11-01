@@ -5265,7 +5265,8 @@ push to; its branch starts at the frozen head (a fork's fetched from
 merge base, the fork point with the base commit GitHub shows for that
 pull request (`baseRefOid`), fetched by id: no local ref, tracking ref or
 remote URL moves it. A pull request retargeted since enqueue, so that
-GitHub shows a base branch other than the frozen one, passes nothing.
+GitHub shows a base branch other than the frozen one, passes nothing, nor
+does a pass whose reviewer names no base it read from.
 When the review is counted
 (§8.2), archond records the branch head it passed as `reviewed_head`, and
 the fork its reviewers read from as `reviewed_fork`, in the stage's
@@ -5285,7 +5286,10 @@ the above:
 - the base commit GitHub shows for the pull request, fetched by id, still
   holding `reviewed_fork`: a base force-pushed back or rewritten past
   commits of the pull request after the review would bring them in
-  unread, so it is refused, naming both commits.
+  unread, so it is refused, naming both commits. Known limit: `gh pr
+  merge` pins only the head, so a base rewritten in the round trip after
+  that last read is not seen; branch protection that forbids force-pushes
+  to the base closes it.
 
 The method is chosen as for any merge, and no author is passed, so GitHub
 credits the pull request's author. An item that `depends_on` such a review

@@ -619,6 +619,11 @@ async fn holding(
         },
         _ => (base_branch, onto_head, None),
     };
+    if fork.is_some()
+        && let Some(why) = unbased_pass(&verdicts, earlier.as_deref())
+    {
+        return Ok(Checked::Refused(why));
+    }
     let workspace = run.workspace.clone();
     let checked = tokio::task::spawn_blocking(move || {
         let mut history = History::new(&workspace);
@@ -758,6 +763,23 @@ async fn trusted_fork(
     };
     assert!(is_commit_id(&fork), "merge-base prints a full commit id");
     Ok(Ok(fork))
+}
+
+/// Why a pass of a whole pull request does not count: a reviewer naming no
+/// base may have read only a tail that a local base ref pointed it to.
+fn unbased_pass(verdicts: &[Read], earlier: Option<&[Read]>) -> Option<String> {
+    assert!(!verdicts.is_empty(), "a named reviewer was read");
+    let earlier = earlier.unwrap_or_default();
+    let (agent, _) = verdicts
+        .iter()
+        .chain(earlier)
+        .find(|(_, verdict)| verdict.pass && verdict.base.is_none())?;
+    assert!(!agent.is_empty(), "a read reviewer has an agent id");
+    Some(format!(
+        "reviewer {agent} passed the pull request without naming the base it read from: a \
+         review of a whole pull request counts only from a base at or before where it left \
+         GitHub's base"
+    ))
 }
 
 /// Why a review of `reviewed` does not hold at the branch `head`: a review

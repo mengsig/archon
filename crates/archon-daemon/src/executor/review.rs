@@ -2,7 +2,8 @@
 //! taken from the lead's word: each reviewer the lead names must be an agent
 //! it delegated to whose own result passed the change as the branch holds it.
 //! A named delta read it left unanchored may rest on a fresh lead's settled
-//! earlier reviewers, which Archon finds, checks and records itself.
+//! earlier reviewers, which Archon finds, checks and records itself. A
+//! reviewer of the attempt that failed with a blocking finding counts, named or not.
 
 mod coverage;
 mod rounds;
@@ -21,7 +22,7 @@ use super::recover;
 use crate::context::DaemonContext;
 use crate::worktree::shadow::Shadow;
 use crate::worktree::stack::{self, is_commit_id};
-use coverage::{Base, Held, History};
+use coverage::{Base, Held, History, Verdicts};
 pub(super) use rounds::{Capped, attempt_resumed, capped_at_completion, reviewer_settled};
 
 /// Agents named in a refusal: enough to see what the lead delegated to.
@@ -200,8 +201,13 @@ async fn reviewers(
         picked.len() >= owed as usize,
         "the review level's reviewers were picked"
     );
+    let left_out = match left_out_fails(ctx, stage, &beneath, &picked).await? {
+        Ok(left_out) => left_out,
+        Err(why) => return Ok(Err(why)),
+    };
     let check = |earlier: Option<Vec<Read>>| {
-        holding(ctx, run, verdicts.clone(), earlier, owed, shipped.clone())
+        let read = (verdicts.clone(), left_out.clone(), earlier);
+        holding(ctx, run, read, owed, shipped.clone())
     };
     let checked = match check(None).await? {
         Checked::Unanchored(stray) => {
@@ -251,6 +257,66 @@ async fn earlier_reads(
         Err(why) => return Ok(Err(why)),
     };
     earlier_verdicts(ctx, &earlier).await
+}
+
+/// The verdicts of the reviewers of `stage`'s attempt that failed with a
+/// blocking finding and are none of the `picked` ones, or why one cannot be
+/// read: each fail stands until a pass reads past it, as a named one does.
+async fn left_out_fails(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    beneath: &[Descendant],
+    picked: &[&Descendant],
+) -> Result<Result<Vec<Read>, String>, ArchonError> {
+    let lead = stage
+        .aether_agent
+        .as_ref()
+        .expect("a checked stage has its agent");
+    assert!(!picked.is_empty(), "a review names its reviewers");
+    let fails = rounds::attempt_fails(ctx, &stage.id).await?;
+    let mut reads = Vec::with_capacity(fails.len());
+    for (agent, head) in fails {
+        if picked.iter().any(|p| p.agent.as_str() == agent) {
+            continue;
+        }
+        let listed = beneath
+            .iter()
+            .find(|d| d.parent == *lead && d.agent.as_str() == agent && d.task.is_some());
+        let Some(child) = listed else {
+            // Aether no longer lists it: the head the tally kept still stands.
+            reads.push((agent, tallied_fail(head)));
+            continue;
+        };
+        let verdict = match result_of(ctx, child).await?.and_then(verdict_in) {
+            Ok(verdict) => verdict,
+            Err(why) => {
+                return Ok(Err(format!(
+                    "reviewer {agent}, which failed this attempt's change with a blocking \
+                     finding, {why}"
+                )));
+            }
+        };
+        if verdict.pass {
+            tracing::warn!(%agent, "a reviewer counted as failing now reads as a pass");
+            continue;
+        }
+        reads.push((agent, verdict));
+    }
+    Ok(Ok(reads))
+}
+
+/// The fail of `head` the attempt's tally counted, for a reviewer Aether no
+/// longer lists: read as a whole-change fail.
+fn tallied_fail(head: String) -> Verdict {
+    assert!(!head.is_empty(), "a counted fail names its head");
+    Verdict {
+        pass: false,
+        head,
+        base: None,
+        findings: None,
+        blocking: None,
+        blocking_findings: Vec::new(),
+    }
 }
 
 /// The `picked` reviewers `held` counts at `head` (its passes, and the
@@ -621,13 +687,13 @@ fn verdict_in(outcome: StageOutcome) -> Result<Verdict, String> {
 }
 
 /// Whether the named `verdicts` hold for the run's branch as it stands, which
-/// must hold the `shipped` tree if one is given. `earlier` reads, once read,
-/// may anchor named delta reads; `None` asks first whether any is needed.
+/// must hold the `shipped` tree if one is given, with no `left_out` fail of
+/// the attempt standing. `earlier` reads, once read, may anchor named delta
+/// reads; `None` asks first whether any is needed.
 async fn holding(
     ctx: &DaemonContext,
     run: &PipelineRun,
-    verdicts: Vec<Read>,
-    earlier: Option<Vec<Read>>,
+    (verdicts, left_out, earlier): (Vec<Read>, Vec<Read>, Option<Vec<Read>>),
     owed: u32,
     shipped: Option<String>,
 ) -> Result<Checked, ArchonError> {
@@ -661,7 +727,12 @@ async fn holding(
             onto_head: onto_head.as_deref(),
             merged_from: merged_from.as_deref(),
         };
-        let placed = coverage::place(&mut history, base, &verdicts, read)?;
+        let read = Verdicts {
+            named: &verdicts,
+            earlier: read,
+            left_out: &left_out,
+        };
+        let placed = coverage::place(&mut history, base, read)?;
         let (head, placed) = match placed {
             Ok(placed) => placed,
             Err(why) => return Ok(Checked::Refused(why)),

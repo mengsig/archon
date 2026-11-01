@@ -9,7 +9,7 @@ use archon_core::model::Effort;
 use archon_core::model::ModelRef;
 use archon_core::policy::ModelPolicy;
 use archon_core::ports::{
-    AgentBackend, AgentUpdate, CostBilling, CreatedNode, Descendant, DescendantState,
+    AgentBackend, AgentUpdate, CostBilling, CreatedNode, Descendant, DescendantState, OpenToolCall,
     RunNodeRequest, SpawnRequest, SpawnedAgent, TreePulse,
 };
 use archon_core::run::StageOutcome;
@@ -686,6 +686,14 @@ impl AgentBackend for AetherBackend {
         let client = self.link.client()?;
         let tree = live_tree(&client, agent).await?;
         Ok(tree.map(|(root, beneath)| tree_pulse(&root, &beneath)))
+    }
+
+    async fn open_tool_call(
+        &self,
+        agent: &AetherAgentId,
+    ) -> Result<Option<OpenToolCall>, ArchonError> {
+        let client = self.link.client()?;
+        crate::tool_calls::open(&client, agent).await
     }
 
     /// Each agent is told before it is resumed, so the note is in its inbox

@@ -14,6 +14,23 @@
 
 ### Fixed
 
+- A stage agent stuck in one tool call is found and woken. On 2026-11-01 an
+  implement agent sat 85 minutes in a Bash call that never returned, and the
+  stage watchdog never fired: a live engine counted as a turn in flight,
+  Aether's minute-by-minute lease renewals kept its `last_event_at` fresh,
+  and the orchestrator's messages delivered to the agent counted as events.
+  Now, once archond's stream has heard nothing of a running tree for
+  `limits.hung_tool_minutes` (default 20), the watchdog reads the lead's
+  newest tool and turn events from Aether. A call with no outcome and nothing
+  of the agent since for that long (`limits.hung_check_minutes`, default 60,
+  for a known long check such as `make ci` or `cargo test`) has its turn
+  interrupted, and the same agent is woken with a note naming the call. A
+  second hang in the same stage run, at least the limit after the
+  interrupt, stops the stage as an infrastructure failure, which
+  `limits.infra_retries` retries; neither counts against the model. Each
+  step posts a stage `info` message to the orchestrator. Calls to Aether's
+  own waiting tools and resumed kept agents are left alone, and mail
+  arriving no longer counts as activity on archond's stream.
 - An engine whose login fails no longer fails every running item. On
   2026-10-31 an OAuth outage of one engine failed each item that ran on it,
   and each needed a retry by hand: a login failure waited 5 minutes but

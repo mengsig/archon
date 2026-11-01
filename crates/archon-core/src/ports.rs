@@ -247,6 +247,20 @@ pub struct TreePulse {
     pub running: bool,
 }
 
+/// A tool call an agent's current turn started and has no outcome for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenToolCall {
+    /// Aether's id of the call.
+    pub id: String,
+    pub name: String,
+    /// The shell command it runs, when its input names one.
+    pub command: Option<String>,
+    pub requested_at: Timestamp,
+    /// The agent's newest tool, message or turn event, at or after
+    /// `requested_at`: nothing of the agent came since.
+    pub last_event_at: Timestamp,
+}
+
 /// A change to a live agent; `None` leaves that part as it is.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AgentUpdate {
@@ -367,6 +381,15 @@ pub trait AgentBackend: Send + Sync {
     /// longer knows `agent`. A backend that cannot tell reports an empty pulse.
     async fn pulse(&self, _agent: &AetherAgentId) -> Result<Option<TreePulse>, ArchonError> {
         Ok(Some(TreePulse::default()))
+    }
+
+    /// The tool call `agent`'s current turn left open; `None` when there is
+    /// none, or the backend cannot tell.
+    async fn open_tool_call(
+        &self,
+        _agent: &AetherAgentId,
+    ) -> Result<Option<OpenToolCall>, ArchonError> {
+        Ok(None)
     }
 
     /// Resume every agent of `lead`'s tree that Aether blocked for

@@ -4,7 +4,8 @@
 //! lock). The sweep judges each one; a stalled stage settles as an
 //! infrastructure failure, so `limits.infra_retries` re-spawns it once on the
 //! same worktree and a second stall is final. The same read finds trees that
-//! wait on something Archon never asks a person for (see `inspection`).
+//! wait on something Archon never asks a person for (see `inspection`), and
+//! a lead stuck in one tool call (see `hung`).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -18,7 +19,7 @@ use archon_core::ports::TreePulse;
 use archon_core::run::{StageOutcome, StageRun, StageState};
 use archon_queue::Store;
 
-use super::inspection;
+use super::{hung, inspection};
 use crate::context::DaemonContext;
 
 /// The key of a stage the watchdog is stopping, holding the reason.
@@ -112,6 +113,8 @@ pub struct Policy {
     pub silence: Duration,
     /// With no report of the engine at all.
     pub fallback: Duration,
+    /// For a lead's open tool call; `None` when that check is off.
+    pub hung: Option<hung::Limits>,
 }
 
 impl Policy {
@@ -125,7 +128,11 @@ impl Policy {
         // A fallback shorter than the reported-dead wait would fire sooner
         // on less evidence.
         let fallback = minutes(limits.stall_fallback_minutes).max(silence);
-        Some(Self { silence, fallback })
+        Some(Self {
+            silence,
+            fallback,
+            hung: hung::Limits::of(limits),
+        })
     }
 }
 
@@ -155,7 +162,7 @@ pub struct Reading {
     pub inspection: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verdict {
     Healthy,
     Stalled {
@@ -170,6 +177,9 @@ pub enum Verdict {
     HeldLong {
         silent: Duration,
     },
+    /// The lead's open tool call went quiet past its limit while its engine
+    /// stays alive: Archon interrupts it once, then stops the stage.
+    Hung(hung::Hung),
 }
 
 /// Whether the tree is stalled: an agent is `running` yet nothing has been
@@ -253,6 +263,25 @@ pub(super) fn inspection_refused(why: &str) -> String {
     )
 }
 
+/// The failure of a stage whose lead hung in a tool call, `call`, again
+/// after an interrupt, for `minutes`.
+pub(super) fn hung_again(call: &str, minutes: u64) -> String {
+    assert!(!call.is_empty(), "the call is named");
+    format!(
+        "{STALLED}: tool call {call} hung again for {minutes} min after Archon interrupted an \
+         earlier hang"
+    )
+}
+
+/// The failure of a stage whose lead was interrupted in a hung tool call,
+/// `call`, but could not be woken, Aether saying `why`.
+pub(super) fn hung_unwoken(call: &str, why: &str) -> String {
+    assert!(!call.is_empty(), "the call is named");
+    format!(
+        "{STALLED}: tool call {call} hung and was interrupted, but its agent was not woken: {why}"
+    )
+}
+
 /// Whether `error` is a stall the watchdog stopped the agent for.
 pub(super) fn is_stall(error: &str) -> bool {
     error.starts_with(STALLED)
@@ -269,6 +298,7 @@ pub(super) async fn scan(
         let mut store = ctx.store.lock().await;
         forget_settled(&mut store, INTENT_KEY_PREFIX)?;
         forget_settled(&mut store, inspection::ESCALATED_KEY_PREFIX)?;
+        forget_settled(&mut store, hung::KEY_PREFIX)?;
     }
     let Some(policy) = Policy::of(&ctx.config.limits) else {
         // Off: the fleet still records events, so nothing may be kept.
@@ -285,7 +315,9 @@ pub(super) async fn scan(
             continue;
         };
         let waits = waiting.holds(&stage.run, ctx, stage).await?;
-        match judge_stage(ctx, &policy, lead, waits, now).await? {
+        // A kept agent's turn end is read as its answer (§6.7): never cut one.
+        let interruptible = stage.aether_task.is_some();
+        match judge_stage(ctx, &policy, lead, waits, interruptible, now).await? {
             Verdict::Stalled {
                 silent,
                 engine_known,
@@ -297,6 +329,11 @@ pub(super) async fn scan(
             }
             Verdict::HeldLong { silent } => {
                 inspection::escalate_held(ctx, stage, lead, silent).await?;
+            }
+            Verdict::Hung(hung) => {
+                if let Some(reason) = hung::act(ctx, stage, lead, &hung, now).await? {
+                    stalled.push((stage.id.clone(), reason));
+                }
             }
             Verdict::Healthy => {}
         }
@@ -311,10 +348,12 @@ async fn judge_stage(
     policy: &Policy,
     lead: &AetherAgentId,
     waiting: bool,
+    interruptible: bool,
     now: Timestamp,
 ) -> Result<Verdict, ArchonError> {
     let last_event = ctx.activity.newest(lead, &[], now);
-    let quiet = policy.silence.min(policy.fallback);
+    let hung_limits = policy.hung.filter(|_| interruptible);
+    let quiet = hung_limits.map_or(policy.silence, |limits| limits.tool.min(policy.silence));
     if waiting || (now - last_event).to_std().unwrap_or(Duration::ZERO) < quiet {
         return Ok(Verdict::Healthy);
     }
@@ -338,7 +377,43 @@ async fn judge_stage(
         .map(|d| d.agent)
         .collect();
     let seen = ctx.activity.newest(lead, &beneath, now);
-    Ok(judge(policy, &read_tree(now, seen, waiting, pulse)))
+    let reading = read_tree(now, seen, waiting, pulse);
+    let verdict = judge(policy, &reading);
+    match hung_limits {
+        Some(limits) if verdict == Verdict::Healthy => {
+            judge_hung(ctx, &limits, lead, &reading).await
+        }
+        _ => Ok(verdict),
+    }
+}
+
+/// The hang of `lead`'s open tool call. Read only for a tree with an agent
+/// `running`, nothing holding it, and nothing heard of it on archond's own
+/// stream for the tool limit: Aether's lease renewals are no output.
+async fn judge_hung(
+    ctx: &DaemonContext,
+    limits: &hung::Limits,
+    lead: &AetherAgentId,
+    reading: &Reading,
+) -> Result<Verdict, ArchonError> {
+    assert!(reading.heard <= reading.now, "heard before now");
+    let quiet = (reading.now - reading.heard)
+        .to_std()
+        .unwrap_or(Duration::ZERO);
+    let held = reading.waiting || reading.held || reading.inspection;
+    if !reading.running || held || quiet < limits.tool {
+        return Ok(Verdict::Healthy);
+    }
+    let call = match ctx.backend.open_tool_call(lead).await {
+        Ok(call) => call,
+        Err(ArchonError::Unavailable(why) | ArchonError::Protocol(why)) => {
+            tracing::info!(%lead, %why, "open tool call unread; the next sweep looks again");
+            return Ok(Verdict::Healthy);
+        }
+        Err(error) => return Err(error),
+    };
+    let hung = call.and_then(|call| hung::judge(limits, &call, reading.now));
+    Ok(hung.map_or(Verdict::Healthy, Verdict::Hung))
 }
 
 /// The reading of a tree from archond's newest event of it, `seen`, and

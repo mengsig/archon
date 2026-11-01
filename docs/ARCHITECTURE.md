@@ -1534,6 +1534,25 @@ in a new worktree off the base branch (§13).
   stall is final. The retry shows in the feed, and the failure in the
   stage's error in `get_item` and the item's outcome. `stall_minutes = 0`
   turns the watchdog off.
+  A lead stuck in one tool call keeps its engine alive and its lease
+  renewed, so the silence above never comes. Once archond's own stream has
+  heard nothing of a `running` tree that nothing holds for
+  `limits.hung_tool_minutes` (default 20; mail delivered to an agent is
+  not activity), archond reads the lead's newest tool, message and turn
+  events from Aether (`get_events` newest first). A call with no outcome
+  in the current turn and no event of the lead since for that long, or
+  `limits.hung_check_minutes` (default 60) when its command is a known long
+  check (`make ci`, `cargo test`, `pytest`, ...), is hung. Calls to Aether's
+  own tools (`wait_for`, `delegate`, `ask_user`) never are, and a kept agent
+  resumed for a fix (§6.7) is never interrupted, as its turn's end is its
+  answer. The first hang of a stage run interrupts the lead's turn
+  (Aether's `interrupt`) and sends it a note naming the call and saying to
+  continue; a note that cannot be sent stops the stage. A hang seen at
+  least the limit after that interrupt stops the stage like a stall
+  ("agent stalled: tool call … hung again …"), so `limits.infra_retries`
+  retries it; neither step is model evidence. Each step posts a stage
+  `info` message to the orchestrator. `hung_tool_minutes = 0` turns this
+  check off.
 - A stage that failed on a full disk gets up to 5 re-spawns of its own.
   Its error text must say so, as above, and come from Aether's
   infrastructure (`infra`). A failure the agent reported itself counts only

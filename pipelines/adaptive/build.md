@@ -66,27 +66,27 @@ read again.
    security or an invariant is at stake, or the brief asks for depth. Require the
    verdict your contract shows, on the head it read, with actionable
    findings (path, issue, impact, remedy).
-   Pass on your contract's bounds for reviewers.
-   Correctness, security and missing essential coverage block; style advice
-   does not. Prefer a model other than your own where the policy in your
+   Pass on your contract's bounds for reviewers and its blocking class:
+   only blocking findings fail; the rest are follow-ups. Prefer a model other than your own where the policy in your
    contract allows one; otherwise use your own and say so in the summary. Do
    not create a reviewer per worker.
 6. **Fix.** Fix blocking findings and failed checks yourself while context is
    warm, in new commits, and rerun the checks the fix affects. Run the full
    suite again only for a fix whose broad impact you can name, or where the
    project's policy demands it; never because a tree that passed was
-   committed. Leave advisory and style findings open and list them.
+   committed. Leave follow-ups open and list them in the `pr.body`.
    A second look is owed after a failed verdict and for any commit after a
    pass: Archon delivers only commits a passing reviewer read, so batch
-   fixes. Delegate the missing passes as your contract defines, each a NEW
-   agent at the new head: after a fail one reads the whole change (`base`
-   the change's start) and any others only what changed since the head they
-   passed. Each gets the previous verdicts, each finding beside its fix,
-   and the regression evidence. If the operator adds scope while a review
-   runs, let it finish, keep its verdict for the commit it read, and have the whole
-   change read again with the addition. Continue while fixes
-   make progress within the item's time and spending limits; escalate
-   repeated findings or a stalled approach with evidence.
+   fixes. Only the first whole-change read takes as many reviewers as your
+   contract asks; each re-review is ONE new agent that reads only the fix
+   (`base` the head the earlier reviews read), given the open findings,
+   each beside its fix, and the regression evidence, and verifies each is
+   fixed with no regression. No new whole-change read is owed. If the
+   operator adds scope while a review runs, let it finish, keep its verdict
+   for the commit it read, and have the whole change read again with the
+   addition. After three failed rounds Archon stops this stage and escalates
+   the open blocking findings, so settle a disputed finding with evidence
+   rather than another round.
 7. **Finish or fail.** An unresolved blocking finding, a failed check, a
    review your contract asks for that did not run, or delegation you needed
    and could not get fail this stage via `fail_task`; use `BLOCKED:` for

@@ -59,11 +59,11 @@ The workers report (claims to verify, not evidence):
    and `git rev-parse HEAD`), the changed paths, the checks you ran with
    their results, and the risks you know of. While they read, run the
    project's build, lint and full test suite once.
-6. **Fix findings.** Correctness, security and missing essential coverage
-   block; style does not. Fix blocking findings in new commits, rerun the
-   checks they affect, and re-review the fixed head as your contract says:
-   one new reviewer reads the whole change again, any others only the fix.
-   Leave advisory findings open and list them.
+6. **Fix findings.** Only blocking findings, as your contract defines them,
+   fail. Fix them in new commits, rerun the checks they affect, and
+   re-review as your contract says: one new reviewer reads only the fix,
+   given the open findings. Leave follow-ups open and list them in the
+   `pr.body`.
 7. **Finish or fail.** An unresolved blocking finding, a failed check or a
    review your contract asks for that did not run fails this stage with
    `fail_task`; use `BLOCKED:` for missing access. Leave a clean working

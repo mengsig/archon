@@ -757,13 +757,11 @@ fn adaptive_prices_what_it_delegates_and_records_what_ships() {
         "never below one your contract names: medium for ordinary risk, high where the change's risk is medium or more",
         "never because a tree that passed was committed",
         "for any commit after a pass: Archon delivers only commits a passing reviewer read",
-        "Delegate the missing passes as your contract defines, each a NEW agent at the new head",
-        "after a fail one reads the whole change (`base` the change's start)",
-        "any others only what changed since the head they passed",
-        "Pass on your contract's bounds for reviewers",
+        "Only the first whole-change read takes as many reviewers as your contract asks",
+        "(`base` the head the earlier reviews read), given the open findings",
+        "Pass on your contract's bounds for reviewers and its blocking class",
         "Use leaf workers unless a bounded subproblem benefits from another level allowed by the contract",
-        "Continue while fixes make progress within the item's time and spending limits; \
-         escalate repeated findings or a stalled approach with evidence",
+        "settle a disputed finding with evidence rather than another round",
         "An unresolved blocking finding, a failed check",
         "Advice left open fails nothing",
         "Archon delivers your commits as they are. Do not push.",
@@ -805,16 +803,25 @@ fn direct_escalates_on_risk_not_size() {
         "{prompt}"
     );
     assert!(
-        prompt.contains("re-review of only what changed"),
+        prompt.contains("its blocking class and its one-reviewer re-review of only the fix"),
         "{prompt}"
     );
     let integrate = &catalog.get("swarm").unwrap().prompts["integrate.md"];
     let integrate = integrate.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
-        integrate
-            .contains("one new reviewer reads the whole change again, any others only the fix"),
+        integrate.contains("one new reviewer reads only the fix, given the open findings"),
         "{integrate}"
     );
+    let build = &catalog.get("adaptive").unwrap().prompts["build.md"];
+    let build = build.split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        "each re-review is ONE new agent that reads only the fix",
+        "No new whole-change read is owed",
+        "After three failed rounds Archon stops this stage",
+        "only blocking findings fail; the rest are follow-ups",
+    ] {
+        assert!(build.contains(said), "missing {said:?} in {build}");
+    }
 }
 
 #[test]

@@ -317,16 +317,25 @@ fn assemble(
 
 /// Where the run's change starts. A refresh's starts at the base commit it
 /// merges, so once merged its diff holds the change and the resolutions, not
-/// the upstream commits between the old fork and that base.
+/// the upstream commits between the old fork and that base. One stacked on a
+/// reviewed pull request starts at its reviewed head.
 async fn change_base(
     ctx: &DaemonContext,
     item: &QueueItem,
     workspace: &Workspace,
     in_git: bool,
 ) -> Result<String, ArchonError> {
-    let fix = ctx.store.lock().await.stack_fix(&item.id)?;
+    let (fix, reviewed) = {
+        let store = ctx.store.lock().await;
+        let reviewed = super::onto::reviewed_dependency(&store, item)?;
+        (store.stack_fix(&item.id)?, reviewed)
+    };
     let Some(refresh) = fix.and_then(|fix| fix.refresh) else {
-        return fork_commit(workspace, in_git).await;
+        // Stacked on a reviewed pull request, the change starts at its head.
+        return match reviewed.filter(|_| in_git) {
+            Some(reviewed) => Ok(reviewed.head_sha),
+            None => fork_commit(workspace, in_git).await,
+        };
     };
     assert!(in_git, "a refresh works in its owner's git worktree");
     assert!(
@@ -369,8 +378,11 @@ async fn workspace(
         "validated: team pipelines use worktrees"
     );
     let tiers = env.tiers()?;
-    // An `onto` item's change is for its pull request's base.
-    let onto_base = item.onto.as_ref().map(|onto| onto.base_ref.clone());
+    let reviewed = super::onto::reviewed_dependency(&*ctx.store.lock().await, item)?;
+    // An `onto` item's change, or one stacked on a reviewed pull request, is
+    // for that pull request's base.
+    let onto_base = item.onto.as_deref().or(reviewed.as_ref());
+    let onto_base = onto_base.map(|onto| onto.base_ref.clone());
     let base = onto_base.or_else(|| env.fork_base(&tiers));
     // Only an integration branch is created when it is missing.
     let release = tiers
@@ -385,7 +397,12 @@ async fn workspace(
     match (mode, &env.repo) {
         (WorkspaceMode::Worktree, Some(repo)) => {
             super::repo_identity::ensure_current(ctx, repo).await?;
-            add_worktree(ctx, repo, item, (base, release), team).await
+            let from = Start {
+                base,
+                release,
+                reviewed,
+            };
+            add_worktree(ctx, repo, item, from, team).await
         }
         (WorkspaceMode::Worktree, None) => Err(ArchonError::Invalid(
             "a worktree pipeline needs a repository".into(),
@@ -407,17 +424,88 @@ async fn workspace(
     }
 }
 
+/// Where a new worktree's branch starts.
+struct Start {
+    base: Option<String>,
+    /// The release branch an integration `base` is created from.
+    release: Option<String>,
+    /// The reviewed pull request a dependency passed, which the branch
+    /// starts from instead of stacking on any parent.
+    reviewed: Option<OntoPullRequest>,
+}
+
+/// Where a new branch starts.
+struct Fork {
+    /// The commit it forks from, when not its base branch's tip.
+    fork: Option<String>,
+    /// The branch its change is for.
+    base: Option<String>,
+    /// The unmerged parents it stacks on.
+    parents: Vec<StackParent>,
+}
+
+/// Where `branch` of `item` starts: an `onto` item's frozen head, the head a
+/// reviewed dependency passed, an open parent's branch, or its base's fork
+/// point. A stack fix reuses its owner's branch, so it forks from nothing.
+async fn fork_of(
+    ctx: &DaemonContext,
+    repo: &Repo,
+    item: &QueueItem,
+    (from, target): (Start, Option<&StackFix>),
+    branch: &str,
+) -> Result<Fork, ArchonError> {
+    let Start {
+        base,
+        release,
+        reviewed,
+    } = from;
+    assert!(
+        item.onto.is_none() || reviewed.is_none(),
+        "an onto item stacks on nothing"
+    );
+    let parents = parents(ctx, repo, item, target, base.as_deref()).await?;
+    if let (None, Some(reviewed), Some(parent)) = (target, &reviewed, parents.first()) {
+        return Err(ArchonError::Invalid(format!(
+            "{} starts from the head of {} a review passed, so it cannot also stack on the \
+             unmerged {}: queue it once that merged, or queue the two changes as one",
+            item.id,
+            reviewed.pr.url(),
+            parent.parent_item
+        )));
+    }
+    let starts_at = item.onto.as_deref().or(reviewed.as_ref());
+    let stacked_on = parents.iter().find(|p| p.is_open());
+    let fork = match (target, starts_at, stacked_on, base.as_deref()) {
+        (None, Some(onto), ..) => onto_fork(ctx, repo, onto, branch).await?,
+        (None, None, None, Some(base)) => {
+            fork_point(ctx, repo, item, (base, release.as_deref()), branch).await?
+        }
+        _ => None,
+    };
+    assert!(
+        fork.is_none() || target.is_none(),
+        "a stack fix reuses its owner's branch"
+    );
+    let base = stacked_on.map(|p| p.parent_branch.clone()).or(base);
+    Ok(Fork {
+        fork,
+        base,
+        parents,
+    })
+}
+
 /// The item's worktree, added now or reused from an earlier run; a team
 /// run's is `main` under the item's directory. Each fresh retry of the
 /// item gives it a new branch. With a `release` branch, `base` is the
 /// integration branch, created from it when missing. An `onto` item's
 /// branch starts from its pull request's frozen head, for that pull
-/// request's base.
+/// request's base; one stacked on a reviewed pull request, from its
+/// reviewed head.
 async fn add_worktree(
     ctx: &DaemonContext,
     repo: &Repo,
     item: &QueueItem,
-    (base, release): (Option<String>, Option<String>),
+    from: Start,
     team: bool,
 ) -> Result<Workspace, ArchonError> {
     let manager = WorktreeManager::new(
@@ -425,20 +513,15 @@ async fn add_worktree(
         ctx.config.worktrees.branch_prefix.clone(),
     );
     let target = ctx.store.lock().await.stack_fix(&item.id)?;
-    let parents = parents(ctx, repo, item, target.as_ref(), base.as_deref()).await?;
-    let stacked_on = parents.iter().find(|p| p.is_open());
     let branch = target
         .as_ref()
         .map(|t| t.branch.clone())
         .unwrap_or_else(|| manager.branch_name(&item.id, &item.title, item.fresh_retries));
-    let fork = match (&target, &item.onto, stacked_on, base.as_deref()) {
-        (None, Some(onto), ..) => onto_fork(ctx, repo, onto, &branch).await?,
-        (None, None, None, Some(base)) => {
-            fork_point(ctx, repo, item, (base, release.as_deref()), &branch).await?
-        }
-        _ => None,
-    };
-    let base = stacked_on.map(|p| p.parent_branch.clone()).or(base);
+    let Fork {
+        fork,
+        base,
+        parents,
+    } = fork_of(ctx, repo, item, (from, target.as_ref()), &branch).await?;
     let start = fork.clone().or_else(|| base.clone());
     let item_id = target
         .as_ref()

@@ -105,6 +105,21 @@ pub struct OntoPullRequest {
     pub head_ref: String,
     pub base_ref: String,
     pub head_sha: String,
+    /// The item's pipeline pushes nothing: it reviews or reads the pull
+    /// request, whose head may be a fork. A review that passed `head_sha`
+    /// lets `request_merge` merge the pull request at that commit.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub review_only: bool,
+}
+
+impl OntoPullRequest {
+    /// Whether the head lives in another repository than the pull request:
+    /// a fork, which Archon never pushes to.
+    pub fn is_fork(&self) -> bool {
+        !self
+            .head_repository
+            .eq_ignore_ascii_case(&self.pr.repository)
+    }
 }
 
 impl fmt::Display for OntoPullRequest {
@@ -169,6 +184,30 @@ mod tests {
         assert_eq!(serde_json::from_str::<PullRequestRef>(&json).unwrap(), pr);
         let bad = serde_json::from_str::<PullRequestRef>("\"https://github.com/o/r/pull/0\"");
         assert!(bad.is_err());
+    }
+
+    #[test]
+    fn a_head_in_another_repository_is_a_fork() {
+        let mut onto = OntoPullRequest {
+            target: OntoTarget::Pr(7),
+            pr: PullRequestRef::from_url("https://github.com/o/r/pull/7").unwrap(),
+            node_id: None,
+            head_repository: "o/r".into(),
+            head_ref: "feature".into(),
+            base_ref: "main".into(),
+            head_sha: "a".repeat(40),
+            review_only: true,
+        };
+        assert!(!onto.is_fork());
+        let stored = serde_json::to_value(&onto).unwrap();
+        assert_eq!(stored["review_only"], true);
+        onto.review_only = false;
+        let delivering = serde_json::to_value(&onto).unwrap();
+        assert!(delivering.get("review_only").is_none(), "{delivering}");
+        let read: OntoPullRequest = serde_json::from_value(delivering).unwrap();
+        assert!(!read.review_only, "an older record delivers");
+        onto.head_repository = "contributor/r".into();
+        assert!(onto.is_fork());
     }
 
     #[test]

@@ -501,7 +501,11 @@ fn run_sections(
         WorkspaceMode::Worktree if item.onto.is_some() => {
             super::onto::section(item.onto.as_deref())
         }
-        WorkspaceMode::Worktree => super::onto::local::section(store, &item.id)?,
+        WorkspaceMode::Worktree => {
+            let reviewed = super::onto::reviewed_dependency(store, item)?;
+            let stacked = super::onto::stacked_section(reviewed.as_ref());
+            stacked + &super::onto::local::section(store, &item.id)?
+        }
         _ => String::new(),
     };
     let dependencies = dependencies::section(store, run, item, mode, &artifacts)?;

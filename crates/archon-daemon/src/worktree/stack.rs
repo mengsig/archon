@@ -100,6 +100,17 @@ pub(crate) fn merge_tree(
     ours: &str,
     theirs: &str,
 ) -> Result<Result<String, String>, ArchonError> {
+    let merged = merge_tree_paths(shadow, base, ours, theirs)?;
+    Ok(merged.map_err(|files| files.join("\n")))
+}
+
+/// [`merge_tree`], the conflicting files each whole as git names them.
+pub(crate) fn merge_tree_paths(
+    shadow: &Shadow,
+    base: Option<&str>,
+    ours: &str,
+    theirs: &str,
+) -> Result<Result<String, Vec<String>>, ArchonError> {
     assert!(is_commit_id(ours) && is_commit_id(theirs), "commit ids");
     assert!(base.is_none_or(is_commit_id), "a merge base is a commit id");
     let mut args = vec![
@@ -121,7 +132,7 @@ pub(crate) fn merge_tree(
     // `merge-tree --write-tree` exits 1 exactly when the merge conflicts.
     match ran.status.code() {
         Some(0) if is_commit_id(&tree) => Ok(Ok(tree)),
-        Some(1) => Ok(Err(fields.collect::<Vec<_>>().join("\n"))),
+        Some(1) => Ok(Err(fields.map(str::to_owned).collect())),
         _ => Err(ran.failure()),
     }
 }

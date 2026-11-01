@@ -3722,7 +3722,9 @@ object per line under `--json`).
   owner's level, read whole from the base. A refresh whose review was
   dropped fails at its record stage if the branch changed code beyond git's
   own merge: each merge's remerge diff and every other new commit, side
-  branches merged in included, must touch only those prose files. A refresh whose branch
+  branches merged in included, must touch only those prose files (a rename
+  counts as both its paths). The brief names the review scope the refresh
+  got: the resolution from the recorded head, or the whole change. A refresh whose branch
   already holds the base commit when it is dispatched (merged in after it
   was queued) is cancelled at once, before any run, saying there was nothing
   to merge.

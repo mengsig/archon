@@ -376,16 +376,12 @@ fn refresh_brief(owner: &archon_core::queue::QueueItem, branch: &str, refresh: &
          follow-up instead of fixing it. It ships as this run's pipeline ships, into the pull \
          request the branch already has: never open a second one, and never rebase or \
          force-push. Archon delivers it only once the branch holds {sha}.\n\n\
-         Review covers the merge resolution only, never the whole change again: \
-         `git show --remerge-diff <merge>` and any commit after the merge. Archon sets this \
-         refresh's review level from what the merge conflicts on: none for a clean merge or \
-         one conflicting only in changelogs, top-level `*.md` or `docs/` files, where the \
-         review that passed the branch before stands and Archon refuses any code changed \
-         beyond the merge; one reviewer for a code conflict, reading the resolution with \
-         `base` set to the merge's first parent (`<merge>^1`), the branch head before it.\n\n\
+         {review}\n\n\
          The item refreshed, {}: {}. Its brief follows as read-only context, not as work \
          to do:\n\n",
-        owner.id, owner.title
+        owner.id,
+        owner.title,
+        review = refresh_review_rules(refresh),
     );
     let context: String = owner
         .brief
@@ -393,6 +389,32 @@ fn refresh_brief(owner: &archon_core::queue::QueueItem, branch: &str, refresh: &
         .map(|line| format!("> {line}\n"))
         .collect();
     format!("{brief}{context}")
+}
+
+/// How a refresh is reviewed: its merge resolution only when Archon recorded
+/// the reviewed head it merges into, else the whole change from the new base.
+fn refresh_review_rules(refresh: &Refresh) -> String {
+    let sha = &refresh.sha;
+    let Some(from) = &refresh.from else {
+        return format!(
+            "The branch head is not one a passing review read, so this refresh keeps its \
+             owner's review level: the review reads the whole change from its new merge base \
+             (`git merge-base {sha} HEAD`) to the head, conflict resolutions included."
+        );
+    };
+    assert!(
+        !from.is_empty() && from != sha,
+        "a reviewed head the base is not"
+    );
+    format!(
+        "Review covers the merge resolution only, never the whole change again: \
+         `git show --remerge-diff <merge>` and any commit after the merge. Archon set this \
+         refresh's review level from what the merge conflicts on: none for a clean merge or \
+         one conflicting only in changelogs, top-level `*.md` or `docs/` files, where the \
+         review that passed the branch at {from} stands and Archon refuses any code changed \
+         beyond the merge; one reviewer for a code conflict, reading the resolution with \
+         `base` set to the merge's first parent, {from}."
+    )
 }
 
 fn validate_parent(conn: &rusqlite::Connection, parent: &StackParent) -> Result<(), ArchonError> {

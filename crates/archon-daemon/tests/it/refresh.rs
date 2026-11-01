@@ -255,6 +255,7 @@ async fn a_refresh_merges_the_new_base_into_the_same_branch_and_pull_request() {
         ReviewLevel::Standard,
         "a code conflict"
     );
+    assert!(fix.brief.contains("merge resolution only"), "{}", fix.brief);
     assert_eq!(
         refresh(&h, &owner).await.unwrap().id,
         fix.id,
@@ -1160,6 +1161,34 @@ async fn a_refresh_of_a_branch_moved_since_its_review_keeps_the_owner_s_review()
     let target = h.ctx.store.lock().await.stack_fix(&fix.id).unwrap();
     let refresh = target.and_then(|target| target.refresh).expect("a refresh");
     assert_eq!(refresh.from, None, "no start but the base");
+    assert!(
+        fix.brief.contains("keeps its owner's review level")
+            && !fix.brief.contains("merge resolution only"),
+        "{}",
+        fix.brief
+    );
+}
+
+/// Moving code into `docs/` removes it: a rename is read as both its paths.
+#[tokio::test]
+async fn a_refresh_owing_no_reviewer_fails_when_it_moves_code_into_docs() {
+    let (h, _gh) = delivering().await;
+    let (owner, _) = shipped(&h, "the change").await;
+    let upstream = advance_origin(&h, "upstream.txt", "elsewhere\n");
+    let fix = refresh(&h, &owner).await.expect("queued");
+    h.dispatch().await;
+    let tree = h.run(&fix.id).await.workspace;
+    git(&tree, &["merge", "--quiet", "--no-edit", upstream.as_str()]);
+    std::fs::create_dir(tree.join("docs")).unwrap();
+    git(&tree, &["mv", "change.txt", "docs/change.txt"]);
+    git(&tree, &["commit", "--quiet", "-m", "Move it"]);
+    settle_merged(&h).await;
+
+    let error = match h.state(&fix.id).await {
+        QueueState::Failed { error, .. } => error,
+        other => panic!("the refresh fails: {other:?}"),
+    };
+    assert!(error.contains("beyond that merge: change.txt."), "{error}");
 }
 
 /// Code a side branch brings in through a clean merge is code the refresh

@@ -453,9 +453,9 @@ fn head_now(
     let sha = super::landed::base_head(&shadow, repo, remote, base)?;
     let tip = stack::sha(repo, branch)?;
     if !stack::contains(repo, &sha, &tip)? {
-        let conflicts = match stack::merge_tree(&shadow, None, &tip, &sha)? {
+        let conflicts = match stack::merge_tree_paths(&shadow, None, &tip, &sha)? {
             Ok(_) => Vec::new(),
-            Err(files) => files.lines().map(str::to_owned).collect(),
+            Err(files) => files,
         };
         let from = tip;
         return Ok(Ok(Fresh {
@@ -599,7 +599,7 @@ async fn dropped_review(
 
 /// What the branch in `dir` changed itself since `from` beyond merging `sha`:
 /// each merge's resolution (`--remerge-diff`) and every other commit's paths,
-/// side branches merged in included.
+/// side branches merged in included; a rename names both of its paths.
 fn authored_paths(dir: &Path, from: &str, sha: &str) -> Result<Vec<String>, ArchonError> {
     assert!(
         stack::is_commit_id(from) && stack::is_commit_id(sha),
@@ -609,6 +609,7 @@ fn authored_paths(dir: &Path, from: &str, sha: &str) -> Result<Vec<String>, Arch
     let args = [
         "log",
         "--diff-merges=remerge",
+        "--no-renames",
         "--name-only",
         "-z",
         "--format=",
@@ -656,6 +657,7 @@ mod tests {
             "docsy/a.rs",
             " docs/a.rs",
             "\nREADME.md",
+            "CHANGELOG\nREADME.md",
         ] {
             assert!(!is_prose(code), "{code}");
         }

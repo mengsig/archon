@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Ship gate
+
+- The ship gate's fast check no longer runs again on a tree it already
+  passed: archond keeps each pass by the git tree id and the exact expanded
+  command, and a later delivery of the same tree whose check expands to the
+  same command reuses it. A pass is kept only once the delivery proved the
+  worktree still holds the checked tree after the check ran, so a check that
+  edits a tracked file keeps none; a failure is never kept, another tree or
+  command runs the check, and restarting archond forgets every pass.
+
 ### Fixed
 
 - Every failed review round of a stage attempt counts toward the cap of

@@ -283,7 +283,9 @@ async fn carry_out(
     };
     let commit = checked.commit.clone();
     match gate_step(ctx, claimed, &repo, &base, gate)? {
-        GateStep::Pass => {}
+        GateStep::Pass(None) => {}
+        // `prove` just found the worktree on the tree the check passed on.
+        GateStep::Pass(Some(pass)) => ctx.runs.lock().await.gates.keep(pass),
         GateStep::Refuse(refusal) => return refused(refusal),
         GateStep::Run(check) => return Ok(Carried::Gate(check)),
     }
@@ -541,8 +543,9 @@ pub(in crate::executor) async fn prove_unchanged(
 /// What the ship gate says of the proved tree.
 #[derive(Debug)]
 enum GateStep {
-    /// Its check passed, or the repository has no trusted one.
-    Pass,
+    /// Its check passed, or the repository has no trusted one; a pass the
+    /// check earned by running is kept once the worktree proof held.
+    Pass(Option<gate::Pass>),
     Refuse(String),
     /// Its check is to run before the delivery goes on.
     Run(gate::Check),
@@ -562,12 +565,16 @@ fn gate_step(
     match gate {
         Some(Err(error)) => return Err(error),
         Some(Ok(verdict)) if verdict.tree == *tree => {
-            return Ok(verdict.refusal.map_or(GateStep::Pass, GateStep::Refuse));
+            let step = match verdict.refusal {
+                Some(refusal) => GateStep::Refuse(refusal),
+                None => GateStep::Pass(verdict.unproved),
+            };
+            return Ok(step);
         }
         Some(Ok(_)) | None => {}
     }
     let Some(template) = fast_check::trusted(repo)? else {
-        return Ok(GateStep::Pass);
+        return Ok(GateStep::Pass(None));
     };
     let env = crate::resolve::RepoEnv::new(Some(repo.clone()))?;
     let mode = env.config.build_cache(&ctx.config.worktrees);

@@ -719,6 +719,24 @@ mod tests {
     }
 
     #[test]
+    fn a_pass_that_states_changes_are_needed_is_held_not_read_as_a_pass() {
+        for tail in [
+            "Changes needed in the parser.",
+            "Issues found: the tail is dropped.",
+            "Still broken on empty input.",
+            ", but tests fail",
+        ] {
+            let held = format!("Verdict: pass. {tail}\nhead: {HEAD}\nbase: 1234567");
+            let error = Verdict::read_result(&held, None).unwrap_err();
+            assert!(error.contains(tail), "{tail}: {error}");
+        }
+        for tail in ["No issues found.", "Nothing is broken."] {
+            let kept = format!("Verdict: pass. {tail}\nhead: {HEAD}\nbase: 1234567");
+            assert!(Verdict::read_result(&kept, None).unwrap().pass, "{tail}");
+        }
+    }
+
+    #[test]
     fn a_verdict_line_is_read_wherever_it_stands_beside_structured_without_one() {
         let late = format!("Prose first.\n\n**Verdict:** PASS\nhead: {HEAD}");
         assert!(Verdict::read_result(&late, None).unwrap().pass);

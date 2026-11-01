@@ -88,6 +88,31 @@ pub(in crate::executor) async fn attempt_resumed(
     save(ctx, &stage.id, &tally).await
 }
 
+/// The settled children `stage`'s attempt read, each with the head of the blocking fail it
+/// counted, if any. Read after [`capped_at_completion`] brought the tally up to date.
+pub(super) async fn attempt_children(
+    ctx: &DaemonContext,
+    stage: &StageRunId,
+) -> Result<Vec<(String, Option<String>)>, ArchonError> {
+    let tally = load(ctx, stage).await?;
+    let mut children: Vec<(String, Option<String>)> =
+        tally.read.into_iter().map(|agent| (agent, None)).collect();
+    for fail in tally.fails {
+        match children.iter_mut().find(|(agent, _)| *agent == fail.agent) {
+            Some(child) => child.1 = Some(fail.head),
+            // A tally written before children were rescanned kept fails alone.
+            None => children.push((fail.agent, Some(fail.head))),
+        }
+    }
+    assert!(
+        children
+            .iter()
+            .all(|(agent, head)| !agent.is_empty() && head.as_ref().is_none_or(|h| !h.is_empty())),
+        "a read child names its agent, and a counted fail its head"
+    );
+    Ok(children)
+}
+
 /// Add the blocking fails of the attempt's settled children not read before
 /// to its tally, in the order Aether created them; the cap, once reached.
 /// `reviewer` is the child an event names, `None` at the lead's completion.

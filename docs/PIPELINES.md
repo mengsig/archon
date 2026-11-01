@@ -396,7 +396,10 @@ rules (their fails stand until answered) but never count toward the level,
 and are recorded as `review.implicit_reviewer_agents`. It does so only when
 the agent ran no other attempt of the run, once every reviewer it delegated
 to has ended (wait for or cancel one still running before completing), and
-when Aether shows each of their results. When the stage also writes the ship
+when Aether shows each of their results. A fail by any reviewer of the
+attempt stands even when the record leaves that reviewer out: the review is
+refused until a pass that holds read past it, and only a resumed agent's
+earlier attempts' reviewers are not read. When the stage also writes the ship
 record, the branch head must hold the record's `tree`. The record names
 the named passes and the named whole-change fails they answered, so the lead
 names every reviewer coverage rests on. With no pass of the head, fewer

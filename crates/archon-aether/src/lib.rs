@@ -23,6 +23,7 @@ pub mod memory;
 pub mod memory_feedback;
 pub mod notifications;
 mod resumed;
+mod tool_calls;
 pub mod wire;
 
 pub use backend::AetherBackend;

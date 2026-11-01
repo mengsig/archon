@@ -8,7 +8,7 @@ use archon_aether::events::{AetherEvent, EventKind};
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::notify::NotificationKind;
-use archon_core::ports::TreePulse;
+use archon_core::ports::{OpenToolCall, TreePulse};
 use archon_core::protocol::{Reply, Request};
 use archon_core::queue::QueueState;
 use archon_core::run::{StageRun, StageState};
@@ -622,4 +622,145 @@ async fn a_held_stage_keeps_a_later_deadline_a_steer_stored_meanwhile() {
         Some(steered),
         "Aether ends with the later one"
     );
+}
+
+/// A turn in flight whose lease Aether renews every minute: its own clock
+/// never goes quiet.
+fn renewed() -> TreePulse {
+    TreePulse {
+        engine_alive: Some(true),
+        last_event_at: Some(archon_core::now()),
+        ..DEAD
+    }
+}
+
+/// A Bash call `command` the lead opened `minutes` ago, with nothing since.
+fn open_call(id: &str, command: &str, minutes: i64) -> OpenToolCall {
+    let then = archon_core::now() - chrono::Duration::minutes(minutes);
+    OpenToolCall {
+        id: id.into(),
+        name: "Bash".into(),
+        command: Some(command.into()),
+        requested_at: then,
+        last_event_at: then,
+    }
+}
+
+const STUCK: &str = "git status --short; git rev-parse HEAD HEAD^{tree}; kill 1227080";
+
+/// 2026-11-01: a stage agent sat 85 min in one Bash call while its engine
+/// lived and Aether renewed its lease; the watchdog never fired.
+#[tokio::test]
+async fn a_lead_hung_in_a_tool_call_is_woken_once_then_its_stage_retried() {
+    let h = Harness::new().await;
+    let item = h.enqueue("hung in a bash call").await;
+    h.dispatch().await;
+    let stage = the_only_running(&h).await;
+    let agent = lead(&stage);
+    h.backend.set_pulse(&agent, renewed());
+    h.backend
+        .set_open_call(&agent, open_call("call_1", STUCK, 21));
+    went_silent(&h, &agent, 21);
+    let mail = AetherEvent {
+        seq: 7,
+        at: archon_core::now(),
+        agent: Some(agent.clone()),
+        task: None,
+        parent: None,
+        run: None,
+        kind: EventKind::InboxDelivered {
+            seq: 3,
+            from_operator: false,
+            message: None,
+        },
+    };
+    archon_daemon::pump::handle_fleet_event(&h.ctx, &mail)
+        .await
+        .expect("mail delivered");
+    sweep(&h).await;
+    assert_eq!(
+        h.backend.interrupts(),
+        vec![agent.clone()],
+        "mail it never read is no progress; the lead alone is interrupted"
+    );
+    let notes: Vec<String> = h
+        .backend
+        .messages()
+        .into_iter()
+        .filter(|(to, text)| {
+            *to == agent && text.contains("hung for 21 min and was interrupted; continue")
+        })
+        .map(|(_, text)| text)
+        .collect();
+    assert_eq!(notes.len(), 1, "woken once with a note: {notes:?}");
+    assert!(notes[0].contains("kill 1227080"), "{}", notes[0]);
+    assert_eq!(
+        the_only_running(&h).await.id,
+        stage.id,
+        "the same agent goes on"
+    );
+    let progress = h.notices(NotificationKind::Progress).await;
+    assert!(
+        progress.iter().any(|p| p.contains("interrupted the turn")),
+        "the orchestrator is told: {progress:?}"
+    );
+
+    h.backend
+        .set_open_call(&agent, open_call("call_2", "sleep 99999", 21));
+    went_silent(&h, &agent, 21);
+    sweep(&h).await;
+    assert_eq!(h.backend.interrupts().len(), 1, "never a second interrupt");
+    assert_eq!(
+        the_only_running(&h).await.id,
+        stage.id,
+        "it has time to recover"
+    );
+
+    let long_ago = (archon_core::now() - chrono::Duration::minutes(21)).to_rfc3339();
+    let mark = format!("hung_tool:{}", stage.id);
+    h.ctx.store.lock().await.kv_set(&mark, &long_ago).unwrap();
+    went_silent(&h, &agent, 21);
+    sweep(&h).await;
+    assert_eq!(h.backend.interrupts().len(), 1, "a stop, not another wake");
+    let retry = the_only_running(&h).await;
+    assert_ne!(retry.id, stage.id, "the stage is retried");
+    let failed = h.stages(&item.id).await.remove(0);
+    let StageState::Failed { error } = &failed.state else {
+        panic!("the hung stage fails: {:?}", failed.state);
+    };
+    assert!(
+        error.starts_with("agent stalled: tool call Bash"),
+        "{error}"
+    );
+    assert!(failed.infrastructure_failure, "no model failure");
+    let progress = h.notices(NotificationKind::Progress).await;
+    assert!(
+        progress.iter().any(|p| p.contains("hung again")),
+        "{progress:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_long_foreground_check_is_not_cut_before_its_own_limit() {
+    let h = Harness::new().await;
+    h.enqueue("running make ci in the foreground").await;
+    h.dispatch().await;
+    let stage = the_only_running(&h).await;
+    let agent = lead(&stage);
+    h.backend.set_pulse(&agent, renewed());
+    h.backend
+        .set_open_call(&agent, open_call("call_ci", "make ci", 45));
+    went_silent(&h, &agent, 45);
+    sweep(&h).await;
+    assert!(
+        h.backend.interrupts().is_empty(),
+        "45 min of make ci is healthy"
+    );
+
+    h.backend
+        .set_open_call(&agent, open_call("call_ci", "make ci", 61));
+    went_silent(&h, &agent, 61);
+    sweep(&h).await;
+    assert_eq!(h.backend.interrupts(), vec![agent], "past the check limit");
+    assert_eq!(the_only_running(&h).await.id, stage.id);
 }

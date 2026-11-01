@@ -20,6 +20,7 @@ mod gate_news;
 mod gates;
 pub(crate) mod gh;
 mod held;
+mod hung;
 pub(crate) mod initiative_ship;
 mod inspection;
 mod landed;

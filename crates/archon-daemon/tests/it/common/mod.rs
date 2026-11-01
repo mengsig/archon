@@ -26,7 +26,7 @@ use archon_core::model::{Effort, ModelChoice, ModelPlan};
 use archon_core::notify::{FeedEntry, NotificationKind};
 use archon_core::ports::{
     AgentBackend, AgentUpdate, CreatedNode, Descendant, DescendantState, NetworkPolicy,
-    RunNodeRequest, SpawnRequest, SpawnedAgent, TreePulse,
+    OpenToolCall, RunNodeRequest, SpawnRequest, SpawnedAgent, TreePulse,
 };
 use archon_core::protocol::{ClientKind, EnqueueRequest, Reply, RepoAdd, RepoRef, Request};
 use archon_core::queue::{QueueItem, QueueState};
@@ -802,6 +802,8 @@ struct FakeState {
     stalls: Vec<(String, Arc<tokio::sync::Semaphore>)>,
     /// What `pulse` reports of an agent's tree; an empty pulse otherwise.
     pulses: BTreeMap<AetherAgentId, TreePulse>,
+    /// What `open_tool_call` reports of an agent until its turn is interrupted.
+    open_calls: BTreeMap<AetherAgentId, OpenToolCall>,
     /// Every `clear_inspection` that resumed a tree: its lead and the note.
     inspections_cleared: Vec<(AetherAgentId, String)>,
     /// Each failure, and whether another client resumed the agent just before.
@@ -1061,6 +1063,12 @@ impl FakeBackend {
         let mut state = self.state();
         assert!(state.is_stage_agent(agent), "only stage agents take turns");
         state.in_turn.insert(agent.clone());
+    }
+
+    /// `open_tool_call` reports `call` for `agent` until its turn is
+    /// interrupted.
+    pub fn set_open_call(&self, agent: &AetherAgentId, call: OpenToolCall) {
+        self.state().open_calls.insert(agent.clone(), call);
     }
 
     /// The next `send_message` calls fail with these errors, in order.
@@ -1426,6 +1434,7 @@ impl AgentBackend for FakeBackend {
         if !state.knows(agent) {
             return Err(ArchonError::NotFound(format!("aether: no agent {agent}")));
         }
+        state.open_calls.remove(agent);
         Ok(state.in_turn.remove(agent))
     }
 
@@ -1475,6 +1484,13 @@ impl AgentBackend for FakeBackend {
             return Ok(None);
         }
         Ok(Some(state.pulses.get(agent).copied().unwrap_or_default()))
+    }
+
+    async fn open_tool_call(
+        &self,
+        agent: &AetherAgentId,
+    ) -> Result<Option<OpenToolCall>, ArchonError> {
+        Ok(self.state().open_calls.get(agent).cloned())
     }
 
     /// The lead is the blocked agent; its pulse no longer reports one.

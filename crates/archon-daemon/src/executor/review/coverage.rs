@@ -6,7 +6,7 @@
 //! rebased away) is superseded: it never counts, and a superseded fail stands
 //! until the counted passes read the whole change. A named delta read no named
 //! one anchors may rest on the lead's earlier reviewers, which Archon adds itself.
-//! A blocking fail of the attempt the record leaves out stands as a named one would.
+//! A fail of the attempt the record leaves out stands as a named one would.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -26,7 +26,7 @@ pub(super) struct Placed {
     pub agent: String,
     /// The lead named it; an earlier reviewer it did not name only anchors.
     pub named: bool,
-    /// An unnamed blocking fail of this attempt: it stands until answered.
+    /// An unnamed fail of this attempt: it stands until answered.
     pub left_out: bool,
     pub pass: bool,
     pub head: String,
@@ -82,7 +82,7 @@ pub(super) struct Base<'a> {
 const READ_THE_BASE: &str = "read the base branch, not the change";
 
 /// The verdicts a review is held to: the reviewers the lead `named`, its
-/// `earlier` ones that may anchor them, and the attempt's blocking fails it `left_out`.
+/// `earlier` ones that may anchor them, and the attempt's fails it `left_out`.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Verdicts<'a> {
     pub named: &'a [(String, Verdict)],
@@ -162,8 +162,8 @@ fn place_unnamed(
             }
             Err(why) => {
                 return Ok(Err(format!(
-                    "reviewer {agent}, which failed this attempt's change with a blocking \
-                     finding and which the record leaves out, {why}"
+                    "reviewer {agent}, which failed this attempt's change and which the \
+                     record leaves out, {why}"
                 )));
             }
         }
@@ -509,7 +509,7 @@ fn holding_passes(
     Ok(current)
 }
 
-/// Why a left-out blocking fail outside play still stands beside the `in_play` reads of
+/// Why a left-out fail outside play still stands beside the `in_play` reads of
 /// `placed`, which [`judged`] found answered; `None` when every one is answered.
 fn open_left_out(
     history: &mut impl Ancestry,
@@ -535,8 +535,8 @@ fn open_left_out(
         return Ok(None);
     };
     Ok(Some(format!(
-        "{why}: the record leaves that reviewer out, but a blocking fail of this attempt \
-         stands until a pass reads past it"
+        "{why}: the record leaves that reviewer out, but a fail of this attempt stands \
+         until a pass reads past it"
     )))
 }
 
@@ -1197,7 +1197,7 @@ mod tests {
         assert_eq!(count(&rereviewed, "c4", 1).unwrap(), [0]);
     }
 
-    /// A blocking fail by a reviewer of this attempt that the lead did not name.
+    /// A fail by a reviewer of this attempt that the lead did not name.
     fn left(agent: &str, head: &str, base: Option<&str>) -> Placed {
         Placed {
             left_out: true,

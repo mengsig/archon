@@ -2963,8 +2963,8 @@ async fn anchored_by_an_earlier_pass(h: &Harness) -> (StageRun, StageOutcome) {
     (lead, fixed)
 }
 
-/// A result Aether could not show may be a fail of the head: it keeps the
-/// earlier reviewers from anchoring, as it refuses a named one.
+/// A result Aether could not show may be a fail of the head: an unnamed
+/// reviewer's refuses the review, as a named one's does.
 #[tokio::test]
 async fn an_earlier_reviewer_aether_cannot_show_leaves_the_named_delta_refused() {
     let h = Harness::new().await;
@@ -2977,9 +2977,12 @@ async fn an_earlier_reviewer_aether_cannot_show_leaves_the_named_delta_refused()
         .unreadable_delegated(&late, "internal: database is locked");
     h.settle_running(|_| fixed.clone()).await;
     let error = refused_review(&h, &item).await;
-    assert!(error.contains("read only from"), "{error}");
-    let unshown = format!("earlier reviewer {late} has a result Aether could not show");
+    let unshown = format!("reviewer {late} of this attempt, which the record leaves out");
     assert!(error.contains(&unshown), "{error}");
+    assert!(
+        error.contains("has a result Aether could not show"),
+        "{error}"
+    );
 }
 
 /// A reviewer still running may yet fail the head, so nothing anchors on
@@ -3006,11 +3009,26 @@ fn fail_on(built: &StageOutcome, blocking: bool) -> serde_json::Value {
     fail
 }
 
+/// A fail of the commit `built` records: with a blocking finding, with an
+/// empty list or none, or with follow-ups alone, which reads as a pass.
+fn fail_of_kind(built: &StageOutcome, kind: &str) -> serde_json::Value {
+    let mut fail = verdict_on(built, "fail");
+    match kind {
+        "blocking" => fail = fail_on(built, true),
+        "follow-ups" => fail = fail_on(built, false),
+        "unlisted" => {
+            fail.as_object_mut().unwrap().remove("findings");
+        }
+        _ => assert_eq!(kind, "empty", "a known kind of fail"),
+    }
+    fail
+}
+
 /// The lead names the reviewer that passed its head and leaves out the one
-/// that failed it: a blocking fail stands, and a fail of follow-ups blocks nothing.
+/// that failed it: the fail stands, unless it lists follow-ups alone.
 #[tokio::test]
 async fn a_reviewer_that_failed_the_head_and_is_left_out_of_the_record_is_refused() {
-    for blocking in [true, false] {
+    for kind in ["blocking", "empty", "unlisted", "follow-ups"] {
         let h = Harness::new().await;
         let item = adaptive_item(&h).await;
         let lead = h.running().await.remove(0);
@@ -3019,21 +3037,21 @@ async fn a_reviewer_that_failed_the_head_and_is_left_out_of_the_record_is_refuse
         let named = pass_by(std::slice::from_ref(&passing));
         let built = shipped_by(&h, &lead, "Reviewed", named).await;
         h.backend
-            .complete_delegated(&failing, fail_on(&built, blocking));
+            .complete_delegated(&failing, fail_of_kind(&built, kind));
         h.backend
             .complete_delegated(&passing, verdict_on(&built, "pass"));
         h.settle_running(|_| built.clone()).await;
-        if !blocking {
+        if kind == "follow-ups" {
             h.dispatch().await;
             assert!(delivered(&h, &item).await, "{:?}", h.state(&item.id).await);
             continue;
         }
         let error = refused_review(&h, &item).await;
         let stands = format!("reviewer {failing} failed the change at");
-        assert!(error.contains(&stands), "{error}");
+        assert!(error.contains(&stands), "{kind}: {error}");
         assert!(
             error.contains("the record leaves that reviewer out"),
-            "{error}"
+            "{kind}: {error}"
         );
     }
 }

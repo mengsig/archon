@@ -2458,7 +2458,11 @@ are stored as `review.implicit_reviewer_agents`. Archon reads them only for
 a lead no other stage run of the run names (a kept agent's earlier reviews
 cannot be told from this attempt's), only once none of its direct children
 is still live, and a result Aether cannot show refuses the review rather
-than being left out. A pass counts when it read the
+than being left out. Whatever the record names, every fail returned by a
+reviewer of the stage attempt (from the review-round tally, so a resumed
+lead's earlier attempts are not read) stands as a named fail would: the
+review is refused, with the reason, until a counted pass reads past it. A
+fail listing only follow-ups reads as a pass. A pass counts when it read the
 branch head, or when a counted pass read every commit after its head
 (`base` at or before it). A fail never counts and must be followed by such
 a pass, or by a later fail that read every commit after its head and was

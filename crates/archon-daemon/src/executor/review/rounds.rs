@@ -88,21 +88,29 @@ pub(in crate::executor) async fn attempt_resumed(
     save(ctx, &stage.id, &tally).await
 }
 
-/// The reviewers whose blocking fails `stage`'s attempt counted, each with
-/// the head it failed. Read after [`capped_at_completion`] brought the tally up to date.
-pub(super) async fn attempt_fails(
+/// The settled children `stage`'s attempt read, each with the head of the blocking fail it
+/// counted, if any. Read after [`capped_at_completion`] brought the tally up to date.
+pub(super) async fn attempt_children(
     ctx: &DaemonContext,
     stage: &StageRunId,
-) -> Result<Vec<(String, String)>, ArchonError> {
+) -> Result<Vec<(String, Option<String>)>, ArchonError> {
     let tally = load(ctx, stage).await?;
-    let fails: Vec<(String, String)> = tally.fails.into_iter().map(|f| (f.agent, f.head)).collect();
+    let mut children: Vec<(String, Option<String>)> =
+        tally.read.into_iter().map(|agent| (agent, None)).collect();
+    for fail in tally.fails {
+        match children.iter_mut().find(|(agent, _)| *agent == fail.agent) {
+            Some(child) => child.1 = Some(fail.head),
+            // A tally written before children were rescanned kept fails alone.
+            None => children.push((fail.agent, Some(fail.head))),
+        }
+    }
     assert!(
-        fails
+        children
             .iter()
-            .all(|(agent, head)| !agent.is_empty() && !head.is_empty()),
-        "a counted fail names its reviewer and head"
+            .all(|(agent, head)| !agent.is_empty() && head.as_ref().is_none_or(|h| !h.is_empty())),
+        "a read child names its agent, and a counted fail its head"
     );
-    Ok(fails)
+    Ok(children)
 }
 
 /// Add the blocking fails of the attempt's settled children not read before

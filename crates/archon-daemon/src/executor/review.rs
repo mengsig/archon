@@ -3,7 +3,7 @@
 //! it delegated to whose own result passed the change as the branch holds it.
 //! A named delta read it left unanchored may rest on a fresh lead's settled
 //! earlier reviewers, which Archon finds, checks and records itself. A
-//! reviewer of the attempt that failed with a blocking finding counts, named or not.
+//! reviewer of the attempt that failed the change counts, named or not.
 
 mod coverage;
 mod rounds;
@@ -192,32 +192,16 @@ async fn reviewers(
         Ok(chosen) => chosen,
         Err(why) => return Ok(Err(why)),
     };
+    assert!(
+        chosen.picked.len() >= owed as usize,
+        "the review level's reviewers were picked"
+    );
+    let checked = check_chosen(ctx, (run, stage), &beneath, &chosen, owed, shipped).await?;
     let Chosen {
         picked,
         verdicts,
         corrections,
     } = chosen;
-    assert!(
-        picked.len() >= owed as usize,
-        "the review level's reviewers were picked"
-    );
-    let left_out = match left_out_fails(ctx, stage, &beneath, &picked).await? {
-        Ok(left_out) => left_out,
-        Err(why) => return Ok(Err(why)),
-    };
-    let check = |earlier: Option<Vec<Read>>| {
-        let read = (verdicts.clone(), left_out.clone(), earlier);
-        holding(ctx, run, read, owed, shipped.clone())
-    };
-    let checked = match check(None).await? {
-        Checked::Unanchored(stray) => {
-            match earlier_reads(ctx, stage, lead, &beneath, &picked).await? {
-                Ok(earlier) => check(Some(earlier)).await?,
-                Err(why) => Checked::Refused(format!("{stray}: {why}")),
-            }
-        }
-        checked => checked,
-    };
     Ok(match checked {
         Checked::Held(held, head, fork) => {
             let found = found(&picked, (held, head), verdicts, corrections);
@@ -228,6 +212,46 @@ async fn reviewers(
         }
         Checked::Refused(why) => Err(why),
         Checked::Unanchored(_) => unreachable!("the earlier reviewers were read"),
+    })
+}
+
+/// Whether the `chosen` verdicts hold beside the attempt's left-out fails, read with the
+/// lead's earlier reviewers only when a named delta read needs an anchor.
+async fn check_chosen(
+    ctx: &DaemonContext,
+    (run, stage): (&PipelineRun, &StageRun),
+    beneath: &[Descendant],
+    chosen: &Chosen<'_>,
+    owed: u32,
+    shipped: Option<String>,
+) -> Result<Checked, ArchonError> {
+    let lead = stage
+        .aether_agent
+        .as_ref()
+        .expect("a checked stage has its agent");
+    let Chosen {
+        picked, verdicts, ..
+    } = chosen;
+    assert_eq!(
+        picked.len(),
+        verdicts.len(),
+        "one verdict per reviewer picked"
+    );
+    let left_out = match left_out_fails(ctx, stage, beneath, picked).await? {
+        Ok(left_out) => left_out,
+        Err(why) => return Ok(Checked::Refused(why)),
+    };
+    let check = |earlier: Option<Vec<Read>>| {
+        let read = (verdicts.clone(), left_out.clone(), earlier);
+        holding(ctx, run, read, owed, shipped.clone())
+    };
+    Ok(match check(None).await? {
+        Checked::Unanchored(stray) => match earlier_reads(ctx, stage, lead, beneath, picked).await?
+        {
+            Ok(earlier) => check(Some(earlier)).await?,
+            Err(why) => Checked::Refused(format!("{stray}: {why}")),
+        },
+        checked => checked,
     })
 }
 
@@ -259,8 +283,8 @@ async fn earlier_reads(
     earlier_verdicts(ctx, &earlier).await
 }
 
-/// The blocking fails of `stage`'s attempt by reviewers none of the `picked`
-/// ones, or why one cannot be read: each stands as a named fail does.
+/// The fails of `stage`'s attempt by its reviewers other than the `picked` ones, or why one
+/// cannot be read: each stands as a named fail does.
 async fn left_out_fails(
     ctx: &DaemonContext,
     stage: &StageRun,
@@ -272,9 +296,9 @@ async fn left_out_fails(
         .as_ref()
         .expect("a checked stage has its agent");
     assert!(!picked.is_empty(), "a review names its reviewers");
-    let fails = rounds::attempt_fails(ctx, &stage.id).await?;
-    let mut reads = Vec::with_capacity(fails.len());
-    for (agent, head) in fails {
+    let children = rounds::attempt_children(ctx, &stage.id).await?;
+    let mut reads = Vec::with_capacity(children.len());
+    for (agent, tallied) in children {
         if picked.iter().any(|p| p.agent.as_str() == agent) {
             continue;
         }
@@ -282,25 +306,31 @@ async fn left_out_fails(
             .iter()
             .find(|d| d.parent == *lead && d.agent.as_str() == agent && d.task.is_some());
         let Some(child) = listed else {
-            // Aether no longer lists it: the head the tally kept still stands.
-            reads.push((agent, tallied_fail(head)));
+            // Aether no longer lists it: a blocking fail the tally kept still stands.
+            if let Some(head) = tallied {
+                reads.push((agent, tallied_fail(head)));
+            }
             continue;
         };
-        let verdict = match result_of(ctx, child).await?.and_then(verdict_in) {
-            Ok(verdict) => verdict,
+        // A fail Aether could not show may be the one that stands.
+        let outcome = match result_of(ctx, child).await? {
+            Ok(outcome) => outcome,
             Err(why) => {
                 return Ok(Err(format!(
-                    "reviewer {agent}, which failed this attempt's change with a blocking \
-                     finding, {why}"
+                    "reviewer {agent} of this attempt, which the record leaves out, {why}"
                 )));
             }
         };
-        if verdict.pass {
-            tracing::warn!(%agent, "a reviewer counted as failing now reads as a pass");
-            continue;
+        match verdict_in(outcome) {
+            Ok(verdict) if !verdict.pass => reads.push((agent, verdict)),
+            Ok(_) => {}
+            Err(why) => tracing::debug!(%agent, %why, "a child with no verdict reviewed nothing"),
         }
-        reads.push((agent, verdict));
     }
+    assert!(
+        reads.iter().all(|(_, read)| !read.pass),
+        "only fails are left out"
+    );
     Ok(Ok(reads))
 }
 

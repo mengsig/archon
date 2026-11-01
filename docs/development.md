@@ -88,6 +88,10 @@ archon setup
 make ci      # fmt check, clippy -D warnings, rustdoc -D warnings, tests
 ```
 
+`make ci` holds one of `CI_HOST_SLOTS` (default 2) host-wide CI slots while
+it runs, so at most that many full runs, Aether's included, load the host at
+once; see [CONTRIBUTING.md](../CONTRIBUTING.md).
+
 `make lint`, and so `make ci`, also checks `install.sh` and the scripts in
 `scripts/`, and needs [ShellCheck](https://www.shellcheck.net/) installed. The installer's tests
 run it under `dash` when there is one, else under `sh`; `ARCHON_TEST_SH`

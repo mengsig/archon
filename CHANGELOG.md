@@ -60,6 +60,23 @@
   a change to a tracked file or an untracked file where the move writes
   stays where it is, and the operator is told why once.
 
+### Development
+
+- `make ci` shares the host with other heavy CI runs: it first takes one of
+  `CI_HOST_SLOTS` (default 2) host-wide slots, a `flock` on
+  `${XDG_RUNTIME_DIR:-/tmp}/heavy-ci/slot-<i>.lock`, the same contract
+  Aether's `make ci` keeps, and says once that it waits when all are taken.
+  Four or five stages and their reviewers ran `cargo test` at once on a
+  12-core host, and the load failed `make ci` on timing flakes that then
+  reran in full. The slot is released however `make ci` ends;
+  `CI_HOST_SLOTS=0` turns it off and `make ci-checks` runs without one.
+  GitHub CI is unaffected.
+- The daemon test `status_answers_with_progress_and_changes_wait_while_recovery_runs`
+  no longer fails under load (16 of 104 runs did). It gave each `status`
+  during recovery 1 s; it now allows 30 s. What it proves is unchanged: the
+  first `status` comes while the test holds the run table, so recovery
+  cannot finish, and a `status` that waited on recovery still never answers.
+
 ## 1.4.9
 
 Released 2026-10-31.

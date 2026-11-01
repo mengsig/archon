@@ -56,6 +56,41 @@ async fn a_failed_check_is_a_kept_refusal_quoting_its_output() {
     assert!(matches!(gates.status(&run), Status::Idle));
 }
 
+/// A later run of a tree the check passed on reuses the pass; another tree,
+/// or a check that failed, runs again.
+#[tokio::test]
+async fn a_pass_on_a_tree_holds_for_a_later_run_of_that_tree() {
+    let tree = tempfile::tempdir().unwrap();
+    let mut gates = Gates::default();
+    let wake = Arc::new(Notify::new());
+    let counted = "echo ran >> count";
+    let first = PipelineRunId::new();
+    gates.start(&first, check(tree.path(), counted), Arc::clone(&wake));
+    let Status::Finished(Ok(verdict)) = finished(&mut gates, &first, &wake).await else {
+        panic!("a verdict")
+    };
+    assert_eq!(verdict.refusal, None);
+    let later = PipelineRunId::new();
+    gates.start(&later, check(tree.path(), counted), Arc::clone(&wake));
+    let Status::Finished(Ok(reused)) = gates.status(&later) else {
+        panic!("the pass is reused at once")
+    };
+    assert_eq!(reused, verdict);
+    let runs = || std::fs::read_to_string(tree.path().join("count")).unwrap();
+    assert_eq!(runs(), "ran\n", "the check ran once");
+
+    let other = Check {
+        tree: "tree-2".into(),
+        ..check(tree.path(), counted)
+    };
+    let third = PipelineRunId::new();
+    gates.start(&third, other, Arc::clone(&wake));
+    let Status::Finished(Ok(_)) = finished(&mut gates, &third, &wake).await else {
+        panic!("a verdict")
+    };
+    assert_eq!(runs(), "ran\nran\n", "another tree runs the check");
+}
+
 #[tokio::test]
 async fn forgetting_a_running_gate_kills_its_check() {
     let tree = tempfile::tempdir().unwrap();

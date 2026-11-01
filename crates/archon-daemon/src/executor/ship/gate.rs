@@ -4,7 +4,7 @@
 //! one at a time on this host; the delivery waits for its verdict, then
 //! proves the worktree again before anything leaves it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -44,11 +44,16 @@ pub(super) enum Status {
     Finished(Result<Verdict, ArchonError>),
 }
 
-/// Every run's gate, and the one slot their checks share.
+/// What a passing check held for: the same tree, base and command pass again.
+type Passed = (String, String, String);
+
+/// Every run's gate, the one slot their checks share, and the checks that
+/// passed, so a later run of the same tree reuses the pass.
 #[derive(Debug)]
 pub struct Gates {
     by_run: BTreeMap<PipelineRunId, Gate>,
     slot: Arc<Semaphore>,
+    passed: BTreeSet<Passed>,
 }
 
 impl Default for Gates {
@@ -56,8 +61,17 @@ impl Default for Gates {
         Self {
             by_run: BTreeMap::new(),
             slot: Arc::new(Semaphore::new(1)),
+            passed: BTreeSet::new(),
         }
     }
+}
+
+fn passed_key(check: &Check) -> Passed {
+    (
+        check.tree.clone(),
+        check.base.clone(),
+        check.template.clone(),
+    )
 }
 
 #[derive(Debug)]
@@ -71,6 +85,7 @@ enum Gate {
 struct Running {
     result: oneshot::Receiver<Result<Verdict, ArchonError>>,
     task: AbortHandle,
+    key: Passed,
 }
 
 impl Drop for Running {
@@ -82,12 +97,25 @@ impl Drop for Running {
 impl Gates {
     /// Start `check` for `run`, replacing any gate it had, and poke `wake`
     /// once its verdict can be taken.
+    /// A check that already passed for the same tree, base and command is
+    /// not run again: its pass is the verdict at once.
     pub(super) fn start(&mut self, run: &PipelineRunId, check: Check, wake: Arc<Notify>) {
         assert!(check.workspace.is_absolute(), "run worktrees are absolute");
         assert!(
             !check.template.trim().is_empty(),
             "a trusted check is a command"
         );
+        let key = passed_key(&check);
+        if self.passed.contains(&key) {
+            tracing::info!(%run, tree = %check.tree, "the fast check passed on this tree before; reused");
+            let verdict = Verdict {
+                tree: check.tree,
+                refusal: None,
+            };
+            self.by_run.insert(run.clone(), Gate::Done(verdict));
+            wake.notify_one();
+            return;
+        }
         let (sender, result) = oneshot::channel();
         let slot = Arc::clone(&self.slot);
         let id = run.clone();
@@ -100,6 +128,7 @@ impl Gates {
         let running = Running {
             result,
             task: task.abort_handle(),
+            key,
         };
         self.by_run.insert(run.clone(), Gate::Running(running));
         assert!(self.by_run.contains_key(run), "the gate is tracked");
@@ -108,19 +137,26 @@ impl Gates {
     /// Where `run`'s gate stands. A failure to check is taken once, so the
     /// next delivery runs the gate again; a verdict is kept for the run.
     pub(super) fn status(&mut self, run: &PipelineRunId) -> Status {
-        let finished = match self.by_run.get_mut(run) {
+        let (finished, key) = match self.by_run.get_mut(run) {
             None => return Status::Idle,
             Some(Gate::Done(verdict)) => return Status::Finished(Ok(verdict.clone())),
             Some(Gate::Running(running)) => match running.result.try_recv() {
                 Err(oneshot::error::TryRecvError::Empty) => return Status::Running,
-                Err(oneshot::error::TryRecvError::Closed) => Err(ArchonError::Unavailable(
-                    "the fast check's task ended without a verdict".into(),
-                )),
-                Ok(result) => result,
+                Err(oneshot::error::TryRecvError::Closed) => (
+                    Err(ArchonError::Unavailable(
+                        "the fast check's task ended without a verdict".into(),
+                    )),
+                    running.key.clone(),
+                ),
+                Ok(result) => (result, running.key.clone()),
             },
         };
         match finished {
             Ok(verdict) => {
+                assert_eq!(verdict.tree, key.0, "a verdict is on the tree checked");
+                if verdict.refusal.is_none() {
+                    self.passed.insert(key);
+                }
                 self.by_run.insert(run.clone(), Gate::Done(verdict.clone()));
                 Status::Finished(Ok(verdict))
             }

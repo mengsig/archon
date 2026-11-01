@@ -2408,8 +2408,17 @@ than being left out. A pass counts when it read the
 branch head, or when a counted pass read every commit after its head
 (`base` at or before it). A fail never counts and must be followed by such
 a pass, or by a later fail that read every commit after its head and was
-itself followed so (a fix of a fix, each reviewed as a delta). Counted
-passes below the level fail the run with the reasons. When
+itself followed so (a fix of a fix, each reviewed as a delta). The level
+counts whole-change reads on the branch, each a pass that holds or an
+answered fail, and one named pass must have read the head: after a fix, an
+anchored delta pass of the final head completes the review. Fewer fail the
+run with the reasons. A reviewer's `fail` whose findings are all marked
+`"blocking": false` reads as a pass (`archon_pipeline::review`), and the
+review rounds of `executor/review/rounds.rs` count only blocking fails: at
+`REVIEW_ROUND_CAP` (three) the stage is cancelled and fails with an
+`ESCALATE:` error, marked first like a stall (§16) so its cancel does not
+settle it as cancelled, and retried by the next sweep when the cancel goes
+unanswered. When
 the same result is the ship record (§8.7), the branch head must hold the
 record's `tree`, the tree delivery later checks: what ships is what was read.
 

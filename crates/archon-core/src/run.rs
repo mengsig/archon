@@ -311,7 +311,8 @@ const DENIABLE: [&str; 15] = [
 
 /// Whether a pass's explanation takes it back: a [`HOLDS_PASS`] word, a
 /// [`BLOCKERS`] word nothing [denies](DENIES), a `no` before anything but a
-/// [`DENIABLE`] word, or [a reported problem](reports_problem). Any other text after a plain pass word is explanation.
+/// [`DENIABLE`] word, or [a reported problem](reports_problem). Any other
+/// text after a plain pass word is explanation.
 fn holds_back(explanation: &str) -> bool {
     let words: Vec<String> = explanation
         .split(|c: char| !c.is_alphanumeric())
@@ -1253,6 +1254,17 @@ mod tests {
             "Verdict: pass. Needed changes remain",
             "Verdict: pass. Issues still open",
             "Verdict: pass. Bug is still there",
+            "Verdict: pass. Issues remain to be fixed",
+            "Verdict: pass. Changes needed to be addressed",
+            "Verdict: pass. Bugs found. None have been fixed",
+            "Verdict: pass. Issues found, none fixed",
+            "Verdict: pass. Bugs found. Nothing was fixed",
+            "Verdict: pass. Lint errors found",
+            "Verdict: pass. Two type errors found",
+            "Verdict: pass. Remaining issues: the parser drops a line",
+            "Verdict: pass. Open issues: the gate crashes",
+            "Verdict: pass. The gate still crashes",
+            "Verdict: pass. Changes are necessary",
         ] {
             assert_eq!(
                 Verdict::extract(summary, None),
@@ -1294,6 +1306,12 @@ mod tests {
             "Verdict: pass. Changes needed — none",
             "Verdict: pass. Issues found - none",
             "Verdict: pass. Issues were found and fixed.",
+            "Verdict: pass. 0 issues found",
+            "Verdict: pass. Found 0 issues",
+            "Verdict: pass. 0 issues remain",
+            "Verdict: pass. Problems found: n/a",
+            "Verdict: pass. Remaining issues: none",
+            "Verdict: pass. Open issues: 0",
             "Verdict: pass.\nIssues found: none\nChanges needed: none",
         ] {
             assert_eq!(Verdict::extract(summary, None), Verdict::Pass, "{summary}");

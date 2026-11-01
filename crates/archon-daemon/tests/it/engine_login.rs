@@ -194,3 +194,41 @@ async fn a_restart_keeps_holding_the_engine_without_a_second_blocker() {
     assert_eq!(h.backend.woken().len(), agents.len(), "each woken once");
     assert_eq!(h.kv(archon_daemon::engine_login::HOLDS_KEY).await, None);
 }
+
+/// The stored deadline of the stage run `id`'s spawn.
+async fn stored_deadline(h: &Harness, id: &archon_core::id::StageRunId) -> archon_core::Timestamp {
+    let raw = h.kv(&format!("spawn_request:{id}")).await.expect("stored");
+    let spawn: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    serde_json::from_value(spawn["request"]["deadline"].clone()).expect("a deadline")
+}
+
+#[tokio::test]
+async fn a_waiting_wake_gets_back_the_time_it_waited() {
+    let h = Harness::new().await;
+    h.enqueue("waits on its login").await;
+    h.dispatch().await;
+    let agent = h.running().await[0].aether_agent.clone().unwrap();
+    h.backend.fail_agent(&agent);
+    h.backend.log_out(ENGINE, "claude-code is not logged in");
+    h.settle_running(login_failed).await;
+    h.dispatch().await;
+    let waiting = h.live_stages().await.remove(0);
+    let reserved = stored_deadline(&h, &waiting.id).await;
+
+    let wait = std::time::Duration::from_millis(1100);
+    tokio::time::sleep(wait).await;
+    h.backend.log_in(ENGINE);
+    h.dispatch().await;
+    assert_eq!(h.backend.woken(), [agent]);
+    let moved = stored_deadline(&h, &waiting.id).await;
+    let waited = chrono::Duration::from_std(wait).unwrap();
+    assert!(
+        moved - reserved >= waited,
+        "moved by the wait: {reserved} -> {moved}"
+    );
+    let woken = h.ctx.store.lock().await.stage_run(&waiting.id).unwrap();
+    let told = h.backend.resumed_with(&woken);
+    let at = moved.format("%Y-%m-%d %H:%M UTC").to_string();
+    assert!(told.contains(&at), "told the moved deadline {at}: {told}");
+    assert_eq!(told.matches("Archon now stops you").count(), 1, "{told}");
+}

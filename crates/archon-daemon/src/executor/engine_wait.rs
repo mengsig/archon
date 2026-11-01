@@ -107,11 +107,13 @@ fn engine_of(spawn: &StoredSpawn) -> &str {
 /// stage deadline counts from now; returns how many waited. Called before
 /// the hold lifts, so none is issued with the deadline it was reserved with.
 pub(crate) async fn release(ctx: &DaemonContext, hold: &EngineHold) -> Result<usize, ArchonError> {
+    // A clock stepped back past `held_at` moves no deadline: `waited` is then negative.
     let now = archon_core::now();
-    assert!(hold.held_at <= now, "a hold started in the past");
+    assert!(!hold.engine.is_empty(), "a hold names its engine");
     let mut store = ctx.store.lock().await;
+    let live = store.live_stage_runs()?;
     let mut released = 0;
-    for stage in store.live_stage_runs()? {
+    for stage in &live {
         if stage.state != StageState::Spawning {
             continue;
         }
@@ -135,7 +137,15 @@ pub(crate) async fn release(ctx: &DaemonContext, hold: &EngineHold) -> Result<us
         stored.resume = stored
             .resume
             .map(|kept| resume::with_moved_deadline(kept, moved));
+        assert!(
+            moved > deadline,
+            "a waiting spawn's deadline only moves later"
+        );
         spawn::save_spawn(&mut store, &stage.id, &stored)?;
     }
+    assert!(
+        released <= live.len(),
+        "each waiting spawn is released once"
+    );
     Ok(released)
 }

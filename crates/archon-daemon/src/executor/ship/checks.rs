@@ -62,6 +62,8 @@ pub(super) struct Target {
     /// The commit the run's own commits start after, when not `base`: the
     /// frozen head of the pull request an `onto` item delivers into.
     pub since: Option<String>,
+    /// The commit of `base` the run forked from, recorded at dispatch.
+    pub forked: Option<String>,
     /// The addresses a commit the run adds may carry, recorded at registration.
     pub allowed: Vec<String>,
     /// The repository's attribution policy at delivery.
@@ -191,8 +193,9 @@ pub(super) fn check_unchanged(target: &Target) -> Result<Result<(), String>, Arc
     let ahead = git(tree, &["rev-list", "--count", &format!("{base}..HEAD")])?;
     if ahead != "0" {
         return Ok(Err(format!(
-            "`{}` holds {ahead} commit(s) beyond `{base}`, so a change exists",
-            target.branch
+            "`{}` holds {ahead} commit(s) beyond {}, so a change exists",
+            target.branch,
+            floor_label(target, &base)
         )));
     }
     Ok(Ok(()))
@@ -373,11 +376,10 @@ fn missing_base(target: &Target) -> String {
 }
 
 /// Where the run's own commits start: `target.since` when it is an ancestor
-/// of the run's head, else the ref of `target.base`.
+/// of the run's head, else where it forked from `target.base` ([`fork_floor`]).
 fn floor(tree: &Path, target: &Target) -> Result<Result<String, String>, ArchonError> {
     let Some(since) = &target.since else {
-        let found = base_ref(tree, &target.base)?;
-        return Ok(found.ok_or_else(|| missing_base(target)));
+        return fork_floor(tree, target);
     };
     assert!(
         crate::worktree::stack::is_commit_id(since),
@@ -395,6 +397,79 @@ fn floor(tree: &Path, target: &Target) -> Result<Result<String, String>, ArchonE
             target.branch
         ))),
         _ => Err(held.failure()),
+    }
+}
+
+/// Where the run's own commits start on `target.base`: the newest commit
+/// that its head holds of the commit it forked from, recorded at dispatch,
+/// and `origin`'s base, which a refresh may have merged; without a recorded
+/// fork, of the local base and `origin`'s. The base's ref when they share no
+/// history. A local base the run's commits landed in never hides them.
+fn fork_floor(tree: &Path, target: &Target) -> Result<Result<String, String>, ArchonError> {
+    let Some(named) = base_ref(tree, &target.base)? else {
+        return Ok(Err(missing_base(target)));
+    };
+    let commits = base_commits(tree, target)?;
+    assert!(!commits.is_empty(), "the base's ref names a commit");
+    let mut args = vec!["merge-base", "HEAD"];
+    args.extend(commits.iter().map(String::as_str));
+    let ran = DaemonGit::sealed_in(tree).args(args).output()?;
+    // `merge-base` exits 1 exactly when the commits share no history.
+    match ran.status.code() {
+        Some(0) => {
+            let fork = ran.stdout_text()?;
+            assert!(crate::worktree::stack::is_commit_id(&fork), "a merge base");
+            Ok(Ok(fork))
+        }
+        Some(1) => Ok(Ok(named)),
+        _ => Err(ran.failure()),
+    }
+}
+
+/// The commits of the base [`fork_floor`] measures from: the recorded fork
+/// when it is still in the repository, else the local base; and `origin`'s.
+fn base_commits(tree: &Path, target: &Target) -> Result<Vec<String>, ArchonError> {
+    let base = &target.base;
+    let forked = match target.forked.as_deref() {
+        Some(fork) if crate::worktree::stack::is_commit_id(fork) => commit_of(tree, fork)?,
+        _ => None,
+    };
+    let start = match forked {
+        Some(fork) => Some(fork),
+        None => commit_of(tree, &format!("refs/heads/{base}"))?,
+    };
+    let remote = commit_of(tree, &format!("refs/remotes/origin/{base}"))?;
+    let commits: Vec<String> = start.into_iter().chain(remote).collect();
+    assert!(commits.len() <= 2, "a start and `origin`'s base");
+    Ok(commits)
+}
+
+/// The commit `name` resolves to in `tree`; `None` when it names none.
+fn commit_of(tree: &Path, name: &str) -> Result<Option<String>, ArchonError> {
+    assert!(
+        is_floor(name),
+        "a full ref name or a commit id, never an option"
+    );
+    let spec = format!("{name}^{{commit}}");
+    let ran = DaemonGit::sealed_in(tree)
+        .args(["rev-parse", "-q", "--verify", spec.as_str()])
+        .output()?;
+    // `rev-parse -q --verify` exits 1 exactly when the name is no commit.
+    match ran.status.code() {
+        Some(0) => Ok(Some(ran.stdout_text()?)),
+        Some(1) => Ok(None),
+        _ => Err(ran.failure()),
+    }
+}
+
+/// How a refusal names `floor`: the base branch and the commit of it the run
+/// forked from, or the frozen head an `onto` item starts after.
+fn floor_label(target: &Target, floor: &str) -> String {
+    assert!(is_floor(floor), "a full ref name or a commit id");
+    let forked = target.since.is_none() && crate::worktree::stack::is_commit_id(floor);
+    match forked {
+        true => format!("`{}` (from {})", target.base, &floor[..12]),
+        false => format!("`{floor}`"),
     }
 }
 

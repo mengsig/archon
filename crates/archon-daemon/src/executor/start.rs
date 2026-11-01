@@ -575,7 +575,8 @@ fn local_branch(
 }
 
 /// The commit a new branch of `item` forks from in `pr` mode: `origin`'s head of
-/// `base`, fetched now, as the local `base` may be behind what GitHub merged; with
+/// `base`, fetched now, as the local `base` may be behind what GitHub merged, which
+/// is then fast-forwarded to it where it safely can be; with
 /// `release`, an integration `base` missing on `origin` is first pushed there from
 /// it. `None` keeps the local `base`: the branch exists already, the repository has
 /// no `origin`, or the fetch failed, which the item's feed says.
@@ -620,6 +621,9 @@ async fn remote_fork(
         Ok((created, fork)) => {
             if created {
                 created_notice(ctx, item, base, release).await?;
+            }
+            if fork.is_some() && super::local_base::follow_origin(ctx, repo, base).await? {
+                ctx.mirrors.request_repo(&repo.id);
             }
             return Ok(fork);
         }

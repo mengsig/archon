@@ -21,6 +21,24 @@
   whose `base` is its own head read an empty diff and is refused. The
   reviewer effort floor (#329) is unchanged.
 
+### Fixed
+
+- A stale local base branch no longer fails a "no change needed" item or
+  inflates a change (#341). In `pr` mode items fork from the freshly fetched
+  `origin/<base>`, but the delivery checks counted from the local
+  `refs/heads/<base>`, so a no-change item failed with "holds N commit(s)
+  beyond" when the local base was N commits behind. Those checks now count
+  from the commit the run forked from, recorded at dispatch, or from a
+  newer `origin/<base>` the run took in; the local base only when no fork
+  was recorded. The fast check's list of affected files starts at the newer
+  of the local and `origin`'s base. After the fetch at dispatch, and at each mirror refresh,
+  archond also fast-forwards the registered checkout's local base to
+  `origin/<base>` when it is strictly behind, so the orchestrator's mirrors
+  follow the fresh base. It never resets, rebases, stashes or forces: a base
+  that is ahead or diverged, being rebased or bisected, or checked out with
+  a change to a tracked file or an untracked file where the move writes
+  stays where it is, and the operator is told why once.
+
 ## 1.4.9
 
 Released 2026-10-31.

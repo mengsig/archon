@@ -9,6 +9,7 @@ use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 use archon_core::merge::LocalReview;
 
+use crate::worktree::fast_forward::{checked_out, dirty};
 use crate::worktree::{self, git};
 
 /// What landing the branch does.
@@ -119,28 +120,6 @@ fn not_descended(landing: Landing<'_>, base_tip: &str) -> Result<String, ArchonE
              `archon queue refresh {item}` to bring the branch up to date, then merge again"
         ),
     })
-}
-
-/// The work tree `base` is checked out in, if any.
-fn checked_out(repo: &Path, base: &str) -> Result<Option<PathBuf>, ArchonError> {
-    let listing = git(repo, &["worktree", "list", "--porcelain"])?;
-    let wanted = heads(base);
-    let mut tree: Option<&str> = None;
-    for line in listing.lines() {
-        if let Some(path) = line.strip_prefix("worktree ") {
-            tree = Some(path);
-        } else if line.strip_prefix("branch ") == Some(wanted.as_str()) {
-            return Ok(tree.map(PathBuf::from));
-        }
-    }
-    Ok(None)
-}
-
-/// The first change a work tree holds that a merge must not run over.
-fn dirty(tree: &Path) -> Result<Option<String>, ArchonError> {
-    let status = git(tree, &["status", "--porcelain", "--untracked-files=no"])?;
-    let count = status.lines().count();
-    Ok((count > 0).then(|| format!("{count} changed file{}", if count == 1 { "" } else { "s" })))
 }
 
 /// Do what `plan` says, after checking again that the checkout and the base

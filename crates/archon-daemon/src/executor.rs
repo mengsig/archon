@@ -22,6 +22,7 @@ pub(crate) mod initiative_ship;
 mod inspection;
 mod landed;
 mod lanes;
+pub(crate) mod local_base;
 mod local_merge;
 mod naming;
 mod notional;

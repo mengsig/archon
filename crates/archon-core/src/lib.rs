@@ -57,6 +57,7 @@ pub mod steer;
 #[cfg(feature = "testing")]
 pub mod testing;
 pub mod tracked;
+mod verdict_prose;
 
 pub use error::{ArchonError, Result};
 

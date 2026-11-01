@@ -114,8 +114,13 @@ async fn settle_stalled(
 ) -> Result<(), ArchonError> {
     let mut first_error = None;
     let escalations = stall::owed_escalations(&*ctx.store.lock().await, running)?;
+    let watched: Vec<StageRun> = running
+        .iter()
+        .filter(|s| !escalations.iter().any(|(id, _)| *id == s.id))
+        .cloned()
+        .collect();
     for (stage, reason) in escalations {
-        match stop_marked(ctx, &stage, &reason, false).await {
+        match stop_marked(ctx, &stage, &reason).await {
             Ok(more) => follow.merge(more),
             Err(error) => {
                 tracing::error!(stage = %stage, %error, "stopping an escalated stage failed");
@@ -123,7 +128,7 @@ async fn settle_stalled(
             }
         }
     }
-    for (stage, reason) in stall::scan(ctx, running, now).await? {
+    for (stage, reason) in stall::scan(ctx, &watched, now).await? {
         match stall(ctx, &stage, &reason).await {
             Ok(more) => follow.merge(more),
             Err(error) => {
@@ -234,7 +239,7 @@ async fn stall(
     reason: &str,
 ) -> Result<FollowUp, ArchonError> {
     tracing::warn!(stage = %id, reason, "stage watchdog fired");
-    stop_marked(ctx, id, reason, true).await
+    stop_marked(ctx, id, reason).await
 }
 
 /// Fail a `running` stage whose review failed too many rounds with the
@@ -249,16 +254,16 @@ pub(super) async fn stop_review_loop(
         "a stopped review loop escalates"
     );
     tracing::warn!(stage = %id, reason, "review round cap reached; stopping the stage");
-    stop_marked(ctx, id, reason, false).await
+    stop_marked(ctx, id, reason).await
 }
 
-/// Cancel a `running` stage's agent and settle it failed with `reason`,
-/// marked first so the cancel's own events cannot settle it as cancelled.
+/// Cancel a `running` stage's agent and settle it failed with `reason`, or
+/// with the escalation it is already marked with, which outlasts a stall.
+/// Marked first so the cancel's own events cannot settle it as cancelled.
 async fn stop_marked(
     ctx: &DaemonContext,
     id: &StageRunId,
     reason: &str,
-    infra: bool,
 ) -> Result<FollowUp, ArchonError> {
     assert!(!reason.trim().is_empty(), "a stop names its reason");
     let stage = ctx.store.lock().await.stage_run(id)?;
@@ -266,16 +271,21 @@ async fn stop_marked(
         return Ok(FollowUp::default());
     }
     assert_eq!(stage.id, *id, "the stage asked for");
-    stall::mark_intent(&mut *ctx.store.lock().await, id, reason)?;
+    let reason = {
+        let mut store = ctx.store.lock().await;
+        let reason = stall::prevailing(&store, id, reason)?;
+        stall::mark_intent(&mut store, id, &reason)?;
+        reason
+    };
     let failed = || StageOutcome::Failed {
-        error: reason.to_owned(),
-        infra,
+        error: reason.clone(),
+        infra: stall::is_stall(&reason),
     };
     match (&stage.aether_agent, &stage.aether_task) {
         (Some(agent), Some(task)) => {
-            cancel_and_settle(ctx, id, agent, task, reason, failed()).await
+            cancel_and_settle(ctx, id, agent, task, &reason, failed()).await
         }
-        (Some(agent), None) => resume::stop(ctx, id, agent, reason, failed()).await,
+        (Some(agent), None) => resume::stop(ctx, id, agent, &reason, failed()).await,
         (None, _) => Ok(FollowUp::default()),
     }
 }

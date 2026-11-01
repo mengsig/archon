@@ -58,7 +58,7 @@ The daemon did not answer the change within the MCP call's 15 s budget, but may 
 - **"resumed … that Aether blocked for inspection"** (a progress notice) A command of the stage agent lost its outcome, most likely because aetherd restarted. Archon told the agent to check the state before repeating the command, and resumed it. Nothing to do.
 - **"Aether blocked it for inspection … and refused to resume it"** The stage failed as infrastructure, and `limits.infra_retries` wakes or replaces its agent. If it fails again, `archon aether agents` shows the agent's state. Then `archon queue retry <id>`.
 - **"has been held by Aether for N min with no approval, usage limit or credentials wait"** (an escalation to the orchestrator) Aether holds the stage for a reason it does not name. Archon keeps the stage running. Inspect the agent with `archon aether agents`, or steer, retry or cancel the item.
-- **"the lead is still fixing it"** A review has failed many rounds. The run goes on; stop it with `archon queue cancel <id>` or change course with `archon queue steer <id> --note "…"`.
+- **"so Archon stopped it instead of another round"** A stage's review failed three rounds in one attempt, so Archon stopped it and ended the run. The error lists the open blocking findings and the reviewers whose results hold them; settle the disputed point in the brief or reshape the work, then `archon queue retry <id>`, or `archon queue steer <id> --note "…"` first.
 - **"tries again on every maintenance pass"** Maintenance of one item or initiative keeps failing. The error text names what to fix, for example a repository or branch; Archon says nothing more until it passes.
 
 ## Shipping and GitHub

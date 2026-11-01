@@ -2,6 +2,8 @@
 //! a commit some reviewer of the lead failed with a blocking finding;
 //! [`REVIEW_ROUND_CAP`] of them end the stage attempt with an escalation to the
 //! orchestrator that lists the open blocking findings, instead of another round.
+//! Each re-review is given the open findings to verify, so the last round's
+//! blocking findings are the open ones; earlier rounds' are listed apart.
 
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
@@ -15,8 +17,8 @@ use serde::{Deserialize, Serialize};
 use super::{result_of, verdict_in};
 use crate::context::DaemonContext;
 
-/// Finding titles an escalation lists.
-const MAX_TITLES: usize = 5;
+/// Finding lines an escalation lists before it points to the reviewers' results.
+const MAX_LISTED: usize = 20;
 
 /// A stage whose review failed [`REVIEW_ROUND_CAP`] rounds: archond stops it
 /// with `reason`, an `ESCALATE:` failure that ends its run.
@@ -53,7 +55,7 @@ pub(in crate::executor) async fn reviewer_settled(
         tally.fails.push(Fail {
             agent: reviewer.to_string(),
             head: verdict.head,
-            titles: verdict.titles,
+            findings: verdict.blocking_findings,
         });
         save(ctx, &stage.id, &tally).await?;
     }
@@ -61,7 +63,7 @@ pub(in crate::executor) async fn reviewer_settled(
     if rounds < REVIEW_ROUND_CAP {
         return Ok(None);
     }
-    let reason = escalation(&stage, rounds, &latest_titles(&tally.fails));
+    let reason = escalation(&stage, rounds, &Open::of(&tally.fails));
     assert!(StageOutcome::ends_run(&reason), "a capped review escalates");
     Ok(Some(Capped {
         stage: stage.id,
@@ -98,7 +100,10 @@ async fn verdict_of(
 struct Fail {
     agent: String,
     head: String,
-    titles: Vec<String>,
+    /// Its blocking findings, one line each; tallies written before they were
+    /// described kept the titles alone.
+    #[serde(alias = "titles")]
+    findings: Vec<String>,
 }
 
 /// The failing verdicts of one stage attempt.
@@ -139,44 +144,117 @@ fn rounds_of(fails: &[Fail]) -> usize {
     heads.len()
 }
 
-/// The titles of the findings of the last failing verdict's round, the latest one.
-fn latest_titles(fails: &[Fail]) -> Vec<&str> {
-    let Some(last) = fails.last() else {
-        return Vec::new();
-    };
-    let same_round = fails.iter().filter(|f| same_commit(&f.head, &last.head));
-    let titles = same_round.flat_map(|f| f.titles.iter().map(String::as_str));
-    titles.take(MAX_TITLES).collect()
+/// The blocking findings an escalation reports: the last round's, which are
+/// open, and those only earlier rounds listed, which its reviewers verified.
+#[derive(Debug, PartialEq, Eq)]
+struct Open<'a> {
+    latest: Vec<&'a str>,
+    earlier: Vec<&'a str>,
+    /// The reviewers whose results hold every finding in full.
+    reviewers: Vec<&'a str>,
+}
+
+impl<'a> Open<'a> {
+    fn of(fails: &'a [Fail]) -> Self {
+        let Some(last) = fails.last() else {
+            return Self {
+                latest: Vec::new(),
+                earlier: Vec::new(),
+                reviewers: Vec::new(),
+            };
+        };
+        let (latest_fails, earlier_fails): (Vec<&Fail>, Vec<&Fail>) =
+            fails.iter().partition(|f| same_commit(&f.head, &last.head));
+        let latest = distinct(latest_fails.iter().flat_map(|f| &f.findings), &[]);
+        let earlier = distinct(earlier_fails.iter().flat_map(|f| &f.findings), &latest);
+        let reviewers = fails.iter().map(|f| f.agent.as_str()).collect();
+        assert!(
+            !latest_fails.is_empty(),
+            "the last fail is in the latest round"
+        );
+        assert!(
+            earlier.iter().all(|e| !latest.contains(e)),
+            "each finding listed once"
+        );
+        Self {
+            latest,
+            earlier,
+            reviewers,
+        }
+    }
+}
+
+/// The lines of `findings` in order, each once and none of `skip`.
+fn distinct<'a>(findings: impl Iterator<Item = &'a String>, skip: &[&str]) -> Vec<&'a str> {
+    let mut seen: Vec<&str> = Vec::new();
+    for line in findings {
+        if !seen.contains(&line.as_str()) && !skip.contains(&line.as_str()) {
+            seen.push(line);
+        }
+    }
+    seen
 }
 
 /// The failure a capped stage settles with: its rounds and the open blocking findings.
-fn escalation(stage: &StageRun, rounds: usize, titles: &[&str]) -> String {
+fn escalation(stage: &StageRun, rounds: usize, open: &Open) -> String {
     assert!(rounds >= REVIEW_ROUND_CAP, "only a capped review escalates");
-    assert!(titles.len() <= MAX_TITLES, "the titles are bounded");
-    let findings = match titles {
-        [] => "The reviewers gave no titles for their blocking findings.".to_owned(),
-        titles => format!("Open blocking findings: {}.", titles.join("; ")),
+    assert!(
+        !open.reviewers.is_empty(),
+        "a capped review had failing reviewers"
+    );
+    let latest = match open.latest.as_slice() {
+        [] => "The last round's reviewers described no blocking finding.".to_owned(),
+        lines => format!(
+            "Open blocking findings, from the last round: {}.",
+            listed(lines, MAX_LISTED)
+        ),
+    };
+    let room = MAX_LISTED.saturating_sub(open.latest.len());
+    let earlier = match open.earlier.as_slice() {
+        [] => String::new(),
+        lines => format!(
+            " Earlier rounds also listed, for the last round's reviewers to verify: {}.",
+            listed(lines, room)
+        ),
     };
     format!(
         "{} the review of stage `{}` (attempt {}) failed {rounds} rounds, each a commit a \
          reviewer failed with a blocking finding, so Archon stopped it instead of another \
-         round. {findings} Reshape the work, settle the disputed point in the brief, or \
-         retry the item with a steer note.",
+         round. {latest}{earlier} The reviewers' results ({}) hold every finding in full. \
+         Reshape the work, settle the disputed point in the brief, or retry the item with a \
+         steer note.",
         StageOutcome::ESCALATE_PREFIX,
         stage.stage_id,
-        stage.attempt
+        stage.attempt,
+        open.reviewers.join(", ")
     )
+}
+
+/// Up to `room` of `lines` joined, saying how many more there are.
+fn listed(lines: &[&str], room: usize) -> String {
+    assert!(!lines.is_empty(), "only findings are listed");
+    let shown = lines
+        .iter()
+        .take(room)
+        .copied()
+        .collect::<Vec<_>>()
+        .join("; ");
+    match lines.len().saturating_sub(room) {
+        0 => shown,
+        more if shown.is_empty() => format!("{more} more"),
+        more => format!("{shown}; and {more} more"),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn fail(head: &str, titles: &[&str]) -> Fail {
+    fn fail(head: &str, findings: &[&str]) -> Fail {
         Fail {
-            agent: "agt_x".into(),
+            agent: format!("agt_{head}_{}", findings.len()),
             head: head.into(),
-            titles: titles.iter().map(|t| (*t).to_owned()).collect(),
+            findings: findings.iter().map(|t| (*t).to_owned()).collect(),
         }
     }
     #[test]
@@ -196,12 +274,37 @@ mod tests {
     }
 
     #[test]
-    fn the_latest_round_lists_all_its_titles_up_to_the_limit() {
+    fn the_last_round_is_open_and_earlier_rounds_are_listed_apart_once() {
         let fails = [
-            fail("aaaaaaa1", &["old"]),
-            fail("bbbbbbb2", &["x", "y"]),
-            fail("bbbbbbb2", &["z", "1", "2", "3"]),
+            fail("aaaaaaa1", &["old", "kept"]),
+            fail("bbbbbbb2", &["x", "y", "kept"]),
+            fail("bbbbbbb2", &["x", "z"]),
         ];
-        assert_eq!(latest_titles(&fails), ["x", "y", "z", "1", "2"]);
+        let open = Open::of(&fails);
+        assert_eq!(open.latest, ["x", "y", "kept", "z"]);
+        assert_eq!(open.earlier, ["old"]);
+        assert_eq!(open.reviewers.len(), 3);
+    }
+
+    #[test]
+    fn every_finding_is_listed_up_to_the_limit_and_the_rest_counted() {
+        let many: Vec<String> = (0..MAX_LISTED + 2).map(|n| format!("f{n}")).collect();
+        let lines: Vec<&str> = many.iter().map(String::as_str).collect();
+        let text = listed(&lines, MAX_LISTED);
+        assert!(text.contains("f0; f1") && text.contains(&format!("f{}", MAX_LISTED - 1)));
+        assert!(text.ends_with("; and 2 more"), "{text}");
+        assert_eq!(
+            listed(&lines[..6], MAX_LISTED).matches("; ").count(),
+            5,
+            "six listed"
+        );
+        assert_eq!(listed(&lines[..2], 0), "2 more");
+    }
+
+    #[test]
+    fn a_tally_written_with_titles_still_reads() {
+        let old = r#"{"fails":[{"agent":"agt_a","head":"aaaaaaa1","titles":["t"]}]}"#;
+        let tally: Tally = serde_json::from_str(old).unwrap();
+        assert_eq!(tally.fails[0].findings, ["t"]);
     }
 }

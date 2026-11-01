@@ -405,29 +405,51 @@ fn is_escalation(reason: &str) -> bool {
     reason.starts_with(StageOutcome::ESCALATE_PREFIX)
 }
 
-/// The outcome `stage` settles with: a cancel archond caused is the stall's
-/// infrastructure failure or the escalation it marked; any other outcome stands.
+/// The outcome `stage` settles with. A cancel archond caused is the stall's
+/// infrastructure failure or the escalation it marked; an escalation also
+/// overrides a result the agent gave before its cancel landed, since the
+/// round cap had already stopped the stage. Any other outcome stands.
 pub(super) fn intended(
     store: &Store,
     stage: &StageRunId,
     outcome: StageOutcome,
 ) -> Result<StageOutcome, ArchonError> {
-    if !matches!(outcome, StageOutcome::Cancelled { .. }) {
-        return Ok(outcome);
-    }
     let Some(reason) = store.kv_get(&intent_key(stage))? else {
         return Ok(outcome);
     };
-    assert!(!reason.is_empty(), "a marked stall names its reason");
+    assert!(!reason.is_empty(), "a marked stop names its reason");
     let infra = is_stall(&reason);
     assert!(
         infra || is_escalation(&reason),
         "a mark is a stall or an escalation"
     );
+    let cancelled = matches!(outcome, StageOutcome::Cancelled { .. });
+    if infra && !cancelled {
+        return Ok(outcome);
+    }
     Ok(StageOutcome::Failed {
         error: reason,
         infra,
     })
+}
+
+/// The reason to stop `stage` for: an escalation already marked outlasts a
+/// later stall, so the round cap's findings are never lost to the watchdog.
+pub(super) fn prevailing(
+    store: &Store,
+    stage: &StageRunId,
+    reason: &str,
+) -> Result<String, ArchonError> {
+    let marked = store.kv_get(&intent_key(stage))?;
+    let reason = match marked {
+        Some(escalation) if is_escalation(&escalation) => escalation,
+        _ => reason.to_owned(),
+    };
+    assert!(
+        is_stall(&reason) || is_escalation(&reason),
+        "only the watchdog and the review round cap stop a stage: {reason}"
+    );
+    Ok(reason)
 }
 
 /// Delete the `prefix` marks of stages that settled or no longer exist.
@@ -489,6 +511,56 @@ impl Waiting {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const CAPPED: &str = "ESCALATE: the review failed 3 rounds";
+
+    fn completed() -> StageOutcome {
+        StageOutcome::Completed {
+            summary: "done".into(),
+            structured: None,
+        }
+    }
+
+    #[test]
+    fn an_escalation_overrides_any_outcome_and_a_stall_only_a_cancel() {
+        let mut store = Store::open_in_memory().unwrap();
+        let stage = StageRunId::new();
+        let stalled = reason(Duration::from_secs(1800), true);
+        mark_intent(&mut store, &stage, &stalled).unwrap();
+        assert_eq!(intended(&store, &stage, completed()).unwrap(), completed());
+        let cancelled = StageOutcome::Cancelled { reason: None };
+        let StageOutcome::Failed { infra, .. } = intended(&store, &stage, cancelled).unwrap()
+        else {
+            panic!("a stall's cancel fails the stage");
+        };
+        assert!(infra, "a stall is an infrastructure failure");
+
+        mark_intent(&mut store, &stage, CAPPED).unwrap();
+        let own_failure = StageOutcome::Failed {
+            error: "tests failed".into(),
+            infra: false,
+        };
+        for outcome in [completed(), own_failure] {
+            let settled = intended(&store, &stage, outcome).unwrap();
+            let expected = StageOutcome::Failed {
+                error: CAPPED.into(),
+                infra: false,
+            };
+            assert_eq!(settled, expected, "the round cap already stopped it");
+        }
+    }
+
+    #[test]
+    fn a_stall_never_replaces_a_marked_escalation() {
+        let mut store = Store::open_in_memory().unwrap();
+        let stage = StageRunId::new();
+        let stalled = reason(Duration::from_secs(1800), false);
+        assert_eq!(prevailing(&store, &stage, &stalled).unwrap(), stalled);
+        mark_intent(&mut store, &stage, CAPPED).unwrap();
+        assert_eq!(prevailing(&store, &stage, &stalled).unwrap(), CAPPED);
+        let later = "ESCALATE: a later cap";
+        assert_eq!(prevailing(&store, &stage, later).unwrap(), CAPPED);
+    }
 
     fn at(minutes: i64) -> Timestamp {
         "2026-10-01T00:00:00Z".parse::<Timestamp>().unwrap() + chrono::Duration::minutes(minutes)

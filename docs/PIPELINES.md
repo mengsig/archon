@@ -404,8 +404,13 @@ that stage with each reason.
 A review loop is capped. A round is a commit a reviewer of the lead failed
 with a blocking finding, parallel reviewers of one head being one round. At
 the third round in one stage attempt, archond cancels the lead and fails the
-stage with an `ESCALATE:` error that lists the latest blocking findings'
-titles: the run ends and the orchestrator reshapes or retries the item.
+stage with an `ESCALATE:` error that lists the open blocking findings (the
+last round's, each with its place and remedy, then those only earlier rounds
+listed) and names the reviewers whose results hold them in full: the run ends
+and the orchestrator reshapes or retries the item. The stop is marked before
+the cancel goes out, so a lead that settles first, an unanswered cancel the
+sweep retries, or a stall the watchdog finds meanwhile all end in that
+escalation.
 Archon records the named reviewers whose passes hold as `review.reviewer_agents` and the models
 Aether ran them on as `review.reviewer_models`, replacing anything the
 agent wrote there.

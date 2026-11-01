@@ -60,9 +60,10 @@
     final head are still refused. A `strict` review takes three only for
     its first whole-change read.
   - At the third failed round in one stage attempt Archon stops the stage
-    with an `ESCALATE:` failure listing the open blocking findings, which
-    hands the item to the orchestrator; the fourth-round operator notice is
-    gone.
+    with an `ESCALATE:` failure listing the open blocking findings, each
+    with its place and remedy, which hands the item to the orchestrator; a
+    lead that settles before the cancel lands, or a stall found meanwhile,
+    still ends in that escalation. The fourth-round operator notice is gone.
   - A passing check of a tree holds for any later head with that tree: the
     stage contract says so, and the ship gate reuses a passing fast check
     for a later run of the same tree, base and command. After a passing full

@@ -1045,7 +1045,7 @@ mod tests {
             base: Some(upstream.clone()),
             findings: None,
             blocking: None,
-            titles: Vec::new(),
+            blocking_findings: Vec::new(),
         };
         let named = [("agt_r".to_owned(), verdict)];
 
@@ -1110,7 +1110,7 @@ mod tests {
             base: Some(from.clone()),
             findings: None,
             blocking: None,
-            titles: Vec::new(),
+            blocking_findings: Vec::new(),
         };
         let named = [("agt_r".to_owned(), verdict)];
         let mut base = Base {
@@ -1142,7 +1142,7 @@ mod tests {
             base: Some(base.to_owned()),
             findings: None,
             blocking: None,
-            titles: Vec::new(),
+            blocking_findings: Vec::new(),
         };
         let base = Base {
             branch: "main",
@@ -1184,7 +1184,7 @@ mod tests {
             base: Some(from.to_owned()),
             findings: None,
             blocking: None,
-            titles: Vec::new(),
+            blocking_findings: Vec::new(),
         };
         let named = [("agt_r".to_owned(), verdict)];
         let base = Base {

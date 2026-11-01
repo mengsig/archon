@@ -24,13 +24,10 @@ pub(super) async fn settle(
     id: &StageRunId,
     outcome: StageOutcome,
 ) -> Result<FollowUp, ArchonError> {
+    let outcome = stall::intended(&*ctx.store.lock().await, id, outcome)?;
     if !matches!(outcome, StageOutcome::Completed { .. }) {
         let mut table = ctx.runs.lock().await;
-        let outcome = {
-            let store = ctx.store.lock().await;
-            let outcome = stall::intended(&store, id, outcome)?;
-            notional::label(&store, id, outcome)?
-        };
+        let outcome = notional::label(&*ctx.store.lock().await, id, outcome)?;
         return settle_locked(ctx, &mut table, id, outcome).await;
     }
     let (stage, run, review, daemon_ships, planner, record_stage) = {

@@ -593,8 +593,8 @@ extends them. Tell reviewers so, and to mark every finding `\"blocking\": true` 
 /// Failing review rounds of one stage attempt after which Archon stops the stage.
 /// A round is one commit that at least one of the lead's reviewers failed with a
 /// blocking finding, so three parallel reviewers of one head are one round. The
-/// stage fails with an `ESCALATE:` error listing the latest blocking findings'
-/// titles, which ends the run and hands the item to the orchestrator.
+/// stage fails with an `ESCALATE:` error listing the open blocking findings,
+/// which ends the run and hands the item to the orchestrator.
 pub const REVIEW_ROUND_CAP: usize = 3;
 
 const REVIEW_CHECK_RULES: &str = "\

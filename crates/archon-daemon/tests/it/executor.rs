@@ -3591,8 +3591,15 @@ async fn the_third_failing_review_round_stops_the_stage_and_escalates() {
         .expect("the third round stops it");
     assert!(error.starts_with("ESCALATE:"), "{error}");
     assert!(error.contains("failed 3 rounds"), "{error}");
+    let (latest, earlier) = error
+        .split_once("Earlier rounds")
+        .expect("earlier rounds' findings are listed apart");
     assert!(
-        error.contains("finding 3") && !error.contains("finding 2"),
+        latest.contains("finding 3") && !latest.contains("finding 2"),
+        "{error}"
+    );
+    assert!(
+        earlier.contains("finding 1") && earlier.contains("finding 2"),
         "{error}"
     );
     let cancelled = h.backend.cancelled();
@@ -3645,4 +3652,28 @@ async fn a_capped_stage_whose_cancel_went_unanswered_is_stopped_by_the_sweep() {
     h.dispatch().await;
     let error = escalated(&h, &lead).await.expect("the sweep stops it");
     assert!(error.starts_with("ESCALATE:"), "{error}");
+}
+
+/// The cap's cancel went unanswered and the lead then completed on its own:
+/// the cap already stopped the stage, so it still escalates.
+#[tokio::test]
+async fn a_lead_that_completes_before_the_caps_cancel_lands_still_escalates() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    for n in 1..=2 {
+        review_round_fails(&h, &lead, n).await;
+    }
+    h.backend.fail_next_cancel(unreachable_aether());
+    review_round_fails(&h, &lead, 3).await;
+    h.settle_running(|_| completed("implemented")).await;
+    let error = escalated(&h, &lead).await.expect("the cap stands");
+    assert!(
+        error.starts_with("ESCALATE:") && error.contains("finding 3"),
+        "{error}"
+    );
+    let QueueState::Failed { error, .. } = h.state(&item.id).await else {
+        panic!("an escalation ends the run");
+    };
+    assert!(error.contains("failed 3 rounds"), "{error}");
 }

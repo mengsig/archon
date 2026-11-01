@@ -63,8 +63,8 @@ pub struct Verdict {
     pub findings: Option<usize>,
     /// How many of those are blocking, not follow-ups marked `"blocking": false`.
     pub blocking: Option<usize>,
-    /// The title of each blocking finding that has one, one line each.
-    pub titles: Vec<String>,
+    /// Each blocking finding as one line: what, where and the remedy given.
+    pub blocking_findings: Vec<String>,
 }
 
 /// What a reviewer must do when its result gives no verdict Archon can read.
@@ -229,15 +229,16 @@ impl Verdict {
             base,
             findings: listed.map(Vec::len),
             blocking: blocking.as_ref().map(Vec::len),
-            titles: blocking.as_deref().map(finding_titles).unwrap_or_default(),
+            blocking_findings: blocking.as_deref().map(described).unwrap_or_default(),
         };
         assert!(
             read.blocking <= read.findings,
             "blocking findings are among those listed"
         );
-        assert!(
-            read.titles.len() <= read.blocking.unwrap_or(0),
-            "titles are the blocking findings'"
+        assert_eq!(
+            read.blocking_findings.len(),
+            read.blocking.unwrap_or(0),
+            "one line per blocking finding"
         );
         read
     }
@@ -254,13 +255,33 @@ impl Verdict {
     }
 }
 
-/// The `title` of each finding in `list` that has a non-empty one.
-fn finding_titles(list: &[&Value]) -> Vec<String> {
-    list.iter()
-        .filter_map(|finding| finding.get("title")?.as_str())
-        .map(one_line)
-        .filter(|title| !title.is_empty())
-        .collect()
+/// Each finding of `list` as one line: its title (else its issue), where it
+/// is and its remedy, so a finding with none of them still counts.
+fn described(list: &[&Value]) -> Vec<String> {
+    let lines: Vec<String> = list.iter().map(|finding| describe(finding)).collect();
+    assert_eq!(lines.len(), list.len(), "one line per finding");
+    assert!(
+        lines.iter().all(|l| !l.is_empty()),
+        "every line names its finding"
+    );
+    lines
+}
+
+fn describe(finding: &Value) -> String {
+    let field = |key: &str| {
+        let text = finding.get(key).and_then(Value::as_str).map(one_line);
+        text.filter(|t| !t.is_empty())
+    };
+    let what = field("title").or_else(|| field("issue"));
+    let mut line = what.unwrap_or_else(|| "an untitled finding".to_owned());
+    if let Some(path) = field("path") {
+        let at = finding.get("line").and_then(Value::as_u64);
+        line += &at.map_or(format!(" at {path}"), |n| format!(" at {path}:{n}"));
+    }
+    if let Some(remedy) = field("remedy") {
+        line += &format!(" (remedy: {remedy})");
+    }
+    one_line(&line)
 }
 
 /// Why a result holds no verdict, quoting the one it gave if any.
@@ -877,13 +898,23 @@ mod tests {
     }
 
     #[test]
-    fn a_verdict_keeps_the_titles_of_its_findings() {
-        let findings =
-            json!([{"title": " Leaks  the\nhandle "}, {"severity": "low"}, {"title": ""}]);
+    fn a_verdict_describes_each_blocking_finding() {
+        let findings = json!([
+            {"title": " Leaks  the\nhandle ", "path": "src/a.rs", "line": 7, "remedy": "close it"},
+            {"severity": "low", "issue": "Drops the tail", "path": "src/b.rs"},
+            {"title": ""}
+        ]);
         let data = json!({"verdict": "fail", "head": HEAD, "findings": findings});
         let read = Verdict::read(Some(&data)).unwrap();
         assert_eq!(read.findings, Some(3));
-        assert_eq!(read.titles, ["Leaks the handle"]);
+        assert_eq!(
+            read.blocking_findings,
+            [
+                "Leaks the handle at src/a.rs:7 (remedy: close it)",
+                "Drops the tail at src/b.rs",
+                "an untitled finding"
+            ]
+        );
     }
 
     #[test]
@@ -896,7 +927,7 @@ mod tests {
         let read = Verdict::read_result("", Some(&data)).unwrap();
         assert!(read.pass, "follow-ups alone never fail the review");
         assert_eq!((read.findings, read.blocking), (Some(2), Some(0)));
-        assert!(read.titles.is_empty());
+        assert!(read.blocking_findings.is_empty());
 
         let mixed = json!([
             {"title": "Drops the tail", "blocking": true},
@@ -907,7 +938,7 @@ mod tests {
         let read = Verdict::read_result("", Some(&data)).unwrap();
         assert!(!read.pass);
         assert_eq!(read.blocking, Some(2));
-        assert_eq!(read.titles, ["Drops the tail", "Unmarked"]);
+        assert_eq!(read.blocking_findings, ["Drops the tail", "Unmarked"]);
 
         let empty = json!({"verdict": "fail", "head": HEAD, "findings": []});
         assert!(!Verdict::read_result("", Some(&empty)).unwrap().pass);
@@ -928,7 +959,7 @@ mod tests {
             base: None,
             findings: Some(3),
             blocking: Some(3),
-            titles: Vec::new(),
+            blocking_findings: vec!["a".into(), "b".into(), "c".into()],
         };
         record_reads(&mut result, &[("agt_r".into(), read)]);
         record_corrections(&mut result, &["agt_x -> agt_r".to_owned()]);

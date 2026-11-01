@@ -1,5 +1,6 @@
 //! Whether reviewers' verdicts hold for the change as the run's branch holds
-//! it: a counted pass read the head itself, whole or as an anchored delta; a
+//! it: as many reviewers as the review level asks read the whole change, and
+//! one counted pass read the head itself, whole or as an anchored delta; a
 //! pass of an earlier head holds, as an anchor, while later passes read every
 //! commit since. A verdict on a commit the branch no longer holds (amended or
 //! rebased away) is superseded: it never counts, and a superseded fail stands
@@ -259,7 +260,8 @@ pub(super) struct Held {
 }
 
 /// The `placed` passes that hold for the branch at `head`, or why the
-/// verdicts do not make `owed` named ones. A fail never counts.
+/// verdicts do not make a review: `owed` whole-change reads, every fail
+/// answered, and a named pass of `head`. A fail never counts as a pass.
 pub(super) fn counted(
     history: &mut impl Ancestry,
     placed: &[Placed],
@@ -367,8 +369,9 @@ fn unanchored(read: &Placed, earlier_read: bool) -> String {
 }
 
 /// Indexes of the anchored `reads` whose named passes hold for the branch
-/// at `head`, or why fewer than `owed` of them read `head` itself or a fail
-/// is unanswered. A pass of an earlier head holds only beside those.
+/// at `head`, or why none read `head` itself, a fail is unanswered, or fewer
+/// than `owed` read the whole change. A pass of an earlier head holds only
+/// beside one of `head`: after a fix, one anchored delta pass reaches it.
 fn judged(
     history: &mut impl Ancestry,
     reads: &[Placed],
@@ -390,13 +393,30 @@ fn judged(
         "only a pass of a commit the branch holds counts"
     );
     let at_head = passes.iter().filter(|i| reads[**i].head == head).count();
-    if at_head < owed as usize {
-        return Ok(Err(short_of(reads, &current, head, at_head, owed)));
+    if at_head == 0 {
+        return Ok(Err(short_of(reads, &current, head)));
     }
     if let Some(why) = open_fail(history, reads, &current)? {
         return Ok(Err(why));
     }
+    let whole = whole_reads(reads, &current);
+    if whole < owed as usize {
+        return Ok(Err(too_few_whole(reads, &current, whole, owed)));
+    }
     Ok(Ok(passes))
+}
+
+/// How many of `reads` read the whole change on the branch: a pass that
+/// holds, or a fail, which [`open_fail`] has already found answered.
+fn whole_reads(reads: &[Placed], current: &[bool]) -> usize {
+    assert_eq!(reads.len(), current.len(), "one mark per read");
+    let whole = reads
+        .iter()
+        .zip(current)
+        .filter(|(read, held)| read.base.is_none() && !read.superseded && (!read.pass || **held))
+        .count();
+    assert!(whole <= reads.len(), "each read counts once");
+    whole
 }
 
 /// What `holds` answers: ancestry, asked of git or of a test's history.
@@ -533,21 +553,16 @@ fn reads_past(
     Ok(later && covers(history, by, &earlier.head)?)
 }
 
-/// Why only `counted` named passes read the branch `head`, naming each read
-/// that does not count: one that no longer holds, or a pass of an earlier head.
-fn short_of(placed: &[Placed], current: &[bool], head: &str, counted: usize, owed: u32) -> String {
-    assert!(counted < owed as usize, "only a short review is refused");
+/// Why no named pass read the branch `head`, naming each read that does
+/// not count: one that no longer holds, or a pass of an earlier head.
+fn short_of(placed: &[Placed], current: &[bool], head: &str) -> String {
     assert_eq!(placed.len(), current.len(), "one mark per read");
     let stale: Vec<String> = placed
         .iter()
         .zip(current)
         .filter(|(read, held)| !**held || (read.named && read.head != head))
         .map(|(read, held)| match (read.superseded, read.pass) {
-            (true, _) => format!(
-                "{} read {}, which the branch no longer holds",
-                read.agent,
-                short(&read.head)
-            ),
+            (true, _) => superseded(read),
             (false, true) if *held => format!(
                 "{} passed {}, before the head: it anchors a delta read from there but \
                  does not count",
@@ -562,15 +577,59 @@ fn short_of(placed: &[Placed], current: &[bool], head: &str, counted: usize, owe
             (false, false) => format!("{} failed {}", read.agent, short(&read.head)),
         })
         .collect();
+    assert!(
+        placed
+            .iter()
+            .all(|read| !read.pass || read.head != head || !read.named),
+        "only a review with no named pass of the head is short"
+    );
     let mut why = format!(
-        "{counted} of the reviewers named passed the branch head {}, and this item's \
-         review level needs {owed}, each a different agent",
+        "0 of the reviewers named passed the branch head {}, whole or as a delta from a \
+         commit a named reviewer read the change up to, and the review needs one",
         short(head)
     );
     if !stale.is_empty() {
         why.push_str(&format!(" ({})", stale.join("; ")));
     }
     why
+}
+
+/// Why only `whole` of `placed` read the whole change while `owed` must,
+/// naming each whole read that does not count.
+fn too_few_whole(placed: &[Placed], current: &[bool], whole: usize, owed: u32) -> String {
+    assert!(whole < owed as usize, "only a short review is refused");
+    assert_eq!(placed.len(), current.len(), "one mark per read");
+    let stale: Vec<String> = placed
+        .iter()
+        .zip(current)
+        .filter(|(read, held)| read.base.is_none() && (read.superseded || (read.pass && !**held)))
+        .map(|(read, _)| match read.superseded {
+            true => superseded(read),
+            false => format!(
+                "{} passed {} and no passing reviewer named read the commits after it",
+                read.agent,
+                short(&read.head)
+            ),
+        })
+        .collect();
+    let mut why = format!(
+        "{whole} of the reviewers read the whole change as the branch holds it, and this \
+         item's review level needs {owed}, each a different agent; a re-review after a fix \
+         needs only a delta read"
+    );
+    if !stale.is_empty() {
+        why.push_str(&format!(" ({})", stale.join("; ")));
+    }
+    why
+}
+
+fn superseded(read: &Placed) -> String {
+    assert!(read.superseded, "only a superseded read is named so");
+    format!(
+        "{} read {}, which the branch no longer holds",
+        read.agent,
+        short(&read.head)
+    )
 }
 
 fn short(commit: &str) -> &str {
@@ -641,13 +700,14 @@ mod tests {
             read("agt_b", true, "c4", Some("c3")),
         ];
         assert_eq!(count(&fixed, "c4", 1).unwrap(), [0, 1]);
-        let anchor_only = count(&fixed, "c4", 2).unwrap_err();
+        let one_whole = count(&fixed, "c4", 2).unwrap_err();
         assert!(
-            anchor_only.starts_with("1 of the reviewers named passed the branch head c4"),
-            "{anchor_only}"
+            one_whole.starts_with("1 of the reviewers read the whole change"),
+            "{one_whole}"
         );
+        let anchor_only = count(&fixed[..1], "c4", 1).unwrap_err();
         assert!(
-            anchor_only.contains("agt_a passed c3, before the head"),
+            anchor_only.starts_with("0 of the reviewers named passed the branch head c4"),
             "{anchor_only}"
         );
         let gap = [
@@ -672,7 +732,10 @@ mod tests {
         ];
         assert_eq!(count(&refixed, "c4", 1).unwrap(), [1]);
         let short = count(&refixed, "c4", 2).unwrap_err();
-        assert!(short.starts_with("1 of the reviewers named"), "{short}");
+        assert!(
+            short.starts_with("1 of the reviewers read the whole change"),
+            "{short}"
+        );
 
         let overruled = [
             read("agt_a", false, "c4", None),
@@ -723,31 +786,39 @@ mod tests {
         ];
         assert_eq!(count(&strict, "c3", 3).unwrap(), [0, 1, 2]);
         let two = count(&strict[..2], "c3", 3).unwrap_err();
-        assert!(two.starts_with("2 of the reviewers named"), "{two}");
+        assert!(
+            two.starts_with("2 of the reviewers read the whole change"),
+            "{two}"
+        );
     }
 
-    /// A strict review where one of three failed: after the fix one new
-    /// reviewer reads the whole change and two read only the fix.
+    /// A strict review where one of three failed: after the fix one reviewer
+    /// reads only the fix, given the open findings; no new whole-change read.
     #[test]
-    fn a_strict_re_review_reads_the_whole_change_once_and_the_fix_as_deltas() {
-        let reduced = [
+    fn a_strict_re_review_after_a_fix_is_one_delta_read() {
+        let first = [
             read("agt_a", false, "c3", None),
             read("agt_b", true, "c3", None),
             read("agt_c", true, "c3", None),
-            read("agt_whole", true, "c5", None),
-            read("agt_delta_b", true, "c5", Some("c3")),
-            read("agt_delta_c", true, "c5", Some("c3")),
         ];
-        assert_eq!(count(&reduced, "c5", 3).unwrap(), [1, 2, 3, 4, 5]);
-        let once = count(&reduced[..4], "c5", 3).unwrap_err();
-        assert!(
-            once.starts_with("1 of the reviewers named passed the branch head c5"),
-            "{once}"
-        );
-        assert!(once.contains("agt_b passed c3, before the head"), "{once}");
-        let unread = count(&reduced, "c6", 3).unwrap_err();
+        let fixed = [first.as_slice(), &[read("agt_d", true, "c5", Some("c3"))]].concat();
+        assert_eq!(count(&fixed, "c5", 3).unwrap(), [1, 2, 3]);
+        let unnamed_fail = count(&fixed[1..], "c5", 3).unwrap_err();
+        assert_eq!(unnamed_fail, too_few(2));
+        let unread = count(&fixed, "c6", 3).unwrap_err();
         assert!(unread.starts_with("0 of the reviewers named"), "{unread}");
-        assert!(unread.contains("agt_whole passed c5"), "{unread}");
+        assert!(unread.contains("agt_d passed c5"), "{unread}");
+        let empty = [first.as_slice(), &[read("agt_d", true, "c3", Some("c3"))]].concat();
+        let refused = count(&empty, "c5", 3).unwrap_err();
+        assert!(refused.starts_with("0 of the reviewers named"), "{refused}");
+    }
+
+    fn too_few(whole: usize) -> String {
+        format!(
+            "{whole} of the reviewers read the whole change as the branch holds it, and this \
+             item's review level needs 3, each a different agent; a re-review after a fix \
+             needs only a delta read"
+        )
     }
 
     /// The re-review read `c4`, and the lead committed `c5` after it.
@@ -778,17 +849,16 @@ mod tests {
     }
 
     #[test]
-    fn an_early_fix_is_read_at_the_new_head_as_often_as_the_level_needs() {
+    fn a_strict_review_counts_whole_reads_and_needs_one_pass_of_the_new_head() {
         let fixed = [
             read("agt_fail", false, "c3", None),
             read("agt_pass", true, "c3", None),
             read("agt_delta", true, "c4", Some("c3")),
             read("agt_whole", true, "c4", None),
-            read("agt_delta_b", true, "c4", Some("c3")),
         ];
-        assert_eq!(count(&fixed, "c4", 3).unwrap(), [1, 2, 3, 4]);
-        let missing = count(&fixed[..4], "c4", 3).unwrap_err();
-        assert!(missing.starts_with("2 of the reviewers named"), "{missing}");
+        assert_eq!(count(&fixed, "c4", 3).unwrap(), [1, 2, 3]);
+        let missing = count(&fixed[..3], "c4", 3).unwrap_err();
+        assert_eq!(missing, too_few(2));
 
         // Two reviewers cancelled at c3 are replaced by whole-change reads at c4.
         let fail_anchored = [
@@ -811,7 +881,10 @@ mod tests {
         let amended = [gone("agt_a", true, "x3"), read("agt_b", true, "c4", None)];
         assert_eq!(count(&amended, "c4", 1).unwrap(), [1]);
         let short = count(&amended, "c4", 2).unwrap_err();
-        assert!(short.starts_with("1 of the reviewers named"), "{short}");
+        assert!(
+            short.starts_with("1 of the reviewers read the whole change"),
+            "{short}"
+        );
         assert!(
             short.contains("agt_a read x3, which the branch no longer holds"),
             "{short}"
@@ -857,11 +930,14 @@ mod tests {
             earlier("agt_whole", true, "c3", None),
             earlier("agt_mid", true, "c4", Some("c3")),
         ];
-        let found = held(&reads, "c5", 2).unwrap();
+        let found = held(&reads, "c5", 1).unwrap();
         assert_eq!(found.passes, [0, 1], "only named passes count");
         assert_eq!(found.implicit, ["agt_whole", "agt_mid"]);
-        let short = count(&reads, "c5", 3).unwrap_err();
-        assert!(short.starts_with("2 of the reviewers named"), "{short}");
+        let short = count(&reads, "c5", 2).unwrap_err();
+        assert!(
+            short.starts_with("1 of the reviewers read the whole change"),
+            "{short}"
+        );
         let named = held(&reads[..2], "c5", 1).unwrap_err();
         assert!(
             named.contains("agt_d1 read only from c4, and no reviewer named"),

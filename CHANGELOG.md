@@ -25,53 +25,46 @@
 
 ### Review
 
-- A re-review after a fix reads only what changed, keeping the gate whole.
-  Since 1.4.9 every re-review read the whole change again, so a `strict`
-  review replaced all three reviewers after each fix (one smoke trial
-  delegated nine medium reviewers and ran out of time). The stage contract
-  now asks, after a fix, for one new whole-change read at the new head
-  and, where the level asks for more passes, delta reads from the head the
-  earlier reviews read; a commit after passes needs only deltas. On a
-  blocking fail the lead lets the reviewers still reading finish before it
-  edits, instead of cancelling them, so one fix answers every finding and
-  their passes anchor the deltas. The review gate is tightened to match:
-  as many passes as the level asks for must have read the branch head
-  itself, whole or as an anchored delta. A pass of an earlier head still
-  holds beside them and anchors a delta, but no longer counts toward the
-  level, so a strict review is three reviewers of the final head. A delta
-  whose `base` is its own head read an empty diff and is refused. The
-  reviewer effort floor (#329) is unchanged.
 - Review loops converge. Loops that did not cost ~565 stage-minutes in a
   week: items failed 7 to 16 rounds, each a fresh reviewer reading the
   whole diff with no definition of what blocks and no cap, so each found
-  new nits. Now:
+  new nits. Since 1.4.9 every re-review also read the whole change again,
+  so a `strict` review replaced all three reviewers after each fix (one
+  smoke trial delegated nine medium reviewers and ran out of time). Now:
   - Reviewers mark each finding `"blocking": true` or `false`. Blocking
     findings are correctness bugs, security or safety issues, failing or
     missing tests for changed behaviour, and broken documented behaviour,
     as the brief narrows or extends them; the rest are follow-ups listed in
     the pull request. A `fail` whose every finding is marked non-blocking
-    counts as a pass, and only blocking fails count as rounds.
-  - A fix is re-reviewed by one new reviewer given the fix commits and the
-    open findings, which verifies they are fixed without regressions. The
-    gate no longer asks for a new whole-change read at the new head: the
-    level's reviewers are owed once as whole-change reads (a pass, or a
-    fail whose findings were fixed), then one anchored delta pass of the
-    final head completes the review. An empty delta and a pass short of the
-    final head are still refused. A `strict` review takes three only for
-    its first whole-change read.
+    counts as a pass, and only blocking fails count as rounds. A finding's
+    `"blocking"` mark outranks its `severity`, which decides only for a
+    finding with no mark.
+  - On a blocking fail the lead lets the reviewers still reading finish
+    before it edits, instead of cancelling them, so one fix answers every
+    finding. The fix is re-reviewed by one new reviewer given the fix
+    commits and the open findings, which verifies they are fixed without
+    regressions; no new whole-change read is asked for. The gate owes the
+    level's reviewers once as whole-change reads (a pass, or a fail whose
+    findings were fixed) and one named pass of the final head, whole or as
+    a delta from a commit a named reviewer read the change up to, and the
+    record names them all. A pass of an earlier head holds beside them as
+    an anchor. A delta whose `base` is its own head read an empty diff and
+    is refused, as is a pass short of the final head. A `strict` review
+    takes three only for its first whole-change read. The reviewer effort
+    floor (#329) is unchanged.
   - At the third failed round in one stage attempt Archon stops the stage
     with an `ESCALATE:` failure listing the open blocking findings, each
     with its place and remedy, which hands the item to the orchestrator; a
     lead that settles before the cancel lands, or a stall found before or
     after, still ends in that escalation. The fourth-round operator notice
-    is gone. A finding's `"blocking"` mark outranks its `severity`, which
-    decides only for a finding with no mark.
-  - A passing check of a tree holds for any later head with that tree: the
-    stage contract says so, and the ship gate reuses a passing fast check
-    when a later run selects the same command (its units expanded) for the
-    same tree, kept in memory until archond restarts. After a passing full
-    check, a diff touching only Markdown, `CHANGELOG` or docs needs only the
-    link and notice checks.
+    is gone.
+  - The stage contract says a passing check of a tree holds for any later
+    head with that tree, and that after a passing full check a diff of only
+    prose or raster images that no build or test reads needs only the link
+    and notice checks. `CONTRIBUTING.md` lists those files for Archon
+    (`*.md`, `*.markdown`, `*.rst`, `*.adoc`, `CHANGELOG*`, PNG, JPEG, GIF,
+    WebP); pipeline prompts, docs scripts and pages a test reads keep the
+    full `make ci`.
 
 ### Fixed
 

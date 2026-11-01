@@ -734,8 +734,8 @@ list what changed and why, the files touched, the exact verification commands yo
 with their results, and any known gaps.\n\
 - Report the `git rev-parse HEAD^{tree}` of your last full check. A passing check of \
 a tree holds for any later head with that tree. After a passing full check, a later \
-diff touching only Markdown, `CHANGELOG` or docs needs only the repository's link and \
-notice checks.\n";
+diff of only prose or raster images that no build or test reads needs only the \
+repository's link and notice checks.\n";
 
 const TEAM_RULES: &str = "\n## Team stage\n\n\
 - Use the report format the stage prompt gives for your summary. If it gives none, \
@@ -1168,8 +1168,8 @@ mod tests {
         let work = work.split_whitespace().collect::<Vec<_>>().join(" ");
         for said in [
             "A passing check of a tree holds for any later head with that tree",
-            "a later diff touching only Markdown, `CHANGELOG` or docs needs only the \
-             repository's link and notice checks",
+            "a later diff of only prose or raster images that no build or test reads \
+             needs only the repository's link and notice checks",
         ] {
             assert!(work.contains(said), "missing {said:?} in {work}");
         }

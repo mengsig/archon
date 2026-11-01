@@ -397,9 +397,11 @@ and are recorded as `review.implicit_reviewer_agents`. It does so only when
 the agent ran no other attempt of the run, once every reviewer it delegated
 to has ended (wait for or cancel one still running before completing), and
 when Aether shows each of their results. When the stage also writes the ship
-record, the branch head must hold the record's `tree`. With no pass of the
-head, or fewer whole-change reads than the level asks for, the run fails at
-that stage with each reason.
+record, the branch head must hold the record's `tree`. The record names
+the named passes and the named whole-change fails they answered, so the lead
+names every reviewer coverage rests on. With no pass of the head, fewer
+whole-change reads than the level asks for, or a record that would name
+fewer, the run fails at that stage with each reason.
 
 A review loop is capped. A round is a commit a reviewer of the lead failed
 with a blocking finding, parallel reviewers of one head being one round. At

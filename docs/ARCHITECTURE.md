@@ -2411,8 +2411,11 @@ a pass, or by a later fail that read every commit after its head and was
 itself followed so (a fix of a fix, each reviewed as a delta). The level
 counts whole-change reads on the branch, each a pass that holds or an
 answered fail, and one named pass must have read the head: after a fix, an
-anchored delta pass of the final head completes the review. Fewer fail the
-run with the reasons. A reviewer's `fail` whose findings are all marked
+anchored delta pass of the final head completes the review. The record
+names the named passes and the named whole-change fails they answered, so
+a strict review whose first reads failed still names three; a review whose
+named reads make a shorter record is refused, as is one with fewer reads.
+Fewer fail the run with the reasons. A reviewer's `fail` whose findings are all marked
 `"blocking": false` reads as a pass (`archon_pipeline::review`), and the
 review rounds of `executor/review/rounds.rs` count only blocking fails: at
 `REVIEW_ROUND_CAP` (three) the stage is cancelled and fails with an
@@ -2724,10 +2727,7 @@ table and delivers it off every lock:
    `CARGO_TARGET_DIR`, in its own process group, killed with everything it
    started after 30 minutes or when its run ends; the last 16 KiB of each
    stream are kept. The delivery stays queued meanwhile, and the verdict,
-   kept for the tree it checked, wakes the dispatcher. A pass is also kept
-   in memory by tree and expanded command: a later run that selects the
-   same command for the same tree reuses it without running it, and a
-   failure is never reused. The worktree is then
+   kept for the tree it checked, wakes the dispatcher. The worktree is then
    proved again, so a check that changed it is refused, before the verdict
    is read: a failed check refuses the item with the command, how it ended
    and the last lines of its output. Restarting archond runs it again.

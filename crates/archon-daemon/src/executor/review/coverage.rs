@@ -836,7 +836,11 @@ mod tests {
         ];
         let fixed = [first.as_slice(), &[read("agt_d", true, "c5", Some("c3"))]].concat();
         assert_eq!(count(&fixed, "c5", 3).unwrap(), [1, 2, 3]);
-        assert_eq!(held(&fixed, "c5", 3).unwrap().answered, [0], "the fixed fail is named");
+        assert_eq!(
+            held(&fixed, "c5", 3).unwrap().answered,
+            [0],
+            "the fixed fail is named"
+        );
         let unnamed_fail = count(&fixed[1..], "c5", 3).unwrap_err();
         assert_eq!(unnamed_fail, too_few(2));
         let unread = count(&fixed, "c6", 3).unwrap_err();

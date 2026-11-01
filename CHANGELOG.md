@@ -14,6 +14,20 @@
   ahead of the first parent's branch), are exempt; an item stacked on a
   reviewed pull request is still held to that pull request's base as
   GitHub shows it at delivery.
+- A passing reviewer whose summary states its verdict as `Verdict: pass.`
+  followed by prose no longer has its structured pass refused. The verdict
+  reader took any explanation of a pass beyond a few plain success words,
+  and any line after it, as taking the pass back, so a summary such as
+  `Verdict: pass. No blocking findings…` failed the stage with "the review
+  this pipeline declares is not on record"; in the 1.4.10 release smoke
+  this forced 4 automatic repairs in 5 runs. Now a pass may be explained on
+  its line and after it unless the text takes it back: a fail word, a
+  second verdict, a negation or condition (`not`, `until`, `if`, `but`, …),
+  a blocker nothing denies, or a `no` before anything but findings. A
+  choice (`PASS or FAIL`), a hedge right after the verdict word and a pass
+  beside a blocking finding are refused as before, and the refusal now
+  quotes the verdict line it read. The review contract tells the lead to
+  have each reviewer end its summary with `VERDICT: PASS` or `VERDICT: FAIL`.
 
 ## 1.4.10
 
@@ -138,9 +152,10 @@ its stage agents running; from 1.4.8, follow the 1.4.9 upgrade note below.
   check it cannot wait for.
 - Work and team stage contracts, the `direct`, `adaptive` and `swarm`
   implement and build prompts, and the automatic repair note say to run
-  checks in the foreground and never end a turn while one runs: Archon reads
-  the end of the turn as the stage's result, so runs that ended their turn
-  while `make ci` ran in the background were refused and restarted.
+  checks in the foreground and never end a turn while one runs (#347):
+  Archon reads the end of the turn as the stage's result, so runs that ended
+  their turn while `make ci` ran in the background were refused and
+  restarted.
 
 ### Fixed
 

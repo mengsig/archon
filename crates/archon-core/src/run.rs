@@ -138,9 +138,10 @@ impl Verdict {
     }
 
     /// What the last `VERDICT: <word>` line of `text` says, in any letter
-    /// case and with light markdown (`**Verdict:** PASS`); `Unknown` when
-    /// that line names no verdict, even if an earlier one did, or a pass is
-    /// explained beyond plain success words or followed by other lines.
+    /// case and with light markdown (`**Verdict:** PASS`, `- verdict: fail`);
+    /// `Unknown` when that line names no verdict, even if an earlier one did,
+    /// or a pass is taken back on its line or the lines after it (a fail word,
+    /// a negation or condition, an undenied blocker).
     pub fn from_summary(text: &str) -> Option<Self> {
         let (line, value) = last_verdict_line(text)?;
         let verdict = Self::from_word(value);
@@ -149,8 +150,7 @@ impl Verdict {
             text.get(..end).is_some_and(|head| head.ends_with(line)),
             "a summary line"
         );
-        // A pass the summary goes on to explain might be taken back there.
-        let held = verdict == Self::Pass && trails_on(&text[end..]);
+        let held = verdict == Self::Pass && trails_back(&text[end..]);
         Some(if held { Self::Unknown } else { verdict })
     }
 
@@ -190,9 +190,9 @@ impl Verdict {
 
     /// `None` when `text` does not open with a verdict word. A verdict word
     /// counts only when no word follows it before the first explanation
-    /// separator (`—`, `:`, `;`, `.`, ` - `, a line break): any is a choice
-    /// (`PASS or FAIL`) or a condition (`PASS, pending fixes`, `PASS (if CI agrees)`),
-    /// and a pass explained beyond plain success words ([`holds_back`]) is `Unknown` too.
+    /// separator (`—`, `:`, `;`, `.`, `!`, ` - `, a line break): any is a choice
+    /// (`PASS or FAIL`) or a condition (`PASS, pending fixes`, `PASS (if CI agrees)`).
+    /// A pass whose explanation [takes it back](holds_back) is `Unknown` too.
     fn leading(text: &str) -> Option<Self> {
         let mut words = text
             .split(|c: char| !c.is_alphanumeric())
@@ -203,7 +203,7 @@ impl Verdict {
             .expect("a first word");
         let after = text[first..].trim_start_matches(char::is_alphanumeric);
         let head = after
-            .split(['—', '–', ':', ';', '.', '\n'])
+            .split(['—', '–', ':', ';', '.', '!', '\n'])
             .next()
             .and_then(|head| head.split(" - ").next())
             .unwrap_or_default();
@@ -225,43 +225,119 @@ impl Verdict {
     }
 }
 
-/// The only words a pass's explanation may hold besides numbers (`PASS — all
-/// 214 tests pass`): any other could make it conditional, so it reads `Unknown`.
-const PLAIN_SUCCESS: [&str; 17] = [
-    "all", "tests", "test", "checks", "check", "pass", "passes", "passed", "passing", "green",
-    "clean", "findings", "issues", "lgtm", "ok", "ci", "and",
+/// Words that take a pass back wherever its statement holds them: the other
+/// verdict, a second `verdict`, a negation (`don't` splits into `don`, `t`) or a condition.
+const HOLDS_PASS: [&str; 43] = [
+    "fail",
+    "fails",
+    "failed",
+    "failing",
+    "failure",
+    "failures",
+    "reject",
+    "rejects",
+    "rejected",
+    "disapprove",
+    "disapproved",
+    "verdict",
+    "not",
+    "t",
+    "never",
+    "nor",
+    "nope",
+    "cannot",
+    "dont",
+    "cant",
+    "wont",
+    "until",
+    "unless",
+    "if",
+    "pending",
+    "but",
+    "however",
+    "except",
+    "before",
+    "after",
+    "first",
+    "only",
+    "yet",
+    "must",
+    "required",
+    "requires",
+    "requested",
+    "need",
+    "needs",
+    "missing",
+    "unsafe",
+    "unresolved",
+    "outstanding",
 ];
 
-/// Whether a pass's explanation could take it back: any word in it that is
-/// neither a number nor a [`PLAIN_SUCCESS`] word, `no` before `findings` or
-/// `issues` aside. A plain pass has none.
+/// What a pass may deny (`no blocking findings`, `non-blocking`) but never
+/// report (`one blocker remains`).
+const BLOCKERS: [&str; 7] = [
+    "blocker",
+    "blockers",
+    "blocking",
+    "blocked",
+    "regression",
+    "regressions",
+    "critical",
+];
+
+/// Words that deny the blocker after them.
+const DENIES: [&str; 6] = ["no", "non", "zero", "0", "without", "none"];
+
+/// What a bare `no` may deny in a pass's explanation (`PASS. No findings`);
+/// any other (`PASS — no tests`) says something the pass lacks.
+const DENIABLE: [&str; 15] = [
+    "critical",
+    "bugs",
+    "findings",
+    "finding",
+    "issues",
+    "issue",
+    "blocker",
+    "blockers",
+    "blocking",
+    "regressions",
+    "regression",
+    "problems",
+    "concerns",
+    "defects",
+    "objections",
+];
+
+/// Whether a pass's explanation takes it back: a [`HOLDS_PASS`] word, a
+/// [`BLOCKERS`] word nothing [denies](DENIES), or a `no` before anything but a
+/// [`DENIABLE`] word. Any other text after a plain pass word is explanation.
 fn holds_back(explanation: &str) -> bool {
-    let words: Vec<&str> = explanation
+    let words: Vec<String> = explanation
         .split(|c: char| !c.is_alphanumeric())
         .filter(|word| !word.is_empty())
+        .map(str::to_lowercase)
         .collect();
-    let plain = |word: &str| PLAIN_SUCCESS.iter().any(|ok| ok.eq_ignore_ascii_case(word));
+    let among = |set: &[&str], word: &str| set.contains(&word);
     words.iter().enumerate().any(|(at, word)| {
-        let next = words.get(at + 1).copied().unwrap_or_default();
-        let denies_findings = word.eq_ignore_ascii_case("no")
-            && ["findings", "issues"]
-                .iter()
-                .any(|n| n.eq_ignore_ascii_case(next));
-        let number = word.chars().all(|c| c.is_ascii_digit());
-        !plain(word) && !number && !denies_findings
+        let before = at.checked_sub(1).map_or("", |prev| words[prev].as_str());
+        let after = words.get(at + 1).map_or("", String::as_str);
+        let blocker = among(&BLOCKERS, word) && !among(&DENIES, before);
+        let lacks = word == "no" && !among(&DENIABLE, after);
+        among(&HOLDS_PASS, word) || blocker || lacks
     })
 }
 
-/// Whether a summary goes on after its verdict line with anything but blank
-/// lines and the `head: <hex>`/`base: <hex>` lines a review names its commits in.
-fn trails_on(rest: &str) -> bool {
+/// Whether the summary after a pass's verdict line takes it back: anything
+/// there but blank lines and the `head: <hex>`/`base: <hex>` lines a review
+/// names its commits in that [holds it back](holds_back).
+fn trails_back(rest: &str) -> bool {
     let is_commit = |value: &str| {
         let value = value.trim().trim_matches(['`', '*']);
         !value.is_empty() && value.bytes().all(|b| b.is_ascii_hexdigit())
     };
     rest.lines().any(|line| {
         let commit = strip_label(line, "head").or_else(|| strip_label(line, "base"));
-        !line.trim().is_empty() && !commit.is_some_and(is_commit)
+        !commit.is_some_and(is_commit) && holds_back(line)
     })
 }
 
@@ -1084,6 +1160,60 @@ mod tests {
     }
 
     #[test]
+    fn a_verdict_statement_reads_with_text_after_it_and_markdown_around_it() {
+        let pass = json!({"verdict": "pass", "head": "abcdef1", "findings": []});
+        for summary in [
+            "Verdict: pass. No blocking findings; the parser change is covered.",
+            "**VERDICT: PASS**",
+            "**verdict: pass.** All checks green.",
+            "Verdict: pass. No critical bugs, no blocking findings.",
+            "- Verdict: Pass! Nothing to fix.",
+            "Verdict: pass. Fixes the reported bug in the code block parser.",
+            "Verdict: pass. No blocking findings…\n\nThe change is small; one non-blocking note.",
+            "Verdict: fail — a regression.\nFixed in the next commit.\nVerdict: pass.",
+        ] {
+            assert_eq!(Verdict::extract(summary, None), Verdict::Pass, "{summary}");
+            assert_eq!(
+                Verdict::extract(summary, Some(&pass)),
+                Verdict::Pass,
+                "{summary}"
+            );
+        }
+        for summary in [
+            "- verdict: fail — two blocking findings in the parser",
+            "Verdict: pass.\nVerdict: FAIL. A regression remains.",
+        ] {
+            assert_eq!(Verdict::extract(summary, None), Verdict::Fail, "{summary}");
+            assert_eq!(Verdict::extract(summary, Some(&pass)), Verdict::Unknown);
+        }
+        let unsaid = "No verdict, but the tests pass.";
+        assert_eq!(Verdict::extract(unsaid, None), Verdict::Unknown);
+        assert_eq!(Verdict::extract(unsaid, Some(&pass)), Verdict::Pass);
+        for summary in [
+            "Verdict: pass or fail, depending on CI",
+            "Verdict: pass. Two tests failed.",
+            "Verdict: pass. One blocker remains in run.rs.",
+            "Verdict: pass. Don't merge yet.",
+            "Verdict: pass. Changes requested.",
+            "Verdict: pass. A critical bug remains.",
+            "Verdict: pass. Needs a fix; unsafe to merge.",
+            "Verdict: pass.\n\nDo not merge until CI is green.",
+        ] {
+            assert_eq!(
+                Verdict::extract(summary, None),
+                Verdict::Unknown,
+                "{summary}"
+            );
+            assert_ne!(Verdict::extract(summary, Some(&pass)), Verdict::Pass);
+        }
+        let blocked = json!({"verdict": "pass", "findings": [{"blocking": true}]});
+        let summary = "Verdict: pass. No blocking findings.";
+        assert_eq!(Verdict::extract(summary, Some(&blocked)), Verdict::Unknown);
+        assert!(Verdict::pass_disputed(summary, Some(&blocked)));
+        assert!(!Verdict::pass_disputed(summary, Some(&pass)));
+    }
+
+    #[test]
     fn markdown_lines_tell_prose_from_quotes_code_and_fences() {
         use LineKind::*;
         let text = "a\n> b\n \tc\n~~~json\n    d\n```\n~~~~\n- e\n  f\n  ```\n  g\n  ```\n```\nh";
@@ -1260,7 +1390,8 @@ mod tests {
             ("PASS — no findings", Verdict::Pass),
             ("PASS — all checks green", Verdict::Pass),
             ("PASS — 214 passed, 0 failed", Verdict::Unknown),
-            ("PASS — no blocking findings", Verdict::Unknown),
+            ("PASS — no blocking findings", Verdict::Pass),
+            ("PASS — one blocking finding", Verdict::Unknown),
             ("PASS — no tests", Verdict::Unknown),
             ("PASS — no CI", Verdict::Unknown),
             (

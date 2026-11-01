@@ -84,10 +84,7 @@ impl Verdict {
     pub fn read_result(summary: &str, structured: Option<&Value>) -> Result<Self, String> {
         let read = Self::read_stated(summary, structured)?;
         if read.pass && Said::pass_disputed(summary, structured) {
-            return Err(format!(
-                "it passes but its summary's final `VERDICT:` line or JSON verdict does not, \
-                 or it lists a blocking finding: {VERDICT_HOWTO}"
-            ));
+            return Err(disputed_pass(summary));
         }
         Ok(read.only_follow_ups_pass())
     }
@@ -282,6 +279,20 @@ fn describe(finding: &Value) -> String {
         line += &format!(" (remedy: {remedy})");
     }
     one_line(&line)
+}
+
+/// Why a pass is refused when the rest of its result takes it back, quoting
+/// the summary's verdict line so the refusal shows what was read.
+fn disputed_pass(summary: &str) -> String {
+    let read = match Said::stated(summary, None) {
+        Some(line) => format!(" (its verdict line reads {:?})", one_line(&line)),
+        None => String::new(),
+    };
+    debug_assert!(!read.contains('\n'), "a quote on one line");
+    format!(
+        "it passes but its summary's final `VERDICT:` line or JSON verdict does not, \
+         or it lists a blocking finding{read}: {VERDICT_HOWTO}"
+    )
 }
 
 /// Why a result holds no verdict, quoting the one it gave if any.
@@ -712,8 +723,10 @@ mod tests {
         let late = format!("Prose first.\n\n**Verdict:** PASS\nhead: {HEAD}");
         assert!(Verdict::read_result(&late, None).unwrap().pass);
         let mid = format!("**Verdict:** PASS\nhead: {HEAD}\nThen more prose.");
+        assert!(Verdict::read_result(&mid, None).unwrap().pass);
+        let held = format!("**Verdict:** PASS\nhead: {HEAD}\nThen more prose, but CI is red.");
         assert!(
-            Verdict::read_result(&mid, None).is_err(),
+            Verdict::read_result(&held, None).is_err(),
             "prose may take a pass back"
         );
         let findings = json!({"head": HEAD, "base": "1234567", "findings": [{"title": "nit"}]});
@@ -811,6 +824,37 @@ mod tests {
         let fenced = format!("```json\n{pass}\n```\nVERDICT: not passed");
         let refused = Verdict::read_result(&fenced, None).unwrap_err();
         assert!(refused.contains("\"VERDICT: not passed\""), "{refused}");
+    }
+
+    #[test]
+    fn a_pass_stated_with_prose_after_it_agrees_and_a_refusal_quotes_its_line() {
+        let pass = json!({"verdict": "pass", "head": HEAD, "findings": []});
+        for summary in [
+            "Verdict: pass. No blocking findings; the change is covered by tests.",
+            "Checked the diff.\n\n**VERDICT: PASS**",
+        ] {
+            let read = Verdict::read_result(summary, Some(&pass)).unwrap();
+            assert!(read.pass, "{summary}");
+            assert_eq!(read.blocking, Some(0), "{summary}");
+        }
+        let lines = format!("- verdict: pass. Nothing to fix.\nhead: {HEAD}");
+        assert!(Verdict::read_result(&lines, None).unwrap().pass);
+        let held = "Verdict: pass. Do not merge until CI is green.";
+        let refused = Verdict::read_result(held, Some(&pass)).unwrap_err();
+        assert!(refused.contains(&format!("reads {held:?}")), "{refused}");
+        let long = format!("Verdict: pass — but {}", "x ".repeat(500));
+        let refused = Verdict::read_result(&long, Some(&pass)).unwrap_err();
+        assert!(
+            refused.contains("reads \"Verdict: pass — but x x"),
+            "{refused}"
+        );
+        assert!(
+            refused.len() < long.len(),
+            "the quote is clipped: {refused}"
+        );
+        let blocked = json!({"verdict": "pass", "head": HEAD, "findings": [{"blocking": true}]});
+        let refused = Verdict::read_result("Verdict: pass.", Some(&blocked)).unwrap_err();
+        assert!(refused.contains("lists a blocking finding"), "{refused}");
     }
 
     #[test]

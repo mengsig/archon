@@ -341,8 +341,8 @@ async fn check_pr_open(
 }
 
 /// Whether `tip`, the branch head a refresh merges into, is the commit a
-/// succeeded item on that branch (`owner` or a fix of it) handed in as its
-/// ship record, which its review gate held: only then may the refresh's review
+/// succeeded item on that branch (`owner` or a fix of it) shipped as its ship
+/// record, which its review gate held: only then may the refresh's review
 /// start there. Anything else is reviewed whole, from the base, as before.
 async fn reviewed_tip(
     ctx: &DaemonContext,
@@ -357,7 +357,8 @@ async fn reviewed_tip(
         if !matches!(store.item(id)?.state, QueueState::Succeeded { .. }) {
             continue;
         }
-        let Some(run) = store.runs_for_item(id)?.pop() else {
+        // A run that shipped nothing delivered no reviewed head.
+        let Some(run) = store.runs_for_item(id)?.pop().filter(|run| run.shipped) else {
             continue;
         };
         assert_eq!(&run.item, id, "the item's own run");
@@ -368,20 +369,23 @@ async fn reviewed_tip(
     Ok(false)
 }
 
-/// The commit of the last ship record among a run's completed `stages`.
+/// The one commit every ship record among a run's completed `stages` names.
+/// `None` when there is none or they disagree: the stage that held the record
+/// is then unknown, and so is the head its review gate passed.
 fn handed_in(stages: &[archon_core::run::StageRun]) -> Option<String> {
     use archon_core::run::StageState;
-    let recorded = stages
+    let mut commits = stages
         .iter()
         .filter(|stage| stage.state == StageState::Completed)
         .filter_map(|stage| {
             let record = archon_pipeline::ShipRecord::read(stage.structured.as_ref()).ok()?;
-            Some((stage.started_at, record.commit))
-        })
-        .max_by_key(|(started, _)| *started);
-    recorded
-        .map(|(_, commit)| commit)
-        .filter(|commit| stack::is_commit_id(commit))
+            Some(record.commit)
+        });
+    let first = commits.next()?;
+    if commits.any(|commit| commit != first) {
+        return None;
+    }
+    Some(first).filter(|commit| stack::is_commit_id(commit))
 }
 
 /// The review a refresh owes: none when its merge is clean or conflicts only in
@@ -399,17 +403,28 @@ fn refresh_review(owner: ReviewLevel, conflicts: &[String]) -> ReviewLevel {
     }
 }
 
+/// File types a refresh may resolve with no reviewer: text that renders and
+/// raster images, never anything a build, a script or a browser runs.
+const PROSE_EXTENSIONS: [&str; 9] = [
+    "md", "markdown", "rst", "adoc", "png", "jpg", "jpeg", "gif", "webp",
+];
+
 /// Whether `path` is prose a refresh resolves with no reviewer: a changelog
-/// anywhere, a top-level Markdown file or anything under `docs/`.
+/// anywhere, or a top-level or `docs/` file of a [`PROSE_EXTENSIONS`] type.
 pub(super) fn is_prose(path: &str) -> bool {
     assert!(!path.is_empty(), "a named path");
     // A name git would quote is never taken for prose.
     if path.chars().any(char::is_control) {
         return false;
     }
-    let name = path.rsplit('/').next().unwrap_or(path);
-    let top_markdown = !path.contains('/') && name.to_ascii_lowercase().ends_with(".md");
-    name.to_ascii_uppercase().starts_with("CHANGELOG") || top_markdown || path.starts_with("docs/")
+    let name = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
+    let Some((stem, extension)) = name.rsplit_once('.') else {
+        return name == "changelog";
+    };
+    if !PROSE_EXTENSIONS.contains(&extension) {
+        return false;
+    }
+    stem == "changelog" || !path.contains('/') || path.starts_with("docs/")
 }
 
 /// The base commit a refresh merges, the branch head it merges into, and the
@@ -674,7 +689,7 @@ mod tests {
             "changelog",
             "README.md",
             "docs/guide.md",
-            "docs/img/flow.svg",
+            "docs/img/flow.png",
         ] {
             assert!(is_prose(prose), "{prose}");
         }
@@ -686,9 +701,58 @@ mod tests {
             " docs/a.rs",
             "\nREADME.md",
             "CHANGELOG\nREADME.md",
+            "docs/assets/src/build.mjs",
+            "docs/conf.py",
+            "docs/requirements.txt",
+            "docs/img/flow.svg",
+            "CHANGELOG.sh",
+            "changelog.md.sh",
+            "build.sh",
         ] {
             assert!(!is_prose(code), "{code}");
         }
+    }
+
+    /// A completed stage of a run, its result naming `commit` as a ship record.
+    fn recorded(commit: &str) -> archon_core::run::StageRun {
+        archon_core::run::StageRun {
+            id: archon_core::id::StageRunId::new(),
+            run: archon_core::id::PipelineRunId::new(),
+            stage_id: "build".into(),
+            kind: None,
+            attempt: 1,
+            fan_index: 0,
+            choice: archon_core::model::ModelChoice {
+                model: "a/work".parse().unwrap(),
+                effort: archon_core::model::Effort::Low,
+                tier: None,
+            },
+            model_segments: Vec::new(),
+            infrastructure_failure: false,
+            host_context: Default::default(),
+            aether_agent: None,
+            aether_task: None,
+            state: archon_core::run::StageState::Completed,
+            verdict: None,
+            summary: None,
+            structured: Some(serde_json::json!({"commit": commit, "tree": "b".repeat(40),
+                "pr": {"title": "t", "body": "b"}})),
+            cost_usd: 0.0,
+            started_at: archon_core::now(),
+            finished_at: None,
+        }
+    }
+
+    #[test]
+    fn ship_records_that_disagree_hand_in_no_reviewed_head() {
+        let (one, other) = ("a".repeat(40), "c".repeat(40));
+        assert_eq!(handed_in(&[recorded(&one)]), Some(one.clone()));
+        assert_eq!(
+            handed_in(&[recorded(&one), recorded(&one)]),
+            Some(one.clone())
+        );
+        assert_eq!(handed_in(&[recorded(&one), recorded(&other)]), None);
+        assert_eq!(handed_in(&[]), None);
     }
 
     #[test]

@@ -22,9 +22,9 @@ const POLICY: &str = "any model the policy allows";
 const PLAIN_BUDGET: usize = 3_650;
 const REVIEW_BUDGET: usize = 3_550;
 const RECORD_BUDGET: usize = 1_550;
-/// What holding a review adds: the record, the verdict and risk call each
-/// reviewer returns, the blocking class and the round cap.
-const REVIEW_HOLDER_BUDGET: usize = 2_100;
+/// What holding a review adds: the record, the verdict, summary line and risk
+/// call each reviewer returns, the blocking class and the round cap.
+const REVIEW_HOLDER_BUDGET: usize = 2_200;
 /// What a work stage of a team pipeline adds: committing where the roles fork.
 const RUN_TREE_BUDGET: usize = 550;
 /// What judging the change's risk adds: the rubric, to the record stage and

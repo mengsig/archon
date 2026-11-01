@@ -583,9 +583,8 @@ starts the diff read:\n\n\
 ```json\n\
 {\"verdict\": \"pass\", \"head\": \"<commit>\", \"base\": \"<commit>\", \"findings\": []}\n\
 ```\n\n\
-Use `\"fail\"` with findings for failures. Tell each reviewer to end its summary \
-with the line `VERDICT: PASS` or `VERDICT: FAIL`, matching that `verdict`: a summary \
-that states another verdict, or a condition beside its pass, takes the pass back.\n\n\
+Use `\"fail\"` with findings for failures. Have each reviewer end its summary \
+with the line `VERDICT: PASS` or `VERDICT: FAIL`, matching it.\n\n\
 - Blocking findings are correctness bugs, security or safety issues, failing or missing \
 tests for changed behaviour, and broken documented behaviour, as the brief narrows or \
 extends them. Tell reviewers so, and to mark every finding `\"blocking\": true` or \

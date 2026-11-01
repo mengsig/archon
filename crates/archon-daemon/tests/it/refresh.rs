@@ -160,19 +160,26 @@ fn merge_by_hand(tree: &Path, sha: &str, file: &str, content: &str) {
 }
 
 /// A new branch forks from what GitHub's base holds, fetched through the
-/// shadow, while the operator's `main` and checkout stay as they were.
+/// shadow, and the operator's clean checkout of `main`, behind it, is
+/// fast-forwarded to it (#341) with nothing to tell.
 #[tokio::test]
-async fn a_new_branch_forks_from_origin_s_base_and_leaves_the_local_one() {
+async fn a_new_branch_forks_from_origin_s_base_and_fast_forwards_the_clean_local_one() {
     let (h, _gh) = delivering().await;
-    let local = git(&h.repo, &["rev-parse", "main"]);
     let upstream = advance_origin(&h, "upstream.txt", "merged on GitHub\n");
     let item = enqueue(&h, "on a fresh base").await;
     h.dispatch().await;
     let run = h.run(&item.id).await;
     assert_eq!(git(&run.workspace, &["rev-parse", "HEAD"]), upstream);
     assert!(run.workspace.join("upstream.txt").exists());
-    assert_eq!(git(&h.repo, &["rev-parse", "main"]), local, "never moved");
-    assert_eq!(git(&h.repo, &["rev-parse", "HEAD"]), local);
+    assert_eq!(
+        git(&h.repo, &["rev-parse", "main"]),
+        upstream,
+        "fast-forwarded"
+    );
+    assert_eq!(git(&h.repo, &["rev-parse", "HEAD"]), upstream);
+    assert!(h.repo.join("upstream.txt").exists(), "the checkout follows");
+    let tracked = ["status", "--porcelain", "--untracked-files=no"];
+    assert_eq!(git(&h.repo, &tracked), "", "nothing left changed");
     assert_eq!(git(&h.repo, &["branch", "--show-current"]), "main");
     assert_eq!(git(&h.repo, &["rev-parse", "origin/main"]), upstream);
     assert!(h.notices(NotificationKind::Decision).await.is_empty());

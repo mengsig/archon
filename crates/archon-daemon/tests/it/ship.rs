@@ -618,6 +618,74 @@ async fn a_no_change_result_on_a_clean_branch_succeeds_without_shipping() {
     assert!(gh.calls().is_empty(), "{:?}", gh.calls());
 }
 
+/// Commit `count` changes to `origin`'s `main` that the harness checkout lacks,
+/// as a merge on GitHub does; returns `origin`'s new head.
+fn advance_origin(h: &Harness, count: usize) -> String {
+    let upstream = h.dir.path().join("upstream");
+    let origin = origin_of(h);
+    let origin = origin.to_str().expect("utf-8");
+    let upstream_path = upstream.to_str().expect("utf-8");
+    git(h.dir.path(), &["clone", "--quiet", origin, upstream_path]);
+    for n in 0..count {
+        std::fs::write(upstream.join(format!("merged-{n}.txt")), "merged\n").unwrap();
+        git(&upstream, &["add", "."]);
+        git(&upstream, &["commit", "--quiet", "-m", "Merged on GitHub"]);
+    }
+    git(&upstream, &["push", "--quiet", "origin", "main"]);
+    git(&upstream, &["rev-parse", "HEAD"])
+}
+
+/// A no-change item whose local base is behind `origin` counts none of the
+/// base's commits as its own (#341); the checkout, edited, is left alone and
+/// the operator is told why once.
+#[tokio::test]
+async fn a_no_change_result_beside_a_stale_local_base_succeeds() {
+    let (h, gh) = delivering().await;
+    let local = git(&h.repo, &["rev-parse", "main"]);
+    let head = advance_origin(&h, 2);
+    std::fs::write(h.repo.join("README.md"), "the operator's edit\n").unwrap();
+    let (item, run) = started(&h, "direct").await;
+    assert_eq!(git(&run.workspace, &["rev-parse", "HEAD"]), head);
+    settle_with(&h, json!({"no_change": {"reason": "already done"}})).await;
+
+    let summary = succeeded(&h, &item).await;
+    assert!(summary.contains("No change was needed"), "{summary}");
+    assert!(gh.calls().is_empty(), "{:?}", gh.calls());
+    assert_eq!(
+        git(&h.repo, &["rev-parse", "main"]),
+        local,
+        "main untouched"
+    );
+    let readme = std::fs::read_to_string(h.repo.join("README.md")).unwrap();
+    assert_eq!(readme, "the operator's edit\n");
+    let told = |notices: Vec<String>| {
+        let left = |n: &&String| n.contains("Left the local `main`");
+        notices.iter().filter(left).cloned().collect::<Vec<_>>()
+    };
+    let notices = told(h.notices(NotificationKind::Decision).await);
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert!(notices[0].contains("local changes"), "{notices:?}");
+
+    // A second dispatch finds the same reason and says nothing new.
+    let _ = started(&h, "direct").await;
+    assert_eq!(told(h.notices(NotificationKind::Decision).await).len(), 1);
+}
+
+/// The run's own commit still counts with the local base behind `origin`,
+/// and only that one.
+#[tokio::test]
+async fn a_no_change_claim_beside_a_commit_and_a_stale_local_base_fails() {
+    let (h, _gh) = delivering().await;
+    advance_origin(&h, 2);
+    std::fs::write(h.repo.join("README.md"), "the operator's edit\n").unwrap();
+    let (item, run) = started(&h, "direct").await;
+    change(&run.workspace);
+    settle_with(&h, json!({"no_change": {"reason": "nothing to do"}})).await;
+
+    let error = failed(&h, &item).await;
+    assert!(error.contains("holds 1 commit(s) beyond `main`"), "{error}");
+}
+
 /// The proposal page a propose stage leaves untracked is Archon's, not a change,
 /// and so is a declared service's PID file.
 #[tokio::test]

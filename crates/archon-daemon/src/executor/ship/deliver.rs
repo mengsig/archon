@@ -407,6 +407,7 @@ async fn prove(
         branch: run.branch.clone(),
         base: base.to_owned(),
         since: claimed.onto.as_ref().map(|onto| onto.head_sha.clone()),
+        forked: forked_from(&claimed.vars, base),
         allowed: repo_identity::RepoIdentity::allowed(identity.as_ref()),
         attribution: repo.attribution,
     };
@@ -439,11 +440,17 @@ pub(in crate::executor) async fn prove_unchanged(
     run: &PipelineRun,
 ) -> Result<Result<(), String>, ArchonError> {
     assert!(run.workspace.is_absolute(), "a run has a worktree");
-    let (repo, onto, base) = {
+    let (repo, onto, base, forked) = {
         let store = ctx.store.lock().await;
         let vars = recover::load_run_vars(&store, &run.id)?;
         let base = base_of(&store, run, &vars)?;
-        (repo_of(&store, run)?, store.item(&run.item)?.onto, base)
+        let forked = forked_from(&vars, &base);
+        (
+            repo_of(&store, run)?,
+            store.item(&run.item)?.onto,
+            base,
+            forked,
+        )
     };
     let Some(repo) = repo else {
         return Ok(Err(
@@ -457,6 +464,7 @@ pub(in crate::executor) async fn prove_unchanged(
         branch: run.branch.clone(),
         base,
         since: onto.map(|onto| onto.head_sha),
+        forked,
         allowed: Vec::new(),
         attribution: repo.attribution,
     };
@@ -573,6 +581,15 @@ pub(in crate::executor) fn base_of(
             "the run's variables name no base branch".into(),
         )),
     }
+}
+
+/// The commit of `base` the run forked from, as recorded at dispatch; `None`
+/// when the run forked from another branch, as a stack's base moves on.
+fn forked_from(vars: &BTreeMap<String, String>, base: &str) -> Option<String> {
+    assert!(!base.is_empty(), "a delivery has a base branch");
+    let same_base = vars.get("base_branch").map(|b| b.trim()) == Some(base);
+    let forked = vars.get("base_commit").filter(|_| same_base)?;
+    crate::worktree::stack::is_commit_id(forked).then(|| forked.clone())
 }
 
 /// Persist `outcome` for a rebuilt driver to replay. A pull request's URL

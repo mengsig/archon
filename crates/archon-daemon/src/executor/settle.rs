@@ -69,6 +69,7 @@ pub(super) async fn settle(
         }
         (false, None) => outcome,
     };
+    let outcome = super::refresh::verify_unreviewed(ctx, &run, review, outcome).await?;
     let outcome = super::review::verify(ctx, &run, &stage, review, outcome).await?;
     let planned = planner.is_some();
     let was_completed = matches!(outcome, StageOutcome::Completed { .. });

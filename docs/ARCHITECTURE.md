@@ -3700,18 +3700,42 @@ object per line under `--json`).
   head (`origin`'s in `pr` mode, else the local branch) and queues a new
   item, titled `Refresh <item> onto <base>`, that runs the owner's pipeline
   on the owner's branch and worktree like a restack fix (§8.8). Proposal and
-  report are always off; review, merge and tools are retained. The owner's
+  report are always off; merge and tools are retained. The owner's
   model plan, model reasons and stage timeouts are not: the refresh takes the
   `model_plan`, `model_reasons` and `stage_timeouts` the request gives, shaped
-  and checked as in `enqueue`, and the stage defaults within model policy for
-  the rest. The plan is validated before enqueue.
+  and checked as in `enqueue`, the stage defaults within model policy for the
+  rest, and `[limits] refresh_stage_timeout_minutes` (default 30) for every
+  stage the request gives no timeout. The plan is validated before enqueue.
+  Its brief asks for the merge only: resolve, keep the checks green, change
+  nothing else and report other findings as follow-ups; the owner's brief
+  follows as quoted, read-only context. When the branch head it merges into
+  is the commit a succeeded item on the branch (the owner or a fix of it)
+  handed in as its ship record, which its review gate held, Archon records
+  that head, previews the merge with `git merge-tree` and sets the refresh's
+  review level from it: `none` for a clean merge or one conflicting only in
+  changelogs, top-level `*.md` or `docs/` files, where that review stands;
+  `standard` (one reviewer) for a code conflict, unless the owner's level is
+  `none`. A read from the recorded head (the merge's first parent) covers the
+  whole refresh, so its reviewer reads the resolution
+  (`git show --remerge-diff`) and later commits only. Any other branch head
+  (a failed or cancelled owner, or commits no review passed) keeps the
+  owner's level, read whole from the base. A refresh whose review was
+  dropped fails at its record stage if the branch changed code beyond git's
+  own merge: each merge's remerge diff and every other new commit, side
+  branches merged in included, must touch only those prose files (a rename
+  counts as both its paths), and none may be an octopus merge, whose
+  resolution git does not show. The brief names the review scope the refresh
+  got: the resolution from the recorded head, or the whole change. A refresh whose branch
+  already holds the base commit when it is dispatched (merged in after it
+  was queued) is cancelled at once, before any run, saying there was nothing
+  to merge.
   The run's base branch is retained separately from expiring prompt templates;
   older runs with neither use the repository's configured base, or require
   `archon repo set` when none is configured. Its agent
   merges that commit with `git merge`, resolves conflicts, commits and runs
-  the checks; its review must cover the change from the new merge base
-  (conflict resolutions included: the review fork of §8.2 counts `origin`'s
-  base), and it delivers into the same pull request. Delivery refuses until the branch
+  the checks; a review it owes covers the merge's resolution (or, as before,
+  the change from the new merge base: the review fork of §8.2 counts
+  `origin`'s base), and it delivers into the same pull request. Delivery refuses until the branch
   holds the fetched commit. A refresh is refused for an item that is not
   finished, is itself a fix, is stacked on an unmerged parent, has a
   restack fix or refresh pending, whose branch already holds the base head,

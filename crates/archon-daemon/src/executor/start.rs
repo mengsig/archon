@@ -54,6 +54,9 @@ pub(super) async fn start_item(
     let Some(item) = claim_item(ctx, id).await? else {
         return Ok(FollowUp::default());
     };
+    if let Some(reason) = super::refresh::nothing_to_merge(ctx, &item).await? {
+        return finish_unstarted(ctx, &item.id, reason).await;
+    }
     let run_id = PipelineRunId::new();
     let subject = format!("starting item {}", item.id);
     let preparing = super::coordination::guarded(&subject, prepare(ctx, &item, run_id.clone()));
@@ -828,6 +831,31 @@ async fn abandon_worktree(ctx: &DaemonContext, added: Option<Cleanup>) -> Result
 fn first_stage(run: &PipelineRun) -> String {
     let stage = run.state.live_stage().expect("a starting run is live");
     stage.to_owned()
+}
+
+/// `dispatching → cancelled` before any run exists, for work left with nothing
+/// to do: the feed says why, and no blocker is raised.
+async fn finish_unstarted(
+    ctx: &DaemonContext,
+    id: &QueueItemId,
+    reason: String,
+) -> Result<FollowUp, ArchonError> {
+    assert!(!reason.is_empty(), "a finish says why");
+    let _table = ctx.runs.lock().await;
+    let item = {
+        let mut store = ctx.store.lock().await;
+        if store.item(id)?.state != QueueState::Dispatching {
+            return Ok(FollowUp::default());
+        }
+        let done = QueueState::Cancelled {
+            reason: Some(reason.clone()),
+        };
+        store.transition_item(id, done, archon_core::now())?
+    };
+    assert!(item.state.is_terminal(), "finished before it started");
+    tracing::info!(item = %id, %reason, "item finished before it started");
+    finish::announce(ctx, &item, None, false, None).await?;
+    Ok(FollowUp::poke())
 }
 
 /// `dispatching → failed` before any run exists, with a `Blocker`.

@@ -574,7 +574,7 @@ async fn holding(
     shipped: Option<String>,
 ) -> Result<Checked, ArchonError> {
     assert!(!verdicts.is_empty(), "a named reviewer was read");
-    let (base_branch, onto_head) = base_of(ctx, run).await?;
+    let (base_branch, onto_head, merged_from) = base_of(ctx, run).await?;
     let workspace = run.workspace.clone();
     let checked = tokio::task::spawn_blocking(move || {
         let mut history = History::new(&workspace);
@@ -582,6 +582,7 @@ async fn holding(
         let base = Base {
             branch: &base_branch,
             onto_head: onto_head.as_deref(),
+            merged_from: merged_from.as_deref(),
         };
         let placed = coverage::place(&mut history, base, &verdicts, read)?;
         let (head, placed) = match placed {
@@ -610,21 +611,25 @@ async fn holding(
         .map_err(|e| ArchonError::io("reviewed commits task", std::io::Error::other(e)))?
 }
 
-/// The branch `run` forked from, empty when its variables name none, and the
-/// frozen head of the pull request its item is queued `onto`.
+/// The branch `run` forked from, empty when its variables name none, the
+/// frozen head of the pull request its item is queued `onto`, and the branch
+/// head a refresh merged into.
 async fn base_of(
     ctx: &DaemonContext,
     run: &PipelineRun,
-) -> Result<(String, Option<String>), ArchonError> {
+) -> Result<(String, Option<String>, Option<String>), ArchonError> {
     let store = ctx.store.lock().await;
     let onto_head = store.item(&run.item)?.onto.map(|onto| onto.head_sha);
+    let refresh = store.stack_fix(&run.item)?.and_then(|fix| fix.refresh);
+    let merged_from = refresh.and_then(|refresh| refresh.from);
     match recover::load_run_vars(&store, &run.id) {
         Ok(vars) => Ok((
             vars.get("base_branch").cloned().unwrap_or_default(),
             onto_head,
+            merged_from,
         )),
         // Without a base only reviews stating no base read the whole change.
-        Err(ArchonError::NotFound(_)) => Ok((String::new(), onto_head)),
+        Err(ArchonError::NotFound(_)) => Ok((String::new(), onto_head, merged_from)),
         Err(error) => Err(error),
     }
 }

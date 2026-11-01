@@ -35,6 +35,8 @@ pub const DELEGATION_DEPTH_CEILING: u32 = 4;
 pub const DEFAULT_STALL_MINUTES: u32 = 20;
 /// `limits.stall_fallback_minutes` by default.
 pub const DEFAULT_STALL_FALLBACK_MINUTES: u32 = 45;
+/// `limits.refresh_stage_timeout_minutes` by default.
+pub const DEFAULT_REFRESH_STAGE_TIMEOUT_MINUTES: u32 = 30;
 
 /// `limits.max_stage_timeout_minutes` by default, and the most it may be (30
 /// days, a pipeline stage's own bound).
@@ -511,6 +513,8 @@ pub struct LimitsConfig {
     pub max_delegation_depth: u32,
     /// Longest per-stage timeout an item may ask for (`stage_timeouts`).
     pub max_stage_timeout_minutes: u32,
+    /// Each stage's timeout in a refresh the request gives none for.
+    pub refresh_stage_timeout_minutes: u32,
     /// Messages one agent may send the orchestrator, and one run node's
     /// inbox may relay, over its lifetime.
     pub max_agent_messages: u32,
@@ -539,6 +543,7 @@ impl Default for LimitsConfig {
             per_pipeline: BTreeMap::new(),
             max_delegation_depth: DEFAULT_DELEGATION_DEPTH,
             max_stage_timeout_minutes: DEFAULT_STAGE_TIMEOUT_MINUTES,
+            refresh_stage_timeout_minutes: DEFAULT_REFRESH_STAGE_TIMEOUT_MINUTES,
             max_agent_messages: DEFAULT_AGENT_MESSAGES,
             initiative_members: InitiativeLimits::DEFAULT.members as u32,
             initiative_contract_bytes: InitiativeLimits::DEFAULT.contract_bytes as u32,
@@ -622,7 +627,7 @@ impl LimitsConfig {
     }
 
     /// The structural limits `[limits]` may set: key, value, default, ceiling.
-    fn configurable(&self) -> [(&'static str, u32, u32, u32); 5] {
+    fn configurable(&self) -> [(&'static str, u32, u32, u32); 6] {
         let default = Self::default();
         let ceiling = InitiativeLimits::CEILING;
         [
@@ -636,6 +641,12 @@ impl LimitsConfig {
                 "max_stage_timeout_minutes",
                 self.max_stage_timeout_minutes,
                 default.max_stage_timeout_minutes,
+                STAGE_TIMEOUT_CEILING_MINUTES,
+            ),
+            (
+                "refresh_stage_timeout_minutes",
+                self.refresh_stage_timeout_minutes,
+                default.refresh_stage_timeout_minutes,
                 STAGE_TIMEOUT_CEILING_MINUTES,
             ),
             (
@@ -1520,6 +1531,7 @@ mod tests {
         assert_eq!(limits.max_delegation_depth, 2);
         assert_eq!(limits.max_agent_messages, 20);
         assert_eq!(limits.max_stage_timeout_minutes, 1440);
+        assert_eq!(limits.refresh_stage_timeout_minutes, 30);
         assert_eq!(
             limits.initiatives(),
             InitiativeLimits {
@@ -1539,6 +1551,8 @@ mod tests {
             "max_delegation_depth = 5",
             "max_stage_timeout_minutes = 0",
             "max_stage_timeout_minutes = 43201",
+            "refresh_stage_timeout_minutes = 0",
+            "refresh_stage_timeout_minutes = 43201",
             "max_agent_messages = 0",
             "initiative_members = 65",
             "initiative_contract_bytes = 16385",
@@ -1567,6 +1581,7 @@ mod tests {
             [
                 "max_delegation_depth",
                 "max_stage_timeout_minutes",
+                "refresh_stage_timeout_minutes",
                 "max_agent_messages",
                 "initiative_members",
                 "initiative_contract_bytes",

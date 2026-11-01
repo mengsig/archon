@@ -1169,6 +1169,37 @@ async fn a_refresh_of_a_branch_moved_since_its_review_keeps_the_owner_s_review()
     );
 }
 
+/// Git shows no resolution of an octopus merge, so a refresh owing no
+/// reviewer may not hand one in.
+#[tokio::test]
+async fn a_refresh_owing_no_reviewer_fails_on_an_octopus_merge() {
+    let (h, _gh) = delivering().await;
+    let (owner, _) = shipped(&h, "the change").await;
+    let upstream = advance_origin(&h, "upstream.txt", "elsewhere\n");
+    let fix = refresh(&h, &owner).await.expect("queued");
+    h.dispatch().await;
+    let tree = h.run(&fix.id).await.workspace;
+    git(&tree, &["checkout", "--quiet", "-b", "side", "HEAD~1"]);
+    std::fs::write(tree.join("side.md"), "notes\n").unwrap();
+    git(&tree, &["add", "side.md"]);
+    git(&tree, &["commit", "--quiet", "-m", "Side"]);
+    git(&tree, &["checkout", "--quiet", "-"]);
+    let octopus = ["merge", "--quiet", "--no-edit", upstream.as_str(), "side"];
+    git(&tree, &octopus);
+    let parents = git(&tree, &["rev-list", "--parents", "-n", "1", "HEAD"]);
+    assert_eq!(parents.split(' ').count(), 4, "three parents: {parents}");
+    settle_merged(&h).await;
+
+    let error = match h.state(&fix.id).await {
+        QueueState::Failed { error, .. } => error,
+        other => panic!("the refresh fails: {other:?}"),
+    };
+    assert!(
+        error.contains("beyond that merge: the octopus merge"),
+        "{error}"
+    );
+}
+
 /// Moving code into `docs/` removes it: a rename is read as both its paths.
 #[tokio::test]
 async fn a_refresh_owing_no_reviewer_fails_when_it_moves_code_into_docs() {

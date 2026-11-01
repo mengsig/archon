@@ -536,22 +536,17 @@ pub(super) async fn verify_unreviewed(
     };
     let workspace = run.workspace.clone();
     let (start, merged) = (from.clone(), sha.clone());
-    let authored = tokio::task::spawn_blocking(move || authored_paths(&workspace, &start, &merged))
+    let code = tokio::task::spawn_blocking(move || unreviewed(&workspace, &start, &merged))
         .await
         .map_err(|e| ArchonError::io("refresh scope task", std::io::Error::other(e)))??;
-    let code: Vec<&str> = authored
-        .iter()
-        .map(String::as_str)
-        .filter(|path| !is_prose(path))
-        .collect();
     if code.is_empty() {
         return Ok(outcome);
     }
-    let shown = code
+    let shown: Vec<&str> = code
         .iter()
         .take(MAX_SHOWN_PATHS)
-        .copied()
-        .collect::<Vec<_>>();
+        .map(String::as_str)
+        .collect();
     Ok(StageOutcome::Failed {
         error: format!(
             "this refresh owes no reviewer, as its merge of {} needed no code resolved, but the \
@@ -595,6 +590,30 @@ async fn dropped_review(
     assert!(stack::is_commit_id(&from), "a recorded branch head");
     assert!(stack::is_commit_id(&sha), "a fetched base commit");
     Ok(Some((from, sha)))
+}
+
+/// What in `dir` since `from`, beyond merging `sha`, no reviewer read: each
+/// octopus merge, whose resolution git cannot show, and each code path.
+fn unreviewed(dir: &Path, from: &str, sha: &str) -> Result<Vec<String>, ArchonError> {
+    let (not_from, not_sha) = (format!("^{from}"), format!("^{sha}"));
+    let octopus = ["rev-list", "--min-parents=3", "HEAD", &not_from, &not_sha];
+    let listed = crate::worktree::daemon_git::DaemonGit::sealed_in(dir)
+        .args(octopus)
+        .text()?;
+    let mut found: Vec<String> = listed
+        .lines()
+        .map(|merge| {
+            assert!(stack::is_commit_id(merge), "rev-list prints full ids");
+            format!(
+                "the octopus merge {} (merge one branch at a time)",
+                &merge[..12]
+            )
+        })
+        .collect();
+    let authored = authored_paths(dir, from, sha)?;
+    found.extend(authored.into_iter().filter(|path| !is_prose(path)));
+    assert!(found.iter().all(|what| !what.is_empty()), "named findings");
+    Ok(found)
 }
 
 /// What the branch in `dir` changed itself since `from` beyond merging `sha`:

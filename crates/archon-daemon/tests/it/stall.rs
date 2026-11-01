@@ -661,11 +661,27 @@ async fn a_lead_hung_in_a_tool_call_is_woken_once_then_its_stage_retried() {
     h.backend
         .set_open_call(&agent, open_call("call_1", STUCK, 21));
     went_silent(&h, &agent, 21);
+    let mail = AetherEvent {
+        seq: 7,
+        at: archon_core::now(),
+        agent: Some(agent.clone()),
+        task: None,
+        parent: None,
+        run: None,
+        kind: EventKind::InboxDelivered {
+            seq: 3,
+            from_operator: false,
+            message: None,
+        },
+    };
+    archon_daemon::pump::handle_fleet_event(&h.ctx, &mail)
+        .await
+        .expect("mail delivered");
     sweep(&h).await;
     assert_eq!(
         h.backend.interrupts(),
         vec![agent.clone()],
-        "the lead alone"
+        "mail it never read is no progress; the lead alone is interrupted"
     );
     let notes: Vec<String> = h
         .backend

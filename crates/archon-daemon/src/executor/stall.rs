@@ -305,7 +305,10 @@ pub(super) async fn scan(
         ctx.activity.prune(now);
         return Ok(Vec::new());
     };
-    let kept = chrono::Duration::from_std(policy.fallback * 2).expect("minutes fit a duration");
+    let longest = policy
+        .hung
+        .map_or(policy.fallback, |h| h.check.max(policy.fallback));
+    let kept = chrono::Duration::from_std(longest * 2).expect("minutes fit a duration");
     ctx.activity.prune(now - kept);
     let waiting = Waiting::read(ctx).await?;
     let mut stalled = Vec::new();

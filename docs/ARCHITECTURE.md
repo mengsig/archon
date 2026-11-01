@@ -3714,7 +3714,9 @@ object per line under `--json`).
   follows as quoted, read-only context. When the branch head it merges into
   is the commit a succeeded item on the branch (the owner or a fix of it)
   shipped as its ship record, which its review gate held (every ship record
-  of that run naming the same commit), Archon records
+  of that run naming the same commit and the head's own tree), and the
+  pipeline hands in a ship record archond delivers (`[pipeline.ship]`, never
+  an agent's own ship stage), Archon records
   that head, previews the merge with `git merge-tree` and sets the refresh's
   review level from it: `none` for a clean merge or one conflicting only in
   changelogs or in top-level or `docs/` prose (`.md`, `.markdown`, `.rst`,
@@ -3730,7 +3732,8 @@ object per line under `--json`).
   own merge: each merge's remerge diff and every other new commit, side
   branches merged in included, must touch only those prose files (a rename
   counts as both its paths), and none may be an octopus merge, whose
-  resolution git does not show. The brief names the review scope the refresh
+  resolution git does not show; the checked `HEAD` must also be the ship
+  record's commit and tree, the tree archond delivers. The brief names the review scope the refresh
   got: the resolution from the recorded head, or the whole change. A refresh whose branch
   already holds the base commit when it is dispatched (merged in after it
   was queued) is cancelled at once, before any run, saying there was nothing

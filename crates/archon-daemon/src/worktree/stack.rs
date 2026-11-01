@@ -36,6 +36,21 @@ pub(crate) fn is_commit_id(sha: &str) -> bool {
     matches!(sha.len(), 40 | 64) && sha.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+/// The tree of `commit`, a full commit id, in `repo`.
+pub(crate) fn tree_of(repo: &Path, commit: &str) -> Result<String, ArchonError> {
+    assert!(is_commit_id(commit), "a commit id in full");
+    let spec = format!("{commit}^{{tree}}");
+    let tree = DaemonGit::sealed_in(repo)
+        .args(["rev-parse", "--verify", &spec])
+        .text()?;
+    if !is_commit_id(&tree) {
+        return Err(ArchonError::Invalid(
+            "git returned an invalid tree id".into(),
+        ));
+    }
+    Ok(tree)
+}
+
 /// The commit `refs/heads/<branch>` names in `repo`.
 pub(crate) fn sha(repo: &Path, branch: &str) -> Result<String, ArchonError> {
     super::check_branch(branch)?;
@@ -447,7 +462,21 @@ pub(crate) fn fetch(
     sha: &str,
 ) -> Result<(), ArchonError> {
     super::check_branch(branch)?;
+    fetch_ref(shadow, repo, &format!("refs/heads/{branch}"), sha)
+}
+
+/// [`fetch`] of `origin`'s full ref `remote_ref`, such as `refs/pull/7/head`.
+pub(crate) fn fetch_ref(
+    shadow: &Shadow,
+    repo: &Path,
+    remote_ref: &str,
+    sha: &str,
+) -> Result<(), ArchonError> {
     assert!(is_commit_id(sha), "a commit id");
+    let plain = remote_ref
+        .strip_prefix("refs/")
+        .is_some_and(|rest| super::check_branch(rest).is_ok());
+    assert!(plain, "a full ref name: {remote_ref:?}");
     let spec = format!("{sha}^{{commit}}");
     if DaemonGit::sealed_in(repo)
         .args(["cat-file", "-e", &spec])
@@ -476,7 +505,7 @@ pub(crate) fn fetch(
             .into_iter()
             .map(|head| format!("--negotiation-tip={head}")),
     );
-    args.extend([url, format!("refs/heads/{branch}")]);
+    args.extend([url, remote_ref.to_owned()]);
     let fetched = shadow.git(None, Config::Operator)?.network();
     fetched.args(args.iter().map(String::as_str)).text()?;
     let found = DaemonGit::sealed_in(repo)
@@ -484,7 +513,7 @@ pub(crate) fn fetch(
         .text()?;
     if found != sha {
         return Err(ArchonError::Unavailable(format!(
-            "`origin` no longer has {sha} on `{branch}`"
+            "`origin` no longer has {sha} on `{remote_ref}`"
         )));
     }
     Ok(())

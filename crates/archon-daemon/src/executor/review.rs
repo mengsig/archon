@@ -10,12 +10,16 @@ mod rounds;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::ports::{Descendant, DescendantState};
+use archon_core::pull_request::OntoPullRequest;
+use archon_core::repo::Repo;
 use archon_core::run::{PipelineRun, StageOutcome, StageRun};
 use archon_pipeline::ShipRecord;
 use archon_pipeline::review::{self, MAX_NAMED_REVIEWERS, Reviewer, Verdict};
 
 use super::recover;
 use crate::context::DaemonContext;
+use crate::worktree::shadow::Shadow;
+use crate::worktree::stack::{self, is_commit_id};
 use coverage::{Base, Held, History};
 pub(super) use rounds::reviewer_settled;
 
@@ -27,6 +31,10 @@ const MAX_LISTED: usize = 6;
 #[derive(Debug)]
 struct Found {
     reviewers: Vec<Reviewer>,
+    /// The branch head the passes were held to.
+    head: String,
+    /// Where a review item's whole pull request started, from GitHub's base.
+    fork: Option<String>,
     implicit: Vec<String>,
     /// What every reviewer read returned, fails included.
     reads: Vec<Read>,
@@ -50,7 +58,9 @@ type Read = (String, Verdict);
 
 /// What checking the verdicts against the branch came to.
 enum Checked {
-    Held(Held),
+    /// The passes hold for the branch at this head, a review item's change
+    /// read from this fork.
+    Held(Held, String, Option<String>),
     Refused(String),
     /// A named delta read needs an anchor, and the earlier reviewers were not
     /// read: why it is refused if none anchors it.
@@ -109,7 +119,17 @@ pub(super) async fn verify(
     if !implicit.is_empty() {
         tracing::info!(stage = %stage.id, ?implicit, "anchored named delta reviews on the lead's earlier reviewers");
     }
+    let (head, fork) = match &found {
+        Some(Ok(found)) => (Some(found.head.clone()), found.fork.clone()),
+        _ => (None, None),
+    };
     review::record_check(&mut structured, found.map(|f| f.map(|f| f.reviewers)));
+    if let Some(head) = head {
+        review::record_reviewed_head(&mut structured, &head);
+    }
+    if let Some(fork) = fork {
+        review::record_reviewed_fork(&mut structured, &fork);
+    }
     review::record_implicit(&mut structured, &implicit);
     if !reads.is_empty() {
         review::record_reads(&mut structured, &reads);
@@ -170,7 +190,10 @@ async fn reviewers(
         checked => checked,
     };
     Ok(match checked {
-        Checked::Held(held) => Ok(found(&picked, held, verdicts, corrections)),
+        Checked::Held(held, head, fork) => {
+            let found = found(&picked, (held, head), verdicts, corrections);
+            Ok(Found { fork, ..found })
+        }
         Checked::Refused(why) if !corrections.is_empty() => {
             Err(format!("{why} ({})", lead_children(&beneath, lead)))
         }
@@ -207,9 +230,15 @@ async fn earlier_reads(
     earlier_verdicts(ctx, &earlier).await
 }
 
-/// The `picked` reviewers whose passes `held` counts, and the earlier ones it added.
-fn found(picked: &[&Descendant], held: Held, reads: Vec<Read>, corrections: Vec<String>) -> Found {
+/// The `picked` reviewers whose passes `held` counts at `head`, and the earlier ones it added.
+fn found(
+    picked: &[&Descendant],
+    (held, head): (Held, String),
+    reads: Vec<Read>,
+    corrections: Vec<String>,
+) -> Found {
     assert!(!held.passes.is_empty(), "a review that holds has a pass");
+    assert!(is_commit_id(&head), "held to a full commit id");
     assert!(
         held.passes.iter().all(|i| *i < picked.len()),
         "only a named pass counts, by its index among those picked"
@@ -220,6 +249,8 @@ fn found(picked: &[&Descendant], held: Held, reads: Vec<Read>, corrections: Vec<
     });
     Found {
         reviewers: reviewers.collect(),
+        head,
+        fork: None,
         implicit: held.implicit,
         reads,
         corrections,
@@ -574,7 +605,26 @@ async fn holding(
     shipped: Option<String>,
 ) -> Result<Checked, ArchonError> {
     assert!(!verdicts.is_empty(), "a named reviewer was read");
-    let (base_branch, onto_head, merged_from) = base_of(ctx, run).await?;
+    let ReviewBase {
+        branch: base_branch,
+        onto_head,
+        reviewed_pr,
+        repo,
+        merged_from,
+    } = base_of(ctx, run).await?;
+    let (base_branch, onto_head, merged_from, fork) = match (&reviewed_pr, repo) {
+        (Some(reviewed), Some(repo)) => match trusted_fork(ctx, run, repo, reviewed).await? {
+            // No local ref names the start, nor a refresh's: only GitHub's base.
+            Ok(fork) => (String::new(), Some(fork.clone()), None, Some(fork)),
+            Err(why) => return Ok(Checked::Refused(why)),
+        },
+        _ => (base_branch, onto_head, merged_from, None),
+    };
+    if fork.is_some()
+        && let Some(why) = unbased_pass(&verdicts, earlier.as_deref())
+    {
+        return Ok(Checked::Refused(why));
+    }
     let workspace = run.workspace.clone();
     let checked = tokio::task::spawn_blocking(move || {
         let mut history = History::new(&workspace);
@@ -594,6 +644,9 @@ async fn holding(
         {
             return Ok(Checked::Refused(why));
         }
+        if let Some(why) = moved_off(reviewed_pr.as_ref(), &head) {
+            return Ok(Checked::Refused(why));
+        }
         if earlier.is_none()
             && let Some(stray) = coverage::unanchored_named(&mut history, &placed)?
         {
@@ -601,7 +654,7 @@ async fn holding(
         }
         Ok(
             match coverage::counted(&mut history, &placed, &head, owed)? {
-                Ok(held) => Checked::Held(held),
+                Ok(held) => Checked::Held(held, head, fork),
                 Err(why) => Checked::Refused(why),
             },
         )
@@ -611,27 +664,149 @@ async fn holding(
         .map_err(|e| ArchonError::io("reviewed commits task", std::io::Error::other(e)))?
 }
 
-/// The branch `run` forked from, empty when its variables name none, the
-/// frozen head of the pull request its item is queued `onto`, and the branch
-/// head a refresh merged into.
-async fn base_of(
-    ctx: &DaemonContext,
-    run: &PipelineRun,
-) -> Result<(String, Option<String>, Option<String>), ArchonError> {
+/// Where the change a run's reviewers read starts.
+struct ReviewBase {
+    /// The branch the run forked from; empty when its variables name none.
+    branch: String,
+    /// The frozen head of the pull request an item delivers into, or the
+    /// reviewed head it is stacked on: its change starts there.
+    onto_head: Option<String>,
+    /// The pull request a review-only item reviews whole, at its frozen head.
+    reviewed_pr: Option<OntoPullRequest>,
+    /// The repository a review-only item's pull request is in.
+    repo: Option<Repo>,
+    /// The branch head a refresh merged into.
+    merged_from: Option<String>,
+}
+
+/// Where `run`'s change starts: its base branch and, for an item queued
+/// `onto` a pull request, that pull request's frozen head or, when the item
+/// only reviews it, the pull request itself; for one stacked on a reviewed
+/// pull request, its reviewed head; and the branch head a refresh merged into.
+async fn base_of(ctx: &DaemonContext, run: &PipelineRun) -> Result<ReviewBase, ArchonError> {
     let store = ctx.store.lock().await;
-    let onto_head = store.item(&run.item)?.onto.map(|onto| onto.head_sha);
+    let item = store.item(&run.item)?;
+    let stacked = super::onto::reviewed_dependency(&store, &item)?;
     let refresh = store.stack_fix(&run.item)?.and_then(|fix| fix.refresh);
     let merged_from = refresh.and_then(|refresh| refresh.from);
-    match recover::load_run_vars(&store, &run.id) {
-        Ok(vars) => Ok((
-            vars.get("base_branch").cloned().unwrap_or_default(),
-            onto_head,
-            merged_from,
-        )),
+    let (onto_head, reviewed_pr) = match item.onto.map(|onto| *onto) {
+        Some(onto) if onto.review_only => (None, Some(onto)),
+        Some(onto) => (Some(onto.head_sha), None),
+        // Stacked on a reviewed pull request, the change starts at its head.
+        None => (stacked.map(|reviewed| reviewed.head_sha), None),
+    };
+    let branch = match recover::load_run_vars(&store, &run.id) {
+        Ok(vars) => vars.get("base_branch").cloned().unwrap_or_default(),
         // Without a base only reviews stating no base read the whole change.
-        Err(ArchonError::NotFound(_)) => Ok((String::new(), onto_head, merged_from)),
-        Err(error) => Err(error),
+        Err(ArchonError::NotFound(_)) => String::new(),
+        Err(error) => return Err(error),
+    };
+    assert!(
+        onto_head.is_none() || reviewed_pr.is_none(),
+        "an item delivers into a pull request or only reviews it"
+    );
+    let repo = match (&reviewed_pr, &item.repo) {
+        (Some(_), Some(repo)) => Some(store.repo(&crate::resolve::repo_ref(repo))?),
+        _ => None,
+    };
+    Ok(ReviewBase {
+        branch,
+        onto_head,
+        reviewed_pr,
+        repo,
+        merged_from,
+    })
+}
+
+/// Where `reviewed`'s change starts, as GitHub holds its base: the merge base
+/// of its frozen head and the base commit GitHub shows for that pull request,
+/// fetched by id, so no ref or remote URL here moves it. `Err` refuses the
+/// review when that cannot be read.
+async fn trusted_fork(
+    ctx: &DaemonContext,
+    run: &PipelineRun,
+    repo: Repo,
+    reviewed: &OntoPullRequest,
+) -> Result<Result<String, String>, ArchonError> {
+    assert!(
+        reviewed.review_only,
+        "only a review item reviews a pull request whole"
+    );
+    assert!(is_commit_id(&reviewed.head_sha), "frozen at enqueue");
+    let url = reviewed.pr.url();
+    let shown = super::gh::base_commit(&ctx.config.github.binary, &repo, &url).await?;
+    if shown.branch != reviewed.base_ref {
+        // A retarget can put the base inside the change and hide its start.
+        return Ok(Err(format!(
+            "{url} now targets `{}`, not `{}` as when it was queued: its change has no \
+             start to review from",
+            shown.branch, reviewed.base_ref
+        )));
     }
+    let Some(base) = shown.commit else {
+        return Ok(Err(format!(
+            "GitHub shows no base commit for {url}: its change has no start to review from"
+        )));
+    };
+    let data_dir = ctx.paths.data_dir.clone();
+    let (workspace, branch, head) = (
+        run.workspace.clone(),
+        reviewed.base_ref.clone(),
+        reviewed.head_sha.clone(),
+    );
+    let fork = tokio::task::spawn_blocking(move || {
+        let shadow = Shadow::of(&data_dir, &repo.path)?;
+        stack::fetch(&shadow, &repo.path, &branch, &base)?;
+        crate::worktree::merge_base(&workspace, &head, &[base])
+    })
+    .await
+    .map_err(|e| ArchonError::io("review fork task", std::io::Error::other(e)))??;
+    let Some(fork) = fork else {
+        return Ok(Err(format!(
+            "{url}'s head {} shares no history with its base `{}` on GitHub: its change has \
+             no start to review from",
+            reviewed.head_sha, reviewed.base_ref
+        )));
+    };
+    assert!(is_commit_id(&fork), "merge-base prints a full commit id");
+    Ok(Ok(fork))
+}
+
+/// Why a pass of a whole pull request does not count: a reviewer naming no
+/// base may have read only a tail that a local base ref pointed it to.
+fn unbased_pass(verdicts: &[Read], earlier: Option<&[Read]>) -> Option<String> {
+    assert!(!verdicts.is_empty(), "a named reviewer was read");
+    let earlier = earlier.unwrap_or_default();
+    let (agent, _) = verdicts
+        .iter()
+        .chain(earlier)
+        .find(|(_, verdict)| verdict.pass && verdict.base.is_none())?;
+    assert!(!agent.is_empty(), "a read reviewer has an agent id");
+    Some(format!(
+        "reviewer {agent} passed the pull request without naming the base it read from: a \
+         review of a whole pull request counts only from a base at or before where it left \
+         GitHub's base"
+    ))
+}
+
+/// Why a review of `reviewed` does not hold at the branch `head`: a review
+/// item adds no commit, so its reviewers passed the pull request's frozen head.
+fn moved_off(reviewed: Option<&OntoPullRequest>, head: &str) -> Option<String> {
+    let reviewed = reviewed?;
+    assert!(
+        reviewed.review_only,
+        "only a review item reviews a pull request whole"
+    );
+    assert!(is_commit_id(head), "the branch head is a full commit id");
+    (reviewed.head_sha != head).then(|| {
+        format!(
+            "this item reviews {} at {}, but its branch is at {head}: a review item commits \
+             nothing, so reset the branch to {} and review that commit",
+            reviewed.pr.url(),
+            reviewed.head_sha,
+            reviewed.head_sha
+        )
+    })
 }
 
 /// Why `name` is not an agent the lead delegated to, listing those it did.

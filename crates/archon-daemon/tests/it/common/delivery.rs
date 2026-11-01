@@ -58,6 +58,22 @@ if [ "$1 $2 $4 $5" = "pr view --json labels,body" ]; then
     python3 -c 'import json,sys; print(json.dumps({"labels": [{"name": l} for l in open(sys.argv[1]).read().splitlines()], "body": open(sys.argv[2]).read()}))' "$state/labels-$n" "$state/body-$n"
     exit 0
 fi
+if [ "$1 $2 $4 $5" = "pr view --json url,baseRefName,baseRefOid" ]; then
+    shown="$state/headed-${3##*/}.json"
+    [ -f "$shown" ] || { echo "GraphQL: Could not resolve to a PullRequest" >&2; exit 1; }
+    python3 -c 'import json,sys; pr=json.load(open(sys.argv[1])); print(json.dumps({"url": pr["url"], "baseRefName": pr["baseRefName"], "baseRefOid": pr.get("baseRefOid")}))' "$shown"
+    exit 0
+fi
+if [ "$1 $2 $4 $5" = "pr view --json id,number,url,state,headRefName,headRefOid,baseRefName,body,isDraft,reviewDecision,isCrossRepository,headRepository,headRepositoryOwner" ]; then
+    shown="$state/headed-${3##*/}.json"
+    [ -f "$shown" ] || { echo "GraphQL: Could not resolve to a PullRequest" >&2; exit 1; }
+    now=OPEN
+    [ -f "$state/merged" ] && now=MERGED
+    [ -f "$state/closed" ] && now=CLOSED
+    python3 -c 'import json,sys; pr=json.load(open(sys.argv[1])); pr["state"]=sys.argv[2]; pr["headRefOid"]=open(sys.argv[3]).read() if sys.argv[3] else pr["headRefOid"]; print(json.dumps(pr))' \
+        "$shown" "$now" "$([ -f "$state/view-head" ] && printf '%s' "$state/view-head")"
+    exit 0
+fi
 case "$1 $2" in
 "label list")
     [ "$3 $4 $5 $6" = "--json name --limit 1000" ] || exit 2
@@ -123,6 +139,7 @@ case "$1 $2" in
     done
     ;;
 "repo view")
+    [ -f "$state/checks-after-repo-view" ] && mv "$state/checks-after-repo-view" "$state/view-checks"
     printf '{"squashMergeAllowed":true,"mergeCommitAllowed":true,"rebaseMergeAllowed":false}'
     ;;
 "pr view")
@@ -238,6 +255,13 @@ impl FakeGh {
         write("view-checks", &checks.to_string());
     }
 
+    /// What `gh pr view <number> --json <head fields>` shows of pull request
+    /// `number`; its state and head follow what [`Self::show`] last set.
+    pub fn headed(&self, number: u64, pr: &Value) {
+        let file = self.state.join(format!("headed-{number}.json"));
+        std::fs::write(file, pr.to_string()).expect("pull request");
+    }
+
     /// Whether a `gh pr merge` merged the pull request shown.
     pub fn merged(&self) -> bool {
         self.state.join("merged").exists()
@@ -262,6 +286,13 @@ impl FakeGh {
             )
             .unwrap();
         }
+    }
+
+    /// `pr view` shows `checks` as its `statusCheckRollup` once the next
+    /// `repo view` (the merge method's read) has run.
+    pub fn checks_after_repo_view(&self, checks: &Value) {
+        let file = self.state.join("checks-after-repo-view");
+        std::fs::write(file, checks.to_string()).expect("checks");
     }
 
     /// What `gh pr checks --json` prints from now on.

@@ -26,7 +26,13 @@ const LEGACY_REVIEWER_MODEL: &str = "reviewer_model";
 const REVIEWER_VERDICTS: &str = "reviewer_verdicts";
 /// Reviewer ids the lead named that Archon corrected to the agents it delegated to.
 const REVIEWER_CORRECTIONS: &str = "reviewer_id_corrections";
-const ARCHON_KEYS: [&str; 8] = [
+/// The branch head the counted passes were held to.
+const REVIEWED_HEAD: &str = "reviewed_head";
+/// Where the whole pull request a review item passed started, from GitHub's base.
+const REVIEWED_FORK: &str = "reviewed_fork";
+const ARCHON_KEYS: [&str; 10] = [
+    REVIEWED_HEAD,
+    REVIEWED_FORK,
     REVIEWER_AGENTS,
     REVIEWER_MODELS,
     REVIEWER_VERDICTS,
@@ -468,6 +474,62 @@ pub fn record_reads(structured: &mut Value, reads: &[(String, Verdict)]) {
         })
     });
     review.insert(REVIEWER_VERDICTS.into(), entries.collect());
+}
+
+/// Put on a checked pass the full commit its counted passes were held to:
+/// the branch head when Archon checked it.
+pub fn record_reviewed_head(structured: &mut Value, head: &str) {
+    assert!(
+        matches!(head.len(), 40 | 64) && head.bytes().all(|b| b.is_ascii_hexdigit()),
+        "a reviewed head is a full commit id"
+    );
+    let review = structured.get_mut("review").and_then(Value::as_object_mut);
+    let review = review.expect("a reviewed head belongs to a checked pass");
+    assert!(
+        review.contains_key(REVIEWER_AGENTS) && !review.contains_key(UNVERIFIED),
+        "a reviewed head is recorded on a pass Archon found"
+    );
+    review.insert(REVIEWED_HEAD.into(), head.into());
+}
+
+/// Put on a checked pass with a reviewed head the commit the change its
+/// reviewers read started at: a review item's fork from GitHub's base.
+pub fn record_reviewed_fork(structured: &mut Value, fork: &str) {
+    assert!(is_full_id(fork), "a reviewed fork is a full commit id");
+    let review = structured.get_mut("review").and_then(Value::as_object_mut);
+    let review = review.expect("a reviewed fork belongs to a checked pass");
+    assert!(
+        review.contains_key(REVIEWED_HEAD) && !review.contains_key(UNVERIFIED),
+        "a reviewed fork is recorded beside the head Archon held the pass to"
+    );
+    review.insert(REVIEWED_FORK.into(), fork.into());
+}
+
+/// The commit a stored result's checked pass was held to; `None` unless it
+/// holds a pass that counts and Archon recorded that commit.
+pub fn reviewed_head(structured: Option<&Value>) -> Option<String> {
+    passed_commit(structured, REVIEWED_HEAD)
+}
+
+/// Where the change a stored result's checked pass covered started; `None`
+/// unless it holds a pass that counts and Archon recorded that commit.
+pub fn reviewed_fork(structured: Option<&Value>) -> Option<String> {
+    passed_commit(structured, REVIEWED_FORK)
+}
+
+/// The full commit Archon recorded under `key` on a pass that counts.
+fn passed_commit(structured: Option<&Value>, key: &str) -> Option<String> {
+    assert!(ARCHON_KEYS.contains(&key), "only Archon records a commit");
+    let Ok(Evidence::Passed { .. }) = Evidence::parse(structured) else {
+        return None;
+    };
+    let commit = structured?.get("review")?.get(key)?.as_str()?;
+    is_full_id(commit).then(|| commit.to_ascii_lowercase())
+}
+
+/// Whether `commit` is a full SHA-1 or SHA-256 commit id.
+fn is_full_id(commit: &str) -> bool {
+    matches!(commit.len(), 40 | 64) && commit.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 /// Put on a checked pass the reviewer ids Archon corrected, one line each.
@@ -1006,6 +1068,30 @@ mod tests {
             read(forged).unwrap().line(),
             "REVIEW: pass, by a/1 (agent agt_r)"
         );
+    }
+
+    /// Only Archon says which commit a pass was held to, and only a counted pass has one.
+    #[test]
+    fn the_reviewed_head_is_archons_and_only_a_counted_pass_has_one() {
+        let head = "c".repeat(40);
+        let mut forged =
+            pass(json!({"reviewed_head": "d".repeat(40), "reviewed_fork": "d".repeat(40)}));
+        assert_eq!(reviewed_head(Some(&forged)), None, "unchecked");
+        record_check(&mut forged, Some(Ok(vec![checked("a/1", "agt_r")])));
+        assert_eq!(
+            reviewed_head(Some(&forged)),
+            None,
+            "the forged head is dropped"
+        );
+        record_reviewed_head(&mut forged, &head);
+        assert_eq!(reviewed_head(Some(&forged)), Some(head.clone()));
+        assert_eq!(reviewed_fork(Some(&forged)), None, "no fork recorded");
+        let fork = "e".repeat(40);
+        record_reviewed_fork(&mut forged, &fork);
+        assert_eq!(reviewed_fork(Some(&forged)), Some(fork));
+        record_check(&mut forged, Some(Err("agt_r failed it".into())));
+        assert_eq!(reviewed_head(Some(&forged)), None, "a refused pass");
+        assert_eq!(reviewed_fork(Some(&forged)), None, "a refused pass");
     }
 
     #[test]

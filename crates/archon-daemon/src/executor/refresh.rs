@@ -45,7 +45,7 @@ pub(crate) async fn refresh_item(
         None => base_for(ctx, &owner, &run, &env).await?,
     };
     let catalog = crate::learned::catalog(ctx).await?;
-    let mut prepared = refresh_owner(ctx, &owner, &env, &catalog, asked)?;
+    let (mut prepared, daemon_ships) = refresh_owner(ctx, &owner, &env, &catalog, asked)?;
     let child_head = match repo.ship == ShipMode::Pr && run.shipped {
         true => check_pr_open(ctx, &repo, &run).await?,
         false => None,
@@ -65,7 +65,9 @@ pub(crate) async fn refresh_item(
         }
         Err(held) => return Err(ArchonError::Invalid(held.refusal)),
     };
-    let reviewed = reviewed_tip(ctx, &owner.id, &fresh.from).await?;
+    // Only a ship record archond checks may stand in for a reviewer: an agent
+    // that ships by itself is never held to the merge.
+    let reviewed = daemon_ships && reviewed_tip(ctx, &owner.id, &fresh).await?;
     if reviewed {
         prepared.autonomy.review = refresh_review(prepared.autonomy.review, &fresh.conflicts);
     }
@@ -166,6 +168,15 @@ async fn target(
             parent.parent_branch
         )));
     }
+    // Refreezing or merging a moved head would change what its reviewers passed.
+    if let Some(onto) = item.onto.as_deref().filter(|onto| onto.review_only) {
+        return Err(ArchonError::Invalid(format!(
+            "{id} reviewed {} at {} and commits nothing: queue a new `review` item onto it \
+             to review its head as it stands now",
+            onto.pr.url(),
+            onto.head_sha
+        )));
+    }
     if let (Some(onto), ShipMode::Pr, true) = (&item.onto, repo.ship, run.shipped) {
         return Err(ArchonError::Invalid(format!(
             "{id} went into the pull request {}, not a branch of its own: queue the \
@@ -216,7 +227,7 @@ fn refresh_owner(
     env: &RepoEnv,
     catalog: &archon_core::model_tier::ModelCatalog,
     asked: Asked,
-) -> Result<QueueItem, ArchonError> {
+) -> Result<(QueueItem, bool), ArchonError> {
     let mut item = owner.clone();
     item.autonomy.proposal = ProposalMode::Off;
     item.autonomy.report = ReportMode::Off;
@@ -252,7 +263,7 @@ fn refresh_owner(
         }
     }
     crate::handlers::check_plan(ctx, env, &spec, &item.model_plan)?;
-    Ok(item)
+    Ok((item, spec.ship_record_stage().is_some()))
 }
 
 /// The branch a refresh brings `owner` up to: the repository's base for a
@@ -331,48 +342,70 @@ async fn check_pr_open(
     Ok(pr.head_ref_oid)
 }
 
-/// Whether `tip`, the branch head a refresh merges into, is the commit a
-/// succeeded item on that branch (`owner` or a fix of it) handed in as its
-/// ship record, which its review gate held: only then may the refresh's review
-/// start there. Anything else is reviewed whole, from the base, as before.
+/// Whether `fresh.from`, the branch head a refresh merges into, is the commit a
+/// succeeded item on that branch (`owner` or a fix of it) shipped as its ship
+/// record, holding the very tree its review gate and delivery checked: only
+/// then may the refresh's review start there. Anything else is reviewed whole.
 async fn reviewed_tip(
     ctx: &DaemonContext,
     owner: &QueueItemId,
-    tip: &str,
+    fresh: &Fresh,
 ) -> Result<bool, ArchonError> {
-    assert!(stack::is_commit_id(tip), "a branch head in full");
+    assert!(stack::is_commit_id(&fresh.from), "a branch head in full");
+    assert!(stack::is_commit_id(&fresh.from_tree), "a tree id in full");
     let store = ctx.store.lock().await;
     let mut items = store.stack_fixes_of(owner)?;
     items.push(owner.clone());
+    let tip = (fresh.from.clone(), fresh.from_tree.clone());
     for id in &items {
-        if !matches!(store.item(id)?.state, QueueState::Succeeded { .. }) {
+        let item = store.item(id)?;
+        // An item that owed no review leaves no review to stand on.
+        let succeeded = matches!(item.state, QueueState::Succeeded { .. });
+        if !succeeded || item.autonomy.review == ReviewLevel::None {
             continue;
         }
-        let Some(run) = store.runs_for_item(id)?.pop() else {
+        // A run that shipped nothing delivered no reviewed head.
+        let Some(run) = store.runs_for_item(id)?.pop().filter(|run| run.shipped) else {
             continue;
         };
         assert_eq!(&run.item, id, "the item's own run");
-        if handed_in(&store.stage_runs(&run.id)?).as_deref() == Some(tip) {
+        if handed_in(&store.stage_runs(&run.id)?).as_ref() == Some(&tip) {
             return Ok(true);
         }
     }
     Ok(false)
 }
 
-/// The commit of the last ship record among a run's completed `stages`.
-fn handed_in(stages: &[archon_core::run::StageRun]) -> Option<String> {
-    use archon_core::run::StageState;
-    let recorded = stages
+/// The one commit and tree every ship record among a run's completed `stages`
+/// names, when archond shipped it under a review it checked. `None` when an
+/// agent ran a ship stage, no record holds a passing review, or records disagree.
+fn handed_in(stages: &[archon_core::run::StageRun]) -> Option<(String, String)> {
+    use archon_core::{catalog::StageKind, run::StageState};
+    // An unknown kind may have been an agent shipping by itself.
+    if stages
         .iter()
-        .filter(|stage| stage.state == StageState::Completed)
-        .filter_map(|stage| {
-            let record = archon_pipeline::ShipRecord::read(stage.structured.as_ref()).ok()?;
-            Some((stage.started_at, record.commit))
-        })
-        .max_by_key(|(started, _)| *started);
-    recorded
-        .map(|(_, commit)| commit)
-        .filter(|commit| stack::is_commit_id(commit))
+        .any(|stage| stage.kind.is_none_or(|kind| kind == StageKind::Ship))
+    {
+        return None;
+    }
+    let mut reviewed = false;
+    let mut records = Vec::new();
+    for stage in stages.iter().filter(|s| s.state == StageState::Completed) {
+        let Some(structured) = stage.structured.as_ref() else {
+            continue;
+        };
+        let Ok(record) = archon_pipeline::ShipRecord::read(Some(structured)) else {
+            continue;
+        };
+        let named = archon_pipeline::review::claimed_reviewers(structured);
+        reviewed |= named.is_some_and(|named| !named.is_empty());
+        records.push((record.commit, record.tree));
+    }
+    let first = records.first()?.clone();
+    if !reviewed || records.iter().any(|record| *record != first) {
+        return None;
+    }
+    Some(first).filter(|(commit, tree)| stack::is_commit_id(commit) && stack::is_commit_id(tree))
 }
 
 /// The review a refresh owes: none when its merge is clean or conflicts only in
@@ -390,17 +423,28 @@ fn refresh_review(owner: ReviewLevel, conflicts: &[String]) -> ReviewLevel {
     }
 }
 
+/// File types a refresh may resolve with no reviewer: text that renders and
+/// raster images, never anything a build, a script or a browser runs.
+const PROSE_EXTENSIONS: [&str; 9] = [
+    "md", "markdown", "rst", "adoc", "png", "jpg", "jpeg", "gif", "webp",
+];
+
 /// Whether `path` is prose a refresh resolves with no reviewer: a changelog
-/// anywhere, a top-level Markdown file or anything under `docs/`.
+/// anywhere, or a top-level or `docs/` file of a [`PROSE_EXTENSIONS`] type.
 pub(super) fn is_prose(path: &str) -> bool {
     assert!(!path.is_empty(), "a named path");
     // A name git would quote is never taken for prose.
     if path.chars().any(char::is_control) {
         return false;
     }
-    let name = path.rsplit('/').next().unwrap_or(path);
-    let top_markdown = !path.contains('/') && name.to_ascii_lowercase().ends_with(".md");
-    name.to_ascii_uppercase().starts_with("CHANGELOG") || top_markdown || path.starts_with("docs/")
+    let name = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
+    let Some((stem, extension)) = name.rsplit_once('.') else {
+        return name == "changelog";
+    };
+    if !PROSE_EXTENSIONS.contains(&extension) {
+        return false;
+    }
+    stem == "changelog" || !path.contains('/') || path.starts_with("docs/")
 }
 
 /// The base commit a refresh merges, the branch head it merges into, and the
@@ -409,6 +453,8 @@ pub(super) fn is_prose(path: &str) -> bool {
 struct Fresh {
     sha: String,
     from: String,
+    /// The tree of `from`, which a reviewed ship record must name.
+    from_tree: String,
     conflicts: Vec<String>,
 }
 
@@ -457,10 +503,12 @@ fn head_now(
             Ok(_) => Vec::new(),
             Err(files) => files,
         };
+        let from_tree = stack::tree_of(repo, &tip)?;
         let from = tip;
         return Ok(Ok(Fresh {
             sha,
             from,
+            from_tree,
             conflicts,
         }));
     }
@@ -534,11 +582,22 @@ pub(super) async fn verify_unreviewed(
     let Some((from, sha)) = dropped_review(ctx, run).await? else {
         return Ok(outcome);
     };
+    let StageOutcome::Completed { structured, .. } = &outcome else {
+        unreachable!("checked completed above")
+    };
+    // A missing record binds nothing: the stage's gate refuses it.
+    let Ok(record) = archon_pipeline::ShipRecord::read(structured.as_ref()) else {
+        return Ok(outcome);
+    };
     let workspace = run.workspace.clone();
     let (start, merged) = (from.clone(), sha.clone());
-    let code = tokio::task::spawn_blocking(move || unreviewed(&workspace, &start, &merged))
-        .await
-        .map_err(|e| ArchonError::io("refresh scope task", std::io::Error::other(e)))??;
+    let code = tokio::task::spawn_blocking(move || {
+        let mut found = unrecorded_head(&workspace, &record.commit, &record.tree)?;
+        found.extend(unreviewed(&workspace, &start, &merged)?);
+        Ok::<_, ArchonError>(found)
+    })
+    .await
+    .map_err(|e| ArchonError::io("refresh scope task", std::io::Error::other(e)))??;
     if code.is_empty() {
         return Ok(outcome);
     }
@@ -563,6 +622,32 @@ pub(super) async fn verify_unreviewed(
 
 /// Paths a refusal names at most.
 const MAX_SHOWN_PATHS: usize = 8;
+
+/// The scope check reads the workspace `HEAD`; delivery ships the record's
+/// tree. A finding unless `HEAD` is the recorded `commit` holding `tree`.
+fn unrecorded_head(dir: &Path, commit: &str, tree: &str) -> Result<Vec<String>, ArchonError> {
+    let git = |spec: &str| {
+        crate::worktree::daemon_git::DaemonGit::sealed_in(dir)
+            .args(["rev-parse", "--verify", spec])
+            .text()
+    };
+    let (head, head_tree) = (git("HEAD^{commit}")?, git("HEAD^{tree}")?);
+    assert!(stack::is_commit_id(&head), "rev-parse prints a full id");
+    assert!(
+        stack::is_commit_id(&head_tree),
+        "rev-parse prints a full id"
+    );
+    if head == commit && head_tree == tree {
+        return Ok(Vec::new());
+    }
+    Ok(vec![format!(
+        "the ship record (commit {}, tree {}) is not the checked HEAD {} (tree {})",
+        &commit[..commit.len().min(12)],
+        &tree[..tree.len().min(12)],
+        &head[..12],
+        &head_tree[..12]
+    )])
+}
 
 /// The branch head a refresh of `run`'s item merged into and the base commit
 /// it merged, when its review was dropped below its owner's.
@@ -665,7 +750,7 @@ mod tests {
             "changelog",
             "README.md",
             "docs/guide.md",
-            "docs/img/flow.svg",
+            "docs/img/flow.png",
         ] {
             assert!(is_prose(prose), "{prose}");
         }
@@ -677,9 +762,63 @@ mod tests {
             " docs/a.rs",
             "\nREADME.md",
             "CHANGELOG\nREADME.md",
+            "docs/assets/src/build.mjs",
+            "docs/conf.py",
+            "docs/requirements.txt",
+            "docs/img/flow.svg",
+            "CHANGELOG.sh",
+            "changelog.md.sh",
+            "build.sh",
         ] {
             assert!(!is_prose(code), "{code}");
         }
+    }
+
+    /// A completed stage of a run, its result naming `commit` as a ship record.
+    fn recorded(commit: &str) -> archon_core::run::StageRun {
+        archon_core::run::StageRun {
+            id: archon_core::id::StageRunId::new(),
+            run: archon_core::id::PipelineRunId::new(),
+            stage_id: "build".into(),
+            kind: Some(archon_core::catalog::StageKind::Work),
+            attempt: 1,
+            fan_index: 0,
+            choice: archon_core::model::ModelChoice {
+                model: "a/work".parse().unwrap(),
+                effort: archon_core::model::Effort::Low,
+                tier: None,
+            },
+            model_segments: Vec::new(),
+            infrastructure_failure: false,
+            host_context: Default::default(),
+            aether_agent: None,
+            aether_task: None,
+            state: archon_core::run::StageState::Completed,
+            verdict: None,
+            summary: None,
+            structured: Some(serde_json::json!({"commit": commit, "tree": "b".repeat(40),
+                "pr": {"title": "t", "body": "b"},
+                "review": {"verdict": "pass", "reviewers": ["agt_r"]}})),
+            cost_usd: 0.0,
+            started_at: archon_core::now(),
+            finished_at: None,
+        }
+    }
+
+    #[test]
+    fn ship_records_that_disagree_hand_in_no_reviewed_head() {
+        let (one, other) = ("a".repeat(40), "c".repeat(40));
+        let held = Some((one.clone(), "b".repeat(40)));
+        assert_eq!(handed_in(&[recorded(&one)]), held);
+        assert_eq!(handed_in(&[recorded(&one), recorded(&one)]), held);
+        assert_eq!(handed_in(&[recorded(&one), recorded(&other)]), None);
+        assert_eq!(handed_in(&[]), None);
+        let mut unreviewed = recorded(&one);
+        unreviewed.structured.as_mut().unwrap()["review"] = serde_json::Value::Null;
+        assert_eq!(handed_in(&[unreviewed]), None, "no review on record");
+        let mut agent_shipped = recorded(&one);
+        agent_shipped.kind = Some(archon_core::catalog::StageKind::Ship);
+        assert_eq!(handed_in(&[recorded(&one), agent_shipped]), None);
     }
 
     #[test]

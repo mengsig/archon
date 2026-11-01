@@ -72,7 +72,7 @@ pub(super) async fn settle(
         (false, None) => outcome,
     };
     let outcome = super::refresh::verify_unreviewed(ctx, &run, review, outcome).await?;
-    let outcome = super::review::verify(ctx, &run, &stage, review, outcome).await?;
+    let (outcome, verified) = super::review::verify(ctx, &run, &stage, review, outcome).await?;
     let planned = planner.is_some();
     let was_completed = matches!(outcome, StageOutcome::Completed { .. });
     let (outcome, assigned) = swarm::verify(ctx, &run, &stage, planner, outcome).await?;
@@ -80,7 +80,7 @@ pub(super) async fn settle(
     let refused = planned && was_completed && matches!(outcome, StageOutcome::Failed { .. });
     let mut table = ctx.runs.lock().await;
     let (stage, run, all) = {
-        let store = ctx.store.lock().await;
+        let mut store = ctx.store.lock().await;
         let current_stage = store.stage_run(id)?;
         let current_run = store.run(&stage.run)?;
         if current_stage.state != stage.state || current_run.state != run.state {
@@ -99,6 +99,15 @@ pub(super) async fn settle(
             current_stage.run, current_run.id,
             "a stage settles into its own run"
         );
+        // Only a pass the review gate held may later anchor a refresh's waiver.
+        let completed = matches!(outcome, StageOutcome::Completed { .. });
+        if let Some(verified) = verified.as_ref().filter(|_| completed) {
+            assert!(
+                was_completed,
+                "only a completed stage holds a verified review"
+            );
+            store.record_run_review(&current_run.id, verified)?;
+        }
         assert!(
             all.iter().any(|s| s.id == current_stage.id),
             "the run lists the stage it settles"

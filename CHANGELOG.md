@@ -4,6 +4,17 @@
 
 ### Fixed
 
+- A refresh skips its reviewer only on a branch whose review archond itself
+  verified. The waiver trusted a passing review claimed by any completed
+  stage holding the ship record, so a stage that owed no reviewer (the
+  `performance` pipeline's `optimize` stage, the `refactor` pipeline's
+  `refactor` stage, or a custom pipeline's stage after its review) could
+  claim one unchecked and let a clean refresh ship with no reviewer. Now
+  archond records, per run, the branch head and tree its review gate held
+  a pass to, and a refresh waives its reviewer only when that record names
+  the shipped commit and tree. A run recorded before this has no such
+  record, so its refresh keeps one reviewer; nothing else changes in the
+  store.
 - A commit made under another identity no longer ships just because some
   remote-tracking ref holds it (#334). The delivery's identity check, and
   under the attribution policy `none` its attribution check, exempted every

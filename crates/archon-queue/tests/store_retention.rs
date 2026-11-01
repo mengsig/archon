@@ -94,6 +94,11 @@ fn old_settled_items_go_with_their_history_and_learning_and_budgets_stay() {
     let old_run = store.runs_for_item(&old.id).unwrap().remove(0);
     store.kv_set(&format!("steers:{}", old.id), "[]").unwrap();
     store.kv_set(&format!("shape:{}", old.id), "[]").unwrap();
+    let review = archon_queue::RunReview {
+        head: "a".repeat(40),
+        tree: "b".repeat(40),
+    };
+    store.record_run_review(&old_run.id, &review).unwrap();
     store
         .kv_set(&format!("steers:{}", recent.id), "[]")
         .unwrap();
@@ -109,9 +114,14 @@ fn old_settled_items_go_with_their_history_and_learning_and_budgets_stay() {
 
     let pruned = store.prune_history(cutoff(), 100, |_, _| false).unwrap();
     assert_eq!((pruned.items, pruned.runs, pruned.stage_runs), (1, 1, 1));
-    assert_eq!((pruned.spend, pruned.feed, pruned.kv), (1, 1, 2));
+    assert_eq!((pruned.spend, pruned.feed, pruned.kv), (1, 1, 3));
     assert!(gone(store.item(&old.id)), "the old settled item goes");
     assert!(gone(store.run(&old_run.id)), "with its run");
+    assert_eq!(
+        store.run_review(&old_run.id).unwrap(),
+        None,
+        "and its review"
+    );
     assert!(
         store
             .kv_get(&format!("steers:{}", old.id))

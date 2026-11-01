@@ -3737,9 +3737,9 @@ object per line under `--json`).
   follows as quoted, read-only context. When the branch head it merges into
   is the commit a succeeded item on the branch (the owner or a fix of it)
   shipped as its ship record, which its review gate held (every ship record
-  of that run naming the same commit and the head's own tree, one of them
-  with a passing review, the item owing a review and no agent ship stage
-  having run), and the
+  of that run naming the same commit and the head's own tree, the item owing
+  a review and no agent ship stage having run, and the run's verified review
+  naming that commit and tree), and the
   pipeline hands in a ship record archond delivers (`[pipeline.ship]`, never
   an agent's own ship stage), Archon records
   that head, previews the merge with `git merge-tree` and sets the refresh's
@@ -3759,7 +3759,15 @@ object per line under `--json`).
   counts as both its paths), and none may be an octopus merge, whose
   resolution git does not show; the checked `HEAD` must also be the ship
   record's commit and tree, the tree archond delivers. The brief names the review scope the refresh
-  got: the resolution from the recorded head, or the whole change. A refresh whose branch
+  got: the resolution from the recorded head, or the whole change. A run's
+  verified review is what archond itself held at the review gate: when a
+  stage owing reviewers passes it, archond records the branch head the
+  counted passes were held to and that commit's tree (`kv`
+  `run_review:<run>`; a later pass of the run replaces it). A stage's own
+  review claim never counts, so a run whose ship stage owed no reviewer
+  (`performance`, `refactor`: their review is a stage of its own) or that
+  was recorded before archond kept this has none, and a refresh of its
+  branch keeps the owner's level. A refresh whose branch
   already holds the base commit when it is dispatched (merged in after it
   was queued) is cancelled at once, before any run, saying there was nothing
   to merge.
@@ -4837,7 +4845,7 @@ whichever is longest: feed rows the feed never shows, and settled items with
 their runs, stage runs, gates, run edits, pull request links, merge
 requests, stacks, dependencies, spend and the per-item `kv` families
 (`steers:`, `shape:`, `restack_fix:`, `restack_target:`,
-`learning/applied/<run>`, a `pr_settled:` no kept
+`learning/applied/<run>`, `run_review:<run>`, a `pr_settled:` no kept
 run shares, `authority_confirmation:` of a closed question). Outcomes and lesson uses
 stay for learning (store schema 18 dropped their keys to runs and items; a
 reshaped run's outcome keeps a `learning/reshaped/<run>` mark). An item

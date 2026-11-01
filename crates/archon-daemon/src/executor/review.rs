@@ -15,6 +15,7 @@ use archon_core::repo::Repo;
 use archon_core::run::{PipelineRun, StageOutcome, StageRun};
 use archon_pipeline::ShipRecord;
 use archon_pipeline::review::{self, MAX_NAMED_REVIEWERS, Reviewer, Verdict};
+use archon_queue::RunReview;
 
 use super::recover;
 use crate::context::DaemonContext;
@@ -78,14 +79,15 @@ pub(super) struct Owed {
 }
 
 /// `outcome` with Archon's own finding on the review pass it claims, for a
-/// `stage` owing `owed`. `Err` while Aether cannot be asked.
+/// `stage` owing `owed`, and the review it verified when that pass holds.
+/// `Err` while Aether cannot be asked.
 pub(super) async fn verify(
     ctx: &DaemonContext,
     run: &PipelineRun,
     stage: &StageRun,
     owed: Owed,
     outcome: StageOutcome,
-) -> Result<StageOutcome, ArchonError> {
+) -> Result<(StageOutcome, Option<RunReview>), ArchonError> {
     assert_eq!(
         stage.run, run.id,
         "a stage's review is checked with its own run"
@@ -95,7 +97,7 @@ pub(super) async fn verify(
         structured: Some(mut structured),
     } = outcome
     else {
-        return Ok(outcome);
+        return Ok((outcome, None));
     };
     // A missing ship record binds nothing: the stage's gate refuses it.
     let record = owed
@@ -124,6 +126,10 @@ pub(super) async fn verify(
         Some(Ok(found)) => (Some(found.head.clone()), found.fork.clone()),
         _ => (None, None),
     };
+    let verified = match &head {
+        Some(head) => Some(verified_review(run, head).await?),
+        None => None,
+    };
     review::record_check(&mut structured, found.map(|f| f.map(|f| f.reviewers)));
     if let Some(head) = head {
         review::record_reviewed_head(&mut structured, &head);
@@ -136,9 +142,25 @@ pub(super) async fn verify(
         review::record_reads(&mut structured, &reads);
     }
     review::record_corrections(&mut structured, &corrections);
-    Ok(StageOutcome::Completed {
+    let outcome = StageOutcome::Completed {
         summary,
         structured: Some(structured),
+    };
+    Ok((outcome, verified))
+}
+
+/// The review a held pass verified: the branch `head` its passes were held to
+/// and that commit's tree in `run`'s workspace.
+async fn verified_review(run: &PipelineRun, head: &str) -> Result<RunReview, ArchonError> {
+    assert!(is_commit_id(head), "a reviewed head is a full commit id");
+    let (workspace, commit) = (run.workspace.clone(), head.to_ascii_lowercase());
+    let tree = tokio::task::spawn_blocking(move || stack::tree_of(&workspace, &commit))
+        .await
+        .map_err(|e| ArchonError::io("reviewed tree task", std::io::Error::other(e)))??;
+    assert!(is_commit_id(&tree), "git prints a full tree id");
+    Ok(RunReview {
+        head: head.to_ascii_lowercase(),
+        tree: tree.to_ascii_lowercase(),
     })
 }
 

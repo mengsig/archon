@@ -449,7 +449,8 @@ fn prune_item_kv(tx: &Transaction<'_>) -> Result<usize, ArchonError> {
         .execute(
             "DELETE FROM kv WHERE key IN (SELECT 'steers:' || id FROM temp.prune_items
                                           UNION SELECT 'shape:' || id FROM temp.prune_items
-                                          UNION SELECT 'learning/applied/' || id FROM temp.prune_runs)",
+                                          UNION SELECT 'learning/applied/' || id FROM temp.prune_runs
+                                          UNION SELECT 'run_review:' || id FROM temp.prune_runs)",
             [],
         )
         .ctx("prune steer histories")?;

@@ -26,7 +26,8 @@ Attempt {{attempt}}: build on what the branch already holds.
 5. When review is required, delegate with `wait: false` on committed changes:
    the base (`{{base_commit}}`) and head commits,
    changed paths, the checks you ran and the verdict your contract shows.
-   Apply your contract's command bounds and its re-review of only what changed.
+   Apply your contract's command bounds, its blocking class and its
+   one-reviewer re-review of only the fix.
 
 Finish with `complete_task`: the `structured` data your contract requires
 and a summary of a few lines: what changed, the checks and their results,

@@ -942,6 +942,50 @@ async fn the_review_level_decides_how_many_reviewers_adaptive_must_show() {
     }
 }
 
+/// A strict review whose three whole-change reads all failed: after the fix
+/// one delta pass from their head completes it, and the record names all four.
+#[tokio::test]
+async fn a_strict_review_whose_whole_reads_all_failed_ships_on_one_delta_pass() {
+    let (h, gh) = delivering().await;
+    let item = enqueue(&h, "adaptive", asking(ReviewLevel::Strict))
+        .await
+        .unwrap();
+    h.dispatch().await;
+    let lead = h.running().await.remove(0);
+    let agent = lead.aether_agent.clone().unwrap();
+    let first: Vec<AetherAgentId> = (0..3)
+        .map(|_| h.backend.delegate(&agent, REVIEW_MODEL))
+        .collect();
+    let read = shipped_by(&h, &lead, "the first head", json!({})).await;
+    let failing = json!([{"title": "drops the tail", "blocking": true}]);
+    for reviewer in &first {
+        let mut verdict = verdict_on(&read, "fail");
+        verdict["findings"] = failing.clone();
+        h.backend.complete_delegated(reviewer, verdict);
+    }
+    let delta = h.backend.delegate(&agent, REVIEW_MODEL);
+    let named = [first.as_slice(), std::slice::from_ref(&delta)].concat();
+    let built = shipped_by(&h, &lead, "Built; fixed and reviewed", pass_by(&named)).await;
+    let mut verdict = verdict_on(&built, "pass");
+    verdict["base"] = verdict_on(&read, "fail")["head"].clone();
+    h.backend.complete_delegated(&delta, verdict);
+    h.settle_running(|_| built.clone()).await;
+    h.dispatch().await;
+
+    let summary = succeeded(&h, &item).await;
+    assert!(summary.contains(&format!("SHIPPED: {PR_ONE}")), "{summary}");
+    let stored = h.ctx.store.lock().await.stage_run(&lead.id).unwrap();
+    let review = &stored.structured.as_ref().unwrap()["review"];
+    let mut found: Vec<String> = serde_json::from_value(review["reviewer_agents"].clone())
+        .unwrap_or_else(|e| panic!("{e}: {review}"));
+    found.sort();
+    let mut expected: Vec<String> = named.iter().map(ToString::to_string).collect();
+    expected.sort();
+    assert_eq!(found, expected, "the answered fails and the delta pass");
+    let (_, body) = gh.created();
+    assert_eq!(body.matches("(agent agt_child").count(), 4, "{body}");
+}
+
 /// Fewer reviewers than the level asks for is no review: the item fails at
 /// the lead's stage, and nothing is delivered.
 #[tokio::test]

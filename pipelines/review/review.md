@@ -34,8 +34,8 @@ moves off that head.
    medium for ordinary risk, high where security, CI or release machinery
    is touched. Require the verdict your
    contract shows, on the head it read, with actionable findings (path,
-   issue, impact, remedy). Correctness, security and missing essential
-   coverage block; style advice does not.
+   issue, impact, remedy), each marked blocking or not by your contract's
+   blocking class.
 3. **Verify.** While they read, run the project's build, lint and tests on
    this head once, read-only: build output goes to the cache your contract
    names, never into the tree. A failing check is a blocking finding.

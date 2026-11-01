@@ -61,8 +61,10 @@ pub struct Verdict {
     pub base: Option<String>,
     /// How many findings it listed; `None` when its result gave no list.
     pub findings: Option<usize>,
-    /// The title of each finding that has one, one line each.
-    pub titles: Vec<String>,
+    /// How many of those are blocking, not follow-ups marked `"blocking": false`.
+    pub blocking: Option<usize>,
+    /// Each blocking finding as one line: what, where and the remedy given.
+    pub blocking_findings: Vec<String>,
 }
 
 /// What a reviewer must do when its result gives no verdict Archon can read.
@@ -87,7 +89,7 @@ impl Verdict {
                  or it lists a blocking finding: {VERDICT_HOWTO}"
             ));
         }
-        Ok(read)
+        Ok(read.only_follow_ups_pass())
     }
 
     /// The verdict the result states, from the first form it gives one in.
@@ -156,13 +158,7 @@ impl Verdict {
             given => Some(commit_of(given).ok_or("its `base:` line names no commit")?),
         };
         let listed = field("findings").and_then(Value::as_array);
-        let read = Self {
-            pass,
-            head,
-            base,
-            findings: listed.map(Vec::len),
-            titles: listed.map(|list| finding_titles(list)).unwrap_or_default(),
-        };
+        let read = Self::judged(pass, head, base, listed);
         read.claims_agree(summary, structured)?;
         Ok(read)
     }
@@ -220,24 +216,72 @@ impl Verdict {
         };
         assert!(head.len() >= MIN_COMMIT_CHARS, "a checked commit id");
         let listed = data.get("findings").and_then(Value::as_array);
-        let titles = listed.map(|list| finding_titles(list)).unwrap_or_default();
-        Ok(Self {
+        Ok(Self::judged(pass, head, base, listed))
+    }
+
+    /// The verdict a reviewer stated, `pass` or not, with the findings it `listed`.
+    fn judged(pass: bool, head: String, base: Option<String>, listed: Option<&Vec<Value>>) -> Self {
+        let blocking: Option<Vec<&Value>> =
+            listed.map(|all| all.iter().filter(|f| !Said::is_follow_up(f)).collect());
+        let read = Self {
             pass,
             head,
             base,
             findings: listed.map(Vec::len),
-            titles,
-        })
+            blocking: blocking.as_ref().map(Vec::len),
+            blocking_findings: blocking.as_deref().map(described).unwrap_or_default(),
+        };
+        assert!(
+            read.blocking <= read.findings,
+            "blocking findings are among those listed"
+        );
+        assert_eq!(
+            read.blocking_findings.len(),
+            read.blocking.unwrap_or(0),
+            "one line per blocking finding"
+        );
+        read
+    }
+
+    /// Only blocking findings fail a review: a fail that lists findings, every
+    /// one a [follow-up](Said::is_follow_up), blocks nothing and counts as a pass.
+    fn only_follow_ups_pass(mut self) -> Self {
+        let follow_ups_only = self.findings.is_some_and(|n| n > 0) && self.blocking == Some(0);
+        if !self.pass && follow_ups_only {
+            self.pass = true;
+        }
+        assert!(self.pass || !follow_ups_only, "follow-ups alone never fail");
+        self
     }
 }
 
-/// The `title` of each finding in `list` that has a non-empty one.
-fn finding_titles(list: &[Value]) -> Vec<String> {
-    list.iter()
-        .filter_map(|finding| finding.get("title")?.as_str())
-        .map(one_line)
-        .filter(|title| !title.is_empty())
-        .collect()
+/// Each finding of `list` as one line: its title (else its issue), where it
+/// is and its remedy, so a finding with none of them still counts.
+fn described(list: &[&Value]) -> Vec<String> {
+    let lines: Vec<String> = list.iter().map(|finding| describe(finding)).collect();
+    assert_eq!(lines.len(), list.len(), "one line per finding");
+    assert!(
+        lines.iter().all(|l| !l.is_empty()),
+        "every line names its finding"
+    );
+    lines
+}
+
+fn describe(finding: &Value) -> String {
+    let field = |key: &str| {
+        let text = finding.get(key).and_then(Value::as_str).map(one_line);
+        text.filter(|t| !t.is_empty())
+    };
+    let what = field("title").or_else(|| field("issue"));
+    let mut line = what.unwrap_or_else(|| "an untitled finding".to_owned());
+    if let Some(path) = field("path") {
+        let at = finding.get("line").and_then(Value::as_u64);
+        line += &at.map_or(format!(" at {path}"), |n| format!(" at {path}:{n}"));
+    }
+    if let Some(remedy) = field("remedy") {
+        line += &format!(" (remedy: {remedy})");
+    }
+    one_line(&line)
 }
 
 /// Why a result holds no verdict, quoting the one it gave if any.
@@ -854,13 +898,67 @@ mod tests {
     }
 
     #[test]
-    fn a_verdict_keeps_the_titles_of_its_findings() {
-        let findings =
-            json!([{"title": " Leaks  the\nhandle "}, {"severity": "low"}, {"title": ""}]);
+    fn a_verdict_describes_each_blocking_finding() {
+        let findings = json!([
+            {"title": " Leaks  the\nhandle ", "path": "src/a.rs", "line": 7, "remedy": "close it"},
+            {"severity": "low", "issue": "Drops the tail", "path": "src/b.rs"},
+            {"title": ""}
+        ]);
         let data = json!({"verdict": "fail", "head": HEAD, "findings": findings});
         let read = Verdict::read(Some(&data)).unwrap();
         assert_eq!(read.findings, Some(3));
-        assert_eq!(read.titles, ["Leaks the handle"]);
+        assert_eq!(
+            read.blocking_findings,
+            [
+                "Leaks the handle at src/a.rs:7 (remedy: close it)",
+                "Drops the tail at src/b.rs",
+                "an untitled finding"
+            ]
+        );
+    }
+
+    #[test]
+    fn only_blocking_findings_fail_a_review() {
+        let follow_ups = json!([
+            {"title": "Rename the helper", "blocking": false},
+            {"title": "Tidy the comment", "blocking": false, "severity": "low"}
+        ]);
+        let data = json!({"verdict": "fail", "head": HEAD, "findings": follow_ups});
+        let read = Verdict::read_result("", Some(&data)).unwrap();
+        assert!(read.pass, "follow-ups alone never fail the review");
+        assert_eq!((read.findings, read.blocking), (Some(2), Some(0)));
+        assert!(read.blocking_findings.is_empty());
+
+        let mixed = json!([
+            {"title": "Drops the tail", "blocking": true},
+            {"title": "Rename the helper", "blocking": false},
+            {"title": "Unmarked", "severity": "medium"}
+        ]);
+        let data = json!({"verdict": "fail", "head": HEAD, "findings": mixed});
+        let read = Verdict::read_result("", Some(&data)).unwrap();
+        assert!(!read.pass);
+        assert_eq!(read.blocking, Some(2));
+        assert_eq!(read.blocking_findings, ["Drops the tail", "Unmarked"]);
+
+        let empty = json!({"verdict": "fail", "head": HEAD, "findings": []});
+        assert!(!Verdict::read_result("", Some(&empty)).unwrap().pass);
+        let marked_high = json!([{"title": "x", "blocking": false, "severity": "high"}]);
+        let data = json!({"verdict": "fail", "head": HEAD, "findings": marked_high});
+        assert!(
+            Verdict::read_result("", Some(&data)).unwrap().pass,
+            "the mark decides"
+        );
+        let data = json!({"verdict": "pass", "head": HEAD, "findings": marked_high});
+        assert!(
+            Verdict::read_result("", Some(&data)).unwrap().pass,
+            "nor disputes a pass"
+        );
+        let unmarked_high = json!([{"title": "x", "severity": "high"}]);
+        let data = json!({"verdict": "fail", "head": HEAD, "findings": unmarked_high});
+        assert!(!Verdict::read_result("", Some(&data)).unwrap().pass);
+        let pass_blocking = json!([{"title": "x", "blocking": true}]);
+        let data = json!({"verdict": "pass", "head": HEAD, "findings": pass_blocking});
+        assert!(Verdict::read_result("", Some(&data)).is_err());
     }
 
     #[test]
@@ -871,7 +969,8 @@ mod tests {
             head: HEAD.into(),
             base: None,
             findings: Some(3),
-            titles: Vec::new(),
+            blocking: Some(3),
+            blocking_findings: vec!["a".into(), "b".into(), "c".into()],
         };
         record_reads(&mut result, &[("agt_r".into(), read)]);
         record_corrections(&mut result, &["agt_x -> agt_r".to_owned()]);

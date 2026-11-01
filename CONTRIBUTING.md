@@ -35,6 +35,18 @@ spare (`make ci CARGO_BUILD_JOBS=16`). CI runs the tests through
 [cargo-nextest](https://nexte.st/) (`make test-nextest`) because it is faster;
 it is optional locally.
 
+A passing `make ci` holds for any later commit with the same tree
+(`git rev-parse HEAD^{tree}`). After it passed, a change touching only prose
+or raster images that no build or test loads (`*.md`, `*.markdown`, `*.rst`,
+`*.adoc`, `CHANGELOG*`, PNG, JPEG, GIF, WebP) needs only the link check
+(`cargo test -p archon --test docs_links`) and the notice check
+(`cargo test -p archon --test release_scripts`, which packs `LICENSE` and
+`THIRD-PARTY-NOTICES`). Pipeline prompts (`pipelines/`,
+`docs/examples/pipelines/`), scripts and JavaScript under `docs/assets/`, and
+any file another test reads keep the full `make ci`: `docs_consistency`,
+`docs_troubleshooting`, `upgrade_notes` and `release_check` read
+`README.md`, `CHANGELOG.md` and several pages of `docs/`.
+
 `make ci` also shares the host with other heavy CI runs, such as Aether's
 `make ci` and every Archon stage's: it first takes one of `CI_HOST_SLOTS`
 (default 2) host-wide slots, a `flock` on

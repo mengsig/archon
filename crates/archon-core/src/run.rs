@@ -87,18 +87,36 @@ impl Verdict {
         }
     }
 
-    /// Whether `structured.findings` holds one whose `severity` blocks a pass.
+    /// Whether `structured.findings` holds one that [blocks](Self::blocks) a pass.
     pub fn lists_blocking(structured: &serde_json::Value) -> bool {
         let Some(findings) = structured.get("findings").and_then(|f| f.as_array()) else {
             return false;
         };
-        findings.iter().any(|finding| {
-            let severity = finding.get("severity").and_then(|s| s.as_str());
-            let severity = severity.unwrap_or_default().trim();
-            BLOCKING_SEVERITIES
-                .iter()
-                .any(|b| b.eq_ignore_ascii_case(severity))
-        })
+        findings.iter().any(Self::blocks)
+    }
+
+    /// Whether `finding` blocks a pass: its `"blocking"` mark when it has one,
+    /// else a blocking `severity`, as findings were judged before the mark.
+    pub fn blocks(finding: &serde_json::Value) -> bool {
+        if let Some(marked) = finding.get("blocking").and_then(serde_json::Value::as_bool) {
+            return marked;
+        }
+        let severity = finding.get("severity").and_then(|s| s.as_str());
+        let severity = severity.unwrap_or_default().trim();
+        BLOCKING_SEVERITIES
+            .iter()
+            .any(|b| b.eq_ignore_ascii_case(severity))
+    }
+
+    /// Whether `finding` is a follow-up that never fails a review: marked
+    /// `"blocking": false`, whatever its `severity`.
+    pub fn is_follow_up(finding: &serde_json::Value) -> bool {
+        let marked = finding.get("blocking") == Some(&serde_json::Value::Bool(false));
+        assert!(
+            !(marked && Self::blocks(finding)),
+            "a follow-up never blocks"
+        );
+        marked
     }
 
     /// The first `result` or `status` that states a verdict, and that verdict.
@@ -1193,6 +1211,10 @@ mod tests {
         }
         let advisory = json!({"verdict": "pass", "findings": [{"severity": "advisory"}]});
         assert_eq!(Verdict::extract("", Some(&advisory)), Verdict::Pass);
+        let marked = json!({"verdict": "pass", "findings": [{"blocking": true}]});
+        assert_eq!(Verdict::extract("", Some(&marked)), Verdict::Unknown);
+        let follow_up = json!({"verdict": "pass", "findings": [{"blocking": false}]});
+        assert_eq!(Verdict::extract("", Some(&follow_up)), Verdict::Pass);
         let failing = json!({"verdict": "fail", "findings": [{"severity": "blocking"}]});
         assert_eq!(Verdict::extract("", Some(&failing)), Verdict::Fail);
         let evidence = json!({"head": "abcdef1", "findings": [{"severity": "blocking"}]});
@@ -1282,6 +1304,25 @@ mod tests {
         let said = Verdict::stated("VERDICT: unsure", Some(&skipped));
         assert_eq!(said.as_deref(), Some("VERDICT: unsure"));
         assert_eq!(Verdict::stated("", Some(&skipped)).as_deref(), Some("done"));
+    }
+
+    #[test]
+    fn the_blocking_mark_decides_and_severity_only_without_one() {
+        assert!(Verdict::is_follow_up(
+            &json!({"blocking": false, "severity": "low"})
+        ));
+        let high_follow_up = json!({"blocking": false, "severity": "high"});
+        assert!(Verdict::is_follow_up(&high_follow_up));
+        assert!(
+            !Verdict::blocks(&high_follow_up),
+            "the mark outranks severity"
+        );
+        assert!(Verdict::blocks(&json!({"severity": "high"})));
+        assert!(!Verdict::is_follow_up(&json!({"severity": "low"})));
+        assert!(!Verdict::is_follow_up(&json!({"blocking": "no"})));
+        assert!(Verdict::blocks(
+            &json!({"blocking": true, "severity": "low"})
+        ));
     }
 
     #[test]

@@ -367,13 +367,21 @@ pub async fn stage_settled(
 }
 
 /// Called by the event pump when `reviewer`, an agent `lead` delegated to, settled
-/// its task: tells the operator once when the lead's review-fix loop runs long.
+/// its task: stops the lead's stage, escalating, once its review-fix loop
+/// failed [`archon_pipeline::contract::REVIEW_ROUND_CAP`] rounds.
 pub async fn reviewer_settled(
     ctx: &DaemonContext,
     lead: &AetherAgentId,
     reviewer: &AetherAgentId,
 ) -> Result<(), ArchonError> {
-    review::reviewer_settled(ctx, lead, reviewer).await
+    let Some(capped) = review::reviewer_settled(ctx, lead, reviewer).await? else {
+        return Ok(());
+    };
+    if stall::escalation_marked(&*ctx.store.lock().await, &capped.stage)? {
+        return Ok(());
+    }
+    let follow = sweep::stop_review_loop(ctx, &capped.stage, &capped.reason).await?;
+    run_follow_up(ctx, follow).await
 }
 
 /// Called by the event pump when an agent's turn ended: an attempt resumed

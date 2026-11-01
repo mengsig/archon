@@ -103,7 +103,7 @@ const BLOCKERS: &[(&str, &str)] = &[
     ),
     (
         "crates/archon-daemon/src/executor/review/rounds.rs",
-        "the lead is still fixing it",
+        "so Archon stopped it instead of another round",
     ),
     (
         "crates/archon-daemon/src/executor/coordination.rs",

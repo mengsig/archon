@@ -753,6 +753,7 @@ fn adaptive_prices_what_it_delegates_and_records_what_ships() {
         "never see each other's findings",
         "full test suite once, and follow your contract's `wait_for` rule",
         "With no reviewer asked for, that run is the whole of this step",
+        "never end your turn while a check runs",
         "the exact base and head commits (`{{base_commit}}` and `git rev-parse HEAD`",
         "never below one your contract names: medium for ordinary risk, high where the change's risk is medium or more",
         "never because a tree that passed was committed",

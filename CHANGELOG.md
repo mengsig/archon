@@ -66,6 +66,22 @@
     WebP); pipeline prompts, docs scripts and pages a test reads keep the
     full `make ci`.
 
+### Stage time
+
+- A stage that reaches its deadline no longer loses its agent's context and
+  uncommitted work. When Aether stops an agent at its stage deadline,
+  Archon wakes the same agent once, with 10 more minutes, to commit what
+  works and report; this is no model failure and spends no infrastructure
+  retry. A refused wake, a second deadline or any failure of the woken run
+  ends the stage as before, with no fresh agent. With a fifth of a stage's
+  time left, the sweep warns its agent once to commit what works and run no
+  check it cannot wait for.
+- Work and team stage contracts, the `direct`, `adaptive` and `swarm`
+  implement and build prompts, and the automatic repair note say to run
+  checks in the foreground and never end a turn while one runs: Archon reads
+  the end of the turn as the stage's result, so runs that ended their turn
+  while `make ci` ran in the background were refused and restarted.
+
 ### Fixed
 
 - A stale local base branch no longer fails a "no change needed" item or

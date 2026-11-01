@@ -1199,28 +1199,6 @@ fn agent_failed(stage: &StageRun, at: Timestamp, error: &str) -> AetherEvent {
     }
 }
 
-/// Aether fails an agent at its deadline; that is the stage's timeout, not
-/// an infrastructure failure for a fresh agent to redo.
-#[tokio::test]
-async fn an_agent_failed_at_its_deadline_times_out_without_a_respawn() {
-    let h = Harness::new().await;
-    let item = h.enqueue("ran out of time").await;
-    h.dispatch().await;
-    let implement = h.running().await.remove(0);
-    let deadline = expire_deadline(&h, &implement).await;
-    let error = format!("deadline of {}", deadline.to_rfc3339());
-    pump::handle_fleet_event(&h.ctx, &agent_failed(&implement, deadline, &error))
-        .await
-        .expect("handled");
-    h.dispatch().await;
-
-    let stages = h.stages(&item.id).await;
-    assert_eq!(stages.len(), 1, "no replacement: {stages:?}");
-    assert_eq!(stages[0].state, StageState::TimedOut);
-    assert_eq!(h.backend.requests().len(), 1);
-    assert!(matches!(h.state(&item.id).await, QueueState::Failed { .. }));
-}
-
 /// An engine crash before the deadline that Archon only hears of after it
 /// (a reconnect replays the stream) is still an infrastructure failure.
 #[tokio::test]

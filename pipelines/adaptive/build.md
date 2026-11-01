@@ -48,7 +48,8 @@ read again.
    shares your workspace and only reads. Several work alone, on different
    models where the policy allows, and never see each other's findings. While
    they read, run the project's build, lint/format and full test suite once,
-   and follow your contract's `wait_for` rule. With no reviewer
+   and follow your contract's `wait_for` rule. Run it in the foreground or
+   wait on it: never end your turn while a check runs. With no reviewer
    asked for, that run is the whole of this step. Hand a reviewer this and
    nothing more:
    - the acceptance criteria, in the few lines that settle what done means;

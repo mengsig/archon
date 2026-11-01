@@ -336,6 +336,13 @@ fn transient_cause(error: &str) -> Option<&'static str> {
         .map(|(_, wait)| *wait)
 }
 
+/// How many minutes an agent Aether stopped at its stage deadline is woken
+/// for, once per slot, to commit what works and report.
+pub(super) const DEADLINE_WAKE_MINUTES: i64 = 10;
+
+/// What a stage stopped at its deadline failed on, as its retry tells it.
+const DEADLINE_PASSED: &str = "stage deadline passed";
+
 /// Why a failed stage is re-spawned; each kind has its own count per slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RetryKind {
@@ -343,6 +350,8 @@ enum RetryKind {
     DiskFull,
     /// A planner whose plan Archon refused, sent back with the problems.
     Refused,
+    /// An agent Aether stopped at its stage deadline, woken once to report.
+    Timeout,
 }
 
 impl RetryKind {
@@ -370,6 +379,7 @@ impl RetryKind {
                 Self::Refused
             }
             StageState::Failed { error } if disk::is_disk_full(error) => Self::DiskFull,
+            StageState::TimedOut => Self::Timeout,
             _ => Self::Infra,
         }
     }
@@ -379,6 +389,7 @@ impl RetryKind {
             Self::Infra => ctx.config.limits.infra_retries as usize,
             Self::DiskFull => MAX_DISK_FULL_RETRIES,
             Self::Refused => archon_pipeline::swarm::MAX_CORRECTIONS,
+            Self::Timeout => 1,
         }
     }
 }
@@ -413,7 +424,66 @@ async fn infra_retry(
         ctx.disk
             .report_full(error, FullDisk::Aether, Instant::now());
     }
-    if run.state.is_terminal() {
+    respawn(ctx, table, (stage, run, all), outcome, error, kind).await
+}
+
+/// Settle stage `id`, whose agent Aether stopped at its deadline: the agent is
+/// woken once per slot with [`DEADLINE_WAKE_MINUTES`] to commit what works and
+/// report, the retry `limits.infra_retries` does not count; else it timed out.
+pub(super) async fn deadline_stopped(
+    ctx: &DaemonContext,
+    id: &StageRunId,
+) -> Result<FollowUp, ArchonError> {
+    let mut table = ctx.runs.lock().await;
+    let (stage, run, all, outcome) = {
+        let store = ctx.store.lock().await;
+        let stage = store.stage_run(id)?;
+        let run = store.run(&stage.run)?;
+        let all = store.stage_runs(&run.id)?;
+        // A stop archond marked, a stall or an escalation, settles as marked.
+        let outcome = stall::intended(&store, id, StageOutcome::TimedOut)?;
+        (stage, run, all, outcome)
+    };
+    if stage.state.is_terminal() {
+        return Ok(FollowUp::default());
+    }
+    assert_eq!(stage.run, run.id, "a stage settles into its own run");
+    if outcome == StageOutcome::TimedOut {
+        let woken = respawn(
+            ctx,
+            &table,
+            (&stage, &run, &all),
+            &outcome,
+            DEADLINE_PASSED,
+            RetryKind::Timeout,
+        )
+        .await?;
+        if let Some(follow) = woken {
+            return Ok(follow);
+        }
+    }
+    settle_locked(ctx, &mut table, id, outcome).await
+}
+
+/// Reserve the replacement of `stage`'s slot, which ended with `outcome` on
+/// `error`, as the retry of `kind` it is; `None` when the slot has none left.
+/// A run that took a deadline wake is the slot's last: what ends it is final.
+async fn respawn(
+    ctx: &DaemonContext,
+    table: &RunTable,
+    (stage, run, all): (&StageRun, &PipelineRun, &[StageRun]),
+    outcome: &StageOutcome,
+    error: &str,
+    kind: RetryKind,
+) -> Result<Option<FollowUp>, ArchonError> {
+    assert!(
+        matches!(
+            (kind, outcome),
+            (RetryKind::Timeout, StageOutcome::TimedOut) | (_, StageOutcome::Failed { .. })
+        ),
+        "a {kind:?} retry replaces a matching outcome, not {outcome:?}"
+    );
+    if run.state.is_terminal() || took_deadline_wake(&*ctx.store.lock().await, stage)? {
         return Ok(None);
     }
     let slot: Vec<&StageRun> = all
@@ -424,20 +494,26 @@ async fn infra_retry(
         .drivers
         .get(&run.id)
         .is_some_and(|d| d.spec().assigned_by(&stage.stage_id).is_some());
-    let failed = settled_stage(stage.clone(), outcome.clone(), archon_core::now());
+    let mut failed = settled_stage(stage.clone(), outcome.clone(), archon_core::now());
+    // Not the model's failure, and it marks the agent as one a wake may take.
+    failed.infrastructure_failure |= kind == RetryKind::Timeout;
     let (retry, wake) = slot_retry(ctx, &failed, &slot, kind, planner, error).await?;
     let limit = kind.limit(ctx);
-    if retry > limit {
+    // A timed-out agent goes on only woken: a fresh one could not finish either.
+    if retry > limit || (kind == RetryKind::Timeout && wake.is_none()) {
         return Ok(None);
     }
-    let refusal = (kind == RetryKind::Refused).then_some((error.as_str(), retry));
+    let refusal = (kind == RetryKind::Refused).then_some((error, retry));
     let waits = passing_cause(kind, error);
     let not_before =
         waits.map(|_| archon_core::now() + chrono::Duration::minutes(TRANSIENT_WAIT_MINUTES));
+    let extension =
+        (kind == RetryKind::Timeout).then(|| chrono::Duration::minutes(DEADLINE_WAKE_MINUTES));
     let reserved = spawn::Retry {
         nth: slot.len(),
         not_before,
         wake: wake.clone(),
+        extension,
     };
     let Some(replacement) = replace(ctx, table, run, all, &failed, reserved, refusal).await? else {
         return Ok(None);
@@ -463,12 +539,21 @@ async fn infra_retry(
     }))
 }
 
+/// Whether `stage` ran on an agent woken at its stage deadline.
+fn took_deadline_wake(store: &archon_queue::Store, stage: &StageRun) -> Result<bool, ArchonError> {
+    match spawn::load_spawn(store, &stage.id) {
+        Ok(spawn) => Ok(spawn.deadline_wake),
+        Err(ArchonError::NotFound(_)) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 /// The cause that clears with time an infrastructure failure's `error`
 /// names, which its retry waits out.
 fn passing_cause(kind: RetryKind, error: &str) -> Option<&'static str> {
     match kind {
         RetryKind::Infra => transient_cause(error),
-        RetryKind::DiskFull | RetryKind::Refused => None,
+        RetryKind::DiskFull | RetryKind::Refused | RetryKind::Timeout => None,
     }
 }
 
@@ -489,13 +574,18 @@ fn retry_text(
         (RetryKind::Infra, false) => ("an infrastructure failure", ""),
         (RetryKind::DiskFull, _) => ("a full disk", " once disk space is free"),
         (RetryKind::Refused, _) => ("a refused swarm plan", ""),
+        (RetryKind::Timeout, _) => (
+            "its deadline",
+            " in the same agent, which has a few minutes to commit and report",
+        ),
     };
     let when = waits.map_or(String::new(), |cause| {
         format!(" in {TRANSIENT_WAIT_MINUTES} min, waiting for {cause},")
     });
-    let count = match woken {
-        true => "a fresh agent if Aether cannot wake it".to_owned(),
-        false => format!("{retry} of {limit}"),
+    let count = match (kind, woken) {
+        (RetryKind::Timeout, _) => "it times out if Aether cannot wake it".to_owned(),
+        (_, true) => "a fresh agent if Aether cannot wake it".to_owned(),
+        (_, false) => format!("{retry} of {limit}"),
     };
     let text = format!(
         "Stage `{}` of run {} hit {what} ({error}); retrying{how}{when} ({count}).",
@@ -524,6 +614,10 @@ async fn slot_retry(
     let replaced = earlier
         .filter(|s| RetryKind::of_replaced(s, planner) == kind)
         .count();
+    if kind == RetryKind::Timeout {
+        let wake = (replaced < kind.limit(ctx)).then(|| resume::wake_at_deadline(failed));
+        return Ok((1 + replaced, wake.flatten()));
+    }
     if kind != RetryKind::Infra {
         return Ok((1 + replaced, None));
     }

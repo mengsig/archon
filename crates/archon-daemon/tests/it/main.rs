@@ -8,6 +8,7 @@ mod chat_ops;
 mod common;
 mod compose_teardown;
 mod crash_marker;
+mod deadline;
 mod delivery_safety;
 mod dependencies;
 mod disk;

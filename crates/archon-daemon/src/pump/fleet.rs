@@ -196,7 +196,7 @@ async fn agent_died(
     let outcome = match &event.kind {
         EventKind::AgentFailed { .. } if failed_past_deadline(ctx, &stage, event.at).await? => {
             tracing::info!(stage = %stage.id, at = %event.at, "agent failed at its deadline; timed out");
-            StageOutcome::TimedOut
+            return executor::stage_deadline_stopped(ctx, agent).await;
         }
         EventKind::AgentFailed { error } => StageOutcome::Failed {
             error: error.clone(),
@@ -232,7 +232,8 @@ async fn ended_an_earlier_run(
 }
 
 /// Whether the agent failed at or past its stage's deadline: Aether stops it
-/// then, and an infra re-spawn would redo the work from nothing. `at` is when
+/// then, and an infra re-spawn would redo the work from nothing; it is woken
+/// once to report instead. `at` is when
 /// it failed, not when Archon heard, so a replayed earlier crash stays infra.
 async fn failed_past_deadline(
     ctx: &DaemonContext,

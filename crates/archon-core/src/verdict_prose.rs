@@ -235,7 +235,7 @@ fn is_modifier(word: &str) -> bool {
 /// The length of the prefix of `rest` that ends in a word of `verbs`, after
 /// up to [`MAX_FILLERS`] [`FILLERS`].
 fn follows(rest: &[&str], verbs: &[&[&str]]) -> Option<usize> {
-    assert!(verbs.iter().all(|set| !set.is_empty()), "verbs to look for");
+    assert!(!verbs.is_empty(), "verb sets to look for");
     let skipped = rest
         .iter()
         .take(MAX_FILLERS)

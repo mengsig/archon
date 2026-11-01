@@ -1,9 +1,10 @@
 //! Whether reviewers' verdicts hold for the change as the run's branch holds
-//! it: a counted pass read the head, or later passes read every commit since.
-//! A verdict on a commit the branch no longer holds (amended or rebased away)
-//! is superseded: it never counts, and a superseded fail stands until the
-//! counted passes read the whole change. A named delta read no named one
-//! anchors may rest on the lead's earlier reviewers, which Archon adds itself.
+//! it: a counted pass read the head itself, whole or as an anchored delta; a
+//! pass of an earlier head holds, as an anchor, while later passes read every
+//! commit since. A verdict on a commit the branch no longer holds (amended or
+//! rebased away) is superseded: it never counts, and a superseded fail stands
+//! until the counted passes read the whole change. A named delta read no named
+//! one anchors may rest on the lead's earlier reviewers, which Archon adds itself.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -212,6 +213,12 @@ fn place_one(
             short(&base)
         )));
     }
+    if base == read {
+        return Ok(Err(format!(
+            "read from its own head {}, an empty diff",
+            short(&read)
+        )));
+    }
     let mut whole = false;
     for fork in forks {
         whole |= history.holds(&base, fork)?;
@@ -336,7 +343,8 @@ fn unanchored(read: &Placed, earlier_read: bool) -> String {
 }
 
 /// Indexes of the anchored `reads` whose named passes hold for the branch
-/// at `head`, or why they are not `owed` passes with every fail answered.
+/// at `head`, or why fewer than `owed` of them read `head` itself or a fail
+/// is unanswered. A pass of an earlier head holds only beside those.
 fn judged(
     history: &mut impl Ancestry,
     reads: &[Placed],
@@ -357,8 +365,9 @@ fn judged(
             .all(|i| reads[*i].pass && !reads[*i].superseded),
         "only a pass of a commit the branch holds counts"
     );
-    if passes.len() < owed as usize {
-        return Ok(Err(short_of(reads, &current, passes.len(), owed)));
+    let at_head = passes.iter().filter(|i| reads[**i].head == head).count();
+    if at_head < owed as usize {
+        return Ok(Err(short_of(reads, &current, head, at_head, owed)));
     }
     if let Some(why) = open_fail(history, reads, &current)? {
         return Ok(Err(why));
@@ -500,17 +509,24 @@ fn reads_past(
     Ok(later && covers(history, by, &earlier.head)?)
 }
 
-/// Why only `counted` named passes count, naming each read that no longer holds.
-fn short_of(placed: &[Placed], current: &[bool], counted: usize, owed: u32) -> String {
+/// Why only `counted` named passes read the branch `head`, naming each read
+/// that does not count: one that no longer holds, or a pass of an earlier head.
+fn short_of(placed: &[Placed], current: &[bool], head: &str, counted: usize, owed: u32) -> String {
     assert!(counted < owed as usize, "only a short review is refused");
     assert_eq!(placed.len(), current.len(), "one mark per read");
     let stale: Vec<String> = placed
         .iter()
         .zip(current)
-        .filter(|(_, held)| !**held)
-        .map(|(read, _)| match (read.superseded, read.pass) {
+        .filter(|(read, held)| !**held || (read.named && read.head != head))
+        .map(|(read, held)| match (read.superseded, read.pass) {
             (true, _) => format!(
                 "{} read {}, which the branch no longer holds",
+                read.agent,
+                short(&read.head)
+            ),
+            (false, true) if *held => format!(
+                "{} passed {}, before the head: it anchors a delta read from there but \
+                 does not count",
                 read.agent,
                 short(&read.head)
             ),
@@ -523,8 +539,9 @@ fn short_of(placed: &[Placed], current: &[bool], counted: usize, owed: u32) -> S
         })
         .collect();
     let mut why = format!(
-        "{counted} of the reviewers named passed the branch as it stands, and this item's \
-         review level needs {owed}, each a different agent"
+        "{counted} of the reviewers named passed the branch head {}, and this item's \
+         review level needs {owed}, each a different agent",
+        short(head)
     );
     if !stale.is_empty() {
         why.push_str(&format!(" ({})", stale.join("; ")));
@@ -599,7 +616,16 @@ mod tests {
             read("agt_a", true, "c3", None),
             read("agt_b", true, "c4", Some("c3")),
         ];
-        assert_eq!(count(&fixed, "c4", 2).unwrap(), [0, 1]);
+        assert_eq!(count(&fixed, "c4", 1).unwrap(), [0, 1]);
+        let anchor_only = count(&fixed, "c4", 2).unwrap_err();
+        assert!(
+            anchor_only.starts_with("1 of the reviewers named passed the branch head c4"),
+            "{anchor_only}"
+        );
+        assert!(
+            anchor_only.contains("agt_a passed c3, before the head"),
+            "{anchor_only}"
+        );
         let gap = [
             read("agt_a", true, "c3", None),
             read("agt_b", true, "c5", Some("c4")),
@@ -665,28 +691,79 @@ mod tests {
     }
 
     #[test]
-    fn several_full_reviews_hold_through_a_reviewed_fix() {
+    fn a_strict_review_passes_in_one_round_when_all_three_pass_the_head() {
         let strict = [
+            read("agt_a", true, "c3", None),
+            read("agt_b", true, "c3", None),
+            read("agt_c", true, "c3", None),
+        ];
+        assert_eq!(count(&strict, "c3", 3).unwrap(), [0, 1, 2]);
+        let two = count(&strict[..2], "c3", 3).unwrap_err();
+        assert!(two.starts_with("2 of the reviewers named"), "{two}");
+    }
+
+    /// A strict review where one of three failed: after the fix one new
+    /// reviewer reads the whole change and two read only the fix.
+    #[test]
+    fn a_strict_re_review_reads_the_whole_change_once_and_the_fix_as_deltas() {
+        let reduced = [
             read("agt_a", false, "c3", None),
             read("agt_b", true, "c3", None),
             read("agt_c", true, "c3", None),
-            read("agt_d", true, "c5", Some("c3")),
+            read("agt_whole", true, "c5", None),
+            read("agt_delta_b", true, "c5", Some("c3")),
+            read("agt_delta_c", true, "c5", Some("c3")),
         ];
-        assert_eq!(count(&strict, "c5", 3).unwrap(), [1, 2, 3]);
-        let unread = count(&strict, "c6", 3).unwrap_err();
-        assert!(unread.contains("agt_d passed c5"), "{unread}");
+        assert_eq!(count(&reduced, "c5", 3).unwrap(), [1, 2, 3, 4, 5]);
+        let once = count(&reduced[..4], "c5", 3).unwrap_err();
+        assert!(
+            once.starts_with("1 of the reviewers named passed the branch head c5"),
+            "{once}"
+        );
+        assert!(once.contains("agt_b passed c3, before the head"), "{once}");
+        let unread = count(&reduced, "c6", 3).unwrap_err();
+        assert!(unread.starts_with("0 of the reviewers named"), "{unread}");
+        assert!(unread.contains("agt_whole passed c5"), "{unread}");
+    }
+
+    /// The re-review read `c4`, and the lead committed `c5` after it.
+    #[test]
+    fn a_re_review_that_skips_the_final_head_is_refused() {
+        let skipped = [
+            read("agt_a", false, "c3", None),
+            read("agt_b", true, "c3", None),
+            read("agt_c", true, "c3", None),
+            read("agt_whole", true, "c4", None),
+            read("agt_delta_b", true, "c4", Some("c3")),
+            read("agt_delta_c", true, "c4", Some("c3")),
+        ];
+        let refused = count(&skipped, "c5", 3).unwrap_err();
+        assert!(
+            refused.starts_with("0 of the reviewers named passed the branch head c5"),
+            "{refused}"
+        );
+        assert!(
+            refused.contains("agt_whole passed c4 and no passing reviewer named"),
+            "{refused}"
+        );
+        let standard = count(&skipped[3..4], "c5", 1).unwrap_err();
+        assert!(
+            standard.starts_with("0 of the reviewers named"),
+            "{standard}"
+        );
     }
 
     #[test]
-    fn an_early_fix_needs_only_the_missing_delta_passes() {
+    fn an_early_fix_is_read_at_the_new_head_as_often_as_the_level_needs() {
         let fixed = [
             read("agt_fail", false, "c3", None),
             read("agt_pass", true, "c3", None),
             read("agt_delta", true, "c4", Some("c3")),
             read("agt_whole", true, "c4", None),
+            read("agt_delta_b", true, "c4", Some("c3")),
         ];
-        assert_eq!(count(&fixed, "c4", 3).unwrap(), [1, 2, 3]);
-        let missing = count(&fixed[..3], "c4", 3).unwrap_err();
+        assert_eq!(count(&fixed, "c4", 3).unwrap(), [1, 2, 3, 4]);
+        let missing = count(&fixed[..4], "c4", 3).unwrap_err();
         assert!(missing.starts_with("2 of the reviewers named"), "{missing}");
 
         // Two reviewers cancelled at c3 are replaced by whole-change reads at c4.
@@ -906,6 +983,40 @@ mod tests {
             Some(upstream.as_str()),
             "without the fetched base the same read is only a delta"
         );
+    }
+
+    /// A delta from its own head read nothing, so it neither counts nor anchors.
+    #[test]
+    fn a_read_from_its_own_head_is_refused_as_an_empty_diff() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().canonicalize().unwrap();
+        git(&repo, &["init", "-q", "--initial-branch=main"]);
+        commit(&repo, "base.txt");
+        git(&repo, &["checkout", "-q", "-b", "run"]);
+        let first = commit(&repo, "change1.txt");
+        let head = commit(&repo, "change2.txt");
+        let verdict = |base: &str| Verdict {
+            pass: true,
+            head: head.clone(),
+            base: Some(base.to_owned()),
+            findings: None,
+            titles: Vec::new(),
+        };
+        let base = Base {
+            branch: "main",
+            onto_head: None,
+        };
+        let mut history = History::new(&repo);
+        let empty = [("agt_empty".to_owned(), verdict(&head))];
+        let refused = place(&mut history, base, &empty, &[]).unwrap().unwrap_err();
+        assert!(
+            refused.starts_with("reviewer agt_empty read from its own head"),
+            "{refused}"
+        );
+        assert!(refused.ends_with("an empty diff"), "{refused}");
+        let delta = [("agt_delta".to_owned(), verdict(&first))];
+        let (_, placed) = place(&mut history, base, &delta, &[]).unwrap().unwrap();
+        assert_eq!(placed[0].base.as_deref(), Some(first.as_str()));
     }
 
     /// A pull request of two commits on `main`, and a run branch of two commits

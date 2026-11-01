@@ -16,6 +16,15 @@ pub enum Interrupt {
 }
 
 impl Interrupt {
+    const ALL: [Self; 3] = [Self::Hangup, Self::Keyboard, Self::Terminate];
+
+    /// The interrupt an update that exited with `code` was ended by.
+    pub fn ended(code: std::process::ExitCode) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|interrupt| std::process::ExitCode::from(interrupt.exit_code()) == code)
+    }
+
     fn kind(self) -> SignalKind {
         match self {
             Self::Hangup => SignalKind::hangup(),
@@ -79,8 +88,10 @@ mod tests {
 
     #[test]
     fn each_interrupt_exits_as_a_shell_reports_its_signal() {
-        let codes = [Interrupt::Hangup, Interrupt::Keyboard, Interrupt::Terminate]
-            .map(|interrupt| (interrupt.name(), interrupt.exit_code()));
+        let codes = Interrupt::ALL.map(|interrupt| (interrupt.name(), interrupt.exit_code()));
         assert_eq!(codes, [("SIGHUP", 129), ("SIGINT", 130), ("SIGTERM", 143)]);
+        let ended = |code: u8| Interrupt::ended(std::process::ExitCode::from(code));
+        assert_eq!(ended(130), Some(Interrupt::Keyboard));
+        assert_eq!((ended(0), ended(1)), (None, None));
     }
 }

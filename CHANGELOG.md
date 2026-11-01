@@ -2,6 +2,90 @@
 
 ## Unreleased
 
+### Review
+
+- A re-review after a fix reads only what changed, keeping the gate whole.
+  Since 1.4.9 every re-review read the whole change again, so a `strict`
+  review replaced all three reviewers after each fix (one smoke trial
+  delegated nine medium reviewers and ran out of time). The stage contract
+  now asks, after a fix, for one new whole-change read at the new head
+  and, where the level asks for more passes, delta reads from the head the
+  earlier reviews read; a commit after passes needs only deltas. On a
+  blocking fail the lead lets the reviewers still reading finish before it
+  edits, instead of cancelling them, so one fix answers every finding and
+  their passes anchor the deltas. The review gate is tightened to match:
+  as many passes as the level asks for must have read the branch head
+  itself, whole or as an anchored delta. A pass of an earlier head still
+  holds beside them and anchors a delta, but no longer counts toward the
+  level, so a strict review is three reviewers of the final head. A delta
+  whose `base` is its own head read an empty diff and is refused. The
+  reviewer effort floor (#329) is unchanged.
+
+### Fixed
+
+- A stale local base branch no longer fails a "no change needed" item or
+  inflates a change (#341). In `pr` mode items fork from the freshly fetched
+  `origin/<base>`, but the delivery checks counted from the local
+  `refs/heads/<base>`, so a no-change item failed with "holds N commit(s)
+  beyond" when the local base was N commits behind. Those checks now count
+  from the commit the run forked from, recorded at dispatch, or from a
+  newer `origin/<base>` the run took in; the local base only when no fork
+  was recorded. The fast check's list of affected files starts at the newer
+  of the local and `origin`'s base. After the fetch at dispatch, and at each mirror refresh,
+  archond also fast-forwards the registered checkout's local base to
+  `origin/<base>` when it is strictly behind, so the orchestrator's mirrors
+  follow the fresh base. It never resets, rebases, stashes or forces: a base
+  that is ahead or diverged, being rebased or bisected, or checked out with
+  a change to a tracked file or an untracked file where the move writes
+  stays where it is, and the operator is told why once.
+
+## 1.4.9
+
+Released 2026-10-31.
+
+A patch release on 1.4.8. "Update and restart" no longer hangs the terminal
+(#335): archond restarts at once while Aether and its stage agents keep
+running. Stage agents get more time and are told their deadline, stop only
+the processes they started, and can keep a server up for a later stage;
+archond cleans up the `lavish-axi poll` processes and Compose stacks that
+items left behind (#321, #323). The mobile web app renders Markdown safely
+(#319), the README gains a get-started section driven through the chat
+(#322), reviewer effort is a floor and verdicts are read by one tolerant
+parser, short ship hashes are accepted, and a stage agent Aether blocked for
+inspection is resumed.
+
+Archon 1.4.9 needs **Aether 1.2.8**: it is released with and tested on that
+release. Neither the installer nor `archon update` pins an Aether version.
+The installer installs the latest Aether release only when it finds no
+`aether`, and keeps one it finds. `archon update` runs `aether update
+--yes`, which installs the latest release, only on a confirmed update:
+after a yes, or with `--yes`; `--check`, `--requirements`, `--no-restart`
+and a declined question leave Aether as it is. Check with `aether
+--version` and update an older one with `aether update`. Aether 1.2.8
+serves protocol 25 (was 24) and still serves 17 to 24; Archon keeps asking
+for 24 and accepting down to 17, so neither constant moves. Protocol 25
+only adds a `credentials` exhaustion class, which Aether shows a client on
+24 as `usage_limit`. The daemon protocol stays 23 and the store schema
+stays 18: a 1.4.8 store opens unchanged, and going back to 1.4.8 needs no
+copy of the data directory.
+
+**Upgrading from 1.4.8**: the 1.4.8 updater still runs its own restart,
+which waits for every running stage agent to finish, up to 30 minutes
+(#335). Run `archon update --no-restart` first, which installs 1.4.9
+alone, then `archon update --yes`: the new archon restarts the 1.4.8
+archond in about 10 seconds, keeping its stage agents running, runs
+`aether update` (the latest Aether, 1.2.8 at this release) and renews the
+orchestrator. An update from 1.4.8 already waiting can be ended with
+Ctrl-C. From 1.4.9 on, `archon update` and its yes restart archond in
+seconds, keeping Aether and its stage agents running; the #335 entry under
+Fixed says when a busy archond restarts later. A new Aether runs only once
+its aetherd restarts. In dedicated mode, when archond runs the new archon
+before the update returns, the update asks it to restart Archon's own
+aetherd in the background after its stage agents finish, as `--wait` and
+`--requeue` allow. An archond that restarts only later is not asked:
+whenever that aetherd still runs the old Aether, `archon daemon restart`
+restarts it. In shared mode, restart your aetherd yourself.
+
 ### Cleanup
 
 - archond runs at most one `lavish-axi poll` per report, and stops it once
@@ -142,6 +226,28 @@
 
 ### Fixed
 
+- "Update and restart" no longer hangs the terminal (#335). After a yes, at
+  launch or with `archon update --yes`, archond restarts at once while Aether
+  and its stage agents keep running (the `--keep-aether` restart), and the
+  new archond takes up their stages; the update then renews the
+  orchestrator and opens what you ran against the new archond, in seconds.
+  Before, the restart waited for every running stage agent to finish, up to
+  30 minutes, and 1.4.7 also ignored Ctrl-C there. A restart that keeps
+  Aether now waits only for archond's own spawns, merges and deliveries; the
+  update waits 30 seconds for it at most, and an archond still busy then
+  restarts by itself once they end, or gives up at `--wait`, which the
+  update says before it returns. An archond older than 1.4.9 still waits
+  for its agents, so the update gives it 10 seconds and has it restart
+  anyway, keeping them running. A new Aether
+  restarts Archon's own aetherd in the background, after its stage agents
+  finish, when archond runs the new archon before the update returns;
+  otherwise `archon daemon restart` does it. Ctrl-C at launch exits instead of opening the old archon. The
+  question no longer says it waits for running agents, and the install
+  report names no commands to type. The update from 1.4.8 still runs 1.4.8's
+  own restart: to skip its wait, run `archon update --no-restart`, then
+  `archon update --yes`, which restarts the 1.4.8 archond in about 10
+  seconds. `scripts/simulate-update.sh` runs both updates end to end in a
+  sandbox with a stage agent running.
 - Stage gates and delegated reviews read verdicts with one tolerant
   parser: a structured `verdict` key, whatever it holds, then a structured
   `result` or `status` that opens with a verdict word or a `VERDICT:`
@@ -189,6 +295,13 @@
   repository, its settings and `/answer` confirmations, queueing, watching
   and merging work, standing directives, Lavish review pages, `/watch`,
   `/questions` and `/lessons`, all from the orchestrator's chat (#322).
+
+### Tests
+
+- Three tests that failed under load are de-flaked: the slow-start wait
+  test logs steadily for 3 s against a 2 s silence limit, the full-check
+  limit test gives its command 3 s, and three fake `gh` scripts are written
+  so that a fork on another test thread cannot hold them open (#332).
 
 ## 1.4.8
 

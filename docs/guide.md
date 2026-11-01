@@ -797,8 +797,8 @@ helper process that outlives it, stops, and is started again with
 Archon's own aetherd. The next archond reports the old and new versions in
 the feed. Without `requeue` a drain that runs out gives the restart up and
 dispatch goes on; with it the restart goes ahead and the stages it stopped
-are retried. `keep-aether` restarts archond alone, so stage agents keep
-running. A binary in cargo's bin directory is rebuilt with
+are retried. `keep-aether` restarts archond alone and waits only for its
+own spawns, merges and deliveries, so stage agents keep running. A binary in cargo's bin directory is rebuilt with
 `cargo install --locked --git … --tag v<version>` (or `--branch main`); an
 installer's binary runs its own `<program> update`. `archon status` shows
 the upgrade's progress, and running against installed versions when they

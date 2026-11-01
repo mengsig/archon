@@ -147,7 +147,7 @@ protocol 17 and later alone do not imply support.
 
 ```json
 {"req":1,"cmd":"hello","protocol_version":24,"client_name":"archon",
- "client_version":"1.4.8","features":["history_expired"]}
+ "client_version":"1.4.9","features":["history_expired"]}
 ```
 
 The reply is `Welcome {protocol_version, daemon_version, instance_id,
@@ -2668,7 +2668,10 @@ table and delivers it off every lock:
 2. **Prove the worktree** (`ship::checks`). It is the worktree git
    registered for the run, not a symlink or a redirected `.git` (§13.1); it
    is on the run branch; no tracked file is modified or staged; `HEAD^{tree}`
-   equals the record's `tree`; the branch is ahead of its base; and every
+   equals the record's `tree`; the branch is ahead of its base, counted
+   from the recorded fork (`base_commit`) or a newer `origin/<base>` the
+   branch holds, the local base only without a recorded fork, so a stale
+   local base adds none (#341); and every
    commit that neither the base nor a remote holds has an author and a
    committer e-mail of the repository's recorded identity or
    `archon@localhost`, which archond's own merges use when git has none. The
@@ -3634,8 +3637,17 @@ object per line under `--json`).
   `pr` mode a new
   branch forks from `origin`'s head of the base, fetched through the shadow
   just before (`ls-remote`, then the objects), with
-  `refs/remotes/origin/<base>` moved to it; the operator's local base branch
-  and checkout are never touched. A repository without `origin` forks from
+  `refs/remotes/origin/<base>` moved to it. The operator's local base branch
+  is then fast-forwarded to it when it is strictly behind (#341), as it is
+  again at each mirror refresh (§13.3), so the mirrors follow the fresh base:
+  by `update-ref` with its old value when no work tree has it checked out,
+  else by `git merge --ff-only` in that work tree, only when it holds no
+  change to a tracked file and no untracked or ignored file where the move
+  writes, and is still on the base at the old commit just before the merge.
+  A base that is ahead or diverged, being rebased or bisected, or checked
+  out with such a change stays where it is, and the
+  operator hears why once (a `decision`); nothing is reset, rebased, stashed
+  or forced. A repository without `origin` forks from
   the local base silently; a fetch that fails forks from it with a warning
   (a `decision` in the item's feed), and `refresh_item` can merge the newer
   base in later. The run's `base_branch` stays the branch name, and its

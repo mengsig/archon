@@ -136,7 +136,8 @@ async fn settle_reviewed(h: &Harness) {
 }
 
 /// The local `next` is stale; the item forks from `origin/next` and its
-/// pull request targets `next`, while the operator's branches stay put.
+/// pull request targets `next`. The local `next`, behind and checked out
+/// nowhere, is fast-forwarded to it (#341); the release branch stays put.
 #[tokio::test]
 async fn an_item_forks_from_origin_s_integration_branch_and_its_pull_request_targets_it() {
     let (h, gh) = delivering().await;
@@ -150,7 +151,13 @@ async fn an_item_forks_from_origin_s_integration_branch_and_its_pull_request_tar
     h.dispatch().await;
     let run = h.run(&item.id).await;
     assert_eq!(git(&run.workspace, &["rev-parse", "HEAD"]), upstream);
-    assert_eq!(git(&h.repo, &["rev-parse", "next"]), stale, "never moved");
+    assert_ne!(stale, upstream);
+    assert_eq!(
+        git(&h.repo, &["rev-parse", "next"]),
+        upstream,
+        "fast-forwarded"
+    );
+    assert_eq!(git(&h.repo, &["rev-parse", "main"]), stale, "main stays");
     assert!(h.notices(NotificationKind::Decision).await.is_empty());
 
     settle_reviewed(&h).await;
@@ -168,15 +175,19 @@ async fn an_item_forks_from_origin_s_integration_branch_and_its_pull_request_tar
     );
 }
 
-/// The local `next` is stale (issue #275): the lead hands reviewers the fork
-/// from `origin/next`, never the local `next`, whose diff would hold every
-/// commit merged upstream since.
+/// The local `next` is stale (issue #275), and diverged so it is not
+/// fast-forwarded: the lead hands reviewers the fork from `origin/next`,
+/// never the local `next`, whose diff would hold every commit merged
+/// upstream since.
 #[tokio::test]
 async fn a_stale_local_base_leaves_the_prompt_naming_the_fork_commit() {
     let (h, _gh) = delivering().await;
     git(&h.repo, &["branch", "next", "main"]);
     git(&h.repo, &["push", "--quiet", "origin", "next"]);
-    let stale = git(&h.repo, &["rev-parse", "next"]);
+    let tree = "next^{tree}";
+    let local_only = ["commit-tree", tree, "-p", "next", "-m", "local only"];
+    let stale = git(&h.repo, &local_only);
+    git(&h.repo, &["update-ref", "refs/heads/next", &stale]);
     let upstream = advance_origin(&h, "next", "integrated.txt");
     integrate_into(&h, "next").await;
 
@@ -197,6 +208,11 @@ async fn a_stale_local_base_leaves_the_prompt_naming_the_fork_commit() {
     assert!(!prompt.contains(&stale), "{prompt}");
     assert!(!prompt.contains("merge-base next"), "{prompt}");
     assert_eq!(git(&h.repo, &["rev-parse", "next"]), stale, "never moved");
+    let notices = h.notices(NotificationKind::Decision).await;
+    assert!(
+        notices.iter().any(|n| n.contains("have diverged")),
+        "{notices:?}"
+    );
 }
 
 /// `origin` has no integration branch: it is made from `origin`'s release

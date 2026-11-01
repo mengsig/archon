@@ -433,6 +433,7 @@ async fn prove(
         base: base.to_owned(),
         since: onto.or(stacked),
         reviewed_base,
+        forked: forked_from(&claimed.vars, base),
         allowed: repo_identity::RepoIdentity::allowed(identity.as_ref()),
         attribution: repo.attribution,
     };
@@ -530,10 +531,11 @@ pub(in crate::executor) async fn prove_unchanged(
     run: &PipelineRun,
 ) -> Result<Result<(), String>, ArchonError> {
     assert!(run.workspace.is_absolute(), "a run has a worktree");
-    let (repo, since, base) = {
+    let (repo, since, base, forked) = {
         let store = ctx.store.lock().await;
         let vars = recover::load_run_vars(&store, &run.id)?;
         let base = base_of(&store, run, &vars)?;
+        let forked = forked_from(&vars, &base);
         let item = store.item(&run.item)?;
         let stacked = super::super::onto::reviewed_ancestry(&store, &item)?;
         let since = item.onto.map(|onto| onto.head_sha);
@@ -541,6 +543,7 @@ pub(in crate::executor) async fn prove_unchanged(
             repo_of(&store, run)?,
             since.or(stacked.map(|s| s.head_sha)),
             base,
+            forked,
         )
     };
     let Some(repo) = repo else {
@@ -557,6 +560,7 @@ pub(in crate::executor) async fn prove_unchanged(
         since,
         // Only a delivery checks identities; no commit is a claim of none.
         reviewed_base: None,
+        forked,
         allowed: Vec::new(),
         attribution: repo.attribution,
     };
@@ -673,6 +677,15 @@ pub(in crate::executor) fn base_of(
             "the run's variables name no base branch".into(),
         )),
     }
+}
+
+/// The commit of `base` the run forked from, as recorded at dispatch; `None`
+/// when the run forked from another branch, as a stack's base moves on.
+fn forked_from(vars: &BTreeMap<String, String>, base: &str) -> Option<String> {
+    assert!(!base.is_empty(), "a delivery has a base branch");
+    let same_base = vars.get("base_branch").map(|b| b.trim()) == Some(base);
+    let forked = vars.get("base_commit").filter(|_| same_base)?;
+    crate::worktree::stack::is_commit_id(forked).then(|| forked.clone())
 }
 
 /// Persist `outcome` for a rebuilt driver to replay. A pull request's URL

@@ -110,18 +110,21 @@ fn committed_checks(root: &Path, rev: &str) -> Result<Option<Checks>, ArchonErro
 }
 
 /// What the change in the work tree `tree` affects: the files its `HEAD`
-/// changes since it forked from `base`, read with git running no program
-/// the tree's config names.
+/// changes since it forked from `base`, local or `origin`'s, whichever is
+/// newer, read with git running no program the tree's config names.
 pub(crate) fn affected_by(tree: &Path, base: &str) -> Result<Affected, ArchonError> {
     assert!(tree.is_absolute(), "run worktrees are absolute");
     assert!(!base.is_empty(), "a change has a base branch");
-    let Some(base) = base_ref(tree, base)? else {
+    let bases = base_refs(tree, base)?;
+    if bases.is_empty() {
         return Err(ArchonError::Invalid(format!(
             "the base branch `{base}` exists neither locally nor on `origin`"
         )));
-    };
+    }
     let git = || DaemonGit::sealed_in(tree);
-    let fork = git().args(["merge-base", &base, "HEAD"]).text()?;
+    let mut fork_args = vec!["merge-base", "HEAD"];
+    fork_args.extend(bases.iter().map(String::as_str));
+    let fork = git().args(fork_args).text()?;
     assert!(crate::worktree::stack::is_commit_id(&fork), "a merge base");
     let args = ["diff", "-z", "--name-only", "--no-renames", &fork, "HEAD"];
     let ran = git().args(args).output()?;
@@ -138,8 +141,9 @@ pub(crate) fn affected_by(tree: &Path, base: &str) -> Result<Affected, ArchonErr
     affected::affected(tree, &changed)
 }
 
-/// The ref `base` names: the local branch, else `origin`'s.
-fn base_ref(tree: &Path, base: &str) -> Result<Option<String>, ArchonError> {
+/// The refs `base` names: the local branch and `origin`'s, those that exist.
+fn base_refs(tree: &Path, base: &str) -> Result<Vec<String>, ArchonError> {
+    let mut found = Vec::with_capacity(2);
     for candidate in [
         format!("refs/heads/{base}"),
         format!("refs/remotes/origin/{base}"),
@@ -147,10 +151,11 @@ fn base_ref(tree: &Path, base: &str) -> Result<Option<String>, ArchonError> {
         let args = ["for-each-ref", "--format=%(refname)", &candidate];
         let listed = DaemonGit::sealed_in(tree).args(args).text()?;
         if listed.lines().any(|name| name == candidate) {
-            return Ok(Some(candidate));
+            found.push(candidate);
         }
     }
-    Ok(None)
+    assert!(found.len() <= 2, "each candidate is listed once");
+    Ok(found)
 }
 
 /// How a check run ended.

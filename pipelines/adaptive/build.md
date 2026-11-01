@@ -48,7 +48,7 @@ read again.
    shares your workspace and only reads. Several work alone, on different
    models where the policy allows, and never see each other's findings. While
    they read, run the project's build, lint/format and full test suite once,
-   and follow your contract's `wait_for` early-fix rule. With no reviewer
+   and follow your contract's `wait_for` rule. With no reviewer
    asked for, that run is the whole of this step. Hand a reviewer this and
    nothing more:
    - the acceptance criteria, in the few lines that settle what done means;
@@ -78,11 +78,12 @@ read again.
    committed. Leave advisory and style findings open and list them.
    A second look is owed after a failed verdict and for any commit after a
    pass: Archon delivers only commits a passing reviewer read, so batch
-   fixes. Delegate the missing pass as your contract defines, a NEW agent
-   reading the whole change (`base` the change's start) at the new head. It
-   gets the previous verdicts, each finding beside its fix, and the
-   regression evidence. If the operator adds scope while a review runs, let
-   it finish, keep its verdict for the commit it read, and have the whole
+   fixes. Delegate the missing passes as your contract defines, each a NEW
+   agent at the new head: after a fail one reads the whole change (`base`
+   the change's start) and any others only what changed since the head they
+   passed. Each gets the previous verdicts, each finding beside its fix,
+   and the regression evidence. If the operator adds scope while a review
+   runs, let it finish, keep its verdict for the commit it read, and have the whole
    change read again with the addition. Continue while fixes
    make progress within the item's time and spending limits; escalate
    repeated findings or a stalled approach with evidence.

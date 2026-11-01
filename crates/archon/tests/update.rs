@@ -6,6 +6,8 @@
 mod archond;
 #[path = "common/release.rs"]
 mod release;
+#[path = "common/terminal.rs"]
+mod terminal;
 
 use std::os::unix::fs::MetadataExt as _;
 use std::os::unix::process::ExitStatusExt as _;
@@ -18,6 +20,7 @@ use std::time::{Duration, Instant, SystemTime};
 use archon_core::protocol::{ClientFrame, PROTOCOL_VERSION, Reply, Request, ServerFrame, Welcome};
 use archon_core::testing::write_script;
 use release::{ARCHIVE_MEMBERS, Server, aether_script, archive_members, archon_script, publish};
+use terminal::{Session, Terminal};
 
 const BUILT: &str = env!("CARGO_BIN_EXE_archon");
 const CURRENT: &str = env!("CARGO_PKG_VERSION");
@@ -178,6 +181,21 @@ fn update_interrupted_by(installed: &Installed, signal: &str) -> Output {
     end_with(update, signal)
 }
 
+/// A bare `archon` on `terminal` with the launch-time check on, at its
+/// update question for the published 9.9.9.
+fn launch_offering_an_update(installed: &Installed, terminal: &Terminal) -> Session {
+    let mut launch = installed.command(&installed.archon(), &[]);
+    launch.env_remove("ARCHON_NO_UPDATE_CHECK");
+    let mut session = terminal.start(&mut launch);
+    session.wait_for(&format!("Archon 9.9.9 is available (this is {CURRENT})."));
+    session.wait_for("Update and restart now? [Y/n/s]");
+    assert!(
+        installed.unchanged(),
+        "nothing is installed before the answer"
+    );
+    session
+}
+
 /// Send `signal` to a running update and return how it ended.
 fn end_with(update: Child, signal: &str) -> Output {
     let sent = Command::new("kill")
@@ -336,8 +354,8 @@ fn a_running_archond_and_an_old_aether_are_named_with_what_to_run() {
     assert!(
         stdout.contains(&format!(
             "archond (pid {pid}) still runs test, and the update itself interrupts no running \
-             item; to switch it to 9.9.9, run `archon daemon stop --keep-aether`, then `archon \
-             aether mcp refresh archon` and `archon orchestrator restart`."
+             item; to switch it to 9.9.9, run `archon daemon restart --keep-aether`, which keeps \
+             running stage agents and gives the orchestrator the new tools."
         )),
         "{stdout}"
     );
@@ -477,28 +495,39 @@ fn yes_prints_no_manual_steps_and_a_signal_ends_a_stuck_restart_naming_its_step(
     assert_eq!(out.status.code(), Some(130), "{stdout}\n{stderr}");
     assert_eq!(installed.version(), "archon 9.9.9", "the install stays");
     assert!(
-        stderr.contains("archon: update: restarting archond (pid")
-            && stderr.contains("update interrupted by SIGINT while restarting archond"),
+        stderr.contains("archon: update: asking archond to restart (pid")
+            && stderr.contains("update interrupted by SIGINT while asking archond to restart")
+            && stderr.contains("`archon daemon restart --keep-aether` restarts it"),
         "{stderr}"
     );
-    assert!(stderr.contains("`archon orchestrator restart`"), "{stderr}");
+    assert!(stderr.contains("stage agents keep running"), "{stderr}");
     assert!(
-        stdout.contains("to switch it to 9.9.9, `--yes` restarts it now."),
+        stdout.contains(&format!(
+            "archond (pid {}) runs test; it restarts next, and its running stage agents keep \
+             running in Aether.",
+            std::process::id()
+        )),
         "{stdout}"
     );
     assert!(!stdout.contains("daemon stop --keep-aether"), "{stdout}");
 }
 
 /// An archond that welcomes this protocol until it is asked to upgrade, then
-/// refuses every hello as one restarted on a newer protocol would.
-fn serve_archond_restarting_on_a_newer_protocol(socket: &Path) {
+/// refuses every hello as one restarted on a newer protocol would. It keeps
+/// the upgrades it was asked for.
+fn serve_archond_restarting_on_a_newer_protocol(
+    socket: &Path,
+) -> Arc<std::sync::Mutex<Vec<archon_core::ops::UpgradeRequest>>> {
     use archon_core::protocol::{ErrorCode, ErrorReply};
     use std::io::{BufRead as _, BufReader, Write as _};
     let listener = std::os::unix::net::UnixListener::bind(socket).unwrap();
     let restarted = Arc::new(AtomicBool::new(false));
+    let asked = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let upgrades = asked.clone();
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let (mut writer, restarted) = (stream.unwrap(), restarted.clone());
+            let upgrades = upgrades.clone();
             std::thread::spawn(move || {
                 let reader = BufReader::new(writer.try_clone().unwrap());
                 for line in reader.lines().map_while(Result::ok) {
@@ -518,7 +547,8 @@ fn serve_archond_restarting_on_a_newer_protocol(socket: &Path) {
                             daemon_version: CURRENT.into(),
                             pid: std::process::id(),
                         })),
-                        Request::Upgrade(_) => {
+                        Request::Upgrade(request) => {
+                            upgrades.lock().unwrap().push(request);
                             restarted.store(true, Ordering::SeqCst);
                             Ok(Reply::UpgradeStarted {
                                 text: "restarting".into(),
@@ -535,6 +565,7 @@ fn serve_archond_restarting_on_a_newer_protocol(socket: &Path) {
             });
         }
     });
+    asked
 }
 
 #[test]
@@ -553,7 +584,7 @@ fn a_restart_onto_a_newer_protocol_renews_the_orchestrator_through_the_installed
     );
     let updating = aether_script(16, 17).replace("*) exit 64", "update) echo done ;;\n*) exit 64");
     write_script(&installed.path("tools/aether"), &updating);
-    serve_archond_restarting_on_a_newer_protocol(&installed.socket());
+    let asked = serve_archond_restarting_on_a_newer_protocol(&installed.socket());
     let update = installed
         .command(&installed.archon(), &["update", "--yes", "--wait", "1"])
         .stdout(Stdio::piped())
@@ -568,6 +599,12 @@ fn a_restart_onto_a_newer_protocol_renews_the_orchestrator_through_the_installed
     assert!(
         stdout.contains("Restarted the orchestrator on archon 9.9.9."),
         "{stdout}"
+    );
+    let asked = asked.lock().unwrap().clone();
+    assert_eq!(asked.len(), 1, "one restart: {asked:?}");
+    assert!(
+        asked[0].keep_aether && asked[0].archon.is_none(),
+        "Aether and its stage agents keep running: {asked:?}"
     );
 }
 
@@ -940,4 +977,70 @@ fn requirements_print_the_aether_protocols_this_build_speaks() {
         format!("aether_protocol_min {min}\naether_protocol_max {max}\n")
     );
     assert!(installed.server.requests().is_empty());
+}
+
+#[test]
+fn yes_at_launch_updates_and_opens_the_new_archon_at_once() {
+    let installed = Installed::new();
+    publish(
+        &installed.releases(),
+        "v9.9.9",
+        &target(),
+        &archon_script("9.9.9"),
+        true,
+    );
+    let terminal = Terminal::open();
+    let mut session = launch_offering_an_update(&installed, &terminal);
+    let answered = Instant::now();
+    session.type_line("y");
+    session.wait_for("fake archon 9.9.9: ");
+    let took = answered.elapsed();
+    let out = session.finish();
+    assert!(out.status.success(), "{out:?}");
+    assert!(took < Duration::from_secs(10), "the update took {took:?}");
+    assert_eq!(installed.version(), "archon 9.9.9");
+    assert_eq!(installed.installed_files(), ["archon"]);
+}
+
+#[test]
+fn ctrl_c_in_a_launch_time_update_exits_at_once_and_opens_nothing() {
+    let installed = Installed::new();
+    publish(
+        &installed.releases(),
+        "v9.9.9",
+        &target(),
+        &archon_script("9.9.9"),
+        true,
+    );
+    installed.server.stall(".tar.gz");
+    let terminal = Terminal::open();
+    let mut session = launch_offering_an_update(&installed, &terminal);
+    session.type_line("y");
+    wait_for_partial_archive(&installed);
+    let sent = Command::new("kill")
+        .args(["-INT", &session.pid().to_string()])
+        .status()
+        .unwrap();
+    assert!(sent.success(), "kill -INT failed: {sent}");
+    let interrupted = Instant::now();
+    let shown_before_exit = session.shown().to_owned();
+    let out = session.finish();
+    assert!(
+        interrupted.elapsed() < Duration::from_secs(5),
+        "exited after {:?}",
+        interrupted.elapsed()
+    );
+    assert_eq!(out.status.code(), Some(130), "{out:?}\n{shown_before_exit}");
+    assert!(installed.unchanged(), "the installed archon is untouched");
+    assert_eq!(
+        installed.installed_files(),
+        ["archon"],
+        "staging is removed"
+    );
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains("archon: update interrupted by SIGINT; nothing staged"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("opening anyway"), "{stderr}");
 }

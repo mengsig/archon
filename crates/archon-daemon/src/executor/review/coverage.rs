@@ -69,6 +69,9 @@ pub(super) struct Base<'a> {
     /// The frozen pull request head an `onto` item's branch was forked at: the
     /// change is what the item added on top of it, not the pull request.
     pub onto_head: Option<&'a str>,
+    /// A refresh's branch head before its merge: the change is the merge's
+    /// resolution and what follows, so a read from there is whole.
+    pub merged_from: Option<&'a str>,
 }
 
 /// The branch head and each verdict on its commits, `named` first, or why a named one is
@@ -142,7 +145,28 @@ pub(super) fn holds_tree(
 /// when neither is there, so only a review stating no base reads the whole change.
 /// An `onto` item's change starts at its frozen head, which the branch holds; a
 /// newer base a refresh merged is a start too, as both hold the item's change.
+/// A refresh's change also starts at the branch head it merged into.
 fn fork_points(dir: &Path, base: Base, head: &str) -> Result<Vec<String>, ArchonError> {
+    let mut starts = base_starts(dir, base, head)?;
+    let Some(from) = base.merged_from else {
+        return Ok(starts);
+    };
+    let Some(from) = worktree::commit_id(dir, from)? else {
+        return Ok(starts);
+    };
+    assert!(
+        is_commit_id(&from),
+        "git names the merged-into head in full"
+    );
+    if !starts.contains(&from) && worktree::is_ancestor(dir, &from, head)? {
+        starts.push(from);
+    }
+    assert!(!starts.is_empty(), "the merged-into head is a start");
+    Ok(starts)
+}
+
+/// Where the change starts on the base branch, or at an `onto` item's frozen head.
+fn base_starts(dir: &Path, base: Base, head: &str) -> Result<Vec<String>, ArchonError> {
     let forks: Vec<String> = worktree::branch_fork(dir, base.branch, head)?
         .into_iter()
         .collect();
@@ -954,6 +978,7 @@ mod tests {
             Base {
                 branch: "main",
                 onto_head: None,
+                merged_from: None,
             },
             &named,
             &[],
@@ -972,6 +997,7 @@ mod tests {
             Base {
                 branch: "main",
                 onto_head: None,
+                merged_from: None,
             },
             &named,
             &[],
@@ -983,6 +1009,43 @@ mod tests {
             Some(upstream.as_str()),
             "without the fetched base the same read is only a delta"
         );
+    }
+
+    /// A refresh's reviewer reads the resolution from the merge's first parent:
+    /// with that head recorded the read is whole, without it only a delta.
+    #[test]
+    fn a_refresh_review_of_its_resolution_from_the_merged_into_head_is_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().canonicalize().unwrap();
+        git(&repo, &["init", "-q", "--initial-branch=main"]);
+        let fork = commit(&repo, "base.txt");
+        git(&repo, &["checkout", "-q", "-b", "run"]);
+        let from = commit(&repo, "change.txt");
+        git(&repo, &["checkout", "-q", "main"]);
+        let upstream = commit(&repo, "upstream.txt");
+        git(&repo, &["checkout", "-q", "run"]);
+        git(&repo, &["merge", "-q", "--no-edit", &upstream]);
+        let head = git(&repo, &["rev-parse", "HEAD"]);
+        assert_ne!(fork, upstream, "the base moved");
+        let verdict = Verdict {
+            pass: true,
+            head: head.clone(),
+            base: Some(from.clone()),
+            findings: None,
+            titles: Vec::new(),
+        };
+        let named = [("agt_r".to_owned(), verdict)];
+        let mut base = Base {
+            branch: "main",
+            onto_head: None,
+            merged_from: Some(from.as_str()),
+        };
+        let mut history = History::new(&repo);
+        let (_, placed) = place(&mut history, base, &named, &[]).unwrap().unwrap();
+        assert_eq!(placed[0].base, None, "the resolution is the whole change");
+        base.merged_from = None;
+        let (_, placed) = place(&mut history, base, &named, &[]).unwrap().unwrap();
+        assert_eq!(placed[0].base.as_deref(), Some(from.as_str()));
     }
 
     /// A delta from its own head read nothing, so it neither counts nor anchors.
@@ -1005,6 +1068,7 @@ mod tests {
         let base = Base {
             branch: "main",
             onto_head: None,
+            merged_from: None,
         };
         let mut history = History::new(&repo);
         let empty = [("agt_empty".to_owned(), verdict(&head))];
@@ -1046,6 +1110,7 @@ mod tests {
         let base = Base {
             branch: "main",
             onto_head: onto,
+            merged_from: None,
         };
         let mut history = History::new(repo);
         let (_, placed) = place(&mut history, base, &named, &[]).unwrap().unwrap();

@@ -610,14 +610,15 @@ async fn holding(
         onto_head,
         reviewed_pr,
         repo,
+        merged_from,
     } = base_of(ctx, run).await?;
-    let (base_branch, onto_head, fork) = match (&reviewed_pr, repo) {
+    let (base_branch, onto_head, merged_from, fork) = match (&reviewed_pr, repo) {
         (Some(reviewed), Some(repo)) => match trusted_fork(ctx, run, repo, reviewed).await? {
-            // No local ref names the start: only the fork GitHub's base gives.
-            Ok(fork) => (String::new(), Some(fork.clone()), Some(fork)),
+            // No local ref names the start, nor a refresh's: only GitHub's base.
+            Ok(fork) => (String::new(), Some(fork.clone()), None, Some(fork)),
             Err(why) => return Ok(Checked::Refused(why)),
         },
-        _ => (base_branch, onto_head, None),
+        _ => (base_branch, onto_head, merged_from, None),
     };
     if fork.is_some()
         && let Some(why) = unbased_pass(&verdicts, earlier.as_deref())
@@ -631,6 +632,7 @@ async fn holding(
         let base = Base {
             branch: &base_branch,
             onto_head: onto_head.as_deref(),
+            merged_from: merged_from.as_deref(),
         };
         let placed = coverage::place(&mut history, base, &verdicts, read)?;
         let (head, placed) = match placed {
@@ -673,16 +675,20 @@ struct ReviewBase {
     reviewed_pr: Option<OntoPullRequest>,
     /// The repository a review-only item's pull request is in.
     repo: Option<Repo>,
+    /// The branch head a refresh merged into.
+    merged_from: Option<String>,
 }
 
 /// Where `run`'s change starts: its base branch and, for an item queued
 /// `onto` a pull request, that pull request's frozen head or, when the item
 /// only reviews it, the pull request itself; for one stacked on a reviewed
-/// pull request, its reviewed head.
+/// pull request, its reviewed head; and the branch head a refresh merged into.
 async fn base_of(ctx: &DaemonContext, run: &PipelineRun) -> Result<ReviewBase, ArchonError> {
     let store = ctx.store.lock().await;
     let item = store.item(&run.item)?;
     let stacked = super::onto::reviewed_dependency(&store, &item)?;
+    let refresh = store.stack_fix(&run.item)?.and_then(|fix| fix.refresh);
+    let merged_from = refresh.and_then(|refresh| refresh.from);
     let (onto_head, reviewed_pr) = match item.onto.map(|onto| *onto) {
         Some(onto) if onto.review_only => (None, Some(onto)),
         Some(onto) => (Some(onto.head_sha), None),
@@ -708,6 +714,7 @@ async fn base_of(ctx: &DaemonContext, run: &PipelineRun) -> Result<ReviewBase, A
         onto_head,
         reviewed_pr,
         repo,
+        merged_from,
     })
 }
 

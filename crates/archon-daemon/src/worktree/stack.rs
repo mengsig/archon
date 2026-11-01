@@ -36,6 +36,21 @@ pub(crate) fn is_commit_id(sha: &str) -> bool {
     matches!(sha.len(), 40 | 64) && sha.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+/// The tree of `commit`, a full commit id, in `repo`.
+pub(crate) fn tree_of(repo: &Path, commit: &str) -> Result<String, ArchonError> {
+    assert!(is_commit_id(commit), "a commit id in full");
+    let spec = format!("{commit}^{{tree}}");
+    let tree = DaemonGit::sealed_in(repo)
+        .args(["rev-parse", "--verify", &spec])
+        .text()?;
+    if !is_commit_id(&tree) {
+        return Err(ArchonError::Invalid(
+            "git returned an invalid tree id".into(),
+        ));
+    }
+    Ok(tree)
+}
+
 /// The commit `refs/heads/<branch>` names in `repo`.
 pub(crate) fn sha(repo: &Path, branch: &str) -> Result<String, ArchonError> {
     super::check_branch(branch)?;
@@ -100,6 +115,17 @@ pub(crate) fn merge_tree(
     ours: &str,
     theirs: &str,
 ) -> Result<Result<String, String>, ArchonError> {
+    let merged = merge_tree_paths(shadow, base, ours, theirs)?;
+    Ok(merged.map_err(|files| files.join("\n")))
+}
+
+/// [`merge_tree`], the conflicting files each whole as git names them.
+pub(crate) fn merge_tree_paths(
+    shadow: &Shadow,
+    base: Option<&str>,
+    ours: &str,
+    theirs: &str,
+) -> Result<Result<String, Vec<String>>, ArchonError> {
     assert!(is_commit_id(ours) && is_commit_id(theirs), "commit ids");
     assert!(base.is_none_or(is_commit_id), "a merge base is a commit id");
     let mut args = vec![
@@ -121,7 +147,7 @@ pub(crate) fn merge_tree(
     // `merge-tree --write-tree` exits 1 exactly when the merge conflicts.
     match ran.status.code() {
         Some(0) if is_commit_id(&tree) => Ok(Ok(tree)),
-        Some(1) => Ok(Err(fields.collect::<Vec<_>>().join("\n"))),
+        Some(1) => Ok(Err(fields.map(str::to_owned).collect())),
         _ => Err(ran.failure()),
     }
 }

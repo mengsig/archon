@@ -166,6 +166,15 @@ async fn target(
             parent.parent_branch
         )));
     }
+    // Refreezing or merging a moved head would change what its reviewers passed.
+    if let Some(onto) = item.onto.as_deref().filter(|onto| onto.review_only) {
+        return Err(ArchonError::Invalid(format!(
+            "{id} reviewed {} at {} and commits nothing: queue a new `review` item onto it \
+             to review its head as it stands now",
+            onto.pr.url(),
+            onto.head_sha
+        )));
+    }
     if let (Some(onto), ShipMode::Pr, true) = (&item.onto, repo.ship, run.shipped) {
         return Err(ArchonError::Invalid(format!(
             "{id} went into the pull request {}, not a branch of its own: queue the \

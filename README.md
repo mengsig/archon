@@ -13,7 +13,7 @@ ceiling. Agents run on [Aether](https://github.com/mengsig/aether).
   the CLI, or mention `@archon` on a watched GitHub repository. The
   orchestrator answers code questions from its own copy of your
   repositories and queues every change as an item.
-- **Pipelines with real gates.** Eleven built-in pipelines, from a single
+- **Pipelines with real gates.** Twelve built-in pipelines, from a single
   agent with no reviewer to a lead with three independent ones, or your own
   in TOML. A failed gate sends the findings back to the implementer, which
   keeps its context through the fix.
@@ -165,7 +165,9 @@ standing directives, Lavish, GitHub, questions and lessons.
 | `refactor`, `performance` | baseline or measure → change → verify → review | a test gate and one reviewer |
 
 `agent-testing`, `e2e-testing`, `code-audit`, `design-doc`, `ask` and
-`errand` test, audit, design and answer without shipping. See the
+`errand` test, audit, design and answer without shipping. `review` reviews
+someone else's pull request, a fork's included, without pushing to it; its
+pass is what lets `archon merge` merge that pull request. See the
 [pipelines in the guide](docs/guide.md#pipelines), and
 [write your own](docs/PIPELINES.md#quick-start-add-a-pipeline) for every
 repository or for one, such as the

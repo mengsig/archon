@@ -1,0 +1,25 @@
+[pipeline]
+name = "review"
+description = "Review an existing pull request, a contributor's fork included, at its frozen head without changing or pushing anything"
+version = 1
+workspace = "worktree"
+requires_repo = true
+
+# The lead holds the review; nothing ships. A pass of the frozen head is what
+# lets `request_merge` merge the pull request at exactly that commit.
+[pipeline.review]
+level = "standard"
+stage = "review"
+
+[nudges]
+tier = "balanced"
+independent_reviewers = true
+notes = "Queue it `onto` the pull request (`onto: {pr: <n>}`), a fork's included: it pushes nothing. A pass records the head its reviewers passed; `request_merge` of this item then merges that pull request only while its head is still there. An item that `depends_on` it starts from that head and ships those commits unchanged beneath its own. The item's review level sets the reviewers: standard (one) by default, strict (three) for risky changes; none records no review and so allows no merge."
+
+[[stage]]
+id = "review"
+kind = "work"
+prompt = "review.md"
+allow_delegation = true
+timeout_minutes = 90
+nudge = "The balanced tier at medium effort leads; the reviewers carry the depth. The lead chooses its reviewers' models and efforts within model policy."

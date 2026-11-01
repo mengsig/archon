@@ -86,6 +86,9 @@ struct Shipped {
     head: String,
     /// Whether every run that delivered `head` had its change reviewed.
     reviewed: bool,
+    /// The pull request is not the item's own: a review item passed it at
+    /// `head`, reading its commits from this fork of GitHub's base.
+    review_of: Option<String>,
 }
 
 impl Shipped {
@@ -99,6 +102,15 @@ impl Shipped {
         match self.local_branch() {
             Some(branch) => format!("branch `{branch}`"),
             None => self.pr_url.clone(),
+        }
+    }
+
+    /// Base branches whose checks the repository waives; none for another's
+    /// pull request, which merges only with every check green.
+    fn waived_bases(&self) -> &[String] {
+        match self.review_of {
+            Some(_) => &[],
+            None => &self.repo.merge_waive_checks,
         }
     }
 
@@ -127,14 +139,10 @@ fn shipped(store: &Store, id: &QueueItemId) -> Result<Shipped, ArchonError> {
         return Err(ArchonError::Invalid(format!("{id} has no repository")));
     };
     let repo = store.repo(&crate::resolve::repo_ref(repo))?;
-    if let Some(onto) = &item.onto {
-        return Err(ArchonError::Invalid(format!(
-            "{id} was delivered onto {}, which belongs to its owner and holds commits Archon \
-             never reviewed: Archon delivers into it but never merges it; merge it by hand",
-            onto.pr.url()
-        )));
-    }
     let stages = store.stage_runs(&run)?;
+    if item.onto.is_some() {
+        return reviewed_pull_request(item, run, repo, &stages);
+    }
     let Some((pr_url, head)) = delivered(&stages).or_else(|| {
         (repo.ship == ShipMode::Local)
             .then(|| local_delivery(store, &run, &stages))
@@ -166,7 +174,100 @@ fn shipped(store: &Store, id: &QueueItemId) -> Result<Shipped, ArchonError> {
         pr_url,
         head,
         reviewed,
+        review_of: None,
     })
+}
+
+/// The pull request a succeeded review item passed, at the head its
+/// reviewers passed; `Err` refuses an item that delivered into its owner's
+/// pull request, or whose review did not pass the frozen head.
+fn reviewed_pull_request(
+    item: QueueItem,
+    run: PipelineRunId,
+    repo: Repo,
+    stages: &[StageRun],
+) -> Result<Shipped, ArchonError> {
+    let onto = item.onto.as_deref().expect("an onto item");
+    let url = onto.pr.url();
+    if !onto.review_only {
+        return Err(ArchonError::Invalid(format!(
+            "{} was delivered onto {url}, which belongs to its owner and holds commits Archon \
+             never reviewed: Archon delivers into it but never merges it; merge it by hand, or \
+             queue a `review` item onto it and request the merge of that item once it passes",
+            item.id
+        )));
+    }
+    if delivered(stages).is_some() {
+        return Err(ArchonError::Invalid(format!(
+            "{} was queued to review {url} but recorded a delivery: it is not merged",
+            item.id
+        )));
+    }
+    let Some(head) = super::onto::reviewed_head(stages) else {
+        return Err(ArchonError::Invalid(format!(
+            "{} read {url} but holds no review that passed it: only a review item whose \
+             reviewers passed the pull request lets it merge; queue one with review level \
+             `standard` or `strict`",
+            item.id
+        )));
+    };
+    if head != onto.head_sha {
+        return Err(ArchonError::Invalid(format!(
+            "{}'s reviewers passed {}, not {url}'s frozen head {}: queue a new review item",
+            item.id,
+            merge::short(&head),
+            merge::short(&onto.head_sha)
+        )));
+    }
+    let Some(fork) = super::onto::reviewed_fork(stages) else {
+        return Err(ArchonError::Invalid(format!(
+            "{}'s review of {url} records no commit its reviewers read from: queue a new \
+             review item",
+            item.id
+        )));
+    };
+    assert!(is_commit_id(&head), "a reviewed head is a full commit id");
+    Ok(Shipped {
+        pr_url: url,
+        head,
+        reviewed: true,
+        review_of: Some(fork),
+        item,
+        run,
+        repo,
+    })
+}
+
+/// Why another's pull request is not merged at the last step: only every
+/// check green lets it merge, which no acknowledgement or waiver replaces.
+fn checks_not_green(ready: &Ready) -> Option<String> {
+    if !ready.review_of || ready.seen.all_green() {
+        return None;
+    }
+    Some(format!(
+        "its checks are not all green ({}): a pull request Archon did not open merges only \
+         with every check green, whatever is acknowledged; ask again once they pass",
+        ready.seen.describe()
+    ))
+}
+
+/// Why a reviewed pull request whose head moved since its review is not
+/// merged: the new commits need a review of their own.
+fn moved_since_review(shipped: &Shipped, facts: &PullRequestFacts) -> Option<String> {
+    if shipped.review_of.is_none() || facts.state != "OPEN" || facts.head == shipped.head {
+        return None;
+    }
+    assert!(
+        is_commit_id(&shipped.head),
+        "a reviewed head is a full commit id"
+    );
+    Some(format!(
+        "its head moved to {} since {} reviewed it at {}; queue a new `review` item onto it so \
+         the new commits are reviewed, then request the merge of that item",
+        merge::short(&facts.head),
+        shipped.item.id,
+        merge::short(&shipped.head)
+    ))
 }
 
 /// A later delivery on the owner's branch by one of its restack fixes or refreshes.
@@ -262,6 +363,11 @@ fn expected_base(
     store: &mut Store,
     shipped: &Shipped,
 ) -> Result<Result<String, String>, ArchonError> {
+    if shipped.review_of.is_some() {
+        let onto = shipped.item.onto.as_deref().expect("a review item");
+        // The pull request must still target the base it was reviewed for.
+        return Ok(Ok(onto.base_ref.clone()));
+    }
     settle_merged_parents(store, shipped)?;
     let parents = store.stack_parents(&shipped.item.id)?;
     if let Some(open) = parents.iter().find(|p| p.is_open()) {
@@ -450,19 +556,7 @@ pub(crate) async fn request(
                 .map_err(|w| refused_early(&shipped, &w))?;
             (ChecksSeen::default(), false)
         }
-        None => {
-            let facts = gh::merge_facts(&ctx.config.github.binary, &shipped.repo, &shipped.pr_url);
-            let expected = Expected {
-                head: &shipped.head,
-                base: &base,
-                ignore_checks: true,
-            };
-            match merge::assess(&facts.await?, expected) {
-                Ok(Assessment::Ready(seen)) => (seen, false),
-                Ok(Assessment::Undecided(seen)) => (seen, true),
-                Err(why) => return Err(refused_early(&shipped, &why)),
-            }
-        }
+        None => seen_on_github(ctx, &shipped, &base).await?,
     };
     supersede_stale_requests(&mut *ctx.store.lock().await, &shipped)?;
     if !(shipped.repo.grant_merge && shipped.reviewed) {
@@ -474,7 +568,7 @@ pub(crate) async fn request(
     if undecided {
         return wait_for_github(ctx, &shipped, reason, &seen).await;
     }
-    match grant_route(&shipped.repo.merge_waive_checks, &base, &seen) {
+    match grant_route(shipped.waived_bases(), &base, &seen) {
         GrantRoute::Ask => ask(ctx, &shipped, reason, &seen).await,
         GrantRoute::Wait => wait_for_checks(ctx, &shipped, reason, &seen).await,
         route => {
@@ -490,6 +584,35 @@ pub(crate) async fn request(
             ctx.store.lock().await.insert_merge(&request)?;
             execute(ctx, request).await
         }
+    }
+}
+
+/// The checks GitHub shows on `shipped`'s pull request and whether its
+/// mergeability is still undecided; `Err` refuses the request before anything is asked.
+async fn seen_on_github(
+    ctx: &DaemonContext,
+    shipped: &Shipped,
+    base: &str,
+) -> Result<(ChecksSeen, bool), ArchonError> {
+    assert!(shipped.local_branch().is_none(), "a pull request on GitHub");
+    assert!(
+        is_commit_id(&shipped.head),
+        "a delivered head is a full commit id"
+    );
+    let facts = gh::merge_facts(&ctx.config.github.binary, &shipped.repo, &shipped.pr_url);
+    let facts = facts.await?;
+    if let Some(why) = moved_since_review(shipped, &facts) {
+        return Err(refused_early(shipped, &why));
+    }
+    let expected = Expected {
+        head: &shipped.head,
+        base,
+        ignore_checks: true,
+    };
+    match merge::assess(&facts, expected) {
+        Ok(Assessment::Ready(seen)) => Ok((seen, false)),
+        Ok(Assessment::Undecided(seen)) => Ok((seen, true)),
+        Err(why) => Err(refused_early(shipped, &why)),
     }
 }
 
@@ -675,6 +798,13 @@ pub(crate) async fn enable_auto_merge(
              land it with `archon merge {item}`"
         )));
     }
+    if shipped.review_of.is_some() {
+        return Err(ArchonError::Invalid(format!(
+            "{item} reviewed {}, which is not its own pull request: GitHub's auto-merge is not \
+             turned on for it; ask for the merge with `request_merge` or `archon merge {item}`",
+            shipped.pr_url
+        )));
+    }
     let base = base.map_err(|why| refused(&why))?;
     let binary = &ctx.config.github.binary;
     let facts = gh::merge_facts(binary, &shipped.repo, &shipped.pr_url).await?;
@@ -724,7 +854,11 @@ async fn ask(
         id: QuestionId::new(),
         number: 0,
         text: question_text(shipped, reason.as_deref(), seen),
-        options: MERGE_OPTIONS.iter().map(|o| (*o).to_owned()).collect(),
+        options: MERGE_OPTIONS
+            .iter()
+            .filter(|o| shipped.review_of.is_none() || **o != "yes ignore-checks")
+            .map(|o| (*o).to_owned())
+            .collect(),
         item: Some(shipped.item.id.clone()),
         aether: None,
         asked_by: None,
@@ -771,6 +905,10 @@ fn question_text(shipped: &Shipped, reason: Option<&str>, seen: &ChecksSeen) -> 
         return text;
     }
     text.push_str(&format!("\nChecks: {}.", seen.describe()));
+    if shipped.review_of.is_some() {
+        text.push_str(" It merges only with every check green.\nAnswer `yes` or `no`.");
+        return text;
+    }
     if !seen.all_green() {
         text.push_str(" Only `yes ignore-checks` merges it so.");
     }
@@ -819,15 +957,10 @@ async fn execute(
     if merge.local_branch().is_some() {
         return execute_local(ctx, merge).await;
     }
-    let ready = match ready(ctx, &merge).await? {
+    let ready = match read_ready(ctx, &mut merge).await? {
         Readiness::Ready(ready) => ready,
-        Readiness::Undecided => return park_for_github(ctx, merge).await,
-        Readiness::Refused(why) => {
-            merge.state = MergeState::Refused { reason: why };
-            return finish_merge(ctx, merge).await;
-        }
+        unready => return settle_unready(ctx, merge, unready).await,
     };
-    merge.checks = Some(ready.seen.describe());
     let binary = &ctx.config.github.binary;
     let method = match merge_method(binary, &ready.repo).await {
         Ok(method) => method,
@@ -836,6 +969,13 @@ async fn execute(
             return finish_merge(ctx, merge).await;
         }
     };
+    // Another's pull request: its checks are read again as the last read before the merge.
+    if ready.review_of {
+        let again = read_ready(ctx, &mut merge).await?;
+        if !matches!(again, Readiness::Ready(_)) {
+            return settle_unready(ctx, merge, again).await;
+        }
+    }
     let args = [
         "pr",
         "merge",
@@ -852,6 +992,45 @@ async fn execute(
         }
         // Left `merging`: the coordination pass settles it from GitHub.
         None => Ok(merge),
+    }
+}
+
+/// [`ready`], with the checks it saw recorded on `merge`; another's pull
+/// request is refused unless every check is green.
+async fn read_ready(
+    ctx: &DaemonContext,
+    merge: &mut MergeRequest,
+) -> Result<Readiness, ArchonError> {
+    assert_eq!(merge.state, MergeState::Merging, "read just before a merge");
+    assert!(
+        is_commit_id(&merge.head),
+        "a merge is pinned to a full commit id"
+    );
+    let readiness = ready(ctx, merge).await?;
+    let Readiness::Ready(ready) = readiness else {
+        return Ok(readiness);
+    };
+    merge.checks = Some(ready.seen.describe());
+    Ok(match checks_not_green(&ready) {
+        Some(why) => Readiness::Refused(why),
+        None => Readiness::Ready(ready),
+    })
+}
+
+/// Record a merge `unready` stopped: parked for GitHub's mergeability check,
+/// else refused with its reason.
+async fn settle_unready(
+    ctx: &DaemonContext,
+    mut merge: MergeRequest,
+    unready: Readiness,
+) -> Result<MergeRequest, ArchonError> {
+    match unready {
+        Readiness::Undecided => park_for_github(ctx, merge).await,
+        Readiness::Refused(why) => {
+            merge.state = MergeState::Refused { reason: why };
+            finish_merge(ctx, merge).await
+        }
+        Readiness::Ready(_) => unreachable!("only a merge that is not ready is settled here"),
     }
 }
 
@@ -932,6 +1111,8 @@ struct Ready {
     repo: Repo,
     base: String,
     seen: ChecksSeen,
+    /// The pull request is another's, passed by a review item.
+    review_of: bool,
 }
 
 /// What reading the pull request again just before a merge decided.
@@ -978,6 +1159,12 @@ async fn ready(ctx: &DaemonContext, merge: &MergeRequest) -> Result<Readiness, A
         Ok(facts) => facts,
         Err(why) => return Ok(Readiness::Refused(why)),
     };
+    if let Some(why) = moved_since_review(&shipped, &facts) {
+        return Ok(Readiness::Refused(why));
+    }
+    if let Err(why) = base_holds_review(ctx, &shipped).await? {
+        return Ok(Readiness::Refused(why));
+    }
     let expected = Expected {
         head: &merge.head,
         base: &base,
@@ -988,10 +1175,33 @@ async fn ready(ctx: &DaemonContext, merge: &MergeRequest) -> Result<Readiness, A
             repo: shipped.repo.clone(),
             base,
             seen,
+            review_of: shipped.review_of.is_some(),
         })),
         Ok(Assessment::Undecided(_)) => Readiness::Undecided,
         Err(why) => Readiness::Refused(why),
     })
+}
+
+/// Whether GitHub's base of another's pull request still holds the fork its
+/// review read from: a base moved back since would merge unread commits.
+async fn base_holds_review(
+    ctx: &DaemonContext,
+    shipped: &Shipped,
+) -> Result<Result<(), String>, ArchonError> {
+    let Some(fork) = &shipped.review_of else {
+        return Ok(Ok(()));
+    };
+    let onto = shipped.item.onto.as_deref().expect("a review item");
+    assert!(
+        onto.review_only,
+        "only a review item passes another's pull request"
+    );
+    let reviewed = super::onto::ReviewedPr {
+        pr: onto.clone(),
+        fork: fork.clone(),
+    };
+    let held = super::onto::reviewed_base(ctx, &shipped.repo, &reviewed).await?;
+    Ok(held.map(|_| ()))
 }
 
 /// A pull request still aimed at a parent branch whose pull request merged or
@@ -1382,7 +1592,7 @@ fn next_step(merge: &MergeRequest, shipped: &Shipped, ready: &Ready) -> Next {
     if !granted {
         return Next::AskOperator("the repository no longer grants the merge");
     }
-    match grant_route(&shipped.repo.merge_waive_checks, &ready.base, &ready.seen) {
+    match grant_route(shipped.waived_bases(), &ready.base, &ready.seen) {
         GrantRoute::Waived => Next::Merge {
             waived_by: Some(ready.base.clone()),
         },

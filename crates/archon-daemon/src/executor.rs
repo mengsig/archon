@@ -13,6 +13,7 @@ mod descendants;
 mod discard;
 pub(crate) mod fast_check;
 mod finish;
+mod forewarn;
 pub(crate) mod frozen;
 mod gate_news;
 mod gates;
@@ -363,6 +364,26 @@ pub async fn stage_settled(
         return Ok(());
     };
     let follow = settle::settle(ctx, &stage.id, outcome).await?;
+    run_follow_up(ctx, follow).await
+}
+
+/// Called by the event pump when Aether stopped `agent`, a stage agent, at its
+/// stage deadline: it is woken once to commit and report, or its stage times out.
+pub async fn stage_deadline_stopped(
+    ctx: &DaemonContext,
+    agent: &AetherAgentId,
+) -> Result<(), ArchonError> {
+    let stage = ctx.store.lock().await.stage_run_by_agent(agent)?;
+    let Some(stage) = stage else {
+        tracing::debug!(%agent, "stopped agent is not a stage agent");
+        return Ok(());
+    };
+    assert_eq!(
+        stage.aether_agent.as_ref(),
+        Some(agent),
+        "the stage the agent holds"
+    );
+    let follow = settle::deadline_stopped(ctx, &stage.id).await?;
     run_follow_up(ctx, follow).await
 }
 

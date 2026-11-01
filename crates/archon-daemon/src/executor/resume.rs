@@ -545,6 +545,40 @@ pub(super) fn wake_for(failed: &StageRun, error: &str) -> Option<KeptAgent> {
     })
 }
 
+/// The agent of `failed`, which Aether stopped at its stage deadline, to wake
+/// for a short extension; `None` without one.
+pub(super) fn wake_at_deadline(failed: &StageRun) -> Option<KeptAgent> {
+    assert_eq!(failed.state, StageState::TimedOut, "only a timeout");
+    assert!(
+        failed.infrastructure_failure,
+        "a timed-out run woken from is marked as one a wake takes"
+    );
+    let agent = failed.aether_agent.clone()?;
+    Some(KeptAgent {
+        agent,
+        message: deadline_note(),
+        asked_record: None,
+    })
+}
+
+/// What an agent woken at its stage deadline is told; [`with_deadline`] adds
+/// when Archon now stops it.
+fn deadline_note() -> String {
+    let minutes = settle::DEADLINE_WAKE_MINUTES;
+    let note = format!(
+        "Archon stopped you at your stage deadline and woke you once, for {minutes} more \
+         minutes. Start nothing new and wait on no check: commit what works now, saying in the \
+         message what is unfinished, and report. That stop ended your task, so do not call \
+         `complete_task`; end your turn with the final message your instructions ask for, its \
+         fenced `json` block included, and name what is left undone."
+    );
+    assert!(
+        note.contains("commit what works"),
+        "the note says what to do"
+    );
+    note
+}
+
 /// The agent a replacement resumes when it wakes `kept`, its slot's failed
 /// agent, given the takeover its reservation found (`resume`, `replaces`).
 pub(super) fn wake_in(

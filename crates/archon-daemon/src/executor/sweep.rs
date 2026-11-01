@@ -1,6 +1,6 @@
 //! Driving live stage runs from the store: re-issuing `spawning` ones,
-//! stopping agents of finished runs, the deadline timer and the stage
-//! watchdog. Everything
+//! stopping agents of finished runs, the deadline timer and warning, and the
+//! stage watchdog. Everything
 //! here is derived from persisted state, so it also repairs a crash.
 
 use std::collections::BTreeMap;
@@ -13,8 +13,8 @@ use archon_core::run::{StageOutcome, StageRun, StageState};
 use archon_queue::Store;
 
 use super::{
-    FollowUp, descendants, held, load_spawn, resume, run_follow_up, run_node, settle, ship,
-    siblings, stall, team,
+    FollowUp, descendants, forewarn, held, load_spawn, resume, run_follow_up, run_node, settle,
+    ship, siblings, stall, team,
 };
 use crate::context::DaemonContext;
 
@@ -86,6 +86,7 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
         (running, expired, nearing)
     };
     follow.time_out = held::sweep(ctx, expired, &nearing, now).await?;
+    forewarn::sweep(ctx, &running, now).await?;
     let stalled = settle_stalled(ctx, &running, now, &mut follow).await;
     run_follow_up(ctx, follow).await?;
     stalled

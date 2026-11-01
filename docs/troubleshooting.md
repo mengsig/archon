@@ -30,6 +30,7 @@ The daemon did not answer the change within the MCP call's 15 s budget, but may 
 
 ## Dispatch is held
 
+- **"Its stages wait instead of failing"** An engine's login failed (expired OAuth token, revoked credentials, or a provider outage), so Archon holds that engine: its failed stages wait, nothing new starts on it, and other engines go on. Archon checks the login on its own, waiting up to 30 minutes between checks, and wakes the waiting agents with their context once it works. If it does not come back, renew it: `archon aether login <provider>`, or run the engine's CLI once (for example `claude`). Nothing needs a retry.
 - **"Dispatch is held:"** from the disk check. Free space is below `limits.min_free_gb`, or a write failed on a full disk. No new agent starts until space is back. Run `archon gc` to reclaim space.
 - **"is above [limits] max_load_per_cpu"** (not a blocker; shown by `archon status` and `archon queue show <id>`). The host's load per CPU is over your limit, so nothing new starts and running agents finish. It resumes by itself once load drops; raise `max_load_per_cpu` under `[limits]` in your config (docs/configuration.md) to hold less.
 - **"is below [limits] min_available_memory_gb"** (not a blocker). The host has less free memory than your limit, so nothing new starts. It resumes when memory is free again; lower `min_available_memory_gb` under `[limits]` to hold less.

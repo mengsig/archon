@@ -180,6 +180,7 @@ pub(super) async fn hand_over(
         tracing::info!(stage = %stage.id, %agent, "slot agent cannot go on; spawning a fresh one");
         return Ok(false);
     }
+    super::review::attempt_resumed(ctx, stage, agent).await?;
     let cost_budget_usd = {
         let store = ctx.store.lock().await;
         regranted_cap(&store, stage, agent, request.cost_budget_usd)?

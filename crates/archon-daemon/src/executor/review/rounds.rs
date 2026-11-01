@@ -4,6 +4,9 @@
 //! orchestrator that lists the open blocking findings, instead of another round.
 //! Each re-review is given the open findings to verify, so the last round's
 //! blocking findings are the open ones; earlier rounds' are listed apart.
+//! Every count rereads the attempt's settled children it has not read, so a
+//! reviewer whose event was missed still counts, at the next event or the
+//! lead's completion; a resumed lead's attempt holds the children it gained since.
 
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
@@ -20,18 +23,17 @@ use crate::context::DaemonContext;
 /// Finding lines an escalation lists before it points to the reviewers' results.
 const MAX_LISTED: usize = 20;
 
-/// A stage whose review failed [`REVIEW_ROUND_CAP`] rounds: archond stops it
-/// with `reason`, an `ESCALATE:` failure that ends its run.
+/// A stage whose review failed [`REVIEW_ROUND_CAP`] rounds: archond stops it,
+/// or settles its completion, with `reason`, an `ESCALATE:` failure that ends its run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::executor) struct Capped {
     pub stage: StageRunId,
     pub reason: String,
 }
 
-/// Add `reviewer`'s blocking fail to its stage attempt's tally; the stage to
-/// stop once the tally reaches the cap. The tally is kept per stage attempt and
-/// grows only by settled reviewers seen here, so a lead reused by a later attempt
-/// starts at none. An Aether answer that fails is returned, so the pump repeats the event.
+/// Count the blocking fails of the settled children of `lead`'s stage
+/// attempt, `reviewer` among them; the stage to stop once the tally reaches
+/// the cap. An Aether answer that fails is returned, so the pump repeats the event.
 pub(in crate::executor) async fn reviewer_settled(
     ctx: &DaemonContext,
     lead: &AetherAgentId,
@@ -41,41 +43,122 @@ pub(in crate::executor) async fn reviewer_settled(
     let Some(stage) = stage.filter(|s| !s.state.is_terminal()) else {
         return Ok(None);
     };
-    let beneath = ctx.backend.descendants(lead).await?;
-    let settled = settled_children(&beneath, lead);
-    let Some(child) = settled.into_iter().find(|c| c.agent == *reviewer) else {
-        return Ok(None);
-    };
-    // Only a fail that lists a blocking finding is a round; the gate still
-    // refuses any fail left unanswered.
-    let blocking = |v: &Verdict| !v.pass && v.blocking.is_some_and(|n| n > 0);
-    let Some(verdict) = verdict_of(ctx, child).await?.filter(blocking) else {
-        return Ok(None);
-    };
-    assert!(
-        !verdict.blocking_findings.is_empty(),
-        "a counted round names its blocking findings"
+    assert_eq!(
+        stage.aether_agent.as_ref(),
+        Some(lead),
+        "the stage of the lead"
     );
+    count(ctx, &stage, lead, Some(reviewer)).await
+}
+
+/// The cap a stage completing now reached, counting every child of its
+/// attempt whose event was missed. A result not readable yet is returned as
+/// the error, so the settle is retried rather than completing past it.
+pub(in crate::executor) async fn capped_at_completion(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+) -> Result<Option<Capped>, ArchonError> {
+    let Some(lead) = &stage.aether_agent else {
+        return Ok(None);
+    };
+    assert!(!stage.state.is_terminal(), "only a live stage completes");
+    count(ctx, stage, lead, None).await
+}
+
+/// Record the children `lead` holds as `stage` resumes it: they are earlier
+/// attempts', and every later one is this attempt's. Recorded once, before
+/// the lead is told to go on, so a repeated hand-over keeps the first list.
+pub(in crate::executor) async fn attempt_resumed(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    lead: &AetherAgentId,
+) -> Result<(), ArchonError> {
     let mut tally = load(ctx, &stage.id).await?;
-    // A replayed reviewer adds no round, but may still owe the stop.
-    if !tally.fails.iter().any(|f| f.agent == reviewer.as_str()) {
-        tally.fails.push(Fail {
-            agent: reviewer.to_string(),
-            head: verdict.head,
-            findings: verdict.blocking_findings,
-        });
+    if tally.earlier.is_some() {
+        return Ok(());
+    }
+    assert!(tally.fails.is_empty(), "an attempt counts after it resumes");
+    let beneath = ctx.backend.descendants(lead).await?;
+    let earlier: Vec<String> = beneath
+        .iter()
+        .filter(|d| d.parent == *lead)
+        .map(|d| d.agent.to_string())
+        .collect();
+    tally.earlier = Some(earlier);
+    save(ctx, &stage.id, &tally).await
+}
+
+/// Add the blocking fails of the attempt's settled children not read before
+/// to its tally, in the order Aether created them; the cap, once reached.
+/// `reviewer` is the child an event names, `None` at the lead's completion.
+async fn count(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    lead: &AetherAgentId,
+    reviewer: Option<&AetherAgentId>,
+) -> Result<Option<Capped>, ArchonError> {
+    let fresh = lead_is_fresh(ctx, stage, lead).await?;
+    let beneath = ctx.backend.descendants(lead).await?;
+    let mut tally = load(ctx, &stage.id).await?;
+    let unread: Vec<&Descendant> = settled_children(&beneath, lead)
+        .into_iter()
+        .filter(|c| tally.attempt_holds(&c.agent, fresh, reviewer))
+        .filter(|c| !tally.has_read(&c.agent))
+        .collect();
+    if !unread.is_empty() {
+        for child in unread {
+            // Unreadable yet: no child is skipped, so the event or settle is retried.
+            let verdict = verdict_of(ctx, child).await?;
+            tally.read.push(child.agent.to_string());
+            if let Some(verdict) = verdict.filter(blocks) {
+                assert!(
+                    !verdict.blocking_findings.is_empty(),
+                    "a counted round names its blocking findings"
+                );
+                tally.fails.push(Fail {
+                    agent: child.agent.to_string(),
+                    head: verdict.head,
+                    findings: verdict.blocking_findings,
+                });
+            }
+        }
+        in_creation_order(&mut tally.fails, &beneath, lead);
         save(ctx, &stage.id, &tally).await?;
     }
+    // A replayed reviewer adds no round, but may still owe the stop.
     let rounds = rounds_of(&tally.fails);
     if rounds < REVIEW_ROUND_CAP {
         return Ok(None);
     }
-    let reason = escalation(&stage, rounds, &Open::of(&tally.fails));
+    let reason = escalation(stage, rounds, &Open::of(&tally.fails));
     assert!(StageOutcome::ends_run(&reason), "a capped review escalates");
     Ok(Some(Capped {
-        stage: stage.id,
+        stage: stage.id.clone(),
         reason,
     }))
+}
+
+/// Only a fail that lists a blocking finding is a round; the gate still
+/// refuses any fail left unanswered.
+fn blocks(verdict: &Verdict) -> bool {
+    !verdict.pass && verdict.blocking.is_some_and(|n| n > 0)
+}
+
+/// Whether no earlier attempt of `stage` ran on `lead`.
+async fn lead_is_fresh(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    lead: &AetherAgentId,
+) -> Result<bool, ArchonError> {
+    let runs = ctx.store.lock().await.stage_runs(&stage.run)?;
+    assert!(
+        runs.iter().any(|s| s.id == stage.id),
+        "the run lists its stage"
+    );
+    let reused = runs.iter().any(|s| {
+        s.id != stage.id && s.stage_id == stage.stage_id && s.aether_agent.as_ref() == Some(lead)
+    });
+    Ok(!reused)
 }
 
 /// The direct children of `lead` that completed a task, in the order Aether lists them.
@@ -85,6 +168,27 @@ fn settled_children<'a>(beneath: &'a [Descendant], lead: &AetherAgentId) -> Vec<
         .filter(|d| d.parent == *lead && d.state == DescendantState::Completed)
         .filter(|d| d.task.is_some())
         .collect()
+}
+
+/// Sort `fails` into the order Aether lists `lead`'s children, which is the
+/// order it created them, so a fail read late never passes for the latest round.
+fn in_creation_order(fails: &mut [Fail], beneath: &[Descendant], lead: &AetherAgentId) {
+    let listed: Vec<&str> = beneath
+        .iter()
+        .filter(|d| d.parent == *lead)
+        .map(|d| d.agent.as_str())
+        .collect();
+    let place = |fail: &Fail| listed.iter().position(|a| *a == fail.agent);
+    if fails.iter().any(|f| place(f).is_none()) {
+        // Aether forgot a child counted before: the order read stands.
+        tracing::warn!(%lead, "a counted reviewer is no longer listed; rounds keep their read order");
+        return;
+    }
+    fails.sort_by_key(|f| place(f));
+    assert!(
+        fails.windows(2).all(|w| w[0].agent != w[1].agent),
+        "each reviewer counts once"
+    );
 }
 
 /// `child`'s verdict; `None` for a result that is no verdict, which counts for nothing.
@@ -113,10 +217,38 @@ struct Fail {
     findings: Vec<String>,
 }
 
-/// The failing verdicts of one stage attempt.
+/// The failing verdicts of one stage attempt, and every child read for one.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Tally {
     fails: Vec<Fail>,
+    /// Tallies written before children were rescanned kept fails alone.
+    #[serde(default)]
+    read: Vec<String>,
+    /// For an attempt that resumed its lead, the children the lead held then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    earlier: Option<Vec<String>>,
+}
+
+impl Tally {
+    fn has_read(&self, agent: &AetherAgentId) -> bool {
+        let agent = agent.as_str();
+        self.read.iter().any(|a| a == agent) || self.fails.iter().any(|f| f.agent == agent)
+    }
+
+    /// Whether child `agent` belongs to this attempt. A lead resumed before
+    /// its children were recorded counts only the reviewer an event names.
+    fn attempt_holds(
+        &self,
+        agent: &AetherAgentId,
+        fresh: bool,
+        reviewer: Option<&AetherAgentId>,
+    ) -> bool {
+        match (fresh, &self.earlier) {
+            (true, _) => true,
+            (false, Some(earlier)) => !earlier.iter().any(|a| a == agent.as_str()),
+            (false, None) => reviewer == Some(agent),
+        }
+    }
 }
 
 fn tally_key(stage: &StageRunId) -> String {

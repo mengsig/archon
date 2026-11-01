@@ -432,6 +432,7 @@ async fn prove(
         base: base.to_owned(),
         since: onto.or(stacked),
         reviewed_base,
+        repository_base: repository_base(repo)?,
         forked: forked_from(&claimed.vars, base),
         allowed: repo_identity::RepoIdentity::allowed(identity.as_ref()),
         attribution: repo.attribution,
@@ -527,6 +528,7 @@ pub(in crate::executor) async fn prove_unchanged(
         since,
         // Only a delivery checks identities; no commit is a claim of none.
         reviewed_base: None,
+        repository_base: None,
         forked,
         allowed: Vec::new(),
         attribution: repo.attribution,
@@ -644,6 +646,19 @@ pub(in crate::executor) fn base_of(
             "the run's variables name no base branch".into(),
         )),
     }
+}
+
+/// The branch `repo`'s new work forks from now, as dispatch picks it; `None`
+/// for a name no branch can have, which forks nothing either.
+fn repository_base(repo: &Repo) -> Result<Option<String>, ArchonError> {
+    let env = resolve::RepoEnv::new(Some(repo.clone()))?;
+    let base = env.fork_base(&env.tiers()?);
+    let plain = base.filter(|b| super::super::dependencies::is_plain_branch(b));
+    assert!(
+        plain.as_deref().is_none_or(|b| !b.is_empty()),
+        "a named branch"
+    );
+    Ok(plain)
 }
 
 /// The commit of `base` the run forked from, as recorded at dispatch; `None`

@@ -68,6 +68,9 @@ pub(super) struct Target {
     /// read at delivery: a commit after `since` it lacks must carry the
     /// identity even when a local ref or a remote holds it.
     pub reviewed_base: Option<String>,
+    /// The branch the repository's new work forks from, which a stack's
+    /// other parents may have merged in ahead of `base`.
+    pub repository_base: Option<String>,
     /// The commit of `base` the run forked from, recorded at dispatch.
     pub forked: Option<String>,
     /// The addresses a commit the run adds may carry, recorded at registration.
@@ -129,12 +132,12 @@ pub(super) fn check(
             target.branch
         )));
     }
-    let held = held_elsewhere(target);
+    let held = held_elsewhere(tree, target)?;
     if let Err(refusal) = foreign_commits(tree, &base, &held, &target.allowed)? {
         return Ok(Err(refusal));
     }
     if target.attribution == Attribution::None
-        && let Err(refusal) = unattributed(tree, &base, record)?
+        && let Err(refusal) = unattributed(tree, (&base, &held), record)?
     {
         return Ok(Err(refusal));
     }
@@ -497,21 +500,33 @@ fn base_ref(tree: &Path, base: &str) -> Result<Option<String>, ArchonError> {
 }
 
 /// Where commits beyond the floor may already be, exempt from the identity
-/// check: any remote, or for a reviewed stack only `origin`'s base head as
+/// check: `origin`'s heads of the base and of the repository's base, never
+/// another remote branch; for a reviewed stack only `origin`'s base head as
 /// read at delivery, which no ref in the worktree can stand in for.
-fn held_elsewhere(target: &Target) -> Vec<String> {
-    let Some(base) = &target.reviewed_base else {
-        return vec!["--remotes".to_owned()];
-    };
-    assert!(
-        target.since.is_some(),
-        "a reviewed stack starts at the reviewed head"
-    );
-    assert!(
-        crate::worktree::stack::is_commit_id(base),
-        "origin's base head is a full commit id"
-    );
-    vec![base.clone()]
+fn held_elsewhere(tree: &Path, target: &Target) -> Result<Vec<String>, ArchonError> {
+    if let Some(base) = &target.reviewed_base {
+        assert!(
+            target.since.is_some(),
+            "a reviewed stack starts at the reviewed head"
+        );
+        assert!(
+            crate::worktree::stack::is_commit_id(base),
+            "origin's base head is a full commit id"
+        );
+        return Ok(vec![base.clone()]);
+    }
+    let mut held = Vec::new();
+    for branch in std::iter::once(&target.base).chain(&target.repository_base) {
+        assert!(!branch.is_empty(), "a base branch has a name");
+        let tracking = format!("refs/remotes/origin/{branch}");
+        if let Some(commit) = commit_of(tree, &tracking)?
+            && !held.contains(&commit)
+        {
+            held.push(commit);
+        }
+    }
+    assert!(held.len() <= 2, "the base's head and the repository's");
+    Ok(held)
 }
 
 /// Refuse a commit the run adds, one neither `base` nor `held` holds, that
@@ -528,8 +543,8 @@ fn foreign_commits(
     );
     assert!(is_floor(base), "a full ref name or a commit id");
     assert!(
-        held.iter().all(|h| h == "--remotes" || is_floor(h)),
-        "remotes or full ref names"
+        held.iter().all(|h| is_floor(h)),
+        "full ref names or commit ids"
     );
     let format = "--format=%H%x09%ae%x09%ce";
     let mut args = vec!["log", format, "HEAD", "--not", base];
@@ -568,31 +583,27 @@ fn foreign_commits(
     )))
 }
 
-/// Refuse a record whose `pr.body`, or a commit the run adds, carries a line
-/// attributing the change to a model or a tool, quoting each such line.
+/// Refuse a record whose `pr.body`, or a commit the run adds (one neither
+/// `base` nor `held` holds), carries a line attributing the change to a
+/// model or a tool, quoting each such line.
 fn unattributed(
     tree: &Path,
-    base: &str,
+    (base, held): (&str, &[String]),
     record: &ShipRecord,
 ) -> Result<Result<(), String>, ArchonError> {
     assert!(is_floor(base), "a full ref name or a commit id");
+    assert!(
+        held.iter().all(|h| is_floor(h)),
+        "full ref names or commit ids"
+    );
     assert!(!record.body.trim().is_empty(), "a read record has a body");
     let mut found: Vec<String> = attribution_lines(&record.body)
         .into_iter()
         .map(|line| format!("`pr.body` has {line:?}"))
         .collect();
-    let log = git(
-        tree,
-        &[
-            "log",
-            "-z",
-            "--format=%H%n%B",
-            "HEAD",
-            "--not",
-            base,
-            "--remotes",
-        ],
-    )?;
+    let mut args = vec!["log", "-z", "--format=%H%n%B", "HEAD", "--not", base];
+    args.extend(held.iter().map(String::as_str));
+    let log = git(tree, &args)?;
     for entry in log.split('\0').filter(|entry| !entry.trim().is_empty()) {
         let entry = entry.trim_start();
         let (commit, message) = entry.split_once('\n').unwrap_or((entry, ""));

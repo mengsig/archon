@@ -140,7 +140,8 @@ impl Verdict {
     /// What the last `VERDICT: <word>` line of `text` says, in any letter
     /// case and with light markdown (`**Verdict:** PASS`, `- verdict: fail`);
     /// `Unknown` when that line names no verdict, even if an earlier one did,
-    /// or a pass is [taken back](holds_back) on its line or the lines after it.
+    /// or a pass is taken back on its line or the lines after it (a fail word,
+    /// a negation or condition, an undenied blocker).
     pub fn from_summary(text: &str) -> Option<Self> {
         let (line, value) = last_verdict_line(text)?;
         let verdict = Self::from_word(value);

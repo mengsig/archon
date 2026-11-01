@@ -538,7 +538,12 @@ pub fn context(
         data_dir,
     };
     create_context_dirs(&paths);
-    let store = Store::open(&paths.store).expect("store");
+    let mut store = Store::open(&paths.store).expect("store");
+    // Probed at once, so a test need not wait out the first probe.
+    let engines = archon_daemon::engine_login::EngineLoginWatch::new(std::time::Duration::ZERO);
+    engines
+        .restore(&mut store, std::time::Instant::now())
+        .expect("engine holds");
     let readers = archon_daemon::readers::Readers::open(&store, &paths.store, 2).expect("readers");
     let operator_settings = archon_daemon::settings::SettingsBook::load(&store).expect("settings");
     let (feed, _) = broadcast::channel(1024);
@@ -578,8 +583,7 @@ pub fn context(
         github: archon_daemon::github::GithubState::default(),
         started_at: archon_core::now(),
         disk,
-        // Probed at once, so a test need not wait out the first probe.
-        engines: archon_daemon::engine_login::EngineLoginWatch::new(std::time::Duration::ZERO),
+        engines,
         host: archon_daemon::host_load::HostWatch::system(),
         standby: OnceLock::new(),
         recovery: Default::default(),

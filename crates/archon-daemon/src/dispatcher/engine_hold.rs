@@ -47,6 +47,7 @@ async fn lift(ctx: &DaemonContext, engine: &str) -> Result<(), ArchonError> {
     let waiting = engine_wait::release(ctx, &hold).await?;
     let lifted = ctx.engines.lift(engine, Instant::now());
     assert!(lifted.is_some(), "only the dispatcher lifts a hold");
+    ctx.engines.save(&mut *ctx.store.lock().await)?;
     assert!(!ctx.engines.is_held(engine), "the engine is free again");
     let text = format!(
         "Engine `{engine}` logs in again; {waiting} stage(s) that waited on it resume, woken \

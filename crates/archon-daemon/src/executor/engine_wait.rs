@@ -32,6 +32,7 @@ pub(super) async fn hold(
     let Some(hold) = ctx.engines.report(&engine, error, Instant::now()) else {
         return Ok(());
     };
+    ctx.engines.save(&mut *ctx.store.lock().await)?;
     tracing::warn!(%engine, %error, relapse = hold.relapse, "engine login failed; holding the engine");
     if hold.relapse {
         return Ok(());

@@ -2025,8 +2025,8 @@ the dispatch pass up; the worktree it was collecting is finished off the
 dispatcher, which that sweep pokes as it ends, and a later pass goes on.
 
 **Engine-login hold.** A stage agent that fails as infrastructure on its
-engine's login (§6.3) holds that engine, daemon-wide and in memory, and
-posts one `Blocker` naming the engine and the error. While it holds, no
+engine's login (§6.3) holds that engine, daemon-wide, and posts one
+`Blocker` naming the engine and the error. While it holds, no
 never-sent spawn on that engine is issued: the failed stage's replacement,
 which wakes the same agent, and every fresh stage on it stay `spawning`.
 Spawns that may already have reached Aether, those of finished runs, and
@@ -2041,8 +2041,8 @@ once with Aether's `wake_agent`; one Aether refuses gets a fresh agent. A
 hold that starts again within 10 minutes of a lift (the probe found the
 login, yet the woken agents failed on it again, as in a provider-side
 outage) is a relapse: it keeps the longer wait and posts no new `Blocker`.
-A restart forgets the holds, so the waiting spawns are issued and a login
-still failing holds the engine again.
+The holds are kept in `kv.engine_login_holds`, so a restart holds the same
+engines again, with no new `Blocker`, and probes them a minute later.
 
 The daemon re-plans on: enqueue, update, cancel and retry of an item, a
 stage settled, a gate answered, a run finished, an agent's turn or life

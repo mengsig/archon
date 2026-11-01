@@ -1,12 +1,26 @@
 //! The engine-login hold (ARCHITECTURE §7.3): an engine whose stage agent
 //! failed on its login takes no new agent, and its failed stages wait on it,
-//! until a probe finds it logged in again. Other engines go on.
+//! until a probe finds it logged in again. Other engines go on. The holds
+//! are kept in the store, so a restart keeps holding them.
 
 use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use archon_core::Timestamp;
+use archon_core::error::ArchonError;
+use archon_queue::Store;
+use serde::{Deserialize, Serialize};
+
+/// The store key of the holds: each held engine's failure and start.
+pub const HOLDS_KEY: &str = "engine_login_holds";
+
+/// One hold as the store keeps it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct StoredHold {
+    error: String,
+    held_at: Timestamp,
+}
 
 /// The first probe of a held engine comes this long after the hold starts.
 pub const FIRST_PROBE: Duration = Duration::from_secs(60);
@@ -72,6 +86,57 @@ impl EngineLoginWatch {
 
     fn lock(&self) -> MutexGuard<'_, WatchState> {
         self.state.lock().expect("no engine watch holder panics")
+    }
+
+    /// Hold again the engines the store says were held when archond stopped,
+    /// announced already, with their first probe a wait from `now`; returns
+    /// how many. An unreadable record holds nothing and is dropped, loudly.
+    pub fn restore(&self, store: &mut Store, now: Instant) -> Result<usize, ArchonError> {
+        let Some(raw) = store.kv_get(HOLDS_KEY)? else {
+            return Ok(0);
+        };
+        let stored: BTreeMap<String, StoredHold> = match serde_json::from_str(&raw) {
+            Ok(stored) => stored,
+            Err(error) => {
+                tracing::error!(%error, "the engine-login holds are unreadable; none is restored");
+                store.kv_delete(HOLDS_KEY)?;
+                return Ok(0);
+            }
+        };
+        let mut state = self.lock();
+        for (engine, hold) in stored {
+            assert!(!engine.is_empty(), "a stored hold names its engine");
+            let restored = EngineHold {
+                engine: engine.clone(),
+                error: hold.error,
+                held_at: hold.held_at,
+                interval: self.first_probe,
+                next_probe: now + self.first_probe,
+                relapse: false,
+            };
+            state.held.insert(engine, restored);
+        }
+        Ok(state.held.len())
+    }
+
+    /// Keep the holds as they are now in the store.
+    pub fn save(&self, store: &mut Store) -> Result<(), ArchonError> {
+        let stored: BTreeMap<String, StoredHold> = self
+            .lock()
+            .held
+            .values()
+            .map(|hold| {
+                let kept = StoredHold {
+                    error: hold.error.clone(),
+                    held_at: hold.held_at,
+                };
+                (hold.engine.clone(), kept)
+            })
+            .collect();
+        if stored.is_empty() {
+            return store.kv_delete(HOLDS_KEY);
+        }
+        store.kv_set(HOLDS_KEY, &serde_json::to_string(&stored)?)
     }
 
     /// Hold `engine`, whose agent failed on its login with `error`. Returns

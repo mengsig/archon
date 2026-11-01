@@ -175,3 +175,22 @@ async fn a_held_engine_takes_no_new_agent_while_another_engine_goes_on() {
     assert_eq!(h.backend.requests().len(), 2, "it starts once logged in");
     assert!(h.ctx.engines.is_held("codex"), "still out");
 }
+
+#[tokio::test]
+async fn a_restart_keeps_holding_the_engine_without_a_second_blocker() {
+    let mut h = Harness::new().await;
+    let agents = two_failed_on_login(&h).await;
+    h.dispatch().await;
+    assert!(h.backend.woken().is_empty());
+
+    h.restart();
+    assert!(h.ctx.engines.is_held(ENGINE), "restored from the store");
+    h.dispatch().await;
+    assert!(h.backend.woken().is_empty(), "still held after the restart");
+    assert_eq!(h.notices(NotificationKind::Blocker).await.len(), 1);
+
+    h.backend.log_in(ENGINE);
+    h.dispatch().await;
+    assert_eq!(h.backend.woken().len(), agents.len(), "each woken once");
+    assert_eq!(h.kv(archon_daemon::engine_login::HOLDS_KEY).await, None);
+}

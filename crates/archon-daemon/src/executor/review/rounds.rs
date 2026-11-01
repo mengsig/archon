@@ -1,46 +1,54 @@
-//! A lead that fixes and re-reviews for many rounds is told to the operator
-//! once, while it runs. A round is a commit some reviewer of the lead failed;
-//! [`REVIEW_ROUNDS_BEFORE_NOTICE`] of them post one notification and change nothing else.
+//! A lead that fixes and re-reviews round after round is stopped. A round is
+//! a commit some reviewer of the lead failed with a blocking finding;
+//! [`REVIEW_ROUND_CAP`] of them end the stage attempt with an escalation to the
+//! orchestrator that lists the open blocking findings, instead of another round.
 
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::id::StageRunId;
-use archon_core::notify::NotificationKind;
 use archon_core::ports::{Descendant, DescendantState};
-use archon_core::run::StageRun;
-use archon_pipeline::contract::REVIEW_ROUNDS_BEFORE_NOTICE;
+use archon_core::run::{StageOutcome, StageRun};
+use archon_pipeline::contract::REVIEW_ROUND_CAP;
 use archon_pipeline::review::Verdict;
 use serde::{Deserialize, Serialize};
 
 use super::{result_of, verdict_in};
 use crate::context::DaemonContext;
 
-/// Finding titles a notice lists.
+/// Finding titles an escalation lists.
 const MAX_TITLES: usize = 5;
 
-/// Add `reviewer`'s failing verdict to its stage attempt's tally and post the notice
-/// when the tally reaches the limit. The tally is kept per stage attempt and grows only
-/// by settled reviewers seen here, so a lead reused by a later attempt starts at none.
-/// An Aether answer that fails is returned, so the pump repeats the event.
+/// A stage whose review failed [`REVIEW_ROUND_CAP`] rounds: archond stops it
+/// with `reason`, an `ESCALATE:` failure that ends its run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::executor) struct Capped {
+    pub stage: StageRunId,
+    pub reason: String,
+}
+
+/// Add `reviewer`'s failing verdict to its stage attempt's tally; the stage to
+/// stop once the tally reaches the cap. The tally is kept per stage attempt and
+/// grows only by settled reviewers seen here, so a lead reused by a later attempt
+/// starts at none. An Aether answer that fails is returned, so the pump repeats the event.
 pub(in crate::executor) async fn reviewer_settled(
     ctx: &DaemonContext,
     lead: &AetherAgentId,
     reviewer: &AetherAgentId,
-) -> Result<(), ArchonError> {
+) -> Result<Option<Capped>, ArchonError> {
     let stage = ctx.store.lock().await.stage_run_by_agent(lead)?;
     let Some(stage) = stage.filter(|s| !s.state.is_terminal()) else {
-        return Ok(());
+        return Ok(None);
     };
     let beneath = ctx.backend.descendants(lead).await?;
     let settled = settled_children(&beneath, lead);
     let Some(child) = settled.into_iter().find(|c| c.agent == *reviewer) else {
-        return Ok(());
+        return Ok(None);
     };
     let Some(verdict) = verdict_of(ctx, child).await?.filter(|v| !v.pass) else {
-        return Ok(());
+        return Ok(None);
     };
     let mut tally = load(ctx, &stage.id).await?;
-    // A replayed reviewer adds no round, but may still owe the notice.
+    // A replayed reviewer adds no round, but may still owe the stop.
     if !tally.fails.iter().any(|f| f.agent == reviewer.as_str()) {
         tally.fails.push(Fail {
             agent: reviewer.to_string(),
@@ -50,10 +58,15 @@ pub(in crate::executor) async fn reviewer_settled(
         save(ctx, &stage.id, &tally).await?;
     }
     let rounds = rounds_of(&tally.fails);
-    if rounds < REVIEW_ROUNDS_BEFORE_NOTICE || tally.told {
-        return Ok(());
+    if rounds < REVIEW_ROUND_CAP {
+        return Ok(None);
     }
-    notify_once(ctx, &stage, rounds, tally).await
+    let reason = escalation(&stage, rounds, &latest_titles(&tally.fails));
+    assert!(StageOutcome::ends_run(&reason), "a capped review escalates");
+    Ok(Some(Capped {
+        stage: stage.id,
+        reason,
+    }))
 }
 
 /// The direct children of `lead` that completed a task, in the order Aether lists them.
@@ -88,11 +101,10 @@ struct Fail {
     titles: Vec<String>,
 }
 
-/// The failing verdicts of one stage attempt, and whether the operator was told.
+/// The failing verdicts of one stage attempt.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Tally {
     fails: Vec<Fail>,
-    told: bool,
 }
 
 fn tally_key(stage: &StageRunId) -> String {
@@ -137,41 +149,22 @@ fn latest_titles(fails: &[Fail]) -> Vec<&str> {
     titles.take(MAX_TITLES).collect()
 }
 
-/// Post the notice, then mark the attempt as told. A crash between the two repeats the
-/// notice when the event is replayed: a repeat is preferred to a notice lost for good.
-async fn notify_once(
-    ctx: &DaemonContext,
-    stage: &StageRun,
-    rounds: usize,
-    mut tally: Tally,
-) -> Result<(), ArchonError> {
-    assert!(
-        rounds >= REVIEW_ROUNDS_BEFORE_NOTICE && !tally.told,
-        "a notice is for a long loop and is posted once"
-    );
-    let item = ctx.store.lock().await.run(&stage.run)?.item;
-    let text = notice_text(
-        &item.to_string(),
-        stage,
-        rounds,
-        &latest_titles(&tally.fails),
-    );
-    let kind = NotificationKind::Blocker;
-    crate::executor::notify(ctx, kind, &text, Some(&item), Some(&stage.run)).await?;
-    tally.told = true;
-    save(ctx, &stage.id, &tally).await
-}
-
-fn notice_text(item: &str, stage: &StageRun, rounds: usize, titles: &[&str]) -> String {
+/// The failure a capped stage settles with: its rounds and the open blocking findings.
+fn escalation(stage: &StageRun, rounds: usize, titles: &[&str]) -> String {
+    assert!(rounds >= REVIEW_ROUND_CAP, "only a capped review escalates");
+    assert!(titles.len() <= MAX_TITLES, "the titles are bounded");
     let findings = match titles {
-        [] => "The reviewers gave no finding titles.".to_owned(),
-        titles => format!("Latest findings: {}.", titles.join("; ")),
+        [] => "The reviewers gave no titles for their blocking findings.".to_owned(),
+        titles => format!("Open blocking findings: {}.", titles.join("; ")),
     };
     format!(
-        "Item `{item}`: the review of stage `{}` (attempt {}) has failed {rounds} rounds and \
-         the lead is still fixing it. {findings} The run goes on. To stop it, run `archon queue \
-         cancel {item}`; to change course, `archon queue steer {item} --note \"…\"`.",
-        stage.stage_id, stage.attempt
+        "{} the review of stage `{}` (attempt {}) failed {rounds} rounds, each a commit a \
+         reviewer failed with a blocking finding, so Archon stopped it instead of another \
+         round. {findings} Reshape the work, settle the disputed point in the brief, or \
+         retry the item with a steer note.",
+        StageOutcome::ESCALATE_PREFIX,
+        stage.stage_id,
+        stage.attempt
     )
 }
 

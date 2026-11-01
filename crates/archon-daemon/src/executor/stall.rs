@@ -362,19 +362,51 @@ fn intent_key(stage: &StageRunId) -> String {
     format!("{INTENT_KEY_PREFIX}{stage}")
 }
 
-/// Record, before its cancel goes out, that the watchdog stops `stage` for
-/// `reason`: the cancel's own events must not settle it as cancelled.
+/// Record, before its cancel goes out, that archond stops `stage` for
+/// `reason`, a stall or an escalation: the cancel's own events must not
+/// settle it as cancelled.
 pub(super) fn mark_intent(
     store: &mut Store,
     stage: &StageRunId,
     reason: &str,
 ) -> Result<(), ArchonError> {
-    assert!(is_stall(reason), "only the watchdog marks: {reason}");
+    assert!(
+        is_stall(reason) || is_escalation(reason),
+        "only the watchdog and the review round cap mark: {reason}"
+    );
     store.kv_set(&intent_key(stage), reason)
 }
 
-/// The outcome `stage` settles with: a cancel the watchdog caused is the
-/// stall's infrastructure failure; any other outcome stands.
+/// The escalation archond stops each of `stages` for, still owed when its
+/// earlier cancel went unanswered.
+pub(super) fn owed_escalations(
+    store: &Store,
+    stages: &[StageRun],
+) -> Result<Vec<(StageRunId, String)>, ArchonError> {
+    let mut owed = Vec::new();
+    for stage in stages {
+        let Some(reason) = store.kv_get(&intent_key(&stage.id))? else {
+            continue;
+        };
+        if is_escalation(&reason) {
+            owed.push((stage.id.clone(), reason));
+        }
+    }
+    assert!(owed.len() <= stages.len(), "one stop per stage");
+    Ok(owed)
+}
+
+/// Whether archond already marked `stage` to stop.
+pub(super) fn marked(store: &Store, stage: &StageRunId) -> Result<bool, ArchonError> {
+    Ok(store.kv_get(&intent_key(stage))?.is_some())
+}
+
+fn is_escalation(reason: &str) -> bool {
+    reason.starts_with(StageOutcome::ESCALATE_PREFIX)
+}
+
+/// The outcome `stage` settles with: a cancel archond caused is the stall's
+/// infrastructure failure or the escalation it marked; any other outcome stands.
 pub(super) fn intended(
     store: &Store,
     stage: &StageRunId,
@@ -387,9 +419,14 @@ pub(super) fn intended(
         return Ok(outcome);
     };
     assert!(!reason.is_empty(), "a marked stall names its reason");
+    let infra = is_stall(&reason);
+    assert!(
+        infra || is_escalation(&reason),
+        "a mark is a stall or an escalation"
+    );
     Ok(StageOutcome::Failed {
         error: reason,
-        infra: true,
+        infra,
     })
 }
 

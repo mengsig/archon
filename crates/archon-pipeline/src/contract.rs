@@ -585,12 +585,12 @@ starts the diff read:\n\n\
 ```\n\n\
 Use `\"fail\"` with findings for failures.\n\n";
 
-/// Failing review rounds of one stage attempt after which Archon tells the operator, once.
-/// A round is one commit that at least one of the lead's reviewers failed, so three
-/// parallel reviewers of one head are one round. The notice lists the latest findings'
-/// titles and the run goes on: nothing stops the loop but a pass, the operator or a
-/// budget. The lead is told nothing; the rules below stay as they are.
-pub const REVIEW_ROUNDS_BEFORE_NOTICE: usize = 4;
+/// Failing review rounds of one stage attempt after which Archon stops the stage.
+/// A round is one commit that at least one of the lead's reviewers failed with a
+/// blocking finding, so three parallel reviewers of one head are one round. The
+/// stage fails with an `ESCALATE:` error listing the latest blocking findings'
+/// titles, which ends the run and hands the item to the orchestrator.
+pub const REVIEW_ROUND_CAP: usize = 3;
 
 const REVIEW_CHECK_RULES: &str = "\
 - Delegate with `wait: false`, then use `wait_for`. On a blocking fail, edit nothing \

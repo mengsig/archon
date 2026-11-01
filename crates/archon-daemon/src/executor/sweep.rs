@@ -113,6 +113,16 @@ async fn settle_stalled(
     follow: &mut FollowUp,
 ) -> Result<(), ArchonError> {
     let mut first_error = None;
+    let escalations = stall::owed_escalations(&*ctx.store.lock().await, running)?;
+    for (stage, reason) in escalations {
+        match stop_marked(ctx, &stage, &reason, false).await {
+            Ok(more) => follow.merge(more),
+            Err(error) => {
+                tracing::error!(stage = %stage, %error, "stopping an escalated stage failed");
+                first_error.get_or_insert(error);
+            }
+        }
+    }
     for (stage, reason) in stall::scan(ctx, running, now).await? {
         match stall(ctx, &stage, &reason).await {
             Ok(more) => follow.merge(more),
@@ -223,15 +233,43 @@ async fn stall(
     id: &StageRunId,
     reason: &str,
 ) -> Result<FollowUp, ArchonError> {
+    tracing::warn!(stage = %id, reason, "stage watchdog fired");
+    stop_marked(ctx, id, reason, true).await
+}
+
+/// Fail a `running` stage whose review failed too many rounds with the
+/// `ESCALATE:` `reason`, which ends its run; a second call is a retry.
+pub(super) async fn stop_review_loop(
+    ctx: &DaemonContext,
+    id: &StageRunId,
+    reason: &str,
+) -> Result<FollowUp, ArchonError> {
+    assert!(
+        StageOutcome::ends_run(reason),
+        "a stopped review loop escalates"
+    );
+    tracing::warn!(stage = %id, reason, "review round cap reached; stopping the stage");
+    stop_marked(ctx, id, reason, false).await
+}
+
+/// Cancel a `running` stage's agent and settle it failed with `reason`,
+/// marked first so the cancel's own events cannot settle it as cancelled.
+async fn stop_marked(
+    ctx: &DaemonContext,
+    id: &StageRunId,
+    reason: &str,
+    infra: bool,
+) -> Result<FollowUp, ArchonError> {
+    assert!(!reason.trim().is_empty(), "a stop names its reason");
     let stage = ctx.store.lock().await.stage_run(id)?;
     if stage.state != StageState::Running {
         return Ok(FollowUp::default());
     }
-    tracing::warn!(stage = %id, reason, "stage watchdog fired");
+    assert_eq!(stage.id, *id, "the stage asked for");
     stall::mark_intent(&mut *ctx.store.lock().await, id, reason)?;
     let failed = || StageOutcome::Failed {
         error: reason.to_owned(),
-        infra: true,
+        infra,
     };
     match (&stage.aether_agent, &stage.aether_task) {
         (Some(agent), Some(task)) => {

@@ -621,10 +621,10 @@ every outcome to the feed itself and wakes the orchestrator for:
 - an item tagged `notify` (`archon queue add --tag notify`, or the
   orchestrator's own choice when it wants to act on the result);
 - an item a GitHub thread asked for, to post the result there;
-- a review-fix loop that has failed four rounds (commits a reviewer failed) in
-  one stage attempt: one blocker with the round count and the latest finding
-  titles, once per attempt; the run goes on, and you can `archon queue cancel`
-  or `archon queue steer` it;
+- a review-fix loop that has failed three rounds (commits a reviewer failed
+  with a blocking finding) in one stage attempt: Archon stops the stage with an
+  `ESCALATE:` failure that lists the open blocking findings, which ends the run,
+  so the orchestrator reshapes the work or retries the item with a steer note;
 - a stage agent's message, a gate that opened, your answer to its question,
   feedback on a report, a budget that was reached, a cancelled helper.
 

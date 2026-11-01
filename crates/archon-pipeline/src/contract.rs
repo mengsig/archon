@@ -583,7 +583,12 @@ starts the diff read:\n\n\
 ```json\n\
 {\"verdict\": \"pass\", \"head\": \"<commit>\", \"base\": \"<commit>\", \"findings\": []}\n\
 ```\n\n\
-Use `\"fail\"` with findings for failures.\n\n";
+Use `\"fail\"` with findings for failures.\n\n\
+- Blocking findings are correctness bugs, security or safety issues, failing or missing \
+tests for changed behaviour, and broken documented behaviour, as the brief narrows or \
+extends them. Tell reviewers so, and to mark every finding `\"blocking\": true` or \
+`false`: only blocking ones fail. List the rest as follow-ups in your summary and \
+`pr.body`.\n";
 
 /// Failing review rounds of one stage attempt after which Archon stops the stage.
 /// A round is one commit that at least one of the lead's reviewers failed with a
@@ -595,21 +600,24 @@ pub const REVIEW_ROUND_CAP: usize = 3;
 const REVIEW_CHECK_RULES: &str = "\
 - Delegate with `wait: false`, then use `wait_for`. On a blocking fail, edit nothing \
 until the reviewers still reading finish (they share your workspace); one you cancel \
-counts for nothing and needs a whole-change replacement. Fix every finding and commit, \
-then re-review only what changed: one new whole-change read at the new head (`base` \
-at the change's start), and for each further pass the review asks a new delta read, \
-`base` at the head the earlier reviews read, given their findings and the fix. A \
-commit after passes needs only delta reads from the head they passed; an amend or \
-rebase needs whole-change reads.\n\
+counts for nothing and needs a whole-change replacement. Fix every blocking finding \
+and commit, then re-review only the fix with one reviewer: a finished one cannot be \
+asked again, so delegate a new one with `base` at the head the failed review read, \
+given the fix commits and the open findings, to verify each is fixed and the fix \
+regresses nothing. No new whole-change read is needed. A commit after passes needs \
+only a delta read from the head they passed; an amend or rebase needs whole-change \
+reads. After 3 failed rounds Archon stops the stage and escalates.\n\
 - Archon checks a pass against Aether and the branch. Each agent named must be a \
-different one you delegated to yourself that completed with that verdict, and as many \
-as the review asks must have passed the branch head itself: whole, or as a delta whose \
-`base` a named reviewer read the change up to. A pass of an earlier head only anchors \
-such a delta. A fail stands until a pass read past it, or after an amend or rebase until a pass of the whole change. Name every \
-reviewer that coverage rests on, earlier whole-change passes included. Anything else \
-fails the run, and nothing ships. Never report `pass` for a \
-review that did not run or did not pass: with a blocking finding open, call \
-`fail_task` and say which.\n\
+different one you delegated to yourself that completed with that verdict. As many as \
+the review asks must have read the whole change, passing or with findings fixed, and \
+one must have passed the branch head itself: whole, or as a delta whose `base` a \
+named reviewer read the change up to. A pass of an earlier head only \
+anchors such a delta. A fail stands until a pass read past it, or after an amend or \
+rebase until a pass of the whole change. Name every reviewer that coverage rests on, \
+earlier whole-change reads included, passed or failed. Anything else fails the run, \
+and nothing ships. \
+Never report `pass` for a review that did not run or did not pass: with a blocking \
+finding open, call `fail_task` and say which.\n\
 - Archon adds the review as the last line of your summary: write no `REVIEW:` line \
 yourself.\n";
 
@@ -724,7 +732,10 @@ const WORK_RULES: &str = "\n## Work stage\n\n\
 - Use the report format the stage prompt gives for your summary. If it gives none, \
 list what changed and why, the files touched, the exact verification commands you ran \
 with their results, and any known gaps.\n\
-- Report the `git rev-parse HEAD^{tree}` of your last full check.\n";
+- Report the `git rev-parse HEAD^{tree}` of your last full check. A passing check of \
+a tree holds for any later head with that tree. After a passing full check, a later \
+diff touching only Markdown, `CHANGELOG` or docs needs only the repository's link and \
+notice checks.\n";
 
 const TEAM_RULES: &str = "\n## Team stage\n\n\
 - Use the report format the stage prompt gives for your summary. If it gives none, \
@@ -1052,24 +1063,29 @@ mod tests {
     }
 
     #[test]
-    fn review_holders_re_review_the_whole_change_once_and_the_fix_as_deltas() {
+    fn review_holders_re_review_only_the_fix_with_one_reviewer() {
         for reviewers in [1, 3] {
             let text = work_contract(owing(reviewers, false));
+            let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
             for said in [
                 "Delegate with `wait: false`, then use `wait_for`",
                 "On a blocking fail, edit nothing until the reviewers still reading finish",
                 "one you cancel counts for nothing and needs a whole-change replacement",
-                "Fix every finding and commit, then re-review only what changed",
-                "one new whole-change read at the new head (`base` at the change's start)",
-                "for each further pass the review asks a new delta read",
-                "A commit after passes needs only delta reads from the head they passed",
+                "Fix every blocking finding and commit, then re-review only the fix with one reviewer",
+                "delegate a new one with `base` at the head the failed review read",
+                "given the fix commits and the open findings",
+                "No new whole-change read is needed",
+                "A commit after passes needs only a delta read from the head they passed",
                 "an amend or rebase needs whole-change reads",
-                "must have passed the branch head itself",
+                "As many as the review asks must have read the whole change",
+                "one must have passed the branch head itself",
                 "A pass of an earlier head only anchors such a delta",
                 "A fail stands until a pass read past it",
+                &format!("After {REVIEW_ROUND_CAP} failed rounds Archon stops the stage"),
             ] {
                 assert!(text.contains(said), "missing {said:?} in {text}");
             }
+            assert!(!text.contains("one new whole-change read at the new head"));
         }
         let delegation = delegation_rules(WorkspaceMode::Worktree, "a/one", 1, None);
         assert!(
@@ -1149,6 +1165,14 @@ mod tests {
             work.contains("Report the `git rev-parse HEAD^{tree}` of your last full check"),
             "a later stage may rely on a check bound to the tree: {work}"
         );
+        let work = work.split_whitespace().collect::<Vec<_>>().join(" ");
+        for said in [
+            "A passing check of a tree holds for any later head with that tree",
+            "a later diff touching only Markdown, `CHANGELOG` or docs needs only the \
+             repository's link and notice checks",
+        ] {
+            assert!(work.contains(said), "missing {said:?} in {work}");
+        }
     }
 
     #[test]
@@ -1567,7 +1591,10 @@ mod tests {
             "Use `\"fail\"` with findings for failures",
             "Each agent named must be a different one you delegated to yourself",
             "must have passed the branch head itself",
-            "Name every reviewer that coverage rests on, earlier whole-change passes included",
+            "Name every reviewer that coverage rests on, earlier whole-change reads included",
+            "Blocking findings are correctness bugs, security or safety issues",
+            "mark every finding `\"blocking\": true` or `false`",
+            "List the rest as follow-ups",
             "write no `REVIEW:` line yourself",
         ] {
             assert!(rules.contains(said), "missing {said:?} in {rules}");

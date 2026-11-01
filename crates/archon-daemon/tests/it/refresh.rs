@@ -1211,7 +1211,7 @@ async fn a_refresh_owing_no_reviewer_fails_when_it_moves_code_into_docs() {
     let tree = h.run(&fix.id).await.workspace;
     git(&tree, &["merge", "--quiet", "--no-edit", upstream.as_str()]);
     std::fs::create_dir(tree.join("docs")).unwrap();
-    git(&tree, &["mv", "change.txt", "docs/change.txt"]);
+    git(&tree, &["mv", "change.txt", "docs/change.md"]);
     git(&tree, &["commit", "--quiet", "-m", "Move it"]);
     settle_merged(&h).await;
 

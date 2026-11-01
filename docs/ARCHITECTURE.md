@@ -3725,10 +3725,17 @@ object per line under `--json`).
   nothing else and report other findings as follow-ups; the owner's brief
   follows as quoted, read-only context. When the branch head it merges into
   is the commit a succeeded item on the branch (the owner or a fix of it)
-  handed in as its ship record, which its review gate held, Archon records
+  shipped as its ship record, which its review gate held (every ship record
+  of that run naming the same commit and the head's own tree, one of them
+  with a passing review, the item owing a review and no agent ship stage
+  having run), and the
+  pipeline hands in a ship record archond delivers (`[pipeline.ship]`, never
+  an agent's own ship stage), Archon records
   that head, previews the merge with `git merge-tree` and sets the refresh's
   review level from it: `none` for a clean merge or one conflicting only in
-  changelogs, top-level `*.md` or `docs/` files, where that review stands;
+  changelogs or in top-level or `docs/` prose (`.md`, `.markdown`, `.rst`,
+  `.adoc`) and raster images, never scripts, configuration or SVG, where that
+  review stands;
   `standard` (one reviewer) for a code conflict, unless the owner's level is
   `none`. A read from the recorded head (the merge's first parent) covers the
   whole refresh, so its reviewer reads the resolution
@@ -3739,7 +3746,8 @@ object per line under `--json`).
   own merge: each merge's remerge diff and every other new commit, side
   branches merged in included, must touch only those prose files (a rename
   counts as both its paths), and none may be an octopus merge, whose
-  resolution git does not show. The brief names the review scope the refresh
+  resolution git does not show; the checked `HEAD` must also be the ship
+  record's commit and tree, the tree archond delivers. The brief names the review scope the refresh
   got: the resolution from the recorded head, or the whole change. A refresh whose branch
   already holds the base commit when it is dispatched (merged in after it
   was queued) is cancelled at once, before any run, saying there was nothing

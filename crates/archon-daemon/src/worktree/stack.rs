@@ -36,6 +36,21 @@ pub(crate) fn is_commit_id(sha: &str) -> bool {
     matches!(sha.len(), 40 | 64) && sha.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+/// The tree of `commit`, a full commit id, in `repo`.
+pub(crate) fn tree_of(repo: &Path, commit: &str) -> Result<String, ArchonError> {
+    assert!(is_commit_id(commit), "a commit id in full");
+    let spec = format!("{commit}^{{tree}}");
+    let tree = DaemonGit::sealed_in(repo)
+        .args(["rev-parse", "--verify", &spec])
+        .text()?;
+    if !is_commit_id(&tree) {
+        return Err(ArchonError::Invalid(
+            "git returned an invalid tree id".into(),
+        ));
+    }
+    Ok(tree)
+}
+
 /// The commit `refs/heads/<branch>` names in `repo`.
 pub(crate) fn sha(repo: &Path, branch: &str) -> Result<String, ArchonError> {
     super::check_branch(branch)?;

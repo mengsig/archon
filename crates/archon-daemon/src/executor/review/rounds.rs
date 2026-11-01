@@ -28,7 +28,7 @@ pub(in crate::executor) struct Capped {
     pub reason: String,
 }
 
-/// Add `reviewer`'s failing verdict to its stage attempt's tally; the stage to
+/// Add `reviewer`'s blocking fail to its stage attempt's tally; the stage to
 /// stop once the tally reaches the cap. The tally is kept per stage attempt and
 /// grows only by settled reviewers seen here, so a lead reused by a later attempt
 /// starts at none. An Aether answer that fails is returned, so the pump repeats the event.
@@ -46,9 +46,16 @@ pub(in crate::executor) async fn reviewer_settled(
     let Some(child) = settled.into_iter().find(|c| c.agent == *reviewer) else {
         return Ok(None);
     };
-    let Some(verdict) = verdict_of(ctx, child).await?.filter(|v| !v.pass) else {
+    // Only a fail that lists a blocking finding is a round; the gate still
+    // refuses any fail left unanswered.
+    let blocking = |v: &Verdict| !v.pass && v.blocking.is_some_and(|n| n > 0);
+    let Some(verdict) = verdict_of(ctx, child).await?.filter(blocking) else {
         return Ok(None);
     };
+    assert!(
+        !verdict.blocking_findings.is_empty(),
+        "a counted round names its blocking findings"
+    );
     let mut tally = load(ctx, &stage.id).await?;
     // A replayed reviewer adds no round, but may still owe the stop.
     if !tally.fails.iter().any(|f| f.agent == reviewer.as_str()) {

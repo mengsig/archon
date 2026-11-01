@@ -3633,6 +3633,38 @@ async fn a_fail_listing_only_follow_ups_adds_no_round() {
     assert_eq!(escalated(&h, &lead).await, None, "follow-ups block nothing");
 }
 
+/// A fail that lists no finding, or gives no list, names nothing blocking:
+/// it adds no round, so two blocking rounds and such fails go on.
+#[tokio::test]
+async fn a_fail_with_no_blocking_finding_adds_no_round() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    for n in 1..=2 {
+        review_round_fails(&h, &lead, n).await;
+    }
+    let lead_id = lead_agent(&lead);
+    let empty = serde_json::json!({"verdict": "fail", "head": "0000003abcdef", "findings": []});
+    let unlisted = serde_json::json!({"verdict": "fail", "head": "0000004abcdef"});
+    for verdict in [empty, unlisted] {
+        let reviewer = h.backend.delegate(&lead_id, REVIEW_MODEL);
+        h.backend.complete_delegated(&reviewer, verdict);
+        executor::reviewer_settled(&h.ctx, &lead_id, &reviewer)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        escalated(&h, &lead).await,
+        None,
+        "nothing blocking was named"
+    );
+    review_round_fails(&h, &lead, 5).await;
+    let error = escalated(&h, &lead)
+        .await
+        .expect("a third blocking round stops it");
+    assert!(error.contains("failed 3 rounds"), "{error}");
+}
+
 /// The cap's cancel went unanswered: the next sweep stops the stage.
 #[tokio::test]
 async fn a_capped_stage_whose_cancel_went_unanswered_is_stopped_by_the_sweep() {

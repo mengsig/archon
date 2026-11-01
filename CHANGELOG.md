@@ -16,15 +16,16 @@ request, a fork's included, and merge it at the head its reviewers passed
 (#341, reported by @D-Brammer), and a stage agent stopped at its deadline is
 woken once to commit and report (#347).
 
-Archon 1.4.10 needs **Aether 1.2.8**, as 1.4.9 did: it is released with and
-tested on that release. Neither the installer nor `archon update` pins an
-Aether version; check with `aether --version` and update an older one with
-`aether update`. The Aether protocol Archon asks for stays 24 and the oldest
-it accepts stays 17. The daemon protocol stays 23 and the store schema stays
-18: a 1.4.9 store opens unchanged, and going back to 1.4.9 needs no copy of
-the data directory. From 1.4.9, `archon update --yes` updates and restarts
-archond at once, keeping its stage agents running; from 1.4.8, follow the
-1.4.9 upgrade note below.
+Archon 1.4.10 needs **Aether 1.2.9**: it is released with and tested on that
+release. Aether 1.2.9 holds only TUI fixes and a docs page over 1.2.8, with
+no change to its daemon or protocol: it serves protocols 17 to 25. Neither
+the installer nor `archon update` pins an Aether version; check with `aether
+--version` and update an older one with `aether update`. The Aether protocol
+Archon asks for stays 24 and the oldest it accepts stays 17. The daemon
+protocol stays 23 and the store schema stays 18: a 1.4.9 store opens
+unchanged, and going back to 1.4.9 needs no copy of the data directory. From
+1.4.9, `archon update --yes` updates and restarts archond at once, keeping
+its stage agents running; from 1.4.8, follow the 1.4.9 upgrade note below.
 
 ### Pull requests
 

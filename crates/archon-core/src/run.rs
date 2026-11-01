@@ -1244,6 +1244,15 @@ mod tests {
             "Verdict: pass.\n\nSummary: issues found in the reader.",
             "Verdict: pass. No blockers. Issues remain in run.rs",
             "Verdict: pass. No issues found. Changes needed in X",
+            "Verdict: pass. No blockers and issues remain in run.rs",
+            "Verdict: pass. No blockers and changes are needed in run.rs",
+            "Verdict: pass. No regressions and bugs were found in the reader",
+            "Verdict: pass. No blocking findings and the build is still broken",
+            "Verdict: pass. Changes will be needed in X",
+            "Verdict: pass. Changes would still be needed in X",
+            "Verdict: pass. Needed changes remain",
+            "Verdict: pass. Issues still open",
+            "Verdict: pass. Bug is still there",
         ] {
             assert_eq!(
                 Verdict::extract(summary, None),
@@ -1275,6 +1284,17 @@ mod tests {
             "Verdict: pass. Nothing is still broken.",
             "Verdict: pass. Found no issues.",
             "Verdict: pass. No problems remain.",
+            "Verdict: pass. Issues found: none.",
+            "Verdict: pass. Issues found: 0",
+            "Verdict: pass. Bugs found: 0",
+            "Verdict: pass. Problems found: zero",
+            "Verdict: pass. Issues remaining: none",
+            "Verdict: pass. Changes needed: none",
+            "Verdict: pass. Changes needed (none)",
+            "Verdict: pass. Changes needed — none",
+            "Verdict: pass. Issues found - none",
+            "Verdict: pass. Issues were found and fixed.",
+            "Verdict: pass.\nIssues found: none\nChanges needed: none",
         ] {
             assert_eq!(Verdict::extract(summary, None), Verdict::Pass, "{summary}");
             assert_eq!(

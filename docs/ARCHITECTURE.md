@@ -1552,7 +1552,7 @@ in a new worktree off the base branch (§13).
   ("agent stalled: tool call … hung again …"), so `limits.infra_retries`
   retries it; neither step is model evidence. Each step posts a stage
   `info` message to the orchestrator. `hung_tool_minutes = 0` turns this
-  check off.
+  check off, as does `stall_minutes = 0`.
 - A stage that failed on a full disk gets up to 5 re-spawns of its own.
   Its error text must say so, as above, and come from Aether's
   infrastructure (`infra`). A failure the agent reported itself counts only

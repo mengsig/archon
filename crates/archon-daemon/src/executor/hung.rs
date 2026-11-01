@@ -29,6 +29,14 @@ const LONG_CHECKS: &[&str] = &[
     "make ci",
     "make check",
     "make test",
+    "e2e",
+    "cargo bench",
+    "cargo llvm-cov",
+    "cargo mutants",
+    "hyperfine",
+    "playwright",
+    "vitest",
+    "jest",
     "make e2e",
     "make bench",
     "make release",
@@ -106,8 +114,8 @@ pub struct Hung {
     pub limit: Duration,
 }
 
-/// `Some` when `call` has gone `limits`' time at `now` with no output,
-/// outcome or other event of its agent. Aether's clock may step, so the
+/// `Some` when `call` has gone `limits`' time at `now` with no outcome
+/// and no other event of its agent. Aether's clock may step, so the
 /// newer of its two times counts.
 pub fn judge(limits: &Limits, call: &OpenToolCall, now: Timestamp) -> Option<Hung> {
     assert!(!call.name.is_empty(), "a call names its tool");
@@ -236,6 +244,12 @@ async fn interrupt(
     hung: &Hung,
     now: Timestamp,
 ) -> Result<Option<String>, ArchonError> {
+    assert_eq!(
+        stage.aether_agent.as_ref(),
+        Some(lead),
+        "only the stage's lead"
+    );
+    assert!(hung.silent >= hung.limit, "only a hang past its limit");
     let minutes = hung.silent.as_secs() / 60;
     let call = describe(&hung.call);
     match ctx.backend.interrupt(lead).await {
@@ -266,7 +280,7 @@ async fn interrupt(
         return Ok(Some(stall::hung_unwoken(&call, &error.to_string())));
     }
     let text = format!(
-        "Stage {} ({}): agent {lead}'s tool call {call} hung for {minutes} min with no output; \
+        "Stage {} ({}): agent {lead}'s tool call {call} hung for {minutes} min with no outcome; \
          Archon interrupted the turn and woke the agent to continue. Another hang stops the \
          stage as an infrastructure failure.",
         stage.stage_id, stage.id
@@ -378,6 +392,8 @@ mod tests {
         for command in [
             "make ci",
             "CARGO_TARGET_DIR=x cargo  test -p archon",
+            "npx playwright test --project=chromium",
+            "cargo bench -p archon-queue",
             "uv run pytest -q",
         ] {
             assert!(is_long_check(command), "{command}");

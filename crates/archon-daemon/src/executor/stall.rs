@@ -409,11 +409,12 @@ async fn judge_hung(
     }
     let call = match ctx.backend.open_tool_call(lead).await {
         Ok(call) => call,
-        Err(ArchonError::Unavailable(why) | ArchonError::Protocol(why)) => {
-            tracing::info!(%lead, %why, "open tool call unread; the next sweep looks again");
+        Err(error) if error.is_store() => return Err(error),
+        // One refused read must not stop the sweep for every other stage.
+        Err(error) => {
+            tracing::warn!(%lead, %error, "open tool call unread; the next sweep looks again");
             return Ok(Verdict::Healthy);
         }
-        Err(error) => return Err(error),
     };
     let hung = call.and_then(|call| hung::judge(limits, &call, reading.now));
     Ok(hung.map_or(Verdict::Healthy, Verdict::Hung))

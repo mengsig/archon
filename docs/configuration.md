@@ -168,7 +168,7 @@ count_estimated_cost = true    # API-equivalent estimates (such as Codex usage) 
 infra_retries = 1              # retries after an infrastructure failure, per stage run; the first wakes the failed agent in place
 stall_minutes = 20             # stage watchdog: minutes a `running` agent tree may go without an event or live engine; 0 = off
 stall_fallback_minutes = 45    # the same silence when Aether does not report `engine_alive` (older Aether)
-hung_tool_minutes = 20         # a stage lead's tool call open this long with no event of the agent: interrupt and wake it once, then stop the stage; 0 = off
+hung_tool_minutes = 20         # a stage lead's tool call open this long with no event of the agent: interrupt and wake it once, then stop the stage; 0 = off (stall_minutes = 0 turns it off too)
 hung_check_minutes = 60        # the same for a known long check (`make ci`, `cargo test`, ...); never less than hung_tool_minutes
 # [limits.per_pipeline] sets the most runs of one pipeline at once (see above)
 

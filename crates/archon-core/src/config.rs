@@ -503,8 +503,9 @@ pub struct LimitsConfig {
     /// Minutes of silence that stall a stage when Aether does not report
     /// whether the engine is alive (an Aether older than the watchdog).
     pub stall_fallback_minutes: u32,
-    /// Minutes a stage agent's tool call may stay open with no output or
-    /// other event before its turn is interrupted; 0 turns that check off.
+    /// Minutes a stage agent's tool call may stay open with no outcome or
+    /// other event before its turn is interrupted; 0 turns that check off,
+    /// as does `stall_minutes = 0`.
     pub hung_tool_minutes: u32,
     /// The same while the open call is a known long check (`make ci`,
     /// `cargo test`, ...); never shorter than `hung_tool_minutes`.

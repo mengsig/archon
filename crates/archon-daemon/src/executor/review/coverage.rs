@@ -256,6 +256,9 @@ fn place_one(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Held {
     pub passes: Vec<usize>,
+    /// The named whole-change reads that failed and whose findings were
+    /// fixed: the record names them beside the passes, as the level counts them.
+    pub answered: Vec<usize>,
     pub implicit: Vec<String>,
 }
 
@@ -280,18 +283,24 @@ pub(super) fn counted(
         Err(why) => return Ok(Err(why)),
     };
     let reads: Vec<Placed> = in_play.iter().map(|i| placed[*i].clone()).collect();
-    let passes = match judged(history, &reads, head, owed)? {
-        Ok(passes) => passes,
+    let (passes, answered) = match judged(history, &reads, head, owed)? {
+        Ok(judged) => judged,
         Err(why) => return Ok(Err(why)),
     };
     let passes: Vec<usize> = passes.into_iter().map(|i| in_play[i]).collect();
+    let answered: Vec<usize> = answered.into_iter().map(|i| in_play[i]).collect();
     assert!(
-        passes.iter().all(|i| placed[*i].named),
-        "only a named pass counts toward the review"
+        passes.iter().chain(&answered).all(|i| placed[*i].named),
+        "only a named read counts toward the review"
+    );
+    assert!(
+        answered.iter().all(|i| !placed[*i].pass),
+        "an answered read is a fail"
     );
     let implicit = reads.into_iter().filter(|read| !read.named);
     Ok(Ok(Held {
         passes,
+        answered,
         implicit: implicit.map(|read| read.agent).collect(),
     }))
 }
@@ -369,15 +378,16 @@ fn unanchored(read: &Placed, earlier_read: bool) -> String {
 }
 
 /// Indexes of the anchored `reads` whose named passes hold for the branch
-/// at `head`, or why none read `head` itself, a fail is unanswered, or fewer
-/// than `owed` read the whole change. A pass of an earlier head holds only
-/// beside one of `head`: after a fix, one anchored delta pass reaches it.
+/// at `head`, and of the named whole-change fails they answered; or why none
+/// read `head` itself, a fail is unanswered, or fewer than `owed` read the
+/// whole change. A pass of an earlier head holds only beside one of `head`:
+/// after a fix, one anchored delta pass reaches it.
 fn judged(
     history: &mut impl Ancestry,
     reads: &[Placed],
     head: &str,
     owed: u32,
-) -> Result<Result<Vec<usize>, String>, ArchonError> {
+) -> Result<Result<(Vec<usize>, Vec<usize>), String>, ArchonError> {
     let current = spread(
         reads,
         |_, read| read.pass && read.head == head,
@@ -400,23 +410,46 @@ fn judged(
         return Ok(Err(why));
     }
     let whole = whole_reads(reads, &current);
-    if whole < owed as usize {
-        return Ok(Err(too_few_whole(reads, &current, whole, owed)));
+    if whole.len() < owed as usize {
+        return Ok(Err(too_few_whole(reads, &current, whole.len(), owed)));
     }
-    Ok(Ok(passes))
+    let answered: Vec<usize> = whole
+        .into_iter()
+        .filter(|i| reads[*i].named && !reads[*i].pass)
+        .collect();
+    let on_record = passes.len() + answered.len();
+    if on_record < owed as usize {
+        return Ok(Err(unnamed_whole(on_record, owed)));
+    }
+    Ok(Ok((passes, answered)))
 }
 
-/// How many of `reads` read the whole change on the branch: a pass that
-/// holds, or a fail, which [`open_fail`] has already found answered.
-fn whole_reads(reads: &[Placed], current: &[bool]) -> usize {
+/// Indexes of the `reads` that read the whole change on the branch: a pass
+/// that holds, or a fail, which [`open_fail`] has already found answered.
+fn whole_reads(reads: &[Placed], current: &[bool]) -> Vec<usize> {
     assert_eq!(reads.len(), current.len(), "one mark per read");
-    let whole = reads
-        .iter()
-        .zip(current)
-        .filter(|(read, held)| read.base.is_none() && !read.superseded && (!read.pass || **held))
-        .count();
-    assert!(whole <= reads.len(), "each read counts once");
+    let whole: Vec<usize> = (0..reads.len())
+        .filter(|i| {
+            let read = &reads[*i];
+            read.base.is_none() && !read.superseded && (!read.pass || current[*i])
+        })
+        .collect();
+    assert!(
+        whole.iter().all(|i| reads[*i].base.is_none()),
+        "only a whole-change read counts"
+    );
     whole
+}
+
+/// Why the record would name only `on_record` reviewers, though the level
+/// needs `owed`: the earlier whole-change reads coverage rests on are unnamed.
+fn unnamed_whole(on_record: usize, owed: u32) -> String {
+    assert!(on_record < owed as usize, "only a short record is refused");
+    format!(
+        "the reviewers named make a record of {on_record} and this item's review level \
+         needs {owed}: name every reviewer that read the whole change, passed or with its \
+         findings fixed, beside the pass of the head"
+    )
 }
 
 /// What `holds` answers: ancestry, asked of git or of a test's history.
@@ -803,6 +836,7 @@ mod tests {
         ];
         let fixed = [first.as_slice(), &[read("agt_d", true, "c5", Some("c3"))]].concat();
         assert_eq!(count(&fixed, "c5", 3).unwrap(), [1, 2, 3]);
+        assert_eq!(held(&fixed, "c5", 3).unwrap().answered, [0], "the fixed fail is named");
         let unnamed_fail = count(&fixed[1..], "c5", 3).unwrap_err();
         assert_eq!(unnamed_fail, too_few(2));
         let unread = count(&fixed, "c6", 3).unwrap_err();
@@ -811,6 +845,32 @@ mod tests {
         let empty = [first.as_slice(), &[read("agt_d", true, "c3", Some("c3"))]].concat();
         let refused = count(&empty, "c5", 3).unwrap_err();
         assert!(refused.starts_with("0 of the reviewers named"), "{refused}");
+    }
+
+    /// Every first read failed: the one delta pass of the fix and the three
+    /// answered fails make the strict record, not the pass alone.
+    #[test]
+    fn a_strict_review_whose_whole_reads_all_failed_records_them_beside_the_delta() {
+        let fixed = [
+            read("agt_a", false, "c3", None),
+            read("agt_b", false, "c3", None),
+            read("agt_c", false, "c3", None),
+            read("agt_d", true, "c5", Some("c3")),
+        ];
+        let found = held(&fixed, "c5", 3).unwrap();
+        assert_eq!((found.passes, found.answered), (vec![3], vec![0, 1, 2]));
+        let unnamed = [
+            read("agt_d", true, "c5", Some("c3")),
+            earlier("agt_a", false, "c3", None),
+            earlier("agt_b", false, "c3", None),
+            earlier("agt_c", false, "c3", None),
+        ];
+        let refused = held(&unnamed, "c5", 3).unwrap_err();
+        assert!(
+            refused.starts_with("the reviewers named make a record of 1"),
+            "{refused}"
+        );
+        assert_eq!(held(&unnamed, "c5", 1).unwrap().passes, [0]);
     }
 
     fn too_few(whole: usize) -> String {

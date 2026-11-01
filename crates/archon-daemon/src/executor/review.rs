@@ -26,8 +26,9 @@ pub(super) use rounds::reviewer_settled;
 /// Agents named in a refusal: enough to see what the lead delegated to.
 const MAX_LISTED: usize = 6;
 
-/// A review Archon found holds: the named reviewers that passed, and the
-/// earlier reviewers it added to anchor their delta reads.
+/// A review Archon found holds: the named reviewers it rests on (the passes
+/// and the whole-change fails they answered), and the earlier reviewers it
+/// added to anchor their delta reads.
 #[derive(Debug)]
 struct Found {
     reviewers: Vec<Reviewer>,
@@ -230,7 +231,8 @@ async fn earlier_reads(
     earlier_verdicts(ctx, &earlier).await
 }
 
-/// The `picked` reviewers whose passes `held` counts at `head`, and the earlier ones it added.
+/// The `picked` reviewers `held` counts at `head` (its passes, and the
+/// whole-change fails they answered), and the earlier ones it added.
 fn found(
     picked: &[&Descendant],
     (held, head): (Held, String),
@@ -239,11 +241,14 @@ fn found(
 ) -> Found {
     assert!(!held.passes.is_empty(), "a review that holds has a pass");
     assert!(is_commit_id(&head), "held to a full commit id");
+    let mut counted: Vec<usize> = held.passes.into_iter().chain(held.answered).collect();
+    counted.sort_unstable();
+    counted.dedup();
     assert!(
-        held.passes.iter().all(|i| *i < picked.len()),
-        "only a named pass counts, by its index among those picked"
+        counted.iter().all(|i| *i < picked.len()),
+        "only a named read counts, by its index among those picked"
     );
-    let reviewers = held.passes.into_iter().map(|i| Reviewer {
+    let reviewers = counted.into_iter().map(|i| Reviewer {
         model: picked[i].model.to_string(),
         agent: picked[i].agent.to_string(),
     });

@@ -3401,7 +3401,8 @@ async fn the_next_stage_waits_until_every_helper_of_the_lead_has_ended() {
     let lead = h.running().await.remove(0).aether_agent.unwrap();
     let helper = h.backend.delegate(&lead, MODEL);
     let below = h.backend.delegate(&helper, MODEL);
-    h.backend.end_delegated(&helper, DescendantState::Completed);
+    h.backend
+        .complete_delegated_with(&helper, completed("helped; its own helper runs on"));
     settle_reviewed(&h, "Built; reviewed").await;
     h.dispatch().await;
     assert_eq!(h.backend.cancelled(), std::slice::from_ref(&lead));

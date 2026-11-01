@@ -23,7 +23,7 @@ use archon_core::queue::QueueState;
 use archon_core::run::{PipelineRun, RunState, StageOutcome, StageRun, StageState};
 use archon_daemon::{dispatcher, executor, pump};
 use common::delivery::{
-    FakeGh, add_origin, origin_of, pass_by, pushed, reviewed_by, shipped_by, verdict_on,
+    FakeGh, add_origin, origin_of, pass_by, pushed, record, reviewed_by, shipped_by, verdict_on,
 };
 use common::{
     Harness, MODEL, REPO_NAME, REVIEW_MODEL, choice, completed, expire_deadline, git, verdict,
@@ -2996,6 +2996,124 @@ async fn a_reviewer_still_running_keeps_earlier_ones_from_anchoring() {
     let held = format!("{running} on {REVIEW_MODEL} still running");
     assert!(error.contains(&held), "{error}");
     assert!(error.contains("or cancel it"), "{error}");
+}
+
+/// A reviewer's fail of the commit `built` records, with one finding that
+/// is blocking or a follow-up.
+fn fail_on(built: &StageOutcome, blocking: bool) -> serde_json::Value {
+    let mut fail = verdict_on(built, "fail");
+    fail["findings"] = serde_json::json!([{"title": "drops the tail", "blocking": blocking}]);
+    fail
+}
+
+/// The lead names the reviewer that passed its head and leaves out the one
+/// that failed it: a blocking fail stands, and a fail of follow-ups blocks nothing.
+#[tokio::test]
+async fn a_reviewer_that_failed_the_head_and_is_left_out_of_the_record_is_refused() {
+    for blocking in [true, false] {
+        let h = Harness::new().await;
+        let item = adaptive_item(&h).await;
+        let lead = h.running().await.remove(0);
+        let failing = h.backend.delegate(&lead_agent(&lead), REVIEW_MODEL);
+        let passing = h.backend.delegate(&lead_agent(&lead), REVIEW_MODEL);
+        let named = pass_by(std::slice::from_ref(&passing));
+        let built = shipped_by(&h, &lead, "Reviewed", named).await;
+        h.backend
+            .complete_delegated(&failing, fail_on(&built, blocking));
+        h.backend
+            .complete_delegated(&passing, verdict_on(&built, "pass"));
+        h.settle_running(|_| built.clone()).await;
+        if !blocking {
+            h.dispatch().await;
+            assert!(delivered(&h, &item).await, "{:?}", h.state(&item.id).await);
+            continue;
+        }
+        let error = refused_review(&h, &item).await;
+        let stands = format!("reviewer {failing} failed the change at");
+        assert!(error.contains(&stands), "{error}");
+        assert!(
+            error.contains("the record leaves that reviewer out"),
+            "{error}"
+        );
+    }
+}
+
+/// A reviewer failed the first head and the lead left it out; the reviewer
+/// it names passed the fix as part of the whole change, so the fail is answered.
+#[tokio::test]
+async fn a_left_out_fail_of_an_earlier_head_is_answered_by_a_pass_of_the_fix() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let failing = h.backend.delegate(&lead_agent(&lead), REVIEW_MODEL);
+    let first = shipped_by(&h, &lead, "Built", serde_json::json!({})).await;
+    h.backend
+        .complete_delegated(&failing, fail_on(&first, true));
+    let rereview = h.backend.delegate(&lead_agent(&lead), REVIEW_MODEL);
+    let named = pass_by(std::slice::from_ref(&rereview));
+    let fixed = shipped_by(&h, &lead, "Built, then fixed", named).await;
+    h.backend
+        .complete_delegated(&rereview, verdict_on(&fixed, "pass"));
+    h.settle_running(|_| fixed.clone()).await;
+    h.dispatch().await;
+    assert!(delivered(&h, &item).await, "{:?}", h.state(&item.id).await);
+}
+
+/// The lead's attempt failed for infrastructure after a reviewer failed its
+/// head; the woken lead, the same agent, had another reviewer pass that head.
+/// Only a blocking fail of the woken attempt that it leaves out stands.
+#[tokio::test]
+async fn a_woken_lead_is_held_to_its_own_attempt_s_reviewers_only() {
+    for left_out in [false, true] {
+        let h = Harness::new().await;
+        let item = adaptive_item(&h).await;
+        let first = h.running().await.remove(0);
+        let agent = lead_agent(&first);
+        let earlier = h.backend.delegate(&agent, REVIEW_MODEL);
+        let built = shipped_by(&h, &first, "Built", serde_json::json!({})).await;
+        h.backend
+            .complete_delegated(&earlier, fail_on(&built, true));
+        h.backend.fail_agent(&agent);
+        h.settle_running(|_| StageOutcome::Failed {
+            error: "engine died".into(),
+            infra: true,
+        })
+        .await;
+        h.dispatch().await;
+        let woken = h.running().await.remove(0);
+        assert_eq!(woken.aether_agent.as_ref(), Some(&agent), "woken in place");
+        assert_ne!(woken.id, first.id);
+
+        let passing = h.backend.delegate(&agent, REVIEW_MODEL);
+        h.backend
+            .complete_delegated(&passing, verdict_on(&built, "pass"));
+        let late = h.backend.delegate(&agent, REVIEW_MODEL);
+        let late_verdict = match left_out {
+            true => fail_on(&built, true),
+            false => verdict_on(&built, "pass"),
+        };
+        h.backend.complete_delegated(&late, late_verdict);
+        // No new commit: the woken lead ships the head the earlier reviewer failed.
+        let mut structured = record(&h.run(&item.id).await.workspace);
+        structured["review"] = pass_by(std::slice::from_ref(&passing))["review"].clone();
+        let answer = StageOutcome::Completed {
+            summary: "picked up and reviewed".into(),
+            structured: Some(structured),
+        };
+        h.backend.answer(&agent, answer);
+        executor::turn_ended(&h.ctx, &agent)
+            .await
+            .expect("turn end");
+        if !left_out {
+            h.dispatch().await;
+            assert!(delivered(&h, &item).await, "{:?}", h.state(&item.id).await);
+            continue;
+        }
+        let error = refused_review(&h, &item).await;
+        let stands = format!("reviewer {late} failed the change at");
+        assert!(error.contains(&stands), "{error}");
+        assert!(!error.contains(earlier.as_str()), "{error}");
+    }
 }
 
 /// The reviewer's agent and model are Archon's finding: what the lead wrote

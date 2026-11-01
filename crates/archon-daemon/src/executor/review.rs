@@ -259,9 +259,8 @@ async fn earlier_reads(
     earlier_verdicts(ctx, &earlier).await
 }
 
-/// The verdicts of the reviewers of `stage`'s attempt that failed with a
-/// blocking finding and are none of the `picked` ones, or why one cannot be
-/// read: each fail stands until a pass reads past it, as a named one does.
+/// The blocking fails of `stage`'s attempt by reviewers none of the `picked`
+/// ones, or why one cannot be read: each stands as a named fail does.
 async fn left_out_fails(
     ctx: &DaemonContext,
     stage: &StageRun,
@@ -686,10 +685,8 @@ fn verdict_in(outcome: StageOutcome) -> Result<Verdict, String> {
     }
 }
 
-/// Whether the named `verdicts` hold for the run's branch as it stands, which
-/// must hold the `shipped` tree if one is given, with no `left_out` fail of
-/// the attempt standing. `earlier` reads, once read, may anchor named delta
-/// reads; `None` asks first whether any is needed.
+/// Whether the named `verdicts`, beside the `left_out` fails, hold for the branch holding any
+/// `shipped` tree. `earlier` reads may anchor delta reads; `None` asks first if any is needed.
 async fn holding(
     ctx: &DaemonContext,
     run: &PipelineRun,

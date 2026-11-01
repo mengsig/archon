@@ -90,9 +90,8 @@ pub(super) struct Verdicts<'a> {
     pub left_out: &'a [(String, Verdict)],
 }
 
-/// The branch head and each verdict on its commits, `named` first, or why a
-/// named or left-out one is not on the branch (an `earlier` one is dropped).
-/// `base` gives the fork point.
+/// The branch head and each verdict on its commits, `named` first, or why a named or
+/// left-out one is not on the branch (an `earlier` one is dropped). `base` gives the fork.
 pub(super) fn place(
     history: &mut History,
     base: Base,
@@ -122,9 +121,8 @@ pub(super) fn place(
     Ok(Ok((head, placed)))
 }
 
-/// Add the `earlier` and `left_out` verdicts to `placed` as unnamed reads of
-/// the branch at `head` forked at `forks`, or say why a left-out fail is not
-/// on it. An earlier read that is no left-out fail and cannot be placed is dropped.
+/// Add the `earlier` and `left_out` verdicts to `placed` as unnamed reads, or say why a
+/// left-out fail is not on the branch; an earlier read that cannot be placed is dropped.
 fn place_unnamed(
     history: &mut History,
     (head, forks): (&str, &[String]),
@@ -511,8 +509,7 @@ fn holding_passes(
     Ok(current)
 }
 
-/// Why a blocking fail of the attempt that the record leaves out, and that
-/// nothing anchored into play, still stands beside the `in_play` reads of
+/// Why a left-out blocking fail outside play still stands beside the `in_play` reads of
 /// `placed`, which [`judged`] found answered; `None` when every one is answered.
 fn open_left_out(
     history: &mut impl Ancestry,

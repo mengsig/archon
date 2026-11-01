@@ -1118,12 +1118,13 @@ async fn a_refresh_owing_no_reviewer_fails_when_it_changes_code_beyond_the_merge
 #[tokio::test]
 async fn a_refresh_conflicting_only_in_the_changelog_ships_with_no_reviewer() {
     let (h, _gh) = delivering().await;
-    let (owner, run) = shipped(&h, "the change").await;
-    on_branch(&h, &run.branch, |tree| {
-        std::fs::write(tree.join("CHANGELOG.md"), "ours\n").unwrap();
-        git(tree, &["add", "CHANGELOG.md"]);
-        git(tree, &["commit", "--quiet", "-m", "Note the change"]);
-    });
+    let owner = enqueue(&h, "the change").await;
+    h.dispatch().await;
+    let workspace = h.run(&owner.id).await.workspace;
+    std::fs::write(workspace.join("CHANGELOG.md"), "ours\n").unwrap();
+    git(&workspace, &["add", "CHANGELOG.md"]);
+    git(&workspace, &["commit", "--quiet", "-m", "Note the change"]);
+    settle_reviewed(&h, None).await;
     let upstream = advance_origin(&h, "CHANGELOG.md", "theirs\n");
     let fix = refresh(&h, &owner).await.expect("queued");
     assert_eq!(fix.autonomy.review, ReviewLevel::None, "prose only");
@@ -1140,6 +1141,52 @@ async fn a_refresh_conflicting_only_in_the_changelog_ships_with_no_reviewer() {
 
     let state = h.state(&fix.id).await;
     assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+}
+
+/// A branch head no passing review handed in (a commit made after the owner
+/// shipped) waives nothing: the refresh keeps its owner's review, read whole.
+#[tokio::test]
+async fn a_refresh_of_a_branch_moved_since_its_review_keeps_the_owner_s_review() {
+    let (h, _gh) = delivering().await;
+    let (owner, run) = shipped(&h, "the change").await;
+    on_branch(&h, &run.branch, |tree| {
+        std::fs::write(tree.join("later.rs"), "fn later() {}\n").unwrap();
+        git(tree, &["add", "later.rs"]);
+        git(tree, &["commit", "--quiet", "-m", "Unreviewed"]);
+    });
+    advance_origin(&h, "upstream.txt", "elsewhere\n");
+    let fix = refresh(&h, &owner).await.expect("queued");
+    assert_eq!(fix.autonomy.review, ReviewLevel::Standard);
+    let target = h.ctx.store.lock().await.stack_fix(&fix.id).unwrap();
+    let refresh = target.and_then(|target| target.refresh).expect("a refresh");
+    assert_eq!(refresh.from, None, "no start but the base");
+}
+
+/// Code a side branch brings in through a clean merge is code the refresh
+/// changed too: one owing no reviewer fails.
+#[tokio::test]
+async fn a_refresh_owing_no_reviewer_fails_when_a_merged_side_branch_brings_code() {
+    let (h, _gh) = delivering().await;
+    let (owner, _) = shipped(&h, "the change").await;
+    let upstream = advance_origin(&h, "upstream.txt", "elsewhere\n");
+    let fix = refresh(&h, &owner).await.expect("queued");
+    assert_eq!(fix.autonomy.review, ReviewLevel::None);
+    h.dispatch().await;
+    let tree = h.run(&fix.id).await.workspace;
+    git(&tree, &["checkout", "--quiet", "-b", "side"]);
+    std::fs::write(tree.join("side.rs"), "fn side() {}\n").unwrap();
+    git(&tree, &["add", "side.rs"]);
+    git(&tree, &["commit", "--quiet", "-m", "Side"]);
+    git(&tree, &["checkout", "--quiet", "-"]);
+    git(&tree, &["merge", "--quiet", "--no-edit", upstream.as_str()]);
+    git(&tree, &["merge", "--quiet", "--no-edit", "side"]);
+    settle_merged(&h).await;
+
+    let error = match h.state(&fix.id).await {
+        QueueState::Failed { error, .. } => error,
+        other => panic!("the refresh fails: {other:?}"),
+    };
+    assert!(error.contains("beyond that merge: side.rs."), "{error}");
 }
 
 /// A refresh whose branch took the base in after it was queued has nothing to

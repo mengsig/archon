@@ -3708,17 +3708,21 @@ object per line under `--json`).
   stage the request gives no timeout. The plan is validated before enqueue.
   Its brief asks for the merge only: resolve, keep the checks green, change
   nothing else and report other findings as follow-ups; the owner's brief
-  follows as quoted, read-only context. Archon previews the merge with `git
-  merge-tree` and sets the refresh's review level from it: `none` for a clean
-  merge or one conflicting only in changelogs, top-level `*.md` or `docs/`
-  files, where the review that passed the branch stands; `standard` (one
-  reviewer) for a code conflict, unless the owner's level is `none`. The
-  branch head it merges into is recorded, and a read from it (the merge's
-  first parent) covers the whole refresh, so its reviewer reads the
-  resolution (`git show --remerge-diff`) and later commits only. A refresh
-  whose review was dropped this way fails at its record stage if the branch
-  changed code beyond git's own merge: each merge's remerge diff and each
-  later commit must touch only those prose files. A refresh whose branch
+  follows as quoted, read-only context. When the branch head it merges into
+  is the commit a succeeded item on the branch (the owner or a fix of it)
+  handed in as its ship record, which its review gate held, Archon records
+  that head, previews the merge with `git merge-tree` and sets the refresh's
+  review level from it: `none` for a clean merge or one conflicting only in
+  changelogs, top-level `*.md` or `docs/` files, where that review stands;
+  `standard` (one reviewer) for a code conflict, unless the owner's level is
+  `none`. A read from the recorded head (the merge's first parent) covers the
+  whole refresh, so its reviewer reads the resolution
+  (`git show --remerge-diff`) and later commits only. Any other branch head
+  (a failed or cancelled owner, or commits no review passed) keeps the
+  owner's level, read whole from the base. A refresh whose review was
+  dropped fails at its record stage if the branch changed code beyond git's
+  own merge: each merge's remerge diff and every other new commit, side
+  branches merged in included, must touch only those prose files. A refresh whose branch
   already holds the base commit when it is dispatched (merged in after it
   was queued) is cancelled at once, before any run, saying there was nothing
   to merge.

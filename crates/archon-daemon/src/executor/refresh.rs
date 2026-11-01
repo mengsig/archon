@@ -65,11 +65,14 @@ pub(crate) async fn refresh_item(
         }
         Err(held) => return Err(ArchonError::Invalid(held.refusal)),
     };
-    prepared.autonomy.review = refresh_review(prepared.autonomy.review, &fresh.conflicts);
+    let reviewed = reviewed_tip(ctx, &owner.id, &fresh.from).await?;
+    if reviewed {
+        prepared.autonomy.review = refresh_review(prepared.autonomy.review, &fresh.conflicts);
+    }
     let refresh = Refresh {
         base,
         sha: fresh.sha,
-        from: Some(fresh.from),
+        from: reviewed.then_some(fresh.from),
     };
     let queued = {
         let _table = ctx.runs.lock().await;
@@ -328,6 +331,50 @@ async fn check_pr_open(
     Ok(pr.head_ref_oid)
 }
 
+/// Whether `tip`, the branch head a refresh merges into, is the commit a
+/// succeeded item on that branch (`owner` or a fix of it) handed in as its
+/// ship record, which its review gate held: only then may the refresh's review
+/// start there. Anything else is reviewed whole, from the base, as before.
+async fn reviewed_tip(
+    ctx: &DaemonContext,
+    owner: &QueueItemId,
+    tip: &str,
+) -> Result<bool, ArchonError> {
+    assert!(stack::is_commit_id(tip), "a branch head in full");
+    let store = ctx.store.lock().await;
+    let mut items = store.stack_fixes_of(owner)?;
+    items.push(owner.clone());
+    for id in &items {
+        if !matches!(store.item(id)?.state, QueueState::Succeeded { .. }) {
+            continue;
+        }
+        let Some(run) = store.runs_for_item(id)?.pop() else {
+            continue;
+        };
+        assert_eq!(&run.item, id, "the item's own run");
+        if handed_in(&store.stage_runs(&run.id)?).as_deref() == Some(tip) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The commit of the last ship record among a run's completed `stages`.
+fn handed_in(stages: &[archon_core::run::StageRun]) -> Option<String> {
+    use archon_core::run::StageState;
+    let recorded = stages
+        .iter()
+        .filter(|stage| stage.state == StageState::Completed)
+        .filter_map(|stage| {
+            let record = archon_pipeline::ShipRecord::read(stage.structured.as_ref()).ok()?;
+            Some((stage.started_at, record.commit))
+        })
+        .max_by_key(|(started, _)| *started);
+    recorded
+        .map(|(_, commit)| commit)
+        .filter(|commit| stack::is_commit_id(commit))
+}
+
 /// The review a refresh owes: none when its merge is clean or conflicts only in
 /// changelogs and docs, where the review that passed the branch stands; else one
 /// reviewer of the resolution, unless the owner's level asks for none.
@@ -347,6 +394,10 @@ fn refresh_review(owner: ReviewLevel, conflicts: &[String]) -> ReviewLevel {
 /// anywhere, a top-level Markdown file or anything under `docs/`.
 pub(super) fn is_prose(path: &str) -> bool {
     assert!(!path.is_empty(), "a named path");
+    // A name git would quote is never taken for prose.
+    if path.chars().any(char::is_control) {
+        return false;
+    }
     let name = path.rsplit('/').next().unwrap_or(path);
     let top_markdown = !path.contains('/') && name.to_ascii_lowercase().ends_with(".md");
     name.to_ascii_uppercase().starts_with("CHANGELOG") || top_markdown || path.starts_with("docs/")
@@ -547,7 +598,8 @@ async fn dropped_review(
 }
 
 /// What the branch in `dir` changed itself since `from` beyond merging `sha`:
-/// each merge's resolution (`--remerge-diff`) and each later commit's paths.
+/// each merge's resolution (`--remerge-diff`) and every other commit's paths,
+/// side branches merged in included.
 fn authored_paths(dir: &Path, from: &str, sha: &str) -> Result<Vec<String>, ArchonError> {
     assert!(
         stack::is_commit_id(from) && stack::is_commit_id(sha),
@@ -556,7 +608,6 @@ fn authored_paths(dir: &Path, from: &str, sha: &str) -> Result<Vec<String>, Arch
     let (not_from, not_sha) = (format!("^{from}"), format!("^{sha}"));
     let args = [
         "log",
-        "--first-parent",
         "--diff-merges=remerge",
         "--name-only",
         "-z",
@@ -574,7 +625,6 @@ fn authored_paths(dir: &Path, from: &str, sha: &str) -> Result<Vec<String>, Arch
     let printed = String::from_utf8_lossy(&ran.stdout);
     let mut paths: Vec<String> = printed
         .split('\0')
-        .map(str::trim)
         .filter(|path| !path.is_empty())
         .map(str::to_owned)
         .collect();
@@ -604,6 +654,8 @@ mod tests {
             "crates/x/README.md",
             "Cargo.toml",
             "docsy/a.rs",
+            " docs/a.rs",
+            "\nREADME.md",
         ] {
             assert!(!is_prose(code), "{code}");
         }

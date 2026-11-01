@@ -11,12 +11,13 @@
   reviewer re-read the whole feature and the refresh became a fix loop.
   Now its brief asks for the merge, conflict resolution and green checks
   only, with the owner's brief quoted as read-only context and other
-  findings left as follow-ups. Archon previews the merge with
-  `git merge-tree`: a clean merge, or one conflicting only in changelogs,
-  top-level `*.md` or `docs/` files, owes no reviewer (the owner's passing
-  review stands, and the refresh fails if it changes code beyond the
-  merge); a code conflict owes one reviewer of the resolution, read from
-  the merge's first parent. A refresh whose branch already holds the base
+  findings left as follow-ups. When the branch head is the commit a passing
+  review held, Archon previews the merge with `git merge-tree`: a clean
+  merge, or one conflicting only in changelogs, top-level `*.md` or `docs/`
+  files, owes no reviewer (that review stands, and the refresh fails if it
+  changes code beyond the merge); a code conflict owes one reviewer of the
+  resolution, read from the merge's first parent. A branch that moved since
+  its review keeps the owner's review level, read whole. A refresh whose branch already holds the base
   commit when it is dispatched ends at once, with no checks or reviewer,
   saying there was nothing to merge. Each refresh stage gets
   `[limits] refresh_stage_timeout_minutes` (default 30) unless the request

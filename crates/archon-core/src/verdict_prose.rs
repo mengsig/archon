@@ -135,7 +135,9 @@ pub(crate) fn reports_problem(explanation: &str, next_line: &str) -> bool {
         .flatten()
         .next()
         .unwrap_or_default();
-    assert!(!sentences.is_empty(), "a split yields a sentence");
+    if sentences.is_empty() {
+        return false;
+    }
     let mut clauses: Vec<&[String]> = Vec::new();
     let mut carried: Vec<bool> = Vec::new();
     for sentence in &sentences {

@@ -314,6 +314,11 @@ const DENIABLE: [&str; 15] = [
 /// [`DENIABLE`] word, or [a reported problem](reports_problem). Any other
 /// text after a plain pass word is explanation.
 fn holds_back(explanation: &str) -> bool {
+    holds_back_before(explanation, "")
+}
+
+/// [`holds_back`] for a summary line, whose `next_line` may zero a problem it reports.
+fn holds_back_before(explanation: &str, next_line: &str) -> bool {
     let words: Vec<String> = explanation
         .split(|c: char| !c.is_alphanumeric())
         .filter(|word| !word.is_empty())
@@ -326,7 +331,7 @@ fn holds_back(explanation: &str) -> bool {
         let blocker = among(&BLOCKERS, word) && !among(&DENIES, before);
         let lacks = word == "no" && !among(&DENIABLE, after);
         among(&HOLDS_PASS, word) || blocker || lacks
-    }) || reports_problem(explanation)
+    }) || reports_problem(explanation, next_line)
 }
 
 /// Whether the summary after a pass's verdict line takes it back: anything
@@ -337,9 +342,11 @@ fn trails_back(rest: &str) -> bool {
         let value = value.trim().trim_matches(['`', '*']);
         !value.is_empty() && value.bytes().all(|b| b.is_ascii_hexdigit())
     };
-    rest.lines().any(|line| {
+    let lines: Vec<&str> = rest.lines().collect();
+    lines.iter().enumerate().any(|(at, line)| {
         let commit = strip_label(line, "head").or_else(|| strip_label(line, "base"));
-        !commit.is_some_and(is_commit) && holds_back(line)
+        let next = lines[at + 1..].iter().find(|l| !l.trim().is_empty());
+        !commit.is_some_and(is_commit) && holds_back_before(line, next.copied().unwrap_or(""))
     })
 }
 
@@ -1265,6 +1272,10 @@ mod tests {
             "Verdict: pass. Open issues: the gate crashes",
             "Verdict: pass. The gate still crashes",
             "Verdict: pass. Changes are necessary",
+            "Verdict: pass. No blockers, issues remain in run.rs",
+            "Verdict: pass. No issues found, bugs remain",
+            "Verdict: pass.\nNo issues.\nBugs found in run.rs",
+            "Verdict: pass.\n\n### Issues found\nThe parser drops a line",
         ] {
             assert_eq!(
                 Verdict::extract(summary, None),
@@ -1312,6 +1323,18 @@ mod tests {
             "Verdict: pass. Problems found: n/a",
             "Verdict: pass. Remaining issues: none",
             "Verdict: pass. Open issues: 0",
+            "Verdict: pass. No issues or bugs found",
+            "Verdict: pass. No critical bugs or issues found",
+            "Verdict: pass. No blockers or issues remain",
+            "Verdict: pass. No issues, problems or bugs found",
+            "Verdict: pass. Zero issues or bugs found",
+            "Verdict: pass. None of the bugs remain",
+            "Verdict: pass. None of the changes are needed",
+            "Verdict: pass. Without any issues remaining",
+            "Verdict: pass. Without any changes needed",
+            "Verdict: pass.\n\n### Issues found\nNone",
+            "Verdict: pass.\nIssues found:\n- none",
+            "Verdict: pass.\nChanges needed:\n(none)",
             "Verdict: pass.\nIssues found: none\nChanges needed: none",
         ] {
             assert_eq!(Verdict::extract(summary, None), Verdict::Pass, "{summary}");

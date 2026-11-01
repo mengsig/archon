@@ -79,6 +79,16 @@ const REFERENTIAL: [&str; 17] = [
     "the", "this", "that", "these", "those", "its", "their", "which", "of", "in", "from", "by",
     "with", "to", "fix", "fixes", "fixed",
 ];
+/// Other nouns a denial may list beside [`PROBLEMS`] (`no blockers or issues`).
+const LISTED: [&str; 5] = [
+    "blocker",
+    "blockers",
+    "regression",
+    "regressions",
+    "findings",
+];
+/// Words that join the nouns of a denial (`none of the`, `without any`, `issues or bugs`).
+const LINKS: [&str; 8] = ["or", "nor", "any", "of", "the", "those", "these", "all"];
 /// Words that, opening a noun phrase, list what is left (`Remaining issues: …`).
 const LISTING: [&str; 4] = ["remaining", "open", "known", "outstanding"];
 /// Words allowed between a noun and the verb that reports it.
@@ -111,29 +121,38 @@ const CLOSED: [&str; 5] = ["fixed", "resolved", "addressed", "corrected", "handl
 /// Whether `explanation` reports, in any one clause, that changes are
 /// needed, that issues were found or remain, or that something is still
 /// broken, unless the words before deny it (`no issues found`) or after
-/// zero it (`issues found: none`).
-pub(crate) fn reports_problem(explanation: &str) -> bool {
-    let clauses: Vec<Vec<String>> = explanation
-        .split(['.', ';', ',', ':', '!', '?', '—', '–', '(', ')', '\n'])
-        .map(|clause| {
-            clause
-                .to_lowercase()
-                .replace("n/a", "none")
-                .split(|c: char| !c.is_alphanumeric())
-                .filter(|word| !word.is_empty())
-                .map(str::to_owned)
-                .collect()
-        })
-        .collect();
-    assert!(!clauses.is_empty(), "a split yields a clause");
-    clauses.iter().enumerate().any(|(at, clause)| {
-        let words: Vec<&str> = clause.iter().map(String::as_str).collect();
-        let Some(end) = clause_report(&words) else {
+/// zero it (`issues found: none`, also on the `next_line`).
+pub(crate) fn reports_problem(explanation: &str, next_line: &str) -> bool {
+    let tokens = |text: &str| -> Vec<Vec<Vec<String>>> {
+        text.split(['.', ';', ':', '!', '?', '—', '–', '(', ')', '\n'])
+            .map(|sentence| sentence.split(',').map(words_of).collect::<Vec<_>>())
+            .filter(|sentence| sentence.iter().any(|clause| !clause.is_empty()))
+            .collect()
+    };
+    let sentences = tokens(explanation);
+    let peek: Vec<String> = tokens(next_line)
+        .into_iter()
+        .flatten()
+        .next()
+        .unwrap_or_default();
+    assert!(!sentences.is_empty(), "a split yields a sentence");
+    let mut clauses: Vec<&[String]> = Vec::new();
+    let mut carried: Vec<bool> = Vec::new();
+    for sentence in &sentences {
+        for (at, clause) in sentence.iter().enumerate() {
+            let before = at.checked_sub(1).map(|prev| as_strs(&sentence[prev]));
+            carried.push(before.is_some_and(|prev| denied_before(&prev, false)));
+            clauses.push(clause);
+        }
+    }
+    let evaluated = clauses.len();
+    clauses.push(&peek);
+    (0..evaluated).any(|at| {
+        let words = as_strs(clauses[at]);
+        let Some(end) = clause_report(&words, carried[at]) else {
             return false;
         };
-        let next: Vec<&str> = clauses
-            .get(at + 1)
-            .map_or(Vec::new(), |next| next.iter().map(String::as_str).collect());
+        let next = as_strs(clauses[at + 1]);
         let after = if end < words.len() {
             &words[end..]
         } else {
@@ -141,6 +160,20 @@ pub(crate) fn reports_problem(explanation: &str) -> bool {
         };
         !zeroed(after) && !closed(&words[end..])
     })
+}
+
+fn words_of(clause: &str) -> Vec<String> {
+    clause
+        .to_lowercase()
+        .replace("n/a", "none")
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn as_strs(words: &[String]) -> Vec<&str> {
+    words.iter().map(String::as_str).collect()
 }
 
 /// Whether `after` a report names none of it (`none`, `0`) and says nothing was fixed.
@@ -160,7 +193,7 @@ fn closed(after: &[&str]) -> bool {
 }
 
 /// Where in `words` the first report ends (just past its verb), if any.
-fn clause_report(words: &[&str]) -> Option<usize> {
+fn clause_report(words: &[&str], carried: bool) -> Option<usize> {
     let lead = words.iter().take_while(|w| is_modifier(w)).count();
     let first = words.get(lead).copied().unwrap_or_default();
     let rest = words.get(lead + 1..).unwrap_or_default();
@@ -176,7 +209,7 @@ fn clause_report(words: &[&str]) -> Option<usize> {
     };
     let end = opening
         .map(|end| lead + 1 + end)
-        .or_else(|| (0..words.len()).find_map(|at| report_at(words, at)));
+        .or_else(|| (0..words.len()).find_map(|at| report_at(words, at, carried)));
     assert!(
         end.is_none_or(|end| end <= words.len()),
         "a report ends in its clause"
@@ -185,7 +218,7 @@ fn clause_report(words: &[&str]) -> Option<usize> {
 }
 
 /// The end of the report the word at `at` starts, if no denial directly precedes it.
-fn report_at(words: &[&str], at: usize) -> Option<usize> {
+fn report_at(words: &[&str], at: usize, carried: bool) -> Option<usize> {
     let word = words[at];
     let rest = &words[at + 1..];
     let end = if PROBLEMS.contains(&word) {
@@ -210,7 +243,7 @@ fn report_at(words: &[&str], at: usize) -> Option<usize> {
         None
     }?;
     assert!(at + 1 + end <= words.len(), "a report ends in its clause");
-    (!denied_before(&words[..at])).then_some(at + 1 + end)
+    (!denied_before(&words[..at], carried)).then_some(at + 1 + end)
 }
 
 /// Whether a noun after `before` opens its own phrase (`and bugs were found`),
@@ -219,13 +252,21 @@ fn starts_phrase(before: &[&str]) -> bool {
     !before.iter().any(|w| REFERENTIAL.contains(w))
 }
 
-/// Whether the words just before a report (past modifiers and fillers) deny it.
-fn denied_before(before: &[&str]) -> bool {
-    let denial = before
-        .iter()
-        .rev()
-        .find(|w| !is_modifier(w) && !FILLERS.contains(w));
-    denial.is_some_and(|w| DENIES.contains(w) || ["nothing", "without"].contains(w))
+/// Whether the words just before a report deny it: the nearest word past
+/// modifiers, fillers and a list of nouns (`no issues or bugs`, `none of the`),
+/// or `carried` when nothing is left (`No issues, bugs found`).
+fn denied_before(before: &[&str], carried: bool) -> bool {
+    let skipped = |w: &&str| {
+        is_modifier(w)
+            || FILLERS.contains(w)
+            || LINKS.contains(w)
+            || PROBLEMS.contains(w)
+            || LISTED.contains(w)
+    };
+    match before.iter().rev().find(|w| !skipped(w)) {
+        Some(w) => DENIES.contains(w) || ["nothing", "without"].contains(w),
+        None => carried,
+    }
 }
 
 fn is_modifier(word: &str) -> bool {

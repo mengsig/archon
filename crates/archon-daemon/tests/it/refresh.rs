@@ -32,11 +32,21 @@ async fn delivering() -> (Harness, FakeGh) {
 
 /// Enqueue a `direct` change whose review owes one reviewer.
 async fn enqueue(h: &Harness, title: &str) -> QueueItem {
+    enqueue_in(h, "direct", title, Some(ReviewLevel::Standard)).await
+}
+
+/// Enqueue a change into `pipeline` at `review`, or the pipeline's own level.
+async fn enqueue_in(
+    h: &Harness,
+    pipeline: &str,
+    title: &str,
+    review: Option<ReviewLevel>,
+) -> QueueItem {
     let request = EnqueueRequest {
         onto: None,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
-        pipeline: Some("direct".into()),
+        pipeline: Some(pipeline.into()),
         title: title.into(),
         brief: "brief".into(),
         priority: Default::default(),
@@ -47,7 +57,7 @@ async fn enqueue(h: &Harness, title: &str) -> QueueItem {
         budget_usd: None,
         idempotency_key: None,
         autonomy: AutonomyPatch {
-            review: Some(ReviewLevel::Standard),
+            review,
             ..AutonomyPatch::default()
         },
         origin: None,
@@ -1079,6 +1089,91 @@ async fn a_refresh_of_a_clean_merge_ships_with_no_reviewer() {
     assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
     let head = git(&h.repo, &["rev-parse", &run.branch]);
     assert_eq!(pushed(&origin_of(&h), &run.branch), Some(head));
+}
+
+/// The owner's run records the review archond verified: the shipped commit
+/// and its tree, which a clean refresh's waiver stands on.
+#[tokio::test]
+async fn a_shipped_run_records_the_review_archond_verified() {
+    let (h, _gh) = delivering().await;
+    let (_, run) = shipped(&h, "the change").await;
+    let head = git(&h.repo, &["rev-parse", &run.branch]);
+    let tree = git(&h.repo, &["rev-parse", &format!("{head}^{{tree}}")]);
+    let verified = h.ctx.store.lock().await.run_review(&run.id).unwrap();
+    assert_eq!(verified, Some(archon_queue::RunReview { head, tree }));
+}
+
+/// A run recorded before archond kept its verified review holds none, so a
+/// clean refresh of it keeps one reviewer, with no error.
+#[tokio::test]
+async fn a_run_without_a_verified_review_on_record_waives_no_reviewer() {
+    let (h, _gh) = delivering().await;
+    let (owner, run) = shipped(&h, "the change").await;
+    let key = format!("run_review:{}", run.id);
+    let mut store = h.ctx.store.lock().await;
+    assert!(store.kv_get(&key).unwrap().is_some(), "the review is kept");
+    store.kv_delete(&key).unwrap();
+    assert_eq!(store.run_review(&run.id).unwrap(), None);
+    drop(store);
+    advance_origin(&h, "upstream.txt", "elsewhere\n");
+    let fix = refresh(&h, &owner).await.expect("queued");
+    assert_eq!(fix.autonomy.review, ReviewLevel::Standard);
+}
+
+/// A ship stage that owes no reviewer (the `refactor` pipeline's review is a
+/// later stage of its own) may claim a pass, but archond verified none: a
+/// clean refresh of its branch keeps one reviewer.
+#[tokio::test]
+async fn a_claimed_review_no_gate_verified_waives_no_reviewer() {
+    let (h, _gh) = delivering().await;
+    let owner = enqueue_in(&h, "refactor", "the refactor", None).await;
+    assert_ne!(
+        owner.autonomy.review,
+        ReviewLevel::None,
+        "the item owes a review"
+    );
+    let passed = |summary: &str| archon_core::run::StageOutcome::Completed {
+        summary: format!("{summary}\nVERDICT: pass"),
+        structured: None,
+    };
+    h.dispatch().await;
+    h.settle_running(|_| passed("Baseline taken")).await;
+    h.dispatch().await;
+    let lead = h.running().await.remove(0);
+    assert_eq!(lead.stage_id, "refactor", "the stage recording the ship");
+    let reviewer = h
+        .backend
+        .delegate(lead.aether_agent.as_ref().unwrap(), REVIEW_MODEL);
+    let extra = pass_by(std::slice::from_ref(&reviewer));
+    let built = shipped_by(&h, &lead, "Refactored; reviewed", extra).await;
+    let head = match &built {
+        archon_core::run::StageOutcome::Completed {
+            structured: Some(record),
+            ..
+        } => record["commit"].clone(),
+        other => panic!("a completed change: {other:?}"),
+    };
+    h.backend.complete_delegated(
+        &reviewer,
+        json!({"verdict": "pass", "head": head, "findings": []}),
+    );
+    h.settle_running(|_| built.clone()).await;
+    for _ in 0..2 {
+        h.dispatch().await;
+        h.settle_running(|_| passed("Checked")).await;
+    }
+    h.dispatch().await;
+    let state = h.state(&owner.id).await;
+    assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+    let run = h.run(&owner.id).await;
+    assert_eq!(h.ctx.store.lock().await.run_review(&run.id).unwrap(), None);
+
+    advance_origin(&h, "upstream.txt", "elsewhere\n");
+    let fix = refresh(&h, &owner).await.expect("queued");
+    assert_eq!(fix.autonomy.review, owner.autonomy.review, "no waiver");
+    let target = h.ctx.store.lock().await.stack_fix(&fix.id).unwrap();
+    let refresh = target.and_then(|target| target.refresh).expect("a refresh");
+    assert_eq!(refresh.from, None, "read whole from the base");
 }
 
 /// A refresh that owes no reviewer may not change code beyond its merge:

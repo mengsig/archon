@@ -344,8 +344,8 @@ async fn check_pr_open(
 
 /// Whether `fresh.from`, the branch head a refresh merges into, is the commit a
 /// succeeded item on that branch (`owner` or a fix of it) shipped as its ship
-/// record, holding the very tree its review gate and delivery checked: only
-/// then may the refresh's review start there. Anything else is reviewed whole.
+/// record, holding the very tree its review gate verified and delivery checked:
+/// only then may the refresh's review start there. Anything else is reviewed whole.
 async fn reviewed_tip(
     ctx: &DaemonContext,
     owner: &QueueItemId,
@@ -369,7 +369,9 @@ async fn reviewed_tip(
             continue;
         };
         assert_eq!(&run.item, id, "the item's own run");
-        if handed_in(&store.stage_runs(&run.id)?).as_ref() == Some(&tip) {
+        let verified = store.run_review(&run.id)?;
+        let stages = store.stage_runs(&run.id)?;
+        if handed_in(&stages, verified.as_ref()).as_ref() == Some(&tip) {
             return Ok(true);
         }
     }
@@ -377,10 +379,19 @@ async fn reviewed_tip(
 }
 
 /// The one commit and tree every ship record among a run's completed `stages`
-/// names, when archond shipped it under a review it checked. `None` when an
-/// agent ran a ship stage, no record holds a passing review, or records disagree.
-fn handed_in(stages: &[archon_core::run::StageRun]) -> Option<(String, String)> {
+/// names, when archond shipped it and its review gate `verified` that very
+/// commit and tree. `None` when an agent ran a ship stage, archond verified no
+/// review of the run (a stage's own claim counts for nothing), or records disagree.
+fn handed_in(
+    stages: &[archon_core::run::StageRun],
+    verified: Option<&archon_queue::RunReview>,
+) -> Option<(String, String)> {
     use archon_core::{catalog::StageKind, run::StageState};
+    let verified = verified?;
+    assert!(
+        stack::is_commit_id(&verified.head) && stack::is_commit_id(&verified.tree),
+        "the store holds a verified review in full ids"
+    );
     // An unknown kind may have been an agent shipping by itself.
     if stages
         .iter()
@@ -388,24 +399,17 @@ fn handed_in(stages: &[archon_core::run::StageRun]) -> Option<(String, String)> 
     {
         return None;
     }
-    let mut reviewed = false;
-    let mut records = Vec::new();
-    for stage in stages.iter().filter(|s| s.state == StageState::Completed) {
-        let Some(structured) = stage.structured.as_ref() else {
-            continue;
-        };
-        let Ok(record) = archon_pipeline::ShipRecord::read(Some(structured)) else {
-            continue;
-        };
-        let named = archon_pipeline::review::claimed_reviewers(structured);
-        reviewed |= named.is_some_and(|named| !named.is_empty());
-        records.push((record.commit, record.tree));
-    }
+    let completed = stages.iter().filter(|s| s.state == StageState::Completed);
+    let records: Vec<(String, String)> = completed
+        .filter_map(|stage| archon_pipeline::ShipRecord::read(stage.structured.as_ref()).ok())
+        .map(|record| (record.commit, record.tree))
+        .collect();
     let first = records.first()?.clone();
-    if !reviewed || records.iter().any(|record| *record != first) {
+    if records.iter().any(|record| *record != first) {
         return None;
     }
-    Some(first).filter(|(commit, tree)| stack::is_commit_id(commit) && stack::is_commit_id(tree))
+    let reviewed = (verified.head.clone(), verified.tree.clone());
+    Some(first).filter(|record| *record == reviewed)
 }
 
 /// The review a refresh owes: none when its merge is clean or conflicts only in
@@ -805,20 +809,65 @@ mod tests {
         }
     }
 
+    /// The review archond verified at `commit` and the tree [`recorded`] names.
+    fn verified(commit: &str) -> archon_queue::RunReview {
+        archon_queue::RunReview {
+            head: commit.to_owned(),
+            tree: "b".repeat(40),
+        }
+    }
+
     #[test]
     fn ship_records_that_disagree_hand_in_no_reviewed_head() {
         let (one, other) = ("a".repeat(40), "c".repeat(40));
         let held = Some((one.clone(), "b".repeat(40)));
-        assert_eq!(handed_in(&[recorded(&one)]), held);
-        assert_eq!(handed_in(&[recorded(&one), recorded(&one)]), held);
-        assert_eq!(handed_in(&[recorded(&one), recorded(&other)]), None);
-        assert_eq!(handed_in(&[]), None);
-        let mut unreviewed = recorded(&one);
-        unreviewed.structured.as_mut().unwrap()["review"] = serde_json::Value::Null;
-        assert_eq!(handed_in(&[unreviewed]), None, "no review on record");
+        let review = verified(&one);
+        let at_one = Some(&review);
+        assert_eq!(handed_in(&[recorded(&one)], at_one), held);
+        assert_eq!(handed_in(&[recorded(&one), recorded(&one)], at_one), held);
+        assert_eq!(handed_in(&[recorded(&one), recorded(&other)], at_one), None);
+        assert_eq!(handed_in(&[], at_one), None);
         let mut agent_shipped = recorded(&one);
         agent_shipped.kind = Some(archon_core::catalog::StageKind::Ship);
-        assert_eq!(handed_in(&[recorded(&one), agent_shipped]), None);
+        assert_eq!(handed_in(&[recorded(&one), agent_shipped], at_one), None);
+    }
+
+    /// A stage's claimed pass anchors nothing: a stage that owed no reviewer
+    /// (or a run recorded before archond kept its verified review) leaves none.
+    #[test]
+    fn only_a_review_archond_verified_hands_in_a_reviewed_head() {
+        let (one, other) = ("a".repeat(40), "c".repeat(40));
+        let claimed = recorded(&one);
+        assert!(
+            archon_pipeline::review::claimed_reviewers(claimed.structured.as_ref().unwrap())
+                .is_some_and(|named| !named.is_empty()),
+            "the stage claims a pass"
+        );
+        assert_eq!(
+            handed_in(std::slice::from_ref(&claimed), None),
+            None,
+            "unverified"
+        );
+        let elsewhere = verified(&other);
+        assert_eq!(
+            handed_in(std::slice::from_ref(&claimed), Some(&elsewhere)),
+            None,
+            "verified at another commit"
+        );
+        let mut other_tree = verified(&one);
+        other_tree.tree = "d".repeat(40);
+        assert_eq!(
+            handed_in(std::slice::from_ref(&claimed), Some(&other_tree)),
+            None
+        );
+        let mut unclaimed = recorded(&one);
+        unclaimed.structured.as_mut().unwrap()["review"] = serde_json::Value::Null;
+        let held = Some((one.clone(), "b".repeat(40)));
+        assert_eq!(
+            handed_in(&[unclaimed], Some(&verified(&one))),
+            held,
+            "the verified review stands whatever the record claims"
+        );
     }
 
     #[test]

@@ -412,7 +412,12 @@ listed) and names the reviewers whose results hold them in full: the run ends
 and the orchestrator reshapes or retries the item. The stop is marked before
 the cancel goes out, so a lead that settles first, an unanswered cancel the
 sweep retries, or a stall the watchdog finds meanwhile all end in that
-escalation.
+escalation. Each count rereads every settled child of the stage attempt that
+it has not read, so a failed round whose event was missed still counts, at
+the next reviewer's event or at the lead's completion; a resumed lead's
+attempt holds only the children delegated after it resumed. A result Aether
+cannot show yet is retried, never skipped, and the rounds keep the order
+Aether created their reviewers in, so the latest is the last created.
 Archon records the named reviewers whose passes hold as `review.reviewer_agents` and the models
 Aether ran them on as `review.reviewer_models`, replacing anything the
 agent wrote there.

@@ -4,6 +4,17 @@
 
 ### Fixed
 
+- Every failed review round of a stage attempt counts toward the cap of
+  three, once, even one whose reviewer event archond missed (a lost wakeup,
+  a restart, a result not readable yet). The tally added only the reviewer
+  an event named, so a review-fix loop could run past the cap. Now each
+  reviewer event, and the lead's completion when it owes a review, rereads
+  every settled child of the attempt not read before. A result Aether
+  cannot show yet fails the event or the settle so it is retried, rather
+  than being skipped; an attempt that resumes a kept lead records the
+  children the lead already held and counts only later ones; and rounds
+  keep the order Aether created their reviewers in, so a fail read late
+  is not labelled the latest round in the escalation.
 - A refresh skips its reviewer only on a branch whose review archond itself
   verified. The waiver trusted a passing review claimed by any completed
   stage holding the ship record, so a stage that owed no reviewer (the

@@ -3401,7 +3401,8 @@ async fn the_next_stage_waits_until_every_helper_of_the_lead_has_ended() {
     let lead = h.running().await.remove(0).aether_agent.unwrap();
     let helper = h.backend.delegate(&lead, MODEL);
     let below = h.backend.delegate(&helper, MODEL);
-    h.backend.end_delegated(&helper, DescendantState::Completed);
+    h.backend
+        .complete_delegated_with(&helper, completed("helped; its own helper runs on"));
     settle_reviewed(&h, "Built; reviewed").await;
     h.dispatch().await;
     assert_eq!(h.backend.cancelled(), std::slice::from_ref(&lead));
@@ -3552,12 +3553,7 @@ async fn review_round_fails(h: &Harness, lead: &StageRun, n: usize) {
 fn review_round_event(h: &Harness, lead: &StageRun, n: usize) -> AetherEvent {
     let lead_id = lead_agent(lead);
     let reviewer = h.backend.delegate(&lead_id, REVIEW_MODEL);
-    let finding = serde_json::json!({"severity": "high", "title": format!("finding {n}")});
-    let verdict = serde_json::json!({
-        "verdict": "fail",
-        "head": format!("{n:07}abcdef"),
-        "findings": [finding],
-    });
+    let verdict = round_fail(n);
     h.backend.complete_delegated(&reviewer, verdict.clone());
     AetherEvent {
         seq: n as u64,
@@ -3574,6 +3570,16 @@ fn review_round_event(h: &Harness, lead: &StageRun, n: usize) -> AetherEvent {
             },
         },
     }
+}
+
+/// A failing verdict on head `n` with one blocking finding, `finding n`.
+fn round_fail(n: usize) -> serde_json::Value {
+    let finding = serde_json::json!({"severity": "high", "title": format!("finding {n}")});
+    serde_json::json!({
+        "verdict": "fail",
+        "head": format!("{n:07}abcdef"),
+        "findings": [finding],
+    })
 }
 
 /// The stage's error once its review loop was capped, or `None` while it runs.
@@ -3784,12 +3790,13 @@ async fn a_cap_marked_while_a_completion_is_verified_still_escalates() {
     adaptive_item(&h).await;
     let lead = h.running().await.remove(0);
     let (built, _) = reviewed_by_one(&h, "Verified; one reviewer passed it").await;
-    let gate = h.backend.hold_next_descendants();
-    let checks_before = h.backend.descendant_checks().len();
+    // The first read is the completion's round tally; the second, its review's.
+    let gate = h.backend.hold_descendants_after(1);
+    let checks_before = h.backend.descendant_checks().len() + 1;
     let (ctx, agent) = (h.ctx.clone(), lead_agent(&lead));
     let settling = tokio::spawn(async move { executor::stage_settled(&ctx, &agent, built).await });
     let held = async {
-        while h.backend.descendant_checks().len() == checks_before {
+        while h.backend.descendant_checks().len() <= checks_before {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     };
@@ -3804,6 +3811,124 @@ async fn a_cap_marked_while_a_completion_is_verified_still_escalates() {
     gate.add_permits(1);
     settling.await.unwrap().unwrap();
     assert_eq!(escalated(&h, &lead).await.as_deref(), Some(reason));
+}
+
+/// The events of the reviewers that failed three rounds were all missed: the
+/// next reviewer's event, or else the lead's completion, finds them.
+#[tokio::test]
+async fn failed_rounds_whose_events_were_missed_still_cap_the_stage() {
+    for completes in [false, true] {
+        let h = Harness::new().await;
+        adaptive_item(&h).await;
+        let lead = h.running().await.remove(0);
+        for n in 1..=3 {
+            review_round_event(&h, &lead, n);
+        }
+        assert_eq!(escalated(&h, &lead).await, None, "no event was seen");
+        if completes {
+            h.settle_running(|_| completed("implemented")).await;
+        } else {
+            let lead_id = lead_agent(&lead);
+            let next = h.backend.delegate(&lead_id, REVIEW_MODEL);
+            h.backend
+                .complete_delegated(&next, serde_json::json!({"verdict": "pass"}));
+            executor::reviewer_settled(&h.ctx, &lead_id, &next)
+                .await
+                .unwrap();
+        }
+        let error = escalated(&h, &lead)
+            .await
+            .expect("the missed rounds cap it");
+        assert!(
+            error.contains("failed 3 rounds"),
+            "completes={completes}: {error}"
+        );
+    }
+}
+
+/// The lead completes while its third failing reviewer's result is not
+/// readable yet: the settle fails to be retried, never completing past it.
+#[tokio::test]
+async fn a_completion_with_a_reviewer_result_not_readable_yet_is_retried() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    for n in 1..=2 {
+        review_round_fails(&h, &lead, n).await;
+    }
+    let lead_id = lead_agent(&lead);
+    let third = h.backend.delegate(&lead_id, REVIEW_MODEL);
+    // Aether shows it completed before its task's result settles.
+    h.backend.end_delegated(&third, DescendantState::Completed);
+    let settled = executor::stage_settled(&h.ctx, &lead_id, completed("implemented")).await;
+    assert!(
+        matches!(settled, Err(ArchonError::Unavailable(_))),
+        "{settled:?}"
+    );
+    assert_eq!(escalated(&h, &lead).await, None, "the settle is retried");
+    h.backend.complete_delegated(&third, round_fail(3));
+    executor::stage_settled(&h.ctx, &lead_id, completed("implemented"))
+        .await
+        .unwrap();
+    let error = escalated(&h, &lead).await.expect("the third round caps it");
+    assert!(error.contains("failed 3 rounds"), "{error}");
+}
+
+/// Two reviewers read side by side and the later one settles first: the
+/// earlier one's fail, read last, is still not the latest round.
+#[tokio::test]
+async fn a_fail_read_late_is_ordered_by_its_reviewer_s_creation() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    review_round_fails(&h, &lead, 1).await;
+    let lead_id = lead_agent(&lead);
+    let older = h.backend.delegate(&lead_id, REVIEW_MODEL);
+    let newer = h.backend.delegate(&lead_id, REVIEW_MODEL);
+    for (reviewer, n) in [(&newer, 3), (&older, 2)] {
+        h.backend.complete_delegated(reviewer, round_fail(n));
+        executor::reviewer_settled(&h.ctx, &lead_id, reviewer)
+            .await
+            .unwrap();
+    }
+    let error = escalated(&h, &lead).await.expect("three rounds cap it");
+    let (latest, earlier) = error
+        .split_once("Earlier rounds")
+        .expect("earlier rounds are listed apart");
+    assert!(
+        latest.contains("finding 3") && !latest.contains("finding 2"),
+        "{error}"
+    );
+    assert!(earlier.contains("finding 2"), "{error}");
+}
+
+/// archond restarts while the third failing reviewer's result is not
+/// readable yet: the repeated event counts it once, with the rounds before.
+#[tokio::test]
+async fn a_restart_in_the_middle_of_a_round_counts_it_once() {
+    let mut h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    for n in 1..=2 {
+        review_round_fails(&h, &lead, n).await;
+    }
+    let event = review_round_event(&h, &lead, 3);
+    let third = event.agent.clone().expect("a reviewer's event");
+    h.backend.fail_next_outcome(unreachable_aether());
+    let handled = pump::handle_fleet_event(&h.ctx, &event).await;
+    assert!(handled.is_err(), "the round is left to the repeat");
+    assert_eq!(escalated(&h, &lead).await, None, "nothing counted it");
+
+    h.restart();
+    executor::recover(&h.ctx).await.expect("recover");
+    pump::handle_fleet_event(&h.ctx, &event).await.unwrap();
+    let error = escalated(&h, &lead).await.expect("the third round caps it");
+    assert!(error.contains("failed 3 rounds"), "{error}");
+    assert_eq!(
+        error.matches(third.as_str()).count(),
+        1,
+        "counted once: {error}"
+    );
 }
 
 /// The cap's cancel went unanswered and the lead then completed on its own:

@@ -176,6 +176,8 @@ pub(super) async fn hand_over(
     assert_eq!(stage.state, StageState::Spawning, "a reserved attempt");
     assert!(!kept.message.trim().is_empty(), "resumed with findings");
     let agent = &kept.agent;
+    // Before a wake can start the agent: what it holds now is earlier attempts'.
+    super::review::attempt_resumed(ctx, stage, agent).await?;
     if !takes_over(ctx, stage, agent).await? {
         tracing::info!(stage = %stage.id, %agent, "slot agent cannot go on; spawning a fresh one");
         return Ok(false);

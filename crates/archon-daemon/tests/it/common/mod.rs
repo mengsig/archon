@@ -784,8 +784,8 @@ struct FakeState {
     pulse_failures: VecDeque<ArchonError>,
     /// Every `descendants` call, in order.
     descendant_checks: Vec<AetherAgentId>,
-    /// The next `descendants` call waits for this gate to open.
-    descendant_hold: Option<Arc<tokio::sync::Semaphore>>,
+    /// The `descendants` call after this many more waits for the gate to open.
+    descendant_hold: Option<(usize, Arc<tokio::sync::Semaphore>)>,
     /// What a kept agent said to end the turn it was resumed in.
     answers: BTreeMap<AetherAgentId, StageOutcome>,
     /// Spawns whose objective holds the text wait for the gate to open.
@@ -1178,10 +1178,11 @@ impl FakeBackend {
         gate
     }
 
-    /// Hold the next `descendants` call, once recorded, until the gate opens.
-    pub fn hold_next_descendants(&self) -> Arc<tokio::sync::Semaphore> {
+    /// Hold the `descendants` call after the next `skip` ones, once
+    /// recorded, until the gate opens.
+    pub fn hold_descendants_after(&self, skip: usize) -> Arc<tokio::sync::Semaphore> {
         let gate = Arc::new(tokio::sync::Semaphore::new(0));
-        self.state().descendant_hold = Some(gate.clone());
+        self.state().descendant_hold = Some((skip, gate.clone()));
         gate
     }
 
@@ -1400,7 +1401,14 @@ impl AgentBackend for FakeBackend {
         let hold = {
             let mut state = self.state();
             state.descendant_checks.push(agent.clone());
-            state.descendant_hold.take()
+            match state.descendant_hold.take() {
+                Some((0, gate)) => Some(gate),
+                Some((skip, gate)) => {
+                    state.descendant_hold = Some((skip - 1, gate));
+                    None
+                }
+                None => None,
+            }
         };
         if let Some(gate) = hold {
             let _open = gate.acquire().await.expect("the hold's gate stays open");

@@ -1274,6 +1274,11 @@ mod tests {
             "Verdict: pass. Changes are necessary",
             "Verdict: pass. No issues found, bugs remain",
             "Verdict: pass. No issues, changes needed in X",
+            "Verdict: pass. No issues, 3 bugs found",
+            "Verdict: pass. No issues, a bug remains",
+            "Verdict: pass. No blockers, several bugs found",
+            "Verdict: pass. No blockers, minor issues remain",
+            "Verdict: pass. Zero blockers, three issues remain",
             "Verdict: pass.\nNo issues.\nBugs found in run.rs",
             "Verdict: pass.\n\n### Issues found\nThe parser drops a line",
         ] {

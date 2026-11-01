@@ -118,10 +118,8 @@ const ZERO: [&str; 5] = ["none", "zero", "0", "nil", "nothing"];
 /// A report directly followed by one of these (`issues found and fixed`) is closed.
 const CLOSED: [&str; 5] = ["fixed", "resolved", "addressed", "corrected", "handled"];
 
-/// Whether `explanation` reports, in any one clause, that changes are
-/// needed, that issues were found or remain, or that something is still
-/// broken, unless the words before deny it (`no issues found`) or after
-/// zero it (`issues found: none`, also on the `next_line`).
+/// Whether `explanation` reports changes needed, issues found or remaining, or
+/// something still broken, unless denied before it or zeroed after (or on `next_line`).
 pub(crate) fn reports_problem(explanation: &str, next_line: &str) -> bool {
     let tokens = |text: &str| -> Vec<Vec<Vec<String>>> {
         text.split(['.', ';', ':', '!', '?', '—', '–', '(', ')', '\n'])
@@ -198,6 +196,7 @@ fn closed(after: &[&str]) -> bool {
 /// Where in `words` the first report ends (just past its verb), if any.
 fn clause_report(words: &[&str], carried: bool) -> Option<usize> {
     let lead = words.iter().take_while(|w| is_modifier(w)).count();
+    let carried = carried && !words[..lead].iter().any(|w| counts(w));
     let first = words.get(lead).copied().unwrap_or_default();
     let rest = words.get(lead + 1..).unwrap_or_default();
     let listed = words[..lead].iter().any(|w| LISTING.contains(w));
@@ -248,7 +247,7 @@ fn report_at(words: &[&str], at: usize, carried: bool) -> Option<usize> {
         None
     }?;
     assert!(at + 1 + end <= words.len(), "a report ends in its clause");
-    let carried = carried && PROBLEMS.contains(&word);
+    let carried = carried && PROBLEMS.contains(&word) && !words[..at].iter().any(|w| counts(w));
     (!denied_before(&words[..at], carried)).then_some(at + 1 + end)
 }
 
@@ -258,9 +257,8 @@ fn starts_phrase(before: &[&str]) -> bool {
     !before.iter().any(|w| REFERENTIAL.contains(w))
 }
 
-/// Whether the words just before a report deny it: the nearest word past
-/// modifiers, fillers and a list of nouns (`no issues or bugs`, `none of the`),
-/// or `carried` from the clauses before when nothing is left (`No issues, bugs, or problems found`).
+/// Whether the words before a report, past modifiers, fillers and a noun list,
+/// deny it; with none left, `carried` from the clauses before.
 fn denied_before(before: &[&str], carried: bool) -> bool {
     let skipped = |w: &&str| {
         is_modifier(w)
@@ -273,6 +271,11 @@ fn denied_before(before: &[&str], carried: bool) -> bool {
         Some(w) => DENIES.contains(w) || ["nothing", "without"].contains(w),
         None => carried,
     }
+}
+
+/// Whether `word` counts or qualifies a noun (`3 bugs`): a new claim, not a list item.
+fn counts(word: &str) -> bool {
+    is_modifier(word) && word != "blocking" && word != "critical"
 }
 
 fn is_modifier(word: &str) -> bool {

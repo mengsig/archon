@@ -3740,13 +3740,12 @@ async fn a_cap_marked_while_a_completion_is_verified_still_escalates() {
     adaptive_item(&h).await;
     let lead = h.running().await.remove(0);
     let (built, _) = reviewed_by_one(&h, "Verified; one reviewer passed it").await;
-    // The first read is the completion's round tally; the second, its review's.
-    let gate = h.backend.hold_descendants_after(1);
-    let checks_before = h.backend.descendant_checks().len() + 1;
+    let gate = h.backend.hold_next_descendants();
+    let checks_before = h.backend.descendant_checks().len();
     let (ctx, agent) = (h.ctx.clone(), lead_agent(&lead));
     let settling = tokio::spawn(async move { executor::stage_settled(&ctx, &agent, built).await });
     let held = async {
-        while h.backend.descendant_checks().len() <= checks_before {
+        while h.backend.descendant_checks().len() == checks_before {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     };
@@ -3761,39 +3760,6 @@ async fn a_cap_marked_while_a_completion_is_verified_still_escalates() {
     gate.add_permits(1);
     settling.await.unwrap().unwrap();
     assert_eq!(escalated(&h, &lead).await.as_deref(), Some(reason));
-}
-
-/// The events of the reviewers that failed three rounds were all missed: the
-/// next reviewer's event, or else the lead's completion, finds them.
-#[tokio::test]
-async fn failed_rounds_whose_events_were_missed_still_cap_the_stage() {
-    for completes in [false, true] {
-        let h = Harness::new().await;
-        adaptive_item(&h).await;
-        let lead = h.running().await.remove(0);
-        for n in 1..=3 {
-            review_round_event(&h, &lead, n);
-        }
-        assert_eq!(escalated(&h, &lead).await, None, "no event was seen");
-        if completes {
-            h.settle_running(|_| completed("implemented")).await;
-        } else {
-            let lead_id = lead_agent(&lead);
-            let next = h.backend.delegate(&lead_id, REVIEW_MODEL);
-            h.backend
-                .complete_delegated(&next, serde_json::json!({"verdict": "pass"}));
-            executor::reviewer_settled(&h.ctx, &lead_id, &next)
-                .await
-                .unwrap();
-        }
-        let error = escalated(&h, &lead)
-            .await
-            .expect("the missed rounds cap it");
-        assert!(
-            error.contains("failed 3 rounds"),
-            "completes={completes}: {error}"
-        );
-    }
 }
 
 /// The cap's cancel went unanswered and the lead then completed on its own:

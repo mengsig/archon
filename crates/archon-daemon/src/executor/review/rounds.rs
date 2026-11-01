@@ -20,17 +20,18 @@ use crate::context::DaemonContext;
 /// Finding lines an escalation lists before it points to the reviewers' results.
 const MAX_LISTED: usize = 20;
 
-/// A stage whose review failed [`REVIEW_ROUND_CAP`] rounds: archond stops it,
-/// or settles its completion, with `reason`, an `ESCALATE:` failure that ends its run.
+/// A stage whose review failed [`REVIEW_ROUND_CAP`] rounds: archond stops it
+/// with `reason`, an `ESCALATE:` failure that ends its run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::executor) struct Capped {
     pub stage: StageRunId,
     pub reason: String,
 }
 
-/// Tally the failing verdicts of `lead`'s settled reviewers, `reviewer`
-/// among them; the stage to stop once the tally reaches the cap. An Aether
-/// answer that fails is returned, so the pump repeats the event.
+/// Add `reviewer`'s failing verdict to its stage attempt's tally; the stage to
+/// stop once the tally reaches the cap. The tally is kept per stage attempt and
+/// grows only by settled reviewers seen here, so a lead reused by a later attempt
+/// starts at none. An Aether answer that fails is returned, so the pump repeats the event.
 pub(in crate::executor) async fn reviewer_settled(
     ctx: &DaemonContext,
     lead: &AetherAgentId,
@@ -40,99 +41,34 @@ pub(in crate::executor) async fn reviewer_settled(
     let Some(stage) = stage.filter(|s| !s.state.is_terminal()) else {
         return Ok(None);
     };
-    assert_eq!(
-        stage.aether_agent.as_ref(),
-        Some(lead),
-        "the stage of the lead"
-    );
-    tally(ctx, &stage, lead, Some(reviewer)).await
-}
-
-/// The cap a stage completing now had reached, its reviewers' events missed;
-/// asked only of a stage that owes reviewers.
-pub(in crate::executor) async fn capped_at_completion(
-    ctx: &DaemonContext,
-    stage: &StageRun,
-) -> Result<Option<Capped>, ArchonError> {
-    let Some(lead) = &stage.aether_agent else {
+    let beneath = ctx.backend.descendants(lead).await?;
+    let settled = settled_children(&beneath, lead);
+    let Some(child) = settled.into_iter().find(|c| c.agent == *reviewer) else {
         return Ok(None);
     };
-    assert!(!stage.state.is_terminal(), "only a live stage completes");
-    tally(ctx, stage, lead, None).await
-}
-
-/// Add the failing verdicts of `lead`'s settled children not read before to
-/// the stage attempt's tally. A lead fresh to this attempt has every child
-/// read, so a reviewer whose event was missed still counts; a lead reused
-/// from an earlier attempt also holds that attempt's children, so only
-/// `reviewer`, the one this event names, is read for it.
-async fn tally(
-    ctx: &DaemonContext,
-    stage: &StageRun,
-    lead: &AetherAgentId,
-    reviewer: Option<&AetherAgentId>,
-) -> Result<Option<Capped>, ArchonError> {
-    let fresh = lead_is_fresh(ctx, stage, lead).await?;
-    let beneath = ctx.backend.descendants(lead).await?;
+    let Some(verdict) = verdict_of(ctx, child).await?.filter(|v| !v.pass) else {
+        return Ok(None);
+    };
     let mut tally = load(ctx, &stage.id).await?;
-    let unread: Vec<&Descendant> = settled_children(&beneath, lead)
-        .into_iter()
-        .filter(|c| fresh || Some(&c.agent) == reviewer)
-        .filter(|c| !tally.has_read(&c.agent))
-        .collect();
-    let mut changed = false;
-    for child in &unread {
-        let verdict = match verdict_of(ctx, child).await {
-            Ok(verdict) => verdict,
-            // Another child's result may not have settled yet: a later event reads it.
-            Err(error) if Some(&child.agent) != reviewer => {
-                tracing::warn!(agent = %child.agent, %error, "a lead's child left for a later tally");
-                continue;
-            }
-            Err(error) => return Err(error),
-        };
-        tally.read.push(child.agent.to_string());
-        changed = true;
-        let Some(verdict) = verdict.filter(|v| !v.pass) else {
-            continue;
-        };
+    // A replayed reviewer adds no round, but may still owe the stop.
+    if !tally.fails.iter().any(|f| f.agent == reviewer.as_str()) {
         tally.fails.push(Fail {
-            agent: child.agent.to_string(),
+            agent: reviewer.to_string(),
             head: verdict.head,
             findings: verdict.blocking_findings,
         });
-    }
-    if changed {
         save(ctx, &stage.id, &tally).await?;
     }
-    // A replayed reviewer adds no round, but may still owe the stop.
     let rounds = rounds_of(&tally.fails);
     if rounds < REVIEW_ROUND_CAP {
         return Ok(None);
     }
-    let reason = escalation(stage, rounds, &Open::of(&tally.fails));
+    let reason = escalation(&stage, rounds, &Open::of(&tally.fails));
     assert!(StageOutcome::ends_run(&reason), "a capped review escalates");
     Ok(Some(Capped {
-        stage: stage.id.clone(),
+        stage: stage.id,
         reason,
     }))
-}
-
-/// Whether no earlier attempt of `stage` ran on `lead`.
-async fn lead_is_fresh(
-    ctx: &DaemonContext,
-    stage: &StageRun,
-    lead: &AetherAgentId,
-) -> Result<bool, ArchonError> {
-    let runs = ctx.store.lock().await.stage_runs(&stage.run)?;
-    assert!(
-        runs.iter().any(|s| s.id == stage.id),
-        "the run lists its stage"
-    );
-    let reused = runs.iter().any(|s| {
-        s.id != stage.id && s.stage_id == stage.stage_id && s.aether_agent.as_ref() == Some(lead)
-    });
-    Ok(!reused)
 }
 
 /// The direct children of `lead` that completed a task, in the order Aether lists them.
@@ -170,20 +106,10 @@ struct Fail {
     findings: Vec<String>,
 }
 
-/// The failing verdicts of one stage attempt, and every child read for one.
+/// The failing verdicts of one stage attempt.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Tally {
     fails: Vec<Fail>,
-    /// Tallies written before children were rescanned kept fails alone.
-    #[serde(default)]
-    read: Vec<String>,
-}
-
-impl Tally {
-    fn has_read(&self, agent: &AetherAgentId) -> bool {
-        let agent = agent.as_str();
-        self.read.iter().any(|a| a == agent) || self.fails.iter().any(|f| f.agent == agent)
-    }
 }
 
 fn tally_key(stage: &StageRunId) -> String {

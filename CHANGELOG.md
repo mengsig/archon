@@ -63,9 +63,8 @@
     with an `ESCALATE:` failure listing the open blocking findings, each
     with its place and remedy, which hands the item to the orchestrator; a
     lead that settles before the cancel lands, or a stall found before or
-    after, still ends in that escalation, and a failed round whose event was
-    missed is found at the next reviewer's settle or the lead's completion.
-    The fourth-round operator notice is gone. A finding's `"blocking"` mark outranks its `severity`, which
+    after, still ends in that escalation. The fourth-round operator notice
+    is gone. A finding's `"blocking"` mark outranks its `severity`, which
     decides only for a finding with no mark.
   - A passing check of a tree holds for any later head with that tree: the
     stage contract says so, and the ship gate reuses a passing fast check

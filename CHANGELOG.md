@@ -2,35 +2,82 @@
 
 ## Unreleased
 
+## 1.4.10
+
+Released 2026-11-01.
+
+A patch release on 1.4.9 that cuts review and refresh time. Review loops
+converge: only blocking findings fail a verdict, a fix is re-reviewed by one
+reviewer, and a third failed round escalates (#339, #346). A refresh reviews
+only its merge, ends at once when there is nothing to merge, and runs on its
+own 30-minute timeout (#344). Archon can now review a contributor's pull
+request, a fork's included, and merge it at the head its reviewers passed
+(#298, #301). A stale local base no longer fails a "no change needed" item
+(#341, reported by @D-Brammer), and a stage agent stopped at its deadline is
+woken once to commit and report (#347).
+
+Archon 1.4.10 needs **Aether 1.2.9**: it is released with and tested on that
+release. Aether 1.2.9 holds only TUI fixes and a docs page over 1.2.8, with
+no change to its daemon or protocol: it serves protocols 17 to 25. Neither
+the installer nor `archon update` pins an Aether version; check with `aether
+--version` and update an older one with `aether update`. The Aether protocol
+Archon asks for stays 24 and the oldest it accepts stays 17. The daemon
+protocol stays 23 and the store schema stays 18: a 1.4.9 store opens
+unchanged, and going back to 1.4.9 needs no copy of the data directory. From
+1.4.9, `archon update --yes` updates and restarts archond at once, keeping
+its stage agents running; from 1.4.8, follow the 1.4.9 upgrade note below.
+
+### Pull requests
+
+- Archon reviews and merges any pull request, a contributor's fork included
+  (#298, #301). Archon could deliver into an existing pull request but never
+  merge one it did not open, and refused a fork's outright. A built-in
+  `review` pipeline, queued `onto: {pr: <n>}`, reviews the pull request at
+  its frozen head and commits or pushes nothing, so `onto` may name a fork
+  or a repository the operator cannot push to. When its reviewers pass,
+  archond records the exact head they passed, a key no agent can write.
+  `request_merge` and `archon merge` of that item then merge the pull
+  request only while GitHub still shows that head with every check green
+  (no acknowledgement or waiver), by the repository's usual method pinned
+  to the head, so GitHub credits the contributor; a head that moved since
+  is refused naming both commits. An item that `depends_on` a passed review
+  starts from the reviewed head and opens its own pull request into the
+  same base, shipping those commits unchanged beneath its own. Nothing is
+  ever pushed to the contributor's branch, an item delivered `onto` an
+  owner's pull request is still never merged, auto-merge never applies to a
+  reviewed one, and a review item cannot be refreshed: queue a new review.
+
 ### Refresh
 
-- A refresh only merges its fresh base, and is reviewed and bounded so. Last
-  week refreshes took 60 to 330 minutes each, ~900 stage-minutes in all: the
-  refresh copied the owner's whole brief as work to do, ran on the
-  pipeline's long timeouts, and owed a fresh whole-change review, so a new
-  reviewer re-read the whole feature and the refresh became a fix loop.
-  Now its brief asks for the merge, conflict resolution and green checks
-  only, with the owner's brief quoted as read-only context and other
-  findings left as follow-ups. When the branch head is the commit a passing
-  review held, Archon previews the merge with `git merge-tree`: a clean
-  merge, or one conflicting only in changelogs or in top-level or `docs/`
-  Markdown, reStructuredText, AsciiDoc or raster images, owes no reviewer (that review stands, and the refresh fails if it
-  changes code beyond the merge); a code conflict owes one reviewer of the
-  resolution, read from the merge's first parent. A branch that moved since
-  its review keeps the owner's review level, read whole. A refresh whose branch already holds the base
-  commit when it is dispatched ends at once, with no checks or reviewer,
-  saying there was nothing to merge. Each refresh stage gets
+- A refresh only merges its fresh base, and is reviewed and bounded so
+  (#344). Last week refreshes took 60 to 330 minutes each, ~900
+  stage-minutes in all: the refresh copied the owner's whole brief as work
+  to do, ran on the pipeline's long timeouts, and owed a fresh whole-change
+  review, so a new reviewer re-read the whole feature and the refresh became
+  a fix loop. Now its brief asks for the merge, conflict resolution and
+  green checks only, with the owner's brief quoted as read-only context and
+  other findings left as follow-ups. When the branch head is the commit a
+  passing review held, Archon previews the merge with `git merge-tree`: a
+  clean merge, or one conflicting only in changelogs or in top-level or
+  `docs/` Markdown, reStructuredText, AsciiDoc or raster images, owes no
+  reviewer (that review stands, and the refresh fails if it changes code
+  beyond the merge); a code conflict owes one reviewer of the resolution,
+  read from the merge's first parent. A branch that moved since its review
+  keeps the owner's review level, read whole. A refresh whose branch already
+  holds the base commit when it is dispatched ends at once, with no checks
+  or reviewer, saying there was nothing to merge. Each refresh stage gets
   `[limits] refresh_stage_timeout_minutes` (default 30) unless the request
   names a timeout.
 
 ### Review
 
-- Review loops converge. Loops that did not cost ~565 stage-minutes in a
-  week: items failed 7 to 16 rounds, each a fresh reviewer reading the
-  whole diff with no definition of what blocks and no cap, so each found
-  new nits. Since 1.4.9 every re-review also read the whole change again,
-  so a `strict` review replaced all three reviewers after each fix (one
-  smoke trial delegated nine medium reviewers and ran out of time). Now:
+- Review loops converge (#339, #346). Loops that did not cost ~565
+  stage-minutes in a week: items failed 7 to 16 rounds, each a fresh
+  reviewer reading the whole diff with no definition of what blocks and no
+  cap, so each found new nits. Since 1.4.9 every re-review also read the
+  whole change again, so a `strict` review replaced all three reviewers
+  after each fix (one smoke trial delegated nine medium reviewers and ran
+  out of time). Now:
   - Reviewers mark each finding `"blocking": true` or `false`. Blocking
     findings are correctness bugs, security or safety issues, failing or
     missing tests for changed behaviour, and broken documented behaviour,
@@ -69,7 +116,7 @@
 ### Stage time
 
 - A stage that reaches its deadline no longer loses its agent's context and
-  uncommitted work. When Aether stops an agent at its stage deadline,
+  uncommitted work (#347). When Aether stops an agent at its stage deadline,
   Archon wakes the same agent once, with 10 more minutes, to commit what
   works and report; this is no model failure and spends no infrastructure
   retry. A refused wake, a second deadline or any failure of the woken run
@@ -85,20 +132,21 @@
 ### Fixed
 
 - A stale local base branch no longer fails a "no change needed" item or
-  inflates a change (#341). In `pr` mode items fork from the freshly fetched
-  `origin/<base>`, but the delivery checks counted from the local
-  `refs/heads/<base>`, so a no-change item failed with "holds N commit(s)
-  beyond" when the local base was N commits behind. Those checks now count
-  from the commit the run forked from, recorded at dispatch, or from a
-  newer `origin/<base>` the run took in; the local base only when no fork
-  was recorded. The fast check's list of affected files starts at the newer
-  of the local and `origin`'s base. After the fetch at dispatch, and at each mirror refresh,
-  archond also fast-forwards the registered checkout's local base to
-  `origin/<base>` when it is strictly behind, so the orchestrator's mirrors
-  follow the fresh base. It never resets, rebases, stashes or forces: a base
-  that is ahead or diverged, being rebased or bisected, or checked out with
-  a change to a tracked file or an untracked file where the move writes
-  stays where it is, and the operator is told why once.
+  inflates a change (#341, reported by @D-Brammer, fixed in #343). In `pr`
+  mode items fork from the freshly fetched `origin/<base>`, but the delivery
+  checks counted from the local `refs/heads/<base>`, so a no-change item
+  failed with "holds N commit(s) beyond" when the local base was N commits
+  behind. Those checks now count from the commit the run forked from,
+  recorded at dispatch, or from a newer `origin/<base>` the run took in; the
+  local base only when no fork was recorded. The fast check's list of
+  affected files starts at the newer of the local and `origin`'s base. After
+  the fetch at dispatch, and at each mirror refresh, archond also
+  fast-forwards the registered checkout's local base to `origin/<base>` when
+  it is strictly behind, so the orchestrator's mirrors follow the fresh
+  base. It never resets, rebases, stashes or forces: a base that is ahead or
+  diverged, being rebased or bisected, or checked out with a change to a
+  tracked file or an untracked file where the move writes stays where it is,
+  and the operator is told why once.
 
 ### Development
 
@@ -110,12 +158,13 @@
   12-core host, and the load failed `make ci` on timing flakes that then
   reran in full. The slot is released however `make ci` ends;
   `CI_HOST_SLOTS=0` turns it off and `make ci-checks` runs without one.
-  GitHub CI is unaffected.
-- The daemon test `status_answers_with_progress_and_changes_wait_while_recovery_runs`
-  no longer fails under load (16 of 104 runs did). It gave each `status`
-  during recovery 1 s; it now allows 30 s. What it proves is unchanged: the
-  first `status` comes while the test holds the run table, so recovery
-  cannot finish, and a `status` that waited on recovery still never answers.
+  GitHub CI is unaffected (#345).
+- The daemon test
+  `status_answers_with_progress_and_changes_wait_while_recovery_runs` no
+  longer fails under load (16 of 104 runs did). It gave each `status` during
+  recovery 1 s; it now allows 30 s. What it proves is unchanged: the first
+  `status` comes while the test holds the run table, so recovery cannot
+  finish, and a `status` that waited on recovery still never answers (#345).
 
 ## 1.4.9
 

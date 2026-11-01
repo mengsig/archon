@@ -870,10 +870,12 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   back: a fail word, a second `verdict`, a negation or a condition (`not`,
   `don't`, `never`, `until`, `unless`, `if`, `pending`, `but`, `however`,
   `except`, `before`, `after`, `first`, `only`, `yet`, `must`,
-  `required`), a blocker or regression nothing denies (`one blocker
-  remains`, not `no blocking findings` or `non-blocking`), or a `no` before
-  anything but findings, issues, blockers, regressions, problems, concerns,
-  defects or objections (`PASS — no tests`). Such a pass counts as fail.
+  `required`, `requested`, `needs`, `missing`, `unsafe`, `outstanding`), a
+  blocker, regression or `critical` nothing denies (`one blocker remains`,
+  not `no blocking findings` or `non-blocking`), or a `no` before anything
+  but findings, issues, blockers, regressions, critical ones, bugs,
+  problems, concerns, defects or objections (`PASS — no tests`). Such a
+  pass counts as fail.
   This errs on the safe side: `PASS — 0 failed` is refused too, so put
   details above the verdict line and end the summary with it.
   A structured pass counts only when the summary's last `VERDICT:` line

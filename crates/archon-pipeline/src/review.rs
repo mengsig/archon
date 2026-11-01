@@ -281,7 +281,6 @@ fn describe(finding: &Value) -> String {
     one_line(&line)
 }
 
-/// Why a result holds no verdict, quoting the one it gave if any.
 /// Why a pass is refused when the rest of its result takes it back, quoting
 /// the summary's verdict line so the refusal shows what was read.
 fn disputed_pass(summary: &str) -> String {
@@ -296,6 +295,7 @@ fn disputed_pass(summary: &str) -> String {
     )
 }
 
+/// Why a result holds no verdict, quoting the one it gave if any.
 fn no_verdict(summary: &str, structured: Option<&Value>) -> String {
     match Said::stated(summary, structured) {
         Some(said) => format!(

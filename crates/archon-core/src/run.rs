@@ -227,22 +227,62 @@ impl Verdict {
 
 /// Words that take a pass back wherever its statement holds them: the other
 /// verdict, a second `verdict`, a negation (`don't` splits into `don`, `t`) or a condition.
-const HOLDS_PASS: [&str; 33] = [
-    "fail", "fails", "failed", "failing", "failure", "failures", "reject", "rejects", "rejected",
-    "verdict", "not", "t", "never", "nor", "cannot", "dont", "cant", "wont", "until", "unless",
-    "if", "pending", "but", "however", "except", "before", "after", "first", "only", "yet", "must",
-    "required", "requires",
+const HOLDS_PASS: [&str; 43] = [
+    "fail",
+    "fails",
+    "failed",
+    "failing",
+    "failure",
+    "failures",
+    "reject",
+    "rejects",
+    "rejected",
+    "disapprove",
+    "disapproved",
+    "verdict",
+    "not",
+    "t",
+    "never",
+    "nor",
+    "nope",
+    "cannot",
+    "dont",
+    "cant",
+    "wont",
+    "until",
+    "unless",
+    "if",
+    "pending",
+    "but",
+    "however",
+    "except",
+    "before",
+    "after",
+    "first",
+    "only",
+    "yet",
+    "must",
+    "required",
+    "requires",
+    "requested",
+    "need",
+    "needs",
+    "missing",
+    "unsafe",
+    "unresolved",
+    "outstanding",
 ];
 
 /// What a pass may deny (`no blocking findings`, `non-blocking`) but never
 /// report (`one blocker remains`).
-const BLOCKERS: [&str; 6] = [
+const BLOCKERS: [&str; 7] = [
     "blocker",
     "blockers",
     "blocking",
     "blocked",
     "regression",
     "regressions",
+    "critical",
 ];
 
 /// Words that deny the blocker after them.
@@ -250,7 +290,9 @@ const DENIES: [&str; 6] = ["no", "non", "zero", "0", "without", "none"];
 
 /// What a bare `no` may deny in a pass's explanation (`PASS. No findings`);
 /// any other (`PASS — no tests`) says something the pass lacks.
-const DENIABLE: [&str; 13] = [
+const DENIABLE: [&str; 15] = [
+    "critical",
+    "bugs",
     "findings",
     "finding",
     "issues",
@@ -1124,7 +1166,9 @@ mod tests {
             "Verdict: pass. No blocking findings; the parser change is covered.",
             "**VERDICT: PASS**",
             "**verdict: pass.** All checks green.",
+            "Verdict: pass. No critical bugs, no blocking findings.",
             "- Verdict: Pass! Nothing to fix.",
+            "Verdict: pass. Fixes the reported bug in the code block parser.",
             "Verdict: pass. No blocking findings…\n\nThe change is small; one non-blocking note.",
             "Verdict: fail — a regression.\nFixed in the next commit.\nVerdict: pass.",
         ] {
@@ -1150,6 +1194,9 @@ mod tests {
             "Verdict: pass. Two tests failed.",
             "Verdict: pass. One blocker remains in run.rs.",
             "Verdict: pass. Don't merge yet.",
+            "Verdict: pass. Changes requested.",
+            "Verdict: pass. A critical bug remains.",
+            "Verdict: pass. Needs a fix; unsafe to merge.",
             "Verdict: pass.\n\nDo not merge until CI is green.",
         ] {
             assert_eq!(

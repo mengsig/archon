@@ -58,6 +58,11 @@ pub(super) async fn settle(
         });
         (stage, run, review, daemon_ships, planner, record_stage)
     };
+    if review.reviewers > 0
+        && let Some(capped) = super::review::capped_at_completion(ctx, &stage).await?
+    {
+        return settle_capped(ctx, id, capped).await;
+    }
     // Leave the stage live until verification is persisted. If interrupted,
     // reconnect reconciliation reads the task outcome and verifies it again.
     let outcome = ship::verify(ctx, &run, &stage, daemon_ships, outcome).await?;
@@ -116,6 +121,27 @@ pub(super) async fn settle(
     // Other verification failures are final stage outcomes, not infrastructure
     // failures from Aether: they must not enter the stage's retry path.
     persist(ctx, &mut table, stage, run, &all, outcome).await
+}
+
+/// Settle a completion of a stage whose review already failed the round
+/// cap, its reviewers' events having been missed, as the cap's escalation.
+async fn settle_capped(
+    ctx: &DaemonContext,
+    id: &StageRunId,
+    capped: super::review::Capped,
+) -> Result<FollowUp, ArchonError> {
+    assert_eq!(capped.stage, *id, "the cap of the stage settling");
+    assert!(
+        StageOutcome::ends_run(&capped.reason),
+        "a capped review escalates"
+    );
+    tracing::warn!(stage = %id, "review round cap reached with reviewer events missed");
+    let escalated = StageOutcome::Failed {
+        error: capped.reason,
+        infra: false,
+    };
+    let mut table = ctx.runs.lock().await;
+    settle_locked(ctx, &mut table, id, escalated).await
 }
 
 /// Record the roles a swarm plan gives a team stage and drop the run's

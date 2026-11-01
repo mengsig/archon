@@ -410,7 +410,11 @@ listed) and names the reviewers whose results hold them in full: the run ends
 and the orchestrator reshapes or retries the item. The stop is marked before
 the cancel goes out, so a lead that settles first, an unanswered cancel the
 sweep retries, or a stall the watchdog finds meanwhile all end in that
-escalation.
+escalation. Each count reads every settled child of a lead fresh to the
+attempt that it has not read, so a reviewer whose event was missed still
+counts at the next reviewer's settle or at the lead's completion; a lead
+reused from an earlier attempt counts only the reviewers whose events it
+sees.
 Archon records the named reviewers whose passes hold as `review.reviewer_agents` and the models
 Aether ran them on as `review.reviewer_models`, replacing anything the
 agent wrote there.

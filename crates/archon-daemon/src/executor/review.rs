@@ -21,7 +21,7 @@ use crate::context::DaemonContext;
 use crate::worktree::shadow::Shadow;
 use crate::worktree::stack::{self, is_commit_id};
 use coverage::{Base, Held, History};
-pub(super) use rounds::reviewer_settled;
+pub(super) use rounds::{Capped, capped_at_completion, reviewer_settled};
 
 /// Agents named in a refusal: enough to see what the lead delegated to.
 const MAX_LISTED: usize = 6;

@@ -2618,10 +2618,12 @@ unreadable), then the summary's last
 `VERDICT:` line that starts at column 0 outside block quotes (a line lazily
 continuing one included) and fences, in any letter case and through
 markdown emphasis. A verdict word followed by any word, in parentheses
-too, before the first `—`, `:`, `;`, `.`, ` - ` or line break is a choice or
-a condition and reads as `Unknown`, as does a pass explained in any word but
-a few plain success words and numbers, or a summary's pass line followed by
-any line but `head:` and `base:`. A structured pass beside a summary
+too, before the first `—`, `:`, `;`, `.`, `!`, ` - ` or line break is a
+choice or a condition and reads as `Unknown`, as does a pass that its
+explanation, or a summary line after it but `head:` and `base:`, takes back
+with a fail word, a second `verdict`, a negation or condition word, an
+undenied blocker or regression, or a `no` before anything but a finding
+(`holds_back`). A structured pass beside a summary
 `VERDICT:` line or JSON `verdict`, `result` or `status` that does not pass
 is `Unknown`, as is any pass beside a `blocking`, `blocker`, `critical` or
 `high` finding in `structured` or the summary's JSON

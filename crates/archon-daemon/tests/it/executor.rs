@@ -2785,6 +2785,40 @@ async fn a_luna_summary_json_verdict_still_needs_to_pass_the_current_commit() {
     }
 }
 
+/// A reviewer whose structured pass its summary states as `Verdict: pass.`
+/// with prose after it passes the gate; one whose prose takes it back is
+/// refused with the line Archon read.
+#[tokio::test]
+async fn a_pass_stated_with_prose_after_it_satisfies_the_review_record() {
+    let held = "Verdict: pass. Do not merge until CI is green.";
+    for summary in [
+        "Verdict: pass. No blocking findings; the fix is covered.",
+        held,
+    ] {
+        let h = Harness::new().await;
+        let item = adaptive_item(&h).await;
+        let lead = h.running().await.remove(0);
+        let reviewer = h.backend.delegate(&lead_agent(&lead), REVIEW_MODEL);
+        let named = pass_by(std::slice::from_ref(&reviewer));
+        let built = shipped_by(&h, &lead, "Reviewed", named).await;
+        h.backend.complete_delegated_with(
+            &reviewer,
+            StageOutcome::Completed {
+                summary: summary.into(),
+                structured: Some(verdict_on(&built, "pass")),
+            },
+        );
+        h.settle_running(|_| built.clone()).await;
+        if summary != held {
+            h.dispatch().await;
+            assert!(delivered(&h, &item).await, "{:?}", h.state(&item.id).await);
+            continue;
+        }
+        let error = refused_review(&h, &item).await;
+        assert!(error.contains(&format!("reads {held:?}")), "{error}");
+    }
+}
+
 /// A reviewer that failed the change does not pass it, whatever the lead says.
 #[tokio::test]
 async fn a_reviewer_that_failed_the_change_is_no_pass() {

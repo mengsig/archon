@@ -583,7 +583,9 @@ starts the diff read:\n\n\
 ```json\n\
 {\"verdict\": \"pass\", \"head\": \"<commit>\", \"base\": \"<commit>\", \"findings\": []}\n\
 ```\n\n\
-Use `\"fail\"` with findings for failures.\n\n\
+Use `\"fail\"` with findings for failures. Tell each reviewer to end its summary \
+with the line `VERDICT: PASS` or `VERDICT: FAIL`, matching that `verdict`: a summary \
+that states another verdict, or a condition beside its pass, takes the pass back.\n\n\
 - Blocking findings are correctness bugs, security or safety issues, failing or missing \
 tests for changed behaviour, and broken documented behaviour, as the brief narrows or \
 extends them. Tell reviewers so, and to mark every finding `\"blocking\": true` or \
@@ -1599,6 +1601,7 @@ mod tests {
             "never prose alone",
             "{\"verdict\": \"pass\", \"head\": \"<commit>\", \"base\": \"<commit>\"",
             "Use `\"fail\"` with findings for failures",
+            "end its summary with the line `VERDICT: PASS` or `VERDICT: FAIL`",
             "Each agent named must be a different one you delegated to yourself",
             "must have passed the branch head itself",
             "Name every reviewer that coverage rests on, earlier whole-change reads included",

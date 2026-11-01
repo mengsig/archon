@@ -862,18 +862,20 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   (`**Verdict:** PASS`) do not matter, and `passed`, `approved`, `failed` and
   `rejected` read as pass and fail. Anything else counts as fail, and so
   does a choice or a hedge: any word after the verdict word, in
-  parentheses too, before the first `—`, `:`, `;`, `.`, ` - ` or line break
-  (`PASS or FAIL`, `PASS, but two failed`, `PASS (pending fixes)`). A
-  fail may be explained after one (`FAIL — two findings`). A pass may be
-  explained only in plain success words and numbers (`all`, `tests`,
-  `checks`, `pass`, `passed`, `green`, `clean`, `findings`, `issues`,
-  `no findings`, `no issues`, `CI`, `ok`, `lgtm`, `and`:
-  `PASS — all 214 tests pass`), and in a summary only `head:` and `base:`
-  lines naming a commit may follow it; any other word could make
-  it conditional (`PASS — merge only with green CI`), so it counts as fail.
-  This errs on the safe side: a plain explanation such as
-  `PASS — 0 failed` or `PASS — no blocking findings` is refused too, so
-  put details above the verdict line and end the summary with it.
+  parentheses too, before the first `—`, `:`, `;`, `.`, `!`, ` - ` or line
+  break (`PASS or FAIL`, `PASS, but two failed`, `PASS (pending fixes)`). A
+  fail may be explained after one (`FAIL — two findings`), and so may a
+  pass (`Verdict: pass. No blocking findings; the fix is covered.`), on its
+  line and the summary's lines after it, unless the explanation takes it
+  back: a fail word, a second `verdict`, a negation or a condition (`not`,
+  `don't`, `never`, `until`, `unless`, `if`, `pending`, `but`, `however`,
+  `except`, `before`, `after`, `first`, `only`, `yet`, `must`,
+  `required`), a blocker or regression nothing denies (`one blocker
+  remains`, not `no blocking findings` or `non-blocking`), or a `no` before
+  anything but findings, issues, blockers, regressions, problems, concerns,
+  defects or objections (`PASS — no tests`). Such a pass counts as fail.
+  This errs on the safe side: `PASS — 0 failed` is refused too, so put
+  details above the verdict line and end the summary with it.
   A structured pass counts only when the summary's last `VERDICT:` line
   and its JSON (the whole summary or its one fenced block) `verdict`,
   `result` or `status`, where it has them, pass too. No pass, wherever it

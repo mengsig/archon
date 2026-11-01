@@ -358,7 +358,10 @@ async fn reviewed_tip(
     items.push(owner.clone());
     let tip = (fresh.from.clone(), fresh.from_tree.clone());
     for id in &items {
-        if !matches!(store.item(id)?.state, QueueState::Succeeded { .. }) {
+        let item = store.item(id)?;
+        // An item that owed no review leaves no review to stand on.
+        let succeeded = matches!(item.state, QueueState::Succeeded { .. });
+        if !succeeded || item.autonomy.review == ReviewLevel::None {
             continue;
         }
         // A run that shipped nothing delivered no reviewed head.
@@ -374,19 +377,32 @@ async fn reviewed_tip(
 }
 
 /// The one commit and tree every ship record among a run's completed `stages`
-/// names. `None` when there is none or they disagree: the stage that held the
-/// record is then unknown, and so is the head its review gate passed.
+/// names, when archond shipped it under a review it checked. `None` when an
+/// agent ran a ship stage, no record holds a passing review, or records disagree.
 fn handed_in(stages: &[archon_core::run::StageRun]) -> Option<(String, String)> {
-    use archon_core::run::StageState;
-    let mut records = stages
+    use archon_core::{catalog::StageKind, run::StageState};
+    // An unknown kind may have been an agent shipping by itself.
+    if stages
         .iter()
-        .filter(|stage| stage.state == StageState::Completed)
-        .filter_map(|stage| {
-            let record = archon_pipeline::ShipRecord::read(stage.structured.as_ref()).ok()?;
-            Some((record.commit, record.tree))
-        });
-    let first = records.next()?;
-    if records.any(|record| record != first) {
+        .any(|stage| stage.kind.is_none_or(|kind| kind == StageKind::Ship))
+    {
+        return None;
+    }
+    let mut reviewed = false;
+    let mut records = Vec::new();
+    for stage in stages.iter().filter(|s| s.state == StageState::Completed) {
+        let Some(structured) = stage.structured.as_ref() else {
+            continue;
+        };
+        let Ok(record) = archon_pipeline::ShipRecord::read(Some(structured)) else {
+            continue;
+        };
+        let named = archon_pipeline::review::claimed_reviewers(structured);
+        reviewed |= named.is_some_and(|named| !named.is_empty());
+        records.push((record.commit, record.tree));
+    }
+    let first = records.first()?.clone();
+    if !reviewed || records.iter().any(|record| *record != first) {
         return None;
     }
     Some(first).filter(|(commit, tree)| stack::is_commit_id(commit) && stack::is_commit_id(tree))
@@ -764,7 +780,7 @@ mod tests {
             id: archon_core::id::StageRunId::new(),
             run: archon_core::id::PipelineRunId::new(),
             stage_id: "build".into(),
-            kind: None,
+            kind: Some(archon_core::catalog::StageKind::Work),
             attempt: 1,
             fan_index: 0,
             choice: archon_core::model::ModelChoice {
@@ -781,7 +797,8 @@ mod tests {
             verdict: None,
             summary: None,
             structured: Some(serde_json::json!({"commit": commit, "tree": "b".repeat(40),
-                "pr": {"title": "t", "body": "b"}})),
+                "pr": {"title": "t", "body": "b"},
+                "review": {"verdict": "pass", "reviewers": ["agt_r"]}})),
             cost_usd: 0.0,
             started_at: archon_core::now(),
             finished_at: None,
@@ -796,6 +813,12 @@ mod tests {
         assert_eq!(handed_in(&[recorded(&one), recorded(&one)]), held);
         assert_eq!(handed_in(&[recorded(&one), recorded(&other)]), None);
         assert_eq!(handed_in(&[]), None);
+        let mut unreviewed = recorded(&one);
+        unreviewed.structured.as_mut().unwrap()["review"] = serde_json::Value::Null;
+        assert_eq!(handed_in(&[unreviewed]), None, "no review on record");
+        let mut agent_shipped = recorded(&one);
+        agent_shipped.kind = Some(archon_core::catalog::StageKind::Ship);
+        assert_eq!(handed_in(&[recorded(&one), agent_shipped]), None);
     }
 
     #[test]

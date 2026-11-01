@@ -3714,7 +3714,9 @@ object per line under `--json`).
   follows as quoted, read-only context. When the branch head it merges into
   is the commit a succeeded item on the branch (the owner or a fix of it)
   shipped as its ship record, which its review gate held (every ship record
-  of that run naming the same commit and the head's own tree), and the
+  of that run naming the same commit and the head's own tree, one of them
+  with a passing review, the item owing a review and no agent ship stage
+  having run), and the
   pipeline hands in a ship record archond delivers (`[pipeline.ship]`, never
   an agent's own ship stage), Archon records
   that head, previews the merge with `git merge-tree` and sets the refresh's

@@ -711,7 +711,8 @@ async fn releasing_zero_bytes_posts_no_notice_but_real_bytes_do() {
     assert_eq!(notices(feed), 1);
 }
 
-/// Queue a refresh of the finished `owner`, which works in its worktree.
+/// Queue a refresh of the finished `owner`, which works in its worktree,
+/// first moving `main` on when the branch holds it: a refresh merges something.
 async fn queue_refresh(h: &Harness, owner: &QueueItem) -> QueueItem {
     let mut store = h.ctx.store.lock().await;
     let owner = store.item(&owner.id).expect("owner");
@@ -720,10 +721,23 @@ async fn queue_refresh(h: &Harness, owner: &QueueItem) -> QueueItem {
         .expect("runs")
         .pop()
         .expect("a run");
+    let held = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&h.repo)
+        .args(["merge-base", "--is-ancestor", "main", &run.branch])
+        .status()
+        .expect("git runs");
+    if held.success() {
+        git(
+            &h.repo,
+            &["commit", "--quiet", "--allow-empty", "-m", "Base moves"],
+        );
+    }
     let sha = git(&h.repo, &["rev-parse", "main"]);
     let refresh = archon_queue::store::stacks::Refresh {
         base: "main".into(),
         sha,
+        from: None,
     };
     store
         .enqueue_refresh(&owner, &run, &refresh)

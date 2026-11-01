@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Refresh
+
+- A refresh only merges its fresh base, and is reviewed and bounded so. Last
+  week refreshes took 60 to 330 minutes each, ~900 stage-minutes in all: the
+  refresh copied the owner's whole brief as work to do, ran on the
+  pipeline's long timeouts, and owed a fresh whole-change review, so a new
+  reviewer re-read the whole feature and the refresh became a fix loop.
+  Now its brief asks for the merge, conflict resolution and green checks
+  only, with the owner's brief quoted as read-only context and other
+  findings left as follow-ups. Archon previews the merge with
+  `git merge-tree`: a clean merge, or one conflicting only in changelogs,
+  top-level `*.md` or `docs/` files, owes no reviewer (the owner's passing
+  review stands, and the refresh fails if it changes code beyond the
+  merge); a code conflict owes one reviewer of the resolution, read from
+  the merge's first parent. A refresh whose branch already holds the base
+  commit when it is dispatched ends at once, with no checks or reviewer,
+  saying there was nothing to merge. Each refresh stage gets
+  `[limits] refresh_stage_timeout_minutes` (default 30) unless the request
+  names a timeout.
+
 ### Review
 
 - A re-review after a fix reads only what changed, keeping the gate whole.

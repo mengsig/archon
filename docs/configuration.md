@@ -369,6 +369,7 @@ go past:
 [limits]
 max_delegation_depth = 2         # 1..=4
 max_stage_timeout_minutes = 1440 # 1..=43200
+refresh_stage_timeout_minutes = 30 # 1..=43200
 max_agent_messages = 20          # 1..=200
 initiative_members = 16          # 1..=64
 initiative_contract_bytes = 2048 # 1..=16384
@@ -382,6 +383,10 @@ initiative_contract_bytes = 2048 # 1..=16384
 - `max_stage_timeout_minutes`: the longest per-stage timeout an item may
   ask for with `stage_timeouts` at `enqueue`, `update_item`, `steer_item` or `retry_item` (`--stage-timeout` on `archon queue add|steer|retry`). A pipeline's
   own `timeout_minutes` is not capped by it.
+- `refresh_stage_timeout_minutes`: each stage's timeout in a refresh
+  (`refresh_item`, `archon queue refresh`) whose request names none, instead
+  of the owner's or the pipeline's: a refresh only merges a fresh base, so it
+  gets a short bound. Capped by `max_stage_timeout_minutes`.
 - `max_agent_messages`: the `message_orchestrator` calls one stage agent
   may make in its lifetime, and the messages one run node's inbox may
   relay. Each message is an orchestrator turn. Past it an agent keeps 3

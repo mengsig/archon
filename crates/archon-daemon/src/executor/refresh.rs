@@ -12,13 +12,13 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use archon_core::autonomy::{ProposalMode, ReportMode};
+use archon_core::autonomy::{ProposalMode, ReportMode, ReviewLevel};
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 use archon_core::model::{ModelPlan, ModelPlanDraft, ModelReasons};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::repo::{Repo, ShipMode};
-use archon_core::run::PipelineRun;
+use archon_core::run::{PipelineRun, StageOutcome};
 use archon_queue::store::stacks::Refresh;
 
 use super::dependencies::is_plain_branch;
@@ -45,7 +45,7 @@ pub(crate) async fn refresh_item(
         None => base_for(ctx, &owner, &run, &env).await?,
     };
     let catalog = crate::learned::catalog(ctx).await?;
-    let prepared = refresh_owner(ctx, &owner, &env, &catalog, asked)?;
+    let mut prepared = refresh_owner(ctx, &owner, &env, &catalog, asked)?;
     let child_head = match repo.ship == ShipMode::Pr && run.shipped {
         true => check_pr_open(ctx, &repo, &run).await?,
         false => None,
@@ -57,15 +57,20 @@ pub(crate) async fn refresh_item(
             super::landed::for_refresh(ctx, landing, &base, child_head.as_deref()).await?
         }
     };
-    let sha = match base_head(ctx, &repo, &base, &run.branch).await? {
-        Ok(sha) => sha,
+    let fresh = match base_head(ctx, &repo, &base, &run.branch).await? {
+        Ok(fresh) => fresh,
         Err(_) if restacked => return refreshed(ctx, &owner, &run, None).await,
         Err(held) if held.ahead && owner.onto.is_some() => {
             return refreshed(ctx, &owner, &run, Some(&held.sha)).await;
         }
         Err(held) => return Err(ArchonError::Invalid(held.refusal)),
     };
-    let refresh = Refresh { base, sha };
+    prepared.autonomy.review = refresh_review(prepared.autonomy.review, &fresh.conflicts);
+    let refresh = Refresh {
+        base,
+        sha: fresh.sha,
+        from: Some(fresh.from),
+    };
     let queued = {
         let _table = ctx.runs.lock().await;
         let mut store = ctx.store.lock().await;
@@ -79,7 +84,8 @@ pub(crate) async fn refresh_item(
         store.enqueue_refresh(&prepared, &run, &refresh)?
     };
     assert!(!queued.state.is_terminal(), "a refresh still to run");
-    tracing::info!(item = %id, refresh = %queued.id, base = %refresh.base, sha = %refresh.sha, "refresh queued");
+    let review = queued.autonomy.review;
+    tracing::info!(item = %id, refresh = %queued.id, base = %refresh.base, sha = %refresh.sha, %review, "refresh queued");
     ctx.dispatch.notify_one();
     Ok(queued)
 }
@@ -176,9 +182,31 @@ pub(crate) struct Asked {
     pub stage_timeouts: BTreeMap<String, u32>,
 }
 
+/// Each of `spec`'s stages' timeout in a refresh: the `asked` one, else
+/// `[limits] refresh_stage_timeout_minutes`, never the owner's.
+fn refresh_timeouts(
+    limits: &archon_core::config::LimitsConfig,
+    spec: &archon_pipeline::PipelineSpec,
+    asked: BTreeMap<String, u32>,
+) -> BTreeMap<String, u32> {
+    let minutes = limits
+        .refresh_stage_timeout_minutes
+        .min(limits.max_stage_timeout_minutes);
+    assert!(minutes >= 1, "validated: a refresh's stages get time");
+    let mut timeouts = asked;
+    for stage in &spec.file.stages {
+        timeouts.entry(stage.id.clone()).or_insert(minutes);
+    }
+    assert!(
+        timeouts.keys().all(|id| spec.stage(id).is_some()),
+        "checked: only the pipeline's own stages"
+    );
+    timeouts
+}
+
 /// The owner's pipeline and knobs, proposal and report off, on the plan and
-/// stage timeouts `asked` names, else the stage defaults: never the owner's
-/// own, which were chosen for other work.
+/// stage timeouts `asked` names, else the stage defaults and the refresh
+/// timeout: never the owner's own, which were chosen for other work.
 fn refresh_owner(
     ctx: &DaemonContext,
     owner: &QueueItem,
@@ -207,7 +235,7 @@ fn refresh_owner(
     let plan = knobs::fill_stage_tiers(tiers, max_tier, &spec, given);
     item.model_plan = knobs::fill_static_stages(&base, &spec, plan, fallback.as_ref())?;
     item.model_reasons = asked.model_reasons;
-    item.stage_timeouts = asked.stage_timeouts;
+    item.stage_timeouts = refresh_timeouts(&ctx.config.limits, &spec, asked.stage_timeouts);
     for stage in &spec.file.stages {
         if item
             .model_plan
@@ -300,6 +328,39 @@ async fn check_pr_open(
     Ok(pr.head_ref_oid)
 }
 
+/// The review a refresh owes: none when its merge is clean or conflicts only in
+/// changelogs and docs, where the review that passed the branch stands; else one
+/// reviewer of the resolution, unless the owner's level asks for none.
+fn refresh_review(owner: ReviewLevel, conflicts: &[String]) -> ReviewLevel {
+    assert!(
+        conflicts.iter().all(|path| !path.is_empty()),
+        "conflicts are named paths"
+    );
+    let resolves_code = conflicts.iter().any(|path| !is_prose(path));
+    match (owner, resolves_code) {
+        (ReviewLevel::None, _) | (_, false) => ReviewLevel::None,
+        (ReviewLevel::Standard | ReviewLevel::Strict, true) => ReviewLevel::Standard,
+    }
+}
+
+/// Whether `path` is prose a refresh resolves with no reviewer: a changelog
+/// anywhere, a top-level Markdown file or anything under `docs/`.
+pub(super) fn is_prose(path: &str) -> bool {
+    assert!(!path.is_empty(), "a named path");
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let top_markdown = !path.contains('/') && name.to_ascii_lowercase().ends_with(".md");
+    name.to_ascii_uppercase().starts_with("CHANGELOG") || top_markdown || path.starts_with("docs/")
+}
+
+/// The base commit a refresh merges, the branch head it merges into, and the
+/// paths that merge conflicts on, as `git merge-tree` previews it.
+#[derive(Debug)]
+struct Fresh {
+    sha: String,
+    from: String,
+    conflicts: Vec<String>,
+}
+
 /// A base head the item's branch holds already, and why that leaves nothing to refresh.
 #[derive(Debug)]
 struct Held {
@@ -316,7 +377,7 @@ async fn base_head(
     repo: &Repo,
     base: &str,
     branch: &str,
-) -> Result<Result<String, Held>, ArchonError> {
+) -> Result<Result<Fresh, Held>, ArchonError> {
     let (data_dir, path) = (ctx.paths.data_dir.clone(), repo.path.clone());
     let (base, branch) = (base.to_owned(), branch.to_owned());
     let remote = repo.ship == ShipMode::Pr;
@@ -331,7 +392,7 @@ fn head_now(
     remote: bool,
     base: &str,
     branch: &str,
-) -> Result<Result<String, Held>, ArchonError> {
+) -> Result<Result<Fresh, Held>, ArchonError> {
     if !crate::worktree::branch_exists(repo, branch)? {
         return Err(ArchonError::Invalid(format!(
             "the item's branch `{branch}` is gone from the repository"
@@ -339,10 +400,19 @@ fn head_now(
     }
     let shadow = Shadow::of(data_dir, repo)?;
     let sha = super::landed::base_head(&shadow, repo, remote, base)?;
-    if !stack::contains(repo, &sha, &format!("refs/heads/{branch}"))? {
-        return Ok(Ok(sha));
-    }
     let tip = stack::sha(repo, branch)?;
+    if !stack::contains(repo, &sha, &tip)? {
+        let conflicts = match stack::merge_tree(&shadow, None, &tip, &sha)? {
+            Ok(_) => Vec::new(),
+            Err(files) => files.lines().map(str::to_owned).collect(),
+        };
+        let from = tip;
+        return Ok(Ok(Fresh {
+            sha,
+            from,
+            conflicts,
+        }));
+    }
     let shipped = !remote && stack::contains(repo, &tip, &format!("refs/heads/{base}"))?;
     let why = match shipped {
         true => format!("it already shipped to `{base}` locally, so there is nothing to refresh"),
@@ -355,4 +425,201 @@ fn head_now(
         ahead,
         refusal,
     }))
+}
+
+/// Why the claimed refresh `item` has nothing to merge at its first start:
+/// its branch holds the base commit already. A retry runs whatever an
+/// earlier attempt merged through its checks and delivery.
+pub(super) async fn nothing_to_merge(
+    ctx: &DaemonContext,
+    item: &QueueItem,
+) -> Result<Option<String>, ArchonError> {
+    assert_eq!(item.state, QueueState::Dispatching, "checked once claimed");
+    let (fix, refresh, repo) = {
+        let store = ctx.store.lock().await;
+        let Some(mut fix) = store.stack_fix(&item.id)? else {
+            return Ok(None);
+        };
+        let (Some(refresh), Some(repo)) = (fix.refresh.take(), &item.repo) else {
+            return Ok(None);
+        };
+        if !store.runs_for_item(&item.id)?.is_empty() {
+            return Ok(None);
+        }
+        (fix, refresh, store.repo(&crate::resolve::repo_ref(repo))?)
+    };
+    assert!(stack::is_commit_id(&refresh.sha), "a fetched base commit");
+    let (path, branch, sha) = (repo.path.clone(), fix.branch.clone(), refresh.sha.clone());
+    let held = tokio::task::spawn_blocking(move || -> Result<bool, ArchonError> {
+        let at = format!("refs/heads/{branch}");
+        Ok(crate::worktree::branch_exists(&path, &branch)? && stack::contains(&path, &sha, &at)?)
+    })
+    .await
+    .map_err(|e| ArchonError::io("refresh merge check task", std::io::Error::other(e)))??;
+    Ok(held.then(|| {
+        format!(
+            "nothing to merge: `{}` already holds `{}` at {}, so the refresh finished at once \
+             with no checks and no reviewer",
+            fix.branch,
+            refresh.base,
+            &refresh.sha[..12]
+        )
+    }))
+}
+
+/// `outcome`, failed when the record stage of a refresh whose review was
+/// dropped, its merge previewed clean or conflicting only in prose, hands in a
+/// branch that changes code beyond what git merged by itself: none reviewed it.
+pub(super) async fn verify_unreviewed(
+    ctx: &DaemonContext,
+    run: &PipelineRun,
+    owed: super::review::Owed,
+    outcome: StageOutcome,
+) -> Result<StageOutcome, ArchonError> {
+    let completed = matches!(outcome, StageOutcome::Completed { .. });
+    if !completed || !owed.records_ship || owed.reviewers > 0 {
+        return Ok(outcome);
+    }
+    let Some((from, sha)) = dropped_review(ctx, run).await? else {
+        return Ok(outcome);
+    };
+    let workspace = run.workspace.clone();
+    let (start, merged) = (from.clone(), sha.clone());
+    let authored = tokio::task::spawn_blocking(move || authored_paths(&workspace, &start, &merged))
+        .await
+        .map_err(|e| ArchonError::io("refresh scope task", std::io::Error::other(e)))??;
+    let code: Vec<&str> = authored
+        .iter()
+        .map(String::as_str)
+        .filter(|path| !is_prose(path))
+        .collect();
+    if code.is_empty() {
+        return Ok(outcome);
+    }
+    let shown = code
+        .iter()
+        .take(MAX_SHOWN_PATHS)
+        .copied()
+        .collect::<Vec<_>>();
+    Ok(StageOutcome::Failed {
+        error: format!(
+            "this refresh owes no reviewer, as its merge of {} needed no code resolved, but the \
+             branch since {} changes code beyond that merge: {}. A refresh changes nothing \
+             beyond its merge: undo those changes, or fail and name what the merge breaks so \
+             it is queued as follow-up work",
+            &sha[..12],
+            &from[..12],
+            shown.join(", ")
+        ),
+        infra: false,
+    })
+}
+
+/// Paths a refusal names at most.
+const MAX_SHOWN_PATHS: usize = 8;
+
+/// The branch head a refresh of `run`'s item merged into and the base commit
+/// it merged, when its review was dropped below its owner's.
+async fn dropped_review(
+    ctx: &DaemonContext,
+    run: &PipelineRun,
+) -> Result<Option<(String, String)>, ArchonError> {
+    let store = ctx.store.lock().await;
+    let Some(fix) = store.stack_fix(&run.item)? else {
+        return Ok(None);
+    };
+    let Some(Refresh {
+        sha,
+        from: Some(from),
+        ..
+    }) = fix.refresh
+    else {
+        return Ok(None);
+    };
+    let level = store.item(&run.item)?.autonomy.review;
+    let owner = store.item(&fix.owner)?.autonomy.review;
+    if level != ReviewLevel::None || owner == ReviewLevel::None {
+        return Ok(None);
+    }
+    assert!(stack::is_commit_id(&from), "a recorded branch head");
+    assert!(stack::is_commit_id(&sha), "a fetched base commit");
+    Ok(Some((from, sha)))
+}
+
+/// What the branch in `dir` changed itself since `from` beyond merging `sha`:
+/// each merge's resolution (`--remerge-diff`) and each later commit's paths.
+fn authored_paths(dir: &Path, from: &str, sha: &str) -> Result<Vec<String>, ArchonError> {
+    assert!(
+        stack::is_commit_id(from) && stack::is_commit_id(sha),
+        "commit ids"
+    );
+    let (not_from, not_sha) = (format!("^{from}"), format!("^{sha}"));
+    let args = [
+        "log",
+        "--first-parent",
+        "--diff-merges=remerge",
+        "--name-only",
+        "-z",
+        "--format=",
+        "HEAD",
+        not_from.as_str(),
+        not_sha.as_str(),
+    ];
+    let ran = crate::worktree::daemon_git::DaemonGit::sealed_in(dir)
+        .args(args)
+        .output()?;
+    if !ran.status.success() {
+        return Err(ran.failure());
+    }
+    let printed = String::from_utf8_lossy(&ran.stdout);
+    let mut paths: Vec<String> = printed
+        .split('\0')
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
+        .collect();
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn changelogs_top_level_markdown_and_docs_are_prose() {
+        for prose in [
+            "CHANGELOG.md",
+            "crates/x/CHANGELOG.md",
+            "changelog",
+            "README.md",
+            "docs/guide.md",
+            "docs/img/flow.svg",
+        ] {
+            assert!(is_prose(prose), "{prose}");
+        }
+        for code in [
+            "src/main.rs",
+            "crates/x/README.md",
+            "Cargo.toml",
+            "docsy/a.rs",
+        ] {
+            assert!(!is_prose(code), "{code}");
+        }
+    }
+
+    #[test]
+    fn only_a_code_conflict_owes_one_reviewer() {
+        let paths = |list: &[&str]| list.iter().map(|p| (*p).to_owned()).collect::<Vec<_>>();
+        let clean = paths(&[]);
+        let prose = paths(&["CHANGELOG.md", "docs/a.md"]);
+        let code = paths(&["CHANGELOG.md", "src/lib.rs"]);
+        for owner in [ReviewLevel::Standard, ReviewLevel::Strict] {
+            assert_eq!(refresh_review(owner, &clean), ReviewLevel::None);
+            assert_eq!(refresh_review(owner, &prose), ReviewLevel::None);
+            assert_eq!(refresh_review(owner, &code), ReviewLevel::Standard);
+        }
+        assert_eq!(refresh_review(ReviewLevel::None, &code), ReviewLevel::None);
+    }
 }

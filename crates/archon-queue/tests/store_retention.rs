@@ -439,6 +439,7 @@ fn a_refresh_and_its_owner_go_together() {
     let refresh = Refresh {
         base: "main".into(),
         sha: "a".repeat(40),
+        from: None,
     };
     let fix = store.enqueue_refresh(&owner, &run, &refresh).unwrap();
     let cancelled = QueueState::Cancelled { reason: None };

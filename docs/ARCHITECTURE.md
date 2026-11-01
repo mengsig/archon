@@ -1434,8 +1434,17 @@ in a new worktree off the base branch (§13).
 - `timed_out`: Archon sets the Aether `deadline`, and a daemon timer also
   cancels the agent at `deadline + 60s` if Aether has not settled it. An
   `agent.failed` whose event time is at or past the deadline (Aether's own
-  `deadline of …` stop) settles `timed_out` too, never an `infra` re-spawn;
-  one stamped earlier stays `infra` however late Archon receives it.
+  `deadline of …` stop) is no `infra` failure: the slot's first such stop
+  wakes the same agent in place with a 10-minute deadline of its own, told
+  to commit what works and report, and spends no `limits.infra_retries`.
+  The run it was woken from settles `timed_out`, marked as no failure of
+  the model; the woken run settles on the agent's answer. A refused wake,
+  a second stop at a deadline, or any failure of the woken run settles for
+  good, with no fresh agent. One stamped earlier stays `infra` however late
+  Archon receives it. With a fifth of a stage's `timeout_minutes` left
+  before its stored deadline, the sweep sends the running agent one warning
+  to commit what works and report (a run woken at its deadline gets none);
+  a send Aether did not answer is repeated by the next sweep.
   After the cancel (and for an agent Aether forgot) the sweep reads the
   task: if the agent had already completed or failed it, that result settles
   the stage instead, so a verdict whose earlier settle failed is not lost to

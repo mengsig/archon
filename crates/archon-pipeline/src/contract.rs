@@ -732,6 +732,7 @@ const WORK_RULES: &str = "\n## Work stage\n\n\
 - Use the report format the stage prompt gives for your summary. If it gives none, \
 list what changed and why, the files touched, the exact verification commands you ran \
 with their results, and any known gaps.\n\
+- Run checks in the foreground or wait on them: never end your turn while one runs.\n\
 - Report the `git rev-parse HEAD^{tree}` of your last full check. A passing check of \
 a tree holds for any later head with that tree. After a passing full check, a later \
 diff of only prose or raster images that no build or test reads needs only the \
@@ -742,6 +743,7 @@ const TEAM_RULES: &str = "\n## Team stage\n\n\
 list what your role changed and why, the files touched, the commits you made, the \
 verification commands you ran with their results, any assumption you made about a \
 peer's work, and any known gaps.\n\
+- Run checks in the foreground or wait on them: never end your turn while one runs.\n\
 \n## Team coordination\n\n\
 - Once every role has an agent, Archon sends you one roster message: each role's name, \
 Aether agent id, worktree and branch. If a role is replaced, a roster with a higher \
@@ -1160,6 +1162,14 @@ mod tests {
             assert!(ship.contains(said), "missing {said:?} in {ship}");
         }
         let work = of(StageKind::Work);
+        for kind in [StageKind::Work, StageKind::Team] {
+            let rules = kind_rules(kind).split_whitespace().collect::<Vec<_>>();
+            let rules = rules.join(" ");
+            assert!(
+                rules.contains("never end your turn while one runs"),
+                "a turn that ends while a check runs loses the stage: {rules}"
+            );
+        }
         assert!(!work.contains("must print the same tree"));
         assert!(
             work.contains("Report the `git rev-parse HEAD^{tree}` of your last full check"),

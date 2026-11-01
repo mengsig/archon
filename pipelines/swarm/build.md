@@ -31,7 +31,8 @@ complete at once, saying so. Otherwise fix what it says about your task.
    for a reply to finish your task. Without a roster or messaging tools,
    work alone from the plan.
 4. Run your task's acceptance commands until they pass, plus the
-   repository's checks that cover your paths.
+   repository's checks that cover your paths, each in the foreground or
+   waiting on it: never end your turn while a check runs.
 5. Never commit build caches (`__pycache__`, `*.pyc`) or `.archon/` files; Archon
    leaves caches out and refuses to ship the plan file.
 6. Commit on your branch with the repository's commit conventions. Do not

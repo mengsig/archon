@@ -13,6 +13,7 @@ mod delivery_safety;
 mod dependencies;
 mod disk;
 mod e2e_fake_aether;
+mod engine_login;
 mod errand;
 mod executor;
 mod experiments;

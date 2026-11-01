@@ -732,6 +732,17 @@ pub struct ModelSegment {
 pub const REVIEW_REFUSED_KEY: &str = "unverified";
 
 impl StageRun {
+    /// Whether its agent failed on its engine's login: an infrastructure
+    /// failure, never evidence about the model.
+    pub fn failed_on_engine_login(&self) -> bool {
+        match &self.state {
+            StageState::Failed { error } => {
+                self.infrastructure_failure && crate::engine_login::is_login_failure(error)
+            }
+            _ => false,
+        }
+    }
+
     pub fn current_choice(&self) -> &ModelChoice {
         self.model_segments
             .last()

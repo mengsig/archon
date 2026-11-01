@@ -309,6 +309,10 @@ pub trait AgentBackend: Send + Sync {
     /// `Err` when Aether refuses, as it does for an agent that did not fail.
     async fn wake(&self, agent: &AetherAgentId) -> Result<(), ArchonError>;
 
+    /// Why `provider`'s engine cannot run now, as Aether's login state says
+    /// it; `None` once it can. Probes an engine held for a failed login.
+    async fn engine_login(&self, provider: &str) -> Result<Option<String>, ArchonError>;
+
     /// Ask Aether to cancel an agent and its live descendants. Aether cancels
     /// cooperatively: `Ok` means accepted, not that any of them has ended.
     async fn cancel(&self, agent: &AetherAgentId, reason: &str) -> Result<(), ArchonError>;

@@ -12,6 +12,7 @@ pub mod compose;
 pub mod context;
 pub mod disk;
 pub mod dispatcher;
+pub mod engine_login;
 pub mod executor;
 mod experiments;
 pub mod feed;
@@ -567,6 +568,7 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
         github: GithubState::default(),
         started_at: archon_core::now(),
         disk: disk::DiskWatch::system(),
+        engines: engine_login::EngineLoginWatch::system(),
         host: host_load::HostWatch::system(),
         standby: std::sync::OnceLock::new(),
         recovery: Default::default(),

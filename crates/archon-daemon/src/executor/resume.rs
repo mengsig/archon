@@ -206,6 +206,9 @@ pub(super) async fn hand_over(
     Ok(false)
 }
 
+/// How [`with_deadline`] starts the deadline it tells.
+const DEADLINE_TOLD: &str = "\n\nArchon now stops you and every agent you delegated to at ";
+
 /// `kept` told the resumed or woken attempt's own deadline `until`, which replaces the one
 /// its contract named.
 pub(super) fn with_deadline(mut kept: KeptAgent, until: Option<Timestamp>) -> KeptAgent {
@@ -214,11 +217,21 @@ pub(super) fn with_deadline(mut kept: KeptAgent, until: Option<Timestamp>) -> Ke
         return kept;
     };
     kept.message.push_str(&format!(
-        "\n\nArchon now stops you and every agent you delegated to at {}. If your task \
-         has you commit, commit each working step as you go. Finish with time to spare.",
+        "{DEADLINE_TOLD}{}. If your task has you commit, commit each working step as you go. \
+         Finish with time to spare.",
         until.format("%Y-%m-%d %H:%M UTC")
     ));
     kept
+}
+
+/// `kept`, told `until` in place of the deadline [`with_deadline`] told it
+/// before, as for an attempt that waited on its engine's login.
+pub(super) fn with_moved_deadline(mut kept: KeptAgent, until: Timestamp) -> KeptAgent {
+    if let Some(at) = kept.message.find(DEADLINE_TOLD) {
+        kept.message.truncate(at);
+    }
+    assert!(!kept.message.contains(DEADLINE_TOLD), "one deadline told");
+    with_deadline(kept, Some(until))
 }
 
 /// Aether's new cap for `agent` resumed or woken on `stage`: the cap counts its subtree's
@@ -518,8 +531,10 @@ pub(super) fn wakes(store: &Store, slot: &[&StageRun]) -> Result<(bool, usize), 
             Err(ArchonError::NotFound(_)) => continue,
             Err(error) => return Err(error),
         };
-        tried |= spawn.woken;
-        took += usize::from(spawn.woken && spawn.resume.is_some());
+        // A wake after a failed engine login is not the slot's one infrastructure wake.
+        let woken = spawn.woken && !spawn.login_wake;
+        tried |= woken;
+        took += usize::from(woken && spawn.resume.is_some());
     }
     assert!(took <= slot.len(), "an attempt wakes one agent at most");
     assert!(

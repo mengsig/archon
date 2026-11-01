@@ -12,8 +12,8 @@ use archon_core::steer::RunEdit;
 use archon_pipeline::{EngineAction, SpawnPlan};
 
 use super::{
-    FollowUp, RunTable, descendants, finish, gates, notional, pages, recover, resume, ship,
-    siblings, spawn, stall, swarm, team,
+    FollowUp, RunTable, descendants, engine_wait, finish, gates, notional, pages, recover, resume,
+    ship, siblings, spawn, stall, swarm, team,
 };
 use crate::context::DaemonContext;
 use crate::disk::{self, FullDisk};
@@ -345,24 +345,25 @@ pub(super) fn settled_stage(
 /// and do not use up `limits.infra_retries` (ARCHITECTURE §6.3).
 const MAX_DISK_FULL_RETRIES: usize = 5;
 
+/// Wakes per slot of agents that failed on their engine's login. Each waits
+/// for a probe to find the engine logged in, so only probes that wrongly
+/// find it so spend them; none uses up `limits.infra_retries`.
+const MAX_LOGIN_WAKES: usize = 48;
+
 /// How long an infrastructure retry waits out a cause that clears with time.
 const TRANSIENT_WAIT_MINUTES: i64 = 5;
 
 /// What an infrastructure failure's `error` names that clears with time: an
-/// engine, provider or login that is down or refusing for now.
+/// engine or provider that is down or refusing for now. A failed login holds
+/// its engine instead (`RetryKind::EngineLogin`).
 fn transient_cause(error: &str) -> Option<&'static str> {
-    // Aether words a model error `<Class>: <message>`, as in `Auth: token expired`.
-    const CAUSES: [(&str, &str); 10] = [
+    // Aether words a model error `<Class>: <message>`, as in `RateLimit: slow down`.
+    const CAUSES: [(&str, &str); 5] = [
         ("unavailable", "the engine to come back"),
         ("overloaded", "the provider to recover"),
         ("ratelimit:", "the rate limit to lift"),
         ("rate limit", "the rate limit to lift"),
         ("usagelimit:", "the usage limit to reset"),
-        ("auth:", "the login to be renewed"),
-        ("authenticat", "the login to be renewed"),
-        ("unauthorized", "the login to be renewed"),
-        ("not logged in", "the login to be renewed"),
-        ("credential", "the credentials to be renewed"),
     ];
     let error = error.to_ascii_lowercase();
     CAUSES
@@ -387,6 +388,8 @@ enum RetryKind {
     Refused,
     /// An agent Aether stopped at its stage deadline, woken once to report.
     Timeout,
+    /// An agent whose engine's login failed, woken once the engine works.
+    EngineLogin,
 }
 
 impl RetryKind {
@@ -394,6 +397,9 @@ impl RetryKind {
     /// trusted to report a full disk: a failure the agent wrote is one only
     /// when the free space confirms it, else it is the agent's own.
     async fn of_failure(ctx: &DaemonContext, error: &str, infra: bool) -> Option<Self> {
+        if infra && archon_core::engine_login::is_login_failure(error) {
+            return Some(Self::EngineLogin);
+        }
         if !disk::is_disk_full(error) {
             return infra.then_some(Self::Infra);
         }
@@ -413,6 +419,7 @@ impl RetryKind {
             {
                 Self::Refused
             }
+            StageState::Failed { .. } if stage.failed_on_engine_login() => Self::EngineLogin,
             StageState::Failed { error } if disk::is_disk_full(error) => Self::DiskFull,
             StageState::TimedOut => Self::Timeout,
             _ => Self::Infra,
@@ -425,6 +432,7 @@ impl RetryKind {
             Self::DiskFull => MAX_DISK_FULL_RETRIES,
             Self::Refused => archon_pipeline::swarm::MAX_CORRECTIONS,
             Self::Timeout => 1,
+            Self::EngineLogin => MAX_LOGIN_WAKES,
         }
     }
 }
@@ -458,6 +466,9 @@ async fn infra_retry(
     if kind == RetryKind::DiskFull {
         ctx.disk
             .report_full(error, FullDisk::Aether, Instant::now());
+    }
+    if kind == RetryKind::EngineLogin {
+        engine_wait::hold(ctx, stage, error).await?;
     }
     respawn(ctx, table, (stage, run, all), outcome, error, kind).await
 }
@@ -549,6 +560,7 @@ async fn respawn(
         not_before,
         wake: wake.clone(),
         extension,
+        engine_login: kind == RetryKind::EngineLogin,
     };
     let Some(replacement) = replace(ctx, table, run, all, &failed, reserved, refusal).await? else {
         return Ok(None);
@@ -588,7 +600,9 @@ fn took_deadline_wake(store: &archon_queue::Store, stage: &StageRun) -> Result<b
 fn passing_cause(kind: RetryKind, error: &str) -> Option<&'static str> {
     match kind {
         RetryKind::Infra => transient_cause(error),
-        RetryKind::DiskFull | RetryKind::Refused | RetryKind::Timeout => None,
+        RetryKind::DiskFull | RetryKind::Refused | RetryKind::Timeout | RetryKind::EngineLogin => {
+            None
+        }
     }
 }
 
@@ -613,12 +627,21 @@ fn retry_text(
             "its deadline",
             " in the same agent, which has a few minutes to commit and report",
         ),
+        (RetryKind::EngineLogin, true) => (
+            "a failed engine login",
+            " in the same agent once its engine's login works again",
+        ),
+        (RetryKind::EngineLogin, false) => (
+            "a failed engine login",
+            " once its engine's login works again",
+        ),
     };
     let when = waits.map_or(String::new(), |cause| {
         format!(" in {TRANSIENT_WAIT_MINUTES} min, waiting for {cause},")
     });
     let count = match (kind, woken) {
         (RetryKind::Timeout, _) => "it times out if Aether cannot wake it".to_owned(),
+        (RetryKind::EngineLogin, _) => format!("no retry spent; wait {retry} of {limit}"),
         (_, true) => "a fresh agent if Aether cannot wake it".to_owned(),
         (_, false) => format!("{retry} of {limit}"),
     };
@@ -652,6 +675,10 @@ async fn slot_retry(
     if kind == RetryKind::Timeout {
         let wake = (replaced < kind.limit(ctx)).then(|| resume::wake_at_deadline(failed));
         return Ok((1 + replaced, wake.flatten()));
+    }
+    // Each failed login wakes the same agent again, once its engine works.
+    if kind == RetryKind::EngineLogin {
+        return Ok((1 + replaced, resume::wake_for(failed, error)));
     }
     if kind != RetryKind::Infra {
         return Ok((1 + replaced, None));
@@ -989,7 +1016,7 @@ mod tests {
     #[test]
     fn only_a_cause_that_clears_with_time_is_waited_out() {
         let login = "model error from claude-code/opus: Auth: token expired";
-        assert_eq!(transient_cause(login), Some("the login to be renewed"));
+        assert_eq!(transient_cause(login), None, "a login holds its engine");
         let limit = "model error: RateLimit: slow down";
         assert_eq!(transient_cause(limit), Some("the rate limit to lift"));
         assert_eq!(

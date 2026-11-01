@@ -2741,7 +2741,11 @@ table and delivers it off every lock:
    kept for the tree it checked, wakes the dispatcher. The worktree is then
    proved again, so a check that changed it is refused, before the verdict
    is read: a failed check refuses the item with the command, how it ended
-   and the last lines of its output. Restarting archond runs it again.
+   and the last lines of its output. Only once that proof held is a pass
+   kept, by the tree id and the expanded command, in memory: a later
+   delivery whose tree and expanded command match reuses it without
+   running anything. A failure, or a pass whose proof failed, is never
+   kept. Restarting archond forgets every pass and runs the check again.
 3. **Push**, `pr` mode only: `git push --porcelain <origin url>
    <commit>:refs/heads/<branch>` of the checked commit, not the branch tip,
    run from the repository's shadow (§13.4), so no hook, filter or ssh

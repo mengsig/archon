@@ -92,6 +92,12 @@ make ci      # fmt check, clippy -D warnings, rustdoc -D warnings, tests
 it runs, so at most that many full runs, Aether's included, load the host at
 once; see [CONTRIBUTING.md](../CONTRIBUTING.md).
 
+The ship gate's fast check (see the repository's `checks.fast`) runs once
+per git tree and expanded command: archond reuses a pass it proved for the
+same tree, so retrying an unchanged change does not rerun it. Only a pass
+whose worktree still held the checked tree afterwards is reused; a changed
+tree or command, or a restart of archond, runs it again.
+
 `make lint`, and so `make ci`, also checks `install.sh` and the scripts in
 `scripts/`, and needs [ShellCheck](https://www.shellcheck.net/) installed. The installer's tests
 run it under `dash` when there is one, else under `sh`; `ARCHON_TEST_SH`

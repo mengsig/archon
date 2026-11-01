@@ -5267,9 +5267,10 @@ pull request (`baseRefOid`), fetched by id: no local ref, tracking ref or
 remote URL moves it. A pull request retargeted since enqueue, so that
 GitHub shows a base branch other than the frozen one, passes nothing.
 When the review is counted
-(§8.2), archond records the branch head it passed as `reviewed_head` in
-the stage's structured result, a key no agent can write; a branch moved
-off the frozen head is refused. A merge of that item then needs, besides
+(§8.2), archond records the branch head it passed as `reviewed_head`, and
+the fork its reviewers read from as `reviewed_fork`, in the stage's
+structured result, keys no agent can write; a branch moved off the frozen
+head is refused, and a pass with no `reviewed_fork` counts for nothing. A merge of that item then needs, besides
 the above:
 
 - a recorded `reviewed_head` equal to the frozen head, and GitHub's head
@@ -5280,11 +5281,11 @@ the above:
   `gh pr merge`. Known limit: GitHub cannot pin check states to a merge,
   so a check that turns red in the round trip after that read is not
   seen (Archon's own merges share this window). Branch protection or a
-  ruleset with required checks closes it. Likewise the fork the review
-  covered is not checked against the base at merge: a base branch
-  force-pushed back past commits of the pull request after the review
-  brings those commits in unread. Branch protection that forbids
-  force-pushes to the base closes it.
+  ruleset with required checks closes it;
+- the base commit GitHub shows for the pull request, fetched by id, still
+  holding `reviewed_fork`: a base force-pushed back or rewritten past
+  commits of the pull request after the review would bring them in
+  unread, so it is refused, naming both commits.
 
 The method is chosen as for any merge, and no author is passed, so GitHub
 credits the pull request's author. An item that `depends_on` such a review
@@ -5293,9 +5294,11 @@ that pull request's base; at ship, `gh` must show the reviewed pull request
 open, or merged, at that head, which becomes the floor of the attribution
 and foreign commit checks (§8.7): those commits must be ancestors of the
 item's head, unchanged, and every other foreign commit is still refused. Past that
-floor only commits in `origin`'s head of the reviewed pull request's base
-branch, read with `ls-remote` and fetched at delivery, are exempt: no local
-or tracking ref counts, nor a stack parent's branch. A
+floor only commits in the base commit GitHub shows for the reviewed pull
+request (`baseRefOid`), fetched by id at delivery, are exempt, and only
+while it still holds `reviewed_fork`: no local or tracking ref counts, nor
+a remote URL or rewrite, nor a stack parent's branch. Base commits newer
+than GitHub's `baseRefOid` are refused until GitHub shows them. A
 refresh of such an item, or a fix of its stack, keeps that floor, and so
 does an item stacked on it, at any depth, through `depends_on`. The
 restack sweep (§8.8) never merges a moved or merged parent into such an

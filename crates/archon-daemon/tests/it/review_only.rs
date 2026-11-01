@@ -36,24 +36,38 @@ async fn fork_pull_request() -> (Harness, FakeGh, String) {
     let gh = FakeGh::install(&h);
     let head = contributor_commit(&h, "patch.txt", "the contributor's patch\n");
     let base = git(&origin_of(&h), &["rev-parse", "main"]);
-    gh.headed(
-        200,
-        &json!({
-            "id": "PR_node200",
-            "number": 200,
-            "url": FORK_PR,
-            "state": "OPEN",
-            "headRefName": "patch",
-            "headRefOid": head,
-            "baseRefName": "main",
-            "baseRefOid": base,
-            "isCrossRepository": true,
-            "headRepository": {"name": "r"},
-            "headRepositoryOwner": {"login": "contributor"},
-        }),
-    );
+    gh.headed(200, &shown_pr(&head, &base));
     gh.show(&head, "MERGEABLE", green());
     (h, gh, head)
+}
+
+/// #200 as GitHub shows it, at `head` over the base commit `base`.
+fn shown_pr(head: &str, base: &str) -> Value {
+    json!({
+        "id": "PR_node200",
+        "number": 200,
+        "url": FORK_PR,
+        "state": "OPEN",
+        "headRefName": "patch",
+        "headRefOid": head,
+        "baseRefName": "main",
+        "baseRefOid": base,
+        "isCrossRepository": true,
+        "headRepository": {"name": "r"},
+        "headRepositoryOwner": {"login": "contributor"},
+    })
+}
+
+/// `origin`'s `main` rewritten after the review to a commit that does not
+/// hold the review's fork, as GitHub then shows #200's base: the pull
+/// request's change now starts before the commits its reviewers read.
+fn rewrite_base(h: &Harness, gh: &FakeGh, head: &str) -> String {
+    let origin = origin_of(h);
+    let tree = git(&origin, &["rev-parse", "main^{tree}"]);
+    let rewritten = git(&origin, &["commit-tree", &tree, "-m", "Rewritten base"]);
+    git(&origin, &["update-ref", "refs/heads/main", &rewritten]);
+    gh.headed(200, &shown_pr(head, &rewritten));
+    rewritten
 }
 
 /// One commit by [`CONTRIBUTOR`] on top of what the fork's clone holds,
@@ -275,6 +289,23 @@ async fn a_head_that_moved_after_the_review_is_never_merged() {
     };
     assert!(reason.contains("moved to"), "{reason}");
     assert!(!gh.calls().iter().any(|c| c.starts_with("pr merge")));
+}
+
+/// A base rewritten after the review adds commits no reviewer read to the
+/// pull request, though its head is unchanged: the merge is refused.
+#[tokio::test]
+async fn a_base_rewritten_after_the_review_is_never_merged() {
+    let (h, gh, head, item) = reviewed_fork().await;
+    rewrite_base(&h, &gh, &head);
+
+    let merge = merge_of(h.cli(merge_item(&item, false)).await);
+
+    let MergeState::Refused { reason } = &merge.state else {
+        panic!("the merge is refused: {merge:?}");
+    };
+    assert!(reason.contains("no longer holds"), "{reason}");
+    assert!(!gh.calls().iter().any(|c| c.starts_with("pr merge")));
+    nothing_pushed_to_the_fork(&h, &gh, &head);
 }
 
 /// A refresh would refreeze or merge the moved head under the old review:
@@ -1078,6 +1109,57 @@ async fn a_stack_on_a_review_whose_pull_request_moved_since_is_refused_at_ship()
         "{error}"
     );
     assert!(!gh.calls().iter().any(|c| c.starts_with("pr create")));
+}
+
+/// A stack on a review whose pull request's base was rewritten since would
+/// carry commits no reviewer read under the reviewed head: refused at ship.
+#[tokio::test]
+async fn a_stack_on_a_review_whose_base_was_rewritten_since_is_refused_at_ship() {
+    let (h, gh, head, review) = reviewed_fork().await;
+    let item = stacked_on(&h, &review, &head).await;
+    rewrite_base(&h, &gh, &head);
+
+    settle_stacked(&h, &item, own_commit).await;
+
+    let QueueState::Failed { error, .. } = h.state(&item.id).await else {
+        panic!("refused: {:?}", h.state(&item.id).await);
+    };
+    assert!(error.contains("no longer holds"), "{error}");
+    assert!(!gh.calls().iter().any(|c| c.starts_with("pr create")));
+    nothing_pushed_to_the_fork(&h, &gh, &head);
+}
+
+/// `origin`'s push URL naming a mirror whose `main` holds a foreign commit:
+/// only the base commit GitHub shows exempts a commit, so it is refused.
+#[tokio::test]
+async fn a_foreign_commit_on_a_mirror_s_base_is_refused_in_a_stack() {
+    let (h, gh, head, review) = reviewed_fork().await;
+    let item = stacked_on(&h, &review, &head).await;
+    let mirror = h.dir.path().join("mirror.git");
+    let (origin, mirrored) = (origin_of(&h), mirror.to_str().unwrap().to_owned());
+    let from = origin.to_str().unwrap();
+    git(
+        h.dir.path(),
+        &["clone", "--quiet", "--mirror", from, &mirrored],
+    );
+    git(&h.repo, &["config", "remote.origin.pushurl", &mirrored]);
+
+    settle_stacked(&h, &item, |workspace| {
+        other_commit(workspace);
+        git(
+            workspace,
+            &["push", "--quiet", &mirrored, "HEAD:refs/heads/main"],
+        );
+        own_commit(workspace);
+    })
+    .await;
+
+    let QueueState::Failed { error, .. } = h.state(&item.id).await else {
+        panic!("refused: {:?}", h.state(&item.id).await);
+    };
+    assert!(error.contains("other@example.com"), "{error}");
+    assert!(!gh.calls().iter().any(|c| c.starts_with("pr create")));
+    nothing_pushed_to_the_fork(&h, &gh, &head);
 }
 
 #[tokio::test]

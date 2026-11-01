@@ -86,8 +86,9 @@ struct Shipped {
     head: String,
     /// Whether every run that delivered `head` had its change reviewed.
     reviewed: bool,
-    /// The pull request is not the item's own: a review item passed it at `head`.
-    review_of: bool,
+    /// The pull request is not the item's own: a review item passed it at
+    /// `head`, reading its commits from this fork of GitHub's base.
+    review_of: Option<String>,
 }
 
 impl Shipped {
@@ -108,8 +109,8 @@ impl Shipped {
     /// pull request, which merges only with every check green.
     fn waived_bases(&self) -> &[String] {
         match self.review_of {
-            true => &[],
-            false => &self.repo.merge_waive_checks,
+            Some(_) => &[],
+            None => &self.repo.merge_waive_checks,
         }
     }
 
@@ -173,7 +174,7 @@ fn shipped(store: &Store, id: &QueueItemId) -> Result<Shipped, ArchonError> {
         pr_url,
         head,
         reviewed,
-        review_of: false,
+        review_of: None,
     })
 }
 
@@ -218,12 +219,19 @@ fn reviewed_pull_request(
             merge::short(&onto.head_sha)
         )));
     }
+    let Some(fork) = super::onto::reviewed_fork(stages) else {
+        return Err(ArchonError::Invalid(format!(
+            "{}'s review of {url} records no commit its reviewers read from: queue a new \
+             review item",
+            item.id
+        )));
+    };
     assert!(is_commit_id(&head), "a reviewed head is a full commit id");
     Ok(Shipped {
         pr_url: url,
         head,
         reviewed: true,
-        review_of: true,
+        review_of: Some(fork),
         item,
         run,
         repo,
@@ -246,7 +254,7 @@ fn checks_not_green(ready: &Ready) -> Option<String> {
 /// Why a reviewed pull request whose head moved since its review is not
 /// merged: the new commits need a review of their own.
 fn moved_since_review(shipped: &Shipped, facts: &PullRequestFacts) -> Option<String> {
-    if !shipped.review_of || facts.state != "OPEN" || facts.head == shipped.head {
+    if shipped.review_of.is_none() || facts.state != "OPEN" || facts.head == shipped.head {
         return None;
     }
     assert!(
@@ -355,7 +363,7 @@ fn expected_base(
     store: &mut Store,
     shipped: &Shipped,
 ) -> Result<Result<String, String>, ArchonError> {
-    if shipped.review_of {
+    if shipped.review_of.is_some() {
         let onto = shipped.item.onto.as_deref().expect("a review item");
         // The pull request must still target the base it was reviewed for.
         return Ok(Ok(onto.base_ref.clone()));
@@ -790,7 +798,7 @@ pub(crate) async fn enable_auto_merge(
              land it with `archon merge {item}`"
         )));
     }
-    if shipped.review_of {
+    if shipped.review_of.is_some() {
         return Err(ArchonError::Invalid(format!(
             "{item} reviewed {}, which is not its own pull request: GitHub's auto-merge is not \
              turned on for it; ask for the merge with `request_merge` or `archon merge {item}`",
@@ -848,7 +856,7 @@ async fn ask(
         text: question_text(shipped, reason.as_deref(), seen),
         options: MERGE_OPTIONS
             .iter()
-            .filter(|o| !shipped.review_of || **o != "yes ignore-checks")
+            .filter(|o| shipped.review_of.is_none() || **o != "yes ignore-checks")
             .map(|o| (*o).to_owned())
             .collect(),
         item: Some(shipped.item.id.clone()),
@@ -897,7 +905,7 @@ fn question_text(shipped: &Shipped, reason: Option<&str>, seen: &ChecksSeen) -> 
         return text;
     }
     text.push_str(&format!("\nChecks: {}.", seen.describe()));
-    if shipped.review_of {
+    if shipped.review_of.is_some() {
         text.push_str(" It merges only with every check green.\nAnswer `yes` or `no`.");
         return text;
     }
@@ -1154,6 +1162,9 @@ async fn ready(ctx: &DaemonContext, merge: &MergeRequest) -> Result<Readiness, A
     if let Some(why) = moved_since_review(&shipped, &facts) {
         return Ok(Readiness::Refused(why));
     }
+    if let Err(why) = base_holds_review(ctx, &shipped).await? {
+        return Ok(Readiness::Refused(why));
+    }
     let expected = Expected {
         head: &merge.head,
         base: &base,
@@ -1164,11 +1175,33 @@ async fn ready(ctx: &DaemonContext, merge: &MergeRequest) -> Result<Readiness, A
             repo: shipped.repo.clone(),
             base,
             seen,
-            review_of: shipped.review_of,
+            review_of: shipped.review_of.is_some(),
         })),
         Ok(Assessment::Undecided(_)) => Readiness::Undecided,
         Err(why) => Readiness::Refused(why),
     })
+}
+
+/// Whether GitHub's base of another's pull request still holds the fork its
+/// review read from: a base moved back since would merge unread commits.
+async fn base_holds_review(
+    ctx: &DaemonContext,
+    shipped: &Shipped,
+) -> Result<Result<(), String>, ArchonError> {
+    let Some(fork) = &shipped.review_of else {
+        return Ok(Ok(()));
+    };
+    let onto = shipped.item.onto.as_deref().expect("a review item");
+    assert!(
+        onto.review_only,
+        "only a review item passes another's pull request"
+    );
+    let reviewed = super::onto::ReviewedPr {
+        pr: onto.clone(),
+        fork: fork.clone(),
+    };
+    let held = super::onto::reviewed_base(ctx, &shipped.repo, &reviewed).await?;
+    Ok(held.map(|_| ()))
 }
 
 /// A pull request still aimed at a parent branch whose pull request merged or

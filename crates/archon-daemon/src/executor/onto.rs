@@ -73,6 +73,26 @@ pub(super) fn reviewed_head(stages: &[StageRun]) -> Option<String> {
     Some(head)
 }
 
+/// Where the change the newest passed review on `stages` covered started,
+/// as Archon recorded it; `None` when no stage records one on a counted pass.
+pub(super) fn reviewed_fork(stages: &[StageRun]) -> Option<String> {
+    let fork = stages
+        .iter()
+        .rev()
+        .filter(|s| s.state == StageState::Completed)
+        .find_map(|s| archon_pipeline::review::reviewed_fork(s.structured.as_ref()))?;
+    assert!(stack::is_commit_id(&fork), "recorded as a full commit id");
+    Some(fork)
+}
+
+/// A pull request a succeeded review item passed whole: its reviewers read
+/// the commits from `fork`, where it left GitHub's base, to its frozen head.
+#[derive(Debug, Clone)]
+pub(crate) struct ReviewedPr {
+    pub(crate) pr: OntoPullRequest,
+    pub(crate) fork: String,
+}
+
 /// The pull request a succeeded review item among `item`'s dependencies
 /// passed at its frozen head, the first in order: an item queued on it with
 /// no `onto` starts from that head, and those commits ship beneath its own,
@@ -82,6 +102,15 @@ pub(crate) fn reviewed_dependency(
     store: &Store,
     item: &QueueItem,
 ) -> Result<Option<OntoPullRequest>, ArchonError> {
+    Ok(reviewed_dependency_pass(store, item)?.map(|reviewed| reviewed.pr))
+}
+
+/// [`reviewed_dependency`] with where its review started; a pass that
+/// recorded no start counts for nothing.
+fn reviewed_dependency_pass(
+    store: &Store,
+    item: &QueueItem,
+) -> Result<Option<ReviewedPr>, ArchonError> {
     if item.onto.is_some() {
         return Ok(None);
     }
@@ -106,9 +135,12 @@ pub(crate) fn reviewed_dependency(
         if dependency.repo != item.repo {
             continue;
         }
-        let passed = reviewed_head(&store.stage_runs(run)?);
-        if passed.as_deref() == Some(onto.head_sha.as_str()) {
-            return Ok(Some(*onto));
+        let stages = store.stage_runs(run)?;
+        if reviewed_head(&stages).as_deref() != Some(onto.head_sha.as_str()) {
+            continue;
+        }
+        if let Some(fork) = reviewed_fork(&stages) {
+            return Ok(Some(ReviewedPr { pr: *onto, fork }));
         }
     }
     Ok(None)
@@ -122,6 +154,14 @@ pub(crate) fn reviewed_ancestry(
     store: &Store,
     item: &QueueItem,
 ) -> Result<Option<OntoPullRequest>, ArchonError> {
+    Ok(reviewed_ancestry_pass(store, item)?.map(|reviewed| reviewed.pr))
+}
+
+/// [`reviewed_ancestry`] with where its review started.
+pub(crate) fn reviewed_ancestry_pass(
+    store: &Store,
+    item: &QueueItem,
+) -> Result<Option<ReviewedPr>, ArchonError> {
     if item.onto.is_some() {
         return Ok(None);
     }
@@ -132,8 +172,11 @@ pub(crate) fn reviewed_ancestry(
         if !seen.insert(next.id.clone()) {
             continue;
         }
-        if let Some(reviewed) = reviewed_dependency(store, &next)? {
-            assert!(reviewed.review_only, "a passed review item's pull request");
+        if let Some(reviewed) = reviewed_dependency_pass(store, &next)? {
+            assert!(
+                reviewed.pr.review_only,
+                "a passed review item's pull request"
+            );
             return Ok(Some(reviewed));
         }
         let owner = match store.stack_fix(&next.id)? {
@@ -148,6 +191,57 @@ pub(crate) fn reviewed_ancestry(
         }
     }
     Ok(None)
+}
+
+/// GitHub's base commit of `reviewed`, fetched by id so no remote URL or
+/// ref here stands in for it, once it still holds the fork its review read
+/// from: a base moved back or away adds commits no reviewer read. `Err` why not.
+pub(crate) async fn reviewed_base(
+    ctx: &DaemonContext,
+    repo: &Repo,
+    reviewed: &ReviewedPr,
+) -> Result<Result<String, String>, ArchonError> {
+    let ReviewedPr { pr, fork } = reviewed;
+    assert!(
+        pr.review_only,
+        "only a review item passes a pull request whole"
+    );
+    assert!(
+        stack::is_commit_id(fork),
+        "a recorded fork is a full commit id"
+    );
+    let url = pr.pr.url();
+    let shown = gh::base_commit(&ctx.config.github.binary, repo, &url).await?;
+    if shown.branch != pr.base_ref {
+        return Ok(Err(format!(
+            "{url} now targets `{}`, not `{}` as when it was reviewed: queue a new review item",
+            shown.branch, pr.base_ref
+        )));
+    }
+    let Some(base) = shown.commit else {
+        return Ok(Err(format!(
+            "GitHub shows no base commit for {url}, so Archon cannot tell which commits its \
+             review covers"
+        )));
+    };
+    let (data_dir, path) = (ctx.paths.data_dir.clone(), repo.path.clone());
+    let (branch, base_id, fork_id) = (pr.base_ref.clone(), base.clone(), fork.clone());
+    let holds = tokio::task::spawn_blocking(move || {
+        let shadow = Shadow::of(&data_dir, &path)?;
+        stack::fetch(&shadow, &path, &branch, &base_id)?;
+        crate::worktree::is_ancestor(&path, &fork_id, &base_id)
+    })
+    .await
+    .map_err(|e| ArchonError::io("reviewed base task", std::io::Error::other(e)))??;
+    if !holds {
+        return Ok(Err(format!(
+            "{url}'s base `{}` is at {base} on GitHub, which no longer holds {fork}, where the \
+             change its review passed started: the pull request now carries commits no \
+             reviewer read. Queue a new review item of it",
+            pr.base_ref
+        )));
+    }
+    Ok(Ok(base))
 }
 
 /// What the agents of an item stacked on a reviewed pull request are told:

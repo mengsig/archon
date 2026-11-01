@@ -33,6 +33,8 @@ struct Found {
     reviewers: Vec<Reviewer>,
     /// The branch head the passes were held to.
     head: String,
+    /// Where a review item's whole pull request started, from GitHub's base.
+    fork: Option<String>,
     implicit: Vec<String>,
     /// What every reviewer read returned, fails included.
     reads: Vec<Read>,
@@ -56,8 +58,9 @@ type Read = (String, Verdict);
 
 /// What checking the verdicts against the branch came to.
 enum Checked {
-    /// The passes hold for the branch at this head.
-    Held(Held, String),
+    /// The passes hold for the branch at this head, a review item's change
+    /// read from this fork.
+    Held(Held, String, Option<String>),
     Refused(String),
     /// A named delta read needs an anchor, and the earlier reviewers were not
     /// read: why it is refused if none anchors it.
@@ -116,13 +119,16 @@ pub(super) async fn verify(
     if !implicit.is_empty() {
         tracing::info!(stage = %stage.id, ?implicit, "anchored named delta reviews on the lead's earlier reviewers");
     }
-    let head = match &found {
-        Some(Ok(found)) => Some(found.head.clone()),
-        _ => None,
+    let (head, fork) = match &found {
+        Some(Ok(found)) => (Some(found.head.clone()), found.fork.clone()),
+        _ => (None, None),
     };
     review::record_check(&mut structured, found.map(|f| f.map(|f| f.reviewers)));
     if let Some(head) = head {
         review::record_reviewed_head(&mut structured, &head);
+    }
+    if let Some(fork) = fork {
+        review::record_reviewed_fork(&mut structured, &fork);
     }
     review::record_implicit(&mut structured, &implicit);
     if !reads.is_empty() {
@@ -184,7 +190,10 @@ async fn reviewers(
         checked => checked,
     };
     Ok(match checked {
-        Checked::Held(held, head) => Ok(found(&picked, (held, head), verdicts, corrections)),
+        Checked::Held(held, head, fork) => {
+            let found = found(&picked, (held, head), verdicts, corrections);
+            Ok(Found { fork, ..found })
+        }
         Checked::Refused(why) if !corrections.is_empty() => {
             Err(format!("{why} ({})", lead_children(&beneath, lead)))
         }
@@ -241,6 +250,7 @@ fn found(
     Found {
         reviewers: reviewers.collect(),
         head,
+        fork: None,
         implicit: held.implicit,
         reads,
         corrections,
@@ -601,13 +611,13 @@ async fn holding(
         reviewed_pr,
         repo,
     } = base_of(ctx, run).await?;
-    let (base_branch, onto_head) = match (&reviewed_pr, repo) {
+    let (base_branch, onto_head, fork) = match (&reviewed_pr, repo) {
         (Some(reviewed), Some(repo)) => match trusted_fork(ctx, run, repo, reviewed).await? {
             // No local ref names the start: only the fork GitHub's base gives.
-            Ok(fork) => (String::new(), Some(fork)),
+            Ok(fork) => (String::new(), Some(fork.clone()), Some(fork)),
             Err(why) => return Ok(Checked::Refused(why)),
         },
-        _ => (base_branch, onto_head),
+        _ => (base_branch, onto_head, None),
     };
     let workspace = run.workspace.clone();
     let checked = tokio::task::spawn_blocking(move || {
@@ -637,7 +647,7 @@ async fn holding(
         }
         Ok(
             match coverage::counted(&mut history, &placed, &head, owed)? {
-                Ok(held) => Checked::Held(held, head),
+                Ok(held) => Checked::Held(held, head, fork),
                 Err(why) => Checked::Refused(why),
             },
         )

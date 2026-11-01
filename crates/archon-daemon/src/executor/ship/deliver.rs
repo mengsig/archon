@@ -28,8 +28,6 @@ use super::super::{
 use super::{auto_merge, checks, existing, gate, pr_checks, remote, risk};
 use crate::context::DaemonContext;
 use crate::resolve;
-use crate::worktree::shadow::Shadow;
-use crate::worktree::stack;
 
 /// `kv`: `ship:<run>` → the JSON [`ShipOutcome`].
 const SHIP_KEY_PREFIX: &str = "ship:";
@@ -84,7 +82,7 @@ struct Claimed {
     onto: Option<Box<OntoPullRequest>>,
     /// The reviewed pull request the item is stacked on, if any, directly or
     /// through the items it stacks on: its branch holds that reviewed head.
-    stacked_on: Option<OntoPullRequest>,
+    stacked_on: Option<super::super::onto::ReviewedPr>,
     vars: BTreeMap<String, String>,
     /// The outcome persisted already, if any.
     recorded: Option<ShipOutcome>,
@@ -183,7 +181,7 @@ async fn claim(
     let claimed = Claimed {
         plan,
         repo: repo_of(&store, &run)?,
-        stacked_on: super::super::onto::reviewed_ancestry(&store, &item)?,
+        stacked_on: super::super::onto::reviewed_ancestry_pass(&store, &item)?,
         onto: item.onto,
         vars: recover::load_run_vars(&store, run_id)?,
         recorded,
@@ -407,7 +405,8 @@ async fn prove(
 ) -> Result<Result<checks::Checked, String>, ArchonError> {
     let identity = repo_identity::of(ctx, repo).await?;
     let run = &claimed.run;
-    let stacked = match stacked_since(ctx, repo, claimed.stacked_on.as_ref()).await? {
+    let stacked_pr = claimed.stacked_on.as_ref().map(|reviewed| &reviewed.pr);
+    let stacked = match stacked_since(ctx, repo, stacked_pr).await? {
         Ok(stacked) => stacked,
         Err(refusal) => return Ok(Err(refusal)),
     };
@@ -415,7 +414,7 @@ async fn prove(
     let reviewed = claimed.stacked_on.as_ref().filter(|_| stacked.is_some());
     let reviewed_base = match reviewed {
         // The reviewed pull request's base on GitHub, never a stack parent's branch.
-        Some(reviewed) => match origin_base(ctx, repo, &reviewed.base_ref).await? {
+        Some(reviewed) => match super::super::onto::reviewed_base(ctx, repo, reviewed).await? {
             Ok(head) => Some(head),
             Err(refusal) => return Ok(Err(refusal)),
         },
@@ -490,38 +489,6 @@ async fn stacked_since(
          that head. Queue a new review item of it, or queue this work again once it merged",
         reviewed.head_sha
     )))
-}
-
-/// `origin`'s head of `base`, fetched into the repository: the base commits
-/// a reviewed stack may carry under another identity, as GitHub holds them.
-async fn origin_base(
-    ctx: &DaemonContext,
-    repo: &Repo,
-    base: &str,
-) -> Result<Result<String, String>, ArchonError> {
-    assert!(!base.is_empty(), "a delivery has a base branch");
-    let (data_dir, repo_path, branch) = (
-        ctx.paths.data_dir.clone(),
-        repo.path.clone(),
-        base.to_owned(),
-    );
-    let fetched = tokio::task::spawn_blocking(move || {
-        let shadow = Shadow::of(&data_dir, &repo_path)?;
-        stack::fetch_head(&shadow, &repo_path, &branch)
-    })
-    .await
-    .map_err(|e| ArchonError::io("base fetch task", std::io::Error::other(e)))??;
-    let Some(head) = fetched else {
-        return Ok(Err(format!(
-            "the repository has no `origin` to read `{base}` from: a stack on a reviewed pull \
-             request ships only over the base GitHub holds"
-        )));
-    };
-    assert!(
-        stack::is_commit_id(&head),
-        "ls-remote names a full commit id"
-    );
-    Ok(Ok(head))
 }
 
 /// Whether the run worktree holds no change, as a record stage claims when

@@ -141,9 +141,10 @@ pub(crate) fn reports_problem(explanation: &str, next_line: &str) -> bool {
     let mut clauses: Vec<&[String]> = Vec::new();
     let mut carried: Vec<bool> = Vec::new();
     for sentence in &sentences {
-        for (at, clause) in sentence.iter().enumerate() {
-            let before = at.checked_sub(1).map(|prev| as_strs(&sentence[prev]));
-            carried.push(before.is_some_and(|prev| denied_before(&prev, false)));
+        let mut denying = false;
+        for clause in sentence {
+            carried.push(denying);
+            denying = denied_before(&as_strs(clause), denying);
             clauses.push(clause);
         }
     }
@@ -200,7 +201,9 @@ fn clause_report(words: &[&str], carried: bool) -> Option<usize> {
     let first = words.get(lead).copied().unwrap_or_default();
     let rest = words.get(lead + 1..).unwrap_or_default();
     let listed = words[..lead].iter().any(|w| LISTING.contains(w));
-    let opening = if PROBLEMS.contains(&first) && listed {
+    let opening = if PROBLEMS.contains(&first) && carried {
+        None
+    } else if PROBLEMS.contains(&first) && listed {
         Some(0)
     } else if PROBLEMS.contains(&first) {
         follows(rest, &[&FOUND, &REMAIN, &LINGER])
@@ -245,6 +248,7 @@ fn report_at(words: &[&str], at: usize, carried: bool) -> Option<usize> {
         None
     }?;
     assert!(at + 1 + end <= words.len(), "a report ends in its clause");
+    let carried = carried && PROBLEMS.contains(&word);
     (!denied_before(&words[..at], carried)).then_some(at + 1 + end)
 }
 
@@ -256,7 +260,7 @@ fn starts_phrase(before: &[&str]) -> bool {
 
 /// Whether the words just before a report deny it: the nearest word past
 /// modifiers, fillers and a list of nouns (`no issues or bugs`, `none of the`),
-/// or `carried` when nothing is left (`No issues, bugs found`).
+/// or `carried` from the clauses before when nothing is left (`No issues, bugs, or problems found`).
 fn denied_before(before: &[&str], carried: bool) -> bool {
     let skipped = |w: &&str| {
         is_modifier(w)

@@ -113,11 +113,70 @@ fn an_untracked_file_the_fast_forward_would_overwrite_is_kept() {
 
     let advance = fast_forward(repo, "main").expect("git");
 
-    assert_eq!(kind(&advance), "refused");
+    assert_eq!(kind(&advance), "dirty");
+    let Advance::Kept(kept) = advance else {
+        unreachable!()
+    };
+    assert!(
+        kept.why.contains("`b.txt` would be overwritten"),
+        "{}",
+        kept.why
+    );
     assert_eq!(main_of(repo), old);
     assert_eq!(
         std::fs::read_to_string(repo.join("b.txt")).unwrap(),
         "mine\n"
+    );
+}
+
+#[test]
+fn an_untracked_directory_where_the_move_writes_is_in_the_way() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let repo = dir.path();
+    let (old, _) = behind(repo);
+    std::fs::create_dir(repo.join("b.txt")).unwrap();
+    std::fs::write(repo.join("b.txt/inside"), "mine\n").unwrap();
+
+    assert_eq!(kind(&fast_forward(repo, "main").expect("git")), "dirty");
+    assert_eq!(main_of(repo), old);
+}
+
+#[test]
+fn untracked_files_the_move_does_not_write_leave_it_free() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let repo = dir.path();
+    let (old, new) = behind(repo);
+    std::fs::create_dir(repo.join("target")).unwrap();
+    std::fs::write(repo.join("target/build.log"), "built\n").unwrap();
+    std::fs::write(repo.join("notes.txt"), "mine\n").unwrap();
+
+    let advance = fast_forward(repo, "main").expect("git");
+
+    assert_eq!(advance, Advance::Moved { from: old, to: new });
+    assert_eq!(
+        std::fs::read_to_string(repo.join("notes.txt")).unwrap(),
+        "mine\n"
+    );
+    assert!(repo.join("target/build.log").is_file());
+}
+
+#[test]
+fn a_checkout_that_left_the_base_before_the_merge_is_not_touched() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let repo = dir.path();
+    let (old, new) = behind(repo);
+    git_in(repo, &["checkout", "--quiet", "-b", "other"]);
+
+    let kept = blocker(repo, "main", &old, &new).expect("git");
+
+    let Some(Advance::Kept(kept)) = kept else {
+        panic!("kept: {kept:?}")
+    };
+    assert_eq!(kept.kind, "moved", "{}", kept.why);
+    assert_eq!(
+        git_in(repo, &["rev-parse", "other"]),
+        old,
+        "other untouched"
     );
 }
 

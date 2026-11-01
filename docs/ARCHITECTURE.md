@@ -2666,8 +2666,9 @@ table and delivers it off every lock:
    registered for the run, not a symlink or a redirected `.git` (§13.1); it
    is on the run branch; no tracked file is modified or staged; `HEAD^{tree}`
    equals the record's `tree`; the branch is ahead of its base, counted
-   from the newest commit of the local base, `origin`'s or the recorded
-   fork the branch holds, so a stale local base adds none (#341); and every
+   from the recorded fork (`base_commit`) or a newer `origin/<base>` the
+   branch holds, the local base only without a recorded fork, so a stale
+   local base adds none (#341); and every
    commit that neither the base nor a remote holds has an author and a
    committer e-mail of the repository's recorded identity or
    `archon@localhost`, which archond's own merges use when git has none. The
@@ -3638,8 +3639,10 @@ object per line under `--json`).
   again at each mirror refresh (§13.3), so the mirrors follow the fresh base:
   by `update-ref` with its old value when no work tree has it checked out,
   else by `git merge --ff-only` in that work tree, only when it holds no
-  change to a tracked file. A base that is ahead or diverged, being rebased
-  or bisected, or checked out with changes stays where it is, and the
+  change to a tracked file and no untracked or ignored file where the move
+  writes, and is still on the base at the old commit just before the merge.
+  A base that is ahead or diverged, being rebased or bisected, or checked
+  out with such a change stays where it is, and the
   operator hears why once (a `decision`); nothing is reset, rebased, stashed
   or forced. A repository without `origin` forks from
   the local base silently; a fetch that fails forks from it with a warning

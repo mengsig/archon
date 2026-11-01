@@ -686,6 +686,22 @@ async fn a_no_change_claim_beside_a_commit_and_a_stale_local_base_fails() {
     assert!(error.contains("holds 1 commit(s) beyond `main`"), "{error}");
 }
 
+/// The run's commit counts from the fork recorded at dispatch even once the
+/// local base holds it, as when the operator merged the branch by hand.
+#[tokio::test]
+async fn a_no_change_claim_beside_a_commit_the_local_base_took_in_fails() {
+    let (h, _gh) = delivering().await;
+    let (item, run) = started(&h, "direct").await;
+    change(&run.workspace);
+    let commit = git(&run.workspace, &["rev-parse", "HEAD"]);
+    git(&h.repo, &["checkout", "--quiet", "-b", "elsewhere"]);
+    git(&h.repo, &["update-ref", "refs/heads/main", &commit]);
+    settle_with(&h, json!({"no_change": {"reason": "nothing to do"}})).await;
+
+    let error = failed(&h, &item).await;
+    assert!(error.contains("holds 1 commit(s) beyond `main`"), "{error}");
+}
+
 /// The proposal page a propose stage leaves untracked is Archon's, not a change,
 /// and so is a declared service's PID file.
 #[tokio::test]

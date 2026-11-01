@@ -1,7 +1,8 @@
 //! Bringing a registered checkout's local base branch up to the fetched
 //! `origin/<base>`: a fast-forward and nothing else. A base that is ahead or
-//! diverged, being rebased or bisected, or checked out with local changes is
-//! left where it is, with the reason. Nothing is reset, rebased, stashed or forced.
+//! diverged, being rebased or bisected, or checked out with local changes or
+//! a file in the move's way is left where it is, with the reason. Nothing is
+//! reset, rebased, stashed or forced.
 
 use std::path::{Path, PathBuf};
 
@@ -99,16 +100,12 @@ fn move_ref(repo: &Path, base: &str, from: &str, to: &str) -> Result<Advance, Ar
     })
 }
 
-/// Fast-forward the branch checked out in `tree`, which must have no local
-/// change; git refuses to overwrite an untracked or ignored file.
+/// Fast-forward the branch checked out in `tree`, which must hold no change
+/// to a tracked file and no untracked or ignored file where the move writes.
 fn merge_in(tree: &Path, base: &str, from: &str, to: &str) -> Result<Advance, ArchonError> {
     assert!(super::stack::is_commit_id(from) && super::stack::is_commit_id(to));
-    if let Some(why) = dirty(tree)? {
-        let why = format!(
-            "`{base}` is checked out in {} with local changes ({why})",
-            tree.display()
-        );
-        return Ok(Kept::advance("dirty", why));
+    if let Some(kept) = blocker(tree, base, from, to)? {
+        return Ok(kept);
     }
     // The user's `branch.<base>.mergeOptions` (e.g. --squash) must not change this.
     let options = format!("branch.{base}.mergeOptions=");
@@ -129,12 +126,74 @@ fn merge_in(tree: &Path, base: &str, from: &str, to: &str) -> Result<Advance, Ar
         );
         return Ok(Kept::advance("refused", why));
     }
-    let now = commit_id(tree, &heads(base))?;
-    assert_eq!(now.as_deref(), Some(to), "a fast-forward lands on `to`");
+    if !on_branch_at(tree, base, to)? {
+        return Err(ArchonError::Invalid(format!(
+            "the work tree {} left `{base}` while it was fast-forwarded to {to}; check \
+             `git status` there",
+            tree.display()
+        )));
+    }
     Ok(Advance::Moved {
         from: from.to_owned(),
         to: to.to_owned(),
     })
+}
+
+/// Why `tree` must not be fast-forwarded from `from` to `to`, if it must not:
+/// a local change, a file in the way, or no longer `base` at `from`. Checked
+/// last just before the merge; git has no lock that spans the two.
+fn blocker(tree: &Path, base: &str, from: &str, to: &str) -> Result<Option<Advance>, ArchonError> {
+    assert!(tree.is_absolute(), "git lists work trees by absolute path");
+    let place = tree.display();
+    if let Some(why) = dirty(tree)? {
+        let why = format!("`{base}` is checked out in {place} with local changes ({why})");
+        return Ok(Some(Kept::advance("dirty", why)));
+    }
+    if let Some(path) = in_the_way(tree, from, to)? {
+        let why = format!(
+            "`{base}` is checked out in {place}, where the untracked or ignored `{path}` \
+             would be overwritten"
+        );
+        return Ok(Some(Kept::advance("dirty", why)));
+    }
+    if !on_branch_at(tree, base, from)? {
+        let why = format!("{place} switched away from `{base}` while it was checked");
+        return Ok(Some(Kept::advance("moved", why)));
+    }
+    Ok(None)
+}
+
+/// Whether `tree` has `base` checked out at `commit`.
+fn on_branch_at(tree: &Path, base: &str, commit: &str) -> Result<bool, ArchonError> {
+    assert!(super::stack::is_commit_id(commit), "a full commit id");
+    if !super::head(tree)?.is_branch(base) {
+        return Ok(false);
+    }
+    Ok(commit_id(tree, "HEAD")?.as_deref() == Some(commit))
+}
+
+/// The first untracked or ignored path of `tree` that moving from `from` to
+/// `to` would write over: one of the paths it changes, or a directory of one.
+fn in_the_way(tree: &Path, from: &str, to: &str) -> Result<Option<String>, ArchonError> {
+    assert!(super::stack::is_commit_id(from) && super::stack::is_commit_id(to));
+    let changed = git(
+        tree,
+        &["diff", "--name-only", "--no-renames", "-z", from, to],
+    )?;
+    let others = git(tree, &["ls-files", "--others", "--directory", "-z"])?;
+    let others: Vec<&str> = others.split('\0').filter(|p| !p.is_empty()).collect();
+    for path in changed.split('\0').filter(|p| !p.is_empty()) {
+        let blocked = others.iter().find(|other| {
+            let dir = other.strip_suffix('/');
+            **other == path
+                || dir.is_some_and(|dir| path.starts_with(&format!("{dir}/")))
+                || other.starts_with(&format!("{path}/"))
+        });
+        if let Some(other) = blocked {
+            return Ok(Some((*other).to_owned()));
+        }
+    }
+    Ok(None)
 }
 
 /// The work tree `base` is checked out in, if any.

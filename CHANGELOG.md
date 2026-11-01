@@ -27,15 +27,17 @@
   inflates a change (#341). In `pr` mode items fork from the freshly fetched
   `origin/<base>`, but the delivery checks counted from the local
   `refs/heads/<base>`, so a no-change item failed with "holds N commit(s)
-  beyond" when the local base was N commits behind. Those checks, and the
-  fast check's list of affected files, now count from the newest commit of
-  the base the run holds: of the local base, `origin`'s, or the commit the
-  run forked from. After the fetch at dispatch, and at each mirror refresh,
+  beyond" when the local base was N commits behind. Those checks now count
+  from the commit the run forked from, recorded at dispatch, or from a
+  newer `origin/<base>` the run took in; the local base only when no fork
+  was recorded. The fast check's list of affected files starts at the newer
+  of the local and `origin`'s base. After the fetch at dispatch, and at each mirror refresh,
   archond also fast-forwards the registered checkout's local base to
   `origin/<base>` when it is strictly behind, so the orchestrator's mirrors
   follow the fresh base. It never resets, rebases, stashes or forces: a base
   that is ahead or diverged, being rebased or bisected, or checked out with
-  local changes stays where it is, and the operator is told why once.
+  a change to a tracked file or an untracked file where the move writes
+  stays where it is, and the operator is told why once.
 
 ## 1.4.9
 

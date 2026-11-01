@@ -400,26 +400,16 @@ fn floor(tree: &Path, target: &Target) -> Result<Result<String, String>, ArchonE
     }
 }
 
-/// The newest commit of the base the run's head holds: of the local base,
-/// `origin`'s or the commit the run forked from, so no commit of a stale
-/// local base counts as the run's. The base's ref when they share no history.
+/// Where the run's own commits start on `target.base`: the newest commit
+/// that its head holds of the commit it forked from, recorded at dispatch,
+/// and `origin`'s base, which a refresh may have merged; without a recorded
+/// fork, of the local base and `origin`'s. The base's ref when they share no
+/// history. A local base the run's commits landed in never hides them.
 fn fork_floor(tree: &Path, target: &Target) -> Result<Result<String, String>, ArchonError> {
     let Some(named) = base_ref(tree, &target.base)? else {
         return Ok(Err(missing_base(target)));
     };
-    let base = &target.base;
-    let refs = [
-        format!("refs/heads/{base}"),
-        format!("refs/remotes/origin/{base}"),
-    ];
-    let is_commit = |f: &&String| crate::worktree::stack::is_commit_id(f);
-    let forked = target.forked.iter().filter(is_commit);
-    let mut commits = Vec::with_capacity(3);
-    for name in refs.iter().chain(forked) {
-        if let Some(commit) = commit_of(tree, name)? {
-            commits.push(commit);
-        }
-    }
+    let commits = base_commits(tree, target)?;
     assert!(!commits.is_empty(), "the base's ref names a commit");
     let mut args = vec!["merge-base", "HEAD"];
     args.extend(commits.iter().map(String::as_str));
@@ -434,6 +424,24 @@ fn fork_floor(tree: &Path, target: &Target) -> Result<Result<String, String>, Ar
         Some(1) => Ok(Ok(named)),
         _ => Err(ran.failure()),
     }
+}
+
+/// The commits of the base [`fork_floor`] measures from: the recorded fork
+/// when it is still in the repository, else the local base; and `origin`'s.
+fn base_commits(tree: &Path, target: &Target) -> Result<Vec<String>, ArchonError> {
+    let base = &target.base;
+    let forked = match target.forked.as_deref() {
+        Some(fork) if crate::worktree::stack::is_commit_id(fork) => commit_of(tree, fork)?,
+        _ => None,
+    };
+    let start = match forked {
+        Some(fork) => Some(fork),
+        None => commit_of(tree, &format!("refs/heads/{base}"))?,
+    };
+    let remote = commit_of(tree, &format!("refs/remotes/origin/{base}"))?;
+    let commits: Vec<String> = start.into_iter().chain(remote).collect();
+    assert!(commits.len() <= 2, "a start and `origin`'s base");
+    Ok(commits)
 }
 
 /// The commit `name` resolves to in `tree`; `None` when it names none.

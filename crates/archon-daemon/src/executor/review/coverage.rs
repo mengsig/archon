@@ -377,6 +377,10 @@ fn unanchored(read: &Placed, earlier_read: bool) -> String {
     )
 }
 
+/// Indexes of the named passes that hold, then of the named whole-change
+/// fails they answered.
+type Judged = (Vec<usize>, Vec<usize>);
+
 /// Indexes of the anchored `reads` whose named passes hold for the branch
 /// at `head`, and of the named whole-change fails they answered; or why none
 /// read `head` itself, a fail is unanswered, or fewer than `owed` read the
@@ -387,7 +391,7 @@ fn judged(
     reads: &[Placed],
     head: &str,
     owed: u32,
-) -> Result<Result<(Vec<usize>, Vec<usize>), String>, ArchonError> {
+) -> Result<Result<Judged, String>, ArchonError> {
     let current = spread(
         reads,
         |_, read| read.pass && read.head == head,

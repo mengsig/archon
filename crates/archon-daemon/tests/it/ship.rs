@@ -964,7 +964,7 @@ async fn a_strict_review_whose_whole_reads_all_failed_ships_on_one_delta_pass() 
         h.backend.complete_delegated(reviewer, verdict);
     }
     let delta = h.backend.delegate(&agent, REVIEW_MODEL);
-    let named = [first.as_slice(), &[delta.clone()]].concat();
+    let named = [first.as_slice(), std::slice::from_ref(&delta)].concat();
     let built = shipped_by(&h, &lead, "Built; fixed and reviewed", pass_by(&named)).await;
     let mut verdict = verdict_on(&built, "pass");
     verdict["base"] = verdict_on(&read, "fail")["head"].clone();

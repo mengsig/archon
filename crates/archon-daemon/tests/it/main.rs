@@ -19,6 +19,7 @@ mod experiments;
 mod fast_check_gate;
 mod feedback_common;
 mod fix_loop;
+mod foreign_commits;
 mod gc;
 mod gh_user;
 mod handle_order;

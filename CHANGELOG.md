@@ -99,6 +99,16 @@
   that is ahead or diverged, being rebased or bisected, or checked out with
   a change to a tracked file or an untracked file where the move writes
   stays where it is, and the operator is told why once.
+- A commit made under another identity no longer ships just because some
+  remote-tracking ref holds it (#334). The delivery's identity check, and
+  under the attribution policy `none` its attribution check, exempted every
+  commit any remote branch held, so a commit fetched from a pull request's
+  `refs/pull/N/head` or another remote's branch and merged in shipped
+  unrefused. Now only commits `origin`'s head of the item's base holds, or
+  of the repository's own base (which a stack's other parents may bring in
+  ahead of the first parent's branch), are exempt; an item stacked on a
+  reviewed pull request is still held to that pull request's base as
+  GitHub shows it at delivery.
 
 ### Development
 

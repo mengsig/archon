@@ -253,17 +253,23 @@ fn report_at(words: &[&str], at: usize, carried: bool) -> Option<usize> {
     (!denied).then_some(at + 1 + end)
 }
 
-/// Whether a denial leads the tests or changes that are `still broken`
-/// (`none of the tests are still broken`); a problem noun between breaks it.
+/// Words that end a clause's denial: what follows them is a new claim.
+const BREAKS: [&str; 8] = [
+    "and", "but", "while", "yet", "though", "although", "however", "except",
+];
+
+/// Whether a denial leads the subject of a `still broken` (`none of the tests
+/// are still broken`); a problem noun or a conjunction between them breaks it.
 fn subject_denied(before: &[&str]) -> bool {
-    let passable = |w: &&str| is_modifier(w) || FILLERS.contains(w) || LINKS.contains(w);
-    let mut rest = before.iter().rev().skip_while(|w| passable(w));
-    match rest.next() {
-        Some(noun) if CHECKS.contains(noun) || CHANGES.contains(noun) => rest
-            .find(|w| !passable(w))
-            .is_some_and(|w| DENIES.contains(w) || ["nothing", "without"].contains(w)),
-        _ => false,
+    for word in before.iter().rev() {
+        if DENIES.contains(word) || ["nothing", "without"].contains(word) {
+            return true;
+        }
+        if PROBLEMS.contains(word) || LISTED.contains(word) || BREAKS.contains(word) {
+            return false;
+        }
     }
+    false
 }
 
 /// Whether a noun after `before` opens its own phrase (`and bugs were found`),

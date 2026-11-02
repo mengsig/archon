@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Changed
+
+- `CI_HOST_SLOTS` now defaults to 1, not 2: one full `make ci` runs at a
+  time on a host, as two at once stalled a 12-core PC. `CI_HOST_SLOTS=0`
+  still disables the slots and any other whole number sets their count.
+
 ### Ship gate
 
 - The ship gate's fast check no longer runs again on a tree it already

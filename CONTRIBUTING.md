@@ -49,7 +49,7 @@ any file another test reads keep the full `make ci`: `docs_consistency`,
 
 `make ci` also shares the host with other heavy CI runs, such as Aether's
 `make ci` and every Archon stage's: it first takes one of `CI_HOST_SLOTS`
-(default 2) host-wide slots, a `flock` on
+(default 1) host-wide slots, a `flock` on
 `${XDG_RUNTIME_DIR:-/tmp}/heavy-ci/slot-<i>.lock` for `i` in `0..N-1`.
 When all are taken it says once that it waits, and waits until one frees.
 The slot is released when `make ci` ends, whether it passes, fails or is

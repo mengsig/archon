@@ -1,5 +1,5 @@
 #!/bin/sh
-# Run a command while holding one of CI_HOST_SLOTS (default 2) host-wide CI
+# Run a command while holding one of CI_HOST_SLOTS (default 1) host-wide CI
 # slots, shared with every repository that keeps this contract; 0 disables it.
 set -eu
 
@@ -7,7 +7,7 @@ if [ "$#" -eq 0 ]; then
     echo "usage: $0 command [argument...]" >&2
     exit 2
 fi
-slots=${CI_HOST_SLOTS:-2}
+slots=${CI_HOST_SLOTS:-1}
 case "$slots" in
     '' | *[!0-9]*)
         echo "ci-slot: CI_HOST_SLOTS must be a whole number, not '$slots'" >&2

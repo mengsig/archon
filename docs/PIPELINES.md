@@ -339,7 +339,8 @@ correctness bugs, security or safety issues, failing or missing tests for
 changed behaviour, and broken documented behaviour; a brief may narrow or
 extend the class. The rest are follow-ups the lead lists in its summary and
 `pr.body`: a `fail` whose every finding is marked `"blocking": false`,
-whatever its `severity`, counts as a pass, and a `pass` with a finding
+whatever its `severity`, counts as a pass unless its `structured` or summary
+JSON lists a blocking finding too, and a `pass` with a finding
 marked `"blocking": true` is refused. A finding with no mark blocks a `fail`.
 
 For providers that auto-complete a task from final text, Archon also accepts
@@ -347,7 +348,7 @@ this object as the entire `summary` when `structured` states no verdict, or the
 `complete_task` arguments `{"summary": "...", "structured": {...}}` written
 out as that summary, or this object opening the summary on lines of its own
 at column 0 followed by text, as long as that text holds no fenced block and
-no `{`, its final `VERDICT:` line (if any) agrees, and nothing
+no `{` and does not open with `[`, its final `VERDICT:` line (if any) agrees, and nothing
 else in it takes a pass back as text after a pass line would. A `head` or
 `base` the JSON leaves out or null comes from a `structured` without a
 verdict, else from the summary's `head:`/`base:` lines. A reviewer that

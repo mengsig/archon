@@ -87,7 +87,12 @@ impl Verdict {
         if read.pass && taken_back {
             return Err(disputed_pass(summary));
         }
-        Ok(read.only_follow_ups_pass())
+        let json = summary_json(summary);
+        let blocking_listed = [structured, json.as_ref()]
+            .into_iter()
+            .flatten()
+            .any(Said::lists_blocking);
+        Ok(read.only_follow_ups_pass(blocking_listed))
     }
 
     /// The verdict the result states, from the first form it gives one in.
@@ -254,13 +259,17 @@ impl Verdict {
     }
 
     /// Only blocking findings fail a review: a fail that lists findings, every
-    /// one a [follow-up](Said::is_follow_up), blocks nothing and counts as a pass.
-    fn only_follow_ups_pass(mut self) -> Self {
+    /// one a [follow-up](Said::is_follow_up), blocks nothing and counts as a pass,
+    /// unless another list in its result (`blocking_listed`) holds a blocking one.
+    fn only_follow_ups_pass(mut self, blocking_listed: bool) -> Self {
         let follow_ups_only = self.findings.is_some_and(|n| n > 0) && self.blocking == Some(0);
-        if !self.pass && follow_ups_only {
+        if !self.pass && follow_ups_only && !blocking_listed {
             self.pass = true;
         }
-        assert!(self.pass || !follow_ups_only, "follow-ups alone never fail");
+        assert!(
+            self.pass || !follow_ups_only || blocking_listed,
+            "follow-ups alone never fail"
+        );
         self
     }
 }
@@ -1523,6 +1532,40 @@ mod tests {
         }
         let second = format!("{pass}\nAlso:\n{{\"head\": \"fedcba9876543\"}}");
         assert!(Verdict::read_result(&second, None).is_err(), "{second}");
+    }
+
+    #[test]
+    fn follow_ups_never_outweigh_a_blocking_finding_elsewhere_in_the_result() {
+        let follow_up = json!([{"title": "rename", "blocking": false}]);
+        let blocking = json!({"findings": [{"title": "data loss", "blocking": true}]});
+        let fail = json!({"verdict": "fail", "head": HEAD, "findings": follow_up});
+        for summary in [
+            format!("{fail}\nhead: {HEAD}\nVERDICT: FAIL"),
+            fail.to_string(),
+            format!("```json\n{fail}\n```"),
+        ] {
+            let read = Verdict::read_result(&summary, Some(&blocking)).expect(&summary);
+            assert!(!read.pass, "{summary}");
+            assert!(
+                Verdict::read_result(&summary, None).unwrap().pass,
+                "{summary}"
+            );
+        }
+        let structured = json!({"verdict": "fail", "head": HEAD, "findings": follow_up});
+        let summary = format!(
+            "```json\n{}\n```",
+            json!({"verdict": "fail", "findings": blocking["findings"]})
+        );
+        assert!(
+            !Verdict::read_result(&summary, Some(&structured))
+                .unwrap()
+                .pass
+        );
+        assert!(
+            Verdict::read_result("Done.", Some(&structured))
+                .unwrap()
+                .pass
+        );
     }
 
     #[test]

@@ -2472,7 +2472,8 @@ than being left out. Whatever the record names, every fail returned by a
 reviewer of the stage attempt (from the review-round tally, so a resumed
 lead's earlier attempts are not read) stands as a named fail would: the
 review is refused, with the reason, until a counted pass reads past it. A
-fail listing only follow-ups reads as a pass. A pass counts when it read the
+fail listing only follow-ups reads as a pass, unless another list in its
+result (`structured` or summary JSON) holds a blocking finding. A pass counts when it read the
 branch head, or when a counted pass read every commit after its head
 (`base` at or before it). A fail never counts and must be followed by such
 a pass, or by a later fail that read every commit after its head and was

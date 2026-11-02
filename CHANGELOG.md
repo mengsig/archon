@@ -137,6 +137,8 @@
   `structured` without a verdict, else from the summary's `head:`/`base:`
   lines, so a reviewer that names its base only on a line is still read as
   having read that delta, and a line naming another commit is refused. A
+  fail whose findings are all follow-ups stays a fail when its `structured`
+  or summary JSON lists a blocking finding. A
   stage verdict whose summary opens with JSON stating another verdict or a
   blocking finding no longer passes.
 

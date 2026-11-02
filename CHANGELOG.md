@@ -9,12 +9,13 @@ Released 2026-11-02.
 A patch release on 1.4.10 that makes the review gate read verdicts and
 records as reviewers meant them, and keeps stuck or locked-out stages
 moving. A pass explained in prose is accepted (#351), but a pass followed by
-"changes needed", "issues found" or "still broken" is held (#362), and Luna
-(Codex) reviewer verdicts are accepted the first time (#369); every
+"changes needed", "issues found" or "still broken" is held (#362). Luna
+(Codex) reviewer verdicts are accepted the first time (#369), and a reviewer
+result the gate cannot read goes straight back to its lead (#370). Every
 failed review round of an attempt counts toward the cap (#353), and a record
 that leaves out a reviewer which failed the change is refused (#340, #361).
-A refresh skips its reviewer only on a review archond verified (#352), and
-a base merge that changes no files keeps the review, so `archon merge` no
+A refresh skips its reviewer only on a review archond verified (#352), and a
+base merge that changes no files keeps the review, so `archon merge` no
 longer refuses it for "head moved" (#364). The ship gate's foreign-commit
 check no longer exempts a commit a remote-tracking ref holds (#334, #348),
 and a fast check's pass is reused for the same tree and command (#354). A
@@ -33,9 +34,11 @@ update an older one with `aether update`. The Aether protocol Archon asks
 for stays 24 and the oldest it accepts stays 17. The daemon protocol stays
 23 and the store schema stays 18: a 1.4.10 store opens unchanged, and going
 back to 1.4.10 needs no copy of the data directory. The new per-run review
-record (#352) is a `run_review:<run>` key in the existing key-value table,
-which 1.4.10 ignores. From 1.4.9 or later, `archon update --yes` updates and
-restarts archond at once, keeping its stage agents running.
+record (#352) and the record of reviewers already sent back to their lead
+(#370) are `run_review:<run>` and `review_restate:<stage run>` keys in the
+existing key-value table, which 1.4.10 ignores. From 1.4.9 or later,
+`archon update --yes` updates and restarts archond at once, keeping its stage
+agents running.
 
 ### Review
 
@@ -74,6 +77,24 @@ restarts archond at once, keeping its stage agents running.
   a fail when its `structured` or summary JSON lists a blocking finding,
   and a stage verdict whose summary opens with JSON stating another verdict
   or a blocking finding no longer passes.
+- A reviewer result the gate cannot read goes straight back to its lead
+  the moment that reviewer completes, not into a repair of the whole stage
+  after the lead finished (#370). archond interrupts the lead's turn and
+  sends one bounded note naming the reviewer, why its result does not count
+  and the exact JSON its replacement must return; the lead delegates that
+  replacement and names it instead. Each reviewer is named once, a stage
+  attempt gets at most two notes, a resumed attempt is never interrupted,
+  and the note reads nothing as a verdict the gate would not read. A
+  `verdict`, `result` or `status` that is exactly
+  `approve_with_nonblocking_finding(s)` or `pass_with_nonblocking_finding(s)`
+  reads as a pass, with every check of a pass: a blocking finding beside
+  it, a missing head or a head that is not the branch's still refuse it. A
+  lead holding a strict review is told to delegate all N reviewers itself,
+  even in a repair, as an earlier run's reviewers count for nothing, and a
+  reviewer that cannot set `structured` is told its last message is the
+  JSON alone, with no `complete_task` word or YAML. In the 1.4.11 re-gate
+  these unreadable results, in shapes #369 did not cover, still cost Luna
+  runs a repair each.
 - A review's pass followed by prose that takes it back is held, not read as
   a pass (#362): "Verdict: pass. Changes needed in X", "… Issues found: …",
   "… Still broken on Y", "… CI is red" and the same on a later summary line

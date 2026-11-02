@@ -215,6 +215,8 @@ pub struct Descendant {
     /// The agent asked about for a direct child, a descendant otherwise.
     pub parent: AetherAgentId,
     pub model: ModelRef,
+    /// The role it was delegated with, such as `reviewer`.
+    pub role: String,
     /// `None` when its config states none Archon can read.
     pub effort: Option<Effort>,
     pub state: DescendantState,

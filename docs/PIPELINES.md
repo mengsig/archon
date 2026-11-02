@@ -342,6 +342,18 @@ extend the class. The rest are follow-ups the lead lists in its summary and
 whatever its `severity`, counts as a pass unless its `structured` or summary
 JSON lists a blocking finding too, and a `pass` with a finding
 marked `"blocking": true` is refused. A finding with no mark blocks a `fail`.
+A `verdict` (or `result`, `status`) that is exactly
+`approve_with_nonblocking_finding(s)` or `pass_with_nonblocking_finding(s)`
+reads as `pass`, with every rule of a pass: it needs its `head`, and a
+blocking finding beside it refuses it. A `VERDICT:` line or prose saying so
+is not read.
+
+When a reviewer the lead delegated with role `reviewer` completes with a
+result that is no verdict Archon reads, archond interrupts the lead's turn
+and sends it one note: why the result does not count, and the exact shape a
+new reviewer must return, for the lead to delegate in its place (a finished
+agent cannot be asked again). Each reviewer gets one note and a stage
+attempt at most two; the gate still judges the record as before.
 
 For providers that auto-complete a task from final text, Archon also accepts
 this object as the entire `summary` when `structured` states no verdict, or the

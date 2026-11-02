@@ -1466,6 +1466,77 @@ mod tests {
         }
     }
 
+    /// The reviewer results the 1.4.11 re-gate refused on Luna: the verdict
+    /// word that passes with follow-ups reads, and the two shapes that are no
+    /// verdict stay refused for archond's note to the lead to answer.
+    #[test]
+    fn luna_reviews_refused_at_the_1_4_11_regate_read_as_they_state() {
+        let capture: Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/luna-1.4.11-regate-refusals.json"
+        ))
+        .unwrap();
+        let reviews = capture["reviewers"].as_array().unwrap();
+        assert_eq!(reviews.len(), 3);
+        for review in reviews {
+            let (agent, result) = (&review["agent"], &review["result"]);
+            let summary = result["summary"].as_str().unwrap();
+            let read = Verdict::read_result(summary, result.get("structured"));
+            match review["now"].as_str().unwrap() {
+                "pass" => {
+                    let read = read.unwrap_or_else(|e| panic!("{agent}: {e}"));
+                    assert!(read.pass && read.head == result["structured"]["head"]);
+                    assert_eq!((read.findings, read.blocking), (Some(1), Some(0)));
+                }
+                "refused" => assert!(read.is_err(), "{agent}: {read:?}"),
+                other => panic!("{agent}: unknown outcome {other}"),
+            }
+        }
+    }
+
+    /// `approve_with_nonblocking_finding` is a pass only as a whole verdict
+    /// field with a head and no blocking finding, never from prose.
+    #[test]
+    fn a_pass_with_follow_ups_word_passes_only_as_a_pass_would() {
+        let follow_up = json!({"title": "t", "blocking": false});
+        let given = |verdict: &str, findings: Value| json!({"verdict": verdict, "head": HEAD, "findings": findings});
+        for word in [
+            "approve_with_nonblocking_finding",
+            "Pass_With_Nonblocking_Findings",
+        ] {
+            let read = Verdict::read(Some(&given(word, json!([follow_up])))).unwrap();
+            assert!(read.pass && read.blocking == Some(0), "{word}");
+            let summary = given(word, json!([])).to_string();
+            assert!(Verdict::read_result(&summary, None).unwrap().pass, "{word}");
+        }
+        let word = "approve_with_nonblocking_finding";
+        let blocking = json!([{"title": "t", "blocking": true}]);
+        let headless = json!({"verdict": word, "findings": []});
+        let taken_back = format!("{}\n\nDo not merge yet.", given(word, json!([])));
+        for (summary, structured) in [
+            ("reviewed".to_owned(), Some(given(word, blocking.clone()))),
+            (
+                "reviewed".to_owned(),
+                Some(json!({"verdict": word, "head": "main"})),
+            ),
+            ("reviewed".to_owned(), Some(headless.clone())),
+            (headless.to_string(), None),
+            (taken_back, None),
+            (format!("head: {HEAD}\nVERDICT: {word}"), None),
+            (format!("{word}: head {HEAD}"), None),
+            (
+                "reviewed".to_owned(),
+                Some(given("approve_with_blocking_finding", json!([]))),
+            ),
+            (
+                "reviewed".to_owned(),
+                Some(given("approve_with_nonblocking_finding_pending", json!([]))),
+            ),
+        ] {
+            let read = Verdict::read_result(&summary, structured.as_ref());
+            assert!(read.is_err(), "{summary} {structured:?}: {read:?}");
+        }
+    }
+
     #[test]
     fn a_json_verdict_opening_a_summary_counts_only_as_it_states() {
         let pass = json!({"verdict": "pass", "head": HEAD, "base": "1234567"}).to_string();

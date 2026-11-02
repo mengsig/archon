@@ -52,7 +52,7 @@ CI_HOST_SLOTS=2 sh "$slot" true 2>"$testdir/second.err"
 [ ! -s "$testdir/second.err" ] || fail "a free second slot waited: $(cat "$testdir/second.err")"
 CI_HOST_SLOTS=0 sh "$slot" true
 
-CI_HOST_SLOTS=1 sh "$slot" touch "$testdir/ran" 2>"$testdir/waiting.err" &
+env -u CI_HOST_SLOTS sh "$slot" touch "$testdir/ran" 2>"$testdir/waiting.err" &
 waiter=$!
 tries=0
 until grep -q 'waiting for one to free' "$testdir/waiting.err"; do

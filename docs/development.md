@@ -88,7 +88,7 @@ archon setup
 make ci      # fmt check, clippy -D warnings, rustdoc -D warnings, tests
 ```
 
-`make ci` holds one of `CI_HOST_SLOTS` (default 2) host-wide CI slots while
+`make ci` holds one of `CI_HOST_SLOTS` (default 1) host-wide CI slots while
 it runs, so at most that many full runs, Aether's included, load the host at
 once; see [CONTRIBUTING.md](../CONTRIBUTING.md).
 

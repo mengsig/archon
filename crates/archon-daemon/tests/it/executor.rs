@@ -3820,6 +3820,207 @@ async fn a_fail_with_no_blocking_finding_adds_no_round() {
     assert!(error.contains("failed 3 rounds"), "{error}");
 }
 
+/// A reviewer of the lead's that finished with `summary` as its only result.
+fn reviewer_said(h: &Harness, lead: &AetherAgentId, summary: &str) -> AetherAgentId {
+    let reviewer = h.backend.delegate(lead, REVIEW_MODEL);
+    let outcome = StageOutcome::Completed {
+        summary: summary.into(),
+        structured: None,
+    };
+    h.backend.complete_delegated_with(&reviewer, outcome);
+    reviewer
+}
+
+/// The YAML a Luna reviewer ended with at the 1.4.11 re-gate.
+const YAML_VERDICT: &str = "complete_task:\n  verdict: pass\n  head: 51fb6147\n  findings: []";
+
+/// An unreadable reviewer result goes back to the lead at once, in one note
+/// with the exact shape, instead of failing the lead's record afterwards.
+#[tokio::test]
+async fn an_unreadable_reviewer_result_goes_back_to_the_lead_once() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let lead_id = lead_agent(&lead);
+    let unreadable = reviewer_said(&h, &lead_id, YAML_VERDICT);
+    for _replayed in 0..2 {
+        executor::reviewer_settled(&h.ctx, &lead_id, &unreadable)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        h.backend.interrupts(),
+        std::slice::from_ref(&lead_id),
+        "interrupted once"
+    );
+    let messages = h.backend.messages();
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    let (to, note) = &messages[0];
+    assert_eq!(to, &lead_id);
+    assert!(
+        note.contains(&format!("cannot count reviewer {unreadable}")),
+        "{note}"
+    );
+    assert!(note.contains("\"verdict\": \"pass\" or \"fail\""), "{note}");
+    assert_eq!(escalated(&h, &lead).await, None, "the stage goes on");
+
+    let replacement = h.backend.delegate(&lead_id, REVIEW_MODEL);
+    let named = pass_by(std::slice::from_ref(&replacement));
+    let built = shipped_by(&h, &lead, "Reviewed again", named).await;
+    h.backend
+        .complete_delegated(&replacement, verdict_on(&built, "pass"));
+    executor::reviewer_settled(&h.ctx, &lead_id, &replacement)
+        .await
+        .unwrap();
+    assert_eq!(
+        h.backend.messages().len(),
+        1,
+        "a readable verdict needs no note"
+    );
+    h.settle_running(|_| built.clone()).await;
+    h.dispatch().await;
+    assert!(delivered(&h, &item).await, "{:?}", h.state(&item.id).await);
+}
+
+/// The note changes nothing the gate reads: a lead that still names the
+/// unreadable reviewer is refused as before.
+#[tokio::test]
+async fn a_lead_that_names_the_unreadable_reviewer_is_still_refused() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let lead_id = lead_agent(&lead);
+    let unreadable = reviewer_said(&h, &lead_id, YAML_VERDICT);
+    executor::reviewer_settled(&h.ctx, &lead_id, &unreadable)
+        .await
+        .unwrap();
+    assert_eq!(h.backend.messages().len(), 1);
+    let named = pass_by(std::slice::from_ref(&unreadable));
+    let built = shipped_by(&h, &lead, "Reviewed", named).await;
+    h.settle_running(|_| built.clone()).await;
+    let error = refused_review(&h, &item).await;
+    assert!(error.contains("no readable verdict"), "{error}");
+}
+
+/// The notes are bounded: a third unreadable reviewer of one attempt is left
+/// to the gate, and a worker's result or a readable verdict sends nothing.
+#[tokio::test]
+async fn unreadable_reviewer_notes_are_bounded_and_only_for_reviewers() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let lead_id = lead_agent(&lead);
+    let worker = h.backend.delegate_as(&lead_id, REVIEW_MODEL, "worker");
+    let outcome = StageOutcome::Completed {
+        summary: "implemented the parser".into(),
+        structured: None,
+    };
+    h.backend.complete_delegated_with(&worker, outcome);
+    executor::reviewer_settled(&h.ctx, &lead_id, &worker)
+        .await
+        .unwrap();
+    assert!(h.backend.messages().is_empty(), "a worker owes no verdict");
+    for n in 1..=3 {
+        let reviewer = reviewer_said(&h, &lead_id, &format!("{YAML_VERDICT}\n# {n}"));
+        executor::reviewer_settled(&h.ctx, &lead_id, &reviewer)
+            .await
+            .unwrap();
+    }
+    assert_eq!(h.backend.messages().len(), 2, "at most two notes");
+    assert_eq!(h.backend.interrupts().len(), 2, "at most two interrupts");
+    assert_eq!(escalated(&h, &lead).await, None, "the stage goes on");
+}
+
+/// A note Aether did not answer is retried by the pump's replay, and the
+/// replay does not interrupt the lead again.
+#[tokio::test]
+async fn an_unanswered_note_is_resent_without_a_second_interrupt() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let lead_id = lead_agent(&lead);
+    let unreadable = reviewer_said(&h, &lead_id, YAML_VERDICT);
+    h.backend.fail_next_message(unreachable_aether());
+    let first = executor::reviewer_settled(&h.ctx, &lead_id, &unreadable).await;
+    assert!(first.is_err(), "the pump repeats the event");
+    executor::reviewer_settled(&h.ctx, &lead_id, &unreadable)
+        .await
+        .unwrap();
+    assert_eq!(h.backend.messages().len(), 1);
+    assert_eq!(h.backend.interrupts(), [lead_id]);
+}
+
+/// Whether the lead was interrupted or told of a reviewer that settled unreadable now.
+async fn noted_unreadable(h: &Harness, lead: &AetherAgentId) -> bool {
+    let interrupted = |h: &Harness| h.backend.interrupts().iter().filter(|a| *a == lead).count();
+    let before = interrupted(h);
+    let unreadable = reviewer_said(h, lead, YAML_VERDICT);
+    executor::reviewer_settled(&h.ctx, lead, &unreadable)
+        .await
+        .unwrap();
+    let named = format!("cannot count reviewer {unreadable}");
+    let told = h
+        .backend
+        .messages()
+        .iter()
+        .any(|(to, text)| to == lead && text.contains(&named));
+    interrupted(h) > before || told
+}
+
+/// Only a live, fresh attempt that owes a review is told: a resumed attempt
+/// settles on its turn's last word (§6.7), so it is never interrupted, and a
+/// stage that owes no review or has ended gets nothing.
+#[tokio::test]
+async fn only_a_live_fresh_lead_owing_a_review_is_told_of_an_unreadable_reviewer() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let first = h.running().await.remove(0);
+    let lead = lead_agent(&first);
+    h.backend.fail_agent(&lead);
+    h.settle_running(|_| StageOutcome::Failed {
+        error: "engine died".into(),
+        infra: true,
+    })
+    .await;
+    h.dispatch().await;
+    let woken = h.running().await.remove(0);
+    assert_eq!(woken.aether_agent.as_ref(), Some(&lead), "woken in place");
+    assert_eq!(
+        woken.aether_task, None,
+        "a resumed attempt has no task of its own"
+    );
+    assert!(!noted_unreadable(&h, &lead).await, "a resumed attempt");
+
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let mut ended = h.running().await.remove(0);
+    ended.state = StageState::Cancelled;
+    ended.finished_at = Some(archon_core::now());
+    h.ctx.store.lock().await.upsert_stage_run(&ended).unwrap();
+    assert!(
+        !noted_unreadable(&h, &lead_agent(&ended)).await,
+        "an ended stage"
+    );
+
+    let h = Harness::new().await;
+    h.enqueue("an ordinary change").await;
+    h.dispatch().await;
+    let unowed = h.running().await.remove(0);
+    assert_eq!(unowed.stage_id.as_str(), "implement");
+    assert!(
+        !noted_unreadable(&h, &lead_agent(&unowed)).await,
+        "no review owed"
+    );
+
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let fresh = h.running().await.remove(0);
+    assert!(
+        noted_unreadable(&h, &lead_agent(&fresh)).await,
+        "the control is told"
+    );
+}
+
 /// The cap's cancel went unanswered: the next sweep stops the stage.
 #[tokio::test]
 async fn a_capped_stage_whose_cancel_went_unanswered_is_stopped_by_the_sweep() {

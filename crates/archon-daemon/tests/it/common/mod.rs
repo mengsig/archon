@@ -1113,9 +1113,14 @@ impl FakeBackend {
         assert!(held, "end_turn ends a held turn: {agent}");
     }
 
-    /// `parent` delegated to a new agent running `model`, live until
+    /// `parent` delegated to a new reviewer running `model`, live until
     /// `end_delegated`: like Aether, a cancel of its parent only asks it to end.
     pub fn delegate(&self, parent: &AetherAgentId, model: &str) -> AetherAgentId {
+        self.delegate_as(parent, model, "reviewer")
+    }
+
+    /// [`Self::delegate`] with the child's `role`.
+    pub fn delegate_as(&self, parent: &AetherAgentId, model: &str, role: &str) -> AetherAgentId {
         let mut state = self.state();
         let known = state.knows(parent) || state.delegated.iter().any(|d| d.agent == *parent);
         assert!(known, "only a created agent delegates: {parent}");
@@ -1126,6 +1131,7 @@ impl FakeBackend {
             agent: agent.clone(),
             parent: parent.clone(),
             model: model.parse().expect("model"),
+            role: role.to_owned(),
             effort: Some(Effort::Medium),
             state: DescendantState::Live,
             task: Some(task),

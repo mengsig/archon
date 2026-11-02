@@ -155,8 +155,16 @@ impl Verdict {
 
     /// A field's verdict: its opening word, after a `VERDICT:` label if it
     /// opens with one, which is `Unknown` when unreadable. A verdict further
-    /// in is an example or a quote.
+    /// in is an example or a quote. A whole field of [`PASS_WITH_FOLLOW_UPS`]
+    /// is a pass, which [`Self::from_structured`] holds to its findings.
     fn from_field(text: &str) -> Option<Self> {
+        let whole = text.trim();
+        if PASS_WITH_FOLLOW_UPS
+            .iter()
+            .any(|word| word.eq_ignore_ascii_case(whole))
+        {
+            return Some(Self::Pass);
+        }
         match strip_label(text, "verdict") {
             Some(value) => Some(Self::from_word(value)),
             None => Self::leading(text),
@@ -250,6 +258,15 @@ impl Verdict {
         }
     }
 }
+
+/// Whole verdict fields that pass with follow-ups only: one listing a
+/// blocking finding is no pass, and a summary line saying so stays unread.
+const PASS_WITH_FOLLOW_UPS: [&str; 4] = [
+    "approve_with_nonblocking_finding",
+    "approve_with_nonblocking_findings",
+    "pass_with_nonblocking_finding",
+    "pass_with_nonblocking_findings",
+];
 
 /// Words that take a pass back wherever its statement holds them: the other
 /// verdict, a second `verdict`, a negation (`don't` splits into `don`, `t`) or a condition.
@@ -1151,6 +1168,32 @@ mod tests {
             Verdict::Pass
         );
         assert_eq!(Verdict::extract("no verdict here", None), Verdict::Unknown);
+    }
+
+    #[test]
+    fn a_whole_pass_with_follow_ups_field_is_a_pass_unless_it_lists_a_blocker() {
+        let word = "approve_with_nonblocking_finding";
+        let plain = serde_json::json!({"verdict": word, "findings": [{"blocking": false}]});
+        assert_eq!(Verdict::from_structured(&plain), Some(Verdict::Pass));
+        let blocked = serde_json::json!({"verdict": word, "findings": [{"blocking": true}]});
+        assert_eq!(Verdict::from_structured(&blocked), Some(Verdict::Unknown));
+        let severe = serde_json::json!({"verdict": word, "findings": [{"severity": "high"}]});
+        assert_eq!(Verdict::from_structured(&severe), Some(Verdict::Unknown));
+        for other in [
+            "approve_with_nonblocking_finding, pending CI",
+            "approve_with_blocking_finding",
+        ] {
+            let given = serde_json::json!({"verdict": other});
+            assert_eq!(
+                Verdict::from_structured(&given),
+                Some(Verdict::Unknown),
+                "{other}"
+            );
+        }
+        assert_eq!(
+            Verdict::extract(&format!("VERDICT: {word}"), None),
+            Verdict::Unknown
+        );
     }
 
     #[test]

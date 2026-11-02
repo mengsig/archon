@@ -1,0 +1,54 @@
+{
+  "source": "Archon 1.4.11 release re-gate smoke runs, 2026-11-02: luna-head-* on 1.4.11 (157fe387) with Aether 1.2.10",
+  "model": "codex/gpt-6-luna",
+  "effort": "medium",
+  "note": "Every reviewer result the re-gate refused, verbatim but for long prose cut short; `now` is what the gate reads after the fix. A refused one is what archond's note to the live lead (review/restate.rs) answers.",
+  "reviewers": [
+    {
+      "run": "luna-head-1",
+      "task": "quality-ledger-transfer",
+      "agent": "agt_01M6E466SN1MYBYNPT02P7CBAA",
+      "refused": "its result carries no readable verdict",
+      "now": "refused",
+      "why": "a YAML-style `complete_task:` block with `verdict: approve`: a shape, not a verdict the gate reads",
+      "result": {
+        "summary": "complete_task:\n  verdict: approve\n  head: 0e290856f292e8c981670fdc1b94f82dc9238825\n  base: 198795c4cdc235a793318462d7de6422064a006b\n  findings: []\n  risk:\n    level: high\n    why: \"Transfers and snapshots share a lock, so concurrency and locking carry high inherent risk. The critical sections are consistently guarded, and I found no deadlock path.\"\n  summary: \"The implementation follows the specified validation order, checks both failure conditions before writing, preserves balances on failure, and handles same-account transfers correctly. The tests cover the key API, atomicity, and concurrency behaviors.\""
+      }
+    },
+    {
+      "run": "luna-head-2",
+      "task": "quality-ledger-transfer",
+      "agent": "agt_01M6E50DXPK1CHGS36J4VXZKRY",
+      "refused": "its `verdict` is \"approve_with_nonblocking_finding\", not \"pass\" or \"fail\"",
+      "now": "pass",
+      "why": "a structured `approve_with_nonblocking_finding` with a head and one finding marked `\"blocking\": false`",
+      "result": {
+        "summary": "Reviewed only the test_ledger.py delta from 311ad9e54d5531d482be12974e497c73077dbcf4 to 51fb6147b6883f7e6096f6f855723c64cbd19eaf. The prior infinite polling loop is replaced by a 5000-iteration bound plus a timed join and explicit completion checks. Worker BaseException instances are captured and asserted in the test thread. One nonblocking robustness gap remains: snapshots starts at 1 for the snapshot taken immediately after the barrier, before there is any guarantee the worker has begun its transfer loop. The worker can finish before the polling loop observes it, so assertGreater(snapshots, 0) does not ensure any snapshot was taken during active transfers. No other regression found in the scoped delta. Supplied checks were not rerun.",
+        "structured": {
+          "findings": [
+            {
+              "blocking": false,
+              "file": "test_ledger.py",
+              "line": 120,
+              "summary": "Snapshot counter is initialized to 1 for the pre-poll snapshot, so the test can pass without sampling during the worker's transfers if it completes before polling."
+            }
+          ],
+          "head": "51fb6147b6883f7e6096f6f855723c64cbd19eaf",
+          "risk": "medium; concurrency behavior remains schedule-dependent",
+          "verdict": "approve_with_nonblocking_finding"
+        }
+      }
+    },
+    {
+      "run": "luna-head-3",
+      "task": "quality-retry-budget",
+      "agent": "agt_01M6E65PJHKP0HK3ZKQW6VNMGB",
+      "refused": "its result carries no readable verdict",
+      "now": "refused",
+      "why": "`complete_task ` before the JSON on its first line, so no JSON opens the summary",
+      "result": {
+        "summary": "complete_task {\n  \"verdict\": \"pass\",\n  \"head\": \"ed91a77001e1ed1d5966c28741d15aa7027c7288\",\n  \"base\": \"91e9552ff8a43796ae541d18711ee090e8a70534\",\n  \"findings\": [],\n  \"risk\": {\n    \"level\": \"medium\",\n    \"why\": \"The implementation matches the documented behavior and the relevant edge cases are covered, but this is a public function behavior change with validation and saturation logic beyond a trivial change.\"\n  }\n}\n\nChecks passed: targeted unittest, full unittest discovery (12 tests), and `git diff --check`. Tests created an untracked `__pycache__/` directory in the workspace."
+      }
+    }
+  ]
+}

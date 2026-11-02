@@ -602,22 +602,13 @@ async fn a_branch_with_no_commit_of_its_own_has_nothing_to_ship() {
     assert!(gh.calls().is_empty());
 }
 
-/// A commit merged on `origin`'s `main` after the registered checkout's local
-/// `main` last moved, as a pull request merged on GitHub leaves it: the run
-/// forks from it, the local branch does not hold it.
+/// A commit merged on `origin`'s `main` that the registered checkout's local
+/// `main` does not get, as a pull request merged on GitHub leaves it: the
+/// operator's edit in the checkout stops dispatch fast-forwarding `main`.
 fn merged_on_origin(h: &Harness) -> String {
-    let clone = h.dir.path().join("merged-elsewhere");
-    let origin = origin_of(h);
-    let paths = [origin.to_str().unwrap(), clone.to_str().unwrap()];
-    git(h.dir.path(), &["clone", "--quiet", paths[0], paths[1]]);
-    std::fs::write(clone.join("merged"), "merged on GitHub\n").unwrap();
-    git(&clone, &["add", "merged"]);
-    git(
-        &clone,
-        &["commit", "--quiet", "-m", "A pull request merged elsewhere"],
-    );
-    git(&clone, &["push", "--quiet", "origin", "main"]);
-    git(&clone, &["rev-parse", "HEAD"])
+    let merged = advance_origin(h, 1);
+    std::fs::write(h.repo.join("README.md"), "the operator's edit\n").unwrap();
+    merged
 }
 
 /// The run's start: its head holds the commit merged on `origin`, the
@@ -662,6 +653,7 @@ async fn a_stale_local_base_gives_a_branch_nothing_of_its_own_to_ship() {
     settle_with(&h, record(&run.workspace)).await;
     let error = failed(&h, &item).await;
     assert!(error.contains("nothing to ship"), "{error}");
+    assert!(error.contains("has no commit beyond `main`"), "{error}");
     assert!(gh.calls().is_empty(), "{:?}", gh.calls());
 }
 

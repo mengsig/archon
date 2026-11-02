@@ -118,8 +118,23 @@
   a blocker nothing denies, or a `no` before anything but findings. A
   choice (`PASS or FAIL`), a hedge right after the verdict word and a pass
   beside a blocking finding are refused as before, and the refusal now
-  quotes the verdict line it read. The review contract tells the lead to
-  have each reviewer end its summary with `VERDICT: PASS` or `VERDICT: FAIL`.
+  quotes the verdict line it read.
+- Codex (Luna) reviewers' verdicts are accepted the first time again, so a
+  Luna run no longer pays for repairs after refused reviews. The review
+  contract told the lead to have each reviewer end its summary with
+  `VERDICT: PASS` or `VERDICT: FAIL` but not to name the commit on a
+  `head:` line, and Luna reviewers, which Aether completes from their final
+  text, appended that line to their JSON verdict. The gate reads a JSON
+  verdict only as the whole summary, so it fell back to the line, found no
+  `head:` and refused it; in the 1.4.11 release smoke this took 10 repairs in
+  3 Luna runs against 3 in 2 on 1.4.9, and 48% more cost. The contract now
+  says a reviewer that cannot set `structured` makes the JSON its whole
+  summary, as Luna wrote it on 1.4.9. The gate also reads a JSON verdict
+  that opens the summary on lines of its own with text after it, when that
+  text holds no second JSON value or fenced block, any final `VERDICT:`
+  line agrees, and nothing in it takes a pass back as text after a pass
+  line would. A summary opening with `{` no longer reads a fenced block
+  below it.
 
 ## 1.4.10
 

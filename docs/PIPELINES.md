@@ -345,7 +345,12 @@ marked `"blocking": true` is refused. A finding with no mark blocks a `fail`.
 For providers that auto-complete a task from final text, Archon also accepts
 this object as the entire `summary` when `structured` states no verdict, or the
 `complete_task` arguments `{"summary": "...", "structured": {...}}` written
-out as that summary, or a `VERDICT: PASS|FAIL` line beside `head:` and
+out as that summary, or this object opening the summary on lines of its own
+at column 0 followed by text, as long as that text holds no fenced block or
+second JSON value, its final `VERDICT:` line (if any) agrees, and nothing
+else in it takes a pass back as text after a pass line would. A reviewer that
+cannot set `structured` is told to make the object its whole summary.
+A `VERDICT: PASS|FAIL` line beside `head:` and
 `base:` lines (a `structured` without a verdict may give these instead; a
 line in a fence, a quote or nested in a list is an example). A verdict,
 `structured` or not, is refused when its `structured` fields, the summary's
@@ -887,7 +892,8 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   This errs on the safe side: `PASS — 0 failed` is refused too, so put
   details above the verdict line and end the summary with it.
   A structured pass counts only when the summary's last `VERDICT:` line
-  and its JSON (the whole summary or its one fenced block) `verdict`,
+  and its JSON (the whole summary, an object opening it on lines of its
+  own, or else its one fenced block) `verdict`,
   `result` or `status`, where it has them, pass too. No pass, wherever it
   is stated, counts beside a finding marked `"blocking": true`, or one
   with no mark of `blocking`, `blocker`, `critical` or `high` severity, in

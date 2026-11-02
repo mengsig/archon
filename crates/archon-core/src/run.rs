@@ -44,7 +44,8 @@ impl Verdict {
 
     /// Whether anything in a result takes a pass back: the summary's last
     /// `VERDICT:` line or [`summary_json`] verdict reading other than pass,
-    /// or a blocking finding in `structured` or that JSON.
+    /// a blocking finding in `structured` or that JSON, or text after a JSON
+    /// verdict opening the summary that takes it back (`json_taken_back`).
     pub fn pass_disputed(summary: &str, structured: Option<&serde_json::Value>) -> bool {
         let json = summary_json(summary);
         // A summary written as `{summary, structured}` holds a summary of its own, read one level deep.
@@ -57,7 +58,26 @@ impl Verdict {
         let inner_disagrees = inner
             .as_deref()
             .is_some_and(|inner| Self::summary_disagrees(inner, inner_json.as_ref()));
-        blocking || inner_disagrees || Self::summary_disagrees(summary, json.as_ref())
+        blocking
+            || inner_disagrees
+            || Self::summary_disagrees(summary, json.as_ref())
+            || Self::json_taken_back(summary)
+    }
+
+    /// Whether the text after a JSON object opening the summary takes its
+    /// pass back, as text after a `VERDICT:` line would. Only the last
+    /// `VERDICT:` line is left out, as [`Self::from_summary`] judges it.
+    fn json_taken_back(summary: &str) -> bool {
+        let Some((_, rest)) = leading_json(summary) else {
+            return false;
+        };
+        let last = last_verdict_line(rest).map(|(line, _)| line.as_ptr());
+        let said: Vec<&str> = rest
+            .lines()
+            .filter(|line| Some(line.as_ptr()) != last)
+            .collect();
+        debug_assert!(said.len() + usize::from(last.is_some()) == rest.lines().count());
+        trails_back(&said.join("\n"))
     }
 
     /// Whether the summary's last `VERDICT:` line or its JSON's verdict,
@@ -350,8 +370,9 @@ fn trails_back(rest: &str) -> bool {
     })
 }
 
-/// The verdict JSON of `summary`: the whole summary or its one fenced block,
-/// unwrapped from the `complete_task` arguments `{summary, structured}`.
+/// The verdict JSON of `summary`: the whole summary, an object opening it on
+/// lines of its own (`leading_json`), or else its one fenced block, unwrapped
+/// from the `complete_task` arguments `{summary, structured}`.
 pub fn summary_json(summary: &str) -> Option<serde_json::Value> {
     let data = raw_summary_json(summary)?;
     Some(match is_wrapper(&data) {
@@ -371,11 +392,42 @@ fn wrapped_summary(summary: &str) -> Option<String> {
     )
 }
 
-/// The whole summary, or its one fenced block, as JSON.
+/// The whole summary, the object opening it, or its one fenced block, as JSON.
+/// A summary opening with `{` that is not one whole value reads no fenced
+/// block: an object above it would be a second verdict nobody checked.
 fn raw_summary_json(summary: &str) -> Option<serde_json::Value> {
-    serde_json::from_str::<serde_json::Value>(summary)
-        .ok()
-        .or_else(|| fenced_json(summary))
+    if let Ok(data) = serde_json::from_str::<serde_json::Value>(summary) {
+        return Some(data);
+    }
+    match summary.trim_start().starts_with('{') {
+        true => leading_json(summary).map(|(data, _)| data),
+        false => fenced_json(summary),
+    }
+}
+
+/// A JSON object on lines of its own that opens `summary` (blank lines aside)
+/// and the text after it, as Codex reviewers write a verdict and then explain it.
+/// `None` when that text holds a fenced block or opens another JSON value:
+/// which one is the verdict would be a guess.
+fn leading_json(summary: &str) -> Option<(serde_json::Value, &str)> {
+    let start = summary.find(|c: char| !c.is_whitespace())?;
+    let at_line_start = start == 0 || summary[..start].ends_with('\n');
+    let body = &summary[start..];
+    if !at_line_start || !body.starts_with('{') {
+        return None;
+    }
+    let mut values = serde_json::Deserializer::from_str(body).into_iter::<serde_json::Value>();
+    let data = values.next()?.ok()?;
+    let rest = &body[values.byte_offset()..];
+    assert!(data.is_object(), "a value opened by `{{` is an object");
+    let line_ends = rest.trim_start_matches([' ', '\t', '\r']).starts_with('\n');
+    let another = rest.trim_start().starts_with(['{', '[']);
+    let fenced = markdown_lines(rest)
+        .any(|(kind, _)| matches!(kind, LineKind::FenceOpen | LineKind::NestedFenceOpen));
+    if rest.trim().is_empty() || !line_ends || another || fenced {
+        return None;
+    }
+    Some((data, rest))
 }
 
 /// Whether `data` is the `complete_task` arguments `{summary, structured}`.
@@ -1015,6 +1067,59 @@ mod tests {
         assert_eq!(slot_retries(slots), [0, 1, 0, 0, 2, 0]);
         assert_eq!(retry_label(0), "");
         assert_eq!(retry_label(2), " retry 2");
+    }
+
+    #[test]
+    fn a_json_object_opening_a_summary_on_its_own_lines_is_its_json() {
+        let pass = json!({"verdict": "pass", "head": "abcdef1"});
+        let text = pass.to_string();
+        let pretty = serde_json::to_string_pretty(&pass).unwrap();
+        for summary in [
+            format!("{text}\nVERDICT: PASS"),
+            format!("\n  \n{pretty}\n\nChecks passed."),
+            format!("{text}  \r\nChecks passed."),
+        ] {
+            assert_eq!(summary_json(&summary), Some(pass.clone()), "{summary:?}");
+        }
+        for summary in [
+            format!("Reviewed: {text}\nVERDICT: PASS"),
+            format!("Reviewed:\n{text}\nVERDICT: PASS"),
+            format!("  {text}\nVERDICT: PASS"),
+            format!("{text} VERDICT: PASS"),
+            format!("{text}\n{text}"),
+            format!("{text}\n[1]"),
+            format!("{text}\n```\n{{\"verdict\": \"fail\"}}\n```"),
+            "{\"verdict\": \"pass\"\nVERDICT: PASS".to_owned(),
+        ] {
+            assert_eq!(summary_json(&summary), None, "{summary:?}");
+        }
+    }
+
+    #[test]
+    fn text_after_a_leading_json_pass_takes_it_back_as_after_a_verdict_line() {
+        let text = json!({"verdict": "pass", "head": "abcdef1"}).to_string();
+        for kept in [
+            format!("{text}\n\nChecks: 9 tests passed.\nVERDICT: PASS"),
+            format!("{text}\nhead: abcdef1\nVERDICT: PASS"),
+        ] {
+            assert_eq!(Verdict::extract(&kept, None), Verdict::Pass, "{kept}");
+        }
+        assert!(!Verdict::pass_disputed(
+            &format!("{text}\n\nNo findings."),
+            None
+        ));
+        for held in [
+            format!("{text}\n\nChanges needed in the parser."),
+            format!("{text}\n\nThe build is still broken.\nVERDICT: PASS"),
+            format!("{text}\nVERDICT: FAIL\nVERDICT: PASS"),
+            format!("{text}\nVERDICT: PASS\nDo not merge yet."),
+            format!("{text}\nAll good. VERDICT: PASS"),
+        ] {
+            assert!(Verdict::pass_disputed(&held, None), "{held}");
+        }
+        let structured = json!({"verdict": "pass", "head": "abcdef1"});
+        let held = format!("{text}\n\nChanges needed in the parser.");
+        assert_eq!(Verdict::extract(&held, Some(&structured)), Verdict::Unknown);
     }
 
     #[test]

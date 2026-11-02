@@ -291,6 +291,7 @@ fn disputed_pass(summary: &str) -> String {
     debug_assert!(!read.contains('\n'), "a quote on one line");
     format!(
         "it passes but its summary's final `VERDICT:` line or JSON verdict does not, \
+         text after the JSON verdict opening it takes it back, \
          or it lists a blocking finding{read}: {VERDICT_HOWTO}"
     )
 }
@@ -1388,8 +1389,9 @@ mod tests {
             "".to_owned(),
             "Reviewed; no findings. VERDICT: PASS".to_owned(),
             format!("Reviewed: {pass}"),
-            format!("{pass}\nVERDICT: PASS"),
+            format!("{pass} VERDICT: PASS"),
             format!("{pass}{pass}"),
+            format!("{pass}\n{pass}"),
             "{\"verdict\":\"pass\"".to_owned(),
             "null".to_owned(),
             format!("[{pass}]"),
@@ -1406,6 +1408,76 @@ mod tests {
                 .unwrap()
                 .pass
         );
+        // The JSON names the commit and states the pass; the line after it agrees.
+        let read = Verdict::read_result(&format!("{pass}\nVERDICT: PASS"), None).unwrap();
+        assert!(read.pass && read.head == "abcdef1");
+    }
+
+    /// Every reviewer result the 1.4.11 release gate refused on Luna, as
+    /// recorded: a JSON verdict followed by a `VERDICT:` line or plain checks
+    /// now reads, and every other form stays refused.
+    #[test]
+    fn luna_reviews_refused_at_the_1_4_11_gate_read_as_they_state() {
+        let capture: Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/luna-1.4.11-gate-refusals.json"
+        ))
+        .unwrap();
+        let reviews = capture["reviewers"].as_array().unwrap();
+        assert_eq!(reviews.len(), 12);
+        for review in reviews {
+            let (agent, result) = (&review["agent"], &review["result"]);
+            let summary = result["summary"].as_str().unwrap();
+            let read = Verdict::read_result(summary, result.get("structured"));
+            match review["now"].as_str().unwrap() {
+                "pass" => {
+                    let read = read.unwrap_or_else(|e| panic!("{agent}: {e}"));
+                    let data = summary_json(summary).unwrap();
+                    assert!(read.pass, "{agent}");
+                    assert_eq!(read.head, data["head"], "{agent}");
+                    assert_eq!(read.base.as_deref(), data["base"].as_str(), "{agent}");
+                    assert!(serde_json::from_str::<Value>(summary).is_err(), "{agent}");
+                }
+                "fail" => assert!(!read.unwrap().pass, "{agent}"),
+                "refused" => assert!(read.is_err(), "{agent}: {read:?}"),
+                other => panic!("{agent}: unknown outcome {other}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_json_verdict_opening_a_summary_counts_only_as_it_states() {
+        let pass = json!({"verdict": "pass", "head": HEAD, "base": "1234567"}).to_string();
+        let fail = json!({"verdict": "fail", "head": HEAD}).to_string();
+        let explained = format!("{pass}\n\nChecks: 12 tests passed; `git diff --check` clean.");
+        let read = Verdict::read_result(&explained, None).unwrap();
+        assert!(read.pass && read.base.as_deref() == Some("1234567"));
+        let read = Verdict::read_result(&format!("{fail}\n\nVERDICT: FAIL"), None).unwrap();
+        assert!(!read.pass);
+        let blocking = json!({"verdict": "pass", "head": HEAD,
+            "findings": [{"title": "t", "blocking": true}]});
+        let newer = "fedcba9876543210fedcba9876543210fedcba98";
+        for summary in [
+            format!("{pass}\n\nChanges needed before merge."),
+            format!("{pass}\n\nTwo issues found in the retry path."),
+            format!("{pass}\n\nThe ledger is still broken under contention.\nVERDICT: PASS"),
+            format!("{pass}\nVERDICT: PASS — merge only with green CI"),
+            format!("{pass}\nVERDICT: FAIL"),
+            format!("{fail}\nVERDICT: PASS"),
+            format!("{pass}\nVERDICT: FAIL\nVERDICT: PASS"),
+            format!("{pass}\nhead: {newer}\nVERDICT: PASS"),
+            format!("{blocking}\nVERDICT: PASS"),
+            format!("{}\nVERDICT: PASS", json!({"verdict": "pass"})),
+            format!("Reviewed:\n{pass}\nVERDICT: PASS"),
+            format!("  {pass}\nVERDICT: PASS"),
+            format!("{pass}\n```json\n{fail}\n```\nVERDICT: PASS"),
+            format!("{pass}\nAll checks pass. VERDICT: PASS"),
+        ] {
+            let refused = Verdict::read_result(&summary, None);
+            assert!(refused.is_err(), "{summary}: {refused:?}");
+        }
+        let structured = json!({"verdict": "pass", "head": HEAD});
+        let taken_back = format!("{pass}\n\nDo not merge yet.");
+        assert!(Verdict::read_result(&taken_back, Some(&structured)).is_err());
     }
 
     #[test]

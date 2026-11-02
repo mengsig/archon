@@ -583,8 +583,8 @@ starts the diff read:\n\n\
 ```json\n\
 {\"verdict\": \"pass\", \"head\": \"<commit>\", \"base\": \"<commit>\", \"findings\": []}\n\
 ```\n\n\
-Use `\"fail\"` with findings for failures. Have each reviewer end its summary \
-with the line `VERDICT: PASS` or `VERDICT: FAIL`, matching it.\n\n\
+Use `\"fail\"` with findings for failures. A reviewer that cannot set `structured` \
+makes that JSON its whole summary, with nothing before or after it.\n\n\
 - Blocking findings are correctness bugs, security or safety issues, failing or missing \
 tests for changed behaviour, and broken documented behaviour, as the brief narrows or \
 extends them. Tell reviewers so, and to mark every finding `\"blocking\": true` or \
@@ -1600,7 +1600,7 @@ mod tests {
             "never prose alone",
             "{\"verdict\": \"pass\", \"head\": \"<commit>\", \"base\": \"<commit>\"",
             "Use `\"fail\"` with findings for failures",
-            "end its summary with the line `VERDICT: PASS` or `VERDICT: FAIL`",
+            "A reviewer that cannot set `structured` makes that JSON its whole summary",
             "Each agent named must be a different one you delegated to yourself",
             "must have passed the branch head itself",
             "Name every reviewer that coverage rests on, earlier whole-change reads included",
@@ -1611,6 +1611,9 @@ mod tests {
         ] {
             assert!(rules.contains(said), "missing {said:?} in {rules}");
         }
+        // Told to end with a `VERDICT:` line and no `head:` line, Codex reviewers
+        // appended it to their JSON verdict, and the gate refused it (1.4.11 gate).
+        assert!(!rules.contains("VERDICT:"), "{rules}");
     }
 
     /// The item's review level sets how many reviewers the holder delegates

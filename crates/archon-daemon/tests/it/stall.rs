@@ -764,3 +764,64 @@ async fn a_long_foreground_check_is_not_cut_before_its_own_limit() {
     assert_eq!(h.backend.interrupts(), vec![agent], "past the check limit");
     assert_eq!(the_only_running(&h).await.id, stage.id);
 }
+
+/// A bad mark in the store belongs to its stage run alone: the sweep goes on,
+/// and the run counts as woken once, so this hang stops it.
+#[tokio::test]
+async fn a_corrupt_hung_call_mark_stops_only_its_own_stage() {
+    let h = Harness::new().await;
+    let item = h.enqueue("hung with a bad mark").await;
+    h.dispatch().await;
+    let stage = the_only_running(&h).await;
+    let agent = lead(&stage);
+    h.backend.set_pulse(&agent, renewed());
+    h.backend
+        .set_open_call(&agent, open_call("call_1", STUCK, 21));
+    went_silent(&h, &agent, 21);
+    let mark = format!("hung_tool:{}", stage.id);
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(&mark, "not a time")
+        .unwrap();
+    sweep(&h).await;
+
+    assert!(h.backend.interrupts().is_empty(), "never woken again");
+    let failed = h.stages(&item.id).await.remove(0);
+    let StageState::Failed { error } = &failed.state else {
+        panic!("the stage fails: {:?}", failed.state);
+    };
+    assert!(error.contains("hung again"), "{error}");
+    assert!(failed.infrastructure_failure, "no model failure");
+    assert_ne!(the_only_running(&h).await.id, stage.id, "retried");
+}
+
+/// The wake follows the mark: were the mark's write to fail, nothing woke.
+#[tokio::test]
+async fn the_hung_call_mark_is_written_before_the_agent_is_interrupted() {
+    let h = Harness::new().await;
+    h.enqueue("hung in a bash call").await;
+    h.dispatch().await;
+    let stage = the_only_running(&h).await;
+    let agent = lead(&stage);
+    h.backend.set_pulse(&agent, renewed());
+    h.backend
+        .set_open_call(&agent, open_call("call_1", STUCK, 21));
+    went_silent(&h, &agent, 21);
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let (ctx, key, slot) = (
+        h.ctx.clone(),
+        format!("hung_tool:{}", stage.id),
+        seen.clone(),
+    );
+    h.backend.on_next_interrupt(move || {
+        let store = ctx.store.try_lock().expect("the store is free");
+        *slot.lock().unwrap() = Some(store.kv_get(&key).unwrap());
+    });
+    sweep(&h).await;
+
+    assert_eq!(h.backend.interrupts(), vec![agent]);
+    let at_interrupt = seen.lock().unwrap().take().expect("interrupted");
+    assert!(at_interrupt.is_some(), "the mark was there before the wake");
+}

@@ -8,6 +8,15 @@
   time on a host, as two at once stalled a 12-core PC. `CI_HOST_SLOTS=0`
   still disables the slots and any other whole number sets their count.
 
+### Fixed
+
+- The hung tool-call watchdog no longer stops its sweep on a corrupt
+  `hung_tool:` mark: the bad mark counts as one earlier wake of its stage run
+  alone, and the sweep goes on. The mark is now written before the agent is
+  interrupted and woken, so a failed write wakes nothing and a wake never
+  lacks its mark. `gh run watch` and `gh pr checks --watch` get the long
+  check limit (`limits.hung_check_minutes`); plain sleeps keep the default.
+
 ### Ship gate
 
 - The ship gate's fast check no longer runs again on a tree it already

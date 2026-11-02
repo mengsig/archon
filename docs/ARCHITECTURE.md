@@ -1542,12 +1542,15 @@ in a new worktree off the base branch (§13).
   events from Aether (`get_events` newest first). A call with no outcome
   in the current turn and no event of the lead since for that long, or
   `limits.hung_check_minutes` (default 60) when its command is a known long
-  check (`make ci`, `cargo test`, `pytest`, ...), is hung. Calls to Aether's
+  check (`make ci`, `cargo test`, `pytest`, `gh run watch`,
+  `gh pr checks --watch`, ...), is hung. Calls to Aether's
   own tools (`wait_for`, `delegate`, `ask_user`) never are, and a kept agent
   resumed for a fix (§6.7) is never interrupted, as its turn's end is its
   answer. The first hang of a stage run interrupts the lead's turn
   (Aether's `interrupt`) and sends it a note naming the call and saying to
-  continue; a note that cannot be sent stops the stage. A hang seen at
+  continue; the stage run's mark is written first, so a failed write wakes
+  nothing, and a corrupt mark counts as one earlier wake of that stage run
+  alone. A note that cannot be sent stops the stage. A hang seen at
   least the limit after that interrupt stops the stage like a stall
   ("agent stalled: tool call … hung again …"), so `limits.infra_retries`
   retries it; neither step is model evidence. Each step posts a stage

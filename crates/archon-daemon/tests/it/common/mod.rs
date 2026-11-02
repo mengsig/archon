@@ -811,6 +811,8 @@ struct FakeState {
     /// Runs once, after the next `update_agent` is recorded: what else
     /// happened while that update was in flight.
     update_hook: Option<Box<dyn FnOnce() + Send>>,
+    /// Runs once, as the next `interrupt` is made.
+    interrupt_hook: Option<Box<dyn FnOnce() + Send>>,
 }
 
 impl FakeState {
@@ -1043,6 +1045,11 @@ impl FakeBackend {
     /// Run `hook` once, right after the next `update_agent` is recorded.
     pub fn on_next_update(&self, hook: impl FnOnce() + Send + 'static) {
         self.state().update_hook = Some(Box::new(hook));
+    }
+
+    /// Run `hook` once, as the next `interrupt` is made.
+    pub fn on_next_interrupt(&self, hook: impl FnOnce() + Send + 'static) {
+        self.state().interrupt_hook = Some(Box::new(hook));
     }
 
     /// `pulse` reports `pulse` for `agent`'s tree from now on.
@@ -1429,8 +1436,15 @@ impl AgentBackend for FakeBackend {
 
     /// Ends a held turn, as Aether's interrupt does.
     async fn interrupt(&self, agent: &AetherAgentId) -> Result<bool, ArchonError> {
+        let hook = {
+            let mut state = self.state();
+            state.interrupts.push(agent.clone());
+            state.interrupt_hook.take()
+        };
+        if let Some(hook) = hook {
+            hook();
+        }
         let mut state = self.state();
-        state.interrupts.push(agent.clone());
         if !state.knows(agent) {
             return Err(ArchonError::NotFound(format!("aether: no agent {agent}")));
         }

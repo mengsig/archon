@@ -27,6 +27,7 @@ pub(super) const KEY_PREFIX: &str = "hung_tool:";
 /// with runs of whitespace folded.
 const LONG_CHECKS: &[&str] = &[
     "make ci",
+    "gh run watch",
     "make check",
     "make test",
     "e2e",
@@ -96,7 +97,8 @@ pub fn is_long_check(command: &str) -> bool {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
-    LONG_CHECKS.iter().any(|check| folded.contains(check))
+    let watches_checks = folded.contains("gh pr checks") && folded.contains("--watch");
+    watches_checks || LONG_CHECKS.iter().any(|check| folded.contains(check))
 }
 
 /// Aether's own tools (`wait_for`, `delegate` with `wait`, `ask_user`) wait
@@ -171,7 +173,9 @@ pub(super) async fn act(
     assert_eq!(stage.state, StageState::Running, "only a running stage");
     assert_eq!(stage.aether_agent.as_ref(), Some(lead), "the stage's lead");
     let marked = ctx.store.lock().await.kv_get(&key(&stage.id))?;
-    let mark = marked.as_deref().map(Mark::parse).transpose()?;
+    let mark = marked
+        .as_deref()
+        .map(|raw| Mark::parse_or_woken(raw, stage, hung, now));
     let minutes = hung.silent.as_secs() / 60;
     let call = describe(&hung.call);
     match step(mark.map(|m| m.interrupted_at), hung, now) {
@@ -225,6 +229,19 @@ impl Mark {
         })
     }
 
+    /// A mark that does not parse is read as a wake made one limit ago, so
+    /// this hang stops the stage and its fresh mark replaces the bad one.
+    fn parse_or_woken(raw: &str, stage: &StageRun, hung: &Hung, now: Timestamp) -> Self {
+        Self::parse(raw).unwrap_or_else(|error| {
+            tracing::warn!(stage = %stage.id, %error, "corrupt hung-call mark; the stage counts as woken once");
+            let limit = chrono::Duration::from_std(hung.limit).expect("minutes fit a duration");
+            Self {
+                interrupted_at: now - limit,
+                stopped: false,
+            }
+        })
+    }
+
     fn render(&self) -> String {
         let at = self.interrupted_at.to_rfc3339();
         match self.stopped {
@@ -235,8 +252,10 @@ impl Mark {
 }
 
 /// Interrupt the turn stuck in `hung` and wake its agent with a note, then
-/// tell the orchestrator. An unanswered interrupt is tried by the next sweep;
-/// a note that cannot be sent leaves an idle agent, so the stage stops.
+/// tell the orchestrator. The mark is written first, so a wake never lacks
+/// it and a failed write wakes nothing. An unanswered interrupt drops the
+/// mark and is tried by the next sweep; a note that cannot be sent leaves an
+/// idle agent, so the stage stops.
 async fn interrupt(
     ctx: &DaemonContext,
     stage: &StageRun,
@@ -252,12 +271,19 @@ async fn interrupt(
     assert!(hung.silent >= hung.limit, "only a hang past its limit");
     let minutes = hung.silent.as_secs() / 60;
     let call = describe(&hung.call);
+    let mark = Mark {
+        interrupted_at: now,
+        stopped: false,
+    };
+    let mark_key = key(&stage.id);
+    ctx.store.lock().await.kv_set(&mark_key, &mark.render())?;
     match ctx.backend.interrupt(lead).await {
         Ok(was_running) => {
             tracing::warn!(stage = %stage.id, %lead, %call, minutes, was_running, "tool call hung; turn interrupted");
         }
         Err(error) if resume::unanswered(&error) => {
             tracing::info!(stage = %stage.id, %lead, %error, "hung-call interrupt unanswered; tried again next sweep");
+            ctx.store.lock().await.kv_delete(&mark_key)?;
             return Ok(None);
         }
         Err(error) if error.is_store() => return Err(error),
@@ -285,11 +311,7 @@ async fn interrupt(
          stage as an infrastructure failure.",
         stage.stage_id, stage.id
     );
-    let mark = Mark {
-        interrupted_at: now,
-        stopped: false,
-    };
-    tell(ctx, stage, lead, text, Some(&mark.render())).await?;
+    tell(ctx, stage, lead, text, None).await?;
     Ok(None)
 }
 
@@ -395,6 +417,8 @@ mod tests {
             "npx playwright test --project=chromium",
             "cargo bench -p archon-queue",
             "uv run pytest -q",
+            "gh run watch 123 --exit-status",
+            "gh  pr checks 7 --watch",
         ] {
             assert!(is_long_check(command), "{command}");
             let check = call(command);
@@ -402,6 +426,10 @@ mod tests {
             assert!(judge(&limits(), &check, at(60)).is_some(), "{command}");
         }
         assert!(!is_long_check(STUCK));
+        assert!(
+            !is_long_check("while sleep 30; do gh pr view 7; done"),
+            "a plain sleep loop keeps the default limit"
+        );
     }
 
     #[test]

@@ -4,7 +4,8 @@
 //! lock). The sweep judges each one; a stalled stage settles as an
 //! infrastructure failure, so `limits.infra_retries` re-spawns it once on the
 //! same worktree and a second stall is final. The same read finds trees that
-//! wait on something Archon never asks a person for (see `inspection`).
+//! wait on something Archon never asks a person for (see `inspection`), and
+//! a lead stuck in one tool call (see `hung`).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -18,7 +19,7 @@ use archon_core::ports::TreePulse;
 use archon_core::run::{StageOutcome, StageRun, StageState};
 use archon_queue::Store;
 
-use super::inspection;
+use super::{hung, inspection};
 use crate::context::DaemonContext;
 
 /// The key of a stage the watchdog is stopping, holding the reason.
@@ -112,6 +113,8 @@ pub struct Policy {
     pub silence: Duration,
     /// With no report of the engine at all.
     pub fallback: Duration,
+    /// For a lead's open tool call; `None` when that check is off.
+    pub hung: Option<hung::Limits>,
 }
 
 impl Policy {
@@ -125,7 +128,11 @@ impl Policy {
         // A fallback shorter than the reported-dead wait would fire sooner
         // on less evidence.
         let fallback = minutes(limits.stall_fallback_minutes).max(silence);
-        Some(Self { silence, fallback })
+        Some(Self {
+            silence,
+            fallback,
+            hung: hung::Limits::of(limits),
+        })
     }
 }
 
@@ -155,7 +162,7 @@ pub struct Reading {
     pub inspection: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verdict {
     Healthy,
     Stalled {
@@ -170,6 +177,9 @@ pub enum Verdict {
     HeldLong {
         silent: Duration,
     },
+    /// The lead's open tool call went quiet past its limit while its engine
+    /// stays alive: Archon interrupts it once, then stops the stage.
+    Hung(hung::Hung),
 }
 
 /// Whether the tree is stalled: an agent is `running` yet nothing has been
@@ -253,6 +263,25 @@ pub(super) fn inspection_refused(why: &str) -> String {
     )
 }
 
+/// The failure of a stage whose lead hung in a tool call, `call`, again
+/// after an interrupt, for `minutes`.
+pub(super) fn hung_again(call: &str, minutes: u64) -> String {
+    assert!(!call.is_empty(), "the call is named");
+    format!(
+        "{STALLED}: tool call {call} hung again for {minutes} min after Archon interrupted an \
+         earlier hang"
+    )
+}
+
+/// The failure of a stage whose lead was interrupted in a hung tool call,
+/// `call`, but could not be woken, Aether saying `why`.
+pub(super) fn hung_unwoken(call: &str, why: &str) -> String {
+    assert!(!call.is_empty(), "the call is named");
+    format!(
+        "{STALLED}: tool call {call} hung and was interrupted, but its agent was not woken: {why}"
+    )
+}
+
 /// Whether `error` is a stall the watchdog stopped the agent for.
 pub(super) fn is_stall(error: &str) -> bool {
     error.starts_with(STALLED)
@@ -269,13 +298,17 @@ pub(super) async fn scan(
         let mut store = ctx.store.lock().await;
         forget_settled(&mut store, INTENT_KEY_PREFIX)?;
         forget_settled(&mut store, inspection::ESCALATED_KEY_PREFIX)?;
+        forget_settled(&mut store, hung::KEY_PREFIX)?;
     }
     let Some(policy) = Policy::of(&ctx.config.limits) else {
         // Off: the fleet still records events, so nothing may be kept.
         ctx.activity.prune(now);
         return Ok(Vec::new());
     };
-    let kept = chrono::Duration::from_std(policy.fallback * 2).expect("minutes fit a duration");
+    let longest = policy
+        .hung
+        .map_or(policy.fallback, |h| h.check.max(policy.fallback));
+    let kept = chrono::Duration::from_std(longest * 2).expect("minutes fit a duration");
     ctx.activity.prune(now - kept);
     let waiting = Waiting::read(ctx).await?;
     let mut stalled = Vec::new();
@@ -285,7 +318,9 @@ pub(super) async fn scan(
             continue;
         };
         let waits = waiting.holds(&stage.run, ctx, stage).await?;
-        match judge_stage(ctx, &policy, lead, waits, now).await? {
+        // A kept agent's turn end is read as its answer (§6.7): never cut one.
+        let interruptible = stage.aether_task.is_some();
+        match judge_stage(ctx, &policy, lead, waits, interruptible, now).await? {
             Verdict::Stalled {
                 silent,
                 engine_known,
@@ -297,6 +332,11 @@ pub(super) async fn scan(
             }
             Verdict::HeldLong { silent } => {
                 inspection::escalate_held(ctx, stage, lead, silent).await?;
+            }
+            Verdict::Hung(hung) => {
+                if let Some(reason) = hung::act(ctx, stage, lead, &hung, now).await? {
+                    stalled.push((stage.id.clone(), reason));
+                }
             }
             Verdict::Healthy => {}
         }
@@ -311,10 +351,12 @@ async fn judge_stage(
     policy: &Policy,
     lead: &AetherAgentId,
     waiting: bool,
+    interruptible: bool,
     now: Timestamp,
 ) -> Result<Verdict, ArchonError> {
     let last_event = ctx.activity.newest(lead, &[], now);
-    let quiet = policy.silence.min(policy.fallback);
+    let hung_limits = policy.hung.filter(|_| interruptible);
+    let quiet = hung_limits.map_or(policy.silence, |limits| limits.tool.min(policy.silence));
     if waiting || (now - last_event).to_std().unwrap_or(Duration::ZERO) < quiet {
         return Ok(Verdict::Healthy);
     }
@@ -338,7 +380,44 @@ async fn judge_stage(
         .map(|d| d.agent)
         .collect();
     let seen = ctx.activity.newest(lead, &beneath, now);
-    Ok(judge(policy, &read_tree(now, seen, waiting, pulse)))
+    let reading = read_tree(now, seen, waiting, pulse);
+    let verdict = judge(policy, &reading);
+    match hung_limits {
+        Some(limits) if verdict == Verdict::Healthy => {
+            judge_hung(ctx, &limits, lead, &reading).await
+        }
+        _ => Ok(verdict),
+    }
+}
+
+/// The hang of `lead`'s open tool call. Read only for a tree with an agent
+/// `running`, nothing holding it, and nothing heard of it on archond's own
+/// stream for the tool limit: Aether's lease renewals are no output.
+async fn judge_hung(
+    ctx: &DaemonContext,
+    limits: &hung::Limits,
+    lead: &AetherAgentId,
+    reading: &Reading,
+) -> Result<Verdict, ArchonError> {
+    assert!(reading.heard <= reading.now, "heard before now");
+    let quiet = (reading.now - reading.heard)
+        .to_std()
+        .unwrap_or(Duration::ZERO);
+    let held = reading.waiting || reading.held || reading.inspection;
+    if !reading.running || held || quiet < limits.tool {
+        return Ok(Verdict::Healthy);
+    }
+    let call = match ctx.backend.open_tool_call(lead).await {
+        Ok(call) => call,
+        Err(error) if error.is_store() => return Err(error),
+        // One refused read must not stop the sweep for every other stage.
+        Err(error) => {
+            tracing::warn!(%lead, %error, "open tool call unread; the next sweep looks again");
+            return Ok(Verdict::Healthy);
+        }
+    };
+    let hung = call.and_then(|call| hung::judge(limits, &call, reading.now));
+    Ok(hung.map_or(Verdict::Healthy, Verdict::Hung))
 }
 
 /// The reading of a tree from archond's newest event of it, `seen`, and
@@ -362,35 +441,96 @@ fn intent_key(stage: &StageRunId) -> String {
     format!("{INTENT_KEY_PREFIX}{stage}")
 }
 
-/// Record, before its cancel goes out, that the watchdog stops `stage` for
-/// `reason`: the cancel's own events must not settle it as cancelled.
+/// Record, before its cancel goes out, that archond stops `stage` for
+/// `reason`, a stall or an escalation: the cancel's own events must not
+/// settle it as cancelled.
 pub(super) fn mark_intent(
     store: &mut Store,
     stage: &StageRunId,
     reason: &str,
 ) -> Result<(), ArchonError> {
-    assert!(is_stall(reason), "only the watchdog marks: {reason}");
+    assert!(
+        is_stall(reason) || is_escalation(reason),
+        "only the watchdog and the review round cap mark: {reason}"
+    );
     store.kv_set(&intent_key(stage), reason)
 }
 
-/// The outcome `stage` settles with: a cancel the watchdog caused is the
-/// stall's infrastructure failure; any other outcome stands.
+/// The escalation archond stops each of `stages` for, still owed when its
+/// earlier cancel went unanswered.
+pub(super) fn owed_escalations(
+    store: &Store,
+    stages: &[StageRun],
+) -> Result<Vec<(StageRunId, String)>, ArchonError> {
+    let mut owed = Vec::new();
+    for stage in stages {
+        let Some(reason) = store.kv_get(&intent_key(&stage.id))? else {
+            continue;
+        };
+        if is_escalation(&reason) {
+            owed.push((stage.id.clone(), reason));
+        }
+    }
+    assert!(owed.len() <= stages.len(), "one stop per stage");
+    Ok(owed)
+}
+
+/// Whether archond already marked `stage` to stop for an escalation; a
+/// stall's mark does not count, as the round cap replaces it.
+pub(super) fn escalation_marked(store: &Store, stage: &StageRunId) -> Result<bool, ArchonError> {
+    let marked = store.kv_get(&intent_key(stage))?;
+    Ok(marked.is_some_and(|reason| is_escalation(&reason)))
+}
+
+fn is_escalation(reason: &str) -> bool {
+    reason.starts_with(StageOutcome::ESCALATE_PREFIX)
+}
+
+/// The outcome `stage` settles with. A cancel archond caused is the stall's
+/// infrastructure failure or the escalation it marked; an escalation also
+/// overrides a result the agent gave before its cancel landed, since the
+/// round cap had already stopped the stage. Any other outcome stands.
 pub(super) fn intended(
     store: &Store,
     stage: &StageRunId,
     outcome: StageOutcome,
 ) -> Result<StageOutcome, ArchonError> {
-    if !matches!(outcome, StageOutcome::Cancelled { .. }) {
-        return Ok(outcome);
-    }
     let Some(reason) = store.kv_get(&intent_key(stage))? else {
         return Ok(outcome);
     };
-    assert!(!reason.is_empty(), "a marked stall names its reason");
+    assert!(!reason.is_empty(), "a marked stop names its reason");
+    let infra = is_stall(&reason);
+    assert!(
+        infra || is_escalation(&reason),
+        "a mark is a stall or an escalation"
+    );
+    let cancelled = matches!(outcome, StageOutcome::Cancelled { .. });
+    if infra && !cancelled {
+        return Ok(outcome);
+    }
     Ok(StageOutcome::Failed {
         error: reason,
-        infra: true,
+        infra,
     })
+}
+
+/// The reason to stop `stage` for: an escalation already marked outlasts a
+/// later stall, so the round cap's findings are never lost to the watchdog.
+pub(super) fn prevailing(
+    store: &Store,
+    stage: &StageRunId,
+    reason: &str,
+) -> Result<String, ArchonError> {
+    let marked = store.kv_get(&intent_key(stage))?;
+    let reason = match marked {
+        Some(escalation) if is_escalation(&escalation) => escalation,
+        _ => reason.to_owned(),
+    };
+    assert!(
+        is_stall(&reason) || is_escalation(&reason),
+        "only the watchdog and the review round cap stop a stage: {reason}"
+    );
+    Ok(reason)
 }
 
 /// Delete the `prefix` marks of stages that settled or no longer exist.
@@ -452,6 +592,56 @@ impl Waiting {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const CAPPED: &str = "ESCALATE: the review failed 3 rounds";
+
+    fn completed() -> StageOutcome {
+        StageOutcome::Completed {
+            summary: "done".into(),
+            structured: None,
+        }
+    }
+
+    #[test]
+    fn an_escalation_overrides_any_outcome_and_a_stall_only_a_cancel() {
+        let mut store = Store::open_in_memory().unwrap();
+        let stage = StageRunId::new();
+        let stalled = reason(Duration::from_secs(1800), true);
+        mark_intent(&mut store, &stage, &stalled).unwrap();
+        assert_eq!(intended(&store, &stage, completed()).unwrap(), completed());
+        let cancelled = StageOutcome::Cancelled { reason: None };
+        let StageOutcome::Failed { infra, .. } = intended(&store, &stage, cancelled).unwrap()
+        else {
+            panic!("a stall's cancel fails the stage");
+        };
+        assert!(infra, "a stall is an infrastructure failure");
+
+        mark_intent(&mut store, &stage, CAPPED).unwrap();
+        let own_failure = StageOutcome::Failed {
+            error: "tests failed".into(),
+            infra: false,
+        };
+        for outcome in [completed(), own_failure] {
+            let settled = intended(&store, &stage, outcome).unwrap();
+            let expected = StageOutcome::Failed {
+                error: CAPPED.into(),
+                infra: false,
+            };
+            assert_eq!(settled, expected, "the round cap already stopped it");
+        }
+    }
+
+    #[test]
+    fn a_stall_never_replaces_a_marked_escalation() {
+        let mut store = Store::open_in_memory().unwrap();
+        let stage = StageRunId::new();
+        let stalled = reason(Duration::from_secs(1800), false);
+        assert_eq!(prevailing(&store, &stage, &stalled).unwrap(), stalled);
+        mark_intent(&mut store, &stage, CAPPED).unwrap();
+        assert_eq!(prevailing(&store, &stage, &stalled).unwrap(), CAPPED);
+        let later = "ESCALATE: a later cap";
+        assert_eq!(prevailing(&store, &stage, later).unwrap(), CAPPED);
+    }
 
     fn at(minutes: i64) -> Timestamp {
         "2026-10-01T00:00:00Z".parse::<Timestamp>().unwrap() + chrono::Duration::minutes(minutes)

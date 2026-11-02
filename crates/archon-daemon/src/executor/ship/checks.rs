@@ -60,8 +60,19 @@ pub(super) struct Target {
     /// The branch the change is for: the stack parent's, else the repository's.
     pub base: String,
     /// The commit the run's own commits start after, when not `base`: the
-    /// frozen head of the pull request an `onto` item delivers into.
+    /// frozen head of the pull request an `onto` item delivers into, or the
+    /// reviewed head of the pull request it is stacked on. Only commits after
+    /// it must carry the repository's identity.
     pub since: Option<String>,
+    /// For a stack on a reviewed head (`since`), `origin`'s head of `base`
+    /// read at delivery: a commit after `since` it lacks must carry the
+    /// identity even when a local ref or a remote holds it.
+    pub reviewed_base: Option<String>,
+    /// The branch the repository's new work forks from, which a stack's
+    /// other parents may have merged in ahead of `base`.
+    pub repository_base: Option<String>,
+    /// The commit of `base` the run forked from, recorded at dispatch.
+    pub forked: Option<String>,
     /// The addresses a commit the run adds may carry, recorded at registration.
     pub allowed: Vec<String>,
     /// The repository's attribution policy at delivery.
@@ -121,11 +132,12 @@ pub(super) fn check(
             target.branch
         )));
     }
-    if let Err(refusal) = foreign_commits(tree, &base, &target.allowed)? {
+    let held = held_elsewhere(tree, target)?;
+    if let Err(refusal) = foreign_commits(tree, &base, &held, &target.allowed)? {
         return Ok(Err(refusal));
     }
     if target.attribution == Attribution::None
-        && let Err(refusal) = unattributed(tree, &base, record)?
+        && let Err(refusal) = unattributed(tree, (&base, &held), record)?
     {
         return Ok(Err(refusal));
     }
@@ -191,8 +203,9 @@ pub(super) fn check_unchanged(target: &Target) -> Result<Result<(), String>, Arc
     let ahead = git(tree, &["rev-list", "--count", &format!("{base}..HEAD")])?;
     if ahead != "0" {
         return Ok(Err(format!(
-            "`{}` holds {ahead} commit(s) beyond `{base}`, so a change exists",
-            target.branch
+            "`{}` holds {ahead} commit(s) beyond {}, so a change exists",
+            target.branch,
+            floor_label(target, &base)
         )));
     }
     Ok(Ok(()))
@@ -373,16 +386,10 @@ fn missing_base(target: &Target) -> String {
 }
 
 /// Where the run's own commits start: `target.since` when it is an ancestor
-/// of the run's head, else the newest commit of `target.base` (local or
-/// `origin`'s) that the head holds, so the base commits a stale local branch
-/// lacks are not counted as the run's; else the ref of `target.base`.
+/// of the run's head, else where it forked from `target.base` ([`fork_floor`]).
 fn floor(tree: &Path, target: &Target) -> Result<Result<String, String>, ArchonError> {
     let Some(since) = &target.since else {
-        if let Some(fork) = crate::worktree::branch_fork(tree, &target.base, "HEAD")? {
-            return Ok(Ok(fork));
-        }
-        let found = base_ref(tree, &target.base)?;
-        return Ok(found.ok_or_else(|| missing_base(target)));
+        return fork_floor(tree, target);
     };
     assert!(
         crate::worktree::stack::is_commit_id(since),
@@ -396,10 +403,84 @@ fn floor(tree: &Path, target: &Target) -> Result<Result<String, String>, ArchonE
         Some(0) => Ok(Ok(since.clone())),
         Some(1) => Ok(Err(format!(
             "the run branch `{}` does not hold {since}, the head of the pull request it \
-             delivers into, so it cannot be pushed there by fast-forward",
+             delivers into or is stacked on: its commits must stay as they are, beneath the \
+             run's own",
             target.branch
         ))),
         _ => Err(held.failure()),
+    }
+}
+
+/// Where the run's own commits start on `target.base`: the newest commit
+/// that its head holds of the commit it forked from, recorded at dispatch,
+/// and `origin`'s base, which a refresh may have merged; without a recorded
+/// fork, of the local base and `origin`'s. The base's ref when they share no
+/// history. A local base the run's commits landed in never hides them.
+fn fork_floor(tree: &Path, target: &Target) -> Result<Result<String, String>, ArchonError> {
+    let Some(named) = base_ref(tree, &target.base)? else {
+        return Ok(Err(missing_base(target)));
+    };
+    let commits = base_commits(tree, target)?;
+    assert!(!commits.is_empty(), "the base's ref names a commit");
+    let mut args = vec!["merge-base", "HEAD"];
+    args.extend(commits.iter().map(String::as_str));
+    let ran = DaemonGit::sealed_in(tree).args(args).output()?;
+    // `merge-base` exits 1 exactly when the commits share no history.
+    match ran.status.code() {
+        Some(0) => {
+            let fork = ran.stdout_text()?;
+            assert!(crate::worktree::stack::is_commit_id(&fork), "a merge base");
+            Ok(Ok(fork))
+        }
+        Some(1) => Ok(Ok(named)),
+        _ => Err(ran.failure()),
+    }
+}
+
+/// The commits of the base [`fork_floor`] measures from: the recorded fork
+/// when it is still in the repository, else the local base; and `origin`'s.
+fn base_commits(tree: &Path, target: &Target) -> Result<Vec<String>, ArchonError> {
+    let base = &target.base;
+    let forked = match target.forked.as_deref() {
+        Some(fork) if crate::worktree::stack::is_commit_id(fork) => commit_of(tree, fork)?,
+        _ => None,
+    };
+    let start = match forked {
+        Some(fork) => Some(fork),
+        None => commit_of(tree, &format!("refs/heads/{base}"))?,
+    };
+    let remote = commit_of(tree, &format!("refs/remotes/origin/{base}"))?;
+    let commits: Vec<String> = start.into_iter().chain(remote).collect();
+    assert!(commits.len() <= 2, "a start and `origin`'s base");
+    Ok(commits)
+}
+
+/// The commit `name` resolves to in `tree`; `None` when it names none.
+fn commit_of(tree: &Path, name: &str) -> Result<Option<String>, ArchonError> {
+    assert!(
+        is_floor(name),
+        "a full ref name or a commit id, never an option"
+    );
+    let spec = format!("{name}^{{commit}}");
+    let ran = DaemonGit::sealed_in(tree)
+        .args(["rev-parse", "-q", "--verify", spec.as_str()])
+        .output()?;
+    // `rev-parse -q --verify` exits 1 exactly when the name is no commit.
+    match ran.status.code() {
+        Some(0) => Ok(Some(ran.stdout_text()?)),
+        Some(1) => Ok(None),
+        _ => Err(ran.failure()),
+    }
+}
+
+/// How a refusal names `floor`: the base branch and the commit of it the run
+/// forked from, or the frozen head an `onto` item starts after.
+fn floor_label(target: &Target, floor: &str) -> String {
+    assert!(is_floor(floor), "a full ref name or a commit id");
+    let forked = target.since.is_none() && crate::worktree::stack::is_commit_id(floor);
+    match forked {
+        true => format!("`{}` (from {})", target.base, &floor[..12]),
+        false => format!("`{floor}`"),
     }
 }
 
@@ -418,11 +499,42 @@ fn base_ref(tree: &Path, base: &str) -> Result<Option<String>, ArchonError> {
     Ok(None)
 }
 
-/// Refuse a commit the run adds, one neither `base` nor a remote holds, that
+/// Where commits beyond the floor may already be, exempt from the identity
+/// check: `origin`'s heads of the base and of the repository's base, never
+/// another remote branch; for a reviewed stack only `origin`'s base head as
+/// read at delivery, which no ref in the worktree can stand in for.
+fn held_elsewhere(tree: &Path, target: &Target) -> Result<Vec<String>, ArchonError> {
+    if let Some(base) = &target.reviewed_base {
+        assert!(
+            target.since.is_some(),
+            "a reviewed stack starts at the reviewed head"
+        );
+        assert!(
+            crate::worktree::stack::is_commit_id(base),
+            "origin's base head is a full commit id"
+        );
+        return Ok(vec![base.clone()]);
+    }
+    let mut held = Vec::new();
+    for branch in std::iter::once(&target.base).chain(&target.repository_base) {
+        assert!(!branch.is_empty(), "a base branch has a name");
+        let tracking = format!("refs/remotes/origin/{branch}");
+        if let Some(commit) = commit_of(tree, &tracking)?
+            && !held.contains(&commit)
+        {
+            held.push(commit);
+        }
+    }
+    assert!(held.len() <= 2, "the base's head and the repository's");
+    Ok(held)
+}
+
+/// Refuse a commit the run adds, one neither `base` nor `held` holds, that
 /// was not made under the repository's git identity or the daemon's own.
 fn foreign_commits(
     tree: &Path,
     base: &str,
+    held: &[String],
     allowed: &[String],
 ) -> Result<Result<(), String>, ArchonError> {
     assert!(
@@ -430,8 +542,14 @@ fn foreign_commits(
         "the daemon's own address is always allowed"
     );
     assert!(is_floor(base), "a full ref name or a commit id");
+    assert!(
+        held.iter().all(|h| is_floor(h)),
+        "full ref names or commit ids"
+    );
     let format = "--format=%H%x09%ae%x09%ce";
-    let log = git(tree, &["log", format, "HEAD", "--not", base, "--remotes"])?;
+    let mut args = vec!["log", format, "HEAD", "--not", base];
+    args.extend(held.iter().map(String::as_str));
+    let log = git(tree, &args)?;
     let mut foreign = Vec::new();
     for line in log.lines() {
         let fields: Vec<&str> = line.split('\t').collect();
@@ -465,31 +583,27 @@ fn foreign_commits(
     )))
 }
 
-/// Refuse a record whose `pr.body`, or a commit the run adds, carries a line
-/// attributing the change to a model or a tool, quoting each such line.
+/// Refuse a record whose `pr.body`, or a commit the run adds (one neither
+/// `base` nor `held` holds), carries a line attributing the change to a
+/// model or a tool, quoting each such line.
 fn unattributed(
     tree: &Path,
-    base: &str,
+    (base, held): (&str, &[String]),
     record: &ShipRecord,
 ) -> Result<Result<(), String>, ArchonError> {
     assert!(is_floor(base), "a full ref name or a commit id");
+    assert!(
+        held.iter().all(|h| is_floor(h)),
+        "full ref names or commit ids"
+    );
     assert!(!record.body.trim().is_empty(), "a read record has a body");
     let mut found: Vec<String> = attribution_lines(&record.body)
         .into_iter()
         .map(|line| format!("`pr.body` has {line:?}"))
         .collect();
-    let log = git(
-        tree,
-        &[
-            "log",
-            "-z",
-            "--format=%H%n%B",
-            "HEAD",
-            "--not",
-            base,
-            "--remotes",
-        ],
-    )?;
+    let mut args = vec!["log", "-z", "--format=%H%n%B", "HEAD", "--not", base];
+    args.extend(held.iter().map(String::as_str));
+    let log = git(tree, &args)?;
     for entry in log.split('\0').filter(|entry| !entry.trim().is_empty()) {
         let entry = entry.trim_start();
         let (commit, message) = entry.split_once('\n').unwrap_or((entry, ""));

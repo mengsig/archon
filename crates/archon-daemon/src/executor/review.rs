@@ -2,7 +2,8 @@
 //! taken from the lead's word: each reviewer the lead names must be an agent
 //! it delegated to whose own result passed the change as the branch holds it.
 //! A named delta read it left unanchored may rest on a fresh lead's settled
-//! earlier reviewers, which Archon finds, checks and records itself.
+//! earlier reviewers, which Archon finds, checks and records itself. A
+//! reviewer of the attempt that failed the change counts, named or not.
 
 mod coverage;
 mod rounds;
@@ -10,23 +11,33 @@ mod rounds;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::ports::{Descendant, DescendantState};
+use archon_core::pull_request::OntoPullRequest;
+use archon_core::repo::Repo;
 use archon_core::run::{PipelineRun, StageOutcome, StageRun};
 use archon_pipeline::ShipRecord;
 use archon_pipeline::review::{self, MAX_NAMED_REVIEWERS, Reviewer, Verdict};
+use archon_queue::RunReview;
 
 use super::recover;
 use crate::context::DaemonContext;
-use coverage::{Base, Held, History};
-pub(super) use rounds::reviewer_settled;
+use crate::worktree::shadow::Shadow;
+use crate::worktree::stack::{self, is_commit_id};
+use coverage::{Base, Held, History, Verdicts};
+pub(super) use rounds::{Capped, attempt_resumed, capped_at_completion, reviewer_settled};
 
 /// Agents named in a refusal: enough to see what the lead delegated to.
 const MAX_LISTED: usize = 6;
 
-/// A review Archon found holds: the named reviewers that passed, and the
-/// earlier reviewers it added to anchor their delta reads.
+/// A review Archon found holds: the named reviewers it rests on (the passes
+/// and the whole-change fails they answered), and the earlier reviewers it
+/// added to anchor their delta reads.
 #[derive(Debug)]
 struct Found {
     reviewers: Vec<Reviewer>,
+    /// The branch head the passes were held to.
+    head: String,
+    /// Where a review item's whole pull request started, from GitHub's base.
+    fork: Option<String>,
     implicit: Vec<String>,
     /// What every reviewer read returned, fails included.
     reads: Vec<Read>,
@@ -50,7 +61,9 @@ type Read = (String, Verdict);
 
 /// What checking the verdicts against the branch came to.
 enum Checked {
-    Held(Held),
+    /// The passes hold for the branch at this head, a review item's change
+    /// read from this fork.
+    Held(Held, String, Option<String>),
     Refused(String),
     /// A named delta read needs an anchor, and the earlier reviewers were not
     /// read: why it is refused if none anchors it.
@@ -67,14 +80,15 @@ pub(super) struct Owed {
 }
 
 /// `outcome` with Archon's own finding on the review pass it claims, for a
-/// `stage` owing `owed`. `Err` while Aether cannot be asked.
+/// `stage` owing `owed`, and the review it verified when that pass holds.
+/// `Err` while Aether cannot be asked.
 pub(super) async fn verify(
     ctx: &DaemonContext,
     run: &PipelineRun,
     stage: &StageRun,
     owed: Owed,
     outcome: StageOutcome,
-) -> Result<StageOutcome, ArchonError> {
+) -> Result<(StageOutcome, Option<RunReview>), ArchonError> {
     assert_eq!(
         stage.run, run.id,
         "a stage's review is checked with its own run"
@@ -84,7 +98,7 @@ pub(super) async fn verify(
         structured: Some(mut structured),
     } = outcome
     else {
-        return Ok(outcome);
+        return Ok((outcome, None));
     };
     // A missing ship record binds nothing: the stage's gate refuses it.
     let record = owed
@@ -109,15 +123,45 @@ pub(super) async fn verify(
     if !implicit.is_empty() {
         tracing::info!(stage = %stage.id, ?implicit, "anchored named delta reviews on the lead's earlier reviewers");
     }
+    let (head, fork) = match &found {
+        Some(Ok(found)) => (Some(found.head.clone()), found.fork.clone()),
+        _ => (None, None),
+    };
+    let verified = match &head {
+        Some(head) => Some(verified_review(run, head).await?),
+        None => None,
+    };
     review::record_check(&mut structured, found.map(|f| f.map(|f| f.reviewers)));
+    if let Some(head) = head {
+        review::record_reviewed_head(&mut structured, &head);
+    }
+    if let Some(fork) = fork {
+        review::record_reviewed_fork(&mut structured, &fork);
+    }
     review::record_implicit(&mut structured, &implicit);
     if !reads.is_empty() {
         review::record_reads(&mut structured, &reads);
     }
     review::record_corrections(&mut structured, &corrections);
-    Ok(StageOutcome::Completed {
+    let outcome = StageOutcome::Completed {
         summary,
         structured: Some(structured),
+    };
+    Ok((outcome, verified))
+}
+
+/// The review a held pass verified: the branch `head` its passes were held to
+/// and that commit's tree in `run`'s workspace.
+async fn verified_review(run: &PipelineRun, head: &str) -> Result<RunReview, ArchonError> {
+    assert!(is_commit_id(head), "a reviewed head is a full commit id");
+    let (workspace, commit) = (run.workspace.clone(), head.to_ascii_lowercase());
+    let tree = tokio::task::spawn_blocking(move || stack::tree_of(&workspace, &commit))
+        .await
+        .map_err(|e| ArchonError::io("reviewed tree task", std::io::Error::other(e)))??;
+    assert!(is_commit_id(&tree), "git prints a full tree id");
+    Ok(RunReview {
+        head: head.to_ascii_lowercase(),
+        tree: tree.to_ascii_lowercase(),
     })
 }
 
@@ -148,34 +192,66 @@ async fn reviewers(
         Ok(chosen) => chosen,
         Err(why) => return Ok(Err(why)),
     };
+    assert!(
+        chosen.picked.len() >= owed as usize,
+        "the review level's reviewers were picked"
+    );
+    let checked = check_chosen(ctx, (run, stage), &beneath, &chosen, owed, shipped).await?;
     let Chosen {
         picked,
         verdicts,
         corrections,
     } = chosen;
-    assert!(
-        picked.len() >= owed as usize,
-        "the review level's reviewers were picked"
-    );
-    let check = |earlier: Option<Vec<Read>>| {
-        holding(ctx, run, verdicts.clone(), earlier, owed, shipped.clone())
-    };
-    let checked = match check(None).await? {
-        Checked::Unanchored(stray) => {
-            match earlier_reads(ctx, stage, lead, &beneath, &picked).await? {
-                Ok(earlier) => check(Some(earlier)).await?,
-                Err(why) => Checked::Refused(format!("{stray}: {why}")),
-            }
-        }
-        checked => checked,
-    };
     Ok(match checked {
-        Checked::Held(held) => Ok(found(&picked, held, verdicts, corrections)),
+        Checked::Held(held, head, fork) => {
+            let found = found(&picked, (held, head), verdicts, corrections);
+            Ok(Found { fork, ..found })
+        }
         Checked::Refused(why) if !corrections.is_empty() => {
             Err(format!("{why} ({})", lead_children(&beneath, lead)))
         }
         Checked::Refused(why) => Err(why),
         Checked::Unanchored(_) => unreachable!("the earlier reviewers were read"),
+    })
+}
+
+/// Whether the `chosen` verdicts hold beside the attempt's left-out fails, read with the
+/// lead's earlier reviewers only when a named delta read needs an anchor.
+async fn check_chosen(
+    ctx: &DaemonContext,
+    (run, stage): (&PipelineRun, &StageRun),
+    beneath: &[Descendant],
+    chosen: &Chosen<'_>,
+    owed: u32,
+    shipped: Option<String>,
+) -> Result<Checked, ArchonError> {
+    let lead = stage
+        .aether_agent
+        .as_ref()
+        .expect("a checked stage has its agent");
+    let Chosen {
+        picked, verdicts, ..
+    } = chosen;
+    assert_eq!(
+        picked.len(),
+        verdicts.len(),
+        "one verdict per reviewer picked"
+    );
+    let left_out = match left_out_fails(ctx, stage, beneath, picked).await? {
+        Ok(left_out) => left_out,
+        Err(why) => return Ok(Checked::Refused(why)),
+    };
+    let check = |earlier: Option<Vec<Read>>| {
+        let read = (verdicts.clone(), left_out.clone(), earlier);
+        holding(ctx, run, read, owed, shipped.clone())
+    };
+    Ok(match check(None).await? {
+        Checked::Unanchored(stray) => match earlier_reads(ctx, stage, lead, beneath, picked).await?
+        {
+            Ok(earlier) => check(Some(earlier)).await?,
+            Err(why) => Checked::Refused(format!("{stray}: {why}")),
+        },
+        checked => checked,
     })
 }
 
@@ -207,19 +283,96 @@ async fn earlier_reads(
     earlier_verdicts(ctx, &earlier).await
 }
 
-/// The `picked` reviewers whose passes `held` counts, and the earlier ones it added.
-fn found(picked: &[&Descendant], held: Held, reads: Vec<Read>, corrections: Vec<String>) -> Found {
-    assert!(!held.passes.is_empty(), "a review that holds has a pass");
+/// The fails of `stage`'s attempt by its reviewers other than the `picked` ones, or why one
+/// cannot be read: each stands as a named fail does.
+async fn left_out_fails(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    beneath: &[Descendant],
+    picked: &[&Descendant],
+) -> Result<Result<Vec<Read>, String>, ArchonError> {
+    let lead = stage
+        .aether_agent
+        .as_ref()
+        .expect("a checked stage has its agent");
+    assert!(!picked.is_empty(), "a review names its reviewers");
+    let children = rounds::attempt_children(ctx, &stage.id).await?;
+    let mut reads = Vec::with_capacity(children.len());
+    for (agent, tallied) in children {
+        if picked.iter().any(|p| p.agent.as_str() == agent) {
+            continue;
+        }
+        let listed = beneath
+            .iter()
+            .find(|d| d.parent == *lead && d.agent.as_str() == agent && d.task.is_some());
+        let Some(child) = listed else {
+            // Aether no longer lists it: a blocking fail the tally kept still stands.
+            if let Some(head) = tallied {
+                reads.push((agent, tallied_fail(head)));
+            }
+            continue;
+        };
+        // A fail Aether could not show may be the one that stands.
+        let outcome = match result_of(ctx, child).await? {
+            Ok(outcome) => outcome,
+            Err(why) => {
+                return Ok(Err(format!(
+                    "reviewer {agent} of this attempt, which the record leaves out, {why}"
+                )));
+            }
+        };
+        match verdict_in(outcome) {
+            Ok(verdict) if !verdict.pass => reads.push((agent, verdict)),
+            Ok(_) => {}
+            Err(why) => tracing::debug!(%agent, %why, "a child with no verdict reviewed nothing"),
+        }
+    }
     assert!(
-        held.passes.iter().all(|i| *i < picked.len()),
-        "only a named pass counts, by its index among those picked"
+        reads.iter().all(|(_, read)| !read.pass),
+        "only fails are left out"
     );
-    let reviewers = held.passes.into_iter().map(|i| Reviewer {
+    Ok(Ok(reads))
+}
+
+/// The fail of `head` the attempt's tally counted, for a reviewer Aether no
+/// longer lists: read as a whole-change fail.
+fn tallied_fail(head: String) -> Verdict {
+    assert!(!head.is_empty(), "a counted fail names its head");
+    Verdict {
+        pass: false,
+        head,
+        base: None,
+        findings: None,
+        blocking: None,
+        blocking_findings: Vec::new(),
+    }
+}
+
+/// The `picked` reviewers `held` counts at `head` (its passes, and the
+/// whole-change fails they answered), and the earlier ones it added.
+fn found(
+    picked: &[&Descendant],
+    (held, head): (Held, String),
+    reads: Vec<Read>,
+    corrections: Vec<String>,
+) -> Found {
+    assert!(!held.passes.is_empty(), "a review that holds has a pass");
+    assert!(is_commit_id(&head), "held to a full commit id");
+    let mut counted: Vec<usize> = held.passes.into_iter().chain(held.answered).collect();
+    counted.sort_unstable();
+    counted.dedup();
+    assert!(
+        counted.iter().all(|i| *i < picked.len()),
+        "only a named read counts, by its index among those picked"
+    );
+    let reviewers = counted.into_iter().map(|i| Reviewer {
         model: picked[i].model.to_string(),
         agent: picked[i].agent.to_string(),
     });
     Found {
         reviewers: reviewers.collect(),
+        head,
+        fork: None,
         implicit: held.implicit,
         reads,
         corrections,
@@ -562,19 +715,36 @@ fn verdict_in(outcome: StageOutcome) -> Result<Verdict, String> {
     }
 }
 
-/// Whether the named `verdicts` hold for the run's branch as it stands, which
-/// must hold the `shipped` tree if one is given. `earlier` reads, once read,
-/// may anchor named delta reads; `None` asks first whether any is needed.
+/// Whether the named `verdicts`, beside the `left_out` fails, hold for the branch holding any
+/// `shipped` tree. `earlier` reads may anchor delta reads; `None` asks first if any is needed.
 async fn holding(
     ctx: &DaemonContext,
     run: &PipelineRun,
-    verdicts: Vec<Read>,
-    earlier: Option<Vec<Read>>,
+    (verdicts, left_out, earlier): (Vec<Read>, Vec<Read>, Option<Vec<Read>>),
     owed: u32,
     shipped: Option<String>,
 ) -> Result<Checked, ArchonError> {
     assert!(!verdicts.is_empty(), "a named reviewer was read");
-    let (base_branch, onto_head) = base_of(ctx, run).await?;
+    let ReviewBase {
+        branch: base_branch,
+        onto_head,
+        reviewed_pr,
+        repo,
+        merged_from,
+    } = base_of(ctx, run).await?;
+    let (base_branch, onto_head, merged_from, fork) = match (&reviewed_pr, repo) {
+        (Some(reviewed), Some(repo)) => match trusted_fork(ctx, run, repo, reviewed).await? {
+            // No local ref names the start, nor a refresh's: only GitHub's base.
+            Ok(fork) => (String::new(), Some(fork.clone()), None, Some(fork)),
+            Err(why) => return Ok(Checked::Refused(why)),
+        },
+        _ => (base_branch, onto_head, merged_from, None),
+    };
+    if fork.is_some()
+        && let Some(why) = unbased_pass(&verdicts, earlier.as_deref())
+    {
+        return Ok(Checked::Refused(why));
+    }
     let workspace = run.workspace.clone();
     let checked = tokio::task::spawn_blocking(move || {
         let mut history = History::new(&workspace);
@@ -582,8 +752,14 @@ async fn holding(
         let base = Base {
             branch: &base_branch,
             onto_head: onto_head.as_deref(),
+            merged_from: merged_from.as_deref(),
         };
-        let placed = coverage::place(&mut history, base, &verdicts, read)?;
+        let read = Verdicts {
+            named: &verdicts,
+            earlier: read,
+            left_out: &left_out,
+        };
+        let placed = coverage::place(&mut history, base, read)?;
         let (head, placed) = match placed {
             Ok(placed) => placed,
             Err(why) => return Ok(Checked::Refused(why)),
@@ -593,6 +769,9 @@ async fn holding(
         {
             return Ok(Checked::Refused(why));
         }
+        if let Some(why) = moved_off(reviewed_pr.as_ref(), &head) {
+            return Ok(Checked::Refused(why));
+        }
         if earlier.is_none()
             && let Some(stray) = coverage::unanchored_named(&mut history, &placed)?
         {
@@ -600,7 +779,7 @@ async fn holding(
         }
         Ok(
             match coverage::counted(&mut history, &placed, &head, owed)? {
-                Ok(held) => Checked::Held(held),
+                Ok(held) => Checked::Held(held, head, fork),
                 Err(why) => Checked::Refused(why),
             },
         )
@@ -610,23 +789,149 @@ async fn holding(
         .map_err(|e| ArchonError::io("reviewed commits task", std::io::Error::other(e)))?
 }
 
-/// The branch `run` forked from, empty when its variables name none, and the
-/// frozen head of the pull request its item is queued `onto`.
-async fn base_of(
+/// Where the change a run's reviewers read starts.
+struct ReviewBase {
+    /// The branch the run forked from; empty when its variables name none.
+    branch: String,
+    /// The frozen head of the pull request an item delivers into, or the
+    /// reviewed head it is stacked on: its change starts there.
+    onto_head: Option<String>,
+    /// The pull request a review-only item reviews whole, at its frozen head.
+    reviewed_pr: Option<OntoPullRequest>,
+    /// The repository a review-only item's pull request is in.
+    repo: Option<Repo>,
+    /// The branch head a refresh merged into.
+    merged_from: Option<String>,
+}
+
+/// Where `run`'s change starts: its base branch and, for an item queued
+/// `onto` a pull request, that pull request's frozen head or, when the item
+/// only reviews it, the pull request itself; for one stacked on a reviewed
+/// pull request, its reviewed head; and the branch head a refresh merged into.
+async fn base_of(ctx: &DaemonContext, run: &PipelineRun) -> Result<ReviewBase, ArchonError> {
+    let store = ctx.store.lock().await;
+    let item = store.item(&run.item)?;
+    let stacked = super::onto::reviewed_dependency(&store, &item)?;
+    let refresh = store.stack_fix(&run.item)?.and_then(|fix| fix.refresh);
+    let merged_from = refresh.and_then(|refresh| refresh.from);
+    let (onto_head, reviewed_pr) = match item.onto.map(|onto| *onto) {
+        Some(onto) if onto.review_only => (None, Some(onto)),
+        Some(onto) => (Some(onto.head_sha), None),
+        // Stacked on a reviewed pull request, the change starts at its head.
+        None => (stacked.map(|reviewed| reviewed.head_sha), None),
+    };
+    let branch = match recover::load_run_vars(&store, &run.id) {
+        Ok(vars) => vars.get("base_branch").cloned().unwrap_or_default(),
+        // Without a base only reviews stating no base read the whole change.
+        Err(ArchonError::NotFound(_)) => String::new(),
+        Err(error) => return Err(error),
+    };
+    assert!(
+        onto_head.is_none() || reviewed_pr.is_none(),
+        "an item delivers into a pull request or only reviews it"
+    );
+    let repo = match (&reviewed_pr, &item.repo) {
+        (Some(_), Some(repo)) => Some(store.repo(&crate::resolve::repo_ref(repo))?),
+        _ => None,
+    };
+    Ok(ReviewBase {
+        branch,
+        onto_head,
+        reviewed_pr,
+        repo,
+        merged_from,
+    })
+}
+
+/// Where `reviewed`'s change starts, as GitHub holds its base: the merge base
+/// of its frozen head and the base commit GitHub shows for that pull request,
+/// fetched by id, so no ref or remote URL here moves it. `Err` refuses the
+/// review when that cannot be read.
+async fn trusted_fork(
     ctx: &DaemonContext,
     run: &PipelineRun,
-) -> Result<(String, Option<String>), ArchonError> {
-    let store = ctx.store.lock().await;
-    let onto_head = store.item(&run.item)?.onto.map(|onto| onto.head_sha);
-    match recover::load_run_vars(&store, &run.id) {
-        Ok(vars) => Ok((
-            vars.get("base_branch").cloned().unwrap_or_default(),
-            onto_head,
-        )),
-        // Without a base only reviews stating no base read the whole change.
-        Err(ArchonError::NotFound(_)) => Ok((String::new(), onto_head)),
-        Err(error) => Err(error),
+    repo: Repo,
+    reviewed: &OntoPullRequest,
+) -> Result<Result<String, String>, ArchonError> {
+    assert!(
+        reviewed.review_only,
+        "only a review item reviews a pull request whole"
+    );
+    assert!(is_commit_id(&reviewed.head_sha), "frozen at enqueue");
+    let url = reviewed.pr.url();
+    let shown = super::gh::base_commit(&ctx.config.github.binary, &repo, &url).await?;
+    if shown.branch != reviewed.base_ref {
+        // A retarget can put the base inside the change and hide its start.
+        return Ok(Err(format!(
+            "{url} now targets `{}`, not `{}` as when it was queued: its change has no \
+             start to review from",
+            shown.branch, reviewed.base_ref
+        )));
     }
+    let Some(base) = shown.commit else {
+        return Ok(Err(format!(
+            "GitHub shows no base commit for {url}: its change has no start to review from"
+        )));
+    };
+    let data_dir = ctx.paths.data_dir.clone();
+    let (workspace, branch, head) = (
+        run.workspace.clone(),
+        reviewed.base_ref.clone(),
+        reviewed.head_sha.clone(),
+    );
+    let fork = tokio::task::spawn_blocking(move || {
+        let shadow = Shadow::of(&data_dir, &repo.path)?;
+        stack::fetch(&shadow, &repo.path, &branch, &base)?;
+        crate::worktree::merge_base(&workspace, &head, &[base])
+    })
+    .await
+    .map_err(|e| ArchonError::io("review fork task", std::io::Error::other(e)))??;
+    let Some(fork) = fork else {
+        return Ok(Err(format!(
+            "{url}'s head {} shares no history with its base `{}` on GitHub: its change has \
+             no start to review from",
+            reviewed.head_sha, reviewed.base_ref
+        )));
+    };
+    assert!(is_commit_id(&fork), "merge-base prints a full commit id");
+    Ok(Ok(fork))
+}
+
+/// Why a pass of a whole pull request does not count: a reviewer naming no
+/// base may have read only a tail that a local base ref pointed it to.
+fn unbased_pass(verdicts: &[Read], earlier: Option<&[Read]>) -> Option<String> {
+    assert!(!verdicts.is_empty(), "a named reviewer was read");
+    let earlier = earlier.unwrap_or_default();
+    let (agent, _) = verdicts
+        .iter()
+        .chain(earlier)
+        .find(|(_, verdict)| verdict.pass && verdict.base.is_none())?;
+    assert!(!agent.is_empty(), "a read reviewer has an agent id");
+    Some(format!(
+        "reviewer {agent} passed the pull request without naming the base it read from: a \
+         review of a whole pull request counts only from a base at or before where it left \
+         GitHub's base"
+    ))
+}
+
+/// Why a review of `reviewed` does not hold at the branch `head`: a review
+/// item adds no commit, so its reviewers passed the pull request's frozen head.
+fn moved_off(reviewed: Option<&OntoPullRequest>, head: &str) -> Option<String> {
+    let reviewed = reviewed?;
+    assert!(
+        reviewed.review_only,
+        "only a review item reviews a pull request whole"
+    );
+    assert!(is_commit_id(head), "the branch head is a full commit id");
+    (reviewed.head_sha != head).then(|| {
+        format!(
+            "this item reviews {} at {}, but its branch is at {head}: a review item commits \
+             nothing, so reset the branch to {} and review that commit",
+            reviewed.pr.url(),
+            reviewed.head_sha,
+            reviewed.head_sha
+        )
+    })
 }
 
 /// Why `name` is not an agent the lead delegated to, listing those it did.

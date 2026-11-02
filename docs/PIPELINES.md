@@ -322,19 +322,38 @@ into each reviewer's instructions: call Aether's `complete_task` with a concise
 reviewer gives its own verdict on the commits it read, where `base` is the
 commit its diff starts from
 (the merge base for the whole change, or an earlier reviewer's head for a
-delta read). After a fix the contract asks for one new whole-change read at
-the new head and, when the level asks for more passes, delta reads of what
-changed for the rest; a reviewer still reading finishes before the lead
-edits, so its pass can anchor a delta:
+delta read). Only the first whole-change read takes as many reviewers as the
+level asks. After a fix the contract asks for one new reviewer that reads
+only the fix (`base` at the head the failed review read), given the fix
+commits and the open findings, and verifies each is fixed with no
+regression; no new whole-change read at the new head is owed. A reviewer
+still reading finishes before the lead edits, so its pass can anchor a
+delta:
 
 ```json
 {"verdict": "pass", "head": "<commit>", "base": "<commit>", "findings": []}
 ```
 
+Each finding is marked `"blocking": true` or `false`. Blocking findings are
+correctness bugs, security or safety issues, failing or missing tests for
+changed behaviour, and broken documented behaviour; a brief may narrow or
+extend the class. The rest are follow-ups the lead lists in its summary and
+`pr.body`: a `fail` whose every finding is marked `"blocking": false`,
+whatever its `severity`, counts as a pass unless its `structured` or summary
+JSON lists a blocking finding too, and a `pass` with a finding
+marked `"blocking": true` is refused. A finding with no mark blocks a `fail`.
+
 For providers that auto-complete a task from final text, Archon also accepts
 this object as the entire `summary` when `structured` states no verdict, or the
 `complete_task` arguments `{"summary": "...", "structured": {...}}` written
-out as that summary, or a `VERDICT: PASS|FAIL` line beside `head:` and
+out as that summary, or this object opening the summary on lines of its own
+at column 0 followed by text, as long as that text holds no fenced block and
+no `{` and does not open with `[`, its final `VERDICT:` line (if any) agrees, and nothing
+else in it takes a pass back as text after a pass line would. A `head` or
+`base` the JSON leaves out or null comes from a `structured` without a
+verdict, else from the summary's `head:`/`base:` lines. A reviewer that
+cannot set `structured` is told to make the object its whole summary.
+A `VERDICT: PASS|FAIL` line beside `head:` and
 `base:` lines (a `structured` without a verdict may give these instead; a
 line in a fence, a quote or nested in a list is an example). A verdict,
 `structured` or not, is refused when its `structured` fields, the summary's
@@ -365,12 +384,13 @@ A pass is not taken on the agent's word. As the stage ends, Archon lists
 the agents it delegated to (one Aether call) and reads the task result of
 each one named. Every named agent must be a different direct child that
 completed with a verdict; a builder or researcher that returned none is not
-a reviewer. Archon then holds the verdicts to the run branch: as many passes
-as the level asks for must have read the branch head itself, whole or as a
-delta (a delta from its own head read nothing and is refused). A pass of
-an earlier head holds beside them while passing reviewers
-read every commit after it, and it anchors a delta from there, but it does
-not count toward the level. A fail never counts, and it
+a reviewer. Archon then holds the verdicts to the run branch: as many
+reviewers as the level asks for must have read the whole change on the
+branch, each a pass that holds or a fail that was answered, and at least one
+named pass must have read the branch head itself, whole or as a delta (a
+delta from its own head read nothing and is refused). A pass of
+an earlier head holds beside it while passing reviewers
+read every commit after it, and it anchors a delta from there. A fail never counts as a pass, and it
 stands until a pass that holds read past it, or a later reviewer read past it and
 failed in turn, and that fail was answered: a fix of a fix is reviewed as a
 delta too. A verdict on a commit the branch no
@@ -384,9 +404,31 @@ rules (their fails stand until answered) but never count toward the level,
 and are recorded as `review.implicit_reviewer_agents`. It does so only when
 the agent ran no other attempt of the run, once every reviewer it delegated
 to has ended (wait for or cancel one still running before completing), and
-when Aether shows each of their results. When the stage also writes the ship
-record, the branch head must hold the record's `tree`. With fewer passes
-of the head than the level asks for, the run fails at that stage with each reason.
+when Aether shows each of their results. A fail by any reviewer of the
+attempt stands even when the record leaves that reviewer out: the review is
+refused until a pass that holds read past it, and only a resumed agent's
+earlier attempts' reviewers are not read. When the stage also writes the ship
+record, the branch head must hold the record's `tree`. The record names
+the named passes and the named whole-change fails they answered, so the lead
+names every reviewer coverage rests on. With no pass of the head, fewer
+whole-change reads than the level asks for, or a record that would name
+fewer, the run fails at that stage with each reason.
+
+A review loop is capped. A round is a commit a reviewer of the lead failed
+with a blocking finding, parallel reviewers of one head being one round. At
+the third round in one stage attempt, archond cancels the lead and fails the
+stage with an `ESCALATE:` error that lists the open blocking findings (the
+last round's, each with its place and remedy, then those only earlier rounds
+listed) and names the reviewers whose results hold them in full: the run ends
+and the orchestrator reshapes or retries the item. The stop is marked before
+the cancel goes out, so a lead that settles first, an unanswered cancel the
+sweep retries, or a stall the watchdog finds meanwhile all end in that
+escalation. Each count rereads every settled child of the stage attempt that
+it has not read, so a failed round whose event was missed still counts, at
+the next reviewer's event or at the lead's completion; a resumed lead's
+attempt holds only the children delegated after it resumed. A result Aether
+cannot show yet is retried, never skipped, and the rounds keep the order
+Aether created their reviewers in, so the latest is the last created.
 Archon records the named reviewers whose passes hold as `review.reviewer_agents` and the models
 Aether ran them on as `review.reviewer_models`, replacing anything the
 agent wrote there.
@@ -836,23 +878,29 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   (`**Verdict:** PASS`) do not matter, and `passed`, `approved`, `failed` and
   `rejected` read as pass and fail. Anything else counts as fail, and so
   does a choice or a hedge: any word after the verdict word, in
-  parentheses too, before the first `—`, `:`, `;`, `.`, ` - ` or line break
-  (`PASS or FAIL`, `PASS, but two failed`, `PASS (pending fixes)`). A
-  fail may be explained after one (`FAIL — two findings`). A pass may be
-  explained only in plain success words and numbers (`all`, `tests`,
-  `checks`, `pass`, `passed`, `green`, `clean`, `findings`, `issues`,
-  `no findings`, `no issues`, `CI`, `ok`, `lgtm`, `and`:
-  `PASS — all 214 tests pass`), and in a summary only `head:` and `base:`
-  lines naming a commit may follow it; any other word could make
-  it conditional (`PASS — merge only with green CI`), so it counts as fail.
-  This errs on the safe side: a plain explanation such as
-  `PASS — 0 failed` or `PASS — no blocking findings` is refused too, so
-  put details above the verdict line and end the summary with it.
+  parentheses too, before the first `—`, `:`, `;`, `.`, `!`, ` - ` or line
+  break (`PASS or FAIL`, `PASS, but two failed`, `PASS (pending fixes)`). A
+  fail may be explained after one (`FAIL — two findings`), and so may a
+  pass (`Verdict: pass. No blocking findings; the fix is covered.`), on its
+  line and the summary's lines after it, unless the explanation takes it
+  back: a fail word, a second `verdict`, a negation or a condition (`not`,
+  `don't`, `never`, `until`, `unless`, `if`, `pending`, `but`, `however`,
+  `except`, `before`, `after`, `first`, `only`, `yet`, `must`,
+  `required`, `requested`, `needs`, `missing`, `unsafe`, `outstanding`), a
+  blocker, regression or `critical` nothing denies (`one blocker remains`,
+  not `no blocking findings` or `non-blocking`), or a `no` before anything
+  but findings, issues, blockers, regressions, critical ones, bugs,
+  problems, concerns, defects or objections (`PASS — no tests`). Such a
+  pass counts as fail.
+  This errs on the safe side: `PASS — 0 failed` is refused too, so put
+  details above the verdict line and end the summary with it.
   A structured pass counts only when the summary's last `VERDICT:` line
-  and its JSON (the whole summary or its one fenced block) `verdict`,
+  and its JSON (the whole summary, its one fenced block, or else an object
+  opening it on lines of its own) `verdict`,
   `result` or `status`, where it has them, pass too. No pass, wherever it
-  is stated, counts beside a finding of `blocking`, `blocker`, `critical`
-  or `high` severity in `structured` or the summary's JSON. A summary
+  is stated, counts beside a finding marked `"blocking": true`, or one
+  with no mark of `blocking`, `blocker`, `critical` or `high` severity, in
+  `structured` or the summary's JSON. A summary
   written as `{summary, structured}` has its inner summary read the same
   way. The gate's refusal quotes what the agent wrote.
   Known limitation: of CommonMark, the parser models only block quotes,
@@ -1106,6 +1154,7 @@ back to the built-in.
 | `agent-testing` | plan → exercise (2 exploratory testers) → report (HTML) | balanced tier, independent testers |
 | `code-audit` | scope → audit (3 lenses, report) → report (HTML with issue drafts) | strong tier, independent auditors. Read-and-report only; findings become follow-up items. Use `ask` for a single question or `agent-testing` to exercise the product. |
 | `e2e-testing` | setup → e2e (`all_pass`, back to setup ×1) → report (HTML with screenshots) | balanced tier |
+| `review` | review (work, delegation enabled, holds the review) | balanced tier; review level `standard` unless the item asks. Queued `onto` someone else's pull request, a fork's included; changes and pushes nothing. A pass of the frozen head is what lets `archon merge` merge that pull request (see the [guide](guide.md#reviewing-a-contributors-pull-request)). |
 | `ask` | answer | balanced tier. Read-only, and no repository required. With one, it works in a disposable snapshot of the repository's `HEAD` commit, so it sees committed work only. |
 | `errand` | errand (report) | balanced tier. A small job answered in text or as a Lavish page, with no repository changes or outward side effects. Scratch workspace, repository optional. Use `ask` for repository questions in text, and a shipping pipeline for changes. |
 | `design-doc` | research → critique (`all_pass`, back to research ×2) → report (HTML design/RFC) | strong tier, independent critic. Before a large or ambiguous change; no product-code changes or shipping. Use `proposal: lavish` for design and implementation in one item. |
@@ -1171,11 +1220,12 @@ verifies and fixes the change. Its prompt has it spend where spending pays:
   or where the project's policy demands it. A second look, by new children
   at the new head, is owed after a failed verdict, and after a pass only
   when a later commit changes production behaviour, security or an
-  invariant, or adds scope: after a fail one reads the whole change again,
-  and any other the level needs reads only what changed. Advisory findings
-  are listed and left. Two fix and re-review rounds are allowed before the
-  lead must fail visibly; only an unresolved blocking finding, a failed
-  check or a review that did not run fails the stage.
+  invariant, or adds scope: one new child reads only the fix, given the
+  open findings, whatever the level; only the first whole-change read takes
+  three where the level asks for three. Follow-ups (non-blocking findings)
+  are listed in the `pr.body` and left. Archon stops the stage after three
+  failed rounds and escalates; only an unresolved blocking finding, a
+  failed check or a review that did not run fails the stage.
 
 That review is the pipeline's: `adaptive` declares
 `[pipeline.review] level = "standard"` on `build` (see "A declared

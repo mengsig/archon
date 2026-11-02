@@ -361,6 +361,7 @@ async fn a_child_of_a_squash_merged_parent_is_told_to_refresh_not_to_merge_the_p
         waived_by: None,
         waited: false,
         mergeability_wait_since: None,
+        carried: None,
         checks: None,
         state: MergeState::Merged {
             method: "squash".into(),
@@ -408,6 +409,7 @@ async fn a_merge_of_another_branch_of_the_parent_does_not_settle_the_child() {
         waived_by: None,
         waited: false,
         mergeability_wait_since: None,
+        carried: None,
         checks: None,
         state: MergeState::Merged {
             method: "squash".into(),

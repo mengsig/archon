@@ -548,6 +548,63 @@ async fn the_helpers_of_a_kept_agent_are_stopped_and_it_stays() {
     ));
 }
 
+/// A reviewer of the kept agent fails on head `n` with one blocking finding;
+/// no event of it is seen.
+fn fails_unheard(h: &Harness, lead: &AetherAgentId, n: usize) -> AetherAgentId {
+    let reviewer = h.backend.delegate(lead, REVIEW_MODEL);
+    let finding = serde_json::json!({"severity": "high", "title": format!("finding {n}")});
+    let verdict = serde_json::json!({"verdict": "fail", "head": format!("{n:07}abcdef"), "findings": [finding]});
+    h.backend.complete_delegated(&reviewer, verdict);
+    reviewer
+}
+
+/// A resumed attempt counts the rounds of the reviewers it delegated whose
+/// events were missed, and none of the earlier attempt's.
+#[tokio::test]
+async fn a_resumed_attempt_counts_its_own_missed_rounds_and_no_earlier_ones() {
+    let h = harness().await;
+    h.add_pipeline("fix-delegating", DELEGATING);
+    let mut plan = plan();
+    let reviewer = plan.0["review"][0].clone();
+    plan.0
+        .insert("review".into(), vec![reviewer.clone(), reviewer]);
+    let queued = h.enqueue_in("fix-delegating", "rounds", plan).await;
+    queued.expect("enqueue");
+    h.dispatch().await;
+    let first = running(&h, "implement").await;
+    let lead = agent(&first);
+    for n in 1..=2 {
+        fails_unheard(&h, &lead, n);
+    }
+    settle_recorded(&h, "implemented").await;
+    h.dispatch().await;
+    h.settle_running(|_| review(false)).await;
+    h.dispatch().await;
+    let fix = running(&h, "implement").await;
+    assert_eq!(agent(&fix), lead, "resumed on the same agent");
+
+    let heard = fails_unheard(&h, &lead, 3);
+    executor::reviewer_settled(&h.ctx, &lead, &heard)
+        .await
+        .unwrap();
+    let live = h.ctx.store.lock().await.stage_run(&fix.id).unwrap();
+    assert_eq!(live.state, StageState::Running, "one round of this attempt");
+    fails_unheard(&h, &lead, 4);
+    let last = fails_unheard(&h, &lead, 5);
+    executor::reviewer_settled(&h.ctx, &lead, &last)
+        .await
+        .unwrap();
+    let capped = h.ctx.store.lock().await.stage_run(&fix.id).unwrap();
+    let StageState::Failed { error } = capped.state else {
+        panic!("its own three rounds cap it: {:?}", capped.state);
+    };
+    assert!(error.contains("failed 3 rounds"), "{error}");
+    assert!(
+        !error.contains("finding 1") && !error.contains("finding 2"),
+        "{error}"
+    );
+}
+
 #[tokio::test]
 async fn a_restart_mid_fix_keeps_the_agent_and_its_answer() {
     let mut h = harness().await;

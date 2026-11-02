@@ -671,15 +671,19 @@ impl RunDriver {
     }
 
     /// The spawn that re-runs `failed`'s slot after an infrastructure
-    /// failure (`limits.infra_retries`), identical to the original spawn.
+    /// failure (`limits.infra_retries`) or a deadline whose agent is woken,
+    /// identical to the original spawn.
     /// `None` when the slot was superseded or the run is already decided.
     /// Persist the failure and the new stage run together, and do not feed
     /// `failed` to [`Self::on_stage_settled`]: a failure persisted alone is
     /// final on resume.
     pub fn respawn(&self, failed: &StageRun, all: &[StageRun]) -> Option<SpawnPlan> {
         assert!(
-            matches!(failed.state, StageState::Failed { .. }),
-            "only a failed stage run is re-spawned, not {:?}",
+            matches!(
+                failed.state,
+                StageState::Failed { .. } | StageState::TimedOut
+            ),
+            "only a failed or timed-out stage run is re-spawned, not {:?}",
             failed.state
         );
         assert!(

@@ -139,6 +139,7 @@ fn builtins_load_without_problems() {
             "errand",
             "performance",
             "refactor",
+            "review",
             "swarm",
         ]
     );

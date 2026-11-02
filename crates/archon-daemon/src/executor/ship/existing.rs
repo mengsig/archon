@@ -60,6 +60,13 @@ pub(super) async fn deliver(
         commit, onto.head_sha,
         "the checks proved commits of its own"
     );
+    if onto.review_only || onto.is_fork() {
+        return Ok(Err(format!(
+            "the item was queued to review {}, whose head Archon never pushes to; queue an \
+             item that `depends_on` it to build on that head in a pull request of its own",
+            onto.pr.url()
+        )));
+    }
     let binary = &ctx.config.github.binary;
     let token = match gh::token(binary, repo).await {
         Ok(token) => token,
@@ -390,6 +397,7 @@ mod tests {
             head_ref: "feature".into(),
             base_ref: "main".into(),
             head_sha: "a".repeat(40),
+            review_only: false,
         }
     }
 

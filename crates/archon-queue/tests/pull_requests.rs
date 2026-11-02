@@ -69,3 +69,38 @@ fn a_pull_request_of_no_run_or_without_a_node_id_is_refused() {
     assert!(matches!(empty, Err(ArchonError::Invalid(_))), "{empty:?}");
     assert_eq!(store.run_pull_request(&run.id).unwrap(), None);
 }
+
+#[test]
+fn a_run_keeps_the_last_review_archond_verified_and_an_old_one_has_none() {
+    let mut store = store();
+    let first = store.insert_item(&item(None, "first"), None).unwrap();
+    let run = start(&mut store, &first.id);
+    assert_eq!(
+        store.run_review(&run.id).unwrap(),
+        None,
+        "none verified yet"
+    );
+    let review = |head: &str| archon_queue::RunReview {
+        head: head.repeat(40),
+        tree: "b".repeat(40),
+    };
+    store.record_run_review(&run.id, &review("a")).unwrap();
+    store.record_run_review(&run.id, &review("c")).unwrap();
+    assert_eq!(store.run_review(&run.id).unwrap(), Some(review("c")));
+
+    let short = archon_queue::RunReview {
+        head: "abc".into(),
+        tree: "b".repeat(40),
+    };
+    let refused = store.record_run_review(&run.id, &short).unwrap_err();
+    assert!(matches!(refused, ArchonError::Invalid(_)), "{refused:?}");
+    let nowhere = store.record_run_review(&PipelineRunId::new(), &review("a"));
+    assert!(nowhere.is_err(), "a review of no run is refused");
+    assert_eq!(store.run_review(&run.id).unwrap(), Some(review("c")));
+
+    store
+        .kv_set(&format!("run_review:{}", run.id), "{\"head\": 1}")
+        .unwrap();
+    let malformed = store.run_review(&run.id).unwrap_err();
+    assert!(matches!(malformed, ArchonError::Store(_)), "{malformed:?}");
+}

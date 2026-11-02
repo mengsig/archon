@@ -9,6 +9,7 @@ use crate::catalog::StageKind;
 use crate::error::ArchonError;
 use crate::id::{PipelineRunId, QuestionId, QueueItemId, ReportId, StageRunId};
 use crate::model::ModelChoice;
+use crate::verdict_prose::reports_problem;
 
 /// What a review/test stage concluded, as [`Verdict::extract`] reads it from
 /// the stage agent's result; anything unreadable is `Unknown` and fails a gate.
@@ -59,6 +60,31 @@ impl Verdict {
         blocking || inner_disagrees || Self::summary_disagrees(summary, json.as_ref())
     }
 
+    /// Whether the text after a JSON verdict opening the summary takes its
+    /// pass back, as text after a `VERDICT:` line would. Only the last
+    /// `VERDICT:` line is left out, as [`Self::from_summary`] judges it.
+    /// A review gate reading that JSON as the verdict checks this too.
+    pub fn json_taken_back(summary: &str) -> bool {
+        let Some((data, rest)) = leading_json(summary) else {
+            return false;
+        };
+        let data = match is_wrapper(&data) {
+            true => &data["structured"],
+            false => &data,
+        };
+        // JSON that states no verdict (a test report) is evidence; the lines decide.
+        if data.get(VERDICT_KEYS[0]).is_none() {
+            return false;
+        }
+        let last = last_verdict_line(rest).map(|(line, _)| line.as_ptr());
+        let said: Vec<&str> = rest
+            .lines()
+            .filter(|line| Some(line.as_ptr()) != last)
+            .collect();
+        debug_assert!(said.len() + usize::from(last.is_some()) == rest.lines().count());
+        trails_back(&said.join("\n"))
+    }
+
     /// Whether the summary's last `VERDICT:` line or its JSON's verdict,
     /// `result` or `status` reads as anything but pass.
     fn summary_disagrees(summary: &str, json: Option<&serde_json::Value>) -> bool {
@@ -87,18 +113,36 @@ impl Verdict {
         }
     }
 
-    /// Whether `structured.findings` holds one whose `severity` blocks a pass.
+    /// Whether `structured.findings` holds one that [blocks](Self::blocks) a pass.
     pub fn lists_blocking(structured: &serde_json::Value) -> bool {
         let Some(findings) = structured.get("findings").and_then(|f| f.as_array()) else {
             return false;
         };
-        findings.iter().any(|finding| {
-            let severity = finding.get("severity").and_then(|s| s.as_str());
-            let severity = severity.unwrap_or_default().trim();
-            BLOCKING_SEVERITIES
-                .iter()
-                .any(|b| b.eq_ignore_ascii_case(severity))
-        })
+        findings.iter().any(Self::blocks)
+    }
+
+    /// Whether `finding` blocks a pass: its `"blocking"` mark when it has one,
+    /// else a blocking `severity`, as findings were judged before the mark.
+    pub fn blocks(finding: &serde_json::Value) -> bool {
+        if let Some(marked) = finding.get("blocking").and_then(serde_json::Value::as_bool) {
+            return marked;
+        }
+        let severity = finding.get("severity").and_then(|s| s.as_str());
+        let severity = severity.unwrap_or_default().trim();
+        BLOCKING_SEVERITIES
+            .iter()
+            .any(|b| b.eq_ignore_ascii_case(severity))
+    }
+
+    /// Whether `finding` is a follow-up that never fails a review: marked
+    /// `"blocking": false`, whatever its `severity`.
+    pub fn is_follow_up(finding: &serde_json::Value) -> bool {
+        let marked = finding.get("blocking") == Some(&serde_json::Value::Bool(false));
+        assert!(
+            !(marked && Self::blocks(finding)),
+            "a follow-up never blocks"
+        );
+        marked
     }
 
     /// The first `result` or `status` that states a verdict, and that verdict.
@@ -120,9 +164,10 @@ impl Verdict {
     }
 
     /// What the last `VERDICT: <word>` line of `text` says, in any letter
-    /// case and with light markdown (`**Verdict:** PASS`); `Unknown` when
-    /// that line names no verdict, even if an earlier one did, or a pass is
-    /// explained beyond plain success words or followed by other lines.
+    /// case and with light markdown (`**Verdict:** PASS`, `- verdict: fail`);
+    /// `Unknown` when that line names no verdict, even if an earlier one did,
+    /// or a pass is taken back on its line or the lines after it (a fail word,
+    /// a negation or condition, an undenied blocker).
     pub fn from_summary(text: &str) -> Option<Self> {
         let (line, value) = last_verdict_line(text)?;
         let verdict = Self::from_word(value);
@@ -131,8 +176,7 @@ impl Verdict {
             text.get(..end).is_some_and(|head| head.ends_with(line)),
             "a summary line"
         );
-        // A pass the summary goes on to explain might be taken back there.
-        let held = verdict == Self::Pass && trails_on(&text[end..]);
+        let held = verdict == Self::Pass && trails_back(&text[end..]);
         Some(if held { Self::Unknown } else { verdict })
     }
 
@@ -172,9 +216,9 @@ impl Verdict {
 
     /// `None` when `text` does not open with a verdict word. A verdict word
     /// counts only when no word follows it before the first explanation
-    /// separator (`—`, `:`, `;`, `.`, ` - `, a line break): any is a choice
-    /// (`PASS or FAIL`) or a condition (`PASS, pending fixes`, `PASS (if CI agrees)`),
-    /// and a pass explained beyond plain success words ([`holds_back`]) is `Unknown` too.
+    /// separator (`—`, `:`, `;`, `.`, `!`, ` - `, a line break): any is a choice
+    /// (`PASS or FAIL`) or a condition (`PASS, pending fixes`, `PASS (if CI agrees)`).
+    /// A pass whose explanation [takes it back](holds_back) is `Unknown` too.
     fn leading(text: &str) -> Option<Self> {
         let mut words = text
             .split(|c: char| !c.is_alphanumeric())
@@ -185,7 +229,7 @@ impl Verdict {
             .expect("a first word");
         let after = text[first..].trim_start_matches(char::is_alphanumeric);
         let head = after
-            .split(['—', '–', ':', ';', '.', '\n'])
+            .split(['—', '–', ':', ';', '.', '!', '\n'])
             .next()
             .and_then(|head| head.split(" - ").next())
             .unwrap_or_default();
@@ -207,48 +251,133 @@ impl Verdict {
     }
 }
 
-/// The only words a pass's explanation may hold besides numbers (`PASS — all
-/// 214 tests pass`): any other could make it conditional, so it reads `Unknown`.
-const PLAIN_SUCCESS: [&str; 17] = [
-    "all", "tests", "test", "checks", "check", "pass", "passes", "passed", "passing", "green",
-    "clean", "findings", "issues", "lgtm", "ok", "ci", "and",
+/// Words that take a pass back wherever its statement holds them: the other
+/// verdict, a second `verdict`, a negation (`don't` splits into `don`, `t`) or a condition.
+const HOLDS_PASS: [&str; 43] = [
+    "fail",
+    "fails",
+    "failed",
+    "failing",
+    "failure",
+    "failures",
+    "reject",
+    "rejects",
+    "rejected",
+    "disapprove",
+    "disapproved",
+    "verdict",
+    "not",
+    "t",
+    "never",
+    "nor",
+    "nope",
+    "cannot",
+    "dont",
+    "cant",
+    "wont",
+    "until",
+    "unless",
+    "if",
+    "pending",
+    "but",
+    "however",
+    "except",
+    "before",
+    "after",
+    "first",
+    "only",
+    "yet",
+    "must",
+    "required",
+    "requires",
+    "requested",
+    "need",
+    "needs",
+    "missing",
+    "unsafe",
+    "unresolved",
+    "outstanding",
 ];
 
-/// Whether a pass's explanation could take it back: any word in it that is
-/// neither a number nor a [`PLAIN_SUCCESS`] word, `no` before `findings` or
-/// `issues` aside. A plain pass has none.
+/// What a pass may deny (`no blocking findings`, `non-blocking`) but never
+/// report (`one blocker remains`).
+const BLOCKERS: [&str; 7] = [
+    "blocker",
+    "blockers",
+    "blocking",
+    "blocked",
+    "regression",
+    "regressions",
+    "critical",
+];
+
+/// Words that deny the blocker after them.
+pub(crate) const DENIES: [&str; 6] = ["no", "non", "zero", "0", "without", "none"];
+
+/// What a bare `no` may deny in a pass's explanation (`PASS. No findings`);
+/// any other (`PASS — no tests`) says something the pass lacks.
+const DENIABLE: [&str; 15] = [
+    "critical",
+    "bugs",
+    "findings",
+    "finding",
+    "issues",
+    "issue",
+    "blocker",
+    "blockers",
+    "blocking",
+    "regressions",
+    "regression",
+    "problems",
+    "concerns",
+    "defects",
+    "objections",
+];
+
+/// Whether a pass's explanation takes it back: a [`HOLDS_PASS`] word, a
+/// [`BLOCKERS`] word nothing [denies](DENIES), a `no` before anything but a
+/// [`DENIABLE`] word, or [a reported problem](reports_problem). Any other
+/// text after a plain pass word is explanation.
 fn holds_back(explanation: &str) -> bool {
-    let words: Vec<&str> = explanation
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|word| !word.is_empty())
-        .collect();
-    let plain = |word: &str| PLAIN_SUCCESS.iter().any(|ok| ok.eq_ignore_ascii_case(word));
-    words.iter().enumerate().any(|(at, word)| {
-        let next = words.get(at + 1).copied().unwrap_or_default();
-        let denies_findings = word.eq_ignore_ascii_case("no")
-            && ["findings", "issues"]
-                .iter()
-                .any(|n| n.eq_ignore_ascii_case(next));
-        let number = word.chars().all(|c| c.is_ascii_digit());
-        !plain(word) && !number && !denies_findings
-    })
+    holds_back_before(explanation, "")
 }
 
-/// Whether a summary goes on after its verdict line with anything but blank
-/// lines and the `head: <hex>`/`base: <hex>` lines a review names its commits in.
-fn trails_on(rest: &str) -> bool {
+/// [`holds_back`] for a summary line, whose `next_line` may zero a problem it reports.
+fn holds_back_before(explanation: &str, next_line: &str) -> bool {
+    let words: Vec<String> = explanation
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_lowercase)
+        .collect();
+    let among = |set: &[&str], word: &str| set.contains(&word);
+    words.iter().enumerate().any(|(at, word)| {
+        let before = at.checked_sub(1).map_or("", |prev| words[prev].as_str());
+        let after = words.get(at + 1).map_or("", String::as_str);
+        let blocker = among(&BLOCKERS, word) && !among(&DENIES, before);
+        let lacks = word == "no" && !among(&DENIABLE, after);
+        among(&HOLDS_PASS, word) || blocker || lacks
+    }) || reports_problem(explanation, next_line)
+}
+
+/// Whether the summary after a pass's verdict line takes it back: anything
+/// there but blank lines and the `head: <hex>`/`base: <hex>` lines a review
+/// names its commits in that [holds it back](holds_back).
+fn trails_back(rest: &str) -> bool {
     let is_commit = |value: &str| {
         let value = value.trim().trim_matches(['`', '*']);
         !value.is_empty() && value.bytes().all(|b| b.is_ascii_hexdigit())
     };
-    rest.lines().any(|line| {
+    let lines: Vec<&str> = rest.lines().collect();
+    lines.iter().enumerate().any(|(at, line)| {
         let commit = strip_label(line, "head").or_else(|| strip_label(line, "base"));
-        !line.trim().is_empty() && !commit.is_some_and(is_commit)
+        let next = lines[at + 1..].iter().find(|l| !l.trim().is_empty());
+        !commit.is_some_and(is_commit) && holds_back_before(line, next.copied().unwrap_or(""))
     })
 }
 
-/// The verdict JSON of `summary`: the whole summary or its one fenced block,
-/// unwrapped from the `complete_task` arguments `{summary, structured}`.
+/// The verdict JSON of `summary`: the whole summary, its one fenced block, or
+/// else an object opening it on lines of its own (`leading_json`), unwrapped
+/// from the `complete_task` arguments `{summary, structured}`.
 pub fn summary_json(summary: &str) -> Option<serde_json::Value> {
     let data = raw_summary_json(summary)?;
     Some(match is_wrapper(&data) {
@@ -268,11 +397,37 @@ fn wrapped_summary(summary: &str) -> Option<String> {
     )
 }
 
-/// The whole summary, or its one fenced block, as JSON.
+/// The whole summary, its one fenced block, or else the object opening it, as JSON.
 fn raw_summary_json(summary: &str) -> Option<serde_json::Value> {
     serde_json::from_str::<serde_json::Value>(summary)
         .ok()
         .or_else(|| fenced_json(summary))
+        .or_else(|| leading_json(summary).map(|(data, _)| data))
+}
+
+/// A JSON object on lines of its own that opens `summary` (blank lines aside)
+/// and the text after it, as Codex reviewers write a verdict and then explain it.
+/// `None` when that text holds a fenced block or any `{` or opens a `[`: a
+/// second JSON value there could state another verdict, finding or commit.
+fn leading_json(summary: &str) -> Option<(serde_json::Value, &str)> {
+    let start = summary.find(|c: char| !c.is_whitespace())?;
+    let at_line_start = start == 0 || summary[..start].ends_with('\n');
+    let body = &summary[start..];
+    if !at_line_start || !body.starts_with('{') {
+        return None;
+    }
+    let mut values = serde_json::Deserializer::from_str(body).into_iter::<serde_json::Value>();
+    let data = values.next()?.ok()?;
+    let rest = &body[values.byte_offset()..];
+    assert!(data.is_object(), "a value opened by `{{` is an object");
+    let line_ends = rest.trim_start_matches([' ', '\t', '\r']).starts_with('\n');
+    let another = rest.contains('{') || rest.trim_start().starts_with('[');
+    let fenced = markdown_lines(rest)
+        .any(|(kind, _)| matches!(kind, LineKind::FenceOpen | LineKind::NestedFenceOpen));
+    if rest.trim().is_empty() || !line_ends || another || fenced {
+        return None;
+    }
+    Some((data, rest))
 }
 
 /// Whether `data` is the `complete_task` arguments `{summary, structured}`.
@@ -638,6 +793,17 @@ pub struct ModelSegment {
 pub const REVIEW_REFUSED_KEY: &str = "unverified";
 
 impl StageRun {
+    /// Whether its agent failed on its engine's login: an infrastructure
+    /// failure, never evidence about the model.
+    pub fn failed_on_engine_login(&self) -> bool {
+        match &self.state {
+            StageState::Failed { error } => {
+                self.infrastructure_failure && crate::engine_login::is_login_failure(error)
+            }
+            _ => false,
+        }
+    }
+
     pub fn current_choice(&self) -> &ModelChoice {
         self.model_segments
             .last()
@@ -904,6 +1070,76 @@ mod tests {
     }
 
     #[test]
+    fn a_json_object_opening_a_summary_on_its_own_lines_is_its_json() {
+        let pass = json!({"verdict": "pass", "head": "abcdef1"});
+        let text = pass.to_string();
+        let pretty = serde_json::to_string_pretty(&pass).unwrap();
+        for summary in [
+            format!("{text}\nVERDICT: PASS"),
+            format!("\n  \n{pretty}\n\nChecks passed."),
+            format!("{text}  \r\nChecks passed."),
+        ] {
+            assert_eq!(summary_json(&summary), Some(pass.clone()), "{summary:?}");
+        }
+        for summary in [
+            format!("Reviewed: {text}\nVERDICT: PASS"),
+            format!("Reviewed:\n{text}\nVERDICT: PASS"),
+            format!("  {text}\nVERDICT: PASS"),
+            format!("{text} VERDICT: PASS"),
+            format!("{text}\n{text}"),
+            format!("{text}\n[1]"),
+            format!("{text}\nAlso:\n{{\"head\": \"1234567\"}}"),
+            format!("{text}\nIt returns {{}} for no input."),
+            format!("{text}\n~~~\nexample\n~~~"),
+            "{\"verdict\": \"pass\"\nVERDICT: PASS".to_owned(),
+        ] {
+            assert_eq!(summary_json(&summary), None, "{summary:?}");
+        }
+        // A fenced block below it is read as before, never shadowed by the object.
+        let fail = json!({"verdict": "fail"});
+        let fenced = format!("{text}\n```json\n{fail}\n```\nVERDICT: PASS");
+        assert_eq!(summary_json(&fenced), Some(fail.clone()));
+        assert_eq!(
+            summary_json(&format!("{{draft\n```\n{fail}\n```")),
+            Some(fail)
+        );
+    }
+
+    #[test]
+    fn text_after_a_leading_json_pass_takes_it_back_as_after_a_verdict_line() {
+        let text = json!({"verdict": "pass", "head": "abcdef1"}).to_string();
+        for kept in [
+            format!("{text}\n\nChecks: 9 tests passed.\nVERDICT: PASS"),
+            format!("{text}\nhead: abcdef1\nVERDICT: PASS"),
+        ] {
+            assert_eq!(Verdict::extract(&kept, None), Verdict::Pass, "{kept}");
+        }
+        assert!(!Verdict::json_taken_back(&format!(
+            "{text}\n\nNo findings."
+        )));
+        // JSON that states no verdict is evidence: prose after it is not held.
+        let report = json!({"tests": 12}).to_string();
+        let explained = format!("{report}\nOnly docs changed.\nhead: abcdef1\nVERDICT: PASS");
+        assert_eq!(Verdict::extract(&explained, None), Verdict::Pass);
+        for held in [
+            format!("{text}\n\nChanges needed in the parser."),
+            format!("{text}\n\nThe build is still broken.\nVERDICT: PASS"),
+            format!("{text}\nVERDICT: FAIL\nVERDICT: PASS"),
+            format!("{text}\nVERDICT: PASS\nDo not merge yet."),
+            format!("{text}\nAll good. VERDICT: PASS"),
+        ] {
+            assert!(Verdict::json_taken_back(&held), "{held}");
+        }
+        // A stage verdict is its line or `structured`, never that JSON: prose before the line stays explanation.
+        let stage = format!("{text}\nAll tests passed after the fix.\nVERDICT: PASS");
+        assert!(Verdict::json_taken_back(&stage));
+        assert_eq!(Verdict::extract(&stage, None), Verdict::Pass);
+        let structured = json!({"verdict": "pass", "head": "abcdef1"});
+        let held = format!("{text}\n\nChanges needed in the parser.");
+        assert_eq!(Verdict::extract(&held, Some(&structured)), Verdict::Pass);
+    }
+
+    #[test]
     fn verdict_prefers_structured_then_summary_line() {
         let structured = serde_json::json!({"verdict": "fail"});
         assert_eq!(
@@ -1066,6 +1302,216 @@ mod tests {
     }
 
     #[test]
+    fn a_verdict_statement_reads_with_text_after_it_and_markdown_around_it() {
+        let pass = json!({"verdict": "pass", "head": "abcdef1", "findings": []});
+        for summary in [
+            "Verdict: pass. No blocking findings; the parser change is covered.",
+            "**VERDICT: PASS**",
+            "**verdict: pass.** All checks green.",
+            "Verdict: pass. No critical bugs, no blocking findings.",
+            "- Verdict: Pass! Nothing to fix.",
+            "Verdict: pass. Fixes the reported bug in the code block parser.",
+            "Verdict: pass. No blocking findings…\n\nThe change is small; one non-blocking note.",
+            "Verdict: fail — a regression.\nFixed in the next commit.\nVerdict: pass.",
+        ] {
+            assert_eq!(Verdict::extract(summary, None), Verdict::Pass, "{summary}");
+            assert_eq!(
+                Verdict::extract(summary, Some(&pass)),
+                Verdict::Pass,
+                "{summary}"
+            );
+        }
+        for summary in [
+            "- verdict: fail — two blocking findings in the parser",
+            "Verdict: pass.\nVerdict: FAIL. A regression remains.",
+        ] {
+            assert_eq!(Verdict::extract(summary, None), Verdict::Fail, "{summary}");
+            assert_eq!(Verdict::extract(summary, Some(&pass)), Verdict::Unknown);
+        }
+        let unsaid = "No verdict, but the tests pass.";
+        assert_eq!(Verdict::extract(unsaid, None), Verdict::Unknown);
+        assert_eq!(Verdict::extract(unsaid, Some(&pass)), Verdict::Pass);
+        for summary in [
+            "Verdict: pass or fail, depending on CI",
+            "Verdict: pass. Two tests failed.",
+            "Verdict: pass. One blocker remains in run.rs.",
+            "Verdict: pass. Don't merge yet.",
+            "Verdict: pass. Changes requested.",
+            "Verdict: pass. A critical bug remains.",
+            "Verdict: pass. Needs a fix; unsafe to merge.",
+            "Verdict: pass.\n\nDo not merge until CI is green.",
+        ] {
+            assert_eq!(
+                Verdict::extract(summary, None),
+                Verdict::Unknown,
+                "{summary}"
+            );
+            assert_ne!(Verdict::extract(summary, Some(&pass)), Verdict::Pass);
+        }
+        let blocked = json!({"verdict": "pass", "findings": [{"blocking": true}]});
+        let summary = "Verdict: pass. No blocking findings.";
+        assert_eq!(Verdict::extract(summary, Some(&blocked)), Verdict::Unknown);
+        assert!(Verdict::pass_disputed(summary, Some(&blocked)));
+        assert!(!Verdict::pass_disputed(summary, Some(&pass)));
+    }
+
+    #[test]
+    fn a_pass_followed_by_a_reported_problem_is_held() {
+        let pass = json!({"verdict": "pass", "head": "abcdef1", "findings": []});
+        for summary in [
+            "Verdict: pass. Changes needed in run.rs",
+            "Verdict: pass. Changes are needed in run.rs",
+            "Verdict: pass. Further work needed",
+            "Verdict: pass. Issues found: the parser drops a line",
+            "Verdict: pass. Two new bugs were found in review.rs",
+            "Verdict: pass. Found 3 problems in the gate",
+            "Verdict: pass. Errors remain in the reader",
+            "Verdict: pass. Still broken on Windows",
+            "Verdict: pass. The gate is still failing",
+            "Verdict: pass. CI is red",
+            "Verdict: pass, but tests fail",
+            "Verdict: pass.\nChanges needed in X",
+            "Verdict: pass.\n\nSummary: issues found in the reader.",
+            "Verdict: pass. No blockers. Issues remain in run.rs",
+            "Verdict: pass. No issues found. Changes needed in X",
+            "Verdict: pass. No blockers and issues remain in run.rs",
+            "Verdict: pass. No blockers and changes are needed in run.rs",
+            "Verdict: pass. No regressions and bugs were found in the reader",
+            "Verdict: pass. No blocking findings and the build is still broken",
+            "Verdict: pass. Changes will be needed in X",
+            "Verdict: pass. Changes would still be needed in X",
+            "Verdict: pass. Needed changes remain",
+            "Verdict: pass. Issues still open",
+            "Verdict: pass. Bug is still there",
+            "Verdict: pass. Issues remain to be fixed",
+            "Verdict: pass. Changes needed to be addressed",
+            "Verdict: pass. Bugs found. None have been fixed",
+            "Verdict: pass. Issues found, none fixed",
+            "Verdict: pass. Bugs found. Nothing was fixed",
+            "Verdict: pass. Lint errors found",
+            "Verdict: pass. Two type errors found",
+            "Verdict: pass. Remaining issues: the parser drops a line",
+            "Verdict: pass. Open issues: the gate crashes",
+            "Verdict: pass. The gate still crashes",
+            "Verdict: pass. Changes are necessary",
+            "Verdict: pass. No issues found, bugs remain",
+            "Verdict: pass. No issues, changes needed in X",
+            "Verdict: pass. No issues, 3 bugs found",
+            "Verdict: pass. No issues, a bug remains",
+            "Verdict: pass. No issues and tests are still broken",
+            "Verdict: pass. Nothing is wrong but the build is broken",
+            "Verdict: pass. None of the changes are needed and the tests are broken",
+            "Verdict: pass. Nothing is broken but the gate is still broken",
+            "Verdict: pass. None of the tests, and the build, are still broken",
+            "Verdict: pass. None of the tests pass and the build is still broken",
+            "Verdict: pass. No blockers, several bugs found",
+            "Verdict: pass. No blockers, minor issues remain",
+            "Verdict: pass. Zero blockers, three issues remain",
+            "Verdict: pass.\nNo issues.\nBugs found in run.rs",
+            "Verdict: pass.\n\n### Issues found\nThe parser drops a line",
+        ] {
+            assert_eq!(
+                Verdict::extract(summary, None),
+                Verdict::Unknown,
+                "{summary}"
+            );
+            assert_ne!(Verdict::extract(summary, Some(&pass)), Verdict::Pass);
+        }
+        for field in ["pass. Changes needed in X", "pass: issues found in X"] {
+            let given = json!({"verdict": field});
+            assert_eq!(
+                Verdict::extract("", Some(&given)),
+                Verdict::Unknown,
+                "{field}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_pass_denying_a_problem_stays_a_pass() {
+        let pass = json!({"verdict": "pass", "head": "abcdef1", "findings": []});
+        for summary in [
+            "Verdict: pass. No issues found.",
+            "Verdict: pass. Nothing is broken.",
+            "Verdict: pass. Non-blocking issues noted.",
+            "Verdict: pass. Fixes the bug found in review.",
+            "Verdict: pass. Fixes the broken parser.",
+            "Verdict: pass. Fixes bugs found by fuzzing.",
+            "Verdict: pass. Nothing is still broken.",
+            "Verdict: pass. None of the tests are still broken.",
+            "Verdict: pass. Is none of the changes still broken",
+            "Verdict: pass. Zero tests still broken.",
+            "Verdict: pass. Neither of the bugs remains",
+            "Verdict: pass. Neither of the tests is still broken",
+            "Verdict: pass. Neither bug was found",
+            "Verdict: pass. Nothing in the tests are still broken.",
+            "Verdict: pass. None of the tests or the build are still broken.",
+            "Verdict: pass. None of the build is broken.",
+            "Verdict: pass. None of the parser is still broken.",
+            "Verdict: pass. None of the code is still broken.",
+            "Verdict: pass. Nothing in the gate is still broken.",
+            "Verdict: pass. Without any checks still broken.",
+            "Verdict: pass. Found no issues.",
+            "Verdict: pass. No problems remain.",
+            "Verdict: pass. Issues found: none.",
+            "Verdict: pass. Issues found: 0",
+            "Verdict: pass. Bugs found: 0",
+            "Verdict: pass. Problems found: zero",
+            "Verdict: pass. Issues remaining: none",
+            "Verdict: pass. Changes needed: none",
+            "Verdict: pass. Changes needed (none)",
+            "Verdict: pass. Changes needed — none",
+            "Verdict: pass. Issues found - none",
+            "Verdict: pass. Issues were found and fixed.",
+            "Verdict: pass. 0 issues found",
+            "Verdict: pass. Found 0 issues",
+            "Verdict: pass. 0 issues remain",
+            "Verdict: pass. Problems found: n/a",
+            "Verdict: pass. Remaining issues: none",
+            "Verdict: pass. Open issues: 0",
+            "Verdict: pass. No issues or bugs found",
+            "Verdict: pass. No critical bugs or issues found",
+            "Verdict: pass. No blockers or issues remain",
+            "Verdict: pass. No issues, problems or bugs found",
+            "Verdict: pass. Zero issues or bugs found",
+            "Verdict: pass. No issues, bugs found",
+            "Verdict: pass. No issues, bugs, or problems found",
+            "Verdict: pass. No blockers, bugs, or errors remain",
+            "Verdict: pass. Without bugs, issues found",
+            "Verdict: pass. None of the bugs remain",
+            "Verdict: pass. None of the changes are needed",
+            "Verdict: pass. Without any issues remaining",
+            "Verdict: pass. Without any changes needed",
+            "Verdict: pass.\n\n### Issues found\nNone",
+            "Verdict: pass.\nIssues found:\n- none",
+            "Verdict: pass.\nChanges needed:\n(none)",
+            "Verdict: pass.\nIssues found: none\nChanges needed: none",
+        ] {
+            assert_eq!(Verdict::extract(summary, None), Verdict::Pass, "{summary}");
+            assert_eq!(
+                Verdict::extract(summary, Some(&pass)),
+                Verdict::Pass,
+                "{summary}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_negated_forms_the_old_reader_refused_stay_refused() {
+        for summary in [
+            "Verdict: pass. No changes needed.",
+            "Verdict: pass. No failing tests.",
+            "Verdict: pass. No new issues found.",
+        ] {
+            assert_eq!(
+                Verdict::extract(summary, None),
+                Verdict::Unknown,
+                "{summary}"
+            );
+        }
+    }
+
+    #[test]
     fn markdown_lines_tell_prose_from_quotes_code_and_fences() {
         use LineKind::*;
         let text = "a\n> b\n \tc\n~~~json\n    d\n```\n~~~~\n- e\n  f\n  ```\n  g\n  ```\n```\nh";
@@ -1193,6 +1639,10 @@ mod tests {
         }
         let advisory = json!({"verdict": "pass", "findings": [{"severity": "advisory"}]});
         assert_eq!(Verdict::extract("", Some(&advisory)), Verdict::Pass);
+        let marked = json!({"verdict": "pass", "findings": [{"blocking": true}]});
+        assert_eq!(Verdict::extract("", Some(&marked)), Verdict::Unknown);
+        let follow_up = json!({"verdict": "pass", "findings": [{"blocking": false}]});
+        assert_eq!(Verdict::extract("", Some(&follow_up)), Verdict::Pass);
         let failing = json!({"verdict": "fail", "findings": [{"severity": "blocking"}]});
         assert_eq!(Verdict::extract("", Some(&failing)), Verdict::Fail);
         let evidence = json!({"head": "abcdef1", "findings": [{"severity": "blocking"}]});
@@ -1238,7 +1688,8 @@ mod tests {
             ("PASS — no findings", Verdict::Pass),
             ("PASS — all checks green", Verdict::Pass),
             ("PASS — 214 passed, 0 failed", Verdict::Unknown),
-            ("PASS — no blocking findings", Verdict::Unknown),
+            ("PASS — no blocking findings", Verdict::Pass),
+            ("PASS — one blocking finding", Verdict::Unknown),
             ("PASS — no tests", Verdict::Unknown),
             ("PASS — no CI", Verdict::Unknown),
             (
@@ -1282,6 +1733,25 @@ mod tests {
         let said = Verdict::stated("VERDICT: unsure", Some(&skipped));
         assert_eq!(said.as_deref(), Some("VERDICT: unsure"));
         assert_eq!(Verdict::stated("", Some(&skipped)).as_deref(), Some("done"));
+    }
+
+    #[test]
+    fn the_blocking_mark_decides_and_severity_only_without_one() {
+        assert!(Verdict::is_follow_up(
+            &json!({"blocking": false, "severity": "low"})
+        ));
+        let high_follow_up = json!({"blocking": false, "severity": "high"});
+        assert!(Verdict::is_follow_up(&high_follow_up));
+        assert!(
+            !Verdict::blocks(&high_follow_up),
+            "the mark outranks severity"
+        );
+        assert!(Verdict::blocks(&json!({"severity": "high"})));
+        assert!(!Verdict::is_follow_up(&json!({"severity": "low"})));
+        assert!(!Verdict::is_follow_up(&json!({"blocking": "no"})));
+        assert!(Verdict::blocks(
+            &json!({"blocking": true, "severity": "low"})
+        ));
     }
 
     #[test]

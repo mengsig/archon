@@ -17,19 +17,20 @@ const EXPERIMENTS: &str = "/experiments";
 /// A model policy in words, about as long as a real allowlist's.
 const POLICY: &str = "any model the policy allows";
 
-/// Byte budgets, a little above what the built-ins weigh today.
-const PLAIN_BUDGET: usize = 3_350;
+/// Byte budgets, a little above what the built-ins weigh today. A work
+/// stage's carries the tree-check rule and the foreground-check rule.
+const PLAIN_BUDGET: usize = 3_650;
 const REVIEW_BUDGET: usize = 3_550;
 const RECORD_BUDGET: usize = 1_550;
-/// What holding a review adds: the record, and the verdict and risk call
-/// each reviewer returns.
-const REVIEW_HOLDER_BUDGET: usize = 1_550;
+/// What holding a review adds: the record, the verdict, summary line and risk
+/// call each reviewer returns, the blocking class and the round cap.
+const REVIEW_HOLDER_BUDGET: usize = 2_200;
 /// What a work stage of a team pipeline adds: committing where the roles fork.
 const RUN_TREE_BUDGET: usize = 550;
 /// What judging the change's risk adds: the rubric, to the record stage and
 /// to a review stage after it.
 const RISK_BUDGET: usize = 1_350;
-const TOTAL_BUDGET: usize = 120_000;
+const TOTAL_BUDGET: usize = 121_000;
 
 /// One built-in stage's fixed input, in bytes.
 struct Cost {
@@ -160,8 +161,9 @@ fn direct_is_the_cheapest_shipping_pipeline() {
     let costs = costs();
     let direct = cost_of(&costs, "direct", "implement");
     assert_eq!(direct.delegation, 0, "no reviewer at its own review level");
-    // 1,600 B before the prompt carried the PR-body attribution rule.
-    assert!(direct.prompt <= 1_700, "prompt is {} B", direct.prompt);
+    // 1,600 B before the prompt carried the PR-body attribution rule, 1,700
+    // before it said to run the full check in the foreground.
+    assert!(direct.prompt <= 1_800, "prompt is {} B", direct.prompt);
     let fixed = |pipeline: &str| -> usize {
         let stages = costs.iter().filter(|c| c.pipeline == pipeline);
         stages.map(|c| c.contract + c.delegation + c.prompt).sum()

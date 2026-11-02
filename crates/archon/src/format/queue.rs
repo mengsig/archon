@@ -5,6 +5,7 @@ use std::fmt::Write as _;
 
 use archon_core::Timestamp;
 use archon_core::protocol::{ItemDetail, ItemSummary, WaitingOn};
+use archon_core::pull_request::OntoPullRequest;
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::run::{
     self, GateDecision, OperatorGate, PipelineRun, RunState, StageRun, StageState,
@@ -154,8 +155,7 @@ pub fn item_detail(detail: &ItemDetail, names: &RepoNames, full: bool) -> String
         let _ = writeln!(out, "depends on: {}", deps.join(", "));
     }
     if let Some(onto) = &item.onto {
-        let line = format!("onto: {onto}, frozen at enqueue from {}", onto.target);
-        let _ = writeln!(out, "{}", sanitize_line(&line));
+        let _ = writeln!(out, "{}", sanitize_line(&onto_line(onto)));
     }
     if !item.tags.is_empty() {
         let _ = writeln!(out, "tags: {}", sanitize_line(&item.tags.join(", ")));
@@ -185,6 +185,18 @@ pub fn item_detail(detail: &ItemDetail, names: &RepoNames, full: bool) -> String
     steer_lines(&mut out, &detail.steers);
     let _ = write!(out, "\n{}", sanitize(item.brief.trim_end()));
     out
+}
+
+/// The pull request an item is queued onto, as frozen at enqueue.
+fn onto_line(onto: &OntoPullRequest) -> String {
+    let reads = match onto.review_only {
+        true => ", reviewed only: nothing is pushed to it",
+        false => "",
+    };
+    format!(
+        "onto: {onto}, frozen at enqueue from {}{reads}",
+        onto.target
+    )
 }
 
 /// `plan implement: model effort (reason)` per stage, for an item whose
@@ -532,6 +544,32 @@ mod tests {
             started_at: at(9, 0),
             finished_at: None,
         }
+    }
+
+    #[test]
+    fn a_review_only_onto_says_nothing_is_pushed_to_it() {
+        use archon_core::pull_request::{OntoTarget, PullRequestRef};
+        let mut onto = OntoPullRequest {
+            target: OntoTarget::Pr(7),
+            pr: PullRequestRef::from_url("https://github.com/o/r/pull/7").unwrap(),
+            node_id: None,
+            head_repository: "contributor/r".into(),
+            head_ref: "patch".into(),
+            base_ref: "main".into(),
+            head_sha: "a".repeat(40),
+            review_only: true,
+        };
+        let line = onto_line(&onto);
+        assert!(
+            line.starts_with("onto: https://github.com/o/r/pull/7"),
+            "{line}"
+        );
+        assert!(
+            line.ends_with("reviewed only: nothing is pushed to it"),
+            "{line}"
+        );
+        onto.review_only = false;
+        assert!(!onto_line(&onto).contains("reviewed only"));
     }
 
     #[test]

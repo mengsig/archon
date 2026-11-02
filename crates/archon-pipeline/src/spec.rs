@@ -307,6 +307,23 @@ impl PipelineSpec {
         self.validate_daemon_ship()
     }
 
+    /// Whether a run writes anywhere but its own worktree: archond ships it,
+    /// a ship agent pushes, or a team merges role branches.
+    pub fn delivers(&self) -> bool {
+        self.file.pipeline.ship.is_some()
+            || self
+                .file
+                .stages
+                .iter()
+                .any(|s| matches!(s.kind, StageKind::Ship | StageKind::Team))
+    }
+
+    /// Whether a run only reviews: one of its stages holds the review, and
+    /// nothing is delivered (a `review` item of an existing pull request).
+    pub fn reviews_only(&self) -> bool {
+        self.file.pipeline.review.is_some() && !self.delivers()
+    }
+
     /// Whether `stage` holds the review the pipeline declares.
     pub fn holds_review(&self, stage: &StageSpec) -> bool {
         self.review_duty(stage).is_some()

@@ -23,7 +23,7 @@ use archon_core::error::ArchonError;
 use archon_core::id::RepoId;
 use archon_core::model::ModelChoice;
 use archon_core::policy::ModelPolicy;
-use archon_core::repo::Repo;
+use archon_core::repo::{Repo, ShipMode};
 use archon_queue::store::Store;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
@@ -144,6 +144,7 @@ async fn sync(ctx: &DaemonContext, asked: &Asked) -> Result<(), ArchonError> {
         return Ok(());
     }
     for repo in selected(ctx, &repos, asked).await? {
+        follow_fetched_base(ctx, repo).await?;
         let recorded = stored_state(&*ctx.store.lock().await, &repo.id)?.commit;
         let plan = Plan::new(ctx, &layout, repo);
         let (outcome, undone) = blocking(move || Ok(plan.refresh(recorded.as_deref())))
@@ -155,6 +156,28 @@ async fn sync(ctx: &DaemonContext, asked: &Asked) -> Result<(), ArchonError> {
         }
     }
     forget_unregistered(ctx, &layout, &repos).await
+}
+
+/// Fast-forward a `pr` repository's local base, the branch its mirror checks
+/// out, to the `origin/<base>` Archon last fetched, so the mirror follows it.
+async fn follow_fetched_base(ctx: &DaemonContext, repo: &Repo) -> Result<(), ArchonError> {
+    assert!(repo.path.is_absolute(), "registered paths are canonical");
+    if repo.ship != ShipMode::Pr {
+        return Ok(());
+    }
+    let path = repo.path.clone();
+    let configured = blocking(move || RepoConfig::load(&path)).await;
+    // The refresh reads the same config and reports it when it cannot.
+    let Ok(config) = configured else {
+        return Ok(());
+    };
+    let Some(base) = repo.base_branch.clone().or(config.repo.base_branch) else {
+        return Ok(());
+    };
+    assert!(!base.is_empty(), "a configured base names a branch");
+    crate::executor::local_base::follow_origin(ctx, repo, &base)
+        .await
+        .map(drop)
 }
 
 /// The `repos` a pass refreshes: all when all were asked for, else those asked for

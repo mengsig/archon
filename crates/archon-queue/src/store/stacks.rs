@@ -130,6 +130,9 @@ pub struct StackFix {
 pub struct Refresh {
     pub base: String,
     pub sha: String,
+    /// The branch's head when the refresh was queued: where its merge starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
 }
 
 impl Store {
@@ -357,20 +360,60 @@ fn onto_key(owner: &QueueItemId, item: &QueueItemId) -> String {
     format!("restack_fix:{owner}:onto:{item}")
 }
 
-/// What a refresh's agent is asked: merge the base in, resolve, check, and
-/// have the change reviewed from where it now leaves the base.
+/// What a refresh's agent is asked: merge the base in, resolve, keep the
+/// checks green, and nothing more. The owner's brief is context only.
 fn refresh_brief(owner: &archon_core::queue::QueueItem, branch: &str, refresh: &Refresh) -> String {
     let (base, sha) = (&refresh.base, &refresh.sha);
-    format!(
+    assert!(
+        !branch.is_empty() && !sha.is_empty(),
+        "a branch and a commit"
+    );
+    let brief = format!(
         "Refresh `{branch}` onto `{base}`: merge {sha}, the head of `{base}` Archon just \
-         fetched, into the branch with `git merge {sha}`. Resolve any \
-         conflicts, commit the merge on the existing branch and run the checks again. It ships \
-         as this run's pipeline ships, into the pull request the branch already has: never \
-         open a second one, and never rebase or force-push. Archon delivers it only once the \
-         branch holds {sha}. The review reads the change from its new merge base \
-         (`git merge-base {sha} HEAD`) to the head, conflict resolutions included.\n\n\
-         The item refreshed, {}: {}\n\n{}",
-        owner.id, owner.title, owner.brief
+         fetched, into the branch with `git merge {sha}`, resolve any conflicts, commit the \
+         merge on the existing branch and run the checks until they pass. That is the whole \
+         job: change nothing beyond what the merge needs, and report any other finding as a \
+         follow-up instead of fixing it. It ships as this run's pipeline ships, into the pull \
+         request the branch already has: never open a second one, and never rebase or \
+         force-push. Archon delivers it only once the branch holds {sha}.\n\n\
+         {review}\n\n\
+         The item refreshed, {}: {}. Its brief follows as read-only context, not as work \
+         to do:\n\n",
+        owner.id,
+        owner.title,
+        review = refresh_review_rules(refresh),
+    );
+    let context: String = owner
+        .brief
+        .lines()
+        .map(|line| format!("> {line}\n"))
+        .collect();
+    format!("{brief}{context}")
+}
+
+/// How a refresh is reviewed: its merge resolution only when Archon recorded
+/// the reviewed head it merges into, else the whole change from the new base.
+fn refresh_review_rules(refresh: &Refresh) -> String {
+    let sha = &refresh.sha;
+    let Some(from) = &refresh.from else {
+        return format!(
+            "The branch head is not one a passing review read, so this refresh keeps its \
+             owner's review level: the review reads the whole change from its new merge base \
+             (`git merge-base {sha} HEAD`) to the head, conflict resolutions included."
+        );
+    };
+    assert!(
+        !from.is_empty() && from != sha,
+        "a reviewed head the base is not"
+    );
+    format!(
+        "Review covers the merge resolution only, never the whole change again: \
+         `git show --remerge-diff <merge>` and any commit after the merge. Archon set this \
+         refresh's review level from what the merge conflicts on: none for a clean merge or \
+         one conflicting only in changelogs, top-level `*.md` or `docs/` files, where the \
+         review that passed the branch at {from} stands and Archon refuses any code changed \
+         beyond the merge; one reviewer for a code conflict, reading the resolution with \
+         `base` set to the merge's first parent, {from}."
     )
 }
 

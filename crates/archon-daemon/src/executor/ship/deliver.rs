@@ -80,6 +80,9 @@ struct Claimed {
     repo: Option<Repo>,
     /// The existing pull request the item delivers into, if any.
     onto: Option<Box<OntoPullRequest>>,
+    /// The reviewed pull request the item is stacked on, if any, directly or
+    /// through the items it stacks on: its branch holds that reviewed head.
+    stacked_on: Option<super::super::onto::ReviewedPr>,
     vars: BTreeMap<String, String>,
     /// The outcome persisted already, if any.
     recorded: Option<ShipOutcome>,
@@ -174,10 +177,12 @@ async fn claim(
         .map(|raw| serde_json::from_str::<ShipOutcome>(&raw))
         .transpose()
         .map_err(|e| ArchonError::Corrupt(format!("delivery outcome of run {run_id}: {e}")))?;
+    let item = store.item(&run.item)?;
     let claimed = Claimed {
         plan,
         repo: repo_of(&store, &run)?,
-        onto: store.item(&run.item)?.onto,
+        stacked_on: super::super::onto::reviewed_ancestry_pass(&store, &item)?,
+        onto: item.onto,
         vars: recover::load_run_vars(&store, run_id)?,
         recorded,
         gate,
@@ -278,7 +283,9 @@ async fn carry_out(
     };
     let commit = checked.commit.clone();
     match gate_step(ctx, claimed, &repo, &base, gate)? {
-        GateStep::Pass => {}
+        GateStep::Pass(None) => {}
+        // `prove` just found the worktree on the tree the check passed on.
+        GateStep::Pass(Some(pass)) => ctx.runs.lock().await.gates.keep(pass),
         GateStep::Refuse(refusal) => return refused(refusal),
         GateStep::Run(check) => return Ok(Carried::Gate(check)),
     }
@@ -400,13 +407,35 @@ async fn prove(
 ) -> Result<Result<checks::Checked, String>, ArchonError> {
     let identity = repo_identity::of(ctx, repo).await?;
     let run = &claimed.run;
+    let stacked_pr = claimed.stacked_on.as_ref().map(|reviewed| &reviewed.pr);
+    let stacked = match stacked_since(ctx, repo, stacked_pr).await? {
+        Ok(stacked) => stacked,
+        Err(refusal) => return Ok(Err(refusal)),
+    };
+    let onto = claimed.onto.as_ref().map(|onto| onto.head_sha.clone());
+    let reviewed = claimed.stacked_on.as_ref().filter(|_| stacked.is_some());
+    let reviewed_base = match reviewed {
+        // The reviewed pull request's base on GitHub, never a stack parent's branch.
+        Some(reviewed) => match super::super::onto::reviewed_base(ctx, repo, reviewed).await? {
+            Ok(head) => Some(head),
+            Err(refusal) => return Ok(Err(refusal)),
+        },
+        None => None,
+    };
+    assert!(
+        onto.is_none() || stacked.is_none(),
+        "an onto item stacks on nothing"
+    );
     let target = checks::Target {
         data_dir: ctx.paths.data_dir.clone(),
         repo_path: repo.path.clone(),
         workspace: run.workspace.clone(),
         branch: run.branch.clone(),
         base: base.to_owned(),
-        since: claimed.onto.as_ref().map(|onto| onto.head_sha.clone()),
+        since: onto.or(stacked),
+        reviewed_base,
+        repository_base: repository_base(repo)?,
+        forked: forked_from(&claimed.vars, base),
         allowed: repo_identity::RepoIdentity::allowed(identity.as_ref()),
         attribution: repo.attribution,
     };
@@ -432,6 +461,39 @@ async fn prove(
     Ok(Ok(checked))
 }
 
+/// The reviewed head the commits of an item `stacked` on a reviewed pull
+/// request must start after, once GitHub shows that pull request open, or
+/// merged, at it; `Err` refuses the delivery. `None` for an item stacked on none.
+async fn stacked_since(
+    ctx: &DaemonContext,
+    repo: &Repo,
+    stacked: Option<&OntoPullRequest>,
+) -> Result<Result<Option<String>, String>, ArchonError> {
+    let Some(reviewed) = stacked else {
+        return Ok(Ok(None));
+    };
+    assert!(reviewed.review_only, "stacked on a reviewed pull request");
+    let url = reviewed.pr.url();
+    let binary = &ctx.config.github.binary;
+    let shown = super::super::gh::view_headed(binary, repo, &url).await?;
+    // Merged at the reviewed head, its commits are still exactly those reviewed.
+    let open = matches!(shown.pr.state.as_str(), "OPEN" | "MERGED");
+    let head = shown.pr.head_ref_oid.as_deref();
+    if open && head == Some(reviewed.head_sha.as_str()) {
+        return Ok(Ok(Some(reviewed.head_sha.clone())));
+    }
+    let now = match (open, head) {
+        (true, Some(head)) => format!("its head moved to {head}"),
+        _ => format!("it is {}", shown.pr.state.to_lowercase()),
+    };
+    Ok(Err(format!(
+        "this item is stacked on {url} as reviewed at {}, but {now}: Archon ships another \
+         author's commits only as a review passed them, in a pull request open or merged at \
+         that head. Queue a new review item of it, or queue this work again once it merged",
+        reviewed.head_sha
+    )))
+}
+
 /// Whether the run worktree holds no change, as a record stage claims when
 /// it reports "no change needed"; `Err` says why the claim is false.
 pub(in crate::executor) async fn prove_unchanged(
@@ -439,11 +501,20 @@ pub(in crate::executor) async fn prove_unchanged(
     run: &PipelineRun,
 ) -> Result<Result<(), String>, ArchonError> {
     assert!(run.workspace.is_absolute(), "a run has a worktree");
-    let (repo, onto, base) = {
+    let (repo, since, base, forked) = {
         let store = ctx.store.lock().await;
         let vars = recover::load_run_vars(&store, &run.id)?;
         let base = base_of(&store, run, &vars)?;
-        (repo_of(&store, run)?, store.item(&run.item)?.onto, base)
+        let forked = forked_from(&vars, &base);
+        let item = store.item(&run.item)?;
+        let stacked = super::super::onto::reviewed_ancestry(&store, &item)?;
+        let since = item.onto.map(|onto| onto.head_sha);
+        (
+            repo_of(&store, run)?,
+            since.or(stacked.map(|s| s.head_sha)),
+            base,
+            forked,
+        )
     };
     let Some(repo) = repo else {
         return Ok(Err(
@@ -456,7 +527,11 @@ pub(in crate::executor) async fn prove_unchanged(
         workspace: run.workspace.clone(),
         branch: run.branch.clone(),
         base,
-        since: onto.map(|onto| onto.head_sha),
+        since,
+        // Only a delivery checks identities; no commit is a claim of none.
+        reviewed_base: None,
+        repository_base: None,
+        forked,
         allowed: Vec::new(),
         attribution: repo.attribution,
     };
@@ -468,8 +543,9 @@ pub(in crate::executor) async fn prove_unchanged(
 /// What the ship gate says of the proved tree.
 #[derive(Debug)]
 enum GateStep {
-    /// Its check passed, or the repository has no trusted one.
-    Pass,
+    /// Its check passed, or the repository has no trusted one; a pass the
+    /// check earned by running is kept once the worktree proof held.
+    Pass(Option<gate::Pass>),
     Refuse(String),
     /// Its check is to run before the delivery goes on.
     Run(gate::Check),
@@ -489,12 +565,16 @@ fn gate_step(
     match gate {
         Some(Err(error)) => return Err(error),
         Some(Ok(verdict)) if verdict.tree == *tree => {
-            return Ok(verdict.refusal.map_or(GateStep::Pass, GateStep::Refuse));
+            let step = match verdict.refusal {
+                Some(refusal) => GateStep::Refuse(refusal),
+                None => GateStep::Pass(verdict.unproved),
+            };
+            return Ok(step);
         }
         Some(Ok(_)) | None => {}
     }
     let Some(template) = fast_check::trusted(repo)? else {
-        return Ok(GateStep::Pass);
+        return Ok(GateStep::Pass(None));
     };
     let env = crate::resolve::RepoEnv::new(Some(repo.clone()))?;
     let mode = env.config.build_cache(&ctx.config.worktrees);
@@ -573,6 +653,28 @@ pub(in crate::executor) fn base_of(
             "the run's variables name no base branch".into(),
         )),
     }
+}
+
+/// The branch `repo`'s new work forks from now, as dispatch picks it; `None`
+/// for a name no branch can have, which forks nothing either.
+fn repository_base(repo: &Repo) -> Result<Option<String>, ArchonError> {
+    let env = resolve::RepoEnv::new(Some(repo.clone()))?;
+    let base = env.fork_base(&env.tiers()?);
+    let plain = base.filter(|b| super::super::dependencies::is_plain_branch(b));
+    assert!(
+        plain.as_deref().is_none_or(|b| !b.is_empty()),
+        "a named branch"
+    );
+    Ok(plain)
+}
+
+/// The commit of `base` the run forked from, as recorded at dispatch; `None`
+/// when the run forked from another branch, as a stack's base moves on.
+fn forked_from(vars: &BTreeMap<String, String>, base: &str) -> Option<String> {
+    assert!(!base.is_empty(), "a delivery has a base branch");
+    let same_base = vars.get("base_branch").map(|b| b.trim()) == Some(base);
+    let forked = vars.get("base_commit").filter(|_| same_base)?;
+    crate::worktree::stack::is_commit_id(forked).then(|| forked.clone())
 }
 
 /// Persist `outcome` for a rebuilt driver to replay. A pull request's URL

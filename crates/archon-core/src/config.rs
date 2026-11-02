@@ -35,6 +35,12 @@ pub const DELEGATION_DEPTH_CEILING: u32 = 4;
 pub const DEFAULT_STALL_MINUTES: u32 = 20;
 /// `limits.stall_fallback_minutes` by default.
 pub const DEFAULT_STALL_FALLBACK_MINUTES: u32 = 45;
+/// `limits.hung_tool_minutes` by default.
+pub const DEFAULT_HUNG_TOOL_MINUTES: u32 = 20;
+/// `limits.hung_check_minutes` by default.
+pub const DEFAULT_HUNG_CHECK_MINUTES: u32 = 60;
+/// `limits.refresh_stage_timeout_minutes` by default.
+pub const DEFAULT_REFRESH_STAGE_TIMEOUT_MINUTES: u32 = 30;
 
 /// `limits.max_stage_timeout_minutes` by default, and the most it may be (30
 /// days, a pipeline stage's own bound).
@@ -497,6 +503,13 @@ pub struct LimitsConfig {
     /// Minutes of silence that stall a stage when Aether does not report
     /// whether the engine is alive (an Aether older than the watchdog).
     pub stall_fallback_minutes: u32,
+    /// Minutes a stage agent's tool call may stay open with no outcome or
+    /// other event before its turn is interrupted; 0 turns that check off,
+    /// as does `stall_minutes = 0`.
+    pub hung_tool_minutes: u32,
+    /// The same while the open call is a known long check (`make ci`,
+    /// `cargo test`, ...); never shorter than `hung_tool_minutes`.
+    pub hung_check_minutes: u32,
     /// Dispatch holds while the data dir or worktree root has less free
     /// space than this, in GiB; 0 disables the hold (ARCHITECTURE §7.3).
     pub min_free_gb: u64,
@@ -511,6 +524,8 @@ pub struct LimitsConfig {
     pub max_delegation_depth: u32,
     /// Longest per-stage timeout an item may ask for (`stage_timeouts`).
     pub max_stage_timeout_minutes: u32,
+    /// Each stage's timeout in a refresh the request gives none for.
+    pub refresh_stage_timeout_minutes: u32,
     /// Messages one agent may send the orchestrator, and one run node's
     /// inbox may relay, over its lifetime.
     pub max_agent_messages: u32,
@@ -533,12 +548,15 @@ impl Default for LimitsConfig {
             infra_retries: 1,
             stall_minutes: DEFAULT_STALL_MINUTES,
             stall_fallback_minutes: DEFAULT_STALL_FALLBACK_MINUTES,
+            hung_tool_minutes: DEFAULT_HUNG_TOOL_MINUTES,
+            hung_check_minutes: DEFAULT_HUNG_CHECK_MINUTES,
             min_free_gb: 10,
             max_load_per_cpu: None,
             min_available_memory_gb: None,
             per_pipeline: BTreeMap::new(),
             max_delegation_depth: DEFAULT_DELEGATION_DEPTH,
             max_stage_timeout_minutes: DEFAULT_STAGE_TIMEOUT_MINUTES,
+            refresh_stage_timeout_minutes: DEFAULT_REFRESH_STAGE_TIMEOUT_MINUTES,
             max_agent_messages: DEFAULT_AGENT_MESSAGES,
             initiative_members: InitiativeLimits::DEFAULT.members as u32,
             initiative_contract_bytes: InitiativeLimits::DEFAULT.contract_bytes as u32,
@@ -604,10 +622,12 @@ impl LimitsConfig {
         for (key, value) in [
             ("stall_minutes", self.stall_minutes),
             ("stall_fallback_minutes", self.stall_fallback_minutes),
+            ("hung_tool_minutes", self.hung_tool_minutes),
+            ("hung_check_minutes", self.hung_check_minutes),
         ] {
             if value > STAGE_TIMEOUT_CEILING_MINUTES {
                 return Err(ArchonError::Config(format!(
-                    "limits.{key} must be at most {STAGE_TIMEOUT_CEILING_MINUTES} (0 = no stage watchdog), not {value}"
+                    "limits.{key} must be at most {STAGE_TIMEOUT_CEILING_MINUTES} (0 = off), not {value}"
                 )));
             }
         }
@@ -622,7 +642,7 @@ impl LimitsConfig {
     }
 
     /// The structural limits `[limits]` may set: key, value, default, ceiling.
-    fn configurable(&self) -> [(&'static str, u32, u32, u32); 5] {
+    fn configurable(&self) -> [(&'static str, u32, u32, u32); 6] {
         let default = Self::default();
         let ceiling = InitiativeLimits::CEILING;
         [
@@ -636,6 +656,12 @@ impl LimitsConfig {
                 "max_stage_timeout_minutes",
                 self.max_stage_timeout_minutes,
                 default.max_stage_timeout_minutes,
+                STAGE_TIMEOUT_CEILING_MINUTES,
+            ),
+            (
+                "refresh_stage_timeout_minutes",
+                self.refresh_stage_timeout_minutes,
+                default.refresh_stage_timeout_minutes,
                 STAGE_TIMEOUT_CEILING_MINUTES,
             ),
             (
@@ -1258,6 +1284,16 @@ mod tests {
         };
         let error = typo.validate().unwrap_err().to_string();
         assert!(error.contains("limits.stall_fallback_minutes"), "{error}");
+        assert_eq!(
+            (default.hung_tool_minutes, default.hung_check_minutes),
+            (20, 60)
+        );
+        let typo = LimitsConfig {
+            hung_check_minutes: STAGE_TIMEOUT_CEILING_MINUTES + 1,
+            ..LimitsConfig::default()
+        };
+        let error = typo.validate().unwrap_err().to_string();
+        assert!(error.contains("limits.hung_check_minutes"), "{error}");
     }
 
     #[test]
@@ -1520,6 +1556,7 @@ mod tests {
         assert_eq!(limits.max_delegation_depth, 2);
         assert_eq!(limits.max_agent_messages, 20);
         assert_eq!(limits.max_stage_timeout_minutes, 1440);
+        assert_eq!(limits.refresh_stage_timeout_minutes, 30);
         assert_eq!(
             limits.initiatives(),
             InitiativeLimits {
@@ -1539,6 +1576,8 @@ mod tests {
             "max_delegation_depth = 5",
             "max_stage_timeout_minutes = 0",
             "max_stage_timeout_minutes = 43201",
+            "refresh_stage_timeout_minutes = 0",
+            "refresh_stage_timeout_minutes = 43201",
             "max_agent_messages = 0",
             "initiative_members = 65",
             "initiative_contract_bytes = 16385",
@@ -1567,6 +1606,7 @@ mod tests {
             [
                 "max_delegation_depth",
                 "max_stage_timeout_minutes",
+                "refresh_stage_timeout_minutes",
                 "max_agent_messages",
                 "initiative_members",
                 "initiative_contract_bytes",

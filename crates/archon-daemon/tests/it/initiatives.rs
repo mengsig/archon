@@ -129,6 +129,7 @@ async fn an_onto_members_pull_request_keeps_its_body_and_draft_state() {
         head_ref: "feature".into(),
         base_ref: "main".into(),
         head_sha: head,
+        review_only: false,
     }));
     h.ctx.store.lock().await.update_item(&onto).unwrap();
     h.dispatch().await;

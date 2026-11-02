@@ -176,6 +176,8 @@ pub(super) async fn hand_over(
     assert_eq!(stage.state, StageState::Spawning, "a reserved attempt");
     assert!(!kept.message.trim().is_empty(), "resumed with findings");
     let agent = &kept.agent;
+    // Before a wake can start the agent: what it holds now is earlier attempts'.
+    super::review::attempt_resumed(ctx, stage, agent).await?;
     if !takes_over(ctx, stage, agent).await? {
         tracing::info!(stage = %stage.id, %agent, "slot agent cannot go on; spawning a fresh one");
         return Ok(false);
@@ -204,6 +206,9 @@ pub(super) async fn hand_over(
     Ok(false)
 }
 
+/// How [`with_deadline`] starts the deadline it tells.
+const DEADLINE_TOLD: &str = "\n\nArchon now stops you and every agent you delegated to at ";
+
 /// `kept` told the resumed or woken attempt's own deadline `until`, which replaces the one
 /// its contract named.
 pub(super) fn with_deadline(mut kept: KeptAgent, until: Option<Timestamp>) -> KeptAgent {
@@ -212,11 +217,21 @@ pub(super) fn with_deadline(mut kept: KeptAgent, until: Option<Timestamp>) -> Ke
         return kept;
     };
     kept.message.push_str(&format!(
-        "\n\nArchon now stops you and every agent you delegated to at {}. If your task \
-         has you commit, commit each working step as you go. Finish with time to spare.",
+        "{DEADLINE_TOLD}{}. If your task has you commit, commit each working step as you go. \
+         Finish with time to spare.",
         until.format("%Y-%m-%d %H:%M UTC")
     ));
     kept
+}
+
+/// `kept`, told `until` in place of the deadline [`with_deadline`] told it
+/// before, as for an attempt that waited on its engine's login.
+pub(super) fn with_moved_deadline(mut kept: KeptAgent, until: Timestamp) -> KeptAgent {
+    if let Some(at) = kept.message.find(DEADLINE_TOLD) {
+        kept.message.truncate(at);
+    }
+    assert!(!kept.message.contains(DEADLINE_TOLD), "one deadline told");
+    with_deadline(kept, Some(until))
 }
 
 /// Aether's new cap for `agent` resumed or woken on `stage`: the cap counts its subtree's
@@ -516,8 +531,10 @@ pub(super) fn wakes(store: &Store, slot: &[&StageRun]) -> Result<(bool, usize), 
             Err(ArchonError::NotFound(_)) => continue,
             Err(error) => return Err(error),
         };
-        tried |= spawn.woken;
-        took += usize::from(spawn.woken && spawn.resume.is_some());
+        // A wake after a failed engine login is not the slot's one infrastructure wake.
+        let woken = spawn.woken && !spawn.login_wake;
+        tried |= woken;
+        took += usize::from(woken && spawn.resume.is_some());
     }
     assert!(took <= slot.len(), "an attempt wakes one agent at most");
     assert!(
@@ -543,6 +560,40 @@ pub(super) fn wake_for(failed: &StageRun, error: &str) -> Option<KeptAgent> {
         message: woken_note(error),
         asked_record: None,
     })
+}
+
+/// The agent of `failed`, which Aether stopped at its stage deadline, to wake
+/// for a short extension; `None` without one.
+pub(super) fn wake_at_deadline(failed: &StageRun) -> Option<KeptAgent> {
+    assert_eq!(failed.state, StageState::TimedOut, "only a timeout");
+    assert!(
+        failed.infrastructure_failure,
+        "a timed-out run woken from is marked as one a wake takes"
+    );
+    let agent = failed.aether_agent.clone()?;
+    Some(KeptAgent {
+        agent,
+        message: deadline_note(),
+        asked_record: None,
+    })
+}
+
+/// What an agent woken at its stage deadline is told; [`with_deadline`] adds
+/// when Archon now stops it.
+fn deadline_note() -> String {
+    let minutes = settle::DEADLINE_WAKE_MINUTES;
+    let note = format!(
+        "Archon stopped you at your stage deadline and woke you once, for {minutes} more \
+         minutes. Start nothing new and wait on no check: commit what works now, saying in the \
+         message what is unfinished, and report. That stop ended your task, so do not call \
+         `complete_task`; end your turn with the final message your instructions ask for, its \
+         fenced `json` block included, and name what is left undone."
+    );
+    assert!(
+        note.contains("commit what works"),
+        "the note says what to do"
+    );
+    note
 }
 
 /// The agent a replacement resumes when it wakes `kept`, its slot's failed

@@ -18,7 +18,8 @@ Attempt {{attempt}}: build on what the branch already holds.
    blocking or deadlock test must fail in seconds, never hang.
 3. Run the checks the change affects: the build, the linter or formatter and
    the tests of what you touched. Fix what you broke; report what was broken
-   before you.
+   before you. Run the full check once, on the final head, in the
+   foreground: never end your turn while a check runs.
 4. Commit on `{{branch}}` under the repository's commit rules and its
    configured git identity; do not push. A commit message, like the
    `pr.body`, names no model or tool: no `Co-Authored-By` or "Generated
@@ -26,7 +27,8 @@ Attempt {{attempt}}: build on what the branch already holds.
 5. When review is required, delegate with `wait: false` on committed changes:
    the base (`{{base_commit}}`) and head commits,
    changed paths, the checks you ran and the verdict your contract shows.
-   Apply your contract's command bounds and its re-review of only what changed.
+   Apply your contract's command bounds, its blocking class and its
+   one-reviewer re-review of only the fix.
 
 Finish with `complete_task`: the `structured` data your contract requires
 and a summary of a few lines: what changed, the checks and their results,

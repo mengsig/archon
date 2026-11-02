@@ -30,6 +30,7 @@ The daemon did not answer the change within the MCP call's 15 s budget, but may 
 
 ## Dispatch is held
 
+- **"Its stages wait instead of failing"** An engine's login failed (expired OAuth token, revoked credentials, or a provider outage), so Archon holds that engine: its failed stages wait, nothing new starts on it, and other engines go on. Archon checks the login on its own, waiting up to 30 minutes between checks, and wakes the waiting agents with their context once it works. If it does not come back, renew it: `archon aether login <provider>`, or run the engine's CLI once (for example `claude`). Nothing needs a retry.
 - **"Dispatch is held:"** from the disk check. Free space is below `limits.min_free_gb`, or a write failed on a full disk. No new agent starts until space is back. Run `archon gc` to reclaim space.
 - **"is above [limits] max_load_per_cpu"** (not a blocker; shown by `archon status` and `archon queue show <id>`). The host's load per CPU is over your limit, so nothing new starts and running agents finish. It resumes by itself once load drops; raise `max_load_per_cpu` under `[limits]` in your config (docs/configuration.md) to hold less.
 - **"is below [limits] min_available_memory_gb"** (not a blocker). The host has less free memory than your limit, so nothing new starts. It resumes when memory is free again; lower `min_available_memory_gb` under `[limits]` to hold less.
@@ -58,7 +59,7 @@ The daemon did not answer the change within the MCP call's 15 s budget, but may 
 - **"resumed … that Aether blocked for inspection"** (a progress notice) A command of the stage agent lost its outcome, most likely because aetherd restarted. Archon told the agent to check the state before repeating the command, and resumed it. Nothing to do.
 - **"Aether blocked it for inspection … and refused to resume it"** The stage failed as infrastructure, and `limits.infra_retries` wakes or replaces its agent. If it fails again, `archon aether agents` shows the agent's state. Then `archon queue retry <id>`.
 - **"has been held by Aether for N min with no approval, usage limit or credentials wait"** (an escalation to the orchestrator) Aether holds the stage for a reason it does not name. Archon keeps the stage running. Inspect the agent with `archon aether agents`, or steer, retry or cancel the item.
-- **"the lead is still fixing it"** A review has failed many rounds. The run goes on; stop it with `archon queue cancel <id>` or change course with `archon queue steer <id> --note "…"`.
+- **"so Archon stopped it instead of another round"** A stage's review failed three rounds in one attempt, so Archon stopped it and ended the run. The error lists the open blocking findings and the reviewers whose results hold them; settle the disputed point in the brief or reshape the work, then `archon queue retry <id>`, or `archon queue steer <id> --note "…"` first.
 - **"tries again on every maintenance pass"** Maintenance of one item or initiative keeps failing. The error text names what to fix, for example a repository or branch; Archon says nothing more until it passes.
 
 ## Shipping and GitHub

@@ -1,0 +1,167 @@
+{
+  "source": "Archon 1.4.11 release gate smoke runs, 2026-11-02: luna-head-* on 1.4.11 with Aether 1.2.10, luna-old-* on v1.4.9 with Aether 1.2.8",
+  "model": "codex/gpt-6-luna",
+  "effort": "medium",
+  "note": "Every reviewer result the gate refused in those runs, verbatim; `refused` is the recorded refusal and `now` what the gate reads after the fix.",
+  "reviewers": [
+    {
+      "run": "luna-head-1",
+      "task": "fix-off-by-one",
+      "agent": "agt_01M6DQ2Q9JQ1CNYMKFY5CFXDW5",
+      "refused": "its result carries no readable verdict",
+      "now": "refused",
+      "why": "a JSON pass, then prose that ends `... checks. VERDICT: PASS` mid-line: the prose holds a second verdict",
+      "result": {
+        "summary": "{\"verdict\":\"pass\",\"head\":\"c345d2190842b8df67710f80df33264e3e3442e2\",\"base\":\"540db56e00aa586856488e29a37a214cd9e72c38\",\"findings\":[],\"risk\":{\"level\":\"medium\",\"why\":\"The change is contained to sliding_windows and corrects its boundary and size validation behavior.\"}}\n\nReview confirmed every contiguous window is included, including the final one; invalid sizes (including bool) raise ValueError; oversized windows return []; and valid sliceable inputs work. Existing tests and `git diff --check` passed, as did direct edge case checks. VERDICT: PASS"
+      }
+    },
+    {
+      "run": "luna-head-1",
+      "task": "quality-ledger-transfer",
+      "agent": "agt_01M6DQ9FE3FHGP86FMQ50NBYNQ",
+      "refused": "its verdict \"verdict: PASS\" reads as neither pass nor fail",
+      "now": "refused",
+      "why": "`verdict: PASS` as one of several key lines; the risk line after it says `no correctness issues`, a `no` the gate does not deny",
+      "result": {
+        "summary": "complete_task\n\nverdict: PASS\nhead: d7c584f90ffaa96e1c601b43a4790303adc55d8f\nbase: e1cb51abd9e11abfe81569356e6679d6493793d2\nfindings: []\nrisk: Medium: this changes ledger behavior and adds concurrency handling; review found no correctness issues against SPEC.md.\nsummary: The implementation satisfies the specified validation, transfer, overflow, copy, and linearizability requirements. All 8 unit tests pass, and `git diff --check` is clean. VERDICT: PASS"
+      }
+    },
+    {
+      "run": "luna-head-1",
+      "task": "quality-retry-budget",
+      "agent": "agt_01M6DQGCE4B9ZG5C916EK0KN3H",
+      "refused": "its summary has a `VERDICT:` line but no `head: <commit>` line naming the commit it read",
+      "now": "pass",
+      "why": "a JSON pass naming its head, plain checks, then `VERDICT: PASS`",
+      "result": {
+        "summary": "{\"verdict\":\"pass\",\"head\":\"efa54d976d30dc6136681715633a8e3dc9ffc72d\",\"base\":\"1c76981e4bb68cdbf57f36e8d9e5b8fc6dae0f01\",\"findings\":[],\"risk\":{\"level\":\"medium\",\"why\":\"The change affects retry scheduling through the function API, but the implementation follows the SPEC, including validation before early returns, the strict budget boundary, uncapped Retry-After floors, and efficient saturation for huge attempts.\"}}\n\nChecks passed: all 10 unit tests, `py_compile`, and `git diff --check`.\n\nVERDICT: PASS"
+      }
+    },
+    {
+      "run": "luna-head-2",
+      "task": "fix-off-by-one",
+      "agent": "agt_01M6DRF3WT1E0YTR7YDPV7P85X",
+      "refused": "its verdict \"VERDICT: PASS\" reads as neither pass nor fail",
+      "now": "refused",
+      "why": "`VERDICT: PASS` followed by a JSON line: text after a pass line holds a second verdict",
+      "result": {
+        "summary": "**Findings:** None. The inclusive endpoint change returns every contiguous window for positive sizes: empty input and sizes larger than the input produce no windows; size one returns each item; and exact-size input returns one window. Nonpositive sizes still raise `ValueError`.\n\n**Risk:** Low. The fix is isolated to the range endpoint and matches the function’s documented behavior.\n\n**Checks:** `python3 -m unittest` passed (3 tests); `git diff --check` passed. No `AGENTS.md` was found.\n\nVERDICT: PASS\n\n{\"verdict\":\"pass\",\"head\":\"3ad31eca3104a8d7cb0dfca29f82985e064242bb\",\"base\":\"323c1f009f2ec7f31edcc3bf653747401b4f5f18\",\"findings\":[]}"
+      }
+    },
+    {
+      "run": "luna-head-2",
+      "task": "fix-off-by-one",
+      "agent": "agt_01M6DRGMV0NP9EDTX1J18ZMB74",
+      "refused": "it passes but its summary's final `VERDICT:` line or JSON verdict does not, or it lists a blocking finding (its verdict line reads \"VERDICT: PASS\")",
+      "now": "refused",
+      "why": "a structured pass whose summary opens with `VERDICT: PASS` and explains it in prose the gate reads as taking it back",
+      "result": {
+        "summary": "VERDICT: PASS\nhead: 3ad31eca3104a8d7cb0dfca29f82985e064242bb\nbase: 323c1f009f2ec7f31edcc3bf653747401b4f5f18\nReviewed the complete diff in window.py. The inclusive endpoint returns all contiguous windows, including the final one. Direct checks confirmed empty input returns [], size equal to length returns one whole-list window, size greater than length returns [], and zero/negative sizes raise ValueError. No findings. Risk is low: isolated one-line boundary correction with the requested cases confirmed.",
+        "structured": {
+          "base": "323c1f009f2ec7f31edcc3bf653747401b4f5f18",
+          "findings": [],
+          "head": "3ad31eca3104a8d7cb0dfca29f82985e064242bb",
+          "risk": {
+            "level": "low",
+            "why": "Isolated one-line boundary correction; requested edge cases and invalid sizes were directly checked."
+          },
+          "verdict": "PASS"
+        }
+      }
+    },
+    {
+      "run": "luna-head-3",
+      "task": "fix-off-by-one",
+      "agent": "agt_01M6DSB02YX6WGR8AJMG68W84S",
+      "refused": "its summary has a `VERDICT:` line but no `head: <commit>` line naming the commit it read",
+      "now": "pass",
+      "why": "a JSON pass with a follow-up finding, then `VERDICT: PASS`",
+      "result": {
+        "summary": "{\"verdict\":\"PASS\",\"head\":\"445429d9a7e46864ea01aa198dd83ec9f0c93a26\",\"base\":\"458957f188bccc34cbf7c41ba7b1470a95262a7c\",\"findings\":[{\"blocking\":false,\"message\":\"No correctness issues found. The function includes the final valid window, returns one window when size equals input length, returns an empty list when the input is shorter, preserves slice types for lists, tuples, and strings, and raises the documented TypeError/ValueError for invalid sizes.\"}],\"risk\":\"low — small, isolated behavior change; boundary behavior and validation checks passed. `python3 -m unittest` passed (3 tests), and `git diff --check` passed.\"}\nVERDICT: PASS"
+      }
+    },
+    {
+      "run": "luna-head-3",
+      "task": "fix-off-by-one",
+      "agent": "agt_01M6DSCJJYV0GRPB4JS6ZG40JH",
+      "refused": "its result carries no readable verdict",
+      "now": "refused",
+      "why": "a JSON pass, then prose ending `head: 445429d, base: ..., VERDICT: PASS` on one line: a second verdict mid-line",
+      "result": {
+        "summary": "{\"verdict\":\"pass\",\"head\":\"445429d\",\"base\":\"458957f188bccc34cbf7c41ba7b1470a95262a7c\",\"risk\":{\"level\":\"medium\",\"why\":\"Contained behavior change to window bounds and size validation; valid positive integer inputs now include the final contiguous slice.\"},\"findings\":[]}\n\nReview: the corrected range returns every window, including the last one, and produces one full-container window when `size == len(items)`. Nonpositive sizes raise `ValueError`; non-integer sizes, including `bool`, raise `TypeError`, consistent with the documented contract. Inputs shorter than `size` return an empty list. No repository guidance files were found.\n\nChecks: `python3 -m unittest` passed (3 tests).\n\nhead: 445429d, base: 458957f188bccc34cbf7c41ba7b1470a95262a7c, VERDICT: PASS"
+      }
+    },
+    {
+      "run": "luna-head-3",
+      "task": "fix-off-by-one",
+      "agent": "agt_01M6DSE6G7NYJJZYN0XS5HAWX5",
+      "refused": "failed the change at 445429d9a7e4, and no passing reviewer named read what changed after it",
+      "now": "fail",
+      "why": "a structured fail with a blocking finding; refused because the lead named no pass read after it",
+      "result": {
+        "summary": "Review complete. The function’s end-exclusive range now includes the final valid window, and checks behave correctly for empty/short/equal-size inputs, nonpositive sizes, floats, strings, None, and bool. Full unittest discovery passes (3 tests). The remaining blocking gap is that committed tests do not exercise the newly documented non-integer/bool validation or shorter-than-size behavior. VERDICT: FAIL.",
+        "structured": {
+          "base": "458957f188bccc34cbf7c41ba7b1470a95262a7c",
+          "findings": [
+            {
+              "blocking": true,
+              "details": "The committed suite does not assert that non-integer sizes (including bool) raise TypeError, nor that inputs shorter than size return an empty list, although these are explicitly documented behaviors and validation was added in this change. Manually exercised cases behave as documented; the gap is in automated regression coverage.",
+              "file": "test_window.py",
+              "title": "Missing regression coverage for validation and short inputs"
+            }
+          ],
+          "head": "445429d9a7e46864ea01aa198dd83ec9f0c93a26",
+          "risk": {
+            "level": "low",
+            "why": "Contained utility behavior change; implementation and the existing boundary tests pass, but the newly documented input-validation behavior lacks committed coverage."
+          },
+          "verdict": "fail"
+        }
+      }
+    },
+    {
+      "run": "luna-head-3",
+      "task": "quality-ledger-transfer",
+      "agent": "agt_01M6DSR5HS3Q598ZZ5PBY048PF",
+      "refused": "its summary has a `VERDICT:` line but no `head: <commit>` line naming the commit it read",
+      "now": "pass",
+      "why": "a pretty-printed JSON pass, then `VERDICT: PASS`",
+      "result": {
+        "summary": "{\n  \"verdict\": \"PASS\",\n  \"head\": \"43fc567bed2ad3004329f032feecf532712ad732\",\n  \"base\": \"23dc8c61e1215d315131337d76db082e663c5452\",\n  \"findings\": [],\n  \"risk\": {\n    \"level\": \"high\",\n    \"why\": \"Concurrency and locking changes are high risk by rubric. Review found a single per-ledger lock protecting transfers and snapshots, with no lock ordering that could deadlock opposite transfers. Validation, atomic failure behavior, self-transfers, bounds, and copy isolation match SPEC.md.\"\n  },\n  \"verification\": [\n    \"Reviewed SPEC.md and the changes to ledger.py and test_ledger.py at the exact HEAD.\",\n    \"python3 -m unittest -v: all 12 tests passed.\",\n    \"git diff --check: passed.\"\n  ]\n}\n\nVERDICT: PASS"
+      }
+    },
+    {
+      "run": "luna-head-3",
+      "task": "quality-ledger-transfer",
+      "agent": "agt_01M6DSSHHBX0R1RAAHVW2WS4J9",
+      "refused": "its summary has a `VERDICT:` line but no `head: <commit>` line naming the commit it read",
+      "now": "pass",
+      "why": "a JSON pass, then `VERDICT: PASS`",
+      "result": {
+        "summary": "{\"verdict\":\"pass\",\"head\":\"43fc567bed2ad3004329f032feecf532712ad732\",\"base\":\"23dc8c61e1215d315131337d76db082e663c5452\",\"findings\":[],\"risk\":{\"level\":\"high\",\"why\":\"This change adds synchronized transfers and snapshots. The shared lock encloses account checks and both writes, making transfers and snapshots linearizable and preventing opposite-transfer deadlocks; focused concurrency tests pass.\"}}\n\nVERDICT: PASS"
+      }
+    },
+    {
+      "run": "luna-old-1",
+      "task": "fix-off-by-one",
+      "agent": "agt_01M6DPCMHKQKDQM61B591N9FB3",
+      "refused": "its verdict \"**Verdict: APPROVE**\" reads as neither pass nor fail",
+      "now": "refused",
+      "why": "`**Verdict: APPROVE**` above bullet lines: no JSON, and the lines after the verdict take it back",
+      "result": {
+        "summary": "**Verdict: APPROVE**\n\n- **Base:** `dd1defb446b0735c95a922b12e7f9dad9f074e04`\n- **Head:** `16d98b7efb97fadef1a5c2a30529b5fd19ffb5f9`\n- **Findings:** None. The `+1` includes the final valid window, including when the window spans the entire input. Empty inputs and sizes larger than the input produce no windows; nonpositive sizes raise `ValueError`. `operator.index` accepts integer-like sizes and rejects non-integers before slicing.\n- **Risk:** Low — the bounds correction is isolated to `sliding_windows`; integer-size validation is compatible with slicing semantics.\n- **Checks:** `python3 -m unittest` passed (3 tests); `git diff --check` passed."
+      }
+    },
+    {
+      "run": "luna-old-1",
+      "task": "quality-ledger-transfer",
+      "agent": "agt_01M6DPKMKE2TMF75Q9T972NZR4",
+      "refused": "its result carries no readable verdict",
+      "now": "pass",
+      "why": "a JSON pass, then a plain line of checks",
+      "result": {
+        "summary": "{\"verdict\":\"pass\",\"head\":\"4ace6d42bef1d36ce83095d3f9d9fc1a07a9a1e2\",\"base\":\"8d5c211443746d0369220dab0ac6c115b61dabd3\",\"findings\":[],\"risk\":{\"level\":\"high\",\"why\":\"The change adds shared locking for transfers and snapshots, so concurrency and deadlock risks are material. Review confirms one lock covers account checks and both writes, snapshots copy under that lock, and opposite transfers use the same lock without lock ordering. The concurrency tests passed, though they are stress checks rather than exhaustive linearizability proofs.\"}}\n\nValidation: `python -m unittest -v` passed all 9 tests; `git diff --check` passed."
+      }
+    }
+  ]
+}

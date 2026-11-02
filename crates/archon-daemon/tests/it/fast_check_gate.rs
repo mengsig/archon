@@ -217,6 +217,45 @@ async fn a_check_that_changes_the_worktree_is_refused_when_it_is_proved_again() 
     assert_eq!(gh.count("pr create"), 0);
 }
 
+/// A pass is kept only once the worktree is proved again after the check: a
+/// check that changed a tracked file keeps none, so the same tree and command
+/// run again; a proved pass is reused for that tree, and another command runs.
+#[tokio::test]
+async fn a_pass_is_reused_for_the_same_tree_only_once_the_worktree_was_proved() {
+    let (h, _gh) = delivering().await;
+    let (marker, tamper) = (h.dir.path().join("checked"), h.dir.path().join("tamper"));
+    std::fs::write(&tamper, "").unwrap();
+    let command = format!(
+        "echo ran >> '{}'; if [ -e '{}' ]; then echo tampered >> change.txt; fi",
+        marker.display(),
+        tamper.display()
+    );
+    fast_check(&h, &command).await;
+    let runs = || std::fs::read_to_string(&marker).unwrap().lines().count();
+
+    let (item, run) = started(&h, "direct").await;
+    let tree = change(&run.workspace)["tree"].clone();
+    let state = settled(&h, &item.id, record(&run.workspace)).await;
+    assert!(failure(state).contains("uncommitted changes"));
+    assert_eq!(runs(), 1);
+
+    std::fs::remove_file(&tamper).unwrap();
+    for expected in [2, 2] {
+        let (item, run) = started(&h, "direct").await;
+        let structured = change(&run.workspace);
+        assert_eq!(structured["tree"], tree, "every item commits the same tree");
+        let state = settled(&h, &item.id, structured).await;
+        assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+        assert_eq!(runs(), expected, "only a proved pass is reused");
+    }
+
+    fast_check(&h, &format!("{command}; true")).await;
+    let (item, run) = started(&h, "direct").await;
+    let state = settled(&h, &item.id, change(&run.workspace)).await;
+    assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+    assert_eq!(runs(), 3, "another command runs on the same tree");
+}
+
 #[tokio::test]
 async fn a_committed_check_runs_only_once_the_operator_confirmed_it() {
     let (h, _gh) = delivering().await;

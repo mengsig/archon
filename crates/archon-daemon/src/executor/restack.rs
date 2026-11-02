@@ -499,6 +499,9 @@ async fn merge_parent(
     if fix_pending(ctx, item, parent, sha).await? {
         return Ok(());
     }
+    if held_for_review(ctx, item, parent, child_head).await? {
+        return Ok(());
+    }
     let Some(mark) = mark_current(ctx, item, run).await? else {
         return Ok(());
     };
@@ -542,6 +545,43 @@ pub(super) async fn mark_current(
         return Ok(None);
     }
     Ok(ctx.collecting.mark(item.id.clone()))
+}
+
+/// Whether `item` carries a reviewed pull request through its stack, so no
+/// parent is merged into its branch in place: only a delivery proves such a
+/// merge brings no unreviewed commit. Told once per pull request head.
+pub(super) async fn held_for_review(
+    ctx: &DaemonContext,
+    item: &QueueItem,
+    parent: &mut StackParent,
+    child_head: Option<&str>,
+) -> Result<bool, ArchonError> {
+    assert_eq!(parent.item, item.id, "one of the item's own parents");
+    let reviewed = super::onto::reviewed_ancestry(&*ctx.store.lock().await, item)?;
+    let Some(reviewed) = reviewed else {
+        return Ok(false);
+    };
+    assert!(
+        reviewed.review_only,
+        "only a review item passes a pull request"
+    );
+    let at = child_head.unwrap_or_default();
+    if parent.needs_attention.as_deref() == Some(at) {
+        return Ok(true);
+    }
+    parent.needs_attention = Some(at.to_owned());
+    let text = format!(
+        "Item {id}'s parent {} moved or merged, but {id} is stacked on the reviewed pull \
+         request {}, so Archon merges nothing into its branch in place and leaves it as \
+         delivered. Once none of its parents is open, `archon queue refresh {id}` restacks \
+         it through a delivery that proves it carries the reviewed commits unchanged",
+        parent.parent_item,
+        reviewed.pr.url(),
+        id = item.id
+    );
+    super::finish::notify(ctx, NotificationKind::Blocker, &text, Some(&item.id), None).await?;
+    ctx.store.lock().await.save_stack_parent(parent)?;
+    Ok(true)
 }
 
 /// Tell the operator `origin` refused the restacked branch; this is said once

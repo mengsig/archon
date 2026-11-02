@@ -562,6 +562,36 @@ impl AetherClient {
         Ok(events)
     }
 
+    /// The newest `limit` events matching `query`, newest first and
+    /// undecoded, for readers of event types Archon does not decode.
+    pub async fn latest_events_raw(
+        &self,
+        query: EventQuery,
+        limit: usize,
+    ) -> Result<Vec<serde_json::Value>, ArchonError> {
+        assert!(limit > 0, "a page holds at least one event");
+        assert!(
+            query.before.is_none(),
+            "the latest page is read from the top"
+        );
+        let command = Command::GetEvents {
+            after: 0,
+            limit,
+            query: EventQuery {
+                before: Some(u64::MAX),
+                ..query
+            },
+        };
+        let raw: Vec<serde_json::Value> = self.typed(command, "events").await?;
+        if raw.len() > limit {
+            return Err(ArchonError::Protocol(format!(
+                "`events` reply holds {} events, more than the {limit} asked for",
+                raw.len()
+            )));
+        }
+        Ok(raw)
+    }
+
     /// The span of deleted history that a replay of `query` after `after`
     /// would reach within its first page, read from Aether's refusal: by the
     /// `history_expired` code when the daemon lists that feature, else by

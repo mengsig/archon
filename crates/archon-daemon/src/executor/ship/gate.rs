@@ -2,9 +2,10 @@
 //! runs the repository's trusted fast check on the committed change, for
 //! the units the change affects. The check runs off the executor's path,
 //! one at a time on this host; the delivery waits for its verdict, then
-//! proves the worktree again before anything leaves it.
+//! proves the worktree again before anything leaves it. A pass that proof
+//! confirmed is kept, so the same command on the same tree is not run again.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -33,6 +34,16 @@ pub(super) struct Check {
 pub(super) struct Verdict {
     pub tree: String,
     pub refusal: Option<String>,
+    /// The pass this check earned by running, for [`Gates::keep`] once the
+    /// delivery proved the worktree still holds `tree`.
+    pub unproved: Option<Pass>,
+}
+
+/// The expanded `command` ran and passed on `tree`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Pass {
+    tree: String,
+    command: String,
 }
 
 /// Where a run's gate stands, for its delivery.
@@ -44,11 +55,13 @@ pub(super) enum Status {
     Finished(Result<Verdict, ArchonError>),
 }
 
-/// Every run's gate, and the one slot their checks share.
+/// Every run's gate, the one slot their checks share, and the proved passes:
+/// the expanded commands that passed on each tree, kept until archond restarts.
 #[derive(Debug)]
 pub struct Gates {
     by_run: BTreeMap<PipelineRunId, Gate>,
     slot: Arc<Semaphore>,
+    passed: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl Default for Gates {
@@ -56,6 +69,7 @@ impl Default for Gates {
         Self {
             by_run: BTreeMap::new(),
             slot: Arc::new(Semaphore::new(1)),
+            passed: BTreeMap::new(),
         }
     }
 }
@@ -90,9 +104,10 @@ impl Gates {
         );
         let (sender, result) = oneshot::channel();
         let slot = Arc::clone(&self.slot);
+        let proved = self.passed.get(&check.tree).cloned().unwrap_or_default();
         let id = run.clone();
         let task = tokio::spawn(async move {
-            let verdict = gated(&id, check, slot).await;
+            let verdict = gated(&id, check, slot, &proved).await;
             // A gate forgotten meanwhile dropped the receiver: nobody waits.
             let _ = sender.send(verdict);
             wake.notify_one();
@@ -131,6 +146,16 @@ impl Gates {
         }
     }
 
+    /// Keep `pass` for later checks of its tree: only once the delivery proved
+    /// the worktree still holds that tree after the check ran.
+    pub(super) fn keep(&mut self, pass: Pass) {
+        assert!(!pass.tree.is_empty(), "a pass is on a tree");
+        assert!(!pass.command.trim().is_empty(), "a pass is of a command");
+        let commands = self.passed.entry(pass.tree).or_default();
+        commands.insert(pass.command);
+        debug_assert!(!commands.is_empty());
+    }
+
     /// Drop `run`'s gate, killing a check still running.
     pub(crate) fn forget(&mut self, run: &PipelineRunId) {
         self.by_run.remove(run);
@@ -138,11 +163,13 @@ impl Gates {
     }
 }
 
-/// Run `check` once the host's slot is free.
+/// Run `check` once the host's slot is free, unless its expanded command is
+/// one of the commands `proved` to pass on its tree.
 async fn gated(
     run: &PipelineRunId,
     check: Check,
     slot: Arc<Semaphore>,
+    proved: &BTreeSet<String>,
 ) -> Result<Verdict, ArchonError> {
     let _permit = slot
         .acquire_owned()
@@ -156,6 +183,7 @@ async fn gated(
             return Ok(Verdict {
                 tree: check.tree,
                 refusal: None,
+                unproved: None,
             });
         }
         Err(why) => {
@@ -167,16 +195,33 @@ async fn gated(
             return Ok(Verdict {
                 tree: check.tree,
                 refusal: Some(refusal),
+                unproved: None,
             });
         }
     };
+    if proved.contains(&command) {
+        tracing::info!(%run, %command, tree = %check.tree, "the fast check passed on this tree before; reused");
+        return Ok(Verdict {
+            tree: check.tree,
+            refusal: None,
+            unproved: None,
+        });
+    }
+    tracing::info!(%run, %command, units = ?affected.units, "running the fast check");
+    ran(run, check, command).await
+}
+
+/// Run the expanded `command` on `check`'s worktree; a pass is the verdict's
+/// unproved one until the delivery proves the tree again.
+async fn ran(run: &PipelineRunId, check: Check, command: String) -> Result<Verdict, ArchonError> {
+    assert!(!command.trim().is_empty(), "an expanded check is a command");
+    assert!(!check.tree.is_empty(), "a check is of a tree");
     let envs: Vec<(&str, &std::path::Path)> = check
         .target_dir
         .as_deref()
         .map(|dir| ("CARGO_TARGET_DIR", dir))
         .into_iter()
         .collect();
-    tracing::info!(%run, %command, units = ?affected.units, "running the fast check");
     let ran = fast_check::run(&command, &check.workspace, &envs, fast_check::RUN_LIMIT).await?;
     let refusal = match &ran.ended {
         fast_check::Ended::Passed => None,
@@ -187,9 +232,14 @@ async fn gated(
         )),
     };
     tracing::info!(%run, %command, passed = refusal.is_none(), "fast check ended");
+    let unproved = refusal.is_none().then(|| Pass {
+        tree: check.tree.clone(),
+        command,
+    });
     Ok(Verdict {
         tree: check.tree,
         refusal,
+        unproved,
     })
 }
 

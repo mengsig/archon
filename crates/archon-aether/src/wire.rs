@@ -463,6 +463,10 @@ pub struct AgentQuery {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub struct EventQuery {
+    /// `get_events` only: newest first, below this seq (`u64::MAX` for the
+    /// latest). Unset reads oldest first after `after`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub before: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<AetherAgentId>,
     #[serde(skip_serializing_if = "Option::is_none")]

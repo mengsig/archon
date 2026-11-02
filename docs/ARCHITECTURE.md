@@ -147,7 +147,7 @@ protocol 17 and later alone do not imply support.
 
 ```json
 {"req":1,"cmd":"hello","protocol_version":24,"client_name":"archon",
- "client_version":"1.4.9","features":["history_expired"]}
+ "client_version":"1.4.10","features":["history_expired"]}
 ```
 
 The reply is `Welcome {protocol_version, daemon_version, instance_id,
@@ -1380,7 +1380,9 @@ The legal edges are implemented in `QueueState::can_transition_to`:
   pull request it has, and the retry is a `retry_after_done` correction of
   the run that had passed (§19), written with the transition. A dependent
   still queued waits for it to succeed again; one that already started goes
-  on. Until it is retried, a `succeeded` item takes no steer or update.
+  on. A `succeeded` review-only item (§18.6) that any item depends on is
+  never retried, as a stack on it ships on the strength of its pass. Until
+  it is retried, a `succeeded` item takes no steer or update.
 
 When a dependency fails or is cancelled, its dependents move to `blocked` and
 the orchestrator gets an `item_blocked` trigger. When a dependency is retried,
@@ -1432,8 +1434,17 @@ in a new worktree off the base branch (§13).
 - `timed_out`: Archon sets the Aether `deadline`, and a daemon timer also
   cancels the agent at `deadline + 60s` if Aether has not settled it. An
   `agent.failed` whose event time is at or past the deadline (Aether's own
-  `deadline of …` stop) settles `timed_out` too, never an `infra` re-spawn;
-  one stamped earlier stays `infra` however late Archon receives it.
+  `deadline of …` stop) is no `infra` failure: the slot's first such stop
+  wakes the same agent in place with a 10-minute deadline of its own, told
+  to commit what works and report, and spends no `limits.infra_retries`.
+  The run it was woken from settles `timed_out`, marked as no failure of
+  the model; the woken run settles on the agent's answer. A refused wake,
+  a second stop at a deadline, or any failure of the woken run settles for
+  good, with no fresh agent. One stamped earlier stays `infra` however late
+  Archon receives it. With a fifth of a stage's `timeout_minutes` left
+  before its stored deadline, the sweep sends the running agent one warning
+  to commit what works and report (a run woken at its deadline gets none);
+  a send Aether did not answer is repeated by the next sweep.
   After the cancel (and for an agent Aether forgot) the sweep reads the
   task: if the agent had already completed or failed it, that result settles
   the stage instead, so a verdict whose earlier settle failed is not lost to
@@ -1472,9 +1483,15 @@ in a new worktree off the base branch (§13).
   agent. The wake is tried once per slot,
   and a wake that took counts apart from the cold retries: it does not use
   up the slot's re-spawn. A failure whose error names a cause that clears
-  with time (an unavailable or overloaded engine, a rate or usage limit, a
-  refused login or credentials) is waited out: the retry is issued 5 min
-  later, and its deadline moves by the same wait.
+  with time (an unavailable or overloaded engine, a rate or usage limit) is
+  waited out: the retry is issued 5 min later, and its deadline moves by the
+  same wait. A failure on the engine's login (`Auth:`, `authenticat`,
+  `unauthorized`, `not logged in`, `login expired`, `oauth`, `credential`)
+  holds the engine instead (§7.3): its replacement wakes the same agent
+  once the engine logs in again, spends no `limits.infra_retries` and is
+  not the slot's one infrastructure wake. A slot is woken so up to 48
+  times; past that the failure is final. Such failures are no model
+  evidence: `model_evidence` leaves them out.
 - **Stage watchdog.** Each sweep checks every `running` stage's agent tree.
   A tree is stalled when Aether holds one of its agents `running`, none of
   its engines is alive, and no Aether event of the tree (archond's stream or
@@ -1517,6 +1534,28 @@ in a new worktree off the base branch (§13).
   stall is final. The retry shows in the feed, and the failure in the
   stage's error in `get_item` and the item's outcome. `stall_minutes = 0`
   turns the watchdog off.
+  A lead stuck in one tool call keeps its engine alive and its lease
+  renewed, so the silence above never comes. Once archond's own stream has
+  heard nothing of a `running` tree that nothing holds for
+  `limits.hung_tool_minutes` (default 20; mail delivered to an agent is
+  not activity), archond reads the lead's newest tool, message and turn
+  events from Aether (`get_events` newest first). A call with no outcome
+  in the current turn and no event of the lead since for that long, or
+  `limits.hung_check_minutes` (default 60) when its command is a known long
+  check (`make ci`, `cargo test`, `pytest`, `gh run watch`,
+  `gh pr checks --watch`, ...), is hung. Calls to Aether's
+  own tools (`wait_for`, `delegate`, `ask_user`) never are, and a kept agent
+  resumed for a fix (§6.7) is never interrupted, as its turn's end is its
+  answer. The first hang of a stage run interrupts the lead's turn
+  (Aether's `interrupt`) and sends it a note naming the call and saying to
+  continue; the stage run's mark is written first, so a failed write wakes
+  nothing, and a corrupt mark counts as one earlier wake of that stage run
+  alone. A note that cannot be sent stops the stage. A hang seen at
+  least the limit after that interrupt stops the stage like a stall
+  ("agent stalled: tool call … hung again …"), so `limits.infra_retries`
+  retries it; neither step is model evidence. Each step posts a stage
+  `info` message to the orchestrator. `hung_tool_minutes = 0` turns this
+  check off, as does `stall_minutes = 0`.
 - A stage that failed on a full disk gets up to 5 re-spawns of its own.
   Its error text must say so, as above, and come from Aether's
   infrastructure (`infra`). A failure the agent reported itself counts only
@@ -2007,6 +2046,26 @@ anything waits for it. The pass stops after 30 seconds so it does not hold
 the dispatch pass up; the worktree it was collecting is finished off the
 dispatcher, which that sweep pokes as it ends, and a later pass goes on.
 
+**Engine-login hold.** A stage agent that fails as infrastructure on its
+engine's login (§6.3) holds that engine, daemon-wide, and posts one
+`Blocker` naming the engine and the error. While it holds, no
+never-sent spawn on that engine is issued: the failed stage's replacement,
+which wakes the same agent, and every fresh stage on it stay `spawning`.
+Spawns that may already have reached Aether, those of finished runs, and
+every other engine's go on. Each dispatch pass probes a held engine whose
+probe is due through Aether's `auth_status`, first a minute after the hold
+starts, then waiting twice as long each time up to 30 minutes; a probe
+Aether does not answer within 10 s counts as failed. Once one finds the
+engine logged in, the spawns that waited get their stored deadline moved by
+the time they waited (and the woken agent is told the new one), the hold
+lifts with one `System` line, and the sweep that follows wakes each agent
+once with Aether's `wake_agent`; one Aether refuses gets a fresh agent. A
+hold that starts again within 10 minutes of a lift (the probe found the
+login, yet the woken agents failed on it again, as in a provider-side
+outage) is a relapse: it keeps the longer wait and posts no new `Blocker`.
+The holds are kept in `kv.engine_login_holds`, so a restart holds the same
+engines again, with no new `Blocker`, and probes them a minute later.
+
 The daemon re-plans on: enqueue, update, cancel and retry of an item, a
 stage settled, a gate answered, a run finished, an agent's turn or life
 ended (§6.3), caps or pause changed, a gc mark gone, a (re)connect to
@@ -2366,7 +2425,14 @@ its verdict on the commits it read:
 
 Where Aether auto-completes a Codex reviewer from its final text, the verdict
 object arrives as the whole `summary` with no `structured`, alone or as the
-`structured` of a written-out `complete_task` call (`{summary, structured}`);
+`structured` of a written-out `complete_task` call (`{summary, structured}`),
+or, with no fenced block, opening the summary on lines of its own with text
+after it that holds no `{` (`run::leading_json`). Text after such an object
+that states a verdict takes a reviewer's pass back as text after a `VERDICT:`
+line does (`Verdict::json_taken_back`; a stage verdict is never read from that
+JSON, so it is not checked there). A `head` or `base` the JSON leaves out or
+null comes from a `structured` without a verdict, else from the summary's
+`head:`/`base:` lines (`review::Verdict::read_json`), so a delta read stays one.
 Archon reads it only then, and a `structured` that states a verdict always
 wins, though a structured pass whose summary's `VERDICT:` line or JSON
 verdict does not pass is refused. A `VERDICT:` line beside `head:` and `base:` lines is read too, each
@@ -2402,12 +2468,29 @@ are stored as `review.implicit_reviewer_agents`. Archon reads them only for
 a lead no other stage run of the run names (a kept agent's earlier reviews
 cannot be told from this attempt's), only once none of its direct children
 is still live, and a result Aether cannot show refuses the review rather
-than being left out. A pass counts when it read the
+than being left out. Whatever the record names, every fail returned by a
+reviewer of the stage attempt (from the review-round tally, so a resumed
+lead's earlier attempts are not read) stands as a named fail would: the
+review is refused, with the reason, until a counted pass reads past it. A
+fail listing only follow-ups reads as a pass, unless another list in its
+result (`structured` or summary JSON) holds a blocking finding. A pass counts when it read the
 branch head, or when a counted pass read every commit after its head
 (`base` at or before it). A fail never counts and must be followed by such
 a pass, or by a later fail that read every commit after its head and was
-itself followed so (a fix of a fix, each reviewed as a delta). Counted
-passes below the level fail the run with the reasons. When
+itself followed so (a fix of a fix, each reviewed as a delta). The level
+counts whole-change reads on the branch, each a pass that holds or an
+answered fail, and one named pass must have read the head: after a fix, an
+anchored delta pass of the final head completes the review. The record
+names the named passes and the named whole-change fails they answered, so
+a strict review whose first reads failed still names three; a review whose
+named reads make a shorter record is refused, as is one with fewer reads.
+Fewer fail the run with the reasons. A reviewer's `fail` whose findings are all marked
+`"blocking": false` reads as a pass (`archon_pipeline::review`), and the
+review rounds of `executor/review/rounds.rs` count only blocking fails: at
+`REVIEW_ROUND_CAP` (three) the stage is cancelled and fails with an
+`ESCALATE:` error, marked first like a stall (§16) so its cancel does not
+settle it as cancelled, and retried by the next sweep when the cancel goes
+unanswered. When
 the same result is the ship record (§8.7), the branch head must hold the
 record's `tree`, the tree delivery later checks: what ships is what was read.
 
@@ -2471,6 +2554,7 @@ literal `{{`.
 | `agent-testing` | plan → exercise (fan_out 2, report) → report | Agents drive the product as a user would and report defects. workspace = worktree |
 | `code-audit` | scope (work) → audit (fan_out 3, report) → report | Security, reliability and maintainability lenses produce HTML with high/critical issue drafts. No code changes or ship. workspace = worktree, tier = strong, independent_reviewers. Use `ask` for one question. |
 | `e2e-testing` | setup → e2e (test gate, goto setup ×1) → report | The report stage produces HTML and screenshots under `.archon/reports/` for Lavish. |
+| `review` | review (work, `allow_delegation`, holds the review) | tier = balanced, independent_reviewers. Queued `onto` someone else's pull request, a fork's included; no `[pipeline.ship]`, so it commits and pushes nothing. Its lead has the frozen head reviewed at the item's review level, `standard` unless the item asks (§8.2); a pass lets the operator merge that pull request at that head (§18.6). |
 | `ask` | answer | workspace = repo-readonly (a disposable snapshot of the repository's `HEAD` commit, §13), requires_repo = false, tier = balanced |
 | `errand` | errand (report) | workspace = scratch, requires_repo = false, tier = balanced. A small job answered in its summary and optionally as one self-contained Lavish page. No repository changes or outward side effects; read an attached checkout only, and run code on a throwaway copy in scratch. Other files are temporary and collected after `worktrees.gc_after` (default 7d; §13.2). |
 | `design-doc` | research → critique (1, all_pass, goto research ×2) → report (HTML design/RFC) | workspace = worktree, requires_repo = true, tier = strong, independent_reviewers. Before a large or ambiguous change; no product-code changes or shipping. Use `proposal: lavish` for design and implementation in one item. |
@@ -2594,10 +2678,12 @@ unreadable), then the summary's last
 `VERDICT:` line that starts at column 0 outside block quotes (a line lazily
 continuing one included) and fences, in any letter case and through
 markdown emphasis. A verdict word followed by any word, in parentheses
-too, before the first `—`, `:`, `;`, `.`, ` - ` or line break is a choice or
-a condition and reads as `Unknown`, as does a pass explained in any word but
-a few plain success words and numbers, or a summary's pass line followed by
-any line but `head:` and `base:`. A structured pass beside a summary
+too, before the first `—`, `:`, `;`, `.`, `!`, ` - ` or line break is a
+choice or a condition and reads as `Unknown`, as does a pass that its
+explanation, or a summary line after it but `head:` and `base:`, takes back
+with a fail word, a second `verdict`, a negation or condition word, an
+undenied blocker or regression, or a `no` before anything but a finding
+(`holds_back`). A structured pass beside a summary
 `VERDICT:` line or JSON `verdict`, `result` or `status` that does not pass
 is `Unknown`, as is any pass beside a `blocking`, `blocker`, `critical` or
 `high` finding in `structured` or the summary's JSON
@@ -2665,7 +2751,10 @@ table and delivers it off every lock:
 2. **Prove the worktree** (`ship::checks`). It is the worktree git
    registered for the run, not a symlink or a redirected `.git` (§13.1); it
    is on the run branch; no tracked file is modified or staged; `HEAD^{tree}`
-   equals the record's `tree`; the branch is ahead of its base; and every
+   equals the record's `tree`; the branch is ahead of its base, counted
+   from the recorded fork (`base_commit`) or a newer `origin/<base>` the
+   branch holds, the local base only without a recorded fork, so a stale
+   local base adds none (#341); and every
    commit that neither the base nor a remote holds has an author and a
    committer e-mail of the repository's recorded identity or
    `archon@localhost`, which archond's own merges use when git has none. The
@@ -2712,7 +2801,11 @@ table and delivers it off every lock:
    kept for the tree it checked, wakes the dispatcher. The worktree is then
    proved again, so a check that changed it is refused, before the verdict
    is read: a failed check refuses the item with the command, how it ended
-   and the last lines of its output. Restarting archond runs it again.
+   and the last lines of its output. Only once that proof held is a pass
+   kept, by the tree id and the expanded command, in memory: a later
+   delivery whose tree and expanded command match reuses it without
+   running anything. A failure, or a pass whose proof failed, is never
+   kept. Restarting archond forgets every pass and runs the check again.
 3. **Push**, `pr` mode only: `git push --porcelain <origin url>
    <commit>:refs/heads/<branch>` of the checked commit, not the branch tip,
    run from the repository's shadow (§13.4), so no hook, filter or ssh
@@ -3631,8 +3724,17 @@ object per line under `--json`).
   `pr` mode a new
   branch forks from `origin`'s head of the base, fetched through the shadow
   just before (`ls-remote`, then the objects), with
-  `refs/remotes/origin/<base>` moved to it; the operator's local base branch
-  and checkout are never touched. A repository without `origin` forks from
+  `refs/remotes/origin/<base>` moved to it. The operator's local base branch
+  is then fast-forwarded to it when it is strictly behind (#341), as it is
+  again at each mirror refresh (§13.3), so the mirrors follow the fresh base:
+  by `update-ref` with its old value when no work tree has it checked out,
+  else by `git merge --ff-only` in that work tree, only when it holds no
+  change to a tracked file and no untracked or ignored file where the move
+  writes, and is still on the base at the old commit just before the merge.
+  A base that is ahead or diverged, being rebased or bisected, or checked
+  out with such a change stays where it is, and the
+  operator hears why once (a `decision`); nothing is reset, rebased, stashed
+  or forced. A repository without `origin` forks from
   the local base silently; a fetch that fails forks from it with a warning
   (a `decision` in the item's feed), and `refresh_item` can merge the newer
   base in later. The run's `base_branch` stays the branch name, and its
@@ -3688,18 +3790,58 @@ object per line under `--json`).
   head (`origin`'s in `pr` mode, else the local branch) and queues a new
   item, titled `Refresh <item> onto <base>`, that runs the owner's pipeline
   on the owner's branch and worktree like a restack fix (§8.8). Proposal and
-  report are always off; review, merge and tools are retained. The owner's
+  report are always off; merge and tools are retained. The owner's
   model plan, model reasons and stage timeouts are not: the refresh takes the
   `model_plan`, `model_reasons` and `stage_timeouts` the request gives, shaped
-  and checked as in `enqueue`, and the stage defaults within model policy for
-  the rest. The plan is validated before enqueue.
+  and checked as in `enqueue`, the stage defaults within model policy for the
+  rest, and `[limits] refresh_stage_timeout_minutes` (default 30) for every
+  stage the request gives no timeout. The plan is validated before enqueue.
+  Its brief asks for the merge only: resolve, keep the checks green, change
+  nothing else and report other findings as follow-ups; the owner's brief
+  follows as quoted, read-only context. When the branch head it merges into
+  is the commit a succeeded item on the branch (the owner or a fix of it)
+  shipped as its ship record, which its review gate held (every ship record
+  of that run naming the same commit and the head's own tree, the item owing
+  a review and no agent ship stage having run, and the run's verified review
+  naming that commit and tree), and the
+  pipeline hands in a ship record archond delivers (`[pipeline.ship]`, never
+  an agent's own ship stage), Archon records
+  that head, previews the merge with `git merge-tree` and sets the refresh's
+  review level from it: `none` for a clean merge or one conflicting only in
+  changelogs or in top-level or `docs/` prose (`.md`, `.markdown`, `.rst`,
+  `.adoc`) and raster images, never scripts, configuration or SVG, where that
+  review stands;
+  `standard` (one reviewer) for a code conflict, unless the owner's level is
+  `none`. A read from the recorded head (the merge's first parent) covers the
+  whole refresh, so its reviewer reads the resolution
+  (`git show --remerge-diff`) and later commits only. Any other branch head
+  (a failed or cancelled owner, or commits no review passed) keeps the
+  owner's level, read whole from the base. A refresh whose review was
+  dropped fails at its record stage if the branch changed code beyond git's
+  own merge: each merge's remerge diff and every other new commit, side
+  branches merged in included, must touch only those prose files (a rename
+  counts as both its paths), and none may be an octopus merge, whose
+  resolution git does not show; the checked `HEAD` must also be the ship
+  record's commit and tree, the tree archond delivers. The brief names the review scope the refresh
+  got: the resolution from the recorded head, or the whole change. A run's
+  verified review is what archond itself held at the review gate: when a
+  stage owing reviewers passes it, archond records the branch head the
+  counted passes were held to and that commit's tree (`kv`
+  `run_review:<run>`; a later pass of the run replaces it). A stage's own
+  review claim never counts, so a run whose ship stage owed no reviewer
+  (`performance`, `refactor`: their review is a stage of its own) or that
+  was recorded before archond kept this has none, and a refresh of its
+  branch keeps the owner's level. A refresh whose branch
+  already holds the base commit when it is dispatched (merged in after it
+  was queued) is cancelled at once, before any run, saying there was nothing
+  to merge.
   The run's base branch is retained separately from expiring prompt templates;
   older runs with neither use the repository's configured base, or require
   `archon repo set` when none is configured. Its agent
   merges that commit with `git merge`, resolves conflicts, commits and runs
-  the checks; its review must cover the change from the new merge base
-  (conflict resolutions included: the review fork of §8.2 counts `origin`'s
-  base), and it delivers into the same pull request. Delivery refuses until the branch
+  the checks; a review it owes covers the merge's resolution (or, as before,
+  the change from the new merge base: the review fork of §8.2 counts
+  `origin`'s base), and it delivers into the same pull request. Delivery refuses until the branch
   holds the fetched commit. A refresh is refused for an item that is not
   finished, is itself a fix, is stacked on an unmerged parent, has a
   restack fix or refresh pending, whose branch already holds the base head,
@@ -4767,7 +4909,7 @@ whichever is longest: feed rows the feed never shows, and settled items with
 their runs, stage runs, gates, run edits, pull request links, merge
 requests, stacks, dependencies, spend and the per-item `kv` families
 (`steers:`, `shape:`, `restack_fix:`, `restack_target:`,
-`learning/applied/<run>`, a `pr_settled:` no kept
+`learning/applied/<run>`, `run_review:<run>`, a `pr_settled:` no kept
 run shares, `authority_confirmation:` of a closed question). Outcomes and lesson uses
 stay for learning (store schema 18 dropped their keys to runs and items; a
 reshaped run's outcome keeps a `learning/reshaped/<run>` mark). An item
@@ -5233,11 +5375,83 @@ state,isDraft,headRefOid,baseRefName,mergeable,statusCheckRollup` shows:
 
 - The item succeeded and archond delivered its pull request (§8.7).
 - The pull request is open, not a draft, and `MERGEABLE`.
-- Its head is the commit the run's checks and review passed.
+- Its head is the commit the run's checks and review passed, or a later
+  head that review carries over to: on the item's own pull request, every
+  commit after the reviewed one is a merge, on the first-parent chain, of
+  a commit that GitHub's base (`baseRefOid`, fetched by id, as is the head
+  from `refs/pull/<n>/head`) holds, whose tree is either `git merge-tree`'s
+  clean merge of its parents or, for a squash or rebase landing of a stack
+  parent merged over (§8.8), its first parent's own tree when the merged
+  commit has exactly the tree of a recorded stack parent head
+  (`parent_sha`) the reviewed commit holds: landing it then adds only the
+  change reviewed on top of that head. A tree that merely matches another
+  commit is no proof. Any other commit, a resolved conflict or an added
+  change keeps the refusal, naming why. The request records the reviewed commit and why as
+  `carried`, its question and result say so, and the merge is pinned to the
+  new head. A merge the operator confirmed stays at the head the question
+  named: a later one is refused, and asked again.
 - Its base is the item's base, and no stack parent is unmerged. A child
   restacked after its parent merged has a new head, so it needs a retry.
 - Every check is green, unless the operator acknowledged them with
   `--ignore-checks` or `yes ignore-checks`.
+
+**Another's pull request.** An item delivered `onto` an owner's pull
+request is never merged: it carries commits Archon never reviewed. A
+pull request Archon did not open, a fork's included, merges only through a
+succeeded item of a pipeline that pushes nothing (the built-in `review`)
+queued `onto` it. At enqueue such an item freezes the pull request with
+`review_only` set, which alone admits a fork or a repository `gh` cannot
+push to; its branch starts at the frozen head (a fork's fetched from
+`refs/pull/<n>/head`) and its review covers the whole pull request from its
+merge base, the fork point with the base commit GitHub shows for that
+pull request (`baseRefOid`), fetched by id: no local ref, tracking ref or
+remote URL moves it. A pull request retargeted since enqueue, so that
+GitHub shows a base branch other than the frozen one, passes nothing, nor
+does a pass whose reviewer names no base it read from.
+When the review is counted
+(§8.2), archond records the branch head it passed as `reviewed_head`, and
+the fork its reviewers read from as `reviewed_fork`, in the stage's
+structured result, keys no agent can write; a branch moved off the frozen
+head is refused, and a pass with no `reviewed_fork` counts for nothing. A merge of that item then needs, besides
+the above:
+
+- a recorded `reviewed_head` equal to the frozen head, and GitHub's head
+  still at it: a head that moved since is refused naming both commits;
+- every check green: `--ignore-checks`, `yes ignore-checks` and
+  `merge_waive_checks` do not apply, and `merge = auto` never does. The
+  checks are read again after the merge method, as the last read before
+  `gh pr merge`. Known limit: GitHub cannot pin check states to a merge,
+  so a check that turns red in the round trip after that read is not
+  seen (Archon's own merges share this window). Branch protection or a
+  ruleset with required checks closes it;
+- the base commit GitHub shows for the pull request, fetched by id, still
+  holding `reviewed_fork`: a base force-pushed back or rewritten past
+  commits of the pull request after the review would bring them in
+  unread, so it is refused, naming both commits. Known limit: `gh pr
+  merge` pins only the head, so a base rewritten in the round trip after
+  that last read is not seen; branch protection that forbids force-pushes
+  to the base closes it.
+
+The method is chosen as for any merge, and no author is passed, so GitHub
+credits the pull request's author. An item that `depends_on` such a review
+item starts from its reviewed head and opens its own pull request into
+that pull request's base; at ship, `gh` must show the reviewed pull request
+open, or merged, at that head, which becomes the floor of the attribution
+and foreign commit checks (§8.7): those commits must be ancestors of the
+item's head, unchanged, and every other foreign commit is still refused. Past that
+floor only commits in the base commit GitHub shows for the reviewed pull
+request (`baseRefOid`), fetched by id at delivery, are exempt, and only
+while it still holds `reviewed_fork`: no local or tracking ref counts, nor
+a remote URL or rewrite, nor a stack parent's branch. Base commits newer
+than GitHub's `baseRefOid` are refused until GitHub shows them. A
+refresh of such an item, or a fix of its stack, keeps that floor, and so
+does an item stacked on it, at any depth, through `depends_on`. The
+restack sweep (§8.8) never merges a moved or merged parent into such an
+item's branch in place, nor does a refresh merge a landed parent there:
+the branch stays as delivered, the operator is told once per head, and once
+no parent is open `archon queue refresh` restacks it through a refresh
+item whose delivery checks that floor. Nothing is ever pushed to the
+reviewed pull request's branch.
 
 **The merge.** A `merge_requests` row (store V13) is written before any
 GitHub write, and an item has at most one open. archond then runs `gh pr

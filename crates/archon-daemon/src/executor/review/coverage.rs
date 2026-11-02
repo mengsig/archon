@@ -1,10 +1,12 @@
 //! Whether reviewers' verdicts hold for the change as the run's branch holds
-//! it: a counted pass read the head itself, whole or as an anchored delta; a
+//! it: as many reviewers as the review level asks read the whole change, and
+//! one counted pass read the head itself, whole or as an anchored delta; a
 //! pass of an earlier head holds, as an anchor, while later passes read every
 //! commit since. A verdict on a commit the branch no longer holds (amended or
 //! rebased away) is superseded: it never counts, and a superseded fail stands
 //! until the counted passes read the whole change. A named delta read no named
 //! one anchors may rest on the lead's earlier reviewers, which Archon adds itself.
+//! A fail of the attempt the record leaves out stands as a named one would.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -24,6 +26,8 @@ pub(super) struct Placed {
     pub agent: String,
     /// The lead named it; an earlier reviewer it did not name only anchors.
     pub named: bool,
+    /// An unnamed fail of this attempt: it stands until answered.
+    pub left_out: bool,
     pub pass: bool,
     pub head: String,
     /// Where the diff it read starts; `None` when it read the whole change.
@@ -69,22 +73,37 @@ pub(super) struct Base<'a> {
     /// The frozen pull request head an `onto` item's branch was forked at: the
     /// change is what the item added on top of it, not the pull request.
     pub onto_head: Option<&'a str>,
+    /// A refresh's branch head before its merge: the change is the merge's
+    /// resolution and what follows, so a read from there is whole.
+    pub merged_from: Option<&'a str>,
 }
 
-/// The branch head and each verdict on its commits, `named` first, or why a named one is
-/// not on the branch (an `earlier` one is left out). `base` gives the fork point.
+/// What a reviewer that read only the base branch is refused for.
+const READ_THE_BASE: &str = "read the base branch, not the change";
+
+/// The verdicts a review is held to: the reviewers the lead `named`, its
+/// `earlier` ones that may anchor them, and the attempt's fails it `left_out`.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Verdicts<'a> {
+    pub named: &'a [(String, Verdict)],
+    pub earlier: &'a [(String, Verdict)],
+    pub left_out: &'a [(String, Verdict)],
+}
+
+/// The branch head and each verdict on its commits, `named` first, or why a named or
+/// left-out one is not on the branch (an `earlier` one is dropped). `base` gives the fork.
 pub(super) fn place(
     history: &mut History,
     base: Base,
-    named: &[(String, Verdict)],
-    earlier: &[(String, Verdict)],
+    verdicts: Verdicts,
 ) -> Result<Result<(String, Vec<Placed>), String>, ArchonError> {
     let dir = history.dir;
     let Some(head) = worktree::commit_id(dir, "HEAD")? else {
         return Ok(Err("the run's workspace has no commit to review".into()));
     };
     let forks = fork_points(dir, base, &head)?;
-    let mut placed = Vec::with_capacity(named.len() + earlier.len());
+    let Verdicts { named, .. } = verdicts;
+    let mut placed = Vec::with_capacity(named.len() + verdicts.earlier.len());
     for (agent, verdict) in named {
         match place_one(history, &head, &forks, agent, verdict)? {
             Ok(read) => placed.push(read),
@@ -92,8 +111,36 @@ pub(super) fn place(
         }
     }
     assert_eq!(placed.len(), named.len(), "every named verdict is placed");
-    for (agent, verdict) in earlier {
-        match place_one(history, &head, &forks, agent, verdict)? {
+    if let Err(why) = place_unnamed(history, (&head, &forks), verdicts, &mut placed)? {
+        return Ok(Err(why));
+    }
+    assert!(
+        placed.iter().all(|read| is_commit_id(&read.head)),
+        "every placed head is a full commit id"
+    );
+    Ok(Ok((head, placed)))
+}
+
+/// Add the `earlier` and `left_out` verdicts to `placed` as unnamed reads, or say why a
+/// left-out fail is not on the branch; an earlier read that cannot be placed is dropped.
+fn place_unnamed(
+    history: &mut History,
+    (head, forks): (&str, &[String]),
+    verdicts: Verdicts,
+    placed: &mut Vec<Placed>,
+) -> Result<Result<(), String>, ArchonError> {
+    let Verdicts {
+        named,
+        earlier,
+        left_out,
+    } = verdicts;
+    let is_left_out = |agent: &str| left_out.iter().any(|(a, _)| a == agent);
+    assert!(
+        named.iter().all(|(agent, _)| !is_left_out(agent)),
+        "a named reviewer is not left out"
+    );
+    for (agent, verdict) in earlier.iter().filter(|(a, _)| !is_left_out(a)) {
+        match place_one(history, head, forks, agent, verdict)? {
             Ok(read) => placed.push(Placed {
                 named: false,
                 ..read
@@ -101,11 +148,27 @@ pub(super) fn place(
             Err(why) => tracing::debug!(%agent, %why, "an earlier reviewer anchors nothing"),
         }
     }
-    assert!(
-        placed.iter().all(|read| is_commit_id(&read.head)),
-        "every placed head is a full commit id"
-    );
-    Ok(Ok((head, placed)))
+    for (agent, verdict) in left_out {
+        assert!(!verdict.pass, "only a fail is left out");
+        match place_one(history, head, forks, agent, verdict)? {
+            Ok(read) => placed.push(Placed {
+                named: false,
+                left_out: true,
+                ..read
+            }),
+            // It judged the base before the change, not the change.
+            Err(why) if why == READ_THE_BASE => {
+                tracing::debug!(%agent, "a left-out fail of the base branch blocks nothing")
+            }
+            Err(why) => {
+                return Ok(Err(format!(
+                    "reviewer {agent}, which failed this attempt's change and which the \
+                     record leaves out, {why}"
+                )));
+            }
+        }
+    }
+    Ok(Ok(()))
 }
 
 /// Whether the branch at `head`, which the verdicts are held to, holds the
@@ -142,7 +205,28 @@ pub(super) fn holds_tree(
 /// when neither is there, so only a review stating no base reads the whole change.
 /// An `onto` item's change starts at its frozen head, which the branch holds; a
 /// newer base a refresh merged is a start too, as both hold the item's change.
+/// A refresh's change also starts at the branch head it merged into.
 fn fork_points(dir: &Path, base: Base, head: &str) -> Result<Vec<String>, ArchonError> {
+    let mut starts = base_starts(dir, base, head)?;
+    let Some(from) = base.merged_from else {
+        return Ok(starts);
+    };
+    let Some(from) = worktree::commit_id(dir, from)? else {
+        return Ok(starts);
+    };
+    assert!(
+        is_commit_id(&from),
+        "git names the merged-into head in full"
+    );
+    if !starts.contains(&from) && worktree::is_ancestor(dir, &from, head)? {
+        starts.push(from);
+    }
+    assert!(!starts.is_empty(), "the merged-into head is a start");
+    Ok(starts)
+}
+
+/// Where the change starts on the base branch, or at an `onto` item's frozen head.
+fn base_starts(dir: &Path, base: Base, head: &str) -> Result<Vec<String>, ArchonError> {
     let forks: Vec<String> = worktree::branch_fork(dir, base.branch, head)?
         .into_iter()
         .collect();
@@ -188,6 +272,7 @@ fn place_one(
     let placed = |head: String, base: Option<String>, superseded: bool| Placed {
         agent: agent.to_owned(),
         named: true,
+        left_out: false,
         pass: verdict.pass,
         head,
         base,
@@ -197,7 +282,7 @@ fn place_one(
         return Ok(Ok(placed(read, None, true)));
     }
     if forks.contains(&read) {
-        return Ok(Err("read the base branch, not the change".into()));
+        return Ok(Err(READ_THE_BASE.into()));
     }
     let Some(base) = &verdict.base else {
         return Ok(Ok(placed(read, None, false)));
@@ -231,11 +316,15 @@ fn place_one(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Held {
     pub passes: Vec<usize>,
+    /// The named whole-change reads that failed and whose findings were
+    /// fixed: the record names them beside the passes, as the level counts them.
+    pub answered: Vec<usize>,
     pub implicit: Vec<String>,
 }
 
 /// The `placed` passes that hold for the branch at `head`, or why the
-/// verdicts do not make `owed` named ones. A fail never counts.
+/// verdicts do not make a review: `owed` whole-change reads, every fail
+/// answered, left-out ones too, and a named pass of `head`. A fail never counts as a pass.
 pub(super) fn counted(
     history: &mut impl Ancestry,
     placed: &[Placed],
@@ -254,18 +343,27 @@ pub(super) fn counted(
         Err(why) => return Ok(Err(why)),
     };
     let reads: Vec<Placed> = in_play.iter().map(|i| placed[*i].clone()).collect();
-    let passes = match judged(history, &reads, head, owed)? {
-        Ok(passes) => passes,
+    let (passes, answered) = match judged(history, &reads, head, owed)? {
+        Ok(judged) => judged,
         Err(why) => return Ok(Err(why)),
     };
+    if let Some(why) = open_left_out(history, placed, &in_play, head)? {
+        return Ok(Err(why));
+    }
     let passes: Vec<usize> = passes.into_iter().map(|i| in_play[i]).collect();
+    let answered: Vec<usize> = answered.into_iter().map(|i| in_play[i]).collect();
     assert!(
-        passes.iter().all(|i| placed[*i].named),
-        "only a named pass counts toward the review"
+        passes.iter().chain(&answered).all(|i| placed[*i].named),
+        "only a named read counts toward the review"
+    );
+    assert!(
+        answered.iter().all(|i| !placed[*i].pass),
+        "an answered read is a fail"
     );
     let implicit = reads.into_iter().filter(|read| !read.named);
     Ok(Ok(Held {
         passes,
+        answered,
         implicit: implicit.map(|read| read.agent).collect(),
     }))
 }
@@ -342,20 +440,22 @@ fn unanchored(read: &Placed, earlier_read: bool) -> String {
     )
 }
 
+/// Indexes of the named passes that hold, then of the named whole-change
+/// fails they answered.
+type Judged = (Vec<usize>, Vec<usize>);
+
 /// Indexes of the anchored `reads` whose named passes hold for the branch
-/// at `head`, or why fewer than `owed` of them read `head` itself or a fail
-/// is unanswered. A pass of an earlier head holds only beside those.
+/// at `head`, and of the named whole-change fails they answered; or why none
+/// read `head` itself, a fail is unanswered, or fewer than `owed` read the
+/// whole change. A pass of an earlier head holds only beside one of `head`:
+/// after a fix, one anchored delta pass reaches it.
 fn judged(
     history: &mut impl Ancestry,
     reads: &[Placed],
     head: &str,
     owed: u32,
-) -> Result<Result<Vec<usize>, String>, ArchonError> {
-    let current = spread(
-        reads,
-        |_, read| read.pass && read.head == head,
-        |read, by| Ok(read.pass && !read.superseded && covers(history, by, &read.head)?),
-    )?;
+) -> Result<Result<Judged, String>, ArchonError> {
+    let current = holding_passes(history, reads, head)?;
     let passes: Vec<usize> = (0..reads.len())
         .filter(|i| current[*i] && reads[*i].named)
         .collect();
@@ -366,13 +466,106 @@ fn judged(
         "only a pass of a commit the branch holds counts"
     );
     let at_head = passes.iter().filter(|i| reads[**i].head == head).count();
-    if at_head < owed as usize {
-        return Ok(Err(short_of(reads, &current, head, at_head, owed)));
+    if at_head == 0 {
+        return Ok(Err(short_of(reads, &current, head)));
     }
     if let Some(why) = open_fail(history, reads, &current)? {
         return Ok(Err(why));
     }
-    Ok(Ok(passes))
+    let whole = whole_reads(reads, &current);
+    if whole.len() < owed as usize {
+        return Ok(Err(too_few_whole(reads, &current, whole.len(), owed)));
+    }
+    let answered: Vec<usize> = whole
+        .into_iter()
+        .filter(|i| reads[*i].named && !reads[*i].pass)
+        .collect();
+    let on_record = passes.len() + answered.len();
+    if on_record < owed as usize {
+        return Ok(Err(unnamed_whole(on_record, owed)));
+    }
+    Ok(Ok((passes, answered)))
+}
+
+/// For each of `reads`, whether it is a pass that holds for the branch at
+/// `head`: one of `head`, or one whose later commits a holding pass read.
+fn holding_passes(
+    history: &mut impl Ancestry,
+    reads: &[Placed],
+    head: &str,
+) -> Result<Vec<bool>, ArchonError> {
+    let current = spread(
+        reads,
+        |_, read| read.pass && read.head == head,
+        |read, by| Ok(read.pass && !read.superseded && covers(history, by, &read.head)?),
+    )?;
+    assert!(
+        reads
+            .iter()
+            .zip(&current)
+            .all(|(read, held)| read.pass || !held),
+        "a fail never holds as a pass"
+    );
+    Ok(current)
+}
+
+/// Why a left-out fail outside play still stands beside the `in_play` reads of
+/// `placed`, which [`judged`] found answered; `None` when every one is answered.
+fn open_left_out(
+    history: &mut impl Ancestry,
+    placed: &[Placed],
+    in_play: &[usize],
+    head: &str,
+) -> Result<Option<String>, ArchonError> {
+    let mut reads: Vec<Placed> = in_play.iter().map(|i| placed[*i].clone()).collect();
+    let outside = (0..placed.len()).filter(|i| placed[*i].left_out && !in_play.contains(i));
+    reads.extend(outside.map(|i| placed[i].clone()));
+    if reads.len() == in_play.len() {
+        return Ok(None);
+    }
+    assert!(
+        reads[in_play.len()..]
+            .iter()
+            .all(|read| read.left_out && !read.pass),
+        "only left-out fails are judged beside the review"
+    );
+    // The in-play fails are answered: a fail that stands is a left-out one.
+    let current = holding_passes(history, &reads, head)?;
+    let Some(why) = open_fail(history, &reads, &current)? else {
+        return Ok(None);
+    };
+    Ok(Some(format!(
+        "{why}: the record leaves that reviewer out, but a fail of this attempt stands \
+         until a pass reads past it"
+    )))
+}
+
+/// Indexes of the `reads` that read the whole change on the branch: a pass
+/// that holds, or a fail, which [`open_fail`] has already found answered.
+fn whole_reads(reads: &[Placed], current: &[bool]) -> Vec<usize> {
+    assert_eq!(reads.len(), current.len(), "one mark per read");
+    let whole: Vec<usize> = (0..reads.len())
+        .filter(|i| {
+            let read = &reads[*i];
+            read.base.is_none() && !read.superseded && (!read.pass || current[*i])
+        })
+        .collect();
+    assert!(
+        whole.iter().all(|i| reads[*i].base.is_none()),
+        "only a whole-change read counts"
+    );
+    whole
+}
+
+/// Why the record would name only `on_record` reviewers, though the level
+/// needs `owed`: the earlier whole-change reads coverage rests on are unnamed.
+fn unnamed_whole(on_record: usize, owed: u32) -> String {
+    assert!(on_record < owed as usize, "only a short record is refused");
+    format!(
+        "the reviewers named make a record of {on_record} and this item's review level \
+         needs {owed}: name every reviewer that read the whole change, passed or with its \
+         findings fixed, beside the pass of the head"
+    )
 }
 
 /// What `holds` answers: ancestry, asked of git or of a test's history.
@@ -509,21 +702,16 @@ fn reads_past(
     Ok(later && covers(history, by, &earlier.head)?)
 }
 
-/// Why only `counted` named passes read the branch `head`, naming each read
-/// that does not count: one that no longer holds, or a pass of an earlier head.
-fn short_of(placed: &[Placed], current: &[bool], head: &str, counted: usize, owed: u32) -> String {
-    assert!(counted < owed as usize, "only a short review is refused");
+/// Why no named pass read the branch `head`, naming each read that does
+/// not count: one that no longer holds, or a pass of an earlier head.
+fn short_of(placed: &[Placed], current: &[bool], head: &str) -> String {
     assert_eq!(placed.len(), current.len(), "one mark per read");
     let stale: Vec<String> = placed
         .iter()
         .zip(current)
         .filter(|(read, held)| !**held || (read.named && read.head != head))
         .map(|(read, held)| match (read.superseded, read.pass) {
-            (true, _) => format!(
-                "{} read {}, which the branch no longer holds",
-                read.agent,
-                short(&read.head)
-            ),
+            (true, _) => superseded(read),
             (false, true) if *held => format!(
                 "{} passed {}, before the head: it anchors a delta read from there but \
                  does not count",
@@ -538,15 +726,59 @@ fn short_of(placed: &[Placed], current: &[bool], head: &str, counted: usize, owe
             (false, false) => format!("{} failed {}", read.agent, short(&read.head)),
         })
         .collect();
+    assert!(
+        placed
+            .iter()
+            .all(|read| !read.pass || read.head != head || !read.named),
+        "only a review with no named pass of the head is short"
+    );
     let mut why = format!(
-        "{counted} of the reviewers named passed the branch head {}, and this item's \
-         review level needs {owed}, each a different agent",
+        "0 of the reviewers named passed the branch head {}, whole or as a delta from a \
+         commit a named reviewer read the change up to, and the review needs one",
         short(head)
     );
     if !stale.is_empty() {
         why.push_str(&format!(" ({})", stale.join("; ")));
     }
     why
+}
+
+/// Why only `whole` of `placed` read the whole change while `owed` must,
+/// naming each whole read that does not count.
+fn too_few_whole(placed: &[Placed], current: &[bool], whole: usize, owed: u32) -> String {
+    assert!(whole < owed as usize, "only a short review is refused");
+    assert_eq!(placed.len(), current.len(), "one mark per read");
+    let stale: Vec<String> = placed
+        .iter()
+        .zip(current)
+        .filter(|(read, held)| read.base.is_none() && (read.superseded || (read.pass && !**held)))
+        .map(|(read, _)| match read.superseded {
+            true => superseded(read),
+            false => format!(
+                "{} passed {} and no passing reviewer named read the commits after it",
+                read.agent,
+                short(&read.head)
+            ),
+        })
+        .collect();
+    let mut why = format!(
+        "{whole} of the reviewers read the whole change as the branch holds it, and this \
+         item's review level needs {owed}, each a different agent; a re-review after a fix \
+         needs only a delta read"
+    );
+    if !stale.is_empty() {
+        why.push_str(&format!(" ({})", stale.join("; ")));
+    }
+    why
+}
+
+fn superseded(read: &Placed) -> String {
+    assert!(read.superseded, "only a superseded read is named so");
+    format!(
+        "{} read {}, which the branch no longer holds",
+        read.agent,
+        short(&read.head)
+    )
 }
 
 fn short(commit: &str) -> &str {
@@ -570,6 +802,7 @@ mod tests {
         Placed {
             agent: agent.into(),
             named: true,
+            left_out: false,
             pass,
             head: head.into(),
             base: base.map(Into::into),
@@ -590,6 +823,15 @@ mod tests {
         Placed {
             named: false,
             ..read(agent, pass, head, base)
+        }
+    }
+
+    /// The verdicts of reviewers the lead named, and no other.
+    fn alone(named: &[(String, Verdict)]) -> Verdicts<'_> {
+        Verdicts {
+            named,
+            earlier: &[],
+            left_out: &[],
         }
     }
 
@@ -617,13 +859,14 @@ mod tests {
             read("agt_b", true, "c4", Some("c3")),
         ];
         assert_eq!(count(&fixed, "c4", 1).unwrap(), [0, 1]);
-        let anchor_only = count(&fixed, "c4", 2).unwrap_err();
+        let one_whole = count(&fixed, "c4", 2).unwrap_err();
         assert!(
-            anchor_only.starts_with("1 of the reviewers named passed the branch head c4"),
-            "{anchor_only}"
+            one_whole.starts_with("1 of the reviewers read the whole change"),
+            "{one_whole}"
         );
+        let anchor_only = count(&fixed[..1], "c4", 1).unwrap_err();
         assert!(
-            anchor_only.contains("agt_a passed c3, before the head"),
+            anchor_only.starts_with("0 of the reviewers named passed the branch head c4"),
             "{anchor_only}"
         );
         let gap = [
@@ -648,7 +891,10 @@ mod tests {
         ];
         assert_eq!(count(&refixed, "c4", 1).unwrap(), [1]);
         let short = count(&refixed, "c4", 2).unwrap_err();
-        assert!(short.starts_with("1 of the reviewers named"), "{short}");
+        assert!(
+            short.starts_with("1 of the reviewers read the whole change"),
+            "{short}"
+        );
 
         let overruled = [
             read("agt_a", false, "c4", None),
@@ -699,31 +945,70 @@ mod tests {
         ];
         assert_eq!(count(&strict, "c3", 3).unwrap(), [0, 1, 2]);
         let two = count(&strict[..2], "c3", 3).unwrap_err();
-        assert!(two.starts_with("2 of the reviewers named"), "{two}");
+        assert!(
+            two.starts_with("2 of the reviewers read the whole change"),
+            "{two}"
+        );
     }
 
-    /// A strict review where one of three failed: after the fix one new
-    /// reviewer reads the whole change and two read only the fix.
+    /// A strict review where one of three failed: after the fix one reviewer
+    /// reads only the fix, given the open findings; no new whole-change read.
     #[test]
-    fn a_strict_re_review_reads_the_whole_change_once_and_the_fix_as_deltas() {
-        let reduced = [
+    fn a_strict_re_review_after_a_fix_is_one_delta_read() {
+        let first = [
             read("agt_a", false, "c3", None),
             read("agt_b", true, "c3", None),
             read("agt_c", true, "c3", None),
-            read("agt_whole", true, "c5", None),
-            read("agt_delta_b", true, "c5", Some("c3")),
-            read("agt_delta_c", true, "c5", Some("c3")),
         ];
-        assert_eq!(count(&reduced, "c5", 3).unwrap(), [1, 2, 3, 4, 5]);
-        let once = count(&reduced[..4], "c5", 3).unwrap_err();
-        assert!(
-            once.starts_with("1 of the reviewers named passed the branch head c5"),
-            "{once}"
+        let fixed = [first.as_slice(), &[read("agt_d", true, "c5", Some("c3"))]].concat();
+        assert_eq!(count(&fixed, "c5", 3).unwrap(), [1, 2, 3]);
+        assert_eq!(
+            held(&fixed, "c5", 3).unwrap().answered,
+            [0],
+            "the fixed fail is named"
         );
-        assert!(once.contains("agt_b passed c3, before the head"), "{once}");
-        let unread = count(&reduced, "c6", 3).unwrap_err();
+        let unnamed_fail = count(&fixed[1..], "c5", 3).unwrap_err();
+        assert_eq!(unnamed_fail, too_few(2));
+        let unread = count(&fixed, "c6", 3).unwrap_err();
         assert!(unread.starts_with("0 of the reviewers named"), "{unread}");
-        assert!(unread.contains("agt_whole passed c5"), "{unread}");
+        assert!(unread.contains("agt_d passed c5"), "{unread}");
+        let empty = [first.as_slice(), &[read("agt_d", true, "c3", Some("c3"))]].concat();
+        let refused = count(&empty, "c5", 3).unwrap_err();
+        assert!(refused.starts_with("0 of the reviewers named"), "{refused}");
+    }
+
+    /// Every first read failed: the one delta pass of the fix and the three
+    /// answered fails make the strict record, not the pass alone.
+    #[test]
+    fn a_strict_review_whose_whole_reads_all_failed_records_them_beside_the_delta() {
+        let fixed = [
+            read("agt_a", false, "c3", None),
+            read("agt_b", false, "c3", None),
+            read("agt_c", false, "c3", None),
+            read("agt_d", true, "c5", Some("c3")),
+        ];
+        let found = held(&fixed, "c5", 3).unwrap();
+        assert_eq!((found.passes, found.answered), (vec![3], vec![0, 1, 2]));
+        let unnamed = [
+            read("agt_d", true, "c5", Some("c3")),
+            earlier("agt_a", false, "c3", None),
+            earlier("agt_b", false, "c3", None),
+            earlier("agt_c", false, "c3", None),
+        ];
+        let refused = held(&unnamed, "c5", 3).unwrap_err();
+        assert!(
+            refused.starts_with("the reviewers named make a record of 1"),
+            "{refused}"
+        );
+        assert_eq!(held(&unnamed, "c5", 1).unwrap().passes, [0]);
+    }
+
+    fn too_few(whole: usize) -> String {
+        format!(
+            "{whole} of the reviewers read the whole change as the branch holds it, and this \
+             item's review level needs 3, each a different agent; a re-review after a fix \
+             needs only a delta read"
+        )
     }
 
     /// The re-review read `c4`, and the lead committed `c5` after it.
@@ -754,17 +1039,16 @@ mod tests {
     }
 
     #[test]
-    fn an_early_fix_is_read_at_the_new_head_as_often_as_the_level_needs() {
+    fn a_strict_review_counts_whole_reads_and_needs_one_pass_of_the_new_head() {
         let fixed = [
             read("agt_fail", false, "c3", None),
             read("agt_pass", true, "c3", None),
             read("agt_delta", true, "c4", Some("c3")),
             read("agt_whole", true, "c4", None),
-            read("agt_delta_b", true, "c4", Some("c3")),
         ];
-        assert_eq!(count(&fixed, "c4", 3).unwrap(), [1, 2, 3, 4]);
-        let missing = count(&fixed[..4], "c4", 3).unwrap_err();
-        assert!(missing.starts_with("2 of the reviewers named"), "{missing}");
+        assert_eq!(count(&fixed, "c4", 3).unwrap(), [1, 2, 3]);
+        let missing = count(&fixed[..3], "c4", 3).unwrap_err();
+        assert_eq!(missing, too_few(2));
 
         // Two reviewers cancelled at c3 are replaced by whole-change reads at c4.
         let fail_anchored = [
@@ -787,7 +1071,10 @@ mod tests {
         let amended = [gone("agt_a", true, "x3"), read("agt_b", true, "c4", None)];
         assert_eq!(count(&amended, "c4", 1).unwrap(), [1]);
         let short = count(&amended, "c4", 2).unwrap_err();
-        assert!(short.starts_with("1 of the reviewers named"), "{short}");
+        assert!(
+            short.starts_with("1 of the reviewers read the whole change"),
+            "{short}"
+        );
         assert!(
             short.contains("agt_a read x3, which the branch no longer holds"),
             "{short}"
@@ -833,11 +1120,14 @@ mod tests {
             earlier("agt_whole", true, "c3", None),
             earlier("agt_mid", true, "c4", Some("c3")),
         ];
-        let found = held(&reads, "c5", 2).unwrap();
+        let found = held(&reads, "c5", 1).unwrap();
         assert_eq!(found.passes, [0, 1], "only named passes count");
         assert_eq!(found.implicit, ["agt_whole", "agt_mid"]);
-        let short = count(&reads, "c5", 3).unwrap_err();
-        assert!(short.starts_with("2 of the reviewers named"), "{short}");
+        let short = count(&reads, "c5", 2).unwrap_err();
+        assert!(
+            short.starts_with("1 of the reviewers read the whole change"),
+            "{short}"
+        );
         let named = held(&reads[..2], "c5", 1).unwrap_err();
         assert!(
             named.contains("agt_d1 read only from c4, and no reviewer named"),
@@ -907,6 +1197,106 @@ mod tests {
         assert_eq!(count(&rereviewed, "c4", 1).unwrap(), [0]);
     }
 
+    /// A fail by a reviewer of this attempt that the lead did not name.
+    fn left(agent: &str, head: &str, base: Option<&str>) -> Placed {
+        Placed {
+            left_out: true,
+            ..earlier(agent, false, head, base)
+        }
+    }
+
+    /// The lead named the reviewer that passed the head and left out the one
+    /// that failed it: the fail stands as it would named.
+    #[test]
+    fn a_left_out_fail_of_the_head_stands() {
+        let omitted = [
+            read("agt_pass", true, "c3", None),
+            left("agt_fail", "c3", None),
+        ];
+        let refused = count(&omitted, "c3", 1).unwrap_err();
+        assert!(
+            refused.starts_with("reviewer agt_fail failed the change at c3"),
+            "{refused}"
+        );
+        assert!(
+            refused.contains("the record leaves that reviewer out"),
+            "{refused}"
+        );
+        let named = [
+            read("agt_pass", true, "c3", None),
+            read("agt_fail", false, "c3", None),
+        ];
+        let also = count(&named, "c3", 1).unwrap_err();
+        assert!(also.contains("agt_fail failed the change at c3"), "{also}");
+    }
+
+    /// A fail of an earlier head stands until a pass reads past it, whether
+    /// the passing reviewer reads the whole fix or only the delta from it.
+    #[test]
+    fn a_left_out_fail_of_an_earlier_head_is_answered_by_a_pass_that_reads_past_it() {
+        let whole = [
+            read("agt_whole", true, "c4", None),
+            left("agt_fail", "c3", None),
+        ];
+        let found = held(&whole, "c4", 1).unwrap();
+        assert_eq!((found.passes, found.implicit), (vec![0], vec![]));
+        let delta = [
+            read("agt_first", true, "c3", None),
+            read("agt_delta", true, "c4", Some("c3")),
+            left("agt_fail", "c3", None),
+        ];
+        assert_eq!(count(&delta, "c4", 1).unwrap(), [0, 1]);
+    }
+
+    /// The fix was amended into the failed commit: a whole-change pass answers
+    /// the fail, and a delta chain resting on a fail does not.
+    #[test]
+    fn a_left_out_fail_of_an_amended_commit_stands_until_a_whole_change_pass() {
+        let amended = |fail: Placed| Placed {
+            superseded: true,
+            ..fail
+        };
+        let fail = amended(left("agt_fail", "x3", None));
+        let whole = [read("agt_whole", true, "c4", None), fail.clone()];
+        assert_eq!(count(&whole, "c4", 1).unwrap(), [0]);
+        let on_a_fail = [
+            read("agt_first", false, "c2", None),
+            read("agt_delta", true, "c4", Some("c2")),
+            fail,
+        ];
+        let refused = count(&on_a_fail, "c4", 1).unwrap_err();
+        assert!(
+            refused.starts_with("reviewer agt_fail failed x3, which the branch no longer holds"),
+            "{refused}"
+        );
+        assert_eq!(count(&on_a_fail[..2], "c4", 1).unwrap(), [1]);
+    }
+
+    /// An earlier fail that anchors a named delta is judged in play, and the
+    /// review records it as the anchor.
+    #[test]
+    fn a_left_out_fail_that_anchors_a_named_delta_is_answered_in_play() {
+        let anchored = [
+            read("agt_delta", true, "c4", Some("c3")),
+            left("agt_fail", "c3", None),
+        ];
+        let found = held(&anchored, "c4", 1).unwrap();
+        assert_eq!(
+            (found.passes, found.implicit),
+            (vec![0], vec!["agt_fail".to_owned()])
+        );
+        let open = [
+            read("agt_delta", true, "c4", Some("c3")),
+            left("agt_fail", "c3", None),
+            left("agt_late", "c4", None),
+        ];
+        let refused = count(&open, "c4", 1).unwrap_err();
+        assert!(
+            refused.contains("agt_late failed the change at c4"),
+            "{refused}"
+        );
+    }
+
     /// Git in `dir` with no config but the repository's own and a throwaway identity.
     fn git(dir: &Path, args: &[&str]) -> String {
         let who = ["-c", "user.name=t", "-c", "user.email=t@example.invalid"];
@@ -944,7 +1334,8 @@ mod tests {
             head: head.clone(),
             base: Some(upstream.clone()),
             findings: None,
-            titles: Vec::new(),
+            blocking: None,
+            blocking_findings: Vec::new(),
         };
         let named = [("agt_r".to_owned(), verdict)];
 
@@ -954,9 +1345,9 @@ mod tests {
             Base {
                 branch: "main",
                 onto_head: None,
+                merged_from: None,
             },
-            &named,
-            &[],
+            alone(&named),
         )
         .unwrap()
         .unwrap();
@@ -972,9 +1363,9 @@ mod tests {
             Base {
                 branch: "main",
                 onto_head: None,
+                merged_from: None,
             },
-            &named,
-            &[],
+            alone(&named),
         )
         .unwrap()
         .unwrap();
@@ -983,6 +1374,44 @@ mod tests {
             Some(upstream.as_str()),
             "without the fetched base the same read is only a delta"
         );
+    }
+
+    /// A refresh's reviewer reads the resolution from the merge's first parent:
+    /// with that head recorded the read is whole, without it only a delta.
+    #[test]
+    fn a_refresh_review_of_its_resolution_from_the_merged_into_head_is_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().canonicalize().unwrap();
+        git(&repo, &["init", "-q", "--initial-branch=main"]);
+        let fork = commit(&repo, "base.txt");
+        git(&repo, &["checkout", "-q", "-b", "run"]);
+        let from = commit(&repo, "change.txt");
+        git(&repo, &["checkout", "-q", "main"]);
+        let upstream = commit(&repo, "upstream.txt");
+        git(&repo, &["checkout", "-q", "run"]);
+        git(&repo, &["merge", "-q", "--no-edit", &upstream]);
+        let head = git(&repo, &["rev-parse", "HEAD"]);
+        assert_ne!(fork, upstream, "the base moved");
+        let verdict = Verdict {
+            pass: true,
+            head: head.clone(),
+            base: Some(from.clone()),
+            findings: None,
+            blocking: None,
+            blocking_findings: Vec::new(),
+        };
+        let named = [("agt_r".to_owned(), verdict)];
+        let mut base = Base {
+            branch: "main",
+            onto_head: None,
+            merged_from: Some(from.as_str()),
+        };
+        let mut history = History::new(&repo);
+        let (_, placed) = place(&mut history, base, alone(&named)).unwrap().unwrap();
+        assert_eq!(placed[0].base, None, "the resolution is the whole change");
+        base.merged_from = None;
+        let (_, placed) = place(&mut history, base, alone(&named)).unwrap().unwrap();
+        assert_eq!(placed[0].base.as_deref(), Some(from.as_str()));
     }
 
     /// A delta from its own head read nothing, so it neither counts nor anchors.
@@ -1000,22 +1429,26 @@ mod tests {
             head: head.clone(),
             base: Some(base.to_owned()),
             findings: None,
-            titles: Vec::new(),
+            blocking: None,
+            blocking_findings: Vec::new(),
         };
         let base = Base {
             branch: "main",
             onto_head: None,
+            merged_from: None,
         };
         let mut history = History::new(&repo);
         let empty = [("agt_empty".to_owned(), verdict(&head))];
-        let refused = place(&mut history, base, &empty, &[]).unwrap().unwrap_err();
+        let refused = place(&mut history, base, alone(&empty))
+            .unwrap()
+            .unwrap_err();
         assert!(
             refused.starts_with("reviewer agt_empty read from its own head"),
             "{refused}"
         );
         assert!(refused.ends_with("an empty diff"), "{refused}");
         let delta = [("agt_delta".to_owned(), verdict(&first))];
-        let (_, placed) = place(&mut history, base, &delta, &[]).unwrap().unwrap();
+        let (_, placed) = place(&mut history, base, alone(&delta)).unwrap().unwrap();
         assert_eq!(placed[0].base.as_deref(), Some(first.as_str()));
     }
 
@@ -1040,15 +1473,17 @@ mod tests {
             head: head.to_owned(),
             base: Some(from.to_owned()),
             findings: None,
-            titles: Vec::new(),
+            blocking: None,
+            blocking_findings: Vec::new(),
         };
         let named = [("agt_r".to_owned(), verdict)];
         let base = Base {
             branch: "main",
             onto_head: onto,
+            merged_from: None,
         };
         let mut history = History::new(repo);
-        let (_, placed) = place(&mut history, base, &named, &[]).unwrap().unwrap();
+        let (_, placed) = place(&mut history, base, alone(&named)).unwrap().unwrap();
         placed[0].base.clone()
     }
 

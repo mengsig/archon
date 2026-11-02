@@ -56,6 +56,61 @@ async fn a_failed_check_is_a_kept_refusal_quoting_its_output() {
     assert!(matches!(gates.status(&run), Status::Idle));
 }
 
+/// `check`'s verdict from a fresh run's gate.
+async fn verdict_of(gates: &mut Gates, check: Check) -> Verdict {
+    let (run, wake) = (PipelineRunId::new(), Arc::new(Notify::new()));
+    gates.start(&run, check, Arc::clone(&wake));
+    let Status::Finished(Ok(verdict)) = finished(gates, &run, &wake).await else {
+        panic!("a verdict")
+    };
+    verdict
+}
+
+/// A pass is reused only once kept, which the delivery does after its proof,
+/// and only for the same expanded command on the same tree.
+#[tokio::test]
+async fn a_kept_pass_holds_only_for_its_tree_and_command() {
+    let tree = tempfile::tempdir().unwrap();
+    let mut gates = Gates::default();
+    let counted = "echo ran >> count";
+    let runs = || std::fs::read_to_string(tree.path().join("count")).unwrap();
+
+    let first = verdict_of(&mut gates, check(tree.path(), counted)).await;
+    assert_eq!(first.refusal, None);
+    let pass = first.unproved.clone().expect("a pass to prove");
+    let unkept = verdict_of(&mut gates, check(tree.path(), counted)).await;
+    assert_eq!(runs(), "ran\nran\n", "an unproved pass is never reused");
+    assert_eq!(unkept, first);
+
+    gates.keep(pass);
+    let reused = verdict_of(&mut gates, check(tree.path(), counted)).await;
+    assert_eq!(runs(), "ran\nran\n", "a kept pass is reused");
+    assert_eq!((reused.refusal, reused.unproved), (None, None));
+
+    let other_tree = Check {
+        tree: "tree-2".into(),
+        ..check(tree.path(), counted)
+    };
+    assert!(verdict_of(&mut gates, other_tree).await.unproved.is_some());
+    assert_eq!(runs().lines().count(), 3, "another tree runs the check");
+    verdict_of(&mut gates, check(tree.path(), "echo ran >> count; true")).await;
+    assert_eq!(runs().lines().count(), 4, "another command runs");
+}
+
+#[tokio::test]
+async fn a_failed_check_earns_no_pass() {
+    let tree = tempfile::tempdir().unwrap();
+    let mut gates = Gates::default();
+    let failing = "echo ran >> count; exit 1";
+    for _ in 0..2 {
+        let verdict = verdict_of(&mut gates, check(tree.path(), failing)).await;
+        assert!(verdict.refusal.is_some(), "refused");
+        assert_eq!(verdict.unproved, None, "a failure is never a pass");
+    }
+    let runs = std::fs::read_to_string(tree.path().join("count")).unwrap();
+    assert_eq!(runs, "ran\nran\n", "a failed check runs again");
+}
+
 #[tokio::test]
 async fn forgetting_a_running_gate_kills_its_check() {
     let tree = tempfile::tempdir().unwrap();

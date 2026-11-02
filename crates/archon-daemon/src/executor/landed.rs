@@ -50,6 +50,9 @@ pub(super) async fn reconcile(
         .into_iter()
         .filter(|p| p.merged && p.landed.is_none());
     for mut parent in pending {
+        if restack::held_for_review(ctx, item, &mut parent, child_head).await? {
+            continue;
+        }
         let Some(base) = due_base(ctx, item).await? else {
             return Ok(());
         };
@@ -94,7 +97,15 @@ pub(super) async fn for_refresh(
 ) -> Result<bool, ArchonError> {
     assert_eq!(run.item, item.id, "the item's own run");
     assert!(item.onto.is_none(), "an onto item has no stack parents");
-    let parents = ctx.store.lock().await.stack_parents(&item.id)?;
+    let (parents, reviewed) = {
+        let store = ctx.store.lock().await;
+        let reviewed = super::onto::reviewed_ancestry(&store, item)?;
+        (store.stack_parents(&item.id)?, reviewed)
+    };
+    if reviewed.is_some() {
+        // The refresh's own merge of the base is held to the review at delivery.
+        return Ok(false);
+    }
     let heads = merged_heads(&parents);
     let mut merged = false;
     for mut parent in parents.into_iter().filter(|p| p.merged) {

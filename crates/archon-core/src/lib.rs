@@ -20,6 +20,7 @@ pub mod config;
 pub mod config_files;
 pub mod cost;
 pub mod crash;
+pub mod engine_login;
 pub mod error;
 pub mod feedback;
 pub mod github;
@@ -56,6 +57,7 @@ pub mod steer;
 #[cfg(feature = "testing")]
 pub mod testing;
 pub mod tracked;
+mod verdict_prose;
 
 pub use error::{ArchonError, Result};
 

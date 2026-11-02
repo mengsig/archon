@@ -716,9 +716,25 @@ fn adaptive_declares_the_review_its_lead_holds_and_round_trips() {
         .collect();
     assert_eq!(
         holders,
-        ["adaptive", "direct", "swarm"],
+        ["adaptive", "direct", "review", "swarm"],
         "the rest gate their review"
     );
+}
+
+#[test]
+fn review_holds_a_review_and_delivers_nothing() {
+    let catalog = Catalog::builtin();
+    let spec = catalog.get("review").unwrap();
+    let stage = spec.stage("review").unwrap();
+    assert!(spec.holds_review(stage));
+    assert!(spec.reviews_only(), "no ship, so a fork's head is allowed");
+    assert!(!spec.delivers());
+    assert_eq!(spec.ship_record_stage(), None);
+    for delivering in ["adaptive", "direct", "swarm", "refactor"] {
+        let spec = catalog.get(delivering).unwrap();
+        assert!(spec.delivers(), "{delivering}");
+        assert!(!spec.reviews_only(), "{delivering}");
+    }
 }
 
 /// What `adaptive` tells its lead decides what a run costs and what is
@@ -737,17 +753,16 @@ fn adaptive_prices_what_it_delegates_and_records_what_ships() {
         "never see each other's findings",
         "full test suite once, and follow your contract's `wait_for` rule",
         "With no reviewer asked for, that run is the whole of this step",
+        "never end your turn while a check runs",
         "the exact base and head commits (`{{base_commit}}` and `git rev-parse HEAD`",
         "never below one your contract names: medium for ordinary risk, high where the change's risk is medium or more",
         "never because a tree that passed was committed",
         "for any commit after a pass: Archon delivers only commits a passing reviewer read",
-        "Delegate the missing passes as your contract defines, each a NEW agent at the new head",
-        "after a fail one reads the whole change (`base` the change's start)",
-        "any others only what changed since the head they passed",
-        "Pass on your contract's bounds for reviewers",
+        "Only the first whole-change read takes as many reviewers as your contract asks",
+        "(`base` the head the earlier reviews read), given the open findings",
+        "Pass on your contract's bounds for reviewers and its blocking class",
         "Use leaf workers unless a bounded subproblem benefits from another level allowed by the contract",
-        "Continue while fixes make progress within the item's time and spending limits; \
-         escalate repeated findings or a stalled approach with evidence",
+        "settle a disputed finding with evidence rather than another round",
         "An unresolved blocking finding, a failed check",
         "Advice left open fails nothing",
         "Archon delivers your commits as they are. Do not push.",
@@ -789,16 +804,25 @@ fn direct_escalates_on_risk_not_size() {
         "{prompt}"
     );
     assert!(
-        prompt.contains("re-review of only what changed"),
+        prompt.contains("its blocking class and its one-reviewer re-review of only the fix"),
         "{prompt}"
     );
     let integrate = &catalog.get("swarm").unwrap().prompts["integrate.md"];
     let integrate = integrate.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
-        integrate
-            .contains("one new reviewer reads the whole change again, any others only the fix"),
+        integrate.contains("one new reviewer reads only the fix, given the open findings"),
         "{integrate}"
     );
+    let build = &catalog.get("adaptive").unwrap().prompts["build.md"];
+    let build = build.split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        "each re-review is ONE new agent that reads only the fix",
+        "No new whole-change read is owed",
+        "After three failed rounds Archon stops this stage",
+        "only blocking findings fail; the rest are follow-ups",
+    ] {
+        assert!(build.contains(said), "missing {said:?} in {build}");
+    }
 }
 
 #[test]

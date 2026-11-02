@@ -26,7 +26,7 @@ use archon_core::model::{Effort, ModelChoice, ModelPlan};
 use archon_core::notify::{FeedEntry, NotificationKind};
 use archon_core::ports::{
     AgentBackend, AgentUpdate, CreatedNode, Descendant, DescendantState, NetworkPolicy,
-    RunNodeRequest, SpawnRequest, SpawnedAgent, TreePulse,
+    OpenToolCall, RunNodeRequest, SpawnRequest, SpawnedAgent, TreePulse,
 };
 use archon_core::protocol::{ClientKind, EnqueueRequest, Reply, RepoAdd, RepoRef, Request};
 use archon_core::queue::{QueueItem, QueueState};
@@ -538,7 +538,12 @@ pub fn context(
         data_dir,
     };
     create_context_dirs(&paths);
-    let store = Store::open(&paths.store).expect("store");
+    let mut store = Store::open(&paths.store).expect("store");
+    // Probed at once, so a test need not wait out the first probe.
+    let engines = archon_daemon::engine_login::EngineLoginWatch::new(std::time::Duration::ZERO);
+    engines
+        .restore(&mut store, std::time::Instant::now())
+        .expect("engine holds");
     let readers = archon_daemon::readers::Readers::open(&store, &paths.store, 2).expect("readers");
     let operator_settings = archon_daemon::settings::SettingsBook::load(&store).expect("settings");
     let (feed, _) = broadcast::channel(1024);
@@ -578,6 +583,7 @@ pub fn context(
         github: archon_daemon::github::GithubState::default(),
         started_at: archon_core::now(),
         disk,
+        engines,
         host: archon_daemon::host_load::HostWatch::system(),
         standby: OnceLock::new(),
         recovery: Default::default(),
@@ -770,6 +776,10 @@ struct FakeState {
     failed: BTreeSet<AetherAgentId>,
     /// Agents `wake` revived, in order; live until cancelled or killed.
     woken: Vec<AetherAgentId>,
+    /// Engines whose login fails, with what `engine_login` says of each.
+    logged_out: BTreeMap<String, String>,
+    /// Every `engine_login` probe, in order.
+    login_probes: Vec<String>,
     /// Every `is_live` call, in order.
     live_checks: Vec<AetherAgentId>,
     next_node: u32,
@@ -784,12 +794,16 @@ struct FakeState {
     pulse_failures: VecDeque<ArchonError>,
     /// Every `descendants` call, in order.
     descendant_checks: Vec<AetherAgentId>,
+    /// The `descendants` call after this many more waits for the gate to open.
+    descendant_hold: Option<(usize, Arc<tokio::sync::Semaphore>)>,
     /// What a kept agent said to end the turn it was resumed in.
     answers: BTreeMap<AetherAgentId, StageOutcome>,
     /// Spawns whose objective holds the text wait for the gate to open.
     stalls: Vec<(String, Arc<tokio::sync::Semaphore>)>,
     /// What `pulse` reports of an agent's tree; an empty pulse otherwise.
     pulses: BTreeMap<AetherAgentId, TreePulse>,
+    /// What `open_tool_call` reports of an agent until its turn is interrupted.
+    open_calls: BTreeMap<AetherAgentId, OpenToolCall>,
     /// Every `clear_inspection` that resumed a tree: its lead and the note.
     inspections_cleared: Vec<(AetherAgentId, String)>,
     /// Each failure, and whether another client resumed the agent just before.
@@ -797,6 +811,8 @@ struct FakeState {
     /// Runs once, after the next `update_agent` is recorded: what else
     /// happened while that update was in flight.
     update_hook: Option<Box<dyn FnOnce() + Send>>,
+    /// Runs once, as the next `interrupt` is made.
+    interrupt_hook: Option<Box<dyn FnOnce() + Send>>,
 }
 
 impl FakeState {
@@ -1002,6 +1018,22 @@ impl FakeBackend {
         self.state().woken.clone()
     }
 
+    /// `provider`'s engine login fails, as `engine_login` says, until `log_in`.
+    pub fn log_out(&self, provider: &str, why: &str) {
+        let mut state = self.state();
+        state.logged_out.insert(provider.to_owned(), why.to_owned());
+    }
+
+    /// `provider`'s engine login works again.
+    pub fn log_in(&self, provider: &str) {
+        self.state().logged_out.remove(provider);
+    }
+
+    /// Every engine `engine_login` probed, in order.
+    pub fn login_probes(&self) -> Vec<String> {
+        self.state().login_probes.clone()
+    }
+
     /// Aether forgot `agent`: `is_live` reports it dead from now on.
     pub fn kill(&self, agent: &AetherAgentId) {
         let mut state = self.state();
@@ -1013,6 +1045,11 @@ impl FakeBackend {
     /// Run `hook` once, right after the next `update_agent` is recorded.
     pub fn on_next_update(&self, hook: impl FnOnce() + Send + 'static) {
         self.state().update_hook = Some(Box::new(hook));
+    }
+
+    /// Run `hook` once, as the next `interrupt` is made.
+    pub fn on_next_interrupt(&self, hook: impl FnOnce() + Send + 'static) {
+        self.state().interrupt_hook = Some(Box::new(hook));
     }
 
     /// `pulse` reports `pulse` for `agent`'s tree from now on.
@@ -1033,6 +1070,12 @@ impl FakeBackend {
         let mut state = self.state();
         assert!(state.is_stage_agent(agent), "only stage agents take turns");
         state.in_turn.insert(agent.clone());
+    }
+
+    /// `open_tool_call` reports `call` for `agent` until its turn is
+    /// interrupted.
+    pub fn set_open_call(&self, agent: &AetherAgentId, call: OpenToolCall) {
+        self.state().open_calls.insert(agent.clone(), call);
     }
 
     /// The next `send_message` calls fail with these errors, in order.
@@ -1176,6 +1219,14 @@ impl FakeBackend {
         gate
     }
 
+    /// Hold the `descendants` call after the next `skip` ones, once
+    /// recorded, until the gate opens.
+    pub fn hold_descendants_after(&self, skip: usize) -> Arc<tokio::sync::Semaphore> {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        self.state().descendant_hold = Some((skip, gate.clone()));
+        gate
+    }
+
     /// Every agent `descendants` was asked about, in order.
     pub fn descendant_checks(&self) -> Vec<AetherAgentId> {
         self.state().descendant_checks.clone()
@@ -1308,6 +1359,12 @@ impl AgentBackend for FakeBackend {
         Ok(())
     }
 
+    async fn engine_login(&self, provider: &str) -> Result<Option<String>, ArchonError> {
+        let mut state = self.state();
+        state.login_probes.push(provider.to_owned());
+        Ok(state.logged_out.get(provider).cloned())
+    }
+
     async fn cancel(&self, agent: &AetherAgentId, _reason: &str) -> Result<(), ArchonError> {
         let mut state = self.state();
         if let Some(error) = state.cancel_failures.pop_front() {
@@ -1379,17 +1436,39 @@ impl AgentBackend for FakeBackend {
 
     /// Ends a held turn, as Aether's interrupt does.
     async fn interrupt(&self, agent: &AetherAgentId) -> Result<bool, ArchonError> {
+        let hook = {
+            let mut state = self.state();
+            state.interrupts.push(agent.clone());
+            state.interrupt_hook.take()
+        };
+        if let Some(hook) = hook {
+            hook();
+        }
         let mut state = self.state();
-        state.interrupts.push(agent.clone());
         if !state.knows(agent) {
             return Err(ArchonError::NotFound(format!("aether: no agent {agent}")));
         }
+        state.open_calls.remove(agent);
         Ok(state.in_turn.remove(agent))
     }
 
     async fn descendants(&self, agent: &AetherAgentId) -> Result<Vec<Descendant>, ArchonError> {
+        let hold = {
+            let mut state = self.state();
+            state.descendant_checks.push(agent.clone());
+            match state.descendant_hold.take() {
+                Some((0, gate)) => Some(gate),
+                Some((skip, gate)) => {
+                    state.descendant_hold = Some((skip - 1, gate));
+                    None
+                }
+                None => None,
+            }
+        };
+        if let Some(gate) = hold {
+            let _open = gate.acquire().await.expect("the hold's gate stays open");
+        }
         let mut state = self.state();
-        state.descendant_checks.push(agent.clone());
         if let Some(error) = state.descendant_failures.pop_front() {
             return Err(error);
         }
@@ -1419,6 +1498,13 @@ impl AgentBackend for FakeBackend {
             return Ok(None);
         }
         Ok(Some(state.pulses.get(agent).copied().unwrap_or_default()))
+    }
+
+    async fn open_tool_call(
+        &self,
+        agent: &AetherAgentId,
+    ) -> Result<Option<OpenToolCall>, ArchonError> {
+        Ok(self.state().open_calls.get(agent).cloned())
     }
 
     /// The lead is the blocked agent; its pulse no longer reports one.

@@ -11,17 +11,21 @@ pub mod coordination;
 mod dependencies;
 mod descendants;
 mod discard;
+pub(crate) mod engine_wait;
 pub(crate) mod fast_check;
 mod finish;
+mod forewarn;
 pub(crate) mod frozen;
 mod gate_news;
 mod gates;
 pub(crate) mod gh;
 mod held;
+mod hung;
 pub(crate) mod initiative_ship;
 mod inspection;
 mod landed;
 mod lanes;
+pub(crate) mod local_base;
 mod local_merge;
 mod naming;
 mod notional;
@@ -365,14 +369,42 @@ pub async fn stage_settled(
     run_follow_up(ctx, follow).await
 }
 
+/// Called by the event pump when Aether stopped `agent`, a stage agent, at its
+/// stage deadline: it is woken once to commit and report, or its stage times out.
+pub async fn stage_deadline_stopped(
+    ctx: &DaemonContext,
+    agent: &AetherAgentId,
+) -> Result<(), ArchonError> {
+    let stage = ctx.store.lock().await.stage_run_by_agent(agent)?;
+    let Some(stage) = stage else {
+        tracing::debug!(%agent, "stopped agent is not a stage agent");
+        return Ok(());
+    };
+    assert_eq!(
+        stage.aether_agent.as_ref(),
+        Some(agent),
+        "the stage the agent holds"
+    );
+    let follow = settle::deadline_stopped(ctx, &stage.id).await?;
+    run_follow_up(ctx, follow).await
+}
+
 /// Called by the event pump when `reviewer`, an agent `lead` delegated to, settled
-/// its task: tells the operator once when the lead's review-fix loop runs long.
+/// its task: stops the lead's stage, escalating, once its review-fix loop
+/// failed [`archon_pipeline::contract::REVIEW_ROUND_CAP`] rounds.
 pub async fn reviewer_settled(
     ctx: &DaemonContext,
     lead: &AetherAgentId,
     reviewer: &AetherAgentId,
 ) -> Result<(), ArchonError> {
-    review::reviewer_settled(ctx, lead, reviewer).await
+    let Some(capped) = review::reviewer_settled(ctx, lead, reviewer).await? else {
+        return Ok(());
+    };
+    if stall::escalation_marked(&*ctx.store.lock().await, &capped.stage)? {
+        return Ok(());
+    }
+    let follow = sweep::stop_review_loop(ctx, &capped.stage, &capped.reason).await?;
+    run_follow_up(ctx, follow).await
 }
 
 /// Called by the event pump when an agent's turn ended: an attempt resumed
@@ -775,7 +807,7 @@ async fn remove_ended_worktree(
 }
 
 /// The spawns to issue now: not one an infrastructure retry holds back for
-/// a while. While dispatch is held for disk space only those
+/// a while, nor a never-sent one on an engine held for its login. While dispatch is held for disk space only those
 /// of finished runs are, so a run cancelled meanwhile retires at once. On a
 /// full disk only their never-sent ones are, which settle without Aether: a
 /// spawn that may have reached Aether would hit the full disk again, so it
@@ -785,6 +817,7 @@ async fn issuable(
     issue: Vec<StageRunId>,
 ) -> Result<BTreeSet<StageRunId>, ArchonError> {
     let issue = due(ctx, dedup(issue)).await?;
+    let issue = engine_wait::ready(ctx, issue).await?;
     if issue.is_empty() || !ctx.disk.holding() {
         return Ok(issue);
     }

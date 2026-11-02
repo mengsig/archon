@@ -2,24 +2,310 @@
 
 ## Unreleased
 
+### Changed
+
+- `CI_HOST_SLOTS` now defaults to 1, not 2: one full `make ci` runs at a
+  time on a host, as two at once stalled a 12-core PC. `CI_HOST_SLOTS=0`
+  still disables the slots and any other whole number sets their count.
+
+### Fixed
+
+- The hung tool-call watchdog no longer stops its sweep on a corrupt
+  `hung_tool:` mark: the bad mark counts as one earlier wake of its stage run
+  alone, and the sweep goes on. The mark is now written before the agent is
+  interrupted and woken, so a failed write wakes nothing and a wake never
+  lacks its mark. `gh run watch` and `gh pr checks --watch` get the long
+  check limit (`limits.hung_check_minutes`); plain sleeps keep the default.
+
+### Ship gate
+
+- The ship gate's fast check no longer runs again on a tree it already
+  passed: archond keeps each pass by the git tree id and the exact expanded
+  command, and a later delivery of the same tree whose check expands to the
+  same command reuses it. A pass is kept only once the delivery proved the
+  worktree still holds the checked tree after the check ran, so a check that
+  edits a tracked file keeps none; a failure is never kept, another tree or
+  command runs the check, and restarting archond forgets every pass.
+
+### Fixed
+
+- A pull request whose head moved after its review only by archond's own
+  base merges merges without a new review. `archon merge`, `request_merge`
+  and the merge gate carry the review over when every commit since is a
+  merge of a commit GitHub's base holds whose content is git's own clean
+  merge, or the branch's own tree over the landing of a recorded stack
+  parent head the review read on top of (a parent squash-merged and merged
+  over, a refresh in place, a recreated base of the same tree). The merge record, the question and the
+  result say the review carried over and why. A resolved conflict, a change
+  added in a merge, a plain commit or a merge of anything the base does not
+  hold is still refused, now with the reason.
+
+- A review's pass followed by prose that takes it back is held, not read as
+  a pass: "Verdict: pass. Changes needed in X", "… Issues found: …", "… Still
+  broken on Y", "… CI is red" and the same on a later summary line now read
+  as no verdict, so the gate refuses the review with the quoted line. Denials
+  ("no issues found", "nothing is broken", "non-blocking issues noted") still
+  pass, and every other form reads as before.
+
+- A stage agent stuck in one tool call is found and woken. On 2026-11-01 an
+  implement agent sat 85 minutes in a Bash call that never returned, and the
+  stage watchdog never fired: a live engine counted as a turn in flight,
+  Aether's minute-by-minute lease renewals kept its `last_event_at` fresh,
+  and the orchestrator's messages delivered to the agent counted as events.
+  Now, once archond's stream has heard nothing of a running tree for
+  `limits.hung_tool_minutes` (default 20), the watchdog reads the lead's
+  newest tool and turn events from Aether. A call with no outcome and nothing
+  of the agent since for that long (`limits.hung_check_minutes`, default 60,
+  for a known long check such as `make ci` or `cargo test`) has its turn
+  interrupted, and the same agent is woken with a note naming the call. A
+  second hang in the same stage run, at least the limit after the
+  interrupt, stops the stage as an infrastructure failure, which
+  `limits.infra_retries` retries; neither counts against the model. Each
+  step posts a stage `info` message to the orchestrator. Calls to Aether's
+  own waiting tools and resumed kept agents are left alone, and mail
+  arriving no longer counts as activity on archond's stream.
+- An engine whose login fails no longer fails every running item. On
+  2026-10-31 an OAuth outage of one engine failed each item that ran on it,
+  and each needed a retry by hand: a login failure waited 5 minutes but
+  spent `limits.infra_retries`, so the second was final. A stage agent that
+  fails on its engine's login now holds that engine: its stage waits, no
+  new agent starts on it, and one `Blocker` says so. Archon probes the
+  login, waiting longer each time up to 30 minutes, and once it works it
+  lifts the hold with one line and wakes the same agents, each once, with
+  their context and their deadline moved by the wait. Login failures spend
+  no infra retry and are no model evidence; other engines keep dispatching.
+- Every failed review round of a stage attempt counts toward the cap of
+  three, once, even one whose reviewer event archond missed (a lost wakeup,
+  a restart, a result not readable yet). The tally added only the reviewer
+  an event named, so a review-fix loop could run past the cap. Now each
+  reviewer event, and the lead's completion when it owes a review, rereads
+  every settled child of the attempt not read before. A result Aether
+  cannot show yet fails the event or the settle so it is retried, rather
+  than being skipped; an attempt that resumes a kept lead records the
+  children the lead already held and counts only later ones; and rounds
+  keep the order Aether created their reviewers in, so a fail read late
+  is not labelled the latest round in the escalation.
+- A refresh skips its reviewer only on a branch whose review archond itself
+  verified. The waiver trusted a passing review claimed by any completed
+  stage holding the ship record, so a stage that owed no reviewer (the
+  `performance` pipeline's `optimize` stage, the `refactor` pipeline's
+  `refactor` stage, or a custom pipeline's stage after its review) could
+  claim one unchecked and let a clean refresh ship with no reviewer. Now
+  archond records, per run, the branch head and tree its review gate held
+  a pass to, and a refresh waives its reviewer only when that record names
+  the shipped commit and tree. A run recorded before this has no such
+  record, so its refresh keeps one reviewer; nothing else changes in the
+  store.
+- A commit made under another identity no longer ships just because some
+  remote-tracking ref holds it (#334). The delivery's identity check, and
+  under the attribution policy `none` its attribution check, exempted every
+  commit any remote branch held, so a commit fetched from a pull request's
+  `refs/pull/N/head` or another remote's branch and merged in shipped
+  unrefused. Now only commits `origin`'s head of the item's base holds, or
+  of the repository's own base (which a stack's other parents may bring in
+  ahead of the first parent's branch), are exempt; an item stacked on a
+  reviewed pull request is still held to that pull request's base as
+  GitHub shows it at delivery.
+- A passing reviewer whose summary states its verdict as `Verdict: pass.`
+  followed by prose no longer has its structured pass refused. The verdict
+  reader took any explanation of a pass beyond a few plain success words,
+  and any line after it, as taking the pass back, so a summary such as
+  `Verdict: pass. No blocking findings…` failed the stage with "the review
+  this pipeline declares is not on record"; in the 1.4.10 release smoke
+  this forced 4 automatic repairs in 5 runs. Now a pass may be explained on
+  its line and after it unless the text takes it back: a fail word, a
+  second verdict, a negation or condition (`not`, `until`, `if`, `but`, …),
+  a blocker nothing denies, or a `no` before anything but findings. A
+  choice (`PASS or FAIL`), a hedge right after the verdict word and a pass
+  beside a blocking finding are refused as before, and the refusal now
+  quotes the verdict line it read.
+- Codex (Luna) reviewers' verdicts are accepted the first time again, so a
+  Luna run no longer pays for repairs after refused reviews. The review
+  contract told the lead to have each reviewer end its summary with
+  `VERDICT: PASS` or `VERDICT: FAIL` but not to name the commit on a
+  `head:` line, and Luna reviewers, which Aether completes from their final
+  text, appended that line to their JSON verdict. The gate reads a JSON
+  verdict only as the whole summary or its one fenced block, so it fell back
+  to the line, found no `head:` and refused it; in the 1.4.11 release smoke this took 10 repairs in
+  3 Luna runs against 3 in 2 on 1.4.9, and 48% more cost. The contract now
+  says a reviewer that cannot set `structured` makes the JSON its whole
+  summary, as Luna wrote it on 1.4.9. The gate also reads a JSON verdict
+  that opens the summary on lines of its own with text after it, when that
+  text holds no `{` and no fenced block, any final `VERDICT:` line agrees,
+  and nothing in it takes a pass back as text after a pass line would. A
+  `head` or `base` a summary JSON verdict leaves out or null is taken from a
+  `structured` without a verdict, else from the summary's `head:`/`base:`
+  lines, so a reviewer that names its base only on a line is still read as
+  having read that delta, and a line naming another commit is refused. A
+  fail whose findings are all follow-ups stays a fail when its `structured`
+  or summary JSON lists a blocking finding. A
+  stage verdict whose summary opens with JSON stating another verdict or a
+  blocking finding no longer passes.
+
+## 1.4.10
+
+Released 2026-11-01.
+
+A patch release on 1.4.9 that cuts review and refresh time. Review loops
+converge: only blocking findings fail a verdict, a fix is re-reviewed by one
+reviewer, and a third failed round escalates (#339, #346). A refresh reviews
+only its merge, ends at once when there is nothing to merge, and runs on its
+own 30-minute timeout (#344). Archon can now review a contributor's pull
+request, a fork's included, and merge it at the head its reviewers passed
+(#298, #301). A stale local base no longer fails a "no change needed" item
+(#341, reported by @D-Brammer), and a stage agent stopped at its deadline is
+woken once to commit and report (#347).
+
+Archon 1.4.10 needs **Aether 1.2.9**: it is released with and tested on that
+release. Aether 1.2.9 holds only TUI fixes and a docs page over 1.2.8, with
+no change to its daemon or protocol: it serves protocols 17 to 25. Neither
+the installer nor `archon update` pins an Aether version; check with `aether
+--version` and update an older one with `aether update`. The Aether protocol
+Archon asks for stays 24 and the oldest it accepts stays 17. The daemon
+protocol stays 23 and the store schema stays 18: a 1.4.9 store opens
+unchanged, and going back to 1.4.9 needs no copy of the data directory. From
+1.4.9, `archon update --yes` updates and restarts archond at once, keeping
+its stage agents running; from 1.4.8, follow the 1.4.9 upgrade note below.
+
+### Pull requests
+
+- Archon reviews and merges any pull request, a contributor's fork included
+  (#298, #301). Archon could deliver into an existing pull request but never
+  merge one it did not open, and refused a fork's outright. A built-in
+  `review` pipeline, queued `onto: {pr: <n>}`, reviews the pull request at
+  its frozen head and commits or pushes nothing, so `onto` may name a fork
+  or a repository the operator cannot push to. When its reviewers pass,
+  archond records the exact head they passed, a key no agent can write.
+  `request_merge` and `archon merge` of that item then merge the pull
+  request only while GitHub still shows that head with every check green
+  (no acknowledgement or waiver), by the repository's usual method pinned
+  to the head, so GitHub credits the contributor; a head that moved since
+  is refused naming both commits. An item that `depends_on` a passed review
+  starts from the reviewed head and opens its own pull request into the
+  same base, shipping those commits unchanged beneath its own. Nothing is
+  ever pushed to the contributor's branch, an item delivered `onto` an
+  owner's pull request is still never merged, auto-merge never applies to a
+  reviewed one, and a review item cannot be refreshed: queue a new review.
+
+### Refresh
+
+- A refresh only merges its fresh base, and is reviewed and bounded so
+  (#344). Last week refreshes took 60 to 330 minutes each, ~900
+  stage-minutes in all: the refresh copied the owner's whole brief as work
+  to do, ran on the pipeline's long timeouts, and owed a fresh whole-change
+  review, so a new reviewer re-read the whole feature and the refresh became
+  a fix loop. Now its brief asks for the merge, conflict resolution and
+  green checks only, with the owner's brief quoted as read-only context and
+  other findings left as follow-ups. When the branch head is the commit a
+  passing review held, Archon previews the merge with `git merge-tree`: a
+  clean merge, or one conflicting only in changelogs or in top-level or
+  `docs/` Markdown, reStructuredText, AsciiDoc or raster images, owes no
+  reviewer (that review stands, and the refresh fails if it changes code
+  beyond the merge); a code conflict owes one reviewer of the resolution,
+  read from the merge's first parent. A branch that moved since its review
+  keeps the owner's review level, read whole. A refresh whose branch already
+  holds the base commit when it is dispatched ends at once, with no checks
+  or reviewer, saying there was nothing to merge. Each refresh stage gets
+  `[limits] refresh_stage_timeout_minutes` (default 30) unless the request
+  names a timeout.
+
 ### Review
 
-- A re-review after a fix reads only what changed, keeping the gate whole.
-  Since 1.4.9 every re-review read the whole change again, so a `strict`
-  review replaced all three reviewers after each fix (one smoke trial
-  delegated nine medium reviewers and ran out of time). The stage contract
-  now asks, after a fix, for one new whole-change read at the new head
-  and, where the level asks for more passes, delta reads from the head the
-  earlier reviews read; a commit after passes needs only deltas. On a
-  blocking fail the lead lets the reviewers still reading finish before it
-  edits, instead of cancelling them, so one fix answers every finding and
-  their passes anchor the deltas. The review gate is tightened to match:
-  as many passes as the level asks for must have read the branch head
-  itself, whole or as an anchored delta. A pass of an earlier head still
-  holds beside them and anchors a delta, but no longer counts toward the
-  level, so a strict review is three reviewers of the final head. A delta
-  whose `base` is its own head read an empty diff and is refused. The
-  reviewer effort floor (#329) is unchanged.
+- Review loops converge (#339, #346). Loops that did not cost ~565
+  stage-minutes in a week: items failed 7 to 16 rounds, each a fresh
+  reviewer reading the whole diff with no definition of what blocks and no
+  cap, so each found new nits. Since 1.4.9 every re-review also read the
+  whole change again, so a `strict` review replaced all three reviewers
+  after each fix (one smoke trial delegated nine medium reviewers and ran
+  out of time). Now:
+  - Reviewers mark each finding `"blocking": true` or `false`. Blocking
+    findings are correctness bugs, security or safety issues, failing or
+    missing tests for changed behaviour, and broken documented behaviour,
+    as the brief narrows or extends them; the rest are follow-ups listed in
+    the pull request. A `fail` whose every finding is marked non-blocking
+    counts as a pass, and only blocking fails count as rounds. A finding's
+    `"blocking"` mark outranks its `severity`, which decides only for a
+    finding with no mark.
+  - On a blocking fail the lead lets the reviewers still reading finish
+    before it edits, instead of cancelling them, so one fix answers every
+    finding. The fix is re-reviewed by one new reviewer given the fix
+    commits and the open findings, which verifies they are fixed without
+    regressions; no new whole-change read is asked for. The gate owes the
+    level's reviewers once as whole-change reads (a pass, or a fail whose
+    findings were fixed) and one named pass of the final head, whole or as
+    a delta from a commit a named reviewer read the change up to, and the
+    record names them all. A pass of an earlier head holds beside them as
+    an anchor. A delta whose `base` is its own head read an empty diff and
+    is refused, as is a pass short of the final head. A `strict` review
+    takes three only for its first whole-change read. The reviewer effort
+    floor (#329) is unchanged.
+  - At the third failed round in one stage attempt Archon stops the stage
+    with an `ESCALATE:` failure listing the open blocking findings, each
+    with its place and remedy, which hands the item to the orchestrator; a
+    lead that settles before the cancel lands, or a stall found before or
+    after, still ends in that escalation. The fourth-round operator notice
+    is gone.
+  - The stage contract says a passing check of a tree holds for any later
+    head with that tree, and that after a passing full check a diff of only
+    prose or raster images that no build or test reads needs only the link
+    and notice checks. `CONTRIBUTING.md` lists those files for Archon
+    (`*.md`, `*.markdown`, `*.rst`, `*.adoc`, `CHANGELOG*`, PNG, JPEG, GIF,
+    WebP); pipeline prompts, docs scripts and pages a test reads keep the
+    full `make ci`.
+
+### Stage time
+
+- A stage that reaches its deadline no longer loses its agent's context and
+  uncommitted work (#347). When Aether stops an agent at its stage deadline,
+  Archon wakes the same agent once, with 10 more minutes, to commit what
+  works and report; this is no model failure and spends no infrastructure
+  retry. A refused wake, a second deadline or any failure of the woken run
+  ends the stage as before, with no fresh agent. With a fifth of a stage's
+  time left, the sweep warns its agent once to commit what works and run no
+  check it cannot wait for.
+- Work and team stage contracts, the `direct`, `adaptive` and `swarm`
+  implement and build prompts, and the automatic repair note say to run
+  checks in the foreground and never end a turn while one runs (#347):
+  Archon reads the end of the turn as the stage's result, so runs that ended
+  their turn while `make ci` ran in the background were refused and
+  restarted.
+
+### Fixed
+
+- A stale local base branch no longer fails a "no change needed" item or
+  inflates a change (#341, reported by @D-Brammer, fixed in #343). In `pr`
+  mode items fork from the freshly fetched `origin/<base>`, but the delivery
+  checks counted from the local `refs/heads/<base>`, so a no-change item
+  failed with "holds N commit(s) beyond" when the local base was N commits
+  behind. Those checks now count from the commit the run forked from,
+  recorded at dispatch, or from a newer `origin/<base>` the run took in; the
+  local base only when no fork was recorded. The fast check's list of
+  affected files starts at the newer of the local and `origin`'s base. After
+  the fetch at dispatch, and at each mirror refresh, archond also
+  fast-forwards the registered checkout's local base to `origin/<base>` when
+  it is strictly behind, so the orchestrator's mirrors follow the fresh
+  base. It never resets, rebases, stashes or forces: a base that is ahead or
+  diverged, being rebased or bisected, or checked out with a change to a
+  tracked file or an untracked file where the move writes stays where it is,
+  and the operator is told why once.
+
+### Development
+
+- `make ci` shares the host with other heavy CI runs: it first takes one of
+  `CI_HOST_SLOTS` (default 2) host-wide slots, a `flock` on
+  `${XDG_RUNTIME_DIR:-/tmp}/heavy-ci/slot-<i>.lock`, the same contract
+  Aether's `make ci` keeps, and says once that it waits when all are taken.
+  Four or five stages and their reviewers ran `cargo test` at once on a
+  12-core host, and the load failed `make ci` on timing flakes that then
+  reran in full. The slot is released however `make ci` ends;
+  `CI_HOST_SLOTS=0` turns it off and `make ci-checks` runs without one.
+  GitHub CI is unaffected (#345).
+- The daemon test
+  `status_answers_with_progress_and_changes_wait_while_recovery_runs` no
+  longer fails under load (16 of 104 runs did). It gave each `status` during
+  recovery 1 s; it now allows 30 s. What it proves is unchanged: the first
+  `status` comes while the test holds the run table, so recovery cannot
+  finish, and a `status` that waited on recovery still never answers (#345).
 
 ## 1.4.9
 

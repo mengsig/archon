@@ -75,10 +75,21 @@ pub(crate) struct StoredSpawn {
     /// Aether was asked to wake it; one asked again refuses, as it is awake.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub wake_asked: bool,
+    /// It replaces a failure on the engine's login and waits on the engine:
+    /// it spends no infrastructure retry and is not the slot's one wake.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub login_wake: bool,
     /// Not issued before this: an infrastructure retry waits out a cause
     /// that clears with time, such as an engine or login that is down.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub not_before: Option<Timestamp>,
+    /// The wake is of an agent Aether stopped at its stage deadline, given a
+    /// short one of its own: refused, the stage times out, with no fresh agent.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deadline_wake: bool,
+    /// The agent was told its stage deadline nears; it is told once.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deadline_warned: bool,
 }
 
 /// The agent kept from the slot's previous attempt, and what it is told to
@@ -143,13 +154,18 @@ pub(super) fn save_spawn(
 }
 
 /// Which retry of its slot a replacement is, the time before which it is
-/// not issued (a passing cause it waits out), and the failed agent it wakes.
+/// not issued (a passing cause it waits out), the failed agent it wakes, and
+/// the short deadline of a wake at the stage deadline.
 /// All are stored with its request, before the stage run exists.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Retry {
     pub nth: usize,
     pub not_before: Option<Timestamp>,
     pub wake: Option<KeptAgent>,
+    /// A deadline wake's own deadline, this long after the replacement starts.
+    pub extension: Option<chrono::Duration>,
+    /// It replaces a failure on its engine's login (`StoredSpawn::login_wake`).
+    pub engine_login: bool,
 }
 
 /// Move the deadline in stage run `id`'s stored request to `until`, as
@@ -501,7 +517,11 @@ fn run_sections(
         WorkspaceMode::Worktree if item.onto.is_some() => {
             super::onto::section(item.onto.as_deref())
         }
-        WorkspaceMode::Worktree => super::onto::local::section(store, &item.id)?,
+        WorkspaceMode::Worktree => {
+            let reviewed = super::onto::reviewed_dependency(store, item)?;
+            let stacked = super::onto::stacked_section(reviewed.as_ref());
+            stacked + &super::onto::local::section(store, &item.id)?
+        }
         _ => String::new(),
     };
     let dependencies = dependencies::section(store, run, item, mode, &artifacts)?;
@@ -704,8 +724,23 @@ fn reserve_one(
         Takeover::Resume(kept) => (Some(resume::with_deadline(kept, request.deadline)), None),
         Takeover::Replace(agent) => (None, Some(agent)),
     };
+    let extension = retry.as_ref().and_then(|r| r.extension);
+    let retry_login = retry.as_ref().is_some_and(|r| r.engine_login);
+    assert!(
+        !retry_login || not_before.is_none(),
+        "a login retry waits on its engine, not a clock"
+    );
+    if let Some(extension) = extension {
+        assert!(not_before.is_none(), "a deadline wake waits for nothing");
+        assert!(
+            extension > chrono::Duration::zero(),
+            "an extension lies ahead"
+        );
+        request.deadline = Some(now + extension);
+    }
     let wake = retry.and_then(|r| r.wake);
     let woken = wake.is_some();
+    assert!(woken || extension.is_none(), "only a wake is extended");
     let (resume, replaces) = match wake {
         Some(kept) => {
             let woken = resume::wake_in(resume, replaces, kept);
@@ -725,7 +760,10 @@ fn reserve_one(
         replaces,
         woken,
         wake_asked: false,
+        login_wake: retry_login,
         not_before,
+        deadline_wake: extension.is_some(),
+        deadline_warned: false,
     };
     save_spawn(store, &id, &spawn)?;
     let stage = StageRun {
@@ -1106,6 +1144,8 @@ async fn ready_to_spawn(
 pub(super) enum Issued {
     Spawned(SpawnedAgent),
     Resumed(AetherAgentId),
+    /// The agent stopped at its stage deadline could not be woken.
+    NotWoken,
 }
 
 /// Resume the slot's kept agent when there is one and it takes the message;
@@ -1138,6 +1178,9 @@ async fn resume_or_spawn(
         );
         if resume::hand_over(ctx, stage, &kept, &spawn.request).await? {
             return Ok(Issued::Resumed(kept.agent));
+        }
+        if spawn.deadline_wake {
+            return Ok(Issued::NotWoken);
         }
         save_spawn(&mut *ctx.store.lock().await, &stage.id, &spawn)?;
     }
@@ -1300,6 +1343,11 @@ async fn record(
         Ok(Issued::Resumed(agent)) => {
             table.spawn_errors.remove(&stage.id);
             return resume::resumed_ok(ctx, stage, agent).await;
+        }
+        Ok(Issued::NotWoken) => {
+            table.spawn_errors.remove(&stage.id);
+            tracing::info!(stage = %stage.id, "agent stopped at its deadline not woken; the stage timed out");
+            return settle::settle_locked(ctx, table, &stage.id, StageOutcome::TimedOut).await;
         }
         Err(error) => error,
     };

@@ -25,9 +25,9 @@ use common::delivery::{FakeGh, add_origin, pass_by, shipped_by, verdict_on};
 use common::{Harness, ORCHESTRATOR, REPO_NAME, REVIEW_MODEL, git};
 use serde_json::{Value, json};
 
-const PR_ONE: &str = "https://github.com/o/r/pull/1";
+pub(crate) const PR_ONE: &str = "https://github.com/o/r/pull/1";
 
-fn green() -> Value {
+pub(crate) fn green() -> Value {
     json!([{"__typename": "CheckRun", "name": "ci", "status": "COMPLETED", "conclusion": "SUCCESS"}])
 }
 
@@ -52,7 +52,7 @@ async fn waive_checks(h: &Harness, bases: &[&str]) {
 }
 
 /// A harness whose repository has an `origin` and a scripted `gh`.
-async fn delivering(config: Config) -> (Harness, FakeGh) {
+pub(crate) async fn delivering(config: Config) -> (Harness, FakeGh) {
     let h = Harness::with_config(config).await;
     add_origin(&h);
     let gh = FakeGh::install(&h);
@@ -88,7 +88,7 @@ async fn enqueue(h: &Harness, pipeline: &str, review: ReviewLevel) -> QueueItem 
 
 /// An item `direct` delivered as [`PR_ONE`], with no review; returns it and
 /// the commit its pull request shows.
-async fn shipped(h: &Harness) -> (QueueItem, String) {
+pub(crate) async fn shipped(h: &Harness) -> (QueueItem, String) {
     let item = enqueue(h, "direct", ReviewLevel::None).await;
     h.dispatch().await;
     let stage = h.running().await.remove(0);
@@ -125,7 +125,7 @@ async fn delivered(h: &Harness, item: &QueueItem) -> (QueueItem, String) {
     (item.clone(), head)
 }
 
-fn merge_item(item: &QueueItem, ignore_checks: bool) -> Request {
+pub(crate) fn merge_item(item: &QueueItem, ignore_checks: bool) -> Request {
     Request::MergeItem {
         item: item.id.clone(),
         ignore_checks,
@@ -133,14 +133,14 @@ fn merge_item(item: &QueueItem, ignore_checks: bool) -> Request {
     }
 }
 
-fn request_merge(item: &QueueItem) -> Request {
+pub(crate) fn request_merge(item: &QueueItem) -> Request {
     Request::RequestMerge {
         item: item.id.clone(),
         reason: Some("the operator said: merge it".into()),
     }
 }
 
-fn merge_of(reply: Result<Reply, ArchonError>) -> MergeRequest {
+pub(crate) fn merge_of(reply: Result<Reply, ArchonError>) -> MergeRequest {
     match reply {
         Ok(Reply::Merge(merge)) => *merge,
         other => panic!("a merge request: {other:?}"),
@@ -148,14 +148,14 @@ fn merge_of(reply: Result<Reply, ArchonError>) -> MergeRequest {
 }
 
 /// The `gh pr merge` calls made, as their arguments.
-fn merge_calls(gh: &FakeGh) -> Vec<String> {
+pub(crate) fn merge_calls(gh: &FakeGh) -> Vec<String> {
     gh.calls()
         .into_iter()
         .filter(|call| call.starts_with("pr merge"))
         .collect()
 }
 
-async fn merges(h: &Harness, item: &QueueItem) -> Vec<MergeRequest> {
+pub(crate) async fn merges(h: &Harness, item: &QueueItem) -> Vec<MergeRequest> {
     h.ctx.store.lock().await.merges_for_item(&item.id).unwrap()
 }
 

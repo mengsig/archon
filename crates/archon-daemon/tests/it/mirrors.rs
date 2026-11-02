@@ -205,6 +205,27 @@ async fn the_mirror_follows_the_base_branch_when_an_item_finishes() {
 }
 
 /// What an agent's native write into `path` gets: `None` when it went through.
+/// A `pr` repository's clean checkout behind the `origin/<base>` Archon last
+/// fetched is fast-forwarded at a refresh, and the mirror follows it (#341).
+#[tokio::test]
+async fn a_refresh_fast_forwards_a_base_behind_origin_and_the_mirror_follows() {
+    let h = synced().await;
+    let old = git(&h.repo, &["rev-parse", "HEAD"]);
+    let fetched = commit(&h.repo, "fetched.txt", "merged on GitHub\n");
+    git(
+        &h.repo,
+        &["update-ref", "refs/remotes/origin/main", &fetched],
+    );
+    git(&h.repo, &["reset", "--quiet", "--hard", &old]);
+    assert_eq!(head(&mirror_of(&h)), old);
+
+    mirror::sync_all(&h.ctx).await.expect("mirror pass");
+
+    assert_eq!(git(&h.repo, &["rev-parse", "main"]), fetched);
+    assert!(h.repo.join("fetched.txt").is_file(), "the checkout follows");
+    assert_eq!(head(&mirror_of(&h)), fetched, "the mirror follows");
+}
+
 fn refused(written: std::io::Result<()>) -> Option<std::io::ErrorKind> {
     written.err().map(|error| error.kind())
 }

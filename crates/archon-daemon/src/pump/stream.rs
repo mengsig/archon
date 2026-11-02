@@ -63,6 +63,7 @@ impl Stream {
             Self::Orchestrator(id) => (Some(id.clone()), ORCHESTRATOR_EVENT_TYPES),
         };
         EventQuery {
+            before: None,
             agent,
             task: None,
             run: None,

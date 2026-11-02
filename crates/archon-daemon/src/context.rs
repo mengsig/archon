@@ -136,6 +136,9 @@ pub struct DaemonContext {
     pub started_at: archon_core::Timestamp,
     /// Free disk space and the dispatch hold it drives.
     pub disk: DiskWatch,
+    /// Engines held for a failed login, which take no new agent until a
+    /// probe finds them logged in again.
+    pub engines: crate::engine_login::EngineLoginWatch,
     /// Host load and free memory, and the dispatch hold they drive.
     pub host: HostWatch,
     /// Set once archond's store hit a full disk: its work has stopped and it

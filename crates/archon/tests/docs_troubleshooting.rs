@@ -33,6 +33,10 @@ const BLOCKERS: &[(&str, &str)] = &[
         "Dispatch is held:",
     ),
     (
+        "crates/archon-daemon/src/executor/engine_wait.rs",
+        "Its stages wait instead of failing",
+    ),
+    (
         "crates/archon-core/src/host_load.rs",
         "is above [limits] max_load_per_cpu",
     ),
@@ -103,7 +107,7 @@ const BLOCKERS: &[(&str, &str)] = &[
     ),
     (
         "crates/archon-daemon/src/executor/review/rounds.rs",
-        "the lead is still fixing it",
+        "so Archon stopped it instead of another round",
     ),
     (
         "crates/archon-daemon/src/executor/coordination.rs",

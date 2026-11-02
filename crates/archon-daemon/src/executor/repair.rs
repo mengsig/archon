@@ -21,6 +21,11 @@ use crate::context::DaemonContext;
 /// Opens every repair note, and so marks an item whose one repair is spent.
 const NOTE_OPENING: &str = "Automatic repair (archond retries a refused record once).";
 
+/// Closes every repair note: a turn that ends while a check runs is read as
+/// the repair's result, which is then refused again.
+const CHECK_RULE: &str = "Run any check in the foreground or wait on it, and never end your \
+                          turn while one runs: Archon reads the end of your turn as your result.";
+
 /// What to do with a run that is about to finish.
 pub(super) enum Decision {
     /// Finish it as usual.
@@ -67,7 +72,7 @@ impl Repair {
                  beside the record."
             }
         };
-        match self.refused {
+        let note = match self.refused {
             Refused::Review => format!(
                 "{NOTE_OPENING} The gate refused your finished work: {refusal}\n\nRepair the \
                  record only. Do not change code unless a reviewer finds a defect. Delegate one \
@@ -86,7 +91,13 @@ impl Repair {
                  under the repository's own git identity, never one you set. Then hand in a new \
                  ship record read after your last commit.{review}"
             ),
-        }
+        };
+        let note = format!("{note}\n\n{CHECK_RULE}");
+        assert!(
+            note.starts_with(NOTE_OPENING),
+            "a repair note marks the item"
+        );
+        note
     }
 
     /// The feed line that makes the repair visible.
@@ -214,4 +225,24 @@ pub(super) fn with_first_refusal(state: RunState, first: &str) -> RunState {
         "{error}\n\nThe automatic repair retry was refused too. The first refusal was: {first}"
     );
     RunState::Failed { stage_id, error }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_repair_note_says_to_wait_for_its_checks() {
+        for refused in [Refused::Record, Refused::Review, Refused::Delivery] {
+            let repair = Repair {
+                item: QueueItemId::new(),
+                refusal: "the review on record is missing".into(),
+                refused,
+                owes_review: true,
+            };
+            let note = repair.note();
+            assert!(note.starts_with(NOTE_OPENING), "{note}");
+            assert!(note.ends_with(CHECK_RULE), "{note}");
+        }
+    }
 }

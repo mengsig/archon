@@ -35,6 +35,29 @@ spare (`make ci CARGO_BUILD_JOBS=16`). CI runs the tests through
 [cargo-nextest](https://nexte.st/) (`make test-nextest`) because it is faster;
 it is optional locally.
 
+A passing `make ci` holds for any later commit with the same tree
+(`git rev-parse HEAD^{tree}`). After it passed, a change touching only prose
+or raster images that no build or test loads (`*.md`, `*.markdown`, `*.rst`,
+`*.adoc`, `CHANGELOG*`, PNG, JPEG, GIF, WebP) needs only the link check
+(`cargo test -p archon --test docs_links`) and the notice check
+(`cargo test -p archon --test release_scripts`, which packs `LICENSE` and
+`THIRD-PARTY-NOTICES`). Pipeline prompts (`pipelines/`,
+`docs/examples/pipelines/`), scripts and JavaScript under `docs/assets/`, and
+any file another test reads keep the full `make ci`: `docs_consistency`,
+`docs_troubleshooting`, `upgrade_notes` and `release_check` read
+`README.md`, `CHANGELOG.md` and several pages of `docs/`.
+
+`make ci` also shares the host with other heavy CI runs, such as Aether's
+`make ci` and every Archon stage's: it first takes one of `CI_HOST_SLOTS`
+(default 1) host-wide slots, a `flock` on
+`${XDG_RUNTIME_DIR:-/tmp}/heavy-ci/slot-<i>.lock` for `i` in `0..N-1`.
+When all are taken it says once that it waits, and waits until one frees.
+The slot is released when `make ci` ends, whether it passes, fails or is
+interrupted. `CI_HOST_SLOTS=0 make ci` skips the slots, and `make ci-checks`
+runs the same checks without one. Without `flock` (util-linux) it runs
+without a slot and says so. GitHub CI runs one job per runner and is
+unaffected.
+
 `make e2e` runs the mobile web app in headless Chromium against a real
 archond (every screen's flows, pairing, revoke). It installs its npm packages
 and the browser on first use and needs `node` and `npm`. It is not part of

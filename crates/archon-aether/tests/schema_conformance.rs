@@ -117,6 +117,7 @@ fn full_create_agent() -> CreateAgent {
 
 fn full_event_query() -> EventQuery {
     EventQuery {
+        before: Some(u64::MAX),
         agent: Some(agent()),
         task: Some(task()),
         run: Some(run()),

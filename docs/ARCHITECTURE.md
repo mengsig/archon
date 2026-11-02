@@ -2426,11 +2426,11 @@ its verdict on the commits it read:
 Where Aether auto-completes a Codex reviewer from its final text, the verdict
 object arrives as the whole `summary` with no `structured`, alone or as the
 `structured` of a written-out `complete_task` call (`{summary, structured}`),
-or opening the summary on lines of its own with text after it
-(`run::leading_json`: no fenced block or second JSON value after it). Text
-after such an object takes a pass back as text after a `VERDICT:` line does
-(`Verdict::json_taken_back`), and a summary opening with `{` reads no fenced
-block. Archon reads it only then, and a `structured` that states a verdict always
+or, with no fenced block, opening the summary on lines of its own with text
+after it that holds no `{` (`run::leading_json`). Text after such an object
+that states a verdict takes a pass back as text after a `VERDICT:` line does
+(`Verdict::json_taken_back`). Archon reads it only then, and a `structured`
+that states a verdict always
 wins, though a structured pass whose summary's `VERDICT:` line or JSON
 verdict does not pass is refused. A `VERDICT:` line beside `head:` and `base:` lines is read too, each
 at the top level as the verdict line is. Any verdict, a structured one

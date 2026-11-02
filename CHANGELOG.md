@@ -131,10 +131,8 @@
   says a reviewer that cannot set `structured` makes the JSON its whole
   summary, as Luna wrote it on 1.4.9. The gate also reads a JSON verdict
   that opens the summary on lines of its own with text after it, when that
-  text holds no second JSON value or fenced block, any final `VERDICT:`
-  line agrees, and nothing in it takes a pass back as text after a pass
-  line would. A summary opening with `{` no longer reads a fenced block
-  below it.
+  text holds no `{` and no fenced block, any final `VERDICT:` line agrees,
+  and nothing in it takes a pass back as text after a pass line would.
 
 ## 1.4.10
 

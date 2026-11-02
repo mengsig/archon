@@ -1478,6 +1478,38 @@ mod tests {
         let structured = json!({"verdict": "pass", "head": HEAD});
         let taken_back = format!("{pass}\n\nDo not merge yet.");
         assert!(Verdict::read_result(&taken_back, Some(&structured)).is_err());
+        let report = json!({"tests": 12}).to_string();
+        let explained = format!("{report}\nOnly docs changed.\nhead: {HEAD}\nVERDICT: PASS");
+        assert!(Verdict::read_result(&explained, None).unwrap().pass);
+    }
+
+    /// A summary opening with JSON keeps every check a fenced block or a
+    /// second object below it was evidence for.
+    #[test]
+    fn json_below_a_leading_object_still_disputes_a_pass() {
+        let pass = json!({"verdict": "pass", "head": HEAD}).to_string();
+        let report = json!({"tests": 12}).to_string();
+        let structured = json!({"verdict": "pass", "head": HEAD});
+        let fenced = |data: Value| format!("```json\n{data}\n```");
+        let fail = fenced(json!({"verdict": "fail"}));
+        let blocking = fenced(json!({"findings": [{"title": "t", "blocking": true}]}));
+        let elsewhere = fenced(json!({"head": "fedcba9876543"}));
+        let line_form = format!("{pass}\n{fail}\nhead: {HEAD}\nVERDICT: PASS");
+        assert!(
+            Verdict::read_result(&line_form, None).is_err(),
+            "{line_form}"
+        );
+        for summary in [
+            format!("{report}\n{fail}"),
+            format!("{report}\n{blocking}"),
+            format!("{report}\n{elsewhere}"),
+            format!("{{draft\n{fail}"),
+        ] {
+            let read = Verdict::read_result(&summary, Some(&structured));
+            assert!(read.is_err(), "{summary}: {read:?}");
+        }
+        let second = format!("{pass}\nAlso:\n{{\"head\": \"fedcba9876543\"}}");
+        assert!(Verdict::read_result(&second, None).is_err(), "{second}");
     }
 
     #[test]

@@ -248,7 +248,22 @@ fn report_at(words: &[&str], at: usize, carried: bool) -> Option<usize> {
     }?;
     assert!(at + 1 + end <= words.len(), "a report ends in its clause");
     let carried = carried && PROBLEMS.contains(&word) && !words[..at].iter().any(|w| counts(w));
-    (!denied_before(&words[..at], carried)).then_some(at + 1 + end)
+    let denied = denied_before(&words[..at], carried)
+        || (STILL.contains(&word) && subject_denied(&words[..at]));
+    (!denied).then_some(at + 1 + end)
+}
+
+/// Whether a denial leads the tests or changes that are `still broken`
+/// (`none of the tests are still broken`); a problem noun between breaks it.
+fn subject_denied(before: &[&str]) -> bool {
+    let passable = |w: &&str| is_modifier(w) || FILLERS.contains(w) || LINKS.contains(w);
+    let mut rest = before.iter().rev().skip_while(|w| passable(w));
+    match rest.next() {
+        Some(noun) if CHECKS.contains(noun) || CHANGES.contains(noun) => rest
+            .find(|w| !passable(w))
+            .is_some_and(|w| DENIES.contains(w) || ["nothing", "without"].contains(w)),
+        _ => false,
+    }
 }
 
 /// Whether a noun after `before` opens its own phrase (`and bugs were found`),

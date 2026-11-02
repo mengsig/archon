@@ -1,9 +1,10 @@
 //! Whether the review of a pull request's commit still covers its later head
 //! (ARCHITECTURE §18.6): every commit since is a merge, on the branch's first
 //! parents, of a commit its base holds, whose content is either git's own
-//! clean merge of it or, for a squash or rebase landing (§8.8), the branch's
-//! own tree because the branch already held the merged commit's content. A
-//! resolved conflict, an added change or any other commit is not covered.
+//! clean merge of it or, for a stacked parent's squash landing (§8.8), the
+//! branch's own tree over a commit of exactly the parent head's content the
+//! review read on top of. A resolved conflict, an added change, a tree that
+//! merely matches or any other commit is not covered.
 
 use std::path::Path;
 
@@ -19,17 +20,28 @@ const MAX_MERGES: usize = 32;
 
 /// Why the review of `reviewed` covers `head`, a later head of its branch,
 /// whose pull request targets the commit `base`: the merges since, in words;
-/// `Err` why it does not. All three commits must be in `repo`.
+/// `Err` why it does not. `stacked_on` are the recorded heads of the item's
+/// stack parents. All commits must be in `repo`.
 pub(crate) fn base_merges(
     shadow: &Shadow,
     repo: &Path,
     (reviewed, head): (&str, &str),
     base: &str,
+    stacked_on: &[String],
 ) -> Result<Result<String, String>, ArchonError> {
     assert!(
         [reviewed, head, base].iter().all(|c| is_commit_id(c)),
         "commit ids in full"
     );
+    assert!(
+        stacked_on.iter().all(|c| is_commit_id(c)),
+        "stack parent heads in full"
+    );
+    let review = Review {
+        reviewed,
+        base,
+        stacked_on,
+    };
     assert_ne!(reviewed, head, "only a moved head is carried over");
     if !contains(repo, reviewed, head)? {
         return Ok(Err(format!(
@@ -54,7 +66,7 @@ pub(crate) fn base_merges(
                 short(reviewed)
             )));
         }
-        match explain(shadow, repo, (&at, &ours, &theirs), base)? {
+        match explain(shadow, repo, (&at, &ours, &theirs), &review)? {
             Ok(how) => merges.push(how),
             Err(why) => return Ok(Err(why)),
         }
@@ -71,16 +83,25 @@ pub(crate) fn base_merges(
     )))
 }
 
+/// The review a later head is checked against.
+struct Review<'a> {
+    reviewed: &'a str,
+    /// The commit the pull request targets.
+    base: &'a str,
+    /// The recorded heads of the item's stack parents.
+    stacked_on: &'a [String],
+}
+
 /// How the base explains the commit `merge` of `theirs` into `ours`, in
 /// words; `Err` why it does not.
 fn explain(
     shadow: &Shadow,
     repo: &Path,
     (merge, ours, theirs): (&str, &str, &str),
-    base: &str,
+    review: &Review,
 ) -> Result<Result<String, String>, ArchonError> {
     assert!(is_commit_id(ours) && is_commit_id(theirs), "merge parents");
-    if !contains(repo, theirs, base)? {
+    if !contains(repo, theirs, review.base)? {
         return Ok(Err(format!(
             "{} merges {}, which the base does not hold",
             short(merge),
@@ -88,17 +109,18 @@ fn explain(
         )));
     }
     let tree = tree_of(shadow, merge)?;
-    // First, as it needs no merge base: a recreated base may share no history.
-    if tree == tree_of(shadow, ours)? && holds_tree_of(shadow, ours, theirs)? {
+    if stack::merge_tree(shadow, None, ours, theirs)? == Ok(tree.clone()) {
         return Ok(Ok(format!(
-            "{} merges {}, whose content the branch already held, and changes no file",
+            "{} merges {} as git does, with no conflict",
             short(merge),
             short(theirs)
         )));
     }
-    if stack::merge_tree(shadow, None, ours, theirs)? == Ok(tree) {
+    // Landing it adds what the review read on top of that parent head, alone.
+    if tree == tree_of(shadow, ours)? && lands_parent(shadow, repo, theirs, review)? {
         return Ok(Ok(format!(
-            "{} merges {} as git does, with no conflict",
+            "{} merges {}, the landing of a stack parent the review read on top of, \
+             and changes no file",
             short(merge),
             short(theirs)
         )));
@@ -128,19 +150,35 @@ fn parents(shadow: &Shadow, commit: &str) -> Result<Option<(String, String)>, Ar
     })
 }
 
-/// Whether a commit of `ours` that `theirs` does not hold has `theirs`'s tree:
-/// the branch held that content before it merged `theirs`.
-fn holds_tree_of(shadow: &Shadow, ours: &str, theirs: &str) -> Result<bool, ArchonError> {
+/// Whether `theirs` has the exact content of a stack parent head the
+/// reviewed commit holds: a squash or rebase landing of that parent.
+fn lands_parent(
+    shadow: &Shadow,
+    repo: &Path,
+    theirs: &str,
+    review: &Review,
+) -> Result<bool, ArchonError> {
     let wanted = tree_of(shadow, theirs)?;
-    let not_theirs = format!("^{theirs}");
-    let trees = git(shadow)?
-        .args(["log", "--format=%T", ours, &not_theirs])
-        .text()?;
-    assert!(
-        trees.lines().all(is_commit_id),
-        "git log prints one tree id a commit"
-    );
-    Ok(trees.lines().any(|tree| tree == wanted))
+    for parent in review.stacked_on {
+        assert!(is_commit_id(parent), "a stack parent head");
+        // The reviewed commit holds only commits that are here.
+        if parent == review.reviewed || !has_commit(repo, parent)? {
+            continue;
+        }
+        if tree_of(shadow, parent)? == wanted && contains(repo, parent, review.reviewed)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn has_commit(repo: &Path, commit: &str) -> Result<bool, ArchonError> {
+    assert!(is_commit_id(commit), "a commit id, no option");
+    let spec = format!("{commit}^{{commit}}");
+    let ran = DaemonGit::sealed_in(repo)
+        .args(["cat-file", "-e", &spec])
+        .output()?;
+    Ok(ran.status.success())
 }
 
 fn tree_of(shadow: &Shadow, commit: &str) -> Result<String, ArchonError> {

@@ -79,8 +79,9 @@ async fn a_clean_base_merge_after_the_review_merges_at_the_new_head() {
     assert!(stored.line().contains("carried over"), "{}", stored.line());
 }
 
-/// Case 1, a parent squash-merged onto an unmoved base: archond merges the
-/// squash keeping the branch's tree, so no file changes.
+/// Case 1, a squash of the reviewed content landed on an unmoved base:
+/// archond's merge of it keeps the branch's tree, so no file changes. (The
+/// stack parent's conflicting shape is `worktree::carried`'s to test.)
 #[tokio::test]
 async fn a_squash_landing_merged_over_asks_and_merges_at_the_new_head() {
     let (h, gh) = delivering(Config::default()).await;
@@ -102,7 +103,7 @@ async fn a_squash_landing_merged_over_asks_and_merges_at_the_new_head() {
     };
     let text = h.ctx.store.lock().await.question(&question).unwrap().text;
     assert!(
-        text.contains("carries over") && text.contains("already held"),
+        text.contains("carries over") && text.contains("with no conflict"),
         "{text}"
     );
     let yes = Request::Answer {
@@ -118,6 +119,7 @@ async fn a_squash_landing_merged_over_asks_and_merges_at_the_new_head() {
         "{merge:?}"
     );
     assert_eq!(merge.head, head);
+    assert_eq!(tree(&h, &head), tree(&h, &reviewed), "no file changed");
     assert!(gh.merged());
 }
 

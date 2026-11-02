@@ -76,14 +76,29 @@ async fn base_merges(
         return Ok(Err(format!("{} is not a pull request URL", shipped.pr_url)));
     };
     let head_ref = format!("refs/pull/{}/head", pr.number);
+    let stacked_on = stacked_on(ctx, shipped).await?;
     let (data_dir, path) = (ctx.paths.data_dir.clone(), shipped.repo.path.clone());
     let (reviewed, head, branch) = (shipped.head.clone(), facts.head.clone(), shown.branch);
     tokio::task::spawn_blocking(move || {
         let shadow = Shadow::of(&data_dir, &path)?;
         stack::fetch(&shadow, &path, &branch, &base)?;
         stack::fetch_ref(&shadow, &path, &head_ref, &head)?;
-        carried::base_merges(&shadow, &path, (&reviewed, &head), &base)
+        let covering = (&reviewed[..], &head[..]);
+        carried::base_merges(&shadow, &path, covering, &base, &stacked_on)
     })
     .await
     .map_err(|e| ArchonError::io("carried review task", std::io::Error::other(e)))?
+}
+
+/// The heads of the item's stack parents its branch was last built on.
+async fn stacked_on(ctx: &DaemonContext, shipped: &Shipped) -> Result<Vec<String>, ArchonError> {
+    let parents = ctx.store.lock().await.stack_parents(&shipped.item.id)?;
+    let heads: Vec<String> = parents.into_iter().map(|p| p.parent_sha).collect();
+    if let Some(bad) = heads.iter().find(|head| !is_commit_id(head)) {
+        return Err(ArchonError::Protocol(format!(
+            "a stack parent of {} is recorded at {bad:?}, not a commit id",
+            shipped.item.id
+        )));
+    }
+    Ok(heads)
 }

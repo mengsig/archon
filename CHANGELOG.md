@@ -24,9 +24,9 @@
   base merges merges without a new review. `archon merge`, `request_merge`
   and the merge gate carry the review over when every commit since is a
   merge of a commit GitHub's base holds whose content is git's own clean
-  merge, or the branch's own tree because the branch already held that
-  content (a parent squash-merged and merged over, a refresh in place, a
-  recreated base of the same tree). The merge record, the question and the
+  merge, or the branch's own tree over the landing of a recorded stack
+  parent head the review read on top of (a parent squash-merged and merged
+  over, a refresh in place, a recreated base of the same tree). The merge record, the question and the
   result say the review carried over and why. A resolved conflict, a change
   added in a merge, a plain commit or a merge of anything the base does not
   hold is still refused, now with the reason.

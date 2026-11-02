@@ -1401,7 +1401,8 @@ that moved since keeps the review only when every commit after it is a
 merge of a commit the pull request's base holds, made as `archond` makes
 them when a parent landed as a squash or a refresh merged the base in
 place: git's own merge with no conflict, or one that keeps the branch's
-tree because the branch already held the merged content. The merge then
+tree over the landing of a stack parent whose exact content the review
+read on top of. The merge then
 goes ahead at the new head and its record says the review carried over and
 why; a resolved conflict, an added change or any other commit is refused
 as before, and needs a retry. Checks

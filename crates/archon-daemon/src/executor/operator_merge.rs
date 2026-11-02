@@ -1168,28 +1168,8 @@ enum Readiness {
 
 /// Check again, just before merging, everything a merge needs.
 async fn ready(ctx: &DaemonContext, merge: &MergeRequest) -> Result<Readiness, ArchonError> {
-    let (shipped, base) = {
-        let mut store = ctx.store.lock().await;
-        let shipped = match shipped(&store, &merge.item) {
-            Ok(shipped) => shipped,
-            Err(error) if error.is_store() => return Err(error),
-            Err(error) => return Ok(Readiness::Refused(error.to_string())),
-        };
-        let base = match expected_base(&mut store, &shipped) {
-            Ok(base) => base,
-            Err(error) if error.is_store() => return Err(error),
-            Err(error) => Err(error.to_string()),
-        };
-        (shipped, base)
-    };
-    let reviewed = merge.carried.as_ref().map_or(&merge.head, |c| &c.reviewed);
-    if (&shipped.run, &shipped.pr_url, &shipped.head) != (&merge.run, &merge.pr_url, reviewed) {
-        return Ok(Readiness::Refused(
-            "the item was delivered again since it was asked for; ask again".into(),
-        ));
-    }
-    let base = match base {
-        Ok(base) => base,
+    let (shipped, base) = match delivered_as_asked(ctx, merge).await? {
+        Ok(delivered) => delivered,
         Err(why) => return Ok(Readiness::Refused(why)),
     };
     let binary = &ctx.config.github.binary;
@@ -1230,6 +1210,34 @@ async fn ready(ctx: &DaemonContext, merge: &MergeRequest) -> Result<Readiness, A
         Ok(Assessment::Undecided(_)) => Readiness::Undecided,
         Err(why) => Readiness::Refused(why),
     })
+}
+
+/// The item's delivery `merge` was asked for, unchanged since, and the base
+/// its pull request must have; `Err` why it cannot merge.
+async fn delivered_as_asked(
+    ctx: &DaemonContext,
+    merge: &MergeRequest,
+) -> Result<Result<(Shipped, String), String>, ArchonError> {
+    let mut store = ctx.store.lock().await;
+    let shipped = match shipped(&store, &merge.item) {
+        Ok(shipped) => shipped,
+        Err(error) if error.is_store() => return Err(error),
+        Err(error) => return Ok(Err(error.to_string())),
+    };
+    let base = match expected_base(&mut store, &shipped) {
+        Ok(base) => base,
+        Err(error) if error.is_store() => return Err(error),
+        Err(error) => Err(error.to_string()),
+    };
+    drop(store);
+    let reviewed = merge.carried.as_ref().map_or(&merge.head, |c| &c.reviewed);
+    assert_eq!(shipped.item.id, merge.item, "the item asked for");
+    if (&shipped.run, &shipped.pr_url, &shipped.head) != (&merge.run, &merge.pr_url, reviewed) {
+        return Ok(Err(
+            "the item was delivered again since it was asked for; ask again".into(),
+        ));
+    }
+    Ok(base.map(|base| (shipped, base)))
 }
 
 /// The commit `merge` may merge now and the review carried over to it: the

@@ -5369,11 +5369,13 @@ state,isDraft,headRefOid,baseRefName,mergeable,statusCheckRollup` shows:
   commit after the reviewed one is a merge, on the first-parent chain, of
   a commit that GitHub's base (`baseRefOid`, fetched by id, as is the head
   from `refs/pull/<n>/head`) holds, whose tree is either `git merge-tree`'s
-  clean merge of its parents or its first parent's own tree when that
-  parent's history already has a commit with the merged commit's tree (a
-  squash or rebase landing merged over, §8.8, or a recreated base). Any
-  other commit, a resolved conflict or an added change keeps the refusal,
-  naming why. The request records the reviewed commit and why as
+  clean merge of its parents or, for a squash or rebase landing of a stack
+  parent merged over (§8.8), its first parent's own tree when the merged
+  commit has exactly the tree of a recorded stack parent head
+  (`parent_sha`) the reviewed commit holds: landing it then adds only the
+  change reviewed on top of that head. A tree that merely matches another
+  commit is no proof. Any other commit, a resolved conflict or an added
+  change keeps the refusal, naming why. The request records the reviewed commit and why as
   `carried`, its question and result say so, and the merge is pinned to the
   new head. A merge the operator confirmed stays at the head the question
   named: a later one is refused, and asked again.

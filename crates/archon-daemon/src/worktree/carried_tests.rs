@@ -88,7 +88,19 @@ impl Fixture {
     }
 
     fn check(&self, reviewed: &str, head: &str, base: &str) -> Result<String, String> {
-        base_merges(&self.shadow, &self.repo, (reviewed, head), base).unwrap()
+        self.check_stacked(reviewed, head, base, &[])
+    }
+
+    /// The check of an item stacked on the parent heads `on`.
+    fn check_stacked(
+        &self,
+        reviewed: &str,
+        head: &str,
+        base: &str,
+        on: &[&str],
+    ) -> Result<String, String> {
+        let on: Vec<String> = on.iter().map(|c| (*c).to_owned()).collect();
+        base_merges(&self.shadow, &self.repo, (reviewed, head), base, &on).unwrap()
     }
 }
 
@@ -129,11 +141,10 @@ fn two_base_merges_in_a_row_carry_it_over() {
     assert_eq!(why.matches("with no conflict").count(), 2, "{why}");
 }
 
-/// A dependency squash-merged into the base, which `item` holds and edits
-/// further: git's merge conflicts, so archond keeps the branch's tree.
-#[test]
-fn a_squash_landing_merged_with_the_branchs_tree_carries_it_over() {
-    let f = fixture();
+/// A stack parent `dep` squash-merged into the base, which `item` holds and
+/// edits further: git's merge conflicts, so archond keeps the branch's tree.
+/// `dep` is the parent's head, one commit after the fork.
+fn squash_landing(f: &Fixture) -> (String, String, String, String) {
     f.on("item");
     let dep = f.commit("dep.txt", "dep\n");
     let reviewed = f.commit("dep.txt", "dep, edited by the item\n");
@@ -145,23 +156,74 @@ fn a_squash_landing_merged_with_the_branchs_tree_carries_it_over() {
     let merged = stack::merge_tree(&f.shadow, None, &reviewed, &squash).unwrap();
     assert!(merged.is_err(), "git's own merge conflicts");
     let head = f.merge_commit(&f.tree(&reviewed), &reviewed, &squash);
-
-    let why = f.check(&reviewed, &head, &squash).expect("carried over");
-    assert!(why.contains("already held"), "{why}");
+    (dep, reviewed, squash, head)
 }
 
-/// A recreated base branch, new commits of the same content, merged with the
-/// branch's tree.
+#[test]
+fn a_stack_parents_squash_merged_with_the_branchs_tree_carries_it_over() {
+    let f = fixture();
+    let (dep, reviewed, squash, head) = squash_landing(&f);
+
+    let why = f.check_stacked(&reviewed, &head, &squash, &[&dep]);
+    let why = why.expect("carried over");
+    assert!(
+        why.contains("stack parent") && why.contains("changes no file"),
+        "{why}"
+    );
+}
+
+/// The same shape where no stack parent is recorded at that content.
+#[test]
+fn a_squash_of_no_recorded_stack_parent_is_not_carried_over() {
+    let f = fixture();
+    let (dep, reviewed, squash, head) = squash_landing(&f);
+    let elsewhere = git(&f.repo, &["commit-tree", &f.tree(&dep), "-m", "unread"]);
+
+    for on in [vec![], vec![elsewhere.as_str()], vec![reviewed.as_str()]] {
+        let why = f.check_stacked(&reviewed, &head, &squash, &on);
+        let why = why.expect_err("refused");
+        assert!(why.contains("resolves a conflict"), "{on:?}: {why}");
+    }
+}
+
+/// A commit of the branch whose content matches a base commit is no landing:
+/// keeping the branch's tree over it would land a later deletion unread.
+#[test]
+fn a_base_merge_kept_as_the_branch_over_a_matching_tree_is_not_carried_over() {
+    let f = fixture();
+    f.on("main");
+    let added = f.commit("y.txt", "on the base\n");
+    f.on("item");
+    git(&f.repo, &["checkout", "--quiet", &added, "--", "y.txt"]);
+    git(&f.repo, &["commit", "--quiet", "-m", "same as the base"]);
+    git(&f.repo, &["rm", "--quiet", "y.txt"]);
+    git(&f.repo, &["commit", "--quiet", "-m", "drop y"]);
+    let reviewed = f.commit("f.txt", "the reviewed change\n");
+    git(
+        &f.repo,
+        &["merge", "--quiet", "--no-edit", "-s", "ours", &added],
+    );
+    let head = f.head();
+
+    let why = f.check(&reviewed, &head, &added).expect_err("refused");
+    assert!(why.contains("resolves a conflict"), "{why}");
+}
+
+/// A recreated base branch, a new commit of the same content over the old,
+/// merged in as git does.
 #[test]
 fn a_recreated_base_of_the_same_tree_carries_it_over() {
     let f = fixture();
     let reviewed = reviewed(&f);
-    let message = ["-m", "recreated"];
     let tree = f.tree(&f.fork);
-    let recreated = git(&f.repo, &["commit-tree", &tree, message[0], message[1]]);
+    let recreated = git(
+        &f.repo,
+        &["commit-tree", &tree, "-p", &f.fork, "-m", "recreated"],
+    );
     let head = f.merge_commit(&f.tree(&reviewed), &reviewed, &recreated);
 
-    assert!(f.check(&reviewed, &head, &recreated).is_ok());
+    let why = f.check(&reviewed, &head, &recreated).expect("carried over");
+    assert!(why.contains("with no conflict"), "{why}");
 }
 
 #[test]

@@ -258,11 +258,16 @@ const BREAKS: [&str; 8] = [
     "and", "but", "while", "yet", "though", "although", "however", "except",
 ];
 
+/// A word that denies the problem after it.
+fn denies(word: &str) -> bool {
+    DENIES.contains(&word) || ["nothing", "without", "neither"].contains(&word)
+}
+
 /// Whether a denial leads the subject of a `still broken` or `tests red` (`none of the tests
 /// are still broken`); a problem noun or a conjunction between them breaks it.
 fn subject_denied(before: &[&str]) -> bool {
     for word in before.iter().rev() {
-        if DENIES.contains(word) || ["nothing", "without"].contains(word) {
+        if denies(word) {
             return true;
         }
         if PROBLEMS.contains(word) || LISTED.contains(word) || BREAKS.contains(word) {
@@ -289,7 +294,7 @@ fn denied_before(before: &[&str], carried: bool) -> bool {
             || LISTED.contains(w)
     };
     match before.iter().rev().find(|w| !skipped(w)) {
-        Some(w) => DENIES.contains(w) || ["nothing", "without"].contains(w),
+        Some(w) => denies(w),
         None => carried,
     }
 }

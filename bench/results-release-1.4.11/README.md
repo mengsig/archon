@@ -41,8 +41,9 @@ the releases each was released with.
     a ship record without `structured`.
 - **A likely cause, not proven.** #351 added a line to the stage contract:
   have each reviewer end its summary with `VERDICT: PASS` or
-  `VERDICT: FAIL`. On the head, 8 of the 9 run-3 reviewer instructions
-  carry it. No v1.4.9 reviewer instruction in run 1 (0 of 5) does.
+  `VERDICT: FAIL`. On the head, all 9 run-3 reviewer specs carry it (7 in
+  the objective, 2 only in the instructions). No v1.4.9 reviewer spec in
+  run 1 (0 of 5) does.
   - On the head, Luna reviewers write that line more often: 14 of 22,
     against 5 of 8 on v1.4.9.
   - They often still leave out `structured` and the `head:` line, which the

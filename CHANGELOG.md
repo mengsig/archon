@@ -125,8 +125,8 @@
   `VERDICT: PASS` or `VERDICT: FAIL` but not to name the commit on a
   `head:` line, and Luna reviewers, which Aether completes from their final
   text, appended that line to their JSON verdict. The gate reads a JSON
-  verdict only as the whole summary, so it fell back to the line, found no
-  `head:` and refused it; in the 1.4.11 release smoke this took 10 repairs in
+  verdict only as the whole summary or its one fenced block, so it fell back
+  to the line, found no `head:` and refused it; in the 1.4.11 release smoke this took 10 repairs in
   3 Luna runs against 3 in 2 on 1.4.9, and 48% more cost. The contract now
   says a reviewer that cannot set `structured` makes the JSON its whole
   summary, as Luna wrote it on 1.4.9. The gate also reads a JSON verdict

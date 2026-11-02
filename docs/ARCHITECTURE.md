@@ -2433,8 +2433,7 @@ line does (`Verdict::json_taken_back`; a stage verdict is never read from that
 JSON, so it is not checked there). A `head` or `base` the JSON leaves out or
 null comes from a `structured` without a verdict, else from the summary's
 `head:`/`base:` lines (`review::Verdict::read_json`), so a delta read stays one.
-Archon reads it only then, and a `structured`
-that states a verdict always
+Archon reads it only then, and a `structured` that states a verdict always
 wins, though a structured pass whose summary's `VERDICT:` line or JSON
 verdict does not pass is refused. A `VERDICT:` line beside `head:` and `base:` lines is read too, each
 at the top level as the verdict line is. Any verdict, a structured one

@@ -249,7 +249,7 @@ fn report_at(words: &[&str], at: usize, carried: bool) -> Option<usize> {
     assert!(at + 1 + end <= words.len(), "a report ends in its clause");
     let carried = carried && PROBLEMS.contains(&word) && !words[..at].iter().any(|w| counts(w));
     let denied = denied_before(&words[..at], carried)
-        || (STILL.contains(&word) && subject_denied(&words[..at]));
+        || ((STILL.contains(&word) || CHECKS.contains(&word)) && subject_denied(&words[..at]));
     (!denied).then_some(at + 1 + end)
 }
 
@@ -258,7 +258,7 @@ const BREAKS: [&str; 8] = [
     "and", "but", "while", "yet", "though", "although", "however", "except",
 ];
 
-/// Whether a denial leads the subject of a `still broken` (`none of the tests
+/// Whether a denial leads the subject of a `still broken` or `tests red` (`none of the tests
 /// are still broken`); a problem noun or a conjunction between them breaks it.
 fn subject_denied(before: &[&str]) -> bool {
     for word in before.iter().rev() {

@@ -2425,7 +2425,14 @@ its verdict on the commits it read:
 
 Where Aether auto-completes a Codex reviewer from its final text, the verdict
 object arrives as the whole `summary` with no `structured`, alone or as the
-`structured` of a written-out `complete_task` call (`{summary, structured}`);
+`structured` of a written-out `complete_task` call (`{summary, structured}`),
+or, with no fenced block, opening the summary on lines of its own with text
+after it that holds no `{` (`run::leading_json`). Text after such an object
+that states a verdict takes a reviewer's pass back as text after a `VERDICT:`
+line does (`Verdict::json_taken_back`; a stage verdict is never read from that
+JSON, so it is not checked there). A `head` or `base` the JSON leaves out or
+null comes from a `structured` without a verdict, else from the summary's
+`head:`/`base:` lines (`review::Verdict::read_json`), so a delta read stays one.
 Archon reads it only then, and a `structured` that states a verdict always
 wins, though a structured pass whose summary's `VERDICT:` line or JSON
 verdict does not pass is refused. A `VERDICT:` line beside `head:` and `base:` lines is read too, each
@@ -2465,7 +2472,8 @@ than being left out. Whatever the record names, every fail returned by a
 reviewer of the stage attempt (from the review-round tally, so a resumed
 lead's earlier attempts are not read) stands as a named fail would: the
 review is refused, with the reason, until a counted pass reads past it. A
-fail listing only follow-ups reads as a pass. A pass counts when it read the
+fail listing only follow-ups reads as a pass, unless another list in its
+result (`structured` or summary JSON) holds a blocking finding. A pass counts when it read the
 branch head, or when a counted pass read every commit after its head
 (`base` at or before it). A fail never counts and must be followed by such
 a pass, or by a later fail that read every commit after its head and was

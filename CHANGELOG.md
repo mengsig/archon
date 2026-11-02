@@ -9,7 +9,8 @@ Released 2026-11-02.
 A patch release on 1.4.10 that makes the review gate read verdicts and
 records as reviewers meant them, and keeps stuck or locked-out stages
 moving. A pass explained in prose is accepted (#351), but a pass followed by
-"changes needed", "issues found" or "still broken" is held (#362); every
+"changes needed", "issues found" or "still broken" is held (#362), and Luna
+(Codex) reviewer verdicts are accepted the first time (#369); every
 failed review round of an attempt counts toward the cap (#353), and a record
 that leaves out a reviewer which failed the change is refused (#340, #361).
 A refresh skips its reviewer only on a review archond verified (#352), and
@@ -50,9 +51,29 @@ restarts archond at once, keeping its stage agents running.
   `but`, …), a blocker nothing denies, or a `no` before anything but
   findings. A choice (`PASS or FAIL`), a hedge right after the verdict word
   and a pass beside a blocking finding are refused as before, and the
-  refusal now quotes the verdict line it read. The review contract tells
-  the lead to have each reviewer end its summary with `VERDICT: PASS` or
-  `VERDICT: FAIL`.
+  refusal now quotes the verdict line it read.
+- Luna (Codex) reviewer verdicts are accepted the first time (#369): the
+  review contract no longer asks for a `VERDICT` line without a head, and
+  the gate reads a JSON verdict that opens a summary under strict
+  conditions. #351 had the contract tell the lead to have each reviewer end
+  its summary with `VERDICT: PASS` or `VERDICT: FAIL` but not to name the
+  commit on a `head:` line, and Luna reviewers, which Aether completes from
+  their final text, appended that line to their JSON verdict. The gate read
+  a JSON verdict only as the whole summary or its one fenced block, so it
+  fell back to the line, found no `head:` and refused it; in the first
+  1.4.11 release smoke this took 10 repairs in 3 Luna runs against 3 in 2
+  on 1.4.9, and 48% more cost. The contract now says a reviewer that cannot
+  set `structured` makes the JSON its whole summary, as Luna wrote it on
+  1.4.9. The gate also reads a JSON verdict that opens the summary on lines
+  of its own with text after it, when that text holds no `{` and no fenced
+  block, any final `VERDICT:` line agrees, and nothing in it takes a pass
+  back as text after a pass line would. A `head` or `base` a summary JSON
+  verdict leaves out or null is taken from a `structured` without a
+  verdict, else from the summary's `head:`/`base:` lines, and a line naming
+  another commit is refused. A fail whose findings are all follow-ups stays
+  a fail when its `structured` or summary JSON lists a blocking finding,
+  and a stage verdict whose summary opens with JSON stating another verdict
+  or a blocking finding no longer passes.
 - A review's pass followed by prose that takes it back is held, not read as
   a pass (#362): "Verdict: pass. Changes needed in X", "… Issues found: …",
   "… Still broken on Y", "… CI is red" and the same on a later summary line

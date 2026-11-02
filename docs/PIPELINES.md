@@ -348,7 +348,9 @@ this object as the entire `summary` when `structured` states no verdict, or the
 out as that summary, or this object opening the summary on lines of its own
 at column 0 followed by text, as long as that text holds no fenced block and
 no `{`, its final `VERDICT:` line (if any) agrees, and nothing
-else in it takes a pass back as text after a pass line would. A reviewer that
+else in it takes a pass back as text after a pass line would. A `head` or
+`base` the JSON leaves out or null comes from a `structured` without a
+verdict, else from the summary's `head:`/`base:` lines. A reviewer that
 cannot set `structured` is told to make the object its whole summary.
 A `VERDICT: PASS|FAIL` line beside `head:` and
 `base:` lines (a `structured` without a verdict may give these instead; a

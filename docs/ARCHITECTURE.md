@@ -2428,8 +2428,12 @@ object arrives as the whole `summary` with no `structured`, alone or as the
 `structured` of a written-out `complete_task` call (`{summary, structured}`),
 or, with no fenced block, opening the summary on lines of its own with text
 after it that holds no `{` (`run::leading_json`). Text after such an object
-that states a verdict takes a pass back as text after a `VERDICT:` line does
-(`Verdict::json_taken_back`). Archon reads it only then, and a `structured`
+that states a verdict takes a reviewer's pass back as text after a `VERDICT:`
+line does (`Verdict::json_taken_back`; a stage verdict is never read from that
+JSON, so it is not checked there). A `head` or `base` the JSON leaves out or
+null comes from a `structured` without a verdict, else from the summary's
+`head:`/`base:` lines (`review::Verdict::read_json`), so a delta read stays one.
+Archon reads it only then, and a `structured`
 that states a verdict always
 wins, though a structured pass whose summary's `VERDICT:` line or JSON
 verdict does not pass is refused. A `VERDICT:` line beside `head:` and `base:` lines is read too, each

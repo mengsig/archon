@@ -83,7 +83,8 @@ impl Verdict {
     /// A pass counts only when nothing else in the result disputes it.
     pub fn read_result(summary: &str, structured: Option<&Value>) -> Result<Self, String> {
         let read = Self::read_stated(summary, structured)?;
-        if read.pass && Said::pass_disputed(summary, structured) {
+        let taken_back = Said::pass_disputed(summary, structured) || Said::json_taken_back(summary);
+        if read.pass && taken_back {
             return Err(disputed_pass(summary));
         }
         Ok(read.only_follow_ups_pass())
@@ -99,7 +100,7 @@ impl Verdict {
         // JSON that states no verdict (a test report) is evidence; the lines decide.
         let json = summary_json(summary);
         if let Some(data) = json.clone().filter(|data| data.get("verdict").is_some()) {
-            let read = Self::read_json(data, structured)?;
+            let read = Self::read_json(data, summary, structured)?;
             read.claims_agree(summary, structured)?;
             return match Said::from_summary(summary) {
                 None => Ok(read),
@@ -121,19 +122,31 @@ impl Verdict {
         }
     }
 
-    /// A verdict given as JSON in the summary; the commits it read and its
-    /// findings may come from a `structured` that gave no verdict, the JSON's own first.
-    fn read_json(mut given: Value, structured: Option<&Value>) -> Result<Self, String> {
+    /// A verdict given as JSON in the summary. A commit or findings list it
+    /// leaves out or null comes from a `structured` that gave no verdict, then
+    /// a commit from the summary's `head:`/`base:` lines, as a `VERDICT:` line's would.
+    fn read_json(
+        mut given: Value,
+        summary: &str,
+        structured: Option<&Value>,
+    ) -> Result<Self, String> {
+        let fields = given.as_object_mut().expect("a JSON verdict is an object");
         let extra = structured.and_then(Value::as_object);
-        if let (Value::Object(fields), Some(extra)) = (&mut given, extra) {
-            assert!(
-                !extra.contains_key("verdict"),
-                "a structured verdict is read first"
-            );
-            for key in ["head", "base", "findings"] {
-                if let Some(value) = extra.get(key) {
-                    fields.entry(key).or_insert_with(|| value.clone());
-                }
+        assert!(
+            extra.is_none_or(|extra| !extra.contains_key("verdict")),
+            "a structured verdict is read first"
+        );
+        let stated = |value: Option<&Value>| value.filter(|value| !value.is_null()).cloned();
+        for key in ["head", "base", "findings"] {
+            if stated(fields.get(key)).is_some() {
+                continue;
+            }
+            let line = || match key {
+                "head" | "base" => labelled(summary, key).map(Value::from),
+                _ => None,
+            };
+            if let Some(value) = stated(extra.and_then(|extra| extra.get(key))).or_else(line) {
+                fields.insert(key.to_owned(), value);
             }
         }
         Self::read(Some(&given))
@@ -1510,6 +1523,46 @@ mod tests {
         }
         let second = format!("{pass}\nAlso:\n{{\"head\": \"fedcba9876543\"}}");
         assert!(Verdict::read_result(&second, None).is_err(), "{second}");
+    }
+
+    #[test]
+    fn commit_lines_beside_a_json_verdict_name_what_it_read() {
+        const OLD: &str = "0123456789abc";
+        let headed = json!({"verdict": "pass", "head": HEAD, "findings": []});
+        let unbased = format!("{headed}\n\nhead: {HEAD}\nbase: {OLD}\n\nVERDICT: PASS");
+        // A delta read stays a delta read: no base would count it as the whole change.
+        for summary in [
+            unbased.clone(),
+            format!("{headed}\nbase: {OLD}\nVERDICT: PASS"),
+            format!("```json\n{headed}\n```\nbase: {OLD}"),
+            format!(
+                "{}\nbase: {OLD}\nVERDICT: PASS",
+                json!({"verdict": "pass", "head": HEAD, "base": null})
+            ),
+        ] {
+            let read = Verdict::read_result(&summary, None).expect(&summary);
+            assert_eq!(read.base.as_deref(), Some(OLD), "{summary}");
+        }
+        let lined = format!(
+            "{}\nhead: {HEAD}\nVERDICT: PASS",
+            json!({"verdict": "pass"})
+        );
+        let read = Verdict::read_result(&lined, None).expect(&lined);
+        assert_eq!((read.head.as_str(), read.base), (HEAD, None));
+        let based = json!({"verdict": "pass", "head": HEAD, "base": OLD});
+        for summary in [
+            format!("{headed}\nhead: fedcba9876543\nVERDICT: PASS"),
+            format!("{based}\nbase: fedcba9876543\nVERDICT: PASS"),
+            format!("{headed}\nbase: {OLD}\nbase: fedcba9876543\nVERDICT: PASS"),
+            format!("{headed}\nbase: the whole change\nVERDICT: PASS"),
+            format!("{}\nbase: {OLD}\nVERDICT: PASS", json!({"verdict": "pass"})),
+        ] {
+            let read = Verdict::read_result(&summary, None);
+            assert!(read.is_err(), "{summary}: {read:?}");
+        }
+        let structured = json!({"base": "fedcba9876543"});
+        let read = Verdict::read_result(&unbased, Some(&structured));
+        assert!(read.is_err(), "{read:?}");
     }
 
     #[test]

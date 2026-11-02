@@ -132,7 +132,13 @@
   summary, as Luna wrote it on 1.4.9. The gate also reads a JSON verdict
   that opens the summary on lines of its own with text after it, when that
   text holds no `{` and no fenced block, any final `VERDICT:` line agrees,
-  and nothing in it takes a pass back as text after a pass line would.
+  and nothing in it takes a pass back as text after a pass line would. A
+  `head` or `base` a summary JSON verdict leaves out or null is taken from a
+  `structured` without a verdict, else from the summary's `head:`/`base:`
+  lines, so a reviewer that names its base only on a line is still read as
+  having read that delta, and a line naming another commit is refused. A
+  stage verdict whose summary opens with JSON stating another verdict or a
+  blocking finding no longer passes.
 
 ## 1.4.10
 

@@ -44,8 +44,7 @@ impl Verdict {
 
     /// Whether anything in a result takes a pass back: the summary's last
     /// `VERDICT:` line or [`summary_json`] verdict reading other than pass,
-    /// a blocking finding in `structured` or that JSON, or text after a JSON
-    /// verdict opening the summary that takes it back (`json_taken_back`).
+    /// or a blocking finding in `structured` or that JSON.
     pub fn pass_disputed(summary: &str, structured: Option<&serde_json::Value>) -> bool {
         let json = summary_json(summary);
         // A summary written as `{summary, structured}` holds a summary of its own, read one level deep.
@@ -58,16 +57,14 @@ impl Verdict {
         let inner_disagrees = inner
             .as_deref()
             .is_some_and(|inner| Self::summary_disagrees(inner, inner_json.as_ref()));
-        blocking
-            || inner_disagrees
-            || Self::summary_disagrees(summary, json.as_ref())
-            || Self::json_taken_back(summary)
+        blocking || inner_disagrees || Self::summary_disagrees(summary, json.as_ref())
     }
 
     /// Whether the text after a JSON verdict opening the summary takes its
     /// pass back, as text after a `VERDICT:` line would. Only the last
     /// `VERDICT:` line is left out, as [`Self::from_summary`] judges it.
-    fn json_taken_back(summary: &str) -> bool {
+    /// A review gate reading that JSON as the verdict checks this too.
+    pub fn json_taken_back(summary: &str) -> bool {
         let Some((data, rest)) = leading_json(summary) else {
             return false;
         };
@@ -1117,10 +1114,9 @@ mod tests {
         ] {
             assert_eq!(Verdict::extract(&kept, None), Verdict::Pass, "{kept}");
         }
-        assert!(!Verdict::pass_disputed(
-            &format!("{text}\n\nNo findings."),
-            None
-        ));
+        assert!(!Verdict::json_taken_back(&format!(
+            "{text}\n\nNo findings."
+        )));
         // JSON that states no verdict is evidence: prose after it is not held.
         let report = json!({"tests": 12}).to_string();
         let explained = format!("{report}\nOnly docs changed.\nhead: abcdef1\nVERDICT: PASS");
@@ -1132,11 +1128,15 @@ mod tests {
             format!("{text}\nVERDICT: PASS\nDo not merge yet."),
             format!("{text}\nAll good. VERDICT: PASS"),
         ] {
-            assert!(Verdict::pass_disputed(&held, None), "{held}");
+            assert!(Verdict::json_taken_back(&held), "{held}");
         }
+        // A stage verdict is its line or `structured`, never that JSON: prose before the line stays explanation.
+        let stage = format!("{text}\nAll tests passed after the fix.\nVERDICT: PASS");
+        assert!(Verdict::json_taken_back(&stage));
+        assert_eq!(Verdict::extract(&stage, None), Verdict::Pass);
         let structured = json!({"verdict": "pass", "head": "abcdef1"});
         let held = format!("{text}\n\nChanges needed in the parser.");
-        assert_eq!(Verdict::extract(&held, Some(&structured)), Verdict::Unknown);
+        assert_eq!(Verdict::extract(&held, Some(&structured)), Verdict::Pass);
     }
 
     #[test]

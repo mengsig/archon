@@ -6,6 +6,7 @@
 //! reviewer of the attempt that failed the change counts, named or not.
 
 mod coverage;
+mod restate;
 mod rounds;
 
 use archon_core::aether_ids::AetherAgentId;
@@ -23,6 +24,7 @@ use crate::context::DaemonContext;
 use crate::worktree::shadow::Shadow;
 use crate::worktree::stack::{self, is_commit_id};
 use coverage::{Base, Held, History, Verdicts};
+pub(super) use restate::reviewer_unreadable;
 pub(super) use rounds::{Capped, attempt_resumed, capped_at_completion, reviewer_settled};
 
 /// Agents named in a refusal: enough to see what the lead delegated to.
@@ -982,6 +984,7 @@ mod tests {
             agent: agent(id),
             parent: agent(parent),
             model: "a/review".parse::<ModelRef>().unwrap(),
+            role: "reviewer".into(),
             effort: None,
             state,
             task: Some(AetherTaskId::parse(&id.replace("agt_", "tsk_")).unwrap()),

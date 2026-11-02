@@ -2490,7 +2490,16 @@ review rounds of `executor/review/rounds.rs` count only blocking fails: at
 `REVIEW_ROUND_CAP` (three) the stage is cancelled and fails with an
 `ESCALATE:` error, marked first like a stall (§16) so its cancel does not
 settle it as cancelled, and retried by the next sweep when the cancel goes
-unanswered. When
+unanswered. A child of a live, owing lead delegated with role `reviewer` that
+completes with no verdict the gate reads (`executor/review/restate.rs`) is
+told to the lead at once: archond records the reviewer under
+`review_restate:<stage run>`, interrupts the lead's turn (a Luna lead calls
+`complete_task` seconds after its reviewer settles) and sends one note keyed
+`archon:restate:<stage run>:<reviewer>` with the reason and the result shape
+for a replacement reviewer. A replayed event resends only the keyed note; a
+stage attempt gets at most `MAX_NOTES` (two) and a resumed one, never
+interrupted (§6.7), none. The note reads nothing as a verdict: the gate
+judges the record unchanged. When
 the same result is the ship record (§8.7), the branch head must hold the
 record's `tree`, the tree delivery later checks: what ships is what was read.
 
@@ -2689,6 +2698,10 @@ is `Unknown`, as is any pass beside a `blocking`, `blocker`, `critical` or
 `high` finding in `structured` or the summary's JSON
 (`Verdict::pass_disputed`), the inner summary of a `{summary, structured}`
 wrapper included. Reviewers' verdicts (§8.2) go through the same parser.
+A field that is exactly `approve_with_nonblocking_finding(s)` or
+`pass_with_nonblocking_finding(s)`, in any case, reads as `Pass`, so
+`pass_disputed` and the head checks still hold it; a `VERDICT:` line or
+prose with those words is not read as one.
 
 Two error prefixes end a run at once, with no loop, no infra retry and the
 stage's live siblings cancelled (`StageOutcome::ends_run`):

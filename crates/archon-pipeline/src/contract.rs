@@ -441,7 +441,8 @@ fn review_rules(duty: ReviewDuty) -> String {
         many => (
             format!(
                 "{many} agents you delegate to, each working alone and none of which \
-                 wrote any of it"
+                 wrote any of it. Delegate all {many} yourself, even in a repair: an \
+                 earlier run's reviewers count for nothing, and naming fewer fails the run"
             ),
             format!("\"<agent id>\", … {many} or more"),
         ),
@@ -584,7 +585,8 @@ starts the diff read:\n\n\
 {\"verdict\": \"pass\", \"head\": \"<commit>\", \"base\": \"<commit>\", \"findings\": []}\n\
 ```\n\n\
 Use `\"fail\"` with findings for failures. A reviewer that cannot set `structured` \
-makes that JSON its whole summary, with nothing before or after it.\n\n\
+makes that JSON its whole last message: no `complete_task` or YAML, nothing \
+before or after it.\n\n\
 - Blocking findings are correctness bugs, security or safety issues, failing or missing \
 tests for changed behaviour, and broken documented behaviour, as the brief narrows or \
 extends them. Tell reviewers so, and to mark every finding `\"blocking\": true` or \
@@ -1600,7 +1602,8 @@ mod tests {
             "never prose alone",
             "{\"verdict\": \"pass\", \"head\": \"<commit>\", \"base\": \"<commit>\"",
             "Use `\"fail\"` with findings for failures",
-            "A reviewer that cannot set `structured` makes that JSON its whole summary",
+            "A reviewer that cannot set `structured` makes that JSON its whole last message",
+            "no `complete_task` or YAML, nothing before or after it",
             "Each agent named must be a different one you delegated to yourself",
             "must have passed the branch head itself",
             "Name every reviewer that coverage rests on, earlier whole-change reads included",
@@ -1650,6 +1653,9 @@ mod tests {
         for said in [
             "reviewed by 3 agents you delegate to, each working alone and none of which wrote any of it",
             "\"reviewers\": [\"<agent id>\", … 3 or more]",
+            // Repair leads after a refusal delegated one reviewer (1.4.11 re-gate).
+            "Delegate all 3 yourself, even in a repair: an earlier run's reviewers count for nothing",
+            "naming fewer fails the run",
         ] {
             assert!(strict.contains(said), "missing {said:?} in {strict}");
         }

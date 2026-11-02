@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Review
+
+- A reviewer result the gate cannot read now goes back to the lead the moment
+  that reviewer completes, not into a repair of the whole stage after the lead
+  finished. archond interrupts the lead's turn and sends one note naming the
+  reviewer, why its result does not count and the exact JSON its replacement
+  must return; the lead delegates that replacement and names it instead. Each
+  reviewer is named once and a stage attempt gets at most two notes; nothing
+  is read as a verdict that the gate would not read.
+- A `verdict` field that is exactly `approve_with_nonblocking_finding` (or
+  `pass_with_nonblocking_finding`, singular or plural) reads as a pass, with
+  every check of a pass: a blocking finding beside it, a missing head or a
+  head that is not the branch's still refuse it.
+- A lead holding a strict review is told to delegate all three reviewers
+  itself, even in a repair: an earlier run's reviewers count for nothing. A
+  reviewer that cannot set `structured` is told its last message is the JSON
+  alone, with no `complete_task` word or YAML.
+
 ### Changed
 
 - `CI_HOST_SLOTS` now defaults to 1, not 2: one full `make ci` runs at a

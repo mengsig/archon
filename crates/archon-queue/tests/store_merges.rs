@@ -24,6 +24,7 @@ fn merge(run: &PipelineRun, repo: &archon_core::repo::Repo, state: MergeState) -
         waived_by: None,
         waited: false,
         mergeability_wait_since: None,
+        carried: None,
         checks: None,
         state,
         requested_at: t(30),

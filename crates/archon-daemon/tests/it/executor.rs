@@ -3950,6 +3950,77 @@ async fn an_unanswered_note_is_resent_without_a_second_interrupt() {
     assert_eq!(h.backend.interrupts(), [lead_id]);
 }
 
+/// Whether the lead was interrupted or told of a reviewer that settled unreadable now.
+async fn noted_unreadable(h: &Harness, lead: &AetherAgentId) -> bool {
+    let interrupted = |h: &Harness| h.backend.interrupts().iter().filter(|a| *a == lead).count();
+    let before = interrupted(h);
+    let unreadable = reviewer_said(h, lead, YAML_VERDICT);
+    executor::reviewer_settled(&h.ctx, lead, &unreadable)
+        .await
+        .unwrap();
+    let named = format!("cannot count reviewer {unreadable}");
+    let told = h
+        .backend
+        .messages()
+        .iter()
+        .any(|(to, text)| to == lead && text.contains(&named));
+    interrupted(h) > before || told
+}
+
+/// Only a live, fresh attempt that owes a review is told: a resumed attempt
+/// settles on its turn's last word (§6.7), so it is never interrupted, and a
+/// stage that owes no review or has ended gets nothing.
+#[tokio::test]
+async fn only_a_live_fresh_lead_owing_a_review_is_told_of_an_unreadable_reviewer() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let first = h.running().await.remove(0);
+    let lead = lead_agent(&first);
+    h.backend.fail_agent(&lead);
+    h.settle_running(|_| StageOutcome::Failed {
+        error: "engine died".into(),
+        infra: true,
+    })
+    .await;
+    h.dispatch().await;
+    let woken = h.running().await.remove(0);
+    assert_eq!(woken.aether_agent.as_ref(), Some(&lead), "woken in place");
+    assert_eq!(
+        woken.aether_task, None,
+        "a resumed attempt has no task of its own"
+    );
+    assert!(!noted_unreadable(&h, &lead).await, "a resumed attempt");
+
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let mut ended = h.running().await.remove(0);
+    ended.state = StageState::Cancelled;
+    ended.finished_at = Some(archon_core::now());
+    h.ctx.store.lock().await.upsert_stage_run(&ended).unwrap();
+    assert!(
+        !noted_unreadable(&h, &lead_agent(&ended)).await,
+        "an ended stage"
+    );
+
+    let h = Harness::new().await;
+    h.enqueue("an ordinary change").await;
+    h.dispatch().await;
+    let unowed = h.running().await.remove(0);
+    assert_eq!(unowed.stage_id.as_str(), "implement");
+    assert!(
+        !noted_unreadable(&h, &lead_agent(&unowed)).await,
+        "no review owed"
+    );
+
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let fresh = h.running().await.remove(0);
+    assert!(
+        noted_unreadable(&h, &lead_agent(&fresh)).await,
+        "the control is told"
+    );
+}
+
 /// The cap's cancel went unanswered: the next sweep stops the stage.
 #[tokio::test]
 async fn a_capped_stage_whose_cancel_went_unanswered_is_stopped_by_the_sweep() {

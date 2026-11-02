@@ -373,9 +373,14 @@ fn missing_base(target: &Target) -> String {
 }
 
 /// Where the run's own commits start: `target.since` when it is an ancestor
-/// of the run's head, else the ref of `target.base`.
+/// of the run's head, else the newest commit of `target.base` (local or
+/// `origin`'s) that the head holds, so the base commits a stale local branch
+/// lacks are not counted as the run's; else the ref of `target.base`.
 fn floor(tree: &Path, target: &Target) -> Result<Result<String, String>, ArchonError> {
     let Some(since) = &target.since else {
+        if let Some(fork) = crate::worktree::branch_fork(tree, &target.base, "HEAD")? {
+            return Ok(Ok(fork));
+        }
         let found = base_ref(tree, &target.base)?;
         return Ok(found.ok_or_else(|| missing_base(target)));
     };

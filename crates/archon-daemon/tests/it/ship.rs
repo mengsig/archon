@@ -602,6 +602,69 @@ async fn a_branch_with_no_commit_of_its_own_has_nothing_to_ship() {
     assert!(gh.calls().is_empty());
 }
 
+/// A commit merged on `origin`'s `main` after the registered checkout's local
+/// `main` last moved, as a pull request merged on GitHub leaves it: the run
+/// forks from it, the local branch does not hold it.
+fn merged_on_origin(h: &Harness) -> String {
+    let clone = h.dir.path().join("merged-elsewhere");
+    let origin = origin_of(h);
+    let paths = [origin.to_str().unwrap(), clone.to_str().unwrap()];
+    git(h.dir.path(), &["clone", "--quiet", paths[0], paths[1]]);
+    std::fs::write(clone.join("merged"), "merged on GitHub\n").unwrap();
+    git(&clone, &["add", "merged"]);
+    git(
+        &clone,
+        &["commit", "--quiet", "-m", "A pull request merged elsewhere"],
+    );
+    git(&clone, &["push", "--quiet", "origin", "main"]);
+    git(&clone, &["rev-parse", "HEAD"])
+}
+
+/// The run's start: its head holds the commit merged on `origin`, the
+/// registered checkout's local `main` does not.
+fn forked_past_the_local_base(h: &Harness, run: &PipelineRun, merged: &str) {
+    let held = Command::new("git")
+        .arg("-C")
+        .arg(&run.workspace)
+        .args(["merge-base", "--is-ancestor", merged, "HEAD"])
+        .status()
+        .expect("git runs");
+    assert!(held.success(), "the run forked from origin's main");
+    assert_ne!(
+        git(&h.repo, &["rev-parse", "main"]),
+        merged,
+        "local main is stale"
+    );
+}
+
+/// The base commits a stale local `main` lacks are not the run's change, so
+/// a claim of no change holds.
+#[tokio::test]
+async fn a_no_change_claim_holds_when_the_local_base_is_behind_origin() {
+    let (h, gh) = delivering().await;
+    let merged = merged_on_origin(&h);
+    let (item, run) = started(&h, "direct").await;
+    forked_past_the_local_base(&h, &run, &merged);
+    settle_with(&h, json!({"no_change": {"reason": "already done"}})).await;
+    let summary = succeeded(&h, &item).await;
+    assert!(summary.contains("No change was needed"), "{summary}");
+    assert!(gh.calls().is_empty(), "{:?}", gh.calls());
+}
+
+/// Nor are they something to ship: a branch with no commit of its own opens
+/// no pull request, however stale the local `main` is.
+#[tokio::test]
+async fn a_stale_local_base_gives_a_branch_nothing_of_its_own_to_ship() {
+    let (h, gh) = delivering().await;
+    let merged = merged_on_origin(&h);
+    let (item, run) = started(&h, "direct").await;
+    forked_past_the_local_base(&h, &run, &merged);
+    settle_with(&h, record(&run.workspace)).await;
+    let error = failed(&h, &item).await;
+    assert!(error.contains("nothing to ship"), "{error}");
+    assert!(gh.calls().is_empty(), "{:?}", gh.calls());
+}
+
 /// A task that needed no change succeeds with that said, and ships nothing.
 #[tokio::test]
 async fn a_no_change_result_on_a_clean_branch_succeeds_without_shipping() {

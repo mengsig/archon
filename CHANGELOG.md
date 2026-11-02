@@ -14,6 +14,13 @@
 
 ### Fixed
 
+- A review's pass followed by prose that takes it back is held, not read as
+  a pass: "Verdict: pass. Changes needed in X", "… Issues found: …", "… Still
+  broken on Y", "… CI is red" and the same on a later summary line now read
+  as no verdict, so the gate refuses the review with the quoted line. Denials
+  ("no issues found", "nothing is broken", "non-blocking issues noted") still
+  pass, and every other form reads as before.
+
 - A stage agent stuck in one tool call is found and woken. On 2026-11-01 an
   implement agent sat 85 minutes in a Bash call that never returned, and the
   stage watchdog never fired: a live engine counted as a turn in flight,

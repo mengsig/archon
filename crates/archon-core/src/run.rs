@@ -9,6 +9,7 @@ use crate::catalog::StageKind;
 use crate::error::ArchonError;
 use crate::id::{PipelineRunId, QuestionId, QueueItemId, ReportId, StageRunId};
 use crate::model::ModelChoice;
+use crate::verdict_prose::reports_problem;
 
 /// What a review/test stage concluded, as [`Verdict::extract`] reads it from
 /// the stage agent's result; anything unreadable is `Unknown` and fails a gate.
@@ -286,7 +287,7 @@ const BLOCKERS: [&str; 7] = [
 ];
 
 /// Words that deny the blocker after them.
-const DENIES: [&str; 6] = ["no", "non", "zero", "0", "without", "none"];
+pub(crate) const DENIES: [&str; 6] = ["no", "non", "zero", "0", "without", "none"];
 
 /// What a bare `no` may deny in a pass's explanation (`PASS. No findings`);
 /// any other (`PASS — no tests`) says something the pass lacks.
@@ -309,9 +310,15 @@ const DENIABLE: [&str; 15] = [
 ];
 
 /// Whether a pass's explanation takes it back: a [`HOLDS_PASS`] word, a
-/// [`BLOCKERS`] word nothing [denies](DENIES), or a `no` before anything but a
-/// [`DENIABLE`] word. Any other text after a plain pass word is explanation.
+/// [`BLOCKERS`] word nothing [denies](DENIES), a `no` before anything but a
+/// [`DENIABLE`] word, or [a reported problem](reports_problem). Any other
+/// text after a plain pass word is explanation.
 fn holds_back(explanation: &str) -> bool {
+    holds_back_before(explanation, "")
+}
+
+/// [`holds_back`] for a summary line, whose `next_line` may zero a problem it reports.
+fn holds_back_before(explanation: &str, next_line: &str) -> bool {
     let words: Vec<String> = explanation
         .split(|c: char| !c.is_alphanumeric())
         .filter(|word| !word.is_empty())
@@ -324,7 +331,7 @@ fn holds_back(explanation: &str) -> bool {
         let blocker = among(&BLOCKERS, word) && !among(&DENIES, before);
         let lacks = word == "no" && !among(&DENIABLE, after);
         among(&HOLDS_PASS, word) || blocker || lacks
-    })
+    }) || reports_problem(explanation, next_line)
 }
 
 /// Whether the summary after a pass's verdict line takes it back: anything
@@ -335,9 +342,11 @@ fn trails_back(rest: &str) -> bool {
         let value = value.trim().trim_matches(['`', '*']);
         !value.is_empty() && value.bytes().all(|b| b.is_ascii_hexdigit())
     };
-    rest.lines().any(|line| {
+    let lines: Vec<&str> = rest.lines().collect();
+    lines.iter().enumerate().any(|(at, line)| {
         let commit = strip_label(line, "head").or_else(|| strip_label(line, "base"));
-        !commit.is_some_and(is_commit) && holds_back(line)
+        let next = lines[at + 1..].iter().find(|l| !l.trim().is_empty());
+        !commit.is_some_and(is_commit) && holds_back_before(line, next.copied().unwrap_or(""))
     })
 }
 
@@ -1222,6 +1231,162 @@ mod tests {
         assert_eq!(Verdict::extract(summary, Some(&blocked)), Verdict::Unknown);
         assert!(Verdict::pass_disputed(summary, Some(&blocked)));
         assert!(!Verdict::pass_disputed(summary, Some(&pass)));
+    }
+
+    #[test]
+    fn a_pass_followed_by_a_reported_problem_is_held() {
+        let pass = json!({"verdict": "pass", "head": "abcdef1", "findings": []});
+        for summary in [
+            "Verdict: pass. Changes needed in run.rs",
+            "Verdict: pass. Changes are needed in run.rs",
+            "Verdict: pass. Further work needed",
+            "Verdict: pass. Issues found: the parser drops a line",
+            "Verdict: pass. Two new bugs were found in review.rs",
+            "Verdict: pass. Found 3 problems in the gate",
+            "Verdict: pass. Errors remain in the reader",
+            "Verdict: pass. Still broken on Windows",
+            "Verdict: pass. The gate is still failing",
+            "Verdict: pass. CI is red",
+            "Verdict: pass, but tests fail",
+            "Verdict: pass.\nChanges needed in X",
+            "Verdict: pass.\n\nSummary: issues found in the reader.",
+            "Verdict: pass. No blockers. Issues remain in run.rs",
+            "Verdict: pass. No issues found. Changes needed in X",
+            "Verdict: pass. No blockers and issues remain in run.rs",
+            "Verdict: pass. No blockers and changes are needed in run.rs",
+            "Verdict: pass. No regressions and bugs were found in the reader",
+            "Verdict: pass. No blocking findings and the build is still broken",
+            "Verdict: pass. Changes will be needed in X",
+            "Verdict: pass. Changes would still be needed in X",
+            "Verdict: pass. Needed changes remain",
+            "Verdict: pass. Issues still open",
+            "Verdict: pass. Bug is still there",
+            "Verdict: pass. Issues remain to be fixed",
+            "Verdict: pass. Changes needed to be addressed",
+            "Verdict: pass. Bugs found. None have been fixed",
+            "Verdict: pass. Issues found, none fixed",
+            "Verdict: pass. Bugs found. Nothing was fixed",
+            "Verdict: pass. Lint errors found",
+            "Verdict: pass. Two type errors found",
+            "Verdict: pass. Remaining issues: the parser drops a line",
+            "Verdict: pass. Open issues: the gate crashes",
+            "Verdict: pass. The gate still crashes",
+            "Verdict: pass. Changes are necessary",
+            "Verdict: pass. No issues found, bugs remain",
+            "Verdict: pass. No issues, changes needed in X",
+            "Verdict: pass. No issues, 3 bugs found",
+            "Verdict: pass. No issues, a bug remains",
+            "Verdict: pass. No issues and tests are still broken",
+            "Verdict: pass. Nothing is wrong but the build is broken",
+            "Verdict: pass. None of the changes are needed and the tests are broken",
+            "Verdict: pass. Nothing is broken but the gate is still broken",
+            "Verdict: pass. None of the tests, and the build, are still broken",
+            "Verdict: pass. None of the tests pass and the build is still broken",
+            "Verdict: pass. No blockers, several bugs found",
+            "Verdict: pass. No blockers, minor issues remain",
+            "Verdict: pass. Zero blockers, three issues remain",
+            "Verdict: pass.\nNo issues.\nBugs found in run.rs",
+            "Verdict: pass.\n\n### Issues found\nThe parser drops a line",
+        ] {
+            assert_eq!(
+                Verdict::extract(summary, None),
+                Verdict::Unknown,
+                "{summary}"
+            );
+            assert_ne!(Verdict::extract(summary, Some(&pass)), Verdict::Pass);
+        }
+        for field in ["pass. Changes needed in X", "pass: issues found in X"] {
+            let given = json!({"verdict": field});
+            assert_eq!(
+                Verdict::extract("", Some(&given)),
+                Verdict::Unknown,
+                "{field}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_pass_denying_a_problem_stays_a_pass() {
+        let pass = json!({"verdict": "pass", "head": "abcdef1", "findings": []});
+        for summary in [
+            "Verdict: pass. No issues found.",
+            "Verdict: pass. Nothing is broken.",
+            "Verdict: pass. Non-blocking issues noted.",
+            "Verdict: pass. Fixes the bug found in review.",
+            "Verdict: pass. Fixes the broken parser.",
+            "Verdict: pass. Fixes bugs found by fuzzing.",
+            "Verdict: pass. Nothing is still broken.",
+            "Verdict: pass. None of the tests are still broken.",
+            "Verdict: pass. Is none of the changes still broken",
+            "Verdict: pass. Zero tests still broken.",
+            "Verdict: pass. Neither of the bugs remains",
+            "Verdict: pass. Neither of the tests is still broken",
+            "Verdict: pass. Neither bug was found",
+            "Verdict: pass. Nothing in the tests are still broken.",
+            "Verdict: pass. None of the tests or the build are still broken.",
+            "Verdict: pass. None of the build is broken.",
+            "Verdict: pass. None of the parser is still broken.",
+            "Verdict: pass. None of the code is still broken.",
+            "Verdict: pass. Nothing in the gate is still broken.",
+            "Verdict: pass. Without any checks still broken.",
+            "Verdict: pass. Found no issues.",
+            "Verdict: pass. No problems remain.",
+            "Verdict: pass. Issues found: none.",
+            "Verdict: pass. Issues found: 0",
+            "Verdict: pass. Bugs found: 0",
+            "Verdict: pass. Problems found: zero",
+            "Verdict: pass. Issues remaining: none",
+            "Verdict: pass. Changes needed: none",
+            "Verdict: pass. Changes needed (none)",
+            "Verdict: pass. Changes needed — none",
+            "Verdict: pass. Issues found - none",
+            "Verdict: pass. Issues were found and fixed.",
+            "Verdict: pass. 0 issues found",
+            "Verdict: pass. Found 0 issues",
+            "Verdict: pass. 0 issues remain",
+            "Verdict: pass. Problems found: n/a",
+            "Verdict: pass. Remaining issues: none",
+            "Verdict: pass. Open issues: 0",
+            "Verdict: pass. No issues or bugs found",
+            "Verdict: pass. No critical bugs or issues found",
+            "Verdict: pass. No blockers or issues remain",
+            "Verdict: pass. No issues, problems or bugs found",
+            "Verdict: pass. Zero issues or bugs found",
+            "Verdict: pass. No issues, bugs found",
+            "Verdict: pass. No issues, bugs, or problems found",
+            "Verdict: pass. No blockers, bugs, or errors remain",
+            "Verdict: pass. Without bugs, issues found",
+            "Verdict: pass. None of the bugs remain",
+            "Verdict: pass. None of the changes are needed",
+            "Verdict: pass. Without any issues remaining",
+            "Verdict: pass. Without any changes needed",
+            "Verdict: pass.\n\n### Issues found\nNone",
+            "Verdict: pass.\nIssues found:\n- none",
+            "Verdict: pass.\nChanges needed:\n(none)",
+            "Verdict: pass.\nIssues found: none\nChanges needed: none",
+        ] {
+            assert_eq!(Verdict::extract(summary, None), Verdict::Pass, "{summary}");
+            assert_eq!(
+                Verdict::extract(summary, Some(&pass)),
+                Verdict::Pass,
+                "{summary}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_negated_forms_the_old_reader_refused_stay_refused() {
+        for summary in [
+            "Verdict: pass. No changes needed.",
+            "Verdict: pass. No failing tests.",
+            "Verdict: pass. No new issues found.",
+        ] {
+            assert_eq!(
+                Verdict::extract(summary, None),
+                Verdict::Unknown,
+                "{summary}"
+            );
+        }
     }
 
     #[test]

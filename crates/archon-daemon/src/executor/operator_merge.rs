@@ -14,8 +14,8 @@ use archon_core::config::RepoConfig;
 use archon_core::error::ArchonError;
 use archon_core::id::{MergeRequestId, PipelineRunId, QuestionId, QueueItemId};
 use archon_core::merge::{
-    self, Assessment, ChecksSeen, Expected, LOCAL_REF_PREFIX, MERGE_OPTIONS, MergeAnswer,
-    MergeAuthority, MergeRequest, MergeState, PullRequestFacts,
+    self, Assessment, CarriedReview, ChecksSeen, Expected, LOCAL_REF_PREFIX, MERGE_OPTIONS,
+    MergeAnswer, MergeAuthority, MergeRequest, MergeState, PullRequestFacts,
 };
 use archon_core::notify::{AnswerVia, NotificationKind, Question};
 use archon_core::queue::{QueueItem, QueueState};
@@ -24,6 +24,7 @@ use archon_core::run::{StageRun, StageState};
 use archon_queue::Store;
 use archon_queue::store::stacks::StackParent;
 
+use self::carry::Covered;
 use super::local_merge::{self, Landing};
 use super::ship::{LOCAL_COMMIT_KEY, MergeRefusal, merge_method, pin_auto_merge};
 use super::{clip, coordination, finish, gh, recover};
@@ -31,6 +32,8 @@ use crate::context::DaemonContext;
 use crate::triggers::{self, TriggerEvent};
 use crate::worktree;
 use crate::worktree::stack::is_commit_id;
+
+mod carry;
 
 /// The orchestrator's reason is kept to this.
 const MAX_REASON_CHARS: usize = 500;
@@ -89,6 +92,8 @@ struct Shipped {
     /// The pull request is not the item's own: a review item passed it at
     /// `head`, reading its commits from this fork of GitHub's base.
     review_of: Option<String>,
+    /// `head` is the pull request's later head, which the review covers.
+    carried: Option<CarriedReview>,
 }
 
 impl Shipped {
@@ -112,6 +117,15 @@ impl Shipped {
             Some(_) => &[],
             None => &self.repo.merge_waive_checks,
         }
+    }
+
+    /// Merge `head`, a later head of the pull request the review covers.
+    fn carry_over(&mut self, head: &str, carried: CarriedReview) {
+        assert!(self.carried.is_none(), "carried over once");
+        assert_eq!(carried.reviewed, self.head, "from the reviewed commit");
+        assert!(is_commit_id(head) && head != self.head, "to a later head");
+        self.head = head.to_owned();
+        self.carried = Some(carried);
     }
 
     fn landing<'a>(&'a self, base: &'a str) -> Option<Landing<'a>> {
@@ -175,6 +189,7 @@ fn shipped(store: &Store, id: &QueueItemId) -> Result<Shipped, ArchonError> {
         head,
         reviewed,
         review_of: None,
+        carried: None,
     })
 }
 
@@ -232,6 +247,7 @@ fn reviewed_pull_request(
         head,
         reviewed: true,
         review_of: Some(fork),
+        carried: None,
         item,
         run,
         repo,
@@ -468,6 +484,7 @@ fn fresh(
         waited: false,
         mergeability_wait_since: None,
         checks: None,
+        carried: shipped.carried.clone(),
         state,
         requested_at: now,
         updated_at: now,
@@ -542,7 +559,7 @@ pub(crate) async fn request(
         .map(|r| r.split_whitespace().collect::<Vec<_>>().join(" "))
         .filter(|r| !r.is_empty())
         .map(|r| clip(&r, MAX_REASON_CHARS));
-    let (shipped, base) = {
+    let (mut shipped, base) = {
         let mut store = ctx.store.lock().await;
         let shipped = shipped(&store, item)?;
         let base = expected_base(&mut store, &shipped)?;
@@ -556,7 +573,7 @@ pub(crate) async fn request(
                 .map_err(|w| refused_early(&shipped, &w))?;
             (ChecksSeen::default(), false)
         }
-        None => seen_on_github(ctx, &shipped, &base).await?,
+        None => seen_on_github(ctx, &mut shipped, &base).await?,
     };
     supersede_stale_requests(&mut *ctx.store.lock().await, &shipped)?;
     if !(shipped.repo.grant_merge && shipped.reviewed) {
@@ -588,10 +605,11 @@ pub(crate) async fn request(
 }
 
 /// The checks GitHub shows on `shipped`'s pull request and whether its
-/// mergeability is still undecided; `Err` refuses the request before anything is asked.
+/// mergeability is still undecided; `Err` refuses the request before anything
+/// is asked. A later head the review covers becomes `shipped`'s head.
 async fn seen_on_github(
     ctx: &DaemonContext,
-    shipped: &Shipped,
+    shipped: &mut Shipped,
     base: &str,
 ) -> Result<(ChecksSeen, bool), ArchonError> {
     assert!(shipped.local_branch().is_none(), "a pull request on GitHub");
@@ -603,6 +621,14 @@ async fn seen_on_github(
     let facts = facts.await?;
     if let Some(why) = moved_since_review(shipped, &facts) {
         return Err(refused_early(shipped, &why));
+    }
+    match carry::covered(ctx, shipped, &facts).await {
+        Covered::Reviewed => {}
+        Covered::Carried(carried) => shipped.carry_over(&facts.head, carried),
+        Covered::Moved(why) => {
+            let why = merge::head_moved(&facts.head, &shipped.head, Some(&why));
+            return Err(refused_early(shipped, &why));
+        }
     }
     let expected = Expected {
         head: &shipped.head,
@@ -899,6 +925,13 @@ fn question_text(shipped: &Shipped, reason: Option<&str>, seen: &ChecksSeen) -> 
         Some(reason) => text.push_str(&format!(": {reason}")),
         None => text.push('.'),
     }
+    if let Some(carried) = &shipped.carried {
+        let reviewed = merge::short(&carried.reviewed);
+        text.push_str(&format!(
+            "\nIts review of {reviewed} carries over: {}.",
+            carried.why
+        ));
+    }
     if shipped.local_branch().is_some() {
         text.push_str("\nIt is fast-forwarded into its base branch; the branch is kept.");
         text.push_str("\nAnswer `yes` or `no`.");
@@ -1010,6 +1043,13 @@ async fn read_ready(
     let Readiness::Ready(ready) = readiness else {
         return Ok(readiness);
     };
+    if (&merge.head, &merge.carried) != (&ready.head, &ready.carried) {
+        // Recorded before the merge, so a lost confirmation is settled at this head.
+        merge.head = ready.head.clone();
+        merge.carried = ready.carried.clone();
+        merge.updated_at = archon_core::now();
+        ctx.store.lock().await.update_merge(merge)?;
+    }
     merge.checks = Some(ready.seen.describe());
     Ok(match checks_not_green(&ready) {
         Some(why) => Readiness::Refused(why),
@@ -1110,6 +1150,9 @@ async fn land_local(
 struct Ready {
     repo: Repo,
     base: String,
+    /// The commit to merge: the reviewed one, or a later head its review covers.
+    head: String,
+    carried: Option<CarriedReview>,
     seen: ChecksSeen,
     /// The pull request is another's, passed by a review item.
     review_of: bool,
@@ -1125,27 +1168,8 @@ enum Readiness {
 
 /// Check again, just before merging, everything a merge needs.
 async fn ready(ctx: &DaemonContext, merge: &MergeRequest) -> Result<Readiness, ArchonError> {
-    let (shipped, base) = {
-        let mut store = ctx.store.lock().await;
-        let shipped = match shipped(&store, &merge.item) {
-            Ok(shipped) => shipped,
-            Err(error) if error.is_store() => return Err(error),
-            Err(error) => return Ok(Readiness::Refused(error.to_string())),
-        };
-        let base = match expected_base(&mut store, &shipped) {
-            Ok(base) => base,
-            Err(error) if error.is_store() => return Err(error),
-            Err(error) => Err(error.to_string()),
-        };
-        (shipped, base)
-    };
-    if (&shipped.run, &shipped.pr_url, &shipped.head) != (&merge.run, &merge.pr_url, &merge.head) {
-        return Ok(Readiness::Refused(
-            "the item was delivered again since it was asked for; ask again".into(),
-        ));
-    }
-    let base = match base {
-        Ok(base) => base,
+    let (shipped, base) = match delivered_as_asked(ctx, merge).await? {
+        Ok(delivered) => delivered,
         Err(why) => return Ok(Readiness::Refused(why)),
     };
     let binary = &ctx.config.github.binary;
@@ -1165,8 +1189,12 @@ async fn ready(ctx: &DaemonContext, merge: &MergeRequest) -> Result<Readiness, A
     if let Err(why) = base_holds_review(ctx, &shipped).await? {
         return Ok(Readiness::Refused(why));
     }
+    let (head, carried) = match covered_head(ctx, merge, &shipped, &facts).await {
+        Ok(covered) => covered,
+        Err(why) => return Ok(Readiness::Refused(why)),
+    };
     let expected = Expected {
-        head: &merge.head,
+        head: &head,
         base: &base,
         ignore_checks: merge.ignore_checks,
     };
@@ -1174,12 +1202,74 @@ async fn ready(ctx: &DaemonContext, merge: &MergeRequest) -> Result<Readiness, A
         Ok(Assessment::Ready(seen)) => Readiness::Ready(Box::new(Ready {
             repo: shipped.repo.clone(),
             base,
+            head,
+            carried,
             seen,
             review_of: shipped.review_of.is_some(),
         })),
         Ok(Assessment::Undecided(_)) => Readiness::Undecided,
         Err(why) => Readiness::Refused(why),
     })
+}
+
+/// The item's delivery `merge` was asked for, unchanged since, and the base
+/// its pull request must have; `Err` why it cannot merge.
+async fn delivered_as_asked(
+    ctx: &DaemonContext,
+    merge: &MergeRequest,
+) -> Result<Result<(Shipped, String), String>, ArchonError> {
+    let mut store = ctx.store.lock().await;
+    let shipped = match shipped(&store, &merge.item) {
+        Ok(shipped) => shipped,
+        Err(error) if error.is_store() => return Err(error),
+        Err(error) => return Ok(Err(error.to_string())),
+    };
+    let base = match expected_base(&mut store, &shipped) {
+        Ok(base) => base,
+        Err(error) if error.is_store() => return Err(error),
+        Err(error) => Err(error.to_string()),
+    };
+    drop(store);
+    let reviewed = merge.carried.as_ref().map_or(&merge.head, |c| &c.reviewed);
+    assert_eq!(shipped.item.id, merge.item, "the item asked for");
+    if (&shipped.run, &shipped.pr_url, &shipped.head) != (&merge.run, &merge.pr_url, reviewed) {
+        return Ok(Err(
+            "the item was delivered again since it was asked for; ask again".into(),
+        ));
+    }
+    Ok(base.map(|base| (shipped, base)))
+}
+
+/// The commit `merge` may merge now and the review carried over to it: the
+/// reviewed commit, or the pull request's later head that review covers. A
+/// merge the operator confirmed stays at the commit the question named.
+async fn covered_head(
+    ctx: &DaemonContext,
+    merge: &MergeRequest,
+    shipped: &Shipped,
+    facts: &PullRequestFacts,
+) -> Result<(String, Option<CarriedReview>), String> {
+    if facts.state != "OPEN" {
+        // Refused by its state, whatever its head.
+        return Ok((merge.head.clone(), merge.carried.clone()));
+    }
+    let (head, carried) = match carry::covered(ctx, shipped, facts).await {
+        Covered::Reviewed => (shipped.head.clone(), None),
+        Covered::Carried(carried) => (facts.head.clone(), Some(carried)),
+        Covered::Moved(why) => {
+            return Err(merge::head_moved(&facts.head, &shipped.head, Some(&why)));
+        }
+    };
+    let confirmed = matches!(merge.authority, MergeAuthority::Confirmed { .. });
+    if confirmed && head != merge.head {
+        return Err(format!(
+            "its head moved to {} since the operator confirmed the merge at {}; ask again",
+            merge::short(&head),
+            merge::short(&merge.head)
+        ));
+    }
+    assert!(is_commit_id(&head), "a commit id in full");
+    Ok((head, carried))
 }
 
 /// Whether GitHub's base of another's pull request still holds the fork its
@@ -1325,6 +1415,16 @@ async fn finish_merge(
     Ok(merge)
 }
 
+/// "; its review of … carried over: why" for a merge at a carried-over head.
+fn carried_note(merge: &MergeRequest) -> String {
+    let Some(carried) = &merge.carried else {
+        return String::new();
+    };
+    assert_ne!(carried.reviewed, merge.head, "carried to a later head");
+    let reviewed = merge::short(&carried.reviewed);
+    format!("; its review of {reviewed} carried over: {}", carried.why)
+}
+
 /// The audit note in the feed, and `merge_finished` news for the orchestrator.
 async fn report(ctx: &DaemonContext, merge: &MergeRequest) -> Result<(), ArchonError> {
     let who = merge.authority.describe();
@@ -1349,6 +1449,7 @@ async fn report(ctx: &DaemonContext, merge: &MergeRequest) -> Result<(), ArchonE
                 (_, Some(checks)) => format!("; checks: {checks}"),
                 (_, None) => String::new(),
             };
+            let carried = carried_note(merge);
             let text = match merge.local_branch() {
                 Some(_) => format!(
                     "Merged {} of {} at {} ({method}); requested on {who}. The branch is kept.",
@@ -1357,7 +1458,7 @@ async fn report(ctx: &DaemonContext, merge: &MergeRequest) -> Result<(), ArchonE
                     merge::short(&merge.head)
                 ),
                 None => format!(
-                    "Merged {} of {} at {} ({method}); {}; requested on {who}{checks}.",
+                    "Merged {} of {} at {} ({method}); {}; requested on {who}{checks}{carried}.",
                     merge.pr_url,
                     merge.item,
                     merge::short(&merge.head),
@@ -1740,6 +1841,7 @@ mod tests {
             waited: false,
             mergeability_wait_since: None,
             checks: None,
+            carried: None,
             state: MergeState::Merging,
             requested_at: now,
             updated_at: now,

@@ -2,6 +2,7 @@
 //! (`team`), and the snapshot a read-only run works in (`snapshot`). Shells
 //! out to `git`; every failure carries git's stderr.
 
+pub(crate) mod carried;
 pub(crate) mod clean;
 pub(crate) mod daemon_git;
 pub(crate) mod fast_forward;

@@ -182,10 +182,23 @@ pub struct MergeRequest {
     /// The checks as last read, in words.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checks: Option<String>,
+    /// `head` came after the reviewed commit, and that review covers it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub carried: Option<CarriedReview>,
     #[serde(flatten)]
     pub state: MergeState,
     pub requested_at: Timestamp,
     pub updated_at: Timestamp,
+}
+
+/// A review that covers a later head than the commit it passed: every commit
+/// since merges in only what the pull request's base holds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CarriedReview {
+    /// The commit the review passed.
+    pub reviewed: String,
+    /// Why it covers the later head: the merges since, in words.
+    pub why: String,
 }
 
 /// Starts the `pr_url` of a request to fast-forward a `ship = local` item's
@@ -221,6 +234,17 @@ impl MergeRequest {
         if let Some(branch) = self.local_branch() {
             return self.local_line(branch);
         }
+        let line = self.pr_line();
+        match &self.carried {
+            Some(carried) => format!(
+                "{line} (the review of {} carried over)",
+                short(&carried.reviewed)
+            ),
+            None => line,
+        }
+    }
+
+    fn pr_line(&self) -> String {
         let head = short(&self.head);
         match &self.state {
             MergeState::AwaitingOperator => format!(
@@ -455,12 +479,7 @@ pub fn assess(pr: &PullRequestFacts, expected: Expected<'_>) -> Result<Assessmen
         return Err("the pull request is a draft".into());
     }
     if pr.head != expected.head {
-        return Err(format!(
-            "its head moved to {} since the review of {}; retry the item so the new commits \
-             are reviewed",
-            short(&pr.head),
-            short(expected.head)
-        ));
+        return Err(head_moved(&pr.head, expected.head, None));
     }
     if pr.base != expected.base {
         return Err(format!(
@@ -482,6 +501,25 @@ pub fn assess(pr: &PullRequestFacts, expected: Expected<'_>) -> Result<Assessmen
         ));
     }
     Ok(Assessment::Ready(seen))
+}
+
+/// Why a pull request whose head moved to `pr_head` since the review of
+/// `reviewed` is not merged; `uncarried` says why that review does not cover it.
+pub fn head_moved(pr_head: &str, reviewed: &str, uncarried: Option<&str>) -> String {
+    assert_ne!(pr_head, reviewed, "only a moved head is refused");
+    assert!(
+        uncarried.is_none_or(|why| !why.is_empty()),
+        "a reason in words"
+    );
+    let why = uncarried.map_or(String::new(), |why| {
+        format!(", and the review does not carry over: {why}")
+    });
+    format!(
+        "its head moved to {} since the review of {}{why}; retry the item so the new commits \
+         are reviewed",
+        short(pr_head),
+        short(reviewed)
+    )
 }
 
 /// [`assess`] for a caller that cannot wait: an undecided mergeability refuses.
@@ -697,6 +735,7 @@ mod tests {
             waived_by: None,
             waited: false,
             mergeability_wait_since: None,
+            carried: None,
             checks: None,
             state: MergeState::AwaitingOperator,
             requested_at: now,

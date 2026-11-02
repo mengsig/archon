@@ -1415,6 +1415,16 @@ async fn finish_merge(
     Ok(merge)
 }
 
+/// "; its review of … carried over: why" for a merge at a carried-over head.
+fn carried_note(merge: &MergeRequest) -> String {
+    let Some(carried) = &merge.carried else {
+        return String::new();
+    };
+    assert_ne!(carried.reviewed, merge.head, "carried to a later head");
+    let reviewed = merge::short(&carried.reviewed);
+    format!("; its review of {reviewed} carried over: {}", carried.why)
+}
+
 /// The audit note in the feed, and `merge_finished` news for the orchestrator.
 async fn report(ctx: &DaemonContext, merge: &MergeRequest) -> Result<(), ArchonError> {
     let who = merge.authority.describe();
@@ -1439,10 +1449,7 @@ async fn report(ctx: &DaemonContext, merge: &MergeRequest) -> Result<(), ArchonE
                 (_, Some(checks)) => format!("; checks: {checks}"),
                 (_, None) => String::new(),
             };
-            let carried = merge.carried.as_ref().map_or(String::new(), |carried| {
-                let reviewed = merge::short(&carried.reviewed);
-                format!("; its review of {reviewed} carried over: {}", carried.why)
-            });
+            let carried = carried_note(merge);
             let text = match merge.local_branch() {
                 Some(_) => format!(
                     "Merged {} of {} at {} ({method}); requested on {who}. The branch is kept.",

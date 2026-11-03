@@ -130,7 +130,7 @@ fn table(columns: &[String], rows: &[Vec<String>]) -> String {
 }
 
 fn cell(text: &str) -> String {
-    defused(text).replace('|', "\\|")
+    defused(text).replace('\\', "\\\\").replace('|', "\\|")
 }
 
 fn outputs(before: Option<&Clipped>, after: Option<&Clipped>) -> String {

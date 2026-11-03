@@ -22,7 +22,7 @@ use super::evidence::{self, Source};
 use crate::context::DaemonContext;
 
 /// GitHub refuses a longer pull request body.
-const MAX_BODY_CHARS: usize = 65_536;
+const MAX_BODY_CHARS: usize = layout::MAX_BODY_CHARS;
 
 /// What a delivery labels its pull request by.
 pub(crate) struct Labelling<'a> {
@@ -99,7 +99,7 @@ pub(crate) async fn label(
             level.label()
         ),
     };
-    let (written, unattached) = match &shown {
+    let (written, unattached, full) = match &shown {
         Ok(shown) => {
             let sections = Sections {
                 assessment: &assessment,
@@ -108,12 +108,16 @@ pub(crate) async fn label(
             };
             write_sections(ctx, repo, url, &shown.body, sections).await
         }
-        Err(why) => (Err(format!("the pull request could not be read: {why}")), 0),
+        Err(why) => (
+            Err(format!("the pull request could not be read: {why}")),
+            0,
+            None,
+        ),
     };
     if let Some(item) = item {
         record(ctx, item, level).await?;
     }
-    let note = summary_line(level, &labelled, &written, unattached);
+    let note = summary_line(level, &labelled, &written, unattached, full.as_deref());
     tracing::info!(%url, %level, %note, "risk labelled");
     Ok(note)
 }
@@ -135,20 +139,20 @@ async fn write_sections(
     url: &str,
     body: &str,
     sections: Sections<'_>,
-) -> (Result<(), String>, usize) {
+) -> (Result<(), String>, usize, Option<String>) {
     let outcome = sections.labelling.outcome;
     assert!(!outcome.by.is_empty(), "someone wrote the change");
     let hosted = evidence::host(ctx, repo, outcome.source, url, outcome.evidence).await;
     let unattached = hosted.values().filter(|link| link.is_err()).count();
-    let text = composed(body, &sections, &hosted);
+    let (text, full) = composed(body, &sections, &hosted);
     let written = write_body(&ctx.config.github.binary, repo, url, &text).await;
     assert!(unattached <= hosted.len(), "counted among the uploads");
-    (written, unattached)
+    (written, unattached, full)
 }
 
 /// `body` with the summary and evidence sections atop its own text and the
 /// risk section at its foot.
-fn composed(body: &str, sections: &Sections<'_>, hosted: &Hosted) -> String {
+fn composed(body: &str, sections: &Sections<'_>, hosted: &Hosted) -> (String, Option<String>) {
     let (labelling, outcome) = (sections.labelling, sections.labelling.outcome);
     let level = sections.assessment.level;
     let summary = layout::summary_section(level, outcome.by, outcome.summary);
@@ -161,17 +165,21 @@ fn composed(body: &str, sections: &Sections<'_>, hosted: &Hosted) -> String {
         label: sections.label,
     };
     let risk = risk::section(sections.assessment, facts);
-    let text = layout::compose(body, &[&summary, &evidence], &[&risk]);
+    let full = layout::compose(body, &[&summary, &evidence], &[&risk]);
+    let text = layout::compose_pr(body, &[&summary, &evidence], &risk);
     debug_assert!(text.starts_with(&summary), "the level leads");
-    text
+    debug_assert!(text.contains(&evidence), "the evidence stays intact");
+    let omitted = (text != full).then_some(full);
+    (text, omitted)
 }
 
-/// The one line of the run's summary on how labelling went.
+/// How labelling went, followed by the full body when it was shortened.
 fn summary_line(
     level: RiskLevel,
     labelled: &Result<(), String>,
     written: &Result<(), String>,
     unattached: usize,
+    full: Option<&str>,
 ) -> String {
     let mut line = format!("RISK: {level}");
     match labelled {
@@ -188,8 +196,17 @@ fn summary_line(
             "; {unattached} screenshot(s) could not be attached, as the evidence section says"
         ));
     }
-    let line: String = line.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut line: String = line.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(!line.contains('\n'), "one line");
+    if let Some(full) = full {
+        assert!(
+            full.chars().count() > MAX_BODY_CHARS,
+            "only oversized bodies are shortened"
+        );
+        line.push_str(&format!(
+            "\n\nFull pull request text before truncation:\n\n{full}"
+        ));
+    }
     line
 }
 
@@ -278,7 +295,8 @@ async fn ensure_labels(binary: &Path, repo: &Repo) -> Result<(), String> {
 
 async fn write_body(binary: &Path, repo: &Repo, url: &str, body: &str) -> Result<(), String> {
     assert!(!body.trim().is_empty(), "a body with Archon's sections");
-    if body.chars().count() >= MAX_BODY_CHARS {
+    assert!(url.starts_with("https://"), "a pull request GitHub listed");
+    if body.chars().count() > MAX_BODY_CHARS {
         return Err(format!(
             "with it the body would pass GitHub's {MAX_BODY_CHARS} characters"
         ));
@@ -329,10 +347,10 @@ mod tests {
 
     #[test]
     fn the_summary_line_says_what_failed_in_one_line() {
-        let set = summary_line(RiskLevel::Medium, &Ok(()), &Ok(()), 0);
+        let set = summary_line(RiskLevel::Medium, &Ok(()), &Ok(()), 0, None);
         assert_eq!(set, "RISK: medium, labelled `risk: medium`");
         let refused = Err("HTTP 403:\nResource not accessible".to_owned());
-        let line = summary_line(RiskLevel::High, &refused, &Err("too long".into()), 2);
+        let line = summary_line(RiskLevel::High, &refused, &Err("too long".into()), 2, None);
         assert!(
             line.starts_with("RISK: high; the label could not be set: HTTP 403:"),
             "{line}"

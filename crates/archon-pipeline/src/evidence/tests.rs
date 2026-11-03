@@ -336,3 +336,15 @@ fn sample_bodies_lead_with_the_level_the_summary_and_the_evidence() {
         assert_eq!(again, body, "re-rendering changes nothing");
     }
 }
+
+#[test]
+fn table_cells_escape_trailing_backslashes_and_backslashes_before_pipes() {
+    let evidence = read(json!([{
+        "kind": "table", "caption": "Escaped cells", "columns": ["path\\", "value"],
+        "rows": [["ends\\", "a\\|b"], ["two\\\\", "plain|pipe"]]
+    }]));
+    let text = section(&evidence, "implement", &Hosted::new());
+    assert!(text.contains("| path\\\\ | value |"), "{text}");
+    assert!(text.contains("| ends\\\\ | a\\\\\\|b |"), "{text}");
+    assert!(text.contains("| two\\\\\\\\ | plain\\|pipe |"), "{text}");
+}

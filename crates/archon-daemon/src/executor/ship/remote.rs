@@ -98,14 +98,14 @@ fn push_target(repo: &Path, token: Option<&Token>) -> Result<Result<String, Stri
 
 /// Push `commit`, the screenshots of a delivery, to `target` under
 /// [`stack::EVIDENCE_REFS`] on `repo`'s `origin`, as [`push`] would; the
-/// inner `Err` says why it was not taken.
+/// destination URL, or an inner `Err` saying why it was not taken.
 pub(super) async fn push_evidence(
     binary: &Path,
     data_dir: &Path,
     repo: &Repo,
     commit: &str,
     target: &str,
-) -> Result<Result<(), String>, ArchonError> {
+) -> Result<Result<String, String>, ArchonError> {
     assert!(stack::is_commit_id(commit), "an evidence commit");
     assert!(target.starts_with(stack::EVIDENCE_REFS), "an evidence ref");
     let token = match gh::token(binary, repo).await {
@@ -131,7 +131,7 @@ pub(super) async fn push_evidence(
             .as_ref()
             .map_or_else(|| said.clone(), |t| t.redact(&said));
         Ok(match ran.status.success() {
-            true => Ok(()),
+            true => Ok(url),
             false => Err(format!("`origin` did not take `{target}`: {}", said.trim())),
         })
     });

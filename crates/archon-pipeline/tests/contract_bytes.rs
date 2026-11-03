@@ -30,7 +30,9 @@ const RUN_TREE_BUDGET: usize = 550;
 /// What judging the change's risk adds: the rubric, to the record stage and
 /// to a review stage after it.
 const RISK_BUDGET: usize = 1_350;
-const TOTAL_BUDGET: usize = 121_000;
+/// What the record stage's summary and evidence rules add.
+const EVIDENCE_BUDGET: usize = 2_100;
+const TOTAL_BUDGET: usize = 130_000;
 
 /// One built-in stage's fixed input, in bytes.
 struct Cost {
@@ -141,6 +143,9 @@ fn built_in_contracts_stay_within_their_byte_budgets() {
         if owed.ship_record || cost.kind == StageKind::Review {
             budget += RISK_BUDGET;
         }
+        if owed.ship_record {
+            budget += EVIDENCE_BUDGET;
+        }
         if cost.contract > budget {
             over.push(format!(
                 "{}/{}: {} B",
@@ -162,8 +167,9 @@ fn direct_is_the_cheapest_shipping_pipeline() {
     let direct = cost_of(&costs, "direct", "implement");
     assert_eq!(direct.delegation, 0, "no reviewer at its own review level");
     // 1,600 B before the prompt carried the PR-body attribution rule, 1,700
-    // before it said to run the full check in the foreground.
-    assert!(direct.prompt <= 1_800, "prompt is {} B", direct.prompt);
+    // before it said to run the full check in the foreground, 1,800 before it
+    // asked for before and after evidence.
+    assert!(direct.prompt <= 2_000, "prompt is {} B", direct.prompt);
     let fixed = |pipeline: &str| -> usize {
         let stages = costs.iter().filter(|c| c.pipeline == pipeline);
         stages.map(|c| c.contract + c.delegation + c.prompt).sum()

@@ -499,7 +499,11 @@ async fn an_onto_item_fast_forwards_the_pull_request_and_only_adds_its_risk_sect
     }
     let body = gh.edited_body(100);
     assert!(
-        body.starts_with("<!-- archon-risk -->\n## Risk: high"),
+        body.starts_with("<!-- archon-summary -->\nRisk level: high\n"),
+        "{body}"
+    );
+    assert!(
+        body.contains("<!-- archon-risk -->\n## Risk: high"),
         "{body}"
     );
     let stages = h.stages(&item.id).await;
@@ -507,7 +511,9 @@ async fn an_onto_item_fast_forwards_the_pull_request_and_only_adds_its_risk_sect
 }
 
 /// Commits added to a pull request judged only themselves: a label the pull
-/// request had stays when theirs is lower, and its owner's text stays below.
+/// request had stays when theirs is lower. Archon's sections are replaced
+/// where the body had them, its owner's text stays, and the new commits'
+/// summary and evidence lead.
 #[tokio::test]
 async fn an_onto_delivery_never_lowers_the_pull_request_s_risk_label() {
     let (h, gh, head) = setup().await;
@@ -522,6 +528,10 @@ async fn an_onto_delivery_never_lowers_the_pull_request_s_risk_label() {
     settle_item(&h, &item, |workspace| {
         let mut record = change_elsewhere(workspace);
         record["risk"] = low;
+        record["pr"]["summary"] =
+            json!("fixed the flaky test. before: 1 in 20 runs failed; now: none.");
+        record["evidence"] = json!([{"kind": "table", "caption": "200 runs",
+            "columns": ["", "before", "after"], "rows": [["failures", "11", "0"]]}]);
         record
     })
     .await;
@@ -539,19 +549,34 @@ async fn an_onto_delivery_never_lowers_the_pull_request_s_risk_label() {
         "{calls}"
     );
     let body = gh.edited_body(100);
-    assert!(
-        body.starts_with("<!-- archon-risk -->\n## Risk: high\n"),
-        "{body}"
-    );
+    let summary = "<!-- archon-summary -->\nRisk level: high\n\n## What changed\n\n\
+                   fixed the flaky test. before: 1 in 20 runs failed; now: none.";
+    assert!(body.starts_with(summary), "{body}");
     assert!(
         body.contains("already labelled `high`, and these commits add to it"),
         "{body}"
     );
     assert!(body.contains("One line in a test."), "{body}");
+    let at = |part: &str| {
+        body.find(part)
+            .unwrap_or_else(|| panic!("{part} in {body}"))
+    };
     assert!(
-        body.ends_with("\n\nThe owner's text.\n") && !body.contains("\nold\n"),
+        at("| failures | 11 | 0 |") < at("The owner's text."),
         "{body}"
     );
+    assert!(
+        at("The owner's text.") < at("<!-- archon-risk -->\n## Risk: high\n"),
+        "{body}"
+    );
+    assert!(!body.contains("\nold\n"), "{body}");
+    for marker in [
+        "<!-- archon-summary -->",
+        "<!-- archon-evidence -->",
+        "<!-- archon-risk -->",
+    ] {
+        assert_eq!(body.matches(marker).count(), 1, "{marker} once: {body}");
+    }
     let stored = h.ctx.store.lock().await.item(&item.id).unwrap().risk;
     assert_eq!(stored, Some(archon_core::risk::RiskLevel::High));
 }

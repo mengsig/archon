@@ -1,9 +1,10 @@
 //! The risk label of a delivered pull request (ARCHITECTURE §8.7): the
 //! repository gets the three `risk:` labels where it lacks them, the pull
-//! request exactly the one its delivery settled on, and its body a "Risk"
-//! section at the top. Strictly advisory: nothing merges or gates by it,
-//! and a step GitHub refuses is told in the body and the run's summary,
-//! never a reason the delivery fails.
+//! request exactly the one its delivery settled on, and its body Archon's
+//! sections: the level and what changed on top, then the evidence, the
+//! body's own text, and the "Risk" section at the foot. Strictly advisory:
+//! nothing merges or gates by it, and a step GitHub refuses is told in the
+//! body and the run's summary, never a reason the delivery fails.
 
 use std::path::Path;
 
@@ -11,10 +12,13 @@ use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 use archon_core::repo::Repo;
 use archon_core::risk::{LABEL_PREFIX, RiskLevel};
+use archon_pipeline::evidence::{self as shown, Hosted};
+use archon_pipeline::layout;
 use archon_pipeline::risk::{self, Assessment, DiffStat, Evidence};
 use serde::Deserialize;
 
 use super::super::gh;
+use super::evidence::{self, Source};
 use crate::context::DaemonContext;
 
 /// GitHub refuses a longer pull request body.
@@ -31,6 +35,19 @@ pub(crate) struct Labelling<'a> {
     pub against: String,
     pub checks: &'a [String],
     pub review: Option<&'a str>,
+    pub outcome: Outcome<'a>,
+}
+
+/// What the pull request shows of its change above its own text.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Outcome<'a> {
+    /// The stage that wrote the change, or `Archon` for its own.
+    pub by: &'a str,
+    /// What changed at a high level, as `by` said.
+    pub summary: Option<&'a str>,
+    pub evidence: &'a shown::Evidence,
+    /// Where its screenshot files are read from, if anywhere.
+    pub source: Option<Source<'a>>,
 }
 
 /// What `gh pr view` shows of a pull request's labels and body.
@@ -82,32 +99,71 @@ pub(crate) async fn label(
             level.label()
         ),
     };
-    let evidence = Evidence {
-        diff: labelling.diff,
-        against: &labelling.against,
-        checks: labelling.checks,
-        review: labelling.review,
-        label: &label_note,
-    };
-    let section = risk::section(&assessment, evidence);
-    let written = match &shown {
+    let (written, unattached) = match &shown {
         Ok(shown) => {
-            write_body(
-                binary,
-                repo,
-                url,
-                &risk::with_section(&shown.body, &section),
-            )
-            .await
+            let sections = Sections {
+                assessment: &assessment,
+                labelling: &labelling,
+                label: &label_note,
+            };
+            write_sections(ctx, repo, url, &shown.body, sections).await
         }
-        Err(why) => Err(format!("the pull request could not be read: {why}")),
+        Err(why) => (Err(format!("the pull request could not be read: {why}")), 0),
     };
     if let Some(item) = item {
         record(ctx, item, level).await?;
     }
-    let note = summary_line(level, &labelled, &written);
+    let note = summary_line(level, &labelled, &written, unattached);
     tracing::info!(%url, %level, %note, "risk labelled");
     Ok(note)
+}
+
+/// What Archon writes into a pull request body besides the label.
+struct Sections<'a> {
+    assessment: &'a Assessment,
+    labelling: &'a Labelling<'a>,
+    /// How setting the label went, in one sentence.
+    label: &'a str,
+}
+
+/// Upload the evidence's screenshots, then write `body` with Archon's
+/// sections, each replacing its old self; how the write went, and how many
+/// screenshots could not be attached.
+async fn write_sections(
+    ctx: &DaemonContext,
+    repo: &Repo,
+    url: &str,
+    body: &str,
+    sections: Sections<'_>,
+) -> (Result<(), String>, usize) {
+    let outcome = sections.labelling.outcome;
+    assert!(!outcome.by.is_empty(), "someone wrote the change");
+    let hosted = evidence::host(ctx, repo, outcome.source, url, outcome.evidence).await;
+    let unattached = hosted.values().filter(|link| link.is_err()).count();
+    let text = composed(body, &sections, &hosted);
+    let written = write_body(&ctx.config.github.binary, repo, url, &text).await;
+    assert!(unattached <= hosted.len(), "counted among the uploads");
+    (written, unattached)
+}
+
+/// `body` with the summary and evidence sections atop its own text and the
+/// risk section at its foot.
+fn composed(body: &str, sections: &Sections<'_>, hosted: &Hosted) -> String {
+    let (labelling, outcome) = (sections.labelling, sections.labelling.outcome);
+    let level = sections.assessment.level;
+    let summary = layout::summary_section(level, outcome.by, outcome.summary);
+    let evidence = shown::section(outcome.evidence, outcome.by, hosted);
+    let facts = Evidence {
+        diff: labelling.diff,
+        against: &labelling.against,
+        checks: labelling.checks,
+        review: labelling.review,
+        label: sections.label,
+    };
+    let risk = risk::section(sections.assessment, facts);
+    let text = layout::compose(body, &[&summary, &evidence], &[&risk]);
+    debug_assert!(text.starts_with(&summary), "the level leads");
+    text
 }
 
 /// The one line of the run's summary on how labelling went.
@@ -115,6 +171,7 @@ fn summary_line(
     level: RiskLevel,
     labelled: &Result<(), String>,
     written: &Result<(), String>,
+    unattached: usize,
 ) -> String {
     let mut line = format!("RISK: {level}");
     match labelled {
@@ -123,7 +180,12 @@ fn summary_line(
     }
     if let Err(why) = written {
         line.push_str(&format!(
-            "; the body's risk section could not be written: {why}"
+            "; the body's risk and evidence sections could not be written: {why}"
+        ));
+    }
+    if unattached > 0 {
+        line.push_str(&format!(
+            "; {unattached} screenshot(s) could not be attached, as the evidence section says"
         ));
     }
     let line: String = line.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -215,7 +277,7 @@ async fn ensure_labels(binary: &Path, repo: &Repo) -> Result<(), String> {
 }
 
 async fn write_body(binary: &Path, repo: &Repo, url: &str, body: &str) -> Result<(), String> {
-    assert!(!body.trim().is_empty(), "a body with its risk section");
+    assert!(!body.trim().is_empty(), "a body with Archon's sections");
     if body.chars().count() >= MAX_BODY_CHARS {
         return Err(format!(
             "with it the body would pass GitHub's {MAX_BODY_CHARS} characters"
@@ -267,16 +329,20 @@ mod tests {
 
     #[test]
     fn the_summary_line_says_what_failed_in_one_line() {
-        let set = summary_line(RiskLevel::Medium, &Ok(()), &Ok(()));
+        let set = summary_line(RiskLevel::Medium, &Ok(()), &Ok(()), 0);
         assert_eq!(set, "RISK: medium, labelled `risk: medium`");
         let refused = Err("HTTP 403:\nResource not accessible".to_owned());
-        let line = summary_line(RiskLevel::High, &refused, &Err("too long".into()));
+        let line = summary_line(RiskLevel::High, &refused, &Err("too long".into()), 2);
         assert!(
             line.starts_with("RISK: high; the label could not be set: HTTP 403:"),
             "{line}"
         );
         assert!(
-            line.contains("risk section could not be written: too long") && !line.contains('\n')
+            line.contains("evidence sections could not be written: too long")
+                && !line.contains('\n')
+        );
+        assert!(
+            line.ends_with("2 screenshot(s) could not be attached, as the evidence section says")
         );
     }
 }

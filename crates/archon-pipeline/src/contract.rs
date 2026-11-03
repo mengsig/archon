@@ -73,11 +73,13 @@ pub fn instructions(
     if owed.ship_record {
         out.push_str(&ship_record_rules(stage.kind));
         out.push_str(&risk_rules(relays_reviewer(owed)));
+        out.push_str(EVIDENCE_RULES);
     } else if stage.kind == StageKind::Review {
         out.push_str(&review_risk_rules());
     } else if stage.kind == StageKind::Ship {
         out.push_str(&risk_rules(false));
         out.push_str(SHIP_RISK_SHAPE);
+        out.push_str(EVIDENCE_RULES);
     }
     out
 }
@@ -666,10 +668,12 @@ pub const SHIP_RECORD_JSON: &str = "\
 ```json\n\
 {\"commit\": \"<git rev-parse HEAD>\", \"tree\": \"<git rev-parse HEAD^{tree}>\",\n \
 \"checks\": [\"<each verification command that ran>\"],\n \
-\"pr\": {\"title\": \"<one line, in the repository's convention>\", \
-\"body\": \"<what changed and why, how it was verified, assumptions>\"},\n \
-\"risk\": {\"level\": \"<low, medium or high>\", \"why\": \"<the evidence for it>\", \
-\"captures\": [\"<https:// link to a screenshot or capture, if any>\"]}}\n\
+\"pr\": {\"title\": \"<one line, in the repository's convention>\",\n  \
+\"summary\": \"<high level, terse: made X happen; now can Y; before: A, now: B>\",\n  \
+\"body\": \"<technical detail: approach, key files, checks with results, assumptions>\"},\n \
+\"risk\": {\"level\": \"<low, medium or high>\", \"why\": \"<the evidence for it>\"},\n \
+\"evidence\": [{\"kind\": \"<screenshot, table or output>\", \"caption\": \"<what it shows>\", \
+\"…\": \"<as Evidence says>\"}]}\n\
 ```\n";
 
 /// How the record stage labels its change's risk (ARCHITECTURE §8.7), with
@@ -691,8 +695,6 @@ fn risk_rules(relays: bool) -> String {
          - Rubric:\n{rubric}\
          - `why`: areas and files touched, whether behaviour changes or only tests, docs or \
          comments, tests run with results, review findings, what pushes the level up.\n\
-         - `captures`: `https://` links to screenshots or captures of a visible change; \
-         never a local path.\n\
          {reviewer}\
          - Without a valid `risk` key Archon labels it `high`.\n",
         rubric = indented(archon_core::risk::RUBRIC),
@@ -723,7 +725,35 @@ fn indented(list: &str) -> String {
 
 /// Where a ship agent, which has no ship record, puts its `risk` key.
 const SHIP_RISK_SHAPE: &str = "- Add it to your `structured` data as `\"risk\": \
-{\"level\": \"<low, medium or high>\", \"why\": \"…\", \"captures\": [\"https://…\"]}`.\n";
+{\"level\": \"<low, medium or high>\", \"why\": \"…\"}`, and `pr.summary` and \
+`evidence` beside it as below.\n";
+
+/// What the record stage shows of its change's outcome, and how Archon lays
+/// the pull request body out with it (ARCHITECTURE §8.7).
+const EVIDENCE_RULES: &str = "\n## Summary and evidence\n\n\
+- The pull request opens with `Risk level: <level>`, then `pr.summary`, then the \
+evidence, then `pr.body`, then the risk section folded. Write for a human skimming.\n\
+- `pr.summary`: what changed at a high level, before and now, in a few terse lines; \
+grammar may go for brevity (\"made X happen. now can Y. before: A, now: B.\"). At most \
+1500 characters. Without it the pull request says it is missing.\n\
+- `pr.body`: the technical detail, still concise: approach, key files, checks run with \
+results, assumptions and limits.\n\
+- `evidence`: a list of entries showing the outcome, before and after where possible. \
+Each has a `kind` and a `caption`:\n\
+  - `screenshot`, for a visible change (web, TUI, desktop): `before` (on the base) and \
+`after` (on the branch), each an `https://` link or the worktree-relative path of a PNG, \
+JPEG, GIF or WebP file under `.archon/evidence/` (or `.archon/reports/`), such as \
+`.archon/evidence/after.png`, which Archon uploads to a ref under \
+`refs/archon/evidence/<item>/` of the repository; never commit it. Never an absolute \
+or home path.\n\
+  - `table`, for numbers (bench, timings, sizes, counts): `columns` and `rows`, a list \
+of cell lists; put before and after in columns of their own. At most 8 columns and \
+25 rows.\n\
+  - `output`, for behaviour: the decisive command output or test result as `text`, or \
+`before` and `after`. At most 40 lines each.\n\
+- When nothing meaningful can be shown (a pure refactor, docs), give \
+`\"evidence\": {\"none\": \"<why>\"}` instead: the pull request says \
+\"No before/after evidence: <why>\". An entry Archon cannot show is named with why.\n";
 
 const SHIP_RECORD_SHAPE: &str = "\
 - Read both hashes after the last commit, made under the repository's own git \
@@ -1716,12 +1746,22 @@ mod tests {
             "high two who read the code",
             "  - `high`: security, auth, permissions",
             "  - When in doubt, pick the higher level.",
-            "never a local path",
             "Without a valid `risk` key Archon labels it `high`.",
         ] {
             assert!(alone.contains(said), "missing {said:?} in {alone}");
         }
         assert!(!alone.contains("risk.reviewer"), "no reviewer to relay");
+        for said in [
+            "## Summary and evidence",
+            "then `pr.summary`, then the evidence, then `pr.body`",
+            "`refs/archon/evidence/<item>/`",
+            "Never an absolute or home path.",
+            "\"No before/after evidence: <why>\"",
+            "\"summary\": \"<high level, terse",
+        ] {
+            assert!(alone.contains(said), "missing {said:?} in {alone}");
+        }
+        assert!(!plain.contains("## Summary and evidence"), "{plain}");
         let held = work_contract(Owed {
             ship_record: true,
             ..owing(1, false)
@@ -1737,6 +1777,11 @@ mod tests {
         let agent = instructions(&ship, mode, "/w", TeamPart::Solo, Owed::default(), None);
         assert_eq!(agent.matches("## Risk level").count(), 1, "{agent}");
         assert!(agent.contains("Add it to your `structured` data as `\"risk\": {"));
+        assert_eq!(
+            agent.matches("## Summary and evidence").count(),
+            1,
+            "{agent}"
+        );
     }
 
     /// A task that does not fit its pipeline goes back to the orchestrator

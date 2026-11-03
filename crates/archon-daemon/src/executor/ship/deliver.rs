@@ -25,7 +25,7 @@ use super::super::{
     FollowUp, RunTable, ShipRetry, descendants, fast_check, initiative_ship, recover,
     repo_identity, restack, settle,
 };
-use super::{auto_merge, checks, existing, gate, pr_checks, remote, risk};
+use super::{auto_merge, checks, evidence, existing, gate, pr_checks, remote, risk};
 use crate::context::DaemonContext;
 use crate::resolve;
 
@@ -393,6 +393,15 @@ async fn label(
         against,
         checks: &plan.record.checks,
         review: plan.review.as_deref(),
+        outcome: risk::Outcome {
+            by: &plan.record_stage,
+            summary: plan.record.summary.as_deref(),
+            evidence: &plan.evidence,
+            source: Some(evidence::Source {
+                workspace: &claimed.run.workspace,
+                item: &claimed.run.item,
+            }),
+        },
     };
     risk::label(ctx, repo, Some(&claimed.run.item), url, labelling).await
 }
@@ -964,6 +973,7 @@ mod tests {
                 tree: "2".repeat(40),
                 title: "t".into(),
                 body: "b".into(),
+                summary: None,
                 checks: Vec::new(),
             },
             body: "b".into(),
@@ -973,6 +983,7 @@ mod tests {
                 &archon_pipeline::risk::Proposal::read(None),
                 None,
             ),
+            evidence: Default::default(),
             review: None,
         };
         let mut table = RunTable::default();

@@ -70,6 +70,7 @@ mod operator_merge;
 mod operator_settings;
 mod ops;
 mod planning_controls;
+mod pr_evidence;
 mod provider_routing;
 mod prune;
 mod push;

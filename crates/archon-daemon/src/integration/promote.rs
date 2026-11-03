@@ -18,6 +18,7 @@ use archon_core::notify::NotificationKind;
 use archon_core::protocol::RepoRef;
 use archon_core::repo::Repo;
 use archon_core::risk::RiskLevel;
+use archon_pipeline::evidence::Evidence;
 use archon_pipeline::risk::{Assessment, DiffStat};
 use tokio::sync::Mutex;
 
@@ -256,6 +257,14 @@ async fn open_pull_request(
         Err(refusal) => return Err(ArchonError::Unavailable(refusal)),
     };
     let checks: Vec<String> = watch.full.iter().cloned().collect();
+    let summary = format!(
+        "promotes `{}` into `{}`: {} merge(s), each reviewed in its own pull request. \
+         the full check passed on this exact head.",
+        watch.branch, watch.release, promoted.merges
+    );
+    let evidence = Evidence::none_because(
+        "a promotion brings changes that each show their evidence in their own pull request",
+    );
     let labelling = risk::Labelling {
         assessment: promotion_risk(watch, promoted.merges),
         onto: false,
@@ -263,6 +272,12 @@ async fn open_pull_request(
         against: format!("`{}`", watch.release),
         checks: &checks,
         review: None,
+        outcome: risk::Outcome {
+            by: "Archon",
+            summary: Some(&summary),
+            evidence: &evidence,
+            source: None,
+        },
     };
     let risk = risk::label(ctx, &watch.repo, None, &url, labelling).await?;
     Ok((url, risk))
@@ -281,7 +296,6 @@ fn promotion_risk(watch: &Watch, merges: usize) -> Assessment {
              head, but together they change what is released.",
             watch.branch, watch.release
         ),
-        captures: Vec::new(),
     };
     debug_assert!(assessment.why.contains(&watch.release));
     assessment

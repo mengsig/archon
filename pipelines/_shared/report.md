@@ -37,6 +37,8 @@ the change. Always make these points easy to find:
 - **Risk:** remaining risk or follow-up; say when none is known.
 - **Acceptance check:** the observable result and the checks that establish
   it, including their actual outcomes.
+- **Evidence:** the before and after the implementer recorded (screenshots,
+  numbers, output), or why it shows none.
 - **Open decisions:** decisions for the operator, with your recommended
   default; say when none are open.
 

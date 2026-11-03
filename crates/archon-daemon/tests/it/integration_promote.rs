@@ -294,7 +294,15 @@ async fn a_green_integration_branch_merges_into_the_release_branch_and_is_realig
     assert!(calls.iter().any(|c| c == labelled), "{calls:?}");
     let body = std::fs::read_to_string(gh.state.join("edited-body")).expect("risk section");
     assert!(
-        body.starts_with("<!-- archon-risk -->\n## Risk: high\n"),
+        body.starts_with("<!-- archon-summary -->\nRisk level: high\n"),
+        "{body}"
+    );
+    assert!(
+        body.contains("<!-- archon-risk -->\n## Risk: high\n"),
+        "{body}"
+    );
+    assert!(
+        body.contains("No before/after evidence: a promotion brings changes"),
         "{body}"
     );
     assert!(

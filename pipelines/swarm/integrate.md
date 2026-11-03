@@ -71,9 +71,14 @@ The workers report (claims to verify, not evidence):
 
 Call `complete_task` with the `structured` data your contract requires:
 the ship record and, where reviewers were asked for, the review record
-naming the agent id of each reviewer the pass rests on. The `pr.body`
-says what changed and why, how the tasks split the work, how it was
-verified, the review's scope, and advisory findings left open. The
+naming the agent id of each reviewer the pass rests on. The `pr.summary`
+says what changed at a high level, before and now, in a few terse lines;
+the `evidence` shows it, before and after, as your contract's Summary and
+evidence section says: capture the `after` on the merged head and the
+`before` on `{{base_commit}}` (screenshots under `.archon/evidence/`, never
+committed), or say why nothing can be shown. The `pr.body` is the concise
+technical detail: what changed and why, how the tasks split the work, how
+it was verified, the review's scope, and advisory findings left open. The
 `pr.body` names no model or tool: no `Co-Authored-By` or "Generated with"
 line. The `summary` lists the tasks, what you fixed yourself,
 what went back to workers, the checks with their results, and anything

@@ -26,6 +26,9 @@ use crate::worktree::team::{check_worktree, common_dir};
 const MAX_LISTED: usize = 5;
 /// Where stages write the pages Archon shows the operator; never part of a change.
 const REPORTS_DIR: &str = ".archon/reports/";
+/// Where an agent leaves the screenshots its pull request shows, uploaded
+/// apart from the branch ([`super::evidence`]).
+const EVIDENCE_DIR: &str = ".archon/evidence/";
 
 /// How the refusals open that the record stage can fix in its own worktree,
 /// so its one automatic repair may: what it left uncommitted or committed
@@ -212,11 +215,13 @@ pub(super) fn check_unchanged(target: &Target) -> Result<Result<(), String>, Arc
 }
 
 /// Whether `path` is output that is never part of a change: a Python
-/// bytecode cache, the swarm plan the workers built from, or a page Archon
-/// shows the operator (a proposal or change report).
+/// bytecode cache, the swarm plan the workers built from, a page Archon
+/// shows the operator (a proposal or change report) or a screenshot its
+/// pull request shows.
 fn is_unshippable(path: &str) -> bool {
     path == PLAN_FILE
         || path.starts_with(REPORTS_DIR)
+        || path.starts_with(EVIDENCE_DIR)
         || path.split('/').any(|part| part == "__pycache__")
         || path.ends_with(".pyc")
         || path.ends_with(".pyo")
@@ -678,6 +683,7 @@ mod tests {
             ".archon/swarm-plan.json",
             ".archon/reports/proposal/index.html",
             ".archon/reports/change/diagram.svg",
+            ".archon/evidence/after.png",
             "pkg/__pycache__/m.cpython-312.pyc",
             "x.pyc",
             "src/y.pyo",

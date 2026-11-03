@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Ship
+
+- Every delivered pull request now leads with `Risk level: <level>` and a
+  terse "What changed" summary (the record's new `pr.summary`), then an
+  Evidence section, then the record's `pr.body` as "Technical detail", with
+  the Risk section and its reasons folded at the foot (#374). Evidence is a
+  new `evidence` key of the ship record: `screenshot`, `table` and `output`
+  entries, before and after where possible, or `{"none": "<why>"}`, which
+  the body shows as "No before/after evidence: <why>". Entries are validated
+  and capped, and one that cannot be shown is named with why. Screenshot
+  files under `.archon/evidence/` are uploaded to
+  `refs/archon/evidence/<item>/<commit>` in the same repository, never to the
+  pull request's branch, so private repositories need no new credential; an
+  upload that fails is said in the body and the summary and never fails the
+  delivery. Refresh, retry and `onto` deliveries rewrite each section in
+  place and keep the owner's text. `risk.captures` is still read and shown
+  as screenshots. The authoring prompts ask for the summary and evidence by
+  default.
+
 ## 1.4.11
 
 Released 2026-11-02.

@@ -13,7 +13,7 @@ use crate::model_tier::{Tier, TierChoice};
 /// `provider/model`, e.g. `claude-code/opus` or `codex/astra`. Serializes as
 /// Aether's `{provider, model}` object; also deserializes from the string form
 /// so config files and MCP arguments can write `"claude-code/opus"`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct ModelRef {
     pub provider: String,
     pub model: String,
@@ -54,7 +54,7 @@ impl FromStr for ModelRef {
     }
 }
 
-#[derive(Deserialize, schemars::JsonSchema)]
+#[derive(Deserialize)]
 #[serde(untagged)]
 enum ModelRefWire {
     Text(String),
@@ -69,6 +69,32 @@ impl<'de> Deserialize<'de> for ModelRef {
                 .parse()
                 .map_err(serde::de::Error::custom),
         }
+    }
+}
+
+/// Not derived: the schema names both shapes `Deserialize` accepts, the
+/// `provider/model` string and the `{provider, model}` object it writes.
+impl schemars::JsonSchema for ModelRef {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ModelRef".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "description": "`provider/model`, e.g. `claude-code/opus`. Written as Aether's \
+                `{provider, model}` object; read from that object or from the string.",
+            "anyOf": [
+                {"type": "string", "pattern": "^[^/]+/.+$"},
+                {
+                    "type": "object",
+                    "properties": {
+                        "provider": {"type": "string", "minLength": 1},
+                        "model": {"type": "string", "minLength": 1}
+                    },
+                    "required": ["provider", "model"]
+                }
+            ]
+        })
     }
 }
 

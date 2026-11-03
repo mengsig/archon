@@ -7588,20 +7588,30 @@
       "type": "object"
     },
     "ModelRef": {
-      "description": "`provider/model`, e.g. `claude-code/opus` or `codex/astra`. Serializes as\nAether's `{provider, model}` object; also deserializes from the string form\nso config files and MCP arguments can write `\"claude-code/opus\"`.",
-      "properties": {
-        "model": {
+      "anyOf": [
+        {
+          "pattern": "^[^/]+/.+$",
           "type": "string"
         },
-        "provider": {
-          "type": "string"
+        {
+          "properties": {
+            "model": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "provider": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "provider",
+            "model"
+          ],
+          "type": "object"
         }
-      },
-      "required": [
-        "provider",
-        "model"
       ],
-      "type": "object"
+      "description": "`provider/model`, e.g. `claude-code/opus`. Written as Aether's `{provider, model}` object; read from that object or from the string."
     },
     "ModelSegment": {
       "properties": {

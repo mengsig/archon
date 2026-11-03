@@ -113,6 +113,36 @@ mod tests {
         assert_eq!(subjects.len(), 8, "one variant per ChangeSubject");
     }
 
+    /// A model is accepted as `provider/model` or as `{provider, model}`, so
+    /// the schema names both; it once named only the object.
+    #[test]
+    fn a_model_reference_takes_either_shape_the_daemon_reads() {
+        let schema = schema();
+        let shapes = definition(&schema, "ModelRef")["anyOf"]
+            .as_array()
+            .expect("a choice of shapes");
+        let types: Vec<&str> = shapes.iter().filter_map(|s| s["type"].as_str()).collect();
+        assert_eq!(types, ["string", "object"], "{shapes:?}");
+        assert_eq!(
+            definition(&schema, "ModelChoiceDraft")["properties"]["model"]["anyOf"][0]["$ref"],
+            "#/$defs/ModelRef"
+        );
+        let retry = |model: Value| {
+            let frame = json!({
+                "req": 1, "cmd": "retry_item", "item": crate::id::QueueItemId::new(),
+                "model_plan": {"build": [{"model": model}]}
+            });
+            let frame: ClientFrame = serde_json::from_value(frame).expect("a retry frame");
+            let super::super::Request::RetryItem { model_plan, .. } = frame.request else {
+                panic!("{:?}", frame.request);
+            };
+            model_plan.expect("a plan").0["build"][0].model.clone()
+        };
+        let text = retry(json!("codex/astra"));
+        assert_eq!(text, retry(json!({"provider": "codex", "model": "astra"})));
+        assert_eq!(text.expect("a model").to_string(), "codex/astra");
+    }
+
     /// Requests are flattened into the frame: a generator sees each command
     /// as one variant tagged by `cmd`, protocol 24's among them.
     #[test]

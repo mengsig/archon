@@ -7,6 +7,7 @@ mod abbreviated;
 mod auto_merge;
 mod checks;
 mod deliver;
+pub(crate) mod evidence;
 mod existing;
 mod gate;
 mod pr_checks;
@@ -201,6 +202,12 @@ async fn label_agent_pr(
     assert_eq!(stage.run, run.id, "the run's own ship stage");
     let onto = ctx.store.lock().await.item(&run.item)?.onto.is_some();
     let proposal = archon_pipeline::risk::Proposal::read(structured);
+    let evidence = archon_pipeline::evidence::Evidence::read(structured);
+    let summary = archon_pipeline::ship::pr_summary(structured);
+    let source = evidence::Source {
+        workspace: &run.workspace,
+        item: &run.item,
+    };
     let labelling = risk::Labelling {
         assessment: archon_pipeline::risk::Assessment::settle(
             stage.stage_id.as_str(),
@@ -212,6 +219,12 @@ async fn label_agent_pr(
         against: "the base the ship agent chose; see the pull request's files".into(),
         checks: &[],
         review: None,
+        outcome: risk::Outcome {
+            by: stage.stage_id.as_str(),
+            summary: summary.as_deref(),
+            evidence: &evidence,
+            source: Some(source),
+        },
     };
     risk::label(ctx, repo, Some(&run.item), url, labelling).await
 }

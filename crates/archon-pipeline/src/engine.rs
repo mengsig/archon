@@ -201,6 +201,7 @@ struct Recorded {
     /// The line Archon wrote for the review the record stage holds.
     review: Option<String>,
     risk: risk::Proposal,
+    evidence: crate::evidence::Evidence,
     /// The highest risk call of the latest review stage that passed after
     /// it, with that stage's id.
     reviewed: Option<(String, risk::RiskCall)>,
@@ -1128,6 +1129,7 @@ impl RunDriver {
             record,
             review,
             risk,
+            evidence,
             reviewed,
         } = at
             .record
@@ -1166,6 +1168,7 @@ impl RunDriver {
             body,
             summary,
             risk,
+            evidence,
             review,
         }
     }
@@ -1586,6 +1589,7 @@ fn passed_record(members: &[&StageRun], duty: Option<ReviewDuty>) -> Recorded {
         record,
         review,
         risk: risk::Proposal::read(structured),
+        evidence: crate::evidence::Evidence::read(structured),
         reviewed: None,
     }
 }

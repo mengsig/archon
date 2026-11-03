@@ -334,6 +334,37 @@ pub(crate) fn push(
     push_with(shadow, url, (branch, commit), (None, false), token)
 }
 
+/// Where the screenshots a delivery shows are pushed, one ref per upload.
+pub(crate) const EVIDENCE_REFS: &str = "refs/archon/evidence/";
+
+/// Push `commit` to `target`, a new ref under [`EVIDENCE_REFS`] that only
+/// Archon writes and names by the commit it holds: never forced, and what
+/// `url` already has is a success.
+pub(crate) fn push_evidence(
+    shadow: &Shadow,
+    url: &str,
+    commit: &str,
+    target: &str,
+    token: Option<&Token>,
+) -> Result<Ran, ArchonError> {
+    assert!(is_commit_id(commit), "an evidence commit is pushed");
+    let name = target.strip_prefix(EVIDENCE_REFS).unwrap_or("");
+    let plain = |part: &str| {
+        !part.is_empty() && part.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+    };
+    assert!(
+        name.split('/').count() == 2 && name.split('/').all(plain) && name.ends_with(commit),
+        "an evidence ref: {target}"
+    );
+    push_refspec(
+        shadow,
+        url,
+        &format!("{commit}:{target}"),
+        (None, false),
+        token,
+    )
+}
+
 /// A remote [`push_from`] pushes through: `url` as its only URL and push URL,
 /// so git applies no `pushInsteadOf`, only the `insteadOf` [`pinned_url`] reports.
 struct Pinned {
@@ -420,6 +451,22 @@ fn push_with(
         "only a lease on the pushed branch"
     );
     assert!(is_commit_id(commit), "the checked commit is pushed");
+    let refspec = format!("{commit}:refs/heads/{branch}");
+    push_refspec(shadow, url, &refspec, (lease, pin), token)
+}
+
+/// [`push_with`] of `refspec`, which names no `+`: nothing is forced.
+fn push_refspec(
+    shadow: &Shadow,
+    url: &str,
+    refspec: &str,
+    (lease, pin): (Option<&str>, bool),
+    token: Option<&Token>,
+) -> Result<Ran, ArchonError> {
+    assert!(
+        !refspec.starts_with(['+', '-']) && refspec.contains(":refs/"),
+        "an unforced refspec"
+    );
     let url = check_url(url)?;
     // The operator's `insteadOf` may send a pinned remote URL to this machine.
     let rewritten_local = pin && token.is_none() && is_local(&pinned_url(shadow, &url)?);
@@ -431,12 +478,11 @@ fn push_with(
         !receive_pack.contains(['\'', '"', '\n']),
         "one shell word list"
     );
-    let refspec = format!("{commit}:refs/heads/{branch}");
     let receive_pack = format!("--receive-pack={receive_pack}");
     let pinned = Pinned::new(&url);
     let mut command = vec!["push", "--porcelain", "--no-verify", &receive_pack];
     command.extend(lease);
-    command.extend([if pin { &pinned.name } else { url.as_str() }, &refspec]);
+    command.extend([if pin { &pinned.name } else { url.as_str() }, refspec]);
     let args = match pin {
         true => pinned.before(&command),
         false => command,

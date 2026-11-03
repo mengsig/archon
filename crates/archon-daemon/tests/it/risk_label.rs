@@ -18,6 +18,7 @@ use serde_json::{Value, json};
 
 const PR_ONE: &str = "https://github.com/o/r/pull/1";
 const START: &str = "<!-- archon-risk -->";
+const TOP: &str = "<!-- archon-summary -->";
 
 async fn delivering() -> (Harness, FakeGh) {
     let h = Harness::new().await;
@@ -87,7 +88,11 @@ async fn a_delivery_creates_the_missing_labels_and_labels_its_pull_request_with_
     let (labels, body) = gh.pr_labels(1);
     assert_eq!(labels, ["risk: medium"]);
     assert!(
-        body.starts_with(&format!("{START}\n## Risk: medium\n")),
+        body.starts_with(&format!("{TOP}\nRisk level: medium\n")),
+        "{body}"
+    );
+    assert!(
+        body.contains(&format!("{START}\n## Risk: medium\n")),
         "{body}"
     );
     for said in [
@@ -104,7 +109,14 @@ async fn a_delivery_creates_the_missing_labels_and_labels_its_pull_request_with_
     ] {
         assert!(body.contains(said), "missing {said:?} in {body}");
     }
-    assert!(!body.contains("before.png"), "never a local path: {body}");
+    assert!(
+        !body.contains("](/home/me/before.png)"),
+        "never a local path: {body}"
+    );
+    assert!(
+        body.contains("`risk.captures` 2: `/home/me/before.png` is not an `https://` link"),
+        "dropped with why: {body}"
+    );
     assert_eq!(recorded(&h, &item).await, Some(RiskLevel::Medium));
     assert_eq!(gh.count("pr merge"), 0, "the label merges nothing");
 }
@@ -147,7 +159,7 @@ async fn a_label_github_refuses_to_create_is_told_and_the_delivery_still_succeed
     let (labels, body) = gh.pr_labels(1);
     assert!(labels.is_empty(), "{labels:?}");
     assert!(
-        body.starts_with(&format!("{START}\n## Risk: low\n")),
+        body.starts_with(&format!("{TOP}\nRisk level: low\n")),
         "{body}"
     );
     assert!(
@@ -171,7 +183,7 @@ async fn a_pull_request_that_cannot_be_read_is_not_labelled_blind() {
         "{summary}"
     );
     assert!(
-        summary.contains("risk section could not be written"),
+        summary.contains("risk and evidence sections could not be written"),
         "{summary}"
     );
     let calls = gh.calls();

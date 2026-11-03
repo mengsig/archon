@@ -1,15 +1,14 @@
-//! The "Risk" section at the top of a pull request body: the level, what it
-//! means, why it was chosen and the evidence. Archon owns only what lies
-//! between its markers; the rest of the body is left as it is.
+//! The "Risk" section at the foot of a pull request body: the level and what
+//! it means, then, folded, why it was chosen and the evidence. Archon owns
+//! only what lies between its markers; the rest of the body is left as it is.
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
 use super::Assessment;
+use crate::layout::{RISK_END as END, RISK_START as START, defused};
 
-const START: &str = "<!-- archon-risk -->";
-const END: &str = "<!-- /archon-risk -->";
 /// Files named one by one; the rest are counted.
 const MAX_FILES: usize = 25;
 /// Areas named one by one; the rest are counted.
@@ -129,7 +128,8 @@ pub struct Evidence<'a> {
     pub label: &'a str,
 }
 
-/// The risk section for `assessment` with `evidence`, between its markers.
+/// The risk section for `assessment` with `evidence`, between its markers:
+/// the level and its meaning in sight, the reasons and evidence folded.
 pub fn section(assessment: &Assessment, evidence: Evidence<'_>) -> String {
     assert!(
         !evidence.label.trim().is_empty(),
@@ -137,20 +137,17 @@ pub fn section(assessment: &Assessment, evidence: Evidence<'_>) -> String {
     );
     let level = assessment.level;
     let mut text = format!(
-        "{START}\n## Risk: {level}\n\n**{}**\n\n**Why this level.** {}\n\n{}\n\n**Evidence**\n\n",
+        "{START}\n## Risk: {level}\n\n**{}**\n\n<details>\n<summary>Why this level, and the \
+         diff, checks, review and label</summary>\n\n**Why this level.** {}\n\n{}\n\n\
+         **Evidence**\n\n",
         level.meaning(),
         assessment.decided,
-        assessment.why.trim()
+        defused(assessment.why.trim())
     );
     for line in evidence_lines(evidence) {
         text.push_str(&format!("- {line}\n"));
     }
-    if !assessment.captures.is_empty() {
-        text.push_str("\n**Captures**\n\n");
-        for (n, url) in assessment.captures.iter().enumerate() {
-            text.push_str(&format!("![capture {}]({url})\n", n + 1));
-        }
-    }
+    text.push_str("\n</details>\n");
     text.push_str(END);
     debug_assert_eq!(text.matches(START).count(), 1, "one section");
     text
@@ -215,27 +212,4 @@ fn diff_lines(diff: &DiffStat, against: &str) -> Vec<String> {
     };
     lines.push(format!("Kind: {kind}"));
     lines
-}
-
-/// `body` with `section` at its top, replacing the one Archon wrote before;
-/// a start marker with no end is left in place, as the body's own text.
-pub fn with_section(body: &str, section: &str) -> String {
-    assert!(
-        section.starts_with(START) && section.ends_with(END),
-        "a risk section"
-    );
-    let (before, after) = body
-        .split_once(START)
-        .and_then(|(before, rest)| Some((before, rest.split_once(END)?.1)))
-        .unwrap_or(("", body));
-    let rest: Vec<&str> = [before.trim(), after.trim()]
-        .into_iter()
-        .filter(|part| !part.is_empty())
-        .collect();
-    let body = match rest.is_empty() {
-        true => format!("{section}\n"),
-        false => format!("{section}\n\n{}\n", rest.join("\n\n")),
-    };
-    debug_assert!(body.starts_with(START), "the section leads");
-    body
 }

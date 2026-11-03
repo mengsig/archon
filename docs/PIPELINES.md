@@ -475,8 +475,15 @@ record beside anything else it returns:
 {"commit": "<git rev-parse HEAD>",
  "tree": "<git rev-parse HEAD^{tree}>",
  "checks": ["cargo test", "cargo clippy"],
- "pr": {"title": "<one line>", "body": "<what changed, why, how it was verified>"},
- "risk": {"level": "medium", "why": "<the evidence>", "captures": ["https://…"]}}
+ "pr": {"title": "<one line>",
+        "summary": "<what changed at a high level: before, now; terse>",
+        "body": "<the technical detail: approach, files, checks and results>"},
+ "risk": {"level": "medium", "why": "<the evidence>"},
+ "evidence": [{"kind": "screenshot", "caption": "Queue screen",
+               "before": ".archon/evidence/before.png", "after": "https://…"},
+              {"kind": "table", "caption": "p50 render",
+               "columns": ["", "before", "after"], "rows": [["ms", "31", "24"]]},
+              {"kind": "output", "caption": "cargo test", "text": "…"}]}
 ```
 
 A pass without a readable record fails the run at that stage. Stages after
@@ -485,6 +492,18 @@ is the level archond labels the pull request with (see
 [risk labels](guide.md#risk-labels)); a missing or invalid one never fails
 the stage, and the label is then `high`. A review stage after the record
 stage is asked for a `risk` call of its own, which stands when it passes.
+
+The pull request body opens with `Risk level: <level>` and `pr.summary`
+under "What changed", then an Evidence section, then `pr.body` under
+"Technical detail", and the Risk section folded at its foot. `evidence`
+shows the outcome, before and after where possible: `screenshot` entries
+(an `https://` link or an image file under `.archon/evidence/` or
+`.archon/reports/`, which archond uploads), `table` entries for numbers and
+`output` entries for behaviour. A change with nothing to show gives
+`"evidence": {"none": "<why>"}`, and the body says "No before/after
+evidence: <why>". Neither key fails the stage: a missing summary or
+evidence, and an entry archond cannot show, are said in the body, with why
+(see [risk labels](guide.md#risk-labels)).
 
 Once every stage has passed, archond checks the run worktree and refuses
 the delivery when any of this does not hold:

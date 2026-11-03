@@ -18,7 +18,9 @@ read again.
 
 1. **Size.** Read the repository guidance, then the code the change touches
    and its callers: search first, open the part you need, reread nothing you
-   hold.
+   hold. Where the change alters something visible or measurable, capture
+   its `before` now, on the unchanged tree: a screenshot saved under
+   `.archon/evidence/` (never committed), the numbers, or the decisive output.
 2. **Delegate what pays.** A worker is for an independent deliverable with
    explicit interfaces and paths it alone owns, when running it beside your
    own work saves more than briefing it, integrating it and the reading it
@@ -97,10 +99,14 @@ read again.
 
 Call `complete_task` with the `structured` data your contract requires: the
 ship record and, where reviewers were asked for, the review record naming the
-agent id of each reviewer the pass rests on. The `pr.body` is what a
-maintainer reads: what changed and why, how it was verified, the review's
-scope (the commits each reviewer read), advisory findings left open,
-assumptions and limits. The `pr.body` names no model or tool: no
+agent id of each reviewer the pass rests on. The `pr.summary` says what
+changed at a high level, before and now, in a few terse lines; the
+`evidence` shows it, before and after, captured on the final head (or says
+why nothing can be shown), as your contract's Summary and evidence section
+says. The `pr.body` is the technical detail a maintainer reads, concise:
+the approach and why, how it was verified, the review's scope (the commits
+each reviewer read), advisory findings left open, assumptions and limits.
+The `pr.body` names no model or tool: no
 `Co-Authored-By` or "Generated with" line. Keep the summary to what the
 orchestrator acts on, in a few lines: what changed, the paths, the
 verification commands with their results, what workers did, and anything

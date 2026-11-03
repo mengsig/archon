@@ -1146,7 +1146,7 @@ branch by fast-forward only, one item per pull request at a time, and the
 item succeeds once GitHub shows that commit as the head: its summary ends
 `SHIPPED: updated #100 to <sha> (<url>)`. The pull request's title, base and
 the owner's text in its body stay as its owner left them, apart from its
-[risk label](#risk-labels) and the Risk section at the top, and nothing is merged: `archon merge`, `/merge`,
+[risk label](#risk-labels) and Archon's own sections (the summary and evidence at the top, the Risk section at the foot), and nothing is merged: `archon merge`, `/merge`,
 `request_merge` and `merge=auto` all refuse such an item and name the pull request to
 merge by hand, or a `review` item to queue onto it. When the head moved
 since enqueue (someone else pushed), delivery fails naming both commits
@@ -1265,13 +1265,34 @@ the pull request that agent opened by the agent's own `risk` call. An
 integration-branch promotion is always `high`, and `archon promote` says
 how labelling it went.
 
-The section states what the level means, who chose it and why, then the
-evidence: the diff's size against its base, the areas and files it touches
-and whether they are only tests and docs, the checks the agent ran, the
-review on record, and screenshots or terminal captures the stage already
-published as `https://` links (never local paths). The level is kept on
-the item: `get_item`, `list_queue`, `queue list` and `queue show` show it,
-and the run's summary has a `RISK:` line before `SHIPPED:`.
+Every delivered pull request reads top to bottom:
+
+1. `Risk level: <level>` and "What changed": the stage's terse
+   before-and-now summary (`pr.summary`).
+2. Evidence: the outcome, before and after where possible. Screenshots sit
+   side by side for a visible change, a table holds numbers (timings, sizes,
+   counts), and output blocks show behaviour. A change with nothing to show,
+   such as docs or a pure refactor, says "No before/after evidence:" and
+   why.
+3. Technical detail: the stage's `pr.body`, the approach, files and checks.
+4. The Risk section: what the level means, then, folded, who chose it and
+   why, the diff's size against its base, the areas and files it touches
+   and whether they are only tests and docs, the checks the agent ran, the
+   review on record and the label.
+
+Archon rewrites only its own sections, in place, on every refresh, retry or
+`onto` delivery; text you add between them stays. Agents save screenshots
+under `.archon/evidence/` in their worktree, never committed. Archon uploads
+them to `refs/archon/evidence/<item>/<commit>` in the same repository, never
+to the pull request's branch, so they work for a private repository with no
+new credential. A screenshot that cannot be uploaded is said in the section
+and the summary, and the delivery still succeeds. Evidence refs are kept;
+delete one with `git push origin :refs/archon/evidence/<item>/<commit>`.
+A missing summary or evidence is said too, never silently left out.
+
+The level is kept on the item: `get_item`, `list_queue`, `queue list` and
+`queue show` show it, and the run's summary has a `RISK:` line before
+`SHIPPED:`.
 
 The label is strictly advisory. Archon changes no merge, auto-merge, gate,
 review count or approval by it, and no agent merges a pull request because

@@ -13,9 +13,9 @@ use super::stack::is_commit_id;
 /// Git's mode of a submodule's entry in an index.
 const GITLINK_MODE: &str = "160000";
 /// Untracked build and tool caches that are never work, ignored or not: the
-/// directories by name at any depth, `target` and Archon's own report pages and swarm plan
-/// under `.archon/` only at the top level; its config and pipelines are work.
-const CACHE_PATTERNS: [&str; 13] = [
+/// directories by name at any depth, `target` and Archon's own report pages, evidence files
+/// and swarm plan under `.archon/` only at the top level; its config and pipelines are work.
+const CACHE_PATTERNS: [&str; 14] = [
     "__pycache__/",
     "*.pyc",
     "*.pyo",
@@ -28,6 +28,7 @@ const CACHE_PATTERNS: [&str; 13] = [
     "node_modules/",
     "/target/",
     "/.archon/reports/",
+    "/.archon/evidence/",
     "/.archon/swarm-plan.json",
 ];
 
@@ -276,6 +277,7 @@ mod tests {
             "target/debug/app",
             "web/build/app.js",
             ".archon/reports/proposal/index.html",
+            ".archon/evidence/after.png",
             ".archon/swarm-plan.json",
         ] {
             write(cache);

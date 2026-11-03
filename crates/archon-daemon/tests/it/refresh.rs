@@ -370,14 +370,22 @@ async fn a_refresh_relabels_the_pull_request_by_its_own_call() {
             .any(|c| c.ends_with("--add-label risk: medium --remove-label risk: low"))
     );
     assert!(
-        body.starts_with("<!-- archon-risk -->\n## Risk: medium\n"),
+        body.starts_with("<!-- archon-summary -->\nRisk level: medium\n"),
         "{body}"
     );
-    assert_eq!(
-        body.matches("<!-- archon-risk -->").count(),
-        1,
-        "replaced: {body}"
+    assert!(
+        body.contains("<!-- archon-risk -->\n## Risk: medium\n"),
+        "{body}"
     );
+    for marker in [
+        "<!-- archon-summary -->",
+        "<!-- archon-evidence -->",
+        "<!-- archon-risk -->",
+    ] {
+        assert_eq!(body.matches(marker).count(), 1, "{marker} replaced: {body}");
+    }
+    let none = "No before/after evidence: `implement` gave no `evidence`.";
+    assert_eq!(body.matches(none).count(), 1, "{body}");
     let stored = h.ctx.store.lock().await.item(&fix.id).unwrap().risk;
     assert_eq!(stored, Some(archon_core::risk::RiskLevel::Medium));
 }

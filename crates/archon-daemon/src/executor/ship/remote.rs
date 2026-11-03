@@ -60,15 +60,9 @@ fn push_now(
     commit: &str,
     token: Option<Token>,
 ) -> Result<Result<(), String>, ArchonError> {
-    let url = match &token {
-        Some(token) => match gh_account::push_url(repo, token.user())? {
-            Ok(url) => url,
-            Err(why) => return Ok(Err(format!("BLOCKED: {why}"))),
-        },
-        None => match origin(repo)? {
-            Ok(url) => url,
-            Err(refusal) => return Ok(Err(refusal)),
-        },
+    let url = match push_target(repo, token.as_ref())? {
+        Ok(url) => url,
+        Err(refusal) => return Ok(Err(refusal)),
     };
     let shadow = Shadow::of(data_dir, repo)?;
     let pushed = stack::push(&shadow, &url, branch, commit, token.as_ref())?;
@@ -88,6 +82,62 @@ fn push_now(
             "git push of `{branch}` failed: {said}"
         ))),
     }
+}
+
+/// Where a push to `repo`'s `origin` goes: as `token`'s login when given,
+/// else with the operator's credentials.
+fn push_target(repo: &Path, token: Option<&Token>) -> Result<Result<String, String>, ArchonError> {
+    match token {
+        Some(token) => match gh_account::push_url(repo, token.user())? {
+            Ok(url) => Ok(Ok(url)),
+            Err(why) => Ok(Err(format!("BLOCKED: {why}"))),
+        },
+        None => origin(repo),
+    }
+}
+
+/// Push `commit`, the screenshots of a delivery, to `target` under
+/// [`stack::EVIDENCE_REFS`] on `repo`'s `origin`, as [`push`] would; the
+/// inner `Err` says why it was not taken.
+pub(super) async fn push_evidence(
+    binary: &Path,
+    data_dir: &Path,
+    repo: &Repo,
+    commit: &str,
+    target: &str,
+) -> Result<Result<(), String>, ArchonError> {
+    assert!(stack::is_commit_id(commit), "an evidence commit");
+    assert!(target.starts_with(stack::EVIDENCE_REFS), "an evidence ref");
+    let token = match gh::token(binary, repo).await {
+        Ok(token) => token,
+        Err(ArchonError::Invalid(blocked)) => return Ok(Err(blocked)),
+        Err(error) => return Err(error),
+    };
+    let (data_dir, path) = (data_dir.to_owned(), repo.path.clone());
+    let (commit, target) = (commit.to_owned(), target.to_owned());
+    let pushed = tokio::task::spawn_blocking(move || {
+        let url = match push_target(&path, token.as_ref())? {
+            Ok(url) => url,
+            Err(refusal) => return Ok(Err(refusal)),
+        };
+        let shadow = Shadow::of(&data_dir, &path)?;
+        let ran = stack::push_evidence(&shadow, &url, &commit, &target, token.as_ref())?;
+        let said = format!(
+            "{} {}",
+            ran.stderr_text(),
+            String::from_utf8_lossy(&ran.stdout)
+        );
+        let said = token
+            .as_ref()
+            .map_or_else(|| said.clone(), |t| t.redact(&said));
+        Ok(match ran.status.success() {
+            true => Ok(()),
+            false => Err(format!("`origin` did not take `{target}`: {}", said.trim())),
+        })
+    });
+    pushed
+        .await
+        .map_err(|e| ArchonError::io("the evidence push task", std::io::Error::other(e)))?
 }
 
 /// Where `repo`'s `origin` takes a push with the operator's credentials.

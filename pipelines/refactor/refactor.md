@@ -58,7 +58,8 @@ brief-authorized exception, every modified pre-existing test with its
 justification, feedback addressed, and remaining limitations. This summary
 is the verifier's input.
 
-Include the ship record your contract requires in `structured`. Its `pr.body`
-is the pull request description a maintainer reads: what changed and why,
-how it was verified, and what is left open. It names no model or tool: no
+Include the ship record your contract requires in `structured`, with the
+`pr.summary` and `evidence` its Summary and evidence section asks for. Its
+`pr.body` is the technical detail a maintainer reads, concise: what changed
+and why, how it was verified, and what is left open. It names no model or tool: no
 `Co-Authored-By` or "Generated with" line.

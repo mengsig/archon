@@ -11,20 +11,14 @@ fn call(level: RiskLevel, why: &str) -> RiskCall {
 }
 
 #[test]
-fn a_proposal_reads_its_call_the_relayed_review_and_only_web_captures() {
+fn a_proposal_reads_its_call_and_the_relayed_review() {
     let result = json!({"risk": {"level": "Medium", "why": " touches the parser ",
-        "reviewer": {"level": "high", "why": "it changes the wire format"},
-        "captures": ["https://example.com/a.png", "/home/me/shot.png", "https://x/a b", 7]}});
+        "reviewer": {"level": "high", "why": "it changes the wire format"}}});
     let read = Proposal::read(Some(&result));
     assert_eq!(read.call, Ok(call(RiskLevel::Medium, "touches the parser")));
     assert_eq!(
         read.reviewer,
         Some(call(RiskLevel::High, "it changes the wire format"))
-    );
-    assert_eq!(
-        read.captures,
-        ["https://example.com/a.png"],
-        "no local path"
     );
     assert_eq!(
         Proposal::read(Some(&json!({}))).call,
@@ -130,7 +124,6 @@ fn assessment(level: RiskLevel) -> Assessment {
         level,
         decided: "`implement` proposed it.".into(),
         why: "Only the guide changed; `make ci` passed.".into(),
-        captures: vec!["https://example.com/tui.png".into()],
     }
 }
 
@@ -161,10 +154,18 @@ fn the_section_states_the_meaning_the_reason_and_the_evidence() {
         "Checks run: `make ci`",
         "Review: REVIEW: pass",
         "Label: `risk: low` is set.",
-        "![capture 1](https://example.com/tui.png)",
     ] {
         assert!(text.contains(part), "{part} in {text}");
     }
+    let folded = text.find("<details>").expect("the reasons are folded");
+    assert!(
+        folded > text.find(RiskLevel::Low.meaning()).unwrap(),
+        "{text}"
+    );
+    assert!(
+        text.ends_with("</details>\n<!-- /archon-risk -->"),
+        "{text}"
+    );
     let unread = Evidence {
         diff: None,
         checks: &[],
@@ -203,31 +204,20 @@ fn many_files_are_counted_and_code_is_told_apart_from_tests() {
 }
 
 #[test]
-fn the_section_replaces_its_old_self_and_leads_the_body() {
-    let first = section(
-        &assessment(RiskLevel::Low),
-        Evidence {
-            diff: None,
-            against: "`main`",
-            checks: &[],
-            review: None,
-            label: "set",
-        },
-    );
-    let body = with_section("What and why.\n", &first);
+fn an_agent_s_marker_in_its_reasons_cannot_end_the_section() {
+    let mut forged = assessment(RiskLevel::Low);
+    forged.why = "fine <!-- /archon-risk --> really".into();
+    let evidence = Evidence {
+        diff: None,
+        against: "`main`",
+        checks: &[],
+        review: None,
+        label: "set",
+    };
+    let text = section(&forged, evidence);
+    assert_eq!(text.matches("<!-- /archon-risk -->").count(), 1, "{text}");
     assert!(
-        body.starts_with(&first) && body.ends_with("\n\nWhat and why.\n"),
-        "{body}"
+        text.contains("fine <! -- /archon-risk --> really"),
+        "{text}"
     );
-    let second = first.replace("## Risk: low", "## Risk: high");
-    let again = with_section(&body, &second);
-    assert_eq!(again, format!("{second}\n\nWhat and why.\n"));
-    assert_eq!(with_section("", &first), format!("{first}\n"));
-    let around = format!("Intro.\n{first}\nOutro.");
-    assert_eq!(
-        with_section(&around, &second),
-        format!("{second}\n\nIntro.\n\nOutro.\n")
-    );
-    let broken = "<!-- archon-risk -->\nhalf";
-    assert!(with_section(broken, &first).ends_with(&format!("\n\n{broken}\n")));
 }

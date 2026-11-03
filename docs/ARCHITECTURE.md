@@ -2734,9 +2734,14 @@ returns:
 
 ```json
 {"commit": "<git rev-parse HEAD>", "tree": "<git rev-parse HEAD^{tree}>",
- "checks": ["…"], "pr": {"title": "…", "body": "…"},
- "risk": {"level": "low|medium|high", "why": "…", "captures": ["https://…"]}}
+ "checks": ["…"], "pr": {"title": "…", "summary": "…", "body": "…"},
+ "risk": {"level": "low|medium|high", "why": "…"},
+ "evidence": [{"kind": "screenshot|table|output", "caption": "…", …}]}
 ```
+
+`pr.summary` (optional, clipped to 1500 characters) and `evidence`
+(optional, `archon_pipeline::evidence::Evidence::read`) are read beside the
+record and carried on the plan; neither ever fails the stage.
 
 `ShipRecord::read` requires full object ids, a one-line title of at most
 256 characters and a non-empty body. An abbreviated id (7 to 63 hex digits,
@@ -2952,23 +2957,63 @@ quietly; a `gh` failure is logged and the next look tries again.
 
 **Risk labels.** Every pull request archond opens or updates carries one
 label, `risk: low`, `risk: medium` or `risk: high` (`archon_core::risk`),
-and a section at the top of its body between `<!-- archon-risk -->` and
+and a section at the foot of its body between `<!-- archon-risk -->` and
 `<!-- /archon-risk -->` (`archon_pipeline::risk::section`): what the level
-means, who settled it and why, and the evidence. The contract (§8.6) gives
+means, then, folded in `<details>`, who settled it and why, and the diff,
+areas, files, checks, review and label. The contract (§8.6) gives
 the record stage the rubric and asks for the `risk` key above; a record
 stage holding a review relays its reviewer's call as `risk.reviewer`, and a
 review stage after it may return its own `risk` call. `risk::Proposal`
 reads the record stage's result and `risk::Assessment::settle` decides:
 the call of the latest review stage that passed after the record stage,
 else the relayed one, stands over the proposal; without a valid proposal
-the level is `high`, and a reviewer's call is kept only as evidence. Captures are kept only as `https://` links. The plan
+the level is `high`, and a reviewer's call is kept only as evidence. The plan
 carries the assessment, so a fix loop's new record replaces it.
+
+**Summary and evidence.** Above the body's own text archond writes two more
+sections it owns (`archon_pipeline::layout`): `<!-- archon-summary -->`,
+which opens with `Risk level: <level>` and holds `pr.summary` under "What
+changed", and `<!-- archon-evidence -->` (`archon_pipeline::evidence::section`).
+The record's `pr.body` is the technical detail, under "Technical detail".
+`layout::compose` removes every well-formed section it owns wherever it
+sits, then writes summary and evidence on top and the risk section at the
+foot, so a refresh, retry or `onto` delivery replaces each in place, never
+twice, and the owner's text between them is kept; a start marker with no
+end is left as text. Agent text is defused (`<!--` becomes `<! --`), so it
+cannot end or forge a section. `Evidence::read` validates at the boundary:
+at most 10 entries of kind `screenshot` (`before`/`after`, an `https://`
+link or a worktree-relative file under `.archon/evidence/` or
+`.archon/reports/`), `table` (at most 8 columns and 25 rows of 120
+characters) or `output` (at most 40 lines and 3000 characters a side), each
+with a caption of 200 characters. An unknown kind, a local or absolute path,
+a missing side or an entry past the cap is dropped and named, with why, under
+"Not shown"; the legacy `risk.captures` links are shown as screenshots. With
+nothing shown, the section says "No before/after evidence:" and the stage's
+reason, or that it gave none. The section is capped at 16000 characters,
+naming what it left out.
+
+Screenshot files are hosted in the same repository, so a private one needs
+no new credential (`executor::ship::evidence::host`). Each file is opened
+only through the canonical worktree root (a symlink out of it is refused),
+must be a PNG, JPEG, GIF or WebP by its magic bytes, at most 5 MiB, and all
+of them at most 20 MiB. archond writes them, as `1.png`, `2.png`, …, into a
+commit of their own in the shadow (a scratch index, the Archon identity and
+a fixed date) and pushes it, never forced, through the same token or
+`origin` push as the branch, to `refs/archon/evidence/<item>/<commit>`; the
+links are `https://github.com/<owner>/<repo>/blob/<commit>/<n>.<ext>?raw=true`,
+which GitHub serves to whoever may read the repository. The commit is never
+on the run branch, and the ship refuses a branch whose commits carry
+`.archon/evidence/`. A file that cannot be read or pushed is shown
+as "The screenshot could not be attached: <why>", the summary line counts
+it, and the delivery still succeeds. Evidence refs are not pruned; delete
+one with `git push origin :refs/archon/evidence/<item>/<commit>`.
 
 At delivery, `executor::ship::risk::label` reads the pull request's labels
 and body (`gh pr view --json labels,body`), creates whichever of the three
 labels the repository lacks (`gh label create` with a colour and the
-level's meaning), sets the one label and removes other `risk:` labels, and
-rewrites only its own section of the body. The diff evidence is
+level's meaning), sets the one label and removes other `risk:` labels,
+hosts the evidence's screenshots, and rewrites only its own sections of the
+body. The diff evidence is
 `git diff --numstat` of the run's commits against the base it shipped to.
 An `onto` delivery judged only the commits it added, so the label it applies
 is never lower than the one the pull request had (`Assessment::onto`);

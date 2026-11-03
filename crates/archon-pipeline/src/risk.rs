@@ -9,10 +9,8 @@ use archon_core::risk::RiskLevel;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub use section::{DiffStat, Evidence, FileStat, section, with_section};
+pub use section::{DiffStat, Evidence, FileStat, section};
 
-/// Screenshot links kept from one result.
-const MAX_CAPTURES: usize = 10;
 /// The longest evidence kept from one agent, in characters.
 const MAX_WHY_CHARS: usize = 3_000;
 
@@ -61,8 +59,6 @@ pub struct Proposal {
     pub call: Result<RiskCall, String>,
     /// Its reviewer's call, which it relays as `risk.reviewer`.
     pub reviewer: Option<RiskCall>,
-    /// `https://` links to screenshots of the change; no local path.
-    pub captures: Vec<String>,
 }
 
 impl Proposal {
@@ -76,30 +72,8 @@ impl Proposal {
             Err(why) => Err(why),
         };
         let reviewer = risk.and_then(|risk| RiskCall::read(risk.get("reviewer")).ok().flatten());
-        let captures = risk
-            .and_then(|risk| risk.get("captures"))
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .map(str::trim)
-            .filter(|url| is_web_link(url))
-            .take(MAX_CAPTURES)
-            .map(str::to_owned)
-            .collect();
-        Self {
-            call,
-            reviewer,
-            captures,
-        }
+        Self { call, reviewer }
     }
-}
-
-/// Whether `url` is an `https://` link with nothing in it that could break
-/// out of a Markdown image.
-fn is_web_link(url: &str) -> bool {
-    let unsafe_char = |c: char| c.is_whitespace() || matches!(c, '(' | ')' | '<' | '>' | '"');
-    url.len() > "https://".len() && url.starts_with("https://") && !url.contains(unsafe_char)
 }
 
 /// The level a delivery applies, and how it was settled.
@@ -110,7 +84,6 @@ pub struct Assessment {
     pub decided: String,
     /// The proposing agent's evidence, then a reviewer's reason for a change.
     pub why: String,
-    pub captures: Vec<String>,
 }
 
 impl Assessment {
@@ -169,7 +142,6 @@ impl Assessment {
             level,
             decided,
             why,
-            captures: proposal.captures.clone(),
         }
     }
 

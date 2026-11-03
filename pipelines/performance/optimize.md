@@ -56,9 +56,10 @@ files and commits, preserved behavior and risks, exact check commands and
 results, baseline and new repeated measurements with units and variance,
 target and noise comparison, every feedback item addressed, and remaining
 limitations. Carry the reproducible benchmark instructions and baseline
-forward, and put the measured evidence in the `pr.body` too.
+forward, and show the measurements as a before and after `table` in `evidence`.
 
-Include the ship record your contract requires in `structured`. Its `pr.body`
-is the pull request description a maintainer reads: what changed and why,
-how it was verified, and what is left open. It names no model or tool: no
+Include the ship record your contract requires in `structured`, with the
+`pr.summary` and `evidence` its Summary and evidence section asks for. Its
+`pr.body` is the technical detail a maintainer reads, concise: what changed
+and why, how it was verified, and what is left open. It names no model or tool: no
 `Co-Authored-By` or "Generated with" line.

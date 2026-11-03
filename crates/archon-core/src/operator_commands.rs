@@ -8,7 +8,7 @@ pub const HOST_COMMANDS_VERSION: u32 = 1;
 /// The host Aether's TUI names beside each command (`· archon`).
 pub const HOST: &str = "archon";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 pub struct OperatorCommand {
     /// Without the leading slash.
     pub name: &'static str,

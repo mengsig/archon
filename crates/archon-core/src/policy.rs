@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::ArchonError;
 use crate::model::{Effort, ModelChoice, ModelPlan, ModelRef};
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ModelPolicy {
     /// `None` allows any model; `Some(empty)` allows none (an empty
     /// intersection of global and repository allowlists).

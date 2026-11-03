@@ -13,7 +13,19 @@ use crate::model::ModelRef;
 use crate::policy::ModelPolicy;
 
 /// A provider-local capability band, weakest first.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Tier {
     Fast,
@@ -61,7 +73,7 @@ impl FromStr for Tier {
 
 /// How a plan entry asked by tier was resolved; recorded on the plan and on
 /// every attempt that runs it.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TierChoice {
     pub requested: Tier,
@@ -93,7 +105,7 @@ impl fmt::Display for TierChoice {
 
 /// One connected model of Aether's catalog; `tier` is Aether's, or `None`
 /// when Aether could not place it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CatalogModel {
     pub model: ModelRef,
     pub tier: Option<Tier>,

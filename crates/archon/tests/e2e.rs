@@ -175,6 +175,9 @@ fn a_chat_that_cannot_open_exits_instead_of_waiting_for_input() {
             protocol_version: PROTOCOL_VERSION,
             daemon_version: "fake".into(),
             pid: 1,
+            min_protocol_version: PROTOCOL_VERSION,
+            features: Vec::new(),
+            device: None,
         };
         let frame = ServerFrame::Reply {
             id: 1,

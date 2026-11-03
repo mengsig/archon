@@ -23,7 +23,17 @@ fn next_ulid() -> ulid::Ulid {
 
 macro_rules! prefixed_id {
     ($name:ident, $prefix:literal) => {
-        #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+        #[derive(
+            Clone,
+            PartialEq,
+            Eq,
+            Hash,
+            PartialOrd,
+            Ord,
+            Serialize,
+            Deserialize,
+            schemars::JsonSchema,
+        )]
         #[serde(try_from = "String", into = "String")]
         pub struct $name(String);
 

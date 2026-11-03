@@ -443,6 +443,9 @@ fn serve_stuck_archond(socket: &Path) -> Arc<AtomicBool> {
                         protocol_version: PROTOCOL_VERSION,
                         daemon_version: "test".into(),
                         pid: std::process::id(),
+                        min_protocol_version: PROTOCOL_VERSION,
+                        features: Vec::new(),
+                        device: None,
                     });
                     let reply = ServerFrame::Reply {
                         id: frame.id,
@@ -546,6 +549,9 @@ fn serve_archond_restarting_on_a_newer_protocol(
                             protocol_version: PROTOCOL_VERSION,
                             daemon_version: CURRENT.into(),
                             pid: std::process::id(),
+                            min_protocol_version: PROTOCOL_VERSION,
+                            features: Vec::new(),
+                            device: None,
                         })),
                         Request::Upgrade(request) => {
                             upgrades.lock().unwrap().push(request);

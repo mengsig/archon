@@ -68,7 +68,113 @@ use crate::steer::Steer;
 /// 22: `update_item` may carry `title`, which an older archond would drop.
 /// 23: the remote-access requests (`remote_status`, `configure_remote`,
 /// `remote_pair`, `remote_revoke`); an older archond knows none of them.
-pub const PROTOCOL_VERSION: u32 = 23;
+/// 24: the unified frontend's wire (CONTRACTS.md §1.3): `hello` features, a
+/// `welcome` with the accepted range and features, the change stream, task
+/// graph, run plans and GitHub links; `archon-web` may still speak 23.
+pub const PROTOCOL_VERSION: u32 = 24;
+
+/// The oldest protocol archond accepts from `archon-web`; every other client
+/// ships in archond's own binary and must match exactly.
+pub const MIN_WEB_PROTOCOL_VERSION: u32 = 23;
+
+pub mod changes;
+pub mod github_links;
+pub mod graph;
+pub mod schema;
+#[cfg(test)]
+mod v24_tests;
+
+pub use changes::{
+    Change, ChangeSubject, HistoryRange, ItemTransition, QueueStateKind, RunStateKind,
+    StageStateKind, TransitionActor,
+};
+pub use github_links::{
+    GithubKind, GithubLink, GithubObject, GithubObjectState, GithubRef, LinkRelation,
+    ManualLinkRelation, PrRef,
+};
+pub use graph::{RunPlan, TaskEdge, TaskFilter, TaskGraph, TaskNode};
+
+/// The feature strings `welcome` may advertise. A feature is advertised only
+/// once its requests are served; a stub answers `unavailable`.
+pub mod feature {
+    pub const CHANGES: &str = "changes";
+    pub const TASK_GRAPH: &str = "task_graph";
+    pub const RUN_PLAN: &str = "run_plan";
+    pub const ITEM_HISTORY: &str = "item_history";
+    pub const ITEM_FILTERS: &str = "item_filters";
+    pub const GITHUB_LINKS: &str = "github_links";
+    pub const GITHUB_IMPORT: &str = "github_import";
+    pub const DEVICE_ROLES: &str = "device_roles";
+    /// Every feature protocol 24 defines.
+    pub const ALL: [&str; 8] = [
+        CHANGES,
+        TASK_GRAPH,
+        RUN_PLAN,
+        ITEM_HISTORY,
+        ITEM_FILTERS,
+        GITHUB_LINKS,
+        GITHUB_IMPORT,
+        DEVICE_ROLES,
+    ];
+}
+
+/// The protocol versions archond accepts in a `hello` from `client`.
+pub fn accepted_protocols(client: ClientKind) -> std::ops::RangeInclusive<u32> {
+    match client {
+        ClientKind::ArchonWeb => MIN_WEB_PROTOCOL_VERSION..=PROTOCOL_VERSION,
+        ClientKind::ArchonCli | ClientKind::ArchonMcp | ClientKind::ArchonBench => {
+            PROTOCOL_VERSION..=PROTOCOL_VERSION
+        }
+    }
+}
+
+/// archond's answer to a `hello`: the `welcome` at the client's version, or
+/// the `incompatible` refusal's message. `features` is what archond serves;
+/// a client below [`PROTOCOL_VERSION`] knows none of them and is sent none.
+pub fn negotiate(
+    client: ClientKind,
+    protocol_version: u32,
+    client_version: &str,
+    features: &[&str],
+) -> Result<Welcome, String> {
+    let accepted = accepted_protocols(client);
+    assert!(
+        accepted.contains(&PROTOCOL_VERSION),
+        "archond always accepts its own protocol"
+    );
+    if !accepted.contains(&protocol_version) {
+        // Starts as every refusal always has: probes read the version from it.
+        let mut message = format!(
+            "archond speaks protocol {PROTOCOL_VERSION}, this client {client_version} speaks {protocol_version}"
+        );
+        if accepted.start() != accepted.end() {
+            let _ = write!(
+                message,
+                " and archond accepts {} to {} from it",
+                accepted.start(),
+                accepted.end()
+            );
+        }
+        message.push_str("; upgrade the older one");
+        return Err(message);
+    }
+    assert!(
+        features.iter().all(|f| feature::ALL.contains(f)),
+        "archond advertises only features protocol {PROTOCOL_VERSION} defines: {features:?}"
+    );
+    let features = match protocol_version == PROTOCOL_VERSION {
+        true => features.iter().map(|f| (*f).to_owned()).collect(),
+        false => Vec::new(),
+    };
+    Ok(Welcome {
+        protocol_version,
+        daemon_version: env!("CARGO_PKG_VERSION").to_owned(),
+        pid: std::process::id(),
+        min_protocol_version: *accepted.start(),
+        features,
+        device: None,
+    })
+}
 
 /// Said beside an item whose `budget_usd` was set while budgets are off.
 pub const BUDGETS_OFF_NOTE: &str = "Dollar budgets are globally off ([limits] budgets_enabled = \
@@ -83,7 +189,7 @@ const _: () =
 
 /// Who is on the other end. Guards against mistakes, not attacks: the
 /// socket's file mode is the security boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum ClientKind {
     ArchonCli,
@@ -95,11 +201,11 @@ pub enum ClientKind {
 }
 
 /// A repository by registry name or `repo_…` id.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(transparent)]
 pub struct RepoRef(pub String);
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ClientFrame {
     #[serde(rename = "req")]
     pub id: u64,
@@ -107,7 +213,7 @@ pub struct ClientFrame {
     pub request: Request,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "frame", rename_all = "snake_case")]
 pub enum ServerFrame {
     /// `id: 0` is the daemon explaining why it is closing the connection.
@@ -119,11 +225,16 @@ pub enum ServerFrame {
         sub: u64,
         item: FeedItem,
     },
+    /// One change of a `subscribe_changes` subscription.
+    Change {
+        sub: u64,
+        change: Change,
+    },
 }
 
 /// Everything a client can ask `archond`. MCP tools map 1:1 onto a subset
 /// (ARCHITECTURE §11).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum Request {
     /// A tool call `archon mcp` forwards for the Aether agent that made it:
@@ -179,6 +290,9 @@ pub enum Request {
         protocol_version: u32,
         client: ClientKind,
         client_version: String,
+        /// Features the client understands; archond reads none of them yet.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        features: Vec<String>,
     },
     Status(StatusQuery),
     Guide {
@@ -535,6 +649,81 @@ pub enum Request {
     RemoteRevoke {
         device: String,
     },
+
+    /// Stream changes with `seq > after` (`None`: live only); feature `changes`.
+    SubscribeChanges {
+        #[serde(default)]
+        after: Option<u64>,
+    },
+    /// The changes with `seq > after`, oldest first; feature `changes`.
+    ChangesPage {
+        after: u64,
+        /// At most [`changes::MAX_CHANGES_PAGE`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    /// An item's state transitions, oldest first; feature `item_history`.
+    ItemHistory {
+        item: QueueItemId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    /// Items and their typed edges as of one change; feature `task_graph`.
+    TaskGraph {
+        #[serde(default)]
+        filter: TaskFilter,
+        /// At most [`graph::MAX_TASK_GRAPH_LIMIT`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    /// A run's stages as it executed them; feature `run_plan`.
+    RunPlan {
+        run: PipelineRunId,
+    },
+    /// An item's GitHub links and their cached objects; feature `github_links`.
+    ItemLinks {
+        item: QueueItemId,
+    },
+    /// The items linked to one issue or pull request; feature `github_links`.
+    IssueItems {
+        #[serde(rename = "ref")]
+        reference: GithubRef,
+    },
+    /// Idempotent: the same link twice is `ok`; feature `github_links`.
+    LinkIssue {
+        item: QueueItemId,
+        #[serde(rename = "ref")]
+        reference: GithubRef,
+        relation: ManualLinkRelation,
+    },
+    UnlinkIssue {
+        item: QueueItemId,
+        #[serde(rename = "ref")]
+        reference: GithubRef,
+        relation: ManualLinkRelation,
+    },
+    /// Cached GitHub objects of one repository; feature `github_import`.
+    ListGithubObjects {
+        /// `owner/name`.
+        repo: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<GithubKind>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        state: Option<GithubObjectState>,
+        /// At most [`github_links::MAX_GITHUB_OBJECTS`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    /// Enqueue an issue as an item, keyed `github:<host>/<owner>/<repo>#<number>`
+    /// so a repeat returns the first item; feature `github_import`.
+    ImportIssue {
+        #[serde(rename = "ref")]
+        reference: GithubRef,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pipeline: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        priority: Option<Priority>,
+    },
 }
 
 /// Who may make a request and whether it changes Archon.
@@ -587,7 +776,15 @@ impl Request {
             | Self::LearningWhy { .. }
             | Self::ListArtifacts { .. }
             | Self::ItemDiff { .. }
-            | Self::ReadArtifact { .. } => Read,
+            | Self::ReadArtifact { .. }
+            | Self::SubscribeChanges { .. }
+            | Self::ChangesPage { .. }
+            | Self::ItemHistory { .. }
+            | Self::TaskGraph { .. }
+            | Self::RunPlan { .. }
+            | Self::ItemLinks { .. }
+            | Self::IssueItems { .. }
+            | Self::ListGithubObjects { .. } => Read,
             Self::CheckUpdates | Self::RemoteStatus => OperatorRead,
             Self::OperatorCommand { .. }
             | Self::UndoAuthority { .. }
@@ -643,7 +840,10 @@ impl Request {
             | Self::RecordLesson(_)
             | Self::RequestAuthority { .. }
             | Self::Promote { .. }
-            | Self::RequestMerge { .. } => Change,
+            | Self::RequestMerge { .. }
+            | Self::LinkIssue { .. }
+            | Self::UnlinkIssue { .. }
+            | Self::ImportIssue { .. } => Change,
         }
     }
 
@@ -691,7 +891,7 @@ impl Request {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RepoAdd {
     pub path: std::path::PathBuf,
     pub name: Option<String>,
@@ -708,7 +908,7 @@ pub struct RepoAdd {
     pub github_watch: bool,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RepoPatch {
     pub ship: Option<ShipMode>,
     #[serde(default)]
@@ -737,7 +937,7 @@ pub struct RepoPatch {
 }
 
 /// A patch to the registry's [`RepoTiers`], field by field.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct TiersPatch {
     pub integration_branch: Clearable<String>,
@@ -775,7 +975,7 @@ impl TiersPatch {
 
 /// A patch to an optional setting. Explicit on the wire (`"keep"`,
 /// `"clear"`, `{"set":v}`) because JSON collapses `Option<Option<T>>`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Clearable<T> {
     #[default]
@@ -800,7 +1000,7 @@ impl<T> Clearable<T> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EnqueueRequest {
     /// Required unless the pipeline has `requires_repo = false`.
     pub repo: Option<RepoRef>,
@@ -839,7 +1039,7 @@ pub struct EnqueueRequest {
     pub origin: Option<GithubThread>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ItemQuery {
     /// `QueueState::kind()` names; empty means all.
     #[serde(default)]
@@ -848,9 +1048,29 @@ pub struct ItemQuery {
     pub pipeline: Option<String>,
     pub tag: Option<String>,
     pub limit: Option<usize>,
+    /// Only items changed at or after this; feature `item_filters`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_since: Option<Timestamp>,
+    /// Only items changed before this; feature `item_filters`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before: Option<Timestamp>,
+    /// A 1 to 200 character substring of the title or brief; feature `item_filters`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// `list_item_summaries` answers `item_summaries_at` with `as_of`;
+    /// feature `changes`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub with_as_of: bool,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+impl ItemQuery {
+    /// Whether the query uses a protocol 24 filter (feature `item_filters`).
+    pub fn has_item_filters(&self) -> bool {
+        self.updated_since.is_some() || self.before.is_some() || self.text.is_some()
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ItemPatch {
     /// A new one-line title; only before the item's first run, whose branch it names.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -875,7 +1095,7 @@ pub struct ItemPatch {
     pub autonomy: Option<AutonomyPatch>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "scope", rename_all = "snake_case")]
 pub enum PauseTarget {
     Global {
@@ -893,7 +1113,7 @@ pub enum PauseTarget {
 }
 
 /// Adjacently tagged like Aether's replies: `{"reply":"item","data":{...}}`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "reply", content = "data", rename_all = "snake_case")]
 pub enum Reply {
     Guide {
@@ -912,6 +1132,12 @@ pub enum Reply {
     ItemBudgetsOff(QueueItem),
     Items(Vec<QueueItem>),
     ItemSummaries(Vec<ItemSummary>),
+    /// `list_item_summaries` asked `with_as_of`: the summaries and the last
+    /// change seq committed in their read transaction.
+    ItemSummariesAt {
+        summaries: Vec<ItemSummary>,
+        as_of: u64,
+    },
     ItemDetail(Box<ItemDetail>),
     StageDetail(Box<StageDetail>),
     Catalog(CatalogListing),
@@ -960,10 +1186,32 @@ pub enum Reply {
     RequestStatus(Box<crate::tracked::RequestStatus>),
     Remote(Box<crate::remote::RemoteView>),
     RemotePairing(crate::remote::PairingCode),
+    Changes {
+        changes: Vec<Change>,
+        last_seq: u64,
+    },
+    ItemHistory {
+        item: QueueItemId,
+        transitions: Vec<ItemTransition>,
+    },
+    TaskGraph(Box<TaskGraph>),
+    RunPlan(Box<RunPlan>),
+    ItemLinks {
+        links: Vec<GithubLink>,
+        objects: Vec<GithubObject>,
+    },
+    IssueItems {
+        links: Vec<GithubLink>,
+    },
+    GithubObjects {
+        objects: Vec<GithubObject>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        synced_at: Option<Timestamp>,
+    },
 }
 
 /// What one gc pass did (ARCHITECTURE §13.2). Paths are real paths.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GcReport {
     /// Worktrees, scratch directories, what team runs and fresh retries set
     /// aside, and team directories gc emptied.
@@ -1003,7 +1251,7 @@ pub struct GcReport {
 
 /// The outcome of `storage_gc`, which Aether runs to delete the workspaces it
 /// delegated to agents whose worktrees gc removed. A failure never fails gc.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AetherGc {
     Ran,
@@ -1012,14 +1260,14 @@ pub enum AetherGc {
 }
 
 /// The paths in `path`, a worktree, that a gc preview found it would delete.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct WouldDelete {
     pub path: std::path::PathBuf,
     pub paths: Vec<String>,
 }
 
 /// The build caches deleted from one worktree.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Reclaimed {
     pub path: std::path::PathBuf,
     pub bytes: u64,
@@ -1074,7 +1322,7 @@ impl GcReport {
 }
 
 /// `DiskStatus::gc`: the last pass that freed anything.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GcStatus {
     pub at: Timestamp,
     pub bytes_freed: u64,
@@ -1087,14 +1335,14 @@ pub struct GcStatus {
 pub const MAX_ARTIFACT_PAGE_BYTES: u64 = 64 * 1024;
 
 /// One file of an item's artifact store, named relative to it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ArtifactFile {
     pub name: String,
     pub bytes: u64,
 }
 
 /// An item's artifact store: where it is and what it holds.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ArtifactListing {
     pub item: QueueItemId,
     /// The directory holding the files, readable by any agent on the host.
@@ -1113,7 +1361,7 @@ pub struct ArtifactListing {
 pub const MAX_ARTIFACT_LISTED: usize = 500;
 
 /// A page of one artifact's text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ArtifactPage {
     pub item: QueueItemId,
     pub name: String,
@@ -1127,7 +1375,9 @@ pub struct ArtifactPage {
 
 /// `Status`'s page of waiting items. The default encodes as a bare
 /// `{"cmd":"status"}`, which every archond reads.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(default)]
 pub struct StatusQuery {
     /// Waiting items to skip.
@@ -1147,14 +1397,38 @@ fn is_zero(n: &usize) -> bool {
     *n == 0
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Welcome {
+    /// The version the connection speaks: the client's own, once accepted.
     pub protocol_version: u32,
     pub daemon_version: String,
     pub pid: u32,
+    /// The oldest version archond accepts from this kind of client.
+    pub min_protocol_version: u32,
+    /// What archond serves beyond the base protocol ([`feature`]).
+    #[serde(default)]
+    pub features: Vec<String>,
+    /// The paired device a remote session runs for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device: Option<WelcomeDevice>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// A remote session's device, as its `welcome` names it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct WelcomeDevice {
+    pub id: String,
+    pub name: String,
+    pub role: DeviceRole,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceRole {
+    Operator,
+    Observer,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DaemonStatus {
     /// Read-time explanations for queued, blocked and operator-waiting
     /// items: the page `StatusQuery` asked for.
@@ -1249,7 +1523,7 @@ pub struct DaemonStatus {
 
 /// `DaemonStatus::recovery`: how far archond is in recovering its runs.
 /// Until it is done, changes are refused and nothing is dispatched.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RecoveryProgress {
     pub runs_done: u32,
     /// Live runs to recover; `None` until they are counted.
@@ -1268,7 +1542,7 @@ impl RecoveryProgress {
 }
 
 /// `DaemonStatus::quota`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct QuotaStatus {
     /// When archond read it from Aether.
     pub as_of: Timestamp,
@@ -1276,7 +1550,7 @@ pub struct QuotaStatus {
 }
 
 /// One provider's quota as tier-only stage routing scores it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ProviderQuotaStatus {
     pub provider: String,
     /// What its weight is multiplied by, 0 to 2; `None` while its usage is
@@ -1324,7 +1598,7 @@ impl ProviderQuotaStatus {
 
 /// `DaemonStatus::health`. archond asks Aether off the request path and
 /// shows its latest answers, so status never waits on a slow aetherd.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StatusHealth {
     /// Aether itself, through the orchestrator's agent record.
     pub aether: ProbeHealth,
@@ -1336,7 +1610,7 @@ pub struct StatusHealth {
 }
 
 /// How fresh one status section is.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ProbeHealth {
     /// When Aether last answered for this section; `None`: it never has.
     pub as_of: Option<Timestamp>,
@@ -1385,7 +1659,7 @@ impl ProbeHealth {
 
 /// `DaemonStatus::disk`: the fuller of the filesystems holding the data
 /// dir and the worktree root (ARCHITECTURE §7.3).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DiskStatus {
     /// The watched path with the least free space.
     pub path: std::path::PathBuf,
@@ -1413,7 +1687,7 @@ pub struct DiskStatus {
 }
 
 /// Allocated bytes for one storage kind, without following symlinks.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StorageUsage {
     pub kind: String,
     pub path: std::path::PathBuf,
@@ -1429,7 +1703,7 @@ pub fn gib(bytes: u64) -> String {
 }
 
 /// The host-load hold as archond last judged it (ARCHITECTURE §7.3).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HostLoadStatus {
     /// `None` when the host could not be read; `unreadable` says why.
     pub sample: Option<crate::host_load::HostSample>,
@@ -1443,7 +1717,7 @@ pub struct HostLoadStatus {
 }
 
 /// Aether's view of one MCP server (its `mcp_servers` reply).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum McpHealth {
     /// Connected; agents started from now on get its `tools`.
@@ -1460,7 +1734,7 @@ pub enum McpHealth {
 
 /// `DaemonStatus::mcp`: the server's health now and the supervisor's
 /// latest heal (ARCHITECTURE §16).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct McpStatus {
     pub health: McpHealth,
     /// When archond last refreshed the server back to ready.
@@ -1473,7 +1747,7 @@ pub struct McpStatus {
     pub failed_relinks: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum AetherLinkStatus {
     Connected {
@@ -1487,7 +1761,7 @@ pub enum AetherLinkStatus {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OrchestratorInfo {
     pub agent: crate::aether_ids::AetherAgentId,
     pub model: ModelRef,
@@ -1553,7 +1827,7 @@ impl OrchestratorInfo {
 
 /// How the running orchestrator generation compares with the one archond
 /// would start now. A restart (`archon orchestrator restart`) catches it up.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OrchestratorFreshness {
     /// The Archon version that created it.
     pub created_by: String,
@@ -1571,7 +1845,7 @@ pub struct OrchestratorFreshness {
 }
 
 /// Model and effort as `provider/model effort`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SettingsDrift {
     pub configured: String,
     pub running: String,
@@ -1589,7 +1863,7 @@ impl OrchestratorFreshness {
 
 /// A queue item with what `archon queue list` shows about its runs. The
 /// item's own fields are flattened in, so JSON readers of `Items` read it too.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ItemSummary {
     #[serde(flatten)]
     pub item: QueueItem,
@@ -1607,10 +1881,16 @@ pub struct ItemSummary {
     /// stays the one it was queued with.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub switched_to: Option<String>,
+    /// The issue the item came from or closes; feature `github_links`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue: Option<GithubRef>,
+    /// The pull request it delivered, with its state; feature `github_links`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr: Option<PrRef>,
 }
 
 /// Stable read-time reason codes; these are never stored on a queue item.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WaitingReasonCode {
     AetherDisconnected,
@@ -1635,7 +1915,7 @@ pub enum WaitingReasonCode {
     ProviderQuota,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct WaitingReason {
     pub code: WaitingReasonCode,
     pub message: String,
@@ -1643,7 +1923,7 @@ pub struct WaitingReason {
 }
 
 /// What the current run needs from the operator, and how to provide it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct WaitingOn {
     /// `proposal`, `report`, or `question`.
     pub subject: String,
@@ -1653,7 +1933,7 @@ pub struct WaitingOn {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ItemDetail {
     pub item: QueueItem,
     pub runs: Vec<PipelineRun>,
@@ -1691,7 +1971,7 @@ pub struct ItemDetail {
 }
 
 /// An agent a stage agent delegated to, itself or through another.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DelegatedAgent {
     pub agent: AetherAgentId,
     /// The stage agent, or the delegated agent that delegated further.
@@ -1716,7 +1996,7 @@ impl DelegatedAgent {
 
 /// An agent of a running stage that leaves inbox items unread: what a lead
 /// that died while the agents it delegated to finished looks like.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StageWarning {
     pub item: QueueItemId,
     pub stage: StageRunId,
@@ -1746,7 +2026,7 @@ impl StageWarning {
 
 /// How the cost of a stage run that delegated splits; the two amounts add up
 /// to the stage run's `cost_usd`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StageDelegation {
     /// What the stage agent itself was charged.
     pub direct_usd: f64,
@@ -1799,7 +2079,7 @@ pub const MAX_STAGE_PAGE_CHARS: usize = 100_000;
 
 /// Which stage runs of an item's run to show. Without `stage` it lists
 /// them all; with it, the matching runs' output in full, paged.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StageQuery {
     pub item: QueueItemId,
     /// One of the item's runs; `None`: its latest. Attempts restart at 1
@@ -1852,7 +2132,7 @@ impl StageQuery {
 }
 
 /// `GetStage`'s answer: stage runs of the item's run asked for, oldest first.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StageDetail {
     pub item: QueueItemId,
     pub run: PipelineRunId,
@@ -1861,7 +2141,7 @@ pub struct StageDetail {
     pub stages: Vec<StageRunView>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StageRunView {
     pub stage_id: String,
     pub attempt: u32,
@@ -1881,7 +2161,7 @@ pub struct StageRunView {
 }
 
 /// Characters `offset..offset + text.chars().count()` of a longer text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TextPage {
     pub text: String,
     pub offset: usize,
@@ -1909,7 +2189,7 @@ impl TextPage {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ReportPublished {
     pub report: ReportId,
     pub published: bool,
@@ -1919,7 +2199,7 @@ pub struct ReportPublished {
 }
 
 /// Where a recorded report stands (ARCHITECTURE §14).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReportState {
     /// Only a file path was shown: Lavish is absent or failed to open it.
@@ -1947,7 +2227,7 @@ impl ReportState {
 }
 
 /// One recorded report, as `ListReports` shows it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ReportSummary {
     pub report: ReportId,
     pub title: String,
@@ -1962,7 +2242,7 @@ pub struct ReportSummary {
     pub updated_at: Timestamp,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
     Incompatible,
@@ -1975,9 +2255,14 @@ pub enum ErrorCode {
     /// archond is recovering its runs after a start; retry once it is done.
     Recovering,
     Internal,
+    /// A change cursor older than what is kept: `{"history_expired":
+    /// {"first_seq":..,"last_seq":..}}`. Read a fresh snapshot.
+    HistoryExpired(HistoryRange),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error, schemars::JsonSchema,
+)]
 #[error("{code:?}: {message}")]
 pub struct ErrorReply {
     pub code: ErrorCode,
@@ -2169,6 +2454,8 @@ mod tests {
             spent_usd: 1.5,
             pr_url: None,
             switched_to: None,
+            issue: None,
+            pr: None,
         };
         let reply = Reply::ItemSummaries(vec![summary.clone()]);
         let value = serde_json::to_value(&reply).unwrap();

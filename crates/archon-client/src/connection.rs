@@ -305,6 +305,13 @@ impl Router {
             ServerFrame::Reply { id: 0, result } => return ControlFlow::Break(notice_text(result)),
             ServerFrame::Reply { id, result } => self.answer(id, result),
             ServerFrame::Feed { sub, item } => self.feed(sub, item),
+            // This client never subscribes to changes, so archond broke protocol.
+            ServerFrame::Change { sub, change } => {
+                return ControlFlow::Break(format!(
+                    "archond sent change {} for subscription {sub}, which this client never opened",
+                    change.seq
+                ));
+            }
         }
         ControlFlow::Continue(())
     }

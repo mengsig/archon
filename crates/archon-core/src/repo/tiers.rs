@@ -16,7 +16,7 @@ pub const DEFAULT_RELEASE_BRANCH: &str = "main";
 
 /// The shape of `.archon/repo.toml` and of the registry's `tiers`; the
 /// registry's values win field by field ([`RepoTiers::over`]).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct RepoTiers {
     /// Items fork from it and their pull requests target it; unset uses
@@ -35,7 +35,7 @@ pub struct RepoTiers {
 /// `{packages:<flag>}` ([`super::affected`]); `full` is the whole suite,
 /// which items never run; `release` runs once a promotion merged the
 /// integration branch into the release branch.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct Checks {
     #[serde(skip_serializing_if = "Option::is_none")]

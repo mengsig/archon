@@ -498,6 +498,8 @@ mod tests {
             spent_usd: 0.0,
             pr_url: None,
             switched_to: None,
+            issue: None,
+            pr: None,
         }
     }
 

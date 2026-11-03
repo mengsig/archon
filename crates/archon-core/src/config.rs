@@ -233,7 +233,18 @@ pub enum AetherMode {
 
 /// Host context requested for newly created agents; full preserves host tools.
 #[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum HostContext {
@@ -432,7 +443,7 @@ impl ModelsConfig {
 }
 
 /// Where a structural limit's value comes from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LimitSource {
     /// Not set in `[limits]`, or set to its default.
@@ -445,7 +456,7 @@ pub enum LimitSource {
 
 /// One structural limit as in force, for `archon autonomy` and the
 /// `autonomy_policy` tool.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StructuralLimit {
     pub key: String,
     pub value: u64,

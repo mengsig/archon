@@ -91,6 +91,14 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
         | Reply::Versions(_)
         | Reply::Remote(_)
         | Reply::RemotePairing(_)
+        | Reply::ItemSummariesAt { .. }
+        | Reply::Changes { .. }
+        | Reply::ItemHistory { .. }
+        | Reply::TaskGraph(_)
+        | Reply::RunPlan(_)
+        | Reply::ItemLinks { .. }
+        | Reply::IssueItems { .. }
+        | Reply::GithubObjects { .. }
         | Reply::Gc(_) => serde_json::to_string(reply)
             .unwrap_or_else(|e| format!("(reply could not be encoded: {e})")),
     }

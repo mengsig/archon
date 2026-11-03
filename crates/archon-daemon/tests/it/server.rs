@@ -14,8 +14,8 @@ use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::notify::{FeedEntry, FeedItem, NotificationKind};
 use archon_core::protocol::{
-    Clearable, ClientFrame, ClientKind, ErrorCode, ErrorReply, PROTOCOL_VERSION, Reply, RepoPatch,
-    RepoRef, Request, ServerFrame,
+    Clearable, ClientFrame, ClientKind, ErrorCode, ErrorReply, MIN_WEB_PROTOCOL_VERSION,
+    PROTOCOL_VERSION, Reply, RepoPatch, RepoRef, Request, ServerFrame,
 };
 use archon_core::repo::{Repo, ShipMode};
 use archon_daemon::server;
@@ -51,6 +51,7 @@ impl Client {
             protocol_version: PROTOCOL_VERSION,
             client: kind,
             client_version: "test".into(),
+            features: Vec::new(),
         };
         let id = client.send(hello).await;
         match client.frame().await {
@@ -96,6 +97,7 @@ impl Client {
                 ServerFrame::Reply { id: got, result } if got == id => return result,
                 ServerFrame::Reply { id: got, result } => panic!("stray reply {got}: {result:?}"),
                 ServerFrame::Feed { item, .. } => feed.push(item),
+                ServerFrame::Change { change, .. } => panic!("stray change {change:?}"),
             }
         }
     }
@@ -247,6 +249,7 @@ async fn first_frame_must_be_hello_at_our_version() {
         protocol_version: PROTOCOL_VERSION + 1,
         client: ClientKind::ArchonCli,
         client_version: "future".into(),
+        features: Vec::new(),
     };
     old.send(hello).await;
     match old.frame().await {
@@ -262,6 +265,7 @@ async fn first_frame_must_be_hello_at_our_version() {
         protocol_version: PROTOCOL_VERSION,
         client: ClientKind::ArchonCli,
         client_version: "test".into(),
+        features: Vec::new(),
     };
     let again = cli
         .call(hello_again, &mut Vec::new())
@@ -283,6 +287,107 @@ async fn first_frame_must_be_hello_at_our_version() {
         .call(Request::Status(Default::default()), &mut Vec::new())
         .await;
     assert!(status.is_ok(), "{status:?}");
+    serving.abort();
+}
+
+/// The first frame of a fresh connection: `hello` as `client` at `version`.
+async fn first_reply(socket: &Path, client: ClientKind, version: u32) -> Result<Reply, ErrorReply> {
+    let mut connection = Client::connect(socket).await;
+    let hello = Request::Hello {
+        protocol_version: version,
+        client,
+        client_version: "test".into(),
+        features: Vec::new(),
+    };
+    let id = connection.send(hello).await;
+    match connection.frame().await {
+        Some(ServerFrame::Reply { id: got, result }) if got == id || got == 0 => result,
+        other => panic!("expected a reply to hello, got {other:?}"),
+    }
+}
+
+/// `archon-web` may speak 23 or 24 and is told the range when it speaks
+/// 25; the CLI still needs an exact match, as one binary.
+#[tokio::test]
+async fn the_web_app_speaks_23_or_24_and_the_cli_only_24() {
+    let h = Harness::new().await;
+    let socket = h.ctx.paths.socket.clone();
+    let (listener, _lock) = server::bind(&h.ctx).expect("bind");
+    let serving = tokio::spawn(server::serve(h.ctx.clone(), listener));
+    for version in [MIN_WEB_PROTOCOL_VERSION, PROTOCOL_VERSION] {
+        match first_reply(&socket, ClientKind::ArchonWeb, version).await {
+            Ok(Reply::Welcome(welcome)) => {
+                assert_eq!(welcome.protocol_version, version);
+                assert_eq!(welcome.min_protocol_version, MIN_WEB_PROTOCOL_VERSION);
+            }
+            other => panic!("archon-web {version}: {other:?}"),
+        }
+    }
+    let refused = first_reply(&socket, ClientKind::ArchonWeb, PROTOCOL_VERSION + 1)
+        .await
+        .expect_err("25 is refused");
+    assert_eq!(refused.code, ErrorCode::Incompatible);
+    let range = format!("accepts {MIN_WEB_PROTOCOL_VERSION} to {PROTOCOL_VERSION}");
+    assert!(refused.message.contains(&range), "{}", refused.message);
+    let cli = first_reply(&socket, ClientKind::ArchonCli, MIN_WEB_PROTOCOL_VERSION)
+        .await
+        .expect_err("the CLI needs its own version");
+    assert_eq!(cli.code, ErrorCode::Incompatible);
+    match first_reply(&socket, ClientKind::ArchonCli, PROTOCOL_VERSION).await {
+        Ok(Reply::Welcome(welcome)) => {
+            assert_eq!(welcome.min_protocol_version, PROTOCOL_VERSION);
+            assert!(welcome.features.is_empty(), "no feature is served yet");
+        }
+        other => panic!("the CLI at {PROTOCOL_VERSION}: {other:?}"),
+    }
+    serving.abort();
+}
+
+/// Every protocol 24 request is classified and, until its owner serves it,
+/// answers `unavailable` rather than anything that looks like data.
+#[tokio::test]
+async fn every_protocol_24_request_answers_unavailable_until_served() {
+    let h = Harness::new().await;
+    let socket = h.ctx.paths.socket.clone();
+    let (listener, _lock) = server::bind(&h.ctx).expect("bind");
+    let serving = tokio::spawn(server::serve(h.ctx.clone(), listener));
+    let mut cli = Client::hello(&socket, ClientKind::ArchonCli).await;
+    let item = archon_core::id::QueueItemId::new();
+    let issue =
+        serde_json::json!({"host": "github.com", "repo": "o/r", "number": 1, "kind": "issue"});
+    let requests = [
+        serde_json::json!({"cmd": "subscribe_changes", "after": 0}),
+        serde_json::json!({"cmd": "changes_page", "after": 0}),
+        serde_json::json!({"cmd": "item_history", "item": item}),
+        serde_json::json!({"cmd": "task_graph", "filter": {}}),
+        serde_json::json!({"cmd": "run_plan", "run": archon_core::id::PipelineRunId::new()}),
+        serde_json::json!({"cmd": "item_links", "item": item}),
+        serde_json::json!({"cmd": "issue_items", "ref": issue}),
+        serde_json::json!({"cmd": "link_issue", "item": item, "ref": issue, "relation": "closes"}),
+        serde_json::json!({"cmd": "unlink_issue", "item": item, "ref": issue, "relation": "mentioned"}),
+        serde_json::json!({"cmd": "list_github_objects", "repo": "o/r"}),
+        serde_json::json!({"cmd": "import_issue", "ref": issue}),
+        serde_json::json!({"cmd": "list_items", "repo": null, "pipeline": null, "tag": null, "limit": null, "text": "x"}),
+        serde_json::json!({"cmd": "list_item_summaries", "repo": null, "pipeline": null, "tag": null, "limit": null, "with_as_of": true}),
+    ];
+    for json in requests {
+        let request: Request = serde_json::from_value(json.clone()).expect("a request");
+        let refusal = cli
+            .call(request, &mut Vec::new())
+            .await
+            .expect_err("not served yet");
+        assert_eq!(refusal.code, ErrorCode::Unavailable, "{json}: {refusal:?}");
+        assert!(
+            refusal.message.contains("not implemented yet"),
+            "{json}: {refusal:?}"
+        );
+    }
+    let plain = Request::ListItemSummaries(Default::default());
+    let summaries = cli.call(plain, &mut Vec::new()).await;
+    assert!(
+        matches!(summaries, Ok(Reply::ItemSummaries(_))),
+        "{summaries:?}"
+    );
     serving.abort();
 }
 

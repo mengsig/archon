@@ -81,6 +81,8 @@ fn summarize(
         spent_usd,
         pr_url,
         switched_to,
+        issue: None,
+        pr: None,
     })
 }
 

@@ -74,6 +74,9 @@ fn welcome() -> Welcome {
         protocol_version: PROTOCOL_VERSION,
         daemon_version: "fake".into(),
         pid: 42,
+        min_protocol_version: PROTOCOL_VERSION,
+        features: Vec::new(),
+        device: None,
     }
 }
 

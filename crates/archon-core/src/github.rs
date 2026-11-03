@@ -26,7 +26,9 @@ pub const MENTION_REGEX: &str = "(?i)(?:^|[^a-z0-9_@])@archon(?:$|[^a-z0-9_-])";
 pub const LABEL_REGEX: &str = "(?i)archon";
 
 /// A GitHub.com `owner/name`, lowercased as Aether stores it.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(try_from = "String", into = "String")]
 pub struct GithubRepo(String);
 
@@ -118,7 +120,7 @@ pub fn is_github_login(login: &str) -> bool {
 /// The GitHub logins that alone may dispatch for one repository: non-empty,
 /// at most [`MAX_ALLOWED_USERS`], lowercased and de-duplicated in first-seen
 /// order, as Aether stores them.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(try_from = "Vec<String>", into = "Vec<String>")]
 pub struct AllowedUsers(Vec<String>);
 
@@ -186,7 +188,7 @@ impl From<AllowedUsers> for Vec<String> {
 
 /// The GitHub logins whose own requests carry the operator's authority.
 /// A type of its own, so that no allowlist is ever saved as operator logins.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(try_from = "Vec<String>", into = "Vec<String>")]
 pub struct OperatorUsers(Vec<String>);
 
@@ -218,7 +220,7 @@ impl From<OperatorUsers> for Vec<String> {
 
 /// One issue or pull request conversation: where a request came from and
 /// where its replies go.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GithubThread {
     pub repository: GithubRepo,
@@ -253,7 +255,7 @@ impl fmt::Display for GithubThread {
 
 /// An operator's edit to Archon's watcher. Nothing here names a target:
 /// archond always points Archon's repositories at the live orchestrator.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum WatcherChange {
     /// Watch a repository (and switch the watcher on). An allowlist replaces
@@ -293,7 +295,7 @@ pub enum WatcherChange {
 }
 
 /// Archon's view of its aetherd's GitHub watcher.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GithubWatcherView {
     /// Aether's config revision; every edit is a compare-and-swap on it.
     pub revision: u64,
@@ -319,7 +321,7 @@ impl GithubWatcherView {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct WatchedRepo {
     pub repository: String,
     pub enabled: bool,
@@ -346,7 +348,7 @@ impl WatchedRepo {
 }
 
 /// Where a watched repository's requests go.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WatchTarget {
     /// Archon's: fixed dispatch to the current orchestrator.
@@ -359,7 +361,7 @@ pub enum WatchTarget {
 }
 
 /// The watcher in `archon status`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum GithubWatch {
     Watching(Box<GithubWatcherView>),

@@ -3491,6 +3491,12 @@ defined in `archon_core::protocol` and served by `archon-daemon`.
   `grant_merge`. Protocol 15 added `RepoPatch.gh_user`, a `Clearable`
   GitHub login. Protocol 17 added `RepoPatch.merge_waive_checks`, a plain
   option holding the whole list.
+- Protocol 24 is the unified frontend's wire (docs/vnext/CONTRACTS.md
+  §1.3). `archon-web` may still say hello at 23; every other client must
+  match exactly. `welcome` names the oldest version accepted and the
+  features served, and a request whose feature is not served answers
+  `unavailable`. `archon schema` prints the protocol as a JSON Schema, and
+  a test keeps the committed `crates/archon-core/protocol.schema.json` current.
 
 The command set is `archon_core::protocol::Request`, and every variant is
 documented there. Reply kinds are `archon_core::protocol::Reply`. Error codes

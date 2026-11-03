@@ -16,7 +16,7 @@ pub use tiers::{Checks, DEFAULT_RELEASE_BRANCH, REPO_FILE_NAME, RepoTiers, check
 
 /// How finished work leaves a repository. Nothing merges unless
 /// the item's `merge = auto` knob is within the operator's ceiling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Default, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum ShipMode {
     /// Push the branch and open a pull request. The default.
@@ -56,7 +56,7 @@ impl<'de> Deserialize<'de> for ShipMode {
 
 /// What a delivered pull request says of Archon and of the tools that made
 /// it; only the operator sets it, in the registry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Default, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum Attribution {
     /// No `Archon item:` line, and delivery refuses a pull request body or
@@ -107,7 +107,7 @@ pub const GH_HOST: &str = "github.com";
 
 /// A github.com login whose `gh` token every `gh` call and push for a
 /// repository carries; only the operator sets it, in the registry.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, schemars::JsonSchema)]
 pub struct GhUser(String);
 
 impl GhUser {
@@ -187,7 +187,7 @@ impl<'de> Deserialize<'de> for GhUser {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Repo {
     pub id: RepoId,
     /// Short unique label used in `--repo`, tags and worktree paths.

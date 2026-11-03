@@ -32,7 +32,7 @@ Setup:
 
 Advanced:
   log, cost, reports, model-evidence, lessons, learning, clear-notifications,
-  promote, release, orchestrator, daemon, aether, tui, gc, mcp
+  promote, release, orchestrator, daemon, aether, tui, gc, mcp, schema
                   Inspection, release and internals; see `archon <command> --help`
 
 Options:
@@ -288,6 +288,8 @@ pub enum Command {
     /// Audit release assets, Latest, and whether CI started.
     #[command(subcommand)]
     Release(ReleaseCommand),
+    /// Print the daemon protocol's JSON Schema, or write it with `--out`.
+    Schema(crate::cmd::schema::SchemaArgs),
     /// Open the terminal UI: Aether's TUI on Archon's main orchestrator
     /// (what a bare `archon` opens).
     Tui(TuiArgs),

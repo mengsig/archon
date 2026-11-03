@@ -13,7 +13,7 @@ use crate::model_tier::{Tier, TierChoice};
 /// `provider/model`, e.g. `claude-code/opus` or `codex/astra`. Serializes as
 /// Aether's `{provider, model}` object; also deserializes from the string form
 /// so config files and MCP arguments can write `"claude-code/opus"`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, schemars::JsonSchema)]
 pub struct ModelRef {
     pub provider: String,
     pub model: String,
@@ -54,7 +54,7 @@ impl FromStr for ModelRef {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
 enum ModelRefWire {
     Text(String),
@@ -73,7 +73,19 @@ impl<'de> Deserialize<'de> for ModelRef {
 }
 
 /// Aether's effort scale; the wire spelling is snake_case (`x_high`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Effort {
     Low,
@@ -116,7 +128,7 @@ impl fmt::Display for Effort {
 
 /// What the orchestrator chose for one agent: model and effort are
 /// mandatory, mirroring Aether's `delegate`, which inherits neither.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelChoice {
     pub model: ModelRef,
@@ -157,7 +169,7 @@ impl fmt::Display for ModelChoice {
 /// A [`ModelChoice`] as a request gives it: an exact `model`, or a `tier`
 /// (optionally on `provider`) that Archon resolves from Aether's catalog.
 /// `effort` may be left out, and the stage's default effort stands in.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelChoiceDraft {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -222,7 +234,7 @@ impl ModelChoiceDraft {
 }
 
 /// A [`ModelPlan`] as a request gives it, keyed like it.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(transparent)]
 pub struct ModelPlanDraft(pub std::collections::BTreeMap<String, Vec<ModelChoiceDraft>>);
 
@@ -295,7 +307,7 @@ pub fn check_reason_lengths(reasons: &ModelReasons) -> Result<(), crate::ArchonE
 
 /// Per-stage choices for one pipeline run, keyed by stage id. A fan-out
 /// stage lists one choice per parallel agent; every other stage lists one.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(transparent)]
 pub struct ModelPlan(pub std::collections::BTreeMap<String, Vec<ModelChoice>>);
 

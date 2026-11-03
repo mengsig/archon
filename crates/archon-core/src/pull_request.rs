@@ -13,7 +13,9 @@ const MAX_NUMBER_DIGITS: usize = 18;
 /// One pull request, as `https://<host>/<owner>/<name>/pull/<number>` names
 /// it. Host and repository are lowercase, as GitHub matches them. Stored as
 /// that URL, read back only when it is one.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(try_from = "String", into = "String")]
 pub struct PullRequestRef {
     /// `github.com`, or a GitHub Enterprise host.
@@ -72,7 +74,7 @@ impl From<PullRequestRef> for String {
 
 /// The pull request an item delivers into instead of opening its own, as
 /// enqueue's `onto` names it: another item's, a number, or an open branch's.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OntoTarget {
     Item(QueueItemId),
@@ -92,7 +94,7 @@ impl fmt::Display for OntoTarget {
 
 /// An `onto` target's pull request as GitHub showed it at enqueue, frozen:
 /// later work starts from `head_sha` and expects the head still there.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OntoPullRequest {
     /// What enqueue was asked for.
     pub target: OntoTarget,

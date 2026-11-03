@@ -19,7 +19,7 @@ pub const CONTRACT_LESSON_NOTICE: &str = "\n\n## Learned advice\n\nThe quoted ob
 /// Most lessons the orchestrator is given when it is spawned.
 pub const ORCHESTRATOR_LESSONS: usize = 10;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LessonKind {
     /// Which model or effort suits which work.
@@ -41,7 +41,7 @@ impl LessonKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LessonState {
     /// Awaiting confirmation; scoped orchestrator advice can be tried at low weight.
@@ -60,7 +60,7 @@ impl LessonState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LessonSource {
     Operator,
@@ -80,13 +80,13 @@ impl LessonSource {
 }
 
 /// Where a lesson applies; all `None` is everywhere.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LessonScope {
     pub repo: Option<RepoId>,
     pub pipeline: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Lesson {
     pub id: LessonId,
     pub scope: LessonScope,
@@ -279,7 +279,7 @@ fn is_plain_char(c: char) -> bool {
 }
 
 /// What `record_lesson` and `archon lessons add` send.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LessonDraft {
     pub kind: LessonKind,
     pub text: String,
@@ -291,7 +291,7 @@ pub struct LessonDraft {
     pub item: Option<QueueItemId>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LessonQuery {
     /// That repository's lessons and the global ones.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -303,7 +303,7 @@ pub struct LessonQuery {
 }
 
 /// An operator's edit; `state` accepts (`active`) or retracts a lesson.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LessonPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
@@ -323,7 +323,7 @@ impl LessonPatch {
 
 /// What shaped an item: the lessons its newest run was given, and why each
 /// stage got its model where a learned default chose it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LessonWhy {
     pub item: QueueItemId,
     pub run: Option<PipelineRunId>,
@@ -331,7 +331,7 @@ pub struct LessonWhy {
     pub routing: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LessonStats {
     /// Recorded outcomes, and how many of them were corrected or merged.
     pub outcomes: u64,
@@ -348,7 +348,7 @@ pub struct LessonStats {
     pub repo_names: BTreeMap<RepoId, String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PipelineEvidence {
     pub repo: Option<RepoId>,
     pub pipeline: String,

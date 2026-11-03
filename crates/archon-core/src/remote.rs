@@ -15,7 +15,7 @@ pub const MAX_PUBLIC_ORIGINS: usize = 16;
 
 /// `[remote]` in config.toml: static settings, read when archond starts.
 /// Whether the listener is open is runtime state (`archon remote enable`).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct RemoteConfig {
     pub address: String,
@@ -65,7 +65,7 @@ impl RemoteConfig {
 }
 
 /// What `remote_status` and every remote change answer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RemoteView {
     pub enabled: bool,
     /// The configured bind address.
@@ -82,7 +82,7 @@ pub struct RemoteView {
 }
 
 /// A paired device, as the operator sees it. Never carries its credential.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeviceView {
     pub id: String,
     pub name: String,
@@ -93,7 +93,7 @@ pub struct DeviceView {
 }
 
 /// A change to the runtime settings; `None` keeps a field.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct RemoteChange {
     pub enabled: Option<bool>,
@@ -104,7 +104,7 @@ pub struct RemoteChange {
 }
 
 /// A pairing just opened: the one-time code and where to use it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PairingCode {
     /// Eight Crockford base32 symbols shown as `ABCD-EFGH`.
     pub code: String,

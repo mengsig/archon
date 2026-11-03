@@ -10,7 +10,9 @@ use crate::error::ArchonError;
 
 /// Provenance of Aether's cumulative dollar amount. Missing legacy provenance
 /// is unknown; mixed totals cannot be split into billed and estimated dollars.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CostBasis {
     #[default]
@@ -96,7 +98,9 @@ pub const DEFAULT_DAYS: u32 = 7;
 const SECS_PER_DAY: u64 = 86_400;
 
 /// What a report sums spend by.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CostGroup {
     #[default]
@@ -149,7 +153,7 @@ pub const MAX_DAYS_BACK: u32 = 3650;
 
 /// One end of a report's range: a local calendar date, or a number of
 /// whole days back from today.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DayBound {
     Date(NaiveDate),
@@ -212,7 +216,9 @@ fn days_before(today: NaiveDate, n: u32) -> Result<NaiveDate, ArchonError> {
 }
 
 /// `Request::CostReport`: spend over a range of days, grouped by `by`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct CostQuery {
     /// `None`: the last [`DEFAULT_DAYS`] days.
     pub since: Option<DayBound>,
@@ -245,7 +251,7 @@ impl CostQuery {
 }
 
 /// Local calendar days, both ends included; never empty.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DayRange {
     pub since: NaiveDate,
     pub until: NaiveDate,
@@ -254,7 +260,7 @@ pub struct DayRange {
 /// Money in one group. Classification does not change budget accounting:
 /// `counted_usd` includes raw Aether `cost_usd` regardless of its basis, plus
 /// raw `estimated_cost_usd` when `limits.count_estimated_cost` is on.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CostAmounts {
     pub counted_usd: f64,
     /// Provider-reported billing only.
@@ -289,7 +295,7 @@ impl CostAmounts {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CostRow {
     /// The day, repository name, pipeline, `provider/model`, item id or
     /// stage id. `None` gathers spend with no such owner: the
@@ -301,7 +307,7 @@ pub struct CostRow {
 
 /// `Reply::CostReport`. Days in order for `by = day`; otherwise the most
 /// counted first. The rows add up to `total`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CostReport {
     pub range: DayRange,
     pub by: CostGroup,

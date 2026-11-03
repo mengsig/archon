@@ -274,6 +274,9 @@ mod tests {
                         protocol_version: PROTOCOL_VERSION,
                         daemon_version: "test".into(),
                         pid: 1,
+                        min_protocol_version: PROTOCOL_VERSION,
+                        features: Vec::new(),
+                        device: None,
                     }),
                     Request::Status(_) => {
                         answered += 1;

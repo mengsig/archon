@@ -3,8 +3,11 @@
 
 mod autonomy;
 mod budget_cost;
+mod changes;
 mod control;
 mod cost;
+mod github_links;
+mod graph;
 mod initiatives;
 mod item_views;
 mod items;
@@ -36,6 +39,26 @@ use tokio::sync::RwLockReadGuard;
 use crate::context::DaemonContext;
 use crate::executor::operator_merge;
 use crate::{github, integration, ops, recovery, reports, standby, supervisor, tracked};
+
+/// The protocol 24 features this archond serves, for `welcome`.
+pub(crate) fn features() -> Vec<&'static str> {
+    let served: Vec<&'static str> = [
+        changes::FEATURES,
+        graph::FEATURES,
+        github_links::FEATURES,
+        crate::remote::FEATURES,
+    ]
+    .concat();
+    let mut unique = served.clone();
+    unique.sort_unstable();
+    unique.dedup();
+    assert_eq!(
+        unique.len(),
+        served.len(),
+        "a feature is served once: {served:?}"
+    );
+    served
+}
 
 /// `update_item` with only `autonomy`, above the item's ceiling. Only the
 /// operator's confirmed request calls this; no request field reaches it.
@@ -436,10 +459,19 @@ pub(crate) async fn resolve_item(
 async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, ArchonError> {
     match request {
         Request::Enqueue(enqueue) => items::enqueue(ctx, enqueue).await,
-        Request::ListItems(query) => items::list(ctx, &query).await,
+        Request::ListItems(query) => {
+            graph::check_item_filters(&query)?;
+            items::list(ctx, &query).await
+        }
         Request::GetItem { item } => items::get(ctx, &item).await,
         Request::GetStage(query) => stages::get(ctx, &query).await,
-        Request::ListItemSummaries(query) => item_views::summaries(ctx, &query).await,
+        Request::ListItemSummaries(query) => {
+            graph::check_item_filters(&query)?;
+            match query.with_as_of {
+                true => changes::summaries_at(ctx, &query).await,
+                false => item_views::summaries(ctx, &query).await,
+            }
+        }
         Request::ResolveItem { prefix } => item_views::resolve(ctx, &prefix).await,
         Request::CancelItem { item, reason } => items::cancel(ctx, &item, reason).await,
         Request::RetryItem {
@@ -516,6 +548,41 @@ async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, Ar
             };
             Ok(Reply::Gc(Box::new(report)))
         }
+        request => handle_protocol_24(ctx, request).await,
+    }
+}
+
+/// The requests protocol 24 added, each served from its owner's file.
+async fn handle_protocol_24(ctx: &DaemonContext, request: Request) -> Result<Reply, ArchonError> {
+    match request {
+        Request::SubscribeChanges { after } => changes::subscribe(ctx, after).await,
+        Request::ChangesPage { after, limit } => changes::page(ctx, after, limit).await,
+        Request::ItemHistory { item, limit } => changes::item_history(ctx, &item, limit).await,
+        Request::TaskGraph { filter, limit } => graph::task_graph(ctx, filter, limit).await,
+        Request::RunPlan { run } => graph::run_plan(ctx, &run).await,
+        Request::ItemLinks { item } => github_links::item_links(ctx, &item).await,
+        Request::IssueItems { reference } => github_links::issue_items(ctx, &reference).await,
+        Request::LinkIssue {
+            item,
+            reference,
+            relation,
+        } => github_links::set_link(ctx, &item, &reference, relation, true).await,
+        Request::UnlinkIssue {
+            item,
+            reference,
+            relation,
+        } => github_links::set_link(ctx, &item, &reference, relation, false).await,
+        Request::ListGithubObjects {
+            repo,
+            kind,
+            state,
+            limit,
+        } => github_links::list_objects(ctx, &repo, kind, state, limit).await,
+        Request::ImportIssue {
+            reference,
+            pipeline,
+            priority,
+        } => github_links::import_issue(ctx, &reference, pipeline, priority).await,
         request => handle_operator(ctx, request).await,
     }
 }

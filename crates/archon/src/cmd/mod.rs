@@ -21,6 +21,7 @@ mod release;
 pub(crate) mod remote;
 mod repo;
 mod reports;
+pub(crate) mod schema;
 mod settings;
 mod talk;
 mod update;
@@ -98,6 +99,7 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
         Command::Reports { command } => reports::run(command, json).await,
         Command::Setup { print, resync } => instance::setup(print, resync, json).await,
         Command::Release(command) => release::run(command, json).await,
+        Command::Schema(args) => schema::run(&args),
         Command::Doctor => doctor::run(json).await,
         Command::Tui(args) => instance::tui(args).await,
         Command::Aether { args } => instance::passthrough(&args).await,
@@ -174,6 +176,7 @@ fn json_refusal(command: Option<&Command>) -> Option<&'static str> {
         | Command::Setup { .. }
         | Command::Doctor
         | Command::Release(_)
+        | Command::Schema(_)
         | Command::Gc { .. }
         | Command::Orchestrator { .. }
         | Command::Update(_) => None,
@@ -280,6 +283,7 @@ mod tests {
             &["reports"],
             &["reports", "reopen", "rpt_1"],
             &["doctor"],
+            &["schema"],
             &["github-watcher"],
             &["github-watcher", "add", "o/r"],
             &["update", "--check"],

@@ -50,14 +50,20 @@ dispatch or class tables, except to add optional fields.
   `client = "archon-web"` the daemon accepts 23..=24. Other clients stay
   exact-match (one binary).
 - `Welcome {protocol_version, daemon_version, pid, min_protocol_version: u32, features: string[], device?: {id, name, role: "operator"|"observer"}}`.
+  `protocol_version` is the version the connection speaks (the client's,
+  once accepted) and `min_protocol_version` the oldest archond accepts from
+  that client kind. A client at 23 is sent no features.
 - Feature strings: `changes`, `task_graph`, `run_plan`, `item_history`,
   `item_filters`, `github_links`, `github_import`, `device_roles`.
 - Requests from the remote listener run with `ClientKind::ArchonWeb` standing,
   not `ArchonCli` (enforced in AR-R).
-- New `ErrorCode::history_expired {first_seq, last_seq}`.
-- `archon schema` writes `crates/archon-core/protocol.schema.json` (schemars,
-  JSON Schema 2020-12) covering `ClientFrame` and `ServerFrame`. A test fails
-  when the file is stale.
+- New `ErrorCode::history_expired {first_seq, last_seq}`, on the wire
+  `"code": {"history_expired": {"first_seq": …, "last_seq": …}}`; the other
+  codes stay plain strings.
+- `archon schema` prints the schema, and `archon schema --out
+  crates/archon-core/protocol.schema.json` writes the committed copy
+  (schemars, JSON Schema 2020-12) covering `ClientFrame` and `ServerFrame`.
+  A test fails when the file is stale.
 
 **Changes and history (owner AR-C)**
 
@@ -65,9 +71,9 @@ dispatch or class tables, except to add optional fields.
 | --- | --- | --- |
 | `subscribe_changes` | `{after?: u64}` → `subscribed {id, last_seq}`, then frames `{"frame":"change","sub":id,"change":Change}` | Read |
 | `changes_page` | `{after: u64, limit?: u32 (1..=1000)}` → `changes {changes: Change[], last_seq}` | Read |
-| `Change` | `{seq: u64, at: Ts, subject: ChangeSubject}`. `seq` is gapless and written in the same transaction as the state it describes. | |
+| `Change` | `{seq: u64, at: Ts, subject: ChangeSubject}`. `seq` is gapless and written in the same transaction as the state it describes. The subject is flattened: `{"seq":7,"at":…,"subject":"item","item":"qi_…","state":"running"}`. | |
 | `ChangeSubject` (tag `subject`) | `item {item, state: QueueStateKind, stage?: string, waiting_reason?: WaitingReasonCode}` · `dependency {item, depends_on, added: bool}` · `run {run, item, state: RunStateKind}` · `stage {stage_run, run, item, stage_id, attempt, fan_index, state: StageStateKind, verdict?: Verdict}` · `gate {run, item, stage_id, decision?: GateDecision}` · `question {question, item?, open: bool}` · `initiative {initiative, state: InitiativeState}` · `link {item, host, repo, number, relation}` | |
-| `list_item_summaries` (extended) | its reply gains `as_of: u64`, read in the same database read transaction as the summaries | Read |
+| `list_item_summaries` (extended) | with `with_as_of: true` in its query the reply is `item_summaries_at {summaries: ItemSummary[], as_of: u64}`, `as_of` read in the same database read transaction as the summaries. Without it the reply stays the bare `item_summaries` array protocol 23 reads. | Read |
 | `item_history` | `{item, limit?: u32 (1..=1000)}` → `item_history {item, transitions: [{seq, at, from?: QueueStateKind, to: QueueStateKind, reason?: string, by: "daemon"\|"cli"\|"web"\|"mcp"\|"github"}]}` | Read |
 
 Retention: changes are kept for at least 30 days or the newest 100,000 rows,
@@ -81,7 +87,7 @@ whichever keeps more. Older cursors get `history_expired`.
 | `TaskNode` | `{id, repo?, title, pipeline, priority, state: QueueStateKind, state_detail?: string, stage?: string, waiting_reason?: WaitingReasonCode, spent_usd: f64, initiative?, tags: string[], created_at, updated_at, issue?: GithubRef, pr?: PrRef, agents_running: u32}` | |
 | `TaskEdge` | `{from: QueueItemId (prerequisite), to: QueueItemId (dependent), kind: "depends_on"\|"initiative_after"\|"stacked_on", satisfied: bool}` | |
 | `run_plan` | `{run}` → `run_plan {run, pipeline, revision: string, stages: StageSummary[], edited: bool}`: the frozen pipeline with steer edits applied | Read |
-| `list_items` (extended) | adds `updated_since?: Ts`, `before?: Ts`, `text?: string (1..=200 chars, title and brief substring)` | Read |
+| `list_items` (extended) | adds `updated_since?: Ts`, `before?: Ts`, `text?: string (1..=200 chars, title and brief substring)`, also on `list_item_summaries`. Until `item_filters` is served, a query using them is refused with `unavailable`. | Read |
 
 `as_of` is the last change seq committed when the projection was read, taken in
 the **same read transaction** as the rows, for `task_graph` and
@@ -100,7 +106,7 @@ gives the same bytes.
 | `issue_items` | `{ref: GithubRef}` → `issue_items {links: GithubLink[]}` | Read | D1 |
 | `link_issue` / `unlink_issue` | `{item, ref, relation: "closes"\|"mentioned"}` → `ok`. Idempotent: the same link twice is `ok`. | Change | D1 |
 | `GithubObject` | `{ref, title, state: "open"\|"closed"\|"merged", state_reason?, draft?, labels: string[], author?, updated_at, fetched_at, review_decision?, checks?}` | | D2 |
-| `list_github_objects` | `{repo, kind?, state?, limit?: u32 (≤500)}` → `github_objects {objects, synced_at?}` | Read | D2 |
+| `list_github_objects` | `{repo: "owner/name", kind?, state?, limit?: u32 (≤500)}` → `github_objects {objects, synced_at?}` | Read | D2 |
 | `import_issue` | `{ref, pipeline?, priority?}` → `item`. Its idempotency key is derived as `github:<host>/<owner>/<repo>#<number>`; a repeat returns the first item. | Change | D2 |
 | `ItemSummary` (extended) | adds `issue?: GithubRef`, `pr?: PrRef` (keeps `pr_url`) | | D1 / D3 |
 

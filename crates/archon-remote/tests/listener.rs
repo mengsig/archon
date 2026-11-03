@@ -6,7 +6,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use archon_core::error::ArchonError;
-use archon_core::protocol::{Reply, Request, ServerFrame};
+use archon_core::protocol::{
+    MIN_WEB_PROTOCOL_VERSION, PROTOCOL_VERSION, Reply, Request, ServerFrame, feature,
+};
 use archon_core::remote::{RemoteChange, RemoteConfig};
 use archon_remote::{Backend, FeedSubscription, Remote};
 use futures_util::{SinkExt as _, StreamExt as _};
@@ -30,6 +32,10 @@ impl Backend for FakeArchond {
         let name = archon_remote::allow::command_name(&request);
         self.asked.lock().unwrap().push(name);
         Ok(Reply::Ok)
+    }
+
+    fn features(&self) -> Vec<&'static str> {
+        vec![feature::CHANGES]
     }
 
     async fn feed(&self, subscription: FeedSubscription, frames: mpsc::Sender<ServerFrame>) {
@@ -120,6 +126,14 @@ impl Listener {
     }
 
     async fn socket(&self, cookie: &str) -> Socket {
+        let mut socket = self.upgrade(cookie).await;
+        let welcome = exchange(&mut socket, hello(PROTOCOL_VERSION)).await;
+        assert_eq!(welcome["result"]["Ok"]["reply"], "welcome", "{welcome}");
+        socket
+    }
+
+    /// An upgraded socket that has not said hello yet.
+    async fn upgrade(&self, cookie: &str) -> Socket {
         let stream = TcpStream::connect(("127.0.0.1", self.port)).await.unwrap();
         let mut request = format!("ws://{}/ws", self.host())
             .into_client_request()
@@ -128,17 +142,18 @@ impl Listener {
         headers.insert("Origin", self.origin().parse().unwrap());
         headers.insert("Cookie", cookie.parse().unwrap());
         headers.insert("Sec-WebSocket-Protocol", "archon".parse().unwrap());
-        let (mut socket, _) = tokio_tungstenite::client_async(request, stream)
+        let (socket, _) = tokio_tungstenite::client_async(request, stream)
             .await
             .expect("the upgrade is accepted");
-        let hello = serde_json::json!({
-            "req": 1, "cmd": "hello", "protocol_version": archon_core::protocol::PROTOCOL_VERSION,
-            "client": "archon-web", "client_version": "test",
-        });
-        let welcome = exchange(&mut socket, hello).await;
-        assert_eq!(welcome["result"]["Ok"]["reply"], "welcome", "{welcome}");
         socket
     }
+}
+
+fn hello(protocol_version: u32) -> serde_json::Value {
+    serde_json::json!({
+        "req": 1, "cmd": "hello", "protocol_version": protocol_version,
+        "client": "archon-web", "client_version": "test",
+    })
 }
 
 fn enable(on: bool) -> RemoteChange {
@@ -362,6 +377,31 @@ async fn a_session_needs_the_cookie_and_a_forged_one_is_cleared() {
         !stored.contains(cookie.split_once('.').unwrap().1),
         "only a hash is stored"
     );
+}
+
+/// The web app may speak 23 or 24; 25 is refused with the range accepted.
+#[tokio::test]
+async fn the_web_app_connects_at_23_and_24_and_25_is_refused_with_the_range() {
+    let listener = Listener::start().await;
+    let cookie = listener.pair().await;
+    for (version, features) in [
+        (23, serde_json::json!([])),
+        (24, serde_json::json!(["changes"])),
+    ] {
+        let mut socket = listener.upgrade(&cookie).await;
+        let welcome = exchange(&mut socket, hello(version)).await;
+        let data = &welcome["result"]["Ok"]["data"];
+        assert_eq!(data["protocol_version"], version, "{welcome}");
+        assert_eq!(data["min_protocol_version"], MIN_WEB_PROTOCOL_VERSION);
+        assert_eq!(data["features"], features, "{welcome}");
+    }
+    let mut socket = listener.upgrade(&cookie).await;
+    let refusal = exchange(&mut socket, hello(PROTOCOL_VERSION + 1)).await;
+    let error = &refusal["result"]["Err"];
+    assert_eq!(error["code"], "incompatible", "{refusal}");
+    let message = error["message"].as_str().unwrap();
+    assert!(message.contains("accepts 23 to 24"), "{message}");
+    assert_eq!(close_code(&mut socket).await, 1008);
 }
 
 #[tokio::test]

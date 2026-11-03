@@ -259,10 +259,12 @@ async fn open(socket: &Path) -> Result<UnixStream, ArchonError> {
 }
 
 async fn handshake(shared: &Shared, kind: ClientKind) -> Result<Welcome, ArchonError> {
+    // archond's own clients ship in its binary: they speak exactly its version.
     let hello = Request::Hello {
         protocol_version: PROTOCOL_VERSION,
         client: kind,
         client_version: env!("CARGO_PKG_VERSION").to_owned(),
+        features: Vec::new(),
     };
     match shared.call(hello, None, HELLO_TIMEOUT).await? {
         Ok(Reply::Welcome(welcome)) if welcome.protocol_version == PROTOCOL_VERSION => Ok(welcome),
@@ -316,6 +318,10 @@ pub fn refusal_error(refusal: ErrorReply) -> ArchonError {
         }
         ErrorCode::Unavailable => ArchonError::Unavailable(bare("unavailable: ")),
         ErrorCode::Recovering => ArchonError::Recovering(bare("recovering: ")),
+        ErrorCode::HistoryExpired(kept) => ArchonError::Invalid(format!(
+            "{message} (changes {} to {} are kept)",
+            kept.first_seq, kept.last_seq
+        )),
         ErrorCode::Incompatible | ErrorCode::Internal => {
             ArchonError::Protocol(format!("archond failed: {message}"))
         }

@@ -18,7 +18,7 @@ use crate::run::StageOutcome;
 /// says otherwise, and a child may not widen its parent's, so Archon states
 /// it on every agent and persists what it stated: a request's frame must
 /// not change between retries under one idempotency key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NetworkPolicy {
     Denied,
@@ -38,7 +38,7 @@ impl NetworkPolicy {
 
 /// Everything needed to start one stage agent (ARCHITECTURE §4.5).
 /// Whether the dollars an engine reports are what the provider bills.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CostBilling {
     /// Billed per use: an HTTP provider at its configured price.
@@ -51,7 +51,7 @@ pub enum CostBilling {
     Unknown,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SpawnRequest {
     /// The stage run id: Aether dedupes a retried create under it.
     pub idempotency_key: String,
@@ -157,7 +157,7 @@ fn handed_in(reply: &str) -> (String, Option<serde_json::Value>) {
 /// The passive Aether agent under which one pipeline run's stage agents
 /// sit (ARCHITECTURE §4.5). It is created but never started, so it takes no
 /// turns and costs nothing; it exists so Aether's tree mirrors Archon's.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RunNodeRequest {
     /// `<pipeline run id>:node:<generation>`; a new generation replaces a
     /// node Aether lost.
@@ -183,7 +183,7 @@ pub struct RunNodeRequest {
     pub attach_run: Option<AetherRunId>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SpawnedAgent {
     pub agent: AetherAgentId,
     pub task: AetherTaskId,
@@ -192,7 +192,7 @@ pub struct SpawnedAgent {
 
 /// A run node Aether created: its id, and the Aether run it and every
 /// stage agent under it belong to.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CreatedNode {
     pub agent: AetherAgentId,
     pub run: AetherRunId,

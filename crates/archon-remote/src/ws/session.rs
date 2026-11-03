@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use archon_core::error::ArchonError;
 use archon_core::protocol::{
-    ClientFrame, ErrorCode, ErrorReply, PROTOCOL_VERSION, Reply, Request, ServerFrame, Welcome,
+    ClientFrame, ErrorCode, ErrorReply, Reply, Request, ServerFrame, negotiate,
 };
 use futures_util::{SinkExt as _, StreamExt as _};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -64,7 +64,7 @@ where
         tasks: JoinSet::new(),
         subscriptions: 0,
     };
-    let ended = match greet(&mut socket, &mut registration).await {
+    let ended = match greet(&mut socket, &mut registration, session.backend.as_ref()).await {
         Ok(()) => run(&mut socket, &mut session, &mut frames, &mut registration).await,
         Err(ended) => ended,
     };
@@ -101,6 +101,7 @@ where
 async fn greet<S>(
     socket: &mut WebSocketStream<S>,
     registration: &mut Registration,
+    backend: &dyn Backend,
 ) -> Result<(), Ended>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -117,21 +118,23 @@ where
     let frame: ClientFrame = serde_json::from_str(&text)
         .map_err(|_| Ended::Violation(CloseCode::Policy, "send hello first"))?;
     let Request::Hello {
-        protocol_version, ..
+        protocol_version,
+        client,
+        client_version,
+        ..
     } = frame.request
     else {
         return Err(Ended::Violation(CloseCode::Policy, "send hello first"));
     };
-    if protocol_version != PROTOCOL_VERSION {
-        let message = format!("archond speaks protocol {PROTOCOL_VERSION}; reload the app");
-        let refusal = error_frame(0, ErrorCode::Incompatible, message);
-        send(socket, &refusal).await?;
-        return Err(Ended::Violation(CloseCode::Policy, "protocol mismatch"));
-    }
-    let welcome = Welcome {
-        protocol_version: PROTOCOL_VERSION,
-        daemon_version: env!("CARGO_PKG_VERSION").to_owned(),
-        pid: std::process::id(),
+    let features = backend.features();
+    let welcome = match negotiate(client, protocol_version, &client_version, &features) {
+        Ok(welcome) => welcome,
+        Err(message) => {
+            let message = format!("{message}, or reload the app");
+            let refusal = error_frame(0, ErrorCode::Incompatible, message);
+            send(socket, &refusal).await?;
+            return Err(Ended::Violation(CloseCode::Policy, "protocol mismatch"));
+        }
     };
     let reply = ServerFrame::Reply {
         id: frame.id,

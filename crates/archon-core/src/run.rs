@@ -13,7 +13,7 @@ use crate::verdict_prose::reports_problem;
 
 /// What a review/test stage concluded, as [`Verdict::extract`] reads it from
 /// the stage agent's result; anything unreadable is `Unknown` and fails a gate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Verdict {
     Pass,
@@ -701,7 +701,7 @@ pub fn strip_label<'a>(line: &'a str, label: &str) -> Option<&'a str> {
         .map(|value| value.trim_start_matches(['*', '_', ' ']))
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum StageState {
     /// Agent creation requested but not yet acknowledged by Aether.
@@ -718,7 +718,7 @@ pub enum StageState {
 
 /// How a stage agent's Aether task settled, as read from `get_task` or a
 /// `task.*` event. Input to the pipeline engine.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum StageOutcome {
     Completed {
@@ -765,7 +765,7 @@ impl StageState {
 
 /// One agent's worth of work: a stage, its attempt number, and for fan-out
 /// stages which parallel slot it filled.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StageRun {
     pub id: StageRunId,
     pub run: PipelineRunId,
@@ -797,7 +797,7 @@ pub struct StageRun {
     pub finished_at: Option<Timestamp>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ModelSegment {
     pub delivery: String,
     pub choice: ModelChoice,
@@ -875,7 +875,7 @@ pub fn retry_label(retry: u32) -> String {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum RunState {
     Running {
@@ -918,7 +918,7 @@ impl RunState {
 }
 
 /// What an operator gate asks the operator to judge.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GateSubject {
     /// The `propose` stage's direction, before implementing.
@@ -937,7 +937,7 @@ impl GateSubject {
 }
 
 /// The operator's answer to a gate.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "decision", rename_all = "snake_case")]
 pub enum GateDecision {
     Approve {
@@ -995,7 +995,7 @@ impl GateDecision {
 }
 
 /// One operator gate of a run, keyed by `(run, stage_id, attempt)`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OperatorGate {
     pub run: PipelineRunId,
     pub item: QueueItemId,
@@ -1025,7 +1025,7 @@ impl OperatorGate {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PipelineRun {
     pub id: PipelineRunId,
     pub item: QueueItemId,

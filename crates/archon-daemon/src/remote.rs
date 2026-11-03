@@ -10,6 +10,9 @@ use tokio::sync::mpsc;
 
 use crate::context::DaemonContext;
 
+/// The protocol 24 features remote access serves (`device_roles`, owner AR-R).
+pub(crate) const FEATURES: &[&str] = &[];
+
 /// Weak, since the context owns the listener that holds this.
 struct DaemonBackend(Weak<DaemonContext>);
 
@@ -30,6 +33,10 @@ impl Backend for DaemonBackend {
         );
         let ctx = self.context()?;
         crate::handlers::handle(&ctx, ClientKind::ArchonCli, request).await
+    }
+
+    fn features(&self) -> Vec<&'static str> {
+        crate::handlers::features()
     }
 
     async fn feed(&self, subscription: FeedSubscription, frames: mpsc::Sender<ServerFrame>) {

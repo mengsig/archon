@@ -18,7 +18,7 @@ use crate::queue::{Caps, format_budget_usd, format_limit};
 
 /// What the operator set at one scope; unset fields come from the layer
 /// beneath. An empty value is "nothing set".
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct OperatorSettings {
     #[serde(skip_serializing_if = "AutonomyPatch::is_empty")]
@@ -60,7 +60,9 @@ pub struct OperatorSettings {
 
 /// How a delivered pull request's checks that never start (billing, no
 /// runner) reach the orchestrator.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ChecksMode {
     /// A quiet feed line first; a wake once they stay unstarted.
@@ -215,7 +217,7 @@ fn most_autonomous() -> Autonomy {
 }
 
 /// Which layer decided an effective value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SettingSource {
     /// Archon's built-in default.
@@ -251,7 +253,7 @@ pub struct Layers<'a> {
 }
 
 /// The values in force for one scope, and where each came from.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EffectiveSettings {
     pub autonomy: AutonomyPolicy,
     pub caps: Caps,
@@ -525,7 +527,7 @@ impl Trace {
 
 /// `Reply::Settings`: what one scope stores, what lies beneath, and the
 /// values in force with their sources.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SettingsView {
     /// The repository asked about; `None` is the global scope.
     pub repo: Option<String>,

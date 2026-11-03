@@ -39,6 +39,8 @@ pub trait Backend: Send + Sync + 'static {
     /// Send `subscribe_feed`'s reply and then its feed frames to `frames`
     /// until it closes, as the Unix socket does.
     async fn feed(&self, subscription: FeedSubscription, frames: mpsc::Sender<ServerFrame>);
+    /// The protocol 24 features archond serves, for a session's `welcome`.
+    fn features(&self) -> Vec<&'static str>;
 }
 
 /// One `subscribe_feed` on a device's WebSocket.

@@ -26,7 +26,7 @@ addition is listed in `Command::introduced()` and advertised in
 | `list_agents_page` | `{query: AgentQuery, after?: AgentId, limit?: u32 (1..=500, default 200)}` → reply `agents_page {agents: Agent[], next_after?: AgentId}`. Ordered by `AgentId` ascending. | observe | `agents_paging` |
 | `get_tree` (extended) | adds optional `role_prefix?: string`, `root?: AgentId`. Absent fields keep today's behaviour. | observe | `agents_paging` |
 | `get_transcript_page` | `{agent, after?: u64, before?: u64, limit?: u32 (1..=1000, default 200)}` → reply `transcript_page {entries: TranscriptEntry[], has_before: bool, has_after: bool, last_seq: u64}`. `after` and `before` are mutually exclusive. | observe | `transcript_paging` |
-| Delta ordering | every `delta` frame gains `invocation_seq: u64`, starting at 1 for each `(agent, invocation)` and increasing by 1 per delta frame sent on that subscription. `tool_input` gains `tool_use_id?: string`. Sent only to clients that list `delta_order`. | n/a | `delta_order` |
+| Delta ordering | every `delta` frame gains `invocation_seq: u64`. The runtime assigns it once, when the delta is produced and before fan-out or filtering. It starts at 1 for each `(agent, invocation)`, increases by 1 per delta, and is the same on every subscription. A delta lost on the bus or by a lagging subscriber therefore shows as a gap, and resubscribing never renumbers. `tool_input` gains `tool_use_id?: string`. Sent only to clients that list `delta_order`. | n/a | `delta_order` |
 | `usage_breakdown` | `{scope: {run?: RunId, agent?: AgentId, subtree?: AgentId, role_prefix?: string}, by: "model"\|"provider"\|"role"\|"day"\|"run", since?: Ts, until?: Ts, limit?: u32 (1..=1000)}` → reply `usage_breakdown {rows: [{key: string, usage: Usage, invocations: u64}], total: Usage, truncated: bool}`. Deterministic: rows ordered by `key`. It keeps `Usage.cost_complete/cost_gap/cost_basis/estimated_cost_usd`. | observe | `usage_breakdown` |
 | Remote mounts | `RemoteSettings.mounts: [{prefix: string, kind: "archon", target: string}]` (at most 4; `prefix` matches `^/[a-z][a-z0-9-]{0,31}$`; `target` is `http://127.0.0.1:<port>` or `http://[::1]:<port>`). Read by `get_remote`, written by `configure_remote` (both remote_admin). `GET /api/health` gains `mounts: [{prefix, kind}]`. | remote_admin | `remote_mounts` |
 
@@ -67,6 +67,7 @@ dispatch or class tables, except to add optional fields.
 | `changes_page` | `{after: u64, limit?: u32 (1..=1000)}` → `changes {changes: Change[], last_seq}` | Read |
 | `Change` | `{seq: u64, at: Ts, subject: ChangeSubject}`. `seq` is gapless and written in the same transaction as the state it describes. | |
 | `ChangeSubject` (tag `subject`) | `item {item, state: QueueStateKind, stage?: string, waiting_reason?: WaitingReasonCode}` · `dependency {item, depends_on, added: bool}` · `run {run, item, state: RunStateKind}` · `stage {stage_run, run, item, stage_id, attempt, fan_index, state: StageStateKind, verdict?: Verdict}` · `gate {run, item, stage_id, decision?: GateDecision}` · `question {question, item?, open: bool}` · `initiative {initiative, state: InitiativeState}` · `link {item, host, repo, number, relation}` | |
+| `list_item_summaries` (extended) | its reply gains `as_of: u64`, read in the same database read transaction as the summaries | Read |
 | `item_history` | `{item, limit?: u32 (1..=1000)}` → `item_history {item, transitions: [{seq, at, from?: QueueStateKind, to: QueueStateKind, reason?: string, by: "daemon"\|"cli"\|"web"\|"mcp"\|"github"}]}` | Read |
 
 Retention: changes are kept for at least 30 days or the newest 100,000 rows,
@@ -82,7 +83,9 @@ whichever keeps more. Older cursors get `history_expired`.
 | `run_plan` | `{run}` → `run_plan {run, pipeline, revision: string, stages: StageSummary[], edited: bool}`: the frozen pipeline with steer edits applied | Read |
 | `list_items` (extended) | adds `updated_since?: Ts`, `before?: Ts`, `text?: string (1..=200 chars, title and brief substring)` | Read |
 
-`as_of` is the change seq the projection was read at. Nodes are ordered by
+`as_of` is the last change seq committed when the projection was read, taken in
+the **same read transaction** as the rows, for `task_graph` and
+`list_item_summaries` alike. Nodes are ordered by
 `(created_at, id)` and edges by `(from, to, kind)`, so the same store always
 gives the same bytes.
 
@@ -110,7 +113,7 @@ gives the same bytes.
 | | V21 | D2 | `github_objects` |
 | | V22 | D3 | `github_outbox` |
 | | V23 | G5 | lessons 2.0 columns |
-| Aether `aether.db` | V29 | AE-P | indexes for paging and `usage_breakdown`, if needed (otherwise an empty slot) |
+| Aether `aether.db` | V29 | AE-P | `agents.subsystem` (nullable text, set once at creation; `"noesis"` for Noesis agents), plus indexes for paging and `usage_breakdown` |
 | | V30 | G1 | memory tiers, candidate state, support, provenance refs |
 | | V31 | G2 | retrieval log and holdout |
 | | V32 | G3 | migration bookkeeping, if needed |
@@ -139,9 +142,9 @@ unused slot ships as a no-op migration, so the numbering stays fixed.
 
 | Path | Package | Owner | Public API |
 | --- | --- | --- | --- |
-| `web/packages/protocol/` | `@aether-ui/protocol` | A1 | generated `aether.ts` and `archon.ts` types and command builders. No runtime code beyond type guards. |
-| `web/packages/core/` | `@aether-ui/core` | A2 | `createApp(host: HostAdapter)`, `ConnectionManager`, `Transport` (`ws-aether`, `ws-archon`, `ipc`), `Store`, `useSelector`, `useCommand`, `Capabilities`, `routes` (§2.3) |
-| `web/packages/ui/` | `@aether-ui/ui` | A3 | `tokens.css`, `ThemeProvider`, primitives (Button, Field, Menu, Dialog, Sheet, Tabs, Toast, Tooltip, Badge, StatusPill, Skeleton, EmptyState, ErrorState), `AppShell`, `NavRail`, `CommandPalette`, `VirtualList`, `registerRoutes`, `registerEntityAction` |
+| `web/packages/protocol/` | `@aether-ui/protocol` | A1 | generated `aether.ts` and `archon.ts` types and command builders, plus the hand-written `app.ts` (§2.5). No runtime code beyond type guards. |
+| `web/packages/core/` | `@aether-ui/core` | A2 | `createApp(host: HostAdapter)`, `ConnectionManager`, `Transport` (`ws-aether`, `ws-archon`, `ipc`), `Store`, `useSelector`, `useCommand`, `useCapabilities`, `registerRoutes`, `registerEntityAction`, the router (§2.3, §2.5) |
+| `web/packages/ui/` | `@aether-ui/ui` | A3 | `tokens.css`, `ThemeProvider`, primitives (Button, Field, Menu, Dialog, Sheet, Tabs, Toast, Tooltip, Badge, StatusPill, Skeleton, EmptyState, ErrorState), `AppShell` (routes and actions as props), `NavRail`, `CommandPalette`, `VirtualList` |
 | `web/packages/graph/` | `@aether-ui/graph` | A4 | `GraphCanvas` (Canvas 2D, dirty-flag rAF), `Viewport` (pan, zoom, fit), `layeredLayout` (worker; deterministic; cached by structure hash), `forceLayout`, `GraphModel` (nodes, edges, groups, collapse state) |
 | `web/packages/aether/` | `@aether-ui/aether` | B1 `src/fleet`, `src/topology`; B2 `src/agent`, `src/conversation`; B3 `src/controls`, `src/inbox`, `src/activity`, `src/memory` (extended later by G3) | each directory exports `routes.ts` |
 | `web/packages/archon/` | `@aether-ui/archon` | C1 `src/queue`, `src/item`, `src/pipeline`; C2 `src/dag`, `src/initiatives`, `src/history` | `routes.ts` per directory |
@@ -200,7 +203,7 @@ interface DesktopBridge {
   request(conn: string, frame: unknown): Promise<unknown>;   // validated ClientFrame → reply frame
   subscribe(conn: string, frame: unknown, onFrame: (f: unknown) => void): Promise<() => void>;
   close(conn: string): Promise<void>;
-  privileged(action: {conn: string; frame: unknown; summary: string}): Promise<unknown>; // native confirm
+  privileged(action: PrivilegedAction): Promise<unknown>;   // main builds frame and confirmation text
   startDaemon(kind: "aether" | "archon"): Promise<void>;     // only if desktop.managed_start
   pickDirectory(purpose: string): Promise<string | null>;
   notify(n: {title: string; body: string; route?: string}): void;
@@ -211,12 +214,78 @@ interface DesktopBridge {
   setPreference(key: PreferenceKey, value: unknown): Promise<void>;
 }
 type PreferenceKey = "window.bounds" | "layout.panels" | "theme" | "desktop.managed_start" | "remote.origins";
+
+// Closed set. A new kind is a CONTRACTS.md edit. `conn` must be a local connection.
+type PrivilegedAction =
+  | {kind: "memory.accept" | "memory.reject"; conn: string; memory: string}
+  | {kind: "device.pair"; conn: string; name: string; role: "operator" | "observer"}
+  | {kind: "device.revoke"; conn: string; device: string}
+  | {kind: "remote.enable" | "remote.disable"; conn: string}
+  | {kind: "remote.mount"; conn: string; prefix: "/archon"; target_port: number}
+  | {kind: "noesis.configure"; conn: string; patch: NoesisSettingsPatch}   // host-only keys of §6.1
+  | {kind: "archon.operator_change"; conn: string; request: "merge" | "unblock" | "settings"; item?: string; patch?: unknown}
+  | {kind: "engine.login"; conn: string; engine: "claude" | "codex"};      // opens a terminal; no secret crosses IPC
 ```
 
 Main validates every argument and size: frames at most 1 MiB, strings at most
-4 KiB. It refuses frames whose command is outside the class allowlist
-(ARCHITECTURE.md §c), and refuses calls from any frame other than the
-top-level `app://` document.
+4 KiB. `request` and `subscribe` refuse any command outside the pass-through
+classes (ARCHITECTURE.md §c), and refuse `shutdown` whatever its class.
+`privileged` accepts only the `PrivilegedAction` union, and only for a
+connection that main discovered locally. Main:
+- builds the daemon frame itself from the validated fields;
+- writes the native confirmation text itself: daemon label and socket path,
+  the action, and every consequential argument (device name and role, memory
+  id and first line, mount target, settings diff);
+- sends exactly the confirmed frame.
+The renderer supplies no frame and no display text. Calls from any frame
+other than the top-level `app://` document are refused.
+
+### 2.5 Shared frontend types (Frozen; A1 writes them, A2/A3/A4 implement)
+
+These types live in `web/packages/protocol/src/app.ts`, so `ui` and `graph`
+can use them without importing `core`. Runtime registries are in `core`.
+
+```ts
+type ConnId = string;                                   // §5.1
+type Standing = "local" | "operator" | "observer";
+type ConnState = "connecting" | "pairing" | "ready" | "backoff" | "closed";
+interface ConnectionInfo { id: ConnId; daemon: "aether" | "archon"; state: ConnState;
+  protocol?: number; features: readonly string[]; standing?: Standing; label: string }
+type Capabilities = Readonly<Record<string, boolean | string>>;   // keys of §3
+
+interface HostAdapter { readonly kind: "browser" | "electron";
+  readonly desktop?: DesktopBridge; readonly storage: KeyValueStore }
+interface KeyValueStore { get(key: string): Promise<unknown>; set(key: string, v: unknown): Promise<void> }
+interface Transport { readonly id: "ws-aether" | "ws-archon" | "ipc";
+  open(target: string, onFrame: (f: unknown) => void, onClose: (code: number, reason: string) => void):
+    Promise<{ send(frame: unknown): void; close(): void }> }
+
+type EntityKind = "agent" | "run" | "item" | "stage" | "initiative" | "issue" | "pull_request" | "proposition";
+interface EntityRef { kind: EntityKind; conn: ConnId; id: string }
+interface RouteDef { path: string; owner: string;               // path as in §2.3
+  nav?: { label: string; section: "aether" | "archon" | "github" | "learn" | "settings" };
+  requires?: (caps: Capabilities) => boolean;
+  load: () => Promise<{ default: unknown /* React component of RouteProps */ }> }
+interface RouteProps { params: Readonly<Record<string, string>> }
+interface EntityAction { id: string; kind: EntityKind; label: string;
+  requires?: (caps: Capabilities, ref: EntityRef) => boolean; run(ref: EntityRef): void | Promise<void> }
+
+interface GNode { id: string; label: string; group?: string; status?: string; weight?: number }
+interface GEdge { from: string; to: string; kind: string }
+interface GGroup { id: string; label: string; parent?: string }
+interface GraphModel { nodes: readonly GNode[]; edges: readonly GEdge[]; groups: readonly GGroup[];
+  collapsed: ReadonlySet<string> }
+interface Layout { hash: string; positions: ReadonlyMap<string, { x: number; y: number }> }
+```
+
+`core` exports `registerRoutes(defs: RouteDef[])`,
+`registerEntityAction(a: EntityAction)`, `useSelector<T>(sel, eq?)`,
+`useCommand(conn)`, `useCapabilities()` and the selectors for each entity
+family. The layout of the normalized store inside `core` is open (owner A2):
+features read it only through those exported selectors. `AppShell` (A3)
+receives the registered routes and actions as props. `graph` exports
+`layeredLayout(m: GraphModel): Promise<Layout>` and `forceLayout`, both keyed
+by `Layout.hash` over the structure only.
 
 ## 3. Capability flags (Frozen; owner A2)
 
@@ -290,8 +359,11 @@ to review (the existing Aether behaviour).
 3. Apply a durable event only if `seq > last_seq`. Applying is idempotent.
 4. Deltas are transient. A gap in `invocation_seq`, a lag close (1013) or a
    reconnect means: discard the in-flight stream for that invocation and read
-   `get_transcript_page {agent, after: last_entry_seq}`. The committed
-   `agent.message` always replaces the streamed text.
+   `get_transcript_page {agent, after: last_entry_seq}`. When the first delta
+   seen for an invocation has `invocation_seq > 1` (the subscription opened
+   mid-invocation), the client reads the transcript page first and then
+   applies only later deltas. The committed `agent.message` always replaces
+   the streamed text.
 5. `history_expired` or `not_found` on subscribe triggers a full resync:
    subscribe live, buffer events, read the snapshots, apply the buffer.
 
@@ -299,8 +371,11 @@ to review (the existing Aether behaviour).
 
 1. On `ready`: `subscribe_changes {after: change_cursor ?? null}` and
    `subscribe_feed {after: feed_seq}`. These are two cursors and never mixed.
-2. Snapshots (`task_graph`, `list_item_summaries`) carry or are followed by
-   `as_of`. Apply only changes with `seq > as_of`.
+2. Subscribe to changes first, buffering them. Then read the snapshots
+   (`task_graph`, `list_item_summaries`); each carries the `as_of` taken in
+   its own read transaction (§1.3). Apply the buffered and live changes with
+   `seq > as_of` of the snapshot they update. A watermark read separately
+   from its snapshot is never used.
 3. A `Change` names an entity and its new state kind. The client updates the
    node in place, and refetches the entity (`get_item`) only when it is on
    screen. Several refetches of one entity within 250 ms collapse into one.
@@ -315,7 +390,7 @@ only on structural change (nodes or edges added or removed), never on a
 status change. Lists of more than 200 rows and every transcript are
 virtualized.
 
-## 6. Noesis service (owner F1–F6)
+## 6. Noesis service (owners F1–F8)
 
 ### 6.1 Settings keys (Frozen; Aether config table `[noesis]`, read by `noesis_status`, written by `noesis_configure`)
 
@@ -323,8 +398,8 @@ virtualized.
 | --- | --- | --- |
 | `noesis.enabled` | bool, `false` | master switch (§8 of the issue) |
 | `noesis.engineering_context` | bool, `false` | requires `enabled` |
-| `noesis.extraction.sessions` | `"manual"\|"auto"`, `"manual"` | auto = extract after teaching turns |
-| `noesis.extraction.engineering` | `"off"\|"auto"`, `"off"` | requires `engineering_context` |
+| `noesis.extraction.sessions` | `"manual"\|"auto"`, `"manual"` | auto requires `enabled`; extract after teaching turns |
+| `noesis.extraction.engineering` | `"off"\|"auto"`, `"off"` | auto requires `enabled` and `engineering_context` |
 | `noesis.budget.interactive_usd_daily` | f64 ≥ 0, `5.0` | 0 = refuse; estimates count for subscription engines |
 | `noesis.budget.background_usd_daily` | f64 ≥ 0, `1.0` | |
 | `noesis.budget.background_tokens_daily` | u64, `2_000_000` | |
@@ -334,39 +409,97 @@ virtualized.
 | `noesis.models.strong` / `noesis.models.cheap` | model id or unset | unset = first ready subscription model |
 | `noesis.billing.allow_api` | bool, `false` | API providers only when true |
 | `noesis.disable.grace_seconds` | 0..=300, `60` | in-flight interactive turn grace on disable |
+| `noesis.prompts.overrides` | bool, `false` | when true, a file `<aether data dir>/noesis/prompts/<agent>/<NN-name>.md` replaces the built-in segment of that name |
 
-Writing `enabled`, budgets or billing is `host_only`. The other keys are
-`operate`.
+Writing `enabled`, budgets, billing or `prompts.overrides` is `host_only`.
+The other keys are `operate`.
+
+Prerequisites (ARCHITECTURE.md §g): a switch is effective only when its
+prerequisites are effective. `noesis_configure` accepts any stored
+combination. `noesis_status` returns `settings` (as stored) and `effective`
+(after prerequisites). Turning a prerequisite off never rewrites a
+dependent's stored value.
 
 ### 6.2 Commands (Frozen names and required fields; feature `noesis`)
 
-Every command except `noesis_status` returns
+Every command except `noesis_status` and `noesis_configure` returns
 `unavailable {reason: "noesis_disabled"}` while disabled, with no side
-effect. Mutations take `idempotency_key`.
+effect. While disabled, `noesis_configure` only validates and writes the
+`[noesis]` config. A patch setting `enabled = true` is written first, and the
+service starts only after the write succeeds; `noesis.db` is opened then and
+not before. Mutations take `idempotency_key`.
 
 | Command | Fields → reply | Class |
 | --- | --- | --- |
-| `noesis_status` | `{}` → `{enabled, settings, jobs_running, spend_today: {interactive, background}, disable_policy}` | observe |
+| `noesis_status` | `{}` → `{enabled, settings, effective, jobs_running, spend_today: {interactive: Usage, background: Usage}, disable_policy: {grace_seconds, background: "cancel_at_model_boundary"}, prompt_overrides: string[]}` | observe |
 | `noesis_configure` | `{patch: settings subset}` → `noesis_status` | host_only / operate (§6.1) |
 | `noesis_create_session` | `{goal: string (1..=2000), mode: "teach"\|"practice", context?: EvidenceBundle, practice_targets?: PropositionId[]}` → `noesis_session` | operate |
 | `noesis_send` | `{session, text (1..=20000)}` → `ok` | operate |
 | `noesis_answer` | `{session, question: QuestionId, answer: {choices?: string[], text?: string, dont_know: bool, confidence?: 0\|30\|50\|70\|90\|100, thinking?: string}}` → `ok` | operate |
-| `noesis_get_session` / `noesis_list_sessions` | `{session}` / `{after?, limit?}` → `noesis_session` / `noesis_sessions` | observe |
+| `noesis_get_session` / `noesis_list_sessions` | `{session}` / `{after?, limit? (1..=200)}` → `noesis_session` / `noesis_sessions {sessions: noesis_session[], next_after?}` | observe |
 | `noesis_delete_session` | `{session, graph: "preserve"\|"delete_nodes"}` → `ok` | operate |
-| `noesis_graph` | `{query?: string, session?, source?, limit?}` → `{nodes: Proposition[], chains: Chain[], clusters, truncated}` | observe |
-| `noesis_extract` | `{session? \| source?}` → `{job}` | operate |
-| `noesis_import_source` | `{name, artifact: ArtifactId}` → `{source, job}` | operate |
-| `noesis_jobs` / `noesis_cancel_job` | `{}` / `{job}` | observe / operate |
-| `noesis_learner` | `{concepts?: ConceptId[], query?: string, limit?}` → `{concepts: ConceptState[]}` | observe |
-| `noesis_learner_evidence` | `{concept, limit?}` → `{evidence: Evidence[]}` | observe |
-| `noesis_correct_learner` | `{concept, state, reason}` → `ConceptState` | operate |
+| `noesis_graph` | `{query?: string, session?, source?, limit? (1..=5000)}` → `noesis_graph {nodes: Proposition[], chains: Chain[], clusters: Cluster[], truncated: bool}` | observe |
+| `noesis_delete_proposition` | `{proposition}` → `ok` (its chains go with it) | operate |
+| `noesis_delete_source` | `{source, graph: "preserve"\|"delete_unsupported"}` → `ok`; `conflict` while a job on it runs | operate |
+| `noesis_extract` | exactly one of `{session}` / `{source}` → `noesis_job {job: Job}` | operate |
+| `noesis_import_source` | `{name (1..=200), artifact: ArtifactId}` → `noesis_import {source: SourceId, job: Job}` | operate |
+| `noesis_jobs` / `noesis_cancel_job` | `{state?}` → `noesis_jobs {jobs: Job[]}` / `{job}` → `ok` | observe / operate |
+| `noesis_learner` | `{concepts?: ConceptId[], query?: string, limit? (1..=1000)}` → `noesis_learner {concepts: ConceptState[]}` | observe |
+| `noesis_learner_evidence` | `{concept, before?: u64, limit? (1..=500)}` → `noesis_evidence {evidence: Evidence[], next_before?: u64}` | observe |
+| `noesis_correct_learner` | `{concept, state: ConceptStateKind, reason (1..=500)}` → `ConceptState` | operate |
 
-`noesis_session = {id, goal, mode, phase: "probe"|"plan"|"teach"|"practice", agent: AgentId, plan?: PlanTree, open_question?: Question, created_at, updated_at}`.
 The conversation itself is the agent's transcript (`get_transcript_page`).
-Events (family `noesis`): `noesis.session_created`, `noesis.phase_changed`,
-`noesis.question_posed`, `noesis.answer_recorded`, `noesis.plan_updated`,
-`noesis.problem_posed`, `noesis.practice_concluded`, `noesis.job_updated`,
-`noesis.graph_merged`, `noesis.learner_updated`, `noesis.settings_changed`.
+
+**Wire objects (Frozen).** Ids are opaque strings with prefixes `ns_`
+(session), `q_` (question), `p_` (proposition), `c_` (chain), `k_` (concept),
+`s_` (source) and `j_` (job). Proposition and chain ids are content-derived.
+
+```text
+noesis_session = {id, goal, mode: teach|practice, phase: probe|plan|teach|practice, agent: AgentId,
+                  plan?: PlanTree, open_question?: Question, active_problem?: Problem, created_at, updated_at}
+PlanTree       = {revision: u32, nodes: [{id: slug, title, status: upcoming|current|visited}], edges: [{from, to}]}
+Question       = {id, kind: choice|recall|goal, prompt, options?: [{value, label}], multi: bool,
+                  collapsed: bool, plan_node?: slug, concepts: ConceptId[], posed_at}
+                  // the answer key is never sent before the answer is recorded
+QuestionResult = {question, correct?: bool, answer_key?: string[] | string, explanation?}
+Problem        = {id, statement, mode: recall|discrimination|composition, targets: PropositionId[], posed_at}
+Proposition    = {id, name, statement, aliases: string[], provenance: [{source: SessionId|SourceId, message_ref?}], created_at}
+Chain          = {id, premises: PropositionId[], conclusion: PropositionId, provenance, created_at}
+Cluster        = {id, session: SessionId, members: PropositionId[]}
+Job            = {id, kind: extract_session|extract_source|extract_engineering, target: string,
+                  state: queued|running|merging|succeeded|failed|cancelled, stats?: {nodes, chains, dropped_chains},
+                  error?: string, usage: Usage, created_at, updated_at}
+ConceptStateKind = unseen|exposed|demonstrated|fragile|misconception
+ConceptState   = {concept: {id, kind: proposition|plan_node|topic, ref, title}, state: ConceptStateKind,
+                  strength: f64 (0..=1), last_success_at?, review_due_at?, calibration?: f64,
+                  misconceptions: string[], as_of_evidence: u64}
+Evidence       = {id: u64, concept, session?, at, kind: probe_answer|predict_answer|check_answer|recall_judged|
+                  practice_conclude|exposure|misconception_observed|operator_correction,
+                  outcome: correct|incorrect|dont_know|exposed|observed|corrected,
+                  confidence?: 0|30|50|70|90|100, mode?, hint_rung?: 0..=5, miss_class?: cue|discrimination|execution|careless|structural, note?}
+```
+
+**Events (Frozen; family `noesis`, durable):**
+
+| Event | Payload |
+| --- | --- |
+| `noesis.session_created` | `{session: noesis_session}` |
+| `noesis.phase_changed` | `{session, from, to}` |
+| `noesis.question_posed` | `{session, question: Question}` |
+| `noesis.answer_recorded` | `{session, result: QuestionResult}` |
+| `noesis.plan_updated` | `{session, plan: PlanTree}` |
+| `noesis.problem_posed` | `{session, problem: Problem}` |
+| `noesis.practice_concluded` | `{session, problem, outcome: solved\|solved_with_hints\|moved_on\|surrendered\|dismissed, rung?, miss_class?, retest: bool}` |
+| `noesis.job_updated` | `{job: Job}` |
+| `noesis.graph_merged` | `{job, stats}` |
+| `noesis.learner_updated` | `{concepts: ConceptId[]}` |
+| `noesis.settings_changed` | `{settings, effective}` |
+
+F3 generates every shape in this section, wiring included, in one change.
+F2, F4 and F8 fill these shapes and never edit the protocol. A shape change
+they need is a CONTRACTS.md edit, made by the current protocol owner (F3,
+and G3 after it merges) as an optional field. A required field is never
+added later.
 
 ### 6.3 Evidence bundle (Frozen; owner F6)
 
@@ -375,11 +508,21 @@ The total of all excerpts is at most 32 KiB. The frontend assembles it from
 reads the user can already make. Noesis stores it with the session and never
 fetches more on its own.
 
-### 6.4 Learner model (Open; owner F4)
+### 6.4 Learner model (wire Frozen in §6.2; storage Open, owner F4)
 
-The direction is in NOESIS.md §5: tables `concepts`, `evidence`
-(append-only) and `concept_state` (derived). The F4 PR records the final
-columns here.
+The wire shapes `ConceptState` and `Evidence` are frozen above. The storage
+follows NOESIS.md §5: tables `concepts`, `evidence` (append-only) and
+`concept_state` (derived). The F4 PR records the final columns here.
+
+### 6.5 Learning data retention (Open; owner F3)
+
+`noesis.db` holds Noesis's own state. The teaching conversations are
+transcripts of Aether agents in run `noesis`, and Aether's history retention
+keeps and expires them. `noesis_delete_session` deletes the Noesis rows and
+the session's evidence bundle. Whether it also purges the Aether transcript
+(and how that fits Aether's history invariants) is settled in F3's PR and
+recorded here. Until then, the UI states that the conversation remains in
+Aether history.
 
 ## 7. Memory 2.0 (Open; owners G1–G5)
 
@@ -411,3 +554,4 @@ G0 benchmark:
 | Archon | `[remote] mounted_at` | `"/archon"` when served behind an Aether mount; cookie `Path` follows it |
 | Archon | `[remote] trusted_origins` | origins (at most 16, `https://host[:port]` or loopback `http://`) accepted on `Origin`; set by `archon remote setup` from Aether's `public_origins` |
 | Archon | device `role` in `remote.json` (format 2) | `"operator"` (default for format-1 records) or `"observer"` |
+| Aether | publication guard (AE-M) | a mount is refused while the publication is a Funnel or cannot be determined; Funnel is refused while any mount exists; an out-of-band Funnel makes every mount answer 503 (rechecked every 60 s), and `get_remote` reports `mounts_blocked: "funnel"` |

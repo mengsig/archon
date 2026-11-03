@@ -138,12 +138,19 @@ the session:
   bytes, a socket path, a shell command or a filesystem path, except a path the
   user picked in a native dialog, returned as an opaque token.
 - Commands are filtered by class. Aether `observe` and `operate`, and Archon
-  `Read` and `Change` within the remote allowlist, pass through. Aether
-  `host_only` and `remote_admin`, and Archon `OperatorRead` and `OperatorChange`,
-  pass only through dedicated typed IPC methods. Main shows a native
-  confirmation for these, naming the action (for example "Accept memory",
-  "Pair device", "Merge item"). A compromised renderer therefore cannot
-  silently use host standing.
+  `Read` and `Change` within the remote allowlist, pass through `request`.
+  Aether `host_only` and `remote_admin`, and Archon `OperatorRead` and
+  `OperatorChange`, never pass through `request`. They are reachable only as
+  the closed set of typed `privileged` actions in CONTRACTS.md §2.4, and only
+  on a local connection. For each action, main builds the daemon frame itself
+  from the validated action data. It also writes the native confirmation
+  text, naming the daemon (label and socket), the action and its
+  consequential arguments, for example "Pair device 'phone' as observer on
+  aetherd (/run/user/1000/aether/aetherd.sock)". The renderer supplies no
+  frame and no text, and confirmation is bound to that exact request. An
+  action not in the set is refused, whatever its class. `shutdown` is never
+  sent, by either method. A compromised renderer therefore cannot silently
+  use host standing, nor mislabel what it asks for.
 - Credentials never cross IPC. Model logins stay in the engine CLIs (§i).
 
 Discovery and lifecycle:
@@ -198,7 +205,18 @@ Mount rules (AE-M):
 - `archon remote setup` makes sure an Aether listener exists. In shared mode
   this is the operator's aetherd; in dedicated mode it is Archon's own aetherd,
   whose agents are the ones Archon runs. It adds the mount and publishes one
-  `tailscale serve` origin. Funnel stays refused.
+  `tailscale serve` origin.
+- **Funnel never reaches a mount.** Archon refuses Funnel today, and the mount
+  must not route around that, so Aether enforces both orders of operation:
+  - Adding a mount is refused while Aether's publication is a Funnel, or
+    while the publication state cannot be determined.
+  - `aether remote setup --funnel`, and keeping an existing Funnel
+    publication, are refused while any mount exists.
+  - Aether re-checks the `tailscale serve` / `funnel` status at listener
+    start and every 60 s. If a Funnel appears out of band, every mount
+    answers 503 until it is gone, and `get_remote` reports why.
+  `archon remote setup` checks `get_remote` before it adds the mount, and
+  refuses with the same reason.
 
 Changes to Archon's remote layer (AR-R):
 - Device `role` (`operator` | `observer`) is chosen by the host when pairing.
@@ -227,7 +245,8 @@ None calls a model. Each is specified in CONTRACTS.md §1.
   `role_prefix` filters. The delegation graph is built from
   `get_tree` plus `agent.created`, `agent.*` and `parent_agent_id`.
 - *Transcripts:* `get_transcript_page` (`after` or `before`, `limit`). Ordered
-  deltas: every `Delta` gains `invocation_seq` (gapless per invocation), and
+  deltas: every `Delta` gains `invocation_seq`, assigned once when the delta is
+  produced (gapless per invocation, the same on every subscription), and
   `tool_input` gains `tool_use_id`, behind feature `delta_order`. The UI can
   then drop duplicates and detect gaps, falling back to `get_transcript_page`.
 - *Costs:* `usage_breakdown{scope, by: model|provider|role|day, since, until}`,
@@ -318,7 +337,10 @@ with Aether alone (issue §7.4).
 Process model:
 - Noesis owns a separate SQLite file, `noesis.db` in Aether's data dir. Aether
   memory never reads it and Noesis never writes Aether memory (§h). Deleting
-  the file removes all learning state.
+  the file removes Noesis's own state: graph, learner model, plans, evidence
+  bundles and jobs. The conversations themselves are transcripts of Aether
+  agents in run `noesis`, kept and expired by Aether's history retention
+  (CONTRACTS.md §6.5).
 - Prober, Teacher, Practitioner, Extractor and Auditor run as Aether agents with
   roles `noesis.<agent>`, in run `noesis`, with Noesis-only harness tools.
   Interactive turns and background jobs have separate concurrency caps and
@@ -331,14 +353,43 @@ Process model:
   the user presses "Understand this". Noesis never connects to archond.
 
 Off-by-default guarantees (issue §8), each with a test in task F7:
-- `noesis.enabled = false` is the default. While disabled: no Noesis harness
-  tool is registered; no `noesis.*` role can be created; no worker or timer
-  starts; `noesis.db` is not opened or created; no context layer is added to any
-  agent; and every `noesis_*` command except `noesis_status` returns
-  `unavailable{reason: "noesis_disabled"}` with no side effect.
-- Engineering context, automatic session extraction and automatic engineering
-  extraction are three further switches, all off by default, each requiring the
-  one before it.
+- `noesis.enabled = false` is the default. While disabled:
+  - no Noesis harness tool is registered, and no `noesis.*` role can be
+    created;
+  - no worker or timer starts;
+  - `noesis.db` is not opened or created;
+  - no context layer is added to any agent;
+  - every `noesis_*` command except `noesis_status` and `noesis_configure`
+    returns `unavailable{reason: "noesis_disabled"}` with no side effect.
+  `noesis_configure` is the host-only control path. While disabled it only
+  validates and writes the `[noesis]` config. Setting `enabled = true` then
+  starts the service, which opens `noesis.db` only at that point.
+- **One runtime guard covers every path to execution.** Noesis agents carry a
+  persisted `subsystem = "noesis"` attribute, set at creation and never
+  changed; the role label is not trusted for this. Aether's runtime checks
+  that attribute in one admission guard before:
+  - every scheduler dispatch, meaning every model call;
+  - the generic agent commands (`send_message`, `reply_to_question`, `wake`,
+    `resume`, `steer`, model changes);
+  - delegation from a Noesis agent;
+  - startup recovery.
+  While Noesis is disabled or draining, the guard refuses new work for these
+  agents and parks them, so nothing resumes them later by surprise. Every
+  Noesis invocation is charged to the Noesis budgets on the same path. F3
+  owns the guard. F7 tests each generic command, and a daemon restart with
+  a parked Noesis agent.
+- Engineering context and the two automatic extraction modes are further
+  switches, all off by default. Their dependencies are:
+
+  | Switch | Requires |
+  | --- | --- |
+  | `noesis.engineering_context` | `enabled` |
+  | `noesis.extraction.sessions = "auto"` | `enabled` |
+  | `noesis.extraction.engineering = "auto"` | `enabled` and `engineering_context` |
+
+  A switch is effective only when its prerequisites are effective. Turning a
+  prerequisite off turns its dependents off in effect, but keeps their stored
+  values, and `noesis_status` reports both.
 - Disabling refuses new work at once. It cancels background jobs at their next
   model-call boundary (each job's last committed merge stays). It lets an
   in-flight interactive turn finish for up to 60 s and then cancels it. The

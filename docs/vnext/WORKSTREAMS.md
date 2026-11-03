@@ -134,7 +134,10 @@ are relative to the repository root.
 - **Goal:** create the `web/` npm workspace with strict TypeScript, Vite,
   lint, Vitest and the import-boundary lint rules (CONTRACTS.md §2.2). Add
   the generator that turns `clients/protocol.schema.json` and
-  `web/schemas/archon.protocol.schema.json` into `@aether-ui/protocol`.
+  `web/schemas/archon.protocol.schema.json` into `@aether-ui/protocol`. Write
+  the shared app types of CONTRACTS.md §2.5, verbatim, in
+  `web/packages/protocol/src/app.ts`, so that A2, A3 and A4 can start in
+  parallel.
 - **Owns:** `web/package.json`, `web/package-lock.json`, `web/tsconfig*.json`,
   `web/eslint.config.js`, `web/scripts/**`, `web/schemas/**`,
   `web/packages/protocol/**`, `.github/workflows/web.yml`, and the `web`
@@ -146,6 +149,7 @@ are relative to the repository root.
   deterministic: run twice, the second run gives no diff. A lint test proves
   that a feature package importing another feature package fails. The
   dependency licences are MIT/ISC/BSD/Apache-2.0 only, checked by a script.
+  `app.ts` matches CONTRACTS.md §2.5 (a test compares the declarations).
 - **Title:** vNext A1: web workspace, toolchain and generated protocol package
 
 #### A2. Core: connections, transports, store, capabilities
@@ -158,6 +162,8 @@ are relative to the repository root.
   - a normalized `Store` with per-frame batching;
   - `useCommand` with idempotency keys and role checks;
   - `Capabilities`;
+  - the route and entity-action registries (`registerRoutes`,
+    `registerEntityAction`) and the exported selectors (§2.5);
   - the hash router;
   - the pairing flow logic.
 - **Owns:** `web/packages/core/**`
@@ -174,7 +180,8 @@ are relative to the repository root.
 #### A3. UI kit, tokens and app shell
 - **Goal:** add `tokens.css` with every token name in CONTRACTS.md §4 (light
   and dark), the primitives, `AppShell`, `NavRail`, `CommandPalette`,
-  `VirtualList`, and the route and entity-action registries. Add the browser
+  `VirtualList`, with the shell rendering the routes and actions it receives
+  as props (CONTRACTS.md §2.5). Add the browser
   entry `web/apps/web` with a service worker and manifest, and empty
   skeletons for every feature package.
 - **Owns:** `web/packages/ui/**`, `web/apps/web/**`, and
@@ -234,7 +241,12 @@ are relative to the repository root.
 - **Acceptance:**
   - A protocol 25 client sees byte-identical frames (compat test).
   - Paging covers every agent exactly once under concurrent creation.
-  - `invocation_seq` is gapless per invocation across 1,000 deltas.
+  - `invocation_seq` is assigned at production: it is gapless per invocation
+    across 1,000 deltas, a delta dropped on the bus shows as a gap to the
+    subscriber, two subscriptions see the same numbers, and resubscribing
+    mid-invocation never renumbers.
+  - V29 adds `agents.subsystem`. It is set only at creation, and no command
+    changes it.
   - `usage_breakdown` totals equal the sum of `invocation.completed` usage,
     and its rows are deterministic.
   - Each new command has an access class, a feature string, and an
@@ -251,12 +263,20 @@ are relative to the repository root.
   `crates/aether/src/`
 - **Depends on:** AE-P
 - **Size:** M · **Pipeline:** adaptive
-- **Acceptance:** the mount refuses non-loopback targets, more than 4 mounts,
-  and prefixes containing `.`, `..`, `%` or `\`. It strips hop-by-hop
-  headers, passes `Origin` unchanged, and adds no cookie, header or standing.
-  It keeps the head, body, frame and connection limits. With the target down
-  it returns 502 without hanging. An observer device on Aether gains nothing
-  on Archon.
+- **Acceptance:**
+  - The mount refuses non-loopback targets, more than 4 mounts, and prefixes
+    containing `.`, `..`, `%` or `\`.
+  - It strips hop-by-hop headers, passes `Origin` unchanged, and adds no
+    cookie, header or standing. It keeps the head, body, frame and
+    connection limits.
+  - With the target down it returns 502 without hanging.
+  - An observer device on Aether gains nothing on Archon.
+  - Funnel in both orders (CONTRACTS.md §8):
+    - adding a mount to a Funnel publication is refused, and so is adding
+      one when the publication state is unknown;
+    - `aether remote setup --funnel` with a mount present is refused, and so
+      is keeping an existing Funnel;
+    - a Funnel enabled out of band turns every mount to 503 within 60 s.
 - **Title:** vNext AE-M: Aether listener path mount for archond (same-origin browser access)
 
 #### B1. Fleet and topology screens
@@ -352,7 +372,9 @@ are relative to the repository root.
 - **Owns:** `crates/archon-queue/src/store/changes.rs` (new), V19 in
   `crates/archon-queue/src/store/schema.rs`, the change-emitting writes in
   `crates/archon-queue/src/store/{items,runs,gates,initiatives,stacks}.rs`,
-  `crates/archon-daemon/src/handlers/changes.rs`, `crates/archon-queue/tests/changes*.rs`
+  `crates/archon-daemon/src/handlers/changes.rs`, the `as_of` of the
+  `list_item_summaries` reply in `crates/archon-daemon/src/read_commands.rs`,
+  `crates/archon-queue/tests/changes*.rs`
 - **Depends on:** AR-P
 - **Size:** L · **Pipeline:** adaptive
 - **Acceptance:**
@@ -362,6 +384,9 @@ are relative to the repository root.
     (injected failure).
   - A cursor older than retention gets `history_expired`.
   - Subscribers that lag are closed, not buffered without bound.
+  - `list_item_summaries.as_of` is read in the snapshot's transaction. A test
+    commits a change between the snapshot and its reply and shows that the
+    client resync of CONTRACTS.md §5.3 loses nothing.
 - **Title:** vNext AR-C: gapless Archon change stream and item transition history
 
 #### AR-G. Task graph, run plan and list filters
@@ -387,7 +412,9 @@ are relative to the repository root.
   `crates/archon/src/cmd/remote/setup*.rs`, and `docs/remote*.md` in Archon
 - **Depends on:** AR-R, AE-M, A5, C1
 - **Size:** M · **Pipeline:** adaptive
-- **Acceptance:** setup is idempotent. Funnel is still refused. A paired
+- **Acceptance:** setup is idempotent. Funnel is still refused, including
+  when the Aether listener it would mount onto is already published through
+  a Funnel (setup refuses with Aether's reason). A paired
   browser on the Aether origin reaches both daemons with their own devices.
   The release build carries no Archon UI assets.
 - **Title:** vNext AR-L: serve Archon through Aether's mount and retire the legacy Archon web app
@@ -492,11 +519,19 @@ are relative to the repository root.
   `web/apps/desktop/src/{main,preload,bridge,security}/**`, `web/apps/desktop/test/security/**`
 - **Depends on:** A2
 - **Size:** L · **Pipeline:** adaptive
-- **Acceptance:** a security test asserts every `BrowserWindow` option,
-  navigation and window-open denial, and the permission handler. The bridge
-  rejects oversize frames, unknown commands, privileged commands through
-  `request`, and calls from non-top frames. Credentials never cross IPC
-  (grep test on the bridge types).
+- **Acceptance:**
+  - A security test asserts every `BrowserWindow` option, navigation and
+    window-open denial, and the permission handler.
+  - The bridge rejects oversize frames, unknown commands, host-only or
+    remote-admin commands through `request`, `shutdown` through any method,
+    privileged actions on a remote connection, and calls from non-top
+    frames.
+  - Adversarial tests:
+    - an action outside the `PrivilegedAction` union is refused;
+    - the confirmation text is built only from main's own data, and a
+      renderer string never appears in it;
+    - the frame sent equals the frame confirmed.
+  - Credentials never cross IPC (grep test on the bridge types).
 - **Title:** vNext E1: Electron main process, preload and validated IPC bridge
 
 #### E2. Native integration, discovery and lifecycle
@@ -530,7 +565,7 @@ are relative to the repository root.
   `noesis.db` migration N1, the budget and concurrency accounting, and
   `Noesis::start_if_enabled`. Disabled means nothing is opened, registered or
   spawned.
-- **Owns:** `crates/aether-noesis/{Cargo.toml,src/lib.rs,src/settings.rs,src/store/**,src/budget.rs}`,
+- **Owns:** `crates/aether-noesis/{Cargo.toml,src/lib.rs,src/settings.rs,src/store/**,src/budget.rs,README.md}`,
   the workspace `members` line in `Cargo.toml`, the `[noesis]` hook in Aether's
   config loader, and `THIRD-PARTY-NOTICES` if a dependency is added
 - **Depends on:** none (AE-P is not required)
@@ -541,6 +576,8 @@ are relative to the repository root.
   - Budgets refuse at 0, and at the limit they refuse before the model call.
   - The settings round-trip, and invalid values are rejected with useful
     errors.
+  - The effective settings follow the prerequisite table of
+    ARCHITECTURE.md §g in every combination (an exhaustive test).
   - No LearnHarness source or prompt text is present (provenance note in
     the crate README).
 - **Title:** vNext F1: Noesis crate, store and dormant-by-default lifecycle
@@ -560,17 +597,30 @@ are relative to the repository root.
 - **Title:** vNext F2: Noesis teaching loop (probe, plan, teach, practice)
 
 #### F3. Noesis protocol and daemon wiring
-- **Goal:** add the CONTRACTS.md §6.2 commands and events behind feature
-  `noesis`, their access classes, the daemon wiring that starts and stops
-  the service, and the disable policy.
+- **Goal:** add every CONTRACTS.md §6.2 command, wire object and event behind
+  feature `noesis`, with their access classes. Add the daemon wiring that
+  starts and stops the service, and the disable policy. Add the single
+  runtime admission guard keyed on `agents.subsystem` (ARCHITECTURE.md §g),
+  and settle CONTRACTS.md §6.5.
 - **Owns:** `crates/aether-protocol/**`, `clients/**`, `crates/aether-daemon/src/noesis/**` (new),
-  and the registration lines in the Aether daemon dispatch
+  `crates/aether-runtime/src/noesis_guard.rs` (new), the guard's call sites in
+  scheduler dispatch, in the generic agent command handlers and in startup
+  recovery, the registration lines in the Aether daemon dispatch, and
+  CONTRACTS.md §6.5 (text)
 - **Depends on:** AE-P, F1
 - **Size:** M · **Pipeline:** adaptive
-- **Acceptance:** while disabled, every `noesis_*` command except
-  `noesis_status` returns `unavailable{noesis_disabled}` with no store change.
-  Toggling on and off at runtime follows the disable policy (grace, then
-  cancel). Writing `enabled`, budgets or billing is `host_only`.
+- **Acceptance:**
+  - While disabled, every `noesis_*` command except `noesis_status` and
+    `noesis_configure` returns `unavailable{noesis_disabled}` with no store
+    change.
+  - `noesis_configure` while disabled writes config only, and enabling
+    through it opens `noesis.db` only after the write.
+  - Toggling on and off at runtime follows the disable policy (grace, then
+    cancel).
+  - Writing `enabled`, budgets, billing or prompt overrides is `host_only`.
+  - With Noesis disabled, `send_message`, `reply_to_question`, `wake`,
+    `resume` and `steer` to a Noesis agent start no model call.
+  - Every Noesis invocation is charged to the Noesis budgets.
 - **Title:** vNext F3: Noesis protocol commands, events and daemon wiring
 
 #### F4. Learner model
@@ -620,9 +670,12 @@ are relative to the repository root.
   `evals/noesis/**`, `web/e2e/specs/noesis/**`
 - **Depends on:** F6, H1
 - **Size:** M · **Pipeline:** e2e-testing
-- **Acceptance:** each guarantee is its own named test. The differential
-  harness is opt-in and needs a local LearnHarness checkout. CI never runs
-  it.
+- **Acceptance:**
+  - Each guarantee is its own named test.
+  - The bypass tests cover every generic agent command, and a daemon
+    restart with a parked Noesis agent while disabled.
+  - The differential harness is opt-in and needs a local LearnHarness
+    checkout. CI never runs it.
 - **Title:** vNext F7: Noesis off-by-default guarantees and behavioural parity suite
 
 #### F8. Knowledge-graph extraction

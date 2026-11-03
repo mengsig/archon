@@ -77,9 +77,9 @@ test code. Do not integrate a sidecar, and do not fork.**
 
 | Option | What AGPL-3.0-only implies | Verdict |
 | --- | --- | --- |
-| Link or port the code | Different language, so this would really be a port: a derivative work. The combined Aether binary would have to be distributed under AGPL, and MIT cannot absorb that. No CLA exists, and the copyright is spread across contributors, so nobody can grant other terms. | Rejected |
+| Link or port the code | Different language, so this would really be a port: a derivative work. The combined Aether binary would have to be distributed under AGPL, and MIT cannot absorb that. Other terms would need permission from every relevant copyright holder. There is no CLA and the copyright is spread across contributors, so we neither assume nor plan to obtain that permission. | Rejected |
 | Node sidecar, shipped with Aether | A separate program talking over HTTP is arguably an aggregate. Shipping it still means distributing AGPL code with source obligations. Making it work requires changes (Aether engines and auth, budgets, the off switch), and §13 then obliges us to offer the modified source to every user who interacts with it over a network, which is exactly what our Tailscale access gives. It also brings a second runtime, a second store, single-process JSON state, duplicate auth and no Codex path. | Rejected |
-| Fork | The fork stays AGPL-3.0-only forever and cannot be relicensed. It inherits the Pi engine, Next and Electron weight, and the single-writer assumptions, and it diverges from upstream once modified. | Rejected |
+| Fork | The fork stays AGPL-3.0-only unless every relevant copyright holder agrees to other terms, which we do not plan to seek. It inherits the Pi engine, Next and Electron weight, and the single-writer assumptions, and it diverges from upstream once modified. | Rejected |
 | **Clean-room reimplementation** | Ideas, behaviour, interfaces and published pedagogy are not protected by copyright; their expression is. We write our own code, schemas and prompts in Rust/TS under MIT. | **Chosen** |
 
 Clean-room rules for tasks F1–F8:
@@ -145,7 +145,7 @@ deliberate differences from upstream are:
   the tool result through `noesis_answer`.
 - **Prompts:** our own, kept in `crates/aether-noesis/src/prompts/` as
   numbered segments. An operator override replaces a segment only when both
-  the setting and the file exist.
+  `noesis.prompts.overrides` is on and the file exists (CONTRACTS.md §6.1).
 
 ## 4. Knowledge graph and extraction (F8)
 
@@ -200,7 +200,8 @@ Derivation rules (a pure function of the evidence and the current time):
 | `fragile` | demonstrated before but decayed (`strength < 0.5`); or the latest attempt is wrong; or correct at confidence ≤ 30; or solved only with hints ≥ R3 |
 | `misconception` | a `misconception_observed` record (from `probe_done`, or a confident wrong answer on a discrimination item) not yet cleared by 2 later correct discrimination answers |
 
-- **Decay:** `strength = exp(-Δt / half_life)`. The half-life starts at 2 days,
+- **Decay:** `strength = 2^(-Δt / half_life)`, so strength is exactly 0.5 after one half-life (F4
+  tests this value). The half-life starts at 2 days,
   doubles after each successful spaced retrieval, halves after each failure,
   and stays between 1 and 180 days. `review_due_at` is when strength reaches
   0.5.
@@ -293,4 +294,8 @@ model and reported in the PR, never gated in CI.
 - **Spend (low):** subscription-first, explicit budgets, manual extraction
   by default, and background priority last.
 - **Data (low):** `noesis.db` is a separate file, independent of Aether
-  memory. Deleting it removes all learning state.
+  memory. Deleting it removes Noesis's own state: graph, learner model, plans,
+  evidence bundles and jobs. The teaching conversations are transcripts of
+  Aether agents in run `noesis`, and stay in Aether history under its
+  retention. Whether deleting a session also purges its transcript is open
+  (CONTRACTS.md §6.5, owner F3), and the UI says so until it is settled.

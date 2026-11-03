@@ -35,9 +35,10 @@ Aether 1.2.9. Each baseline is the release it was released with.
 
 ## Luna
 
-- **Cost and repairs.** Both head runs cost less than every v1.4.9 run,
-  recorded or fresh: $0.0650 and $0.0534. Neither run had a repair or a
-  restate note (#370's note to the lead). Every reviewer result was one the
+- **Cost and repairs.** The head runs cost $0.0650 and $0.0534, a mean of
+  $0.0592, below both v1.4.9 means ($0.0649 recorded, $0.0931 #370's fresh).
+  Run 1 cost more than recorded v1.4.9 run 2 ($0.0582); run 2 cost less than
+  both recorded runs. Neither run had a repair or a restate note (#370's note to the lead). Every reviewer result was one the
   gate reads: the unstructured reviewer results in both runs and run 2's
   `"verdict": "approve"` were accepted the first time.
 - **Review level.** Run 1 reviewed `quality-ledger-transfer` at `strict`

@@ -487,7 +487,7 @@ pub(super) async fn pause(
         let was_hard = store.kv_get(HARD_PAUSE_KEY)?.is_some_and(|v| v == "1");
         let global = matches!(target, PauseTarget::Global { .. });
         let release = global && !paused && was_hard;
-        if release && client == ClientKind::ArchonMcp {
+        if release && matches!(client, ClientKind::ArchonMcp | ClientKind::ArchonWeb) {
             return Err(ArchonError::Forbidden(
                 "the operator's hard pause is lifted only from the archon CLI".into(),
             ));

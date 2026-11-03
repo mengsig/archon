@@ -2806,6 +2806,17 @@
             "cmd": {
               "const": "remote_pair",
               "type": "string"
+            },
+            "role": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DeviceRole"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The role the paired device gets; `None` pairs an operator."
             }
           },
           "required": [
@@ -3137,7 +3148,7 @@
         },
         {
           "const": "archon-web",
-          "description": "The web app over archond's remote listener (docs/remote.md). Only its\nhello names it; the listener sends its allowed requests as the CLI.",
+          "description": "The web app over archond's remote listener (docs/remote.md). Its\nhello names it, and the listener sends its allowed requests with it.",
           "type": "string"
         }
       ]
@@ -3733,6 +3744,7 @@
       "type": "object"
     },
     "DeviceRole": {
+      "description": "What a paired device may do: an operator runs the queue, an observer\nonly reads it.",
       "enum": [
         "operator",
         "observer"
@@ -3758,6 +3770,11 @@
         "paired_at": {
           "format": "date-time",
           "type": "string"
+        },
+        "role": {
+          "$ref": "#/$defs/DeviceRole",
+          "default": "operator",
+          "description": "What it may do, chosen when it was paired."
         },
         "sessions": {
           "description": "Its WebSocket sessions open now.",
@@ -9549,6 +9566,13 @@
             "null"
           ]
         },
+        "mounted_at": {
+          "description": "The Aether mount archond is served under, from `[remote] mounted_at`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "pairing_expires_at": {
           "description": "When the open pairing code expires; `None` with no pairing open.",
           "format": "date-time",
@@ -9559,6 +9583,13 @@
         },
         "public_origins": {
           "description": "The `https://` origins browsers may use besides loopback.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "trusted_origins": {
+          "description": "The only origins accepted while mounted.",
           "items": {
             "type": "string"
           },
@@ -12862,6 +12893,17 @@
             "cmd": {
               "const": "remote_pair",
               "type": "string"
+            },
+            "role": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DeviceRole"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The role the paired device gets; `None` pairs an operator."
             }
           },
           "required": [

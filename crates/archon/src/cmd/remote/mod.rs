@@ -10,7 +10,7 @@ use std::fmt::Write as _;
 use std::process::ExitCode;
 
 use archon_client::ArchonClient;
-use archon_core::protocol::{Reply, Request};
+use archon_core::protocol::{DeviceRole, Reply, Request};
 use archon_core::remote::{PairingCode, RemoteChange, RemoteView, normalize_origin};
 
 use super::{emit, to_json};
@@ -24,7 +24,13 @@ pub async fn run(command: Option<RemoteCommand>, json: bool) -> anyhow::Result<E
     let change = |change: RemoteChange| Request::ConfigureRemote { change };
     let request = match command {
         RemoteCommand::Setup(args) => return setup(args, json).await,
-        RemoteCommand::Pair => return pair(json).await,
+        RemoteCommand::Pair { observer } => {
+            let role = match observer {
+                true => DeviceRole::Observer,
+                false => DeviceRole::Operator,
+            };
+            return pair(role, json).await;
+        }
         RemoteCommand::Status | RemoteCommand::Devices => {
             let view = remote_view(&connect_running().await?, Request::RemoteStatus).await?;
             return show(&view, matches!(command, RemoteCommand::Devices), json);
@@ -73,15 +79,28 @@ fn show(view: &RemoteView, devices_only: bool, json: bool) -> anyhow::Result<Exi
     })
 }
 
-async fn pair(json: bool) -> anyhow::Result<ExitCode> {
+async fn pair(role: DeviceRole, json: bool) -> anyhow::Result<ExitCode> {
     let client = connect_or_start().await?;
-    let code = open_pairing(&client).await?;
-    emit(json, || to_json(&code), &pairing_text(&code)?)?;
+    let code = request_pairing(&client, role).await?;
+    let mut text = pairing_text(&code)?;
+    if role == DeviceRole::Observer {
+        text.push_str(
+            "\nThe device it pairs is an observer: it reads the queue and changes nothing.",
+        );
+    }
+    emit(json, || to_json(&code), &text)?;
     Ok(ExitCode::SUCCESS)
 }
 
+/// A pairing for an operator device, as setup opens one.
 async fn open_pairing(client: &ArchonClient) -> anyhow::Result<PairingCode> {
-    let code = match client.request(Request::RemotePair).await? {
+    request_pairing(client, DeviceRole::Operator).await
+}
+
+async fn request_pairing(client: &ArchonClient, role: DeviceRole) -> anyhow::Result<PairingCode> {
+    // An operator pairing is sent as before, so the request reads the same.
+    let role = (role == DeviceRole::Observer).then_some(role);
+    let code = match client.request(Request::RemotePair { role }).await? {
         Reply::RemotePairing(code) => code,
         other => return Err(unexpected(&other, "remote_pairing")),
     };
@@ -123,9 +142,16 @@ fn status_text(view: &RemoteView) -> String {
         ),
         (None, false) => "Remote access is off. `archon remote setup` sets it up.".to_owned(),
     };
-    match view.public_origins.as_slice() {
-        [] => text.push_str("\nPublished at: nowhere (loopback only)."),
-        origins => {
+    match (&view.mounted_at, view.public_origins.as_slice()) {
+        (Some(prefix), _) => {
+            let _ = write!(
+                text,
+                "\nServed under {prefix} by an Aether listener; only {} may call it.",
+                view.trusted_origins.join(", ")
+            );
+        }
+        (None, []) => text.push_str("\nPublished at: nowhere (loopback only)."),
+        (None, origins) => {
             let _ = write!(text, "\nPublished at: {}", origins.join(", "));
         }
     }
@@ -151,9 +177,13 @@ fn devices_text(view: &RemoteView) -> String {
             || "never connected".to_owned(),
             |at| format!("last seen {}", at.format("%Y-%m-%d %H:%M UTC")),
         );
+        let role = match device.role {
+            DeviceRole::Operator => "operator",
+            DeviceRole::Observer => "observer",
+        };
         let _ = write!(
             text,
-            "\n  {}  {}  paired {}, {seen}, {} session(s) open",
+            "\n  {}  {}  {role}, paired {}, {seen}, {} session(s) open",
             device.id,
             device.name,
             device.paired_at.format("%Y-%m-%d"),
@@ -176,9 +206,12 @@ mod tests {
             listening: Some("127.0.0.1:8378".into()),
             error: None,
             public_origins: vec!["https://box.tail1234.ts.net".into()],
+            mounted_at: None,
+            trusted_origins: vec![],
             devices: vec![DeviceView {
                 id: "dev_0123456789abcdef01234567".into(),
                 name: "Phone".into(),
+                role: DeviceRole::Observer,
                 paired_at: archon_core::now(),
                 last_seen_at: None,
                 sessions: 1,
@@ -193,7 +226,17 @@ mod tests {
         assert!(text.contains("listening on 127.0.0.1:8378"), "{text}");
         assert!(text.contains("https://box.tail1234.ts.net"), "{text}");
         assert!(
-            text.contains("dev_0123456789abcdef01234567  Phone"),
+            text.contains("dev_0123456789abcdef01234567  Phone  observer, paired"),
+            "{text}"
+        );
+        let mounted = RemoteView {
+            mounted_at: Some("/archon".into()),
+            trusted_origins: vec!["https://box.tail1234.ts.net".into()],
+            ..view()
+        };
+        let text = status_text(&mounted);
+        assert!(
+            text.contains("Served under /archon") && !text.contains("Published at"),
             "{text}"
         );
         let off = RemoteView {

@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use archon_core::error::ArchonError;
 use archon_core::protocol::{
-    MIN_WEB_PROTOCOL_VERSION, PROTOCOL_VERSION, Reply, Request, ServerFrame, feature,
+    DeviceRole, MIN_WEB_PROTOCOL_VERSION, PROTOCOL_VERSION, Reply, Request, ServerFrame, feature,
 };
 use archon_core::remote::{RemoteChange, RemoteConfig};
 use archon_remote::{Backend, FeedSubscription, Remote};
@@ -28,7 +28,8 @@ struct FakeArchond {
 
 #[async_trait::async_trait]
 impl Backend for FakeArchond {
-    async fn handle(&self, request: Request) -> Result<Reply, ArchonError> {
+    async fn handle(&self, role: DeviceRole, request: Request) -> Result<Reply, ArchonError> {
+        assert!(archon_remote::allow::allowed(role, &request), "{request:?}");
         let name = archon_remote::allow::command_name(&request);
         self.asked.lock().unwrap().push(name);
         Ok(Reply::Ok)
@@ -55,14 +56,33 @@ struct Listener {
     remote: Remote,
     backend: Arc<FakeArchond>,
     port: u16,
+    /// The origin the app is opened at; loopback unless mounted.
+    opened_at: Option<String>,
 }
+
+/// The origin the Aether listener that mounts archond is reached at.
+const AETHER: &str = "https://box.ts.net";
 
 impl Listener {
     async fn start() -> Self {
+        Self::start_with(RemoteConfig::default(), None).await
+    }
+
+    /// Served under `/archon` by an Aether listener at [`AETHER`].
+    async fn mounted() -> Self {
+        let config = RemoteConfig {
+            mounted_at: Some("/archon".into()),
+            trusted_origins: vec![AETHER.into()],
+            ..RemoteConfig::default()
+        };
+        Self::start_with(config, Some(AETHER.into())).await
+    }
+
+    async fn start_with(config: RemoteConfig, opened_at: Option<String>) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let config = RemoteConfig {
             address: "127.0.0.1:0".into(),
-            ..RemoteConfig::default()
+            ..config
         };
         let remote = Remote::open(config, dir.path(), "9.9.9").unwrap();
         let backend = Arc::new(FakeArchond::default());
@@ -75,11 +95,14 @@ impl Listener {
             remote,
             backend,
             port,
+            opened_at,
         }
     }
 
     fn origin(&self) -> String {
-        format!("http://127.0.0.1:{}", self.port)
+        self.opened_at
+            .clone()
+            .unwrap_or_else(|| format!("http://127.0.0.1:{}", self.port))
     }
 
     fn host(&self) -> String {
@@ -99,9 +122,13 @@ impl Listener {
             .await
     }
 
-    /// Pair a device and return its `archon_device=…` cookie.
+    /// Pair an operator device and return its `archon_device=…` cookie.
     async fn pair(&self) -> String {
-        let code = self.remote.pair().unwrap().code;
+        self.pair_as(DeviceRole::Operator).await
+    }
+
+    async fn pair_as(&self, role: DeviceRole) -> String {
+        let code = self.remote.pair(role).unwrap().code;
         let response = self.claim(&code).await;
         assert_eq!(response.status, 200, "{}", response.body);
         let set = response.header("set-cookie").expect("a credential is set");
@@ -295,7 +322,7 @@ async fn a_code_pairs_one_device_once_and_cross_site_claims_are_refused() {
         "no pairing is open: {}",
         closed.status
     );
-    let code = listener.remote.pair().unwrap().code;
+    let code = listener.remote.pair(DeviceRole::Operator).unwrap().code;
     let cross = listener
         .request(
             "POST",
@@ -334,7 +361,7 @@ async fn a_code_pairs_one_device_once_and_cross_site_claims_are_refused() {
 #[tokio::test]
 async fn guesses_are_rate_limited_and_the_store_is_private() {
     let listener = Listener::start().await;
-    let code = listener.remote.pair().unwrap().code;
+    let code = listener.remote.pair(DeviceRole::Operator).unwrap().code;
     let wrong = if code.starts_with('Z') {
         "YYYY-YYYY"
     } else {
@@ -394,6 +421,12 @@ async fn the_web_app_connects_at_23_and_24_and_25_is_refused_with_the_range() {
         assert_eq!(data["protocol_version"], version, "{welcome}");
         assert_eq!(data["min_protocol_version"], MIN_WEB_PROTOCOL_VERSION);
         assert_eq!(data["features"], features, "{welcome}");
+        let named = data.get("device").is_some();
+        assert_eq!(
+            named,
+            version == PROTOCOL_VERSION,
+            "only 24 knows devices: {welcome}"
+        );
     }
     let mut socket = listener.upgrade(&cookie).await;
     let refusal = exchange(&mut socket, hello(PROTOCOL_VERSION + 1)).await;
@@ -493,7 +526,10 @@ async fn revoking_a_device_closes_its_session_at_once_and_disabling_closes_all()
     assert_eq!(close_code(&mut tablet_socket).await, 4403);
     let refused = TcpStream::connect(("127.0.0.1", listener.port)).await;
     assert!(refused.is_err(), "the port is closed once disabled");
-    assert!(listener.remote.pair().is_err(), "no pairing while off");
+    assert!(
+        listener.remote.pair(DeviceRole::Operator).is_err(),
+        "no pairing while off"
+    );
 }
 
 #[tokio::test]
@@ -569,4 +605,143 @@ async fn a_revoke_lands_while_the_device_floods_requests_it_does_not_read() {
     listener.remote.revoke(id).unwrap();
     assert_eq!(close_code(&mut socket).await, 4401);
     assert!(listener.remote.view().devices.is_empty());
+}
+
+/// What the device's own socket answers to `frame`: `ok` or an error code.
+async fn outcome(socket: &mut Socket, frame: serde_json::Value) -> String {
+    let answer = exchange(socket, frame).await;
+    match answer["result"].get("Ok") {
+        Some(ok) => ok["reply"].as_str().unwrap().to_owned(),
+        None => answer["result"]["Err"]["code"].as_str().unwrap().to_owned(),
+    }
+}
+
+#[tokio::test]
+async fn an_observer_reads_and_is_refused_every_change() {
+    let listener = Listener::start().await;
+    let cookie = listener.pair_as(DeviceRole::Observer).await;
+    let session = listener
+        .request("GET", "/api/session", &[("Cookie", cookie.as_str())], "")
+        .await;
+    assert!(
+        session.body.contains("\"role\":\"observer\""),
+        "{}",
+        session.body
+    );
+    let mut socket = listener.upgrade(&cookie).await;
+    let welcome = exchange(&mut socket, hello(PROTOCOL_VERSION)).await;
+    let device = &welcome["result"]["Ok"]["data"]["device"];
+    assert_eq!(device["role"], "observer", "{welcome}");
+    assert_eq!(device["name"], "Test phone", "{welcome}");
+    let read = serde_json::json!({"req": 2, "cmd": "repo_list"});
+    assert_eq!(outcome(&mut socket, read).await, "ok");
+    let changes = [
+        serde_json::json!({"cmd": "say", "text": "hi"}),
+        serde_json::json!({"cmd": "cancel_item", "item": "qi_01M621D9ZBJPTMDTV26KKQNBE1"}),
+        serde_json::json!({"cmd": "pause", "scope": "global"}),
+        serde_json::json!({"cmd": "answer", "question": "q_01M621D9ZBJPTMDTV26KKQNBE1", "text": "yes"}),
+    ];
+    for (n, mut change) in changes.into_iter().enumerate() {
+        change["req"] = serde_json::json!(10 + n);
+        let answer = exchange(&mut socket, change.clone()).await;
+        let error = &answer["result"]["Err"];
+        assert_eq!(error["code"], "forbidden", "{change}: {answer}");
+        let message = error["message"].as_str().unwrap();
+        assert!(message.contains("only observes"), "{message}");
+    }
+    assert_eq!(*listener.backend.asked.lock().unwrap(), ["repo_list"]);
+    assert_eq!(listener.remote.view().devices[0].role, DeviceRole::Observer);
+}
+
+#[tokio::test]
+async fn a_hard_pause_or_resume_is_refused_and_a_soft_one_reaches_archond() {
+    let listener = Listener::start().await;
+    let cookie = listener.pair().await;
+    let mut socket = listener.socket(&cookie).await;
+    for cmd in ["pause", "resume"] {
+        let hard = serde_json::json!({"req": 2, "cmd": cmd, "scope": "global", "hard": true});
+        let answer = exchange(&mut socket, hard).await;
+        assert_eq!(answer["result"]["Err"]["code"], "forbidden", "{answer}");
+        let message = answer["result"]["Err"]["message"].as_str().unwrap();
+        assert!(message.contains("with hard"), "{message}");
+    }
+    let soft = serde_json::json!({"req": 3, "cmd": "pause", "scope": "global", "hard": false});
+    assert_eq!(outcome(&mut socket, soft).await, "ok");
+    assert_eq!(*listener.backend.asked.lock().unwrap(), ["pause"]);
+}
+
+#[tokio::test]
+async fn mounted_the_cookie_is_scoped_to_the_mount_and_only_trusted_origins_are_accepted() {
+    let listener = Listener::mounted().await;
+    let urls = listener.remote.pair(DeviceRole::Operator).unwrap().urls;
+    assert_eq!(urls, [format!("{AETHER}/archon/pair")]);
+    let view = listener.remote.view();
+    assert_eq!(view.mounted_at.as_deref(), Some("/archon"));
+    assert_eq!(view.trusted_origins, [AETHER]);
+    let code = listener.remote.pair(DeviceRole::Operator).unwrap().code;
+    let body = serde_json::json!({"code": code, "device_name": "Phone"}).to_string();
+    let loopback = format!("http://127.0.0.1:{}", listener.port);
+    for refused in [loopback.as_str(), "https://evil.example"] {
+        let headers = [("Origin", refused), ("Content-Type", "application/json")];
+        let claim = listener
+            .request("POST", "/api/pair/claim", &headers, &body)
+            .await;
+        assert_eq!(claim.status, 403, "{refused}: {}", claim.body);
+        assert!(claim.body.contains("forbidden_origin"), "{}", claim.body);
+    }
+    let claim = listener.claim(&code).await;
+    assert_eq!(claim.status, 200, "{}", claim.body);
+    let set = claim.header("set-cookie").unwrap();
+    assert!(
+        set.contains("; Path=/archon;") && set.contains("Secure"),
+        "{set}"
+    );
+    let cookie = set.split(';').next().unwrap().to_owned();
+    let welcome_socket = listener.socket(&cookie).await;
+    drop(welcome_socket);
+    let public = raw(
+        listener.port,
+        "GET",
+        "/api/health",
+        &[("Host", "box.ts.net")],
+        "",
+    )
+    .await;
+    assert_eq!(public.status, 403, "the mount names this listener as Host");
+    let forget_headers = [
+        ("Origin", AETHER),
+        ("Content-Type", "application/json"),
+        ("Cookie", cookie.as_str()),
+    ];
+    let forgot = listener
+        .request("POST", "/api/session/forget", &forget_headers, "{}")
+        .await;
+    assert_eq!(forgot.status, 200, "{}", forgot.body);
+    let cleared = forgot.header("set-cookie").unwrap();
+    assert!(
+        cleared.contains("Path=/archon;") && cleared.contains("Max-Age=0"),
+        "{cleared}"
+    );
+}
+
+#[tokio::test]
+async fn mounted_an_upgrade_from_loopback_is_refused() {
+    let listener = Listener::mounted().await;
+    let cookie = listener.pair().await;
+    let stream = TcpStream::connect(("127.0.0.1", listener.port))
+        .await
+        .unwrap();
+    let mut request = format!("ws://{}/ws", listener.host())
+        .into_client_request()
+        .unwrap();
+    let headers = request.headers_mut();
+    let loopback = format!("http://127.0.0.1:{}", listener.port);
+    headers.insert("Origin", loopback.parse().unwrap());
+    headers.insert("Cookie", cookie.parse().unwrap());
+    headers.insert("Sec-WebSocket-Protocol", "archon".parse().unwrap());
+    let refused = tokio_tungstenite::client_async(request, stream).await;
+    let Err(tokio_tungstenite::tungstenite::Error::Http(response)) = refused else {
+        panic!("a loopback origin is refused while mounted: {refused:?}");
+    };
+    assert_eq!(response.status(), 403);
 }

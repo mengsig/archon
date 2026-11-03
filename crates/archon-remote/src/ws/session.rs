@@ -6,7 +6,8 @@ use std::time::Duration;
 
 use archon_core::error::ArchonError;
 use archon_core::protocol::{
-    ClientFrame, ErrorCode, ErrorReply, Reply, Request, ServerFrame, negotiate,
+    ClientFrame, ErrorCode, ErrorReply, PROTOCOL_VERSION, Reply, Request, ServerFrame,
+    WelcomeDevice, negotiate,
 };
 use futures_util::{SinkExt as _, StreamExt as _};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -42,14 +43,20 @@ enum Ended {
 
 struct Session {
     backend: Arc<dyn Backend>,
+    /// The paired device the session runs for; its role is fixed at pairing.
+    device: WelcomeDevice,
     outbox: mpsc::Sender<ServerFrame>,
     in_flight: Arc<Semaphore>,
     tasks: JoinSet<()>,
     subscriptions: u64,
 }
 
-pub async fn carry<S>(io: S, backend: Arc<dyn Backend>, mut registration: Registration)
-where
+pub async fn carry<S>(
+    io: S,
+    backend: Arc<dyn Backend>,
+    device: WelcomeDevice,
+    mut registration: Registration,
+) where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     let config = WebSocketConfig::default()
@@ -59,12 +66,13 @@ where
     let (outbox, mut frames) = mpsc::channel(OUTBOX_FRAMES);
     let mut session = Session {
         backend,
+        device,
         outbox,
         in_flight: Arc::new(Semaphore::new(MAX_IN_FLIGHT)),
         tasks: JoinSet::new(),
         subscriptions: 0,
     };
-    let ended = match greet(&mut socket, &mut registration, session.backend.as_ref()).await {
+    let ended = match greet(&mut socket, &mut registration, &session).await {
         Ok(()) => run(&mut socket, &mut session, &mut frames, &mut registration).await,
         Err(ended) => ended,
     };
@@ -97,11 +105,12 @@ where
     Ok(())
 }
 
-/// The first message must be `hello` at archond's protocol version.
+/// The first message must be `hello` at a protocol archond accepts from the
+/// web app. At protocol 24 the `welcome` names the device and its role.
 async fn greet<S>(
     socket: &mut WebSocketStream<S>,
     registration: &mut Registration,
-    backend: &dyn Backend,
+    session: &Session,
 ) -> Result<(), Ended>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -126,8 +135,8 @@ where
     else {
         return Err(Ended::Violation(CloseCode::Policy, "send hello first"));
     };
-    let features = backend.features();
-    let welcome = match negotiate(client, protocol_version, &client_version, &features) {
+    let features = session.backend.features();
+    let mut welcome = match negotiate(client, protocol_version, &client_version, &features) {
         Ok(welcome) => welcome,
         Err(message) => {
             let message = format!("{message}, or reload the app");
@@ -136,6 +145,13 @@ where
             return Err(Ended::Violation(CloseCode::Policy, "protocol mismatch"));
         }
     };
+    assert!(
+        welcome.device.is_none(),
+        "only the listener knows the device"
+    );
+    if welcome.protocol_version == PROTOCOL_VERSION {
+        welcome.device = Some(session.device.clone());
+    }
     let reply = ServerFrame::Reply {
         id: frame.id,
         result: Ok(Reply::Welcome(welcome)),
@@ -244,9 +260,13 @@ fn receive(session: &mut Session, message: Message) -> Result<(), Ended> {
 }
 
 fn dispatch(session: &mut Session, id: u64, request: Request) -> Result<(), Ended> {
-    if !crate::allow::allowed(&request) || matches!(request, Request::Hello { .. }) {
-        let name = crate::allow::command_name(&request);
-        let message = format!("{name} is not available from the web app; use the archon CLI");
+    let role = session.device.role;
+    let refusal = match request {
+        Request::Hello { .. } => Err(crate::allow::Refusal::HostOnly),
+        ref request => crate::allow::check(role, request),
+    };
+    if let Err(refusal) = refusal {
+        let message = refusal.message(&crate::allow::command_name(&request));
         return queue(session, error_frame(id, ErrorCode::Forbidden, message));
     }
     if let Request::SubscribeFeed { after, verbose } = request {
@@ -259,7 +279,7 @@ fn dispatch(session: &mut Session, id: u64, request: Request) -> Result<(), Ende
     };
     let (backend, outbox) = (session.backend.clone(), session.outbox.clone());
     session.tasks.spawn(async move {
-        let result = backend.handle(request).await;
+        let result = backend.handle(role, request).await;
         let frame = ServerFrame::Reply {
             id,
             result: result.map_err(|e| ErrorReply::from(&e)),

@@ -195,8 +195,8 @@ pub enum ClientKind {
     ArchonCli,
     ArchonMcp,
     ArchonBench,
-    /// The web app over archond's remote listener (docs/remote.md). Only its
-    /// hello names it; the listener sends its allowed requests as the CLI.
+    /// The web app over archond's remote listener (docs/remote.md). Its
+    /// hello names it, and the listener sends its allowed requests with it.
     ArchonWeb,
 }
 
@@ -644,7 +644,11 @@ pub enum Request {
         change: crate::remote::RemoteChange,
     },
     /// Open a pairing with a new one-time code, replacing any open one.
-    RemotePair,
+    RemotePair {
+        /// The role the paired device gets; `None` pairs an operator.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        role: Option<DeviceRole>,
+    },
     /// Unpair a device by id or name, closing its sessions at once.
     RemoteRevoke {
         device: String,
@@ -807,7 +811,7 @@ impl Request {
             | Self::LearningRetryMemory { .. }
             | Self::MergeItem { .. }
             | Self::ConfigureRemote { .. }
-            | Self::RemotePair
+            | Self::RemotePair { .. }
             | Self::RemoteRevoke { .. }
             | Self::Answer { .. } => OperatorChange,
             Self::RepoAdd(add) if add.auto_merge || add.github_watch => OperatorChange,
@@ -1421,9 +1425,14 @@ pub struct WelcomeDevice {
     pub role: DeviceRole,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+/// What a paired device may do: an operator runs the queue, an observer
+/// only reads it.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DeviceRole {
+    #[default]
     Operator,
     Observer,
 }

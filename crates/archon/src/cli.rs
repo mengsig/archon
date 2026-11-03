@@ -561,7 +561,11 @@ pub enum RemoteCommand {
     /// Close the listener and every device's session; pairings are kept.
     Disable,
     /// Open a one-time pairing code (5 minutes) and show it as a QR code.
-    Pair,
+    Pair {
+        /// Pair a device that only reads: it may not change the queue.
+        #[arg(long)]
+        observer: bool,
+    },
     /// The paired devices.
     Devices,
     /// Forget a paired device and close its sessions at once.
@@ -1346,6 +1350,22 @@ mod tests {
         let mut argv = vec!["archon"];
         argv.extend_from_slice(args);
         Cli::try_parse_from(argv).unwrap().command.unwrap()
+    }
+
+    #[test]
+    fn remote_pair_pairs_an_operator_unless_told_observer() {
+        for (args, expected) in [
+            (&["remote", "pair"][..], false),
+            (&["remote", "pair", "--observer"][..], true),
+        ] {
+            let Command::Remote {
+                command: Some(RemoteCommand::Pair { observer }),
+            } = parse(args)
+            else {
+                panic!("remote pair");
+            };
+            assert_eq!(observer, expected, "{args:?}");
+        }
     }
 
     #[test]

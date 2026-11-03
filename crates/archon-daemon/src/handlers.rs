@@ -531,7 +531,9 @@ async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, Ar
             let view = ctx.remote.configure(change).await?;
             Ok(Reply::Remote(Box::new(view)))
         }
-        Request::RemotePair => Ok(Reply::RemotePairing(ctx.remote.pair()?)),
+        Request::RemotePair { role } => Ok(Reply::RemotePairing(
+            ctx.remote.pair(role.unwrap_or_default())?,
+        )),
         Request::RemoteRevoke { device } => {
             Ok(Reply::Remote(Box::new(ctx.remote.revoke(&device)?)))
         }

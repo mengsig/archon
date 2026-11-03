@@ -234,10 +234,18 @@ classes (ARCHITECTURE.md §c), and refuse `shutdown` whatever its class.
 connection that main discovered locally. Main:
 - builds the daemon frame itself from the validated fields;
 - writes the native confirmation text itself, from main-owned templates
-  holding the daemon label and socket path. Renderer-supplied values (device
-  name and role, memory id and first line, mount target, settings diff)
-  appear only as validated argument values in fixed slots: control
-  characters escaped, each cut to 200 characters;
+  holding the daemon label and socket path. Renderer-supplied values appear
+  only as validated argument values in fixed slots, with control characters
+  escaped:
+  - *Descriptive labels* (device name, memory first line) may be cut to 200
+    characters, with an ellipsis shown.
+  - *Consequential values* are always shown in full and never cut: role,
+    memory id, mount prefix and port, `request` kind, item id, and **every
+    changed key of a settings patch with its old and new value**.
+  - Patches are limited to known keys (§6.1, Archon settings), so their full
+    rendering is bounded. If the full rendering exceeds 60 lines, main
+    refuses the action and asks for smaller patches; it never shows a
+    partial diff;
 - sends exactly the confirmed frame.
 The renderer supplies no frame and no display text. Calls from any frame
 other than the top-level `app://` document are refused.
@@ -556,4 +564,4 @@ G0 benchmark:
 | Archon | `[remote] mounted_at` | `"/archon"` when served behind an Aether mount; cookie `Path` follows it |
 | Archon | `[remote] trusted_origins` | origins (at most 16, `https://host[:port]` or loopback `http://`) accepted on `Origin`; set by `archon remote setup` from Aether's `public_origins` |
 | Archon | device `role` in `remote.json` (format 2) | `"operator"` (default for format-1 records) or `"observer"` |
-| Aether | publication guard (AE-M) | adding a mount is refused while the publication is a Funnel or cannot be determined; Funnel is refused while any mount exists; each new mounted HTTP request or WebSocket upgrade is admitted only against a publication status ≤ 5 s old, failing closed with 503; on detecting a Funnel, every open mounted connection is closed (WebSocket close 1008) and nothing more is forwarded; `get_remote` reports `mounts_blocked: "funnel" \| "status_unknown"` |
+| Aether | publication guard (AE-M) | adding a mount is refused while the publication is a Funnel or cannot be determined; Funnel is refused while any mount exists; mounted traffic (new requests, upgrades and frames on established connections) flows only under a lease, meaning a successful non-Funnel status read ≤ 5 s old, refreshed every 2 s; when the lease ends (Funnel seen, read failure, or expiry on its own timer if a refresh hangs) every open mounted connection is closed (WebSocket close 1008), new requests get 503, and nothing more is forwarded; `get_remote` reports `mounts_blocked: "funnel" \| "status_unknown"` |

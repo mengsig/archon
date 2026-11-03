@@ -206,21 +206,25 @@ Mount rules (AE-M):
   this is the operator's aetherd; in dedicated mode it is Archon's own aetherd,
   whose agents are the ones Archon runs. It adds the mount and publishes one
   `tailscale serve` origin.
-- **Funnel never reaches a mount.** Archon refuses Funnel today, and the mount
-  must not route around that, so Aether enforces both orders of operation:
+- **A Funnel configured through Aether never reaches a mount, and an
+  out-of-band Funnel reaches it for at most 5 s.** Archon refuses Funnel
+  today, and the mount must not route around that, so Aether enforces both
+  orders of operation, plus a status lease:
   - Adding a mount is refused while Aether's publication is a Funnel, or
     while the publication state cannot be determined.
   - `aether remote setup --funnel`, and keeping an existing Funnel
     publication, are refused while any mount exists.
-  - Every new mounted connection (HTTP request or WebSocket upgrade) is
-    admitted only against a publication status no older than 5 s. If the
-    status is a Funnel or cannot be read, admission fails closed with 503.
-    The status is refreshed every 5 s while any mount connection is open,
-    and every 60 s otherwise.
-  - When a Funnel is detected, Aether also **closes every open mounted
-    connection**: keep-alive HTTP, and upgraded WebSockets with close code
-    1008. No byte is forwarded to archond after detection. `get_remote`
-    reports why.
+  - **Status lease.** Mounted traffic flows only while Aether holds a
+    lease: a *successful* status read showing no Funnel, at most 5 s old.
+    This covers new HTTP requests, WebSocket upgrades, and every frame on
+    an established connection. The lease is refreshed every 2 s while a
+    mounted connection is open, and before admission otherwise.
+  - When the lease ends, Aether **closes every open mounted connection** at
+    once: keep-alive HTTP, and upgraded WebSockets with close code 1008. A
+    lease ends when a Funnel is seen, when a read fails, or when it expires
+    because a refresh hangs. Expiry runs on its own timer, independent of
+    the refresh. New requests get 503. No byte is forwarded to archond
+    without a live lease, and `get_remote` reports why.
   - Residual risk: a Funnel enabled by hand outside Aether is exposed for at
     most the 5 s status age before every mounted connection closes. Funnel
     and serve share one hostname, so Origin checks cannot tell them apart.

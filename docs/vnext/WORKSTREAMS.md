@@ -276,7 +276,10 @@ are relative to the repository root.
       one when the publication state is unknown;
     - `aether remote setup --funnel` with a mount present is refused, and so
       is keeping an existing Funnel;
-    - a Funnel enabled out of band turns every mount to 503 within 60 s.
+    - a Funnel enabled out of band: new mounted connections fail with 503
+      within 5 s, a status read failure also fails closed, and a WebSocket
+      tunnel opened before detection is closed (1008); a test shows that no
+      frame reaches archond after detection.
 - **Title:** vNext AE-M: Aether listener path mount for archond (same-origin browser access)
 
 #### B1. Fleet and topology screens
@@ -528,8 +531,10 @@ are relative to the repository root.
     frames.
   - Adversarial tests:
     - an action outside the `PrivilegedAction` union is refused;
-    - the confirmation text is built only from main's own data, and a
-      renderer string never appears in it;
+    - the confirmation text comes from main's templates and daemon identity;
+      renderer values appear only as escaped, length-limited argument slots,
+      and a hostile argument (newlines, control characters, a misleading
+      "Accept memory" device name) cannot change the template text;
     - the frame sent equals the frame confirmed.
   - Credentials never cross IPC (grep test on the bridge types).
 - **Title:** vNext E1: Electron main process, preload and validated IPC bridge

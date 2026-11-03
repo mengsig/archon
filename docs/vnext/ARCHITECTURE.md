@@ -212,9 +212,19 @@ Mount rules (AE-M):
     while the publication state cannot be determined.
   - `aether remote setup --funnel`, and keeping an existing Funnel
     publication, are refused while any mount exists.
-  - Aether re-checks the `tailscale serve` / `funnel` status at listener
-    start and every 60 s. If a Funnel appears out of band, every mount
-    answers 503 until it is gone, and `get_remote` reports why.
+  - Every new mounted connection (HTTP request or WebSocket upgrade) is
+    admitted only against a publication status no older than 5 s. If the
+    status is a Funnel or cannot be read, admission fails closed with 503.
+    The status is refreshed every 5 s while any mount connection is open,
+    and every 60 s otherwise.
+  - When a Funnel is detected, Aether also **closes every open mounted
+    connection**: keep-alive HTTP, and upgraded WebSockets with close code
+    1008. No byte is forwarded to archond after detection. `get_remote`
+    reports why.
+  - Residual risk: a Funnel enabled by hand outside Aether is exposed for at
+    most the 5 s status age before every mounted connection closes. Funnel
+    and serve share one hostname, so Origin checks cannot tell them apart.
+    Funnel set up through Aether never reaches a mount.
   `archon remote setup` checks `get_remote` before it adds the mount, and
   refuses with the same reason.
 

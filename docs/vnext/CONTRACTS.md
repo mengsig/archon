@@ -233,9 +233,11 @@ classes (ARCHITECTURE.md §c), and refuse `shutdown` whatever its class.
 `privileged` accepts only the `PrivilegedAction` union, and only for a
 connection that main discovered locally. Main:
 - builds the daemon frame itself from the validated fields;
-- writes the native confirmation text itself: daemon label and socket path,
-  the action, and every consequential argument (device name and role, memory
-  id and first line, mount target, settings diff);
+- writes the native confirmation text itself, from main-owned templates
+  holding the daemon label and socket path. Renderer-supplied values (device
+  name and role, memory id and first line, mount target, settings diff)
+  appear only as validated argument values in fixed slots: control
+  characters escaped, each cut to 200 characters;
 - sends exactly the confirmed frame.
 The renderer supplies no frame and no display text. Calls from any frame
 other than the top-level `app://` document are refused.
@@ -554,4 +556,4 @@ G0 benchmark:
 | Archon | `[remote] mounted_at` | `"/archon"` when served behind an Aether mount; cookie `Path` follows it |
 | Archon | `[remote] trusted_origins` | origins (at most 16, `https://host[:port]` or loopback `http://`) accepted on `Origin`; set by `archon remote setup` from Aether's `public_origins` |
 | Archon | device `role` in `remote.json` (format 2) | `"operator"` (default for format-1 records) or `"observer"` |
-| Aether | publication guard (AE-M) | a mount is refused while the publication is a Funnel or cannot be determined; Funnel is refused while any mount exists; an out-of-band Funnel makes every mount answer 503 (rechecked every 60 s), and `get_remote` reports `mounts_blocked: "funnel"` |
+| Aether | publication guard (AE-M) | adding a mount is refused while the publication is a Funnel or cannot be determined; Funnel is refused while any mount exists; each new mounted HTTP request or WebSocket upgrade is admitted only against a publication status ≤ 5 s old, failing closed with 503; on detecting a Funnel, every open mounted connection is closed (WebSocket close 1008) and nothing more is forwarded; `get_remote` reports `mounts_blocked: "funnel" \| "status_unknown"` |

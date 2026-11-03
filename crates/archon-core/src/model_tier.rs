@@ -27,6 +27,7 @@ use crate::policy::ModelPolicy;
     schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
+#[schemars(transform = crate::protocol::schema::AlsoReads("strongest"))]
 pub enum Tier {
     Fast,
     Balanced,

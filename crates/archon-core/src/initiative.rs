@@ -79,6 +79,7 @@ impl ContractChange {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[schemars(transform = crate::protocol::schema::AlsoReads("succeeded"))]
 pub enum InitiativeState {
     /// At least one member has not finished.
     Open,

@@ -52,6 +52,32 @@ fn sorted(value: Value) -> Value {
     }
 }
 
+/// A spelling a string enum still reads through `#[serde(alias)]`, which
+/// schemars does not see; the derive takes it as `#[schemars(transform)]`.
+pub(crate) struct AlsoReads(pub &'static str);
+
+impl schemars::transform::Transform for AlsoReads {
+    fn transform(&mut self, schema: &mut schemars::Schema) {
+        let alias = self.0;
+        let schema = schema
+            .as_object_mut()
+            .expect("an enum's schema is an object");
+        if let Some(Value::Array(names)) = schema.get_mut("enum") {
+            assert!(!names.contains(&alias.into()), "{alias} is already a name");
+            names.push(alias.into());
+            return;
+        }
+        let Some(Value::Array(variants)) = schema.get_mut("oneOf") else {
+            panic!("{alias} is an alias of a string enum, not of {schema:?}");
+        };
+        variants.push(json!({
+            "type": "string",
+            "const": alias,
+            "description": "A legacy spelling: read, never written.",
+        }));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,6 +167,90 @@ mod tests {
         let text = retry(json!("codex/astra"));
         assert_eq!(text, retry(json!({"provider": "codex", "model": "astra"})));
         assert_eq!(text.expect("a model").to_string(), "codex/astra");
+    }
+
+    /// The strings a string enum's definition admits, aliases among them.
+    fn admitted(schema: &Value, name: &str) -> Vec<String> {
+        let def = definition(schema, name);
+        let variants = def["oneOf"]
+            .as_array()
+            .cloned()
+            .unwrap_or_else(|| vec![def.clone()]);
+        let mut names = Vec::new();
+        for variant in variants {
+            names.extend(variant["const"].as_str().map(str::to_owned));
+            let listed = variant["enum"].as_array().into_iter().flatten();
+            names.extend(listed.filter_map(Value::as_str).map(str::to_owned));
+        }
+        assert!(!names.is_empty(), "{name} is a string enum: {def}");
+        names
+    }
+
+    /// A legacy spelling the daemon reads is one the schema admits, so a
+    /// request that decodes also validates.
+    #[test]
+    fn the_schema_admits_the_legacy_spellings_serde_reads() {
+        let schema = schema();
+        let frame = json!({
+            "req": 1, "cmd": "retry_item", "item": crate::id::QueueItemId::new(),
+            "model_plan": {"build": [{"tier": "strongest", "effort": "xhigh"}]}
+        });
+        let frame: ClientFrame = serde_json::from_value(frame).expect("a retry frame");
+        let super::super::Request::RetryItem { model_plan, .. } = frame.request else {
+            panic!("{:?}", frame.request);
+        };
+        let choice = &model_plan.expect("a plan").0["build"][0];
+        assert_eq!(choice.tier, Some(crate::model_tier::Tier::Strong));
+        assert_eq!(choice.effort, Some(crate::model::Effort::XHigh));
+        let done: crate::initiative::InitiativeState =
+            serde_json::from_value(json!("succeeded")).expect("the old name of done");
+        assert_eq!(done, crate::initiative::InitiativeState::Done);
+        for (name, alias, canonical) in [
+            ("Tier", "strongest", "strong"),
+            ("Effort", "xhigh", "x_high"),
+            ("InitiativeState", "succeeded", "done"),
+        ] {
+            let names = admitted(&schema, name);
+            assert!(names.iter().any(|n| n == alias), "{name}: {names:?}");
+            assert!(names.iter().any(|n| n == canonical), "{name}: {names:?}");
+        }
+    }
+
+    /// Every `#[serde(alias)]` in this crate shows in the schema: a new one
+    /// fails here until its type takes `AlsoReads`.
+    #[test]
+    fn every_serde_alias_is_in_the_schema() {
+        let text = schema_text();
+        let mut pending = vec![std::path::PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src"
+        ))];
+        let mut aliases = Vec::new();
+        while let Some(dir) = pending.pop() {
+            for entry in std::fs::read_dir(&dir).expect("the crate's sources") {
+                let path = entry.expect("a source entry").path();
+                if path.is_dir() {
+                    pending.push(path);
+                    continue;
+                }
+                let source = std::fs::read_to_string(&path).expect("a source file");
+                let marker = concat!("#[serde(", "alias = \"");
+                for (at, _) in source.match_indices(marker) {
+                    let rest = &source[at + marker.len()..];
+                    aliases.push(rest.split('"').next().expect("a quoted alias").to_owned());
+                }
+            }
+        }
+        assert!(
+            aliases.len() >= 3,
+            "xhigh, strongest and succeeded at least: {aliases:?}"
+        );
+        for alias in aliases {
+            assert!(
+                text.contains(&format!("\"{alias}\"")),
+                "{alias} is missing from the schema"
+            );
+        }
     }
 
     /// Requests are flattened into the frame: a generator sees each command

@@ -3939,7 +3939,8 @@
         "medium",
         "high",
         "x_high",
-        "max"
+        "max",
+        "xhigh"
       ],
       "type": "string"
     },
@@ -5272,6 +5273,11 @@
         {
           "const": "open",
           "description": "At least one member has not finished.",
+          "type": "string"
+        },
+        {
+          "const": "succeeded",
+          "description": "A legacy spelling: read, never written.",
           "type": "string"
         }
       ]
@@ -14783,6 +14789,11 @@
         {
           "const": "strong",
           "description": "`strongest` is the legacy spelling, kept for stored plans and pipelines.",
+          "type": "string"
+        },
+        {
+          "const": "strongest",
+          "description": "A legacy spelling: read, never written.",
           "type": "string"
         }
       ]

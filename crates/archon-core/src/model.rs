@@ -113,6 +113,7 @@ impl schemars::JsonSchema for ModelRef {
     schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
+#[schemars(transform = crate::protocol::schema::AlsoReads("xhigh"))]
 pub enum Effort {
     Low,
     Medium,

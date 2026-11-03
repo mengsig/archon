@@ -168,8 +168,8 @@ pub enum ShipOutcome {
         pr_url: Option<String>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         updated: bool,
-        /// How labelling the pull request with its risk level went, in one
-        /// line for the run's summary; never a reason the delivery failed.
+        /// How risk labelling went, plus the full body if shortened for GitHub;
+        /// kept in the run summary, never a reason the delivery failed.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         risk: Option<String>,
     },
@@ -178,15 +178,14 @@ pub enum ShipOutcome {
 }
 
 impl ShipOutcome {
-    /// The lines that end a shipped run's summary: how its risk label went,
-    /// then where it shipped.
+    /// Risk labelling and any unabridged body, then where the run shipped.
     pub fn lines(&self) -> Option<String> {
         let line = self.line()?;
         match self {
             Self::Shipped {
                 risk: Some(risk), ..
             } => {
-                assert!(!risk.contains('\n'), "one line");
+                assert!(risk.starts_with("RISK: "), "a risk labelling report");
                 Some(format!("{risk}\n{line}"))
             }
             _ => Some(line),

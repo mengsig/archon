@@ -6,6 +6,9 @@
 
 use archon_core::risk::RiskLevel;
 
+mod budget;
+pub use budget::{MAX_BODY_CHARS, compose_pr};
+
 pub const SUMMARY_START: &str = "<!-- archon-summary -->";
 pub const SUMMARY_END: &str = "<!-- /archon-summary -->";
 pub const EVIDENCE_START: &str = "<!-- archon-evidence -->";

@@ -12,8 +12,7 @@ use std::path::{Path, PathBuf};
 
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
-use archon_core::pull_request::PullRequestRef;
-use archon_core::repo::Repo;
+use archon_core::repo::{Repo, github_slug};
 use archon_pipeline::evidence::{Evidence, FILE_ROOTS, Hosted};
 
 use super::remote;
@@ -64,9 +63,7 @@ pub(crate) async fn host(
     let Some(source) = source else {
         return all_failed("no run worktree holds it");
     };
-    let Some(pr) = PullRequestRef::from_url(pr_url) else {
-        return all_failed("the pull request's URL names no GitHub repository");
-    };
+    assert!(source.workspace.is_absolute(), "a run worktree");
     let (workspace, named) = (source.workspace.to_path_buf(), files.clone());
     let read = tokio::task::spawn_blocking(move || readable(&workspace, &named)).await;
     let (mut hosted, uploads) = match read {
@@ -79,29 +76,42 @@ pub(crate) async fn host(
     let uploaded = upload(ctx, repo, source.item, &uploads).await;
     for upload in &uploads {
         let link = match &uploaded {
-            Ok(commit) => Ok(format!(
-                "https://{}/{}/blob/{commit}/{}?raw=true",
-                pr.host, pr.repository, upload.name
-            )),
+            Ok((commit, origin)) => hosted_link(origin, commit, &upload.name),
             Err(why) => Err(why.clone()),
         };
         hosted.insert(upload.named.clone(), link);
     }
     match &uploaded {
-        Ok(commit) => tracing::info!(%pr_url, %commit, files = uploads.len(), "evidence hosted"),
+        Ok((commit, _)) => {
+            tracing::info!(%pr_url, %commit, files = uploads.len(), "evidence hosted")
+        }
         Err(why) => tracing::warn!(%pr_url, %why, "evidence could not be hosted"),
     }
     debug_assert_eq!(hosted.len(), files.len(), "every file is told");
     hosted
 }
 
-/// Commit `uploads` and push the commit; the commit, or why not.
+/// A screenshot's link on the repository that took the evidence push.
+fn hosted_link(origin: &str, commit: &str, name: &str) -> Result<String, String> {
+    assert!(is_commit_id(commit), "an uploaded evidence commit");
+    assert!(
+        !name.is_empty() && !name.contains('/'),
+        "a flat upload name"
+    );
+    let slug = github_slug(origin)
+        .ok_or_else(|| "the evidence push destination is not a GitHub repository".to_owned())?;
+    Ok(format!(
+        "https://github.com/{slug}/blob/{commit}/{name}?raw=true"
+    ))
+}
+
+/// Commit `uploads` and push the commit; its id and destination, or why not.
 async fn upload(
     ctx: &DaemonContext,
     repo: &Repo,
     item: &QueueItemId,
     uploads: &[Upload],
-) -> Result<String, String> {
+) -> Result<(String, String), String> {
     assert!(!uploads.is_empty(), "something to upload");
     let (data_dir, path) = (ctx.paths.data_dir.clone(), repo.path.clone());
     let files: Vec<(String, PathBuf)> = uploads
@@ -116,10 +126,11 @@ async fn upload(
     .await
     .map_err(|e| format!("the evidence commit task failed: {e}"))?
     .map_err(|e| format!("the evidence commit could not be made: {e}"))?;
+    assert!(is_commit_id(&committed), "a commit ready to push");
     let target = format!("{EVIDENCE_REFS}{item}/{committed}");
     let binary = &ctx.config.github.binary;
     match remote::push_evidence(binary, &ctx.paths.data_dir, repo, &committed, &target).await {
-        Ok(Ok(())) => Ok(committed),
+        Ok(Ok(origin)) => Ok((committed, origin)),
         Ok(Err(refusal)) => Err(refusal),
         Err(error) => Err(format!("pushing `{target}` failed: {error}")),
     }
@@ -267,6 +278,35 @@ fn write_tree(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hosted_links_follow_the_push_destination_in_a_fork_workflow() {
+        let pr = archon_core::pull_request::PullRequestRef::from_url(
+            "https://github.com/upstream/project/pull/375",
+        )
+        .unwrap();
+        let commit = "a".repeat(40);
+        for origin in [
+            "https://github.com/fork/project.git",
+            "git@github.com:fork/project.git",
+            "ssh://git@github.com/fork/project.git",
+        ] {
+            let link = hosted_link(origin, &commit, "1.png").unwrap();
+            assert_eq!(
+                link,
+                format!("https://github.com/fork/project/blob/{commit}/1.png?raw=true")
+            );
+            assert!(
+                !link.contains(&pr.repository),
+                "the PR's base is not the evidence host"
+            );
+        }
+        assert!(
+            hosted_link("/srv/local.git", &commit, "1.png")
+                .unwrap_err()
+                .contains("not a GitHub repository")
+        );
+    }
 
     #[test]
     fn only_image_bytes_name_an_image_type() {

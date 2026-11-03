@@ -101,8 +101,33 @@ fn evidence_refs(origin: &Path) -> Vec<(String, String)> {
         .collect()
 }
 
+async fn assert_uploaded(h: &Harness, item: &QueueItem, origin: &Path) {
+    let refs = evidence_refs(origin);
+    assert_eq!(refs.len(), 1, "{refs:?}");
+    let (name, commit) = &refs[0];
+    assert_eq!(name, &format!("refs/archon/evidence/{}/{commit}", item.id));
+    assert_eq!(
+        git(origin, &["ls-tree", "--name-only", commit]),
+        "1.png\n2.png"
+    );
+    // The run worktree is gone by now: its evidence files are no work to keep.
+    let before = origin.with_file_name("before.png");
+    std::fs::write(&before, image("before")).expect("a copy of the screenshot");
+    let blob = git(origin, &["rev-parse", &format!("{commit}:1.png")]);
+    assert_eq!(
+        blob,
+        git(origin, &["hash-object", before.to_str().unwrap()])
+    );
+    let branch = common::delivery::pushed(origin, &h.run(&item.id).await.branch).unwrap();
+    let shipped = git(origin, &["ls-tree", "-r", "--name-only", &branch]);
+    assert!(
+        !shipped.contains(".archon/evidence"),
+        "never on the branch: {shipped}"
+    );
+}
+
 #[tokio::test]
-async fn a_delivery_leads_with_its_summary_and_shows_hosted_before_and_after_screenshots() {
+async fn a_delivery_uploads_evidence_and_does_not_invent_github_links_for_a_local_origin() {
     let (h, gh, origin) = delivering().await;
     let files = [
         ("before.png", image("before")),
@@ -125,43 +150,17 @@ async fn a_delivery_leads_with_its_summary_and_shows_hosted_before_and_after_scr
         "{said}"
     );
     assert!(
-        said.contains("; 1 screenshot(s) could not be attached"),
+        said.contains("; 3 screenshot(s) could not be attached"),
         "{said}"
     );
-    let refs = evidence_refs(&origin);
-    assert_eq!(refs.len(), 1, "{refs:?}");
-    let (name, commit) = &refs[0];
-    assert_eq!(name, &format!("refs/archon/evidence/{}/{commit}", item.id));
-    assert_eq!(
-        git(&origin, &["ls-tree", "--name-only", commit]),
-        "1.png\n2.png"
-    );
-    // The run worktree is gone by now: its evidence files are no work to keep.
-    let before = origin.with_file_name("before.png");
-    std::fs::write(&before, image("before")).expect("a copy of the screenshot");
-    let blob = git(&origin, &["rev-parse", &format!("{commit}:1.png")]);
-    assert_eq!(
-        blob,
-        git(&origin, &["hash-object", before.to_str().unwrap()])
-    );
-    let branch = common::delivery::pushed(&origin, &h.run(&item.id).await.branch).unwrap();
-    let shipped = git(&origin, &["ls-tree", "-r", "--name-only", &branch]);
-    assert!(
-        !shipped.contains(".archon/evidence"),
-        "never on the branch: {shipped}"
-    );
+    assert_uploaded(&h, &item, &origin).await;
 
     let (_, body) = gh.pr_labels(1);
     let top = "<!-- archon-summary -->\nRisk level: medium\n\n## What changed\n\n\
                made the queue show each item's risk. before: none → now: a chip.\n";
     assert!(body.starts_with(top), "{body}");
-    let link = |n: u8| format!("https://github.com/o/r/blob/{commit}/{n}.png?raw=true");
     for said in [
-        format!(
-            "| ![Queue screen, before]({}) | ![Queue screen, after]({}) |",
-            link(1),
-            link(2)
-        ),
+        "| _The screenshot could not be attached: the evidence push destination is not a GitHub repository_ |".to_owned(),
         "| p50 ms | 31 | 30 |".to_owned(),
         "**Detail**\n\n_The screenshot could not be attached: it is not a PNG".to_owned(),
         "_Note: `before` left out: `/home/me/x.png` is a local path".to_owned(),
@@ -170,6 +169,7 @@ async fn a_delivery_leads_with_its_summary_and_shows_hosted_before_and_after_scr
     ] {
         assert!(body.contains(&said), "missing {said:?} in {body}");
     }
+    assert!(!body.contains("https://github.com/o/r/blob/"), "{body}");
     let at = |part: &str| {
         body.find(part)
             .unwrap_or_else(|| panic!("{part} in {body}"))
@@ -224,4 +224,37 @@ async fn no_evidence_and_a_missing_summary_are_said() {
     ] {
         assert!(body.contains(said), "missing {said:?} in {body}");
     }
+}
+
+#[tokio::test]
+async fn an_oversized_existing_body_keeps_evidence_and_saves_the_full_text_in_the_summary() {
+    let (h, gh, _) = delivering().await;
+    let item = h
+        .enqueue_in("direct", "fit the body", ModelPlan::default())
+        .await
+        .unwrap();
+    h.dispatch().await;
+    let stage = h.running().await.remove(0);
+    let evidence = json!([{"kind": "table", "caption": "Behaviour", "columns": ["before", "after"],
+        "rows": [["missing sections", "visible evidence"]]}]);
+    let outcome = shipped_by(&h, &stage, "Changed it", record_extra(evidence)).await;
+    let branch = h.run(&item.id).await.branch;
+    gh.open(&branch, "main");
+    let detail = format!(
+        "## Technical detail\n\n{}\nFull text ends here.",
+        "x".repeat(60_000)
+    );
+    gh.label_pr(7, &[], &detail);
+    h.settle_running(|_| outcome.clone()).await;
+    h.dispatch().await;
+
+    let said = summary(&h, &item).await;
+    let (_, body) = gh.pr_labels(7);
+    assert!(body.chars().count() <= 60_000);
+    assert!(body.starts_with("<!-- archon-summary -->\nRisk level: medium"));
+    assert!(body.contains("| missing sections | visible evidence |"));
+    assert!(body.contains("(truncated:") && body.contains("full text in the run summary)"));
+    assert!(!body.contains("Full text ends here."));
+    assert!(said.contains(&detail), "the omitted text is recoverable");
+    assert!(!said.contains("sections could not be written"));
 }

@@ -208,6 +208,7 @@ interface DesktopBridge {
   pickDirectory(purpose: string): Promise<string | null>;
   notify(n: {title: string; body: string; route?: string}): void;
   openExternal(url: string): Promise<void>;      // https: only
+  openRemote(origin: string): Promise<void>;     // an entry of remote.origins; opens a remote window (ARCHITECTURE.md §c)
   onDeepLink(cb: (route: string) => void): () => void;       // aether-app://open?route=…
   diagnostics(): Promise<{versions: Record<string, string>; daemons: LocalDaemon[]; logPath: string}>;
   getPreference(key: PreferenceKey): Promise<unknown>;
@@ -249,6 +250,14 @@ connection that main discovered locally. Main:
 - sends exactly the confirmed frame.
 The renderer supplies no frame and no display text. Calls from any frame
 other than the top-level `app://` document are refused.
+
+`remote.origins` holds at most 16 exact `https://host[:port]` origins: no
+path, query, fragment or userinfo, normalized to lowercase ASCII (IDN as
+punycode). `openRemote` refuses any other value. A remote window is
+unprivileged (ARCHITECTURE.md §c): it has no preload and no bridge, its
+title shows the origin, and main holds no IPC channel to it. Remote
+connections therefore never use the `ipc` transport; inside a remote window
+`core` runs as `host.browser` with `ws-aether` and `ws-archon`.
 
 ### 2.5 Shared frontend types (Frozen; A1 writes them, A2/A3/A4 implement)
 
@@ -460,6 +469,27 @@ not before. Mutations take `idempotency_key`.
 
 The conversation itself is the agent's transcript (`get_transcript_page`).
 
+**Sealed fields (Frozen; owner F3, tests F7).** `noesis.ask` `answer_key` and
+`explanation`, and `noesis.problem` `solution`, are *sealed*. The runtime
+seals them where the tool call is produced and persisted, so every read path
+sees the same projection, for every standing including `local`:
+- No `tool_input` delta is produced for a sealed tool call. The tool name is
+  known when the call starts, so this happens before `invocation_seq` is
+  assigned (§1.1) and leaves no gap.
+- The persisted tool-call entry stores the input with each sealed field
+  replaced by the string `"<sealed>"`. `get_transcript_page`, `get_events`,
+  `subscribe`, agent reads, run reports and logs
+  therefore never carry the value. The value is kept only in `noesis.db`,
+  keyed by question or problem id.
+- `thinking` of `subsystem = "noesis"` agents is neither produced as a delta
+  nor returned by any transcript read.
+- Reveal is only through Noesis objects: `QuestionResult` in
+  `noesis.answer_recorded` after the answer is recorded, and `solution` in
+  `noesis.practice_concluded` after `conclude`. The transcript stays sealed.
+- No command, of any class, reads a sealed value before its reveal. Outside
+  the daemon, the plaintext exists only in `noesis.db` and the engine CLI's
+  own session files on the host (the user's own files, mode 0600).
+
 **Wire objects (Frozen).** Ids are opaque strings with prefixes `ns_`
 (session), `q_` (question), `p_` (proposition), `c_` (chain), `k_` (concept),
 `s_` (source) and `j_` (job). Proposition and chain ids are content-derived.
@@ -499,7 +529,7 @@ Evidence       = {id: u64, concept, session?, at, kind: probe_answer|predict_ans
 | `noesis.answer_recorded` | `{session, result: QuestionResult}` |
 | `noesis.plan_updated` | `{session, plan: PlanTree}` |
 | `noesis.problem_posed` | `{session, problem: Problem}` |
-| `noesis.practice_concluded` | `{session, problem, outcome: solved\|solved_with_hints\|moved_on\|surrendered\|dismissed, rung?, miss_class?, retest: bool}` |
+| `noesis.practice_concluded` | `{session, problem, outcome: solved\|solved_with_hints\|moved_on\|surrendered\|dismissed, rung?, miss_class?, retest: bool, solution: string}` |
 | `noesis.job_updated` | `{job: Job}` |
 | `noesis.graph_merged` | `{job, stats}` |
 | `noesis.learner_updated` | `{concepts: ConceptId[]}` |

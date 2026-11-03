@@ -103,8 +103,9 @@ Rules:
   connection is live. Agents of Archon runs show in the Aether fleet either
   way, labelled by role (`archon-run:*`), so nothing is hidden when Archon is
   down.
-- *Local versus remote:* `local` standing exists only inside Electron and only
-  for daemons on the same host. A browser never gets it (§d).
+- *Local versus remote:* `local` standing exists only inside Electron's
+  `app://` renderer and only for daemons on the same host. A browser never
+  gets it, nor does an Electron remote window (§c, §d).
 - *Operator versus observer:* `can.operate.*` is false for observers. Mutating
   controls render disabled with the reason. Requests the daemon refuses
   (`forbidden`) are shown, not retried.
@@ -128,9 +129,10 @@ the session:
 - Navigation is pinned to `app://`. `setWindowOpenHandler` denies.
   `openExternal` accepts only `https:` URLs. Permission handlers deny by
   default, allowing only notifications.
-- The renderer CSP is `default-src 'self'`, with `connect-src` limited to
-  `'self'` plus the remote origins the user added in settings. The main process
-  sets it on every `app://` response.
+- The renderer CSP is `default-src 'self'` with `connect-src 'self'`; the
+  main process sets it on every `app://` response. The `app://` renderer
+  never opens a network connection: it reaches local daemons only through
+  IPC, and remote daemons only through a remote window (below).
 - Every IPC call is checked in main for: the sender frame URL (must be the
   top-level `app://` document); the payload against the generated JSON
   Schema; the command against an allowlist built from each daemon's access
@@ -164,10 +166,30 @@ Discovery and lifecycle:
   (new session, stdio to the daemons' own logs, `unref`). The daemons are never
   Electron's children, so quitting Electron, closing windows or crashing the
   renderer stops nothing. Electron never sends `shutdown`.
-- A remote connection from the desktop app is a device connection exactly as in
-  a browser: the WS carrier, device key, role. Local IPC methods are bound to
-  local connection ids only. Electron never forwards a remote request into a
-  local socket.
+- **Remote daemons open in a remote window, never in the `app://` renderer.**
+  Reason: the remote listeners admit only their own HTTPS origins (Origin and
+  `Sec-Fetch-Site` checks) and Archon's device cookie is `SameSite=Strict`, so
+  an `app://` page cannot authenticate to them without weakening those
+  checks. A remote window is a separate `BrowserWindow` that loads the remote
+  listener's own `https://` origin (one entry of the `remote.origins`
+  preference), which serves the same `web/dist/` (task A5). It is the browser
+  case exactly: same origin, device key in that origin's IndexedDB, Archon
+  cookie under `/archon`, every existing Origin, cookie and CSP check
+  unchanged. Its rules:
+  - no preload and no `window.desktop`, so `host.browser`, no `local`
+    standing and no privileged actions; it has the same baseline options
+    (`contextIsolation`, `sandbox`, no Node, `webSecurity: true`);
+  - its own persistent session partition per origin
+    (`persist:remote:<sha256(origin)>`), never shared with `app://` or with
+    another origin; removing the origin clears that partition;
+  - navigation and redirects are pinned to that exact origin; anything else
+    is denied or sent to `openExternal`; `setWindowOpenHandler` denies;
+  - permission handlers deny everything except notifications; certificate
+    errors are never overridden;
+  - main never injects credentials, headers or scripts into it and keeps no
+    IPC channel to it.
+  Local IPC methods are bound to local connection ids only, and Electron
+  never forwards anything from a remote window into a local socket.
 
 Packaging: electron-builder produces an AppImage and a deb for Linux, and a
 dmg/zip for macOS (signed and notarized when maintainer credentials exist,
@@ -392,6 +414,15 @@ Off-by-default guarantees (issue §8), each with a test in task F7:
   Noesis invocation is charged to the Noesis budgets on the same path. F3
   owns the guard. F7 tests each generic command, and a daemon restart with
   a parked Noesis agent.
+- **Answers stay hidden on every read path.** Noesis agents are ordinary
+  agents, so the generic transcript, event and delta reads would otherwise
+  show the committed answer key or solution in their tool calls. The
+  runtime seals those fields where the call is produced and persisted
+  (CONTRACTS.md §6.2), before any client, local or remote, can read them;
+  they are revealed only through Noesis objects after the answer. Residual
+  risk: the model can still restate an answer in its visible text; the
+  prompts forbid it and parity test T5 checks it. F3 owns the seal and F7
+  tests it.
 - Engineering context and the two automatic extraction modes are further
   switches, all off by default. Their dependencies are:
 

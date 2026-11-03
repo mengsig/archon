@@ -135,7 +135,10 @@ deliberate differences from upstream are:
 - **Harness tools** (registered only while Noesis is enabled, and only for
   `noesis.*` roles):
   - `noesis.ask {kind: choice|recall|goal, prompt, options?, answer_key, explanation, plan_node?, concepts?}`;
-    `answer_key` is committed before the learner sees the question;
+    `answer_key` is committed before the learner sees the question.
+    `answer_key`, `explanation` and the `noesis.problem` `solution` are
+    sealed (CONTRACTS.md §6.2): no delta, transcript, event or log shows
+    them before the answer or `conclude` reveals them;
   - `noesis.probe_done`;
   - `noesis.plan`;
   - `noesis.problem` / `noesis.conclude`;
@@ -230,13 +233,13 @@ behaviour list. Where Noesis deliberately differs, the row says how.
 | T2 | `probe_done` is refused while a question is open and on a second call; a fixed short acknowledgement; the hand-off starts the Teacher, and recovery works if the wake fails | same |
 | T3 | Phase moves probe → plan on `probe_done`, and plan → teach on the first question tagged with a plan node; a plan alone does not advance it | the stored phase equals the fold over events |
 | T4 | A question pose ends the run, including mixed tool batches. An invalid pose returns an error, and the model may retry. The pending question is derived from the record. | same |
-| T5 | Question authoring: ≥ 2 options; the answer key matches the option values; multi-select is graded as an exact set; `plan_node` exists; recall needs a committed answer key | same |
+| T5 | Question authoring: ≥ 2 options; the answer key matches the option values; multi-select is graded as an exact set; `plan_node` exists; recall needs a committed answer key | same, plus: the posing turn's visible text does not contain a choice answer key's option label or a recall key verbatim |
 | T6 | Deterministic option shuffle and local grading; confidence stops 0/30/50/70/90/100, default 50; "don't know" excludes confidence | same |
 | T7 | Reveal rule: teach-phase checks are collapsed; predictions, probes and goal questions are never collapsed | same |
 | T8 | Plan validation: slug ids, cycles, self-loops, duplicates and missing endpoints rejected, with every problem reported; a rewrite replaces the whole plan | JSON DAG instead of Mermaid |
 | T9 | Plan-node status (current, visited, upcoming) is derived from the latest tagged question | same |
 | T10 | Practice gate: one active problem; `conclude` with none is refused; conclude then problem in one turn works; target names normalize to ids; an unknown target is refused | same |
-| T11 | `conclude` enums (outcome, rung, miss class, retest); the solution is hidden until `conclude`; practice never writes to the graph | same, plus learner evidence (§5) |
+| T11 | `conclude` enums (outcome, rung, miss class, retest); the solution is hidden until `conclude`; practice never writes to the graph | same, plus learner evidence (§5); the solution is sealed on every generic read path |
 | T12 | Malformed tool arguments (stringified arrays, quoted enums) are healed | same |
 
 **Service (S, tasks F3 and F7)**

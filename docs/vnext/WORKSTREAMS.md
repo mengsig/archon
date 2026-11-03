@@ -142,8 +142,13 @@ are relative to the repository root.
   `web/eslint.config.js`, `web/scripts/**`, `web/schemas/**`,
   `web/packages/protocol/**`, `.github/workflows/web.yml`, and the `web`
   target in `Makefile`.
-- **Depends on:** none (uses the schemas at the current HEAD; the SYNC errand
-  regenerates them after AE-P and AR-P).
+- **Depends on:** none. The Aether module generates from
+  `clients/protocol.schema.json` at the current HEAD. Archon has no schema
+  until AR-P (BASELINE.md §2), so A1 tests the Archon generator against a
+  fixture schema under `web/scripts/fixtures/` and does not add
+  `web/schemas/archon.protocol.schema.json`. The first SYNC errand after
+  AR-P vendors it and generates the Archon module; `npm run check` passes
+  with and without that file.
 - **Size:** M · **Pipeline:** adaptive
 - **Acceptance:** `npm run check` passes on a clean clone. The generator is
   deterministic: run twice, the second run gives no diff. A lint test proves
@@ -518,10 +523,10 @@ are relative to the repository root.
 #### E1. Main process, preload and validated bridge
 - **Goal:** implement `window.desktop` per CONTRACTS.md §2.4 with the
   ARCHITECTURE.md §c security baseline: `app://` protocol, CSP, schema
-  validation, class allowlist, and native confirmation for privileged
-  actions.
+  validation, class allowlist, native confirmation for privileged
+  actions, and unprivileged remote windows (`openRemote`).
 - **Owns:** `web/apps/desktop/{package.json,package-lock.json,tsconfig.json}`,
-  `web/apps/desktop/src/{main,preload,bridge,security}/**`, `web/apps/desktop/test/security/**`
+  `web/apps/desktop/src/{main,preload,bridge,security,remote}/**`, `web/apps/desktop/test/security/**`
 - **Depends on:** A2
 - **Size:** L · **Pipeline:** adaptive
 - **Acceptance:**
@@ -542,6 +547,15 @@ are relative to the repository root.
       value, and a patch too large to show in full is refused;
     - the frame sent equals the frame confirmed.
   - Credentials never cross IPC (grep test on the bridge types).
+  - Remote windows: a test asserts no preload, `sandbox`,
+    `contextIsolation`, `webSecurity: true`, a per-origin partition
+    distinct from `app://`'s, navigation and redirects pinned to the exact
+    origin, window-open denial, and no IPC handler answering their
+    `webContents`. `openRemote` refuses `http:`, a path, userinfo and an
+    origin not in `remote.origins`. Against a fixture HTTPS server that
+    enforces Origin and a `SameSite=Strict` cookie, a remote window
+    authenticates with no relaxed check, and `app://` has no
+    `connect-src` to it.
 - **Title:** vNext E1: Electron main process, preload and validated IPC bridge
 
 #### E2. Native integration, discovery and lifecycle
@@ -615,8 +629,10 @@ are relative to the repository root.
 - **Owns:** `crates/aether-protocol/**`, `clients/**`, `crates/aether-daemon/src/noesis/**` (new),
   `crates/aether-runtime/src/noesis_guard.rs` (new), the guard's call sites in
   scheduler dispatch, in the generic agent command handlers and in startup
-  recovery, the registration lines in the Aether daemon dispatch, and
-  CONTRACTS.md §6.5 (text)
+  recovery, `crates/aether-runtime/src/noesis_seal.rs` (new) and its call
+  sites where tool calls and thinking are produced as deltas and persisted
+  to the transcript (code AE-P merged earlier), the registration lines in
+  the Aether daemon dispatch, and CONTRACTS.md §6.5 (text)
 - **Depends on:** AE-P, F1
 - **Size:** M · **Pipeline:** adaptive
 - **Acceptance:**
@@ -631,6 +647,11 @@ are relative to the repository root.
   - With Noesis disabled, `send_message`, `reply_to_question`, `wake`,
     `resume` and `steer` to a Noesis agent start no model call.
   - Every Noesis invocation is charged to the Noesis budgets.
+  - Sealed fields (CONTRACTS.md §6.2): for a posed question and an active
+    problem, no `tool_input` delta is produced and `invocation_seq` stays
+    gapless; the persisted entry holds `"<sealed>"`; `thinking` of Noesis
+    agents is never produced or returned; and the values appear only in
+    `noesis.answer_recorded` and `noesis.practice_concluded`.
 - **Title:** vNext F3: Noesis protocol commands, events and daemon wiring
 
 #### F4. Learner model
@@ -684,6 +705,12 @@ are relative to the repository root.
   - Each guarantee is its own named test.
   - The bypass tests cover every generic agent command, and a daemon
     restart with a parked Noesis agent while disabled.
+  - Hidden answers: with a question open and with a problem active, a
+    `local` client and an observer device each read `get_transcript_page`,
+    `get_events`, a live delta subscription, agent reads and the daemon
+    log, both on a fresh subscription and after a reconnect, and none
+    contains the answer key, explanation or solution until the answer or
+    `conclude` is recorded.
   - The differential harness is opt-in and needs a local LearnHarness
     checkout. CI never runs it.
 - **Title:** vNext F7: Noesis off-by-default guarantees and behavioural parity suite
@@ -804,8 +831,8 @@ PR, and a regression without an explained trade-off blocks it.
 
 #### H3. Security audit of remote and desktop
 - **Goal:** audit the mount, the Archon roles and standing, the Electron
-  bridge and CSP, pairing across the shared origin, and Noesis data
-  boundaries. Findings are fixed in the owning task, or filed.
+  bridge and CSP, Electron remote windows, pairing across the shared origin,
+  and Noesis data boundaries including sealed fields. Findings are fixed in the owning task, or filed.
 - **Owns:** `docs/security/vnext-audit.md` in each repository
 - **Depends on:** AE-M, AR-L, E2, F6
 - **Size:** S · **Pipeline:** code-audit
@@ -816,7 +843,11 @@ PR, and a regression without an explained trade-off blocks it.
 #### H4. Cross-daemon flows (exclusive)
 - **Goal:** e2e flows: Aether only; Aether with Archon; an observer device;
   an issue imported through to a merged PR (stubbed `gh`); Noesis off, then
-  on; and the desktop bridge against the same daemons.
+  on; the desktop bridge against the same daemons; and an Electron remote
+  window that pairs with the real Aether listener and the mounted archond
+  over a loopback HTTPS test origin, reconnects after a daemon restart,
+  and, paired as observer, is refused every operate command, with the
+  listeners' Origin and cookie checks unchanged.
 - **Owns:** `web/e2e/specs/flows/**`
 - **Depends on:** H1, D4, F7, E2
 - **Size:** M · **Pipeline:** e2e-testing

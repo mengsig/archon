@@ -136,12 +136,13 @@ async fn a_delivery_leads_with_its_summary_and_shows_hosted_before_and_after_scr
         git(&origin, &["ls-tree", "--name-only", commit]),
         "1.png\n2.png"
     );
-    let workspace = h.run(&item.id).await.workspace;
-    let before = workspace.join(".archon/evidence/before.png");
+    // The run worktree is gone by now: its evidence files are no work to keep.
+    let before = origin.with_file_name("before.png");
+    std::fs::write(&before, image("before")).expect("a copy of the screenshot");
     let blob = git(&origin, &["rev-parse", &format!("{commit}:1.png")]);
     assert_eq!(
         blob,
-        git(&workspace, &["hash-object", before.to_str().unwrap()])
+        git(&origin, &["hash-object", before.to_str().unwrap()])
     );
     let branch = common::delivery::pushed(&origin, &h.run(&item.id).await.branch).unwrap();
     let shipped = git(&origin, &["ls-tree", "-r", "--name-only", &branch]);

@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use super::{Clipped, Evidence, Image, Item, Shown};
-use crate::layout::{EVIDENCE_END, EVIDENCE_START, defused};
+use crate::layout::{EVIDENCE_END, EVIDENCE_START, defused, wrap};
 
 /// The characters one section may take; entries past them are left out.
 pub const MAX_SECTION_CHARS: usize = 16_000;
@@ -16,7 +16,7 @@ pub type Hosted = BTreeMap<String, Result<String, String>>;
 /// links of its uploaded files.
 pub fn section(evidence: &Evidence, by: &str, hosted: &Hosted) -> String {
     assert!(!by.is_empty(), "a stage gave the evidence");
-    let mut text = format!("{EVIDENCE_START}\n## Evidence\n\n");
+    let mut text = "## Evidence\n\n".to_owned();
     let mut dropped = evidence.dropped.clone();
     let mut shown = 0;
     for (n, item) in evidence.items.iter().enumerate() {
@@ -42,8 +42,8 @@ pub fn section(evidence: &Evidence, by: &str, hosted: &Hosted) -> String {
         }
         text.push('\n');
     }
-    let text = format!("{}\n{EVIDENCE_END}", text.trim_end());
-    debug_assert_eq!(text.matches(EVIDENCE_START).count(), 1, "one section");
+    let text = wrap(EVIDENCE_START, EVIDENCE_END, &text);
+    debug_assert!(text.ends_with(EVIDENCE_END), "one section");
     text
 }
 

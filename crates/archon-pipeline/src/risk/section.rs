@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::Assessment;
-use crate::layout::{RISK_END as END, RISK_START as START, defused};
+use crate::layout::{RISK_END as END, RISK_START as START, wrap};
 
 /// Files named one by one; the rest are counted.
 const MAX_FILES: usize = 25;
@@ -136,20 +136,24 @@ pub fn section(assessment: &Assessment, evidence: Evidence<'_>) -> String {
         "the label's fate is told"
     );
     let level = assessment.level;
-    let mut text = format!(
-        "{START}\n## Risk: {level}\n\n**{}**\n\n<details>\n<summary>Why this level, and the \
+    let mut inner = format!(
+        "## Risk: {level}\n\n**{}**\n\n<details>\n<summary>Why this level, and the \
          diff, checks, review and label</summary>\n\n**Why this level.** {}\n\n{}\n\n\
          **Evidence**\n\n",
         level.meaning(),
         assessment.decided,
-        defused(assessment.why.trim())
+        assessment.why.trim()
     );
     for line in evidence_lines(evidence) {
-        text.push_str(&format!("- {line}\n"));
+        inner.push_str(&format!("- {line}\n"));
     }
-    text.push_str("\n</details>\n");
-    text.push_str(END);
-    debug_assert_eq!(text.matches(START).count(), 1, "one section");
+    inner.push_str("\n</details>");
+    // Checks, files, the review line and gh's errors are an agent's or a remote's text.
+    let text = wrap(START, END, &inner);
+    debug_assert!(
+        text.starts_with(START) && text.ends_with(END),
+        "one section"
+    );
     text
 }
 

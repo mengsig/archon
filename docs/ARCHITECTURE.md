@@ -2978,9 +2978,12 @@ The record's `pr.body` is the technical detail, under "Technical detail".
 `layout::compose` removes every well-formed section it owns wherever it
 sits, then writes summary and evidence on top and the risk section at the
 foot, so a refresh, retry or `onto` delivery replaces each in place, never
-twice, and the owner's text between them is kept; a start marker with no
-end is left as text. Agent text is defused (`<!--` becomes `<! --`), so it
-cannot end or forge a section. `Evidence::read` validates at the boundary:
+twice, and the owner's text between them is kept. A marker counts only on a
+line of its own, and an end marker pairs with the nearest start before it, so
+a stray marker is left as text and takes nothing around it. Everything inside
+a section (`layout::wrap`) and the record's text (`pr_text`) is defused
+(`<!--` becomes `<! --`), so an agent's or a remote's text cannot end or
+forge a section. `Evidence::read` validates at the boundary:
 at most 10 entries of kind `screenshot` (`before`/`after`, an `https://`
 link or a worktree-relative file under `.archon/evidence/` or
 `.archon/reports/`), `table` (at most 8 columns and 25 rows of 120

@@ -67,7 +67,12 @@ pub(crate) async fn host(
     let Some(pr) = PullRequestRef::from_url(pr_url) else {
         return all_failed("the pull request's URL names no GitHub repository");
     };
-    let (mut hosted, uploads) = readable(source.workspace, &files);
+    let (workspace, named) = (source.workspace.to_path_buf(), files.clone());
+    let read = tokio::task::spawn_blocking(move || readable(&workspace, &named)).await;
+    let (mut hosted, uploads) = match read {
+        Ok(read) => read,
+        Err(e) => return all_failed(&format!("reading the screenshots failed: {e}")),
+    };
     if uploads.is_empty() {
         return hosted;
     }
@@ -152,7 +157,7 @@ fn image_file(workspace: &Path, named: &str) -> Result<(PathBuf, &'static str, u
     assert!(workspace.is_absolute(), "a run worktree");
     let found = FILE_ROOTS.iter().find(|root| named.starts_with(*root));
     let Some(within) = found else {
-        panic!("checked when the result was read: {named}")
+        return Err(format!("it is not under {}", FILE_ROOTS.join(" or ")));
     };
     let canonical = |path: &Path| path.canonicalize().map_err(|e| e.to_string());
     let tree = canonical(workspace).map_err(|e| format!("the worktree is unreadable: {e}"))?;
@@ -301,5 +306,7 @@ mod tests {
             why(2)
         );
         assert!(why(3).contains("it is not there"), "{}", why(3));
+        let stray = image_file(&tree, "src/main.png").unwrap_err();
+        assert!(stray.contains("not under .archon/evidence/"), "{stray}");
     }
 }

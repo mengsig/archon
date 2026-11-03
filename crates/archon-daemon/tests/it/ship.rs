@@ -144,7 +144,10 @@ async fn archond_opens_the_pull_request_and_no_agent_ships() {
     assert!(gh.calls().iter().any(|c| c.starts_with(&create)));
     let (title, body) = gh.created();
     assert_eq!(title, "Change the thing");
-    assert!(body.starts_with("Why, and how it was verified."), "{body}");
+    assert!(
+        body.starts_with("## Technical detail\n\nWhy, and how it was verified."),
+        "{body}"
+    );
     assert!(
         body.ends_with(&format!("Archon item: {}\n", item.id)),
         "{body}"
@@ -540,7 +543,10 @@ async fn without_attribution_the_pull_request_names_no_item() {
 
     succeeded(&h, &item).await;
     let (_, body) = gh.created();
-    assert!(body.starts_with("Why, and how it was verified."), "{body}");
+    assert!(
+        body.starts_with("## Technical detail\n\nWhy, and how it was verified."),
+        "{body}"
+    );
     assert!(!body.contains("Archon item:"), "{body}");
     assert!(!body.contains(item.id.as_str()), "{body}");
 }

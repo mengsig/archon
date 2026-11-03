@@ -237,7 +237,10 @@ async fn an_atomic_initiative_opens_drafts_and_readies_them_together() {
         assert_eq!(all[branch]["isDraft"], false, "{all}");
         let body = all[branch]["body"].as_str().unwrap();
         assert!(body.contains("Part of Rename the account field"), "{body}");
-        assert!(body.starts_with("Why, and how it was verified."), "{body}");
+        assert!(
+            body.starts_with("## Technical detail\n\nWhy, and how it was verified."),
+            "{body}"
+        );
     }
     assert_eq!(merges(&h), 0, "the operator merges an atomic set together");
     let state = h.ctx.store.lock().await.initiative(&detail.initiative.id);

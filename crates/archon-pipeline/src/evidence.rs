@@ -25,6 +25,8 @@ pub const MAX_OUTPUT_LINES: usize = 40;
 pub const MAX_OUTPUT_CHARS: usize = 3_000;
 /// The longest "no evidence" reason kept, in characters.
 pub const MAX_REASON_CHARS: usize = 300;
+/// At most this many entries are named as not shown; the rest are counted.
+pub const MAX_DROPPED: usize = 10;
 /// Where in the run worktree a screenshot file may lie: directories a
 /// delivery refuses to commit, so the file never reaches the branch.
 pub const FILE_ROOTS: [&str; 2] = [".archon/evidence/", ".archon/reports/"];
@@ -124,7 +126,9 @@ impl Evidence {
         }
         evidence.items.extend(captures);
         evidence.keep_at_most(MAX_ITEMS);
+        evidence.name_at_most(MAX_DROPPED);
         debug_assert!(evidence.items.len() <= MAX_ITEMS);
+        debug_assert!(evidence.dropped.len() <= MAX_DROPPED + 1);
         evidence
     }
 
@@ -167,6 +171,16 @@ impl Evidence {
             "{over} more entr{} left out: at most {max} are shown",
             if over == 1 { "y" } else { "ies" }
         ));
+    }
+
+    /// Keep the first `max` reasons for what was dropped, and count the rest.
+    fn name_at_most(&mut self, max: usize) {
+        if self.dropped.len() <= max {
+            return;
+        }
+        let over = self.dropped.len() - max;
+        self.dropped.truncate(max);
+        self.dropped.push(format!("{over} more left out, unnamed"));
     }
 
     /// Every file a screenshot names, for the delivery to upload.

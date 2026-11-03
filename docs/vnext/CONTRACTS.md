@@ -166,10 +166,16 @@ A3 creates the empty skeleton (`package.json`, `src/index.ts`) for every
 feature package. Each `index.ts` loads its directories' `routes.ts` with
 `import.meta.glob`, so feature tasks never edit a shared index.
 
+The toolchain is Vite 7, not 8: Vite 8 pulls in lightningcss (MPL-2.0).
+Dependency licences are MIT, ISC, BSD or Apache-2.0, with three dev-only
+exceptions: minimatch (BlueOak-1.0.0), caniuse-lite (CC-BY-4.0) and axe-core
+(MPL-2.0, test-only, for A3's accessibility checks). None of the three may
+appear in a shipped bundle.
+
 ### 2.2 Import rules (Frozen, enforced by lint in A1)
 
 - `protocol` imports nothing. `graph` and `ui` import only React and
-  `protocol` types. `core` imports `protocol`.
+  `protocol` types, and `graph` also d3-force. `core` imports `protocol`.
 - Feature packages import `core`, `ui`, `graph` and `protocol`, **never each
   other**. They cross over only through routes (§2.3) and the entity-action
   registry.
@@ -269,6 +275,8 @@ connections therefore never use the `ipc` transport; inside a remote window
 
 These types live in `web/packages/protocol/src/app.ts`, so `ui` and `graph`
 can use them without importing `core`. Runtime registries are in `core`.
+`app.ts` also declares the types §2.4 names, `LocalDaemon` and
+`NoesisSettingsPatch` among them.
 
 ```ts
 type ConnId = string;                                   // §5.1

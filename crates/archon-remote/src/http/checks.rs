@@ -29,12 +29,13 @@ pub struct Allowed {
 
 impl Allowed {
     pub fn now(shared: &Shared, bound: SocketAddr) -> Self {
-        let local = local_origins(bound);
         if shared.config.mounted_at.is_some() {
-            return Self::serving(&local, shared.config.trusted_origins.clone());
+            // Aether mounts only loopback targets, whatever address is bound.
+            let loopback = loopback_origins(bound);
+            return Self::serving(&loopback, shared.config.trusted_origins.clone());
         }
         let mut origins = shared.lock().stored.public_origins.clone();
-        origins.extend(local);
+        origins.extend(local_origins(bound));
         Self::serving(&origins, origins.clone())
     }
 
@@ -89,16 +90,19 @@ impl Allowed {
     }
 }
 
-/// Loopback by number and by name on the bound port, and the bound address,
-/// each as browsers write it.
-fn local_origins(bound: SocketAddr) -> Vec<String> {
-    use archon_core::remote::{http_origin, local_origin};
+/// Loopback by number and by name on the bound port, as browsers write it.
+fn loopback_origins(bound: SocketAddr) -> Vec<String> {
     assert!(bound.port() > 0, "the listener is bound");
-    let mut origins: Vec<String> = ["127.0.0.1", "localhost", "[::1]"]
+    ["127.0.0.1", "localhost", "[::1]"]
         .into_iter()
-        .map(|host| http_origin(host, bound.port()))
-        .collect();
-    let local = local_origin(bound);
+        .map(|host| archon_core::remote::http_origin(host, bound.port()))
+        .collect()
+}
+
+/// [`loopback_origins`], and the bound address as browsers write it.
+fn local_origins(bound: SocketAddr) -> Vec<String> {
+    let mut origins = loopback_origins(bound);
+    let local = archon_core::remote::local_origin(bound);
     if !origins.contains(&local) {
         origins.push(local);
     }
@@ -300,9 +304,30 @@ mod tests {
     }
 
     #[test]
+    fn mounted_the_host_is_only_loopback_even_on_a_non_loopback_bind() {
+        let uri: Uri = "/".parse().unwrap();
+        let bound: SocketAddr = "192.0.2.1:8378".parse().unwrap();
+        assert!(local_origins(bound).contains(&"http://192.0.2.1:8378".to_owned()));
+        let mounted = Allowed::serving(&loopback_origins(bound), vec!["https://box.ts.net".into()]);
+        assert!(
+            mounted
+                .check_host(&headers(&[("host", "192.0.2.1:8378")]), &uri)
+                .is_err()
+        );
+        for host in ["127.0.0.1:8378", "localhost:8378", "[::1]:8378"] {
+            assert!(
+                mounted
+                    .check_host(&headers(&[("host", host)]), &uri)
+                    .is_ok(),
+                "{host}"
+            );
+        }
+    }
+
+    #[test]
     fn mounted_the_host_is_local_and_only_trusted_origins_are_accepted() {
         let uri: Uri = "/".parse().unwrap();
-        let local = local_origins("127.0.0.1:8378".parse().unwrap());
+        let local = loopback_origins("127.0.0.1:8378".parse().unwrap());
         let mounted = Allowed::serving(&local, vec!["https://box.ts.net".into()]);
         assert!(
             mounted

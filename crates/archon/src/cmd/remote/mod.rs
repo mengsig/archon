@@ -10,7 +10,7 @@ use std::fmt::Write as _;
 use std::process::ExitCode;
 
 use archon_client::ArchonClient;
-use archon_core::protocol::{DeviceRole, Reply, Request};
+use archon_core::protocol::{DeviceRole, Reply, Request, Welcome, feature};
 use archon_core::remote::{PairingCode, RemoteChange, RemoteView, normalize_origin};
 
 use super::{emit, to_json};
@@ -98,6 +98,7 @@ async fn open_pairing(client: &ArchonClient) -> anyhow::Result<PairingCode> {
 }
 
 async fn request_pairing(client: &ArchonClient, role: DeviceRole) -> anyhow::Result<PairingCode> {
+    check_role_served(client.welcome(), role)?;
     // An operator pairing is sent as before, so the request reads the same.
     let role = (role == DeviceRole::Observer).then_some(role);
     let code = match client.request(Request::RemotePair { role }).await? {
@@ -110,6 +111,19 @@ async fn request_pairing(client: &ArchonClient, role: DeviceRole) -> anyhow::Res
         "archond sent a malformed pairing code"
     );
     Ok(code)
+}
+
+/// An archond without `device_roles` drops the role and pairs an operator,
+/// so an observer is paired only by one that serves roles.
+fn check_role_served(welcome: &Welcome, role: DeviceRole) -> anyhow::Result<()> {
+    let served = welcome.features.iter().any(|f| f == feature::DEVICE_ROLES);
+    anyhow::ensure!(
+        served || role == DeviceRole::Operator,
+        "archond {} pairs operators only, since it does not serve device roles; \
+         upgrade or restart it on this archon to pair an observer",
+        welcome.daemon_version
+    );
+    Ok(())
 }
 
 /// The QR code of the first address (a public one when there is one), the
@@ -251,6 +265,22 @@ mod tests {
             text.contains("off") && text.contains("loopback only"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn an_observer_is_paired_only_by_an_archond_that_serves_roles() {
+        let mut welcome = archon_core::protocol::negotiate(
+            archon_core::protocol::ClientKind::ArchonCli,
+            archon_core::protocol::PROTOCOL_VERSION,
+            "test",
+            &[],
+        )
+        .unwrap();
+        check_role_served(&welcome, DeviceRole::Operator).expect("operators pair anywhere");
+        let refused = check_role_served(&welcome, DeviceRole::Observer).unwrap_err();
+        assert!(refused.to_string().contains("operators only"), "{refused}");
+        welcome.features.push(feature::DEVICE_ROLES.to_owned());
+        check_role_served(&welcome, DeviceRole::Observer).expect("roles are served");
     }
 
     #[test]

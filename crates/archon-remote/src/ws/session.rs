@@ -31,7 +31,7 @@ const SILENT_AFTER: Duration = Duration::from_secs(75);
 const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 const OUTBOX_FRAMES: usize = 256;
 const MAX_IN_FLIGHT: usize = 16;
-const MAX_SUBSCRIPTIONS: u64 = 4;
+const MAX_SUBSCRIPTIONS: usize = 4;
 
 /// How a session ended, and so how its socket is closed.
 #[derive(Debug)]
@@ -48,7 +48,10 @@ struct Session {
     outbox: mpsc::Sender<ServerFrame>,
     in_flight: Arc<Semaphore>,
     tasks: JoinSet<()>,
+    /// The last subscription id handed out; ids are never reused.
     subscriptions: u64,
+    /// One permit per live subscription, given back when its stream ends.
+    live_subscriptions: Arc<Semaphore>,
 }
 
 pub async fn carry<S>(
@@ -71,6 +74,7 @@ pub async fn carry<S>(
         in_flight: Arc::new(Semaphore::new(MAX_IN_FLIGHT)),
         tasks: JoinSet::new(),
         subscriptions: 0,
+        live_subscriptions: Arc::new(Semaphore::new(MAX_SUBSCRIPTIONS)),
     };
     let ended = match greet(&mut socket, &mut registration, &session).await {
         Ok(()) => run(&mut socket, &mut session, &mut frames, &mut registration).await,
@@ -306,13 +310,13 @@ fn subscribe(
     stream: Stream,
     after: Option<u64>,
 ) -> Result<(), Ended> {
-    if session.subscriptions >= MAX_SUBSCRIPTIONS {
-        let message = format!("at most {MAX_SUBSCRIPTIONS} subscriptions per connection");
+    let Ok(live) = session.live_subscriptions.clone().try_acquire_owned() else {
+        let message = format!("at most {MAX_SUBSCRIPTIONS} live subscriptions per connection");
         return queue(
             session,
             error_frame(id, ErrorCode::InvalidArgument, message),
         );
-    }
+    };
     session.subscriptions += 1;
     let sub = session.subscriptions;
     let (backend, outbox) = (session.backend.clone(), session.outbox.clone());
@@ -324,9 +328,10 @@ fn subscribe(
                 after,
                 verbose,
             };
-            session
-                .tasks
-                .spawn(async move { backend.feed(subscription, outbox).await });
+            session.tasks.spawn(async move {
+                backend.feed(subscription, outbox).await;
+                drop(live);
+            });
         }
         Stream::Changes => {
             let subscription = ChangeSubscription {
@@ -334,9 +339,10 @@ fn subscribe(
                 request: id,
                 after,
             };
-            session
-                .tasks
-                .spawn(async move { backend.changes(subscription, outbox).await });
+            session.tasks.spawn(async move {
+                backend.changes(subscription, outbox).await;
+                drop(live);
+            });
         }
     }
     Ok(())

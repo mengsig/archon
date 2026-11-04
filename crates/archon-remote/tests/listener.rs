@@ -10,7 +10,7 @@ use archon_core::protocol::{
     DeviceRole, MIN_WEB_PROTOCOL_VERSION, PROTOCOL_VERSION, Reply, Request, ServerFrame, feature,
 };
 use archon_core::remote::{RemoteChange, RemoteConfig};
-use archon_remote::{Backend, FeedSubscription, Remote};
+use archon_remote::{Backend, ChangeSubscription, FeedSubscription, Remote};
 use futures_util::{SinkExt as _, StreamExt as _};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpStream;
@@ -40,6 +40,18 @@ impl Backend for FakeArchond {
     }
 
     async fn feed(&self, subscription: FeedSubscription, frames: mpsc::Sender<ServerFrame>) {
+        let subscribed = ServerFrame::Reply {
+            id: subscription.request,
+            result: Ok(Reply::Subscribed {
+                id: subscription.id,
+                last_seq: 0,
+            }),
+        };
+        let _ = frames.send(subscribed).await;
+    }
+
+    /// Opens, then ends at once, as a lagging or refused stream does.
+    async fn changes(&self, subscription: ChangeSubscription, frames: mpsc::Sender<ServerFrame>) {
         let subscribed = ServerFrame::Reply {
             id: subscription.request,
             result: Ok(Reply::Subscribed {
@@ -744,4 +756,30 @@ async fn mounted_an_upgrade_from_loopback_is_refused() {
         panic!("a loopback origin is refused while mounted: {refused:?}");
     };
     assert_eq!(response.status(), 403);
+}
+
+/// A change stream that ended gives its slot back, so a client that must
+/// resubscribe (after a lag or a resync) always can; ids are never reused.
+#[tokio::test]
+async fn an_ended_change_subscription_frees_its_slot() {
+    let listener = Listener::start().await;
+    let cookie = listener.pair().await;
+    let mut socket = listener.socket(&cookie).await;
+    let mut ids = Vec::new();
+    for req in 2..10 {
+        let frame = serde_json::json!({"req": req, "cmd": "subscribe_changes", "after": 0});
+        let opened = exchange(&mut socket, frame).await;
+        assert_eq!(opened["id"], req, "{opened}");
+        assert_eq!(opened["result"]["Ok"]["reply"], "subscribed", "{opened}");
+        ids.push(
+            opened["result"]["Ok"]["data"]["id"]
+                .as_u64()
+                .expect("an id"),
+        );
+    }
+    assert_eq!(
+        ids,
+        (1..=8).collect::<Vec<u64>>(),
+        "fresh ids, past the limit of 4"
+    );
 }

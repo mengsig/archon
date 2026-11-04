@@ -4,14 +4,20 @@
 //! every committed change, once and in order, to live subscribers, and one
 //! that falls behind the bounded buffer is closed, never buffered further.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 use archon_core::protocol::changes::MAX_CHANGES_PAGE;
-use archon_core::protocol::{Change, ErrorReply, ItemQuery, Reply, ServerFrame, feature};
+use archon_core::protocol::{
+    Change, ClientKind, ErrorReply, ItemQuery, ItemSummary, Reply, ServerFrame, TransitionActor,
+    feature,
+};
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc;
@@ -65,6 +71,38 @@ impl ChangeHub {
 impl Default for ChangeHub {
     fn default() -> Self {
         Self::new(CHANGE_BUFFER, 0)
+    }
+}
+
+/// Who `item_history` says made the transitions a client's request records.
+fn actor_of(client: ClientKind) -> TransitionActor {
+    match client {
+        ClientKind::ArchonCli | ClientKind::ArchonBench => TransitionActor::Cli,
+        ClientKind::ArchonMcp => TransitionActor::Mcp,
+        ClientKind::ArchonWeb => TransitionActor::Web,
+    }
+}
+
+/// A request's future, polled with the store attributing its item
+/// transitions to the client; tasks it spawns act for the daemon.
+pub(super) struct Attributed<F> {
+    actor: TransitionActor,
+    request: Pin<Box<F>>,
+}
+
+pub(super) fn attributed<F: Future>(client: ClientKind, request: F) -> Attributed<F> {
+    Attributed {
+        actor: actor_of(client),
+        request: Box::pin(request),
+    }
+}
+
+impl<F: Future> Future for Attributed<F> {
+    type Output = F::Output;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<F::Output> {
+        let actor = self.actor;
+        archon_queue::store::acting_as(actor, || self.request.as_mut().poll(cx))
     }
 }
 
@@ -131,25 +169,50 @@ pub(super) async fn item_history(
     })
 }
 
+/// Reads of `summaries_at` before it answers with waiting reasons that may
+/// predate a change it covers.
+const SUMMARY_ATTEMPTS: usize = 3;
+
 /// `list_item_summaries` with `with_as_of`: the summaries and the last change
 /// seq, both read in one snapshot, so `seq > as_of` is exactly what they miss.
+/// Waiting reasons come from the dispatcher's view, read before that snapshot,
+/// so it is read again while a change commits in between.
 pub(super) async fn summaries_at(
     ctx: &DaemonContext,
     query: &ItemQuery,
 ) -> Result<Reply, ArchonError> {
     assert!(query.with_as_of, "routed only for with_as_of");
-    let waiting = super::waiting::WaitingView::read(ctx).await?;
+    let mut attempt = 1;
+    loop {
+        let floor = ctx.read_store().await?.last_change_seq()?;
+        let waiting = super::waiting::WaitingView::read(ctx).await?;
+        let (summaries, as_of) = summaries_in_snapshot(ctx, query, &waiting).await?;
+        assert!(as_of >= floor, "change seqs only grow");
+        if as_of == floor || attempt == SUMMARY_ATTEMPTS {
+            if as_of != floor {
+                tracing::debug!(floor, as_of, "summary waiting reasons may predate as_of");
+            }
+            return Ok(Reply::ItemSummariesAt { summaries, as_of });
+        }
+        attempt += 1;
+    }
+}
+
+async fn summaries_in_snapshot(
+    ctx: &DaemonContext,
+    query: &ItemQuery,
+    waiting: &super::waiting::WaitingView,
+) -> Result<(Vec<ItemSummary>, u64), ArchonError> {
     let estimates = ctx.config.limits.count_estimated_cost;
     let store = ctx.read_store().await?;
     let as_of = store.last_change_seq()?;
-    let summaries = super::item_views::summaries_in(&store, query, estimates, &waiting)?;
+    let summaries = super::item_views::summaries_in(&store, query, estimates, waiting)?;
     assert_eq!(
         store.last_change_seq()?,
         as_of,
         "the snapshot holds while its summaries are read"
     );
-    drop(store);
-    Ok(Reply::ItemSummariesAt { summaries, as_of })
+    Ok((summaries, as_of))
 }
 
 /// Hands every change committed after the hub's `sent` to live subscribers,

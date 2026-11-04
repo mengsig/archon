@@ -83,7 +83,16 @@ pub async fn update_item_autonomy_above_ceiling(
 /// A `tracked` change is known as pending before anything can refuse it; a
 /// repeat under its idempotency key answers with the first outcome. One
 /// function: a debug build's deepest request already nears a test's stack.
+/// The item transitions a request makes are recorded as by its client.
 pub async fn handle(
+    ctx: &DaemonContext,
+    client: ClientKind,
+    request: Request,
+) -> Result<Reply, ArchonError> {
+    changes::attributed(client, handle_unattributed(ctx, client, request)).await
+}
+
+async fn handle_unattributed(
     ctx: &DaemonContext,
     client: ClientKind,
     request: Request,

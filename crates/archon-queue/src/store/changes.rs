@@ -4,6 +4,8 @@
 //! back with it, and writes are serialized, so committed seqs never skip.
 //! Item transitions are kept beside them in `item_transitions`.
 
+use std::cell::Cell;
+
 use archon_core::Timestamp;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId};
@@ -28,6 +30,24 @@ pub const KEEP_DAYS: i64 = 30;
 pub const KEEP_ROWS: u64 = 100_000;
 /// A transition's reason is cut to this many characters.
 const REASON_CHARS: usize = 500;
+
+thread_local! {
+    /// Who the item transitions recorded on this thread are by; see [`acting_as`].
+    static ACTING: Cell<TransitionActor> = const { Cell::new(TransitionActor::Daemon) };
+}
+
+/// Runs `f` with the item transitions it records attributed to `actor`, then
+/// restores the attribution it found: the daemon's, unless a caller set one.
+pub fn acting_as<R>(actor: TransitionActor, f: impl FnOnce() -> R) -> R {
+    struct Restore(TransitionActor);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            ACTING.set(self.0);
+        }
+    }
+    let _restore = Restore(ACTING.replace(actor));
+    f()
+}
 
 /// Append `subject` to the stream inside the caller's write transaction.
 fn record(conn: &Connection, subject: &ChangeSubject) -> Result<u64, ArchonError> {
@@ -89,7 +109,7 @@ pub(super) fn record_item(
             before.map(QueueState::kind),
             item.state.kind(),
             transition_reason(&item.state),
-            actor_name(TransitionActor::Daemon),
+            actor_name(ACTING.get()),
         ],
     )
     .ctx("record item transition")?;
@@ -245,9 +265,12 @@ fn parse_at(raw: &str) -> Result<Timestamp, ArchonError> {
 /// The seqs still kept: `first_seq` is `last_seq + 1` when none is.
 pub(super) fn range(conn: &Connection) -> Result<HistoryRange, ArchonError> {
     let (first, last): (Option<i64>, Option<i64>) = conn
-        .query_row("SELECT MIN(seq), MAX(seq) FROM changes", [], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })
+        .query_row(
+            // Separate subqueries, so each endpoint is one primary-key lookup.
+            "SELECT (SELECT MIN(seq) FROM changes), (SELECT MAX(seq) FROM changes)",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
         .ctx("read the change range")?;
     let last = to_u64(last.unwrap_or(0), "change seq")?;
     let first = match first {
@@ -267,7 +290,7 @@ pub(super) fn range(conn: &Connection) -> Result<HistoryRange, ArchonError> {
 /// A cursor resumes the stream only if every change after it is kept; one
 /// past the last seq is from another store.
 fn check_cursor(after: u64, kept: HistoryRange) -> Result<(), ArchonError> {
-    if after + 1 >= kept.first_seq && after <= kept.last_seq {
+    if after <= kept.last_seq && after + 1 >= kept.first_seq {
         return Ok(());
     }
     Err(ArchonError::HistoryExpired {
@@ -467,6 +490,7 @@ mod tests {
             check_cursor(10, kept).is_err(),
             "a cursor from another store"
         );
+        assert!(check_cursor(u64::MAX, kept).is_err(), "no overflow");
         let empty = HistoryRange {
             first_seq: 1,
             last_seq: 0,

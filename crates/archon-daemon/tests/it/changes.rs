@@ -8,7 +8,7 @@ use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 use archon_core::protocol::{
     Change, ChangeSubject, ErrorCode, ErrorReply, ItemQuery, QueueStateKind, Reply, Request,
-    ServerFrame,
+    ServerFrame, TransitionActor,
 };
 use archon_core::queue::QueueItem;
 use archon_daemon::handlers::changes::{self, CHANGE_BUFFER, ChangeSubscription};
@@ -200,6 +200,8 @@ async fn history_pages_and_summaries_read_the_same_store() {
     let last = transitions.last().expect("its cancel");
     assert_eq!(first.from, None);
     assert_eq!(last.to, QueueStateKind::Cancelled);
+    assert_eq!(last.by, TransitionActor::Cli, "the CLI cancelled it");
+    assert_eq!(last.reason.as_deref(), Some("not needed"));
     assert!(transitions.windows(2).all(|w| w[0].seq < w[1].seq));
     let query = ItemQuery {
         with_as_of: true,

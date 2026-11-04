@@ -266,9 +266,10 @@ fn item_history_lists_each_transition_oldest_first() {
         error: "tests failed".into(),
     };
     settle_run(&mut store, &run, failed, t(40));
-    store
-        .transition_item(id, QueueState::Queued, t(41))
-        .unwrap();
+    archon_queue::store::acting_as(TransitionActor::Web, || {
+        store.transition_item(id, QueueState::Queued, t(41))
+    })
+    .unwrap();
     let history = store.item_history(id, 1000).unwrap();
     let steps: Vec<_> = history.iter().map(|h| (h.from, h.to)).collect();
     use QueueStateKind as K;
@@ -283,10 +284,16 @@ fn item_history_lists_each_transition_oldest_first() {
         ]
     );
     assert_eq!(history[3].reason.as_deref(), Some("tests failed"));
-    assert!(history.iter().all(|h| h.by == TransitionActor::Daemon));
+    let by: Vec<_> = history.iter().map(|h| h.by).collect();
+    use TransitionActor as A;
+    assert_eq!(by, [A::Daemon, A::Daemon, A::Daemon, A::Daemon, A::Web]);
+    let after = store.transition_item(id, QueueState::Cancelled { reason: None }, t(42));
+    let after = after.unwrap();
+    let last = store.item_history(&after.id, 1).unwrap();
+    assert_eq!(last[0].by, A::Daemon, "the attribution ends with its scope");
     assert!(history.windows(2).all(|w| w[0].seq < w[1].seq));
-    let newest = store.item_history(id, 2).unwrap();
-    assert_eq!(newest, history[3..].to_vec(), "a limit keeps the newest");
+    let newest = store.item_history(id, 3).unwrap();
+    assert_eq!(newest[..2], history[3..], "a limit keeps the newest");
     let missing = store.item_history(&QueueItemId::new(), 10);
     assert!(matches!(missing, Err(ArchonError::NotFound(_))));
 }

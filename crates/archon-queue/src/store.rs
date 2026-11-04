@@ -10,7 +10,7 @@
 //! the first statement, so a refused change writes nothing.
 
 mod changes;
-pub use changes::{KEEP_DAYS as CHANGES_KEEP_DAYS, KEEP_ROWS as CHANGES_KEEP_ROWS};
+pub use changes::{KEEP_DAYS as CHANGES_KEEP_DAYS, KEEP_ROWS as CHANGES_KEEP_ROWS, acting_as};
 mod codec;
 mod cost;
 mod delegated;

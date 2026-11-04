@@ -611,8 +611,32 @@ CREATE TABLE spend_pruned (
 );
 "#;
 
+/// Version 19 (vNext AR-C): the gapless change stream and item transitions.
+/// Items that predate it get one change naming their current state, so a
+/// replay from 0 still reaches every item's state.
+const V19: &str = r#"
+CREATE TABLE changes (
+    seq  INTEGER PRIMARY KEY AUTOINCREMENT,
+    at   TEXT NOT NULL,
+    data TEXT NOT NULL
+);
+CREATE TABLE item_transitions (
+    seq        INTEGER PRIMARY KEY,
+    item       TEXT NOT NULL REFERENCES items (id) ON DELETE CASCADE,
+    at         TEXT NOT NULL,
+    from_state TEXT,
+    to_state   TEXT NOT NULL,
+    reason     TEXT,
+    actor      TEXT NOT NULL
+);
+CREATE INDEX item_transitions_by_item ON item_transitions (item, seq);
+INSERT INTO changes (at, data)
+SELECT updated_at, json_object('subject', 'item', 'item', id, 'state', state)
+FROM items ORDER BY seq;
+"#;
+
 pub(super) const MIGRATIONS: &[&str] = &[
-    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18,
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19,
 ];
 
 /// Pragmas every connection needs. `on_disk` connections must end up in
@@ -1253,7 +1277,8 @@ mod tests {
         insert_feedback(&conn, "fb_old", V11_ROW).unwrap();
         conn.execute_batch(
             "DROP TABLE run_pull_requests; DROP TABLE merge_requests; DROP TABLE tracked_requests;
-             DROP TABLE spend_pruned; DELETE FROM schema_migrations WHERE version >= 12",
+             DROP TABLE spend_pruned; DROP TABLE item_transitions; DROP TABLE changes;
+             DELETE FROM schema_migrations WHERE version >= 12",
         )
         .unwrap();
         assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());

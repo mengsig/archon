@@ -2295,6 +2295,7 @@ impl From<&ArchonError> for ErrorReply {
             | ArchonError::DiskFull(_)
             | ArchonError::Io { .. }
             | ArchonError::Protocol(_) => ErrorCode::Internal,
+            ArchonError::HistoryExpired { kept, .. } => ErrorCode::HistoryExpired(*kept),
         };
         Self {
             code,

@@ -9,6 +9,8 @@
 //! finished runs staying finished, stage runs only moving forward) before
 //! the first statement, so a refused change writes nothing.
 
+mod changes;
+pub use changes::{KEEP_DAYS as CHANGES_KEEP_DAYS, KEEP_ROWS as CHANGES_KEEP_ROWS};
 mod codec;
 mod cost;
 mod delegated;

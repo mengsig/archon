@@ -354,6 +354,8 @@ fn insert_requested_in(
     )
     .ctx("insert item")?;
     replace_deps(tx, item)?;
+    super::changes::record_item(tx, item, None)?;
+    super::changes::record_dependencies(tx, &item.id, &[], &item.dependencies)?;
     Ok(item.clone())
 }
 
@@ -443,6 +445,7 @@ pub(super) fn transition_in(
     debug_assert!(before.can_transition_to(&item.state));
     check_run_refs(tx, id, &item.state)?;
     write_columns(tx, &item)?;
+    super::changes::record_item(tx, &item, Some(&before))?;
     if let QueueState::Succeeded { run, .. } = &before
         && item.state == QueueState::Queued
     {
@@ -498,6 +501,12 @@ pub(super) fn update_with_kv(
     write_columns(&tx, item)?;
     if deps_changed {
         replace_deps(&tx, item)?;
+        super::changes::record_dependencies(
+            &tx,
+            &item.id,
+            &stored.dependencies,
+            &item.dependencies,
+        )?;
     }
     for (key, value) in updates {
         super::settings::kv_set(&tx, key, value)?;
@@ -585,6 +594,7 @@ pub(super) fn requeue_orphaned_dispatching(
         item.state = QueueState::Queued;
         item.updated_at = at.max(item.updated_at);
         write_columns(&tx, &item)?;
+        super::changes::record_item(&tx, &item, Some(&QueueState::Dispatching))?;
         requeued.push(item.id);
     }
     tx.commit().ctx("commit recovery")?;

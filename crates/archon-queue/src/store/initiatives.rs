@@ -56,6 +56,7 @@ impl Store {
                 to_json(request, "initiative request")?, ts(&initiative.created_at),
                 ts(&initiative.updated_at), to_json(initiative, "initiative")?],
         ).ctx("insert initiative")?;
+        super::changes::record_initiative(&tx, initiative)?;
         for item in members {
             assert_eq!(item.initiative.as_ref(), Some(&initiative.id));
             items::insert_in(&tx, item, None, &Default::default())?;
@@ -272,5 +273,5 @@ fn save(conn: &Connection, initiative: &mut Initiative) -> Result<(), ArchonErro
         )
         .ctx("save initiative")?;
     assert_eq!(changed, 1);
-    Ok(())
+    super::changes::record_initiative(conn, initiative)
 }

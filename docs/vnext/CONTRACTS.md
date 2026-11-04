@@ -386,9 +386,9 @@ to review (the existing Aether behaviour).
 1. On `ready`: `subscribe {after: last_seq ?? null, query: {}, deltas: false}`
    for durable events. Then read `get_attention` and `get_tree` (or
    `list_agents_page` pages) when there is no snapshot.
-2. Deltas are opened only for agents on screen, with one subscription per
-   connection whose `query.agent` set changes by resubscribing. The client
-   uses at most 4 of the daemon's 16 subscriptions.
+2. Deltas are opened only for agents on screen, with one delta subscription
+   per on-screen agent (at most 3), plus the durable one. The client uses at
+   most 4 of the daemon's 16 subscriptions.
 3. Apply a durable event only if `seq > last_seq`. Applying is idempotent.
 4. Deltas are transient. A gap in `invocation_seq`, a lag close (1013) or a
    reconnect means: discard the in-flight stream for that invocation and read

@@ -19,7 +19,7 @@ use archon_core::protocol::{
     feature,
 };
 use tokio::sync::broadcast;
-use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 use tokio::sync::mpsc;
 
 use crate::context::DaemonContext;
@@ -169,14 +169,13 @@ pub(super) async fn item_history(
     })
 }
 
-/// Reads of `summaries_at` before it answers with waiting reasons that may
-/// predate a change it covers.
+/// Reads of `summaries_at` before it asks the client to retry.
 const SUMMARY_ATTEMPTS: usize = 3;
 
 /// `list_item_summaries` with `with_as_of`: the summaries and the last change
 /// seq, both read in one snapshot, so `seq > as_of` is exactly what they miss.
 /// Waiting reasons come from the dispatcher's view, read before that snapshot,
-/// so it is read again while a change commits in between.
+/// so it is read again while a change commits in between; never stale.
 pub(super) async fn summaries_at(
     ctx: &DaemonContext,
     query: &ItemQuery,
@@ -188,11 +187,13 @@ pub(super) async fn summaries_at(
         let waiting = super::waiting::WaitingView::read(ctx).await?;
         let (summaries, as_of) = summaries_in_snapshot(ctx, query, &waiting).await?;
         assert!(as_of >= floor, "change seqs only grow");
-        if as_of == floor || attempt == SUMMARY_ATTEMPTS {
-            if as_of != floor {
-                tracing::debug!(floor, as_of, "summary waiting reasons may predate as_of");
-            }
+        if as_of == floor {
             return Ok(Reply::ItemSummariesAt { summaries, as_of });
+        }
+        if attempt == SUMMARY_ATTEMPTS {
+            return Err(ArchonError::Unavailable(format!(
+                "changes kept committing while {SUMMARY_ATTEMPTS} summary snapshots were read; retry"
+            )));
         }
         attempt += 1;
     }
@@ -331,7 +332,7 @@ async fn run(
         return Ok(());
     };
     let mut cursor = sub.after.unwrap_or(last_seq);
-    if !catch_up(ctx, sub, frames, &mut cursor).await? {
+    if !catch_up(ctx, sub, frames, &mut live, &mut cursor).await? {
         return Ok(());
     }
     follow(ctx, sub, frames, &mut live, &mut cursor).await
@@ -353,12 +354,8 @@ async fn follow(
         let open = match received {
             Ok(change) if change.seq <= *cursor => true,
             Ok(change) if change.seq == *cursor + 1 => deliver(sub, frames, cursor, change).await,
-            Ok(_) => catch_up(ctx, sub, frames, cursor).await?,
-            Err(RecvError::Lagged(missed)) => {
-                return Err(ArchonError::Unavailable(format!(
-                    "it fell {missed} changes behind; resubscribe with after: {cursor}"
-                )));
-            }
+            Ok(_) => catch_up(ctx, sub, frames, live, cursor).await?,
+            Err(RecvError::Lagged(missed)) => return Err(fell_behind(missed, *cursor)),
             Err(RecvError::Closed) => return Ok(()),
         };
         if !open {
@@ -367,19 +364,37 @@ async fn follow(
     }
 }
 
+fn fell_behind(missed: u64, cursor: u64) -> ArchonError {
+    ArchonError::Unavailable(format!(
+        "it fell {missed} changes behind; resubscribe with after: {cursor}"
+    ))
+}
+
 /// Send every stored change after `cursor`. `false` once the client is gone.
+/// Live changes are drained as it goes and read from the store instead; a
+/// buffer that overflowed during one batch means the client is behind.
 async fn catch_up(
     ctx: &DaemonContext,
     sub: &ChangeSubscription,
     frames: &mpsc::Sender<ServerFrame>,
+    live: &mut broadcast::Receiver<Change>,
     cursor: &mut u64,
 ) -> Result<bool, ArchonError> {
     loop {
         let batch = ctx.read_store().await?.changes_after(*cursor, BATCH)?;
-        let done = batch.len() < BATCH;
+        let mut done = batch.len() < BATCH;
         for change in batch {
             if !deliver(sub, frames, cursor, change).await {
                 return Ok(false);
+            }
+        }
+        loop {
+            match live.try_recv() {
+                // One the store had not shown yet: read it from there.
+                Ok(change) => done &= change.seq <= *cursor,
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Lagged(missed)) => return Err(fell_behind(missed, *cursor)),
+                Err(TryRecvError::Closed) => return Ok(false),
             }
         }
         if done {

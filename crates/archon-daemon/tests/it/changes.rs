@@ -116,6 +116,42 @@ async fn a_subscription_catches_up_then_follows_every_commit_in_order() {
     pump.abort();
 }
 
+/// Waits until the pump handed out every change through `end`.
+async fn pumped_through(h: &Harness, end: u64) {
+    let pumped = async {
+        while h.ctx.changes.sent() < end {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    };
+    tokio::time::timeout(WAIT, pumped)
+        .await
+        .expect("pumped in time");
+}
+
+/// Reads to the lag close: how many changes came first, and the close.
+async fn read_to_close(frames: &mut mpsc::Receiver<ServerFrame>) -> (usize, ErrorReply) {
+    let mut delivered = 0;
+    loop {
+        match next(frames).await {
+            Some(ServerFrame::Change { .. }) => delivered += 1,
+            Some(ServerFrame::Reply {
+                id: 0,
+                result: Err(refusal),
+            }) => {
+                assert_eq!(refusal.code, ErrorCode::Unavailable, "{refusal:?}");
+                assert!(
+                    refusal.message.contains("change subscription 3 ended")
+                        && refusal.message.contains("resubscribe with after"),
+                    "{refusal:?}"
+                );
+                assert!(next(frames).await.is_none(), "the stream ended");
+                return (delivered, refusal);
+            }
+            other => panic!("expected a change or the close, got {other:?}"),
+        }
+    }
+}
+
 #[tokio::test]
 async fn a_subscription_that_falls_behind_is_closed_not_buffered() {
     let h = Harness::new().await;
@@ -126,36 +162,34 @@ async fn a_subscription_that_falls_behind_is_closed_not_buffered() {
     insert_copies(&h, &first, CHANGE_BUFFER + 50).await;
     let end = last_seq(&h).await;
     assert!(end > head + CHANGE_BUFFER as u64);
-    let pumped = async {
-        while h.ctx.changes.sent() < end {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    };
-    tokio::time::timeout(WAIT, pumped)
-        .await
-        .expect("pumped in time");
-    let mut delivered = 0;
-    let refusal = loop {
-        match next(&mut frames).await {
-            Some(ServerFrame::Change { .. }) => delivered += 1,
-            Some(ServerFrame::Reply {
-                id: 0,
-                result: Err(refusal),
-            }) => break refusal,
-            other => panic!("expected a change or the close, got {other:?}"),
-        }
-    };
+    pumped_through(&h, end).await;
+    let (delivered, _) = read_to_close(&mut frames).await;
     assert!(
         delivered < CHANGE_BUFFER,
         "closed, not buffered: {delivered}"
     );
-    assert_eq!(refusal.code, ErrorCode::Unavailable, "{refusal:?}");
+    pump.abort();
+}
+
+/// A subscriber still replaying the store while a buffer's worth more
+/// commits is closed too, rather than replaying forever.
+#[tokio::test]
+async fn a_subscription_that_falls_behind_while_catching_up_is_closed() {
+    let h = Harness::new().await;
+    let first = h.enqueue("first").await;
+    let pump = tokio::spawn(changes::pump(h.ctx.clone()));
+    insert_copies(&h, &first, 600).await;
+    let replayed = last_seq(&h).await;
+    pumped_through(&h, replayed).await;
+    let mut frames = open(&h, subscription(Some(0)), 1);
+    assert_eq!(opened(&mut frames).await.expect("subscribed"), replayed);
+    insert_copies(&h, &first, CHANGE_BUFFER + 50).await;
+    pumped_through(&h, last_seq(&h).await).await;
+    let (delivered, _) = read_to_close(&mut frames).await;
     assert!(
-        refusal.message.contains("change subscription 3 ended")
-            && refusal.message.contains("resubscribe with after"),
-        "{refusal:?}"
+        (delivered as u64) < replayed,
+        "closed within its first batch, not after replaying: {delivered}"
     );
-    assert!(next(&mut frames).await.is_none(), "the stream ended");
     pump.abort();
 }
 

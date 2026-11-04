@@ -759,9 +759,27 @@ CREATE INDEX github_outbox_pending ON github_outbox (next_attempt_at)
     WHERE state = 'pending';
 "#;
 
+/// Version 23 (vNext G5): each lesson's near-duplicate cluster, and the
+/// holdout trials lift is measured from. Additive: no lesson row changes.
+const V23: &str = r#"
+ALTER TABLE lessons ADD COLUMN cluster TEXT REFERENCES lessons (id);
+CREATE INDEX lessons_by_cluster ON lessons (cluster) WHERE cluster IS NOT NULL;
+
+CREATE TABLE lesson_trials (
+    lesson TEXT NOT NULL REFERENCES lessons (id),
+    run    TEXT NOT NULL,
+    item   TEXT NOT NULL,
+    held   INTEGER NOT NULL CHECK (held IN (0, 1)),
+    at     TEXT NOT NULL,
+    won    INTEGER CHECK (won IN (0, 1)),
+    PRIMARY KEY (lesson, run)
+) WITHOUT ROWID;
+CREATE INDEX lesson_trials_by_run ON lesson_trials (run);
+"#;
+
 pub(super) const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22,
+    V22, V23,
 ];
 
 /// Pragmas every connection needs. `on_disk` connections must end up in
@@ -1406,6 +1424,8 @@ mod tests {
             "DROP TABLE run_pull_requests; DROP TABLE merge_requests; DROP TABLE tracked_requests;
              DROP TABLE spend_pruned; DROP TABLE item_transitions; DROP TABLE changes;
              DROP TABLE github_links; DROP TABLE github_objects; DROP TABLE github_outbox;
+             DROP TABLE lesson_trials; DROP INDEX lessons_by_cluster;
+             ALTER TABLE lessons DROP COLUMN cluster;
              DELETE FROM schema_migrations WHERE version >= 12",
         )
         .unwrap();

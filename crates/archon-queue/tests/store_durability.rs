@@ -220,7 +220,7 @@ fn recovery_after_a_crash_mid_dispatch() {
 
 /// Takes a store back to before V10, for tests that replay earlier migrations.
 const UNDO_V10: &str = "
-    DROP TABLE github_outbox; DROP TABLE github_objects; DROP TABLE github_links; DROP TABLE item_transitions; DROP TABLE changes;
+    DROP TABLE lesson_trials; DROP TABLE github_outbox; DROP TABLE github_objects; DROP TABLE github_links; DROP TABLE item_transitions; DROP TABLE changes;
     DROP TABLE spend_pruned; DROP TABLE tracked_requests; DROP TABLE run_pull_requests; DROP TABLE merge_requests;
     DROP TABLE operator_feedback;
     DROP TABLE lesson_uses; DROP TABLE lessons; DROP TABLE outcome_stages; DROP TABLE outcomes;
@@ -247,7 +247,7 @@ fn migrations_apply_once_and_a_newer_store_is_refused() {
     assert_eq!(
         schema_versions(&path),
         vec![
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23
         ]
     );
     let conn = rusqlite::Connection::open(&path).unwrap();
@@ -320,7 +320,7 @@ fn concurrent_first_opens_migrate_once() {
     assert_eq!(
         schema_versions(&path),
         vec![
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23
         ]
     );
 }
@@ -597,7 +597,7 @@ fn v9_keeps_an_earlier_provider_reported_total_as_the_floor() {
     drop(conn);
 
     let mut store = Store::open(&path).unwrap();
-    assert_eq!(schema_versions(&path).last(), Some(&22));
+    assert_eq!(schema_versions(&path).last(), Some(&23));
     for n in [1, 2] {
         let settled = SpendRow {
             cost_complete: Some(true),

@@ -162,6 +162,9 @@ pub struct LearningConfig {
     pub distill_every: u32,
     pub distill_daily_budget_usd: f64,
     pub explore_rate: f64,
+    /// Share of (lesson, item) pairs whose lesson is withheld to measure its
+    /// lift; 0, the default, holds nothing out.
+    pub holdout_rate: f64,
 }
 
 impl Default for LearningConfig {
@@ -171,6 +174,7 @@ impl Default for LearningConfig {
             distill_every: 20,
             distill_daily_budget_usd: 3.0,
             explore_rate: 0.1,
+            holdout_rate: 0.0,
         }
     }
 }
@@ -190,6 +194,11 @@ impl LearningConfig {
         if !self.explore_rate.is_finite() || !(0.0..=0.1).contains(&self.explore_rate) {
             return Err(ArchonError::Config(
                 "learning.explore_rate must be between 0 and 0.1".into(),
+            ));
+        }
+        if !self.holdout_rate.is_finite() || !(0.0..=0.2).contains(&self.holdout_rate) {
+            return Err(ArchonError::Config(
+                "learning.holdout_rate must be between 0 and 0.2".into(),
             ));
         }
         Ok(())

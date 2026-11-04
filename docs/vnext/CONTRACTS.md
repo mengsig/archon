@@ -598,6 +598,10 @@ G0 benchmark:
   `retrieval.holdout_rate` (default 0.05), `admission.mode = "candidate"|"immediate"`.
 - Archon `Lesson` gains `refs` (items, runs, PRs), `support`, `cluster?`.
   `LessonStats` gains `holdout_lift?: {uses, wins, holdout_uses, holdout_wins}`.
+  Settled by G5 (V23), all optional on the wire: `refs?: [{kind: "item"|"run"|"pr", value}]`
+  (at most 32, a PR by its URL), `support?: u32` (distinct item refs), `cluster?: LessonId`
+  (the smallest id of its near-duplicate group). `holdout_lift` appears only when both arms
+  have at least 20 scored runs; Archon config `learning.holdout_rate` (0..0.2, default 0).
 - Ownership stays split: Noesis never reads or writes either store, and
   disabling Noesis changes nothing here.
 

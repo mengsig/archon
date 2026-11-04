@@ -277,7 +277,7 @@ pub async fn pass(store: &Mutex<Store>, gh: &Path) -> Result<usize, ArchonError>
 }
 
 /// The outbox worker: settles what a restart or a failure left pending, at
-/// start and then every [`PASS_EVERY`]. Only a store failure ends it.
+/// start and then every 30 seconds. Only a store failure ends it.
 pub async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
     loop {
         pass(&ctx.store, &ctx.config.github.binary).await?;

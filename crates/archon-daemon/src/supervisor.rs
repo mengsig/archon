@@ -563,11 +563,18 @@ pub async fn restart_orchestrator(ctx: &DaemonContext) -> Result<AetherAgentId, 
 /// Restart the orchestrator so it gets the `archon` MCP tools back: an
 /// agent keeps the tool list it started with (see `mcp`). Cancel it, wait
 /// for it to stop, then `restart` it from its checkpoint; a fresh generation
-/// only when Aether will not restart it. `None` when there is none yet.
+/// only when Aether will not restart it. `None` when there is none yet, or
+/// when none is owed any more: a path that replaced the orchestrator while
+/// this one waited for the serialization already gave the new agent the
+/// tools, and cancelling it would only waste an agent.
 pub(crate) async fn relink_orchestrator(
     ctx: &DaemonContext,
 ) -> Result<Option<AetherAgentId>, ArchonError> {
     let _serial = ctx.supervisor.serial.lock().await;
+    if !mcp::restart_owed(ctx).await {
+        tracing::info!("the orchestrator was replaced meanwhile; it needs no restart");
+        return Ok(None);
+    }
     let client = ctx.aether.client()?;
     let Some(stored) = current_orchestrator(ctx).await? else {
         return Ok(None);

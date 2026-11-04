@@ -135,8 +135,15 @@ fn brackets(line: &str) -> i32 {
     depth
 }
 
-/// Replace `path` with `text` through a sibling file, keeping its mode.
+/// Replace `path` with `text` through a sibling file, keeping its mode. A
+/// symlinked config.toml stays a link: its target is what is replaced.
 fn write_atomically(path: &Path, text: &str) -> anyhow::Result<()> {
+    let resolved = match std::fs::canonicalize(path) {
+        Ok(resolved) => resolved,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => path.to_path_buf(),
+        Err(e) => return Err(e).with_context(|| format!("resolving {}", path.display())),
+    };
+    let path = resolved.as_path();
     let parent = path.parent().context("config.toml has a directory")?;
     std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
     let temporary = parent.join(".config.toml.setup");
@@ -189,6 +196,24 @@ mod tests {
         assert!(after.contains("max_connections = 8"), "{after}");
         let (_, appended) = written("[aether]\nmode = \"shared\"");
         assert!(appended.ends_with("\n\n[remote]\nmounted_at = \"/archon\"\ntrusted_origins = [\"https://box.ts.net\"]\n"), "{appended}");
+    }
+
+    #[test]
+    fn a_symlinked_config_stays_a_link_to_the_edited_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("dotfiles.toml");
+        std::fs::write(&real, "[remote]\nmax_connections = 8\n").unwrap();
+        let link = dir.path().join("config.toml");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert!(ensure_mounted(&link, "/archon", &[ORIGIN.to_owned()]).unwrap());
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        let written = std::fs::read_to_string(&real).unwrap();
+        assert!(written.contains("mounted_at = \"/archon\""), "{written}");
     }
 
     #[test]

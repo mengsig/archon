@@ -116,7 +116,12 @@ impl Aether {
             ));
             return Ok(status);
         }
-        let output = self.call(&["remote", "enable", "--json"]).await?;
+        // `enable` sets pairing from its flag, so keep what the operator chose.
+        let mut args = vec!["remote", "enable", "--json"];
+        if !status.settings.pairing {
+            args.push("--no-pairing");
+        }
+        let output = self.call(&args).await?;
         anyhow::ensure!(
             output.success(),
             "`aether remote enable` failed: {}",

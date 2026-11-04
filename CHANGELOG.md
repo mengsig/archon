@@ -68,6 +68,10 @@ optional, so a record without them is still read; 1.4.11 ignores them.
 
 - The 1.4.11 release bench record's sentence on Luna's cost is corrected
   (#373).
+- The 1.4.12 release smoke gate is recorded in
+  `bench/results-release-1.4.12/`. It fails on a confirmed Luna cost
+  increase: $0.0597 per run on the release head against $0.0493 on v1.4.11
+  (+21%), with Haiku within noise (+4%) and no fall in pass rate.
 
 ## 1.4.11
 

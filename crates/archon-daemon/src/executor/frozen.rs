@@ -67,7 +67,7 @@ pub(crate) async fn thaw(
 }
 
 /// The run's snapshot, as frozen at its start, after `edits`.
-pub(super) async fn thaw_edited(
+pub(crate) async fn thaw_edited(
     data_dir: &Path,
     run: &PipelineRunId,
     pipeline: &str,

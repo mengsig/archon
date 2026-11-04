@@ -27,6 +27,7 @@ mod gc;
 mod gh_user;
 mod github_links;
 mod github_sync;
+mod graph;
 mod handle_order;
 mod handlers;
 mod inbox_health;

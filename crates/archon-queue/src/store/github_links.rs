@@ -249,7 +249,7 @@ fn parse_row(row: LinkRow) -> Result<GithubLink, ArchonError> {
     Ok(link)
 }
 
-fn query_links(
+pub(super) fn query_links(
     conn: &Connection,
     filter: &str,
     args: impl rusqlite::Params,
@@ -278,7 +278,7 @@ fn item_exists(conn: &Connection, item: &QueueItemId) -> Result<bool, ArchonErro
 
 /// The summary's issue and pull request among `links`, one item's in their
 /// stored order: the most telling issue, and the newest delivered pull request.
-fn summary_refs(links: &[GithubLink]) -> (Option<GithubRef>, Option<PrRef>) {
+pub(super) fn summary_refs(links: &[GithubLink]) -> (Option<GithubRef>, Option<PrRef>) {
     let issue = ISSUE_RELATIONS.iter().find_map(|relation| {
         links
             .iter()

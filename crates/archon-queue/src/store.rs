@@ -20,6 +20,7 @@ mod gates;
 mod github_links;
 mod github_objects;
 pub use github_objects::{CachedObject, MAX_ETAG_BYTES, SyncTarget};
+mod graph;
 mod handoffs;
 pub mod initiatives;
 mod items;

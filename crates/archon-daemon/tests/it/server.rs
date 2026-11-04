@@ -344,6 +344,9 @@ async fn the_web_app_speaks_23_or_24_and_the_cli_only_24() {
                 feature::DEVICE_ROLES,
                 feature::GITHUB_LINKS,
                 feature::GITHUB_IMPORT,
+                feature::TASK_GRAPH,
+                feature::RUN_PLAN,
+                feature::ITEM_FILTERS,
             ] {
                 assert!(served.iter().any(|f| f == served_feature), "{served:?}");
             }
@@ -353,38 +356,34 @@ async fn the_web_app_speaks_23_or_24_and_the_cli_only_24() {
     serving.abort();
 }
 
-/// Every protocol 24 request is classified and, until its owner serves it,
-/// answers `unavailable` rather than anything that looks like data.
+/// Every protocol 24 request is served: none answers `unavailable`. The
+/// import names an unregistered repository, so it is refused before any `gh` call.
 #[tokio::test]
-async fn every_protocol_24_request_answers_unavailable_until_served() {
+async fn every_protocol_24_request_is_served() {
     let h = Harness::new().await;
     let socket = h.ctx.paths.socket.clone();
     let (listener, _lock) = server::bind(&h.ctx).expect("bind");
     let serving = tokio::spawn(server::serve(h.ctx.clone(), listener));
     let mut cli = Client::hello(&socket, ClientKind::ArchonCli).await;
+    let issue =
+        serde_json::json!({"host": "github.com", "repo": "o/r", "number": 1, "kind": "issue"});
     let requests = [
         serde_json::json!({"cmd": "task_graph", "filter": {}}),
         serde_json::json!({"cmd": "run_plan", "run": archon_core::id::PipelineRunId::new()}),
         serde_json::json!({"cmd": "list_items", "repo": null, "pipeline": null, "tag": null, "limit": null, "text": "x"}),
+        serde_json::json!({"cmd": "list_github_objects", "repo": "o/r"}),
+        serde_json::json!({"cmd": "import_issue", "ref": issue}),
     ];
     for json in requests {
         let request: Request = serde_json::from_value(json.clone()).expect("a request");
-        let refusal = cli
-            .call(request, &mut Vec::new())
-            .await
-            .expect_err("not served yet");
-        assert_eq!(refusal.code, ErrorCode::Unavailable, "{json}: {refusal:?}");
-        assert!(
-            refusal.message.contains("not implemented yet"),
-            "{json}: {refusal:?}"
-        );
+        if let Err(refusal) = cli.call(request, &mut Vec::new()).await {
+            assert_ne!(refusal.code, ErrorCode::Unavailable, "{json}: {refusal:?}");
+            assert!(
+                !refusal.message.contains("not implemented yet"),
+                "{json}: {refusal:?}"
+            );
+        }
     }
-    let plain = Request::ListItemSummaries(Default::default());
-    let summaries = cli.call(plain, &mut Vec::new()).await;
-    assert!(
-        matches!(summaries, Ok(Reply::ItemSummaries(_))),
-        "{summaries:?}"
-    );
     serving.abort();
 }
 

@@ -175,7 +175,7 @@ const SUMMARY_ATTEMPTS: usize = 3;
 /// `list_item_summaries` with `with_as_of`: the summaries and the last change
 /// seq, both read in one snapshot, so `seq > as_of` is exactly what they miss.
 /// Waiting reasons come from the dispatcher's view, read before that snapshot,
-/// so it is read again while a change commits in between; never stale.
+/// so it is read again while a write changes its inputs in between.
 pub(super) async fn summaries_at(
     ctx: &DaemonContext,
     query: &ItemQuery,
@@ -185,14 +185,14 @@ pub(super) async fn summaries_at(
     loop {
         let floor = ctx.read_store().await?.last_change_seq()?;
         let waiting = super::waiting::WaitingView::read(ctx).await?;
-        let (summaries, as_of) = summaries_in_snapshot(ctx, query, &waiting).await?;
+        let (summaries, as_of, current) = summaries_in_snapshot(ctx, query, &waiting).await?;
         assert!(as_of >= floor, "change seqs only grow");
-        if as_of == floor {
+        if as_of == floor && current {
             return Ok(Reply::ItemSummariesAt { summaries, as_of });
         }
         if attempt == SUMMARY_ATTEMPTS {
             return Err(ArchonError::Unavailable(format!(
-                "changes kept committing while {SUMMARY_ATTEMPTS} summary snapshots were read; retry"
+                "the queue kept changing while {SUMMARY_ATTEMPTS} summary snapshots were read; retry"
             )));
         }
         attempt += 1;
@@ -203,17 +203,18 @@ async fn summaries_in_snapshot(
     ctx: &DaemonContext,
     query: &ItemQuery,
     waiting: &super::waiting::WaitingView,
-) -> Result<(Vec<ItemSummary>, u64), ArchonError> {
+) -> Result<(Vec<ItemSummary>, u64, bool), ArchonError> {
     let estimates = ctx.config.limits.count_estimated_cost;
     let store = ctx.read_store().await?;
     let as_of = store.last_change_seq()?;
     let summaries = super::item_views::summaries_in(&store, query, estimates, waiting)?;
+    let current = waiting.current_in(&store, estimates)?;
     assert_eq!(
         store.last_change_seq()?,
         as_of,
         "the snapshot holds while its summaries are read"
     );
-    Ok((summaries, as_of))
+    Ok((summaries, as_of, current))
 }
 
 /// Hands every change committed after the hub's `sent` to live subscribers,

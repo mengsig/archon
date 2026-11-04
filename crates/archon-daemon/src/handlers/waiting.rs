@@ -35,6 +35,44 @@ impl WaitingView {
         })
     }
 
+    /// Whether `store` still holds the database inputs this view's reasons
+    /// came from, so they hold for rows read from it. `estimates` is as the
+    /// dispatcher counts spend.
+    pub(super) fn current_in(&self, store: &Store, estimates: bool) -> Result<bool, ArchonError> {
+        let now = archon_core::now();
+        let mut stored = store.dispatch_snapshot(now)?;
+        if !estimates {
+            (stored.spend_today_usd, stored.spend_total_usd) = store.spend_totals(now, false)?;
+        }
+        let seen = &self.snapshot;
+        let same_queue = stored.queued.len() == seen.queued.len()
+            && stored.queued.iter().zip(&seen.queued).all(|(s, v)| {
+                (
+                    &s.item,
+                    &s.repo,
+                    &s.pipeline,
+                    s.priority,
+                    s.created_seq,
+                    s.deps,
+                ) == (
+                    &v.item,
+                    &v.repo,
+                    &v.pipeline,
+                    v.priority,
+                    v.created_seq,
+                    v.deps,
+                )
+            });
+        Ok(same_queue
+            && stored.pause == seen.pause
+            && stored.running_total == seen.running_total
+            && stored.running_by_repo == seen.running_by_repo
+            && stored.running_by_pipeline == seen.running_by_pipeline
+            && stored.active_runs == seen.active_runs
+            && stored.spend_today_usd == seen.spend_today_usd
+            && stored.spend_total_usd == seen.spend_total_usd)
+    }
+
     pub(super) fn reason(
         &self,
         store: &Store,
@@ -336,5 +374,51 @@ mod tests {
             updated_at: now,
         };
         assert_eq!(view.reason(&store, &item, None).unwrap(), None);
+    }
+
+    /// A write that records no change, such as a priority edit, still makes
+    /// a view's reasons stale for the rows read after it.
+    #[test]
+    fn a_priority_edit_makes_the_view_stale() {
+        let mut store = Store::open_in_memory().unwrap();
+        let now = archon_core::now();
+        let item = QueueItem {
+            onto: None,
+            id: QueueItemId::new(),
+            repo: None,
+            pipeline: "ask".into(),
+            title: "first".into(),
+            brief: "brief".into(),
+            priority: Default::default(),
+            dependencies: vec![],
+            tags: vec![],
+            model_plan: Default::default(),
+            model_reasons: None,
+            budget_usd: None,
+            autonomy: Default::default(),
+            origin: None,
+            stage_timeouts: Default::default(),
+            fresh_retries: 0,
+            routed_provider: None,
+            provider_switch: None,
+            initiative: None,
+            risk: None,
+            state: QueueState::Queued,
+            created_at: now,
+            updated_at: now,
+        };
+        let mut item = store.insert_item(&item, None).unwrap();
+        let view = WaitingView {
+            snapshot: store.dispatch_snapshot(now).unwrap(),
+            reasons: BTreeMap::new(),
+            connected: true,
+        };
+        assert_eq!(view.snapshot.queued.len(), 1);
+        assert!(view.current_in(&store, true).unwrap());
+        let seq = store.last_change_seq().unwrap();
+        item.priority = archon_core::queue::Priority::Critical;
+        store.update_item(&item).unwrap();
+        assert_eq!(store.last_change_seq().unwrap(), seq, "no change recorded");
+        assert!(!view.current_in(&store, true).unwrap());
     }
 }

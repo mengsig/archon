@@ -218,6 +218,7 @@ async fn a_cursor_the_store_does_not_hold_is_refused_on_subscribe() {
 async fn history_pages_and_summaries_read_the_same_store() {
     let h = Harness::new().await;
     let item = h.enqueue("first").await;
+    let waiting = h.enqueue("second").await;
     let cancel = Request::CancelItem {
         item: item.id.clone(),
         reason: Some("not needed".into()),
@@ -248,6 +249,11 @@ async fn history_pages_and_summaries_read_the_same_store() {
     assert_eq!(as_of, last_seq(&h).await);
     assert_eq!(as_of, last.seq, "the cancel is the last change");
     assert!(summaries.iter().any(|s| s.item.id == item.id));
+    let queued = summaries.iter().find(|s| s.item.id == waiting.id);
+    assert!(
+        queued.is_some_and(|s| s.waiting_reason.is_some()),
+        "{queued:?}"
+    );
     let (_, head) = page(&h, as_of, Some(1)).await.unwrap();
     assert_eq!(head, as_of);
     let refused = page(&h, 0, Some(0)).await;

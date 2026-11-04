@@ -690,6 +690,9 @@ async fn status_reports_the_mcp_servers_health() {
     assert_eq!(refreshes(&harness), 0, "status only looks");
 }
 
+/// Long enough for a task on another worker to run its next few awaits.
+const SETTLE: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// A restart owed from the server's failure is settled by the operator's
 /// restart that wins the serialization: the relink that waited behind it must
 /// not cancel the orchestrator the operator just started.
@@ -698,9 +701,14 @@ async fn a_restart_during_a_relink_wait_leaves_one_new_orchestrator() {
     let harness = Harness::new().await;
     harness.connect().await;
     running_orchestrator(&harness).await;
-    harness.fake.set_default(
+    // The operator's replacement is created only after the check has seen the
+    // server ready and queued its relink behind the restart's serialization.
+    harness.fake.set_responder(
         "create_agent",
-        Scripted::reply("agent", orchestrator(ORCH_2, "ready")),
+        Arc::new(|_| {
+            tokio::task::block_in_place(|| std::thread::sleep(SETTLE));
+            Scripted::reply("agent", orchestrator(ORCH_2, "ready"))
+        }),
     );
     // The check's refresh is the last thing it asks Aether before it owes a
     // restart. Answering it starts the operator's restart, which takes the
@@ -718,7 +726,7 @@ async fn a_restart_during_a_relink_wait_leaves_one_new_orchestrator() {
             let task = tokio::spawn(async move { supervisor::restart_orchestrator(&ctx).await });
             *started.lock().unwrap() = Some(task);
             tokio::task::block_in_place(|| {
-                std::thread::sleep(std::time::Duration::from_millis(200));
+                std::thread::sleep(SETTLE);
             });
             Scripted::reply("mcp_servers", json!([ready()]))
         }),
@@ -736,6 +744,7 @@ async fn a_restart_during_a_relink_wait_leaves_one_new_orchestrator() {
         "only the old orchestrator: {cancelled:?}"
     );
     assert_eq!(cancelled[0]["agent"], json!(ORCH));
+    assert_eq!(cancelled[0]["reason"], json!("restarted by the operator"));
     assert!(harness.fake.received_named("restart").is_empty());
     assert_eq!(
         harness.kv(keys::ORCHESTRATOR_AGENT).await.as_deref(),

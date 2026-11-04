@@ -197,6 +197,17 @@ pub(super) fn record_delivery(
     Ok(())
 }
 
+/// Retention is about to delete the items in `temp.prune_items`, and their
+/// links with them by cascade: each link's removal is a change.
+pub(super) fn record_pruned(conn: &Connection) -> Result<usize, ArchonError> {
+    let filter = "item IN (SELECT id FROM temp.prune_items)";
+    let links = query_links(conn, filter, params![])?;
+    for link in &links {
+        record_change(conn, &link.item, &link.reference, link.relation)?;
+    }
+    Ok(links.len())
+}
+
 type LinkRow = (String, String, String, i64, String, String, String, String);
 
 fn read_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LinkRow> {

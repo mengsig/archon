@@ -389,6 +389,7 @@ fn delete_chosen(
     pruned: &mut HistoryPruned,
 ) -> Result<(), ArchonError> {
     pruned.kv += prune_item_kv(tx)?;
+    super::github_links::record_pruned(tx)?;
     let run_owned = [
         "DELETE FROM run_edits WHERE run IN (SELECT id FROM temp.prune_runs)",
         "DELETE FROM agent_runs WHERE run IN (SELECT id FROM temp.prune_runs)",

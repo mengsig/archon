@@ -281,6 +281,47 @@ fn a_pull_request_another_run_still_delivers_to_stays_linked() {
     assert_eq!(numbers, vec![7, 9], "the first run still delivers to 7");
 }
 
+/// Retention deletes an item's links with it, each removal a change.
+#[test]
+fn a_pruned_item_takes_its_links_with_a_change_for_each() {
+    let mut store = store();
+    let old = store.insert_item(&item(None, "old"), None).unwrap();
+    let run = start(&mut store, &old.id);
+    store
+        .record_run_pull_request(&run.id, &pr(7), None)
+        .unwrap();
+    store
+        .link_github(&operator_link(&old.id, issue(3), LinkRelation::Closes))
+        .unwrap();
+    let done = QueueState::Succeeded {
+        run: run.id.clone(),
+        summary: "done".into(),
+    };
+    settle_run(&mut store, &run, done, t(50));
+    let finished = store.run(&run.id).unwrap();
+    store.capture_outcome(&finished, None, true).unwrap();
+    let before = store.last_change_seq().unwrap();
+
+    let pruned = store
+        .prune_history(t(30 * 86_400), 100, |_, _| false)
+        .unwrap();
+    assert_eq!(pruned.items, 1, "{pruned:?}");
+    assert!(
+        store.issue_items(&issue(3)).unwrap().is_empty(),
+        "the links went with it"
+    );
+    let mut removed = link_changes(&store, before);
+    removed.sort_by_key(|(_, number, _)| *number);
+    let id = old.id.clone();
+    assert_eq!(
+        removed,
+        vec![
+            (id.clone(), 3, LinkRelation::Closes),
+            (id, 7, LinkRelation::Delivered)
+        ]
+    );
+}
+
 #[test]
 fn an_issue_lists_every_item_linked_to_its_number() {
     let mut store = store();

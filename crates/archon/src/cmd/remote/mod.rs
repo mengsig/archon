@@ -1,5 +1,5 @@
 //! `archon remote [setup | status | enable | disable | pair | devices |
-//! revoke | origin]`: the mobile web app archond serves (docs/remote.md).
+//! revoke | origin]`: archond's listener, mounted on Aether's (docs/remote.md).
 
 mod qr;
 mod runner;

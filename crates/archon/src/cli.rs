@@ -268,9 +268,9 @@ pub enum Command {
         #[command(subcommand)]
         command: Option<GithubWatcherCommand>,
     },
-    /// Reach Archon from your phone: the mobile web app archond serves
-    /// over Tailscale or your own HTTPS proxy (docs/remote.md). Shows the
-    /// status by default.
+    /// Reach Archon from your phone: archond mounted on Aether's listener,
+    /// published to your tailnet (docs/remote.md). Shows the status by
+    /// default.
     Remote {
         #[command(subcommand)]
         command: Option<RemoteCommand>,

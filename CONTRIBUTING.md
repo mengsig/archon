@@ -58,12 +58,10 @@ runs the same checks without one. Without `flock` (util-linux) it runs
 without a slot and says so. GitHub CI runs one job per runner and is
 unaffected.
 
-`make e2e` runs the mobile web app in headless Chromium against a real
-archond (every screen's flows, pairing, revoke). It installs its npm packages
-and the browser on first use and needs `node` and `npm`. It is not part of
-`make ci`: CI runs it on the release pull request into `main`, and you should
-run it when you change `crates/archon-remote`. Without a browser it prints
-SKIP locally; with `CI` set it fails instead.
+Archon's screens are part of the Aether app, so this repository has no
+browser tests: `crates/archon-remote/tests/listener.rs` and
+`crates/archon/tests/remote.rs` cover the listener, pairing and `archon
+remote setup` against stand-ins.
 
 ### CI on the release branch
 

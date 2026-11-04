@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Remote access
+
+- Archon is served through Aether (#383). `archon remote setup` now mounts
+  archond on an Aether listener at `/archon`, publishes that listener as the
+  one `tailscale serve` origin, writes `[remote] mounted_at` and
+  `trusted_origins` into `config.toml`, and asks for one `archon daemon
+  restart`. It needs Aether 1.3.0 or later and says so, stops with Aether's
+  own reason while anything on the machine is published through Funnel,
+  withdraws an earlier direct publication of archond, and reads before each
+  step, so a rerun changes nothing and says so. Archon's screens are part of
+  the Aether app; each daemon pairs the browser with its own device.
+  `--proxy-url` and `--local` are gone.
+- archond no longer embeds the mobile web app (`crates/archon-remote/web`
+  and `make e2e` are removed). A browser visiting archond's listener
+  directly gets a short page without scripts that links to Aether's address.
+
 ### Ship
 
 - Every delivered pull request now leads with `Risk level: <level>` and a

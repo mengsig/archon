@@ -6,8 +6,7 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 publish.workspace = true
-description = "archond's remote listener: the mobile web app, device pairing and the WebSocket carrier"
-build = "build.rs"
+description = "archond's remote listener: device pairing and the WebSocket carrier, mounted on Aether's listener"
 
 [dependencies]
 archon-core = { workspace = true }

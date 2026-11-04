@@ -268,9 +268,9 @@ pub enum Command {
         #[command(subcommand)]
         command: Option<GithubWatcherCommand>,
     },
-    /// Reach Archon from your phone: the mobile web app archond serves
-    /// over Tailscale or your own HTTPS proxy (docs/remote.md). Shows the
-    /// status by default.
+    /// Reach Archon from your phone: archond mounted on Aether's listener,
+    /// published to your tailnet (docs/remote.md). Shows the status by
+    /// default.
     Remote {
         #[command(subcommand)]
         command: Option<RemoteCommand>,
@@ -553,11 +553,12 @@ pub enum AutonomyCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum RemoteCommand {
-    /// Switch remote access on, publish it on your tailnet and pair a
-    /// phone, explaining each step. Safe to run again.
+    /// Serve Archon through the `/archon` mount of Aether's listener,
+    /// publish that listener on your tailnet and pair a browser, explaining
+    /// each step. Safe to run again: a rerun changes nothing and says so.
     #[command(after_help = "Examples:\n  archon remote setup\n  \
                             archon remote setup --yes --json\n  \
-                            archon remote setup --proxy-url https://archon.example.com")]
+                            archon remote setup --https-port 8443")]
     Setup(RemoteSetupArgs),
     /// Whether the listener is on, where it is published, and the paired
     /// devices (the default).
@@ -603,17 +604,9 @@ pub struct RemoteSetupArgs {
     /// Answer yes to every question: publish without asking.
     #[arg(long)]
     pub yes: bool,
-    /// Serve through your own HTTPS reverse proxy at this origin instead of
-    /// `tailscale serve`.
-    #[arg(long, value_name = "URL", conflicts_with = "local")]
-    pub proxy_url: Option<String>,
-    /// Publish nothing, and withdraw origins earlier runs allowed: the app
-    /// answers on this machine's loopback only.
+    /// The HTTPS port `tailscale serve` publishes Aether's listener on (443,
+    /// 8443 or 10000); default: one already serving it, else the first free.
     #[arg(long)]
-    pub local: bool,
-    /// The HTTPS port `tailscale serve` publishes on (443, 8443 or 10000);
-    /// default: the first one free.
-    #[arg(long, conflicts_with_all = ["proxy_url", "local"])]
     pub https_port: Option<u16>,
     /// Set everything up but open no pairing code.
     #[arg(long)]

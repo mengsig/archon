@@ -1,9 +1,12 @@
 //! `archon remote [setup | status | enable | disable | pair | devices |
-//! revoke | origin]`: the mobile web app archond serves (docs/remote.md).
+//! revoke | origin]`: archond's listener, mounted on Aether's (docs/remote.md).
 
 mod qr;
 mod runner;
 mod setup;
+mod setup_aether;
+mod setup_config;
+mod setup_publish;
 mod tailscale;
 
 use std::fmt::Write as _;

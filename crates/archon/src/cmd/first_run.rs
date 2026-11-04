@@ -140,8 +140,9 @@ pub async fn offer(config: &Config) -> anyhow::Result<bool> {
 /// Offered once, right after the first setup; a failure there leaves the
 /// rest of the first run going and names the command that retries it.
 async fn offer_remote(input: &mut impl BufRead, out: &mut impl Write) -> anyhow::Result<()> {
-    let question = "Reach Archon from your phone too? This publishes the mobile web app to \
-                    your tailnet with `tailscale serve` (`archon remote setup --yes`)";
+    let question = "Reach Archon from your phone too? This mounts Archon on Aether's listener \
+                    and publishes it to your tailnet with `tailscale serve` \
+                    (`archon remote setup --yes`)";
     if !ask(input, out, question, false)? {
         println!("Skipped. `archon remote setup` does it later.");
         return Ok(());
@@ -149,8 +150,6 @@ async fn offer_remote(input: &mut impl BufRead, out: &mut impl Write) -> anyhow:
     // The answer above is the consent; stdin stays locked here, so nothing more is asked.
     let args = crate::cli::RemoteSetupArgs {
         yes: true,
-        proxy_url: None,
-        local: false,
         https_port: None,
         no_pair: false,
     };

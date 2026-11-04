@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint shell doc test test-nextest build install ci ci-checks e2e
+.PHONY: fmt fmt-check lint shell doc test test-nextest build install ci ci-checks
 export CARGO_BUILD_JOBS ?= 4
 
 fmt:       ; cargo fmt --all
@@ -20,8 +20,3 @@ install:   ; cargo install --locked --path crates/archon
 # while it runs the checks; `ci-checks` runs them without one.
 ci:        ; sh scripts/ci-slot.sh $(MAKE) --no-print-directory ci-checks
 ci-checks: fmt-check lint doc test
-# The mobile web app in headless Chromium against a real archond; installs its
-# npm packages and the browser first. Run for releases; not part of `ci`.
-e2e:
-	cargo build -p archon --locked
-	ARCHON_BIN="$${CARGO_TARGET_DIR:-$(CURDIR)/target}/debug/archon" node crates/archon-remote/web/scripts/e2e.js

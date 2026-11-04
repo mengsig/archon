@@ -1,7 +1,7 @@
-//! archond's remote listener (docs/remote.md): the embedded mobile web app,
-//! one-time pairing, per-device credentials, and a WebSocket that carries
-//! archond's own protocol. Off until the operator enables it, bound to
-//! loopback, and published over HTTPS by `tailscale serve` or a proxy.
+//! archond's remote listener (docs/remote.md): one-time pairing, per-device
+//! credentials, and a WebSocket that carries archond's own protocol. Off
+//! until the operator enables it, bound to loopback, and reached through
+//! the `/archon` mount of Aether's listener, whose app has Archon's screens.
 //!
 //! A paired device gets no authority of its own: [`allow::check`] picks the
 //! requests its role may send, and [`Backend`] hands each to archond with

@@ -122,7 +122,10 @@ pub(super) async fn import_issue(
         )));
     }
     let key = import::key(&reference);
-    if let Some(item) = ctx.read_store().await?.imported_item(&key)? {
+    // Its own statement: without reader connections the read holds the writer,
+    // which `imported` locks again.
+    let first = ctx.read_store().await?.imported_item(&key)?;
+    if let Some(item) = first {
         return imported(ctx, &reference, None, item).await;
     }
     let mut registry = github_sync::registered(ctx).await?;

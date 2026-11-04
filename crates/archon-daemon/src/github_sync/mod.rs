@@ -131,7 +131,9 @@ impl GithubSync {
                 break;
             }
             pass.requested += 1;
-            self.asked.insert(key_of(&target), now);
+            // When this request starts, not the pass: a slow pass must not
+            // bring its last objects due early.
+            self.asked.insert(key_of(&target), Instant::now());
             if let Some(wait) = refresh(ctx, repo, &target, &mut pass).await? {
                 self.paused_until = Some(Instant::now() + wait);
                 pass.backoff = Some(wait);

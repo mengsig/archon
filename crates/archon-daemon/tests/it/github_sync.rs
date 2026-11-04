@@ -24,6 +24,7 @@ use common::{Harness, REPO_NAME};
 /// Answers `gh api --method GET … repos/o/r/issues/N` from `issue-N.json`
 /// and `etag-N` beside it: a 304 when `If-None-Match` sends the current ETag,
 /// a 404 for a number it has no file for. Any other call is a violation.
+/// While `hold-N` exists a read of #N marks `started-N` and waits.
 const STUB_GH: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 printf '%s\n' "$*" >> "$dir/gh-calls"
@@ -41,6 +42,10 @@ for arg in "$@"; do
 done
 [ "$method" = GET ] || violate "method '$method'"
 number=${endpoint##*/}
+if [ -f "$dir/hold-$number" ]; then
+  : > "$dir/started-$number"
+  while [ -f "$dir/hold-$number" ]; do sleep 0.02; done
+fi
 current=$(cat "$dir/etag-$number" 2>/dev/null)
 if [ -n "$etag" ] && [ "$etag" = "$current" ]; then
   printf 'HTTP/2.0 304 Not Modified\r\nEtag: %s\r\n\r\n' "$etag"
@@ -78,6 +83,32 @@ impl Github {
         let at = self.dir.path();
         std::fs::write(at.join(format!("issue-{number}.json")), issue.to_string()).unwrap();
         std::fs::write(at.join(format!("etag-{number}")), etag).unwrap();
+    }
+
+    /// Reads of #`number` wait until [`Github::release`].
+    fn hold(&self, number: u64) {
+        std::fs::write(self.dir.path().join(format!("hold-{number}")), "").unwrap();
+    }
+
+    fn release(&self, number: u64) {
+        std::fs::remove_file(self.dir.path().join(format!("hold-{number}"))).unwrap();
+    }
+
+    /// The first of `numbers` a held read started for, within seconds. It
+    /// yields between looks, so the sync's own future runs meanwhile.
+    async fn started(&self, numbers: &[u64]) -> u64 {
+        assert!(!numbers.is_empty(), "something to wait for");
+        for _ in 0..10_000 {
+            let marked = numbers
+                .iter()
+                .find(|n| self.dir.path().join(format!("started-{n}")).exists());
+            if let Some(&number) = marked {
+                return number;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            tokio::task::yield_now().await;
+        }
+        panic!("no held read of {numbers:?} started");
     }
 
     fn calls(&self) -> Vec<String> {
@@ -241,6 +272,71 @@ async fn the_sync_only_reads_and_a_304_writes_nothing() {
     github.assert_only_reads();
 }
 
+/// `future`, with the runtime kept busy meanwhile: a paused clock then moves
+/// only when the test advances it, never on to a `gh` timeout.
+async fn busy<T>(future: impl std::future::Future<Output = T>) -> T {
+    let done = std::cell::Cell::new(false);
+    let finish = async {
+        let out = future.await;
+        done.set(true);
+        out
+    };
+    let spin = async {
+        for _ in 0..10_000 {
+            if done.get() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            tokio::task::yield_now().await;
+        }
+        panic!("the future never finished");
+    };
+    tokio::join!(finish, spin).0
+}
+
+/// Each object's interval runs from its own request, not the pass's start:
+/// a slow pass brings no object due early (ARCHITECTURE §f).
+#[tokio::test]
+async fn a_slow_pass_brings_no_object_due_early() {
+    let github = Github::new();
+    for number in [5, 6] {
+        let etag = format!("W/\"i{number}\"");
+        github.serve(number, issue_json(number, "an issue", "text"), &etag);
+    }
+    let h = harness(&github).await;
+    for number in [5, 6] {
+        import(&h, number, None).await.unwrap();
+        github.hold(number);
+    }
+    tokio::time::pause();
+    let mut sync = GithubSync::new(MIN_INTERVAL);
+    let driver = async {
+        let early = github.started(&[5, 6]).await;
+        // Under the read's own timeout, which a paused clock still keeps.
+        tokio::time::advance(MIN_INTERVAL * 5 / 6).await;
+        github.release(early);
+        let late = 11 - early;
+        assert_eq!(github.started(&[late]).await, late);
+        github.release(late);
+        (early, late)
+    };
+    let (slow_pass, (early, late)) = busy(async { tokio::join!(sync.pass(&h.ctx), driver) }).await;
+    let slow_pass = slow_pass.unwrap();
+    assert_eq!((slow_pass.requested, slow_pass.unchanged), (2, 2));
+
+    tokio::time::advance(MIN_INTERVAL / 2).await;
+    let asked = github.calls().len();
+    let next = busy(sync.pass(&h.ctx)).await.unwrap();
+    assert_eq!(next.requested, 1, "#{late} was asked only 30s ago");
+    let calls = github.calls();
+    assert_eq!(calls.len(), asked + 1);
+    assert!(
+        calls[asked].ends_with(&format!("/issues/{early}")),
+        "{calls:?}"
+    );
+    github.assert_only_reads();
+}
+
 /// `item_links` and `list_github_objects` read the cache the sync and the
 /// import fill.
 #[tokio::test]
@@ -319,6 +415,26 @@ async fn a_second_import_returns_the_first_item() {
     let key = "github:github.com/o/r#5";
     let stored = h.ctx.store.lock().await.imported_item(key).unwrap();
     assert_eq!(stored.map(|i| i.id), Some(first.id));
+    github.assert_only_reads();
+}
+
+/// Without reader connections a read holds the writer: a repeat import still
+/// returns the first item rather than wait on its own lock.
+#[tokio::test]
+async fn a_repeat_import_returns_without_reader_connections() {
+    let github = Github::new();
+    github.serve(5, issue_json(5, "an issue", "the work"), "W/\"i1\"");
+    let mut h = harness(&github).await;
+    let first = import(&h, 5, None).await.unwrap();
+    let ctx = std::sync::Arc::get_mut(&mut h.ctx).expect("the harness alone holds its context");
+    ctx.readers = archon_daemon::readers::Readers::default();
+    let wait = std::time::Duration::from_secs(10);
+    let again = tokio::time::timeout(wait, import(&h, 5, None))
+        .await
+        .expect("a repeat import returns")
+        .unwrap();
+    assert_eq!(again.id, first.id);
+    assert_eq!(github.calls().len(), 1, "the repeat reads nothing");
     github.assert_only_reads();
 }
 

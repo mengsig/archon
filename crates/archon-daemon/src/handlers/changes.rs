@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
@@ -27,6 +27,9 @@ pub const CHANGE_BUFFER: usize = 1024;
 const PUMP_EVERY: Duration = Duration::from_millis(100);
 /// Changes read from the store per query.
 const BATCH: usize = 500;
+/// How often retention trims the oldest changes, and how many per write.
+const PRUNE_EVERY: Duration = Duration::from_secs(60 * 60);
+const PRUNE_BATCH: usize = 5_000;
 
 /// The live side of the stream: what the pump read, for every subscriber.
 /// `sent` outlives a pump restart, so no committed change is skipped.
@@ -152,13 +155,39 @@ pub(super) async fn summaries_at(
 /// Hands every change committed after the hub's `sent` to live subscribers,
 /// in seq order, whether or not anyone listens: a subscriber's own catch-up
 /// covers what was sent before it subscribed, and nothing later is skipped.
+/// It also applies retention, at start and every [`PRUNE_EVERY`].
 pub async fn pump(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
     let mut tick = tokio::time::interval(PUMP_EVERY);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut pruned_at: Option<Instant> = None;
     loop {
         tick.tick().await;
         while send_batch(&ctx).await? == BATCH {}
+        if pruned_at.is_none_or(|at| at.elapsed() >= PRUNE_EVERY) {
+            prune(&ctx).await?;
+            pruned_at = Some(Instant::now());
+        }
     }
+}
+
+/// Deletes what retention no longer keeps, one bounded write at a time so
+/// other writers get the store between them; how many changes it deleted.
+async fn prune(ctx: &DaemonContext) -> Result<u64, ArchonError> {
+    let now = archon_core::now();
+    let mut total = 0;
+    loop {
+        let deleted = ctx.store.lock().await.prune_changes(now, PRUNE_BATCH)?;
+        assert!(deleted <= PRUNE_BATCH as u64, "a prune stays in its batch");
+        total += deleted;
+        if deleted < PRUNE_BATCH as u64 {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    if total > 0 {
+        tracing::info!(deleted = total, "pruned changes past retention");
+    }
+    Ok(total)
 }
 
 /// One batch after `sent`; how many changes it held.

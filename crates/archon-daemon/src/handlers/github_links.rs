@@ -125,15 +125,17 @@ pub(super) async fn import_issue(
     if let Some(item) = ctx.read_store().await?.imported_item(&key)? {
         return imported(ctx, &reference, None, item).await;
     }
-    let repo = github_sync::registered(ctx)
-        .await?
-        .remove(&reference.repo)
-        .ok_or_else(|| {
-            ArchonError::NotFound(format!(
-                "a registered repository whose origin is github.com/{}",
-                reference.repo
-            ))
-        })?;
+    let mut registry = github_sync::registered(ctx).await?;
+    let repo = registry.by_origin.remove(&reference.repo).ok_or_else(|| {
+        let unreadable = match registry.unreadable.as_slice() {
+            [] => String::new(),
+            some => format!("; these origins could not be read: {}", some.join("; ")),
+        };
+        ArchonError::NotFound(format!(
+            "a registered repository whose origin is github.com/{}{unreadable}",
+            reference.repo
+        ))
+    })?;
     let issue = import::read_issue(ctx, &repo, &reference).await?;
     let title = import::title(&reference, &issue.cached.object.title);
     let request = EnqueueRequest {

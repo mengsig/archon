@@ -18,6 +18,7 @@ Everyday:
   chat, say       Talk to the orchestrator: the line chat, or one message
   questions       List what the orchestrator is waiting on; `answer` replies
   queue           Inspect and change queue items
+  github          Import a GitHub issue as an item: `archon github import o/r#1`
   status          Daemon, orchestrator, caps, spend and Aether link
   repo            Register and configure repositories
   merge           Merge a succeeded item's pull request, or land its local branch

@@ -13,9 +13,10 @@ use archon_core::notify::FeedEntry;
 use archon_core::protocol::github_links::LinkSource;
 use archon_core::protocol::{
     GithubKind, GithubLink, GithubObject, GithubObjectState, GithubRef, LinkRelation,
-    ManualLinkRelation, Reply, RepoRef, Request,
+    ManualLinkRelation, Reply, RepoAdd, RepoRef, Request,
 };
 use archon_core::queue::{Priority, QueueItem};
+use archon_core::repo::ShipMode;
 use archon_daemon::github_sync::import::UNTRUSTED_NOTICE;
 use archon_daemon::github_sync::{GithubSync, MIN_INTERVAL};
 use common::{Harness, REPO_NAME};
@@ -318,6 +319,60 @@ async fn a_second_import_returns_the_first_item() {
     let key = "github:github.com/o/r#5";
     let stored = h.ctx.store.lock().await.imported_item(key).unwrap();
     assert_eq!(stored.map(|i| i.id), Some(first.id));
+    github.assert_only_reads();
+}
+
+/// A registered checkout whose `origin` cannot be read is skipped and named:
+/// the sync and an import of another repository go on.
+#[tokio::test]
+async fn an_unreadable_checkout_stops_neither_the_sync_nor_an_import() {
+    let github = Github::new();
+    github.serve(5, issue_json(5, "an issue", "text"), "W/\"i1\"");
+    github.serve(6, issue_json(6, "another", "text"), "W/\"i2\"");
+    let h = harness(&github).await;
+    let gone = common::init_repo_with_origin(&h.dir.path().join("gone"));
+    let added = h
+        .cli(Request::RepoAdd(RepoAdd {
+            path: gone.clone(),
+            name: Some("gone".into()),
+            ship: Some(ShipMode::Pr),
+            base_branch: Some("main".into()),
+            default_pipeline: Some(common::PIPELINE.into()),
+            auto_merge: false,
+            github_watch: false,
+        }))
+        .await;
+    assert!(matches!(added, Ok(Reply::Repo(_))), "{added:?}");
+    std::fs::remove_dir_all(&gone).unwrap();
+
+    let item = import(&h, 5, None).await.expect("o/r still imports");
+    let link = Request::LinkIssue {
+        item: item.id.clone(),
+        reference: reference(6, GithubKind::Issue),
+        relation: ManualLinkRelation::Mentioned,
+    };
+    assert!(matches!(h.cli(link).await, Ok(Reply::Ok)));
+    let pass = GithubSync::new(MIN_INTERVAL).pass(&h.ctx).await.unwrap();
+    assert_eq!(pass.requested, 2, "both o/r objects: {pass:?}");
+    assert_eq!((pass.changed, pass.unchanged), (1, 1), "{pass:?}");
+    assert!(cached(&h, 6).await.is_some(), "the linked issue is cached");
+
+    let elsewhere = Request::ImportIssue {
+        reference: GithubRef {
+            repo: "someone/else".into(),
+            ..reference(1, GithubKind::Issue)
+        },
+        pipeline: None,
+        priority: None,
+    };
+    let refused = h.cli(elsewhere).await.unwrap_err();
+    let ArchonError::NotFound(message) = &refused else {
+        panic!("{refused:?}");
+    };
+    assert!(
+        message.contains("gone"),
+        "names the unreadable checkout: {message}"
+    );
     github.assert_only_reads();
 }
 

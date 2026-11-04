@@ -6,7 +6,7 @@
 mod fetch;
 pub mod import;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -31,8 +31,8 @@ const CLOSED_INTERVAL: Duration = Duration::from_secs(86_400);
 /// The most `GET`s one pass makes; the rest wait for the next pass.
 const MAX_REQUESTS_PER_PASS: usize = 50;
 
-/// How many linked objects one pass considers, stalest first.
-const MAX_TARGETS_PER_PASS: usize = 2_000;
+/// How many linked objects one store read returns; a pass pages through all.
+const TARGET_PAGE: usize = 1_000;
 
 /// What one pass did.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -54,6 +54,10 @@ pub struct Pass {
 
 type Key = (String, String, u64);
 
+fn key_of(target: &SyncTarget) -> Key {
+    (target.host.clone(), target.repo.clone(), target.number)
+}
+
 /// The sync's own schedule: when each object was last asked about, and how
 /// long GitHub asked it to wait. Kept in memory, so a 304 writes nothing.
 #[derive(Debug)]
@@ -61,6 +65,8 @@ pub struct GithubSync {
     interval: Duration,
     asked: HashMap<Key, Instant>,
     paused_until: Option<Instant>,
+    /// The registered repositories whose `origin` the last pass could not read.
+    unreadable: Vec<String>,
 }
 
 impl GithubSync {
@@ -70,12 +76,13 @@ impl GithubSync {
             interval,
             asked: HashMap::new(),
             paused_until: None,
+            unreadable: Vec::new(),
         }
     }
 
     /// Whether `target` is due: never asked, or asked longer ago than its interval.
     fn due(&self, target: &SyncTarget, now: Instant) -> bool {
-        let key = (target.host.clone(), target.repo.clone(), target.number);
+        let key = key_of(target);
         let every = match target.state {
             Some(GithubObjectState::Closed) => CLOSED_INTERVAL,
             _ => self.interval,
@@ -83,6 +90,21 @@ impl GithubSync {
         self.asked
             .get(&key)
             .is_none_or(|at| now.duration_since(*at) >= every)
+    }
+
+    /// The due `targets`, least recently asked first: those this process never
+    /// asked, then by when, ties to the stalest copy. Forgets unwatched objects.
+    fn due_in_order(&mut self, targets: Vec<SyncTarget>, now: Instant) -> Vec<SyncTarget> {
+        let watched: HashSet<Key> = targets.iter().map(key_of).collect();
+        self.asked.retain(|key, _| watched.contains(key));
+        let mut due: Vec<SyncTarget> = targets.into_iter().filter(|t| self.due(t, now)).collect();
+        due.sort_by_cached_key(|t| (self.asked.get(&key_of(t)).copied(), t.fetched_at));
+        assert!(
+            self.asked.len() <= watched.len(),
+            "only watched objects kept"
+        );
+        assert!(due.len() <= watched.len(), "each target due at most once");
+        due
     }
 
     /// Ask GitHub about each due linked object once, as the login of the
@@ -93,14 +115,15 @@ impl GithubSync {
         if self.paused_until.is_some_and(|until| now < until) {
             return Ok(pass);
         }
-        let targets = ctx
-            .read_store()
-            .await?
-            .github_sync_targets(MAX_TARGETS_PER_PASS)?;
-        let repos = registered(ctx).await?;
-        let due: Vec<&SyncTarget> = targets.iter().filter(|t| self.due(t, now)).collect();
-        for target in due {
-            let Some(repo) = repos.get(&target.repo).filter(|_| target.host == GH_HOST) else {
+        let targets = watched_targets(ctx).await?;
+        let registry = registered(ctx).await?;
+        self.note_unreadable(registry.unreadable);
+        for target in self.due_in_order(targets, now) {
+            let Some(repo) = registry
+                .by_origin
+                .get(&target.repo)
+                .filter(|_| target.host == GH_HOST)
+            else {
                 pass.unregistered += 1;
                 continue;
             };
@@ -108,11 +131,8 @@ impl GithubSync {
                 break;
             }
             pass.requested += 1;
-            self.asked.insert(
-                (target.host.clone(), target.repo.clone(), target.number),
-                now,
-            );
-            if let Some(wait) = refresh(ctx, repo, target, &mut pass).await? {
+            self.asked.insert(key_of(&target), now);
+            if let Some(wait) = refresh(ctx, repo, &target, &mut pass).await? {
                 self.paused_until = Some(Instant::now() + wait);
                 pass.backoff = Some(wait);
                 break;
@@ -125,6 +145,45 @@ impl GithubSync {
         );
         Ok(pass)
     }
+
+    /// Warn when the set of unreadable repositories changes, not every pass.
+    fn note_unreadable(&mut self, unreadable: Vec<String>) {
+        if unreadable == self.unreadable {
+            return;
+        }
+        if unreadable.is_empty() {
+            tracing::info!("every registered repository's origin reads again");
+        } else {
+            tracing::warn!(
+                ?unreadable,
+                "the GitHub sync skips registered repositories whose origin cannot be read"
+            );
+        }
+        self.unreadable = unreadable;
+    }
+}
+
+/// Every linked object still watched, read a page at a time.
+async fn watched_targets(ctx: &DaemonContext) -> Result<Vec<SyncTarget>, ArchonError> {
+    let store = ctx.read_store().await?;
+    let mut targets: Vec<SyncTarget> = Vec::new();
+    loop {
+        let after = targets
+            .last()
+            .map(|t| (t.host.as_str(), t.repo.as_str(), t.number));
+        let page = store.github_sync_targets(after, TARGET_PAGE)?;
+        let last_page = page.len() < TARGET_PAGE;
+        targets.extend(page);
+        if last_page {
+            break;
+        }
+    }
+    debug_assert_eq!(
+        targets.iter().map(key_of).collect::<HashSet<_>>().len(),
+        targets.len(),
+        "no object read twice"
+    );
+    Ok(targets)
 }
 
 /// One `GET` of `target`, its outcome counted in `pass`: only a 200 writes.
@@ -166,26 +225,53 @@ async fn refresh(
 }
 
 /// The registered repositories by the github.com `owner/name` their `origin`
-/// names; a repository without one is left out.
-pub(crate) async fn registered(ctx: &DaemonContext) -> Result<HashMap<String, Repo>, ArchonError> {
+/// names, and those whose `origin` could not be read, each with its error.
+#[derive(Debug, Default)]
+pub(crate) struct Registry {
+    pub by_origin: HashMap<String, Repo>,
+    pub unreadable: Vec<String>,
+}
+
+/// The [`Registry`] now. One unreadable checkout is reported and skipped,
+/// so it stops neither the sync nor an import of another repository.
+pub(crate) async fn registered(ctx: &DaemonContext) -> Result<Registry, ArchonError> {
     let repos = ctx.read_store().await?.repos()?;
-    let found = tokio::task::spawn_blocking(move || {
-        let mut by_origin = HashMap::new();
+    let count = repos.len();
+    let registry = tokio::task::spawn_blocking(move || {
+        let mut registry = Registry::default();
         for repo in repos {
-            let origin = crate::worktree::stack::origin_url(&repo.path)?;
-            if let Some(github) = origin.as_deref().and_then(GithubRepo::from_remote_url) {
-                by_origin.entry(github.as_str().to_owned()).or_insert(repo);
+            match crate::worktree::stack::origin_url(&repo.path) {
+                Ok(origin) => {
+                    if let Some(github) = origin.as_deref().and_then(GithubRepo::from_remote_url) {
+                        registry
+                            .by_origin
+                            .entry(github.as_str().to_owned())
+                            .or_insert(repo);
+                    }
+                }
+                Err(error) => registry.unreadable.push(format!(
+                    "{} ({}): {error}",
+                    repo.name,
+                    repo.path.display()
+                )),
             }
         }
-        Ok::<_, ArchonError>(by_origin)
+        registry
     })
     .await
-    .map_err(|e| ArchonError::io("reading repository origins", std::io::Error::other(e)))??;
+    .map_err(|e| ArchonError::io("reading repository origins", std::io::Error::other(e)))?;
+    assert!(
+        registry.by_origin.len() + registry.unreadable.len() <= count,
+        "each repository counted once"
+    );
     debug_assert!(
-        found.keys().all(|k| k == &k.to_ascii_lowercase()),
+        registry
+            .by_origin
+            .keys()
+            .all(|k| k == &k.to_ascii_lowercase()),
         "keys are lowercased"
     );
-    Ok(found)
+    Ok(registry)
 }
 
 /// The sync worker: a pass every [`MIN_INTERVAL`], each asking only about
@@ -208,5 +294,57 @@ pub async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
             Ok(pass) => tracing::debug!(?pass, "GitHub sync pass"),
             Err(error) => return Err(error),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn target(number: u64) -> SyncTarget {
+        SyncTarget {
+            host: GH_HOST.into(),
+            repo: "o/r".into(),
+            number,
+            state: Some(GithubObjectState::Open),
+            etag: Some("W/\"e\"".into()),
+            fetched_at: Some(archon_core::now()),
+        }
+    }
+
+    /// 600 unchanged objects at 50 a pass: each is asked once a round, in turn,
+    /// rather than the first 250 every interval and the rest never.
+    #[test]
+    fn every_watched_object_is_asked_in_turn_however_many_there_are() {
+        let mut sync = GithubSync::new(INTERVAL);
+        let targets: Vec<SyncTarget> = (1..=600).map(target).collect();
+        let start = Instant::now();
+        let mut asks: HashMap<u64, u32> = HashMap::new();
+        for minute in 0..60 {
+            let now = start + MIN_INTERVAL * minute;
+            let due = sync.due_in_order(targets.clone(), now);
+            for t in due.into_iter().take(MAX_REQUESTS_PER_PASS) {
+                sync.asked.insert(key_of(&t), now);
+                *asks.entry(t.number).or_default() += 1;
+            }
+        }
+        assert_eq!(asks.len(), targets.len(), "every object is asked");
+        assert!(asks.values().all(|&n| n == 5), "{asks:?}");
+        sync.due_in_order(targets[..10].to_vec(), start);
+        assert_eq!(sync.asked.len(), 10, "unwatched objects are forgotten");
+    }
+
+    #[test]
+    fn never_fetched_objects_come_before_the_stalest_copies() {
+        let mut sync = GithubSync::new(INTERVAL);
+        let mut fresh = target(1);
+        fresh.fetched_at = Some(archon_core::now());
+        let mut stale = target(2);
+        stale.fetched_at = Some(archon_core::now() - chrono::Duration::days(1));
+        let mut new = target(3);
+        new.fetched_at = None;
+        let order = sync.due_in_order(vec![fresh, stale, new], Instant::now());
+        let numbers: Vec<u64> = order.iter().map(|t| t.number).collect();
+        assert_eq!(numbers, [3, 2, 1]);
     }
 }

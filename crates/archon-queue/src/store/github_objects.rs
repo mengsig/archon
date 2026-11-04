@@ -42,6 +42,8 @@ pub struct SyncTarget {
     /// The cached state, `None` before the first fetch.
     pub state: Option<GithubObjectState>,
     pub etag: Option<String>,
+    /// When a 200 last refreshed it, `None` before the first fetch.
+    pub fetched_at: Option<Timestamp>,
 }
 
 /// A wire enum's snake_case name, as its serde form spells it.
@@ -224,8 +226,15 @@ fn query_objects(
     rows.into_iter().map(parse_row).collect()
 }
 
-/// host, repo, number, cached state, ETag.
-type TargetRow = (String, String, i64, Option<String>, Option<String>);
+/// host, repo, number, cached state, ETag, fetched_at.
+type TargetRow = (
+    String,
+    String,
+    i64,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
 
 fn read_target(row: &rusqlite::Row<'_>) -> rusqlite::Result<TargetRow> {
     Ok((
@@ -234,7 +243,22 @@ fn read_target(row: &rusqlite::Row<'_>) -> rusqlite::Result<TargetRow> {
         row.get(2)?,
         row.get(3)?,
         row.get(4)?,
+        row.get(5)?,
     ))
+}
+
+fn parse_target(row: TargetRow) -> Result<SyncTarget, ArchonError> {
+    let (host, repo, number, state, etag, fetched_at) = row;
+    Ok(SyncTarget {
+        host,
+        repo,
+        number: to_u64(number, "GitHub number")?,
+        state: state.map(|s| parse_name(&s, "state")).transpose()?,
+        etag,
+        fetched_at: fetched_at
+            .map(|at| parse_at(&at, "fetch time"))
+            .transpose()?,
+    })
 }
 
 impl Store {
@@ -312,39 +336,48 @@ impl Store {
         Ok(rows.into_iter().map(|c| c.object).collect())
     }
 
-    /// Up to `limit` linked objects to refresh, those never fetched first and
-    /// then the stalest. A merged or closed pull request is no longer watched.
-    pub fn github_sync_targets(&self, limit: usize) -> Result<Vec<SyncTarget>, ArchonError> {
+    /// Up to `limit` linked objects to refresh, in (host, repo, number) order
+    /// after `after`, so a caller pages through them all. A merged or closed
+    /// pull request is no longer watched.
+    pub fn github_sync_targets(
+        &self,
+        after: Option<(&str, &str, u64)>,
+        limit: usize,
+    ) -> Result<Vec<SyncTarget>, ArchonError> {
+        assert!(limit > 0, "a page holds at least one target");
+        let (host, repo, number) = after.unwrap_or(("", "", 0));
+        let number = i64::try_from(number)
+            .map_err(|_| ArchonError::Invalid(format!("GitHub number {number}")))?;
         let mut stmt = self
             .conn
             .prepare_cached(
-                "SELECT l.host, l.repo, l.number, o.state, o.etag
+                "SELECT l.host, l.repo, l.number, o.state, o.etag, o.fetched_at
                  FROM github_links l LEFT JOIN github_objects o
                      ON (o.host, o.repo, o.number) = (l.host, l.repo, l.number)
-                 WHERE COALESCE(o.kind = 'pull_request' AND o.state IN ('merged', 'closed'), 0) = 0
+                 WHERE (l.host, l.repo, l.number) > (?1, ?2, ?3)
+                   AND COALESCE(o.kind = 'pull_request' AND o.state IN ('merged', 'closed'), 0) = 0
                  GROUP BY l.host, l.repo, l.number
-                 ORDER BY o.fetched_at IS NOT NULL, o.fetched_at, l.host, l.repo, l.number
-                 LIMIT ?1",
+                 ORDER BY l.host, l.repo, l.number
+                 LIMIT ?4",
             )
             .ctx("prepare GitHub sync targets")?;
         let rows = stmt
-            .query_map([sql_limit(limit)], read_target)
+            .query_map(params![host, repo, number, sql_limit(limit)], read_target)
             .ctx("read GitHub sync targets")?
             .collect::<Result<Vec<_>, _>>()
             .ctx("read GitHub sync targets")?;
         let targets = rows
             .into_iter()
-            .map(|(host, repo, number, state, etag)| {
-                Ok(SyncTarget {
-                    host,
-                    repo,
-                    number: to_u64(number, "GitHub number")?,
-                    state: state.map(|s| parse_name(&s, "state")).transpose()?,
-                    etag,
-                })
-            })
+            .map(parse_target)
             .collect::<Result<Vec<_>, ArchonError>>()?;
         assert!(targets.len() <= limit, "at most the limit");
+        debug_assert!(
+            targets
+                .windows(2)
+                .all(|w| (&w[0].host, &w[0].repo, w[0].number)
+                    < (&w[1].host, &w[1].repo, w[1].number)),
+            "in strictly increasing key order"
+        );
         Ok(targets)
     }
 
@@ -470,5 +503,44 @@ mod tests {
         );
         let (one, _) = store.github_objects("o/r", None, None, 1).unwrap();
         assert_eq!(one.len(), 1);
+    }
+
+    #[test]
+    fn sync_targets_page_through_every_link_but_finished_pull_requests() {
+        let mut store = Store::open_in_memory().unwrap();
+        store
+            .conn
+            .execute_batch("PRAGMA foreign_keys = OFF")
+            .unwrap();
+        for number in 1..=5_u64 {
+            let kind = if number == 3 { "pull_request" } else { "issue" };
+            store
+                .conn
+                .execute(
+                    "INSERT INTO github_links VALUES
+                     ('i', 'github.com', 'o/r', ?1, ?2, 'mentioned', 'operator', 'x')",
+                    params![number as i64, kind],
+                )
+                .unwrap();
+        }
+        let merged = object(3, GithubKind::PullRequest, GithubObjectState::Merged);
+        store.cache_github_object(&merged).unwrap();
+        store
+            .cache_github_object(&object(4, GithubKind::Issue, GithubObjectState::Closed))
+            .unwrap();
+        let mut seen = Vec::new();
+        let mut after: Option<SyncTarget> = None;
+        loop {
+            let key = after
+                .as_ref()
+                .map(|t| (t.host.as_str(), t.repo.as_str(), t.number));
+            let page = store.github_sync_targets(key, 2).unwrap();
+            let Some(last) = page.last().cloned() else {
+                break;
+            };
+            seen.extend(page.iter().map(|t| (t.number, t.fetched_at.is_some())));
+            after = Some(last);
+        }
+        assert_eq!(seen, [(1, false), (2, false), (4, true), (5, false)]);
     }
 }

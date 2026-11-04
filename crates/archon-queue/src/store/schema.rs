@@ -705,8 +705,32 @@ CREATE INDEX github_links_by_object ON github_links (host, repo, number);
 #[cfg(test)]
 const GITHUB_LINKS_BACKFILL: &str = github_links_backfill!();
 
+/// Version 21 (vNext D2): the read-only cache of linked GitHub issues and
+/// pull requests, one row per number, with the ETag its refresh sends.
+const V21: &str = r#"
+CREATE TABLE github_objects (
+    host            TEXT NOT NULL CHECK (host <> '' AND host = lower(host)),
+    repo            TEXT NOT NULL CHECK (repo GLOB '?*/?*' AND repo = lower(repo)),
+    number          INTEGER NOT NULL CHECK (number > 0),
+    kind            TEXT NOT NULL CHECK (kind IN ('issue', 'pull_request')),
+    title           TEXT NOT NULL,
+    state           TEXT NOT NULL CHECK (state IN ('open', 'closed', 'merged')),
+    state_reason    TEXT,
+    draft           INTEGER CHECK (draft IN (0, 1)),
+    merged_at       TEXT,
+    labels          TEXT NOT NULL,
+    author          TEXT,
+    updated_at      TEXT NOT NULL,
+    etag            TEXT,
+    fetched_at      TEXT NOT NULL,
+    review_decision TEXT,
+    checks          TEXT,
+    PRIMARY KEY (host, repo, number)
+) WITHOUT ROWID;
+"#;
+
 pub(super) const MIGRATIONS: &[&str] = &[
-    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20,
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
 ];
 
 /// Pragmas every connection needs. `on_disk` connections must end up in
@@ -1350,7 +1374,7 @@ mod tests {
         conn.execute_batch(
             "DROP TABLE run_pull_requests; DROP TABLE merge_requests; DROP TABLE tracked_requests;
              DROP TABLE spend_pruned; DROP TABLE item_transitions; DROP TABLE changes;
-             DROP TABLE github_links;
+             DROP TABLE github_links; DROP TABLE github_objects;
              DELETE FROM schema_migrations WHERE version >= 12",
         )
         .unwrap();

@@ -469,6 +469,7 @@ fn caller_errors_have_typed_json_categories() {
         (&["reports", "reopen", "bad-id"], "invalid_argument"),
         (&["autonomy", "clear", "bad-id"], "invalid_argument"),
         (&["github-watcher", "add", "bad-repo"], "invalid_argument"),
+        (&["github", "import", "o/r"], "invalid_argument"),
         (
             &["github-watcher", "allow", "o/r", "bad_login"],
             "invalid_argument",

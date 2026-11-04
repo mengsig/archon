@@ -18,6 +18,8 @@ mod directives;
 mod feed;
 mod gates;
 mod github_links;
+mod github_objects;
+pub use github_objects::{CachedObject, MAX_ETAG_BYTES, SyncTarget};
 mod handoffs;
 pub mod initiatives;
 mod items;

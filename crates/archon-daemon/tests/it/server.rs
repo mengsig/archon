@@ -340,7 +340,11 @@ async fn the_web_app_speaks_23_or_24_and_the_cli_only_24() {
         Ok(Reply::Welcome(welcome)) => {
             assert_eq!(welcome.min_protocol_version, PROTOCOL_VERSION);
             let served = &welcome.features;
-            for served_feature in [feature::DEVICE_ROLES, feature::GITHUB_LINKS] {
+            for served_feature in [
+                feature::DEVICE_ROLES,
+                feature::GITHUB_LINKS,
+                feature::GITHUB_IMPORT,
+            ] {
                 assert!(served.iter().any(|f| f == served_feature), "{served:?}");
             }
         }
@@ -358,13 +362,9 @@ async fn every_protocol_24_request_answers_unavailable_until_served() {
     let (listener, _lock) = server::bind(&h.ctx).expect("bind");
     let serving = tokio::spawn(server::serve(h.ctx.clone(), listener));
     let mut cli = Client::hello(&socket, ClientKind::ArchonCli).await;
-    let issue =
-        serde_json::json!({"host": "github.com", "repo": "o/r", "number": 1, "kind": "issue"});
     let requests = [
         serde_json::json!({"cmd": "task_graph", "filter": {}}),
         serde_json::json!({"cmd": "run_plan", "run": archon_core::id::PipelineRunId::new()}),
-        serde_json::json!({"cmd": "list_github_objects", "repo": "o/r"}),
-        serde_json::json!({"cmd": "import_issue", "ref": issue}),
         serde_json::json!({"cmd": "list_items", "repo": null, "pipeline": null, "tag": null, "limit": null, "text": "x"}),
     ];
     for json in requests {

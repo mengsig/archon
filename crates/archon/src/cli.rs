@@ -256,6 +256,11 @@ pub enum Command {
         #[command(subcommand)]
         command: Option<ReportCommand>,
     },
+    /// GitHub issues as items: `archon github import owner/name#123`.
+    Github {
+        #[command(subcommand)]
+        command: crate::cmd::github::GithubCommand,
+    },
     /// Route `@archon` on GitHub issues and pull requests to the orchestrator,
     /// through Archon's own Aether's watcher (docs/github-watcher.md).
     GithubWatcher {

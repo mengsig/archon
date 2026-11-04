@@ -19,6 +19,7 @@ pub mod feed;
 pub mod gc;
 mod gh_account;
 pub mod github;
+pub mod github_sync;
 pub mod handlers;
 pub mod host_load;
 mod inbox_health;
@@ -413,6 +414,7 @@ fn spawn_workers(
     worker!("change stream", handlers::changes::pump);
     worker!("repository mirrors", mirror::run);
     worker!("learning", learned::run);
+    worker!("github sync", github_sync::run);
     worker!("upgrades", ops::run);
     let auto_gc = ctx.config.worktrees.auto_gc;
     if auto_gc {
@@ -424,7 +426,7 @@ fn spawn_workers(
     }
     assert_eq!(
         workers.len(),
-        18 + usize::from(auto_gc) + usize::from(verifies),
+        19 + usize::from(auto_gc) + usize::from(verifies),
         "every daemon worker is supervised"
     );
 }

@@ -193,12 +193,14 @@ Tables (`noesis.db`, migration N2):
   is a **derived** cache. It is rebuilt from `evidence` on demand and checked
   by a rebuild test.
 
+The final columns are in CONTRACTS.md §6.4.
+
 Derivation rules (a pure function of the evidence and the current time):
 
 | State | Rule |
 | --- | --- |
 | `unseen` | no evidence |
-| `exposed` | only `exposure` evidence (the concept was taught or shown). **Exposure never counts as mastery.** |
+| `exposed` | only `exposure` evidence (the concept was taught or shown), or evidence that meets no other rule (see the assumptions below). **Exposure never counts as mastery.** |
 | `demonstrated` | at least 2 correct retrievals (`check`, `recall_judged` or practice `solved` at rung ≤ R1) on different days, at a stated confidence ≥ 50, with no unresolved misconception and `strength ≥ 0.5` |
 | `fragile` | demonstrated before but decayed (`strength < 0.5`); or the latest attempt is wrong; or correct at confidence ≤ 30; or solved only with hints ≥ R3 |
 | `misconception` | a `misconception_observed` record (from `probe_done`, or a confident wrong answer on a discrimination item) not yet cleared by 2 later correct discrimination answers |
@@ -215,6 +217,17 @@ Derivation rules (a pure function of the evidence and the current time):
 - **Operator correction** (`noesis_correct_learner`) appends evidence of kind
   `operator_correction` and wins until newer evidence arrives. It never
   edits history.
+- **Derivation assumptions** (F4):
+  - Only `check_answer`, `recall_judged` and `practice_conclude` count as
+    retrievals. `probe_answer` and `predict_answer` count toward calibration
+    only.
+  - A retrieval is *spaced* when it falls on a later UTC day than the last
+    success.
+  - A missing confidence neither qualifies nor disqualifies: it neither fails
+    the `≥ 50` test of `demonstrated` nor meets the `≤ 30` test of `fragile`.
+  - With no open misconception (that rule is checked first), evidence that
+    meets neither the `demonstrated` nor the `fragile` rule reads `exposed`.
+  - A winning operator correction sets only the state.
 - **Uses:** the Prober skips `demonstrated` concepts, the Practitioner
   targets `fragile`, `misconception` and due concepts, and the UI shows
   "my understanding" with the `--mastery-*` tokens and text labels.
@@ -300,5 +313,5 @@ model and reported in the PR, never gated in CI.
   memory. Deleting it removes Noesis's own state: graph, learner model, plans,
   evidence bundles and jobs. The teaching conversations are transcripts of
   Aether agents in run `noesis`, and stay in Aether history under its
-  retention. Whether deleting a session also purges its transcript is open
-  (CONTRACTS.md §6.5, owner F3), and the UI says so until it is settled.
+  retention. Deleting a session keeps its transcript, which only retention
+  removes (CONTRACTS.md §6.5), and the UI says so.

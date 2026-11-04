@@ -30,6 +30,10 @@ addition is listed in `Command::introduced()` and advertised in
 | `usage_breakdown` | `{scope: {run?: RunId, agent?: AgentId, subtree?: AgentId, role_prefix?: string}, by: "model"\|"provider"\|"role"\|"day"\|"run", since?: Ts, until?: Ts, limit?: u32 (1..=1000)}` → reply `usage_breakdown {rows: [{key: string, usage: Usage, invocations: u64}], total: Usage, truncated: bool}`. Deterministic: rows ordered by `key`. It keeps `Usage.cost_complete/cost_gap/cost_basis/estimated_cost_usd`. | observe | `usage_breakdown` |
 | Remote mounts | `RemoteSettings.mounts: [{prefix: string, kind: "archon", target: string}]` (at most 4; `prefix` matches `^/[a-z][a-z0-9-]{0,31}$`; `target` is `http://127.0.0.1:<port>` or `http://[::1]:<port>`). Read by `get_remote`, written by `configure_remote` (both remote_admin). `GET /api/health` gains `mounts: [{prefix, kind}]`. | remote_admin | `remote_mounts` |
 
+Mount prefixes never shadow Aether's own paths: `validate_mounts` refuses
+`/api`, `/ws` and every prefix the embedded web assets are served under.
+`/pair/` (trailing slash) reaches pairing exactly like `/pair`.
+
 ### 1.2 Aether protocol 26: later additions (same version, own feature)
 
 | Item | Owner | Status |
@@ -63,7 +67,10 @@ dispatch or class tables, except to add optional fields.
 - `archon schema` prints the schema, and `archon schema --out
   crates/archon-core/protocol.schema.json` writes the committed copy
   (schemars, JSON Schema 2020-12) covering `ClientFrame` and `ServerFrame`.
-  A test fails when the file is stale.
+  A test fails when the file is stale. Its top level carries
+  `protocol_version` and `min_web_protocol_version` (the oldest version
+  accepted from `archon-web`). `min_web_protocol_version` is the one name;
+  Aether's client generator maps it to its own `min_protocol_version`.
 
 **Changes and history (owner AR-C)**
 
@@ -88,6 +95,11 @@ whichever keeps more. Older cursors get `history_expired`.
 | `TaskEdge` | `{from: QueueItemId (prerequisite), to: QueueItemId (dependent), kind: "depends_on"\|"initiative_after"\|"stacked_on", satisfied: bool}` | |
 | `run_plan` | `{run}` → `run_plan {run, pipeline, revision: string, stages: StageSummary[], edited: bool}`: the frozen pipeline with steer edits applied | Read |
 | `list_items` (extended) | adds `updated_since?: Ts`, `before?: Ts`, `text?: string (1..=200 chars, title and brief substring)`, also on `list_item_summaries`. Until `item_filters` is served, a query using them is refused with `unavailable`. | Read |
+
+`run_plan` serves an unfinished run only: on a finished run it returns
+`not_found`, and a finished run's plan is read from its stage attempts. Its
+`edited` is true after any steer edit, of every kind, `AssignRoles` and
+`AbortStage` included. Today those two leave it false (a known gap).
 
 `as_of` is the last change seq committed when the projection was read, taken in
 the **same read transaction** as the rows, for `task_graph` and
@@ -124,7 +136,7 @@ gives the same bytes.
 | | V30 | G1 | memory tiers, candidate state, support, provenance refs |
 | | V31 | G2 | retrieval log and holdout |
 | | V32 | G3 | migration bookkeeping, if needed |
-| Noesis `noesis.db` | N1 | F1 | sessions, messages index, questions, plans, graph ledgers, coverage, jobs |
+| Noesis `noesis.db` | N1 | F1 | sessions, messages index, questions, the problems tables, plans, the graph tables and their ledgers, coverage, jobs |
 | | N2 | F4 | learner tables (§6.4) |
 | | N3 | F6 | evidence bundles |
 
@@ -160,18 +172,21 @@ unused slot ships as a no-op migration, so the numbering stays fixed.
 | `web/packages/settings/` | `@aether-ui/settings` | B3 | `routes.ts` |
 | `web/apps/web/` | app | A3 | browser entry, `sw.js`, manifest |
 | `web/apps/desktop/` | app | E1 `src/{main,preload,bridge,security}`; E2 `src/{native,discovery,lifecycle}`; E3 packaging files | §2.4 |
-| `web/e2e/` | tests | H1 harness and `specs/smoke`; H4 `specs/flows`; F7 `specs/noesis` | |
+| `web/e2e/` | tests | H1 harness and `specs/smoke`; H4 `specs/flows`; F7 `specs/noesis`; H2 `specs/perf` (the browser performance and axe runner) | |
 | `web/dist/`, `web/schemas/` | generated | SYNC | |
 
 A3 creates the empty skeleton (`package.json`, `src/index.ts`) for every
 feature package. Each `index.ts` loads its directories' `routes.ts` with
 `import.meta.glob`, so feature tasks never edit a shared index.
 
+Open requirement (owner H5, release): CI fails when the committed
+`web/dist/` differs from a fresh build. No such job exists yet.
+
 The toolchain is Vite 7, not 8: Vite 8 pulls in lightningcss (MPL-2.0).
 Dependency licences are MIT, ISC, BSD or Apache-2.0, with three dev-only
 exceptions: minimatch (BlueOak-1.0.0), caniuse-lite (CC-BY-4.0) and axe-core
-(MPL-2.0, test-only, for A3's accessibility checks). None of the three may
-appear in a shipped bundle.
+(MPL-2.0, test-only, for accessibility checks in A3 and in feature-package
+tests, §2.2). None of the three may appear in a shipped bundle.
 
 ### 2.2 Import rules (Frozen, enforced by lint in A1)
 
@@ -180,6 +195,8 @@ appear in a shipped bundle.
 - Feature packages import `core`, `ui`, `graph` and `protocol`, **never each
   other**. They cross over only through routes (§2.3) and the entity-action
   registry.
+- Feature-package tests may also import `axe-core` (dev-only, MPL-2.0, for
+  accessibility checks), alongside the dev-only licence exceptions of §2.1.
 - Only `core` talks to transports. Feature code sends through `useCommand`,
   which adds idempotency keys, role checks and error reporting.
 - No feature keeps its own copy of daemon entities (agents, items, stages,
@@ -369,6 +386,9 @@ Components use tokens only and never write raw colours or durations.
   `--motion-slow`; `--ease-standard`, `--ease-emphasized`, `--ease-exit`.
   Under `prefers-reduced-motion: reduce` every duration token is `0ms`.
 
+Follow-up requirement: the eslint-tokens rule's `TIMING_KEY` matches only
+duration and delay keys. Today it matches more than those.
+
 Fonts are bundled (OFL), never fetched. Focus is always visible through
 `--focus-ring`. LearnHarness's "no-ring" rule is not adopted, for
 accessibility.
@@ -387,8 +407,8 @@ to review (the existing Aether behaviour).
 1. On `ready`: `subscribe {after: last_seq ?? null, query: {}, deltas: false}`
    for durable events. Then read `get_attention` and `get_tree` (or
    `list_agents_page` pages) when there is no snapshot.
-2. Deltas are opened only for agents on screen, with one delta subscription
-   per on-screen agent (at most 3), plus the durable one. The client uses at
+2. Deltas are opened only for agents on screen, with at most one delta
+   subscription per on-screen agent and at most 3 in all, plus the durable one. The client uses at
    most 4 of the daemon's 16 subscriptions.
 3. Apply a durable event only if `seq > last_seq`. Applying is idempotent.
 4. Deltas are transient. A gap in `invocation_seq`, a lag close (1013) or a
@@ -563,21 +583,43 @@ The total of all excerpts is at most 32 KiB. The frontend assembles it from
 reads the user can already make. Noesis stores it with the session and never
 fetches more on its own.
 
-### 6.4 Learner model (wire Frozen in §6.2; storage Open, owner F4)
+### 6.4 Learner model (wire Frozen in §6.2; storage settled by F4)
 
 The wire shapes `ConceptState` and `Evidence` are frozen above. The storage
-follows NOESIS.md §5: tables `concepts`, `evidence` (append-only) and
-`concept_state` (derived). The F4 PR records the final columns here.
+follows NOESIS.md §5. N2 adds three tables to noesis.db.
 
-### 6.5 Learning data retention (Open; owner F3)
+- `concepts`: id TEXT PK `k_…`; kind proposition|plan_node|topic; ref TEXT
+  non-empty; title TEXT; created_at TEXT RFC 3339 ms; UNIQUE(kind, ref).
+- `evidence`, append-only (a BEFORE UPDATE trigger aborts; the store has no
+  update or delete): id INTEGER PK AUTOINCREMENT, the wire `Evidence.id`;
+  concept → concepts(id); session TEXT nullable, a plain value with no key;
+  at TEXT; kind (the 8 §6.2 kinds); outcome (the 6 §6.2 outcomes);
+  confidence 0|30|50|70|90|100 nullable; dont_know 0|1 = (outcome =
+  'dont_know'), with no confidence when 1; mode
+  recall|discrimination|composition nullable; hint_rung 0..5 nullable;
+  miss_class nullable; note TEXT; corrected_state (a ConceptStateKind), set
+  exactly on operator_correction rows. CHECKs tie exposure↔exposed,
+  misconception_observed↔observed and operator_correction↔corrected. Index
+  (concept, id).
+- `concept_state`, a derived cache written only by the learner model's
+  rebuild: concept PK → concepts(id); state; strength REAL 0..1;
+  last_success_at; review_due_at (both null or both set); calibration REAL
+  0..1 nullable; misconceptions JSON string[]; as_of_evidence INTEGER;
+  derived_at TEXT. Indexes on state and on review_due_at.
+- No learner table has a key, trigger or view tied to a graph table. They
+  share proposition ids only as plain values in `concepts.ref`.
+- On the wire, a correction's state appears at the start of its note as
+  "<state>: <reason>".
+
+### 6.5 Learning data retention (settled by F3)
 
 `noesis.db` holds Noesis's own state. The teaching conversations are
 transcripts of Aether agents in run `noesis`, and Aether's history retention
-keeps and expires them. `noesis_delete_session` deletes the Noesis rows and
-the session's evidence bundle. Whether it also purges the Aether transcript
-(and how that fits Aether's history invariants) is settled in F3's PR and
-recorded here. Until then, the UI states that the conversation remains in
-Aether history.
+keeps and expires them. `noesis_delete_session` deletes the session's Noesis
+rows and its evidence bundle, not the Aether transcript: history is
+append-only, and only retention removes it. The UI states that the
+conversation remains in Aether history. Transcripts never hold sealed values
+(§6.2) or Noesis thinking.
 
 ## 7. Memory 2.0 (Open; owners G1–G5)
 

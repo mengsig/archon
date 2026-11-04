@@ -822,7 +822,7 @@ PR, and a regression without an explained trade-off blocks it.
 - **Goal:** perf fixtures and budgets: 5,000 agents, a 20,000-entry
   transcript, a 2,000-node DAG, the delta rate, and bundle size. CI tracks
   them.
-- **Owns:** `web/perf/**`, `.github/workflows/web-perf.yml`
+- **Owns:** `web/perf/**`, `web/e2e/specs/perf/**`, `.github/workflows/web-perf.yml`
 - **Depends on:** B1, B2, C2
 - **Size:** M · **Pipeline:** performance
 - **Acceptance:** the budgets are written down and enforced. A regression

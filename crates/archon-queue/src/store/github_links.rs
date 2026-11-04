@@ -138,13 +138,14 @@ fn record_change(
 }
 
 /// The watcher path: a new item asked for on a GitHub thread links to it.
+/// A thread no link can name, such as a number past `i64::MAX`, is refused.
 pub(super) fn record_origin(conn: &Connection, item: &QueueItem) -> Result<(), ArchonError> {
     let Some(origin) = &item.origin else {
         return Ok(());
     };
     let link = GithubLink {
         item: item.id.clone(),
-        reference: origin.reference(),
+        reference: normalized_ref(&origin.reference())?,
         relation: LinkRelation::Origin,
         source: LinkSource::Watcher,
         created_at: item.created_at,

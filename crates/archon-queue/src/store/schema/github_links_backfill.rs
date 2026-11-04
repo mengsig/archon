@@ -286,3 +286,50 @@ fn a_link_row_refuses_what_the_store_never_writes() {
     .expect("an item's links go with it");
     assert_eq!(links(&conn).len(), 2, "the local item's link went with it");
 }
+
+/// Origin numbers up to `i64::MAX` link; larger ones, which SQLite reads back
+/// as REAL, are left unlinked so every stored link and change stays readable.
+#[test]
+fn v20_links_only_origin_numbers_a_link_can_hold() {
+    let mut conn = v19_store();
+    let numbers = [
+        ("qi_00000000000000000000000005", i64::MAX.to_string()),
+        (
+            "qi_00000000000000000000000006",
+            (i64::MAX as u64 + 1).to_string(),
+        ),
+        ("qi_00000000000000000000000007", u64::MAX.to_string()),
+    ];
+    for (item, number) in &numbers {
+        let data = format!(r#"{{"origin":{{"repository":"o/r","number":{number}}}}}"#);
+        conn.execute(
+            "INSERT INTO items (id, pipeline, priority, state, tags, created_at, updated_at, data)
+             VALUES (?1, 'adaptive', 1, 'succeeded', '[]', ?2, ?2, ?3)",
+            rusqlite::params![item, T3, data],
+        )
+        .unwrap();
+    }
+    migrate(&mut conn).unwrap();
+    let large: Vec<(String, i64)> = links(&conn)
+        .into_iter()
+        .filter(|row| row.2 == "o/r")
+        .map(|row| (row.0, row.3))
+        .collect();
+    assert_eq!(large, vec![(numbers[0].0.to_owned(), i64::MAX)]);
+    let real_numbers: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM github_links WHERE typeof(number) <> 'integer'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(real_numbers, 0, "every link number is an integer");
+    for (_, data) in link_changes(&conn) {
+        let subject: archon_core::protocol::ChangeSubject =
+            serde_json::from_value(data.clone()).expect("a change the stream reads");
+        assert!(
+            matches!(subject, archon_core::protocol::ChangeSubject::Link { .. }),
+            "{data}"
+        );
+    }
+}

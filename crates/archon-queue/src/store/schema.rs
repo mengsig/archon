@@ -637,6 +637,8 @@ FROM items ORDER BY seq;
 
 /// The V20 backfill as a statement list of its own, so a test can run it
 /// again: rows already linked are skipped, and each new one gets its change.
+/// An origin number past `i64::MAX` reads back as REAL and names no GitHub
+/// thread, so it is left unlinked rather than stored unreadable.
 macro_rules! github_links_backfill {
     () => {
         r#"
@@ -654,7 +656,8 @@ SELECT id, 'github.com', lower(json_extract(data, '$.origin.repository')),
        json_extract(data, '$.origin.number'), 'issue', 'origin', created_at
 FROM items
 WHERE json_type(data, '$.origin.repository') = 'text'
-  AND json_type(data, '$.origin.number') = 'integer';
+  AND typeof(json_extract(data, '$.origin.number')) = 'integer'
+  AND json_extract(data, '$.origin.number') > 0;
 INSERT INTO temp.github_links_backfill
 SELECT r.item, p.host, p.repository, p.number, 'pull_request', 'delivered', MIN(r.started_at)
 FROM run_pull_requests p JOIN runs r ON r.id = p.run

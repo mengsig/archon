@@ -82,6 +82,29 @@ fn a_watcher_item_links_its_origin_with_one_change() {
     );
 }
 
+/// An origin no link can hold refuses the enqueue whole, rather than panicking.
+#[test]
+fn an_origin_past_what_a_link_holds_is_refused_whole() {
+    let mut store = store();
+    let before = store.last_change_seq().unwrap();
+    let mut asked = item(None, "too far");
+    asked.origin = Some(GithubThread {
+        repository: GithubRepo::parse("o/r").unwrap(),
+        number: NonZeroU64::new(i64::MAX as u64 + 1).unwrap(),
+    });
+    let refused = store.insert_item(&asked, None);
+    assert!(
+        matches!(refused, Err(ArchonError::Invalid(_))),
+        "{refused:?}"
+    );
+    assert!(store.item(&asked.id).is_err(), "the item was not stored");
+    assert_eq!(
+        store.last_change_seq().unwrap(),
+        before,
+        "and no change was"
+    );
+}
+
 #[test]
 fn an_operator_link_is_idempotent_and_each_change_is_streamed_once() {
     let mut store = store();

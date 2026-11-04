@@ -18,6 +18,7 @@ mod directives;
 mod feed;
 mod gates;
 mod github_links;
+mod graph;
 mod handoffs;
 pub mod initiatives;
 mod items;

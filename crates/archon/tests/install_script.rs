@@ -591,10 +591,7 @@ fn the_mobile_web_app_is_set_up_only_when_asked_for() {
         out.status.success(),
         "a failed remote step keeps the install: {out:?}"
     );
-    assert!(
-        errors.contains("remote access is not set up"),
-        "{errors}"
-    );
+    assert!(errors.contains("remote access is not set up"), "{errors}");
     assert!(errors.contains("  archon remote setup"), "{errors}");
 }
 

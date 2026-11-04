@@ -1,23 +1,24 @@
-# Remote access: the mobile web app
+# Remote access: Archon in the Aether app
 
-archond can serve a mobile web app: the queue, each item's stages and
-verdicts, the operator chat, the questions and gates waiting on you, and
-the actions you take every day, on your phone. This page is the reference:
-what is served, how a device is paired and authenticated, and what a
-paired device may do. To set it up, follow
+Archon's screens (the queue, each item's stages and verdicts, the operator
+chat, the questions and gates waiting on you, and the actions you take every
+day) are part of the Aether app. Aether's listener serves the app and
+forwards `/archon/…` to archond's listener: the `/archon` mount. archond
+serves the API, the pairing and the WebSocket behind it, and no app of its
+own. This page is the reference: what archond serves, how a device is paired
+and authenticated, and what a paired device may do. To set it up, follow
 [Use Archon from your phone](remote-setup.md).
 
 Remote access is **off** until you switch it on. When on, archond listens on
-loopback only (`127.0.0.1:8378`); `tailscale serve`, or an HTTPS reverse
-proxy you run, publishes it. A paired device gets **no authority of its
-own**: each request it sends is checked against a fixed list
+loopback only (`127.0.0.1:8378`); `tailscale serve` publishes Aether's
+listener, the one origin, and Aether forwards to archond. A paired device
+gets **no authority of its own**: each request it sends is checked against a fixed list
 ([what a device may do](#what-a-device-may-do)) and then handled exactly as
 the same request from your `archon` CLI, so archond's own rules apply
 unchanged.
 
 ## Contents
 
-- [Screens](#screens)
 - [Threat model](#threat-model)
 - [Configuration](#configuration)
 - [Pairing](#pairing)
@@ -27,30 +28,14 @@ unchanged.
 - [Revoking and switching off](#revoking-and-switching-off)
 - [Commands](#commands)
 
-## Screens
-
-The app at a phone's size, light and dark. `make e2e` regenerates nothing;
-`node scripts/screens.js` in `crates/archon-remote/web` does.
-
-| Screen | Light | Dark |
-| --- | --- | --- |
-| **Pairing**: Type or scan the one-time code and name the device. | ![Pairing, light](assets/remote/pairing-light.png) | ![Pairing, dark](assets/remote/pairing-dark.png) |
-| **Queue**: Items with what each waits on; filter by state, held-up items, repository, pipeline and priority, or search. | ![Queue, light](assets/remote/queue-light.png) | ![Queue, dark](assets/remote/queue-dark.png) |
-| **Item**: Stages, verdicts, cost, pull request and artifacts; cancel, retry and pause. | ![Item, light](assets/remote/item-light.png) | ![Item, dark](assets/remote/item-dark.png) |
-| **Inbox**: Questions, including stage gates, and notifications waiting on you, answered in place. | ![Inbox, light](assets/remote/inbox-light.png) | ![Inbox, dark](assets/remote/inbox-dark.png) |
-| **Chat**: The operator chat with the orchestrator, live. | ![Chat, light](assets/remote/chat-light.png) | ![Chat, dark](assets/remote/chat-dark.png) |
-| **New item**: Enqueue with repository, title, brief, pipeline, priority and review level. | ![New item, light](assets/remote/new-item-light.png) | ![New item, dark](assets/remote/new-item-dark.png) |
-| **Overview**: Agents against caps, budgets and spend, repositories and pipelines; pause and resume. | ![Overview, light](assets/remote/overview-light.png) | ![Overview, dark](assets/remote/overview-dark.png) |
-| **Settings**: Theme, this device and the versions; forget this device. | ![Settings, light](assets/remote/settings-light.png) | ![Settings, dark](assets/remote/settings-dark.png) |
-
 ## Threat model
 
 What remote access protects, and from whom:
 
 - **Someone who can reach the address but holds no credential** (another
   device on your tailnet, a local user on this machine, a browser tab on a
-  hostile site). They get the app's static files and `GET /api/health`,
-  nothing else. Every API call and the WebSocket need a paired device's
+  hostile site). They get a short page pointing at Aether's address and
+  `GET /api/health`, nothing else. Every API call and the WebSocket need a paired device's
   credential. Pairing needs the one-time code that only `archon remote
   pair` (or `setup`) shows on your terminal.
 - **Guessing the code.** It is 8 symbols of Crockford base32 (40 bits), open
@@ -61,7 +46,8 @@ What remote access protects, and from whom:
 - **Cross-site requests and DNS rebinding.** Every request's `Host` must be
   an origin archond was told about (the public origins you added, or
   loopback on the listening port), so a hostile name pointed at
-  `127.0.0.1` is refused. A `POST` and the WebSocket upgrade need an
+  `127.0.0.1` is refused. Mounted, `Host` must be loopback, as Aether's
+  mount sends it, and `Origin` one of `trusted_origins`, Aether's own. A `POST` and the WebSocket upgrade need an
   allowed `Origin` and, when the browser sends it, `Sec-Fetch-Site:
   same-origin`. Bodies must be `application/json`, which a cross-site form
   cannot send. The credential cookie is `HttpOnly` and `SameSite=Strict`.
@@ -76,21 +62,19 @@ What remote access protects, and from whom:
   upgrades and remote access itself stay on the CLI. A merge the
   orchestrator proposes still waits for the confirmation question it
   always asks, which you may answer from the app as from the chat.
-- **Secrets in URLs and logs.** The pairing link carries its code in the
-  URL fragment (`/pair#code=…`), which browsers never send to a server or a
-  proxy. No credential is ever in a URL; the app's own files live under
-  fixed paths. archond logs device ids, never codes or credentials.
+- **Secrets in URLs and logs.** The pairing code is typed on the Aether
+  app's Archon pairing screen and never put in a link. No credential is ever
+  in a URL. archond logs device ids, never codes or credentials.
 - **Exposure.** The listener binds loopback unless you set
   `allow_remote = true`, and serves plain HTTP: TLS is the proxy's job.
-  The setup wizard publishes only to your tailnet with `tailscale serve`,
-  never with Funnel, and refuses to reuse a port Funnel opens to the
-  internet.
+  The setup wizard publishes only Aether's listener, only to your tailnet
+  with `tailscale serve`, never with Funnel, and stops while Funnel
+  publishes anything on this machine; Aether refuses to mount then too.
 
 What it does not protect against: anyone who can run commands as you on
 this machine (they can use the CLI and read the data directory anyway), a
 compromised phone while it is paired, and a proxy you configure to forward
-someone else's traffic. Off a tailnet, put your own authentication in front
-of the proxy too.
+someone else's traffic.
 
 ## Configuration
 
@@ -101,7 +85,14 @@ Static settings live in `config.toml`; a change needs an archond restart.
 address = "127.0.0.1:8378"   # where the listener binds
 allow_remote = false         # true to bind a non-loopback address
 max_connections = 16         # HTTP connections served at once (1 to 1024)
+mounted_at = "/archon"       # set by `archon remote setup`: served behind Aether's mount
+trusted_origins = ["https://box.tail1234.ts.net"]  # Aether's public origins, at most 16
 ```
+
+`mounted_at` and `trusted_origins` come together: with them, archond serves
+behind Aether's mount, its cookie is scoped to the prefix, and it answers
+only loopback `Host` values and the trusted `Origin` values. `archon remote
+setup` writes them from Aether's public origins and asks for a restart.
 
 `allow_remote = true` lets the listener bind a non-loopback address. The
 listener still speaks plain HTTP and still checks `Host` and `Origin`; use
@@ -123,11 +114,12 @@ in archond's memory and never outlives it.
 ## Pairing
 
 1. `archon remote pair` (or `archon remote setup`) opens a pairing and
-   prints its code (`7K2M-9QXD`), a QR code of
-   `https://<origin>/pair#code=7K2M-9QXD`, and every address it works at.
-   A new pairing replaces any open one.
-2. The phone opens the link (or `/pair` and you type the code), names
-   itself, and sends `POST /api/pair/claim`.
+   prints its code (`7K2M-9QXD`) and every address it works at; setup also
+   shows a QR code of the Aether app's Archon pairing screen,
+   `https://<origin>/#/pair/archon`. A new pairing replaces any open one.
+2. The browser opens that screen, you type the code and name the device,
+   and it sends `POST /archon/api/pair/claim`, which Aether forwards to
+   archond's `POST /api/pair/claim`.
 3. archond checks the code (case, dashes and spaces ignored; `O` reads as
    `0`, `I` and `L` as `1`), closes the pairing, stores the new device, and
    answers with its credential in a cookie.
@@ -138,8 +130,9 @@ The code must be claimed within 5 minutes. A wrong code counts towards the
 
 ## HTTP endpoints
 
+Paths are archond's own; through Aether's mount each is under `/archon`.
 Every response carries `Content-Security-Policy: default-src 'none';
-script-src 'self'; …; frame-ancestors 'none'`, `X-Content-Type-Options:
+style-src 'sha256-…'; …; frame-ancestors 'none'` (no script runs), `X-Content-Type-Options:
 nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`,
 `Cross-Origin-Opener-Policy` and `Cross-Origin-Resource-Policy: same-origin`,
 and a `Permissions-Policy` that turns off the camera, microphone and geolocation.
@@ -158,10 +151,12 @@ most 32 KiB; bodies at most 16 KiB (413) within 10 seconds. Errors are
 | `GET /api/session` | the cookie; same-site | `{"device","protocol_version","daemon_version"}`; `401` (and a cleared cookie) when not paired |
 | `POST /api/session/forget` | Origin, the cookie | unpairs this device and clears the cookie |
 | `GET /ws` | Origin, the cookie, subprotocol `archon` | the WebSocket |
-| `GET /…` | — | the app's files, with an `ETag`; a path without an extension serves `index.html` |
+| `GET /…` | — | a short page with no script that links to Aether's address (`/pair` to its Archon pairing screen); `404` for a path with an extension |
 
 The cookie is `archon_device=<id>.<secret>; Path=/; HttpOnly;
-SameSite=Strict; Max-Age=34560000`, plus `Secure` when paired over HTTPS.
+SameSite=Strict; Max-Age=34560000`, plus `Secure` when paired over HTTPS;
+mounted, `Path` is the mount (`/archon`), so Aether's own cookie and
+Archon's never meet.
 `device_name` is 1 to 64 characters, whitespace folded; control,
 invisible, bidirectional and private-use characters are refused.
 
@@ -191,7 +186,7 @@ silent for 75.
 
 ## What a device may do
 
-The app may send these requests, and only these:
+Archon's screens may send these requests, and only these:
 
 | Reads | Changes |
 | --- | --- |
@@ -208,12 +203,13 @@ archon CLI".
 
 - `archon remote revoke <id or name>` forgets one device and closes its
   sessions at once; its cookie no longer works. "Forget this device" in the
-  app does the same for the phone in your hand.
+  app does the same for the browser in your hand. Aether's device for the
+  same browser is Aether's to revoke (`aether remote revoke`).
 - `archon remote disable` closes the listener, every session (4403) and any
   open pairing. Paired devices are kept, and work again after `archon
   remote enable`.
-- `archon remote origin remove` and `archon remote setup --local` close
-  every open session (4002) when they withdraw an origin, since origins are
+- `archon remote origin remove` and `archon remote setup` close every open
+  session (4002) when they withdraw an origin, since origins are
   checked when a session opens (and again once it is registered, so an
   upgrade racing the withdrawal is refused); sessions from origins still
   allowed reconnect.
@@ -225,7 +221,7 @@ archon CLI".
 | Command | Does |
 | --- | --- |
 | `archon remote` (`status`) | Whether the listener is on, its origins, and the paired devices. |
-| `archon remote setup` | The guided setup ([remote-setup.md](remote-setup.md)). |
+| `archon remote setup` | Mount archond on Aether and publish Aether's listener ([remote-setup.md](remote-setup.md)). |
 | `archon remote enable` / `disable` | Open or close the listener. |
 | `archon remote pair` | Open a pairing code and show its QR code. |
 | `archon remote devices` | The paired devices. |

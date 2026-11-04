@@ -4,6 +4,9 @@
 mod qr;
 mod runner;
 mod setup;
+mod setup_aether;
+mod setup_config;
+mod setup_publish;
 mod tailscale;
 
 use std::fmt::Write as _;

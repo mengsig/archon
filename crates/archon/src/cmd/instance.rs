@@ -573,7 +573,7 @@ fn is_stop(args: &[OsString]) -> bool {
     command.is_some_and(|command| command == "stop")
 }
 
-fn aether_command(config: &Config, args: &[OsString]) -> anyhow::Result<Command> {
+pub(crate) fn aether_command(config: &Config, args: &[OsString]) -> anyhow::Result<Command> {
     let aether = Path::new(AETHER_PROGRAM);
     let command = match config.aether.mode {
         AetherMode::Shared => {

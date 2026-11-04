@@ -186,6 +186,75 @@ fn lift_is_reported_only_with_enough_scored_runs_in_both_arms() {
     );
 }
 
+/// Queued items for which `wanted` says whether each of `lessons` is held out.
+fn items_where(
+    store: &mut Store,
+    lessons: &[&Lesson],
+    wanted: &[bool],
+    count: usize,
+) -> Vec<QueueItemId> {
+    assert_eq!(lessons.len(), wanted.len());
+    let mut found = Vec::new();
+    for n in 0..20_000 {
+        if found.len() == count {
+            break;
+        }
+        let made = store
+            .insert_item(&item(None, &format!("pick {n}")), None)
+            .unwrap();
+        let held: Vec<bool> = lessons
+            .iter()
+            .map(|l| held_out(&l.id, &made.id, RATE))
+            .collect();
+        if held == wanted {
+            found.push(made.id);
+        }
+    }
+    assert_eq!(found.len(), count, "enough items match {wanted:?}");
+    found
+}
+
+#[test]
+fn lift_counts_scored_runs_not_lessons_and_never_pinned_ones() {
+    let mut store = store();
+    with_holdout(&store, RATE);
+    let first = active(&store, "Check migrations against old stores");
+    let second = active(&store, "Quote shell variables that hold file names");
+    let half = usize::try_from(HOLDOUT_MIN_SAMPLES).unwrap() / 2;
+    let both = [&first, &second];
+    for item in items_where(&mut store, &both, &[true, true], half) {
+        assert!(run_once(&mut store, &item, Some(false)).is_empty());
+    }
+    for item in items_where(&mut store, &both, &[false, false], half) {
+        assert_eq!(run_once(&mut store, &item, Some(true)).len(), 2);
+    }
+    assert!(
+        store.learning_stats(None).unwrap().holdout_lift.is_none(),
+        "{half} runs an arm, however many lessons each, are too few"
+    );
+
+    let mut store = common::store();
+    with_holdout(&store, RATE);
+    let pinned = active(&store, "Check migrations against old stores");
+    let patch = archon_core::lesson::LessonPatch {
+        pinned: Some(true),
+        ..Default::default()
+    };
+    let pinned = store.update_lesson(&pinned.id, patch).unwrap();
+    let eligible = active(&store, "Quote shell variables that hold file names");
+    let min = usize::try_from(HOLDOUT_MIN_SAMPLES).unwrap();
+    for item in items_where(&mut store, &[&eligible], &[true], min) {
+        assert_eq!(
+            run_once(&mut store, &item, Some(true)),
+            vec![pinned.id.to_string()]
+        );
+    }
+    assert!(
+        store.learning_stats(None).unwrap().holdout_lift.is_none(),
+        "a pinned lesson given every run is no given arm"
+    );
+}
+
 #[test]
 fn the_injection_budget_is_unchanged() {
     assert_eq!((CONTRACT_LESSONS, CONTRACT_LESSON_BYTES), (6, 1200));

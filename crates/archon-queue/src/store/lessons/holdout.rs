@@ -22,7 +22,8 @@ pub(super) fn split(
     (given, held)
 }
 
-/// Records one trial per lesson of the run, in both arms.
+/// Records one trial per holdout-eligible lesson of the run, in both arms.
+/// Pinned lessons are never held out, so they are no evidence either way.
 pub(super) fn record(
     conn: &Connection,
     run: &PipelineRunId,
@@ -34,9 +35,14 @@ pub(super) fn record(
         given.iter().all(|g| held.iter().all(|h| h.id != g.id)),
         "a lesson is given or held out, never both"
     );
+    assert!(
+        held.iter().all(|l| !l.pinned),
+        "a pinned lesson is never held out"
+    );
     let at = ts(&archon_core::now());
     let arms = given
         .iter()
+        .filter(|l| !l.pinned)
         .map(|l| (l, false))
         .chain(held.iter().map(|l| (l, true)));
     for (lesson, is_held) in arms {
@@ -49,16 +55,20 @@ pub(super) fn record(
     Ok(())
 }
 
-/// Both arms' scored runs, reported only when each has the minimum sample.
+/// Both arms' scored runs, reported only when each has the minimum sample. A
+/// run counts once per arm however many of its lessons were in that arm.
 pub(in crate::store) fn lift(
     conn: &Connection,
     repo: Option<&RepoId>,
 ) -> Result<Option<HoldoutLift>, ArchonError> {
     let mut stmt = conn
         .prepare(
-            "SELECT t.held, COUNT(t.won), COALESCE(SUM(t.won), 0) FROM lesson_trials t
-             LEFT JOIN outcomes o ON o.run = t.run
-             WHERE ?1 IS NULL OR o.repo = ?1 GROUP BY t.held",
+            "SELECT held, COUNT(*), COALESCE(SUM(won), 0) FROM (
+                 SELECT t.run, t.held, MAX(t.won) AS won FROM lesson_trials t
+                 LEFT JOIN outcomes o ON o.run = t.run
+                 WHERE t.won IS NOT NULL AND (?1 IS NULL OR o.repo = ?1)
+                 GROUP BY t.run, t.held)
+             GROUP BY held",
         )
         .ctx("prepare holdout lift")?;
     let rows = stmt

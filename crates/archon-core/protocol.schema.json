@@ -3435,6 +3435,19 @@
           "default": null,
           "description": "Archon's GitHub watcher. `None` in shared mode, where archond\nleaves the operator's Aether watcher alone, or from an older archond."
         },
+        "github_outbox": {
+          "description": "GitHub comments not yet seen posted, longest due first, at most\n[`MAX_OUTBOX_SHOWN`]; `github_outbox_pending` counts them all.",
+          "items": {
+            "$ref": "#/$defs/GithubOutboxPending"
+          },
+          "type": "array"
+        },
+        "github_outbox_pending": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "health": {
           "anyOf": [
             {
@@ -4810,6 +4823,51 @@
         "merged"
       ],
       "type": "string"
+    },
+    "GithubOutboxPending": {
+      "description": "A GitHub comment Archon recorded but has not seen posted: it is retried,\nat most once on GitHub, and never dropped (`DaemonStatus::github_outbox`).",
+      "properties": {
+        "attempts": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "last_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "next_attempt_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "purpose": {
+          "description": "`reply` or `ship`.",
+          "type": "string"
+        },
+        "target": {
+          "description": "`owner/name#number` on github.com.",
+          "type": "string"
+        },
+        "token": {
+          "description": "The token its hidden marker carries.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "token",
+        "purpose",
+        "target",
+        "attempts",
+        "next_attempt_at",
+        "created_at"
+      ],
+      "type": "object"
     },
     "GithubRef": {
       "description": "An issue or pull request on a GitHub host.",

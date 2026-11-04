@@ -109,6 +109,7 @@ gives the same bytes.
 | `list_github_objects` | `{repo: "owner/name", kind?, state?, limit?: u32 (≤500)}` → `github_objects {objects, synced_at?}` | Read | D2 |
 | `import_issue` | `{ref, pipeline?, priority?}` → `item`. Its idempotency key is derived as `github:<host>/<owner>/<repo>#<number>`; a repeat returns the first item. | Change | D2 |
 | `ItemSummary` (extended) | adds `issue?: GithubRef`, `pr?: PrRef` (keeps `pr_url`) | | D1 / D3 |
+| `DaemonStatus` (extended) | adds `github_outbox?: GithubOutboxPending[]` (at most 20, longest due first) and `github_outbox_pending: u64`. `GithubOutboxPending` is `{token, purpose: "reply"\|"ship", target: "owner/name#N", attempts: u32, next_attempt_at, last_error?, created_at}`: a comment recorded in the V22 outbox and not yet seen posted. | Read | D3 |
 
 ### 1.4 Store migrations (pre-assigned, Frozen)
 

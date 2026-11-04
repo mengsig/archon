@@ -120,6 +120,8 @@ prefixed_id!(RequestId, "req");
 // One Archon store's identity. Keeps Archon's idempotency keys distinct
 // across stores, since a fresh store restarts its counters.
 prefixed_id!(StoreId, "store");
+// One GitHub comment in the outbox: its hidden marker finds the comment again.
+prefixed_id!(OutboxToken, "obx");
 
 /// Crockford base32, the alphabet of a ULID's 26 characters.
 pub(crate) const ULID_ALPHABET: &str = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";

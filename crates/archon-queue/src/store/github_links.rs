@@ -277,8 +277,12 @@ fn item_exists(conn: &Connection, item: &QueueItemId) -> Result<bool, ArchonErro
 }
 
 /// The summary's issue and pull request among `links`, one item's in their
-/// stored order: the most telling issue, and the newest delivered pull request.
-pub(super) fn summary_refs(links: &[GithubLink]) -> (Option<GithubRef>, Option<PrRef>) {
+/// stored order: the most telling issue, and the newest delivered pull
+/// request with its state, review and checks as the cache last saw them.
+pub(super) fn summary_refs(
+    conn: &Connection,
+    links: &[GithubLink],
+) -> Result<(Option<GithubRef>, Option<PrRef>), ArchonError> {
     let issue = ISSUE_RELATIONS.iter().find_map(|relation| {
         links
             .iter()
@@ -291,13 +295,9 @@ pub(super) fn summary_refs(links: &[GithubLink]) -> (Option<GithubRef>, Option<P
         .find(|l| {
             l.relation == LinkRelation::Delivered && l.reference.kind == GithubKind::PullRequest
         })
-        .map(|l| PrRef {
-            reference: l.reference.clone(),
-            state: None,
-            review_decision: None,
-            checks: None,
-        });
-    (issue, pr)
+        .map(|l| super::github_objects::pr_ref(conn, &l.reference))
+        .transpose()?;
+    Ok((issue, pr))
 }
 
 impl Store {
@@ -370,6 +370,6 @@ impl Store {
         item: &QueueItemId,
     ) -> Result<(Option<GithubRef>, Option<PrRef>), ArchonError> {
         let links = query_links(&self.conn, "item = ?1", [item.as_str()])?;
-        Ok(summary_refs(&links))
+        summary_refs(&self.conn, &links)
     }
 }

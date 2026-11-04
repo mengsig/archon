@@ -196,6 +196,8 @@ fn linked_status() -> archon_core::protocol::DaemonStatus {
         integration: vec![],
         stage_warnings: vec![],
         message_caps: Vec::new(),
+        github_outbox: Vec::new(),
+        github_outbox_pending: 0,
     }
 }
 

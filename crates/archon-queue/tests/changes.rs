@@ -529,8 +529,8 @@ fn the_migration_gives_older_items_one_change_each() {
     drop(store);
     let conn = rusqlite::Connection::open(&path).unwrap();
     conn.execute_batch(
-        "DROP TABLE item_transitions; DROP TABLE changes;
-         DELETE FROM schema_migrations WHERE version = 19;",
+        "DROP TABLE github_links; DROP TABLE item_transitions; DROP TABLE changes;
+         DELETE FROM schema_migrations WHERE version >= 19;",
     )
     .unwrap();
     drop(conn);

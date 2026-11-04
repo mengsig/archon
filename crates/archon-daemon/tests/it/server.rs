@@ -15,7 +15,7 @@ use archon_core::error::ArchonError;
 use archon_core::notify::{FeedEntry, FeedItem, NotificationKind};
 use archon_core::protocol::{
     Clearable, ClientFrame, ClientKind, ErrorCode, ErrorReply, MIN_WEB_PROTOCOL_VERSION,
-    PROTOCOL_VERSION, Reply, RepoPatch, RepoRef, Request, ServerFrame,
+    PROTOCOL_VERSION, Reply, RepoPatch, RepoRef, Request, ServerFrame, feature,
 };
 use archon_core::repo::{Repo, ShipMode};
 use archon_daemon::server;
@@ -307,7 +307,8 @@ async fn first_reply(socket: &Path, client: ClientKind, version: u32) -> Result<
 }
 
 /// `archon-web` may speak 23 or 24 and is told the range when it speaks
-/// 25; the CLI still needs an exact match, as one binary.
+/// 25, and is offered features only at 24; the CLI still needs an exact
+/// match, as one binary.
 #[tokio::test]
 async fn the_web_app_speaks_23_or_24_and_the_cli_only_24() {
     let h = Harness::new().await;
@@ -319,6 +320,8 @@ async fn the_web_app_speaks_23_or_24_and_the_cli_only_24() {
             Ok(Reply::Welcome(welcome)) => {
                 assert_eq!(welcome.protocol_version, version);
                 assert_eq!(welcome.min_protocol_version, MIN_WEB_PROTOCOL_VERSION);
+                let roles = welcome.features.iter().any(|f| f == feature::DEVICE_ROLES);
+                assert_eq!(roles, version == PROTOCOL_VERSION, "{:?}", welcome.features);
             }
             other => panic!("archon-web {version}: {other:?}"),
         }
@@ -336,7 +339,11 @@ async fn the_web_app_speaks_23_or_24_and_the_cli_only_24() {
     match first_reply(&socket, ClientKind::ArchonCli, PROTOCOL_VERSION).await {
         Ok(Reply::Welcome(welcome)) => {
             assert_eq!(welcome.min_protocol_version, PROTOCOL_VERSION);
-            assert!(welcome.features.is_empty(), "no feature is served yet");
+            let served = &welcome.features;
+            assert!(
+                served.iter().any(|f| f == feature::DEVICE_ROLES),
+                "{served:?}"
+            );
         }
         other => panic!("the CLI at {PROTOCOL_VERSION}: {other:?}"),
     }

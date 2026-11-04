@@ -279,17 +279,17 @@ fn every_filter_narrows_the_nodes() {
         repos: Some(vec![other.id.clone()]),
         ..TaskFilter::default()
     };
-    assert_eq!(pick(&store, repos), [urgent.id.clone()]);
+    assert_eq!(pick(&store, repos), std::slice::from_ref(&urgent.id));
     let pipelines = TaskFilter {
         pipelines: Some(vec!["review".into()]),
         ..TaskFilter::default()
     };
-    assert_eq!(pick(&store, pipelines), [urgent.id.clone()]);
+    assert_eq!(pick(&store, pipelines), std::slice::from_ref(&urgent.id));
     let priority = TaskFilter {
         min_priority: Some(Priority::High),
         ..TaskFilter::default()
     };
-    assert_eq!(pick(&store, priority), [urgent.id.clone()]);
+    assert_eq!(pick(&store, priority), std::slice::from_ref(&urgent.id));
     let members = TaskFilter {
         initiative: Some(made.id.clone()),
         ..TaskFilter::default()
@@ -304,7 +304,7 @@ fn every_filter_narrows_the_nodes() {
         component_of: Some(lone.id.clone()),
         ..TaskFilter::default()
     };
-    assert_eq!(pick(&store, alone), [lone.id.clone()]);
+    assert_eq!(pick(&store, alone), std::slice::from_ref(&lone.id));
     store
         .transition_item(&a.id, QueueState::Dispatching, t(41))
         .unwrap();
@@ -312,7 +312,7 @@ fn every_filter_narrows_the_nodes() {
         states: Some(vec![QueueStateKind::Dispatching]),
         ..TaskFilter::default()
     };
-    assert_eq!(pick(&store, states), [a.id.clone()]);
+    assert_eq!(pick(&store, states), std::slice::from_ref(&a.id));
 }
 
 #[test]

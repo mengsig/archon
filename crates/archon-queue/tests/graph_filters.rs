@@ -122,7 +122,7 @@ fn text_is_one_to_two_hundred_characters() {
     };
     assert_eq!(
         listed(&store, query(long_title.clone())),
-        [unicode.id.clone()],
+        std::slice::from_ref(&unicode.id),
         "200 characters, not bytes"
     );
     for bad in [String::new(), "a".repeat(201)] {

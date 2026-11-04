@@ -33,6 +33,12 @@ const COMPONENT_CTE: &str = "WITH RECURSIVE component (id) AS (
 
 const TERMINAL: &str = "('succeeded', 'failed', 'cancelled')";
 
+/// A node with the run its state names when running.
+type NodeWithRun = (TaskNode, Option<PipelineRunId>);
+
+/// The GitHub issue and pull request an item is linked to.
+type ItemRefs = (Option<GithubRef>, Option<PrRef>);
+
 impl Store {
     /// The items `filter` selects, at most `limit` (default
     /// [`TASK_GRAPH_LIMIT`]), ordered by `(created_at, id)`, with the edges
@@ -186,7 +192,7 @@ fn select_nodes(
     conn: &Connection,
     filter: &TaskFilter,
     limit: usize,
-) -> Result<(Vec<(TaskNode, Option<PipelineRunId>)>, bool), ArchonError> {
+) -> Result<(Vec<NodeWithRun>, bool), ArchonError> {
     let (clauses, rest) = node_clauses(filter);
     assert!(!clauses.is_empty(), "terminal items are always filtered");
     let mut args = Vec::with_capacity(rest.len() + 2);
@@ -218,7 +224,7 @@ fn select_nodes(
     Ok((nodes, truncated))
 }
 
-fn node_of(row: &Row<'_>) -> Result<(TaskNode, Option<PipelineRunId>), ArchonError> {
+fn node_of(row: &Row<'_>) -> Result<NodeWithRun, ArchonError> {
     let text = |index: usize| row.get::<_, String>(index).ctx("read task graph node");
     let id = QueueItemId::parse(&text(0)?)?;
     let repo: Option<String> = row.get(1).ctx("read node repository")?;
@@ -262,7 +268,7 @@ fn node_of(row: &Row<'_>) -> Result<(TaskNode, Option<PipelineRunId>), ArchonErr
 /// spend, GitHub refs and, when blocked, why.
 fn fill_nodes(
     conn: &Connection,
-    nodes: &mut [(TaskNode, Option<PipelineRunId>)],
+    nodes: &mut [NodeWithRun],
     ids: &str,
     estimates: bool,
 ) -> Result<(), ArchonError> {
@@ -352,10 +358,7 @@ fn per_item<T>(
     Ok(out)
 }
 
-fn links_by_item(
-    conn: &Connection,
-    ids: &str,
-) -> Result<BTreeMap<String, (Option<GithubRef>, Option<PrRef>)>, ArchonError> {
+fn links_by_item(conn: &Connection, ids: &str) -> Result<BTreeMap<String, ItemRefs>, ArchonError> {
     let links =
         super::github_links::query_links(conn, "item IN (SELECT value FROM json_each(?1))", [ids])?;
     let mut grouped: BTreeMap<String, Vec<_>> = BTreeMap::new();

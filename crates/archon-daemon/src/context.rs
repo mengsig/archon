@@ -97,6 +97,8 @@ pub struct DaemonContext {
     pub backend: Arc<dyn AgentBackend>,
     /// Every appended feed item, for `SubscribeFeed` connections.
     pub feed: broadcast::Sender<FeedItem>,
+    /// Committed changes, for `subscribe_changes` streams.
+    pub changes: crate::handlers::changes::ChangeHub,
     /// Poked on enqueue, settle, caps or pause change, and when a gc mark
     /// goes.
     pub dispatch: Arc<Notify>,

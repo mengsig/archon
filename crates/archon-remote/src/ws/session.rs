@@ -19,7 +19,7 @@ use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::protocol::{CloseFrame, Role, WebSocketConfig};
 
 use crate::sessions::Registration;
-use crate::{Backend, FeedSubscription};
+use crate::{Backend, ChangeSubscription, FeedSubscription};
 
 /// The largest message a device may send; the app sends small requests.
 pub const MAX_MESSAGE: usize = 1024 * 1024;
@@ -270,7 +270,10 @@ fn dispatch(session: &mut Session, id: u64, request: Request) -> Result<(), Ende
         return queue(session, error_frame(id, ErrorCode::Forbidden, message));
     }
     if let Request::SubscribeFeed { after, verbose } = request {
-        return subscribe(session, id, after, verbose);
+        return subscribe(session, id, Stream::Feed { verbose }, after);
+    }
+    if let Request::SubscribeChanges { after } = request {
+        return subscribe(session, id, Stream::Changes, after);
     }
     let Ok(permit) = session.in_flight.clone().try_acquire_owned() else {
         let message =
@@ -290,30 +293,52 @@ fn dispatch(session: &mut Session, id: u64, request: Request) -> Result<(), Ende
     Ok(())
 }
 
+/// What a subscription streams.
+#[derive(Debug, Clone, Copy)]
+enum Stream {
+    Feed { verbose: bool },
+    Changes,
+}
+
 fn subscribe(
     session: &mut Session,
     id: u64,
+    stream: Stream,
     after: Option<u64>,
-    verbose: bool,
 ) -> Result<(), Ended> {
     if session.subscriptions >= MAX_SUBSCRIPTIONS {
-        let message = format!("at most {MAX_SUBSCRIPTIONS} feed subscriptions per connection");
+        let message = format!("at most {MAX_SUBSCRIPTIONS} subscriptions per connection");
         return queue(
             session,
             error_frame(id, ErrorCode::InvalidArgument, message),
         );
     }
     session.subscriptions += 1;
-    let subscription = FeedSubscription {
-        id: session.subscriptions,
-        request: id,
-        after,
-        verbose,
-    };
+    let sub = session.subscriptions;
     let (backend, outbox) = (session.backend.clone(), session.outbox.clone());
-    session
-        .tasks
-        .spawn(async move { backend.feed(subscription, outbox).await });
+    match stream {
+        Stream::Feed { verbose } => {
+            let subscription = FeedSubscription {
+                id: sub,
+                request: id,
+                after,
+                verbose,
+            };
+            session
+                .tasks
+                .spawn(async move { backend.feed(subscription, outbox).await });
+        }
+        Stream::Changes => {
+            let subscription = ChangeSubscription {
+                id: sub,
+                request: id,
+                after,
+            };
+            session
+                .tasks
+                .spawn(async move { backend.changes(subscription, outbox).await });
+        }
+    }
     Ok(())
 }
 

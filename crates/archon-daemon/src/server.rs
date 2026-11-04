@@ -223,6 +223,25 @@ pub(crate) async fn send(outbox: &Outbox, frame: ServerFrame) -> bool {
     outbox.send(out).await.is_ok()
 }
 
+/// A change subscription on the socket: its frames join the connection's
+/// outbox, so a client that stops reading holds the stream up until it lags.
+async fn change_frames(
+    ctx: Arc<DaemonContext>,
+    sub: handlers::changes::ChangeSubscription,
+    outbox: Outbox,
+) {
+    let (frames, mut queued) = mpsc::channel::<ServerFrame>(OUTBOX_FRAMES);
+    let forward = async move {
+        while let Some(frame) = queued.recv().await {
+            if !send(&outbox, frame).await {
+                return;
+            }
+        }
+    };
+    // As in `feed_frames`: either side ending ends the other.
+    tokio::join!(handlers::changes::stream(ctx, sub, frames), forward);
+}
+
 /// A feed subscription for the remote listener: its frames go to `frames`
 /// until that closes, exactly as a socket connection would get them.
 pub(crate) async fn feed_frames(
@@ -333,6 +352,15 @@ async fn session(
                     verbose,
                 };
                 feeds.spawn(subscription::run(ctx.clone(), sub, outbox.clone()));
+            }
+            Request::SubscribeChanges { after } => {
+                subscriptions += 1;
+                let sub = handlers::changes::ChangeSubscription {
+                    id: subscriptions,
+                    request: frame.id,
+                    after,
+                };
+                feeds.spawn(change_frames(ctx.clone(), sub, outbox.clone()));
             }
             Request::Shutdown => return shutdown(ctx, client, frame.id, &outbox, stop).await,
             request => {

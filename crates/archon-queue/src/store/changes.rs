@@ -391,9 +391,12 @@ impl Store {
         Ok(range(&self.conn)?.last_seq)
     }
 
-    /// The change seqs still kept.
-    pub fn change_range(&self) -> Result<HistoryRange, ArchonError> {
-        range(&self.conn)
+    /// The change seqs still kept, when a stream may resume after `after`;
+    /// `HistoryExpired` otherwise.
+    pub fn check_change_cursor(&self, after: u64) -> Result<HistoryRange, ArchonError> {
+        let kept = range(&self.conn)?;
+        check_cursor(after, kept)?;
+        Ok(kept)
     }
 
     /// At most `limit` changes with `seq > after`, oldest first, read in

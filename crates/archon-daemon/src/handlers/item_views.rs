@@ -32,13 +32,23 @@ pub(super) async fn read_summaries(
     let waiting = super::waiting::WaitingView::read(ctx).await?;
     let estimates = ctx.config.limits.count_estimated_cost;
     let store = ctx.read_store().await?;
+    summaries_in(&store, query, estimates, &waiting)
+}
+
+/// The summaries `query` lists, read on `store` alone, so a caller holding
+/// one snapshot reads them in it.
+pub(super) fn summaries_in(
+    store: &Store,
+    query: &ItemQuery,
+    estimates: bool,
+    waiting: &super::waiting::WaitingView,
+) -> Result<Vec<ItemSummary>, ArchonError> {
     let items = store.items(query)?;
     let count = items.len();
     let mut summaries = Vec::with_capacity(count);
     for item in items {
-        summaries.push(summarize(&store, item, estimates, &waiting)?);
+        summaries.push(summarize(store, item, estimates, waiting)?);
     }
-    drop(store);
     assert_eq!(summaries.len(), count, "one summary per listed item");
     Ok(summaries)
 }

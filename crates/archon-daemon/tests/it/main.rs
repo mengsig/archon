@@ -4,6 +4,7 @@ mod adaptive_surface;
 mod agent_messages;
 mod autonomy;
 mod carried_review;
+mod changes;
 mod chat_answer;
 mod chat_ops;
 mod common;

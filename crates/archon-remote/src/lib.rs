@@ -40,6 +40,16 @@ pub trait Backend: Send + Sync + 'static {
     /// Send `subscribe_feed`'s reply and then its feed frames to `frames`
     /// until it closes, as the Unix socket does.
     async fn feed(&self, subscription: FeedSubscription, frames: mpsc::Sender<ServerFrame>);
+    /// Send `subscribe_changes`' reply and then its change frames to
+    /// `frames` until it closes. A backend without a change stream refuses it.
+    async fn changes(&self, subscription: ChangeSubscription, frames: mpsc::Sender<ServerFrame>) {
+        let refusal = ArchonError::Unavailable("this archond serves no change stream".into());
+        let frame = ServerFrame::Reply {
+            id: subscription.request,
+            result: Err((&refusal).into()),
+        };
+        let _gone = frames.send(frame).await;
+    }
     /// The protocol 24 features archond serves, for a session's `welcome`.
     fn features(&self) -> Vec<&'static str>;
 }
@@ -53,6 +63,15 @@ pub struct FeedSubscription {
     pub request: u64,
     pub after: Option<u64>,
     pub verbose: bool,
+}
+
+/// One `subscribe_changes` on a device's WebSocket, numbered with its feeds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChangeSubscription {
+    pub id: u64,
+    /// The request's `req`, for the `subscribed` reply.
+    pub request: u64,
+    pub after: Option<u64>,
 }
 
 /// The remote listener and its state; one per archond.

@@ -363,9 +363,6 @@ async fn every_protocol_24_request_answers_unavailable_until_served() {
     let issue =
         serde_json::json!({"host": "github.com", "repo": "o/r", "number": 1, "kind": "issue"});
     let requests = [
-        serde_json::json!({"cmd": "subscribe_changes", "after": 0}),
-        serde_json::json!({"cmd": "changes_page", "after": 0}),
-        serde_json::json!({"cmd": "item_history", "item": item}),
         serde_json::json!({"cmd": "task_graph", "filter": {}}),
         serde_json::json!({"cmd": "run_plan", "run": archon_core::id::PipelineRunId::new()}),
         serde_json::json!({"cmd": "item_links", "item": item}),
@@ -375,7 +372,6 @@ async fn every_protocol_24_request_answers_unavailable_until_served() {
         serde_json::json!({"cmd": "list_github_objects", "repo": "o/r"}),
         serde_json::json!({"cmd": "import_issue", "ref": issue}),
         serde_json::json!({"cmd": "list_items", "repo": null, "pipeline": null, "tag": null, "limit": null, "text": "x"}),
-        serde_json::json!({"cmd": "list_item_summaries", "repo": null, "pipeline": null, "tag": null, "limit": null, "with_as_of": true}),
     ];
     for json in requests {
         let request: Request = serde_json::from_value(json.clone()).expect("a request");
@@ -581,5 +577,41 @@ async fn a_subscription_ends_when_its_client_leaves() {
     tokio::time::timeout(WAIT, gone)
         .await
         .expect("the subscription ended with its connection");
+    serving.abort();
+}
+
+/// A socket's `subscribe_changes` answers `subscribed`, then streams each
+/// committed change as a `change` frame under its subscription id.
+#[tokio::test]
+async fn a_socket_subscription_streams_committed_changes() {
+    let h = Harness::new().await;
+    let socket = h.ctx.paths.socket.clone();
+    let (listener, _lock) = server::bind(&h.ctx).expect("bind");
+    let serving = tokio::spawn(server::serve(h.ctx.clone(), listener));
+    let pump = tokio::spawn(archon_daemon::handlers::changes::pump(h.ctx.clone()));
+    let mut cli = Client::hello(&socket, ClientKind::ArchonCli).await;
+    let id = cli.send(Request::SubscribeChanges { after: None }).await;
+    let sub = match cli.frame().await {
+        Some(ServerFrame::Reply {
+            id: got,
+            result:
+                Ok(Reply::Subscribed {
+                    id: sub,
+                    last_seq: 0,
+                }),
+        }) if got == id => sub,
+        other => panic!("expected subscribed at 0, got {other:?}"),
+    };
+    let item = h.enqueue("streamed").await;
+    match cli.frame().await {
+        Some(ServerFrame::Change { sub: got, change }) => {
+            assert_eq!((got, change.seq), (sub, 1));
+            let told = matches!(&change.subject,
+                archon_core::protocol::ChangeSubject::Item { item: id, .. } if *id == item.id);
+            assert!(told, "{change:?}");
+        }
+        other => panic!("expected the item's change, got {other:?}"),
+    }
+    pump.abort();
     serving.abort();
 }

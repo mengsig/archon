@@ -410,6 +410,7 @@ fn spawn_workers(
     worker!("trigger delivery", triggers::deliver_loop);
     worker!("store pruning", prune::run);
     worker!("wal checkpoints", readers::checkpoint);
+    worker!("change stream", handlers::changes::pump);
     worker!("repository mirrors", mirror::run);
     worker!("learning", learned::run);
     worker!("upgrades", ops::run);
@@ -423,7 +424,7 @@ fn spawn_workers(
     }
     assert_eq!(
         workers.len(),
-        17 + usize::from(auto_gc) + usize::from(verifies),
+        18 + usize::from(auto_gc) + usize::from(verifies),
         "every daemon worker is supervised"
     );
 }
@@ -536,6 +537,10 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
     let aether = Arc::new(AetherLink::new());
     let backend = Arc::new(AetherBackend::new(aether.clone(), config.models.policy()));
     let (feed, _) = broadcast::channel(FEED_BROADCAST_CAPACITY);
+    let changes = handlers::changes::ChangeHub::new(
+        handlers::changes::CHANGE_BUFFER,
+        store.last_change_seq()?,
+    );
     let dispatch = Arc::new(Notify::new());
     let ctx = DaemonContext {
         storage: Default::default(),
@@ -551,6 +556,7 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
         aether,
         backend,
         feed,
+        changes,
         dispatch: dispatch.clone(),
         coordination: Default::default(),
         runs: Mutex::new(executor::RunTable::default()),

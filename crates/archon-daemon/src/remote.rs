@@ -6,7 +6,7 @@ use std::sync::{Arc, Weak};
 
 use archon_core::error::ArchonError;
 use archon_core::protocol::{ClientKind, DeviceRole, Reply, Request, ServerFrame, feature};
-use archon_remote::{Backend, FeedSubscription};
+use archon_remote::{Backend, ChangeSubscription, FeedSubscription};
 use tokio::sync::mpsc;
 
 use crate::context::DaemonContext;
@@ -49,6 +49,18 @@ impl Backend for DaemonBackend {
             return;
         };
         crate::server::feed_frames(ctx, subscription, frames).await;
+    }
+
+    async fn changes(&self, subscription: ChangeSubscription, frames: mpsc::Sender<ServerFrame>) {
+        let Ok(ctx) = self.context() else {
+            return;
+        };
+        let sub = crate::handlers::changes::ChangeSubscription {
+            id: subscription.id,
+            request: subscription.request,
+            after: subscription.after,
+        };
+        crate::handlers::changes::stream(ctx, sub, frames).await;
     }
 }
 

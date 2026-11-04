@@ -3,7 +3,7 @@
 
 mod autonomy;
 mod budget_cost;
-mod changes;
+pub mod changes;
 mod control;
 mod cost;
 mod github_links;

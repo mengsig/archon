@@ -104,6 +104,7 @@ impl Harness {
             aether: link,
             backend,
             feed: broadcast::channel(256).0,
+            changes: Default::default(),
             dispatch: dispatch.clone(),
             coordination: Default::default(),
             runs: Mutex::new(RunTable::default()),

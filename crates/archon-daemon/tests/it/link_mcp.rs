@@ -689,3 +689,56 @@ async fn status_reports_the_mcp_servers_health() {
     assert_eq!(failing.health, McpHealth::Failed { error });
     assert_eq!(refreshes(&harness), 0, "status only looks");
 }
+
+/// A restart owed from the server's failure is settled by the operator's
+/// restart that wins the serialization: the relink that waited behind it must
+/// not cancel the orchestrator the operator just started.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_restart_during_a_relink_wait_leaves_one_new_orchestrator() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    running_orchestrator(&harness).await;
+    harness.fake.set_default(
+        "create_agent",
+        Scripted::reply("agent", orchestrator(ORCH_2, "ready")),
+    );
+    // The check's refresh is the last thing it asks Aether before it owes a
+    // restart. Answering it starts the operator's restart, which takes the
+    // serialization before the check can ask for it.
+    let restarting: Arc<Mutex<Option<tokio::task::JoinHandle<_>>>> = Arc::default();
+    let started = restarting.clone();
+    let ctx = harness.ctx.clone();
+    harness.fake.set_responder(
+        "mcp_servers",
+        Arc::new(move |cmd| {
+            if cmd["refresh"] != json!(true) {
+                return Scripted::reply("mcp_servers", json!([failed("Broken pipe")]));
+            }
+            let ctx = ctx.clone();
+            let task = tokio::spawn(async move { supervisor::restart_orchestrator(&ctx).await });
+            *started.lock().unwrap() = Some(task);
+            tokio::task::block_in_place(|| {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            });
+            Scripted::reply("mcp_servers", json!([ready()]))
+        }),
+    );
+    supervisor::check_mcp(&harness.ctx, archon_core::now())
+        .await
+        .unwrap();
+    let task = restarting.lock().unwrap().take().expect("the restart ran");
+    assert_eq!(task.await.unwrap().unwrap(), agent_id(ORCH_2));
+
+    let cancelled = harness.fake.received_named("cancel");
+    assert_eq!(
+        cancelled.len(),
+        1,
+        "only the old orchestrator: {cancelled:?}"
+    );
+    assert_eq!(cancelled[0]["agent"], json!(ORCH));
+    assert!(harness.fake.received_named("restart").is_empty());
+    assert_eq!(
+        harness.kv(keys::ORCHESTRATOR_AGENT).await.as_deref(),
+        Some(ORCH_2)
+    );
+}

@@ -17,6 +17,7 @@ mod delegated;
 mod directives;
 mod feed;
 mod gates;
+mod github_links;
 mod handoffs;
 pub mod initiatives;
 mod items;

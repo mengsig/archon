@@ -25,6 +25,7 @@ mod fix_loop;
 mod foreign_commits;
 mod gc;
 mod gh_user;
+mod github_links;
 mod handle_order;
 mod handlers;
 mod inbox_health;

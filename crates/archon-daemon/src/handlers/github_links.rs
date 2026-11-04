@@ -1,15 +1,19 @@
 //! GitHub links, the object cache and issue import (CONTRACTS.md §1.3,
-//! owners D1 and D2). Until served, each answers `unavailable`.
+//! owners D1 and D2). The link requests are served from the link store; the
+//! cache and import answer `unavailable` until D2 serves them.
 
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
-use archon_core::protocol::{GithubKind, GithubObjectState, GithubRef, ManualLinkRelation, Reply};
+use archon_core::protocol::github_links::LinkSource;
+use archon_core::protocol::{
+    GithubKind, GithubLink, GithubObjectState, GithubRef, ManualLinkRelation, Reply, feature,
+};
 use archon_core::queue::Priority;
 
 use crate::context::DaemonContext;
 
 /// The features `welcome` advertises for this file's requests.
-pub(super) const FEATURES: &[&str] = &[];
+pub(super) const FEATURES: &[&str] = &[feature::GITHUB_LINKS];
 
 fn not_yet(command: &str, feature: &str) -> ArchonError {
     ArchonError::Unavailable(format!(
@@ -17,30 +21,57 @@ fn not_yet(command: &str, feature: &str) -> ArchonError {
     ))
 }
 
+/// `item`'s links. Their cached objects come with the `github_import` cache.
 pub(super) async fn item_links(
-    _ctx: &DaemonContext,
-    _item: &QueueItemId,
+    ctx: &DaemonContext,
+    item: &QueueItemId,
 ) -> Result<Reply, ArchonError> {
-    Err(not_yet("item_links", "github_links"))
+    let links = ctx.read_store().await?.item_links(item)?;
+    assert!(
+        links.iter().all(|l| &l.item == item),
+        "only the item's links"
+    );
+    Ok(Reply::ItemLinks {
+        links,
+        objects: Vec::new(),
+    })
 }
 
 pub(super) async fn issue_items(
-    _ctx: &DaemonContext,
-    _reference: &GithubRef,
+    ctx: &DaemonContext,
+    reference: &GithubRef,
 ) -> Result<Reply, ArchonError> {
-    Err(not_yet("issue_items", "github_links"))
+    let links = ctx.read_store().await?.issue_items(reference)?;
+    assert!(
+        links.iter().all(|l| l.reference.number == reference.number),
+        "only links to the one number"
+    );
+    Ok(Reply::IssueItems { links })
 }
 
-/// `link_issue` (`linked`) or `unlink_issue`.
+/// `link_issue` (`linked`) or `unlink_issue`: an operator's link, `ok`
+/// whether or not it was already there.
 pub(super) async fn set_link(
-    _ctx: &DaemonContext,
-    _item: &QueueItemId,
-    _reference: &GithubRef,
-    _relation: ManualLinkRelation,
+    ctx: &DaemonContext,
+    item: &QueueItemId,
+    reference: &GithubRef,
+    relation: ManualLinkRelation,
     linked: bool,
 ) -> Result<Reply, ArchonError> {
-    let command = if linked { "link_issue" } else { "unlink_issue" };
-    Err(not_yet(command, "github_links"))
+    let mut store = ctx.store.lock().await;
+    if !linked {
+        store.unlink_github(item, reference, relation.into())?;
+        return Ok(Reply::Ok);
+    }
+    let link = GithubLink {
+        item: item.clone(),
+        reference: reference.clone(),
+        relation: relation.into(),
+        source: LinkSource::Operator,
+        created_at: archon_core::now(),
+    };
+    store.link_github(&link)?;
+    Ok(Reply::Ok)
 }
 
 pub(super) async fn list_objects(

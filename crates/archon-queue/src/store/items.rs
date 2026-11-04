@@ -356,6 +356,7 @@ fn insert_requested_in(
     replace_deps(tx, item)?;
     super::changes::record_item(tx, item, None)?;
     super::changes::record_dependencies(tx, &item.id, &[], &item.dependencies)?;
+    super::github_links::record_origin(tx, item)?;
     Ok(item.clone())
 }
 

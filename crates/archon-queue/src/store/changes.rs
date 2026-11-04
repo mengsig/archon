@@ -50,7 +50,7 @@ pub fn acting_as<R>(actor: TransitionActor, f: impl FnOnce() -> R) -> R {
 }
 
 /// Append `subject` to the stream inside the caller's write transaction.
-fn record(conn: &Connection, subject: &ChangeSubject) -> Result<u64, ArchonError> {
+pub(super) fn record(conn: &Connection, subject: &ChangeSubject) -> Result<u64, ArchonError> {
     assert!(
         !conn.is_autocommit(),
         "a change is written in the transaction of the state it describes"

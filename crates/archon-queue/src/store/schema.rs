@@ -635,8 +635,75 @@ SELECT updated_at, json_object('subject', 'item', 'item', id, 'state', state)
 FROM items ORDER BY seq;
 "#;
 
+/// The V20 backfill as a statement list of its own, so a test can run it
+/// again: rows already linked are skipped, and each new one gets its change.
+macro_rules! github_links_backfill {
+    () => {
+        r#"
+CREATE TEMP TABLE github_links_backfill (
+    item       TEXT NOT NULL,
+    host       TEXT NOT NULL,
+    repo       TEXT NOT NULL,
+    number     INTEGER NOT NULL,
+    kind       TEXT NOT NULL,
+    relation   TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+INSERT INTO temp.github_links_backfill
+SELECT id, 'github.com', lower(json_extract(data, '$.origin.repository')),
+       json_extract(data, '$.origin.number'), 'issue', 'origin', created_at
+FROM items
+WHERE json_type(data, '$.origin.repository') = 'text'
+  AND json_type(data, '$.origin.number') = 'integer';
+INSERT INTO temp.github_links_backfill
+SELECT r.item, p.host, p.repository, p.number, 'pull_request', 'delivered', MIN(r.started_at)
+FROM run_pull_requests p JOIN runs r ON r.id = p.run
+GROUP BY r.item, p.host, p.repository, p.number;
+DELETE FROM temp.github_links_backfill WHERE EXISTS (
+    SELECT 1 FROM github_links l
+    WHERE (l.item, l.host, l.repo, l.number, l.relation)
+        = (github_links_backfill.item, github_links_backfill.host, github_links_backfill.repo,
+           github_links_backfill.number, github_links_backfill.relation));
+INSERT INTO github_links (item, host, repo, number, kind, relation, source, created_at)
+SELECT item, host, repo, number, kind, relation, 'backfill', created_at
+FROM temp.github_links_backfill;
+INSERT INTO changes (at, data)
+SELECT created_at, json_object('subject', 'link', 'item', item, 'host', host, 'repo', repo,
+                               'number', number, 'relation', relation)
+FROM temp.github_links_backfill ORDER BY created_at, item, relation, host, repo, number;
+DROP TABLE temp.github_links_backfill;
+"#
+    };
+}
+
+/// Version 20 (vNext D1): the links between items and GitHub issues and pull
+/// requests, backfilled from item origins and `run_pull_requests`.
+const V20: &str = concat!(
+    r#"
+CREATE TABLE github_links (
+    item       TEXT NOT NULL REFERENCES items (id) ON DELETE CASCADE,
+    host       TEXT NOT NULL CHECK (host <> '' AND host = lower(host)),
+    repo       TEXT NOT NULL CHECK (repo GLOB '?*/?*' AND repo = lower(repo)),
+    number     INTEGER NOT NULL CHECK (number > 0),
+    kind       TEXT NOT NULL CHECK (kind IN ('issue', 'pull_request')),
+    relation   TEXT NOT NULL
+               CHECK (relation IN ('origin', 'imported', 'delivered', 'closes', 'mentioned')),
+    source     TEXT NOT NULL
+               CHECK (source IN ('watcher', 'operator', 'import', 'ship', 'backfill')),
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (item, host, repo, number, relation)
+) WITHOUT ROWID;
+CREATE INDEX github_links_by_object ON github_links (host, repo, number);
+"#,
+    github_links_backfill!()
+);
+
+/// V20's backfill alone, run again by its idempotence test.
+#[cfg(test)]
+const GITHUB_LINKS_BACKFILL: &str = github_links_backfill!();
+
 pub(super) const MIGRATIONS: &[&str] = &[
-    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19,
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20,
 ];
 
 /// Pragmas every connection needs. `on_disk` connections must end up in
@@ -827,6 +894,8 @@ pub(super) fn migrate(conn: &mut Connection) -> Result<usize, ArchonError> {
     Ok(MIGRATIONS.len())
 }
 
+#[cfg(test)]
+mod github_links_backfill;
 #[cfg(test)]
 mod history_upgrade;
 #[cfg(test)]
@@ -1278,6 +1347,7 @@ mod tests {
         conn.execute_batch(
             "DROP TABLE run_pull_requests; DROP TABLE merge_requests; DROP TABLE tracked_requests;
              DROP TABLE spend_pruned; DROP TABLE item_transitions; DROP TABLE changes;
+             DROP TABLE github_links;
              DELETE FROM schema_migrations WHERE version >= 12",
         )
         .unwrap();

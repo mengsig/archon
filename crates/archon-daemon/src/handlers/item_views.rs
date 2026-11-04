@@ -83,6 +83,7 @@ fn summarize(
     let waiting_on = waiting_on(store, &item, &runs, &stages)?;
     let waiting_reason = waiting.reason(store, &item, waiting_on.as_ref())?;
     let switched_to = crate::executor::steer::switched_to(store, &item)?;
+    let (issue, pr) = store.item_github_refs(&item.id)?;
     Ok(ItemSummary {
         waiting_reason,
         waiting_on,
@@ -91,8 +92,8 @@ fn summarize(
         spent_usd,
         pr_url,
         switched_to,
-        issue: None,
-        pr: None,
+        issue,
+        pr,
     })
 }
 

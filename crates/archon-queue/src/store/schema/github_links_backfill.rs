@@ -7,6 +7,7 @@ const T3: &str = "2026-10-03T00:00:00.000000000Z";
 /// A store as Archon left it at version 19, built from the migrations alone:
 /// an item asked for on a thread whose two runs delivered one pull request, a
 /// local item whose run delivered another, and an item with neither.
+/// Their ids end in 2, 1 and 3; an id ending in 4 names no item.
 fn v19_store() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
     configure(&conn, false).unwrap();
@@ -24,9 +25,9 @@ fn v19_store() -> Connection {
     }
     let origin = r#"{"origin":{"repository":"mengsig/archon","number":384}}"#;
     for (item, data, created) in [
-        ("qi_watched", origin, T1),
-        ("qi_local", "{}", T2),
-        ("qi_idle", "{}", T3),
+        ("qi_00000000000000000000000002", origin, T1),
+        ("qi_00000000000000000000000001", "{}", T2),
+        ("qi_00000000000000000000000003", "{}", T3),
     ] {
         conn.execute(
             "INSERT INTO items (id, pipeline, priority, state, tags, created_at, updated_at, data)
@@ -37,10 +38,10 @@ fn v19_store() -> Connection {
     }
     conn.execute_batch(&format!(
         "INSERT INTO runs (id, item, pipeline, terminal, started_at, data) VALUES
-             ('prun_w1', 'qi_watched', 'adaptive', 1, '{T2}', '{{}}'),
-             ('prun_w2', 'qi_watched', 'adaptive', 1, '{T3}', '{{}}'),
-             ('prun_l1', 'qi_local', 'adaptive', 1, '{T3}', '{{}}'),
-             ('prun_i1', 'qi_idle', 'adaptive', 1, '{T3}', '{{}}');
+             ('prun_w1', 'qi_00000000000000000000000002', 'adaptive', 1, '{T2}', '{{}}'),
+             ('prun_w2', 'qi_00000000000000000000000002', 'adaptive', 1, '{T3}', '{{}}'),
+             ('prun_l1', 'qi_00000000000000000000000001', 'adaptive', 1, '{T3}', '{{}}'),
+             ('prun_i1', 'qi_00000000000000000000000003', 'adaptive', 1, '{T3}', '{{}}');
          INSERT INTO run_pull_requests (run, host, repository, number) VALUES
              ('prun_w1', 'github.com', 'mengsig/archon', 378),
              ('prun_w2', 'github.com', 'mengsig/archon', 378),
@@ -122,12 +123,14 @@ fn rerun_backfill(conn: &mut Connection) {
 fn v20_backfills_exactly_the_origins_and_deliveries_with_their_changes() {
     let mut conn = v19_store();
     let seq_before: i64 = conn
-        .query_row("SELECT MAX(seq) FROM changes", [], |r| r.get(0))
+        .query_row("SELECT COALESCE(MAX(seq), 0) FROM changes", [], |r| {
+            r.get(0)
+        })
         .unwrap();
     assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
     let expected = vec![
         row(
-            "qi_local",
+            "qi_00000000000000000000000001",
             "ghe.example",
             "team/tool",
             5,
@@ -136,7 +139,7 @@ fn v20_backfills_exactly_the_origins_and_deliveries_with_their_changes() {
             T3,
         ),
         row(
-            "qi_watched",
+            "qi_00000000000000000000000002",
             "github.com",
             "mengsig/archon",
             378,
@@ -145,7 +148,7 @@ fn v20_backfills_exactly_the_origins_and_deliveries_with_their_changes() {
             T2,
         ),
         row(
-            "qi_watched",
+            "qi_00000000000000000000000002",
             "github.com",
             "mengsig/archon",
             384,
@@ -168,12 +171,18 @@ fn v20_backfills_exactly_the_origins_and_deliveries_with_their_changes() {
     let expected_changes = vec![
         (
             T1.to_owned(),
-            link("qi_watched", "github.com", "mengsig/archon", 384, "origin"),
+            link(
+                "qi_00000000000000000000000002",
+                "github.com",
+                "mengsig/archon",
+                384,
+                "origin",
+            ),
         ),
         (
             T2.to_owned(),
             link(
-                "qi_watched",
+                "qi_00000000000000000000000002",
                 "github.com",
                 "mengsig/archon",
                 378,
@@ -182,7 +191,13 @@ fn v20_backfills_exactly_the_origins_and_deliveries_with_their_changes() {
         ),
         (
             T3.to_owned(),
-            link("qi_local", "ghe.example", "team/tool", 5, "delivered"),
+            link(
+                "qi_00000000000000000000000001",
+                "ghe.example",
+                "team/tool",
+                5,
+                "delivered",
+            ),
         ),
     ];
     assert_eq!(changes, expected_changes, "a change per backfilled link");
@@ -220,7 +235,7 @@ fn the_backfill_keeps_live_links_and_fills_only_the_gaps() {
     let mut conn = v19_store();
     migrate(&mut conn).unwrap();
     conn.execute_batch(
-        "DELETE FROM github_links WHERE item = 'qi_local';
+        "DELETE FROM github_links WHERE item = 'qi_00000000000000000000000001';
          UPDATE github_links SET source = 'watcher' WHERE relation = 'origin';",
     )
     .unwrap();
@@ -237,9 +252,9 @@ fn the_backfill_keeps_live_links_and_fills_only_the_gaps() {
     assert_eq!(
         sources,
         vec![
-            triple("qi_local", "delivered", "backfill"),
-            triple("qi_watched", "delivered", "backfill"),
-            triple("qi_watched", "origin", "watcher"),
+            triple("qi_00000000000000000000000001", "delivered", "backfill"),
+            triple("qi_00000000000000000000000002", "delivered", "backfill"),
+            triple("qi_00000000000000000000000002", "origin", "watcher"),
         ]
     );
     assert_eq!(
@@ -254,20 +269,20 @@ fn a_link_row_refuses_what_the_store_never_writes() {
     let mut conn = v19_store();
     migrate(&mut conn).unwrap();
     for bad in [
-        "('qi_idle', 'GitHub.com', 'o/r', 1, 'issue', 'closes', 'operator', 't')",
-        "('qi_idle', 'github.com', 'O/R', 1, 'issue', 'closes', 'operator', 't')",
-        "('qi_idle', 'github.com', 'o/r', 0, 'issue', 'closes', 'operator', 't')",
-        "('qi_idle', 'github.com', 'o/r', 1, 'discussion', 'closes', 'operator', 't')",
-        "('qi_idle', 'github.com', 'o/r', 1, 'issue', 'fixes', 'operator', 't')",
-        "('qi_nobody', 'github.com', 'o/r', 1, 'issue', 'closes', 'operator', 't')",
+        "('qi_00000000000000000000000003', 'GitHub.com', 'o/r', 1, 'issue', 'closes', 'operator', 't')",
+        "('qi_00000000000000000000000003', 'github.com', 'O/R', 1, 'issue', 'closes', 'operator', 't')",
+        "('qi_00000000000000000000000003', 'github.com', 'o/r', 0, 'issue', 'closes', 'operator', 't')",
+        "('qi_00000000000000000000000003', 'github.com', 'o/r', 1, 'discussion', 'closes', 'operator', 't')",
+        "('qi_00000000000000000000000003', 'github.com', 'o/r', 1, 'issue', 'fixes', 'operator', 't')",
+        "('qi_00000000000000000000000004', 'github.com', 'o/r', 1, 'issue', 'closes', 'operator', 't')",
     ] {
         let insert = format!("INSERT INTO github_links VALUES {bad}");
         assert!(conn.execute_batch(&insert).is_err(), "{bad} was stored");
     }
     conn.execute_batch(
         "DELETE FROM run_pull_requests WHERE run = 'prun_l1';
-         DELETE FROM runs WHERE item = 'qi_local'; DELETE FROM items WHERE id = 'qi_local';",
+         DELETE FROM runs WHERE item = 'qi_00000000000000000000000001'; DELETE FROM items WHERE id = 'qi_00000000000000000000000001';",
     )
     .expect("an item's links go with it");
-    assert_eq!(links(&conn).len(), 2, "qi_local's link went with it");
+    assert_eq!(links(&conn).len(), 2, "the local item's link went with it");
 }

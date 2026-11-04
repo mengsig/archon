@@ -544,3 +544,23 @@ fn the_migration_gives_older_items_one_change_each() {
     assert_eq!(states, Replayed::of_store(&store));
     assert_eq!(states.states[&a.id], QueueStateKind::Dispatching);
 }
+
+/// Writes that record no change still move the writer's count, so a
+/// snapshot paired with a view read before it can tell it is stale.
+#[test]
+fn every_write_moves_the_write_count_even_without_a_change() {
+    let (mut store, _, items) = seeded(1);
+    let mut item = items[0].clone();
+    let seq = store.last_change_seq().unwrap();
+    let count = store.write_count();
+    item.priority = archon_core::queue::Priority::Critical;
+    store.update_item(&item).unwrap();
+    assert_eq!(store.last_change_seq().unwrap(), seq, "no change recorded");
+    let edited = store.write_count();
+    assert!(edited > count, "a priority edit is a write");
+    store.kv_set("a key", "a value").unwrap();
+    assert!(store.write_count() > edited, "a setting is a write");
+    let written = store.write_count();
+    store.item(&item.id).unwrap();
+    assert_eq!(store.write_count(), written, "a read is not");
+}

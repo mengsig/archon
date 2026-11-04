@@ -170,51 +170,47 @@ pub(super) async fn item_history(
 }
 
 /// Reads of `summaries_at` before it asks the client to retry.
-const SUMMARY_ATTEMPTS: usize = 3;
+const SUMMARY_ATTEMPTS: usize = 5;
 
 /// `list_item_summaries` with `with_as_of`: the summaries and the last change
 /// seq, both read in one snapshot, so `seq > as_of` is exactly what they miss.
-/// Waiting reasons come from the dispatcher's view, read before that snapshot,
-/// so it is read again while a write changes its inputs in between.
+/// Waiting reasons come from the dispatcher's view, read before that snapshot;
+/// it is all read again when anything was written between the two.
 pub(super) async fn summaries_at(
     ctx: &DaemonContext,
     query: &ItemQuery,
 ) -> Result<Reply, ArchonError> {
     assert!(query.with_as_of, "routed only for with_as_of");
-    let mut attempt = 1;
-    loop {
-        let floor = ctx.read_store().await?.last_change_seq()?;
+    for _ in 0..SUMMARY_ATTEMPTS {
+        let before = ctx.store.lock().await.write_count();
         let waiting = super::waiting::WaitingView::read(ctx).await?;
-        let (summaries, as_of, current) = summaries_in_snapshot(ctx, query, &waiting).await?;
-        assert!(as_of >= floor, "change seqs only grow");
-        if as_of == floor && current {
+        let (summaries, as_of) = summaries_in_snapshot(ctx, query, &waiting).await?;
+        let after = ctx.store.lock().await.write_count();
+        assert!(after >= before, "the writer's count only grows");
+        if after == before {
             return Ok(Reply::ItemSummariesAt { summaries, as_of });
         }
-        if attempt == SUMMARY_ATTEMPTS {
-            return Err(ArchonError::Unavailable(format!(
-                "the queue kept changing while {SUMMARY_ATTEMPTS} summary snapshots were read; retry"
-            )));
-        }
-        attempt += 1;
     }
+    Err(ArchonError::Unavailable(format!(
+        "the store kept changing while {SUMMARY_ATTEMPTS} summary snapshots were read; retry"
+    )))
 }
 
 async fn summaries_in_snapshot(
     ctx: &DaemonContext,
     query: &ItemQuery,
     waiting: &super::waiting::WaitingView,
-) -> Result<(Vec<ItemSummary>, u64, bool), ArchonError> {
+) -> Result<(Vec<ItemSummary>, u64), ArchonError> {
     let estimates = ctx.config.limits.count_estimated_cost;
     let store = ctx.read_store().await?;
     let as_of = store.last_change_seq()?;
     let summaries = super::item_views::summaries_in(&store, query, estimates, waiting)?;
-    let current = waiting.current_in(&store, estimates)?;
     assert_eq!(
         store.last_change_seq()?,
         as_of,
         "the snapshot holds while its summaries are read"
     );
-    Ok((summaries, as_of, current))
+    Ok((summaries, as_of))
 }
 
 /// Hands every change committed after the hub's `sent` to live subscribers,

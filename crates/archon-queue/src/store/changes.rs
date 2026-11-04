@@ -410,6 +410,12 @@ fn prune_through(conn: &Connection, now: Timestamp, limit: usize) -> Result<u64,
 impl Store {
     /// The last change seq committed: what a snapshot read in the same
     /// transaction is `as_of`.
+    /// Rows this connection wrote since it opened, committed or rolled back.
+    /// On the one writer, an unchanged count means nothing was written between.
+    pub fn write_count(&self) -> u64 {
+        self.conn.total_changes()
+    }
+
     pub fn last_change_seq(&self) -> Result<u64, ArchonError> {
         Ok(range(&self.conn)?.last_seq)
     }

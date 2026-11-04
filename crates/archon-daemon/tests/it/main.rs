@@ -26,6 +26,7 @@ mod foreign_commits;
 mod gc;
 mod gh_user;
 mod github_links;
+mod graph;
 mod handle_order;
 mod handlers;
 mod inbox_health;

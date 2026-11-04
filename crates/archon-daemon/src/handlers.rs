@@ -468,19 +468,13 @@ pub(crate) async fn resolve_item(
 async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, ArchonError> {
     match request {
         Request::Enqueue(enqueue) => items::enqueue(ctx, enqueue).await,
-        Request::ListItems(query) => {
-            graph::check_item_filters(&query)?;
-            items::list(ctx, &query).await
-        }
+        Request::ListItems(query) => items::list(ctx, &query).await,
         Request::GetItem { item } => items::get(ctx, &item).await,
         Request::GetStage(query) => stages::get(ctx, &query).await,
-        Request::ListItemSummaries(query) => {
-            graph::check_item_filters(&query)?;
-            match query.with_as_of {
-                true => changes::summaries_at(ctx, &query).await,
-                false => item_views::summaries(ctx, &query).await,
-            }
-        }
+        Request::ListItemSummaries(query) => match query.with_as_of {
+            true => changes::summaries_at(ctx, &query).await,
+            false => item_views::summaries(ctx, &query).await,
+        },
         Request::ResolveItem { prefix } => item_views::resolve(ctx, &prefix).await,
         Request::CancelItem { item, reason } => items::cancel(ctx, &item, reason).await,
         Request::RetryItem {

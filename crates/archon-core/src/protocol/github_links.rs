@@ -75,6 +75,39 @@ pub struct PrRef {
     pub checks: Option<ChecksSummary>,
 }
 
+/// A GitHub comment Archon recorded but has not seen posted: it is retried,
+/// at most once on GitHub, and never dropped (`DaemonStatus::github_outbox`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct GithubOutboxPending {
+    /// The token its hidden marker carries.
+    pub token: String,
+    /// `reply` or `ship`.
+    pub purpose: String,
+    /// `owner/name#number` on github.com.
+    pub target: String,
+    pub attempts: u32,
+    pub next_attempt_at: Timestamp,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    pub created_at: Timestamp,
+}
+
+impl GithubOutboxPending {
+    /// `reply on o/r#5: 2 attempts, next 12:00:00Z (HTTP 502)`, as `status` shows it.
+    pub fn describe(&self) -> String {
+        let next = self.next_attempt_at.format("%Y-%m-%d %H:%M:%SZ");
+        let why = self
+            .last_error
+            .as_deref()
+            .map(|e| format!(" ({e})"))
+            .unwrap_or_default();
+        format!(
+            "{} on {} not confirmed posted: {} attempts, next {next}{why}",
+            self.purpose, self.target, self.attempts
+        )
+    }
+}
+
 /// How an item and a GitHub object relate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]

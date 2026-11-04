@@ -1,10 +1,12 @@
 //! The read-only GitHub sync (ARCHITECTURE §f, vNext D2): it refreshes the
 //! cached copy of every linked issue and pull request through `gh api` `GET`s
 //! conditional on their ETags, and never writes to GitHub. A pull request is
-//! watched until it is merged or closed, however long that takes.
+//! watched until it is merged or closed, however long that takes. An open
+//! one also has its review decision and checks read (vNext D3).
 
 mod fetch;
 pub mod import;
+mod pr_state;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -14,7 +16,7 @@ use archon_core::error::ArchonError;
 use archon_core::github::GithubRepo;
 use archon_core::protocol::{GithubKind, GithubObjectState, GithubRef};
 use archon_core::repo::{GH_HOST, Repo};
-use archon_queue::store::SyncTarget;
+use archon_queue::store::{CachedObject, SyncTarget};
 use tokio::time::Instant;
 
 use crate::context::DaemonContext;
@@ -50,6 +52,10 @@ pub struct Pass {
     pub unregistered: usize,
     /// Set when GitHub's rate-limit headers stopped the pass.
     pub backoff: Option<Duration>,
+    /// Open pull requests whose review and checks were read, and those
+    /// whose read failed, which keep what was cached.
+    pub pr_states: usize,
+    pub pr_states_failed: usize,
 }
 
 type Key = (String, String, u64);
@@ -213,10 +219,25 @@ async fn refresh(
     };
     match read.fetched {
         Ok(fetch::Fetched::Changed { cached, .. }) => {
+            let cached = with_pr_state(ctx, repo, *cached, pass).await?;
             ctx.store.lock().await.cache_github_object(&cached)?;
             pass.changed += 1;
         }
-        Ok(fetch::Fetched::NotModified) => pass.unchanged += 1,
+        Ok(fetch::Fetched::NotModified) => {
+            pass.unchanged += 1;
+            let open_pr = target.kind == Some(GithubKind::PullRequest)
+                && target.state == Some(GithubObjectState::Open);
+            let reference = GithubRef {
+                kind: GithubKind::PullRequest,
+                ..reference
+            };
+            // Checks change without the issue's ETag: they are read anyway.
+            if open_pr && let Some(state) = read_pr_state(ctx, repo, &reference, pass).await {
+                let checks = Some(&state.checks);
+                let mut store = ctx.store.lock().await;
+                store.set_pull_request_state(&reference, state.review_decision, checks)?;
+            }
+        }
         Ok(fetch::Fetched::Missing) => pass.missing += 1,
         Err(error) => {
             tracing::debug!(%error, repo = %target.repo, number = target.number, "GitHub read refused");
@@ -224,6 +245,60 @@ async fn refresh(
         }
     }
     Ok(read.backoff)
+}
+
+/// `cached` with a pull request's review decision and checks: read afresh
+/// while it is open, else (or when that read fails) kept from the cache.
+async fn with_pr_state(
+    ctx: &DaemonContext,
+    repo: &Repo,
+    mut cached: CachedObject,
+    pass: &mut Pass,
+) -> Result<CachedObject, ArchonError> {
+    let reference = cached.object.reference.clone();
+    if reference.kind != GithubKind::PullRequest {
+        return Ok(cached);
+    }
+    let fresh = match cached.object.state {
+        GithubObjectState::Open => read_pr_state(ctx, repo, &reference, pass).await,
+        GithubObjectState::Merged | GithubObjectState::Closed => None,
+    };
+    let (review_decision, checks) = match fresh {
+        Some(state) => (state.review_decision, Some(state.checks)),
+        None => match ctx.read_store().await?.github_object(&reference)? {
+            Some(previous) => (previous.object.review_decision, previous.object.checks),
+            None => (None, None),
+        },
+    };
+    cached.object.review_decision = review_decision;
+    cached.object.checks = checks;
+    assert_eq!(cached.object.reference, reference, "the same pull request");
+    Ok(cached)
+}
+
+/// One read of an open pull request's review and checks, counted in `pass`.
+async fn read_pr_state(
+    ctx: &DaemonContext,
+    repo: &Repo,
+    reference: &GithubRef,
+    pass: &mut Pass,
+) -> Option<pr_state::PrState> {
+    assert_eq!(
+        reference.kind,
+        GithubKind::PullRequest,
+        "only pull requests have checks"
+    );
+    match pr_state::read(&ctx.config.github.binary, repo, reference).await {
+        Ok(state) => {
+            pass.pr_states += 1;
+            Some(state)
+        }
+        Err(error) => {
+            tracing::debug!(%error, repo = %reference.repo, number = reference.number, "pull request state read failed");
+            pass.pr_states_failed += 1;
+            None
+        }
+    }
 }
 
 /// The registered repositories by the github.com `owner/name` their `origin`
@@ -308,6 +383,7 @@ mod tests {
             host: GH_HOST.into(),
             repo: "o/r".into(),
             number,
+            kind: Some(GithubKind::Issue),
             state: Some(GithubObjectState::Open),
             etag: Some("W/\"e\"".into()),
             fetched_at: Some(archon_core::now()),

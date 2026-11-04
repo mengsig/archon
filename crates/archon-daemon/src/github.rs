@@ -4,6 +4,7 @@
 //! is Archon's, and archond keeps it pointed at the live orchestrator.
 //! Only the operator's CLI edits it; nothing from GitHub can.
 
+pub mod outbox;
 mod reply;
 
 use std::collections::BTreeSet;

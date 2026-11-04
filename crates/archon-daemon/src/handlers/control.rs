@@ -43,6 +43,7 @@ pub(super) async fn status(ctx: &DaemonContext, query: StatusQuery) -> Result<Re
     let stage_warnings = crate::inbox_health::warnings(ctx, archon_core::now(), None).await?;
     let message_caps = crate::agent_messages::caps(&*ctx.read_store().await?, None)?;
     let (held_news, held_news_due) = triggers::held_news_status(ctx).await?;
+    let (github_outbox, github_outbox_pending) = crate::github::outbox::pending(ctx).await?;
     let status = DaemonStatus {
         waiting_items: waiting.items,
         waiting_total: count(waiting.total),
@@ -81,6 +82,8 @@ pub(super) async fn status(ctx: &DaemonContext, query: StatusQuery) -> Result<Re
         integration,
         stage_warnings,
         message_caps,
+        github_outbox,
+        github_outbox_pending,
     };
     assert!(
         status.spend_today_usd <= status.spend_total_usd + 1e-9,

@@ -7,8 +7,8 @@ use archon_core::Timestamp;
 use archon_core::error::ArchonError;
 use archon_core::github::normalized_ref;
 use archon_core::id::QueueItemId;
-use archon_core::protocol::github_links::{ChecksSummary, ReviewDecision};
-use archon_core::protocol::{GithubKind, GithubObject, GithubObjectState, GithubRef};
+use archon_core::protocol::github_links::{ChecksSummary, PrState, ReviewDecision};
+use archon_core::protocol::{GithubKind, GithubObject, GithubObjectState, GithubRef, PrRef};
 use archon_core::queue::QueueItem;
 use rusqlite::{Connection, params};
 use serde::Serialize;
@@ -39,6 +39,8 @@ pub struct SyncTarget {
     pub host: String,
     pub repo: String,
     pub number: u64,
+    /// The cached kind, `None` before the first fetch.
+    pub kind: Option<GithubKind>,
     /// The cached state, `None` before the first fetch.
     pub state: Option<GithubObjectState>,
     pub etag: Option<String>,
@@ -226,11 +228,10 @@ fn query_objects(
     rows.into_iter().map(parse_row).collect()
 }
 
-/// host, repo, number, cached state, ETag, fetched_at.
+/// host, repo, number, cached kind, cached state, ETag, fetched_at.
 type TargetRow = (
-    String,
-    String,
-    i64,
+    (String, String, i64),
+    Option<String>,
     Option<String>,
     Option<String>,
     Option<String>,
@@ -238,21 +239,21 @@ type TargetRow = (
 
 fn read_target(row: &rusqlite::Row<'_>) -> rusqlite::Result<TargetRow> {
     Ok((
-        row.get(0)?,
-        row.get(1)?,
-        row.get(2)?,
+        (row.get(0)?, row.get(1)?, row.get(2)?),
         row.get(3)?,
         row.get(4)?,
         row.get(5)?,
+        row.get(6)?,
     ))
 }
 
 fn parse_target(row: TargetRow) -> Result<SyncTarget, ArchonError> {
-    let (host, repo, number, state, etag, fetched_at) = row;
+    let ((host, repo, number), kind, state, etag, fetched_at) = row;
     Ok(SyncTarget {
         host,
         repo,
         number: to_u64(number, "GitHub number")?,
+        kind: kind.map(|k| parse_name(&k, "kind")).transpose()?,
         state: state.map(|s| parse_name(&s, "state")).transpose()?,
         etag,
         fetched_at: fetched_at
@@ -261,7 +262,76 @@ fn parse_target(row: TargetRow) -> Result<SyncTarget, ArchonError> {
     })
 }
 
+/// `reference`, a delivered pull request, with what the cache last saw of
+/// it; bare before its first fetch or when the number turned out an issue.
+pub(super) fn pr_ref(conn: &Connection, reference: &GithubRef) -> Result<PrRef, ArchonError> {
+    assert_eq!(
+        reference.kind,
+        GithubKind::PullRequest,
+        "a pull request's link"
+    );
+    let bare = PrRef {
+        reference: reference.clone(),
+        state: None,
+        review_decision: None,
+        checks: None,
+    };
+    let number = to_i64(reference.number, "GitHub number")?;
+    let filter = "host = ?1 AND repo = ?2 AND number = ?3";
+    let mut found = query_objects(
+        conn,
+        filter,
+        2,
+        params![reference.host, reference.repo, number],
+    )?;
+    assert!(found.len() <= 1, "one row per number");
+    let Some(cached) = found
+        .pop()
+        .filter(|c| c.object.reference.kind == GithubKind::PullRequest)
+    else {
+        return Ok(bare);
+    };
+    let object = cached.object;
+    let state = match (object.state, object.draft) {
+        (GithubObjectState::Open, Some(true)) => PrState::Draft,
+        (GithubObjectState::Open, _) => PrState::Open,
+        (GithubObjectState::Merged, _) => PrState::Merged,
+        (GithubObjectState::Closed, _) => PrState::Closed,
+    };
+    Ok(PrRef {
+        state: Some(state),
+        review_decision: object.review_decision,
+        checks: object.checks,
+        ..bare
+    })
+}
+
 impl Store {
+    /// Set a cached pull request's review decision and checks, as its own
+    /// read found them. Writes only a change; returns whether there was one.
+    pub fn set_pull_request_state(
+        &mut self,
+        reference: &GithubRef,
+        review_decision: Option<ReviewDecision>,
+        checks: Option<&ChecksSummary>,
+    ) -> Result<bool, ArchonError> {
+        let reference = normalized_ref(reference)?;
+        let number = to_i64(reference.number, "GitHub number")?;
+        let review = review_decision.as_ref().map(name_of);
+        let checks = checks.map(|c| to_json(c, "checks")).transpose()?;
+        let changed = self
+            .conn
+            .execute(
+                "UPDATE github_objects SET review_decision = ?4, checks = ?5
+                 WHERE host = ?1 AND repo = ?2 AND number = ?3 AND kind = 'pull_request'
+                   AND (review_decision IS NOT ?4 OR checks IS NOT ?5)",
+                params![reference.host, reference.repo, number, review, checks],
+            )
+            .ctx("write a pull request's review and checks")?;
+        assert!(changed <= 1, "one row per number");
+        Ok(changed == 1)
+    }
+
     /// Keep what a fetch of one object returned, replacing what was cached.
     pub fn cache_github_object(&mut self, cached: &CachedObject) -> Result<(), ArchonError> {
         let reference = &cached.object.reference;
@@ -351,7 +421,7 @@ impl Store {
         let mut stmt = self
             .conn
             .prepare_cached(
-                "SELECT l.host, l.repo, l.number, o.state, o.etag, o.fetched_at
+                "SELECT l.host, l.repo, l.number, o.kind, o.state, o.etag, o.fetched_at
                  FROM github_links l LEFT JOIN github_objects o
                      ON (o.host, o.repo, o.number) = (l.host, l.repo, l.number)
                  WHERE (l.host, l.repo, l.number) > (?1, ?2, ?3)
@@ -454,6 +524,60 @@ mod tests {
         store.cache_github_object(&cached).unwrap();
         assert_eq!(store.github_object(&reference).unwrap(), Some(cached));
         assert!(has_row(&store.conn, &reference));
+    }
+
+    #[test]
+    fn a_pull_requests_ref_reads_its_state_review_and_checks_from_the_cache() {
+        use archon_core::protocol::github_links::ChecksState;
+        let mut store = Store::open_in_memory().unwrap();
+        let mut cached = object(6, GithubKind::PullRequest, GithubObjectState::Open);
+        let reference = cached.object.reference.clone();
+        let bare = pr_ref(&store.conn, &reference).unwrap();
+        assert_eq!(
+            (bare.state, bare.checks),
+            (None, None),
+            "nothing cached yet"
+        );
+        cached.object.draft = Some(true);
+        store.cache_github_object(&cached).unwrap();
+        let checks = ChecksSummary {
+            state: ChecksState::Pending,
+            total: 3,
+            failed: 0,
+        };
+        let approved = Some(ReviewDecision::Approved);
+        assert!(
+            store
+                .set_pull_request_state(&reference, approved, Some(&checks))
+                .unwrap()
+        );
+        assert!(
+            !store
+                .set_pull_request_state(&reference, approved, Some(&checks))
+                .unwrap(),
+            "unchanged"
+        );
+        let pr = pr_ref(&store.conn, &reference).unwrap();
+        assert_eq!(pr.state, Some(PrState::Draft));
+        assert_eq!((pr.review_decision, pr.checks), (approved, Some(checks)));
+        let issue = object(7, GithubKind::Issue, GithubObjectState::Open);
+        store.cache_github_object(&issue).unwrap();
+        let issue_ref = issue.object.reference.clone();
+        assert!(
+            !store
+                .set_pull_request_state(&issue_ref, approved, None)
+                .unwrap(),
+            "an issue has no review"
+        );
+        let as_pr = GithubRef {
+            kind: GithubKind::PullRequest,
+            ..issue_ref
+        };
+        assert_eq!(
+            pr_ref(&store.conn, &as_pr).unwrap().state,
+            None,
+            "the number is an issue"
+        );
     }
 
     #[test]

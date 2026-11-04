@@ -368,10 +368,10 @@ fn links_by_item(conn: &Connection, ids: &str) -> Result<BTreeMap<String, ItemRe
             .or_default()
             .push(link);
     }
-    Ok(grouped
+    grouped
         .into_iter()
-        .map(|(item, links)| (item, super::github_links::summary_refs(&links)))
-        .collect())
+        .map(|(item, links)| Ok((item, super::github_links::summary_refs(conn, &links)?)))
+        .collect()
 }
 
 /// The waiting reason of a blocked item, from its dependencies' states, as

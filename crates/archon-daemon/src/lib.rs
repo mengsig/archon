@@ -415,6 +415,7 @@ fn spawn_workers(
     worker!("repository mirrors", mirror::run);
     worker!("learning", learned::run);
     worker!("github sync", github_sync::run);
+    worker!("github outbox", github::outbox::run);
     worker!("upgrades", ops::run);
     let auto_gc = ctx.config.worktrees.auto_gc;
     if auto_gc {
@@ -426,7 +427,7 @@ fn spawn_workers(
     }
     assert_eq!(
         workers.len(),
-        19 + usize::from(auto_gc) + usize::from(verifies),
+        20 + usize::from(auto_gc) + usize::from(verifies),
         "every daemon worker is supervised"
     );
 }

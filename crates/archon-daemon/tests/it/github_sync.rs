@@ -10,7 +10,9 @@ use std::path::{Path, PathBuf};
 use archon_core::config::Config;
 use archon_core::error::ArchonError;
 use archon_core::notify::FeedEntry;
-use archon_core::protocol::github_links::LinkSource;
+use archon_core::protocol::github_links::{
+    ChecksState, ChecksSummary, LinkSource, PrState, ReviewDecision,
+};
 use archon_core::protocol::{
     GithubKind, GithubLink, GithubObject, GithubObjectState, GithubRef, LinkRelation,
     ManualLinkRelation, Reply, RepoAdd, RepoRef, Request,
@@ -25,10 +27,20 @@ use common::{Harness, REPO_NAME};
 /// and `etag-N` beside it: a 304 when `If-None-Match` sends the current ETag,
 /// a 404 for a number it has no file for. Any other call is a violation.
 /// While `hold-N` exists a read of #N marks `started-N` and waits.
+/// `gh pr view <url> --json reviewDecision,statusCheckRollup` answers from
+/// `pr-state-N.json`, else no review and no checks.
 const STUB_GH: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
-printf '%s\n' "$*" >> "$dir/gh-calls"
 violate() { printf '%s: %s\n' "$1" "$*" >> "$dir/gh-violations"; exit 97; }
+if [ "$1" = pr ]; then
+  printf '%s\n' "$*" >> "$dir/gh-pr-views"
+  [ "$#" = 5 ] && [ "$2" = view ] && [ "$4" = --json ] && [ "$5" = reviewDecision,statusCheckRollup ] \
+    || violate "not a pull request read"
+  number=${3##*/}
+  cat "$dir/pr-state-$number.json" 2>/dev/null || echo '{"reviewDecision":"","statusCheckRollup":[]}'
+  exit 0
+fi
+printf '%s\n' "$*" >> "$dir/gh-calls"
 [ "$1" = api ] || violate "not gh api"
 method= prev= etag= endpoint=
 for arg in "$@"; do
@@ -111,6 +123,20 @@ impl Github {
         panic!("no held read of {numbers:?} started");
     }
 
+    /// GitHub now gives #`number` this review decision and check rollup.
+    fn serve_pr_state(&self, number: u64, state: serde_json::Value) {
+        let path = self.dir.path().join(format!("pr-state-{number}.json"));
+        std::fs::write(path, state.to_string()).unwrap();
+    }
+
+    /// The `gh pr view` reads, in order.
+    fn pr_views(&self) -> Vec<String> {
+        let views =
+            std::fs::read_to_string(self.dir.path().join("gh-pr-views")).unwrap_or_default();
+        views.lines().map(str::to_owned).collect()
+    }
+
+    /// The `gh api` calls, in order.
     fn calls(&self) -> Vec<String> {
         let calls = std::fs::read_to_string(self.dir.path().join("gh-calls")).unwrap_or_default();
         calls.lines().map(str::to_owned).collect()
@@ -269,6 +295,11 @@ async fn the_sync_only_reads_and_a_304_writes_nothing() {
         "once per interval"
     );
     assert_eq!(github.calls().len(), 8, "2 + 2 + 2 + 1 + 1 reads");
+    assert_eq!(
+        github.pr_views().len(),
+        2,
+        "only while the pull request is open"
+    );
     github.assert_only_reads();
 }
 
@@ -607,5 +638,136 @@ async fn an_issue_body_grants_no_authority() {
     );
     drop(store);
     assert_eq!(settings(&h).await, settings_before);
+    github.assert_only_reads();
+}
+
+/// A delivered pull request's `PrRef` carries the review decision and checks
+/// the sync cached, read again on a 304 since checks change without an ETag;
+/// an unchanged state writes nothing.
+#[tokio::test]
+async fn a_delivered_pull_requests_review_and_checks_come_from_the_cache() {
+    let github = Github::new();
+    github.serve(6, pr_json(6, false), "W/\"p1\"");
+    github.serve_pr_state(
+        6,
+        serde_json::json!({"reviewDecision": "CHANGES_REQUESTED",
+        "statusCheckRollup": [{"status": "COMPLETED", "conclusion": "FAILURE"},
+                              {"status": "COMPLETED", "conclusion": "SUCCESS"}]}),
+    );
+    let h = harness(&github).await;
+    let item = h.enqueue("delivered work").await;
+    let delivered = GithubLink {
+        item: item.id.clone(),
+        reference: reference(6, GithubKind::PullRequest),
+        relation: LinkRelation::Delivered,
+        source: LinkSource::Ship,
+        created_at: archon_core::now(),
+    };
+    h.ctx.store.lock().await.link_github(&delivered).unwrap();
+    let bare = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .item_github_refs(&item.id)
+        .unwrap()
+        .1
+        .unwrap();
+    assert_eq!(
+        (bare.state, bare.review_decision, bare.checks),
+        (None, None, None),
+        "not fetched yet"
+    );
+
+    let first = GithubSync::new(MIN_INTERVAL).pass(&h.ctx).await.unwrap();
+    assert_eq!((first.changed, first.pr_states), (1, 1), "{first:?}");
+    let pr = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .item_github_refs(&item.id)
+        .unwrap()
+        .1
+        .unwrap();
+    assert_eq!(pr.state, Some(PrState::Open));
+    assert_eq!(pr.review_decision, Some(ReviewDecision::ChangesRequested));
+    let failing = ChecksSummary {
+        state: ChecksState::Failure,
+        total: 2,
+        failed: 1,
+    };
+    assert_eq!(pr.checks, Some(failing));
+
+    github.serve_pr_state(
+        6,
+        serde_json::json!({"reviewDecision": "APPROVED",
+        "statusCheckRollup": [{"status": "COMPLETED", "conclusion": "SUCCESS"}]}),
+    );
+    let unchanged = GithubSync::new(MIN_INTERVAL).pass(&h.ctx).await.unwrap();
+    assert_eq!(
+        (unchanged.unchanged, unchanged.pr_states),
+        (1, 1),
+        "{unchanged:?}"
+    );
+    let pr = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .item_github_refs(&item.id)
+        .unwrap()
+        .1
+        .unwrap();
+    assert_eq!(pr.review_decision, Some(ReviewDecision::Approved));
+    let passing = ChecksSummary {
+        state: ChecksState::Success,
+        total: 1,
+        failed: 0,
+    };
+    assert_eq!(pr.checks, Some(passing));
+    let graph = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .task_graph(&Default::default(), None, false)
+        .unwrap();
+    let node = graph.nodes.iter().find(|n| n.id == item.id).unwrap();
+    assert_eq!(
+        node.pr.as_ref(),
+        Some(&pr),
+        "the graph reads the same cache"
+    );
+
+    let written = h.ctx.store.lock().await.rows_written();
+    GithubSync::new(MIN_INTERVAL).pass(&h.ctx).await.unwrap();
+    assert_eq!(
+        h.ctx.store.lock().await.rows_written(),
+        written,
+        "the same state writes nothing"
+    );
+    github.serve(6, pr_json(6, true), "W/\"p2\"");
+    GithubSync::new(MIN_INTERVAL).pass(&h.ctx).await.unwrap();
+    let merged = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .item_github_refs(&item.id)
+        .unwrap()
+        .1
+        .unwrap();
+    assert_eq!(merged.state, Some(PrState::Merged));
+    assert_eq!(
+        merged.checks,
+        Some(passing),
+        "the last state is kept once merged"
+    );
+    assert_eq!(
+        github.pr_views().len(),
+        3,
+        "a merged pull request is not read"
+    );
     github.assert_only_reads();
 }

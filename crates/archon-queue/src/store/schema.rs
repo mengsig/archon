@@ -729,8 +729,39 @@ CREATE TABLE github_objects (
 ) WITHOUT ROWID;
 "#;
 
+/// Version 22 (vNext D3): every GitHub comment Archon posts, written before
+/// the post under a token its body carries, so a restart never posts it twice.
+const V22: &str = r#"
+CREATE TABLE github_outbox (
+    token           TEXT PRIMARY KEY CHECK (token GLOB 'obx_?*'),
+    purpose         TEXT NOT NULL CHECK (purpose IN ('reply', 'ship')),
+    item            TEXT,
+    run             TEXT,
+    host            TEXT NOT NULL CHECK (host <> '' AND host = lower(host)),
+    repo            TEXT NOT NULL CHECK (repo GLOB '?*/?*' AND repo = lower(repo)),
+    number          INTEGER NOT NULL CHECK (number > 0),
+    body            TEXT NOT NULL CHECK (instr(body, token) > 0),
+    state           TEXT NOT NULL CHECK (state IN ('pending', 'posted')),
+    attempts        INTEGER NOT NULL CHECK (attempts >= 0),
+    next_attempt_at TEXT NOT NULL,
+    last_error      TEXT,
+    comment_id      INTEGER CHECK (comment_id > 0),
+    comment_url     TEXT,
+    created_at      TEXT NOT NULL,
+    posted_at       TEXT,
+    CHECK ((state = 'posted') = (comment_id IS NOT NULL)),
+    CHECK ((state = 'posted') = (posted_at IS NOT NULL)),
+    CHECK (purpose <> 'ship' OR (item IS NOT NULL AND run IS NOT NULL))
+);
+CREATE UNIQUE INDEX github_outbox_once ON github_outbox (item, run, purpose)
+    WHERE item IS NOT NULL AND run IS NOT NULL;
+CREATE INDEX github_outbox_pending ON github_outbox (next_attempt_at)
+    WHERE state = 'pending';
+"#;
+
 pub(super) const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
+    V22,
 ];
 
 /// Pragmas every connection needs. `on_disk` connections must end up in
@@ -1374,7 +1405,7 @@ mod tests {
         conn.execute_batch(
             "DROP TABLE run_pull_requests; DROP TABLE merge_requests; DROP TABLE tracked_requests;
              DROP TABLE spend_pruned; DROP TABLE item_transitions; DROP TABLE changes;
-             DROP TABLE github_links; DROP TABLE github_objects;
+             DROP TABLE github_links; DROP TABLE github_objects; DROP TABLE github_outbox;
              DELETE FROM schema_migrations WHERE version >= 12",
         )
         .unwrap();

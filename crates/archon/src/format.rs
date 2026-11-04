@@ -171,6 +171,15 @@ fn link_lines(out: &mut String, status: &DaemonStatus, verbose: bool) {
     for cap in &status.message_caps {
         let _ = writeln!(out, "stage messages: {}", sanitize_line(&cap.describe()));
     }
+    for pending in &status.github_outbox {
+        let _ = writeln!(out, "github outbox: {}", sanitize_line(&pending.describe()));
+    }
+    let unlisted = status
+        .github_outbox_pending
+        .saturating_sub(status.github_outbox.len() as u64);
+    if unlisted > 0 {
+        let _ = writeln!(out, "github outbox: {unlisted} more not confirmed posted");
+    }
     if let Some(host) = &status.host_load {
         let _ = writeln!(out, "host: {}", host_load_line(host));
     }
@@ -986,6 +995,8 @@ pub(crate) mod tests {
             integration: Vec::new(),
             stage_warnings: Vec::new(),
             message_caps: Vec::new(),
+            github_outbox: Vec::new(),
+            github_outbox_pending: 0,
         }
     }
 

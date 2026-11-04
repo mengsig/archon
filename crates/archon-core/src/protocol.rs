@@ -89,8 +89,8 @@ pub use changes::{
     StageStateKind, TransitionActor,
 };
 pub use github_links::{
-    GithubKind, GithubLink, GithubObject, GithubObjectState, GithubRef, LinkRelation,
-    ManualLinkRelation, PrRef,
+    GithubKind, GithubLink, GithubObject, GithubObjectState, GithubOutboxPending, GithubRef,
+    LinkRelation, ManualLinkRelation, PrRef,
 };
 pub use graph::{RunPlan, TaskEdge, TaskFilter, TaskGraph, TaskNode};
 
@@ -1528,7 +1528,16 @@ pub struct DaemonStatus {
     /// Agents of running stages at their `max_agent_messages` cap, first refused first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub message_caps: Vec<crate::agent_message::MessageCap>,
+    /// GitHub comments not yet seen posted, longest due first, at most
+    /// [`MAX_OUTBOX_SHOWN`]; `github_outbox_pending` counts them all.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub github_outbox: Vec<GithubOutboxPending>,
+    #[serde(default)]
+    pub github_outbox_pending: u64,
 }
+
+/// The most pending GitHub comments `status` lists.
+pub const MAX_OUTBOX_SHOWN: usize = 20;
 
 /// `DaemonStatus::recovery`: how far archond is in recovering its runs.
 /// Until it is done, changes are refused and nothing is dispatched.

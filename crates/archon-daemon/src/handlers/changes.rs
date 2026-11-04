@@ -216,7 +216,7 @@ async fn summaries_in_snapshot(
 /// Hands every change committed after the hub's `sent` to live subscribers,
 /// in seq order, whether or not anyone listens: a subscriber's own catch-up
 /// covers what was sent before it subscribed, and nothing later is skipped.
-/// It also applies retention, at start and every [`PRUNE_EVERY`].
+/// It also applies retention, at start and every hour.
 pub async fn pump(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
     let mut tick = tokio::time::interval(PUMP_EVERY);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -320,7 +320,7 @@ async fn run(
     });
     let reply = ServerFrame::Reply {
         id: sub.request,
-        result: result.map_err(|e| ErrorReply::from(&*e)),
+        result: result.map_err(ErrorReply::from),
     };
     if frames.send(reply).await.is_err() {
         return Ok(());

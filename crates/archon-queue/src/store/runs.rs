@@ -609,7 +609,7 @@ pub(super) fn upsert_stage(conn: &mut Connection, stage: &StageRun) -> Result<()
     match &before {
         Some(stored) => {
             stage.model_segments = stored.model_segments.clone();
-            check_stage_change(&stored, &stage)?;
+            check_stage_change(stored, &stage)?;
         }
         None => {
             if load(&tx, &stage.run)?.state.is_terminal() {

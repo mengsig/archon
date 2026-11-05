@@ -201,7 +201,7 @@ Derivation rules (a pure function of the evidence and the current time):
 | --- | --- |
 | `unseen` | no evidence |
 | `exposed` | only `exposure` evidence (the concept was taught or shown), or evidence that meets no other rule (see the assumptions below). **Exposure never counts as mastery.** |
-| `demonstrated` | at least 2 correct retrievals (`check`, `recall_judged` or practice `solved` at rung ≤ R1) on different days, at a stated confidence ≥ 50, with no unresolved misconception and `strength ≥ 0.5` |
+| `demonstrated` | at least 2 correct retrievals (`check_answer`, `recall_judged` or practice `solved` at rung ≤ R1) on different days, at a stated confidence ≥ 50, with no unresolved misconception and `strength ≥ 0.5` |
 | `fragile` | demonstrated before but decayed (`strength < 0.5`); or the latest attempt is wrong; or correct at confidence ≤ 30; or solved only with hints ≥ R3 |
 | `misconception` | a `misconception_observed` record (from `probe_done`, or a confident wrong answer on a discrimination item) not yet cleared by 2 later correct discrimination answers |
 

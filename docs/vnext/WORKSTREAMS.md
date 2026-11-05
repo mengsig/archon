@@ -401,7 +401,9 @@ are relative to the repository root.
 
 #### AR-G. Task graph, run plan and list filters
 - **Goal:** add the `task_graph` projection with typed edges and `as_of`,
-  `run_plan` with steer edits applied, and the `list_items` filters.
+  `run_plan` with steer edits applied (unfinished runs only: on a finished
+  run it returns `not_found`, and its plan is read from its stage attempts),
+  and the `list_items` filters.
 - **Owns:** `crates/archon-queue/src/store/graph.rs` (new), `crates/archon-daemon/src/handlers/graph.rs`,
   the filter code in `crates/archon-queue/src/store/items.rs`, `crates/archon-queue/tests/graph*.rs`
 - **Depends on:** AR-C, D1
@@ -432,7 +434,9 @@ are relative to the repository root.
 #### C1. Queue, item and pipeline screens
 - **Goal:** a queue list (filters, priority, waiting reasons, spend); item
   detail with runs, stages, gates, questions and links; and pipeline views
-  from `run_plan`, with live updates from the change stream.
+  from `run_plan`, with live updates from the change stream. A finished
+  run's plan is read from its stage attempts, because `run_plan` returns
+  `not_found` for it.
 - **Owns:** `web/packages/archon/src/{queue,item,pipeline}/**`
 - **Depends on:** A2, A3, AR-G
 - **Size:** L · **Pipeline:** adaptive
@@ -822,7 +826,7 @@ PR, and a regression without an explained trade-off blocks it.
 - **Goal:** perf fixtures and budgets: 5,000 agents, a 20,000-entry
   transcript, a 2,000-node DAG, the delta rate, and bundle size. CI tracks
   them.
-- **Owns:** `web/perf/**`, `web/e2e/specs/perf/**`, `.github/workflows/web-perf.yml`
+- **Owns:** `web/perf/**` (runner and `budgets.json`), `.github/workflows/web-perf.yml`
 - **Depends on:** B1, B2, C2
 - **Size:** M · **Pipeline:** performance
 - **Acceptance:** the budgets are written down and enforced. A regression
@@ -858,8 +862,10 @@ PR, and a regression without an explained trade-off blocks it.
 #### H5. Release preparation
 - **Goal:** bump the versions (Archon 1.5.0, Aether 1.3.0). Write the
   changelogs, the upgrade notes (protocol ranges, migrations, remote setup
-  changes) and the docs index. Run the dry-run release scripts.
-- **Owns:** version fields, `CHANGELOG.md`, `docs/` index pages, release notes in both repositories
+  changes) and the docs index. Add the CI job that fails when the committed
+  `web/dist/` differs from a fresh build (it does not exist yet). Run the
+  dry-run release scripts.
+- **Owns:** version fields, `CHANGELOG.md`, `docs/` index pages, release notes in both repositories, and the `web/dist` drift job
 - **Depends on:** every other task
 - **Size:** S · **Pipeline:** adaptive
 - **Acceptance:** the release scripts pass in dry-run. An upgrade from 1.4.11

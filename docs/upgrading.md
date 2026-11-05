@@ -32,7 +32,7 @@ are in the [changelog](../CHANGELOG.md).
 A 1.5.0 `archon` and a 1.4.x archond refuse each other at `hello`, so
 upgrade both together: `archon update --yes` restarts archond for you. A
 stage agent's `archon mcp` that outlives the update restarts itself on the
-new binary once archond refuses it, as since 1.4.10, so running stages carry
+new binary once archond refuses it, as since 1.4.2, so running stages carry
 on.
 
 ### Store migrations V19 to V23

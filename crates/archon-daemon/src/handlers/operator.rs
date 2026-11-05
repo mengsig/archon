@@ -175,7 +175,9 @@ pub(super) async fn answer(
     text: &str,
     via: AnswerVia,
 ) -> Result<Question, ArchonError> {
-    answer_from(ctx, ClientKind::ArchonCli, id, text, via).await
+    // Boxed: an answer routes deep into gates and merges, and every request's
+    // future holds this one inline.
+    Box::pin(answer_from(ctx, ClientKind::ArchonCli, id, text, via)).await
 }
 
 /// `answer` for whichever client sent it: a paired web device answers as

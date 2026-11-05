@@ -401,7 +401,7 @@ pub(crate) async fn route(
             } else {
                 AnswerVia::Archon
             };
-            operator::answer_from(ctx, client, &question, &text, via)
+            Box::pin(operator::answer_from(ctx, client, &question, &text, via))
                 .await
                 .map(Reply::Question)
         }

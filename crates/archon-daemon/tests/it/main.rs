@@ -57,6 +57,7 @@ mod link_mcp;
 mod link_pump;
 mod link_pump_recovery;
 mod link_reports;
+mod link_stall;
 mod link_status;
 mod link_supervisor;
 mod link_triggers;

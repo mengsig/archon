@@ -156,7 +156,10 @@ impl Liveness {
             return None;
         }
         assert!(self.nudges <= MAX_NUDGES, "nudges stay bounded");
-        assert!(!self.interrupted, "an unreported silence was never interrupted");
+        assert!(
+            !self.interrupted,
+            "an unreported silence was never interrupted"
+        );
         self.reported_at = Some(now);
         let nudge = self.nudges < MAX_NUDGES;
         self.nudges += u8::from(nudge);

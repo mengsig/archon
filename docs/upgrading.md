@@ -28,6 +28,7 @@ are in the [changelog](../CHANGELOG.md).
 | Store schema (`archon.db`) | 18 | 23, migrated at archond's first start |
 | `remote.json` | format 1 | format 1 while every device is an operator; format 2 once an observer is paired |
 | Remote access | archond served its own web app over `tailscale serve` or your proxy | archond is mounted on Aether's listener and its screens are part of the Aether app |
+| A hung orchestrator turn | archond nudged it and told you after 30 silent minutes; your messages waited until you pressed Esc | the same notice, after 10 minutes once your message waits, then archond interrupts the turn 5 minutes later, as Esc would, so your messages reach a fresh turn ([troubleshooting](troubleshooting.md#the-orchestrator-or-aether-is-down)) |
 | `config.toml` | | new keys `[remote] mounted_at`, `[remote] trusted_origins` and `[learning] holdout_rate` |
 
 A 1.5.0 `archon` and a 1.4.x archond refuse each other at `hello`, so

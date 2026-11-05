@@ -152,6 +152,15 @@ From the audit in [docs/security/vnext-audit.md](docs/security/vnext-audit.md)
   and reports `holdout_lift` once both arms have 20 scored runs. Pinned
   lessons are never held out, and held-out runs never change promotion.
 
+### Orchestrator
+
+- A hung orchestrator turn no longer holds your messages for hours (#393). When a
+  turn is still silent 5 minutes after the stall nudge, archond interrupts it,
+  as Esc would, so the queued inbox, operator messages included, reaches a fresh
+  turn; at most 3 times per orchestrator. Operator chat or an `@archon` request
+  delivered to a turn silent for 10 minutes starts this at once instead of
+  after 30.
+
 ### Removed
 
 - `archon remote setup --proxy-url` and `--local`.

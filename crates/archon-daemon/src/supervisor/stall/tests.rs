@@ -136,7 +136,10 @@ fn the_notice_says_what_happened_and_what_to_do() {
     assert!(text.contains("180 minutes"), "{text}");
     assert!(text.contains("archon orchestrator restart"), "{text}");
     assert!(text.contains("sent it a nudge"), "{text}");
-    assert!(text.contains("in 5 minutes, Archon interrupts the turn"), "{text}");
+    assert!(
+        text.contains("in 5 minutes, Archon interrupts the turn"),
+        "{text}"
+    );
     let spent = stall_text(hours, Nudge::Spent, false);
     assert!(spent.contains("sends no more"), "{spent}");
     assert!(spent.contains("used its 3 interrupts"), "{spent}");
@@ -231,7 +234,11 @@ fn a_busy_turn_that_keeps_emitting_events_is_left_alone() {
     for minute in (0..=240).step_by(9) {
         let now = at(minute * 60);
         live.saw(&agent(A), &operator_mail(minute as u64), now);
-        let progress = if minute % 2 == 0 { usage() } else { result.clone() };
+        let progress = if minute % 2 == 0 {
+            usage()
+        } else {
+            result.clone()
+        };
         live.saw(&agent(A), &progress, now);
         let later = now + chrono::TimeDelta::minutes(8);
         assert_eq!(live.take_stall(later), None);
@@ -253,20 +260,29 @@ fn interrupts_are_bounded_per_agent() {
     }
     assert_eq!(interrupted, i32::from(MAX_INTERRUPTS));
     live.saw(&agent(B), &started(), at(0));
-    assert!(live.take_stall(at(STALL)).unwrap().interrupt, "a new generation");
+    assert!(
+        live.take_stall(at(STALL)).unwrap().interrupt,
+        "a new generation"
+    );
 }
 
 #[test]
 fn operator_mail_to_a_turn_silent_past_the_shorter_limit_is_due_at_once() {
     let mut live = Liveness::default();
     live.saw(&agent(A), &started(), at(0));
-    assert!(!live.saw(&agent(A), &operator_mail(1), at(MAIL - 1)), "too soon");
+    assert!(
+        !live.saw(&agent(A), &operator_mail(1), at(MAIL - 1)),
+        "too soon"
+    );
     assert!(live.take_stall(at(MAIL - 1)).is_none());
     assert!(live.saw(&agent(A), &operator_mail(2), at(MAIL)));
     let stall = live.take_stall(at(MAIL)).expect("the mail made it due");
     assert_eq!(stall.silent, MAIL_STALL_AFTER);
     assert!(stall.nudge);
-    assert!(!live.saw(&agent(A), &operator_mail(3), at(MAIL + 1)), "reported");
+    assert!(
+        !live.saw(&agent(A), &operator_mail(3), at(MAIL + 1)),
+        "reported"
+    );
     assert!(live.take_interrupt(&agent(A), at(MAIL + GRACE)).is_some());
 }
 

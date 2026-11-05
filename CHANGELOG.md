@@ -22,7 +22,8 @@ version. The store schema is 23 (was 18): archond's first start migrates a
 refuses the migrated store and archond takes no copy, so back up `archon.db`
 first. 1.4.12 also refuses the new `config.toml` keys and a `remote.json`
 that names an observer. After upgrading, run `archon remote setup` again if
-you use remote access, and pair each browser from the Aether app.
+you use remote access. Devices paired before stay valid until revoked; pair
+again from the Aether app a browser that paired on another hostname.
 
 ### Protocol
 

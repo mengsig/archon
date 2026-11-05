@@ -100,13 +100,15 @@ listener still speaks plain HTTP and still checks `Host` and `Origin`; use
 it only on a network you trust, behind a TLS proxy.
 
 What changes at run time is kept in `remote.json` in archond's data
-directory, mode 0600, written through a private temporary file:
+directory, mode 0600, written through a private temporary file. Its
+`version` is 1 while every device is an operator, which Archon 1.4 also
+reads, and 2 once an observer is paired:
 
 | Field | Meaning |
 | --- | --- |
 | `enabled` | Whether the listener opens when archond starts. |
 | `public_origins` | The `https://host[:port]` origins browsers may use besides loopback, at most 16. |
-| `devices` | The paired devices: `id`, `name`, `secret_sha256`, `paired_at`, `last_seen_at`. At most 64. |
+| `devices` | The paired devices: `id`, `name`, `secret_sha256`, `paired_at`, `last_seen_at`, and `role` in format 2. At most 64. |
 
 A `remote.json` that does not parse stops archond with the path and the
 fix: move it away to reset remote access. An open pairing code lives only
@@ -166,8 +168,9 @@ invisible, bidirectional and private-use characters are refused.
 `GET /ws` upgrades to a WebSocket with the subprotocol `archon` (version
 13 only). It carries archond's own protocol
 ([ARCHITECTURE §10](ARCHITECTURE.md)), one JSON frame per text message: the
-first message must be `hello` with archond's protocol version (23), and
-archond answers `welcome`. After that each `{"req": N, "cmd": …}` is
+first message must be `hello` with protocol 23 or 24 (archond's own is
+24), and archond answers `welcome`, which names the device and its role at
+24. After that each `{"req": N, "cmd": …}` is
 answered by a `reply` frame with the same id, and `subscribe_feed` streams
 `feed` frames, as on the Unix socket.
 
@@ -187,14 +190,19 @@ silent for 75.
 
 ## What a device may do
 
-Archon's screens may send these requests, and only these:
+A device is an **operator** (the default, and every device paired before
+1.5.0) or an **observer**, paired with `archon remote pair --observer`. An
+observer sends only the reads; an operator sends both columns:
 
-| Reads | Changes |
+| Reads | Changes (operators only) |
 | --- | --- |
-| `status`, `repo_list`, `list_items`, `list_item_summaries`, `get_item`, `get_stage`, `resolve_item`, `list_pipelines`, `list_questions`, `feed_history`, `subscribe_feed`, `list_reports`, `orchestrator_status`, `cost_report`, `list_artifacts`, `read_artifact`, `item_diff`, `settings`, `autonomy` | `enqueue`, `cancel_item`, `retry_item`, `pause`, `resume`, `answer`, `say` |
+| `status`, `repo_list`, `list_items`, `list_item_summaries`, `get_item`, `get_stage`, `resolve_item`, `list_pipelines`, `list_questions`, `feed_history`, `subscribe_feed`, `list_reports`, `orchestrator_status`, `cost_report`, `list_artifacts`, `read_artifact`, `item_diff`, `settings`, `autonomy`, `subscribe_changes`, `changes_page`, `item_history`, `task_graph`, `run_plan`, `item_links`, `issue_items`, `list_github_objects` | `enqueue`, `cancel_item`, `retry_item`, `pause`, `resume`, `answer`, `say`, `link_issue`, `unlink_issue`, `import_issue` |
 
-Each is handled as the operator CLI's request, so archond applies the same
-checks and records the same feed lines. `say` reaches the orchestrator
+Each runs with the Aether app's standing (`archon-web`), not the operator
+CLI's, so archond applies its own checks on top and records the same feed
+lines. `pause` and `resume` with `hard` are refused to every device, and a
+device's soft `resume` does not lift a hard pause the operator set.
+`say` reaches the orchestrator
 marked as a web device's line: it is chat, never operator authority, so a
 `/archon`, `/watch` or `/merge` in it is not run and the orchestrator cannot
 cite it for `request_authority`. `answer` answers a question or gate as
@@ -202,7 +210,8 @@ cite it for `request_authority`. `answer` answers a question or gate as
 (answer that on the host), and a reply to an Aether question goes out marked
 as a web device's line, like `say`. Everything else, including a second `hello`, is refused with
 `forbidden` and the message "… is not available from the web app; use the
-archon CLI".
+archon CLI"; a change from an observer gets "… changes Archon, and this
+device only observes".
 
 ## Revoking and switching off
 
@@ -228,7 +237,7 @@ archon CLI".
 | `archon remote` (`status`) | Whether the listener is on, its origins, and the paired devices. |
 | `archon remote setup` | Mount archond on Aether and publish Aether's listener ([remote-setup.md](remote-setup.md)). |
 | `archon remote enable` / `disable` | Open or close the listener. |
-| `archon remote pair` | Open a pairing code and show its QR code. |
+| `archon remote pair` | Open a pairing code and show its QR code; `--observer` pairs a device that only reads. |
 | `archon remote devices` | The paired devices. |
 | `archon remote revoke DEVICE` | Unpair one device. |
 | `archon remote origin add URL` / `remove URL` | Allow or drop an `https://` origin. |

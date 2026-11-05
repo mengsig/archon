@@ -229,7 +229,9 @@ Contributors are listed by GitHub handle, and the list is maintained by hand.
 [Queue scripting](docs/queue-scripting.md) ·
 [GitHub watcher](docs/github-watcher.md) ·
 [Remote access](docs/remote-setup.md) ·
-[Operator authority](docs/operator-authority.md) · [Architecture](docs/ARCHITECTURE.md)
+[Operator authority](docs/operator-authority.md) · [Architecture](docs/ARCHITECTURE.md) ·
+[Upgrading](docs/upgrading.md) · [Troubleshooting](docs/troubleshooting.md) ·
+[Every page](docs/README.md)
 
 Project version: **1.5.0**. Licensed under [MIT](LICENSE). For development,
 see [CONTRIBUTING.md](CONTRIBUTING.md).

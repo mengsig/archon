@@ -120,6 +120,12 @@ impl NotificationAnswer {
     pub fn by_operator(&self) -> bool {
         self.by.get("actor").and_then(|a| a.as_str()) == Some("user")
     }
+
+    /// Whether that person answered on one of the host's own Aether
+    /// connections, not from a paired remote device.
+    pub fn by_host(&self) -> bool {
+        crate::events::is_host_user(&self.by)
+    }
 }
 
 /// A notification as Aether stores it, narrowed to what Archon reads.

@@ -391,6 +391,20 @@ pub(crate) async fn route(
         }
         // Who said it decides whether the line may carry operator authority.
         Request::Say { text, images } => operator::say(ctx, client, &text, &images).await,
+        Request::Answer {
+            question,
+            text,
+            chat,
+        } if client == ClientKind::ArchonWeb => {
+            let via = if chat {
+                AnswerVia::ChatCommand
+            } else {
+                AnswerVia::Archon
+            };
+            operator::answer_from(ctx, client, &question, &text, via)
+                .await
+                .map(Reply::Question)
+        }
         request => handle_adaptive(ctx, client, request).await,
     }
 }

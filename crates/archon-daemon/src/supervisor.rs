@@ -754,6 +754,22 @@ pub async fn route_answer(
             .await?;
         return Ok(None);
     }
+    route_archon_answer(ctx, question, text, via).await
+}
+
+/// The rest of `route_answer`, for a question Archon itself asked: its gate,
+/// its merge, its report's "Reopen it?", or the asker's `ask_operator`.
+pub async fn route_archon_answer(
+    ctx: &DaemonContext,
+    question: &Question,
+    text: &str,
+    via: AnswerVia,
+) -> Result<Option<Question>, ArchonError> {
+    assert!(
+        question.aether.is_none(),
+        "Aether's questions are replied to"
+    );
+    assert!(question.is_open(), "only an open question is routed");
     let gate = ctx.store.lock().await.gate_by_question(&question.id)?;
     if let Some(gate) = gate {
         let decision = GateDecision::from_answer(text)?;

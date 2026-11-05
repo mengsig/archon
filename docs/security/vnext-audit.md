@@ -28,9 +28,11 @@ Archon half. The Aether half is audited on mengsig/aether#414.
 | H3-A2 | high | operator standing / shared origin | fixed (see [Fixes](#fixes)) |
 | H3-A3 | low | GitHub outbox | follow-up |
 | H3-A4 | low | GitHub cache (ETag) | follow-up |
-| H3-A5 | low | remote roles (authority confirmations) | follow-up |
+| H3-A5 | high | remote roles (authority confirmations) | fixed (see [Fixes](#fixes)) |
 | H3-A6 | low | `archon remote setup` | follow-up |
 | H3-A7 | low | Aether `[listen]` token clients in dedicated mode | follow-up |
+| H3-A8 | high | operator standing / web `answer` to an Aether question | fixed (see [Fixes](#fixes)) |
+| H3-A9 | high | operator standing / notification-center answers | fixed (see [Fixes](#fixes)) |
 | H3-X1 | high | Electron bridge (Aether) | for the other repository |
 | H3-X2 | low | Electron allowlist drift (Aether) | for the other repository |
 
@@ -40,7 +42,7 @@ Archon half. The Aether half is audited on mengsig/aether#414.
 `{"cmd":"say","text":"/archon resume --hard"}` over `/ws` (or
 `/archon watcher {...}`, `/archon set …`, `/archon apply {...}`,
 `/upgrade …`, `/merge …`). The listener allows `say` for operators
-(`crates/archon-remote/src/allow.rs:256-298`). archond echoes the line to
+(`crates/archon-remote/src/allow.rs:65-109`). archond echoes the line to
 the feed and sends it to the orchestrator over its own Aether socket
 (`crates/archon-daemon/src/handlers/operator.rs:26-44` at base `f1dbfc2b`,
 `crates/archon-daemon/src/supervisor.rs:713-731`). Aether stamps every
@@ -105,16 +107,23 @@ the stored ETag as `-H If-None-Match: {etag}`. It is one argv entry, never a
 shell, but it is GitHub's own header value stored verbatim. **Follow-up:**
 refuse an ETag with control characters when it is cached.
 
-### H3-A5 (low): an operator device may confirm an authority change
+### H3-A5 (high): an operator device could confirm an authority change
 
-An operator device's `answer` can say `yes` to an authority confirmation
-(`crates/archon-daemon/src/authority/confirmations.rs:152-200`). That applies
-a change that a verified channel (CLI, dedicated chat or GitHub operator)
-requested. The device starts nothing itself: with H3-A1 fixed, no device line
-can request authority. Answering is documented for devices (`docs/remote.md`,
-"What a device may do"). **Follow-up:** decide whether authority
-confirmations, unlike gate and merge questions, should be answered only from
-the CLI or verified chat.
+**Scenario.** A verified host line ("grant requested merges") is cited by
+`request_authority`, and archond asks for confirmation. A paired web device
+lists the question and sends `answer {"text":"yes"}`. At base the answer
+route dropped the client (`crates/archon-daemon/src/handlers.rs:607-619`),
+and `confirmations::decide` checked only the original request's evidence
+(`crates/archon-daemon/src/authority/confirmations.rs:152-215`) before it
+applied the change. A pending request is not approved yet, so the device
+completed a grant, a ceiling raise or a hard resume, all of which it is
+refused to ask for directly. (Found in review; first filed as low.)
+
+**Fix.** A web `answer` is routed with its client
+(`operator::answer_from`, `crates/archon-daemon/src/handlers/operator.rs:183`).
+An authority confirmation from `ArchonWeb` is refused `forbidden`
+(`route_from`, `operator.rs:222`). Gate, merge, report and `ask_operator`
+answers still work from the app, as `docs/remote.md` says.
 
 ### H3-A6 (low): `archon remote setup` reads Tailscale, not `mounts_blocked`
 
@@ -134,6 +143,33 @@ keeps today's dedicated-mode chat authority, and shared mode refuses it
 (`crates/archon-daemon/src/operator_commands.rs:175-180`).
 **Follow-up:** decide whether a token client should be a verified chat
 channel at all.
+
+### H3-A8 (high): a web `answer` to an Aether question ran as operator chat
+
+**Scenario.** The orchestrator has an open Aether `ask_user`. A web operator
+device answers it with `/archon set --repo R grant_merge=true`. At base,
+`supervisor::route_answer` sent the text unchanged through archond's own
+`reply_to_question` (`crates/archon-daemon/src/supervisor.rs:750-755`).
+Aether delivers the reply as an ordinary message from the socket's `user`
+actor (`aether: crates/aether-runtime/src/commands/messaging.rs:191-235`).
+That is H3-A1 by another door. (Found in review.)
+
+**Fix.** A web reply to an Aether question goes out with `WEB_RELAY_MARK`
+(`route_from`, `crates/archon-daemon/src/handlers/operator.rs:222`).
+`supervisor::route_archon_answer` keeps the rest of the routing in one place.
+
+### H3-A9 (high): an Aether-paired device's notification answer approved Archon gates
+
+**Scenario.** An Aether operator device that has no Archon credential
+answers an Archon question, gate or merge in Aether's notification center.
+`NotificationAnswer::by_operator` checked only `actor == "user"`
+(`crates/archon-aether/src/notifications.rs:118-122`), so
+`notification_center/answers.rs` applied the answer, live or on reconnect.
+That is H3-A2 for answers. (Found in review.)
+
+**Fix.** `permitted` also requires `by_host()`
+(`crates/archon-daemon/src/notification_center/answers.rs:98`), which uses
+the same host-connection rule as chat (`archon_aether::events::is_host_user`).
 
 ## For the other repository
 
@@ -172,7 +208,7 @@ publishes. On the Archon side, emitting each command's class into
 
 | §d item | Status | Evidence |
 | --- | --- | --- |
-| Browser access through one origin, Aether's listener; archond keeps its own pairing, device identity, roles, Host/Origin checks and revocation | ✅ | Pairing `crates/archon-remote/src/pairing.rs:69-120`; devices and SHA-256 secrets `crates/archon-remote/src/devices.rs:29,56`; roles `crates/archon-remote/src/allow.rs:226-238`; checks `crates/archon-remote/src/http/checks.rs`; revocation `crates/archon-remote/src/lib.rs:291` |
+| Browser access through one origin, Aether's listener; archond keeps its own pairing, device identity, roles, Host/Origin checks and revocation | ✅ | Pairing `crates/archon-remote/src/pairing.rs:69-120`; devices and SHA-256 secrets `crates/archon-remote/src/devices.rs:29,56`; roles `crates/archon-remote/src/allow.rs:35-46`; checks `crates/archon-remote/src/http/checks.rs`; revocation `crates/archon-remote/src/lib.rs:291` |
 | The mount adds no credential and no standing | ✅ after H3-A2 | archond authenticates only its own `archon_device` cookie (`crates/archon-remote/src/http/api.rs:111-137`). Aether-device chat no longer confers Archon authority (test `an_aether_paired_device_confers_no_archon_authority`) |
 | archond trusts no header a browser could set to choose identity or standing | ✅ | archond reads only `Host`, `Origin`, `Sec-Fetch-Site`, `Cookie` (`archon_device` only), `Content-Type` and the WebSocket upgrade headers (`grep -rn 'header::' crates/archon-remote/src`). There is no `X-Forwarded-*` (`grep -rni forwarded crates/archon-remote/src` prints nothing). `Origin` only narrows what is accepted. Identity comes from the cookie alone |
 | A mounted request gets exactly the Archon role of its credential | ✅ | Role from the cookie's device at upgrade (`crates/archon-remote/src/ws.rs:31,46-50`), checked per frame (`crates/archon-remote/src/ws/session.rs:267-270`), passed to archond (`session.rs:289`). archond asserts the allowlist and runs as `ArchonWeb`, whatever the `hello` says (`crates/archon-daemon/src/remote.rs:30-41`). Tests `an_observer_reads_and_is_refused_every_change`, `the_socket_carries_allowed_requests_and_refuses_the_rest` (`crates/archon-remote/tests/listener.rs:644,465`) |
@@ -184,8 +220,8 @@ publishes. On the Archon side, emitting each command's class into
 | CSP and security headers | ✅ | `default-src 'none'`, hashed style, `frame-ancestors 'none'` (`crates/archon-remote/src/assets.rs:22-33`). `nosniff`, `DENY`, `no-referrer`, COOP/CORP on every response (`crates/archon-remote/src/http.rs:174-197`). The pointer page escapes the origin (`assets.rs:76-89`) |
 | Device `role` chosen by the host when pairing | ✅ | `remote_pair {role}` is `OperatorChange` (`crates/archon-core/src/protocol.rs:828`). The role is fixed in the pairing (`pairing.rs:23-24,69-97`) and copied to the device on claim (`api.rs:67-69`) |
 | `remote.json` format version; old files load as `operator` | ✅ | `crates/archon-remote/src/store.rs:5-110` (format 1 has no roles, format 2 names each) |
-| Allowlists split per role; observers only read | ✅ | `crates/archon-remote/src/allow.rs:226-238`; tests `an_observer_is_refused_every_change_and_reads_the_rest`, `daily_operation_is_allowed_to_operators` |
-| `pause`/`resume` with `hard:true` refused for devices (BASELINE §3.2) | ✅ after H3-A1 | `allow.rs:245-251`, tests `a_hard_pause_or_resume_is_refused_to_every_role`, `a_hard_pause_or_resume_is_refused_and_a_soft_one_reaches_archond`. archond refuses a web release of a hard pause (`crates/archon-daemon/src/handlers/control.rs:493`, test `a_web_device_cannot_lift_the_operators_hard_pause`). The chat bypass (`say "/archon resume --hard"`) is H3-A1, closed by test `a_web_devices_say_carries_no_operator_authority` |
+| Allowlists split per role; observers only read | ✅ | `crates/archon-remote/src/allow.rs:35-46`; tests `an_observer_is_refused_every_change_and_reads_the_rest`, `daily_operation_is_allowed_to_operators` |
+| `pause`/`resume` with `hard:true` refused for devices (BASELINE §3.2) | ✅ after H3-A1 | `allow.rs:54-60`, tests `a_hard_pause_or_resume_is_refused_to_every_role`, `a_hard_pause_or_resume_is_refused_and_a_soft_one_reaches_archond`. archond refuses a web release of a hard pause (`crates/archon-daemon/src/handlers/control.rs:493`, test `a_web_device_cannot_lift_the_operators_hard_pause`). The chat bypass (`say "/archon resume --hard"`) is H3-A1, closed by test `a_web_devices_say_carries_no_operator_authority` |
 | New read models observer-visible; new mutations operator-only | ✅ | `link_issue`, `unlink_issue` and `import_issue` are `Change` and refused to observers (`allow.rs` test `an_observer_is_refused_every_change_and_reads_the_rest` covers all 11 changes). The protocol 24 reads are `Read` (`protocol.rs:749-791`) |
 | Web requests run with `ClientKind::ArchonWeb` standing | ✅ | `crates/archon-daemon/src/remote.rs:40`; refusals keyed on it at `handlers/control.rs:493`, `handlers/changes.rs:82` |
 | Observer limits | ✅ | Reads expose no credential. Device views carry no secret hash (`crates/archon-core/src/remote.rs:167-177`, `api.rs:139-143`), `remote_status` is `OperatorRead` and refused to every device (`allow.rs` test `administration_merges_and_agent_requests_are_refused`). Artifact names are plain relative paths (`crates/archon-daemon/src/artifacts.rs:53`, test `stored_names_are_plain_relative_paths`). Pending outbox tokens are observer-visible (H3-A3) |
@@ -195,7 +231,7 @@ publishes. On the Archon side, emitting each command's class into
 | archond listens on loopback when mounted | ✅ | Setup refuses a non-loopback listener (`setup.rs:224-229`). Mounted `Host` is loopback only, whatever is bound (`checks.rs:31-36`) |
 | Private by default | ✅ | `allow_remote = false` and the listener is off until enabled (`docs/remote.md` "Configuration"; `crates/archon-core/src/remote.rs:40-47`) |
 | Mount configuration, path normalization, hop-by-hop stripping, lease and Funnel orders | Aether side | `aether: crates/aether-remote/src/mount.rs`; audited on mengsig/aether#414 |
-| Idempotency receipts, `resolve_submission` | Aether side | archond keeps `enqueue.idempotency_key` and its tracked requests unchanged; neither is on the device allowlist (`allow.rs:256-298`) |
+| Idempotency receipts, `resolve_submission` | Aether side | archond keeps `enqueue.idempotency_key` and its tracked requests unchanged; neither is on the device allowlist (`allow.rs:65-109`) |
 
 ## Operator standing
 
@@ -205,8 +241,8 @@ Operator authority is a daemon decision backed by an observed message
 | Path | Who may use it | Evidence |
 | --- | --- | --- |
 | Operator socket (`archon` CLI) | the Unix user | `operator_only` requests are refused for any agent, whichever client forwards them (`crates/archon-daemon/src/handlers.rs:155-182`); test `agents_are_refused_operator_only_requests_through_any_client` |
-| Dedicated Aether chat | the host's own Aether connections only (after H3-A1, H3-A2) | `crates/archon-aether/src/events.rs` `inbox_delivered`; tests `an_aether_paired_device_confers_no_archon_authority`, `a_web_devices_say_carries_no_operator_authority` |
-| GitHub operator | a listed login, vouched for only by the watcher's envelope | `crates/archon-aether/src/events.rs:309-339`; payload flags and text markers are refused (unit test in `events.rs`, `only_fresh_verbatim_operator_citations_are_accepted`). GitHub cannot change the watcher (`crates/archon-daemon/src/authority/actions.rs:26-33`; test `github_confirmations_bind_the_thread_and_never_change_the_watcher`) |
+| Dedicated Aether chat and notification answers | the host's own Aether connections only (after H3-A1, H3-A2, H3-A8, H3-A9) | `crates/archon-aether/src/events.rs` `inbox_delivered`; tests `an_aether_paired_device_confers_no_archon_authority`, `a_web_devices_say_carries_no_operator_authority` |
+| GitHub operator | a listed login, vouched for only by the watcher's envelope | `crates/archon-aether/src/events.rs:311-341`; payload flags and text markers are refused (unit test in `events.rs`, `only_fresh_verbatim_operator_citations_are_accepted`). GitHub cannot change the watcher (`crates/archon-daemon/src/authority/actions.rs:26-33`; test `github_confirmations_bind_the_thread_and_never_change_the_watcher`) |
 | `request_authority` | the current orchestrator, citing a recorded message from the paths above | `crates/archon-daemon/src/authority/mod.rs:21-48`, `evidence.rs:48-73` (60-minute window, verbatim quote). Tests `only_fresh_verbatim_operator_citations_are_accepted`, `stage_callers_and_nested_privileged_requests_are_refused` |
 
 What can never confer it:
@@ -214,14 +250,14 @@ What can never confer it:
 - **GitHub text.** An imported issue's body is fenced and marked untrusted
   (`crates/archon-daemon/src/github_sync/import.rs:17-21,105-121`). Only
   Aether's envelope flag makes a GitHub line an operator's
-  (`events.rs:309-339`).
+  (`events.rs:311-341`).
 - **Relays and stage messages.** `message_orchestrator` and
   `publish_artifact` are the only changes a stage agent may make
   (`handlers.rs:269-279`). Every other change for an agent needs the
   orchestrator's authority (`handlers.rs:207-223`). Messages from `agent`,
   `client` or `system` actors run nothing (test
   `nobody_but_the_operator_upgrades_or_watches_from_the_chat`).
-- **Web device lines.** H3-A1.
+- **Web device lines and answers.** H3-A1, H3-A5, H3-A8.
 - **Lessons.** A lesson is a prompt input, never a channel. No code path
   turns one into an `OperatorMessage`: citations are recorded only at
   `crates/archon-daemon/src/operator_commands.rs:50`
@@ -270,12 +306,16 @@ prints nothing). Aether side otherwise.
 | --- | --- | --- |
 | H3-A1 | `crates/archon-core/src/authority.rs` (`WEB_RELAY_MARK`, `is_web_relay`); `crates/archon-daemon/src/handlers/operator.rs` and `handlers.rs` (a web `say` is sent with the mark); `crates/archon-aether/src/events.rs` (a marked line gets no channel) | `a_web_devices_say_carries_no_operator_authority` (`crates/archon-daemon/tests/it/operator_authority.rs`); `a_web_relay_or_a_paired_device_is_never_an_operator_channel` (`crates/archon-aether/src/events.rs`) |
 | H3-A2 | `crates/archon-aether/src/events.rs` (only a host connection's `user` actor is a verified channel) | `an_aether_paired_device_confers_no_archon_authority` (`operator_authority.rs`); `a_web_relay_or_a_paired_device_is_never_an_operator_channel` |
+| H3-A5 | `crates/archon-daemon/src/handlers.rs` (a web `answer` keeps its client); `handlers/operator.rs` (`answer_from`, `route_from` refuse a web confirmation) | `a_web_device_cannot_confirm_an_authority_change` (`operator_authority.rs`) |
+| H3-A8 | `handlers/operator.rs` (`route_from` marks a web reply to Aether); `crates/archon-daemon/src/supervisor.rs` (`route_archon_answer`) | `a_web_answer_to_an_aether_question_carries_no_operator_authority` (`operator_authority.rs`) |
+| H3-A9 | `crates/archon-aether/src/notifications.rs` (`by_host`); `crates/archon-daemon/src/notification_center/answers.rs` (`permitted`) | `an_answer_from_an_aether_paired_device_is_refused`, `a_paired_devices_answer_given_meanwhile_is_refused_on_connect` (`crates/archon-daemon/tests/it/notification_center.rs`) |
 
 Docs: `docs/remote.md` and `docs/operator-authority.md` now say that a
-device's chat line carries no operator authority.
+device's chat line or answer carries no operator authority.
 
-Before the fix: with the two source changes in `events.rs` and
-`handlers/operator.rs` taken out (the tests kept), all three tests fail:
+Before the fix: with the source changes taken out and the tests kept, every
+new test fails. For H3-A1 and H3-A2, the changes in `events.rs` and
+`handlers/operator.rs` were taken out:
 
 ```
 test events::tests::a_web_relay_or_a_paired_device_is_never_an_operator_channel ... FAILED
@@ -283,6 +323,16 @@ test operator_authority::a_web_devices_say_carries_no_operator_authority ... FAI
 test operator_authority::an_aether_paired_device_confers_no_archon_authority ... FAILED
 ```
 
-With the fix, `cargo test -p archon-aether --lib events` passes 8 of 8, and
-`cargo test -p archon-daemon --test it -- operator_authority link_images chat_ops handlers::`
-passes 68 of 68.
+For H3-A5, H3-A8 and H3-A9, the web `answer` route arm and the `by_host`
+check were disabled:
+
+```
+test operator_authority::a_web_answer_to_an_aether_question_carries_no_operator_authority ... FAILED
+test operator_authority::a_web_device_cannot_confirm_an_authority_change ... FAILED
+test notification_center::a_paired_devices_answer_given_meanwhile_is_refused_on_connect ... FAILED
+test notification_center::an_answer_from_an_aether_paired_device_is_refused ... FAILED
+```
+
+With the fixes, `cargo test -p archon-aether --lib` passes 68 of 68, and
+`cargo test -p archon-daemon --test it -- operator_authority notification_center link_supervisor link_images chat_ops chat_answer handlers::`
+passes 167 of 167.

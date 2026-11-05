@@ -726,8 +726,8 @@ Answering a question there is the same as sending
 ([Answering in the orchestrator's chat](#answering-in-the-orchestrators-chat)):
 the chosen action is the option number, words you add follow it (`reject
 too risky`), and words alone are the answer. The same rules apply: only an
-answer Aether records from you (the `user` actor) counts, only in the
-default dedicated mode, and an authority confirmation is answered only in
+answer Aether records from you (the `user` actor) on a host connection counts,
+never one from a paired remote device, only in the default dedicated mode, and an authority confirmation is answered only in
 the channel it was asked in. Its feed record says
 `answered in the notification center`. An answer that is refused, or no
 longer valid, comes back as a system notice with the reason, and the

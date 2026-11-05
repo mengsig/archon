@@ -1237,3 +1237,71 @@ async fn a_web_devices_say_carries_no_operator_authority() {
     let cited_web = h.orchestrator(cited(grant(true), 1, &command));
     assert!(cited_web.await.is_err(), "a web line was citable");
 }
+
+fn web_answer(question: &archon_core::id::QuestionId, text: &str) -> Request {
+    Request::Answer {
+        question: question.clone(),
+        text: text.into(),
+        chat: false,
+    }
+}
+
+/// A host request waiting for its confirmation is not yet approved, and a
+/// paired device may not approve it: it is answered on the host.
+#[tokio::test]
+async fn a_web_device_cannot_confirm_an_authority_change() {
+    let h = harness(AetherMode::Dedicated).await;
+    deliver(&h, 1, user("grant requested merges")).await;
+    let q = confirmation(&h, 1).await;
+    let web = handlers::handle(&h.ctx, ClientKind::ArchonWeb, web_answer(&q.id, "yes")).await;
+    assert!(
+        matches!(web, Err(archon_core::error::ArchonError::Forbidden(_))),
+        "{web:?}"
+    );
+    assert!(!granted(&h).await, "a web device confirmed the grant");
+    assert!(h.ctx.store.lock().await.question(&q.id).unwrap().is_open());
+    deliver(&h, 2, user("yes")).await;
+    assert!(granted(&h).await, "the host's own reply still confirms");
+}
+
+/// archond replies to an Aether question from its own socket, which Aether
+/// delivers as the operator's line; a web device's reply goes out marked.
+#[tokio::test]
+async fn a_web_answer_to_an_aether_question_carries_no_operator_authority() {
+    use archon_aether::fake::Scripted;
+    use archon_core::aether_ids::AetherQuestionRef;
+    let h = harness(AetherMode::Dedicated).await;
+    let fake = watched(&h, None).await;
+    fake.set_default(
+        "reply_to_question",
+        Scripted::reply("message_sent", json!({})),
+    );
+    let asked = AetherQuestionRef {
+        agent: AetherAgentId::parse(ORCHESTRATOR).unwrap(),
+        seq: 17,
+    };
+    let question = archon_daemon::feed::aether_question(&h.ctx, asked, "Which?", None)
+        .await
+        .unwrap()
+        .unwrap();
+    let command = format!("/archon set --repo {REPO_NAME} grant_merge=true");
+    handlers::handle(
+        &h.ctx,
+        ClientKind::ArchonWeb,
+        web_answer(&question.id, &command),
+    )
+    .await
+    .unwrap();
+    let replied = fake.received_named("reply_to_question").remove(0);
+    let content = replied["content"].as_str().unwrap().to_owned();
+    assert!(archon_core::authority::is_web_relay(&content), "{content}");
+    assert!(content.ends_with(&command));
+    let socket = json!({"transport":"local_socket","connection":"archond"});
+    deliver(&h, 1, user_from(socket, &content)).await;
+    assert!(
+        !granted(&h).await,
+        "a web device's answer applied a command"
+    );
+    let cited_web = h.orchestrator(cited(grant(true), 1, &command));
+    assert!(cited_web.await.is_err(), "a web answer was citable");
+}

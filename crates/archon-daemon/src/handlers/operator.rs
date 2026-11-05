@@ -175,6 +175,18 @@ pub(super) async fn answer(
     text: &str,
     via: AnswerVia,
 ) -> Result<Question, ArchonError> {
+    answer_from(ctx, ClientKind::ArchonCli, id, text, via).await
+}
+
+/// `answer` for whichever client sent it: a paired web device answers as
+/// `archon answer` does, but its words never carry operator authority.
+pub(super) async fn answer_from(
+    ctx: &DaemonContext,
+    client: ClientKind,
+    id: &QuestionId,
+    text: &str,
+    via: AnswerVia,
+) -> Result<Question, ArchonError> {
     assert_ne!(
         via,
         AnswerVia::ChatReply,
@@ -187,7 +199,7 @@ pub(super) async fn answer(
     if !asked.is_open() {
         return Err(reports::already_closed(&asked));
     }
-    if let Some(recorded) = supervisor::route_answer(ctx, &asked, &text, via).await? {
+    if let Some(recorded) = route_from(ctx, client, &asked, &text, via).await? {
         return Ok(recorded);
     }
     let question = ctx
@@ -203,6 +215,35 @@ pub(super) async fn answer(
     };
     feed::append(ctx, entry).await?;
     Ok(question)
+}
+
+/// Route a web device's answer without its standing reaching the host's:
+/// it confirms no authority change, and Aether gets its words marked.
+async fn route_from(
+    ctx: &DaemonContext,
+    client: ClientKind,
+    asked: &Question,
+    text: &str,
+    via: AnswerVia,
+) -> Result<Option<Question>, ArchonError> {
+    if client != ClientKind::ArchonWeb {
+        return supervisor::route_answer(ctx, asked, text, via).await;
+    }
+    if crate::authority::is_confirmation(ctx, &asked.id).await? {
+        return Err(ArchonError::Forbidden(
+            "an authority change is confirmed on the host, with archon or its chat; a paired device cannot confirm it".into(),
+        ));
+    }
+    let Some(aether) = &asked.aether else {
+        return supervisor::route_archon_answer(ctx, asked, text, via).await;
+    };
+    let marked = delivered_text(client, text);
+    assert!(is_web_relay(&marked), "a web reply reaches Aether marked");
+    let aether_client = ctx.aether.client()?;
+    aether_client
+        .reply_to_question(&aether.agent, aether.seq, &marked)
+        .await?;
+    Ok(None)
 }
 
 /// The orchestrator's `record_chat_answer`: close a question this very agent

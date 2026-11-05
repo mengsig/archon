@@ -272,7 +272,7 @@ fn inbox_delivered(item: Value) -> Result<EventKind, serde_json::Error> {
             item.kind.get("content").cloned().unwrap_or(Value::Null),
         )?);
         let verified = sender == MessageSender::Operator
-            && from_host_connection(&item.kind)
+            && is_host_user(&item.kind["from"])
             && !archon_core::authority::is_web_relay(&text);
         Some(InboxMessage {
             channel: verified.then_some(archon_core::authority::OperatorChannel::AetherChat),
@@ -290,12 +290,14 @@ fn inbox_delivered(item: Value) -> Result<EventKind, serde_json::Error> {
     })
 }
 
-/// Whether a `user` message came over one of the host's own Aether
+/// Whether Aether's `actor` is the operator on one of the host's own Aether
 /// connections. A paired remote device holds Aether's standing, never
 /// Archon's (ARCHITECTURE §d), and an unknown transport is not trusted.
-fn from_host_connection(kind: &Value) -> bool {
-    assert_eq!(kind["kind"], "message", "only a message has a sender");
-    match kind.pointer("/from/origin") {
+pub fn is_host_user(actor: &Value) -> bool {
+    if actor.get("actor").and_then(Value::as_str) != Some("user") {
+        return false;
+    }
+    match actor.get("origin") {
         None => true,
         Some(origin) => matches!(
             origin.get("transport").and_then(Value::as_str),

@@ -198,7 +198,9 @@ checks and records the same feed lines. `say` reaches the orchestrator
 marked as a web device's line: it is chat, never operator authority, so a
 `/archon`, `/watch` or `/merge` in it is not run and the orchestrator cannot
 cite it for `request_authority`. `answer` answers a question or gate as
-`archon answer` does. Everything else, including a second `hello`, is refused with
+`archon answer` does, with two limits: it cannot confirm an authority change
+(answer that on the host), and a reply to an Aether question goes out marked
+as a web device's line, like `say`. Everything else, including a second `hello`, is refused with
 `forbidden` and the message "… is not available from the web app; use the
 archon CLI".
 

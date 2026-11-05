@@ -77,10 +77,13 @@ the store up yourself first (step 2 below).
   archond reads them only when it starts. With them it scopes its device
   cookie to `/archon`, answers only loopback `Host` values on its own port,
   and accepts only these origins.
-- A browser paired with 1.4.x's own app is not carried over: pair it again
-  from the Aether app (`archon remote pair`, then `archon aether remote pair`
-  for Aether's own device). Its old record stays in `remote.json` as an
-  operator until `archon remote revoke` removes it.
+- Devices paired with 1.4.x stay valid, as operators, until
+  `archon remote revoke` removes them. A browser that paired on the hostname
+  Aether now publishes still sends its old cookie (scoped to `/`), and the
+  mount accepts it; one that paired on another hostname must pair again with
+  `archon remote pair`. Aether's own device is paired separately, with
+  `archon aether remote pair`. Pairing again does not revoke the old device:
+  revoke it to retire that access.
 
 ### What a paired device may do
 

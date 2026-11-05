@@ -35,7 +35,7 @@ a step stops. The reference, with the threat model, is
 archon remote setup          # on the computer: mounts, publishes, checks
 archon daemon restart        # once, when it asks: archond reads the mount at start
 archon remote setup          # again: checks the address and shows a QR code
-aether remote pair           # pair the same browser with Aether too
+archon aether remote pair    # pair the same browser with Aether too
 ```
 
 Scan the QR code with the phone's camera: it opens Aether's Archon pairing
@@ -80,10 +80,11 @@ open it like an app.
    never in the link. The first browser to claim it gets its own Archon
    device; the code then stops working.
 
-Each daemon pairs the browser on its own: `aether remote pair` gives it an
-Aether device, and `archon remote setup` or `archon remote pair` an Archon
-device. Neither daemon sees the other's credential, and `archon remote
-revoke` takes back only Archon's.
+Each daemon pairs the browser on its own: `archon aether remote pair` gives
+it an Aether device, and `archon remote setup` or `archon remote pair` an
+Archon device. Neither daemon sees the other's credential, and `archon remote
+revoke` takes back only Archon's. `archon aether` runs `aether` against the
+Aether Archon uses: its own in dedicated mode, yours in shared mode.
 
 ## Running it again
 
@@ -141,9 +142,9 @@ setup, says to run `archon remote setup`); it carries no script.
 | MagicDNS or HTTPS certificates are off | Turn them on at https://login.tailscale.com/admin/dns. |
 | this user may not change Tailscale | `sudo tailscale set --operator=$USER` once. |
 | Serve is off for your tailnet | Turn it on at the link it prints. |
-| Aether already mounts /archon on … | Another target holds the prefix: `aether remote mount remove /archon` if it is no other daemon. |
+| Aether already mounts /archon on … | Another target holds the prefix: `archon aether remote mount remove /archon` if it is no other daemon. |
 | Restart it with `archon daemon restart` | Do, then run `archon remote setup` again. |
 | cannot edit safely | Add the two lines it prints under `[remote]` in `config.toml` by hand. |
 | the listener did not open | Another program holds port 8378: set `[remote] address` in `config.toml` and restart archond. |
-| … did not answer | Wait a moment for the certificate and run it again; `aether remote status` shows whether Aether forwards. |
+| … did not answer | Wait a moment for the certificate and run it again; `archon aether remote status` shows whether Aether forwards. |
 | The browser says "not paired" | The device was revoked or remote access reset: `archon remote pair` and type the new code. |

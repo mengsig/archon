@@ -218,7 +218,7 @@ device only observes".
 - `archon remote revoke <id or name>` forgets one device and closes its
   sessions at once; its cookie no longer works. "Forget this device" in the
   app does the same for the browser in your hand. Aether's device for the
-  same browser is Aether's to revoke (`aether remote revoke`).
+  same browser is Aether's to revoke (`archon aether remote revoke`).
 - `archon remote disable` closes the listener, every session (4403) and any
   open pairing. Paired devices are kept, and work again after `archon
   remote enable`.

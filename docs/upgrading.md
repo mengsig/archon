@@ -77,8 +77,8 @@ the store up yourself first (step 2 below).
   cookie to `/archon`, answers only loopback `Host` values on its own port,
   and accepts only these origins.
 - A browser paired with 1.4.x's own app is not carried over: pair it again
-  from the Aether app (`archon remote pair`, then `aether remote pair` for
-  Aether's own device). Its old record stays in `remote.json` as an
+  from the Aether app (`archon remote pair`, then `archon aether remote pair`
+  for Aether's own device). Its old record stays in `remote.json` as an
   operator until `archon remote revoke` removes it.
 
 ### What a paired device may do
@@ -118,12 +118,14 @@ the store up yourself first (step 2 below).
    archon daemon stop
    cd ~/.local/share/archon      # or $ARCHON_DATA_DIR; ~/Library/Application Support/archon on macOS
    cp archon.db archon-1.4.db
-   cp remote.json remote-1.4.json 2>/dev/null || true   # only if remote access was set up
+   if [ -f archon.db-wal ]; then cp archon.db-wal archon-1.4.db-wal; fi
+   if [ -f remote.json ]; then cp remote.json remote-1.4.json; fi
    ```
 
-   A cleanly stopped archond leaves no `archon.db-wal`; if there is one,
-   copy it too, as `archon-1.4.db-wal`. Keep a copy of `config.toml`
-   (`~/.config/archon`, or `$ARCHON_CONFIG_DIR`) as well.
+   A cleanly stopped archond leaves no `archon.db-wal`, and there is no
+   `remote.json` until a device is paired; going back relies on knowing which
+   of the two you copied. Keep a copy of `config.toml` (`~/.config/archon`, or
+   `$ARCHON_CONFIG_DIR`) as well.
 3. **Install 1.5.0.** `archon update --version v1.5.0 --yes` (or `archon
    update --yes` once it is the latest release).
 4. **Start and check.** `archon daemon start` migrates the store. Then
@@ -146,12 +148,16 @@ archon update --version v1.4.12
 cd ~/.local/share/archon
 rm -f archon.db-wal archon.db-shm
 cp archon-1.4.db archon.db
-cp remote-1.4.json remote.json 2>/dev/null || true
+if [ -f archon-1.4.db-wal ]; then cp archon-1.4.db-wal archon.db-wal; fi
+if [ -f remote-1.4.json ]; then cp remote-1.4.json remote.json
+elif [ -f remote.json ]; then mv remote.json remote-1.5.json; fi
 ```
 
-1.4.12 also refuses `config.toml` keys it does not know: remove
-`mounted_at` and `trusted_origins` under `[remote]` and `holdout_rate` under
-`[learning]` (or restore your copy), then `archon daemon start`. Aether's
-`/archon` mount points at archond's listener, which 1.4.12 serves as its
-own app: remove it with `aether remote mount remove /archon`, then run
-1.4.12's `archon remote setup` to publish archond again.
+A `remote.json` that 1.5.0 wrote where 1.4.12 had none is moved aside: its
+devices were paired from the Aether app, and 1.4.12 refuses the format 2 an
+observer brings. 1.4.12 also refuses `config.toml` keys it does
+not know: remove `mounted_at` and `trusted_origins` under `[remote]` and
+`holdout_rate` under `[learning]` (or restore your copy), then `archon daemon
+start`. Aether's `/archon` mount points at archond's listener, which 1.4.12
+serves as its own app: remove it with `archon aether remote mount remove
+/archon`, then run 1.4.12's `archon remote setup` to publish archond again.

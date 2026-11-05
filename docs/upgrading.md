@@ -137,9 +137,12 @@ the store up yourself first (step 2 below).
    doctor` report the daemon healthy. `archon orchestrator restart` gives a
    running orchestrator the new tools if the update did not.
 5. **Remote access, if you used it.** Run `archon remote setup`, then
-   `archon daemon restart` when it asks, then `archon remote setup` again,
-   and pair each browser from the Aether app. Revoke the 1.4.x device
-   records you no longer need with `archon remote revoke`.
+   `archon daemon restart` when it asks, then `archon remote setup` again.
+   A browser paired on the hostname Aether now publishes keeps working; pair
+   one that paired on another hostname with the code setup shows (or
+   `archon remote pair`), and with Aether through `archon aether remote
+   pair` if it has no Aether device yet. Revoke the 1.4.x devices you no
+   longer need with `archon remote revoke`.
 
 ### If the update was interrupted
 

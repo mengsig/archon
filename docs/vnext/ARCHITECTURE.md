@@ -49,9 +49,9 @@ Reasons:
 - **Aether already has the machinery.** Aether has generated TS protocol types,
   schema drift gates, device-key auth, the recovery ledger, a virtualized
   transcript and the delegation graph. Archon's app has none of these.
-- **Release builds stay Node-free.** `web/dist/` is committed and a CI job
-  rebuilds it and fails on drift. This is the same pattern as
-  `clients/protocol.schema.json`. `cargo build` and `install.sh` stay unchanged.
+- **Release builds stay Node-free.** `web/dist/` is committed and CI must
+  fail when it differs from a fresh build (the job does not exist yet; H5
+  adds it). This is the same pattern as `clients/protocol.schema.json`. `cargo build` and `install.sh` stay unchanged.
 
 Stack: TypeScript (strict), Vite, React 19, and plain CSS with design tokens
 (CONTRACTS.md §4). There is no CSS-in-JS runtime and no Tailwind, and the
@@ -307,7 +307,9 @@ None calls a model. Each is specified in CONTRACTS.md §1.
   stage, waiting reason, cost, links) and typed edges (`depends_on`,
   `initiative_after`, `stacked_on`), plus `as_of` change seq.
 - *Pipelines:* `run_plan{run}` returns the frozen, steer-edited stage list of
-  a run, so steered runs render as they actually executed.
+  an unfinished run, so steered runs render as they actually executed. On a
+  finished run `run_plan` returns `not_found`, and its plan is read from its
+  stage attempts.
 - *History:* `list_items` gains `updated_since`, `before` and `text` filters.
   `item_history` returns transitions with timestamps.
 - *GitHub:* see §f.

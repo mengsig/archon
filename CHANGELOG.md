@@ -45,6 +45,11 @@ you use remote access, and pair each browser from the Aether app.
   their updater waited out its 30 seconds and reported that no new archond
   answered. The refusal now carries the `hello`'s own id, which they read as
   a newer archond.
+- The other way round, `archon` 1.5.0 reads a 1.4.x archond's refusal as
+  "archond speaks another protocol" instead of "archond is not running", so
+  it no longer tries to start a second archond beside it. An update
+  interrupted before archond restarted is recovered as
+  [upgrading.md](docs/upgrading.md#if-the-update-was-interrupted) says.
 
 ### Changes and history
 

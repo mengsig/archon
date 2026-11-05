@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use archon_core::error::ArchonError;
 use archon_core::notify::FeedItem;
-use archon_core::protocol::{ClientFrame, ErrorReply, Reply, Request, ServerFrame};
+use archon_core::protocol::{ClientFrame, ErrorCode, ErrorReply, Reply, Request, ServerFrame};
 use serde_json::Value;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot};
@@ -165,6 +165,10 @@ impl Shared {
         self.lock().pending.remove(&req)
     }
 
+    fn pending_ids(&self) -> Vec<u64> {
+        self.lock().pending.keys().copied().collect()
+    }
+
     /// Whether a `subscribe_feed` reply is still outstanding, i.e. whether a
     /// feed frame for an unknown subscription may yet find its owner.
     fn subscribe_pending(&self) -> bool {
@@ -302,6 +306,12 @@ impl Router {
     /// Deliver one frame; `Break` with the reason when it ends the connection.
     fn route(&mut self, frame: ServerFrame) -> ControlFlow<String> {
         match frame {
+            ServerFrame::Reply {
+                id: 0,
+                result: Err(refusal),
+            } if refusal.code == ErrorCode::Incompatible => {
+                return ControlFlow::Break(self.refuse_waiters(refusal));
+            }
             ServerFrame::Reply { id: 0, result } => return ControlFlow::Break(notice_text(result)),
             ServerFrame::Reply { id, result } => self.answer(id, result),
             ServerFrame::Feed { sub, item } => self.feed(sub, item),
@@ -314,6 +324,22 @@ impl Router {
             }
         }
         ControlFlow::Continue(())
+    }
+
+    /// archond before 1.5.0 refuses a hello's protocol as an id-0 notice: each
+    /// waiter, the hello among them, gets the refusal itself, not "closed".
+    fn refuse_waiters(&mut self, refusal: ErrorReply) -> String {
+        assert_eq!(
+            refusal.code,
+            ErrorCode::Incompatible,
+            "only a protocol refusal"
+        );
+        let waiting = self.shared.pending_ids();
+        assert!(!waiting.contains(&0), "id 0 is never a request's");
+        for id in waiting {
+            self.answer(id, Err(refusal.clone()));
+        }
+        notice_text(Err(refusal))
     }
 
     fn answer(&mut self, id: u64, result: Result<Reply, ErrorReply>) {

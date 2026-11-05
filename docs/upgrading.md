@@ -13,6 +13,7 @@ are in the [changelog](../CHANGELOG.md).
   - [Remote access](#remote-access)
   - [What a paired device may do](#what-a-paired-device-may-do)
   - [Steps, in order](#steps-in-order)
+  - [If the update was interrupted](#if-the-update-was-interrupted)
   - [Going back to 1.4.12](#going-back-to-1412)
 
 ## From 1.4.x to 1.5.0
@@ -124,8 +125,8 @@ the store up yourself first (step 2 below).
 
    A cleanly stopped archond leaves no `archon.db-wal`, and `remote.json`
    is absent if remote access was never configured; going back relies on
-   knowing which of the two you copied. Keep a copy of `config.toml` (`~/.config/archon`, or
-   `$ARCHON_CONFIG_DIR`) as well.
+   knowing which of the two you copied. Keep a copy of `config.toml`
+   (`~/.config/archon`, or `$ARCHON_CONFIG_DIR`) as well.
 3. **Install 1.5.0.** `archon update --version v1.5.0 --yes` (or `archon
    update --yes` once it is the latest release).
 4. **Start and check.** `archon daemon start` migrates the store. Then
@@ -136,6 +137,25 @@ the store up yourself first (step 2 below).
    `archon daemon restart` when it asks, then `archon remote setup` again,
    and pair each browser from the Aether app. Revoke the 1.4.x device
    records you no longer need with `archon remote revoke`.
+
+### If the update was interrupted
+
+A plain `archon update --yes` from 1.4.x installs 1.5.0 and then asks the
+running archond to restart. Stopped in between (Ctrl+C, a closed terminal),
+it leaves the 1.4.x archond running, and the installed 1.5.0 cannot reach
+it: commands say "this archon speaks daemon protocol 24 but archond does
+not", and `archon daemon stop` and `archon daemon restart` fail the same
+way. Stop it by the pid it writes beside its socket, then start 1.5.0's;
+running stage agents keep running in Aether:
+
+```sh
+kill "$(cat "$XDG_RUNTIME_DIR/archon/archond.pid")"
+archon daemon start
+```
+
+Without `$XDG_RUNTIME_DIR`, as on macOS, the socket and its `archond.pid`
+are in the data directory; with `$ARCHON_SOCKET` set, the pid file is that
+path ending in `.pid`.
 
 ### Going back to 1.4.12
 

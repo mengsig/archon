@@ -5,10 +5,11 @@ use std::path::Path;
 
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::attachment::{ImageAttachment, check_images};
+use archon_core::authority::{WEB_RELAY_MARK, is_web_relay};
 use archon_core::error::ArchonError;
 use archon_core::id::{NotificationId, QuestionId, QueueItemId};
 use archon_core::notify::{AnswerVia, FeedEntry, Notification, NotificationKind, Question};
-use archon_core::protocol::Reply;
+use archon_core::protocol::{ClientKind, Reply};
 use archon_queue::Store;
 
 use crate::context::DaemonContext;
@@ -25,6 +26,7 @@ const MAX_OPTIONS: usize = 10;
 /// is recorded; the feed keeps only what each image was.
 pub(super) async fn say(
     ctx: &DaemonContext,
+    client: ClientKind,
     text: &str,
     images: &[ImageAttachment],
 ) -> Result<Reply, ArchonError> {
@@ -40,8 +42,22 @@ pub(super) async fn say(
     let item = feed::append(ctx, entry).await?;
     assert!(item.seq > 0, "feed sequences start at 1");
     crate::learned::operator_message(ctx, &text).await?;
-    supervisor::deliver_operator_message(ctx, &item.id, &text, images).await?;
+    let delivered = delivered_text(client, &text);
+    supervisor::deliver_operator_message(ctx, &item.id, &delivered, images).await?;
     Ok(Reply::Ok)
+}
+
+/// The line as the orchestrator receives it. archond sends every line from
+/// its own Aether socket, which Aether names the operator, so a web device's
+/// line is marked: Archon then reads it as chat, never as operator authority.
+fn delivered_text(client: ClientKind, text: &str) -> String {
+    if client != ClientKind::ArchonWeb {
+        return text.to_owned();
+    }
+    let marked = format!("{WEB_RELAY_MARK}{text}");
+    assert!(is_web_relay(&marked), "the mark leads the line");
+    assert!(marked.ends_with(text), "the line itself is unchanged");
+    marked
 }
 
 /// The text beside at least one image: trimmed and bounded, and may be blank.

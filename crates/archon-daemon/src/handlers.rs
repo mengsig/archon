@@ -389,6 +389,8 @@ pub(crate) async fn route(
             let merge = operator_merge::request(ctx, &item, reason.as_deref()).await?;
             Ok(Reply::Merge(Box::new(merge)))
         }
+        // Who said it decides whether the line may carry operator authority.
+        Request::Say { text, images } => operator::say(ctx, client, &text, &images).await,
         request => handle_adaptive(ctx, client, request).await,
     }
 }
@@ -594,7 +596,6 @@ async fn handle_protocol_24(ctx: &DaemonContext, request: Request) -> Result<Rep
 
 async fn handle_operator(ctx: &DaemonContext, request: Request) -> Result<Reply, ArchonError> {
     match request {
-        Request::Say { text, images } => operator::say(ctx, &text, &images).await,
         Request::Notify { kind, text, item } => operator::notify(ctx, kind, &text, item).await,
         Request::ClearNotifications { item } => operator::clear_notifications(ctx, item).await,
         Request::AskOperator {

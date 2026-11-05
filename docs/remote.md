@@ -57,7 +57,8 @@ What remote access protects, and from whom:
   sessions at once (WebSocket close code 4401).
 - **A paired device doing more than you could.** It cannot: requests outside
   the [list](#what-a-device-may-do) are refused with `forbidden`, and the
-  rest go through archond's operator checks as the CLI's do. Merges,
+  rest go through archond's operator checks as the CLI's do, and its chat
+  lines carry no operator authority. Merges,
   promotions, settings, autonomy ceilings, repository registration, gc,
   upgrades and remote access itself stay on the CLI. A merge the
   orchestrator proposes still waits for the confirmation question it
@@ -193,9 +194,11 @@ Archon's screens may send these requests, and only these:
 | `status`, `repo_list`, `list_items`, `list_item_summaries`, `get_item`, `get_stage`, `resolve_item`, `list_pipelines`, `list_questions`, `feed_history`, `subscribe_feed`, `list_reports`, `orchestrator_status`, `cost_report`, `list_artifacts`, `read_artifact`, `item_diff`, `settings`, `autonomy` | `enqueue`, `cancel_item`, `retry_item`, `pause`, `resume`, `answer`, `say` |
 
 Each is handled as the operator CLI's request, so archond applies the same
-checks and records the same feed lines; `say` reaches the orchestrator as
-your chat line does, and `answer` answers a question or gate as `archon
-answer` does. Everything else, including a second `hello`, is refused with
+checks and records the same feed lines. `say` reaches the orchestrator
+marked as a web device's line: it is chat, never operator authority, so a
+`/archon`, `/watch` or `/merge` in it is not run and the orchestrator cannot
+cite it for `request_authority`. `answer` answers a question or gate as
+`archon answer` does. Everything else, including a second `hello`, is refused with
 `forbidden` and the message "… is not available from the web app; use the
 archon CLI".
 

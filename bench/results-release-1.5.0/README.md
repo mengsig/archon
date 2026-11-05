@@ -1,6 +1,7 @@
 # Release 1.5.0 smoke gate
 
-**Verdict: DECREASE, on a confirmed Luna cost increase.** The release head
+**Verdict: FAIL (release check: DECREASE), on a confirmed Luna cost
+increase.** The release head
 `a3cc3920` on Aether 1.3.0 cost a mean of $0.0682 per Luna run over three
 runs. Two fresh v1.4.12 runs on Aether 1.2.11 cost $0.0520: +31%, beyond
 the ±10% noise band. The first two head runs already averaged $0.0619
@@ -60,8 +61,8 @@ Per the release rule, nothing is fixed here. The operator decides.
   reviewer found that unhashable account arguments raised `TypeError`
   instead of the specified `KeyError`. On `quality-retry-budget` a
   reviewer found a wrong saturation threshold (`base_ms=5`, `cap_ms=6`
-  returns 6, not 5). Both reviewers returned `request_changes` with a
-  blocking finding. Both leads still reported a pass that listed the
+  returns 6, not 5). Both reviewers asked for changes with a blocking
+  finding (`changes_requested` and `request_changes`). Both leads still reported a pass that listed the
   finding. The gate refused it ("its verdict passes but lists a blocking
   finding"), and the repairs shipped. Those two tasks cost $0.0310 and
   $0.0372.
@@ -70,9 +71,11 @@ Per the release rule, nothing is fixed here. The operator decides.
 - **What changed on the stage path.** Between `v1.4.12` and `a3cc3920`,
   `crates/archon-pipeline` (the stage contract) is unchanged, and so is
   `crates/archon-daemon/src/executor` (the review gate) apart from one
-  visibility change in `frozen.rs`. The changes on an agent's path are the
-  supervisor's stall recovery (#393, `supervisor/stall.rs`) and Aether 1.3.0
-  itself. The isolation run (head on Aether
+  visibility change in `frozen.rs`. Of the changes checked, those on an
+  agent's path are the supervisor's stall recovery (#393,
+  `supervisor/stall.rs`) and Aether 1.3.0 itself. The release also changes
+  lesson selection, inbox channel checks and client code, which this gate
+  did not trace to the sandbox agents. The isolation run (head on Aether
   1.2.11, the same Archon code) had no repair and cost $0.0492, so the
   Archon change alone does not reproduce the increase.
 - **Against the 1.4.12 gate's record.** 1.4.12's gate recorded $0.0597 per
@@ -164,9 +167,9 @@ stored baselines `baseline.json` (Haiku) and `baseline-luna.json` (Luna,
   (refused) try, and it started at a load of 16.0 from other work on the
   host. `§` marks its wall time, which the load may have raised.
 - **Token guard.** A run starts only when the host's Claude token has more
-  than an hour left. It refused the isolation run four times (47
-  to 18 minutes left) until the host refreshed the token. The run started
-  at 23:15 UTC, an hour after the last head run.
+  than an hour left. It refused the isolation run four times (44,
+  34, 24 and 9 minutes left) until the host refreshed the token. The run
+  started at 23:15 UTC, 52 minutes after the last head run ended.
 - **Head arm.** `archon` and `archon-bench` were built from a `git archive`
   of `a3cc3920` with `cargo build --release -p archon -p archon-bench
   --locked`, on Aether 1.3.0.

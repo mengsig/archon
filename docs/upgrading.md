@@ -145,11 +145,14 @@ running archond to restart. Stopped in between (Ctrl+C, a closed terminal),
 it leaves the 1.4.x archond running, and the installed 1.5.0 cannot reach
 it: commands say "this archon speaks daemon protocol 24 but archond does
 not", and `archon daemon stop` and `archon daemon restart` fail the same
-way. Stop it by the pid it writes beside its socket, then start 1.5.0's;
-running stage agents keep running in Aether:
+way. Stop it by the pid it writes beside its socket, wait until it has
+exited (a few seconds), then start 1.5.0's; running stage agents keep
+running in Aether:
 
 ```sh
-kill "$(cat "$XDG_RUNTIME_DIR/archon/archond.pid")"
+pid=$(cat "$XDG_RUNTIME_DIR/archon/archond.pid")
+kill "$pid"
+while kill -0 "$pid" 2>/dev/null; do sleep 1; done
 archon daemon start
 ```
 

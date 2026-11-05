@@ -122,9 +122,9 @@ the store up yourself first (step 2 below).
    if [ -f remote.json ]; then cp remote.json remote-1.4.json; fi
    ```
 
-   A cleanly stopped archond leaves no `archon.db-wal`, and there is no
-   `remote.json` until a device is paired; going back relies on knowing which
-   of the two you copied. Keep a copy of `config.toml` (`~/.config/archon`, or
+   A cleanly stopped archond leaves no `archon.db-wal`, and `remote.json`
+   is absent if remote access was never configured; going back relies on
+   knowing which of the two you copied. Keep a copy of `config.toml` (`~/.config/archon`, or
    `$ARCHON_CONFIG_DIR`) as well.
 3. **Install 1.5.0.** `archon update --version v1.5.0 --yes` (or `archon
    update --yes` once it is the latest release).

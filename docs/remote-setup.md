@@ -83,8 +83,9 @@ open it like an app.
 Each daemon pairs the browser on its own: `archon aether remote pair` gives
 it an Aether device, and `archon remote setup` or `archon remote pair` an
 Archon device. Neither daemon sees the other's credential, and `archon remote
-revoke` takes back only Archon's. `archon aether` runs `aether` against the
-Aether Archon uses: its own in dedicated mode, yours in shared mode.
+revoke` takes back only Archon's. In dedicated mode `archon aether` runs
+`aether` against Archon's own Aether; in shared mode it runs your `aether`
+as configured, which must reach the Aether Archon is set to use.
 
 ## Running it again
 

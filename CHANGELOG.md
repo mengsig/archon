@@ -18,6 +18,35 @@
   and `make e2e` are removed). A browser visiting archond's listener
   directly gets a short page without scripts that links to Aether's address.
 
+## 1.4.12
+
+Released 2026-11-04.
+
+A patch release on 1.4.11 that has every delivered pull request lead with
+what changed and the evidence for it. The body now opens with
+`Risk level: <level>`, a terse "What changed" summary and a before/after
+Evidence section of screenshots, tables and output, with the risk details
+folded at the foot (#374, #375). Screenshots are kept on
+`refs/archon/evidence/<item>/<commit>` of the same repository. A body too
+long for GitHub is shortened to 60,000 characters, keeping the summary and
+evidence whole; backslashes in table cells are escaped, and screenshot
+links point at the repository the evidence was pushed to (#376). New tests carried from #342 pin that the ship checks
+measure a run's own commits from its fork, not from a stale local base
+(#371), and the 1.4.11 bench record's Luna cost sentence is corrected
+(#373).
+
+Archon 1.4.12 needs **Aether 1.2.11**: it is released with and tested on
+that release. Aether 1.2.11 fixes agent names on its board and the
+user-message highlight in its TUI and updates its dependencies; it serves
+protocols 17 to 25, as 1.2.10 did, and keeps store schema 28. Neither the
+installer nor `archon update` pins an Aether version; check with
+`aether --version` and update an older one with `aether update`. The Aether
+protocol Archon asks for stays 24 and the oldest it accepts stays 17. The
+daemon protocol stays 23 and the store schema stays 18: a 1.4.11 store
+opens unchanged, and going back to 1.4.11 needs no copy of the data
+directory. The ship record's new `pr.summary` and `evidence` keys are
+optional, so a record without them is still read; 1.4.11 ignores them.
+
 ### Ship
 
 - Every delivered pull request now leads with `Risk level: <level>` and a
@@ -35,7 +64,30 @@
   delivery. Refresh, retry and `onto` deliveries rewrite each section in
   place and keep the owner's text. `risk.captures` is still read and shown
   as screenshots. The authoring prompts ask for the summary and evidence by
-  default.
+  default (#375).
+- A delivered body too long for GitHub is shortened to fit instead of
+  left without its sections (#376). The limit is now 60,000 characters,
+  not 65,536: the "Technical detail" text is shortened first, then the
+  folded risk details, while the summary, the Evidence section and the risk
+  section's wrapper stay whole, and the full text is kept in the run's
+  summary. Backslashes in evidence table cells are escaped, so one at a
+  cell's end no longer escapes its closing pipe, and an uploaded screenshot
+  is linked on the repository the evidence was pushed to (`origin`, a fork
+  in a fork workflow), not on the pull request's base repository.
+- Tests carried from #342 (contributed by @D-Brammer) pin that the ship
+  checks measure a run's own commits from its fork, not from a stale local
+  base (#371): with the local `main` behind `origin`'s, a "no change
+  needed" claim holds and a branch with no commit of its own still has
+  nothing to ship. The fix itself shipped in 1.4.10 (#343, for #341).
+
+### Documentation
+
+- The 1.4.11 release bench record's sentence on Luna's cost is corrected
+  (#373).
+- The 1.4.12 release smoke gate is recorded in
+  `bench/results-release-1.4.12/`. It fails on a confirmed Luna cost
+  increase: $0.0597 per run on the release head against $0.0493 on v1.4.11
+  (+21%), with Haiku within noise (+4%) and no fall in pass rate.
 
 ## 1.4.11
 

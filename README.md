@@ -231,5 +231,5 @@ Contributors are listed by GitHub handle, and the list is maintained by hand.
 [Remote access](docs/remote-setup.md) ·
 [Operator authority](docs/operator-authority.md) · [Architecture](docs/ARCHITECTURE.md)
 
-Project version: **1.4.11**. Licensed under [MIT](LICENSE). For development,
+Project version: **1.4.12**. Licensed under [MIT](LICENSE). For development,
 see [CONTRIBUTING.md](CONTRIBUTING.md).

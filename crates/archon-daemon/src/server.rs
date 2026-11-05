@@ -401,7 +401,8 @@ async fn shutdown(
 
 /// The first frame must be `hello` at a version archond accepts from that
 /// client (`negotiate`); anything else gets an id-0 error and the
-/// connection is closed.
+/// connection is closed. A refused version is answered under the hello's
+/// own id, which a 1.4.x updater reads as a new archond.
 async fn handshake(
     reader: &mut BufReader<OwnedReadHalf>,
     outbox: &Outbox,
@@ -428,7 +429,15 @@ async fn handshake(
     let welcome = match negotiate(client, protocol_version, &client_version, &features) {
         Ok(welcome) => welcome,
         Err(message) => {
-            refuse(outbox, ErrorCode::Incompatible, message).await;
+            let refusal = ErrorReply {
+                code: ErrorCode::Incompatible,
+                message,
+            };
+            let refused = ServerFrame::Reply {
+                id: frame.id,
+                result: Err(refusal),
+            };
+            send(outbox, refused).await;
             return Ok(None);
         }
     };

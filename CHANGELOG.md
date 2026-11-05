@@ -37,6 +37,15 @@ you use remote access, and pair each browser from the Aether app.
   schema --out crates/archon-core/protocol.schema.json` writes the committed
   copy, which a test keeps current.
 
+### Update
+
+- `archon update --yes` from 1.4.x now finishes against the restarted
+  1.5.0 archond. archond answered a `hello` at another protocol as a
+  closing notice, which 1.4.x clients read as "archond is not running", so
+  their updater waited out its 30 seconds and reported that no new archond
+  answered. The refusal now carries the `hello`'s own id, which they read as
+  a newer archond.
+
 ### Changes and history
 
 - Every write of item, dependency, run, stage, gate, question, initiative

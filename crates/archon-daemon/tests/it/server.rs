@@ -251,14 +251,17 @@ async fn first_frame_must_be_hello_at_our_version() {
         client_version: "future".into(),
         features: Vec::new(),
     };
-    old.send(hello).await;
+    let hello_id = old.send(hello).await;
+    assert_ne!(hello_id, 0, "a request id is never the notice id");
+    // Under the hello's id, not as an id-0 notice: a 1.4.x client reads only
+    // that as `incompatible`, so its updater knows the new archond answered.
     match old.frame().await {
-        Some(ServerFrame::Reply {
-            id: 0,
-            result: Err(e),
-        }) => assert_eq!(e.code, ErrorCode::Incompatible),
-        other => panic!("expected incompatible, got {other:?}"),
+        Some(ServerFrame::Reply { id, result: Err(e) }) if id == hello_id => {
+            assert_eq!(e.code, ErrorCode::Incompatible);
+        }
+        other => panic!("expected incompatible under id {hello_id}, got {other:?}"),
     }
+    assert!(old.frame().await.is_none(), "the connection is closed");
 
     let mut cli = Client::hello(&socket, ClientKind::ArchonCli).await;
     let hello_again = Request::Hello {

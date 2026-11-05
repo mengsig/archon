@@ -39,7 +39,7 @@ Mount prefixes never shadow Aether's own paths: `validate_mounts` refuses
 | Item | Owner | Status |
 | --- | --- | --- |
 | Noesis commands and events, §6 | F3 | Frozen names and required fields; optional fields open |
-| Memory 2.0 commands and fields, §7 | G3 | Open |
+| Memory 2.0 commands and fields, §7 | G3 | Frozen, settled by G3 (feature `memory_v2`) |
 
 ### 1.3 Archon protocol 24 (owner AR-P for the wire, Frozen)
 

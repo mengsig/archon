@@ -104,11 +104,9 @@ pub(super) async fn attempt_children(
     stage: &StageRunId,
 ) -> Result<Tallied, ArchonError> {
     let tally = load(ctx, stage).await?;
+    // A tally an earlier archond began stays unsure of what it read then, even
+    // as it keeps the heads of the fails it reads now.
     let every_fail_kept = tally.every_fail_kept;
-    assert!(
-        every_fail_kept || tally.other_fails.is_empty(),
-        "only a tally that keeps every fail holds non-blocking ones"
-    );
     let mut children: Vec<(String, Option<String>)> =
         tally.read.into_iter().map(|agent| (agent, None)).collect();
     let other_fails = tally.other_fails.into_iter();

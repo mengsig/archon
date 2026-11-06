@@ -161,7 +161,8 @@ From the audit in [docs/security/vnext-audit.md](docs/security/vnext-audit.md)
   `_`, `-` and spaces alike. Such a fail beside a blocking finding was
   reported as a pass that lists one. A fail now always fails: one whose
   findings are all follow-ups no longer counts as a pass, so reviewers pass
-  such a review. Any other word stays unreadable and fails.
+  such a review. Any other word stays unreadable and fails, `passes`
+  included, which used to read as a pass.
 
 ### Orchestrator
 

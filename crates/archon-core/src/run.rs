@@ -295,8 +295,8 @@ impl Verdict {
 
 /// Every word or phrase a verdict passes with. Archon's contracts ask for
 /// `pass`; the rest are read, never asked for.
-pub const PASS_WORDS: [&str; 9] = [
-    "pass", "passed", "passes", "approve", "approved", "lgtm", "accept", "accepted", "ok",
+pub const PASS_WORDS: [&str; 8] = [
+    "pass", "passed", "approve", "approved", "lgtm", "accept", "accepted", "ok",
 ];
 
 /// Every word or phrase a verdict fails with, whatever findings it lists.
@@ -1333,6 +1333,7 @@ mod tests {
             "pass or fail",
             "block-level",
             "okay",
+            "passes",
         ] {
             assert_eq!(read(word), Verdict::Unknown, "{word}");
             assert_eq!(Verdict::of_phrase(word), None, "{word}");

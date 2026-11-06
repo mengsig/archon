@@ -910,7 +910,7 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   a paragraph: a heading, a thematic break, a bullet or `1.` item, a fence).
   Letter case and markdown emphasis
   (`**Verdict:** PASS`) do not matter, and `_`, `-` and spaces between words
-  are alike. Contracts ask for `pass` or `fail`; `pass`, `passed`, `passes`,
+  are alike. Contracts ask for `pass` or `fail`; `pass`, `passed`,
   `approve`, `approved`, `lgtm`, `accept`, `accepted` and `ok` read as pass,
   and `fail`, `failed`, `fails`, `reject`, `rejected`, `changes requested`,
   `request changes`, `needs changes`, `needs work`, `blocking` and `block`

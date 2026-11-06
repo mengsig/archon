@@ -2144,9 +2144,8 @@ mechanical edits; `medium` for routine changes and reviews of small or low-risk
 diffs; `high` for non-trivial design, risky diffs and reviews of shared code;
 `x_high` for hard reasoning, such as root-causing a regression, concurrency or
 security analysis, or a fix that failed twice; `max` only after `x_high` failed
-on the same task;
-the cheapest that fits. Reviewers need independent discovery: another provider at the same
-tier counts, and several fast-tier reviewers, or a fast-tier team checked by
+on the same task. Take the cheapest that fits. Reviewers need independent
+discovery: another provider at the same tier counts, and several fast-tier reviewers, or a fast-tier team checked by
 one stronger-tier judge at low effort, can beat one balanced reviewer for far
 less. A failed stage prompts reconsideration through `retry_item`'s
 `model_plan`. The daemon validates policy and never replaces a choice the

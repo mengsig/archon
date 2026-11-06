@@ -100,16 +100,21 @@ impl Verdict {
     /// or `status` that opens with a verdict word or a `VERDICT:` label. A
     /// pass that [lists a blocking finding](Self::lists_blocking) is `Unknown`.
     pub fn from_structured(structured: &serde_json::Value) -> Option<Self> {
-        let stated = match structured.get(VERDICT_KEYS[0]) {
+        match Self::as_worded(structured) {
+            Some(Self::Pass) if Self::lists_blocking(structured) => Some(Self::Unknown),
+            stated => stated,
+        }
+    }
+
+    /// The verdict `structured`'s words state, before a pass is held to its
+    /// findings: what tells a pass beside a blocking finding from an unreadable word.
+    pub fn as_worded(structured: &serde_json::Value) -> Option<Self> {
+        match structured.get(VERDICT_KEYS[0]) {
             Some(given) => {
                 let text = given.as_str().unwrap_or_default();
                 Some(Self::from_field(text).unwrap_or(Self::Unknown))
             }
             None => Self::other_field(structured).map(|(_, verdict)| verdict),
-        };
-        match stated {
-            Some(Self::Pass) if Self::lists_blocking(structured) => Some(Self::Unknown),
-            stated => stated,
         }
     }
 
@@ -228,14 +233,7 @@ impl Verdict {
     /// (`PASS or FAIL`) or a condition (`PASS, pending fixes`, `PASS (if CI agrees)`).
     /// A pass whose explanation [takes it back](holds_back) is `Unknown` too.
     fn leading(text: &str) -> Option<Self> {
-        let mut words = text
-            .split(|c: char| !c.is_alphanumeric())
-            .filter(|word| !word.is_empty());
-        let verdict = Self::of_word(words.next()?)?;
-        let first = text
-            .find(|c: char| c.is_alphanumeric())
-            .expect("a first word");
-        let after = text[first..].trim_start_matches(char::is_alphanumeric);
+        let (verdict, after) = Self::opening(text)?;
         let head = after
             .split(['—', '–', ':', ';', '.', '!', '\n'])
             .next()
@@ -250,14 +248,79 @@ impl Verdict {
         })
     }
 
-    fn of_word(word: &str) -> Option<Self> {
-        match word.to_ascii_lowercase().as_str() {
-            "pass" | "passed" | "passes" | "ok" | "approve" | "approved" => Some(Self::Pass),
-            "fail" | "failed" | "fails" | "reject" | "rejected" => Some(Self::Fail),
-            _ => None,
+    /// The verdict phrase of [`PASS_WORDS`] or [`FAIL_WORDS`] that opens `text`,
+    /// its longest if several do, and the text after it; `None` when none does.
+    fn opening(text: &str) -> Option<(Self, &str)> {
+        let start = text.find(char::is_alphanumeric)?;
+        let mut end = start;
+        let mut phrase = String::new();
+        let mut found = None;
+        for _ in 0..MAX_PHRASE_WORDS {
+            let rest = &text[end..];
+            let word = rest
+                .find(|c: char| !c.is_alphanumeric())
+                .unwrap_or(rest.len());
+            if word == 0 {
+                break;
+            }
+            phrase.push_str(&rest[..word]);
+            end += word;
+            if let Some(verdict) = Self::of_phrase(&phrase) {
+                found = Some((verdict, end));
+            }
+            let gap = text[end..].len() - text[end..].trim_start_matches(WORD_JOINS).len();
+            end += gap;
+            phrase.push(' ');
         }
+        let (verdict, at) = found?;
+        assert!(at > start && text.is_char_boundary(at), "a phrase was read");
+        Some((verdict, &text[at..]))
+    }
+
+    /// The verdict a whole `text` names in the vocabulary of [`PASS_WORDS`] and
+    /// [`FAIL_WORDS`]: in any letter case, with `_`, `-` and spaces alike.
+    pub fn of_phrase(text: &str) -> Option<Self> {
+        let words: Vec<String> = text
+            .split(WORD_JOINS)
+            .filter(|word| !word.is_empty())
+            .map(str::to_lowercase)
+            .collect();
+        let phrase = words.join(" ");
+        if PASS_WORDS.contains(&phrase.as_str()) {
+            return Some(Self::Pass);
+        }
+        FAIL_WORDS.contains(&phrase.as_str()).then_some(Self::Fail)
     }
 }
+
+/// Every word or phrase a verdict passes with. Archon's contracts ask for
+/// `pass`; the rest are read, never asked for.
+pub const PASS_WORDS: [&str; 8] = [
+    "pass", "passed", "approve", "approved", "lgtm", "accept", "accepted", "ok",
+];
+
+/// Every word or phrase a verdict fails with, whatever findings it lists.
+/// Archon's contracts ask for `fail`; the rest are read, never asked for.
+pub const FAIL_WORDS: [&str; 11] = [
+    "fail",
+    "failed",
+    "fails",
+    "reject",
+    "rejected",
+    "changes requested",
+    "request changes",
+    "needs changes",
+    "needs work",
+    "blocking",
+    "block",
+];
+
+/// What may join the words of a verdict phrase: `changes_requested`,
+/// `changes-requested` and `changes requested` are one phrase.
+const WORD_JOINS: [char; 3] = ['_', '-', ' '];
+
+/// The most words a phrase of [`PASS_WORDS`] or [`FAIL_WORDS`] holds.
+const MAX_PHRASE_WORDS: usize = 2;
 
 /// Whole verdict fields that pass with follow-ups only: one listing a
 /// blocking finding is no pass, and a summary line saying so stays unread.
@@ -1231,13 +1294,75 @@ mod tests {
     }
 
     #[test]
+    fn each_word_of_the_vocabulary_reads_as_it_says_in_any_spelling() {
+        let read = |word: &str| {
+            let structured = Verdict::extract("", Some(&json!({"verdict": word})));
+            let line = Verdict::extract(&format!("VERDICT: {word}"), None);
+            assert_eq!(structured, line, "{word}: both paths read alike");
+            structured
+        };
+        for (words, verdict) in [
+            (&PASS_WORDS[..], Verdict::Pass),
+            (&FAIL_WORDS[..], Verdict::Fail),
+        ] {
+            for word in words {
+                for spelt in [
+                    word.to_string(),
+                    word.to_uppercase(),
+                    word.replace(' ', "_"),
+                ] {
+                    assert_eq!(read(&spelt), verdict, "{spelt}");
+                    assert_eq!(Verdict::of_phrase(&spelt), Some(verdict), "{spelt}");
+                }
+                assert_eq!(read(&format!("{}: why", word.replace(' ', "-"))), verdict);
+            }
+        }
+        for word in [
+            "Changes_Requested",
+            "request-changes",
+            "changes  requested",
+            "Needs_Work",
+        ] {
+            assert_eq!(read(word), Verdict::Fail, "{word}");
+        }
+        for word in [
+            "changes",
+            "requested",
+            "needs",
+            "maybe",
+            "pass or fail",
+            "block-level",
+            "okay",
+            "passes",
+        ] {
+            assert_eq!(read(word), Verdict::Unknown, "{word}");
+            assert_eq!(Verdict::of_phrase(word), None, "{word}");
+        }
+    }
+
+    /// A fail word beside a blocking finding is a fail, never an unreadable pass.
+    #[test]
+    fn a_fail_word_beside_a_blocking_finding_reads_as_a_fail() {
+        let blocking = json!([{"title": "data loss", "blocking": true}]);
+        let said = json!({"verdict": "changes_requested", "findings": blocking});
+        assert_eq!(Verdict::extract("", Some(&said)), Verdict::Fail);
+        assert_eq!(Verdict::as_worded(&said), Some(Verdict::Fail));
+        let passed = json!({"verdict": "approved", "findings": blocking});
+        assert_eq!(Verdict::from_structured(&passed), Some(Verdict::Unknown));
+        assert_eq!(Verdict::as_worded(&passed), Some(Verdict::Pass));
+    }
+
+    #[test]
     fn verdict_stays_unknown_without_a_readable_word_and_quotes_what_was_said() {
-        let unclear = serde_json::json!({"verdict": "lgtm"});
+        let unclear = serde_json::json!({"verdict": "maybe"});
         assert_eq!(
             Verdict::extract("VERDICT: PASS", Some(&unclear)),
             Verdict::Unknown
         );
-        assert_eq!(Verdict::stated("", Some(&unclear)).as_deref(), Some("lgtm"));
+        assert_eq!(
+            Verdict::stated("", Some(&unclear)).as_deref(),
+            Some("maybe")
+        );
         for malformed in [
             json!({"verdict": ""}),
             json!({"verdict": null}),

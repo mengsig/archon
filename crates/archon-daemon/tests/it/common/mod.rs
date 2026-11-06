@@ -1192,6 +1192,14 @@ impl FakeBackend {
         delegated.expect("a delegated agent").state = ended;
     }
 
+    /// Aether no longer lists the delegated `agent` among any descendants.
+    pub fn forget_delegated(&self, agent: &AetherAgentId) {
+        let mut state = self.state();
+        let before = state.delegated.len();
+        state.delegated.retain(|d| d.agent != *agent);
+        assert_eq!(state.delegated.len() + 1, before, "a delegated agent");
+    }
+
     /// The next `descendants` calls fail with these errors, in order.
     pub fn fail_next_descendants(&self, error: ArchonError) {
         self.state().descendant_failures.push_back(error);

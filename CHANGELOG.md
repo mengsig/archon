@@ -152,6 +152,18 @@ From the audit in [docs/security/vnext-audit.md](docs/security/vnext-audit.md)
   and reports `holdout_lift` once both arms have 20 scored runs. Pinned
   lessons are never held out, and held-out runs never change promotion.
 
+### Review
+
+- A reviewer's verdict word reads as it says on every path, `structured`,
+  summary JSON and the `VERDICT:` line: `changes_requested`,
+  `request_changes`, `needs_changes`, `needs work`, `blocking` and `block`
+  fail, and `lgtm`, `accept` and `accepted` pass, in any letter case with
+  `_`, `-` and spaces alike. Such a fail beside a blocking finding was
+  reported as a pass that lists one. A fail now always fails: one whose
+  findings are all follow-ups no longer counts as a pass, so reviewers pass
+  such a review. Any other word stays unreadable and fails, `passes`
+  included, which used to read as a pass.
+
 ### Orchestrator
 
 - A hung orchestrator turn no longer holds your messages for hours (#393). When a

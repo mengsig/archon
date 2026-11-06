@@ -268,18 +268,18 @@ fn member_report(stage: &StageSpec, member: &StageRun) -> String {
     }
 }
 
-/// Why a completed member's verdict counts as fail, quoting what it said.
+/// Why a completed member's verdict counts as fail, quoting what it said:
+/// a pass beside a blocking finding, or words that read as no verdict.
 fn unreadable_verdict(member: &StageRun) -> String {
     let summary = member.summary.as_deref().unwrap_or_default();
     let Some(said) = Verdict::stated(summary, member.structured.as_ref()) else {
         return "missing (counts as fail)".to_owned();
     };
     let quoted: String = said.chars().take(MAX_QUOTED_VERDICT_CHARS).collect();
-    if member
-        .structured
-        .as_ref()
-        .is_some_and(Verdict::lists_blocking)
-    {
+    let structured = member.structured.as_ref();
+    let worded = structured.and_then(Verdict::as_worded);
+    let worded_pass = worded.or_else(|| Verdict::from_summary(summary)) == Some(Verdict::Pass);
+    if worded_pass && structured.is_some_and(Verdict::lists_blocking) {
         return format!("{quoted:?} beside a blocking finding (counts as fail)");
     }
     format!("{quoted:?} unreadable as pass or fail (counts as fail)")
@@ -388,6 +388,49 @@ mod tests {
         assert!(text.contains("  loop\n  ends early"), "{text}");
         assert!(text.contains("- [-] nit"), "{text}");
         assert_eq!(findings_text(None), "");
+    }
+
+    /// A completed review slot that returned `summary` and `structured`.
+    fn completed(summary: &str, structured: serde_json::Value) -> StageRun {
+        serde_json::from_value(serde_json::json!({
+            "id": "stg_01M58B56K8HTQT169S0FYFQWDP",
+            "run": "prun_01M58B56J7J5HAT01706PQRAVW",
+            "stage_id": "review", "kind": "review", "attempt": 1, "fan_index": 0,
+            "choice": {"model": {"provider": "claude-code", "model": "claude-sonnet-5-5"}, "effort": "medium"},
+            "infrastructure_failure": false, "host_context": "full",
+            "state": {"state": "completed"}, "cost_usd": 0.0,
+            "started_at": "2026-10-18T20:27:24Z", "finished_at": "2026-10-18T20:57:24Z",
+            "summary": summary, "structured": structured
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_fail_word_fails_the_gate_and_only_a_pass_is_named_beside_its_blocker() {
+        let blocking = serde_json::json!([{"title": "data loss", "blocking": true}]);
+        let said = |word: &str| serde_json::json!({"verdict": word, "findings": blocking});
+        let rejected = completed("Reviewed.", said("changes_requested"));
+        assert_eq!(verdict_of(&rejected), Verdict::Fail);
+        let line = completed(
+            "VERDICT: needs work",
+            serde_json::json!({"findings": blocking}),
+        );
+        assert_eq!(verdict_of(&line), Verdict::Fail);
+
+        let passed = completed("Reviewed.", said("approved"));
+        assert_eq!(verdict_of(&passed), Verdict::Unknown);
+        let why = unreadable_verdict(&passed);
+        assert_eq!(
+            why,
+            "\"approved\" beside a blocking finding (counts as fail)"
+        );
+        let lined = completed("VERDICT: PASS", serde_json::json!({"findings": blocking}));
+        assert!(unreadable_verdict(&lined).contains("beside a blocking finding"));
+
+        let unclear = completed("Reviewed.", said("maybe"));
+        assert_eq!(verdict_of(&unclear), Verdict::Unknown);
+        let why = unreadable_verdict(&unclear);
+        assert_eq!(why, "\"maybe\" unreadable as pass or fail (counts as fail)");
     }
 
     #[test]

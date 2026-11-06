@@ -88,20 +88,38 @@ pub(in crate::executor) async fn attempt_resumed(
     save(ctx, &stage.id, &tally).await
 }
 
-/// The settled children `stage`'s attempt read, each with the head of the blocking fail it
-/// counted, if any. Read after [`capped_at_completion`] brought the tally up to date.
+/// The settled children a stage attempt read, and whether its tally kept each fail's head.
+pub(super) struct Tallied {
+    /// Each child read, with the head of the fail it returned, blocking or not, if any.
+    pub children: Vec<(String, Option<String>)>,
+    /// `false` for a tally an earlier archond began: it kept only blocking
+    /// fails' heads, so a child without one may still have failed.
+    pub every_fail_kept: bool,
+}
+
+/// The settled children `stage`'s attempt read, each with the head of the fail it
+/// read, if any. Read after [`capped_at_completion`] brought the tally up to date.
 pub(super) async fn attempt_children(
     ctx: &DaemonContext,
     stage: &StageRunId,
-) -> Result<Vec<(String, Option<String>)>, ArchonError> {
+) -> Result<Tallied, ArchonError> {
     let tally = load(ctx, stage).await?;
+    // A tally an earlier archond began stays unsure of what it read then, even
+    // as it keeps the heads of the fails it reads now.
+    let every_fail_kept = tally.every_fail_kept;
     let mut children: Vec<(String, Option<String>)> =
         tally.read.into_iter().map(|agent| (agent, None)).collect();
-    for fail in tally.fails {
-        match children.iter_mut().find(|(agent, _)| *agent == fail.agent) {
-            Some(child) => child.1 = Some(fail.head),
+    let other_fails = tally.other_fails.into_iter();
+    for (failed, head) in tally
+        .fails
+        .into_iter()
+        .map(|f| (f.agent, f.head))
+        .chain(other_fails)
+    {
+        match children.iter_mut().find(|(agent, _)| *agent == failed) {
+            Some(child) => child.1 = Some(head),
             // A tally written before children were rescanned kept fails alone.
-            None => children.push((fail.agent, Some(fail.head))),
+            None => children.push((failed, Some(head))),
         }
     }
     assert!(
@@ -110,7 +128,10 @@ pub(super) async fn attempt_children(
             .all(|(agent, head)| !agent.is_empty() && head.as_ref().is_none_or(|h| !h.is_empty())),
         "a read child names its agent, and a counted fail its head"
     );
-    Ok(children)
+    Ok(Tallied {
+        children,
+        every_fail_kept,
+    })
 }
 
 /// Add the blocking fails of the attempt's settled children not read before
@@ -128,24 +149,13 @@ async fn count(
     let unread: Vec<&Descendant> = settled_children(&beneath, lead)
         .into_iter()
         .filter(|c| tally.attempt_holds(&c.agent, fresh, reviewer))
-        .filter(|c| !tally.has_read(&c.agent))
+        .filter(|c| !tally.has_read(&c.agent) || tally.owes_reread(&c.agent))
         .collect();
     if !unread.is_empty() {
         for child in unread {
             // Unreadable yet: no child is skipped, so the event or settle is retried.
             let verdict = verdict_of(ctx, child).await?;
-            tally.read.push(child.agent.to_string());
-            if let Some(verdict) = verdict.filter(blocks) {
-                assert!(
-                    !verdict.blocking_findings.is_empty(),
-                    "a counted round names its blocking findings"
-                );
-                tally.fails.push(Fail {
-                    agent: child.agent.to_string(),
-                    head: verdict.head,
-                    findings: verdict.blocking_findings,
-                });
-            }
+            tally.record(&child.agent, verdict);
         }
         in_creation_order(&mut tally.fails, &beneath, lead);
         save(ctx, &stage.id, &tally).await?;
@@ -252,12 +262,74 @@ struct Tally {
     /// For an attempt that resumed its lead, the children the lead held then.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     earlier: Option<Vec<String>>,
+    /// Each fail read that names nothing blocking, as (agent, head): it adds
+    /// no round, but stands for coverage once Aether no longer lists its agent.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    other_fails: Vec<(String, String)>,
+    /// Whether this tally kept every read fail's head from its start; one an
+    /// earlier archond began lacks it and reads `false`.
+    #[serde(default)]
+    every_fail_kept: bool,
+    /// For a tally an earlier archond began, the children read under today's
+    /// verdict words; any other child it read is read again once its attempt admits it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    reread: Vec<String>,
 }
 
 impl Tally {
     fn has_read(&self, agent: &AetherAgentId) -> bool {
         let agent = agent.as_str();
         self.read.iter().any(|a| a == agent) || self.fails.iter().any(|f| f.agent == agent)
+    }
+
+    /// Whether an earlier archond read `agent`, which may have failed in a word
+    /// it did not know, kept no fail of it, and it was not read again yet.
+    fn owes_reread(&self, agent: &AetherAgentId) -> bool {
+        let agent = agent.as_str();
+        !self.every_fail_kept
+            && self.read.iter().any(|a| a == agent)
+            && !self.reread.iter().any(|a| a == agent)
+            && !self.fails.iter().any(|f| f.agent == agent)
+            && !self.other_fails.iter().any(|(a, _)| a == agent)
+    }
+
+    /// Add child `agent`'s verdict, `None` for none: a blocking fail as a
+    /// round, any other fail by its head. A child read again is listed once.
+    fn record(&mut self, agent: &AetherAgentId, verdict: Option<Verdict>) {
+        let name = agent.to_string();
+        assert!(!name.is_empty(), "a read child names its agent");
+        assert!(
+            !self.fails.iter().any(|f| f.agent == name),
+            "a counted round is never read again"
+        );
+        if self.read.contains(&name) {
+            assert!(
+                !self.every_fail_kept,
+                "a tally that kept every fail reads a child once"
+            );
+        } else {
+            self.read.push(name.clone());
+        }
+        if !self.every_fail_kept {
+            self.reread.push(name.clone());
+        }
+        let Some(verdict) = verdict.filter(|v| !v.pass) else {
+            return;
+        };
+        assert!(!verdict.head.is_empty(), "a read fail names its head");
+        if !blocks(&verdict) {
+            self.other_fails.push((name, verdict.head));
+            return;
+        }
+        assert!(
+            !verdict.blocking_findings.is_empty(),
+            "a counted round names its blocking findings"
+        );
+        self.fails.push(Fail {
+            agent: name,
+            head: verdict.head,
+            findings: verdict.blocking_findings,
+        });
     }
 
     /// Whether child `agent` belongs to this attempt. A lead resumed before
@@ -271,6 +343,8 @@ impl Tally {
         match (fresh, &self.earlier) {
             (true, _) => true,
             (false, Some(earlier)) => !earlier.iter().any(|a| a == agent.as_str()),
+            // Known limit: an earlier-read reviewer no event names again is never read again;
+            // its fail adds no round here, and the ship-time coverage check still refuses it.
             (false, None) => reviewer == Some(agent),
         }
     }
@@ -283,7 +357,10 @@ fn tally_key(stage: &StageRunId) -> String {
 async fn load(ctx: &DaemonContext, stage: &StageRunId) -> Result<Tally, ArchonError> {
     let key = tally_key(stage);
     let Some(raw) = ctx.store.lock().await.kv_get(&key)? else {
-        return Ok(Tally::default());
+        return Ok(Tally {
+            every_fail_kept: true,
+            ..Tally::default()
+        });
     };
     serde_json::from_str(&raw).map_err(|e| ArchonError::Corrupt(format!("kv {key} = {raw:?}: {e}")))
 }
@@ -463,6 +540,48 @@ mod tests {
             "six listed"
         );
         assert_eq!(listed(&lines[..2], 0), "2 more");
+    }
+
+    #[test]
+    fn a_legacy_tally_reads_each_earlier_read_child_again_once_whenever_it_is_admitted() {
+        let id = |s: &str| AetherAgentId::parse(s).unwrap();
+        let (old, other, new) = (id("agt_old"), id("agt_other"), id("agt_new"));
+        let legacy = r#"{"fails":[],"read":["agt_old","agt_other"]}"#;
+        let mut tally: Tally = serde_json::from_str(legacy).unwrap();
+        assert!(tally.owes_reread(&old) && tally.owes_reread(&other));
+        // A resumed lead admits only the reviewer an event names: `old` waits its turn.
+        tally.record(&new, None);
+        assert!(
+            !tally.owes_reread(&new),
+            "a child read after the upgrade is read once"
+        );
+        assert!(tally.owes_reread(&old) && tally.owes_reread(&other));
+        let blocking = Verdict {
+            pass: false,
+            head: "aaaaaaa1".into(),
+            base: None,
+            findings: Some(1),
+            blocking: Some(1),
+            blocking_findings: vec!["drops the tail".into()],
+        };
+        tally.record(&old, Some(blocking));
+        assert_eq!(rounds_of(&tally.fails), 1, "the reread fail is a round");
+        assert!(!tally.owes_reread(&old), "read again once");
+        assert!(tally.owes_reread(&other), "still owed until admitted");
+        assert_eq!(
+            tally.read,
+            ["agt_old", "agt_other", "agt_new"],
+            "each listed once"
+        );
+        let fresh = Tally {
+            every_fail_kept: true,
+            read: vec!["agt_old".into()],
+            ..Tally::default()
+        };
+        assert!(
+            !fresh.owes_reread(&old),
+            "a tally that kept every fail owes none"
+        );
     }
 
     #[test]

@@ -1635,7 +1635,7 @@ mod tests {
         }
         let rubric = archon_core::model::EFFORT_RUBRIC;
         assert!(
-            prompt.contains(&format!("size their children's: {rubric}")),
+            prompt.contains(&format!("Size each stage's effort to its task: {rubric}")),
             "the stage contracts' effort rubric, word for word"
         );
         assert!(
@@ -1833,7 +1833,8 @@ mod tests {
     }
 
     /// The prompt is paid for on every turn; the tools describe themselves.
-    const BUDGET_BYTES: usize = 13 * 1024;
+    /// The half KiB above 13 holds the effort rubric.
+    const BUDGET_BYTES: usize = 13 * 1024 + 512;
 
     #[test]
     fn builtin_prompt_stays_within_its_budget() {

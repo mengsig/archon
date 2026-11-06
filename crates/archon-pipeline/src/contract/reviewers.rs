@@ -363,7 +363,7 @@ mod tests {
             &single_fast_catalog(),
         );
         assert!(
-            rules.contains("on codex/luna at effort medium or higher"),
+            rules.contains("on codex/luna at effort medium: "),
             "{rules}"
         );
         assert!(rules.contains("balanced unavailable under policy"));
@@ -384,7 +384,7 @@ mod tests {
                 &catalog,
             );
             assert!(
-                rules.contains("on codex/luna at effort medium or higher"),
+                rules.contains("on codex/luna at effort medium: "),
                 "{rules}"
             );
             assert_no_lookup_instruction(&rules);
@@ -397,7 +397,7 @@ mod tests {
             &ModelCatalog::default(),
         );
         assert!(
-            rules.contains("on third/other at effort medium or higher"),
+            rules.contains("on third/other at effort medium: "),
             "{rules}"
         );
         let rules = reviewer_profile_rules(
@@ -428,7 +428,9 @@ mod tests {
             &single_fast_catalog(),
         );
         assert!(
-            rules.contains("codex/sol at tier balanced and effort medium or higher"),
+            rules.contains(
+                "codex/sol at tier balanced and effort medium. That effort is the default"
+            ),
             "{rules}"
         );
     }
@@ -446,7 +448,7 @@ mod tests {
         let narrowed = global.narrowed_by(&policy_allowing(&["codex/luna"]));
         let rules = reviewer_profile_rules(None, &own, &narrowed, &config, &single_fast_catalog());
         assert!(
-            rules.contains("on codex/luna at effort medium or higher"),
+            rules.contains("on codex/luna at effort medium: "),
             "{rules}"
         );
         assert_no_lookup_instruction(&rules);
@@ -463,7 +465,7 @@ mod tests {
         let rules =
             reviewer_profile_rules(None, &own, &ModelPolicy::default(), &config, &catalog());
         assert!(
-            rules.contains("on codex/strong at effort medium or higher"),
+            rules.contains("on codex/strong at effort medium: "),
             "{rules}"
         );
         assert!(rules.contains("frontier unavailable under policy"));

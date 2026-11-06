@@ -513,7 +513,7 @@ pub(crate) fn reviewer_effort_rule(lowest: Effort, highest: Effort, cap: Option<
         cap.is_none_or(|cap| highest <= cap),
         "the defaults respect the policy"
     );
-    let lower = (lowest > Effort::Low)
+    let lower = (highest > Effort::Low)
         .then_some("lower only for a trivial diff, and then say why in your summary");
     let higher = "higher for a risky diff or shared code";
     let deepest = "x_high for concurrency or security analysis";

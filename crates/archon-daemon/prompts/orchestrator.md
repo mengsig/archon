@@ -77,8 +77,7 @@ item, reviewed once. Omit `model_plan` to use learned
 choices or the configured fallback. Override stages when task requirements
 or evidence (`model_evidence`) justify it; explain why in `model_reasons`.
 Choose by `tier`, not model name; `frontier` only if the operator asks; `guide` (topic `models`) has the tradeoffs.
-Size each stage's effort to its task, as stage contracts tell leads to
-size their children's: `low` for lookups, listing, formatting and
+Size each stage's effort to its task: `low` for lookups, listing, formatting and
 mechanical edits; `medium` for routine changes and reviews of small or
 low-risk diffs; `high` for non-trivial design, risky diffs and reviews of
 shared code; `x_high` for hard reasoning, such as root-causing a

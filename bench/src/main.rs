@@ -20,6 +20,7 @@ use archon_core::model::{Effort, ModelRef};
 use clap::{Args, Parser, Subcommand};
 
 mod smoke_cli;
+mod swe_cli;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -49,6 +50,9 @@ enum BenchCommand {
         #[arg(long)]
         lavish: bool,
     },
+    /// The SWE family on Aether's shared swe-v1 set, and its release gate.
+    #[command(subcommand)]
+    Swe(swe_cli::SweCommand),
     /// Check graders against untouched, reference and optional naive fixtures.
     Verify {
         /// Task ids; empty checks every task.
@@ -149,6 +153,7 @@ async fn main() -> anyhow::Result<()> {
         }
         BenchCommand::Run(args) => run(&cli.tasks, *args).await.map(|_| ()),
         BenchCommand::Smoke(args) => smoke_cli::run(&cli.tasks, *args).await,
+        BenchCommand::Swe(command) => swe_cli::run(command),
         BenchCommand::Report { results, lavish } => render(&results, lavish),
         BenchCommand::Verify { only } => verify_all(&cli.tasks, &only).await,
     }

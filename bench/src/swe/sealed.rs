@@ -1,7 +1,7 @@
-//! Guards around the sealed holdout. Its store
-//! (`$XDG_DATA_HOME/bench-holdout`, normally `~/.local/share/bench-holdout`)
-//! belongs to Aether's runner: archon-bench never reads, writes or points a
-//! run into it, and its own scratch space is private and short-lived.
+//! Guards around the sealed holdout. Its store (`~/.local/share/bench-holdout`)
+//! and keys (`~/.config/bench-holdout`) belong to Aether's runner: archon-bench
+//! never reads, writes or points a run into them, and its own scratch space is
+//! private and short-lived.
 
 use std::ffi::OsString;
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
@@ -11,26 +11,47 @@ use anyhow::{Context, bail, ensure};
 
 use crate::workspace;
 
-/// The holdout store's root, from the same variables as the work directory.
-pub fn store_root() -> anyhow::Result<PathBuf> {
-    store_root_from(std::env::var_os("XDG_DATA_HOME"), std::env::var_os("HOME"))
+/// Every directory the holdout or its keys may live in.
+fn store_roots() -> anyhow::Result<Vec<PathBuf>> {
+    let var = std::env::var_os;
+    store_roots_from(var("HOME"), var("XDG_DATA_HOME"), var("XDG_CONFIG_HOME"))
 }
 
-fn store_root_from(xdg: Option<OsString>, home: Option<OsString>) -> anyhow::Result<PathBuf> {
-    let absolute = |value: OsString| {
-        let path = PathBuf::from(value);
-        path.is_absolute().then_some(path)
-    };
-    let data_home = xdg
-        .and_then(absolute)
-        .or_else(|| home.and_then(absolute).map(|h| h.join(".local/share")))
-        .context("neither XDG_DATA_HOME nor HOME is absolute, so the holdout store is unknown")?;
-    Ok(data_home.join("bench-holdout"))
+/// Aether's fixed HOME paths, plus their XDG forms in case a later Aether honours them.
+fn store_roots_from(
+    home: Option<OsString>,
+    xdg_data: Option<OsString>,
+    xdg_config: Option<OsString>,
+) -> anyhow::Result<Vec<PathBuf>> {
+    let absolute =
+        |value: Option<OsString>| value.map(PathBuf::from).filter(|path| path.is_absolute());
+    let home =
+        absolute(home).context("HOME is not an absolute path, so the holdout store is unknown")?;
+    let mut roots = vec![
+        home.join(".local/share/bench-holdout"),
+        home.join(".config/bench-holdout"),
+    ];
+    for base in [absolute(xdg_data), absolute(xdg_config)]
+        .into_iter()
+        .flatten()
+    {
+        roots.push(base.join("bench-holdout"));
+    }
+    roots.sort();
+    roots.dedup();
+    assert!(
+        roots.iter().all(|r| r.is_absolute()),
+        "every store root is absolute"
+    );
+    Ok(roots)
 }
 
-/// Refuse any path inside the holdout store, before anything opens it.
+/// Refuse any path inside the holdout store or its keys, before anything opens it.
 pub fn refuse_inside_store(path: &Path) -> anyhow::Result<()> {
-    refuse_inside(path, &store_root()?)
+    for store in store_roots()? {
+        refuse_inside(path, &store)?;
+    }
+    Ok(())
 }
 
 fn refuse_inside(path: &Path, store: &Path) -> anyhow::Result<()> {
@@ -98,12 +119,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_store_follows_xdg_data_home_then_home() {
-        let root = store_root_from(Some("/x".into()), Some("/h".into())).unwrap();
-        assert_eq!(root, Path::new("/x/bench-holdout"));
-        let root = store_root_from(Some("relative".into()), Some("/h".into())).unwrap();
-        assert_eq!(root, Path::new("/h/.local/share/bench-holdout"));
-        assert!(store_root_from(None, None).is_err());
+    fn the_store_covers_home_data_and_keys_whatever_xdg_says() {
+        let roots = store_roots_from(Some("/h".into()), Some("/x".into()), None).unwrap();
+        assert_eq!(
+            roots,
+            [
+                PathBuf::from("/h/.config/bench-holdout"),
+                PathBuf::from("/h/.local/share/bench-holdout"),
+                PathBuf::from("/x/bench-holdout"),
+            ]
+        );
+        let roots =
+            store_roots_from(Some("/h".into()), Some("rel".into()), Some("/c".into())).unwrap();
+        assert!(roots.contains(&PathBuf::from("/c/bench-holdout")));
+        assert_eq!(roots.len(), 3, "a relative XDG value is ignored");
+        assert!(store_roots_from(Some("rel".into()), Some("/x".into()), None).is_err());
+        assert!(store_roots_from(None, None, None).is_err());
     }
 
     #[test]

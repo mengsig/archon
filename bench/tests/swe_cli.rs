@@ -289,42 +289,46 @@ fn a_holdout_run_beside_another_is_refused_without_reading_either() {
     assert!(results_empty(&sandbox), "nothing is kept");
 }
 
-#[test]
-fn a_run_pointed_into_the_holdout_store_is_refused_before_the_runner_starts() {
-    let sandbox = Sandbox::new();
-    let store = sandbox.data_home.join("bench-holdout/swe-v1");
-    std::fs::create_dir_all(&store).unwrap();
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_archon-bench"))
+/// A dry `swe run` whose Aether checkout is `checkout`, under the given HOME.
+fn dry_run_with_checkout(sandbox: &Sandbox, home: &Path, checkout: &Path) -> Output {
+    std::fs::create_dir_all(checkout).unwrap();
+    std::process::Command::new(env!("CARGO_BIN_EXE_archon-bench"))
         .args([
             "swe",
             "run",
             "--split",
             "dev",
             "--dry-run",
-            "--old-label",
-            "a",
-            "--new-label",
-            "b",
-        ])
-        .args([
-            "--old-archon",
-            "x",
-            "--old-aether",
-            "x",
-            "--new-archon",
-            "y",
-            "--new-aether",
-            "y",
             "--budget-usd",
             "1",
         ])
+        .args(["--old-label", "a", "--new-label", "b"])
+        .args(["--old-archon", "x", "--old-aether", "x"])
+        .args(["--new-archon", "y", "--new-aether", "y"])
         .arg("--aether-checkout")
-        .arg(&store)
+        .arg(checkout)
+        .env("HOME", home)
         .env("XDG_DATA_HOME", &sandbox.data_home)
+        .env_remove("XDG_CONFIG_HOME")
         .output()
-        .unwrap();
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("sealed holdout store"));
+        .unwrap()
+}
+
+#[test]
+fn a_run_pointed_into_the_holdout_store_is_refused_before_the_runner_starts() {
+    let sandbox = Sandbox::new();
+    let home = sandbox.data_home.parent().unwrap().join("home");
+    let stores = [
+        sandbox.data_home.join("bench-holdout/swe-v1"),
+        home.join(".local/share/bench-holdout/swe-v1"),
+        home.join(".config/bench-holdout"),
+    ];
+    for store in &stores {
+        let output = dry_run_with_checkout(&sandbox, &home, store);
+        assert!(!output.status.success(), "{} was accepted", store.display());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("sealed holdout store"), "{stderr}");
+    }
     assert!(sandbox.kept_files().is_empty());
 }
 

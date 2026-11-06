@@ -211,7 +211,9 @@ For that split archon-bench:
 - discards the runner's stdout and stderr unread;
 - skips Aether's own gate reasons and stop reason unread;
 - deletes the scratch directory the runner worked in;
-- refuses any path inside the holdout store;
+- refuses any path inside the holdout store or its keys
+  (`~/.local/share/bench-holdout`, `~/.config/bench-holdout`, and their
+  `$XDG_DATA_HOME` and `$XDG_CONFIG_HOME` forms), whatever XDG is set to;
 - refuses an aggregate that carries per-instance verdicts or any field
   outside the schema;
 - reports a parse error by position only, never by content;

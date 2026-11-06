@@ -755,7 +755,8 @@ fn adaptive_prices_what_it_delegates_and_records_what_ships() {
         "With no reviewer asked for, that run is the whole of this step",
         "never end your turn while a check runs",
         "the exact base and head commits (`{{base_commit}}` and `git rev-parse HEAD`",
-        "Size its effort to the diff from the default your contract names: lower only for a trivial diff, saying why in your summary",
+        "Keep the effort your contract names unless the diff calls for another, then take the rubric's level for a review: `low` for a trivial diff, `medium` for a small or low-risk one",
+        "Going below the default, say why in your summary.",
         "by your contract's effort rubric",
         "never because a tree that passed was committed",
         "for any commit after a pass: Archon delivers only commits a passing reviewer read",
@@ -794,6 +795,19 @@ fn adaptive_prices_what_it_delegates_and_records_what_ships() {
         !build.contains("never below one your contract names"),
         "a default, no floor"
     );
+    // Both reviewer-delegating prompts size a review by the contract's absolute levels.
+    let review = flat(&catalog.get("review").unwrap().prompts["review.md"]);
+    for prompt in [&build, &review] {
+        assert!(
+            prompt.contains("`medium` for a small or low-risk one"),
+            "{prompt}"
+        );
+        assert!(prompt.contains("`x_high` for concurrency or security analysis"));
+        assert!(
+            !prompt.contains("lower only for a trivial diff"),
+            "{prompt}"
+        );
+    }
 }
 
 /// `direct` escalates on what a change risks and reaches into, not on its

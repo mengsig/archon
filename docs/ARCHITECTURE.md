@@ -2245,9 +2245,12 @@ its tier.
 `<stage>.review` in `model_plan` and `model_reasons`, with at most as many
 `{model, effort}` entries as the strict level has reviewers (taken in turn).
 The stage contract tells the lead to delegate reviewers with role `reviewer` on
-those models, each effort the default for its reviewer: the lead goes lower
-only for a trivial diff, saying why in its summary, and higher for a risky one,
-the model policy's `max_effort` the only ceiling. The delegation watchdog
+those models, each effort the default for its reviewer. Where the diff calls
+for another, the lead takes the rubric's level for a review (`low` for a
+trivial diff, `medium` for a small or low-risk one, `high` for a risky diff or
+shared code, `x_high` for concurrency or security analysis, never `max`),
+saying why in its summary when it goes below the default; the model policy's
+`max_effort` is the only ceiling. The delegation watchdog
 (§7.4) cancels a child with such a role on another model, or above the cap, as
 it spawns, before it does any work. This check relies on the lead using
 the required reviewer role; children with other roles follow the general model

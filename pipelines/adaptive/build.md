@@ -65,10 +65,12 @@ read again.
    - the repository guidance it must apply and only the parts of a spec that
      bear on the change: no conversation, no project history.
 
-   Size its effort to the diff from the default your contract names: lower
-   only for a trivial diff, saying why in your summary; high for a risky
-   diff or shared code, where an invariant is at stake, or the brief asks
-   for depth; x_high for concurrency or security analysis. Require the
+   Keep the effort your contract names unless the diff calls for another,
+   then take the rubric's level for a review: `low` for a trivial diff,
+   `medium` for a small or low-risk one, `high` for a risky diff, shared
+   code, an invariant at stake or a brief asking for depth, `x_high` for
+   concurrency or security analysis. Going below the default, say why in
+   your summary. Require the
    verdict your contract shows, on the head it read, with actionable
    findings (path, issue, impact, remedy).
    Pass on your contract's bounds for reviewers and its blocking class:

@@ -1246,10 +1246,11 @@ verifies and fixes the change. Its prompt has it spend where spending pays:
   they read. A reviewer is handed the acceptance criteria, the exact base
   and head commits, the changed paths, the checks with their results and
   the known risks, not the conversation. Its effort is the lead's choice,
-  sized to the diff from the default its contract names: lower only for a
-  trivial diff, saying why in its summary; high for a risky diff or shared
-  code, or where an invariant is at stake; `x_high` for concurrency or
-  security analysis.
+  the default its contract names unless the diff calls for another, then
+  the rubric's level for a review: `low` for a trivial diff, `medium` for a
+  small or low-risk one, `high` for a risky diff, shared code or an
+  invariant at stake, `x_high` for concurrency or security analysis; going
+  below the default, it says why in its summary.
 - **Fixes.** Blocking findings are fixed in new commits and the affected
   checks rerun; the full suite runs again only for a fix with broad impact
   or where the project's policy demands it. A second look, by new children

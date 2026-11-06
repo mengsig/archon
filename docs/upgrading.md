@@ -29,7 +29,7 @@ are in the [changelog](../CHANGELOG.md).
 | `remote.json` | format 1 | format 1 while every device is an operator; format 2 once an observer is paired |
 | Remote access | archond served its own web app over `tailscale serve` or your proxy | archond is mounted on Aether's listener and its screens are part of the Aether app |
 | A hung orchestrator turn | archond nudged it and told you after 30 silent minutes; your messages waited until you pressed Esc | the same notice, after 10 minutes once your message waits, then archond interrupts the turn 5 minutes later, as Esc would, so your messages reach a fresh turn ([troubleshooting](troubleshooting.md#the-orchestrator-or-aether-is-down)) |
-| A reviewer plan's effort (`<stage>.review` in `model_plan`) | a floor: archond cancelled a reviewer below it | the reviewer's default: a lead may go lower for a trivial diff, saying why, or higher for a risky one, up to `[models] max_effort`; a reviewer on a model the plan does not name is still cancelled |
+| A reviewer plan's effort (`<stage>.review` in `model_plan`) | a floor: archond cancelled a reviewer below it | the reviewer's default: where the diff calls for another, a lead takes the effort rubric's level for a review, from `low` for a trivial diff to `x_high` for concurrency or security analysis, saying why when it goes below the default, up to `[models] max_effort`; a reviewer on a model the plan does not name is still cancelled |
 | `config.toml` | | new keys `[remote] mounted_at`, `[remote] trusted_origins` and `[learning] holdout_rate` |
 
 A 1.5.0 `archon` and a 1.4.x archond refuse each other at `hello`, so

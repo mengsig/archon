@@ -32,7 +32,7 @@ const RUN_TREE_BUDGET: usize = 550;
 const RISK_BUDGET: usize = 1_350;
 /// What the record stage's summary and evidence rules add.
 const EVIDENCE_BUDGET: usize = 2_100;
-const TOTAL_BUDGET: usize = 130_000;
+const TOTAL_BUDGET: usize = 131_000;
 
 /// One built-in stage's fixed input, in bytes.
 struct Cost {
@@ -155,7 +155,8 @@ fn built_in_contracts_stay_within_their_byte_budgets() {
     }
     println!("BYTES total contract+delegation = {total}");
     assert!(over.is_empty(), "contracts over their budget: {over:?}");
-    // 139,966 B while every shipping pipeline ended in a ship agent.
+    // 139,966 B while every shipping pipeline ended in a ship agent; 130,312 B
+    // once every delegation section carried the effort rubric.
     assert!(total <= TOTAL_BUDGET, "built-in contracts total {total} B");
 }
 

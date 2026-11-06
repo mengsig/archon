@@ -2604,7 +2604,7 @@ async fn a_policy_narrowed_mid_run_bounds_the_next_lead_s_reviewers() {
     h.dispatch().await;
     let build = h.backend.requests().last().unwrap().clone();
     assert_eq!(build.labels["archon.stage"], "build");
-    let own = format!("on {MODEL} at tier balanced and effort medium or higher");
+    let own = format!("on {MODEL} at tier balanced and effort medium. That effort is the default");
     assert!(build.instructions.contains(&own), "{}", build.instructions);
     let named = build.instructions.matches(REVIEW_MODEL).count();
     assert_eq!(named, 0, "{}", build.instructions);
@@ -2688,7 +2688,13 @@ async fn adaptive_guarded_build_delegates_within_the_stated_policy_and_archond_s
     assert!(build.instructions.contains("\n## Review on record\n"));
     assert!(build.instructions.contains("\n## Ship record\n"));
     // The repository leaves the lead's model alone: its reviewers run on it.
-    let own = format!("on {MODEL} at tier balanced and effort medium up to high, and high");
+    let own = format!(
+        "on {MODEL} at tier balanced and effort medium. That effort is the default, for a diff \
+         the rubric leaves open; otherwise the rubric decides: `low` for a trivial diff, \
+         `medium` for a small or low-risk diff, `high` for a risky diff or shared code; never \
+         above high, the model policy's cap. Off the default, lower or higher, state the reason \
+         in one line in your result."
+    );
     assert!(build.instructions.contains(&own), "{}", build.instructions);
 
     let (built, reviewer) = reviewed_by_one(&h, "Verified; one reviewer passed it").await;

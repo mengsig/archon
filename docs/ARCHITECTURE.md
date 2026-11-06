@@ -946,7 +946,10 @@ each attempt is charged only what was spent between its hand-off and the
 next, so an item's attempts add up to what its agents cost.
 A stage that delegated also reports the split (`delegations` in `GetItem`,
 `delegation` in `GetStage`): its own agent's cost, the delegated agents'
-cost, and each delegated agent with its parent, model, effort and cost.
+cost, and each delegated agent with its parent, model, effort and cost. Its
+text in `get_item` and `get_stage` counts the agents by effort
+(`… for 3 delegated agent(s) at effort 2 medium, 1 x_high`), so the mix shows
+at a glance.
 Schema V8 (`delegated_agents`) records who delegated to whom as the watcher
 links each child, and the child's effort, read from Aether's agent record
 as it is linked and again when the stage's owed stop is confirmed (§6.3);
@@ -2133,11 +2136,16 @@ The orchestrator chooses independently for each stage, following operator
 provider preferences and exact model requests first. Pipeline nudges are
 advice, not routing rules. Its prompt asks what reasoning and ambiguity remain,
 what a wrong result would break and how tests or review would catch it, and
-which available model and effort are the cheapest plausible choices. The
-highest efforts (`x_high`, `max`) are for a reasoning problem it can name that
-inspecting the work left unresolved; that the operator prefers strong models is
-not one. Reviewers need independent discovery: another provider at the same
-tier counts, and several fast-tier reviewers, or a fast-tier team checked by
+which available model and effort are the cheapest plausible choices. One effort
+rubric (`archon_core::model::EFFORT_RUBRIC`) sizes every effort Archon asks an
+agent to choose, word for word in the orchestrator prompt and in every stage
+contract that may delegate: `low` for lookups, listing, formatting and
+mechanical edits; `medium` for routine changes and reviews of small or low-risk
+diffs; `high` for non-trivial design, risky diffs and reviews of shared code;
+`x_high` for hard reasoning, such as root-causing a regression, concurrency or
+security analysis, or a fix that failed twice; `max` only after `x_high` failed
+on the same task. Take the cheapest that fits. Reviewers need independent
+discovery: another provider at the same tier counts, and several fast-tier reviewers, or a fast-tier team checked by
 one stronger-tier judge at low effort, can beat one balanced reviewer for far
 less. A failed stage prompts reconsideration through `retry_item`'s
 `model_plan`. The daemon validates policy and never replaces a choice the
@@ -2237,20 +2245,24 @@ its tier.
 `<stage>.review` in `model_plan` and `model_reasons`, with at most as many
 `{model, effort}` entries as the strict level has reviewers (taken in turn).
 The stage contract tells the lead to delegate reviewers with role `reviewer` on
-those models, each effort a floor and the model policy's `max_effort` the
-only ceiling: the delegation watchdog (§7.4) cancels a child with such a role
-on another model or below its model's effort as it spawns, before it does
-any work, and the contract states the floor so the lead delegates at it. This check relies on the lead using
+those models, each effort the default for its reviewer, kept where the rubric
+leaves the diff open. Otherwise the rubric decides the review's level (`low`
+for a trivial diff, `medium` for a small or low-risk one, `high` for a risky
+diff or shared code, `x_high` for concurrency or security analysis, `max` only
+after `x_high` failed on the same review), and the lead states the reason in
+one line in its result, lower or higher; the model policy's
+`max_effort` is the only ceiling. The delegation watchdog
+(§7.4) cancels a child with such a role on another model, or above the cap, as
+it spawns, before it does any work. This check relies on the lead using
 the required reviewer role; children with other roles follow the general model
-policy. The role matches `reviewer` exactly (case-insensitively); a reviewer
-with missing or unrecognised effort is refused. If Aether no longer has the
+policy. The role matches `reviewer` exactly (case-insensitively). If Aether no longer has the
 child when the watchdog reads it, only its event model can be checked: its role
 and effort are unavailable. With no such key the contract names the models the
 item's effective policy allows, as it stands when the lead spawns, other than the
 lead's, or the lead's own when the policy allows no other, and the watchdog holds
-reviewers only to the model policy. The `[review]` profile's contract asks such
-reviewers for at least medium effort, and at least high when the lead rates the
-change's risk medium or high, within the policy's `max_effort`.
+reviewers only to the model policy. The `[review]` profile's contract names
+its `default_effort`, raised to medium, as such a reviewer's default, sized to
+the diff the same way within the policy's `max_effort`.
 
 **Stage timeouts.** `enqueue`, `update_item` and `steer_item` take `stage_timeouts`, a
 `{"<stage-id>": minutes}` map for the item: each stage it names runs with that

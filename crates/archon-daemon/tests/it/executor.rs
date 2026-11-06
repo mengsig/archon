@@ -3010,7 +3010,7 @@ fn fail_on(built: &StageOutcome, blocking: bool) -> serde_json::Value {
 }
 
 /// A fail of the commit `built` records: with a blocking finding, with an
-/// empty list or none, or with follow-ups alone, which reads as a pass.
+/// empty list or none, or with follow-ups alone, which still fails.
 fn fail_of_kind(built: &StageOutcome, kind: &str) -> serde_json::Value {
     let mut fail = verdict_on(built, "fail");
     match kind {
@@ -3025,7 +3025,7 @@ fn fail_of_kind(built: &StageOutcome, kind: &str) -> serde_json::Value {
 }
 
 /// The lead names the reviewer that passed its head and leaves out the one
-/// that failed it: the fail stands, unless it lists follow-ups alone.
+/// that failed it: the fail stands, whatever findings it lists.
 #[tokio::test]
 async fn a_reviewer_that_failed_the_head_and_is_left_out_of_the_record_is_refused() {
     for kind in ["blocking", "empty", "unlisted", "follow-ups"] {
@@ -3041,11 +3041,6 @@ async fn a_reviewer_that_failed_the_head_and_is_left_out_of_the_record_is_refuse
         h.backend
             .complete_delegated(&passing, verdict_on(&built, "pass"));
         h.settle_running(|_| built.clone()).await;
-        if kind == "follow-ups" {
-            h.dispatch().await;
-            assert!(delivered(&h, &item).await, "{:?}", h.state(&item.id).await);
-            continue;
-        }
         let error = refused_review(&h, &item).await;
         let stands = format!("reviewer {failing} failed the change at");
         assert!(error.contains(&stands), "{kind}: {error}");
@@ -3053,6 +3048,35 @@ async fn a_reviewer_that_failed_the_head_and_is_left_out_of_the_record_is_refuse
             error.contains("the record leaves that reviewer out"),
             "{kind}: {error}"
         );
+    }
+}
+
+/// A fail naming nothing blocking adds no round, but the tally keeps its head:
+/// left out of the record after Aether stops listing its reviewer, it stands.
+#[tokio::test]
+async fn a_left_out_fail_with_nothing_blocking_stands_after_aether_forgets_its_reviewer() {
+    for kind in ["empty", "unlisted", "follow-ups"] {
+        let h = Harness::new().await;
+        let item = adaptive_item(&h).await;
+        let lead = h.running().await.remove(0);
+        let lead_id = lead_agent(&lead);
+        let failing = h.backend.delegate(&lead_id, REVIEW_MODEL);
+        let passing = h.backend.delegate(&lead_id, REVIEW_MODEL);
+        let named = pass_by(std::slice::from_ref(&passing));
+        let built = shipped_by(&h, &lead, "Reviewed", named).await;
+        h.backend
+            .complete_delegated(&failing, fail_of_kind(&built, kind));
+        executor::reviewer_settled(&h.ctx, &lead_id, &failing)
+            .await
+            .unwrap();
+        assert_eq!(escalated(&h, &lead).await, None, "{kind}: no round");
+        h.backend.forget_delegated(&failing);
+        h.backend
+            .complete_delegated(&passing, verdict_on(&built, "pass"));
+        h.settle_running(|_| built.clone()).await;
+        let error = refused_review(&h, &item).await;
+        let stands = format!("reviewer {failing} failed the change at");
+        assert!(error.contains(&stands), "{kind}: {error}");
     }
 }
 

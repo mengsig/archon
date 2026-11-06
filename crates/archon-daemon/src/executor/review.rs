@@ -308,7 +308,7 @@ async fn left_out_fails(
             .iter()
             .find(|d| d.parent == *lead && d.agent.as_str() == agent && d.task.is_some());
         let Some(child) = listed else {
-            // Aether no longer lists it: a blocking fail the tally kept still stands.
+            // Aether no longer lists it: any fail the tally kept still stands.
             if let Some(head) = tallied {
                 reads.push((agent, tallied_fail(head)));
             }
@@ -336,7 +336,7 @@ async fn left_out_fails(
     Ok(Ok(reads))
 }
 
-/// The fail of `head` the attempt's tally counted, for a reviewer Aether no
+/// The fail of `head` the attempt's tally read, for a reviewer Aether no
 /// longer lists: read as a whole-change fail.
 fn tallied_fail(head: String) -> Verdict {
     assert!(!head.is_empty(), "a counted fail names its head");

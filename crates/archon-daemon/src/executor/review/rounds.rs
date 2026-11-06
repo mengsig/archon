@@ -88,8 +88,8 @@ pub(in crate::executor) async fn attempt_resumed(
     save(ctx, &stage.id, &tally).await
 }
 
-/// The settled children `stage`'s attempt read, each with the head of the blocking fail it
-/// counted, if any. Read after [`capped_at_completion`] brought the tally up to date.
+/// The settled children `stage`'s attempt read, each with the head of the fail it
+/// read, blocking or not, if any. Read after [`capped_at_completion`] brought the tally up to date.
 pub(super) async fn attempt_children(
     ctx: &DaemonContext,
     stage: &StageRunId,
@@ -97,11 +97,17 @@ pub(super) async fn attempt_children(
     let tally = load(ctx, stage).await?;
     let mut children: Vec<(String, Option<String>)> =
         tally.read.into_iter().map(|agent| (agent, None)).collect();
-    for fail in tally.fails {
-        match children.iter_mut().find(|(agent, _)| *agent == fail.agent) {
-            Some(child) => child.1 = Some(fail.head),
+    let other_fails = tally.other_fails.into_iter();
+    for (failed, head) in tally
+        .fails
+        .into_iter()
+        .map(|f| (f.agent, f.head))
+        .chain(other_fails)
+    {
+        match children.iter_mut().find(|(agent, _)| *agent == failed) {
+            Some(child) => child.1 = Some(head),
             // A tally written before children were rescanned kept fails alone.
-            None => children.push((fail.agent, Some(fail.head))),
+            None => children.push((failed, Some(head))),
         }
     }
     assert!(
@@ -135,6 +141,11 @@ async fn count(
             // Unreadable yet: no child is skipped, so the event or settle is retried.
             let verdict = verdict_of(ctx, child).await?;
             tally.read.push(child.agent.to_string());
+            if let Some(verdict) = verdict.as_ref().filter(|v| !v.pass && !blocks(v)) {
+                assert!(!verdict.head.is_empty(), "a read fail names its head");
+                let kept = (child.agent.to_string(), verdict.head.clone());
+                tally.other_fails.push(kept);
+            }
             if let Some(verdict) = verdict.filter(blocks) {
                 assert!(
                     !verdict.blocking_findings.is_empty(),
@@ -252,6 +263,10 @@ struct Tally {
     /// For an attempt that resumed its lead, the children the lead held then.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     earlier: Option<Vec<String>>,
+    /// Each fail read that names nothing blocking, as (agent, head): it adds
+    /// no round, but stands for coverage once Aether no longer lists its agent.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    other_fails: Vec<(String, String)>,
 }
 
 impl Tally {

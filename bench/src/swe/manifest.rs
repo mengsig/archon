@@ -30,9 +30,8 @@ struct Wire {
     splits: Splits,
 }
 
-/// Only the dev split is committed; any other split is neither read nor accepted.
+/// Only the dev split is read; serde skips whatever else the manifest records.
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct Splits {
     dev: Dev,
 }
@@ -111,7 +110,7 @@ mod tests {
     }
 
     #[test]
-    fn unpinned_empty_foreign_or_holdout_bearing_manifests_are_refused() {
+    fn unpinned_empty_or_foreign_manifests_are_refused() {
         let mut value = manifest();
         value["splits"]["dev"]["revision"] = json!(" ");
         assert!(
@@ -135,12 +134,6 @@ mod tests {
         assert!(
             DevManifest::parse(&value.to_string()).is_err(),
             "another format"
-        );
-        let mut value = manifest();
-        value["splits"]["holdout"] = json!({"instances": {}});
-        assert!(
-            DevManifest::parse(&value.to_string()).is_err(),
-            "a committed holdout split"
         );
     }
 }

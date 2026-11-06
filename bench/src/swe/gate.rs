@@ -312,4 +312,24 @@ mod tests {
         assert_eq!(bound[4], (5, Some(5)));
         assert_eq!(bound[7], (8, Some(7)));
     }
+
+    #[test]
+    fn the_noise_bound_table_in_the_docs_holds() {
+        let bound = noise_bound(25);
+        let documented = [
+            (5, 5),
+            (6, 6),
+            (7, 7),
+            (8, 7),
+            (9, 8),
+            (10, 9),
+            (12, 10),
+            (15, 12),
+            (20, 15),
+            (25, 18),
+        ];
+        for (discordant, losses) in documented {
+            assert_eq!(bound[discordant as usize - 1], (discordant, Some(losses)));
+        }
+    }
 }

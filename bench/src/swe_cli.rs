@@ -89,6 +89,9 @@ pub struct RunArgs {
     /// The holdout's size, as the seal command printed it; archon-bench never reads the holdout.
     #[arg(long, default_value_t = 25)]
     holdout_instances: u32,
+    /// Dev only: run the first N instances, to smoke-test the wiring.
+    #[arg(long)]
+    limit: Option<u32>,
     /// An earlier aggregate of the same split whose measured means replace the priors.
     #[arg(long)]
     estimate_from: Option<PathBuf>,
@@ -152,13 +155,15 @@ fn run_split(args: &RunArgs) -> anyhow::Result<()> {
         repeats: args.repeats,
         jobs: args.jobs,
         load_max: args.load_max,
+        limit: args.limit,
     };
     request.validate()?;
     let instances = match split {
         Split::Dev => {
             let manifest = DevManifest::load(&args.aether_checkout)?;
             println!("dev set: {}@{}", manifest.dataset, manifest.revision);
-            manifest.instances
+            args.limit
+                .map_or(manifest.instances, |limit| limit.min(manifest.instances))
         }
         Split::Holdout => args.holdout_instances,
     };

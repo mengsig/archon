@@ -35,6 +35,8 @@ pub struct Request<'a> {
     pub repeats: u32,
     pub jobs: u32,
     pub load_max: f64,
+    /// Dev only: the first N instances, for a smoke of the wiring.
+    pub limit: Option<u32>,
 }
 
 impl Request<'_> {
@@ -44,6 +46,11 @@ impl Request<'_> {
         ensure!(
             self.load_max.is_finite() && self.load_max > 0.0,
             "--load-max must be positive"
+        );
+        ensure!(self.limit != Some(0), "--limit must be positive");
+        ensure!(
+            self.limit.is_none() || self.split == Split::Dev,
+            "--limit applies to the dev split only: the holdout runs whole"
         );
         Ok(())
     }
@@ -80,6 +87,9 @@ impl Runner {
         ];
         for (flag, value) in pairs {
             args.extend([flag.into(), value.into()]);
+        }
+        if let Some(limit) = request.limit {
+            args.extend(["--limit".into(), limit.to_string().into()]);
         }
         args.extend([
             "--arms".into(),
@@ -175,6 +185,7 @@ mod tests {
             repeats: 1,
             jobs: 3,
             load_max: 12.0,
+            limit: None,
         };
         let args = runner.args(
             &request,
@@ -212,7 +223,42 @@ mod tests {
         assert!(
             Request {
                 load_max: f64::NAN,
-                ..request
+                ..request.clone()
+            }
+            .validate()
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn a_limit_reaches_the_runner_on_dev_and_is_refused_on_the_holdout() {
+        let dir = tempfile::tempdir().unwrap();
+        let arms = arm_set(dir.path());
+        let runner = Runner {
+            python: "python3".into(),
+            script: "/aether/evals/swe_bench.py".into(),
+        };
+        let dev = Request {
+            split: Split::Dev,
+            arms: &arms,
+            repeats: 1,
+            jobs: 3,
+            load_max: 12.0,
+            limit: Some(2),
+        };
+        dev.validate().unwrap();
+        let args = runner.args(&dev, Path::new("/s/a.json"), Path::new("/s/o.json"));
+        let at = args.iter().position(|a| a == "--limit").unwrap();
+        assert_eq!(args[at + 1], "2");
+        let holdout = Request {
+            split: Split::Holdout,
+            ..dev.clone()
+        };
+        assert!(holdout.validate().is_err());
+        assert!(
+            Request {
+                limit: Some(0),
+                ..dev
             }
             .validate()
             .is_err()

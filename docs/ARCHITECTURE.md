@@ -4841,6 +4841,17 @@ spec tests, multi-file refactor keeping tests green, multi-repo change (two
 fixtures, API and client), a question-only task (`ask` arm grading by keyword
 rubric), and a review task (seeded bug must be reported).
 
+The SWE family (`archon-bench swe`, `bench/src/swe/`) adds no task of its
+own. It runs Aether's shared `swe-v1` set through Aether's runner, which
+owns the instances, the sealed holdout, the labelled image cache and the
+official grading. archon-bench chooses the arms: per model, the best recent
+release on its released Aether, the candidate, and the native CLI. It
+prints the estimate and the noise bound, reads the runner's aggregates
+through one adapter (`swe/aggregate.rs`), and gates the release with an
+exact one-sided paired test per model and split. On the holdout it discards
+the runner's output and keeps only the validated aggregate. See
+`bench/results-swe/README.md`.
+
 ## 16. Failure modes and recovery
 
 | Failure | Detection | Recovery |

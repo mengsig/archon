@@ -36,6 +36,7 @@ Every page under `docs/`, by what you are doing. The project overview is the
 | Page | What it covers |
 | --- | --- |
 | [Writing pipelines](PIPELINES.md) | Stages, gates, fan-out and prompts. |
+| [Product journeys](journeys.md) | The `release-journey` gate and its `.archon/journeys.toml` manifest, with a Playwright `_electron` example. |
 | `team-pr` example | [pipeline.toml](examples/pipelines/team-pr/pipeline.toml), with the prompts [plan](examples/pipelines/team-pr/plan.md), [build](examples/pipelines/team-pr/build.md), [e2e](examples/pipelines/team-pr/e2e.md) and [review](examples/pipelines/team-pr/review.md). |
 | `bugfix-tdd` example | [pipeline.toml](examples/pipelines/bugfix-tdd/pipeline.toml), with the prompts [reproduce](examples/pipelines/bugfix-tdd/reproduce.md), [fix](examples/pipelines/bugfix-tdd/fix.md) and [review](examples/pipelines/bugfix-tdd/review.md). |
 

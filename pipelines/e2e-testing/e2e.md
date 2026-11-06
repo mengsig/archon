@@ -65,11 +65,15 @@ Give each failed or blocked scenario a finding with the scenario id and
 title, the step that failed, expected against actual, the evidence path, and
 whether the environment or the product is at fault. Severity is high for a
 broken main journey or environment, medium for a broken secondary path, and
-low for cosmetic issues.
+low for cosmetic issues. Mark an environment finding `"blocking": true` and
+a product defect `"blocking": false`: a product defect never fails this
+gate, whatever its severity.
 
 ## Report
 
 Call `complete_task` with the structured verdict and findings the stage
-contract describes. The `summary` gives the scenario table (id, title,
-status), the location of `results.json`, the product defects, and any
-environment problems. It ends with `VERDICT: PASS` or `VERDICT: FAIL`.
+contract describes, and beside them `"scenarios": [{"id", "title",
+"status"}]` for every scenario, so the stage result shows each one. The
+`summary` gives the scenario table (id, title, status), the location of
+`results.json`, the product defects, and any environment problems. It ends
+with `VERDICT: PASS` or `VERDICT: FAIL`.

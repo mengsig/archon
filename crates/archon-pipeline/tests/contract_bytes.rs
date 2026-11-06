@@ -9,7 +9,7 @@ use std::path::Path;
 use archon_core::catalog::StageKind;
 use archon_pipeline::Catalog;
 use archon_pipeline::contract::{self, TeamPart};
-use archon_pipeline::spec::{PipelineSpec, StageSpec};
+use archon_pipeline::spec::{PipelineSpec, Scenarios, StageSpec};
 
 const WORKSPACE: &str = "/worktree";
 /// The item's directory for reviewers' experiment copies, as terse as `WORKSPACE`.
@@ -32,7 +32,10 @@ const RUN_TREE_BUDGET: usize = 550;
 const RISK_BUDGET: usize = 1_350;
 /// What the record stage's summary and evidence rules add.
 const EVIDENCE_BUDGET: usize = 2_100;
-const TOTAL_BUDGET: usize = 131_000;
+/// What a strict scenario stage adds: the list it records and the private stack.
+const STRICT_SCENARIO_BUDGET: usize = 800;
+/// 131,000 before `e2e-strict` and `release-journey` added six stages of about 20.6 kB.
+const TOTAL_BUDGET: usize = 152_000;
 
 /// One built-in stage's fixed input, in bytes.
 struct Cost {
@@ -145,6 +148,9 @@ fn built_in_contracts_stay_within_their_byte_budgets() {
         }
         if owed.ship_record {
             budget += EVIDENCE_BUDGET;
+        }
+        if spec.stage(&cost.stage).expect("a listed stage").scenarios == Scenarios::Strict {
+            budget += STRICT_SCENARIO_BUDGET;
         }
         if cost.contract > budget {
             over.push(format!(

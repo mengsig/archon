@@ -113,6 +113,7 @@ tier = "strong"              # default: the pipeline's default choice; this stag
 allow_delegation = false     # true lets the stage agent delegate, whatever the item's tools
 nudge = "Advice for this stage's model choice."
 on_fail = { goto = "fix", max_loops = 2 }   # optional fix loop
+scenarios = "lenient"        # default lenient; strict lets archond fail a test stage on its scenario list (see "Strict scenarios")
 
 [[stage]]                    # a team stage (see "Team stages")
 id = "build"
@@ -166,6 +167,7 @@ the field:
   or `any`): their agents return a verdict, and `gate = "none"` would ignore
   it.
 - `on_fail.goto` names an **earlier** stage, and `max_loops` is at most 10.
+- `scenarios = "strict"` is only allowed on a `test` stage with one agent.
 
 These bounds (32 stages, `fan_out` 16, `max_loops` 10) belong to the file
 format and are the same on every installation, unlike `[limits]`: a
@@ -1191,7 +1193,9 @@ back to the built-in.
 | `performance` | measure → optimize → verify (`all_pass`, back to optimize ×3) → review (1, `all_pass`, back to optimize ×2) | strong tier, independent reviewer. For a specific slow path with a measurable goal, not speculative micro-optimization; use `direct` for ordinary changes. |
 | `agent-testing` | plan → exercise (2 exploratory testers) → report (HTML) | balanced tier, independent testers |
 | `code-audit` | scope → audit (3 lenses, report) → report (HTML with issue drafts) | strong tier, independent auditors. Read-and-report only; findings become follow-up items. Use `ask` for a single question or `agent-testing` to exercise the product. |
-| `e2e-testing` | setup → e2e (`all_pass`, back to setup ×1) → report (HTML with screenshots) | balanced tier |
+| `e2e-testing` | setup → e2e (`all_pass`, back to setup ×1) → report (HTML with screenshots) | balanced tier. Lenient: product defects land in the report, not the gate. |
+| `e2e-strict` | setup → e2e (`all_pass`, strict scenarios, back to setup ×1) → report (HTML with screenshots) | balanced tier. Any failed, skipped or missing scenario fails the run. For release validation. |
+| `release-journey` | setup → journeys (`all_pass`, strict scenarios, back to setup ×1) → report (HTML with screenshots) | balanced tier. Runs the repository's [product journeys](journeys.md) in the shipped artifact with real engines; any journey that does not pass fails the run. |
 | `review` | review (work, delegation enabled, holds the review) | balanced tier; review level `standard` unless the item asks. Queued `onto` someone else's pull request, a fork's included; changes and pushes nothing. A pass of the frozen head is what lets `archon merge` merge that pull request (see the [guide](guide.md#reviewing-a-contributors-pull-request)). |
 | `ask` | answer | balanced tier. Read-only, and no repository required. With one, it works in a disposable snapshot of the repository's `HEAD` commit, so it sees committed work only. |
 | `errand` | errand (report) | balanced tier. A small job answered in text or as a Lavish page, with no repository changes or outward side effects. Scratch workspace, repository optional. Use `ask` for repository questions in text, and a shipping pipeline for changes. |
@@ -1421,6 +1425,51 @@ after `worktrees.gc_after` (default seven days) following the last finished
 run, once the item also passes gc's age checks. `--older-than` overrides
 the age cutoff. With `worktrees.auto_gc` on, passes run at startup and
 every 30 minutes. See [workspace retention](ARCHITECTURE.md#132-worktree-gc).
+
+### End-to-end modes: `e2e-testing`, `e2e-strict` and `release-journey`
+
+All three set up the product, run user scenarios against it and report with
+screenshots. They differ in what fails the run.
+
+| Pipeline | Scenarios come from | A product defect | An environment fault |
+| --- | --- | --- | --- |
+| `e2e-testing` | the brief, derived by the tester | passes the gate and lands in the report | loops back to setup once, then fails |
+| `e2e-strict` | `.archon/e2e/scenarios.json`, which setup writes from the brief | fails the run at once | loops back to setup once, then fails |
+| `release-journey` | the repository's `.archon/journeys.toml` ([format](journeys.md#archonjourneystoml)) | fails the run at once | loops back to setup once, then fails |
+
+Use `e2e-testing` to explore and report: a run can succeed while its
+scenarios fail, so read the report, not the run state. Use `e2e-strict` when
+the run decides whether a change is fit to ship, and `release-journey` for
+release preparation and changes to user-facing behaviour in a repository
+that keeps a journey manifest. In every mode, the test stage's structured
+result lists each scenario and its status as `scenarios`, so `get_item` and
+`get_stage` show them without the report.
+
+#### Strict scenarios
+
+A `test` stage with `scenarios = "strict"` lists, in its structured result,
+the manifest's scenario ids as `expected` and every scenario it ran as
+`scenarios`:
+
+```json
+{"verdict": "pass",
+ "expected": ["login", "checkout"],
+ "scenarios": [{"id": "login", "title": "…", "status": "pass", "evidence": "…"},
+               {"id": "checkout", "title": "…", "status": "fail", "evidence": "…"}],
+ "findings": [{"severity": "high", "blocking": false, "title": "checkout: pay does nothing"}]}
+```
+
+The verdict judges only the environment: `fail` means the results cannot be
+trusted, and the run loops back as `on_fail` says. Given a `pass`, archond
+judges the list itself. The gate fails when any scenario's status is not
+`pass` (a `fail`, `skipped` or `blocked` one), when an `expected` id is
+missing from `scenarios`, and when either list is empty or unreadable: a run
+cannot pass by running nothing. That failure is a product defect, which no
+loop back can fix, so the run fails at once, whatever `on_fail` says. Its
+error names each failed or missing scenario, at most 20 of them. The stage
+contract tells the agent the format, and that the stack it tests is private:
+temporary homes, private sockets and ports, and config copied without
+secrets, never the installed daemons' state or the user's homes.
 
 ### The `team-pr` example
 

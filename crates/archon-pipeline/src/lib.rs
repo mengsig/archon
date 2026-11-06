@@ -2,8 +2,8 @@
 //! prompt templating (`template`), the autonomy knobs' stages and gates
 //! (`autonomy`), team stage names and merges (`team`), swarm plans that
 //! assign a team its roles (`swarm`), what archond ships
-//! (`ship`), the run state machine (`engine`), and edits to the unstarted
-//! stages of a run (`reshape`).
+//! (`ship`), the run state machine (`engine`), the strict scenario gate
+//! (`scenarios`), and edits to the unstarted stages of a run (`reshape`).
 //! No process spawning and no store access: the daemon drives this crate.
 
 pub mod autonomy;
@@ -18,6 +18,7 @@ pub mod proposals;
 pub mod reshape;
 pub mod review;
 pub mod risk;
+mod scenarios;
 mod sections;
 pub mod ship;
 pub mod spec;

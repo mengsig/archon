@@ -1108,3 +1108,24 @@ fn code_audit_auditors_take_their_lens_from_the_brief_before_the_defaults() {
         "no fixed lens"
     );
 }
+
+#[test]
+fn strict_scenarios_need_a_test_stage_with_one_agent() {
+    let needle = "scenarios = \"strict\" needs a test stage with one agent";
+    let work = stage("build", "work", "scenarios = \"strict\"");
+    assert_refused(&work, &[], needle);
+    let fanned = stage(
+        "check",
+        "test",
+        "fan_out = 2\ngate = \"all_pass\"\nscenarios = \"strict\"",
+    );
+    assert_refused(&fanned, &[], needle);
+    let strict = stage(
+        "check",
+        "test",
+        "gate = \"all_pass\"\nscenarios = \"strict\"",
+    );
+    validate(&strict, &[]).expect("a one-agent strict test stage is valid");
+    let lenient = stage("build", "work", "scenarios = \"lenient\"");
+    validate(&lenient, &[]).expect("lenient is the default anywhere");
+}

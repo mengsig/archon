@@ -602,8 +602,8 @@ starts the diff read:\n\n\
 {\"verdict\": \"pass\", \"head\": \"<commit>\", \"base\": \"<commit>\", \"findings\": []}\n\
 ```\n\n\
 Use `\"fail\"` with findings for failures. The `verdict` is exactly `\"pass\"` or \
-`\"fail\"`, and a `\"fail\"` always fails, so a review whose findings are all \
-follow-ups passes. A reviewer that cannot set `structured` \
+`\"fail\"`; a fail always fails, so a review with only follow-ups passes. A reviewer \
+that cannot set `structured` \
 makes that JSON its whole last message: no `complete_task` or YAML, nothing \
 before or after it.\n\n\
 - Blocking findings are correctness bugs, security or safety issues, failing or missing \
@@ -897,10 +897,9 @@ const VERDICT_RULES: &str = "\n## Verdict\n\n\
 \"findings\": [{\"severity\": \"critical|high|medium|low\", \"title\": \"…\", \
 \"detail\": \"…\", \"path\": \"relative/path:line\"}]}\n\
 ```\n\n\
-- The `verdict` is exactly `\"pass\"` or `\"fail\"`, no other word.\n\
-- The stage prompt defines which findings make the verdict `fail`; apply its rule \
-exactly. A `fail` lists at least one finding and always fails. A review whose \
-findings are all advice is a `pass`.\n\
+- The `verdict` is exactly `\"pass\"` or `\"fail\"`, no other word. The stage prompt \
+defines which findings make it `fail`; apply its rule exactly. A `fail` lists a \
+finding and always fails; a review with only advice is a `pass`.\n\
 - End the `summary` with a final line that is exactly `VERDICT: PASS` or \
 `VERDICT: FAIL`, matching the structured verdict. A missing or unreadable verdict \
 counts as a fail.\n";
@@ -1022,7 +1021,7 @@ mod tests {
             // The contract fixes the format; the prompt owns the threshold.
             assert!(text.contains("stage prompt defines which findings"));
             assert!(text.contains("exactly `\"pass\"` or `\"fail\"`, no other word"));
-            assert!(text.contains("findings are all advice is a `pass`"));
+            assert!(text.contains("a review with only advice is a `pass`"));
         }
         let work = instructions(
             &stage(StageKind::Work, Gate::None, 1),
@@ -1714,8 +1713,8 @@ mod tests {
             "never prose alone",
             "{\"verdict\": \"pass\", \"head\": \"<commit>\", \"base\": \"<commit>\"",
             "Use `\"fail\"` with findings for failures",
-            "The `verdict` is exactly `\"pass\"` or `\"fail\"`, and a `\"fail\"` always fails",
-            "a review whose findings are all follow-ups passes",
+            "The `verdict` is exactly `\"pass\"` or `\"fail\"`; a fail always fails",
+            "so a review with only follow-ups passes",
             "A reviewer that cannot set `structured` makes that JSON its whole last message",
             "no `complete_task` or YAML, nothing before or after it",
             "Each agent named must be a different one you delegated to yourself",

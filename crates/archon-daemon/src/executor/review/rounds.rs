@@ -146,33 +146,20 @@ async fn count(
     let fresh = lead_is_fresh(ctx, stage, lead).await?;
     let beneath = ctx.backend.descendants(lead).await?;
     let mut tally = load(ctx, &stage.id).await?;
+    // An earlier archond read words it did not know as no verdict: read them again once.
+    let reread = tally.owes_reread();
     let unread: Vec<&Descendant> = settled_children(&beneath, lead)
         .into_iter()
         .filter(|c| tally.attempt_holds(&c.agent, fresh, reviewer))
-        .filter(|c| !tally.has_read(&c.agent))
+        .filter(|c| !tally.has_read(&c.agent) || (reread && tally.kept_no_fail(&c.agent)))
         .collect();
-    if !unread.is_empty() {
+    if !unread.is_empty() || reread {
         for child in unread {
             // Unreadable yet: no child is skipped, so the event or settle is retried.
             let verdict = verdict_of(ctx, child).await?;
-            tally.read.push(child.agent.to_string());
-            if let Some(verdict) = verdict.as_ref().filter(|v| !v.pass && !blocks(v)) {
-                assert!(!verdict.head.is_empty(), "a read fail names its head");
-                let kept = (child.agent.to_string(), verdict.head.clone());
-                tally.other_fails.push(kept);
-            }
-            if let Some(verdict) = verdict.filter(blocks) {
-                assert!(
-                    !verdict.blocking_findings.is_empty(),
-                    "a counted round names its blocking findings"
-                );
-                tally.fails.push(Fail {
-                    agent: child.agent.to_string(),
-                    head: verdict.head,
-                    findings: verdict.blocking_findings,
-                });
-            }
+            tally.record(&child.agent, verdict);
         }
+        tally.legacy_reread |= reread;
         in_creation_order(&mut tally.fails, &beneath, lead);
         save(ctx, &stage.id, &tally).await?;
     }
@@ -286,12 +273,60 @@ struct Tally {
     /// earlier archond began lacks it and reads `false`.
     #[serde(default)]
     every_fail_kept: bool,
+    /// Whether a tally an earlier archond began has read its children again
+    /// under today's verdict words, once.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    legacy_reread: bool,
 }
 
 impl Tally {
     fn has_read(&self, agent: &AetherAgentId) -> bool {
         let agent = agent.as_str();
         self.read.iter().any(|a| a == agent) || self.fails.iter().any(|f| f.agent == agent)
+    }
+
+    /// Whether an earlier archond began this tally and its reads were not redone yet.
+    fn owes_reread(&self) -> bool {
+        !self.every_fail_kept && !self.legacy_reread
+    }
+
+    /// Whether `agent` was read and the tally kept no fail of it.
+    fn kept_no_fail(&self, agent: &AetherAgentId) -> bool {
+        let agent = agent.as_str();
+        self.read.iter().any(|a| a == agent)
+            && !self.fails.iter().any(|f| f.agent == agent)
+            && !self.other_fails.iter().any(|(a, _)| a == agent)
+    }
+
+    /// Add child `agent`'s verdict, `None` for none: a blocking fail as a
+    /// round, any other fail by its head. Reading a child again adds it once.
+    fn record(&mut self, agent: &AetherAgentId, verdict: Option<Verdict>) {
+        let name = agent.to_string();
+        assert!(!name.is_empty(), "a read child names its agent");
+        assert!(
+            !self.fails.iter().any(|f| f.agent == name),
+            "a counted round is never read again"
+        );
+        if !self.read.contains(&name) {
+            self.read.push(name.clone());
+        }
+        let Some(verdict) = verdict.filter(|v| !v.pass) else {
+            return;
+        };
+        assert!(!verdict.head.is_empty(), "a read fail names its head");
+        if !blocks(&verdict) {
+            self.other_fails.push((name, verdict.head));
+            return;
+        }
+        assert!(
+            !verdict.blocking_findings.is_empty(),
+            "a counted round names its blocking findings"
+        );
+        self.fails.push(Fail {
+            agent: name,
+            head: verdict.head,
+            findings: verdict.blocking_findings,
+        });
     }
 
     /// Whether child `agent` belongs to this attempt. A lead resumed before

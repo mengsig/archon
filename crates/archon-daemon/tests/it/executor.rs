@@ -3825,6 +3825,36 @@ async fn the_third_failing_review_round_stops_the_stage_and_escalates() {
     assert!(error.contains("failed 3 rounds"), "{error}");
 }
 
+/// An earlier archond read a `changes_requested` fail as no verdict and kept
+/// only that it read it. Upgraded, the tally reads it again once: it is a round.
+#[tokio::test]
+async fn a_fail_an_earlier_archond_could_not_read_counts_as_a_round_after_the_upgrade() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let lead_id = lead_agent(&lead);
+    let unread = h.backend.delegate(&lead_id, REVIEW_MODEL);
+    let mut fail = round_fail(1);
+    fail["verdict"] = serde_json::json!("changes_requested");
+    h.backend.complete_delegated(&unread, fail);
+    let legacy = serde_json::json!({"fails": [], "read": [unread.as_str()]});
+    let key = format!("review_rounds:{}", lead.id);
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(&key, &legacy.to_string())
+        .unwrap();
+    review_round_fails(&h, &lead, 2).await;
+    assert_eq!(escalated(&h, &lead).await, None, "two rounds go on");
+    review_round_fails(&h, &lead, 3).await;
+    let error = escalated(&h, &lead)
+        .await
+        .expect("the reread fail is the first of three rounds");
+    assert!(error.contains("failed 3 rounds"), "{error}");
+    assert!(error.contains("finding 1"), "{error}");
+}
+
 /// A fail whose findings are all follow-ups still fails, but names nothing
 /// blocking, so it adds no round.
 #[tokio::test]

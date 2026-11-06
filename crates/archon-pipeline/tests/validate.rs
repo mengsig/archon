@@ -798,11 +798,16 @@ fn adaptive_prices_what_it_delegates_and_records_what_ships() {
     // Both reviewer-delegating prompts size a review by the contract's absolute levels.
     let review = flat(&catalog.get("review").unwrap().prompts["review.md"]);
     for prompt in [&build, &review] {
-        assert!(
-            prompt.contains("`medium` for a small or low-risk one"),
-            "{prompt}"
-        );
-        assert!(prompt.contains("`x_high` for concurrency or security analysis"));
+        for said in [
+            "unless the diff calls for another, then take the rubric's level for a review",
+            "`low` for a trivial diff",
+            "`medium` for a small or low-risk one",
+            "`high` for a risky diff, shared code",
+            "`x_high` for concurrency or security analysis",
+            "Going below the default, say why in your summary.",
+        ] {
+            assert!(prompt.contains(said), "missing {said:?} in {prompt}");
+        }
         assert!(
             !prompt.contains("lower only for a trivial diff"),
             "{prompt}"

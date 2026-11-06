@@ -1872,19 +1872,34 @@ mod tests {
         );
         let topic = validation_topic();
         for said in [
-            "`enqueue` one validation item `onto` the item that built it \
-             (`onto: {item: \"qi_…\"}`), so it tests that exact head.",
-            "`release-journey` when the repository's mirror has `.archon/journeys.toml`, else \
-             `e2e-strict`.",
-            "its `model_plan` names no model the build's stages ran",
+            "Queue one validation item that `depends_on` every item that built it",
+            "It stacks on their branches, so it tests the heads they delivered, whatever their \
+             pipeline or ship mode.",
+            "Pipeline, by the build's head, not the base: `release-journey` only when the head's \
+             `.archon/journeys.toml` has a journey for every outcome to check",
+            "`git show refs/mirror/<branch>:.archon/journeys.toml`",
+            "else `e2e-strict`, briefed with every outcome as a scenario.",
+            "its `model_plan` pins a `model` for every stage of its pipeline (`list_pipelines`), \
+             none a model the build's stages ran (`get_item`), so no stage falls back to a \
+             learned or default choice.",
+            "tell the operator the build cannot be validated independently instead of queueing \
+             a self-check.",
+            "A pass counts for the outcomes its journeys or scenarios checked",
+            "name any outcome it did not check.",
             "On a failure, tell the operator what failed, from its report, and that a fix is \
-             queued",
+             queued; queue it, then a new validation item that `depends_on` the fix.",
             "Never say \"ready\" before a pass.",
             "An internal change (refactor, tests, CI, docs, a library no person runs) needs none: \
              relay its success as usual.",
         ] {
             assert!(topic.contains(said), "topic misses {said:?}");
         }
+        // `enqueue` refuses `onto` with `depends_on`, and a local `onto` a team
+        // run or a stacked build, so the validation never goes `onto` its build.
+        assert!(topic.contains(
+            "Never `onto`: that takes no `depends_on` and refuses team runs and stacked builds."
+        ));
+        assert!(!topic.contains("`onto` the item"), "{topic}");
     }
 
     /// The orchestrator coordinates: validation is an item's work, never its
@@ -1935,11 +1950,14 @@ mod tests {
              outcomes its part serves",
             "\"on a fresh install, a new user starts an agent and gets a reply within 30 \
              seconds\"",
-            "One item owns the end-to-end outcome: a `release-journey` or `e2e-strict` \
-             validation item that `depends_on` every build item",
+            "One item owns the end-to-end outcome: the hand-off's validation item, which \
+             `depends_on` every build item",
+            "or all of a split request's (then it is the outcome owner below; queue no second \
+             one)",
             "Its pass is the request's pass; the hand-off waits for it.",
             "Such an unchecked outcome is left to the owning item, never assumed met.",
-            "`release-journey`, `depends_on` 1 and 2, on another provider",
+            "`e2e-strict`, `depends_on` 1 and 2, every stage pinned to another provider's model",
+            "(`release-journey` instead once the manifest has that journey)",
         ] {
             assert!(topic.contains(said), "topic misses {said:?}");
         }

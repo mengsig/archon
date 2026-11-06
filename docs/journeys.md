@@ -26,12 +26,17 @@ setup stage stops with `BLOCKED:`.
 
 The orchestrator coordinates; it never builds, runs apps or drives journeys
 itself. Before it tells you a user-facing build is ready to try, it queues
-an independent validation item `onto` the item that built it, so the
-validation tests that exact head: `release-journey` when the repository has
-`.archon/journeys.toml`, `e2e-strict` otherwise. The validation runs on a
-model none of the build's stages used. You hear only that item's outcome:
-on a pass, the build is ready; on a failure, what failed and that a fix is
-queued, never "ready". A success of an internal change (a refactor, tests,
+an independent validation item that `depends_on` the items that built it.
+The item stacks on their branches, so it tests the heads they delivered,
+whatever their pipeline or ship mode (`onto` would refuse team runs and
+stacked builds). It runs `release-journey` when the build's own head has a
+`.archon/journeys.toml` with a journey for every outcome to check, and
+`e2e-strict`, with each outcome as a scenario, otherwise. Every one of its
+stages is pinned to a model none of the build's stages ran; when the model
+policy leaves none, the orchestrator says the build cannot be validated
+independently. You hear only that item's outcome: on a pass, the build is
+ready, with any outcome the run did not check named; on a failure, what
+failed and that a fix is queued, never "ready". A success of an internal change (a refactor, tests,
 CI, docs) is relayed as before, without validation.
 
 The orchestrator's `guide(topic=validation)` holds the workflow
@@ -45,8 +50,8 @@ change.
 When the orchestrator splits a user-facing request into several items, each
 brief keeps its code-level criteria and adds the user outcomes it serves,
 written so they can be checked. One more item owns the end-to-end outcome:
-a validation item that `depends_on` all the others, so the outcome cannot
-fall between them. Each build stage checks its change against its brief's
+the hand-off's validation item, which `depends_on` all the others, so the
+outcome cannot fall between them. Each build stage checks its change against its brief's
 outcome criteria and says which ones its environment could not check,
 instead of claiming them.
 
@@ -56,9 +61,10 @@ An example backlog for "let new users start an agent from the desktop app":
 | --- | --- | --- | --- | --- |
 | 1 | `direct` | | a first-run setup view, with tests | a new user sees a "Start an agent" step on first launch |
 | 2 | `adaptive` | 1 | start the agent and stream its reply, with tests | after "Start", the user sees a reply within 30 seconds |
-| 3 | `release-journey`, on another provider | 1, 2 | none | on a fresh install, a new user starts an agent and gets a reply within 30 seconds |
+| 3 | `e2e-strict`, every stage on another provider's model | 1, 2 | none | on a fresh install, a new user starts an agent and gets a reply within 30 seconds |
 
-Item 3 owns the outcome. The orchestrator calls the build ready only once
+Item 3 owns the outcome; it would be `release-journey` once the manifest has
+a journey for it. The orchestrator calls the build ready only once
 it passes.
 
 ## How a run goes

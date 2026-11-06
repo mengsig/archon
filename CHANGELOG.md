@@ -172,10 +172,11 @@ From the audit in [docs/security/vnext-audit.md](docs/security/vnext-audit.md)
   still cancels a reviewer on a model the plan does not name. A delegating
   stage's cost split in `get_item` and `get_stage` counts its agents by effort.
 - The orchestrator no longer calls a user-facing build ready on the pipeline's
-  success alone (#396). It first queues an independent validation item onto
-  the item that built it, `release-journey` with a journey manifest and
-  `e2e-strict` otherwise, on a model the build did not use, and reports only
-  that item's outcome. It never builds, runs apps or drives journeys itself.
+  success alone (#396). It first queues an independent validation item that
+  `depends_on` the items that built it, `release-journey` when the build's
+  journey manifest covers the outcomes and `e2e-strict` otherwise, every
+  stage on a model the build did not use, and reports only that item's
+  outcome. It never builds, runs apps or drives journeys itself.
   `[orchestrator] validate_before_handoff = false` turns the rule off.
 - A split user-facing request carries user-outcome acceptance criteria in its
   briefs and one validation item that `depends_on` the rest and owns the

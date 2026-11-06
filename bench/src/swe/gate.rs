@@ -123,54 +123,59 @@ fn compare(
         model,
         harness: reference.harness(),
     };
-    let incomplete = |reason: String, paired| Comparison {
+    let (paired, verdict, reason) = match aggregate {
+        None => (None, Verdict::Incomplete, format!("no {split} aggregate")),
+        Some(aggregate) => judge(aggregate, new, other),
+    };
+    Comparison {
         model,
         split,
         reference,
         paired,
-        verdict: Verdict::Incomplete,
+        verdict,
         reason,
-    };
-    let Some(aggregate) = aggregate else {
-        return incomplete(format!("no {split} aggregate"), None);
-    };
+    }
+}
+
+/// The paired test of `new` against `other`, and why it is incomplete if it is.
+fn judge(aggregate: &Aggregate, new: ArmKey, other: ArmKey) -> (Option<Paired>, Verdict, String) {
+    assert_eq!(new.model, other.model, "a comparison stays on one model");
     let Some((n, new_only, reference_only)) = aggregate.paired(new, other) else {
-        return incomplete(format!("no {new} vs {other} pair"), None);
+        return (
+            None,
+            Verdict::Incomplete,
+            format!("no {new} vs {other} pair"),
+        );
     };
-    let discordant = new_only + reference_only;
-    let paired = Paired {
+    let p_worse = stats::sign_test_upper_tail(reference_only, new_only + reference_only);
+    let paired = Some(Paired {
         n,
         new_only,
         reference_only,
-        p_worse: stats::sign_test_upper_tail(reference_only, discordant),
-    };
+        p_worse,
+    });
     let infra: u32 = [new, other]
         .iter()
         .filter_map(|key| aggregate.arms.get(key))
         .map(|totals| totals.infra)
         .sum();
     if infra > 0 {
-        return incomplete(
-            format!("{infra} infrastructure failures; rerun them"),
-            Some(paired),
-        );
+        let reason = format!("{infra} infrastructure failures; rerun them");
+        return (paired, Verdict::Incomplete, reason);
     }
     if n == 0 {
-        return incomplete("no instance graded on both arms".into(), Some(paired));
+        return (
+            paired,
+            Verdict::Incomplete,
+            "no instance graded on both arms".into(),
+        );
     }
-    let verdict = if paired.p_worse < ALPHA {
+    let verdict = if p_worse < ALPHA {
         Verdict::Worse
     } else {
         Verdict::Pass
     };
-    Comparison {
-        model,
-        split,
-        reference,
-        paired: Some(paired),
-        verdict,
-        reason: String::new(),
-    }
+    (paired, verdict, String::new())
 }
 
 /// The noise bound stated before a run: for each count of discordant pairs,

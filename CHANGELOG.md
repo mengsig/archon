@@ -179,8 +179,9 @@ From the audit in [docs/security/vnext-audit.md](docs/security/vnext-audit.md)
   `[orchestrator] validate_before_handoff = false` turns the rule off.
 - A split user-facing request carries user-outcome acceptance criteria in its
   briefs and one validation item that `depends_on` the rest and owns the
-  end-to-end outcome (#397). Work and team stages check their change against
-  the brief's outcome criteria and say which they could not check. The
+  end-to-end outcome (#397). The lead that records a change, and each team
+  role, check it against the brief's outcome criteria and say which they
+  could not check. The
   orchestrator's new `guide(topic=validation)` holds both workflows.
 
 ### Removed

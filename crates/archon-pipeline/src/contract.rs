@@ -52,7 +52,7 @@ pub fn instructions(
     assert!(stage.fan_out >= 1, "validated specs have fan_out >= 1");
     let mut out = contract_header(stage, mode, workspace, team);
     out.push_str(kind_rules(stage.kind));
-    if matches!(stage.kind, StageKind::Work | StageKind::Team) {
+    if builds_the_change(stage.kind, owed) {
         out.push_str(OUTCOME_RULE);
     }
     if stage.kind == StageKind::Team {
@@ -795,13 +795,18 @@ a tree holds for any later head with that tree. After a passing full check, a la
 diff of only prose or raster images that no build or test reads needs only the \
 repository's link and notice checks.\n";
 
+/// Whether a stage of `kind` builds the run's change: a team role, or the
+/// work stage that records what ships. Setup, plan and baseline stages do not.
+fn builds_the_change(kind: StageKind, owed: Owed) -> bool {
+    kind == StageKind::Team || (kind == StageKind::Work && owed.ship_record)
+}
+
 /// Code-level criteria can all hold while the product fails its user, so a
 /// building stage answers for the brief's user outcomes too (#397).
 const OUTCOME_RULE: &str = "\
-- Where the brief states user-outcome acceptance criteria (what a person can do or \
-see) and you change the product, check your change against each and say in your \
-summary how. For one this environment cannot check, say so plainly and why: never \
-claim an outcome you did not check.\n";
+- Check your change against each user-outcome criterion in the brief and say how. \
+Say plainly which this environment cannot check, and why: never claim one you did \
+not check.\n";
 
 const TEAM_RULES: &str = "\n## Team stage\n\n\
 - Use the report format the stage prompt gives for your summary. If it gives none, \
@@ -1346,19 +1351,19 @@ mod tests {
         assert!(!solo.contains("roster"), "only team roles get a roster");
     }
 
-    /// Every stage that builds answers for the brief's user outcomes, and
-    /// says which it could not check rather than claiming them (#397).
+    /// The stages that build the change answer for the brief's user outcomes,
+    /// and say which they could not check rather than claiming them (#397).
     #[test]
     fn building_stages_check_the_brief_s_outcome_criteria_or_say_they_cannot() {
-        let rule = "check your change against each and say in your summary how. For one this \
-                    environment cannot check, say so plainly and why: never claim an outcome \
-                    you did not check.";
+        let rule = "Check your change against each user-outcome criterion in the brief and say \
+                    how. Say plainly which this environment cannot check, and why: never claim \
+                    one you did not check.";
         let slot = TeamSlot {
             role: "ui".into(),
             branch: "archon/x--ui".into(),
             workspace: "/t/s-ui".into(),
         };
-        let contract = |kind: StageKind| {
+        let contract = |kind: StageKind, ship_record: bool| {
             let gate = match kind {
                 StageKind::Review | StageKind::Test => Gate::AllPass,
                 _ => Gate::None,
@@ -1371,35 +1376,33 @@ mod tests {
                 }
                 _ => TeamPart::Solo,
             };
-            instructions(
-                &spec,
-                WorkspaceMode::Worktree,
-                "/w",
-                part,
-                Owed::default(),
-                None,
-            )
+            let owed = Owed {
+                review: None,
+                ship_record,
+            };
+            let text = instructions(&spec, WorkspaceMode::Worktree, "/w", part, owed, None);
+            text.split_whitespace().collect::<Vec<_>>().join(" ")
         };
+        assert!(contract(StageKind::Work, true).contains(rule), "the lead");
+        assert!(contract(StageKind::Team, false).contains(rule), "a role");
+        assert!(
+            !contract(StageKind::Work, false).contains(rule),
+            "a setup or plan stage builds nothing"
+        );
         for kind in [
-            StageKind::Work,
-            StageKind::Team,
             StageKind::Review,
             StageKind::Test,
             StageKind::Ship,
             StageKind::Report,
             StageKind::Propose,
         ] {
-            let text = contract(kind);
-            let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
-            let builds = matches!(kind, StageKind::Work | StageKind::Team);
-            assert_eq!(flat.contains(rule), builds, "{kind:?}: {text}");
-            assert_eq!(flat.contains("user-outcome acceptance criteria"), builds);
+            assert!(!contract(kind, false).contains(rule), "{kind:?}");
         }
-        let team = contract(StageKind::Team);
-        let outcome = team.find("user-outcome acceptance criteria").unwrap();
-        let coordination = team.find("\n## Team coordination\n").unwrap();
+        let team = contract(StageKind::Team, false);
+        let outcome = team.find(rule).unwrap();
         assert!(
-            team.find("\n## Team stage\n").unwrap() < outcome && outcome < coordination,
+            team.find("## Team stage").unwrap() < outcome
+                && outcome < team.find("## Team coordination").unwrap(),
             "the rule belongs to the team stage, not to its coordination: {team}"
         );
     }

@@ -1,0 +1,32 @@
+[pipeline]
+name = "e2e-strict"
+description = "Set up the product, run end-to-end scenarios from a fixed manifest, and fail on any scenario that does not pass"
+version = 1
+workspace = "worktree"
+requires_repo = true
+
+[nudges]
+tier = "balanced"
+notes = "e2e-testing as a ship gate: archond fails the run on any failed, skipped or missing scenario, or an empty list, naming each in the stage result. Environment faults loop back to setup once; product defects fail at once. Use it for release validation, e2e-testing for exploratory reports."
+
+[[stage]]
+id = "setup"
+kind = "work"
+prompt = "setup.md"
+timeout_minutes = 120
+
+[[stage]]
+id = "e2e"
+kind = "test"
+prompt = "e2e.md"
+gate = "all_pass"
+scenarios = "strict"
+timeout_minutes = 120
+on_fail = { goto = "setup", max_loops = 1 }
+
+[[stage]]
+id = "report"
+kind = "report"
+prompt = "report.md"
+timeout_minutes = 45
+nudge = "Write HTML plus screenshots under .archon/reports/ and list them in structured.reports."

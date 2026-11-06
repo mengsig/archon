@@ -393,7 +393,9 @@ per stage. Add your own under `~/.config/archon/pipelines/` or
 | `performance` | measure → optimize → verify (gate, back to optimize ×3) → review (gate, back to optimize ×2) | strong tier, independent reviewer. For a specific slow path with a measurable goal; use `direct` for ordinary changes. |
 | `agent-testing` | plan → exercise (fan-out) → report | agents using the product as a user would |
 | `code-audit` | scope → audit (3 independent lenses) → report (HTML with issue drafts) | code inspection with evidence and follow-up findings; use `ask` for one question |
-| `e2e-testing` | setup → e2e (gate) → report | HTML and screenshot reports for Lavish |
+| `e2e-testing` | setup → e2e (gate) → report | HTML and screenshot reports for Lavish; product defects land in the report, not the gate |
+| `e2e-strict` | setup → e2e (strict gate) → report | `e2e-testing` as a ship gate: any failed, skipped or missing scenario fails the run. See [end-to-end modes](PIPELINES.md#end-to-end-modes-e2e-testing-e2e-strict-and-release-journey) |
+| `release-journey` | setup → journeys (strict gate) → report | the repository's [product journeys](journeys.md), run in the shipped artifact with real engines on an empty and a populated install; any journey that does not pass fails the run |
 | `ask` | answer | a read-only answer about a repository, with no PR |
 | `review` | review (holds the review) | queued `onto` someone else's pull request, a fork's included: one lead has its frozen head reviewed and runs its checks, changing and pushing nothing. A pass is what lets `archon merge` merge that pull request; see [Reviewing a contributor's pull request](#reviewing-a-contributors-pull-request) |
 | `errand` | errand (report) | a small job that changes no repository, answered in text or as a Lavish page; no outward side effects |

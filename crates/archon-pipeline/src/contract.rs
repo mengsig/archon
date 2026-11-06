@@ -10,7 +10,7 @@ use archon_core::policy::ModelPolicy;
 use archon_core::run::StageOutcome;
 use serde::Serialize;
 
-use crate::spec::{Owed, ReviewDuty, StageSpec};
+use crate::spec::{Owed, ReviewDuty, Scenarios, StageSpec};
 use crate::team::TeamSlot;
 
 mod checks;
@@ -62,6 +62,9 @@ pub fn instructions(
     }
     if needs_verdict(stage) {
         out.push_str(VERDICT_RULES);
+    }
+    if stage.scenarios == Scenarios::Strict {
+        out.push_str(STRICT_SCENARIO_RULES);
     }
     // An agent that cannot delegate needs no telling that it reviews nothing.
     if let Some(duty) = owed
@@ -887,6 +890,18 @@ prompt treats as advice.\n\
 `VERDICT: FAIL`, matching the structured verdict. A missing or unreadable verdict \
 counts as a fail.\n";
 
+const STRICT_SCENARIO_RULES: &str = "\n## Strict scenario gate\n\n\
+- Archon judges your scenarios itself. Put in `structured`, beside the verdict: \
+`\"expected\": [\"<id>\", …]`, every scenario id the manifest lists, and \
+`\"scenarios\": [{\"id\", \"title\", \"status\": \"pass\" | \"fail\" | \"skipped\" | \
+\"blocked\", \"evidence\"}]`, every scenario you ran.\n\
+- The gate fails on any status but `pass`, on an expected id missing from `scenarios`, \
+and on an empty list. Such a product defect fails the run with no loop back. Your verdict \
+judges only the environment: `fail` sends the run back to setup.\n\
+- The stack you test is private: temporary homes (`HOME`, `XDG_*`), private sockets and \
+ports, config copied without secrets. Never read or write the state of the daemons \
+installed on this machine, or the user's homes.\n";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -908,6 +923,7 @@ mod tests {
             roles: Vec::new(),
             role_prompts: Default::default(),
             roles_from: None,
+            scenarios: Default::default(),
         }
     }
 

@@ -6,7 +6,7 @@ use archon_core::run::{StageRun, StageState, Verdict};
 
 use crate::review::Evidence;
 use crate::ship::ShipRecord;
-use crate::spec::{Owed, StageSpec};
+use crate::spec::{Owed, Scenarios, StageSpec};
 
 /// Feedback handed to a looped-to stage is capped so a verbose reviewer
 /// cannot blow up the next agent's objective.
@@ -43,6 +43,9 @@ pub(crate) enum GroupResult {
     Pass { summary: String },
     /// `headline` is one line; `report` details every failing member.
     Fail { headline: String, report: String },
+    /// A strict stage's scenario list fell short: a product defect, which no
+    /// loop back to an earlier stage can fix, so the run fails.
+    Defect { headline: String, report: String },
 }
 
 /// Evaluate a stage group whose every slot is terminal. `members` holds the
@@ -65,6 +68,12 @@ pub(crate) fn evaluate(
         Gate::Majority => passes * 2 > total,
         Gate::Any => passes >= 1,
     };
+    if ok
+        && stage.scenarios == Scenarios::Strict
+        && let Some(defect) = scenario_defect(stage, attempt, members)
+    {
+        return defect;
+    }
     if ok && owed != Owed::default() {
         return recorded(stage, attempt, members, owed);
     }
@@ -91,6 +100,24 @@ pub(crate) fn evaluate(
         headline,
         report: clip(&report, MAX_FEEDBACK_CHARS),
     }
+}
+
+/// The strict stage's scenario shortfall, when its passing member has one.
+fn scenario_defect(stage: &StageSpec, attempt: u32, members: &[&StageRun]) -> Option<GroupResult> {
+    let [member] = members else {
+        panic!("validated: a strict scenario stage has one agent")
+    };
+    assert_eq!(member.state, StageState::Completed, "it passed its gate");
+    let short = crate::scenarios::shortfall(member.structured.as_ref())?;
+    let summary = member.summary.as_deref().unwrap_or_default().trim();
+    let report = format!(
+        "**Stage `{}` attempt {attempt}: {}**\n\n{}\n\n{summary}\n",
+        stage.id, short.headline, short.detail
+    );
+    Some(GroupResult::Defect {
+        headline: short.headline,
+        report: clip(&report, MAX_FEEDBACK_CHARS),
+    })
 }
 
 /// A stage that passed its gate passes only with what it owes on record: the

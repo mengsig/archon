@@ -1619,7 +1619,11 @@ Per stage:
    every agent completed. For gated stages, the `Verdict`s of completed agents
    are evaluated: `all_pass` needs every verdict to be `pass`, `majority`
    needs more than half, and `any` needs at least one. `unknown` counts as
-   fail.
+   fail. A passing `test` stage with `scenarios = "strict"` passes only if
+   its structured `scenarios` all have status `pass` and cover every
+   `expected` id, neither list empty; otherwise it is a product defect that
+   finishes `failed{stage_id, error}` at once, with no `on_fail` loop
+   (`scenarios.rs`; [PIPELINES.md](PIPELINES.md#strict-scenarios)).
 3. On success, go to the next stage. After the last one, a pipeline with
    `[pipeline.ship]` emits `Ship` and waits for `on_shipped(outcome)`:
    `Shipped` finishes `succeeded`, `Failed` finishes
@@ -2353,6 +2357,9 @@ roles = ["api", "ui"]                # 2 to 8, unique across the pipeline
 role_prompts = { ui = "Own the CSS." }   # optional, appended per role
 ```
 
+A `test` stage with one agent may set `scenarios = "strict"` (default
+`lenient`): see step 2 of §6.4.
+
 Validation rules (load-time errors):
 
 - `name` equals the directory name.
@@ -2563,6 +2570,8 @@ literal `{{`.
 | `agent-testing` | plan → exercise (fan_out 2, report) → report | Agents drive the product as a user would and report defects. workspace = worktree |
 | `code-audit` | scope (work) → audit (fan_out 3, report) → report | Security, reliability and maintainability lenses produce HTML with high/critical issue drafts. No code changes or ship. workspace = worktree, tier = strong, independent_reviewers. Use `ask` for one question. |
 | `e2e-testing` | setup → e2e (test gate, goto setup ×1) → report | The report stage produces HTML and screenshots under `.archon/reports/` for Lavish. |
+| `e2e-strict` | setup → e2e (test gate, `scenarios = "strict"`, goto setup ×1) → report | As `e2e-testing`, but archond fails the run on any failed, skipped or missing scenario of the manifest setup writes, with no loop back. |
+| `release-journey` | setup → journeys (test gate, `scenarios = "strict"`, goto setup ×1) → report | Runs the repository's `.archon/journeys.toml` journeys in the shipped artifact, with real engines, in a private stack; archond fails the run on any journey run that does not pass ([journeys.md](journeys.md)). |
 | `review` | review (work, `allow_delegation`, holds the review) | tier = balanced, independent_reviewers. Queued `onto` someone else's pull request, a fork's included; no `[pipeline.ship]`, so it commits and pushes nothing. Its lead has the frozen head reviewed at the item's review level, `standard` unless the item asks (§8.2); a pass lets the operator merge that pull request at that head (§18.6). |
 | `ask` | answer | workspace = repo-readonly (a disposable snapshot of the repository's `HEAD` commit, §13), requires_repo = false, tier = balanced |
 | `errand` | errand (report) | workspace = scratch, requires_repo = false, tier = balanced. A small job answered in its summary and optionally as one self-contained Lavish page. No repository changes or outward side effects; read an attached checkout only, and run code on a throwaway copy in scratch. Other files are temporary and collected after `worktrees.gc_after` (default 7d; §13.2). |

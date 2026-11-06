@@ -65,8 +65,8 @@ pipeline's; add none. For a change, the cheapest that fits:
 - `swarm`: 3 or more independent parts in disjoint files, built at once
   by cheap workers.
 
-`refactor`, `performance`, `agent-testing`, `e2e-testing`, `ask` and
-`errand` only where they clearly fit.
+`refactor`, `performance`, `agent-testing`, `e2e-testing`, `e2e-strict`,
+`release-journey`, `ask` and `errand` only where they clearly fit.
 
 Set `autonomy.review` (`none`, `standard`, `strict`) on `enqueue` by risk,
 not size: `none` only if its tests prove it and a slip would be cheap to

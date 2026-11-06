@@ -3855,6 +3855,85 @@ async fn a_fail_an_earlier_archond_could_not_read_counts_as_a_round_after_the_up
     assert!(error.contains("finding 1"), "{error}");
 }
 
+/// The event of `reviewer`, a child of `lead`, completing `verdict`.
+fn settled_event(
+    lead: &AetherAgentId,
+    reviewer: &AetherAgentId,
+    verdict: serde_json::Value,
+    seq: u64,
+) -> AetherEvent {
+    AetherEvent {
+        seq,
+        at: archon_core::now(),
+        agent: Some(reviewer.clone()),
+        task: None,
+        parent: Some(lead.clone()),
+        run: None,
+        kind: EventKind::TaskCompleted {
+            result: archon_aether::wire::TaskResult {
+                summary: "reviewed".into(),
+                artifacts: Vec::new(),
+                structured: Some(verdict),
+            },
+        },
+    }
+}
+
+/// A lead an earlier archond woke without recording its earlier children
+/// counts only the reviewer each event names. Its two `changes_requested`
+/// fails that archond read as nothing are read again when their events
+/// replay after a newer reviewer's, and count as rounds once each.
+#[tokio::test]
+async fn a_woken_lead_s_earlier_read_fails_count_when_their_events_replay_after_the_upgrade() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let first = h.running().await.remove(0);
+    let agent = lead_agent(&first);
+    h.backend.fail_agent(&agent);
+    h.settle_running(|_| StageOutcome::Failed {
+        error: "engine died".into(),
+        infra: true,
+    })
+    .await;
+    h.dispatch().await;
+    let woken = h.running().await.remove(0);
+    assert_eq!(woken.aether_agent.as_ref(), Some(&agent), "woken in place");
+    let mut old = Vec::new();
+    for n in 1..=2 {
+        let reviewer = h.backend.delegate(&agent, REVIEW_MODEL);
+        let mut fail = round_fail(n);
+        fail["verdict"] = serde_json::json!("changes_requested");
+        h.backend.complete_delegated(&reviewer, fail.clone());
+        old.push(settled_event(&agent, &reviewer, fail, n as u64));
+    }
+    let read: Vec<&str> = old
+        .iter()
+        .map(|e| e.agent.as_ref().unwrap().as_str())
+        .collect();
+    let legacy = serde_json::json!({"fails": [], "read": read});
+    let key = format!("review_rounds:{}", woken.id);
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(&key, &legacy.to_string())
+        .unwrap();
+    review_round_fails(&h, &woken, 3).await;
+    assert_eq!(
+        escalated(&h, &woken).await,
+        None,
+        "only the named reviewer counts"
+    );
+    pump::handle_fleet_event(&h.ctx, &old[0]).await.unwrap();
+    pump::handle_fleet_event(&h.ctx, &old[0]).await.unwrap();
+    assert_eq!(escalated(&h, &woken).await, None, "a replay counts once");
+    pump::handle_fleet_event(&h.ctx, &old[1]).await.unwrap();
+    let error = escalated(&h, &woken)
+        .await
+        .expect("both earlier-read fails are rounds");
+    assert!(error.contains("failed 3 rounds"), "{error}");
+}
+
 /// A fail whose findings are all follow-ups still fails, but names nothing
 /// blocking, so it adds no round.
 #[tokio::test]

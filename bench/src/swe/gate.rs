@@ -154,10 +154,10 @@ fn judge(aggregate: &Aggregate, new: ArmKey, other: ArmKey) -> (Option<Paired>, 
         reference_only,
         p_worse,
     });
-    let infra: u32 = [new, other]
+    let infra: u64 = [new, other]
         .iter()
         .filter_map(|key| aggregate.arms.get(key))
-        .map(|totals| totals.infra)
+        .map(|totals| u64::from(totals.infra))
         .sum();
     if infra > 0 {
         let reason = format!("{infra} infrastructure failures; rerun them");
@@ -306,6 +306,16 @@ mod tests {
         assert!(
             dev.iter()
                 .all(|c| c.verdict == Verdict::Incomplete && c.paired.is_some())
+        );
+        // Two arms of 2^31 failures each would wrap a u32 sum to 0.
+        let wraps = 1u32 << 31;
+        let report = evaluate(&[Model::Haiku], &[aggregate("dev", pairs(0, 0), wraps)]);
+        assert!(
+            report
+                .comparisons
+                .iter()
+                .filter(|c| c.split == Split::Dev)
+                .all(|c| c.verdict == Verdict::Incomplete && c.reason.contains("infrastructure"))
         );
     }
 

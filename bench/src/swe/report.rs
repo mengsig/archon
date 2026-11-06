@@ -112,9 +112,10 @@ fn arms_table(aggregates: &[Aggregate], old_label: &str) -> String {
     out
 }
 
-/// A total spread over the solved instances; nothing solved has no such figure.
-fn per_solved(total: f64, solved: u32) -> Option<f64> {
-    (solved > 0).then(|| total / f64::from(solved))
+/// A total spread over the solved instances; nothing solved, or an unknown
+/// total, has no such figure.
+fn per_solved(total: Option<f64>, solved: u32) -> Option<f64> {
+    total.filter(|_| solved > 0).map(|t| t / f64::from(solved))
 }
 
 fn arm_label(key: ArmKey, old_label: &str) -> String {
@@ -137,14 +138,14 @@ mod tests {
     fn dev() -> Aggregate {
         let arm = |passed| json!({"n": 4, "passed": passed, "infra": 0, "cost_usd": 2.0, "wall_s": 800.0});
         let value = json!({
-            "schema": SCHEMA, "split": "dev",
+            "schema": SCHEMA, "split": "dev", "tasks": 4, "repeats": 1,
             "arms": {"haiku/old": arm(2), "haiku/new": arm(2), "haiku/native": arm(0)},
             "pairs": [
                 {"a": "haiku/new", "b": "haiku/native", "n": 4, "a_only": 2, "b_only": 0},
                 {"a": "haiku/new", "b": "haiku/old", "n": 4, "a_only": 1, "b_only": 1},
             ],
         });
-        Aggregate::parse(&value.to_string(), Split::Dev, None).unwrap()
+        Aggregate::parse_saved(&value.to_string(), Split::Dev).unwrap()
     }
 
     #[test]

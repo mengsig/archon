@@ -6,10 +6,6 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use anyhow::{Context, bail, ensure};
-use serde_json::{Value, json};
-
-/// The Archon pipeline both Archon arms run.
-pub const PIPELINE: &str = "direct";
 
 /// The two cheap models every live bench run uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -122,6 +118,12 @@ impl ArchonBuild {
                 "the {what} binary {} is not a file",
                 path.display()
             );
+            // The runner reads each build as `--archon-pair LABEL=ARCHON,AETHER`.
+            ensure!(
+                !path.as_os_str().as_encoded_bytes().contains(&b','),
+                "the {what} binary {} has a comma, which the runner's pair flag cannot carry",
+                path.display()
+            );
         }
         Ok(Self {
             label: label.to_owned(),
@@ -174,26 +176,6 @@ impl ArmSet {
             Harness::Native => None,
         }
     }
-
-    /// The arms file handed to Aether's runner (see `runner`).
-    pub fn runner_arms(&self) -> Value {
-        let arms: Vec<Value> = self
-            .keys()
-            .into_iter()
-            .map(|key| match self.build(key.harness) {
-                Some(build) => json!({
-                    "key": key.to_string(), "model": key.model.name(), "harness": "archon",
-                    "pipeline": PIPELINE, "label": build.label, "archon_bin": build.archon_bin,
-                    "aether_bin": build.aether_bin,
-                }),
-                None => json!({
-                    "key": key.to_string(), "model": key.model.name(), "harness": "native",
-                    "cli": key.model.native_cli(),
-                }),
-            })
-            .collect();
-        json!({ "arms": arms })
-    }
 }
 
 #[cfg(test)]
@@ -243,26 +225,14 @@ mod tests {
                 "luna/native"
             ]
         );
-        let arms = set.runner_arms();
-        let arms = arms["arms"].as_array().unwrap();
-        assert_eq!(arms[0]["label"], "v1.4.9");
+        assert_eq!(set.build(Harness::Old).unwrap().label, "v1.4.9");
         assert!(
-            arms[0]["aether_bin"]
-                .as_str()
+            set.build(Harness::New)
                 .unwrap()
-                .ends_with("aether-v1.4.9")
+                .aether_bin
+                .ends_with("aether-head")
         );
-        assert_eq!(arms[4]["label"], "head");
-        assert_eq!(
-            (arms[0]["pipeline"].as_str(), arms[4]["pipeline"].as_str()),
-            (Some("direct"), Some("direct"))
-        );
-        assert!(
-            arms[2].get("pipeline").is_none(),
-            "a native arm runs no pipeline"
-        );
-        assert_eq!(arms[2]["cli"], "claude-code");
-        assert_eq!(arms[5]["cli"], "codex");
+        assert!(set.build(Harness::Native).is_none());
     }
 
     #[test]
@@ -276,5 +246,8 @@ mod tests {
         let missing = dir.path().join("missing");
         assert!(ArchonBuild::new("head", &missing, &missing).is_err());
         assert!(ArchonBuild::new("head", Path::new("archon"), Path::new("aether")).is_err());
+        let comma = dir.path().join("archon,v2");
+        std::fs::write(&comma, "").unwrap();
+        assert!(ArchonBuild::new("head", &comma, &comma).is_err(), "a comma");
     }
 }

@@ -86,6 +86,9 @@ pub struct RunArgs {
     /// The runner starts no trial above this 1-minute load.
     #[arg(long, default_value_t = 12.0)]
     load_max: f64,
+    /// The runner admits no trial once the run has spent this many dollars.
+    #[arg(long)]
+    budget_usd: f64,
     /// The holdout's size, as the seal command printed it; archon-bench never reads the holdout.
     #[arg(long, default_value_t = 25)]
     holdout_instances: u32,
@@ -158,6 +161,7 @@ fn run_split(args: &RunArgs) -> anyhow::Result<()> {
         repeats: args.repeats,
         jobs: args.jobs,
         load_max: args.load_max,
+        budget_usd: args.budget_usd,
         limit: args.limit,
     };
     request.validate()?;
@@ -254,6 +258,12 @@ fn print_plan(args: &RunArgs, request: &Request<'_>, instances: u32) -> anyhow::
         earlier.as_ref(),
     );
     print!("{}", estimate::render(&figures, request.jobs));
+    println!("budget: ${:.2}", request.budget_usd);
+    if request.budget_usd < figures.usd {
+        println!(
+            "  below the estimate: the runner may stop early, and the gate calls a short run incomplete"
+        );
+    }
     let bound: Vec<(u32, u32)> = gate::noise_bound(instances)
         .into_iter()
         .filter_map(|(discordant, losses)| losses.map(|k| (discordant, k)))
@@ -277,7 +287,7 @@ fn read_aggregate(path: &Path, split: Split) -> anyhow::Result<Aggregate> {
     sealed::refuse_inside_store(path)?;
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("reading the {split} aggregate {}", path.display()))?;
-    Aggregate::parse(&text, split, None).with_context(|| format!("checking {}", path.display()))
+    Aggregate::parse_saved(&text, split).with_context(|| format!("checking {}", path.display()))
 }
 
 fn run_gate(args: &GateArgs) -> anyhow::Result<()> {

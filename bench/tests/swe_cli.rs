@@ -1,7 +1,9 @@
-//! `archon-bench swe` end to end against a stub Aether runner. On the holdout
-//! it never prints holdout content and keeps no copy of it: the stub leaks a
-//! canary on stdout, on stderr, in its scratch directory and, in one case, in
-//! its aggregate. On dev it passes the arms through and the gate decides.
+//! `archon-bench swe` end to end against a stub of Aether's runner
+//! (`evals/release_bench.py run`, as of aether 73f66333). On the holdout it
+//! never prints holdout content and keeps no copy of it: the stub leaks a
+//! canary on stdout, on stderr, in its work root, and in Aether's own gate
+//! reasons and stop reason. On dev it passes both builds through and the gate
+//! decides.
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -10,18 +12,25 @@ use serde_json::{Value, json};
 
 const CANARY: &str = "sealed-canary-astropy__astropy-424242";
 
+/// Writes its aggregate where the real runner does: a dev run under its
+/// `--run-id`, a holdout run under a name of its own.
 const FAKE_RUNNER: &str = r#"printf '%s\n' "$@" > "$FAKE_ARGS"
-out=""
+checkout=$(cd "$(dirname "$0")/.." && pwd)
 while [ $# -gt 0 ]; do
-  if [ "$1" = --aggregate-out ]; then out=$2; fi
-  if [ "$1" = --arms ]; then arms=$2; fi
+  case "$1" in
+    --split) split=$2 ;;
+    --run-id) run_id=$2 ;;
+    --work-root) work=$2 ;;
+  esac
   shift
 done
 echo "instance $CANARY: diff --git a/x b/x"
 echo "prompt for $CANARY" >&2
-printf '%s' "$CANARY" > "$(dirname "$out")/transcript.txt"
-cp "$FAKE_AGGREGATE" "$out"
-cp "$arms" "$(dirname "$FAKE_ARGS")/arms-copy.json"
+mkdir -p "$work/runs" && printf '%s' "$CANARY" > "$work/runs/transcript.txt"
+runs="$checkout/target/release-bench"
+if [ "$split" = dev ]; then out="$runs/runs/$run_id"; mkdir -p "$out"
+else mkdir -p "$runs/holdout" && out=$(mktemp -d "$runs/holdout/run-XXXXXX"); fi
+if [ "$FAKE_WRITE" = 1 ]; then cp "$FAKE_AGGREGATE" "$out/aggregate.json"; fi
 exit "$FAKE_EXIT"
 "#;
 
@@ -51,7 +60,7 @@ impl Sandbox {
             "dataset": "SWE-bench/SWE-bench_Verified", "revision": "78f471bf",
             "instances": {"a__b-1": pin, "c__d-2": pin, "e__f-3": pin}}}});
         std::fs::write(set.join("manifest.json"), manifest.to_string()).unwrap();
-        std::fs::write(checkout.join("evals/swe_bench.py"), FAKE_RUNNER).unwrap();
+        std::fs::write(checkout.join("evals/release_bench.py"), FAKE_RUNNER).unwrap();
         for name in ["archon-old", "aether-old", "archon-new", "aether-new"] {
             std::fs::write(bins.join(name), "").unwrap();
         }
@@ -66,17 +75,25 @@ impl Sandbox {
         }
     }
 
-    fn run(&self, aggregate: &Value, exit: u32) -> Output {
+    fn run(&self, aggregate: Option<&Value>, exit: u32) -> Output {
         self.run_split("holdout", aggregate, exit, &[])
     }
 
-    fn run_split(&self, split: &str, aggregate: &Value, exit: u32, extra: &[&str]) -> Output {
+    /// Run `swe run`; the stub writes `aggregate` (if any) and exits `exit`.
+    fn run_split(
+        &self,
+        split: &str,
+        aggregate: Option<&Value>,
+        exit: u32,
+        extra: &[&str],
+    ) -> Output {
         let aggregate_file = self.data_home.join("fake-aggregate.json");
-        std::fs::write(&aggregate_file, aggregate.to_string()).unwrap();
+        let text = aggregate.map_or(String::new(), Value::to_string);
+        std::fs::write(&aggregate_file, text).unwrap();
         let bin = |name: &str| self.bins.join(name);
         std::process::Command::new(env!("CARGO_BIN_EXE_archon-bench"))
             .args(["swe", "run", "--split", split, "--models", "haiku"])
-            .args(["--python", "/bin/sh"])
+            .args(["--python", "/bin/sh", "--budget-usd", "90"])
             .args(extra)
             .arg("--aether-checkout")
             .arg(&self.checkout)
@@ -97,6 +114,7 @@ impl Sandbox {
             .env("CANARY", CANARY)
             .env("FAKE_AGGREGATE", &aggregate_file)
             .env("FAKE_EXIT", exit.to_string())
+            .env("FAKE_WRITE", if aggregate.is_some() { "1" } else { "0" })
             .env("FAKE_ARGS", self.data_home.join("runner-args.txt"))
             .output()
             .unwrap()
@@ -126,16 +144,50 @@ fn collect(dir: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
-fn aggregate() -> Value {
-    let arm = json!({"n": 25, "passed": 11, "infra": 0, "cost_usd": 12.5, "wall_s": 30000.0});
+/// An arm in the runner's schema, `aether-release-bench-aggregate/1`.
+fn arm(name: &str, n: u32, passed: u32) -> Value {
+    let (model, harness) = name.split_once('/').unwrap();
+    json!({"model": model, "harness": harness, "trials": n, "infra": 0, "n": n, "passed": passed,
+           "pass_rate": f64::from(passed) / f64::from(n), "pass_ci": [0.2, 0.6],
+           "cost_usd_total": 12.5, "unpriced": 0, "cost_per_solved_usd": 1.1,
+           "wall_seconds_total": 30000.0, "wall_per_solved_seconds": 2700.0})
+}
+
+/// A pair in the runner's schema: `b` only the baseline passed, `c` only the candidate.
+fn pair(tasks: u32, baseline: &str, candidate: &str, b: u32, c: u32) -> Value {
+    json!({"model": "haiku", "baseline": baseline, "candidate": candidate, "tasks": tasks,
+           "pairs": tasks, "b": b, "c": c, "p_one_sided": 0.6, "pass_diff": [0.0, -0.2, 0.2]})
+}
+
+fn runner_output(split: &str, tasks: u32, passed: [u32; 3], pairs: [Value; 3]) -> Value {
+    let [native, old, new] = passed;
     json!({
-        "schema": "swe-aggregate/1", "split": "holdout",
-        "arms": {"haiku/old": arm, "haiku/new": arm, "haiku/native": arm},
-        "pairs": [
-            {"a": "haiku/new", "b": "haiku/native", "n": 25, "a_only": 3, "b_only": 3},
-            {"a": "haiku/new", "b": "haiku/old", "n": 25, "a_only": 2, "b_only": 2},
-        ],
+        "schema": "aether-release-bench-aggregate/1",
+        "set": {"name": "swe-v1", "split": split, "sha256": "c".repeat(64), "tasks": tasks, "excluded": 0},
+        "settings": {"confidence": 0.95, "accuracy_margin": 0.05, "native_alpha": 0.05},
+        "arms": {"haiku/native": arm("haiku/native", tasks, native),
+                 "haiku/archon-old": arm("haiku/archon-old", tasks, old),
+                 "haiku/archon-new": arm("haiku/archon-new", tasks, new)},
+        "pairs": pairs,
+        "gates": {"haiku": {"release": null,
+                            "native": {"haiku/archon-new": {"verdict": "FAIL", "reasons": [CANARY]}}}},
+        "overall": "FAIL",
+        "stop_reason": CANARY,
     })
+}
+
+/// A holdout of 25 tasks; Aether's gate reasons and stop reason carry the canary.
+fn aggregate() -> Value {
+    runner_output(
+        "holdout",
+        25,
+        [11, 11, 11],
+        [
+            pair(25, "haiku/native", "haiku/archon-old", 2, 2),
+            pair(25, "haiku/native", "haiku/archon-new", 3, 3),
+            pair(25, "haiku/archon-old", "haiku/archon-new", 2, 2),
+        ],
+    )
 }
 
 fn assert_silent(output: &Output) {
@@ -170,13 +222,19 @@ fn assert_no_copy(sandbox: &Sandbox) {
 #[test]
 fn a_holdout_run_prints_only_aggregates_and_keeps_only_the_validated_aggregate() {
     let sandbox = Sandbox::new();
-    let output = sandbox.run(&aggregate(), 0);
+    let output = sandbox.run(Some(&aggregate()), 0);
     assert!(
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
     assert_silent(&output);
+    let args = std::fs::read_to_string(sandbox.data_home.join("runner-args.txt")).unwrap();
+    assert!(args.contains("--split\nholdout\n"), "{args}");
+    assert!(
+        !args.contains("--run-id") && !args.contains("--limit"),
+        "{args}"
+    );
     assert_no_copy(&sandbox);
     let kept = sandbox.kept_files();
     assert_eq!(kept.len(), 1, "only the aggregate is kept: {kept:?}");
@@ -193,8 +251,9 @@ fn a_holdout_run_prints_only_aggregates_and_keeps_only_the_validated_aggregate()
 fn a_holdout_aggregate_with_instances_is_refused_unprinted_and_unkept() {
     let sandbox = Sandbox::new();
     let mut leaky = aggregate();
-    leaky["instances"] = json!([{"instance_id": CANARY, "arm": "haiku/new", "resolved": true}]);
-    let output = sandbox.run(&leaky, 0);
+    leaky["instances"] =
+        json!([{"task": CANARY, "arm": "haiku/archon-new", "repeat": 0, "passed": true}]);
+    let output = sandbox.run(Some(&leaky), 0);
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("per-instance"));
     assert_silent(&output);
@@ -209,7 +268,7 @@ fn a_holdout_aggregate_with_instances_is_refused_unprinted_and_unkept() {
 #[test]
 fn a_failing_holdout_runner_is_reported_without_its_output() {
     let sandbox = Sandbox::new();
-    let output = sandbox.run(&aggregate(), 3);
+    let output = sandbox.run(None, 3);
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("discards its output"), "{stderr}");
@@ -247,6 +306,8 @@ fn a_run_pointed_into_the_holdout_store_is_refused_before_the_runner_starts() {
             "y",
             "--new-aether",
             "y",
+            "--budget-usd",
+            "1",
         ])
         .arg("--aether-checkout")
         .arg(&store)
@@ -268,7 +329,7 @@ fn out_of_range_counts_are_refused_as_errors_before_any_estimate() {
         ["--jobs", "0"],
     ] {
         let args = [&extra[..], &["--dry-run"]].concat();
-        let output = sandbox.run_split("holdout", &aggregate(), 0, &args);
+        let output = sandbox.run_split("holdout", Some(&aggregate()), 0, &args);
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(output.status.code(), Some(1), "{extra:?}: {stderr}");
         assert!(!stderr.contains("panicked"), "{extra:?}: {stderr}");
@@ -278,23 +339,29 @@ fn out_of_range_counts_are_refused_as_errors_before_any_estimate() {
     assert!(sandbox.kept_files().is_empty());
 }
 
+/// Two dev tasks: new solves both, native only a__b-1, old only c__d-2.
 fn dev_aggregate() -> Value {
-    let arm =
-        |passed| json!({"n": 2, "passed": passed, "infra": 0, "cost_usd": 1.0, "wall_s": 900.0});
-    let verdict = |id, arm, resolved| json!({"instance_id": id, "arm": arm, "resolved": resolved});
-    json!({
-        "schema": "swe-aggregate/1", "split": "dev",
-        "arms": {"haiku/old": arm(1), "haiku/new": arm(2), "haiku/native": arm(1)},
-        "pairs": [
-            {"a": "haiku/new", "b": "haiku/native", "n": 2, "a_only": 1, "b_only": 0},
-            {"a": "haiku/old", "b": "haiku/new", "n": 2, "a_only": 0, "b_only": 1},
+    let verdict =
+        |task, arm, passed| json!({"task": task, "arm": arm, "repeat": 0, "passed": passed});
+    let mut value = runner_output(
+        "dev",
+        2,
+        [1, 1, 2],
+        [
+            pair(2, "haiku/native", "haiku/archon-old", 1, 1),
+            pair(2, "haiku/native", "haiku/archon-new", 0, 1),
+            pair(2, "haiku/archon-old", "haiku/archon-new", 0, 1),
         ],
-        "instances": [
-            verdict("a__b-1", "haiku/new", true), verdict("c__d-2", "haiku/new", true),
-            verdict("a__b-1", "haiku/native", true), verdict("c__d-2", "haiku/native", false),
-            verdict("a__b-1", "haiku/old", false), verdict("c__d-2", "haiku/old", true),
-        ],
-    })
+    );
+    value["instances"] = json!([
+        verdict("a__b-1", "haiku/archon-new", true),
+        verdict("c__d-2", "haiku/archon-new", true),
+        verdict("a__b-1", "haiku/native", true),
+        verdict("c__d-2", "haiku/native", false),
+        verdict("a__b-1", "haiku/archon-old", false),
+        verdict("c__d-2", "haiku/archon-old", true),
+    ]);
+    value
 }
 
 fn saved(sandbox: &Sandbox, name: &str) -> PathBuf {
@@ -332,7 +399,8 @@ fn gate(sandbox: &Sandbox, holdout: Option<&Path>) -> Output {
 #[test]
 fn a_dev_run_hands_the_runner_both_builds_and_the_limit_and_keeps_no_verdicts() {
     let sandbox = Sandbox::new();
-    let output = sandbox.run_split("dev", &dev_aggregate(), 0, &["--limit", "2"]);
+    // Exit 1 is the runner's own non-PASS verdict, after it wrote its aggregate.
+    let output = sandbox.run_split("dev", Some(&dev_aggregate()), 1, &["--limit", "2"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success(),
@@ -348,36 +416,40 @@ fn a_dev_run_hands_the_runner_both_builds_and_the_limit_and_keeps_no_verdicts() 
         "{stdout}"
     );
     assert!(stdout.contains("estimate (priors): 6 trials"), "{stdout}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("exited exit status: 1 after writing its aggregate"),
+        "{stderr}"
+    );
     assert!(
         stdout.contains("| haiku | dev | 2 | 1 | 0 | 1.000 | pass |"),
         "{stdout}"
     );
     let args = std::fs::read_to_string(sandbox.data_home.join("runner-args.txt")).unwrap();
-    assert!(
-        args.contains("--split\ndev\n") && args.contains("--limit\n2\n"),
-        "{args}"
-    );
-    assert!(
-        args.contains("--jobs\n3\n") && args.contains("--load-max\n12\n"),
-        "{args}"
-    );
-    let arms: Value = serde_json::from_str(
-        &std::fs::read_to_string(sandbox.data_home.join("arms-copy.json")).unwrap(),
-    )
-    .unwrap();
-    let old = &arms["arms"][0];
-    assert_eq!(
-        (old["key"].as_str(), old["label"].as_str()),
-        (Some("haiku/old"), Some("v1.4.9"))
-    );
-    assert!(old["archon_bin"].as_str().unwrap().ends_with("archon-old"));
-    assert!(old["aether_bin"].as_str().unwrap().ends_with("aether-old"));
-    assert_eq!(
-        arms["arms"][1]["aether_bin"]
-            .as_str()
-            .map(|p| p.ends_with("aether-new")),
-        Some(true)
-    );
+    let bin = |name: &str| sandbox.bins.join(name).display().to_string();
+    for expected in [
+        "run\n--set\nswe-v1\n--split\ndev\n".to_owned(),
+        format!(
+            "--old\n{}\n--new\n{}\n",
+            bin("aether-old"),
+            bin("aether-new")
+        ),
+        "--arms\nhaiku/archon-old,haiku/archon-new,haiku/native\n".to_owned(),
+        format!(
+            "--archon-pair\nold={},{}\n",
+            bin("archon-old"),
+            bin("aether-old")
+        ),
+        format!(
+            "--archon-pair\nnew={},{}\n",
+            bin("archon-new"),
+            bin("aether-new")
+        ),
+        "--jobs\n3\n--load-max\n12\n--budget\n90\n".to_owned(),
+        "--limit\n2\n--run-id\narchon-bench-".to_owned(),
+    ] {
+        assert!(args.contains(&expected), "{expected:?} in\n{args}");
+    }
     let kept = std::fs::read_to_string(saved(&sandbox, "dev-aggregate.json")).unwrap();
     assert!(
         !kept.contains("a__b-1"),
@@ -390,7 +462,7 @@ fn the_gate_fails_without_a_holdout_and_passes_with_both_splits_not_worse() {
     let sandbox = Sandbox::new();
     assert!(
         sandbox
-            .run_split("dev", &dev_aggregate(), 0, &[])
+            .run_split("dev", Some(&dev_aggregate()), 0, &[])
             .status
             .success()
     );
@@ -406,7 +478,7 @@ fn the_gate_fails_without_a_holdout_and_passes_with_both_splits_not_worse() {
     );
     assert!(markdown.contains("### Never worse than the best release (v1.4.9)\n"));
     assert!(markdown.contains("(no holdout aggregate)"), "{markdown}");
-    assert!(sandbox.run(&aggregate(), 0).status.success());
+    assert!(sandbox.run(Some(&aggregate()), 0).status.success());
     let holdout = saved(&sandbox, "holdout-aggregate.json");
     let complete = gate(&sandbox, Some(&holdout));
     assert!(

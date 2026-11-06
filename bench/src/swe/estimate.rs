@@ -48,12 +48,13 @@ fn prior(key: ArmKey) -> PerTrial {
     }
 }
 
+/// The arm's mean per graded trial, when the earlier run timed and priced every one.
 fn measured(key: ArmKey, earlier: &Aggregate) -> Option<PerTrial> {
     let totals = earlier.arms.get(&key).filter(|t| t.n > 0)?;
     let n = f64::from(totals.n);
     Some(PerTrial {
-        minutes: totals.wall_s / n / 60.0,
-        usd: totals.cost_usd / n,
+        minutes: totals.wall_s? / n / 60.0,
+        usd: totals.cost_usd? / n,
     })
 }
 
@@ -155,14 +156,18 @@ mod tests {
     #[test]
     fn an_earlier_run_replaces_the_priors_only_when_it_covers_every_arm() {
         let arm = json!({"n": 10, "passed": 5, "infra": 0, "cost_usd": 5.0, "wall_s": 6000.0});
-        let value =
-            json!({"schema": SCHEMA, "split": "dev", "arms": {"haiku/new": arm}, "pairs": []});
-        let earlier = Aggregate::parse(&value.to_string(), Split::Dev, None).unwrap();
+        let mut value = json!({"schema": SCHEMA, "split": "dev", "tasks": 10, "repeats": 1,
+                               "arms": {"haiku/new": arm}, "pairs": []});
+        let earlier = Aggregate::parse_saved(&value.to_string(), Split::Dev).unwrap();
         let covered = estimate(&keys(&["haiku/new"]), 10, 1, 1, Some(&earlier));
         assert!(covered.measured);
         assert!((covered.usd - 5.0).abs() < 1e-9);
         assert!((covered.hours - 10.0 * 13.0 / 60.0).abs() < 1e-9);
         let partial = estimate(&keys(&["haiku/new", "luna/new"]), 10, 1, 1, Some(&earlier));
         assert!(!partial.measured);
+        value["arms"]["haiku/new"]["cost_usd"] = serde_json::Value::Null;
+        let unpriced = Aggregate::parse_saved(&value.to_string(), Split::Dev).unwrap();
+        let fallback = estimate(&keys(&["haiku/new"]), 10, 1, 1, Some(&unpriced));
+        assert!(!fallback.measured, "an unpriced arm keeps its prior");
     }
 }

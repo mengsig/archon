@@ -28,9 +28,42 @@ than the best recent Archon release.
   its own and keeps no copy of the set. It:
   - picks the arms and hands them to the runner;
   - prints the estimate and the noise bound;
-  - reads the runner's aggregate through one adapter
-    (`src/swe/aggregate.rs`, schema `swe-aggregate/1`);
+  - reads the runner's aggregate through one adapter (`src/swe/runner.rs`
+    and `src/swe/runner/output.rs`);
+  - saves its own reduced aggregate (`src/swe/aggregate.rs`, schema
+    `archon-bench-swe-aggregate/1`): totals and paired counts only;
   - renders and enforces the gate.
+
+### The runner interface
+
+archon-bench follows Aether's runner as of aether 73f66333 (branch
+`archon/615skbgs-bench-swe-tier-with-a-sealed-holdout-and`):
+
+```sh
+python3 evals/release_bench.py run --set swe-v1 --split dev|holdout \
+  --old <old aether> --new <new aether> \
+  --arms haiku/archon-old,haiku/archon-new,haiku/native \
+  --archon-pair old=<old archon>,<old aether> --archon-pair new=<new archon>,<new aether> \
+  --repeats 1 --jobs 3 --load-max 12 --budget <usd> --work-root <scratch> \
+  [--limit N --run-id <id>]   # dev only
+```
+
+- **Dev.** The run is named `archon-bench-<random>`. Its aggregate is
+  `<checkout>/target/release-bench/runs/<id>/aggregate.json`, with
+  per-instance verdicts. archon-bench checks those verdicts against every
+  total and pair.
+- **Holdout.** The runner names the run itself. archon-bench reads the one
+  new `<checkout>/target/release-bench/holdout/<run>/aggregate.json`, which
+  carries no verdicts.
+- **Aggregate.** Both splits use schema `aether-release-bench-aggregate/1`.
+  A pair's `b` counts trial pairs only the baseline passed, and `c` those
+  only the candidate passed, matched on task and repeat.
+- **What is skipped.** Aether's own `gates`, `overall` and `stop_reason` are
+  skipped unread: their reasons may name a task. Its `settings` and its
+  per-arm and per-pair derived figures are skipped too.
+- **Exit status.** The runner exits nonzero on its own non-PASS verdict.
+  When it has written its aggregate, archon-bench reads the file and gates
+  for itself.
 
 ## Arms
 
@@ -42,9 +75,9 @@ Per model, three arms run on the same instances:
 | `new` | The candidate (the #378 head) on its Aether | the same |
 | `native` | `claude-code` | `codex` |
 
-Both Archon arms run the `direct` pipeline through the runner's Archon arm,
-each on its own `archon` and `aether` binaries; the arms file names the
-pipeline for each.
+Both Archon arms run the `direct` pipeline through the runner's Archon arm
+(`--archon-pair`), each on its own `archon` and `aether` binaries, which the
+runner pins by SHA-256 into the run.
 
 ### The best recent release
 
@@ -110,7 +143,9 @@ fails, when:
 
 - its split has no aggregate;
 - the pair is missing;
-- either arm lost a trial to an infrastructure failure. Rerun those trials.
+- either arm lost a trial to an infrastructure failure. Rerun those trials;
+- fewer than tasks × repeats trial pairs were graded on both arms, as when
+  the budget stopped the run.
 
 Any failing comparison fails the release.
 
@@ -146,11 +181,13 @@ sh scripts/ci-slot.sh nice -n 10 ionice -c3 \
     --old-label v1.4.9 --old-archon "$dir/archon/archon" --old-aether "$dir/aether/aether" \
     --new-label "$(git rev-parse --short HEAD)" \
     --new-archon "$PWD/target/release/archon" --new-aether "$NEW_AETHER" \
-    --jobs 3 --load-max 12 --repeats 1
+    --jobs 3 --load-max 12 --repeats 1 --budget-usd 90
 ```
 
 - **Estimate.** `--dry-run` prints the arms, the estimate (cost, time and
-  disk) and the noise bound, then stops. Without measurements the
+  disk), the budget and the noise bound, then stops. `--budget-usd` is
+  required: the runner admits no trial past it, and a run it stops short is
+  incomplete at the gate, so set it above the estimate. Without measurements the
   estimate uses stated priors (`src/swe/estimate.rs`). Add
   `--estimate-from <earlier>/dev-aggregate.json` to use a run's measured
   means instead.
@@ -170,7 +207,8 @@ harness code never read it or run it. It uses the same command with
 For that split archon-bench:
 
 - discards the runner's stdout and stderr unread;
-- deletes the runner's scratch directory;
+- skips Aether's own gate reasons and stop reason unread;
+- deletes the scratch directory the runner worked in;
 - refuses any path inside the holdout store;
 - refuses an aggregate that carries per-instance verdicts or any field
   outside the schema;
@@ -178,14 +216,17 @@ For that split archon-bench:
 - keeps only the re-serialized aggregate, which has no instance field.
 
 `tests/swe_cli.rs` checks the silence, the scratch removal, the store
-refusal and the instance refusal end to end, with a fake runner that leaks
-a canary on every channel it has. The unit tests in `src/swe/aggregate`
-check the schema refusal and the position-only parse errors.
+refusal and the instance refusal end to end. It uses a stub runner that
+leaks a canary on every channel it has, Aether's gate reasons and stop
+reason included. The unit tests in `src/swe/runner/output` and
+`src/swe/aggregate` check the schema refusal and the position-only parse
+errors.
 
 ## Dev baseline
 
-**Not run yet.** This change shipped before Aether's runner, dev manifest
-and image cache landed (aether#373). The baseline is queued as its own
+**Not run yet.** This change shipped before Aether's runner was pushed and
+before its dev manifest and image cache landed (aether#373); it is tested
+against a stub of the runner's interface. The baseline is queued as its own
 item, under the CI slot, once both changes are in. Its command:
 
 ```sh
@@ -195,7 +236,7 @@ sh scripts/ci-slot.sh nice -n 10 ionice -c3 \
     --old-label v1.4.9 --old-archon "$dir/archon/archon" --old-aether "$dir/aether/aether" \
     --new-label "$(git rev-parse --short HEAD)" \
     --new-archon "$PWD/target/release/archon" --new-aether "$NEW_AETHER" \
-    --jobs 3 --load-max 12 --repeats 1
+    --jobs 3 --load-max 12 --repeats 1 --budget-usd 90
 ```
 
 - **Arms.** Six: `haiku/old`, `haiku/new`, `haiku/native` (claude-code),
@@ -207,11 +248,13 @@ sh scripts/ci-slot.sh nice -n 10 ionice -c3 \
 - **Expected.** 150 trials (25 instances × 6 arms × 1 repeat). The priors
   estimate about 18.8 h and $69, and 34.5 GB of disk (30 GB image cache
   plus workspaces). `--dry-run` prints the same figures before any trial.
+- **Budget.** $90, about 1.3 times the estimate, so that a run near the
+  priors is not cut short.
 
 To prove the wiring before that, a smoke run of two dev instances on one
 model takes about 40 minutes (6 trials) with the priors:
 
 ```sh
 target/release/archon-bench swe run --split dev --models haiku --limit 2 \
-  --aether-checkout "$AETHER_CHECKOUT" ...the same build flags...
+  --budget-usd 6 --aether-checkout "$AETHER_CHECKOUT" ...the same build flags...
 ```

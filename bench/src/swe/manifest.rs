@@ -11,6 +11,9 @@ use serde::Deserialize;
 
 use super::{sealed, stats};
 
+/// The set's name, as the runner's `--set` takes it and its aggregate records it.
+pub const SET_NAME: &str = "swe-v1";
+
 /// The set's directory inside an Aether checkout.
 pub const SET_DIR: &str = "bench/release-set/swe-v1";
 
@@ -105,6 +108,7 @@ mod tests {
     fn a_dev_manifest_gives_its_count_dataset_and_revision() {
         let parsed = DevManifest::parse(&manifest().to_string()).unwrap();
         assert_eq!(parsed.instances, 2);
+        assert_eq!(Path::new(SET_DIR).file_name().unwrap(), SET_NAME);
         assert_eq!(
             (parsed.dataset.as_str(), parsed.revision.as_str()),
             ("SWE-bench/SWE-bench_Verified", "78f471bf")

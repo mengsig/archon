@@ -163,12 +163,11 @@ fn judge(aggregate: &Aggregate, new: ArmKey, other: ArmKey) -> (Option<Paired>, 
         let reason = format!("{infra} infrastructure failures; rerun them");
         return (paired, Verdict::Incomplete, reason);
     }
-    if n == 0 {
-        return (
-            paired,
-            Verdict::Incomplete,
-            "no instance graded on both arms".into(),
-        );
+    // Missing trials (a budget stop, an unfinished run) leave pairs ungraded.
+    let cells = u64::from(aggregate.tasks) * u64::from(aggregate.repeats);
+    if u64::from(n) < cells {
+        let reason = format!("{n} of {cells} trial pairs graded on both arms; run the rest");
+        return (paired, Verdict::Incomplete, reason);
     }
     let verdict = if p_worse < ALPHA {
         Verdict::Worse
@@ -200,36 +199,41 @@ mod tests {
 
     use super::*;
 
-    fn aggregate(split: &str, pairs: serde_json::Value, infra: u32) -> Aggregate {
-        let arm = json!({"n": 25, "passed": 10, "infra": infra, "cost_usd": 3.0, "wall_s": 9000.0});
+    /// 25 tasks, once each; `lost` of them never graded on any arm, `infra`
+    /// of them lost to infrastructure failures.
+    fn graded(
+        split: &str,
+        (native_wins, old_wins): (u32, u32),
+        lost: u32,
+        infra: u32,
+    ) -> Aggregate {
+        let n = 25 - lost - infra;
+        let arm = json!({"n": n, "passed": 10, "infra": infra, "cost_usd": 3.0, "wall_s": 9000.0});
         let value = json!({
-            "schema": crate::swe::aggregate::SCHEMA, "split": split,
+            "schema": crate::swe::aggregate::SCHEMA, "split": split, "tasks": 25, "repeats": 1,
             "arms": {"haiku/old": arm, "haiku/new": arm, "haiku/native": arm},
-            "pairs": pairs,
+            "pairs": [
+                {"a": "haiku/native", "b": "haiku/new", "n": n, "a_only": native_wins, "b_only": 1},
+                {"a": "haiku/new", "b": "haiku/old", "n": n, "a_only": 1, "b_only": old_wins},
+            ],
         });
         let split = if split == "dev" {
             Split::Dev
         } else {
             Split::Holdout
         };
-        Aggregate::parse(&value.to_string(), split, None).unwrap()
+        Aggregate::parse_saved(&value.to_string(), split).unwrap()
     }
 
-    fn pairs(native_wins: u32, old_wins: u32) -> serde_json::Value {
-        json!([
-            {"a": "haiku/native", "b": "haiku/new", "n": 25, "a_only": native_wins, "b_only": 1},
-            {"a": "haiku/new", "b": "haiku/old", "n": 25, "a_only": 1, "b_only": old_wins},
-        ])
+    fn aggregate(split: &str, wins: (u32, u32), infra: u32) -> Aggregate {
+        graded(split, wins, 0, infra)
     }
 
     #[test]
     fn a_release_passes_only_when_every_split_and_reference_is_not_worse() {
         let report = evaluate(
             &[Model::Haiku],
-            &[
-                aggregate("dev", pairs(2, 2), 0),
-                aggregate("holdout", pairs(1, 3), 0),
-            ],
+            &[aggregate("dev", (2, 2), 0), aggregate("holdout", (1, 3), 0)],
         );
         assert_eq!(report.comparisons.len(), 4);
         assert!(report.passed(), "{report:#?}");
@@ -243,10 +247,10 @@ mod tests {
 
     #[test]
     fn losing_significantly_to_native_or_the_best_release_fails() {
-        let dev = aggregate("dev", pairs(2, 2), 0);
+        let dev = aggregate("dev", (2, 2), 0);
         let report = evaluate(
             &[Model::Haiku],
-            &[dev.clone(), aggregate("holdout", pairs(8, 0), 0)],
+            &[dev.clone(), aggregate("holdout", (8, 0), 0)],
         );
         assert!(!report.passed());
         let worse: Vec<_> = report
@@ -259,10 +263,7 @@ mod tests {
             (worse[0].reference, worse[0].split),
             (Reference::Native, Split::Holdout)
         );
-        let report = evaluate(
-            &[Model::Haiku],
-            &[dev, aggregate("holdout", pairs(0, 8), 0)],
-        );
+        let report = evaluate(&[Model::Haiku], &[dev, aggregate("holdout", (0, 8), 0)]);
         let worse: Vec<_> = report
             .comparisons
             .iter()
@@ -272,8 +273,8 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_split_pair_or_infra_trial_makes_the_gate_incomplete() {
-        let report = evaluate(&[Model::Haiku], &[aggregate("dev", pairs(0, 0), 0)]);
+    fn a_missing_split_pair_infra_trial_or_ungraded_pair_makes_the_gate_incomplete() {
+        let report = evaluate(&[Model::Haiku], &[aggregate("dev", (0, 0), 0)]);
         assert!(!report.passed());
         assert!(
             report
@@ -281,10 +282,7 @@ mod tests {
                 .iter()
                 .any(|c| c.reason == "no holdout aggregate")
         );
-        let report = evaluate(
-            &[Model::Haiku, Model::Luna],
-            &[aggregate("dev", pairs(0, 0), 0)],
-        );
+        let report = evaluate(&[Model::Haiku, Model::Luna], &[aggregate("dev", (0, 0), 0)]);
         assert!(
             report
                 .comparisons
@@ -293,10 +291,7 @@ mod tests {
         );
         let report = evaluate(
             &[Model::Haiku],
-            &[
-                aggregate("dev", pairs(0, 0), 1),
-                aggregate("holdout", pairs(0, 0), 0),
-            ],
+            &[aggregate("dev", (0, 0), 1), aggregate("holdout", (0, 0), 0)],
         );
         let dev: Vec<_> = report
             .comparisons
@@ -307,15 +302,17 @@ mod tests {
             dev.iter()
                 .all(|c| c.verdict == Verdict::Incomplete && c.paired.is_some())
         );
-        // Two arms of 2^31 failures each would wrap a u32 sum to 0.
-        let wraps = 1u32 << 31;
-        let report = evaluate(&[Model::Haiku], &[aggregate("dev", pairs(0, 0), wraps)]);
+        let short = graded("dev", (0, 0), 3, 0);
+        let report = evaluate(&[Model::Haiku], &[short, aggregate("holdout", (0, 0), 0)]);
+        let dev: Vec<_> = report
+            .comparisons
+            .iter()
+            .filter(|c| c.split == Split::Dev)
+            .collect();
         assert!(
-            report
-                .comparisons
-                .iter()
-                .filter(|c| c.split == Split::Dev)
-                .all(|c| c.verdict == Verdict::Incomplete && c.reason.contains("infrastructure"))
+            dev.iter().all(|c| c.verdict == Verdict::Incomplete
+                && c.reason == "22 of 25 trial pairs graded on both arms; run the rest"),
+            "{dev:#?}"
         );
     }
 

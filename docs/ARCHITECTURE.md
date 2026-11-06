@@ -4869,10 +4869,13 @@ own. It runs Aether's shared `swe-v1` set through Aether's runner, which
 owns the instances, the sealed holdout, the labelled image cache and the
 official grading. archon-bench chooses the arms: per model, the best recent
 release on its released Aether, the candidate, and the native CLI. It
-prints the estimate and the noise bound, reads the runner's aggregates
-through one adapter (`swe/aggregate.rs`), and gates the release with an
-exact one-sided paired test per model and split. On the holdout it discards
-the runner's output and keeps only the validated aggregate. See
+prints the estimate and the noise bound, drives Aether's
+`evals/release_bench.py run --set swe-v1` and reads its
+`aether-release-bench-aggregate/1` file through one adapter
+(`swe/runner.rs`, `swe/runner/output.rs`). It saves its own reduced
+aggregate and gates the release with an exact one-sided paired test per
+model and split. On the holdout it discards the runner's output and Aether's
+own gate reasons, and keeps only the validated totals. See
 `bench/results-swe/README.md`.
 
 ## 16. Failure modes and recovery

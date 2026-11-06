@@ -884,8 +884,8 @@ const VERDICT_RULES: &str = "\n## Verdict\n\n\
 ```\n\n\
 - The `verdict` is exactly `\"pass\"` or `\"fail\"`, no other word.\n\
 - The stage prompt defines which findings make the verdict `fail`; apply its rule \
-exactly. A `fail` lists at least one finding and always fails. A `pass` may still \
-list findings the prompt treats as advice, so a review with only advice passes.\n\
+exactly. A `fail` lists at least one finding and always fails. A review whose \
+findings are all advice is a `pass`.\n\
 - End the `summary` with a final line that is exactly `VERDICT: PASS` or \
 `VERDICT: FAIL`, matching the structured verdict. A missing or unreadable verdict \
 counts as a fail.\n";
@@ -1007,7 +1007,7 @@ mod tests {
             // The contract fixes the format; the prompt owns the threshold.
             assert!(text.contains("stage prompt defines which findings"));
             assert!(text.contains("exactly `\"pass\"` or `\"fail\"`, no other word"));
-            assert!(text.contains("a review with only advice passes"));
+            assert!(text.contains("findings are all advice is a `pass`"));
         }
         let work = instructions(
             &stage(StageKind::Work, Gate::None, 1),

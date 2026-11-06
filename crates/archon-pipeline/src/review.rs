@@ -72,7 +72,7 @@ const VERDICT_HOWTO: &str = "complete the task with `structured` set to \
 {\"verdict\": \"pass\"|\"fail\", \"head\": \"<commit>\", \"base\": \"<commit>\", \"findings\": []}, \
 or end the summary with a line `VERDICT: PASS` or `VERDICT: FAIL` beside lines \
 `head: <commit>` and `base: <commit>`; the verdict is one of those two words, and a fail always fails, \
-so a review whose findings are all follow-ups or advice passes";
+so a review whose findings are all follow-ups or advice is a pass";
 
 impl Verdict {
     /// Prefer the task's `structured` field when it states a verdict. Aether can
@@ -730,7 +730,7 @@ mod tests {
         let unclear = Verdict::read_result("VERDICT: looks fine", None).unwrap_err();
         assert!(unclear.contains("\"VERDICT: looks fine\""), "{unclear}");
         assert!(
-            unclear.contains("all follow-ups or advice passes"),
+            unclear.contains("all follow-ups or advice is a pass"),
             "{unclear}"
         );
     }

@@ -34,8 +34,9 @@ const RISK_BUDGET: usize = 1_350;
 const EVIDENCE_BUDGET: usize = 2_100;
 /// What a strict scenario stage adds: the list it records and the private stack.
 const STRICT_SCENARIO_BUDGET: usize = 800;
-/// 131,000 before `e2e-strict` and `release-journey` added six stages of about 20.6 kB.
-const TOTAL_BUDGET: usize = 152_000;
+/// 131,000 before `e2e-strict` and `release-journey` added six stages of about 20.6 kB,
+/// 152,000 before the building stages' user-outcome rule (#397).
+const TOTAL_BUDGET: usize = 153_000;
 
 /// One built-in stage's fixed input, in bytes.
 struct Cost {

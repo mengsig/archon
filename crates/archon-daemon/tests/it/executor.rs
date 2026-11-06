@@ -3765,7 +3765,8 @@ async fn the_third_failing_review_round_stops_the_stage_and_escalates() {
     assert!(error.contains("failed 3 rounds"), "{error}");
 }
 
-/// A fail whose findings are all follow-ups is a pass: it adds no round.
+/// A fail whose findings are all follow-ups still fails, but names nothing
+/// blocking, so it adds no round.
 #[tokio::test]
 async fn a_fail_listing_only_follow_ups_adds_no_round() {
     let h = Harness::new().await;

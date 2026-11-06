@@ -586,7 +586,9 @@ starts the diff read:\n\n\
 ```json\n\
 {\"verdict\": \"pass\", \"head\": \"<commit>\", \"base\": \"<commit>\", \"findings\": []}\n\
 ```\n\n\
-Use `\"fail\"` with findings for failures. A reviewer that cannot set `structured` \
+Use `\"fail\"` with findings for failures. The `verdict` is exactly `\"pass\"` or \
+`\"fail\"`, and a `\"fail\"` always fails, so a review whose findings are all \
+follow-ups passes. A reviewer that cannot set `structured` \
 makes that JSON its whole last message: no `complete_task` or YAML, nothing \
 before or after it.\n\n\
 - Blocking findings are correctness bugs, security or safety issues, failing or missing \
@@ -880,6 +882,7 @@ const VERDICT_RULES: &str = "\n## Verdict\n\n\
 \"findings\": [{\"severity\": \"critical|high|medium|low\", \"title\": \"…\", \
 \"detail\": \"…\", \"path\": \"relative/path:line\"}]}\n\
 ```\n\n\
+- The `verdict` is exactly `\"pass\"` or `\"fail\"`, no other word.\n\
 - The stage prompt defines which findings make the verdict `fail`; apply its rule \
 exactly. A `fail` lists at least one finding. A `pass` may still list findings the \
 prompt treats as advice.\n\
@@ -1003,6 +1006,7 @@ mod tests {
             assert!(text.contains("\"verdict\""), "{kind:?}");
             // The contract fixes the format; the prompt owns the threshold.
             assert!(text.contains("stage prompt defines which findings"));
+            assert!(text.contains("exactly `\"pass\"` or `\"fail\"`, no other word"));
         }
         let work = instructions(
             &stage(StageKind::Work, Gate::None, 1),
@@ -1632,6 +1636,8 @@ mod tests {
             "never prose alone",
             "{\"verdict\": \"pass\", \"head\": \"<commit>\", \"base\": \"<commit>\"",
             "Use `\"fail\"` with findings for failures",
+            "The `verdict` is exactly `\"pass\"` or `\"fail\"`, and a `\"fail\"` always fails",
+            "a review whose findings are all follow-ups passes",
             "A reviewer that cannot set `structured` makes that JSON its whole last message",
             "no `complete_task` or YAML, nothing before or after it",
             "Each agent named must be a different one you delegated to yourself",

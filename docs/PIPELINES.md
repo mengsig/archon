@@ -338,10 +338,10 @@ Each finding is marked `"blocking": true` or `false`. Blocking findings are
 correctness bugs, security or safety issues, failing or missing tests for
 changed behaviour, and broken documented behaviour; a brief may narrow or
 extend the class. The rest are follow-ups the lead lists in its summary and
-`pr.body`: a `fail` whose every finding is marked `"blocking": false`,
-whatever its `severity`, counts as a pass unless its `structured` or summary
-JSON lists a blocking finding too, and a `pass` with a finding
-marked `"blocking": true` is refused. A finding with no mark blocks a `fail`.
+`pr.body`: a `pass` beside follow-ups passes, and a `pass` with a finding
+marked `"blocking": true` is refused. A `fail` always fails, whatever its
+findings, but only its blocking ones (a finding with no mark among them)
+count as a review round.
 A `verdict` (or `result`, `status`) that is exactly
 `approve_with_nonblocking_finding(s)` or `pass_with_nonblocking_finding(s)`
 reads as `pass`, with every rule of a pass: it needs its `head`, and a
@@ -906,8 +906,12 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   paragraph as in CommonMark until a blank line or a block that interrupts
   a paragraph: a heading, a thematic break, a bullet or `1.` item, a fence).
   Letter case and markdown emphasis
-  (`**Verdict:** PASS`) do not matter, and `passed`, `approved`, `failed` and
-  `rejected` read as pass and fail. Anything else counts as fail, and so
+  (`**Verdict:** PASS`) do not matter, and `_`, `-` and spaces between words
+  are alike. Contracts ask for `pass` or `fail`; `pass`, `passed`, `passes`,
+  `approve`, `approved`, `lgtm`, `accept`, `accepted` and `ok` read as pass,
+  and `fail`, `failed`, `fails`, `reject`, `rejected`, `changes requested`,
+  `request changes`, `needs changes`, `needs work`, `blocking` and `block`
+  read as fail. Anything else counts as fail, and so
   does a choice or a hedge: any word after the verdict word, in
   parentheses too, before the first `—`, `:`, `;`, `.`, `!`, ` - ` or line
   break (`PASS or FAIL`, `PASS, but two failed`, `PASS (pending fixes)`). A

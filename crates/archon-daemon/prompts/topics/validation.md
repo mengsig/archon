@@ -9,19 +9,24 @@ app, UI, CLI or installer a person runs) is ready to try or test:
 - Queue one validation item that `depends_on` every item that built it: the
   one build item, or all of a split request's (then it is the outcome owner
   below; queue no second one). It stacks on their branches, so it tests the
-  heads they delivered, whatever their pipeline or ship mode. Never `onto`:
-  that takes no `depends_on` and refuses team runs and stacked builds.
+  heads they delivered, team runs and stacked builds included. Exception: a
+  build queued `onto` a pull request has no branch to stack on; once every
+  build item has finished, queue the validation `onto` that build item.
 - Pipeline, by the build's head, not the base: `release-journey` only when
   the head's `.archon/journeys.toml` has a journey for every outcome to
   check (`git show refs/mirror/<branch>:.archon/journeys.toml` in the
-  mirror, `get_item` names the branch; queued before the build ran, when
-  the briefs have the build keep or add those journeys), else `e2e-strict`,
+  mirror, `get_item` names the branch; before the build ran, when the
+  briefs have the build keep or add those journeys), else `e2e-strict`,
   briefed with every outcome as a scenario.
 - Independence: its `model_plan` pins a `model` for every stage of its
-  pipeline (`list_pipelines`), none a model the build's stages ran
-  (`get_item`), so no stage falls back to a learned or default choice. If
-  `model_policy` leaves no other model, tell the operator the build cannot
-  be validated independently instead of queueing a self-check.
+  pipeline (`list_pipelines`), none a model a build stage runs, so no stage
+  falls back to a learned or default choice. Know the build's models first:
+  queue it with the build only when every build item's `model_plan` pins
+  each of its stages to models outside the validation's; else queue it once
+  every build item has finished, from the models `get_item` shows they ran.
+  A fix item follows the same rule. If `model_policy` leaves no other
+  model, tell the operator the build cannot be validated independently
+  instead of queueing a self-check.
 - Report only that item's outcome. A pass counts for the outcomes its
   journeys or scenarios checked: the build is ready to try, with its pull
   request and the report; name any outcome it did not check. On a failure,
@@ -59,3 +64,6 @@ Example backlog for "let new users start an agent from the desktop app":
    provider's model: owns "on a fresh install, a new user starts an agent
    and gets a reply within 30 seconds" (`release-journey` instead once the
    manifest has that journey).
+
+Items 1 and 2 pin every stage to one provider's models and item 3 to
+another's, so all three queue at once.

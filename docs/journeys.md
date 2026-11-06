@@ -28,12 +28,14 @@ The orchestrator coordinates; it never builds, runs apps or drives journeys
 itself. Before it tells you a user-facing build is ready to try, it queues
 an independent validation item that `depends_on` the items that built it.
 The item stacks on their branches, so it tests the heads they delivered,
-whatever their pipeline or ship mode (`onto` would refuse team runs and
-stacked builds). It runs `release-journey` when the build's own head has a
+team runs and stacked builds included; only a build that itself went `onto`
+a pull request is validated `onto` that build once it has finished. It runs `release-journey` when the build's own head has a
 `.archon/journeys.toml` with a journey for every outcome to check, and
 `e2e-strict`, with each outcome as a scenario, otherwise. Every one of its
-stages is pinned to a model none of the build's stages ran; when the model
-policy leaves none, the orchestrator says the build cannot be validated
+stages is pinned to a model no build stage runs: it is queued with the
+build only when the build's stages are pinned too, and otherwise once the
+build has finished and its models are known. When the model policy leaves
+none, the orchestrator says the build cannot be validated
 independently. You hear only that item's outcome: on a pass, the build is
 ready, with any outcome the run did not check named; on a failure, what
 failed and that a fix is queued, never "ready". A success of an internal change (a refactor, tests,
@@ -64,7 +66,8 @@ An example backlog for "let new users start an agent from the desktop app":
 | 3 | `e2e-strict`, every stage on another provider's model | 1, 2 | none | on a fresh install, a new user starts an agent and gets a reply within 30 seconds |
 
 Item 3 owns the outcome; it would be `release-journey` once the manifest has
-a journey for it. The orchestrator calls the build ready only once
+a journey for it. Items 1 and 2 pin their stages to one provider's models
+and item 3 to another's, so all three are queued at once. The orchestrator calls the build ready only once
 it passes.
 
 ## How a run goes

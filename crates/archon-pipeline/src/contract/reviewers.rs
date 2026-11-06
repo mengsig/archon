@@ -47,7 +47,7 @@ pub fn governed_reviewer_rules(
     let tier = profile.default_tier;
     let effort = profile.default_effort.max(Effort::Medium);
     let effort = policy.max_effort.map_or(effort, |cap| cap.min(effort));
-    let sizing = super::reviewer_effort_rule(effort, effort, policy.max_effort);
+    let sizing = super::reviewer_effort_rule(policy.max_effort);
     if let Some((model, resolved)) = resolve_default(tier, own, policy, profile, catalog) {
         assert!(
             policy.permits_model(&model),
@@ -285,7 +285,7 @@ mod tests {
             "a configured low effort is raised to medium: {rules}"
         );
         assert!(
-            rules.contains("lower only for a trivial diff, and then say why in your summary"),
+            rules.contains("`low` for a trivial diff, `medium` for a small or low-risk diff"),
             "{rules}"
         );
         config.prefer_other_provider = false;

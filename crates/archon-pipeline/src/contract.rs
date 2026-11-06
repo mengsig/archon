@@ -487,52 +487,50 @@ pub fn reviewer_model_rules(
 /// lead sizes to the diff; `cap` (the policy's `max_effort`) the only ceiling.
 fn named_reviewer_rules(choices: &[ModelChoice], cap: Option<Effort>) -> String {
     assert!(!choices.is_empty(), "a plan names reviewers");
-    let capped = |effort: Effort| cap.map_or(effort, |cap| effort.min(cap));
-    let defaults: Vec<Effort> = choices.iter().map(|c| capped(c.effort)).collect();
     let models: Vec<String> = choices
         .iter()
-        .zip(&defaults)
-        .map(|(c, effort)| format!("{} at effort {effort}", c.model))
+        .map(|c| {
+            let effort = cap.map_or(c.effort, |cap| c.effort.min(cap));
+            format!("{} at effort {effort}", c.model)
+        })
         .collect();
-    let lowest = *defaults.iter().min().expect("asserted non-empty");
-    let highest = *defaults.iter().max().expect("asserted non-empty");
     format!(
         "- Delegate every reviewer with role `reviewer`, each on one of these models, \
          taken in turn: {}. {} Archon cancels a child labelled `reviewer` on any other \
          model as it spawns.\n",
         models.join("; "),
-        reviewer_effort_rule(lowest, highest, cap)
+        reviewer_effort_rule(cap)
     )
 }
 
-/// How a lead sizes a reviewer's effort from the defaults `lowest..=highest`
-/// to the diff it reads, never above `cap`: the rubric's terms for a review.
-pub(crate) fn reviewer_effort_rule(lowest: Effort, highest: Effort, cap: Option<Effort>) -> String {
-    assert!(lowest <= highest, "the defaults are ordered");
-    assert!(
-        cap.is_none_or(|cap| highest <= cap),
-        "the defaults respect the policy"
-    );
-    let lower = (highest > Effort::Low)
-        .then_some("lower only for a trivial diff, and then say why in your summary");
-    let higher = "higher for a risky diff or shared code";
-    let deepest = "x_high for concurrency or security analysis";
-    let higher = match cap {
-        Some(cap) if cap <= lowest => None,
-        Some(cap) if cap < Effort::XHigh => Some(format!("{higher}, never above {cap}")),
-        Some(cap) => Some(format!("{higher}, {deepest}, never above {cap}")),
-        None => Some(format!("{higher}, {deepest}")),
+/// The rubric's efforts for a review, cheapest first, with the diff each fits.
+const REVIEW_EFFORTS: [(Effort, &str); 4] = [
+    (Effort::Low, "a trivial diff"),
+    (Effort::Medium, "a small or low-risk diff"),
+    (Effort::High, "a risky diff or shared code"),
+    (Effort::XHigh, "concurrency or security analysis"),
+];
+
+/// How a lead moves a reviewer off its default effort: to the rubric's level
+/// for the diff it reads, never above `cap`. `max` is never a review's level.
+pub(crate) fn reviewer_effort_rule(cap: Option<Effort>) -> String {
+    let levels: Vec<String> = REVIEW_EFFORTS
+        .iter()
+        .filter(|(effort, _)| cap.is_none_or(|cap| *effort <= cap))
+        .map(|(effort, fits)| format!("`{effort}` for {fits}"))
+        .collect();
+    assert!(!levels.is_empty(), "low is within every cap");
+    let ceiling = match cap {
+        Some(cap) if cap < Effort::XHigh => format!("; never above {cap}, the model policy's cap"),
+        _ => String::new(),
     };
-    match (lower, higher) {
-        (Some(lower), Some(higher)) => {
-            format!("That effort is the default; size it to the diff: {lower}; {higher}.")
-        }
-        (Some(lower), None) => {
-            format!("That effort is the default and the model policy's cap: go {lower}.")
-        }
-        (None, Some(higher)) => format!("That effort is the default; go {higher}."),
-        (None, None) => "Keep that effort: it is the lowest and the model policy's cap.".into(),
-    }
+    let rule = format!(
+        "That effort is the default; where the diff calls for another, take the rubric's: \
+         {}{ceiling}. Going below the default, say why in your summary.",
+        levels.join(", ")
+    );
+    debug_assert!(!rule.contains("`max`"), "no review is sized to max");
+    rule
 }
 
 /// A model other than `own` where `policy` allows one, else `own`: advice
@@ -1565,7 +1563,7 @@ mod tests {
             rules.contains("claude-code/opus at effort medium; claude-code/haiku at effort low."),
             "{rules}"
         );
-        assert!(rules.contains("That effort is the default; size it to the diff"));
+        assert!(rules.contains("That effort is the default; where the diff calls for another"));
         assert!(rules.contains("on any other model as it spawns"), "{rules}");
         assert!(
             !rules.contains("floor"),
@@ -1582,32 +1580,55 @@ mod tests {
     }
 
     /// A trivial diff gets a cheaper reviewer than the plan names, with the
-    /// reason on record; a risky one a dearer, never past the policy's cap.
+    /// reason on record; a risky one the rubric's level, never past the cap.
     #[test]
     fn the_plan_s_reviewer_effort_is_a_default_a_trivial_diff_may_go_below() {
-        use archon_core::model::Effort::{High, Low, Medium, XHigh};
+        use archon_core::model::Effort::{High, Low, Max, Medium, XHigh};
+        let open = reviewer_effort_rule(None);
         assert_eq!(
-            reviewer_effort_rule(High, High, None),
-            "That effort is the default; size it to the diff: lower only for a trivial diff, \
-             and then say why in your summary; higher for a risky diff or shared code, x_high \
-             for concurrency or security analysis."
-        );
-        assert!(
-            reviewer_effort_rule(Medium, Medium, Some(XHigh))
-                .ends_with("x_high for concurrency or security analysis, never above x_high.")
+            open,
+            "That effort is the default; where the diff calls for another, take the rubric's: \
+             `low` for a trivial diff, `medium` for a small or low-risk diff, `high` for a \
+             risky diff or shared code, `x_high` for concurrency or security analysis. Going \
+             below the default, say why in your summary."
         );
         assert_eq!(
-            reviewer_effort_rule(Medium, Medium, Some(Medium)),
-            "That effort is the default and the model policy's cap: go lower only for a \
-             trivial diff, and then say why in your summary."
+            reviewer_effort_rule(Some(Max)),
+            open,
+            "max is no review's level"
         );
-        let from_low = reviewer_effort_rule(Low, Low, None);
+        assert_eq!(reviewer_effort_rule(Some(XHigh)), open);
+        let capped = reviewer_effort_rule(Some(Medium));
         assert!(
-            from_low.starts_with("That effort is the default; go higher"),
-            "{from_low}"
+            capped.contains("`medium` for a small or low-risk diff; never above medium"),
+            "{capped}"
         );
-        assert!(!from_low.contains("lower"), "{from_low}");
-        assert!(reviewer_effort_rule(Low, Low, Some(Low)).starts_with("Keep that effort"));
+        assert!(!capped.contains("`high`"), "{capped}");
+        assert!(
+            reviewer_effort_rule(Some(Low)).contains("`low` for a trivial diff; never above low")
+        );
+        let choice = |effort| ModelChoice {
+            model: "codex/m".parse().unwrap(),
+            effort,
+            tier: None,
+        };
+        // A high, x_high or max default is never sent past the rubric's level.
+        for effort in [High, XHigh, Max] {
+            let rules = named_reviewer_rules(&[choice(effort)], None);
+            assert!(rules.contains(&format!(
+                "codex/m at effort {effort}. That effort is the default"
+            )));
+            assert!(!rules.contains("higher"), "{rules}");
+            assert!(!rules.contains("`max`"), "{rules}");
+        }
+        // Mixed defaults with the highest at the cap: one ceiling, no contradiction.
+        let mixed = named_reviewer_rules(&[choice(Low), choice(High)], Some(High));
+        assert!(
+            mixed.contains("codex/m at effort low; codex/m at effort high."),
+            "{mixed}"
+        );
+        assert!(mixed.contains("`high` for a risky diff or shared code; never above high"));
+        assert!(!mixed.contains("x_high"), "{mixed}");
     }
 
     /// The bench's smoke preset allows one model: a reviewer must run on it,

@@ -45,9 +45,9 @@ pub fn governed_reviewer_rules(
         catalog
     };
     let tier = profile.default_tier;
-    let floor = profile.default_effort.max(Effort::Medium);
-    let floor = policy.max_effort.map_or(floor, |cap| cap.min(floor));
-    let effort = super::unnamed_reviewer_effort(floor, policy.max_effort);
+    let effort = profile.default_effort.max(Effort::Medium);
+    let effort = policy.max_effort.map_or(effort, |cap| cap.min(effort));
+    let sizing = super::reviewer_effort_rule(effort, effort, policy.max_effort);
     if let Some((model, resolved)) = resolve_default(tier, own, policy, profile, catalog) {
         assert!(
             policy.permits_model(&model),
@@ -57,16 +57,16 @@ pub fn governed_reviewer_rules(
         if resolved == tier {
             return format!(
                 "- Delegate every reviewer with role `reviewer`, on {model} at tier {tier} \
-                 and effort {effort}.\n"
+                 and effort {effort}. {sizing}\n"
             );
         }
         return format!(
             "- Delegate every reviewer with role `reviewer`, on {model} at effort {effort}: \
-             {tier} unavailable under policy ({}); using {model}.\n",
+             {tier} unavailable under policy ({}); using {model}. {sizing}\n",
             policy.describe()
         );
     }
-    unplaced_rules(own, policy, &effort, governed)
+    unplaced_rules(own, policy, (effort, &sizing), governed)
 }
 
 /// Why the reviewers owed cannot run under an item budget, `None` when they
@@ -153,8 +153,13 @@ fn unplaced_model<'a>(
 
 /// Neither the catalog nor the policy places a model: name one the policy
 /// permits, never one it would refuse, and never send the agent to look.
-fn unplaced_rules(own: &ModelRef, policy: &ModelPolicy, effort: &str, governed: bool) -> String {
-    assert!(!effort.is_empty(), "an effort to name");
+fn unplaced_rules(
+    own: &ModelRef,
+    policy: &ModelPolicy,
+    (effort, sizing): (Effort, &str),
+    governed: bool,
+) -> String {
+    assert!(!sizing.is_empty(), "a rule for sizing the effort");
     let Some(model) = unplaced_model(own, policy, governed) else {
         return format!(
             "- Delegate no reviewer: the model policy ({}) allows no model{}.\n",
@@ -169,7 +174,7 @@ fn unplaced_rules(own: &ModelRef, policy: &ModelPolicy, effort: &str, governed: 
     format!(
         "- Delegate every reviewer with role `reviewer`, on {model} at effort {effort}: \
          Archon's cached catalog places no allowed model by tier, and the model policy \
-         ({}) permits it.\n",
+         ({}) permits it. {sizing}\n",
         policy.describe()
     )
 }
@@ -275,15 +280,18 @@ mod tests {
         let mut config = ReviewConfig::default();
         let rules =
             reviewer_profile_rules(None, &own, &ModelPolicy::default(), &config, &catalog());
-        assert!(rules.contains("codex/balanced at tier balanced and effort medium or higher"));
         assert!(
-            rules.contains("high or higher when you rate the change's risk medium or high"),
-            "a configured low effort is raised to the floor: {rules}"
+            rules.contains("codex/balanced at tier balanced and effort medium. That effort is"),
+            "a configured low effort is raised to medium: {rules}"
+        );
+        assert!(
+            rules.contains("lower only for a trivial diff, and then say why in your summary"),
+            "{rules}"
         );
         config.prefer_other_provider = false;
         let rules =
             reviewer_profile_rules(None, &own, &ModelPolicy::default(), &config, &catalog());
-        assert!(rules.contains("claude-code/sonnet at tier balanced and effort medium or higher"));
+        assert!(rules.contains("claude-code/sonnet at tier balanced and effort medium."));
         config.prefer_other_provider = true;
         config.default_effort = Effort::High;
         let policy =

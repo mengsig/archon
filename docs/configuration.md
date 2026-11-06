@@ -67,12 +67,14 @@ preference, not a floor: Archon picks the best model the effective model policy
 from the lead when `prefer_other_provider` is set and a permitted model of
 another provider exists. If no permitted model reaches the tier, the contract
 names the best permitted one, or the lead's own model, and says so; the agent is
-never sent to look for a model the policy would refuse. `default_effort` is a
-floor raised to at least medium: the contract asks for that effort or higher,
-and for at least high when the lead rates the change's risk medium or high. The
-model policy's effort cap still applies. In an explicit `<stage>.review` plan
-each effort is a floor too: a reviewer below it is cancelled as it spawns, and
-one above it runs, up to the policy's cap.
+never sent to look for a model the policy would refuse. `default_effort`,
+raised to at least medium, is the reviewer's default effort: the lead sizes it
+to the diff, lower only for a trivial diff (saying why in its summary), higher
+for a risky diff or shared code, `x_high` for concurrency or security analysis.
+The model policy's effort cap still applies. In an explicit `<stage>.review`
+plan each effort is that reviewer's default in the same way: a reviewer on
+another model is cancelled as it spawns, and one at any effort on a named model
+runs, up to the policy's cap.
 
 `auto_repair` (default `true`) covers a run that fails only because the gate
 refused the review or the ship record it owes (a delta read not anchored, a

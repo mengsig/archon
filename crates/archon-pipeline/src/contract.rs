@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use archon_core::catalog::{Gate, StageKind, WorkspaceMode};
-use archon_core::model::{Effort, ModelChoice, ModelRef};
+use archon_core::model::{EFFORT_RUBRIC, Effort, ModelChoice, ModelRef};
 use archon_core::policy::ModelPolicy;
 use archon_core::run::StageOutcome;
 use serde::Serialize;
@@ -141,6 +141,7 @@ pub fn delegation_rules(
          - Choose each child's model and effort within Archon's policy for this item: \
          {models}. Archon cancels a child outside it. Aether's `list_models` lists what \
          is connected, not what is allowed.\n\
+         - Size each child's effort to its own task, whatever yours is: {EFFORT_RUBRIC}\n\
          - Wait for every child (`wait_for`) or cancel it (`cancel_agent`) before you \
          finish: Archon cancels whatever still runs when your stage ends, and that work \
          is lost. A child that finished cannot be asked again: for a second look, \
@@ -482,48 +483,56 @@ pub fn reviewer_model_rules(
     }
 }
 
-/// The plan's reviewers: each effort is a floor, and `cap` (the policy's
-/// `max_effort`) the only ceiling.
+/// The plan's reviewers: each effort is its reviewer's default, which the
+/// lead sizes to the diff; `cap` (the policy's `max_effort`) the only ceiling.
 fn named_reviewer_rules(choices: &[ModelChoice], cap: Option<Effort>) -> String {
     assert!(!choices.is_empty(), "a plan names reviewers");
+    let capped = |effort: Effort| cap.map_or(effort, |cap| effort.min(cap));
+    let defaults: Vec<Effort> = choices.iter().map(|c| capped(c.effort)).collect();
     let models: Vec<String> = choices
         .iter()
-        .map(|c| format!("{} at effort {}", c.model, effort_range(c.effort, cap)))
+        .zip(&defaults)
+        .map(|(c, effort)| format!("{} at effort {effort}", c.model))
         .collect();
+    let lowest = *defaults.iter().min().expect("asserted non-empty");
+    let highest = *defaults.iter().max().expect("asserted non-empty");
     format!(
         "- Delegate every reviewer with role `reviewer`, each on one of these models, \
-         taken in turn: {}. Each effort is a floor, never a ceiling: Archon cancels a \
-         child labelled `reviewer` on any other model, or below its model's effort, as it \
-         spawns.\n",
-        models.join("; ")
+         taken in turn: {}. {} Archon cancels a child labelled `reviewer` on any other \
+         model as it spawns.\n",
+        models.join("; "),
+        reviewer_effort_rule(lowest, highest, cap)
     )
 }
 
-/// `floor` and the higher efforts `cap` leaves: `high`, `high or higher`, `high up to max`.
-fn effort_range(floor: Effort, cap: Option<Effort>) -> String {
-    match cap {
-        Some(cap) if cap <= floor => floor.to_string(),
-        Some(cap) => format!("{floor} up to {cap}"),
-        None => format!("{floor} or higher"),
-    }
-}
-
-/// The effort of a reviewer no plan names, from `floor`, which `cap` already
-/// bounds: at least that, and at least high for a change of medium risk or more.
-pub(crate) fn unnamed_reviewer_effort(floor: Effort, cap: Option<Effort>) -> String {
+/// How a lead sizes a reviewer's effort from the defaults `lowest..=highest`
+/// to the diff it reads, never above `cap`: the rubric's terms for a review.
+pub(crate) fn reviewer_effort_rule(lowest: Effort, highest: Effort, cap: Option<Effort>) -> String {
+    assert!(lowest <= highest, "the defaults are ordered");
     assert!(
-        cap.is_none_or(|cap| floor <= cap),
-        "the floor respects the policy"
+        cap.is_none_or(|cap| highest <= cap),
+        "the defaults respect the policy"
     );
-    let risky = cap.map_or(Effort::High, |cap| cap.min(Effort::High));
-    let at = effort_range(floor, cap);
-    if risky <= floor {
-        return at;
+    let lower = (lowest > Effort::Low)
+        .then_some("lower only for a trivial diff, and then say why in your summary");
+    let higher = "higher for a risky diff or shared code";
+    let deepest = "x_high for concurrency or security analysis";
+    let higher = match cap {
+        Some(cap) if cap <= lowest => None,
+        Some(cap) if cap < Effort::XHigh => Some(format!("{higher}, never above {cap}")),
+        Some(cap) => Some(format!("{higher}, {deepest}, never above {cap}")),
+        None => Some(format!("{higher}, {deepest}")),
+    };
+    match (lower, higher) {
+        (Some(lower), Some(higher)) => {
+            format!("That effort is the default; size it to the diff: {lower}; {higher}.")
+        }
+        (Some(lower), None) => {
+            format!("That effort is the default and the model policy's cap: go {lower}.")
+        }
+        (None, Some(higher)) => format!("That effort is the default; go {higher}."),
+        (None, None) => "Keep that effort: it is the lowest and the model policy's cap.".into(),
     }
-    format!(
-        "{at}, and {} when you rate the change's risk medium or high",
-        effort_range(risky, cap)
-    )
 }
 
 /// A model other than `own` where `policy` allows one, else `own`: advice
@@ -1363,6 +1372,20 @@ mod tests {
         ] {
             assert!(writable.contains(said), "missing {said:?} in {writable}");
         }
+        let sizing = format!(
+            "Size each child's effort to its own task, whatever yours is: {EFFORT_RUBRIC}\n"
+        );
+        assert!(
+            writable.contains(&sizing),
+            "the rubric, word for word: {writable}"
+        );
+        for rung in [
+            "`low` for lookups",
+            "`x_high` for hard reasoning",
+            "`max` only when `x_high` failed",
+        ] {
+            assert!(writable.contains(rung), "missing {rung:?}");
+        }
         assert_eq!(
             writable,
             delegation_rules(WorkspaceMode::Scratch, "a/one, b/two", 2, None)
@@ -1538,33 +1561,53 @@ mod tests {
         let own = model("claude-code/opus");
         let rules = reviewer_model_rules(Some(&named), &own, &ModelPolicy::default());
         assert!(rules.contains("role `reviewer`"), "{rules}");
-        assert!(rules.contains(
-            "claude-code/opus at effort medium or higher; claude-code/haiku at effort low or higher"
-        ));
-        assert!(rules.contains("Each effort is a floor, never a ceiling"));
-        assert!(rules.contains("on any other model, or below its model's effort, as it spawns"));
+        assert!(
+            rules.contains("claude-code/opus at effort medium; claude-code/haiku at effort low."),
+            "{rules}"
+        );
+        assert!(rules.contains("That effort is the default; size it to the diff"));
+        assert!(rules.contains("on any other model as it spawns"), "{rules}");
+        assert!(
+            !rules.contains("floor"),
+            "the plan's effort is no floor: {rules}"
+        );
         let capped = ModelPolicy::from_lists(&[], &[], Some(archon_core::model::Effort::Medium));
         let rules = reviewer_model_rules(Some(&named), &own, &capped);
+        assert!(rules.contains("opus at effort medium; claude-code/haiku at effort low."));
+        assert!(rules.contains("higher for a risky diff or shared code, never above medium"));
         assert!(
-            rules.contains("opus at effort medium; claude-code/haiku at effort low up to medium")
+            !rules.contains("x_high"),
+            "the cap rules x_high out: {rules}"
         );
     }
 
+    /// A trivial diff gets a cheaper reviewer than the plan names, with the
+    /// reason on record; a risky one a dearer, never past the policy's cap.
     #[test]
-    fn an_unnamed_reviewer_runs_at_medium_or_more_and_high_for_a_riskier_change() {
+    fn the_plan_s_reviewer_effort_is_a_default_a_trivial_diff_may_go_below() {
         use archon_core::model::Effort::{High, Low, Medium, XHigh};
-        let open = unnamed_reviewer_effort(Medium, None);
         assert_eq!(
-            open,
-            "medium or higher, and high or higher when you rate the change's risk medium or high"
+            reviewer_effort_rule(High, High, None),
+            "That effort is the default; size it to the diff: lower only for a trivial diff, \
+             and then say why in your summary; higher for a risky diff or shared code, x_high \
+             for concurrency or security analysis."
+        );
+        assert!(
+            reviewer_effort_rule(Medium, Medium, Some(XHigh))
+                .ends_with("x_high for concurrency or security analysis, never above x_high.")
         );
         assert_eq!(
-            unnamed_reviewer_effort(Medium, Some(XHigh)),
-            "medium up to x_high, and high up to x_high when you rate the change's risk medium or high"
+            reviewer_effort_rule(Medium, Medium, Some(Medium)),
+            "That effort is the default and the model policy's cap: go lower only for a \
+             trivial diff, and then say why in your summary."
         );
-        assert_eq!(unnamed_reviewer_effort(Medium, Some(Medium)), "medium");
-        assert_eq!(unnamed_reviewer_effort(Low, Some(Low)), "low");
-        assert_eq!(unnamed_reviewer_effort(High, None), "high or higher");
+        let from_low = reviewer_effort_rule(Low, Low, None);
+        assert!(
+            from_low.starts_with("That effort is the default; go higher"),
+            "{from_low}"
+        );
+        assert!(!from_low.contains("lower"), "{from_low}");
+        assert!(reviewer_effort_rule(Low, Low, Some(Low)).starts_with("Keep that effort"));
     }
 
     /// The bench's smoke preset allows one model: a reviewer must run on it,

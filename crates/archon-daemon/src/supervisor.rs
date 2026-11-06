@@ -1630,10 +1630,18 @@ mod tests {
             "Omit `model_plan` to use learned choices or the configured fallback.",
             "Override stages when task requirements or evidence (`model_evidence`) justify it; \
              explain why in `model_reasons`.",
-            "`x_high` or `max` only for a named reasoning problem inspection left open.",
         ] {
             assert!(prompt.contains(said), "missing {said:?}");
         }
+        let rubric = archon_core::model::EFFORT_RUBRIC;
+        assert!(
+            prompt.contains(&format!("size their children's: {rubric}")),
+            "the stage contracts' effort rubric, word for word"
+        );
+        assert!(
+            !prompt.contains("only for a named reasoning problem"),
+            "x_high is chosen by the rubric, not ruled out"
+        );
     }
 
     /// The review level belongs to the item, not to the pipeline's name, and

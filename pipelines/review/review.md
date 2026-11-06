@@ -30,9 +30,10 @@ moves off that head.
      secrets, network or file access, build scripts, CI workflows, new
      dependencies, and anything that runs at install or build time.
 
-   Choose each reviewer's effort, never below one your contract names:
-   medium for ordinary risk, high where security, CI or release machinery
-   is touched. Require the verdict your
+   Size each reviewer's effort to the diff from the default your contract
+   names: lower only for a trivial diff, saying why in your summary; high
+   where CI or release machinery is touched; x_high for concurrency or
+   security analysis. Require the verdict your
    contract shows, on the head it read, with actionable findings (path,
    issue, impact, remedy), each marked blocking or not by your contract's
    blocking class.

@@ -2073,14 +2073,38 @@ impl StageDelegation {
         self.direct_usd + self.delegated_usd
     }
 
-    /// `$1.20 own + $0.80 for 2 delegated agent(s)`.
+    /// `$1.20 own + $0.80 for 2 delegated agent(s) at effort 1 low, 1 high`.
     pub fn split(&self) -> String {
         format!(
-            "{} own + {} for {} delegated agent(s)",
+            "{} own + {} for {} delegated agent(s) at effort {}",
             crate::cost::format_usd(self.direct_usd),
             crate::cost::format_usd(self.delegated_usd),
-            self.agents.len()
+            self.agents.len(),
+            self.effort_mix()
         )
+    }
+
+    /// How many agents ran at each effort, lowest first and unknown last:
+    /// `2 medium, 1 x_high, 1 unknown`.
+    fn effort_mix(&self) -> String {
+        let mut counts: BTreeMap<Effort, usize> = BTreeMap::new();
+        let mut unknown = 0;
+        for agent in &self.agents {
+            match agent.effort {
+                Some(effort) => *counts.entry(effort).or_default() += 1,
+                None => unknown += 1,
+            }
+        }
+        let mut parts: Vec<String> = counts.iter().map(|(e, n)| format!("{n} {e}")).collect();
+        if unknown > 0 {
+            parts.push(format!("{unknown} unknown"));
+        }
+        debug_assert_eq!(
+            counts.values().sum::<usize>() + unknown,
+            self.agents.len(),
+            "every agent is counted once"
+        );
+        parts.join(", ")
     }
 
     /// The split and every delegated agent on one line.
@@ -2719,6 +2743,37 @@ mod tests {
             offset: 0,
             limit: None,
         }
+    }
+
+    /// The operator reads a stage's effort mix off its cost split.
+    #[test]
+    fn a_cost_split_counts_its_agents_by_effort() {
+        let lead = AetherAgentId::parse("agt_lead").unwrap();
+        let agent = |id: &str, effort| DelegatedAgent {
+            agent: AetherAgentId::parse(id).unwrap(),
+            parent: lead.clone(),
+            model: "codex/m".parse().unwrap(),
+            effort,
+            cost_usd: 0.0,
+        };
+        let split = StageDelegation::of(
+            0.0,
+            vec![
+                agent("agt_a", Some(Effort::XHigh)),
+                agent("agt_b", None),
+                agent("agt_c", Some(Effort::Low)),
+                agent("agt_d", Some(Effort::XHigh)),
+            ],
+        );
+        let text = split.split();
+        assert!(
+            text.ends_with("for 4 delegated agent(s) at effort 1 low, 2 x_high, 1 unknown"),
+            "{text}"
+        );
+        assert!(
+            split.line().starts_with(&text),
+            "the line leads with the split"
+        );
     }
 
     #[test]

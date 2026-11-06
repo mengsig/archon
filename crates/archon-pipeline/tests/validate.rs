@@ -755,7 +755,8 @@ fn adaptive_prices_what_it_delegates_and_records_what_ships() {
         "With no reviewer asked for, that run is the whole of this step",
         "never end your turn while a check runs",
         "the exact base and head commits (`{{base_commit}}` and `git rev-parse HEAD`",
-        "never below one your contract names: medium for ordinary risk, high where the change's risk is medium or more",
+        "Size its effort to the diff from the default your contract names: lower only for a trivial diff, saying why in your summary",
+        "by your contract's effort rubric",
         "never because a tree that passed was committed",
         "for any commit after a pass: Archon delivers only commits a passing reviewer read",
         "Only the first whole-change read takes as many reviewers as your contract asks",
@@ -787,7 +788,12 @@ fn adaptive_prices_what_it_delegates_and_records_what_ships() {
     assert!(!spec.prompts.contains_key("ship.md"), "no agent ships");
     let nudge = spec.stage("build").unwrap().nudge.as_deref().unwrap();
     assert!(nudge.contains("at medium effort (the default); high for hard multi-file work"));
-    assert!(nudge.contains("x_high or max only for a reasoning problem you can name"));
+    assert!(nudge.contains("x_high for hard reasoning, such as root-causing a regression"));
+    assert!(nudge.contains("max only when x_high failed"));
+    assert!(
+        !build.contains("never below one your contract names"),
+        "a default, no floor"
+    );
 }
 
 /// `direct` escalates on what a change risks and reaches into, not on its

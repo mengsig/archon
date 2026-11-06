@@ -160,6 +160,15 @@ From the audit in [docs/security/vnext-audit.md](docs/security/vnext-audit.md)
   turn; at most 3 times per orchestrator. Operator chat or an `@archon` request
   delivered to a turn silent for 10 minutes starts this at once instead of
   after 30.
+- Agents no longer run at `high` effort for every task. One effort rubric,
+  from `low` for lookups and mechanical edits through `x_high` for hard
+  reasoning (root-causing a regression, concurrency or security analysis, a fix
+  that failed twice) to `max` only when `x_high` failed, now sizes every effort
+  the orchestrator and stage leads choose. A reviewer plan's effort is that
+  reviewer's default instead of a floor: a lead may go lower for a trivial
+  diff, saying why, or higher for a risky one, within `max_effort`; archond
+  still cancels a reviewer on a model the plan does not name. A delegating
+  stage's cost split in `get_item` and `get_stage` counts its agents by effort.
 
 ### Removed
 

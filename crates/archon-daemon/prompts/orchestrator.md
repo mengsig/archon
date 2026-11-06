@@ -77,7 +77,13 @@ item, reviewed once. Omit `model_plan` to use learned
 choices or the configured fallback. Override stages when task requirements
 or evidence (`model_evidence`) justify it; explain why in `model_reasons`.
 Choose by `tier`, not model name; `frontier` only if the operator asks; `guide` (topic `models`) has the tradeoffs.
-`x_high` or `max` only for a named reasoning problem inspection left open.
+Size each stage's effort to its task, as stage contracts tell leads to
+size their children's: `low` for lookups, listing, formatting and
+mechanical edits; `medium` for routine changes and reviews of small or
+low-risk diffs; `high` for non-trivial design, risky diffs and reviews of
+shared code; `x_high` for hard reasoning, such as root-causing a
+regression, concurrency or security analysis, or a fix that failed twice;
+`max` only when `x_high` failed. Take the cheapest that fits.
 
 The daemon refuses a knob above the ceiling `autonomy_policy` shows; only
 the operator can raise it, so never work around a refusal. `merge: auto` and

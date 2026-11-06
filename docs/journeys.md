@@ -28,8 +28,10 @@ The orchestrator coordinates; it never builds, runs apps or drives journeys
 itself. Before it tells you a user-facing build is ready to try, it queues
 an independent validation item that `depends_on` the items that built it.
 The item stacks on their branches, so it tests the heads they delivered,
-team runs and stacked builds included; only a build that itself went `onto`
-a pull request is validated `onto` that build once it has finished. It runs `release-journey` when the build's own head has a
+team runs and stacked builds included. Only a build that itself went `onto`
+a pull request is validated `onto` that build once it has finished; in a
+split request, only when every build went into that same pull request, and
+otherwise the orchestrator says there is no combined head to validate. It runs `release-journey` when the build's own head has a
 `.archon/journeys.toml` with a journey for every outcome to check, and
 `e2e-strict`, with each outcome as a scenario, otherwise. Every one of its
 stages is pinned to a model no build stage runs: it is queued with the

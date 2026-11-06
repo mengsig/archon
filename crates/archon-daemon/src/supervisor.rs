@@ -1885,7 +1885,7 @@ mod tests {
             "queue it with the build only when every build item's `model_plan` pins each of its \
              stages to models outside the validation's; else queue it once every build item has \
              finished, from the models `get_item` shows they ran.",
-            "A fix item follows the same rule.",
+            "A fix follows the same rule.",
             "tell the operator the build cannot be validated independently instead of queueing \
              a self-check.",
             "A pass counts for the outcomes its journeys or scenarios checked",
@@ -1902,12 +1902,14 @@ mod tests {
         // run or a stacked build, and nothing stacks on a build that went `onto` a
         // pull request: only that build is validated `onto`, once it finished.
         assert!(topic.contains(
-            "Exception: a build queued `onto` a pull request has no branch to stack on; once \
-             every build item has finished, queue the validation `onto` that build item."
+            "Exception: a build queued `onto` a pull request has no branch to stack on. \
+             Validate it `onto` that build item once it finished, and in a split request only if \
+             every build went `onto` that same pull request, so its head holds them all; else \
+             say the builds have no combined head to validate, not \"ready\"."
         ));
         assert_eq!(
             topic.matches("`onto`").count(),
-            2,
+            3,
             "only the exception: {topic}"
         );
     }

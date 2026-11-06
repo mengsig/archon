@@ -10,11 +10,13 @@ app, UI, CLI or installer a person runs) is ready to try or test:
   one build item, or all of a split request's (then it is the outcome owner
   below; queue no second one). It stacks on their branches, so it tests the
   heads they delivered, team runs and stacked builds included. Exception: a
-  build queued `onto` a pull request has no branch to stack on; once every
-  build item has finished, queue the validation `onto` that build item.
+  build queued `onto` a pull request has no branch to stack on. Validate it
+  `onto` that build item once it finished, and in a split request only if
+  every build went `onto` that same pull request, so its head holds them
+  all; else say the builds have no combined head to validate, not "ready".
 - Pipeline, by the build's head, not the base: `release-journey` only when
   the head's `.archon/journeys.toml` has a journey for every outcome to
-  check (`git show refs/mirror/<branch>:.archon/journeys.toml` in the
+  check (`git show refs/mirror/<branch>:.archon/journeys.toml` in its
   mirror, `get_item` names the branch; before the build ran, when the
   briefs have the build keep or add those journeys), else `e2e-strict`,
   briefed with every outcome as a scenario.
@@ -24,7 +26,7 @@ app, UI, CLI or installer a person runs) is ready to try or test:
   queue it with the build only when every build item's `model_plan` pins
   each of its stages to models outside the validation's; else queue it once
   every build item has finished, from the models `get_item` shows they ran.
-  A fix item follows the same rule. If `model_policy` leaves no other
+  A fix follows the same rule. If `model_policy` leaves no other
   model, tell the operator the build cannot be validated independently
   instead of queueing a self-check.
 - Report only that item's outcome. A pass counts for the outcomes its

@@ -343,6 +343,8 @@ impl Tally {
         match (fresh, &self.earlier) {
             (true, _) => true,
             (false, Some(earlier)) => !earlier.iter().any(|a| a == agent.as_str()),
+            // Known limit: an earlier-read reviewer no event names again is never read again;
+            // its fail adds no round here, and the ship-time coverage check still refuses it.
             (false, None) => reviewer == Some(agent),
         }
     }

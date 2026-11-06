@@ -8,6 +8,8 @@ use std::fmt::Write as _;
 
 use super::aggregate::Aggregate;
 use super::arms::{ArmKey, Harness, Model};
+use super::runner::{MAX_JOBS, MAX_REPEATS};
+use super::stats;
 
 /// Grading one trial in its instance container.
 const GRADE_MINUTES: f64 = 3.0;
@@ -73,12 +75,13 @@ pub fn estimate(
     earlier: Option<&Aggregate>,
 ) -> Estimate {
     assert!(
-        !arms.is_empty() && instances > 0,
-        "an estimate covers some arms and instances"
+        (1..=Model::ALL.len() * Harness::ALL.len()).contains(&arms.len())
+            && (1..=stats::MAX_PAIRS).contains(&instances),
+        "an estimate covers some arms and validated instances"
     );
     assert!(
-        repeats > 0 && jobs > 0,
-        "an estimate needs repeats and jobs"
+        (1..=MAX_REPEATS).contains(&repeats) && (1..=MAX_JOBS).contains(&jobs),
+        "an estimate needs validated repeats and jobs"
     );
     let per_arm: Vec<PerTrial> = arms
         .iter()
@@ -119,7 +122,7 @@ pub fn render(estimate: &Estimate, jobs: u32) -> String {
     let _ = writeln!(
         out,
         "estimate ({source}): {} trials, {:.1} h at {jobs} at once, ${:.2}, \
-         {:.0} GB disk (image cache cap {IMAGE_CACHE_GB:.0} GB + workspaces)",
+         {:.1} GB disk (image cache cap {IMAGE_CACHE_GB:.0} GB + workspaces)",
         estimate.trials, estimate.hours, estimate.usd, estimate.disk_gb
     );
     out

@@ -12,6 +12,7 @@ use anyhow::{Context, anyhow, bail, ensure};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::arms::ArmKey;
+use super::stats;
 
 /// The schema version this adapter reads and writes.
 pub const SCHEMA: &str = "swe-aggregate/1";
@@ -167,8 +168,14 @@ impl Aggregate {
             ensure!(pair.a != pair.b, "{}: an arm is paired with itself", pair.a);
             let (a, b) = (self.totals(pair.a)?, self.totals(pair.b)?);
             ensure!(
-                pair.a_only + pair.b_only <= pair.n,
+                u64::from(pair.a_only) + u64::from(pair.b_only) <= u64::from(pair.n),
                 "{} vs {}: more discordant than paired",
+                pair.a,
+                pair.b
+            );
+            ensure!(
+                pair.n <= stats::MAX_PAIRS,
+                "{} vs {}: more pairs than the gate's exact test takes",
                 pair.a,
                 pair.b
             );

@@ -258,6 +258,26 @@ fn a_run_pointed_into_the_holdout_store_is_refused_before_the_runner_starts() {
     assert!(sandbox.kept_files().is_empty());
 }
 
+#[test]
+fn out_of_range_counts_are_refused_as_errors_before_any_estimate() {
+    let sandbox = Sandbox::new();
+    for extra in [
+        ["--holdout-instances", "0"],
+        ["--holdout-instances", "5000"],
+        ["--repeats", "4000000000"],
+        ["--jobs", "0"],
+    ] {
+        let args = [&extra[..], &["--dry-run"]].concat();
+        let output = sandbox.run_split("holdout", &aggregate(), 0, &args);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "{extra:?}: {stderr}");
+        assert!(!stderr.contains("panicked"), "{extra:?}: {stderr}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(!stdout.contains("estimate"), "{extra:?}: {stdout}");
+    }
+    assert!(sandbox.kept_files().is_empty());
+}
+
 fn dev_aggregate() -> Value {
     let arm =
         |passed| json!({"n": 2, "passed": passed, "infra": 0, "cost_usd": 1.0, "wall_s": 900.0});

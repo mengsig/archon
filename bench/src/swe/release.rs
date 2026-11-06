@@ -87,8 +87,8 @@ impl Records {
     }
 
     /// Releases measured on both models, best first: by pooled pass rate,
-    /// then by summed cost per run. The current release wins any tie, so an
-    /// older release is chosen only when it scored strictly better.
+    /// then by summed cost per run, then the current release first. An older
+    /// release wins only by passing more, or as many for less.
     pub fn ranked(&self) -> Vec<Ranked<'_>> {
         let mut ranked: Vec<Ranked<'_>> = self
             .records

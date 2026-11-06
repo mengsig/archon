@@ -1,12 +1,16 @@
 //! The statistics the SWE gate rests on: an exact one-sided paired test
 //! (McNemar's, as a sign test on discordant pairs) and Wilson intervals.
 
+/// The most discordant pairs an exact tail is computed over; inputs are
+/// bounded to it where they enter (the run's flags, manifests, aggregates).
+pub const MAX_PAIRS: u32 = 1000;
+
 /// P(X >= k) for X ~ Binomial(n, 1/2): the one-sided McNemar p-value of
 /// `k` losses among `n` discordant pairs.
 pub fn sign_test_upper_tail(k: u32, n: u32) -> f64 {
     assert!(k <= n, "losses ({k}) cannot exceed discordant pairs ({n})");
     assert!(
-        n <= 1000,
+        n <= MAX_PAIRS,
         "an exact tail over {n} pairs is outside this bench's scale"
     );
     if k == 0 {

@@ -20,6 +20,11 @@ use super::sealed;
 /// The runner script inside an Aether checkout.
 pub const RUNNER_SCRIPT: &str = "evals/swe_bench.py";
 
+/// The most repeats and parallel jobs a run accepts: well above this host's
+/// 3 jobs, and low enough that every count in the estimate fits in a u32.
+pub const MAX_REPEATS: u32 = 10;
+pub const MAX_JOBS: u32 = 32;
+
 /// How to start Aether's runner.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Runner {
@@ -41,8 +46,14 @@ pub struct Request<'a> {
 
 impl Request<'_> {
     pub fn validate(&self) -> anyhow::Result<()> {
-        ensure!(self.repeats >= 1, "an SWE run needs at least one repeat");
-        ensure!(self.jobs >= 1, "an SWE run needs at least one job");
+        ensure!(
+            (1..=MAX_REPEATS).contains(&self.repeats),
+            "--repeats must be between 1 and {MAX_REPEATS}"
+        );
+        ensure!(
+            (1..=MAX_JOBS).contains(&self.jobs),
+            "--jobs must be between 1 and {MAX_JOBS}"
+        );
         ensure!(
             self.load_max.is_finite() && self.load_max > 0.0,
             "--load-max must be positive"
@@ -220,6 +231,22 @@ mod tests {
             .validate()
             .is_err()
         );
+        for (repeats, jobs) in [
+            (MAX_REPEATS + 1, 3),
+            (4_000_000_000, 3),
+            (1, 0),
+            (1, MAX_JOBS + 1),
+        ] {
+            let request = Request {
+                repeats,
+                jobs,
+                ..request.clone()
+            };
+            assert!(
+                request.validate().is_err(),
+                "{repeats} repeats, {jobs} jobs"
+            );
+        }
         assert!(
             Request {
                 load_max: f64::NAN,

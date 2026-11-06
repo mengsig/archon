@@ -9,7 +9,7 @@ use archon_bench::swe::arms::{ArchonBuild, ArmSet, Model};
 use archon_bench::swe::manifest::DevManifest;
 use archon_bench::swe::release::{self, Records};
 use archon_bench::swe::runner::{Request, Runner};
-use archon_bench::swe::{estimate, gate, report, sealed};
+use archon_bench::swe::{estimate, gate, report, sealed, stats};
 use clap::{Args, Subcommand, ValueEnum};
 
 #[derive(Debug, Subcommand)]
@@ -126,6 +126,9 @@ pub fn run(command: SweCommand) -> anyhow::Result<()> {
         SweCommand::Gate(args) => run_gate(&args),
         SweCommand::BestRelease { records } => best_release(&records),
         SweCommand::VerifyRelease { sums, asset } => {
+            for path in std::iter::once(&sums).chain(&asset) {
+                sealed::refuse_inside_store(path)?;
+            }
             for asset in &asset {
                 let digest = release::verify_asset(&sums, asset)?;
                 println!("ok\t{digest}\t{}", asset.display());
@@ -158,6 +161,30 @@ fn run_split(args: &RunArgs) -> anyhow::Result<()> {
         limit: args.limit,
     };
     request.validate()?;
+    let instances = instance_count(args, split)?;
+    print_plan(args, &request, instances)?;
+    if args.dry_run {
+        return Ok(());
+    }
+    // Made before the run, so an unwritable results directory costs no trials.
+    let dir = args.results_dir.join(format!(
+        "swe-{split}-{}",
+        archon_core::now().format("%Y%m%dT%H%M%SZ")
+    ));
+    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    let aggregate = runner.run(&request, &work_dir)?;
+    let path = dir.join(format!("{split}-aggregate.json"));
+    std::fs::write(&path, aggregate.to_json())
+        .with_context(|| format!("writing {}", path.display()))?;
+    let gate = gate::evaluate(&arms.models, std::slice::from_ref(&aggregate));
+    println!("{}", report::render(&gate, &[aggregate], &arms.old.label));
+    println!("aggregate: {}", path.display());
+    Ok(())
+}
+
+/// The instances one run covers: the dev manifest's (or its first `--limit`),
+/// or the holdout size the seal printed, within what the gate's test handles.
+fn instance_count(args: &RunArgs, split: Split) -> anyhow::Result<u32> {
     let instances = match split {
         Split::Dev => {
             let manifest = DevManifest::load(&args.aether_checkout)?;
@@ -167,23 +194,12 @@ fn run_split(args: &RunArgs) -> anyhow::Result<()> {
         }
         Split::Holdout => args.holdout_instances,
     };
-    print_plan(args, &request, instances)?;
-    if args.dry_run {
-        return Ok(());
-    }
-    let aggregate = runner.run(&request, &work_dir)?;
-    let dir = args.results_dir.join(format!(
-        "swe-{split}-{}",
-        archon_core::now().format("%Y%m%dT%H%M%SZ")
-    ));
-    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
-    let path = dir.join(format!("{split}-aggregate.json"));
-    std::fs::write(&path, aggregate.to_json())
-        .with_context(|| format!("writing {}", path.display()))?;
-    let gate = gate::evaluate(&arms.models, std::slice::from_ref(&aggregate));
-    println!("{}", report::render(&gate, &[aggregate], &arms.old.label));
-    println!("aggregate: {}", path.display());
-    Ok(())
+    ensure!(
+        (1..=stats::MAX_PAIRS).contains(&instances),
+        "a {split} run covers 1 to {} instances, not {instances}",
+        stats::MAX_PAIRS
+    );
+    Ok(instances)
 }
 
 fn arm_set(args: &RunArgs) -> anyhow::Result<ArmSet> {
@@ -289,6 +305,7 @@ fn run_gate(args: &GateArgs) -> anyhow::Result<()> {
 }
 
 fn best_release(path: &Path) -> anyhow::Result<()> {
+    sealed::refuse_inside_store(path)?;
     let records = Records::load(path)?;
     println!("window: {}\nmeasure: {}\n", records.window, records.measure);
     println!(

@@ -43,7 +43,8 @@ Per model, three arms run on the same instances:
 | `native` | `claude-code` | `codex` |
 
 Both Archon arms run the `direct` pipeline through the runner's Archon arm,
-each on its own `archon` and `aether` binaries.
+each on its own `archon` and `aether` binaries; the arms file names the
+pipeline for each.
 
 ### The best recent release
 
@@ -57,9 +58,9 @@ each on its own `archon` and `aether` binaries.
   2026-10-31. Earlier releases ran reviewers at a lower effort that has
   since been replaced.
 - **Rule.** Rank by pass rate pooled over both models, then by summed cost
-  per run. Only releases measured on both models are ranked. The current
-  release wins any tie, so an older one is picked only when it scored
-  strictly better.
+  per run, then the current release first. Only releases measured on both
+  models are ranked. An older release is picked only when it passed more,
+  or passed as many for less (v1.4.11 ranks above v1.4.12 below).
 
 | Rank | Archon | Aether | Passed | Cost/run (Haiku + Luna) | Source |
 |---:|---|---|---:|---:|---|
@@ -176,8 +177,10 @@ For that split archon-bench:
 - reports a parse error by position only, never by content;
 - keeps only the re-serialized aggregate, which has no instance field.
 
-`tests/swe_cli.rs` checks all of this with a fake runner that leaks a
-canary on every channel it has.
+`tests/swe_cli.rs` checks the silence, the scratch removal, the store
+refusal and the instance refusal end to end, with a fake runner that leaks
+a canary on every channel it has. The unit tests in `src/swe/aggregate`
+check the schema refusal and the position-only parse errors.
 
 ## Dev baseline
 
@@ -202,7 +205,7 @@ sh scripts/ci-slot.sh nice -n 10 ionice -c3 \
 - **Jobs.** 3, the most the host takes, with the runner starting no trial
   above a 1-minute load of 12.
 - **Expected.** 150 trials (25 instances × 6 arms × 1 repeat). The priors
-  estimate about 18.8 h and $69, and 35 GB of disk (30 GB image cache
+  estimate about 18.8 h and $69, and 34.5 GB of disk (30 GB image cache
   plus workspaces). `--dry-run` prints the same figures before any trial.
 
 To prove the wiring before that, a smoke run of two dev instances on one

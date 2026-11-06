@@ -9,7 +9,7 @@ use std::path::Path;
 use anyhow::{Context, ensure};
 use serde::Deserialize;
 
-use super::sealed;
+use super::{sealed, stats};
 
 /// The set's directory inside an Aether checkout.
 pub const SET_DIR: &str = "bench/release-set/swe-v1";
@@ -69,8 +69,10 @@ impl DevManifest {
             "the dataset revision is not pinned"
         );
         ensure!(
-            !dev.instances.is_empty(),
-            "the dev manifest lists no instance"
+            (1..=stats::MAX_PAIRS as usize).contains(&dev.instances.len()),
+            "the dev manifest lists {} instances, not 1 to {}",
+            dev.instances.len(),
+            stats::MAX_PAIRS
         );
         let pinned =
             |hash: &String| hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit());
@@ -79,7 +81,7 @@ impl DevManifest {
             "a dev instance has no SHA-256 pin"
         );
         Ok(Self {
-            instances: dev.instances.len() as u32,
+            instances: u32::try_from(dev.instances.len()).expect("bounded by MAX_PAIRS above"),
             dataset: dev.dataset,
             revision: dev.revision,
         })

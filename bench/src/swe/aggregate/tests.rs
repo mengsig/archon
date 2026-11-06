@@ -141,6 +141,22 @@ fn inconsistent_counts_and_wrong_splits_are_refused() {
 }
 
 #[test]
+fn pair_counts_that_overflow_or_exceed_the_exact_test_are_refused() {
+    let mut value = aggregate("dev");
+    // These sum to 2^32 + 3, which a wrapping u32 add would read as 3 <= n.
+    value["pairs"][0]["a_only"] = json!(2_147_483_649u32);
+    value["pairs"][0]["b_only"] = json!(2_147_483_650u32);
+    assert!(parse(&value, Split::Dev).is_err(), "discordant overflow");
+    let mut value = aggregate("dev");
+    let big = stats::MAX_PAIRS + 1;
+    value["arms"]["haiku/new"] = arm(big, 1);
+    value["arms"]["haiku/native"] = arm(big, 0);
+    value["pairs"][0]["n"] = json!(big);
+    let error = parse(&value, Split::Dev).unwrap_err().to_string();
+    assert!(error.contains("exact test"), "{error}");
+}
+
+#[test]
 fn a_saved_aggregate_round_trips_and_drops_every_instance() {
     let mut value = aggregate("dev");
     value["instances"] = instances();

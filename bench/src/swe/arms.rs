@@ -8,6 +8,9 @@ use std::str::FromStr;
 use anyhow::{Context, bail, ensure};
 use serde_json::{Value, json};
 
+/// The Archon pipeline both Archon arms run.
+pub const PIPELINE: &str = "direct";
+
 /// The two cheap models every live bench run uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Model {
@@ -180,7 +183,7 @@ impl ArmSet {
             .map(|key| match self.build(key.harness) {
                 Some(build) => json!({
                     "key": key.to_string(), "model": key.model.name(), "harness": "archon",
-                    "label": build.label, "archon_bin": build.archon_bin,
+                    "pipeline": PIPELINE, "label": build.label, "archon_bin": build.archon_bin,
                     "aether_bin": build.aether_bin,
                 }),
                 None => json!({
@@ -250,6 +253,14 @@ mod tests {
                 .ends_with("aether-v1.4.9")
         );
         assert_eq!(arms[4]["label"], "head");
+        assert_eq!(
+            (arms[0]["pipeline"].as_str(), arms[4]["pipeline"].as_str()),
+            (Some("direct"), Some("direct"))
+        );
+        assert!(
+            arms[2].get("pipeline").is_none(),
+            "a native arm runs no pipeline"
+        );
         assert_eq!(arms[2]["cli"], "claude-code");
         assert_eq!(arms[5]["cli"], "codex");
     }

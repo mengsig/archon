@@ -3080,6 +3080,42 @@ async fn a_left_out_fail_with_nothing_blocking_stands_after_aether_forgets_its_r
     }
 }
 
+/// A tally an earlier archond began kept no head for a fail naming nothing
+/// blocking. Its reviewer is read again while Aether lists it; once Aether
+/// forgets it, the review is refused rather than guessed.
+#[tokio::test]
+async fn a_left_out_reviewer_an_earlier_archond_s_tally_read_is_never_guessed_passed() {
+    for forgotten in [false, true] {
+        let h = Harness::new().await;
+        let item = adaptive_item(&h).await;
+        let lead = h.running().await.remove(0);
+        let lead_id = lead_agent(&lead);
+        let failing = h.backend.delegate(&lead_id, REVIEW_MODEL);
+        let passing = h.backend.delegate(&lead_id, REVIEW_MODEL);
+        let named = pass_by(std::slice::from_ref(&passing));
+        let built = shipped_by(&h, &lead, "Reviewed", named).await;
+        h.backend
+            .complete_delegated(&failing, fail_of_kind(&built, "follow-ups"));
+        let legacy = serde_json::json!({"fails": [], "read": [failing.as_str()]});
+        let key = format!("review_rounds:{}", lead.id);
+        let mut store = h.ctx.store.lock().await;
+        store.kv_set(&key, &legacy.to_string()).unwrap();
+        drop(store);
+        if forgotten {
+            h.backend.forget_delegated(&failing);
+        }
+        h.backend
+            .complete_delegated(&passing, verdict_on(&built, "pass"));
+        h.settle_running(|_| built.clone()).await;
+        let error = refused_review(&h, &item).await;
+        let why = match forgotten {
+            true => "did not keep whether it failed the change: retry the stage".to_owned(),
+            false => format!("reviewer {failing} failed the change at"),
+        };
+        assert!(error.contains(&why), "forgotten {forgotten}: {error}");
+    }
+}
+
 /// A reviewer failed the first head and the lead left it out; the reviewer
 /// it names passed the fix as part of the whole change, so the fail is answered.
 #[tokio::test]

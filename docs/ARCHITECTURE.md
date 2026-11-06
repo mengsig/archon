@@ -2473,7 +2473,9 @@ reviewer of the stage attempt (from the review-round tally, so a resumed
 lead's earlier attempts are not read) stands as a named fail would: the
 review is refused, with the reason, until a counted pass reads past it. A
 fail fails whatever its findings; one listing only follow-ups adds no review
-round. A pass counts when it read the
+round, but the tally keeps its head, so it stands after Aether forgets its
+reviewer. A tally an earlier archond began kept only blocking fails' heads:
+there a left-out reviewer Aether forgot refuses the review. A pass counts when it read the
 branch head, or when a counted pass read every commit after its head
 (`base` at or before it). A fail never counts and must be followed by such
 a pass, or by a later fail that read every commit after its head and was

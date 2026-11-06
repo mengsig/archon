@@ -88,13 +88,27 @@ pub(in crate::executor) async fn attempt_resumed(
     save(ctx, &stage.id, &tally).await
 }
 
+/// The settled children a stage attempt read, and whether its tally kept each fail's head.
+pub(super) struct Tallied {
+    /// Each child read, with the head of the fail it returned, blocking or not, if any.
+    pub children: Vec<(String, Option<String>)>,
+    /// `false` for a tally an earlier archond began: it kept only blocking
+    /// fails' heads, so a child without one may still have failed.
+    pub every_fail_kept: bool,
+}
+
 /// The settled children `stage`'s attempt read, each with the head of the fail it
-/// read, blocking or not, if any. Read after [`capped_at_completion`] brought the tally up to date.
+/// read, if any. Read after [`capped_at_completion`] brought the tally up to date.
 pub(super) async fn attempt_children(
     ctx: &DaemonContext,
     stage: &StageRunId,
-) -> Result<Vec<(String, Option<String>)>, ArchonError> {
+) -> Result<Tallied, ArchonError> {
     let tally = load(ctx, stage).await?;
+    let every_fail_kept = tally.every_fail_kept;
+    assert!(
+        every_fail_kept || tally.other_fails.is_empty(),
+        "only a tally that keeps every fail holds non-blocking ones"
+    );
     let mut children: Vec<(String, Option<String>)> =
         tally.read.into_iter().map(|agent| (agent, None)).collect();
     let other_fails = tally.other_fails.into_iter();
@@ -116,7 +130,10 @@ pub(super) async fn attempt_children(
             .all(|(agent, head)| !agent.is_empty() && head.as_ref().is_none_or(|h| !h.is_empty())),
         "a read child names its agent, and a counted fail its head"
     );
-    Ok(children)
+    Ok(Tallied {
+        children,
+        every_fail_kept,
+    })
 }
 
 /// Add the blocking fails of the attempt's settled children not read before
@@ -267,6 +284,10 @@ struct Tally {
     /// no round, but stands for coverage once Aether no longer lists its agent.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     other_fails: Vec<(String, String)>,
+    /// Whether this tally kept every read fail's head from its start; one an
+    /// earlier archond began lacks it and reads `false`.
+    #[serde(default)]
+    every_fail_kept: bool,
 }
 
 impl Tally {
@@ -298,7 +319,10 @@ fn tally_key(stage: &StageRunId) -> String {
 async fn load(ctx: &DaemonContext, stage: &StageRunId) -> Result<Tally, ArchonError> {
     let key = tally_key(stage);
     let Some(raw) = ctx.store.lock().await.kv_get(&key)? else {
-        return Ok(Tally::default());
+        return Ok(Tally {
+            every_fail_kept: true,
+            ..Tally::default()
+        });
     };
     serde_json::from_str(&raw).map_err(|e| ArchonError::Corrupt(format!("kv {key} = {raw:?}: {e}")))
 }

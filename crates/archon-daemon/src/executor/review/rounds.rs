@@ -146,20 +146,17 @@ async fn count(
     let fresh = lead_is_fresh(ctx, stage, lead).await?;
     let beneath = ctx.backend.descendants(lead).await?;
     let mut tally = load(ctx, &stage.id).await?;
-    // An earlier archond read words it did not know as no verdict: read them again once.
-    let reread = tally.owes_reread();
     let unread: Vec<&Descendant> = settled_children(&beneath, lead)
         .into_iter()
         .filter(|c| tally.attempt_holds(&c.agent, fresh, reviewer))
-        .filter(|c| !tally.has_read(&c.agent) || (reread && tally.kept_no_fail(&c.agent)))
+        .filter(|c| !tally.has_read(&c.agent) || tally.owes_reread(&c.agent))
         .collect();
-    if !unread.is_empty() || reread {
+    if !unread.is_empty() {
         for child in unread {
             // Unreadable yet: no child is skipped, so the event or settle is retried.
             let verdict = verdict_of(ctx, child).await?;
             tally.record(&child.agent, verdict);
         }
-        tally.legacy_reread |= reread;
         in_creation_order(&mut tally.fails, &beneath, lead);
         save(ctx, &stage.id, &tally).await?;
     }
@@ -273,10 +270,10 @@ struct Tally {
     /// earlier archond began lacks it and reads `false`.
     #[serde(default)]
     every_fail_kept: bool,
-    /// Whether a tally an earlier archond began has read its children again
-    /// under today's verdict words, once.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    legacy_reread: bool,
+    /// For a tally an earlier archond began, the children read under today's
+    /// verdict words; any other child it read is read again once its attempt admits it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    reread: Vec<String>,
 }
 
 impl Tally {
@@ -285,21 +282,19 @@ impl Tally {
         self.read.iter().any(|a| a == agent) || self.fails.iter().any(|f| f.agent == agent)
     }
 
-    /// Whether an earlier archond began this tally and its reads were not redone yet.
-    fn owes_reread(&self) -> bool {
-        !self.every_fail_kept && !self.legacy_reread
-    }
-
-    /// Whether `agent` was read and the tally kept no fail of it.
-    fn kept_no_fail(&self, agent: &AetherAgentId) -> bool {
+    /// Whether an earlier archond read `agent`, which may have failed in a word
+    /// it did not know, kept no fail of it, and it was not read again yet.
+    fn owes_reread(&self, agent: &AetherAgentId) -> bool {
         let agent = agent.as_str();
-        self.read.iter().any(|a| a == agent)
+        !self.every_fail_kept
+            && self.read.iter().any(|a| a == agent)
+            && !self.reread.iter().any(|a| a == agent)
             && !self.fails.iter().any(|f| f.agent == agent)
             && !self.other_fails.iter().any(|(a, _)| a == agent)
     }
 
     /// Add child `agent`'s verdict, `None` for none: a blocking fail as a
-    /// round, any other fail by its head. Reading a child again adds it once.
+    /// round, any other fail by its head. A child read again is listed once.
     fn record(&mut self, agent: &AetherAgentId, verdict: Option<Verdict>) {
         let name = agent.to_string();
         assert!(!name.is_empty(), "a read child names its agent");
@@ -307,8 +302,16 @@ impl Tally {
             !self.fails.iter().any(|f| f.agent == name),
             "a counted round is never read again"
         );
-        if !self.read.contains(&name) {
+        if self.read.contains(&name) {
+            assert!(
+                !self.every_fail_kept,
+                "a tally that kept every fail reads a child once"
+            );
+        } else {
             self.read.push(name.clone());
+        }
+        if !self.every_fail_kept {
+            self.reread.push(name.clone());
         }
         let Some(verdict) = verdict.filter(|v| !v.pass) else {
             return;
@@ -535,6 +538,48 @@ mod tests {
             "six listed"
         );
         assert_eq!(listed(&lines[..2], 0), "2 more");
+    }
+
+    #[test]
+    fn a_legacy_tally_reads_each_earlier_read_child_again_once_whenever_it_is_admitted() {
+        let id = |s: &str| AetherAgentId::parse(s).unwrap();
+        let (old, other, new) = (id("agt_old"), id("agt_other"), id("agt_new"));
+        let legacy = r#"{"fails":[],"read":["agt_old","agt_other"]}"#;
+        let mut tally: Tally = serde_json::from_str(legacy).unwrap();
+        assert!(tally.owes_reread(&old) && tally.owes_reread(&other));
+        // A resumed lead admits only the reviewer an event names: `old` waits its turn.
+        tally.record(&new, None);
+        assert!(
+            !tally.owes_reread(&new),
+            "a child read after the upgrade is read once"
+        );
+        assert!(tally.owes_reread(&old) && tally.owes_reread(&other));
+        let blocking = Verdict {
+            pass: false,
+            head: "aaaaaaa1".into(),
+            base: None,
+            findings: Some(1),
+            blocking: Some(1),
+            blocking_findings: vec!["drops the tail".into()],
+        };
+        tally.record(&old, Some(blocking));
+        assert_eq!(rounds_of(&tally.fails), 1, "the reread fail is a round");
+        assert!(!tally.owes_reread(&old), "read again once");
+        assert!(tally.owes_reread(&other), "still owed until admitted");
+        assert_eq!(
+            tally.read,
+            ["agt_old", "agt_other", "agt_new"],
+            "each listed once"
+        );
+        let fresh = Tally {
+            every_fail_kept: true,
+            read: vec!["agt_old".into()],
+            ..Tally::default()
+        };
+        assert!(
+            !fresh.owes_reread(&old),
+            "a tally that kept every fail owes none"
+        );
     }
 
     #[test]

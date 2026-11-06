@@ -742,12 +742,22 @@ fn the_strict_e2e_pipelines_keep_their_shared_shape() {
         journey,
         (vec!["setup", "journeys", "report"], Scenarios::Strict)
     );
-    let setup = catalog.get("release-journey").unwrap().prompts["setup.md"].replace('\n', " ");
+    let setup = &catalog.get("release-journey").unwrap().prompts["setup.md"];
+    let setup = setup.split_whitespace().collect::<Vec<_>>().join(" ");
     for said in [
         ".archon/journeys.toml",
         "never as copied credential files",
         "Nothing you start may read or write the state of the daemons installed",
+        "prints `ENV-FAULT: <why>` to stderr, exits 3 and launches nothing",
+        "Confirm that it exits 3 and the file does not exist",
     ] {
         assert!(setup.contains(said), "missing {said:?} in {setup}");
+    }
+    // `eval "$(env.sh …)"` ran the journey even when env.sh failed.
+    for (file, prompt) in &catalog.get("release-journey").unwrap().prompts {
+        assert!(
+            !prompt.contains("eval "),
+            "release-journey/{file} evals a run's environment"
+        );
     }
 }

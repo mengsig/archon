@@ -26,7 +26,7 @@ setup stage stops with `BLOCKED:`.
 
 | Stage | What it does |
 | --- | --- |
-| `setup` | Reads the manifest and builds each journey's artifact with its `build` command. It writes `.archon/journeys/env.sh`, which makes a fresh private home for one journey run, and `start.sh` and `stop.sh` when the journeys need private services. |
+| `setup` | Reads the manifest and builds each journey's artifact with its `build` command. It writes `.archon/journeys/run.sh`, which runs one journey run in a fresh private home and launches nothing when that home cannot be set up, and `start.sh` and `stop.sh` when the journeys need private services. |
 | `journeys` | Runs every journey once per install and per engine, each in a fresh home, and keeps screenshots, traces and output under `.archon/reports/journeys/`. It publishes that directory as the item's `journeys` artifact. Its gate is `all_pass`, with [`scenarios = "strict"`](PIPELINES.md#strict-scenarios). |
 | `report` | Writes `.archon/reports/journeys/index.html` for Lavish, after a passing run. |
 
@@ -44,7 +44,7 @@ verdict, goes back to `setup`, once.
 
 A journey run must never touch the daemons installed on the machine, or
 their state, or the user's homes. The setup prompt and the stage contract
-both say so, and `env.sh` enforces it in practice:
+both say so, and `run.sh` enforces it in practice:
 
 - Each run gets a fresh temporary home under `.archon/journeys/homes/`.
   `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`,
@@ -54,6 +54,11 @@ both say so, and `env.sh` enforces it in practice:
   stack only through the environment variables an engine's `env` lists,
   never as copied credential files. If one of them is unset, the run stops
   with `BLOCKED:` and names it.
+- `run.sh` fails closed. If the home, a variable, a credential or the
+  `populate` script fails, it prints `ENV-FAULT:`, exits 3 and launches
+  nothing, and that run counts as blocked by the environment. Setup proves
+  this with a sentinel command before any journey runs. Each run is its own
+  process: no agent loads a run's environment into its own shell.
 - Stop scripts stop only what their start scripts recorded, by PID, process
   group or Compose project, never by name or pattern.
 
@@ -162,7 +167,7 @@ test('a new user starts their first agent', async () => {
 
 On a headless machine, the setup stage starts a private virtual display
 (for example `Xvfb` on a free display number, recorded by `start.sh`) and
-`env.sh` exports its `DISPLAY`. A journey whose Start button stays disabled
+`run.sh` exports its `DISPLAY`. A journey whose Start button stays disabled
 fails `expect(start).toBeEnabled()`. Its run is recorded as `fail`, with
 `2-ready.png` and `trace.zip` as evidence, and the `release-journey` run
 fails, naming `first-agent/empty/claude-code`.

@@ -30,15 +30,18 @@ Read `{{workspace}}/.archon/journeys/env.md` for the details and
    `first-agent/empty/claude-code`. These ids are the manifest's list.
 2. **Start** private services with `.archon/journeys/start.sh`, if setup
    wrote one.
-3. **Run each one in a fresh home.** `eval "$(.archon/journeys/env.sh
-   <journey> <install> <engine>)"`, then the journey's `run` command. The
-   script drives the real artifact through its real interface and exits 0
-   only when every step passed. Keep its screenshots and traces in
-   `$JOURNEY_EVIDENCE`, and its output as `output.txt` there.
+3. **Run each one in a fresh home.** `.archon/journeys/run.sh <journey>
+   <install> <engine>`, one call per run. Never load its environment into
+   your own shell. The script drives the real artifact through its real
+   interface and exits 0 only when every step passed. Keep its screenshots
+   and traces in `$JOURNEY_EVIDENCE`, and its output as `output.txt` there.
+   Exit 3 with `ENV-FAULT:` means the private home could not be set up and
+   nothing launched: that run is `blocked` by the environment, never a pass.
 4. **Check the assertions.** A run passes only when its script exits 0 and
    every `assert` of its journey holds in the evidence. Never pass a run on
    the script alone when the evidence contradicts an assertion.
-5. **Retry flakes honestly.** Retry a failed run once, in a fresh home. If
+5. **Retry flakes honestly.** Retry a failed run once, with a new `run.sh`
+   call, which makes a fresh home. If
    it passes, it passes, flagged as flaky in its notes. A run that fails
    twice is a failure.
 6. **Stop.** Always run `.archon/journeys/stop.sh` at the end, if it exists,

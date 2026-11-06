@@ -1554,8 +1554,10 @@ mod tests {
             prompt.contains("Call `list_pipelines` to see the catalog"),
             "new pipelines must be discoverable without static prompt guidance"
         );
-        // Reports the operator asks for by name need no routing guidance.
-        let pending_catalog_guidance = ["code-audit", "design-doc"];
+        // Reports the operator asks for by name need no routing guidance, and the
+        // release gates get theirs with the release-validation prompts (#396, #397).
+        let pending_catalog_guidance =
+            ["code-audit", "design-doc", "e2e-strict", "release-journey"];
         let catalog = archon_pipeline::Catalog::builtin();
         for name in pending_catalog_guidance {
             catalog.get(name).expect("pending pipeline is discoverable");

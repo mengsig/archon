@@ -54,13 +54,19 @@ this machine or the user's homes:
 
 1. **Build the shipped artifact** of every journey with its `build` command,
    in a temporary home, and confirm that its `path` exists afterwards.
-2. **`.archon/journeys/env.sh <journey> <install> <engine>`** creates a fresh
-   temporary home for one journey run and prints the `export` lines for it:
-   the variables above, plus `JOURNEY_ID`, `JOURNEY_INSTALL`,
-   `JOURNEY_ENGINE`, `JOURNEY_MODEL`, `JOURNEY_ARTIFACT` and
-   `JOURNEY_EVIDENCE` (an empty directory under
-   `.archon/reports/journeys/assets/`). For a `populated` install it runs
-   the journey's `populate` script in that home first.
+2. **`.archon/journeys/run.sh <journey> <install> <engine> [command]`**
+   runs one journey run in its own process, and fails closed. Under
+   `set -eu` it creates a new, empty temporary home for this run (never an
+   earlier one) and exports the variables above, plus `JOURNEY_ID`,
+   `JOURNEY_INSTALL`, `JOURNEY_ENGINE`, `JOURNEY_MODEL`, `JOURNEY_ARTIFACT`
+   and `JOURNEY_EVIDENCE` (an empty directory under
+   `.archon/reports/journeys/assets/`). It checks that each is set, that
+   `HOME` lies under `.archon/journeys/homes/`, and that the engine's `env`
+   variables are set. For a `populated` install it then runs the journey's
+   `populate` script in that home. Only when every step succeeded does it
+   `exec` the journey's `run` command, or `command` when given. On any
+   failure it prints `ENV-FAULT: <why>` to stderr, exits 3 and launches
+   nothing.
 3. **`.archon/journeys/start.sh` and `stop.sh`**, if the journeys need
    private services. `start.sh` records PIDs or Compose projects under
    `.archon/journeys/run/` and waits with a bounded timeout for a health
@@ -68,12 +74,16 @@ this machine or the user's homes:
    group or Compose project, never by name or pattern (`pkill`, `killall`,
    `pgrep -f`), and exits 0 once none of them runs.
 4. **`.archon/journeys/env.md`** for the next agent: how to run one journey
-   (the `env.sh` call, then the journey's `run` command), the display or
+   (the `run.sh` call), the display or
    headless setup the artifact needs, where logs go, and known quirks.
-5. **Prove it works.** For one journey, run `env.sh`, launch its artifact,
-   confirm that it starts, and stop it. Confirm that none of the processes
-   you recorded is left running, and that the installed daemons' state was
-   not touched.
+5. **Prove it works.** For one journey, launch its artifact through
+   `run.sh`, confirm that it starts, and stop it. Confirm that none of the
+   processes you recorded is left running, and that the installed daemons'
+   state was not touched.
+6. **Prove it fails closed.** Run `run.sh` with one of the engine's `env`
+   variables unset and, as `command`, a sentinel that creates a file.
+   Confirm that it exits 3 and the file does not exist. Do the same with a
+   `populate` script that fails, when a journey has one.
 
 ## Report
 

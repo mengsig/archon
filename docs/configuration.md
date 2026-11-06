@@ -68,11 +68,12 @@ from the lead when `prefer_other_provider` is set and a permitted model of
 another provider exists. If no permitted model reaches the tier, the contract
 names the best permitted one, or the lead's own model, and says so; the agent is
 never sent to look for a model the policy would refuse. `default_effort`,
-raised to at least medium, is the reviewer's default effort: where the diff
-calls for another, the lead takes the effort rubric's level for a review, `low`
-for a trivial diff, `medium` for a small or low-risk one, `high` for a risky
-diff or shared code, `x_high` for concurrency or security analysis, and says
-why in its summary when it goes below the default.
+raised to at least medium, is the reviewer's default effort, kept where the
+effort rubric leaves the diff open; otherwise the rubric decides: `low` for a
+trivial diff, `medium` for a small or low-risk one, `high` for a risky diff or
+shared code, `x_high` for concurrency or security analysis, `max` only after
+`x_high` failed on the same review. Off the default, lower or higher, the lead
+states the reason in one line in its result.
 The model policy's effort cap still applies. In an explicit `<stage>.review`
 plan each effort is that reviewer's default in the same way: a reviewer on
 another model is cancelled as it spawns, and one at any effort on a named model

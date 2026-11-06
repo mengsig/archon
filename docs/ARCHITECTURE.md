@@ -2143,7 +2143,8 @@ contract that may delegate: `low` for lookups, listing, formatting and
 mechanical edits; `medium` for routine changes and reviews of small or low-risk
 diffs; `high` for non-trivial design, risky diffs and reviews of shared code;
 `x_high` for hard reasoning, such as root-causing a regression, concurrency or
-security analysis, or a fix that failed twice; `max` only when `x_high` failed;
+security analysis, or a fix that failed twice; `max` only after `x_high` failed
+on the same task;
 the cheapest that fits. Reviewers need independent discovery: another provider at the same
 tier counts, and several fast-tier reviewers, or a fast-tier team checked by
 one stronger-tier judge at low effort, can beat one balanced reviewer for far
@@ -2245,11 +2246,12 @@ its tier.
 `<stage>.review` in `model_plan` and `model_reasons`, with at most as many
 `{model, effort}` entries as the strict level has reviewers (taken in turn).
 The stage contract tells the lead to delegate reviewers with role `reviewer` on
-those models, each effort the default for its reviewer. Where the diff calls
-for another, the lead takes the rubric's level for a review (`low` for a
-trivial diff, `medium` for a small or low-risk one, `high` for a risky diff or
-shared code, `x_high` for concurrency or security analysis, never `max`),
-saying why in its summary when it goes below the default; the model policy's
+those models, each effort the default for its reviewer, kept where the rubric
+leaves the diff open. Otherwise the rubric decides the review's level (`low`
+for a trivial diff, `medium` for a small or low-risk one, `high` for a risky
+diff or shared code, `x_high` for concurrency or security analysis, `max` only
+after `x_high` failed on the same review), and the lead states the reason in
+one line in its result, lower or higher; the model policy's
 `max_effort` is the only ceiling. The delegation watchdog
 (§7.4) cancels a child with such a role on another model, or above the cap, as
 it spawns, before it does any work. This check relies on the lead using

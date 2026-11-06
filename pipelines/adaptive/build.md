@@ -65,12 +65,13 @@ read again.
    - the repository guidance it must apply and only the parts of a spec that
      bear on the change: no conversation, no project history.
 
-   Keep the effort your contract names unless the diff calls for another,
-   then take the rubric's level for a review: `low` for a trivial diff,
+   The effort your contract names is the default, for a diff the rubric
+   leaves open; otherwise the rubric decides: `low` for a trivial diff,
    `medium` for a small or low-risk one, `high` for a risky diff, shared
    code, an invariant at stake or a brief asking for depth, `x_high` for
-   concurrency or security analysis. Going below the default, say why in
-   your summary. Require the
+   concurrency or security analysis, `max` only after `x_high` failed on
+   the same review; never above the model policy's cap. Off the default,
+   lower or higher, state the reason in one line in your result. Require the
    verdict your contract shows, on the head it read, with actionable
    findings (path, issue, impact, remedy).
    Pass on your contract's bounds for reviewers and its blocking class:

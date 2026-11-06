@@ -285,7 +285,8 @@ mod tests {
             "a configured low effort is raised to medium: {rules}"
         );
         assert!(
-            rules.contains("`low` for a trivial diff, `medium` for a small or low-risk diff"),
+            rules.contains("`low` for a trivial diff, `medium` for a small or low-risk diff")
+                && rules.contains(super::super::REASON_RULE),
             "{rules}"
         );
         config.prefer_other_provider = false;

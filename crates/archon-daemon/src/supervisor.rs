@@ -1638,10 +1638,29 @@ mod tests {
             prompt.contains(&format!("Size each stage's effort to its task: {rubric}")),
             "the stage contracts' effort rubric, word for word"
         );
+        for level in [
+            "`low` for lookups",
+            "`medium` for routine changes",
+            "`high` for non-trivial design",
+            "`x_high` for hard reasoning",
+            "`max` only after `x_high` failed on the same task",
+        ] {
+            assert!(prompt.contains(level), "missing {level:?}");
+        }
         assert!(
-            !prompt.contains("only for a named reasoning problem"),
-            "x_high is chosen by the rubric, not ruled out"
+            prompt.contains(&format!(
+                "{rubric} Off the learned or configured effort, lower or higher, state the \
+                 reason in one line in `model_reasons`."
+            )),
+            "a move off the default is explained"
         );
+        for gone in [
+            "only for a named reasoning problem",
+            "lower only for a trivial diff",
+            "`max` only when `x_high` failed.",
+        ] {
+            assert!(!prompt.contains(gone), "{gone:?} is the old rule");
+        }
     }
 
     /// The review level belongs to the item, not to the pipeline's name, and

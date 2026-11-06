@@ -163,12 +163,12 @@ From the audit in [docs/security/vnext-audit.md](docs/security/vnext-audit.md)
 - Agents no longer run at `high` effort for every task. One effort rubric,
   from `low` for lookups and mechanical edits through `x_high` for hard
   reasoning (root-causing a regression, concurrency or security analysis, a fix
-  that failed twice) to `max` only when `x_high` failed, now sizes every effort
-  the orchestrator and stage leads choose. A reviewer plan's effort is that
-  reviewer's default instead of a floor: where the diff calls for another, a
-  lead takes the rubric's level for a review, from `low` for a trivial diff to
-  `x_high` for concurrency or security analysis, saying why when it goes below
-  the default, within `max_effort`; archond
+  that failed twice) to `max` only after `x_high` failed on the same task, now
+  sizes every effort the orchestrator and stage leads choose. A reviewer plan's
+  effort is that reviewer's default instead of a floor, kept where the rubric
+  leaves the diff open; otherwise the rubric decides, from `low` for a trivial
+  diff to `x_high` for concurrency or security analysis, and the lead states the
+  reason in one line whether it goes lower or higher, within `max_effort`; archond
   still cancels a reviewer on a model the plan does not name. A delegating
   stage's cost split in `get_item` and `get_stage` counts its agents by effort.
 

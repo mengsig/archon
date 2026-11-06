@@ -159,7 +159,8 @@ pub const EFFORT_RUBRIC: &str = "`low` for lookups, listing, formatting and mech
 edits; `medium` for routine changes and reviews of small or low-risk diffs; `high` for \
 non-trivial design, risky diffs and reviews of shared code; `x_high` for hard reasoning, \
 such as root-causing a regression, concurrency or security analysis, or a fix that \
-failed twice; `max` only when `x_high` failed. Take the cheapest that fits.";
+failed twice; `max` only after `x_high` failed on the same task. Take the cheapest that \
+fits.";
 
 /// What the orchestrator chose for one agent: model and effort are
 /// mandatory, mirroring Aether's `delegate`, which inherits neither.

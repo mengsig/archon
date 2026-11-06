@@ -82,7 +82,9 @@ mechanical edits; `medium` for routine changes and reviews of small or
 low-risk diffs; `high` for non-trivial design, risky diffs and reviews of
 shared code; `x_high` for hard reasoning, such as root-causing a
 regression, concurrency or security analysis, or a fix that failed twice;
-`max` only when `x_high` failed. Take the cheapest that fits.
+`max` only after `x_high` failed on the same task. Take the cheapest that
+fits. Off the learned or configured effort, lower or higher, state the reason
+in one line in `model_reasons`.
 
 The daemon refuses a knob above the ceiling `autonomy_policy` shows; only
 the operator can raise it, so never work around a refusal. `merge: auto` and

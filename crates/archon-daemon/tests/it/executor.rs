@@ -2689,10 +2689,11 @@ async fn adaptive_guarded_build_delegates_within_the_stated_policy_and_archond_s
     assert!(build.instructions.contains("\n## Ship record\n"));
     // The repository leaves the lead's model alone: its reviewers run on it.
     let own = format!(
-        "on {MODEL} at tier balanced and effort medium. That effort is the default; where the \
-         diff calls for another, take the rubric's: `low` for a trivial diff, `medium` for a \
-         small or low-risk diff, `high` for a risky diff or shared code; never above high, the \
-         model policy's cap. Going below the default, say why in your summary."
+        "on {MODEL} at tier balanced and effort medium. That effort is the default, for a diff \
+         the rubric leaves open; otherwise the rubric decides: `low` for a trivial diff, \
+         `medium` for a small or low-risk diff, `high` for a risky diff or shared code; never \
+         above high, the model policy's cap. Off the default, lower or higher, state the reason \
+         in one line in your result."
     );
     assert!(build.instructions.contains(&own), "{}", build.instructions);
 

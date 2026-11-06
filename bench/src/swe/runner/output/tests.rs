@@ -25,9 +25,9 @@ fn pair(baseline: &str, candidate: &str, b: u32, c: u32) -> Value {
 }
 
 /// Three tasks: native solves t1; old t1 and t2; new t1 and t3. Aether's
-/// own gate reasons and stop reason carry the canary.
+/// own gate reasons and stop reason carry the canary; dev adds the verdicts.
 fn output(split: &str) -> Value {
-    json!({
+    let mut value = json!({
         "schema": SCHEMA,
         "set": {"name": "swe-v1", "split": split, "sha256": "ab".repeat(32), "tasks": 3, "excluded": 1},
         "settings": {"confidence": 0.95, "accuracy_margin": 0.05, "native_alpha": 0.05},
@@ -39,7 +39,11 @@ fn output(split: &str) -> Value {
         "gates": {"haiku": {"release": null, "native": {"haiku/archon-new": {"verdict": "FAIL", "reasons": [CANARY]}}}},
         "overall": "FAIL",
         "stop_reason": CANARY,
-    })
+    });
+    if split == "dev" {
+        value["instances"] = instances();
+    }
+    value
 }
 
 fn instances() -> Value {
@@ -60,18 +64,19 @@ fn instances() -> Value {
 }
 
 fn parse_value(value: &Value, split: Split) -> anyhow::Result<Aggregate> {
-    parse(&value.to_string(), split, 1, &keys())
+    parse(&value.to_string(), split, 1, None, &keys())
 }
 
 #[test]
 fn a_dev_output_becomes_an_aggregate_oriented_as_the_runner_pairs_it() {
-    let mut value = output("dev");
-    value["instances"] = instances();
-    let aggregate = parse_value(&value, Split::Dev).unwrap();
+    let aggregate = parse_value(&output("dev"), Split::Dev).unwrap();
     let [old, new, native] = keys()[..] else {
         unreachable!()
     };
-    assert_eq!((aggregate.tasks, aggregate.repeats), (3, 1));
+    assert_eq!(
+        (aggregate.tasks, aggregate.repeats, aggregate.limit),
+        (3, 1, None)
+    );
     assert_eq!(aggregate.totals(new).unwrap().passed, 2);
     assert_eq!(aggregate.totals(native).unwrap().cost_usd, Some(3.0));
     assert_eq!(
@@ -131,14 +136,12 @@ fn the_set_must_be_swe_v1_on_the_requested_split_pinned_by_hash() {
 #[test]
 fn dev_verdicts_must_add_up_to_the_totals_and_the_pairs() {
     let mut value = output("dev");
-    value["instances"] = instances();
     value["instances"][8]["passed"] = json!(false);
     assert!(
         parse_value(&value, Split::Dev).is_err(),
         "a flipped verdict"
     );
     let mut value = output("dev");
-    value["instances"] = instances();
     value["instances"][0]["repeat"] = json!(1);
     assert!(
         parse_value(&value, Split::Dev).is_err(),
@@ -150,6 +153,22 @@ fn dev_verdicts_must_add_up_to_the_totals_and_the_pairs() {
     rows.as_array_mut().unwrap().push(first);
     value["instances"] = rows;
     assert!(parse_value(&value, Split::Dev).is_err(), "graded twice");
+    let mut value = output("dev");
+    value.as_object_mut().unwrap().remove("instances");
+    assert!(
+        parse_value(&value, Split::Dev).is_err(),
+        "no verdicts to check"
+    );
+}
+
+#[test]
+fn a_limited_dev_run_is_recorded_as_limited_and_a_limited_holdout_refused() {
+    let limited = parse(&output("dev").to_string(), Split::Dev, 1, Some(3), &keys()).unwrap();
+    assert_eq!(limited.limit, Some(3));
+    let short = parse(&output("dev").to_string(), Split::Dev, 1, Some(2), &keys());
+    assert!(short.is_err(), "more tasks than the limit");
+    let holdout = output("holdout").to_string();
+    assert!(parse(&holdout, Split::Holdout, 1, Some(3), &keys()).is_err());
 }
 
 #[test]

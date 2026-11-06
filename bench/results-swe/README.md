@@ -146,6 +146,8 @@ fails, when:
 - either arm lost a trial to an infrastructure failure. Rerun those trials;
 - fewer than tasks × repeats trial pairs were graded on both arms, as when
   the budget stopped the run.
+- it is a `--limit` smoke. The saved aggregate records the limit, so a
+  smoke of the first few dev instances never stands in for the whole split.
 
 Any failing comparison fails the release.
 
@@ -258,3 +260,6 @@ model takes about 40 minutes (6 trials) with the priors:
 target/release/archon-bench swe run --split dev --models haiku --limit 2 \
   --budget-usd 6 --aether-checkout "$AETHER_CHECKOUT" ...the same build flags...
 ```
+
+The smoke's comparisons always read **incomplete**: it shows the
+wiring works, and it is no evidence for the gate.

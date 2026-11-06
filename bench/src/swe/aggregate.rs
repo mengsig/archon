@@ -74,6 +74,9 @@ pub struct Aggregate {
     /// `tasks * repeats` trial pairs.
     pub tasks: u32,
     pub repeats: u32,
+    /// Dev only: a `--limit` smoke ran the split's first `limit` tasks, so
+    /// the gate never counts it as the whole split.
+    pub limit: Option<u32>,
     pub arms: BTreeMap<ArmKey, ArmTotals>,
     pub pairs: Vec<PairCounts>,
 }
@@ -144,6 +147,16 @@ impl Aggregate {
             (1..=MAX_REPEATS).contains(&self.repeats),
             "an aggregate has 1 to {MAX_REPEATS} repeats, not {}",
             self.repeats
+        );
+        ensure!(
+            self.limit.is_none() || self.split == Split::Dev,
+            "only a dev aggregate is limited: the holdout runs whole"
+        );
+        ensure!(
+            self.limit.is_none_or(|limit| self.tasks <= limit),
+            "an aggregate limited to {:?} tasks counts {}",
+            self.limit,
+            self.tasks
         );
         let cells = u64::from(self.tasks) * u64::from(self.repeats);
         for (key, totals) in &self.arms {

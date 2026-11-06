@@ -14,6 +14,7 @@ fn saved(split: &str) -> Value {
         "split": split,
         "tasks": 3,
         "repeats": 1,
+        "limit": null,
         "arms": {"haiku/new": arm(3, 2), "haiku/native": arm(3, 1)},
         "pairs": [{"a": "haiku/native", "b": "haiku/new", "n": 3, "a_only": 0, "b_only": 1}],
     })
@@ -45,7 +46,7 @@ type Corrupt = fn(&mut Value);
 
 #[test]
 fn inconsistent_counts_are_refused() {
-    let cases: [(&str, Corrupt); 8] = [
+    let cases: [(&str, Corrupt); 9] = [
         ("more passes than trials", |v| {
             v["arms"]["haiku/new"]["passed"] = json!(4)
         }),
@@ -60,6 +61,7 @@ fn inconsistent_counts_are_refused() {
         ("too many repeats", |v| {
             v["repeats"] = json!(MAX_REPEATS + 1)
         }),
+        ("a limit below the tasks", |v| v["limit"] = json!(2)),
         ("a cross-model pair", |v| {
             v["pairs"][0]["a"] = json!("luna/native")
         }),
@@ -100,6 +102,9 @@ fn wrong_schemas_splits_and_fields_are_refused() {
         parse(&saved("dev"), Split::Holdout).is_err(),
         "split mismatch"
     );
+    let mut value = saved("holdout");
+    value["limit"] = json!(3);
+    assert!(parse(&value, Split::Holdout).is_err(), "a limited holdout");
     let mut value = saved("dev");
     value["schema"] = json!("archon-bench-swe-aggregate/0");
     assert!(parse(&value, Split::Dev).is_err(), "schema mismatch");

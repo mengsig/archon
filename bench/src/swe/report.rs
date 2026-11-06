@@ -138,7 +138,7 @@ mod tests {
     fn dev() -> Aggregate {
         let arm = |passed| json!({"n": 4, "passed": passed, "infra": 0, "cost_usd": 2.0, "wall_s": 800.0});
         let value = json!({
-            "schema": SCHEMA, "split": "dev", "tasks": 4, "repeats": 1,
+            "schema": SCHEMA, "split": "dev", "tasks": 4, "repeats": 1, "limit": null,
             "arms": {"haiku/old": arm(2), "haiku/new": arm(2), "haiku/native": arm(0)},
             "pairs": [
                 {"a": "haiku/new", "b": "haiku/native", "n": 4, "a_only": 2, "b_only": 0},

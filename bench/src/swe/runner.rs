@@ -213,7 +213,13 @@ impl Runner {
         }
         let text = std::fs::read_to_string(&path)
             .with_context(|| format!("reading the runner's aggregate {}", path.display()))?;
-        output::parse(&text, request.split, request.repeats, &request.arms.keys())
+        output::parse(
+            &text,
+            request.split,
+            request.repeats,
+            request.limit,
+            &request.arms.keys(),
+        )
     }
 
     /// The holdout run directories the runner has written so far.

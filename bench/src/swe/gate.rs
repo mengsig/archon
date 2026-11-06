@@ -163,6 +163,10 @@ fn judge(aggregate: &Aggregate, new: ArmKey, other: ArmKey) -> (Option<Paired>, 
         let reason = format!("{infra} infrastructure failures; rerun them");
         return (paired, Verdict::Incomplete, reason);
     }
+    if let Some(limit) = aggregate.limit {
+        let reason = format!("a --limit {limit} smoke, not the whole split; run it whole");
+        return (paired, Verdict::Incomplete, reason);
+    }
     // Missing trials (a budget stop, an unfinished run) leave pairs ungraded.
     let cells = u64::from(aggregate.tasks) * u64::from(aggregate.repeats);
     if u64::from(n) < cells {
@@ -210,7 +214,7 @@ mod tests {
         let n = 25 - lost - infra;
         let arm = json!({"n": n, "passed": 10, "infra": infra, "cost_usd": 3.0, "wall_s": 9000.0});
         let value = json!({
-            "schema": crate::swe::aggregate::SCHEMA, "split": split, "tasks": 25, "repeats": 1,
+            "schema": crate::swe::aggregate::SCHEMA, "split": split, "tasks": 25, "repeats": 1, "limit": null,
             "arms": {"haiku/old": arm, "haiku/new": arm, "haiku/native": arm},
             "pairs": [
                 {"a": "haiku/native", "b": "haiku/new", "n": n, "a_only": native_wins, "b_only": 1},
@@ -312,6 +316,24 @@ mod tests {
         assert!(
             dev.iter().all(|c| c.verdict == Verdict::Incomplete
                 && c.reason == "22 of 25 trial pairs graded on both arms; run the rest"),
+            "{dev:#?}"
+        );
+    }
+
+    #[test]
+    fn a_limited_dev_smoke_never_counts_as_the_whole_split() {
+        let mut smoke = aggregate("dev", (0, 0), 0);
+        smoke.limit = Some(25);
+        let report = evaluate(&[Model::Haiku], &[smoke, aggregate("holdout", (0, 0), 0)]);
+        let dev: Vec<_> = report
+            .comparisons
+            .iter()
+            .filter(|c| c.split == Split::Dev)
+            .collect();
+        assert_eq!(dev.len(), 2, "native and the best release");
+        assert!(
+            dev.iter().all(|c| c.verdict == Verdict::Incomplete
+                && c.reason == "a --limit 25 smoke, not the whole split; run it whole"),
             "{dev:#?}"
         );
     }

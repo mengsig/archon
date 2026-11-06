@@ -102,11 +102,13 @@ struct Instance {
 }
 
 /// Parse and check the runner's aggregate of a run of `expected` arms with
-/// `repeats` repeats. Holdout errors name only a position, never content.
+/// `repeats` repeats, of the first `limit` tasks if a dev smoke. Holdout
+/// errors name only a position, never content.
 pub fn parse(
     text: &str,
     split: Split,
     repeats: u32,
+    limit: Option<u32>,
     expected: &[ArmKey],
 ) -> anyhow::Result<Aggregate> {
     let output: Output = aggregate::parse_json(text, split, SCHEMA)?;
@@ -125,6 +127,7 @@ pub fn parse(
         split,
         tasks: output.set.tasks,
         repeats,
+        limit,
         arms: arms(&output.arms, &names)?,
         pairs: pairs(&output.pairs, &names, output.set.tasks)?,
     };
@@ -134,7 +137,8 @@ pub fn parse(
             bail!("a holdout aggregate holds per-instance verdicts; refused and not kept")
         }
         (Split::Dev, Some(instances)) => check_instances(&aggregate, instances, &names)?,
-        (_, None) => {}
+        (Split::Dev, None) => bail!("the runner's dev aggregate has no per-instance verdicts"),
+        (Split::Holdout, None) => {}
     }
     Ok(aggregate)
 }

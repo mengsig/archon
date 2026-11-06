@@ -156,7 +156,7 @@ mod tests {
     #[test]
     fn an_earlier_run_replaces_the_priors_only_when_it_covers_every_arm() {
         let arm = json!({"n": 10, "passed": 5, "infra": 0, "cost_usd": 5.0, "wall_s": 6000.0});
-        let mut value = json!({"schema": SCHEMA, "split": "dev", "tasks": 10, "repeats": 1,
+        let mut value = json!({"schema": SCHEMA, "split": "dev", "tasks": 10, "repeats": 1, "limit": null,
                                "arms": {"haiku/new": arm}, "pairs": []});
         let earlier = Aggregate::parse_saved(&value.to_string(), Split::Dev).unwrap();
         let covered = estimate(&keys(&["haiku/new"]), 10, 1, 1, Some(&earlier));

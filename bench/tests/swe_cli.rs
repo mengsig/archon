@@ -30,6 +30,7 @@ mkdir -p "$work/runs" && printf '%s' "$CANARY" > "$work/runs/transcript.txt"
 runs="$checkout/target/release-bench"
 if [ "$split" = dev ]; then out="$runs/runs/$run_id"; mkdir -p "$out"
 else mkdir -p "$runs/holdout" && out=$(mktemp -d "$runs/holdout/run-XXXXXX"); fi
+if [ -e "$checkout/fake-two-runs" ]; then mktemp -d "$runs/holdout/other-XXXXXX" >/dev/null; fi
 if [ "$FAKE_WRITE" = 1 ]; then cp "$FAKE_AGGREGATE" "$out/aggregate.json"; fi
 exit "$FAKE_EXIT"
 "#;
@@ -176,6 +177,11 @@ fn runner_output(split: &str, tasks: u32, passed: [u32; 3], pairs: [Value; 3]) -
     })
 }
 
+/// Whether archon-bench left its results directory empty.
+fn results_empty(sandbox: &Sandbox) -> bool {
+    std::fs::read_dir(&sandbox.results).map_or(true, |mut entries| entries.next().is_none())
+}
+
 /// A holdout of 25 tasks; Aether's gate reasons and stop reason carry the canary.
 fn aggregate() -> Value {
     runner_output(
@@ -222,12 +228,11 @@ fn assert_no_copy(sandbox: &Sandbox) {
 #[test]
 fn a_holdout_run_prints_only_aggregates_and_keeps_only_the_validated_aggregate() {
     let sandbox = Sandbox::new();
-    let output = sandbox.run(Some(&aggregate()), 0);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    // Exit 1 is the runner's own non-PASS verdict, after it wrote its aggregate.
+    let output = sandbox.run(Some(&aggregate()), 1);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert!(stderr.contains("after writing its aggregate"), "{stderr}");
     assert_silent(&output);
     let args = std::fs::read_to_string(sandbox.data_home.join("runner-args.txt")).unwrap();
     assert!(args.contains("--split\nholdout\n"), "{args}");
@@ -258,11 +263,7 @@ fn a_holdout_aggregate_with_instances_is_refused_unprinted_and_unkept() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("per-instance"));
     assert_silent(&output);
     assert_no_copy(&sandbox);
-    assert!(
-        sandbox.kept_files().is_empty(),
-        "nothing is kept: {:?}",
-        sandbox.kept_files()
-    );
+    assert!(results_empty(&sandbox), "nothing is kept");
 }
 
 #[test]
@@ -273,11 +274,19 @@ fn a_failing_holdout_runner_is_reported_without_its_output() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("discards its output"), "{stderr}");
     assert_silent(&output);
-    assert!(
-        sandbox.kept_files().is_empty(),
-        "nothing is kept: {:?}",
-        sandbox.kept_files()
-    );
+    assert!(results_empty(&sandbox), "no results directory is left");
+}
+
+#[test]
+fn a_holdout_run_beside_another_is_refused_without_reading_either() {
+    let sandbox = Sandbox::new();
+    std::fs::write(sandbox.checkout.join("fake-two-runs"), "").unwrap();
+    let output = sandbox.run(Some(&aggregate()), 0);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("run the holdout alone"), "{stderr}");
+    assert_silent(&output);
+    assert!(results_empty(&sandbox), "nothing is kept");
 }
 
 #[test]
@@ -397,7 +406,7 @@ fn gate(sandbox: &Sandbox, holdout: Option<&Path>) -> Output {
 }
 
 #[test]
-fn a_dev_run_hands_the_runner_both_builds_and_the_limit_and_keeps_no_verdicts() {
+fn a_limited_dev_run_hands_the_runner_both_builds_and_never_passes_the_gate() {
     let sandbox = Sandbox::new();
     // Exit 1 is the runner's own non-PASS verdict, after it wrote its aggregate.
     let output = sandbox.run_split("dev", Some(&dev_aggregate()), 1, &["--limit", "2"]);
@@ -422,8 +431,10 @@ fn a_dev_run_hands_the_runner_both_builds_and_the_limit_and_keeps_no_verdicts() 
         "{stderr}"
     );
     assert!(
-        stdout.contains("| haiku | dev | 2 | 1 | 0 | 1.000 | pass |"),
-        "{stdout}"
+        stdout.contains(
+            "| haiku | dev | 2 | 1 | 0 | 1.000 | **FAIL: incomplete** (a --limit 2 smoke"
+        ),
+        "a smoke never passes as the whole split: {stdout}"
     );
     let args = std::fs::read_to_string(sandbox.data_home.join("runner-args.txt")).unwrap();
     let bin = |name: &str| sandbox.bins.join(name).display().to_string();

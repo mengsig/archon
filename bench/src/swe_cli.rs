@@ -176,7 +176,10 @@ fn run_split(args: &RunArgs) -> anyhow::Result<()> {
         archon_core::now().format("%Y%m%dT%H%M%SZ")
     ));
     std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
-    let aggregate = runner.run(&request, &work_dir)?;
+    let aggregate = match runner.run(&request, &work_dir) {
+        Ok(aggregate) => aggregate,
+        Err(run) => return Err(remove_empty_dir(&dir, run)),
+    };
     let path = dir.join(format!("{split}-aggregate.json"));
     std::fs::write(&path, aggregate.to_json())
         .with_context(|| format!("writing {}", path.display()))?;
@@ -184,6 +187,14 @@ fn run_split(args: &RunArgs) -> anyhow::Result<()> {
     println!("{}", report::render(&gate, &[aggregate], &arms.old.label));
     println!("aggregate: {}", path.display());
     Ok(())
+}
+
+/// `run`'s error, after removing the results directory a failed run left empty.
+fn remove_empty_dir(dir: &Path, run: anyhow::Error) -> anyhow::Error {
+    match std::fs::remove_dir(dir) {
+        Ok(()) => run,
+        Err(removal) => run.context(format!("and removing {}: {removal}", dir.display())),
+    }
 }
 
 /// The instances one run covers: the dev manifest's (or its first `--limit`),

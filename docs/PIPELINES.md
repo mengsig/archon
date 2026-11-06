@@ -229,6 +229,9 @@ by either route. It says to:
 - choose each child's model and effort within the model policy that
   applies to the item, which the section states in words. The watchdog
   cancels a child outside it;
+- size each child's effort to its own task by the effort rubric, from `low`
+  for lookups and mechanical edits up to `x_high` for hard reasoning and
+  `max` only after `x_high` failed on the same task, the cheapest that fits;
 - wait for every child or cancel it before finishing;
 - delegate a new child for a second look, because a finished one cannot
   be asked again;
@@ -1247,9 +1250,12 @@ verifies and fixes the change. Its prompt has it spend where spending pays:
   they read. A reviewer is handed the acceptance criteria, the exact base
   and head commits, the changed paths, the checks with their results and
   the known risks, not the conversation. Its effort is the lead's choice,
-  never below the effort its contract names: medium for ordinary risk,
-  high where the risk is medium or more, or security or an invariant is at
-  stake.
+  the default its contract names, kept where the rubric leaves the diff
+  open; otherwise the rubric decides: `low` for a trivial diff, `medium` for
+  a small or low-risk one, `high` for a risky diff, shared code or an
+  invariant at stake, `x_high` for concurrency or security analysis, `max`
+  only after `x_high` failed on the same review. Off the default, lower or
+  higher, it states the reason in one line in its result.
 - **Fixes.** Blocking findings are fixed in new commits and the affected
   checks rerun; the full suite runs again only for a fix with broad impact
   or where the project's policy demands it. A second look, by new children

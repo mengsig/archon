@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use archon_core::autonomy::{Autonomy, ProposalMode, ReportMode};
 use archon_core::catalog::{Gate, StageKind};
 use archon_pipeline::builtin::BUILTINS;
-use archon_pipeline::{Catalog, autonomy, template};
+use archon_pipeline::{Catalog, autonomy, contract, template};
 
 const HEADER: &str = r#"
 [pipeline]
@@ -755,7 +755,8 @@ fn adaptive_prices_what_it_delegates_and_records_what_ships() {
         "With no reviewer asked for, that run is the whole of this step",
         "never end your turn while a check runs",
         "the exact base and head commits (`{{base_commit}}` and `git rev-parse HEAD`",
-        "never below one your contract names: medium for ordinary risk, high where the change's risk is medium or more",
+        "The effort your contract names is the default, for a diff the rubric leaves open; otherwise the rubric decides: `low` for a trivial diff, `medium` for a small or low-risk one",
+        "by your contract's effort rubric",
         "never because a tree that passed was committed",
         "for any commit after a pass: Archon delivers only commits a passing reviewer read",
         "Only the first whole-change read takes as many reviewers as your contract asks",
@@ -787,7 +788,94 @@ fn adaptive_prices_what_it_delegates_and_records_what_ships() {
     assert!(!spec.prompts.contains_key("ship.md"), "no agent ships");
     let nudge = spec.stage("build").unwrap().nudge.as_deref().unwrap();
     assert!(nudge.contains("at medium effort (the default); high for hard multi-file work"));
-    assert!(nudge.contains("x_high or max only for a reasoning problem you can name"));
+    assert!(nudge.contains("x_high for hard reasoning, such as root-causing a regression"));
+    assert!(nudge.contains("max only after x_high failed on the same task"));
+    assert!(
+        !build.contains("never below one your contract names"),
+        "a default, no floor"
+    );
+}
+
+/// The five levels a review may take, as every reviewer-delegating prompt
+/// and contract words them, and the one-line reason a move off the default owes.
+const REVIEW_LEVELS: [&str; 5] = [
+    "`low` for a trivial diff",
+    "`medium` for a small or low-risk",
+    "`high` for a risky diff",
+    "`x_high` for concurrency or security analysis",
+    "`max` only after `x_high` failed on the same review",
+];
+const OLD_EFFORT_RULES: [&str; 6] = [
+    "lower only for a trivial diff",
+    "Going below the default",
+    "never below one your contract names",
+    "is a floor",
+    "or higher, and high",
+    "`max` only when `x_high` failed.",
+];
+
+/// The reviewer rules archond gives a lead with no reviewer plan.
+fn profile_reviewers(
+    own: &archon_core::model::ModelRef,
+    policy: &archon_core::policy::ModelPolicy,
+) -> String {
+    let profile = archon_core::config::ReviewConfig::default();
+    let catalog = archon_core::model_tier::ModelCatalog::default();
+    contract::reviewer_profile_rules(None, own, policy, &profile, &catalog)
+}
+
+fn assert_sizes_reviews_by_the_rubric(name: &str, text: &str) {
+    for said in REVIEW_LEVELS.iter().chain([&contract::REASON_RULE]) {
+        assert!(text.contains(said), "{name} lacks {said:?}: {text}");
+    }
+    assert!(text.contains("the rubric decides"), "{name}: {text}");
+    for gone in OLD_EFFORT_RULES {
+        assert!(!text.contains(gone), "{name} keeps {gone:?}");
+    }
+}
+
+/// Both reviewer-delegating templates size a review as the contract does:
+/// the rubric decides, the named effort is the default, and a move is explained.
+#[test]
+fn reviewer_delegating_templates_size_reviews_as_the_contract_does() {
+    let catalog = Catalog::builtin();
+    let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    for (pipeline, prompt) in [("adaptive", "build.md"), ("review", "review.md")] {
+        let text = flat(&catalog.get(pipeline).unwrap().prompts[prompt]);
+        assert_sizes_reviews_by_the_rubric(prompt, &text);
+        assert!(
+            text.contains("never above the model policy's cap"),
+            "{text}"
+        );
+    }
+    let rule = profile_reviewers(&"codex/m".parse().unwrap(), &Default::default());
+    assert_sizes_reviews_by_the_rubric("the reviewer rules", &rule);
+}
+
+/// `direct`'s lead reads the whole rubric twice: for every child in its
+/// delegation section, and for its reviewers with the reason a move owes.
+#[test]
+fn direct_implement_contract_carries_every_rubric_level_and_the_reason() {
+    let catalog = Catalog::builtin();
+    let spec = catalog.get("direct").unwrap();
+    let mode = spec.file.pipeline.workspace;
+    let own: archon_core::model::ModelRef = "claude-code/opus".parse().unwrap();
+    let policy = archon_core::policy::ModelPolicy::default();
+    let delegation = contract::delegation_rules(mode, "any model", 2, None);
+    let reviewers = profile_reviewers(&own, &policy);
+    let lead = format!("{}{delegation}{reviewers}", spec.prompts["implement.md"]);
+    let rubric = archon_core::model::EFFORT_RUBRIC;
+    assert!(lead.contains(rubric), "{lead}");
+    for level in [
+        "`low` for lookups",
+        "`medium` for routine changes",
+        "`high` for non-trivial design",
+        "`x_high` for hard reasoning",
+        "`max` only after `x_high` failed on the same task",
+    ] {
+        assert!(lead.contains(level), "missing {level:?}");
+    }
+    assert_sizes_reviews_by_the_rubric("direct/implement", &lead);
 }
 
 /// `direct` escalates on what a change risks and reaches into, not on its

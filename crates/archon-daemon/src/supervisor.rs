@@ -1632,9 +1632,36 @@ mod tests {
             "Omit `model_plan` to use learned choices or the configured fallback.",
             "Override stages when task requirements or evidence (`model_evidence`) justify it; \
              explain why in `model_reasons`.",
-            "`x_high` or `max` only for a named reasoning problem inspection left open.",
         ] {
             assert!(prompt.contains(said), "missing {said:?}");
+        }
+        let rubric = archon_core::model::EFFORT_RUBRIC;
+        assert!(
+            prompt.contains(&format!("Size each stage's effort to its task: {rubric}")),
+            "the stage contracts' effort rubric, word for word"
+        );
+        for level in [
+            "`low` for lookups",
+            "`medium` for routine changes",
+            "`high` for non-trivial design",
+            "`x_high` for hard reasoning",
+            "`max` only after `x_high` failed on the same task",
+        ] {
+            assert!(prompt.contains(level), "missing {level:?}");
+        }
+        assert!(
+            prompt.contains(&format!(
+                "{rubric} Off the learned or configured effort, lower or higher, state the \
+                 reason in one line in `model_reasons`."
+            )),
+            "a move off the default is explained"
+        );
+        for gone in [
+            "only for a named reasoning problem",
+            "lower only for a trivial diff",
+            "`max` only when `x_high` failed.",
+        ] {
+            assert!(!prompt.contains(gone), "{gone:?} is the old rule");
         }
     }
 
@@ -1827,7 +1854,8 @@ mod tests {
     }
 
     /// The prompt is paid for on every turn; the tools describe themselves.
-    const BUDGET_BYTES: usize = 13 * 1024;
+    /// The half KiB above 13 holds the effort rubric.
+    const BUDGET_BYTES: usize = 13 * 1024 + 512;
 
     #[test]
     fn builtin_prompt_stays_within_its_budget() {

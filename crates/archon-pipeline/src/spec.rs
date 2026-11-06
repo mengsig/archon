@@ -151,6 +151,27 @@ pub struct StageSpec {
     /// roles at run time; until then it has none and [`MAX_ROLES`] slots.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub roles_from: Option<String>,
+    /// How a test stage's gate reads the scenarios its result lists.
+    #[serde(skip_serializing_if = "Scenarios::is_lenient")]
+    pub scenarios: Scenarios,
+}
+
+/// `scenarios` on a test stage: whether archond fails its gate on the
+/// scenario list itself, or leaves product defects to the report.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Scenarios {
+    /// The agent's verdict alone decides; failed scenarios land in the report.
+    #[default]
+    Lenient,
+    /// Every listed scenario must pass, and none the manifest names be missing.
+    Strict,
+}
+
+impl Scenarios {
+    fn is_lenient(&self) -> bool {
+        *self == Self::Lenient
+    }
 }
 
 /// A `[[stage]]` table as written: an omitted `fan_out` is one agent, or
@@ -185,6 +206,8 @@ struct StageToml {
     role_prompts: BTreeMap<String, String>,
     #[serde(default)]
     roles_from: Option<String>,
+    #[serde(default)]
+    scenarios: Scenarios,
 }
 
 impl From<StageToml> for StageSpec {
@@ -210,6 +233,7 @@ impl From<StageToml> for StageSpec {
             roles: raw.roles,
             role_prompts: raw.role_prompts,
             roles_from: raw.roles_from,
+            scenarios: raw.scenarios,
         }
     }
 }
@@ -621,6 +645,14 @@ impl PipelineSpec {
         if judges && stage.gate == Gate::None {
             return Err(
                 "a review or test stage needs gate = \"all_pass\", \"majority\" or \"any\": with no gate its verdict is ignored"
+                    .into(),
+            );
+        }
+        if stage.scenarios == Scenarios::Strict
+            && (stage.kind != StageKind::Test || stage.fan_out != 1)
+        {
+            return Err(
+                "scenarios = \"strict\" needs a test stage with one agent, which lists every scenario it ran"
                     .into(),
             );
         }

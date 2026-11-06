@@ -2047,10 +2047,11 @@ async fn a_compacted_orchestrator_is_told_its_directives_again() {
     assert_eq!(harness.drain_triggers().await, vec![restated]);
 }
 
-/// The plan's reviewer effort is a floor: a reviewer above it runs up to the
-/// policy's `max_effort`, and one below it is cancelled as it spawns.
+/// The plan's reviewer effort is a default the lead sizes to the diff: a
+/// reviewer below or above it runs up to the policy's `max_effort`; one on
+/// another model, or above the cap, is cancelled as it spawns.
 #[tokio::test]
-async fn reviewer_spawn_is_checked_against_the_items_named_model_and_effort() {
+async fn reviewer_spawn_is_checked_against_the_items_named_model_and_the_cap() {
     use archon_core::model::ModelChoice;
     let mut config = Config::default();
     config.models.max_effort = Some(Effort::High);
@@ -2092,19 +2093,18 @@ async fn reviewer_spawn_is_checked_against_the_items_named_model_and_effort() {
         .iter()
         .map(|c| c["agent"].as_str().unwrap())
         .collect();
-    assert_eq!(cancelled, ["agt_0103", "agt_0104", "agt_0105"]);
+    assert_eq!(
+        cancelled,
+        ["agt_0103", "agt_0105"],
+        "a low reviewer of a trivial diff runs"
+    );
     let reason = |n: usize| cancels[n]["reason"].as_str().unwrap();
     assert!(
         reason(0).contains("breaks the item's reviewer plan"),
         "{}",
         reason(0)
     );
-    assert!(
-        reason(1).contains("at effort low is below the item's reviewer plan"),
-        "{}",
-        reason(1)
-    );
-    assert!(reason(2).contains("high"), "the policy cap: {}", reason(2));
+    assert!(reason(1).contains("high"), "the policy cap: {}", reason(1));
 }
 
 /// With one model allowed and no reviewer plan, a reviewer on the lead's own

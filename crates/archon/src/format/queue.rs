@@ -921,7 +921,7 @@ mod tests {
         let text = item_detail(&detail, &RepoNames::new(), false);
         let expected = "\x20 review attempt 1 slot 1: completed, verdict pass, $1.00, \
              claude-code/opus (high), agent agt_one\n\
-             \x20   cost: $0.50 own + $0.50 for 2 delegated agent(s)\n\
+             \x20   cost: $0.50 own + $0.50 for 2 delegated agent(s) at effort 1 medium, 1 unknown\n\
              \x20     agt_two codex/astra (medium) $0.30\n\
              \x20     agt_three codex/astra (effort unknown) $0.20\n\
              \x20   REVIEW: pass, by codex/astra (agent agt_two)\n\

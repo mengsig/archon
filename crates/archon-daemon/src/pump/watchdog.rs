@@ -275,44 +275,22 @@ async fn policy_violation(
     Ok(policy_refusal(policy, model, &held).map(|refusal| refusal.to_string()))
 }
 
-/// Why a reviewer child runs on no model the plan names for reviewers, or
-/// below the effort it names there: the plan's effort is a floor, and the
-/// model policy's `max_effort` the only ceiling. A child whose role is no
-/// reviewer's is not held to it.
+/// Why a reviewer child runs on no model the plan names for reviewers. Its
+/// effort is the lead's to size to the diff, from the plan's as a default; the
+/// model policy's `max_effort` alone bounds it. A child whose role is no
+/// reviewer's is not held to the plan.
 fn reviewer_refusal(named: &[ModelChoice], model: &ModelRef, held: &Value) -> Option<String> {
     let role = held.get("role").and_then(Value::as_str).unwrap_or_default();
-    if !role.eq_ignore_ascii_case("reviewer") {
-        return None;
-    }
-    let effort = match child_effort(held) {
-        ChildEffort::Known(effort) => effort,
-        ChildEffort::Unknown => {
-            return Some(
-                "reviewer effort is missing; cannot compare with its reviewer plan".into(),
-            );
-        }
-        ChildEffort::Unrecognised(raw) => {
-            return Some(format!(
-                "reviewer effort {raw:?} cannot be compared with its reviewer plan"
-            ));
-        }
-    };
-    let on_model: Vec<&ModelChoice> = named.iter().filter(|c| c.model == *model).collect();
-    if on_model.iter().any(|c| effort >= c.effort) {
+    if !role.eq_ignore_ascii_case("reviewer") || named.iter().any(|c| c.model == *model) {
         return None;
     }
     let listed: Vec<String> = named
         .iter()
-        .map(|c| format!("{} at effort {} or higher", c.model, c.effort))
+        .map(|c| format!("{} (default effort {})", c.model, c.effort))
         .collect();
-    let why = match on_model.is_empty() {
-        true => format!("reviewer on {model} breaks the item's reviewer plan"),
-        false => {
-            format!("reviewer on {model} at effort {effort} is below the item's reviewer plan")
-        }
-    };
     Some(format!(
-        "{why}; reviewers run on: {}; delegate it again at the planned effort or higher",
+        "reviewer on {model} breaks the item's reviewer plan; reviewers run on: {}; \
+         delegate it again on one of them",
         listed.join(", ")
     ))
 }
@@ -670,7 +648,7 @@ mod reviewer_tests {
     use serde_json::json;
 
     #[test]
-    fn named_reviewers_are_held_to_their_model_and_at_least_their_effort() {
+    fn named_reviewers_are_held_to_their_model_at_any_effort() {
         let model: ModelRef = "claude-code/claude-haiku-5-5".parse().unwrap();
         let named = [ModelChoice {
             model: model.clone(),
@@ -678,19 +656,20 @@ mod reviewer_tests {
             tier: None,
         }];
         let reviewer = |effort| json!({"role": "reviewer", "config": {"effort": effort}});
-        assert!(reviewer_refusal(&named, &model, &reviewer("medium")).is_none());
-        assert!(reviewer_refusal(&named, &model, &reviewer("high")).is_none());
-        assert!(reviewer_refusal(&named, &model, &reviewer("max")).is_none());
-        let below = reviewer_refusal(&named, &model, &reviewer("low")).expect("below the floor");
-        assert!(
-            below.contains("at effort low is below the item's reviewer plan")
-                && below.contains("at effort medium or higher"),
-            "{below}"
-        );
-        assert!(reviewer_refusal(&named, &model, &reviewer("invalid")).is_some());
-        assert!(reviewer_refusal(&named, &model, &json!({"role":"reviewer"})).is_some());
+        for effort in ["low", "medium", "high", "x_high", "max"] {
+            assert!(
+                reviewer_refusal(&named, &model, &reviewer(effort)).is_none(),
+                "a {effort} reviewer on the plan's model runs: the lead sizes it to the diff"
+            );
+        }
+        assert!(reviewer_refusal(&named, &model, &json!({"role":"reviewer"})).is_none());
         let other = "codex/gpt-6-luna".parse().unwrap();
-        assert!(reviewer_refusal(&named, &other, &reviewer("low")).is_some());
+        let off_plan = reviewer_refusal(&named, &other, &reviewer("high")).expect("off the plan");
+        assert!(
+            off_plan.contains("reviewer on codex/gpt-6-luna breaks the item's reviewer plan")
+                && off_plan.contains("claude-code/claude-haiku-5-5 (default effort medium)"),
+            "{off_plan}"
+        );
         for role in ["worker", "preview-builder", "review-assistant"] {
             assert!(reviewer_refusal(&named, &other, &json!({"role":role})).is_none());
         }

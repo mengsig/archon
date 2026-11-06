@@ -152,6 +152,18 @@ From the audit in [docs/security/vnext-audit.md](docs/security/vnext-audit.md)
   and reports `holdout_lift` once both arms have 20 scored runs. Pinned
   lessons are never held out, and held-out runs never change promotion.
 
+### Review
+
+- A reviewer's verdict word reads as it says on every path, `structured`,
+  summary JSON and the `VERDICT:` line: `changes_requested`,
+  `request_changes`, `needs_changes`, `needs work`, `blocking` and `block`
+  fail, and `lgtm`, `accept` and `accepted` pass, in any letter case with
+  `_`, `-` and spaces alike. Such a fail beside a blocking finding was
+  reported as a pass that lists one. A fail now always fails: one whose
+  findings are all follow-ups no longer counts as a pass, so reviewers pass
+  such a review. Any other word stays unreadable and fails, `passes`
+  included, which used to read as a pass.
+
 ### Orchestrator
 
 - A hung orchestrator turn no longer holds your messages for hours (#393). When a
@@ -160,6 +172,17 @@ From the audit in [docs/security/vnext-audit.md](docs/security/vnext-audit.md)
   turn; at most 3 times per orchestrator. Operator chat or an `@archon` request
   delivered to a turn silent for 10 minutes starts this at once instead of
   after 30.
+- Agents no longer run at `high` effort for every task. One effort rubric,
+  from `low` for lookups and mechanical edits through `x_high` for hard
+  reasoning (root-causing a regression, concurrency or security analysis, a fix
+  that failed twice) to `max` only after `x_high` failed on the same task, now
+  sizes every effort the orchestrator and stage leads choose. A reviewer plan's
+  effort is that reviewer's default instead of a floor, kept where the rubric
+  leaves the diff open; otherwise the rubric decides, from `low` for a trivial
+  diff to `x_high` for concurrency or security analysis, and the lead states the
+  reason in one line whether it goes lower or higher, within `max_effort`; archond
+  still cancels a reviewer on a model the plan does not name. A delegating
+  stage's cost split in `get_item` and `get_stage` counts its agents by effort.
 
 ### Removed
 

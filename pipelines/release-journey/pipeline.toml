@@ -1,0 +1,32 @@
+[pipeline]
+name = "release-journey"
+description = "Build the shipped artifact in a private stack and run the repository's product journeys with real engines; any journey that does not pass fails the run"
+version = 1
+workspace = "worktree"
+requires_repo = true
+
+[nudges]
+tier = "balanced"
+notes = "The product-journey gate for release preparation and user-facing changes. Needs .archon/journeys.toml in the repository. Runs every journey on an empty and a populated install with real engines; archond fails the run on any failed, skipped or missing journey run. Environment faults loop back to setup once."
+
+[[stage]]
+id = "setup"
+kind = "work"
+prompt = "setup.md"
+timeout_minutes = 120
+
+[[stage]]
+id = "journeys"
+kind = "test"
+prompt = "journeys.md"
+gate = "all_pass"
+scenarios = "strict"
+timeout_minutes = 180
+on_fail = { goto = "setup", max_loops = 1 }
+
+[[stage]]
+id = "report"
+kind = "report"
+prompt = "report.md"
+timeout_minutes = 45
+nudge = "Write HTML plus screenshots under .archon/reports/ and list them in structured.reports."

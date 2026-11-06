@@ -161,6 +161,7 @@ token_env = "AETHER_TOKEN"     # the variable holding the token for `address`
 name = "Archon"                # the orchestrator's name in Aether
 # instructions_file = "~/orchestrator.md"   # appended to the built-in prompt
 trigger_coalesce_ms = 2000     # triggers within this window wake it once
+validate_before_handoff = true # validate a user-facing build before calling it ready
 
 [models]
 # deny = ["codex/gpt-6.1-terra"] # never used, whatever `allow` says
@@ -324,6 +325,12 @@ in `archon chat` instead, set
 `wake_on_success = false` under `[orchestrator]`: a routine success then
 reaches the orchestrator with its next turn
 ([guide](guide.md#when-the-orchestrator-is-woken)).
+
+Before the orchestrator calls a user-facing build ready to try, it queues an
+independent validation item and reports that item's outcome
+([product journeys](journeys.md#before-a-hand-off)). Set
+`validate_before_handoff = false` under `[orchestrator]` to have it relay
+the build's success as is.
 
 The helper agents the orchestrator delegates to
 ([guide](guide.md#what-the-orchestrator-does-without-queueing)) work in a

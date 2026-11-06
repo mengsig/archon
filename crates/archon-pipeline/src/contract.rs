@@ -52,6 +52,12 @@ pub fn instructions(
     assert!(stage.fan_out >= 1, "validated specs have fan_out >= 1");
     let mut out = contract_header(stage, mode, workspace, team);
     out.push_str(kind_rules(stage.kind));
+    if matches!(stage.kind, StageKind::Work | StageKind::Team) {
+        out.push_str(OUTCOME_RULE);
+    }
+    if stage.kind == StageKind::Team {
+        out.push_str(TEAM_COORDINATION_RULES);
+    }
     if stage.kind == StageKind::Review {
         out.push_str(&review_bounds(experiments));
     }
@@ -789,13 +795,22 @@ a tree holds for any later head with that tree. After a passing full check, a la
 diff of only prose or raster images that no build or test reads needs only the \
 repository's link and notice checks.\n";
 
+/// Code-level criteria can all hold while the product fails its user, so a
+/// building stage answers for the brief's user outcomes too (#397).
+const OUTCOME_RULE: &str = "\
+- Where the brief states user-outcome acceptance criteria (what a person can do or \
+see) and you change the product, check your change against each and say in your \
+summary how. For one this environment cannot check, say so plainly and why: never \
+claim an outcome you did not check.\n";
+
 const TEAM_RULES: &str = "\n## Team stage\n\n\
 - Use the report format the stage prompt gives for your summary. If it gives none, \
 list what your role changed and why, the files touched, the commits you made, the \
 verification commands you ran with their results, any assumption you made about a \
 peer's work, and any known gaps.\n\
-- Run checks in the foreground or wait on them: never end your turn while one runs.\n\
-\n## Team coordination\n\n\
+- Run checks in the foreground or wait on them: never end your turn while one runs.\n";
+
+const TEAM_COORDINATION_RULES: &str = "\n## Team coordination\n\n\
 - Once every role has an agent, Archon sends you one roster message: each role's name, \
 Aether agent id, worktree and branch. If a role is replaced, a roster with a higher \
 version follows; it supersedes the earlier one.\n\
@@ -1329,6 +1344,64 @@ mod tests {
             None,
         );
         assert!(!solo.contains("roster"), "only team roles get a roster");
+    }
+
+    /// Every stage that builds answers for the brief's user outcomes, and
+    /// says which it could not check rather than claiming them (#397).
+    #[test]
+    fn building_stages_check_the_brief_s_outcome_criteria_or_say_they_cannot() {
+        let rule = "check your change against each and say in your summary how. For one this \
+                    environment cannot check, say so plainly and why: never claim an outcome \
+                    you did not check.";
+        let slot = TeamSlot {
+            role: "ui".into(),
+            branch: "archon/x--ui".into(),
+            workspace: "/t/s-ui".into(),
+        };
+        let contract = |kind: StageKind| {
+            let gate = match kind {
+                StageKind::Review | StageKind::Test => Gate::AllPass,
+                _ => Gate::None,
+            };
+            let mut spec = stage(kind, gate, 1);
+            let part = match kind {
+                StageKind::Team => {
+                    spec.roles = vec!["ui".into()];
+                    TeamPart::Role(&slot)
+                }
+                _ => TeamPart::Solo,
+            };
+            instructions(
+                &spec,
+                WorkspaceMode::Worktree,
+                "/w",
+                part,
+                Owed::default(),
+                None,
+            )
+        };
+        for kind in [
+            StageKind::Work,
+            StageKind::Team,
+            StageKind::Review,
+            StageKind::Test,
+            StageKind::Ship,
+            StageKind::Report,
+            StageKind::Propose,
+        ] {
+            let text = contract(kind);
+            let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            let builds = matches!(kind, StageKind::Work | StageKind::Team);
+            assert_eq!(flat.contains(rule), builds, "{kind:?}: {text}");
+            assert_eq!(flat.contains("user-outcome acceptance criteria"), builds);
+        }
+        let team = contract(StageKind::Team);
+        let outcome = team.find("user-outcome acceptance criteria").unwrap();
+        let coordination = team.find("\n## Team coordination\n").unwrap();
+        assert!(
+            team.find("\n## Team stage\n").unwrap() < outcome && outcome < coordination,
+            "the rule belongs to the team stage, not to its coordination: {team}"
+        );
     }
 
     #[test]

@@ -22,6 +22,45 @@ request (see [Work onto an existing pull request](guide.md#work-onto-an-existing
 The repository needs a manifest at `.archon/journeys.toml`. Without one, the
 setup stage stops with `BLOCKED:`.
 
+## Before a hand-off
+
+The orchestrator coordinates; it never builds, runs apps or drives journeys
+itself. Before it tells you a user-facing build is ready to try, it queues
+an independent validation item `onto` the item that built it, so the
+validation tests that exact head: `release-journey` when the repository has
+`.archon/journeys.toml`, `e2e-strict` otherwise. The validation runs on a
+model none of the build's stages used. You hear only that item's outcome:
+on a pass, the build is ready; on a failure, what failed and that a fix is
+queued, never "ready". A success of an internal change (a refactor, tests,
+CI, docs) is relayed as before, without validation.
+
+The orchestrator's `guide(topic=validation)` holds the workflow
+([source](../crates/archon-daemon/prompts/topics/validation.md)). Turn the
+rule off with `validate_before_handoff = false` under `[orchestrator]`
+([configuration](configuration.md)); the orchestrator started next gets the
+change.
+
+### Outcome criteria and the item that owns them
+
+When the orchestrator splits a user-facing request into several items, each
+brief keeps its code-level criteria and adds the user outcomes it serves,
+written so they can be checked. One more item owns the end-to-end outcome:
+a validation item that `depends_on` all the others, so the outcome cannot
+fall between them. Each build stage checks its change against its brief's
+outcome criteria and says which ones its environment could not check,
+instead of claiming them.
+
+An example backlog for "let new users start an agent from the desktop app":
+
+| # | Pipeline | Depends on | Code criteria | Outcome criteria |
+| --- | --- | --- | --- | --- |
+| 1 | `direct` | | a first-run setup view, with tests | a new user sees a "Start an agent" step on first launch |
+| 2 | `adaptive` | 1 | start the agent and stream its reply, with tests | after "Start", the user sees a reply within 30 seconds |
+| 3 | `release-journey`, on another provider | 1, 2 | none | on a fresh install, a new user starts an agent and gets a reply within 30 seconds |
+
+Item 3 owns the outcome. The orchestrator calls the build ready only once
+it passes.
+
 ## How a run goes
 
 | Stage | What it does |

@@ -3230,6 +3230,7 @@ name = "Archon"
 # instructions_file = "~/.config/archon/orchestrator.md"  # appended to the built-in prompt
 trigger_coalesce_ms = 2000
 wake_on_success = true         # false: a routine success waits for its next turn (§5.4)
+validate_before_handoff = true # false: a user-facing build is relayed without validation
 
 [models]
 allow = []                     # e.g. ["claude-code/claude-opus-5-5"]; [] = any

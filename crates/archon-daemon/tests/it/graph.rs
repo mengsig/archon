@@ -163,6 +163,19 @@ async fn a_finished_runs_plan_is_kept_as_it_finished() {
     h.dispatch().await;
     let live = run_plan(&h, &item.id).await.expect("a live run's plan");
     assert!(!live.finished);
+    let stale = RunPlan {
+        revision: "stale".into(),
+        finished: true,
+        ..live.clone()
+    };
+    let earlier = Some(&stale);
+    let kept_early = h.ctx.store.lock().await.keep_run_plan(&live.run, earlier);
+    kept_early.expect("as a finish that failed after keeping it would");
+    assert_eq!(
+        run_plan(&h, &item.id).await.unwrap(),
+        live,
+        "a live run serves its live plan"
+    );
     run_to_the_end(&h, &item.id).await;
     let kept = run_plan(&h, &item.id).await.expect("the kept plan");
     assert!(kept.finished, "it says the run finished");

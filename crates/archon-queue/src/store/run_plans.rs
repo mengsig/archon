@@ -13,14 +13,25 @@ use super::{Store, runs, settings};
 pub(super) const PREFIX: &str = "run_plan:";
 
 impl Store {
-    /// Keep `plan` as its run's finished plan, replacing an earlier one.
-    pub fn keep_run_plan(&mut self, plan: &RunPlan) -> Result<(), ArchonError> {
-        assert!(plan.finished, "only a finished run's plan is kept");
-        assert!(!plan.stages.is_empty(), "a run keeps a stage");
-        let value = serde_json::to_string(plan).expect("a run plan encodes");
+    /// Keep `plan` as `run`'s finished plan, replacing an earlier one; with
+    /// no plan, forget an earlier one, so none outlives the finish it was for.
+    pub fn keep_run_plan(
+        &mut self,
+        run: &PipelineRunId,
+        plan: Option<&RunPlan>,
+    ) -> Result<(), ArchonError> {
+        let key = format!("{PREFIX}{run}");
         let tx = write_tx(&mut self.conn)?;
-        runs::load(&tx, &plan.run)?;
-        settings::kv_set(&tx, &format!("{PREFIX}{}", plan.run), &value)?;
+        runs::load(&tx, run)?;
+        match plan {
+            Some(plan) => {
+                assert!(plan.finished, "only a finished run's plan is kept");
+                assert_eq!(&plan.run, run, "a plan is kept under its run");
+                let value = serde_json::to_string(plan).expect("a run plan encodes");
+                settings::kv_set(&tx, &key, &value)?;
+            }
+            None => settings::kv_delete(&tx, &key)?,
+        }
         tx.commit().ctx("commit a run's finished plan")
     }
 

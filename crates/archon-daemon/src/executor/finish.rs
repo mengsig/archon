@@ -54,7 +54,7 @@ pub(super) async fn finish_run(
         _ => ShippingProof::None,
     };
     Box::pin(delete_role_branches(ctx, &run)).await?;
-    let plan = super::plan_view::finished(ctx, table, (&run, &state)).await;
+    let plan = super::plan_view::finished(ctx, table, (&run, &state)).await?;
     let now = archon_core::now();
     let finished = {
         let mut store = ctx.store.lock().await;
@@ -67,9 +67,8 @@ pub(super) async fn finish_run(
                 .any(|s| &s.stage_id == id && s.state == StageState::Completed),
             ShippingProof::None => false,
         };
-        if let Some(plan) = &plan {
-            store.keep_run_plan(plan)?;
-        }
+        // An earlier finish that failed may have kept a plan; this one replaces it.
+        store.keep_run_plan(&run.id, plan.as_ref())?;
         run.finish(state, now)?;
         let mut finished = store.finish_run(&run, item_state(&run), now)?;
         if let Some(planned) = &repair {

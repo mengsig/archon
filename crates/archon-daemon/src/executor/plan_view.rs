@@ -103,33 +103,18 @@ fn key_settings(
 
 /// The plan `run` ran, to keep as it ends in `state`: from its snapshot with
 /// its recorded edits, or its driver's pipeline when the snapshot does not
-/// read. `None`, logged, when neither gives one.
+/// read; `None`, logged, when neither gives one. A store error fails it, so
+/// the run finishes later with its snapshot still there.
 pub(super) async fn finished(
     ctx: &DaemonContext,
     table: &RunTable,
     (run, state): (&PipelineRun, &RunState),
-) -> Option<RunPlan> {
+) -> Result<Option<RunPlan>, ArchonError> {
     assert!(state.is_terminal(), "a plan is kept as its run finishes");
     assert!(
         !run.state.is_terminal(),
         "built before the run is shown finished"
     );
-    let built = match build(ctx, table, run).await {
-        Ok(plan) => plan,
-        Err(error) => {
-            tracing::warn!(run = %run.id, %error, "the finished run's plan cannot be built; run_plan cannot show it");
-            return None;
-        }
-    };
-    assert!(built.finished && built.run == run.id, "the run's own plan");
-    Some(built)
-}
-
-async fn build(
-    ctx: &DaemonContext,
-    table: &RunTable,
-    run: &PipelineRun,
-) -> Result<RunPlan, ArchonError> {
     let (recorded, item) = {
         let store = ctx.store.lock().await;
         (store.run_edits(&run.id)?, store.item(&run.item)?)
@@ -142,12 +127,23 @@ async fn build(
             tracing::warn!(run = %run.id, %error, "the run's snapshot does not read; its plan is its driver's");
             driver.spec().as_ref().clone()
         }
-        (Err(error), None) => return Err(error),
+        (Err(error), None) => {
+            tracing::warn!(run = %run.id, %error, "the finished run's plan cannot be built; run_plan cannot show it");
+            return Ok(None);
+        }
     };
-    Ok(RunPlan {
-        finished: true,
-        ..plan_of(&run.id, &spec, &edits, &item)?
-    })
+    let plan = match plan_of(&run.id, &spec, &edits, &item) {
+        Ok(plan) => RunPlan {
+            finished: true,
+            ..plan
+        },
+        Err(error) => {
+            tracing::warn!(run = %run.id, %error, "the finished run's plan does not encode; run_plan cannot show it");
+            return Ok(None);
+        }
+    };
+    assert_eq!(plan.run, run.id, "the run's own plan");
+    Ok(Some(plan))
 }
 
 /// Whether a steer's edit changed the stages, not only how one runs.

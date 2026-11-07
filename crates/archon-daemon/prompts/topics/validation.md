@@ -63,16 +63,4 @@ the validation item does.
   says which it could not check where it ran. Such an unchecked outcome is
   left to the owning item, never assumed met.
 
-Example backlog for "let new users start an agent from the desktop app":
-
-1. `direct`: the first-run screen. Code: a setup view with tests. Outcome:
-   a new user sees a "Start an agent" step on first launch.
-2. `adaptive`, `depends_on` 1: start the agent and stream its reply.
-   Outcome: after "Start", the user sees a reply within 30 seconds.
-3. `e2e-strict`, `depends_on` 1 and 2, every stage pinned to another
-   provider's model: owns "on a fresh install, a new user starts an agent
-   and gets a reply within 30 seconds" (`release-journey` instead once the
-   manifest has that journey).
-
-Items 1 and 2 pin every stage to one provider's models and item 3 to
-another's, so all three queue at once.
+See `docs/journeys.md` for an example backlog.

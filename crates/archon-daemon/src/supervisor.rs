@@ -1975,10 +1975,7 @@ mod tests {
              one)",
             "Its pass is the request's pass; the hand-off waits for it.",
             "Such an unchecked outcome is left to the owning item, never assumed met.",
-            "`e2e-strict`, `depends_on` 1 and 2, every stage pinned to another provider's model",
-            "(`release-journey` instead once the manifest has that journey)",
-            "Items 1 and 2 pin every stage to one provider's models and item 3 to another's, so \
-             all three queue at once.",
+            "See `docs/journeys.md` for an example backlog.",
         ] {
             assert!(topic.contains(said), "topic misses {said:?}");
         }

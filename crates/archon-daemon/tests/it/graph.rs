@@ -199,8 +199,11 @@ async fn a_finished_runs_plan_is_kept_as_it_finished() {
 #[tokio::test]
 async fn a_run_whose_plan_cannot_be_kept_still_finishes() {
     let h = harness().await;
+    use std::os::unix::fs::PermissionsExt;
     let blocked = h.ctx.paths.data_dir.join("run-plans");
-    std::fs::write(&blocked, "not a directory").expect("a file where plans go");
+    std::fs::create_dir_all(&blocked).expect("the plans directory");
+    let read_only = std::fs::Permissions::from_mode(0o500);
+    std::fs::set_permissions(&blocked, read_only).expect("no plan can be written");
     let item = h.enqueue("ship it").await;
     h.dispatch().await;
     run_to_the_end(&h, &item.id).await;
@@ -211,7 +214,8 @@ async fn a_run_whose_plan_cannot_be_kept_still_finishes() {
         matches!(&missing, ArchonError::NotFound(m) if m.contains("no plan was kept")),
         "{missing}"
     );
-    std::fs::remove_file(&blocked).expect("the blocking file is the test's");
+    let writable = std::fs::Permissions::from_mode(0o700);
+    std::fs::set_permissions(&blocked, writable).expect("cleaned up as it was");
 }
 
 #[tokio::test]

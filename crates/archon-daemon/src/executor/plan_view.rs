@@ -276,7 +276,7 @@ mod tests {
         let pinned = ModelChoice::pinned("p/pin".parse().unwrap(), Effort::Low);
         let defaults = key_settings(
             "build",
-            &[tiered.clone()],
+            std::slice::from_ref(&tiered),
             Effort::Medium,
             Some((30, SettingSource::Default)),
         );

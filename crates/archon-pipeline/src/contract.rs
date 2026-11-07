@@ -52,6 +52,12 @@ pub fn instructions(
     assert!(stage.fan_out >= 1, "validated specs have fan_out >= 1");
     let mut out = contract_header(stage, mode, workspace, team);
     out.push_str(kind_rules(stage.kind));
+    if builds_the_change(stage.kind, owed) {
+        out.push_str(OUTCOME_RULE);
+    }
+    if stage.kind == StageKind::Team {
+        out.push_str(TEAM_COORDINATION_RULES);
+    }
     if stage.kind == StageKind::Review {
         out.push_str(&review_bounds(experiments));
     }
@@ -857,13 +863,27 @@ a tree holds for any later head with that tree. After a passing full check, a la
 diff of only prose or raster images that no build or test reads needs only the \
 repository's link and notice checks.\n";
 
+/// Whether a stage of `kind` builds the run's change: a team role, or the
+/// work stage that records what ships. Setup, plan and baseline stages do not.
+fn builds_the_change(kind: StageKind, owed: Owed) -> bool {
+    kind == StageKind::Team || (kind == StageKind::Work && owed.ship_record)
+}
+
+/// Code-level criteria can all hold while the product fails its user, so a
+/// building stage answers for the brief's user outcomes too (#397).
+const OUTCOME_RULE: &str = "\
+- Check your change against each user-outcome criterion in the brief and say how. \
+Say plainly which this environment cannot check, and why: never claim one you did \
+not check.\n";
+
 const TEAM_RULES: &str = "\n## Team stage\n\n\
 - Use the report format the stage prompt gives for your summary. If it gives none, \
 list what your role changed and why, the files touched, the commits you made, the \
 verification commands you ran with their results, any assumption you made about a \
 peer's work, and any known gaps.\n\
-- Run checks in the foreground or wait on them: never end your turn while one runs.\n\
-\n## Team coordination\n\n\
+- Run checks in the foreground or wait on them: never end your turn while one runs.\n";
+
+const TEAM_COORDINATION_RULES: &str = "\n## Team coordination\n\n\
 - Once every role has an agent, Archon sends you one roster message: each role's name, \
 Aether agent id, worktree and branch. If a role is replaced, a roster with a higher \
 version follows; it supersedes the earlier one.\n\
@@ -1399,6 +1419,62 @@ mod tests {
             None,
         );
         assert!(!solo.contains("roster"), "only team roles get a roster");
+    }
+
+    /// The stages that build the change answer for the brief's user outcomes,
+    /// and say which they could not check rather than claiming them (#397).
+    #[test]
+    fn building_stages_check_the_brief_s_outcome_criteria_or_say_they_cannot() {
+        let rule = "Check your change against each user-outcome criterion in the brief and say \
+                    how. Say plainly which this environment cannot check, and why: never claim \
+                    one you did not check.";
+        let slot = TeamSlot {
+            role: "ui".into(),
+            branch: "archon/x--ui".into(),
+            workspace: "/t/s-ui".into(),
+        };
+        let contract = |kind: StageKind, ship_record: bool| {
+            let gate = match kind {
+                StageKind::Review | StageKind::Test => Gate::AllPass,
+                _ => Gate::None,
+            };
+            let mut spec = stage(kind, gate, 1);
+            let part = match kind {
+                StageKind::Team => {
+                    spec.roles = vec!["ui".into()];
+                    TeamPart::Role(&slot)
+                }
+                _ => TeamPart::Solo,
+            };
+            let owed = Owed {
+                review: None,
+                ship_record,
+            };
+            let text = instructions(&spec, WorkspaceMode::Worktree, "/w", part, owed, None);
+            text.split_whitespace().collect::<Vec<_>>().join(" ")
+        };
+        assert!(contract(StageKind::Work, true).contains(rule), "the lead");
+        assert!(contract(StageKind::Team, false).contains(rule), "a role");
+        assert!(
+            !contract(StageKind::Work, false).contains(rule),
+            "a setup or plan stage builds nothing"
+        );
+        for kind in [
+            StageKind::Review,
+            StageKind::Test,
+            StageKind::Ship,
+            StageKind::Report,
+            StageKind::Propose,
+        ] {
+            assert!(!contract(kind, false).contains(rule), "{kind:?}");
+        }
+        let team = contract(StageKind::Team, false);
+        let outcome = team.find(rule).unwrap();
+        assert!(
+            team.find("## Team stage").unwrap() < outcome
+                && outcome < team.find("## Team coordination").unwrap(),
+            "the rule belongs to the team stage, not to its coordination: {team}"
+        );
     }
 
     #[test]

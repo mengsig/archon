@@ -313,6 +313,9 @@ pub struct OrchestratorConfig {
     /// Wake the orchestrator for every success, so it reports it in its
     /// chat; off, a routine success waits for its next turn.
     pub wake_on_success: bool,
+    /// Have the orchestrator queue an independent validation item before it
+    /// calls a user-facing build ready; off, it relays the success as is.
+    pub validate_before_handoff: bool,
 }
 
 impl Default for OrchestratorConfig {
@@ -324,6 +327,7 @@ impl Default for OrchestratorConfig {
             instructions_file: None,
             trigger_coalesce_ms: 2000,
             wake_on_success: true,
+            validate_before_handoff: true,
         }
     }
 }
@@ -1327,6 +1331,7 @@ mod tests {
         assert_eq!(config, Config::default());
         assert_eq!(config.limits.caps().max_parallel_agents, 8);
         assert!(config.orchestrator.wake_on_success);
+        assert!(config.orchestrator.validate_before_handoff);
     }
 
     #[test]

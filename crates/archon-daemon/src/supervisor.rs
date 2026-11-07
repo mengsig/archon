@@ -71,6 +71,10 @@ const BUILTIN_PROMPT: &str = include_str!("../prompts/orchestrator.md");
 /// requests gets it, ahead of the built-in prompt's `## Principles`.
 const GITHUB_SECTION: &str = include_str!("../prompts/orchestrator_github.md");
 const GITHUB_SECTION_BEFORE: &str = "\n## Principles\n";
+/// The hand-off rule, closing `## Archon news` unless `[orchestrator]
+/// validate_before_handoff` is off (#396).
+const HANDOFF_RULE: &str = include_str!("../prompts/orchestrator_handoff.md");
+const HANDOFF_RULE_BEFORE: &str = "\n## Kept\n";
 
 /// How long a cancelled orchestrator gets to end the turn it was in before
 /// its restart is put off: Aether restarts only a stopped agent.
@@ -146,8 +150,9 @@ impl Supervisor {
     }
 }
 
-/// Built-in prompt, with the GitHub section when `github`, this
-/// installation's paths, and `[orchestrator] instructions_file`, if set.
+/// Built-in prompt, with the GitHub section when `github` and the hand-off
+/// rule when configured, this installation's paths, and `[orchestrator]
+/// instructions_file`, if set.
 /// `workspace` is the orchestrator's own.
 pub fn orchestrator_instructions(
     config: &Config,
@@ -159,7 +164,8 @@ pub fn orchestrator_instructions(
         "orchestrator workspace must be absolute"
     );
     let user_pipelines = archon_core::paths::config_dir().join("pipelines");
-    let mut text = sized_efforts(builtin_prompt(github), config.models.effort_sizing);
+    let prompt = builtin_prompt(github, config.orchestrator.validate_before_handoff);
+    let mut text = sized_efforts(prompt, config.models.effort_sizing);
     let depth = config.limits.max_delegation_depth;
     text.push_str(&installation(workspace, &user_pipelines, depth));
     if let Some(path) = &config.orchestrator.instructions_file {
@@ -171,22 +177,14 @@ pub fn orchestrator_instructions(
     Ok(text)
 }
 
-fn builtin_prompt(github: bool) -> String {
-    if !github {
-        return BUILTIN_PROMPT.to_owned();
+fn builtin_prompt(github: bool, handoff: bool) -> String {
+    let mut text = BUILTIN_PROMPT.to_owned();
+    if handoff {
+        insert_section(&mut text, HANDOFF_RULE, HANDOFF_RULE_BEFORE);
     }
-    let at = BUILTIN_PROMPT
-        .find(GITHUB_SECTION_BEFORE)
-        .expect("the built-in prompt has a Principles section")
-        + 1;
-    let text = [
-        &BUILTIN_PROMPT[..at],
-        GITHUB_SECTION,
-        "\n",
-        &BUILTIN_PROMPT[at..],
-    ]
-    .concat();
-    assert_eq!(text.len(), BUILTIN_PROMPT.len() + GITHUB_SECTION.len() + 1);
+    if github {
+        insert_section(&mut text, GITHUB_SECTION, GITHUB_SECTION_BEFORE);
+    }
     text
 }
 
@@ -213,6 +211,18 @@ fn sized_efforts(prompt: String, effort_sizing: bool) -> String {
     let prompt = prompt.replacen(UNSIZED_EFFORTS, &sized, 1);
     debug_assert!(!prompt.contains(UNSIZED_EFFORTS), "the line is replaced");
     prompt
+}
+
+/// Insert `section` and a blank line before the heading `before` names.
+fn insert_section(text: &mut String, section: &str, before: &str) {
+    assert!(section.ends_with('\n'), "a section ends its last line");
+    let at = text
+        .find(before)
+        .unwrap_or_else(|| panic!("the built-in prompt has {before:?}"))
+        + 1;
+    let len = text.len();
+    text.insert_str(at, &[section, "\n"].concat());
+    assert_eq!(text.len(), len + section.len() + 1);
 }
 
 /// What the built-in prompt refers to but cannot know: paths, and how deep
@@ -1579,10 +1589,8 @@ mod tests {
             prompt.contains("Call `list_pipelines` to see the catalog"),
             "new pipelines must be discoverable without static prompt guidance"
         );
-        // Reports the operator asks for by name need no routing guidance, and the
-        // release gates get theirs with the release-validation prompts (#396, #397).
-        let pending_catalog_guidance =
-            ["code-audit", "design-doc", "e2e-strict", "release-journey"];
+        // Reports the operator asks for by name need no routing guidance.
+        let pending_catalog_guidance = ["code-audit", "design-doc"];
         let catalog = archon_pipeline::Catalog::builtin();
         for name in pending_catalog_guidance {
             catalog.get(name).expect("pending pipeline is discoverable");
@@ -1617,7 +1625,8 @@ mod tests {
             "Queue clear changes at once, in one message; read code only to split them or judge \
              risk, not to fix or test them.",
             "a large request is a backlog ordered with `depends_on` and `priority`",
-            "Never change a repository yourself or through a child.",
+            "Never change a repository, build, run apps or drive journeys, yourself or through \
+             a child.",
             "A mirror holds the registered repository's local base commit",
             "Before you say a file has or lacks a change, or a commit or fix is present, read \
              the file in the mirror or run `git log`, `git show` or `git grep` there",
@@ -1872,6 +1881,146 @@ mod tests {
         }
     }
 
+    fn validation_topic() -> String {
+        let Ok(archon_core::protocol::Reply::Guide { text }) =
+            crate::authority::guide("validation")
+        else {
+            panic!("the validation topic is a guide");
+        };
+        unwrapped(&text)
+    }
+
+    /// The daemon's gates check code, not use: a user-facing build is called
+    /// ready only after an item the orchestrator queued, never it, checked it (#396).
+    #[test]
+    fn a_user_facing_build_is_handed_over_only_after_independent_validation() {
+        let prompt = unwrapped(&prompt());
+        for said in [
+            "**Hand-off.** Before telling the operator a user-facing build is ready to try, \
+             read `guide(topic=validation)` and queue the independent validation it names; \
+             report only its outcome, never \"ready\" on a failure. Internal changes need none.",
+            "Relay a success in a line with its pull request or commit; run no tool to verify it: \
+             the daemon did.",
+        ] {
+            assert!(prompt.contains(said), "missing {said:?}");
+        }
+        let news = prompt.find("## Archon news").unwrap();
+        let rule = prompt.find("**Hand-off.**").unwrap();
+        assert!(
+            news < rule && rule < prompt.find("## Kept").unwrap(),
+            "the rule follows the success it narrows"
+        );
+        let topic = validation_topic();
+        for said in [
+            "Queue one validation item that `depends_on` every item that built it",
+            "It stacks on their branches, so it tests the heads they delivered, team runs and \
+             stacked builds included.",
+            "Pipeline, by the build's head, not the base: `release-journey` only when the head's \
+             `.archon/journeys.toml` has a journey for every outcome to check",
+            "`git show refs/mirror/<branch>:.archon/journeys.toml`",
+            "else `e2e-strict`, briefed with every outcome as a scenario.",
+            "its `model_plan` pins a `model` for every stage of its pipeline (`list_pipelines`), \
+             none a model a build stage runs, so no stage falls back to a learned or default \
+             choice.",
+            "queue it with the build only when every build item's `model_plan` pins each of its \
+             stages to models outside the validation's; else queue it once every build item has \
+             finished, from the models `get_item` shows they ran.",
+            "A fix follows the same rule.",
+            "tell the operator the build cannot be validated independently instead of queueing \
+             a self-check.",
+            "Brief it to report the exact commit tested for each repository.",
+            "before saying \"ready\", read each delivering pull request's current head \
+             (`get_item` on the delivering item, or the pull request itself). Hand over only \
+             if every head equals its tested commit; if any moved, queue validation again.",
+            "In local ship mode, with no pull request, compare the branch head the validation \
+             names; mirror ref freshness is a known limitation.",
+            "A pass counts for the outcomes its journeys or scenarios checked",
+            "name any outcome it did not check.",
+            "On a failure, tell the operator what failed, from the failed stage's `scenarios` \
+             (`get_stage`; a strict run fails before its report), and that a fix is queued; \
+             queue it, then a new validation item that `depends_on` the fix.",
+            "Never say \"ready\" before a pass.",
+            "An internal change (refactor, tests, CI, docs, a library no person runs) needs none: \
+             relay its success as usual.",
+        ] {
+            assert!(topic.contains(said), "topic misses {said:?}");
+        }
+        // `enqueue` refuses `onto` with `depends_on`, a local `onto` refuses a team
+        // run or a stacked build, and nothing stacks on a build that went `onto` a
+        // pull request: only that build is validated `onto`, once it finished.
+        assert!(topic.contains(
+            "Exception: a build queued `onto` a pull request has no branch to stack on. \
+             Validate it `onto` that build item once it finished, and in a split request only if \
+             every build went `onto` that same pull request, so its head holds them all; else \
+             say the builds have no combined head to validate, not \"ready\"."
+        ));
+        assert_eq!(
+            topic.matches("`onto`").count(),
+            3,
+            "only the exception: {topic}"
+        );
+    }
+
+    /// The orchestrator coordinates: validation is an item's work, never its
+    /// own or a helper's, whether or not the hand-off rule is on.
+    #[test]
+    fn the_orchestrator_never_does_validation_work_itself() {
+        let ban = "Never change a repository, build, run apps or drive journeys, yourself or \
+                   through a child.";
+        let mut config = Config::default();
+        config.orchestrator.validate_before_handoff = false;
+        for config in [Config::default(), config] {
+            let text = orchestrator_instructions(&config, Path::new("/o"), false).unwrap();
+            assert!(unwrapped(&text).contains(ban), "missing the ban: {text}");
+        }
+        assert!(validation_topic().contains(
+            "You never build, run apps or drive journeys yourself or through a helper: the \
+             validation item does."
+        ));
+    }
+
+    /// `validate_before_handoff = false` drops the rule and nothing else, so
+    /// every success is relayed as an internal one is.
+    #[test]
+    fn validate_before_handoff_off_leaves_the_rule_out() {
+        let mut config = Config::default();
+        config.orchestrator.validate_before_handoff = false;
+        let off = orchestrator_instructions(&config, Path::new("/o"), true).unwrap();
+        let on = orchestrator_instructions(&Config::default(), Path::new("/o"), true).unwrap();
+        assert!(!off.contains("**Hand-off.**"), "{off}");
+        assert_eq!(on.len(), off.len() + HANDOFF_RULE.len() + 1);
+        assert_eq!(on.replacen(&format!("{HANDOFF_RULE}\n"), "", 1), off);
+        assert!(off.contains(github_policy()), "the GitHub section stays");
+    }
+
+    /// A split user-facing request names user outcomes, and one item owns
+    /// them end to end so they cannot fall between items (#397).
+    #[test]
+    fn a_split_user_facing_request_carries_outcome_criteria_and_one_owner() {
+        let prompt = unwrapped(&prompt());
+        assert!(prompt.contains(
+            "a large request is a backlog ordered with `depends_on` and `priority`, and a \
+             user-facing one has outcome criteria and one item owning them \
+             (`guide(topic=validation)`)."
+        ));
+        let topic = validation_topic();
+        for said in [
+            "Each brief keeps its code-level criteria (functions, tests, files) and adds the user \
+             outcomes its part serves",
+            "\"on a fresh install, a new user starts an agent and gets a reply within 30 \
+             seconds\"",
+            "One item owns the end-to-end outcome: the hand-off's validation item, which \
+             `depends_on` every build item",
+            "or all of a split request's (then it is the outcome owner below; queue no second \
+             one)",
+            "Its pass is the request's pass; the hand-off waits for it.",
+            "Such an unchecked outcome is left to the owning item, never assumed met.",
+            "See `docs/journeys.md` for an example backlog.",
+        ] {
+            assert!(topic.contains(said), "topic misses {said:?}");
+        }
+    }
+
     /// Models are chosen by tier, so a new release changes neither the
     /// prompt nor the built-in pipelines' advice.
     #[test]
@@ -1893,8 +2042,8 @@ mod tests {
     }
 
     /// The prompt is paid for on every turn; the tools describe themselves.
-    /// The half KiB above 13 holds the effort rubric `[models] effort_sizing` adds.
-    const BUDGET_BYTES: usize = 13 * 1024 + 512;
+    /// Above 13 KiB: half a KiB for the effort rubric, a quarter for the hand-off.
+    const BUDGET_BYTES: usize = 13 * 1024 + 768;
 
     #[test]
     fn builtin_prompt_stays_within_its_budget() {
@@ -1903,12 +2052,12 @@ mod tests {
             "the built-in prompt grew to {} bytes",
             BUILTIN_PROMPT.len()
         );
-        let watching = builtin_prompt(true).len();
+        let watching = builtin_prompt(true, true).len();
         assert!(
             watching <= BUDGET_BYTES,
             "with the GitHub policy it grew to {watching} bytes"
         );
-        let sized = sized_efforts(builtin_prompt(true), true).len();
+        let sized = sized_efforts(builtin_prompt(true, true), true).len();
         assert!(
             sized <= BUDGET_BYTES,
             "with the GitHub policy and effort sizing it grew to {sized} bytes"

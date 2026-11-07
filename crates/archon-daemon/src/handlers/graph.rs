@@ -135,15 +135,11 @@ pub(super) async fn run_plan(
     Ok(Reply::RunPlan(Box::new(plan)))
 }
 
-/// The plan kept when `run` finished, or built from the snapshot it kept
-/// when that plan was not written; none when it finished before archond
-/// kept plans.
+/// The plan kept when `run` finished; none when it finished before archond
+/// kept plans, or its plan could not be built (logged then).
 async fn finished_plan(ctx: &DaemonContext, run: &PipelineRun) -> Result<Reply, ArchonError> {
     assert!(run.state.is_terminal(), "a finished run's plan");
-    if let Some(plan) = plan_view::kept(&ctx.paths.data_dir, &run.id).await? {
-        return Ok(Reply::RunPlan(Box::new(plan)));
-    }
-    match plan_view::keep_late(ctx, run).await? {
+    match ctx.read_store().await?.kept_run_plan(&run.id)? {
         Some(plan) => Ok(Reply::RunPlan(Box::new(plan))),
         None => Err(ArchonError::NotFound(format!(
             "the plan of run {}: no plan was kept when it finished",

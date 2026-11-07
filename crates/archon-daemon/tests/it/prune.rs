@@ -626,31 +626,27 @@ async fn a_pruned_history_takes_only_its_own_runs_plan() {
     let h = Harness::new().await;
     let gone = h.run(&run_to_success(&h, "pruned work").await).await;
     let kept = h.run(&run_to_success(&h, "kept work").await).await;
-    let plans = h.ctx.paths.data_dir.join("run-plans");
-    let plan_of = |run: &archon_core::run::PipelineRun| plans.join(format!("{}.json", run.id));
-    assert!(
-        plan_of(&gone).is_file() && plan_of(&kept).is_file(),
-        "both kept"
-    );
+    let plan_of = async |run: &archon_core::run::PipelineRun| {
+        let store = h.ctx.store.lock().await;
+        store.kept_run_plan(&run.id).expect("the store reads")
+    };
+    assert!(plan_of(&gone).await.is_some() && plan_of(&kept).await.is_some());
     std::fs::create_dir_all(&kept.workspace).unwrap();
     let _ = std::fs::remove_dir_all(&gone.workspace);
     let later = archon_core::now() + chrono::Duration::days(15);
 
     let pruned = prune_at(&h, later).await;
+    assert_eq!(pruned.history.runs, 1, "{pruned:?}");
     assert_eq!(
-        (pruned.history.runs, pruned.run_plans),
-        (1, 1),
-        "{pruned:?}"
-    );
-    assert!(
-        !plan_of(&gone).exists(),
+        plan_of(&gone).await,
+        None,
         "its history went, so its plan did"
     );
     assert!(
-        plan_of(&kept).is_file(),
+        plan_of(&kept).await.is_some(),
         "a retained history keeps its plan"
     );
     let again = prune_at(&h, later).await;
-    assert_eq!((again.history.runs, again.run_plans), (0, 0), "{again:?}");
-    assert!(plan_of(&kept).is_file(), "a later pass keeps it too");
+    assert_eq!(again.history.runs, 0, "{again:?}");
+    assert!(plan_of(&kept).await.is_some(), "a later pass keeps it too");
 }

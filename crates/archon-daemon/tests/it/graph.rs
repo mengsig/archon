@@ -6,7 +6,7 @@ use crate::common;
 
 use archon_core::autonomy::{AutonomyPatch, ProposalMode};
 use archon_core::error::ArchonError;
-use archon_core::id::QueueItemId;
+use archon_core::id::{PipelineRunId, QueueItemId};
 use archon_core::model::Effort;
 use archon_core::protocol::{
     EnqueueRequest, ItemQuery, ModelSource, Reply, RepoRef, Request, RunPlan, SettingSource,
@@ -180,13 +180,8 @@ async fn a_finished_runs_plan_is_kept_as_it_finished() {
         "read again, unchanged"
     );
 
-    let missing = h
-        .ctx
-        .paths
-        .data_dir
-        .join("run-plans")
-        .join(format!("{}.json", kept.run));
-    std::fs::remove_file(&missing).expect("the kept plan is a file");
+    let key = format!("run_plan:{}", kept.run);
+    h.ctx.store.lock().await.kv_delete(&key).expect("forget it");
     let gone = run_plan(&h, &item.id)
         .await
         .expect_err("an older run kept none");
@@ -196,47 +191,64 @@ async fn a_finished_runs_plan_is_kept_as_it_finished() {
     );
 }
 
+async fn plan_of_run(h: &Harness, run: &PipelineRunId) -> RunPlan {
+    match h.cli(Request::RunPlan { run: run.clone() }).await {
+        Ok(Reply::RunPlan(plan)) => *plan,
+        other => panic!("run_plan replied {other:?}"),
+    }
+}
+
 #[tokio::test]
-async fn a_run_whose_plan_cannot_be_kept_finishes_and_keeps_it_later() {
+async fn a_finished_runs_plan_outlives_its_snapshot_and_a_retry_with_other_models() {
     let h = harness().await;
-    use std::os::unix::fs::PermissionsExt;
-    let blocked = h.ctx.paths.data_dir.join("run-plans");
-    std::fs::create_dir_all(&blocked).expect("the plans directory");
-    let read_only = std::fs::Permissions::from_mode(0o500);
-    std::fs::set_permissions(&blocked, read_only).expect("no plan can be written");
-    let item = h.enqueue("ship it").await;
+    let item = h.enqueue("cancelled").await;
     h.dispatch().await;
     let live = run_plan(&h, &item.id).await.expect("a live run's plan");
-    run_to_the_end(&h, &item.id).await;
     let snapshot = h
         .ctx
         .paths
         .data_dir
         .join("pipeline-runs")
         .join(live.run.as_str());
-    assert!(
-        snapshot.is_dir(),
-        "the snapshot stays while no plan is kept"
-    );
-    let served = run_plan(&h, &item.id)
-        .await
-        .expect("built from the snapshot");
-    assert!(served.finished, "it says the run finished");
-    assert_eq!(served.stages, live.stages, "the plan it ran");
-    assert!(
-        snapshot.is_dir(),
-        "still not written, so the snapshot stays"
+    std::fs::remove_dir_all(&snapshot).expect("the run's snapshot");
+    let cancel = Request::CancelItem {
+        item: item.id.clone(),
+        reason: None,
+    };
+    h.cli(cancel).await.expect("cancel");
+    let kept = plan_of_run(&h, &live.run).await;
+    assert!(kept.finished, "kept from the run's driver as it finished");
+    assert_eq!(
+        RunPlan {
+            finished: false,
+            ..kept.clone()
+        },
+        live,
+        "the plan it ran"
     );
 
-    let writable = std::fs::Permissions::from_mode(0o700);
-    std::fs::set_permissions(&blocked, writable).expect("plans can be written again");
-    archon_daemon::prune::prune_once(&h.ctx, archon_core::now())
-        .await
-        .expect("a prune pass");
-    assert!(!snapshot.is_dir(), "the plan is kept, so the snapshot goes");
-    let kept = blocked.join(format!("{}.json", live.run));
-    assert!(kept.is_file(), "the pass kept the plan");
-    assert_eq!(run_plan(&h, &item.id).await.unwrap(), served, "unchanged");
+    let mut other = plan();
+    other.0.get_mut("implement").unwrap()[0] = common::choice(common::REVIEW_MODEL, Effort::Low);
+    let retry = Request::RetryItem {
+        item: item.id.clone(),
+        model_plan: Some(other.clone().into()),
+        model_reasons: None,
+        fresh: false,
+        brief_append: None,
+        stage_timeouts: [("implement".to_owned(), 7)].into(),
+    };
+    h.cli(retry).await.expect("retry");
+    h.dispatch().await;
+    let runs = h.ctx.store.lock().await.runs_for_item(&item.id).unwrap();
+    let new_run = runs.iter().find(|r| r.id != live.run).expect("a new run");
+    let retried = plan_of_run(&h, &new_run.id).await;
+    assert!(!retried.finished, "the retry runs");
+    assert_eq!(retried.settings[0].choices, other.0["implement"]);
+    assert_eq!(
+        plan_of_run(&h, &live.run).await,
+        kept,
+        "the finished run keeps the models and limits it ran with"
+    );
 }
 
 #[tokio::test]

@@ -54,7 +54,7 @@ pub(super) async fn finish_run(
         _ => ShippingProof::None,
     };
     Box::pin(delete_role_branches(ctx, &run)).await?;
-    let plan_kept = super::plan_view::keep(ctx, &run, &state).await;
+    let plan = super::plan_view::finished(ctx, table, (&run, &state)).await;
     let now = archon_core::now();
     let finished = {
         let mut store = ctx.store.lock().await;
@@ -67,6 +67,9 @@ pub(super) async fn finish_run(
                 .any(|s| &s.stage_id == id && s.state == StageState::Completed),
             ShippingProof::None => false,
         };
+        if let Some(plan) = &plan {
+            store.keep_run_plan(plan)?;
+        }
         run.finish(state, now)?;
         let mut finished = store.finish_run(&run, item_state(&run), now)?;
         if let Some(planned) = &repair {
@@ -82,9 +85,7 @@ pub(super) async fn finish_run(
     };
     crate::learned::finished(ctx, &run).await;
     let item = finished.item;
-    if plan_kept {
-        frozen::discard(&ctx.paths.data_dir, &run.id);
-    }
+    frozen::discard(&ctx.paths.data_dir, &run.id);
     table.drivers.remove(&run.id);
     table.pending.remove(&run.id);
     table.merges.remove(&run.id);

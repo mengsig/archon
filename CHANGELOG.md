@@ -75,11 +75,10 @@ again from the Aether app a browser that paired on another hostname.
 - `run_plan` gives a run's frozen pipeline with its steer edits applied,
   and `settings`: each stage's and reviewers key's resolved model choices,
   effort and time limit, marked `default` or `override` (the model `tier` or
-  `exact`), so a client shows what really runs. A run's plan is kept in
-  `run-plans/` as it finishes, marked `finished`, until its history is
-  pruned. A plan that could not be written as the run finished is built
-  from the run's snapshot, kept until a later `run_plan` or prune pass
-  writes it; a run that finished before 1.5.0 has none and is `not_found`.
+  `exact`), so a client shows what really runs. The store keeps a run's
+  plan, marked `finished`, as it records the run finished, from the models
+  and limits the run ran with, until the run's history is pruned; a run that
+  finished before 1.5.0 has none and is `not_found`.
 - `list_items` and `list_item_summaries` take `updated_since`, `before` and
   `text` (a title and brief substring).
 

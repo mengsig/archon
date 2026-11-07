@@ -148,7 +148,6 @@ fn measure(paths: &DaemonPaths) -> Vec<StorageUsage> {
         ("aether", paths.data_dir.join("aether")),
         ("mirror_git", paths.data_dir.join("mirror-git")),
         ("pipeline_snapshots", paths.data_dir.join("pipeline-runs")),
-        ("run_plans", paths.data_dir.join("run-plans")),
         (
             "initiative_bodies",
             paths.data_dir.join("initiative-bodies"),

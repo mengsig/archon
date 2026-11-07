@@ -98,11 +98,11 @@ whichever keeps more. Older cursors get `history_expired`.
 | `list_items` (extended) | adds `updated_since?: Ts`, `before?: Ts`, `text?: string (1..=200 chars, title and brief substring)`, also on `list_item_summaries`. Until `item_filters` is served, a query using them is refused with `unavailable`. | Read |
 
 `run_plan` serves a live run's plan as it resolves now, and a finished run's
-plan as archond kept it when the run finished, with `finished: true`; it is
-kept until the run's history is pruned. A plan that could not be written
-as the run finished is built from the run's snapshot, which stays until a
-later `run_plan` or prune pass writes the plan. A run that finished before archond
-kept plans returns `not_found`, and its plan is read from its stage attempts.
+plan as archond kept it when the run finished, with `finished: true`; the
+store keeps it as it records the run finished, until the run's history is
+pruned, and a later retry or steer of the item does not change it. A run
+that finished before archond kept plans returns `not_found`, and its plan
+is read from its stage attempts.
 `settings` lists each stage in order, its reviewers key after it, with the
 model choices its next agents start with (`model: "tier"` when they come
 from a tier, resolved again at dispatch; `"exact"` for a named model, which

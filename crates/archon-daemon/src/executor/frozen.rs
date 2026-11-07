@@ -87,56 +87,14 @@ pub(crate) async fn thaw_edited(
     Ok(edited)
 }
 
-/// Whether `run` still holds its snapshot.
-pub(crate) fn holds(data_dir: &Path, run: &PipelineRunId) -> bool {
-    run_dir(data_dir, run).is_dir()
-}
-
-/// Every run that holds a snapshot; a stray entry is skipped.
-pub(crate) fn snapshot_runs(data_dir: &Path) -> Result<Vec<PipelineRunId>, ArchonError> {
-    let root = runs_root(data_dir);
-    let entries = match std::fs::read_dir(&root) {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(ArchonError::io(format!("listing {}", root.display()), e)),
-    };
-    let mut runs = Vec::new();
-    for entry in entries {
-        let entry = entry.map_err(|e| ArchonError::io(format!("listing {}", root.display()), e))?;
-        let name = entry.file_name();
-        if let Some(run) = name.to_str().and_then(|n| PipelineRunId::parse(n).ok()) {
-            runs.push(run);
-        }
-    }
-    Ok(runs)
-}
-
 /// Drop a finished run's snapshot. Failing leaves only a stale copy.
-pub(crate) fn discard(data_dir: &Path, run: &PipelineRunId) {
+pub(super) fn discard(data_dir: &Path, run: &PipelineRunId) {
     let dir = run_dir(data_dir, run);
     match std::fs::remove_dir_all(&dir) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => tracing::warn!(dir = %dir.display(), %error, "pipeline snapshot not removed"),
     }
-}
-
-/// Write `text` durably to `root/name`, creating `root` in the data
-/// directory first: a kept run plan, which outlives the run's snapshot.
-pub(crate) fn write_kept(root: &Path, name: &str, text: &str) -> Result<(), ArchonError> {
-    assert!(
-        !name.contains('/') && !name.starts_with('.'),
-        "unsafe file name {name:?}"
-    );
-    assert!(!text.is_empty(), "a kept file says something");
-    std::fs::create_dir_all(root)
-        .map_err(|e| ArchonError::io(format!("creating {}", root.display()), e))?;
-    write_durably(root, name, text)?;
-    sync_dir(root)?;
-    let top = root
-        .parent()
-        .expect("kept files live in the data directory");
-    sync_dir(top)
 }
 
 /// Write the snapshot into `dir`, under `root`, and sync every directory

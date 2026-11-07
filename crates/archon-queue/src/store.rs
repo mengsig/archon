@@ -41,6 +41,7 @@ mod retention;
 pub use retention::HistoryPruned;
 pub use schema::WAL_SIZE_LIMIT;
 mod run_edits;
+mod run_plans;
 mod run_reviews;
 pub use run_reviews::RunReview;
 mod runs;

@@ -168,9 +168,14 @@ async fn a_finished_runs_plan_is_kept_as_it_finished() {
         finished: true,
         ..live.clone()
     };
-    let earlier = Some(&stale);
-    let kept_early = h.ctx.store.lock().await.keep_run_plan(&live.run, earlier);
-    kept_early.expect("as a finish that failed after keeping it would");
+    let key = format!("run_plan:{}", live.run);
+    let raw = serde_json::to_string(&stale).unwrap();
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(&key, &raw)
+        .expect("a stale plan");
     assert_eq!(
         run_plan(&h, &item.id).await.unwrap(),
         live,
@@ -193,7 +198,6 @@ async fn a_finished_runs_plan_is_kept_as_it_finished() {
         "read again, unchanged"
     );
 
-    let key = format!("run_plan:{}", kept.run);
     h.ctx.store.lock().await.kv_delete(&key).expect("forget it");
     let gone = run_plan(&h, &item.id)
         .await
@@ -202,6 +206,60 @@ async fn a_finished_runs_plan_is_kept_as_it_finished() {
         matches!(&gone, ArchonError::NotFound(m) if m.contains("no plan was kept")),
         "{gone}"
     );
+}
+
+/// A store read that fails as the run finishes fails the finish: the run
+/// stays live with its snapshot, and the finish that follows keeps the plan
+/// of the settings it then has.
+#[tokio::test]
+async fn a_finish_that_cannot_read_the_store_keeps_the_plan_of_its_retry() {
+    let h = harness().await;
+    let item = h.enqueue("finished twice").await;
+    h.dispatch().await;
+    let live = run_plan(&h, &item.id).await.expect("a live run's plan");
+    let db = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    let at = archon_core::now().to_rfc3339();
+    let unreadable = "INSERT INTO run_edits (run, seq, at, edit) VALUES (?1, 1, ?2, '[1]')";
+    db.execute(unreadable, [live.run.as_str(), at.as_str()])
+        .unwrap();
+    let cancel = || Request::CancelItem {
+        item: item.id.clone(),
+        reason: None,
+    };
+    let refused = h.cli(cancel()).await.expect_err("its edits do not read");
+    assert!(refused.to_string().contains("run edit"), "{refused}");
+    assert!(
+        !h.run(&item.id).await.state.is_terminal(),
+        "the run is live"
+    );
+    let snapshot = h.ctx.paths.data_dir.join("pipeline-runs");
+    assert!(
+        snapshot.join(live.run.as_str()).is_dir(),
+        "and keeps its snapshot"
+    );
+
+    db.execute("DELETE FROM run_edits WHERE run = ?1", [live.run.as_str()])
+        .unwrap();
+    drop(db);
+    let steer = Steer {
+        stage_timeouts: [("review".to_owned(), 9)].into(),
+        ..Steer::default()
+    };
+    let request = Request::SteerItem {
+        item: item.id.clone(),
+        steer,
+    };
+    h.cli(request).await.expect("the review gets nine minutes");
+    h.cli(cancel()).await.expect("the finish goes through");
+    let kept = plan_of_run(&h, &live.run).await;
+    assert!(kept.finished);
+    let review = kept.settings.iter().find(|s| s.key == "review").unwrap();
+    assert_eq!(
+        (review.timeout_minutes, review.timeout),
+        (Some(9), Some(SettingSource::Override)),
+        "the settings the run finished with"
+    );
+    assert!(!snapshot.join(live.run.as_str()).exists(), "now discarded");
 }
 
 async fn plan_of_run(h: &Harness, run: &PipelineRunId) -> RunPlan {

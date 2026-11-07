@@ -66,7 +66,7 @@ use archon_core::id::{
 };
 use archon_core::merge::MergeRequest;
 use archon_core::notify::{FeedEntry, FeedItem, Question};
-use archon_core::protocol::{ItemQuery, RepoRef};
+use archon_core::protocol::{ItemQuery, RepoRef, RunPlan};
 use archon_core::queue::{PauseState, QueueItem, QueueState};
 use archon_core::repo::Repo;
 use archon_core::run::{OperatorGate, PipelineRun, StageRun};
@@ -442,7 +442,18 @@ impl Store {
         next: QueueState,
         at: Timestamp,
     ) -> Result<FinishedRun, ArchonError> {
-        runs::finish(&mut self.conn, run, next, at)
+        runs::finish(&mut self.conn, run, None, next, at)
+    }
+    /// [`Store::finish_run`], keeping `plan` as the plan the run finished
+    /// with in the same transaction; with none, any earlier one is dropped.
+    pub fn finish_run_with_plan(
+        &mut self,
+        run: &PipelineRun,
+        plan: Option<&RunPlan>,
+        next: QueueState,
+        at: Timestamp,
+    ) -> Result<FinishedRun, ArchonError> {
+        runs::finish(&mut self.conn, run, plan, next, at)
     }
     pub fn run(&self, id: &PipelineRunId) -> Result<PipelineRun, ArchonError> {
         runs::load(&self.conn, id)

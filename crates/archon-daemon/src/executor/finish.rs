@@ -67,10 +67,9 @@ pub(super) async fn finish_run(
                 .any(|s| &s.stage_id == id && s.state == StageState::Completed),
             ShippingProof::None => false,
         };
-        // An earlier finish that failed may have kept a plan; this one replaces it.
-        store.keep_run_plan(&run.id, plan.as_ref())?;
         run.finish(state, now)?;
-        let mut finished = store.finish_run(&run, item_state(&run), now)?;
+        let mut finished =
+            store.finish_run_with_plan(&run, plan.as_ref(), item_state(&run), now)?;
         if let Some(planned) = &repair {
             match planned.requeue(&mut store) {
                 Ok(queued) => finished.item = queued,

@@ -38,9 +38,9 @@ stages is pinned to a model no build stage runs: it is queued with the
 build only when the build's stages are pinned too, and otherwise once the
 build has finished and its models are known. When the model policy leaves
 none, the orchestrator says the build cannot be validated
-independently. You hear only that item's outcome, and only while each
-build's branch still holds the commit its run shipped (a moved branch gets
-a new validation first): on a pass, the build is ready, with any outcome
+independently. The item reports the commit of each build branch it
+tested, and you hear its outcome only while every build branch's head is
+still that commit (a moved branch gets a new validation first): on a pass, the build is ready, with any outcome
 the run did not check named; on a failure, what failed, from the failed
 stage's scenario list since a strict run stops before its report, and that
 a fix is queued, never "ready". A success of an internal change (a refactor, tests,

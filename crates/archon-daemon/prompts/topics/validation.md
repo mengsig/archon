@@ -29,10 +29,12 @@ app, UI, CLI or installer a person runs) is ready to try or test:
   A fix follows the same rule. If `model_policy` leaves no other
   model, tell the operator the build cannot be validated independently
   instead of queueing a self-check.
-- Report only that item's outcome, and only for the heads it tested:
-  before saying "ready", check each build branch's head (`git rev-parse
-  refs/mirror/<branch>`) is still the `commit` its run shipped
-  (`get_stage`); if one moved, queue a new validation item instead. A pass counts for the outcomes its journeys or scenarios
+- Brief it to report, for each build branch, the commit of it the run
+  tested (`git merge-base HEAD origin/<branch>` after a fetch). Report only
+  that item's outcome, and only for those commits: before saying "ready",
+  check each build branch's head (`git rev-parse refs/mirror/<branch>`) is
+  the commit it reported; if one differs, queue a new validation item and
+  judge by the commits that one reports. A pass counts for the outcomes its journeys or scenarios
   checked: the build is ready to try, with its pull request and the
   report; name any outcome it did not check. On a failure, tell the
   operator what failed, from the failed stage's `scenarios` (`get_stage`;

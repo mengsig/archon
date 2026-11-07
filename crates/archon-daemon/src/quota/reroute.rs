@@ -2,8 +2,10 @@
 //! of quota, follow the item's new provider, or wait while every one is out.
 
 use archon_core::error::ArchonError;
-use archon_core::id::QueueItemId;
+use archon_core::id::{NotificationId, QueueItemId};
+use archon_core::model::{ModelPlan, ModelRef};
 use archon_core::model_tier::ModelCatalog;
+use archon_core::notify::{FeedEntry, Notification, NotificationKind};
 use archon_core::policy::ModelPolicy;
 use archon_core::provider_route::{ProviderRoute, ProviderWeights, Routed};
 use archon_core::queue::QueueItem;
@@ -101,20 +103,154 @@ pub(crate) fn reroute_spawns(
     .by(quota.0, quota.1);
     let route = route.expect("weights route the item");
     let tiers = TierScope::new(&ctx.config, &policy, &catalog).routed(Some(route));
-    let first = move_plans(plans, (spec, tiers), (held.as_deref(), view.as_ref()));
-    if first.is_none() && item.routed_provider == held {
+    let moved = move_plans(plans, (spec, tiers), (held.as_deref(), view.as_ref()));
+    if moved.is_empty() && item.routed_provider == held {
         return Ok(Reserve::Go);
     }
     item.routed_provider = held.clone();
-    if let Some((stage, from, to)) = first {
-        let scope = format!("stage {stage}");
-        let note = switch_note((Some(&from), Some(&to)), view.as_ref(), &scope);
-        item.provider_switch = note.or(item.provider_switch.take());
-    }
+    let stored = item.model_plan.clone();
     follow_plan(item, spec, tiers);
+    record_moves(ctx, store, item, (&moved, &stored), view.as_ref())?;
     item.updated_at = archon_core::now();
     store.update_item(item)?;
     Ok(Reserve::Go)
+}
+
+/// One stage slot a reroute moved from model `from` to model `to`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Moved {
+    stage: String,
+    from: ModelRef,
+    to: ModelRef,
+}
+
+/// Note on `item`, and post to its feed, every model its `pending` spawns
+/// moved to and every choice of its stored plan that differs from `before`;
+/// nothing when no model moved. The caller stores `item`.
+pub(crate) fn record_moves(
+    ctx: &DaemonContext,
+    store: &mut Store,
+    item: &mut QueueItem,
+    (pending, before): (&[Moved], &ModelPlan),
+    view: Option<&QuotaView>,
+) -> Result<(), ArchonError> {
+    let moves = distinct_moves(pending, &plan_moves(before, &item.model_plan));
+    let Some(first) = moves.first() else {
+        return Ok(());
+    };
+    let reason = move_reason(first, item.routed_provider.as_deref(), view);
+    let swaps = swap_list(&moves);
+    announce_move(ctx, store, item, &reason, &swaps)?;
+    let note = format!("{}: {reason}; {swaps}", minute(archon_core::now()));
+    debug_assert!(!note.contains('\n'), "one line");
+    assert!(
+        moves.iter().all(|m| note.contains(&m.stage)),
+        "the note names every stage that moved"
+    );
+    item.provider_switch = Some(note);
+    Ok(())
+}
+
+/// `pending` then each of `followed` not among them: one entry per distinct
+/// swap, so a fan-out slot that moved differently keeps its own.
+fn distinct_moves(pending: &[Moved], followed: &[Moved]) -> Vec<Moved> {
+    let mut moves = pending.to_vec();
+    for moved in followed {
+        if !moves.contains(moved) {
+            moves.push(moved.clone());
+        }
+    }
+    debug_assert!(followed.iter().all(|m| moves.contains(m)), "none dropped");
+    assert!(
+        moves.iter().all(|m| m.from != m.to),
+        "a move changes the model"
+    );
+    moves
+}
+
+/// Why `first` of a reroute's moves moved: it left a provider out of quota,
+/// moved onto the item's `held` provider, or its tier resolves elsewhere now.
+fn move_reason(first: &Moved, held: Option<&str>, view: Option<&QuotaView>) -> String {
+    let (from, to) = (first.from.provider.as_str(), first.to.provider.as_str());
+    let scope = format!("stage {}", first.stage);
+    if let Some(note) = switch_note((Some(from), Some(to)), view, &scope) {
+        let (_, reason) = note
+            .split_once(": ")
+            .expect("a note starts with its minute");
+        return reason.to_owned();
+    }
+    let why = match held == Some(to) && from != to {
+        true => format!("it follows the item's provider {to}"),
+        false => format!("its tier resolves to {} now", first.to),
+    };
+    let reason = match from == to {
+        true => format!("{scope} moved from {} to {}: {why}", first.from, first.to),
+        false => format!("{scope} moved from {from} to {to}: {why}"),
+    };
+    debug_assert!(!reason.contains('\n'), "one line");
+    reason
+}
+
+/// Every model `moves` swapped, by stage, old and new: one clause each.
+fn swap_list(moves: &[Moved]) -> String {
+    assert!(!moves.is_empty(), "a list is made only for a move");
+    let swaps: Vec<String> = moves
+        .iter()
+        .map(|m| {
+            format!(
+                "stage {} now runs on {} instead of {}",
+                m.stage, m.to, m.from
+            )
+        })
+        .collect();
+    swaps.join("; ")
+}
+
+/// Post the reroute's `reason` and every model it swapped to `item`'s feed,
+/// so no stage runs on another model unannounced.
+fn announce_move(
+    ctx: &DaemonContext,
+    store: &mut Store,
+    item: &QueueItem,
+    reason: &str,
+    swaps: &str,
+) -> Result<(), ArchonError> {
+    assert!(!reason.is_empty(), "the notice says why");
+    assert!(!swaps.is_empty(), "the notice says what moved");
+    let entry = FeedEntry::Notification(Notification {
+        id: NotificationId::new(),
+        kind: NotificationKind::Progress,
+        text: format!("Item {} changed models: {reason}; {swaps}", item.id),
+        item: Some(item.id.clone()),
+        run: None,
+        at: archon_core::now(),
+    });
+    let posted = store.append_feed(entry, archon_core::now())?;
+    crate::feed::publish(ctx, vec![posted]);
+    Ok(())
+}
+
+/// Every choice whose model differs from `before` to `after`, keyed alike.
+fn plan_moves(before: &ModelPlan, after: &ModelPlan) -> Vec<Moved> {
+    assert!(
+        before.0.keys().eq(after.0.keys()),
+        "a reroute changes models, not stages"
+    );
+    let pairs = before.0.iter().zip(after.0.values());
+    let mut moved = Vec::new();
+    for ((stage, was), now) in pairs {
+        assert_eq!(was.len(), now.len(), "a reroute keeps each stage's choices");
+        let changed = was
+            .iter()
+            .zip(now)
+            .filter(|(was, now)| was.model != now.model);
+        moved.extend(changed.map(|(was, now)| Moved {
+            stage: stage.clone(),
+            from: was.model.clone(),
+            to: now.model.clone(),
+        }));
+    }
+    moved
 }
 
 /// The weights and policy `item` routes by in `repo`; `None` when weights
@@ -227,13 +363,14 @@ fn record_wait(
 }
 
 /// Move each fresh tier-only plan that sits on a provider out of quota, or
-/// off the item's `held` one, as `tiers` resolve it; the first move made.
+/// off the item's `held` one, as `tiers` resolve it; every move made. An
+/// exact pin is never moved.
 fn move_plans(
     plans: &mut [SpawnPlan],
     (spec, tiers): (&PipelineSpec, TierScope<'_>),
     (held, view): (Option<&str>, Option<&QuotaView>),
-) -> Option<(String, String, String)> {
-    let mut first = None;
+) -> Vec<Moved> {
+    let mut moved = Vec::new();
     for plan in plans.iter_mut() {
         let Some(tier) = plan.choice.tier.as_ref().filter(|t| t.provider.is_none()) else {
             continue;
@@ -260,27 +397,100 @@ fn move_plans(
         let from = std::mem::replace(&mut plan.choice.model, model);
         debug_assert!(tier.resolved >= floor, "never below the floor");
         plan.choice.tier = Some(tier);
-        let to = plan.choice.model.provider.clone();
-        first.get_or_insert((plan.stage_id.clone(), from.provider, to));
+        moved.push(Moved {
+            stage: plan.stage_id.clone(),
+            from,
+            to: plan.choice.model.clone(),
+        });
     }
-    first
+    moved
 }
 
-/// Resolve `item`'s stored tier-only choices again, so its later stages and
-/// a recovered run follow the provider it moved to.
+/// Resolve `item`'s stored tiered choices again, so its later stages and a
+/// recovered run follow the provider it moved to. A choice that no longer
+/// resolves keeps its model alone; the rest still follow.
 fn follow_plan(item: &mut QueueItem, spec: &PipelineSpec, tiers: TierScope<'_>) {
-    let before = item.model_plan.clone();
-    let resolved = item.model_plan.resolve_tiers(|key, tier, provider| {
-        tiers.resolve((tier, spec.tier_floor(key, tier)), provider)
-    });
-    if let Err(error) = resolved {
-        tracing::warn!(item = %item.id, %error, "the stored plan keeps its models");
-        item.model_plan = before;
-        return;
+    let before = plan_shape(&item.model_plan);
+    for (key, choices) in item.model_plan.0.iter_mut() {
+        for choice in choices.iter_mut() {
+            let Some(asked) = &choice.tier else {
+                continue;
+            };
+            let floor = spec.tier_floor(key, asked.requested);
+            match tiers.resolve((asked.requested, floor), asked.provider.as_deref()) {
+                Ok((model, tier)) => {
+                    debug_assert_eq!(tier.requested, asked.requested, "the tier asked for");
+                    choice.model = model;
+                    choice.tier = Some(tier);
+                }
+                Err(error) => {
+                    tracing::warn!(item = %item.id, stage = %key, %error, "a stored choice keeps its model");
+                }
+            }
+        }
     }
-    debug_assert_eq!(
-        item.model_plan.0.keys().collect::<Vec<_>>(),
-        before.0.keys().collect::<Vec<_>>(),
-        "only models change"
-    );
+    assert_eq!(plan_shape(&item.model_plan), before, "only models change");
+}
+
+/// Each plan key with its number of choices.
+fn plan_shape(plan: &ModelPlan) -> Vec<(String, usize)> {
+    (plan.0.iter())
+        .map(|(key, c)| (key.clone(), c.len()))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn moved(stage: &str, from: &str, to: &str) -> Moved {
+        Moved {
+            stage: stage.into(),
+            from: from.parse().unwrap(),
+            to: to.parse().unwrap(),
+        }
+    }
+
+    #[test]
+    fn a_fan_out_slot_that_moved_differently_keeps_its_own_entry() {
+        let pending = [moved("review", "a/x", "b/y")];
+        let followed = [
+            moved("review", "a/x", "b/y"),
+            moved("review", "a/z", "b/w"),
+            moved("ship", "a/x", "b/y"),
+        ];
+        let moves = distinct_moves(&pending, &followed);
+        assert_eq!(
+            moves.len(),
+            3,
+            "the same slot once, each other kept: {moves:?}"
+        );
+        assert_eq!(moves[1], moved("review", "a/z", "b/w"));
+        assert_eq!(distinct_moves(&[], &followed[2..]), followed[2..]);
+    }
+
+    #[test]
+    fn a_note_claims_the_item_s_provider_only_when_the_move_went_onto_it() {
+        let ship = moved("ship", "a/x", "b/y");
+        let followed = move_reason(&ship, Some("b"), None);
+        assert!(
+            followed.contains("stage ship moved from a to b"),
+            "{followed}"
+        );
+        assert!(
+            followed.contains("follows the item's provider b"),
+            "{followed}"
+        );
+        for held in [None, Some("c")] {
+            let note = move_reason(&ship, held, None);
+            assert!(!note.contains("item's provider"), "{held:?}: {note}");
+            assert!(note.contains("its tier resolves to b/y now"), "{note}");
+        }
+        let same = move_reason(&moved("ship", "a/x", "a/y"), Some("a"), None);
+        assert!(same.contains("its tier resolves to a/y now"), "{same}");
+        assert!(
+            same.contains("stage ship moved from a/x to a/y"),
+            "a move within a provider names both models: {same}"
+        );
+    }
 }

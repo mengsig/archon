@@ -189,6 +189,21 @@ impl ModelChoice {
     pub fn without_tier(&self) -> Self {
         Self::pinned(self.model.clone(), self.effort)
     }
+
+    /// This choice with the `model` and `effort` a steer names. A named model
+    /// is an exact pin, which no tier resolves to another model later.
+    pub fn steered(&self, model: Option<&ModelRef>, effort: Option<Effort>) -> Self {
+        let steered = match model {
+            Some(model) => Self::pinned(model.clone(), effort.unwrap_or(self.effort)),
+            None => Self {
+                effort: effort.unwrap_or(self.effort),
+                ..self.clone()
+            },
+        };
+        debug_assert!(model.is_none_or(|m| *m == steered.model && steered.tier.is_none()));
+        debug_assert!(model.is_some() || steered.model == self.model);
+        steered
+    }
 }
 
 impl fmt::Display for ModelChoice {
@@ -521,6 +536,38 @@ mod tests {
         assert_eq!(
             tiered.to_string(),
             "p/m high (tier frontier, fell back to strong)"
+        );
+    }
+
+    #[test]
+    fn a_steered_model_is_a_pin_no_tier_resolves_away_and_an_effort_keeps_the_tier() {
+        let tiered = ModelChoice {
+            model: "p/balanced".parse().unwrap(),
+            effort: Effort::Medium,
+            tier: Some(TierChoice {
+                requested: Tier::Balanced,
+                provider: None,
+                resolved: Tier::Balanced,
+            }),
+        };
+        let fast: ModelRef = "p/fast".parse().unwrap();
+        let mut plan = ModelPlan::default();
+        plan.0.insert(
+            "answer".into(),
+            vec![tiered.steered(Some(&fast), Some(Effort::Low))],
+        );
+        plan.resolve_tiers(|_, _, _| unreachable!("a steered model is not resolved again"))
+            .unwrap();
+        assert_eq!(
+            plan.0["answer"],
+            [ModelChoice::pinned(fast, Effort::Low)],
+            "the steered model runs"
+        );
+        let retuned = tiered.steered(None, Some(Effort::High));
+        assert_eq!(retuned.tier, tiered.tier, "an effort alone keeps the tier");
+        assert_eq!(
+            (retuned.model, retuned.effort),
+            (tiered.model, Effort::High)
         );
     }
 

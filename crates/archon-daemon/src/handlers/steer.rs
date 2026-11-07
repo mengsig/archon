@@ -407,8 +407,7 @@ fn retune(
     };
     assert!(!choices.is_empty(), "a plan gives every stage a choice");
     for choice in choices.iter_mut() {
-        choice.model = steer.model.clone().unwrap_or_else(|| choice.model.clone());
-        choice.effort = steer.effort.unwrap_or(choice.effort);
+        *choice = choice.steered(steer.model.as_ref(), steer.effort);
     }
     Ok(Some(format!(
         "stage `{stage}` now runs on {} at effort {}",

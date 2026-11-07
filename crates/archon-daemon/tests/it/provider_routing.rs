@@ -443,6 +443,176 @@ async fn a_running_item_s_next_stages_move_off_a_spent_provider_and_get_item_say
 }
 
 #[tokio::test]
+async fn a_quota_reroute_posts_each_model_it_swaps_and_never_moves_a_pin() {
+    let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![
+            ("claude-code", window(80, TimeDelta::hours(4))),
+            ("codex", window(0, TimeDelta::hours(1))),
+        ],
+    );
+    let plan = serde_json::from_value(serde_json::json!({
+        "implement": [{"tier": "strong"}],
+        "review": [{"model": "claude-code/opus"}, {"tier": "fast"}],
+        "ship": [{"tier": "fast"}],
+    }))
+    .unwrap();
+    let item = enqueue(&h, ROUTED, "announced", plan).await;
+    h.dispatch().await;
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![
+            ("claude-code", window(10, TimeDelta::hours(3))),
+            ("codex", window(90, TimeDelta::hours(4))),
+        ],
+    );
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    let reviews: Vec<String> = (h.stages(&item.id).await.into_iter())
+        .filter(|s| s.stage_id == "review")
+        .map(|s| s.choice.model.to_string())
+        .collect();
+    assert_eq!(
+        reviews,
+        ["claude-code/opus", "codex/mini"],
+        "the pin stays; the tier moves"
+    );
+    let notices = h
+        .notices(archon_core::notify::NotificationKind::Progress)
+        .await;
+    let swapped: Vec<&String> = notices
+        .iter()
+        .filter(|n| n.contains("changed models"))
+        .collect();
+    assert_eq!(swapped.len(), 1, "one notice for the reroute: {notices:?}");
+    let notice = swapped[0];
+    assert!(notice.contains(item.id.as_str()), "{notice}");
+    assert!(
+        notice.contains("stage review now runs on codex/mini instead of claude-code/haiku"),
+        "{notice}"
+    );
+    assert!(
+        notice.contains("stage ship now runs on codex/mini instead of claude-code/haiku"),
+        "the stored later stage too: {notice}"
+    );
+    assert!(notice.contains("has no quota"), "it says why: {notice}");
+    assert!(
+        !notice.contains("claude-code/opus"),
+        "the pin did not move: {notice}"
+    );
+    let switch = h.item(&item.id).await.provider_switch.expect("noted");
+    for swap in [
+        "stage review now runs on codex/mini instead of claude-code/haiku",
+        "stage ship now runs on codex/mini instead of claude-code/haiku",
+    ] {
+        assert!(
+            switch.contains(swap),
+            "the item's record keeps it: {switch}"
+        );
+    }
+}
+
+/// A stored choice that no longer resolves keeps its model alone: the stages
+/// a reroute moved are stored as they run, so the plan shows what runs.
+#[tokio::test]
+async fn a_choice_that_no_longer_resolves_keeps_the_rest_of_a_reroute_stored() {
+    let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![
+            ("claude-code", window(80, TimeDelta::hours(4))),
+            ("codex", window(0, TimeDelta::hours(1))),
+        ],
+    );
+    let item = enqueue(&h, ROUTED, "half resolvable", tier_plan()).await;
+    h.dispatch().await;
+    {
+        let mut store = h.ctx.store.lock().await;
+        let mut stored = store.item(&item.id).unwrap();
+        let ship = &mut stored.model_plan.0.get_mut("ship").unwrap()[0];
+        ship.tier.as_mut().expect("a tier").provider = Some("gone".into());
+        store.update_item(&stored).unwrap();
+    }
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![
+            ("claude-code", window(10, TimeDelta::hours(3))),
+            ("codex", window(90, TimeDelta::hours(4))),
+        ],
+    );
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    let reviews: Vec<String> = (h.stages(&item.id).await.into_iter())
+        .filter(|s| s.stage_id == "review")
+        .map(|s| s.choice.model.to_string())
+        .collect();
+    assert_eq!(reviews[1], "codex/mini", "the fast reviewer moved");
+    let stored = h.item(&item.id).await.model_plan;
+    let review: Vec<String> = (stored.0["review"].iter())
+        .map(|c| c.model.to_string())
+        .collect();
+    assert_eq!(review, reviews, "the stored plan is the models that run");
+    assert_eq!(
+        stored.0["ship"][0].model.to_string(),
+        "claude-code/haiku",
+        "the choice that does not resolve keeps its model"
+    );
+}
+
+#[tokio::test]
+async fn a_queued_item_that_dispatch_moves_off_a_spent_provider_posts_each_swap() {
+    let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![
+            ("claude-code", window(80, TimeDelta::hours(4))),
+            ("codex", window(0, TimeDelta::hours(1))),
+        ],
+    );
+    let item = enqueue(&h, ROUTED, "moved before it ran", tier_plan()).await;
+    assert_eq!(item.routed_provider.as_deref(), Some("claude-code"));
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![
+            ("claude-code", window(10, TimeDelta::hours(3))),
+            ("codex", window(90, TimeDelta::hours(4))),
+        ],
+    );
+    h.dispatch().await;
+    let stages = h.stages(&item.id).await;
+    assert_eq!(stages[0].choice.model.to_string(), "codex/sol", "it moved");
+    let notices = h
+        .notices(archon_core::notify::NotificationKind::Progress)
+        .await;
+    let swapped: Vec<&String> = notices
+        .iter()
+        .filter(|n| n.contains("changed models"))
+        .collect();
+    assert_eq!(swapped.len(), 1, "one notice for the move: {notices:?}");
+    let notice = swapped[0];
+    assert!(
+        notice.contains("stage implement now runs on codex/sol instead of claude-code/sonnet"),
+        "{notice}"
+    );
+    assert!(
+        notice.contains("stage ship now runs on codex/mini instead of claude-code/haiku"),
+        "{notice}"
+    );
+    let switch = h.item(&item.id).await.provider_switch.expect("noted");
+    assert!(
+        switch.contains("moved from claude-code to codex"),
+        "{switch}"
+    );
+}
+
+#[tokio::test]
 async fn an_aetherd_without_headroom_or_with_a_stale_one_routes_by_weight_alone() {
     let config = weighted(&[("claude-code", 7), ("codex", 3)]);
     let weights = config.models.provider_weights(&Default::default()).unwrap();
@@ -637,5 +807,101 @@ async fn a_stage_waiting_for_quota_takes_no_agent_slot_from_other_work() {
         h.stages(&pinned.id).await.len(),
         1,
         "the free slot goes to work that can run"
+    );
+}
+
+/// Steer `stage` of `item` onto `model`.
+async fn steer_model(h: &Harness, item: &QueueItem, stage: &str, model: &str) {
+    let steer = archon_core::steer::Steer {
+        stage: Some(stage.into()),
+        model: Some(model.parse().unwrap()),
+        ..Default::default()
+    };
+    let request = Request::SteerItem {
+        item: item.id.clone(),
+        steer,
+    };
+    h.cli(request).await.expect("the steer is taken");
+}
+
+/// The model of each stage `stage` of `item` ran, in start order.
+async fn ran_on(h: &Harness, item: &QueueItem, stage: &str) -> Vec<String> {
+    (h.stages(&item.id).await.into_iter())
+        .filter(|s| s.stage_id == stage)
+        .inspect(|s| assert!(s.choice.tier.is_none(), "a steered pin: {:?}", s.choice))
+        .map(|s| s.choice.model.to_string())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_steered_model_runs_on_every_fan_out_slot_loop_and_retry_off_quota() {
+    let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+    let spent_codex = || {
+        vec![
+            ("claude-code", window(80, TimeDelta::hours(4))),
+            ("codex", window(0, TimeDelta::hours(1))),
+        ]
+    };
+    read(&h, TimeDelta::zero(), spent_codex());
+    let paused = archon_core::protocol::PauseTarget::Global { hard: false };
+    h.cli(Request::Pause(paused.clone())).await.expect("pause");
+    let item = enqueue(&h, ROUTED, "steered", tier_plan()).await;
+    assert_eq!(item.routed_provider.as_deref(), Some("claude-code"));
+    steer_model(&h, &item, "implement", "codex/sol").await;
+    steer_model(&h, &item, "review", "codex/sol").await;
+    h.cli(Request::Resume(paused)).await.expect("resume");
+    h.dispatch().await;
+    assert_eq!(ran_on(&h, &item, "implement").await, ["codex/sol"]);
+
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    assert_eq!(
+        ran_on(&h, &item, "review").await,
+        ["codex/sol", "codex/sol"],
+        "every fan-out slot runs the steered model"
+    );
+    h.settle_running(|_| common::verdict(false)).await;
+    h.dispatch().await;
+    assert_eq!(
+        ran_on(&h, &item, "implement").await,
+        ["codex/sol", "codex/sol"],
+        "the loop back runs it again"
+    );
+
+    h.cli(Request::CancelItem {
+        item: item.id.clone(),
+        reason: None,
+    })
+    .await
+    .expect("cancel");
+    read(&h, TimeDelta::zero(), spent_codex());
+    let retry = Request::RetryItem {
+        item: item.id.clone(),
+        model_plan: None,
+        model_reasons: None,
+        fresh: false,
+        brief_append: None,
+        stage_timeouts: Default::default(),
+    };
+    h.cli(retry).await.expect("retry");
+    h.dispatch().await;
+    let implemented = ran_on(&h, &item, "implement").await;
+    assert_eq!(implemented.len(), 3, "the retry starts it: {implemented:?}");
+    assert!(
+        implemented.iter().all(|m| m == "codex/sol"),
+        "{implemented:?}"
+    );
+    let stored = h.item(&item.id).await;
+    assert!(
+        (stored.model_plan.0["review"].iter()).all(|c| c.model.to_string() == "codex/sol"),
+        "no reroute moved the pin: {:?}",
+        stored.model_plan
+    );
+    let notices = h
+        .notices(archon_core::notify::NotificationKind::Progress)
+        .await;
+    assert!(
+        !notices.iter().any(|n| n.contains("instead of codex/sol")),
+        "no pin was swapped: {notices:?}"
     );
 }

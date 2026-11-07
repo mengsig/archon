@@ -29,12 +29,13 @@ app, UI, CLI or installer a person runs) is ready to try or test:
   A fix follows the same rule. If `model_policy` leaves no other
   model, tell the operator the build cannot be validated independently
   instead of queueing a self-check.
-- Brief it to report, for each build branch, the commit of it the run
-  tested (`git merge-base HEAD origin/<branch>` after a fetch). Report only
-  that item's outcome, and only for those commits: before saying "ready",
-  check each build branch's head (`git rev-parse refs/mirror/<branch>`) is
-  the commit it reported; if one differs, queue a new validation item and
-  judge by the commits that one reports. A pass counts for the outcomes its journeys or scenarios
+- Brief it to report the exact commit tested for each repository. Report only
+  that item's outcome: before saying "ready", read each delivering pull
+  request's current head (`get_item` on the delivering item, or the pull
+  request itself). Hand over only if every head equals its tested commit;
+  if any moved, queue validation again. In local ship mode, with no pull
+  request, compare the branch head the validation names; mirror ref freshness
+  is a known limitation. A pass counts for the outcomes its journeys or scenarios
   checked: the build is ready to try, with its pull request and the
   report; name any outcome it did not check. On a failure, tell the
   operator what failed, from the failed stage's `scenarios` (`get_stage`;

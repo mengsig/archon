@@ -38,9 +38,11 @@ stages is pinned to a model no build stage runs: it is queued with the
 build only when the build's stages are pinned too, and otherwise once the
 build has finished and its models are known. When the model policy leaves
 none, the orchestrator says the build cannot be validated
-independently. The item reports the commit of each build branch it
-tested, and you hear its outcome only while every build branch's head is
-still that commit (a moved branch gets a new validation first): on a pass, the build is ready, with any outcome
+independently. The item reports the exact commit tested for each repository.
+Before hand-off, the orchestrator compares each delivering pull request's
+current head with the tested commit and queues validation again if any moved.
+In local ship mode it compares the branch head the validation names; mirror
+ref freshness is a known limitation. On a pass, the build is ready, with any outcome
 the run did not check named; on a failure, what failed, from the failed
 stage's scenario list since a strict run stops before its report, and that
 a fix is queued, never "ready". A success of an internal change (a refactor, tests,

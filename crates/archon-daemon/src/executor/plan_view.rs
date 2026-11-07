@@ -112,34 +112,102 @@ fn key_settings(
 }
 
 /// Keep `run`'s plan as it ends in `state`, written before the store shows
-/// the run finished, so `run_plan` finds it once it does. A plan not kept is
-/// logged: only `run_plan` of the finished run misses it.
-pub(super) async fn keep(ctx: &DaemonContext, run: &PipelineRun, state: &RunState) {
+/// the run finished, so `run_plan` finds it once it does; whether it was
+/// kept. A plan not kept is logged, and the caller keeps the run's snapshot
+/// so [`keep_late`] keeps it later.
+pub(super) async fn keep(ctx: &DaemonContext, run: &PipelineRun, state: &RunState) -> bool {
     assert!(state.is_terminal(), "a plan is kept as its run finishes");
     assert!(
         !run.state.is_terminal(),
         "kept before the run is shown finished"
     );
-    if let Err(error) = try_keep(ctx, run).await {
-        tracing::warn!(run = %run.id, %error, "the finished run's plan was not kept; run_plan cannot show it");
-    }
+    let written = match finished_plan(ctx, run).await {
+        Ok(plan) => write_plan(&ctx.paths.data_dir, &plan).await,
+        Err(error) => Err(error),
+    };
+    let Err(error) = written else {
+        return true;
+    };
+    tracing::warn!(run = %run.id, %error, "the finished run's plan was not kept; its snapshot stays until it is");
+    false
 }
 
-async fn try_keep(ctx: &DaemonContext, run: &PipelineRun) -> Result<(), ArchonError> {
+/// The plan of finished `run` from the snapshot it kept because its plan was
+/// not written as it finished, written now when it can be, which drops the
+/// snapshot; `None` when the run has no snapshot left.
+pub(crate) async fn keep_late(
+    ctx: &DaemonContext,
+    run: &PipelineRun,
+) -> Result<Option<RunPlan>, ArchonError> {
+    assert!(
+        run.state.is_terminal(),
+        "only a finished run's plan is kept"
+    );
+    let data_dir = &ctx.paths.data_dir;
+    if !frozen::holds(data_dir, &run.id) {
+        return Ok(None);
+    }
+    let plan = finished_plan(ctx, run).await?;
+    assert!(
+        plan.finished && plan.run == run.id,
+        "the finished run's plan"
+    );
+    match write_plan(data_dir, &plan).await {
+        Ok(()) => frozen::discard(data_dir, &run.id),
+        Err(error) => {
+            tracing::warn!(run = %run.id, %error, "the finished run's plan is still not kept; its snapshot stays");
+        }
+    }
+    Ok(Some(plan))
+}
+
+/// Keep the plan of every finished run that still holds its snapshot, and
+/// drop the snapshot of one whose plan is kept; how many plans were kept. A
+/// run that fails is logged and keeps its snapshot for the next pass.
+pub(crate) async fn keep_unkept(ctx: &DaemonContext) -> Result<usize, ArchonError> {
+    let data_dir = &ctx.paths.data_dir;
+    let mut kept_now = 0;
+    for id in frozen::snapshot_runs(data_dir)? {
+        let run = match ctx.store.lock().await.run(&id) {
+            Ok(run) if run.state.is_terminal() => run,
+            // A starting run freezes before the store holds it.
+            Ok(_) | Err(ArchonError::NotFound(_)) => continue,
+            Err(error) => return Err(error),
+        };
+        if kept(data_dir, &id).await?.is_some() {
+            frozen::discard(data_dir, &id);
+            continue;
+        }
+        match keep_late(ctx, &run).await {
+            Ok(Some(_)) if !frozen::holds(data_dir, &id) => kept_now += 1,
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(run = %id, %error, "a finished run's plan cannot be built; its snapshot stays");
+            }
+        }
+    }
+    Ok(kept_now)
+}
+
+/// The plan finished `run` ran, from its snapshot and recorded edits.
+async fn finished_plan(ctx: &DaemonContext, run: &PipelineRun) -> Result<RunPlan, ArchonError> {
     let (recorded, item) = {
         let store = ctx.store.lock().await;
         (store.run_edits(&run.id)?, store.item(&run.item)?)
     };
     let edits: Vec<RunEdit> = recorded.into_iter().map(|r| r.edit).collect();
-    let data_dir = &ctx.paths.data_dir;
-    let spec = frozen::thaw_edited(data_dir, &run.id, &run.pipeline, &edits).await?;
-    let plan = RunPlan {
+    let spec = frozen::thaw_edited(&ctx.paths.data_dir, &run.id, &run.pipeline, &edits).await?;
+    Ok(RunPlan {
         finished: true,
         ..plan_of(&run.id, &spec, &edits, &item)?
-    };
-    let text = serde_json::to_string(&plan).expect("a run plan encodes");
+    })
+}
+
+async fn write_plan(data_dir: &Path, plan: &RunPlan) -> Result<(), ArchonError> {
+    assert!(plan.finished, "only a finished run's plan is kept");
+    let text = serde_json::to_string(plan).expect("a run plan encodes");
     let root = plans_root(data_dir);
-    let name = plan_file(&run.id);
+    let name = plan_file(&plan.run);
     tokio::task::spawn_blocking(move || frozen::write_kept(&root, &name, &text))
         .await
         .map_err(|e| ArchonError::io("run plan task", std::io::Error::other(e)))?

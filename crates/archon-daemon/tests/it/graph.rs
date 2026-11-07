@@ -197,7 +197,7 @@ async fn a_finished_runs_plan_is_kept_as_it_finished() {
 }
 
 #[tokio::test]
-async fn a_run_whose_plan_cannot_be_kept_still_finishes() {
+async fn a_run_whose_plan_cannot_be_kept_finishes_and_keeps_it_later() {
     let h = harness().await;
     use std::os::unix::fs::PermissionsExt;
     let blocked = h.ctx.paths.data_dir.join("run-plans");
@@ -206,16 +206,37 @@ async fn a_run_whose_plan_cannot_be_kept_still_finishes() {
     std::fs::set_permissions(&blocked, read_only).expect("no plan can be written");
     let item = h.enqueue("ship it").await;
     h.dispatch().await;
+    let live = run_plan(&h, &item.id).await.expect("a live run's plan");
     run_to_the_end(&h, &item.id).await;
-    let missing = run_plan(&h, &item.id)
-        .await
-        .expect_err("no plan was written");
+    let snapshot = h
+        .ctx
+        .paths
+        .data_dir
+        .join("pipeline-runs")
+        .join(live.run.as_str());
     assert!(
-        matches!(&missing, ArchonError::NotFound(m) if m.contains("no plan was kept")),
-        "{missing}"
+        snapshot.is_dir(),
+        "the snapshot stays while no plan is kept"
     );
+    let served = run_plan(&h, &item.id)
+        .await
+        .expect("built from the snapshot");
+    assert!(served.finished, "it says the run finished");
+    assert_eq!(served.stages, live.stages, "the plan it ran");
+    assert!(
+        snapshot.is_dir(),
+        "still not written, so the snapshot stays"
+    );
+
     let writable = std::fs::Permissions::from_mode(0o700);
-    std::fs::set_permissions(&blocked, writable).expect("cleaned up as it was");
+    std::fs::set_permissions(&blocked, writable).expect("plans can be written again");
+    archon_daemon::prune::prune_once(&h.ctx, archon_core::now())
+        .await
+        .expect("a prune pass");
+    assert!(!snapshot.is_dir(), "the plan is kept, so the snapshot goes");
+    let kept = blocked.join(format!("{}.json", live.run));
+    assert!(kept.is_file(), "the pass kept the plan");
+    assert_eq!(run_plan(&h, &item.id).await.unwrap(), served, "unchanged");
 }
 
 #[tokio::test]

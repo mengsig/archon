@@ -8,6 +8,7 @@ use archon_core::id::{PipelineRunId, QueueItemId};
 use archon_core::protocol::{
     QueueStateKind, Reply, TaskFilter, TaskGraph, WaitingReasonCode as Code, feature,
 };
+use archon_core::run::PipelineRun;
 use archon_core::steer::RunEdit;
 use archon_queue::Store;
 
@@ -113,31 +114,40 @@ pub(super) async fn run_plan(
     };
     assert_eq!(&stored.id, run, "the run asked for");
     if stored.state.is_terminal() {
-        return finished_plan(ctx, run).await;
+        return finished_plan(ctx, &stored).await;
     }
     let edits: Vec<RunEdit> = recorded.into_iter().map(|r| r.edit).collect();
     let thawed = frozen::thaw_edited(&ctx.paths.data_dir, run, &stored.pipeline, &edits).await;
     let spec = match thawed {
         Ok(spec) => spec,
         // A run that finished since it was read has dropped its snapshot.
-        Err(error) if ctx.read_store().await?.run(run)?.state.is_terminal() => {
+        Err(error) => {
+            let now = ctx.read_store().await?.run(run)?;
+            if !now.state.is_terminal() {
+                return Err(error);
+            }
             tracing::debug!(%run, %error, "the run finished while its plan was read");
-            return finished_plan(ctx, run).await;
+            return finished_plan(ctx, &now).await;
         }
-        Err(error) => return Err(error),
     };
     let plan = plan_view::plan_of(run, &spec, &edits, &item)?;
     assert!(!plan.finished, "a live run's plan");
     Ok(Reply::RunPlan(Box::new(plan)))
 }
 
-/// The plan kept when `run` finished; none when it finished before archond
-/// kept plans, or its plan could not be written (logged then).
-async fn finished_plan(ctx: &DaemonContext, run: &PipelineRunId) -> Result<Reply, ArchonError> {
-    match plan_view::kept(&ctx.paths.data_dir, run).await? {
+/// The plan kept when `run` finished, or built from the snapshot it kept
+/// when that plan was not written; none when it finished before archond
+/// kept plans.
+async fn finished_plan(ctx: &DaemonContext, run: &PipelineRun) -> Result<Reply, ArchonError> {
+    assert!(run.state.is_terminal(), "a finished run's plan");
+    if let Some(plan) = plan_view::kept(&ctx.paths.data_dir, &run.id).await? {
+        return Ok(Reply::RunPlan(Box::new(plan)));
+    }
+    match plan_view::keep_late(ctx, run).await? {
         Some(plan) => Ok(Reply::RunPlan(Box::new(plan))),
         None => Err(ArchonError::NotFound(format!(
-            "the plan of run {run}: no plan was kept when it finished"
+            "the plan of run {}: no plan was kept when it finished",
+            run.id
         ))),
     }
 }

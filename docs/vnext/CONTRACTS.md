@@ -99,7 +99,9 @@ whichever keeps more. Older cursors get `history_expired`.
 
 `run_plan` serves a live run's plan as it resolves now, and a finished run's
 plan as archond kept it when the run finished, with `finished: true`; it is
-kept until the run's history is pruned. A run that finished before archond
+kept until the run's history is pruned. A plan that could not be written
+as the run finished is built from the run's snapshot, which stays until a
+later `run_plan` or prune pass writes the plan. A run that finished before archond
 kept plans returns `not_found`, and its plan is read from its stage attempts.
 `settings` lists each stage in order, its reviewers key after it, with the
 model choices its next agents start with (`model: "tier"` when they come

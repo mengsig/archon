@@ -138,11 +138,14 @@ pub(crate) fn record_moves(
     let Some(first) = moves.first() else {
         return Ok(());
     };
-    let note = move_note(first, item.routed_provider.as_deref(), view);
-    announce_move(ctx, store, item, &note, &moves)?;
+    let reason = move_reason(first, item.routed_provider.as_deref(), view);
+    let swaps = swap_list(&moves);
+    announce_move(ctx, store, item, &reason, &swaps)?;
+    let note = format!("{}: {reason}; {swaps}", minute(archon_core::now()));
+    debug_assert!(!note.contains('\n'), "one line");
     assert!(
-        note.contains(&first.stage),
-        "the note names a stage that moved"
+        moves.iter().all(|m| note.contains(&m.stage)),
+        "the note names every stage that moved"
     );
     item.provider_switch = Some(note);
     Ok(())
@@ -165,34 +168,32 @@ fn distinct_moves(pending: &[Moved], followed: &[Moved]) -> Vec<Moved> {
     moves
 }
 
-/// The `get_item` line for `first` of a reroute's moves: why, when it left
-/// a provider out of quota or moved onto the item's `held` provider.
-fn move_note(first: &Moved, held: Option<&str>, view: Option<&QuotaView>) -> String {
+/// Why `first` of a reroute's moves moved: it left a provider out of quota,
+/// moved onto the item's `held` provider, or its tier resolves elsewhere now.
+fn move_reason(first: &Moved, held: Option<&str>, view: Option<&QuotaView>) -> String {
     let (from, to) = (first.from.provider.as_str(), first.to.provider.as_str());
     let scope = format!("stage {}", first.stage);
     if let Some(note) = switch_note((Some(from), Some(to)), view, &scope) {
-        return note;
+        let (_, reason) = note
+            .split_once(": ")
+            .expect("a note starts with its minute");
+        return reason.to_owned();
     }
-    let now = minute(archon_core::now());
     let why = match held == Some(to) && from != to {
         true => format!("it follows the item's provider {to}"),
         false => format!("its tier resolves to {} now", first.to),
     };
-    let note = format!("{now}: {scope} moved from {from} to {to}: {why}");
-    debug_assert!(!note.contains('\n'), "one line");
-    note
+    let reason = match from == to {
+        true => format!("{scope} moved from {} to {}: {why}", first.from, first.to),
+        false => format!("{scope} moved from {from} to {to}: {why}"),
+    };
+    debug_assert!(!reason.contains('\n'), "one line");
+    reason
 }
 
-/// Post the reroute's `note` and every model it swapped to `item`'s feed, so
-/// no stage runs on another model unannounced.
-fn announce_move(
-    ctx: &DaemonContext,
-    store: &mut Store,
-    item: &QueueItem,
-    note: &str,
-    moves: &[Moved],
-) -> Result<(), ArchonError> {
-    assert!(!moves.is_empty(), "a note is made only for a move");
+/// Every model `moves` swapped, by stage, old and new: one clause each.
+fn swap_list(moves: &[Moved]) -> String {
+    assert!(!moves.is_empty(), "a list is made only for a move");
     let swaps: Vec<String> = moves
         .iter()
         .map(|m| {
@@ -202,17 +203,24 @@ fn announce_move(
             )
         })
         .collect();
-    let reason = note.split_once(": ").map_or(note, |(_, reason)| reason);
-    let text = format!(
-        "Item {} changed models: {reason}; {}",
-        item.id,
-        swaps.join("; ")
-    );
+    swaps.join("; ")
+}
+
+/// Post the reroute's `reason` and every model it swapped to `item`'s feed,
+/// so no stage runs on another model unannounced.
+fn announce_move(
+    ctx: &DaemonContext,
+    store: &mut Store,
+    item: &QueueItem,
+    reason: &str,
+    swaps: &str,
+) -> Result<(), ArchonError> {
     assert!(!reason.is_empty(), "the notice says why");
+    assert!(!swaps.is_empty(), "the notice says what moved");
     let entry = FeedEntry::Notification(Notification {
         id: NotificationId::new(),
         kind: NotificationKind::Progress,
-        text,
+        text: format!("Item {} changed models: {reason}; {swaps}", item.id),
         item: Some(item.id.clone()),
         run: None,
         at: archon_core::now(),
@@ -450,7 +458,7 @@ mod tests {
     #[test]
     fn a_note_claims_the_item_s_provider_only_when_the_move_went_onto_it() {
         let ship = moved("ship", "a/x", "b/y");
-        let followed = move_note(&ship, Some("b"), None);
+        let followed = move_reason(&ship, Some("b"), None);
         assert!(
             followed.contains("stage ship moved from a to b"),
             "{followed}"
@@ -460,11 +468,15 @@ mod tests {
             "{followed}"
         );
         for held in [None, Some("c")] {
-            let note = move_note(&ship, held, None);
+            let note = move_reason(&ship, held, None);
             assert!(!note.contains("item's provider"), "{held:?}: {note}");
             assert!(note.contains("its tier resolves to b/y now"), "{note}");
         }
-        let same = move_note(&moved("ship", "a/x", "a/y"), Some("a"), None);
+        let same = move_reason(&moved("ship", "a/x", "a/y"), Some("a"), None);
         assert!(same.contains("its tier resolves to a/y now"), "{same}");
+        assert!(
+            same.contains("stage ship moved from a/x to a/y"),
+            "a move within a provider names both models: {same}"
+        );
     }
 }

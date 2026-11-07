@@ -1888,10 +1888,15 @@ mod tests {
             "A fix follows the same rule.",
             "tell the operator the build cannot be validated independently instead of queueing \
              a self-check.",
+            "Report only that item's outcome, and only for the heads it tested: before saying \
+             \"ready\", check each build branch's head (`git rev-parse refs/mirror/<branch>`) is \
+             still the `commit` its run shipped (`get_stage`); if one moved, queue a new \
+             validation item instead.",
             "A pass counts for the outcomes its journeys or scenarios checked",
             "name any outcome it did not check.",
-            "On a failure, tell the operator what failed, from its report, and that a fix is \
-             queued; queue it, then a new validation item that `depends_on` the fix.",
+            "On a failure, tell the operator what failed, from the failed stage's `scenarios` \
+             (`get_stage`; a strict run fails before its report), and that a fix is queued; \
+             queue it, then a new validation item that `depends_on` the fix.",
             "Never say \"ready\" before a pass.",
             "An internal change (refactor, tests, CI, docs, a library no person runs) needs none: \
              relay its success as usual.",

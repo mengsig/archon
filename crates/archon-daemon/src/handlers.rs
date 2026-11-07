@@ -28,7 +28,7 @@ mod steer;
 mod waiting;
 
 use archon_core::aether_ids::AetherAgentId;
-use archon_core::autonomy::AutonomyPatch;
+use archon_core::autonomy::{AutonomyPatch, MergeMode, ToolsMode};
 use archon_core::error::ArchonError;
 use archon_core::id::{QuestionId, QueueItemId};
 use archon_core::merge::MergeAuthority;
@@ -158,6 +158,21 @@ async fn refuse_early(
     caller: Option<&AetherAgentId>,
     request: &Request,
 ) -> Result<(), ArchonError> {
+    if client == ClientKind::ArchonWeb {
+        let autonomy = match request {
+            Request::UpdateItem { patch, .. } => patch.autonomy.as_ref(),
+            Request::SteerItem { steer, .. } => steer.autonomy.as_ref(),
+            _ => None,
+        };
+        if autonomy.is_some_and(|patch| {
+            patch.merge == Some(MergeMode::Auto) || patch.tools == Some(ToolsMode::Yolo)
+        }) {
+            return Err(ArchonError::Forbidden(
+                "a paired device cannot set merge=auto or tools=yolo; use the operator's CLI"
+                    .into(),
+            ));
+        }
+    }
     if for_an_agent(client, caller) && request.is_operator_only() {
         let shell = match (client, caller) {
             (ClientKind::ArchonCli, Some(agent)) => {

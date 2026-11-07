@@ -127,8 +127,10 @@ again from the Aether app a browser that paired on another hostname.
   device's requests run with the Aether app's standing, not the CLI's;
   `pause` and `resume` with `hard` are refused to every device, and a soft
   resume no longer lifts the operator's hard pause. Devices may read the
-  change stream, history, task graph, run plans and links; operators may
-  also link, unlink and import issues.
+  change stream, history, task graph, run plans, links, model policy and
+  initiative detail; operators may also steer and update items, and link,
+  unlink and import issues. Daemon autonomy and authority checks still apply;
+  devices cannot set `merge=auto` or `tools=yolo` on items.
 
 ### Security
 

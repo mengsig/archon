@@ -138,7 +138,7 @@ pub(crate) fn record_moves(
     let Some(first) = moves.first() else {
         return Ok(());
     };
-    let note = move_note(first, view);
+    let note = move_note(first, item.routed_provider.as_deref(), view);
     announce_move(ctx, store, item, &note, &moves)?;
     assert!(
         note.contains(&first.stage),
@@ -166,17 +166,17 @@ fn distinct_moves(pending: &[Moved], followed: &[Moved]) -> Vec<Moved> {
 }
 
 /// The `get_item` line for `first` of a reroute's moves: why, when it left
-/// a provider out of quota.
-fn move_note(first: &Moved, view: Option<&QuotaView>) -> String {
+/// a provider out of quota or moved onto the item's `held` provider.
+fn move_note(first: &Moved, held: Option<&str>, view: Option<&QuotaView>) -> String {
     let (from, to) = (first.from.provider.as_str(), first.to.provider.as_str());
     let scope = format!("stage {}", first.stage);
     if let Some(note) = switch_note((Some(from), Some(to)), view, &scope) {
         return note;
     }
     let now = minute(archon_core::now());
-    let why = match from == to {
-        true => format!("{to} resolves its tier to another model now"),
-        false => format!("it follows the item's provider {to}"),
+    let why = match held == Some(to) && from != to {
+        true => format!("it follows the item's provider {to}"),
+        false => format!("its tier resolves to {} now", first.to),
     };
     let note = format!("{now}: {scope} moved from {from} to {to}: {why}");
     debug_assert!(!note.contains('\n'), "one line");
@@ -448,14 +448,23 @@ mod tests {
     }
 
     #[test]
-    fn a_note_says_what_its_first_move_did_with_no_provider_held() {
-        let note = move_note(&moved("ship", "a/x", "b/y"), None);
-        assert!(note.contains("stage ship moved from a to b"), "{note}");
-        assert!(note.contains("follows the item's provider b"), "{note}");
-        let same = move_note(&moved("ship", "a/x", "a/y"), None);
+    fn a_note_claims_the_item_s_provider_only_when_the_move_went_onto_it() {
+        let ship = moved("ship", "a/x", "b/y");
+        let followed = move_note(&ship, Some("b"), None);
         assert!(
-            same.contains("a resolves its tier to another model"),
-            "{same}"
+            followed.contains("stage ship moved from a to b"),
+            "{followed}"
         );
+        assert!(
+            followed.contains("follows the item's provider b"),
+            "{followed}"
+        );
+        for held in [None, Some("c")] {
+            let note = move_note(&ship, held, None);
+            assert!(!note.contains("item's provider"), "{held:?}: {note}");
+            assert!(note.contains("its tier resolves to b/y now"), "{note}");
+        }
+        let same = move_note(&moved("ship", "a/x", "a/y"), Some("a"), None);
+        assert!(same.contains("its tier resolves to a/y now"), "{same}");
     }
 }

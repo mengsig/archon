@@ -10,7 +10,7 @@ use archon_core::id::PipelineRunId;
 use archon_core::model::{Effort, ModelChoice, REVIEWERS_KEY_SUFFIX};
 use archon_core::protocol::{ModelSource, RunPlan, SettingSource, StageSettings};
 use archon_core::queue::QueueItem;
-use archon_core::run::PipelineRun;
+use archon_core::run::{PipelineRun, RunState};
 use archon_core::steer::RunEdit;
 use archon_pipeline::PipelineSpec;
 use archon_queue::Store;
@@ -111,12 +111,14 @@ fn key_settings(
     }
 }
 
-/// Keep `run`'s plan as it finishes, read while its snapshot still exists.
-/// A plan not kept is logged: only `run_plan` of the finished run misses it.
-pub(super) async fn keep(ctx: &DaemonContext, run: &PipelineRun) {
+/// Keep `run`'s plan as it ends in `state`, written before the store shows
+/// the run finished, so `run_plan` finds it once it does. A plan not kept is
+/// logged: only `run_plan` of the finished run misses it.
+pub(super) async fn keep(ctx: &DaemonContext, run: &PipelineRun, state: &RunState) {
+    assert!(state.is_terminal(), "a plan is kept as its run finishes");
     assert!(
-        run.state.is_terminal(),
-        "a plan is kept as its run finishes"
+        !run.state.is_terminal(),
+        "kept before the run is shown finished"
     );
     if let Err(error) = try_keep(ctx, run).await {
         tracing::warn!(run = %run.id, %error, "the finished run's plan was not kept; run_plan cannot show it");

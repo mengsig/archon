@@ -191,9 +191,27 @@ async fn a_finished_runs_plan_is_kept_as_it_finished() {
         .await
         .expect_err("an older run kept none");
     assert!(
-        matches!(&gone, ArchonError::NotFound(m) if m.contains("finished before archond kept")),
+        matches!(&gone, ArchonError::NotFound(m) if m.contains("no plan was kept")),
         "{gone}"
     );
+}
+
+#[tokio::test]
+async fn a_run_whose_plan_cannot_be_kept_still_finishes() {
+    let h = harness().await;
+    let blocked = h.ctx.paths.data_dir.join("run-plans");
+    std::fs::write(&blocked, "not a directory").expect("a file where plans go");
+    let item = h.enqueue("ship it").await;
+    h.dispatch().await;
+    run_to_the_end(&h, &item.id).await;
+    let missing = run_plan(&h, &item.id)
+        .await
+        .expect_err("no plan was written");
+    assert!(
+        matches!(&missing, ArchonError::NotFound(m) if m.contains("no plan was kept")),
+        "{missing}"
+    );
+    std::fs::remove_file(&blocked).expect("the blocking file is the test's");
 }
 
 #[tokio::test]

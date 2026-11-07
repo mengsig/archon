@@ -131,13 +131,13 @@ pub(super) async fn run_plan(
     Ok(Reply::RunPlan(Box::new(plan)))
 }
 
-/// The plan kept when `run` finished; a run that finished before archond
-/// kept plans has none.
+/// The plan kept when `run` finished; none when it finished before archond
+/// kept plans, or its plan could not be written (logged then).
 async fn finished_plan(ctx: &DaemonContext, run: &PipelineRunId) -> Result<Reply, ArchonError> {
     match plan_view::kept(&ctx.paths.data_dir, run).await? {
         Some(plan) => Ok(Reply::RunPlan(Box::new(plan))),
         None => Err(ArchonError::NotFound(format!(
-            "the plan of run {run}: it finished before archond kept finished runs' plans"
+            "the plan of run {run}: no plan was kept when it finished"
         ))),
     }
 }

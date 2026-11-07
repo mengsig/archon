@@ -77,7 +77,8 @@ again from the Aether app a browser that paired on another hostname.
   effort and time limit, marked `default` or `override` (the model `tier` or
   `exact`), so a client shows what really runs. A run's plan is kept in
   `run-plans/` as it finishes, marked `finished`, until its history is
-  pruned; a run that finished before 1.5.0 has none and is `not_found`.
+  pruned; a run that finished before 1.5.0, or whose plan could not be
+  written, has none and is `not_found`.
 - `list_items` and `list_item_summaries` take `updated_since`, `before` and
   `text` (a title and brief substring).
 
@@ -197,7 +198,8 @@ From the audit in [docs/security/vnext-audit.md](docs/security/vnext-audit.md)
   item, and no tier, retry or quota reroute replaces it.
 - A quota reroute that moves a stage to another model now says so in the
   feed, naming each stage and both models, and in the item's
-  `provider_switch`, also when it moved to follow the item's provider.
+  `provider_switch`, also when it moved to follow the item's provider or
+  when dispatch resolved a queued item's tiers to other models.
 
 ### Removed
 

@@ -54,6 +54,7 @@ pub(super) async fn finish_run(
         _ => ShippingProof::None,
     };
     Box::pin(delete_role_branches(ctx, &run)).await?;
+    super::plan_view::keep(ctx, &run, &state).await;
     let now = archon_core::now();
     let finished = {
         let mut store = ctx.store.lock().await;
@@ -81,7 +82,6 @@ pub(super) async fn finish_run(
     };
     crate::learned::finished(ctx, &run).await;
     let item = finished.item;
-    super::plan_view::keep(ctx, &run).await;
     frozen::discard(&ctx.paths.data_dir, &run.id);
     table.drivers.remove(&run.id);
     table.pending.remove(&run.id);

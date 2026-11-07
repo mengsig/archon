@@ -506,6 +506,54 @@ async fn a_quota_reroute_posts_each_model_it_swaps_and_never_moves_a_pin() {
 }
 
 #[tokio::test]
+async fn a_queued_item_that_dispatch_moves_off_a_spent_provider_posts_each_swap() {
+    let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![
+            ("claude-code", window(80, TimeDelta::hours(4))),
+            ("codex", window(0, TimeDelta::hours(1))),
+        ],
+    );
+    let item = enqueue(&h, ROUTED, "moved before it ran", tier_plan()).await;
+    assert_eq!(item.routed_provider.as_deref(), Some("claude-code"));
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![
+            ("claude-code", window(10, TimeDelta::hours(3))),
+            ("codex", window(90, TimeDelta::hours(4))),
+        ],
+    );
+    h.dispatch().await;
+    let stages = h.stages(&item.id).await;
+    assert_eq!(stages[0].choice.model.to_string(), "codex/sol", "it moved");
+    let notices = h
+        .notices(archon_core::notify::NotificationKind::Progress)
+        .await;
+    let swapped: Vec<&String> = notices
+        .iter()
+        .filter(|n| n.contains("changed models"))
+        .collect();
+    assert_eq!(swapped.len(), 1, "one notice for the move: {notices:?}");
+    let notice = swapped[0];
+    assert!(
+        notice.contains("stage implement now runs on codex/sol instead of claude-code/sonnet"),
+        "{notice}"
+    );
+    assert!(
+        notice.contains("stage ship now runs on codex/mini instead of claude-code/haiku"),
+        "{notice}"
+    );
+    let switch = h.item(&item.id).await.provider_switch.expect("noted");
+    assert!(
+        switch.contains("moved from claude-code to codex"),
+        "{switch}"
+    );
+}
+
+#[tokio::test]
 async fn an_aetherd_without_headroom_or_with_a_stale_one_routes_by_weight_alone() {
     let config = weighted(&[("claude-code", 7), ("codex", 3)]);
     let weights = config.models.provider_weights(&Default::default()).unwrap();

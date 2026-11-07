@@ -107,58 +107,80 @@ pub(crate) fn reroute_spawns(
     if moved.is_empty() && item.routed_provider == held {
         return Ok(Reserve::Go);
     }
-    let held_before = std::mem::replace(&mut item.routed_provider, held.clone());
+    item.routed_provider = held.clone();
     let stored = item.model_plan.clone();
     follow_plan(item, spec, tiers);
-    let followed = plan_moves(&stored, &item.model_plan);
-    let moves = (held_before.as_deref(), held.as_deref());
-    if let Some(note) = move_note(moves, (&moved, &followed), view.as_ref()) {
-        announce_move(ctx, store, item, &note, (&moved, &followed))?;
-        item.provider_switch = Some(note);
-    }
+    record_moves(ctx, store, item, (&moved, &stored), view.as_ref())?;
     item.updated_at = archon_core::now();
     store.update_item(item)?;
     Ok(Reserve::Go)
 }
 
-/// One stage a reroute moved from model `from` to model `to`.
+/// One stage slot a reroute moved from model `from` to model `to`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Moved {
+pub(crate) struct Moved {
     stage: String,
     from: ModelRef,
     to: ModelRef,
 }
 
-/// The `get_item` line for a reroute that moved `pending` spawns or the
-/// `followed` stored choices: why, when it left a provider out of quota.
-fn move_note(
-    (held_before, held): (Option<&str>, Option<&str>),
-    (pending, followed): (&[Moved], &[Moved]),
+/// Note on `item`, and post to its feed, every model its `pending` spawns
+/// moved to and every choice of its stored plan that differs from `before`;
+/// nothing when no model moved. The caller stores `item`.
+pub(crate) fn record_moves(
+    ctx: &DaemonContext,
+    store: &mut Store,
+    item: &mut QueueItem,
+    (pending, before): (&[Moved], &ModelPlan),
     view: Option<&QuotaView>,
-) -> Option<String> {
-    let (scope, from, to) = match (pending.first(), followed.first()) {
-        (Some(m), _) => (
-            format!("stage {}", m.stage),
-            m.from.provider.clone(),
-            m.to.provider.clone(),
-        ),
-        (None, Some(_)) => (
-            "its later stages".to_owned(),
-            held_before?.to_owned(),
-            held?.to_owned(),
-        ),
-        (None, None) => return None,
+) -> Result<(), ArchonError> {
+    let moves = distinct_moves(pending, &plan_moves(before, &item.model_plan));
+    let Some(first) = moves.first() else {
+        return Ok(());
     };
-    assert!(!scope.is_empty(), "a move names what moved");
-    if let Some(note) = switch_note((Some(&from), Some(&to)), view, &scope) {
-        return Some(note);
+    let note = move_note(first, view);
+    announce_move(ctx, store, item, &note, &moves)?;
+    assert!(
+        note.contains(&first.stage),
+        "the note names a stage that moved"
+    );
+    item.provider_switch = Some(note);
+    Ok(())
+}
+
+/// `pending` then each of `followed` not among them: one entry per distinct
+/// swap, so a fan-out slot that moved differently keeps its own.
+fn distinct_moves(pending: &[Moved], followed: &[Moved]) -> Vec<Moved> {
+    let mut moves = pending.to_vec();
+    for moved in followed {
+        if !moves.contains(moved) {
+            moves.push(moved.clone());
+        }
+    }
+    debug_assert!(followed.iter().all(|m| moves.contains(m)), "none dropped");
+    assert!(
+        moves.iter().all(|m| m.from != m.to),
+        "a move changes the model"
+    );
+    moves
+}
+
+/// The `get_item` line for `first` of a reroute's moves: why, when it left
+/// a provider out of quota.
+fn move_note(first: &Moved, view: Option<&QuotaView>) -> String {
+    let (from, to) = (first.from.provider.as_str(), first.to.provider.as_str());
+    let scope = format!("stage {}", first.stage);
+    if let Some(note) = switch_note((Some(from), Some(to)), view, &scope) {
+        return note;
     }
     let now = minute(archon_core::now());
     let why = match from == to {
         true => format!("{to} resolves its tier to another model now"),
         false => format!("it follows the item's provider {to}"),
     };
-    Some(format!("{now}: {scope} moved from {from} to {to}: {why}"))
+    let note = format!("{now}: {scope} moved from {from} to {to}: {why}");
+    debug_assert!(!note.contains('\n'), "one line");
+    note
 }
 
 /// Post the reroute's `note` and every model it swapped to `item`'s feed, so
@@ -168,13 +190,11 @@ fn announce_move(
     store: &mut Store,
     item: &QueueItem,
     note: &str,
-    (pending, followed): (&[Moved], &[Moved]),
+    moves: &[Moved],
 ) -> Result<(), ArchonError> {
-    let pending_stages: Vec<&str> = pending.iter().map(|m| m.stage.as_str()).collect();
-    let unstarted = followed
+    assert!(!moves.is_empty(), "a note is made only for a move");
+    let swaps: Vec<String> = moves
         .iter()
-        .filter(|m| !pending_stages.contains(&m.stage.as_str()));
-    let swaps: Vec<String> = (pending.iter().chain(unstarted))
         .map(|m| {
             format!(
                 "stage {} now runs on {} instead of {}",
@@ -182,13 +202,13 @@ fn announce_move(
             )
         })
         .collect();
-    assert!(!swaps.is_empty(), "a note is made only for a move");
     let reason = note.split_once(": ").map_or(note, |(_, reason)| reason);
     let text = format!(
         "Item {} changed models: {reason}; {}",
         item.id,
         swaps.join("; ")
     );
+    assert!(!reason.is_empty(), "the notice says why");
     let entry = FeedEntry::Notification(Notification {
         id: NotificationId::new(),
         kind: NotificationKind::Progress,
@@ -395,4 +415,47 @@ fn follow_plan(item: &mut QueueItem, spec: &PipelineSpec, tiers: TierScope<'_>) 
         before.0.keys().collect::<Vec<_>>(),
         "only models change"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn moved(stage: &str, from: &str, to: &str) -> Moved {
+        Moved {
+            stage: stage.into(),
+            from: from.parse().unwrap(),
+            to: to.parse().unwrap(),
+        }
+    }
+
+    #[test]
+    fn a_fan_out_slot_that_moved_differently_keeps_its_own_entry() {
+        let pending = [moved("review", "a/x", "b/y")];
+        let followed = [
+            moved("review", "a/x", "b/y"),
+            moved("review", "a/z", "b/w"),
+            moved("ship", "a/x", "b/y"),
+        ];
+        let moves = distinct_moves(&pending, &followed);
+        assert_eq!(
+            moves.len(),
+            3,
+            "the same slot once, each other kept: {moves:?}"
+        );
+        assert_eq!(moves[1], moved("review", "a/z", "b/w"));
+        assert_eq!(distinct_moves(&[], &followed[2..]), followed[2..]);
+    }
+
+    #[test]
+    fn a_note_says_what_its_first_move_did_with_no_provider_held() {
+        let note = move_note(&moved("ship", "a/x", "b/y"), None);
+        assert!(note.contains("stage ship moved from a to b"), "{note}");
+        assert!(note.contains("follows the item's provider b"), "{note}");
+        let same = move_note(&moved("ship", "a/x", "a/y"), None);
+        assert!(
+            same.contains("a resolves its tier to another model"),
+            "{same}"
+        );
+    }
 }

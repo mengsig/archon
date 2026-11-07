@@ -72,8 +72,12 @@ again from the Aether app a browser that paired on another hostname.
   stacked edges, read at one `as_of` (#382). It filters by repository,
   state, pipeline, priority, initiative, component and recently finished
   items, up to 2,000 nodes, and gives the same bytes for the same store.
-- `run_plan` gives an unfinished run's frozen pipeline with its steer edits
-  applied; a finished run's plan is `not_found`.
+- `run_plan` gives a run's frozen pipeline with its steer edits applied,
+  and `settings`: each stage's and reviewers key's resolved model choices,
+  effort and time limit, marked `default` or `override` (the model `tier` or
+  `exact`), so a client shows what really runs. A run's plan is kept in
+  `run-plans/` as it finishes, marked `finished`, until its history is
+  pruned; a run that finished before 1.5.0 has none and is `not_found`.
 - `list_items` and `list_item_summaries` take `updated_since`, `before` and
   `text` (a title and brief substring).
 
@@ -183,6 +187,17 @@ From the audit in [docs/security/vnext-audit.md](docs/security/vnext-audit.md)
   reason in one line whether it goes lower or higher, within `max_effort`; archond
   still cancels a reviewer on a model the plan does not name. A delegating
   stage's cost split in `get_item` and `get_stage` counts its agents by effort.
+
+### Fixed
+
+- A model named for a stage by `steer_item` on a waiting item is the model
+  that runs. The steer kept the stage's tier, and dispatch resolved that
+  tier again to another model: an `ask` steered to Haiku while paused ran on
+  Sonnet. A named model is now an exact pin, on a waiting or a running
+  item, and no tier, retry or quota reroute replaces it.
+- A quota reroute that moves a stage to another model now says so in the
+  feed, naming each stage and both models, and in the item's
+  `provider_switch`, also when it moved to follow the item's provider.
 
 ### Removed
 

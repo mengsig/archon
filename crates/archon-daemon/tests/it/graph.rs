@@ -7,9 +7,10 @@ use crate::common;
 use archon_core::autonomy::{AutonomyPatch, ProposalMode};
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
+use archon_core::model::Effort;
 use archon_core::protocol::{
-    EnqueueRequest, ItemQuery, Reply, RepoRef, Request, RunPlan, TaskFilter, TaskGraph,
-    WaitingReasonCode,
+    EnqueueRequest, ItemQuery, ModelSource, Reply, RepoRef, Request, RunPlan, SettingSource,
+    TaskFilter, TaskGraph, WaitingReasonCode,
 };
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::steer::{InsertStage, Steer};
@@ -142,11 +143,8 @@ async fn a_steered_runs_plan_is_the_stages_it_ran() {
     assert_eq!(executed(&h, &item.id).await, stage_ids(&last));
 }
 
-#[tokio::test]
-async fn a_finished_runs_plan_is_not_kept() {
-    let h = harness().await;
-    let item = h.enqueue("ship it").await;
-    h.dispatch().await;
+/// Settle every stage the item runs until it is done.
+async fn run_to_the_end(h: &Harness, item: &QueueItemId) {
     for _ in 0..6 {
         h.settle_running(|stage| match stage.stage_id.as_str() {
             "review" => verdict(true),
@@ -155,14 +153,110 @@ async fn a_finished_runs_plan_is_not_kept() {
         .await;
         h.dispatch().await;
     }
-    assert!(matches!(
-        h.state(&item.id).await,
-        QueueState::Succeeded { .. }
-    ));
-    let gone = run_plan(&h, &item.id).await.expect_err("finished");
+    assert!(matches!(h.state(item).await, QueueState::Succeeded { .. }));
+}
+
+#[tokio::test]
+async fn a_finished_runs_plan_is_kept_as_it_finished() {
+    let h = harness().await;
+    let item = h.enqueue("ship it").await;
+    h.dispatch().await;
+    let live = run_plan(&h, &item.id).await.expect("a live run's plan");
+    assert!(!live.finished);
+    run_to_the_end(&h, &item.id).await;
+    let kept = run_plan(&h, &item.id).await.expect("the kept plan");
+    assert!(kept.finished, "it says the run finished");
+    assert_eq!(
+        RunPlan {
+            finished: false,
+            ..kept.clone()
+        },
+        live,
+        "the plan it ran"
+    );
+    assert_eq!(
+        run_plan(&h, &item.id).await.unwrap(),
+        kept,
+        "read again, unchanged"
+    );
+
+    let missing = h
+        .ctx
+        .paths
+        .data_dir
+        .join("run-plans")
+        .join(format!("{}.json", kept.run));
+    std::fs::remove_file(&missing).expect("the kept plan is a file");
+    let gone = run_plan(&h, &item.id)
+        .await
+        .expect_err("an older run kept none");
     assert!(
-        matches!(&gone, ArchonError::NotFound(m) if m.contains("finished")),
+        matches!(&gone, ArchonError::NotFound(m) if m.contains("finished before archond kept")),
         "{gone}"
+    );
+}
+
+#[tokio::test]
+async fn a_runs_plan_carries_the_settings_its_stages_run_with() {
+    let h = harness().await;
+    let mut plan = plan();
+    plan.0.get_mut("implement").unwrap()[0].effort = Effort::Low;
+    let request = EnqueueRequest {
+        onto: None,
+        stage_timeouts: [("implement".to_owned(), 5)].into(),
+        repo: Some(RepoRef(REPO_NAME.into())),
+        pipeline: Some(PIPELINE.into()),
+        title: "five minutes".into(),
+        brief: "brief".into(),
+        priority: Default::default(),
+        depends_on: Vec::new(),
+        tags: Vec::new(),
+        model_plan: plan.clone().into(),
+        model_reasons: None,
+        budget_usd: None,
+        idempotency_key: None,
+        autonomy: Default::default(),
+        origin: None,
+    };
+    let Ok(Reply::Item(item)) = h.cli(Request::Enqueue(request)).await else {
+        panic!("enqueued");
+    };
+    h.dispatch().await;
+    let shown = run_plan(&h, &item.id).await.expect("a live run's plan");
+    let keys: Vec<&str> = shown.settings.iter().map(|s| s.key.as_str()).collect();
+    assert_eq!(keys, ["implement", "review", "ship"]);
+    let implement = &shown.settings[0];
+    assert_eq!(
+        implement.choices, plan.0["implement"],
+        "the models that run"
+    );
+    assert_eq!(implement.model, ModelSource::Exact);
+    assert_eq!(
+        implement.effort,
+        SettingSource::Override,
+        "low, not the default"
+    );
+    assert_eq!(
+        (implement.timeout_minutes, implement.timeout),
+        (Some(5), Some(SettingSource::Override))
+    );
+    let pipeline_default = shown.stages[0].timeout_minutes;
+    assert_ne!(
+        pipeline_default, 5,
+        "the summary keeps the pipeline's default"
+    );
+    let ship = &shown.settings[2];
+    assert_eq!(
+        (ship.timeout_minutes, ship.timeout),
+        (
+            Some(shown.stages[2].timeout_minutes),
+            Some(SettingSource::Default)
+        )
+    );
+    let running = h.stages(&item.id).await;
+    assert_eq!(
+        running[0].choice, implement.choices[0],
+        "the plan shows what runs"
     );
 }
 

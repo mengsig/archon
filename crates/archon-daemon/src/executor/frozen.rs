@@ -97,6 +97,24 @@ pub(super) fn discard(data_dir: &Path, run: &PipelineRunId) {
     }
 }
 
+/// Write `text` durably to `root/name`, creating `root` in the data
+/// directory first: a kept run plan, which outlives the run's snapshot.
+pub(crate) fn write_kept(root: &Path, name: &str, text: &str) -> Result<(), ArchonError> {
+    assert!(
+        !name.contains('/') && !name.starts_with('.'),
+        "unsafe file name {name:?}"
+    );
+    assert!(!text.is_empty(), "a kept file says something");
+    std::fs::create_dir_all(root)
+        .map_err(|e| ArchonError::io(format!("creating {}", root.display()), e))?;
+    write_durably(root, name, text)?;
+    sync_dir(root)?;
+    let top = root
+        .parent()
+        .expect("kept files live in the data directory");
+    sync_dir(top)
+}
+
 /// Write the snapshot into `dir`, under `root`, and sync every directory
 /// from `dir` up to `root`'s parent, so the new entries survive a power loss.
 fn write_files(

@@ -81,6 +81,7 @@ pub(super) async fn finish_run(
     };
     crate::learned::finished(ctx, &run).await;
     let item = finished.item;
+    super::plan_view::keep(ctx, &run).await;
     frozen::discard(&ctx.paths.data_dir, &run.id);
     table.drivers.remove(&run.id);
     table.pending.remove(&run.id);

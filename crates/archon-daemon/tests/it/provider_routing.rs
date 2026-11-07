@@ -443,6 +443,69 @@ async fn a_running_item_s_next_stages_move_off_a_spent_provider_and_get_item_say
 }
 
 #[tokio::test]
+async fn a_quota_reroute_posts_each_model_it_swaps_and_never_moves_a_pin() {
+    let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![
+            ("claude-code", window(80, TimeDelta::hours(4))),
+            ("codex", window(0, TimeDelta::hours(1))),
+        ],
+    );
+    let plan = serde_json::from_value(serde_json::json!({
+        "implement": [{"tier": "strong"}],
+        "review": [{"model": "claude-code/opus"}, {"tier": "fast"}],
+        "ship": [{"tier": "fast"}],
+    }))
+    .unwrap();
+    let item = enqueue(&h, ROUTED, "announced", plan).await;
+    h.dispatch().await;
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![
+            ("claude-code", window(10, TimeDelta::hours(3))),
+            ("codex", window(90, TimeDelta::hours(4))),
+        ],
+    );
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    let reviews: Vec<String> = (h.stages(&item.id).await.into_iter())
+        .filter(|s| s.stage_id == "review")
+        .map(|s| s.choice.model.to_string())
+        .collect();
+    assert_eq!(
+        reviews,
+        ["claude-code/opus", "codex/mini"],
+        "the pin stays; the tier moves"
+    );
+    let notices = h
+        .notices(archon_core::notify::NotificationKind::Progress)
+        .await;
+    let swapped: Vec<&String> = notices
+        .iter()
+        .filter(|n| n.contains("changed models"))
+        .collect();
+    assert_eq!(swapped.len(), 1, "one notice for the reroute: {notices:?}");
+    let notice = swapped[0];
+    assert!(notice.contains(item.id.as_str()), "{notice}");
+    assert!(
+        notice.contains("stage review now runs on codex/mini instead of claude-code/haiku"),
+        "{notice}"
+    );
+    assert!(
+        notice.contains("stage ship now runs on codex/mini instead of claude-code/haiku"),
+        "the stored later stage too: {notice}"
+    );
+    assert!(notice.contains("has no quota"), "it says why: {notice}");
+    assert!(
+        !notice.contains("claude-code/opus"),
+        "the pin did not move: {notice}"
+    );
+}
+
+#[tokio::test]
 async fn an_aetherd_without_headroom_or_with_a_stale_one_routes_by_weight_alone() {
     let config = weighted(&[("claude-code", 7), ("codex", 3)]);
     let weights = config.models.provider_weights(&Default::default()).unwrap();

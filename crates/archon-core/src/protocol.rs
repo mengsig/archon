@@ -92,7 +92,9 @@ pub use github_links::{
     GithubKind, GithubLink, GithubObject, GithubObjectState, GithubOutboxPending, GithubRef,
     LinkRelation, ManualLinkRelation, PrRef,
 };
-pub use graph::{RunPlan, TaskEdge, TaskFilter, TaskGraph, TaskNode};
+pub use graph::{
+    ModelSource, RunPlan, SettingSource, StageSettings, TaskEdge, TaskFilter, TaskGraph, TaskNode,
+};
 
 /// The feature strings `welcome` may advertise. A feature is advertised only
 /// once its requests are served; a stub answers `unavailable`.

@@ -93,11 +93,20 @@ whichever keeps more. Older cursors get `history_expired`.
 | `task_graph` | `{filter: {repos?: RepoId[], states?: QueueStateKind[], pipelines?: string[], min_priority?: Priority, initiative?: InitiativeId, component_of?: QueueItemId, include_terminal_since?: Ts}, limit?: u32 (1..=2000, default 500)}` → `task_graph {nodes: TaskNode[], edges: TaskEdge[], initiatives: [{id, title, state, atomic}], as_of: u64, truncated: bool}` | Read |
 | `TaskNode` | `{id, repo?, title, pipeline, priority, state: QueueStateKind, state_detail?: string, stage?: string, waiting_reason?: WaitingReasonCode, spent_usd: f64, initiative?, tags: string[], created_at, updated_at, issue?: GithubRef, pr?: PrRef, agents_running: u32}` | |
 | `TaskEdge` | `{from: QueueItemId (prerequisite), to: QueueItemId (dependent), kind: "depends_on"\|"initiative_after"\|"stacked_on", satisfied: bool}` | |
-| `run_plan` | `{run}` → `run_plan {run, pipeline, revision: string, stages: StageSummary[], edited: bool}`: the frozen pipeline with steer edits applied | Read |
+| `run_plan` | `{run}` → `run_plan {run, pipeline, revision: string, stages: StageSummary[], edited: bool, settings?: StageSettings[], finished?: bool}`: the frozen pipeline with steer edits applied | Read |
+| `StageSettings` | `{key: string (a stage id or `<stage>.review`), choices: ModelChoice[], model: "tier"\|"exact", effort: "default"\|"override", timeout_minutes?: u32, timeout?: "default"\|"override"}` | |
 | `list_items` (extended) | adds `updated_since?: Ts`, `before?: Ts`, `text?: string (1..=200 chars, title and brief substring)`, also on `list_item_summaries`. Until `item_filters` is served, a query using them is refused with `unavailable`. | Read |
 
-`run_plan` serves an unfinished run only: on a finished run it returns
-`not_found`, and a finished run's plan is read from its stage attempts. Its
+`run_plan` serves a live run's plan as it resolves now, and a finished run's
+plan as archond kept it when the run finished, with `finished: true`; it is
+kept until the run's history is pruned. A run that finished before archond
+kept plans returns `not_found`, and its plan is read from its stage attempts.
+`settings` lists each stage in order, its reviewers key after it, with the
+model choices its next agents start with (`model: "tier"` when they come
+from a tier, resolved again at dispatch; `"exact"` for a named model, which
+no tier replaces), and whether the effort and time limit are the pipeline's
+`default` or an `override` set for the item. `stages` keeps the pipeline's
+own defaults. Its
 `edited` is true after any steer edit, of every kind, `AssignRoles` and
 `AbortStage` included. Today those two leave it false (a known gap).
 

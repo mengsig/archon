@@ -49,6 +49,8 @@ pub struct Pruned {
     pub retired_orchestrators: usize,
     pub tracked_requests: usize,
     pub history: HistoryPruned,
+    /// Kept plans of finished runs whose history went.
+    pub run_plans: usize,
 }
 
 impl Pruned {
@@ -67,6 +69,7 @@ impl Pruned {
             + self.retired_orchestrators
             + self.tracked_requests
             + self.history.total()
+            + self.run_plans
     }
 }
 
@@ -144,6 +147,10 @@ pub async fn prune_once(ctx: &DaemonContext, now: Timestamp) -> Result<Pruned, A
         ctx.store.lock().await.prune_tracked(tracked_cutoff(now)),
     )?;
     let history = prune_history(ctx, now).await?;
+    let run_plans = category(
+        "run_plans",
+        executor::plan_view::prune_kept(&ctx.paths.data_dir, &*ctx.store.lock().await),
+    )?;
     Ok(Pruned {
         spawn_requests,
         run_vars,
@@ -159,6 +166,7 @@ pub async fn prune_once(ctx: &DaemonContext, now: Timestamp) -> Result<Pruned, A
         retired_orchestrators,
         tracked_requests,
         history,
+        run_plans,
     })
 }
 

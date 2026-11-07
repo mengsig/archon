@@ -170,6 +170,7 @@ impl Verdict {
             given => Some(commit_of(given).ok_or("its `base:` line names no commit")?),
         };
         let listed = field("findings").and_then(Value::as_array);
+        validate_findings(listed)?;
         let read = Self::judged(pass, head, base, listed);
         read.claims_agree(summary, structured)?;
         Ok(read)
@@ -204,6 +205,7 @@ impl Verdict {
                 "its result carries no structured verdict: {VERDICT_HOWTO}"
             ));
         };
+        validate_findings(data.get("findings").and_then(Value::as_array))?;
         let pass = match Said::from_structured(value) {
             Some(Said::Pass) => true,
             Some(Said::Fail) => false,
@@ -260,10 +262,12 @@ impl Verdict {
     }
 }
 
-/// Each finding of `list` as one line: its title (else its issue), where it
-/// is and its remedy, so a finding with none of them still counts.
+/// Each finding of `list` as one line, after validation.
 fn described(list: &[&Value]) -> Vec<String> {
-    let lines: Vec<String> = list.iter().map(|finding| describe(finding)).collect();
+    let lines: Vec<String> = list
+        .iter()
+        .map(|finding| describe(finding).expect("validated finding"))
+        .collect();
     assert_eq!(lines.len(), list.len(), "one line per finding");
     assert!(
         lines.iter().all(|l| !l.is_empty()),
@@ -272,21 +276,55 @@ fn described(list: &[&Value]) -> Vec<String> {
     lines
 }
 
-fn describe(finding: &Value) -> String {
+fn validate_findings(list: Option<&Vec<Value>>) -> Result<(), String> {
+    if let Some(finding) = list.into_iter().flatten().find(|f| describe(f).is_none()) {
+        return Err(format!(
+            "its finding is unreadable: {}",
+            one_line(&finding.to_string())
+        ));
+    }
+    Ok(())
+}
+
+fn describe(finding: &Value) -> Option<String> {
     let field = |key: &str| {
         let text = finding.get(key).and_then(Value::as_str).map(one_line);
         text.filter(|t| !t.is_empty())
     };
-    let what = field("title").or_else(|| field("issue"));
+    // Prefer the canonical title, then common reviewer alternatives in this order.
+    let what = finding
+        .as_str()
+        .map(one_line)
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            [
+                "title",
+                "issue",
+                "short_summary",
+                "summary",
+                "description",
+                "message",
+                "detail",
+            ]
+            .into_iter()
+            .find_map(field)
+        });
+    let path = field("path").or_else(|| field("file"));
+    let remedy = ["remedy", "recommendation", "fix", "suggestion"]
+        .into_iter()
+        .find_map(field);
+    if what.is_none() && path.is_none() && remedy.is_none() {
+        return None;
+    }
     let mut line = what.unwrap_or_else(|| "an untitled finding".to_owned());
-    if let Some(path) = field("path") {
+    if let Some(path) = path {
         let at = finding.get("line").and_then(Value::as_u64);
         line += &at.map_or(format!(" at {path}"), |n| format!(" at {path}:{n}"));
     }
-    if let Some(remedy) = field("remedy") {
+    if let Some(remedy) = remedy {
         line += &format!(" (remedy: {remedy})");
     }
-    one_line(&line)
+    Some(one_line(&line))
 }
 
 /// Why a pass is refused when the rest of its result takes it back, quoting
@@ -887,7 +925,7 @@ mod tests {
             refused.len() < long.len(),
             "the quote is clipped: {refused}"
         );
-        let blocked = json!({"verdict": "pass", "head": HEAD, "findings": [{"blocking": true}]});
+        let blocked = json!({"verdict": "pass", "head": HEAD, "findings": [{"title": "defect", "blocking": true}]});
         let refused = Verdict::read_result("Verdict: pass.", Some(&blocked)).unwrap_err();
         assert!(refused.contains("lists a blocking finding"), "{refused}");
     }
@@ -981,7 +1019,7 @@ mod tests {
         let findings = json!([
             {"title": " Leaks  the\nhandle ", "path": "src/a.rs", "line": 7, "remedy": "close it"},
             {"severity": "low", "issue": "Drops the tail", "path": "src/b.rs"},
-            {"title": ""}
+            {"title": "", "summary": "Third finding"}
         ]);
         let data = json!({"verdict": "fail", "head": HEAD, "findings": findings});
         let read = Verdict::read(Some(&data)).unwrap();
@@ -991,8 +1029,49 @@ mod tests {
             [
                 "Leaks the handle at src/a.rs:7 (remedy: close it)",
                 "Drops the tail at src/b.rs",
-                "an untitled finding"
+                "Third finding"
             ]
+        );
+    }
+
+    #[test]
+    fn alternate_finding_shapes_are_described() {
+        let findings = json!([
+            {"summary": "Drops data", "file": "src/a.rs", "line": 7, "recommendation": "Keep it"},
+            "A bare finding",
+            {"file": "...", "line": 104, "blocking": true, "summary": "...", "failure_scenario": "..."}
+        ]);
+        let data = json!({"verdict": "fail", "head": HEAD, "findings": findings});
+        let read = Verdict::read_result("", Some(&data)).unwrap();
+        assert_eq!(read.blocking, Some(3));
+        assert_eq!(
+            read.blocking_findings,
+            [
+                "Drops data at src/a.rs:7 (remedy: Keep it)",
+                "A bare finding",
+                "... at ...:104"
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_findings_make_the_review_unreadable() {
+        for finding in [
+            json!({}),
+            json!(null),
+            json!({"severity": "high", "blocking": true}),
+        ] {
+            for verdict in ["pass", "fail"] {
+                let data = json!({"verdict": verdict, "head": HEAD, "findings": [finding]});
+                let error = Verdict::read_result("", Some(&data)).unwrap_err();
+                assert!(error.starts_with("its finding is unreadable: "));
+                assert!(error.contains(&finding.to_string()));
+            }
+        }
+        let listed = json!({"head": HEAD, "findings": [{}]});
+        assert_eq!(
+            Verdict::read_result("VERDICT: FAIL", Some(&listed)).unwrap_err(),
+            "its finding is unreadable: {}"
         );
     }
 

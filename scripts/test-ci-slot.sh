@@ -9,11 +9,17 @@ if ! command -v flock >/dev/null 2>&1 || ! command -v timeout >/dev/null 2>&1; t
     exit 0
 fi
 if [ "${CI_SLOT_TEST_SHELL:-}" = '' ]; then
+    tested=
     for test_shell in bash dash; do
-        command -v "$test_shell" >/dev/null 2>&1 || { echo "missing shell: $test_shell" >&2; exit 1; }
+        if ! command -v "$test_shell" >/dev/null 2>&1; then
+            echo "SKIP: $test_shell is not installed"
+            continue
+        fi
         echo "test-ci-slot.sh: testing $test_shell"
         CI_SLOT_TEST_SHELL=$test_shell timeout 90 "$test_shell" "$0"
+        tested=1
     done
+    if [ -z "$tested" ]; then CI_SLOT_TEST_SHELL='sh' timeout 90 sh "$0"; fi
     exit 0
 fi
 shell=$CI_SLOT_TEST_SHELL

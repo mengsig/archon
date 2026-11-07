@@ -1,5 +1,11 @@
 # Changelog
 
+### Tooling
+
+- Host CI slots now share Aether's FIFO queue, preventing newer Archon runs
+  from bypassing waiting jobs. `sh scripts/ci-slot.sh --status` shows holders
+  and queued commands.
+
 ## 1.5.0
 
 A minor release for the unified Aether app (#377). archond speaks daemon

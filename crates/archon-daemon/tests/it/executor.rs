@@ -2604,7 +2604,7 @@ async fn a_policy_narrowed_mid_run_bounds_the_next_lead_s_reviewers() {
     h.dispatch().await;
     let build = h.backend.requests().last().unwrap().clone();
     assert_eq!(build.labels["archon.stage"], "build");
-    let own = format!("on {MODEL} at tier balanced and effort medium. That effort is the default");
+    let own = format!("on {MODEL} at tier balanced and effort medium or higher");
     assert!(build.instructions.contains(&own), "{}", build.instructions);
     let named = build.instructions.matches(REVIEW_MODEL).count();
     assert_eq!(named, 0, "{}", build.instructions);
@@ -2688,14 +2688,12 @@ async fn adaptive_guarded_build_delegates_within_the_stated_policy_and_archond_s
     assert!(build.instructions.contains("\n## Review on record\n"));
     assert!(build.instructions.contains("\n## Ship record\n"));
     // The repository leaves the lead's model alone: its reviewers run on it.
-    let own = format!(
-        "on {MODEL} at tier balanced and effort medium. That effort is the default, for a diff \
-         the rubric leaves open; otherwise the rubric decides: `low` for a trivial diff, \
-         `medium` for a small or low-risk diff, `high` for a risky diff or shared code; never \
-         above high, the model policy's cap. Off the default, lower or higher, state the reason \
-         in one line in your result."
-    );
+    let own = format!("on {MODEL} at tier balanced and effort medium up to high, and high");
     assert!(build.instructions.contains(&own), "{}", build.instructions);
+    assert!(
+        !build.instructions.contains("rubric"),
+        "no effort sizing by default"
+    );
 
     let (built, reviewer) = reviewed_by_one(&h, "Verified; one reviewer passed it").await;
     h.settle_running(|_| built.clone()).await;
@@ -2707,6 +2705,35 @@ async fn adaptive_guarded_build_delegates_within_the_stated_policy_and_archond_s
     assert_eq!(title, "Change the thing");
     let review = format!("REVIEW: pass, by {REVIEW_MODEL} (agent {reviewer})");
     assert!(body.contains(&review), "{body}");
+}
+
+/// `[models] effort_sizing` reaches the lead's contract: its children and its
+/// reviewers are sized by the effort rubric, within the policy's cap.
+#[tokio::test]
+async fn an_opted_in_lead_sizes_its_children_and_reviewers_by_the_rubric() {
+    let mut config = Config::default();
+    config.models.allow = vec![MODEL.parse().unwrap(), REVIEW_MODEL.parse().unwrap()];
+    config.models.max_effort = Some(Effort::High);
+    config.models.effort_sizing = true;
+    let h = Harness::with_config(config).await;
+    seed_review_catalog(&h).await;
+    h.repo_config(&format!("[models]\ndeny = [\"{REVIEW_MODEL}\"]\n"));
+    adaptive_item(&h).await;
+    let build = h.backend.requests()[0].clone();
+    assert_eq!(build.labels["archon.stage"], "build");
+    let rules = &build.instructions[build.instructions.find("## Delegation").unwrap()..];
+    let sizing = format!(
+        "Size each child's effort to its own task, whatever yours is: {}",
+        archon_core::model::EFFORT_RUBRIC
+    );
+    assert!(rules.contains(&sizing), "{rules}");
+    let own = format!(
+        "on {MODEL} at tier balanced and effort medium. That effort is the default, for a diff \
+         the rubric leaves open; otherwise the rubric decides: `low` for a trivial diff, \
+         `medium` for a small or low-risk diff, `high` for a risky diff or shared code; never \
+         above high, the model policy's cap."
+    );
+    assert!(build.instructions.contains(&own), "{}", build.instructions);
 }
 
 /// A pass is the lead's word until Aether shows the reviewer: an agent it

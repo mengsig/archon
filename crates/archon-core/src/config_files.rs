@@ -32,6 +32,7 @@ pub const STARTER_CONFIG: &str = r#"# Archon's configuration. Every key is optio
 # provider_weights = { "claude-code" = 7, codex = 3 }   # share of tier-only items
 # reserve_percent = { orchestrator = 15, interactive = 10 }   # quota stages never spend
 # interactive_providers = ["claude-code"]   # providers also used by hand
+# effort_sizing = false   # true: size every agent's effort by the effort rubric
 
 # Reviewers without an explicit <stage>.review model plan. The tier is a
 # preference: with no permitted model at it, the best permitted one is used.

@@ -5,7 +5,7 @@ use archon_core::model::{Effort, ModelChoice, ModelRef};
 use archon_core::model_tier::{ModelCatalog, Tier};
 use archon_core::policy::ModelPolicy;
 
-/// [`governed_reviewer_rules`] with no item budget.
+/// [`governed_reviewer_rules`] with no item budget and no effort sizing.
 pub fn reviewer_profile_rules(
     named: Option<&[ModelChoice]>,
     own: &ModelRef,
@@ -13,7 +13,7 @@ pub fn reviewer_profile_rules(
     profile: &ReviewConfig,
     catalog: &ModelCatalog,
 ) -> String {
-    governed_reviewer_rules(named, own, policy, (profile, catalog), false)
+    governed_reviewer_rules(named, own, policy, (profile, catalog), false, false)
 }
 
 /// Whether Aether can enforce a dollar budget on `provider`. Mirrors the
@@ -26,16 +26,18 @@ pub fn provider_reports_cost(provider: &str) -> bool {
 /// The reviewers' models for the stage's `own` model. Under an item budget
 /// (`governed`) only providers that report a dollar cost qualify, since
 /// Aether refuses to delegate to any other. Explicit plans keep their
-/// contract; unnamed reviewers use the configured profile.
+/// contract; unnamed reviewers use the configured profile. `effort_sizing`
+/// (`[models] effort_sizing`) makes each effort a default the rubric may move.
 pub fn governed_reviewer_rules(
     named: Option<&[ModelChoice]>,
     own: &ModelRef,
     policy: &ModelPolicy,
     (profile, catalog): (&ReviewConfig, &ModelCatalog),
     governed: bool,
+    effort_sizing: bool,
 ) -> String {
     if let Some(choices) = named.filter(|choices| !choices.is_empty()) {
-        return super::named_reviewer_rules(choices, policy.max_effort);
+        return super::named_reviewer_rules(choices, policy.max_effort, effort_sizing);
     }
     let costed;
     let catalog = if governed {
@@ -45,9 +47,18 @@ pub fn governed_reviewer_rules(
         catalog
     };
     let tier = profile.default_tier;
-    let effort = profile.default_effort.max(Effort::Medium);
-    let effort = policy.max_effort.map_or(effort, |cap| cap.min(effort));
-    let sizing = super::reviewer_effort_rule(policy.max_effort);
+    let floor = profile.default_effort.max(Effort::Medium);
+    let floor = policy.max_effort.map_or(floor, |cap| cap.min(floor));
+    let (effort, sizing) = match effort_sizing {
+        true => (
+            floor.to_string(),
+            format!(" {}", super::reviewer_effort_rule(policy.max_effort)),
+        ),
+        false => (
+            super::unnamed_reviewer_effort(floor, policy.max_effort),
+            String::new(),
+        ),
+    };
     if let Some((model, resolved)) = resolve_default(tier, own, policy, profile, catalog) {
         assert!(
             policy.permits_model(&model),
@@ -57,16 +68,16 @@ pub fn governed_reviewer_rules(
         if resolved == tier {
             return format!(
                 "- Delegate every reviewer with role `reviewer`, on {model} at tier {tier} \
-                 and effort {effort}. {sizing}\n"
+                 and effort {effort}.{sizing}\n"
             );
         }
         return format!(
             "- Delegate every reviewer with role `reviewer`, on {model} at effort {effort}: \
-             {tier} unavailable under policy ({}); using {model}. {sizing}\n",
+             {tier} unavailable under policy ({}); using {model}.{sizing}\n",
             policy.describe()
         );
     }
-    unplaced_rules(own, policy, (effort, &sizing), governed)
+    unplaced_rules(own, policy, (&effort, &sizing), governed)
 }
 
 /// Why the reviewers owed cannot run under an item budget, `None` when they
@@ -156,10 +167,14 @@ fn unplaced_model<'a>(
 fn unplaced_rules(
     own: &ModelRef,
     policy: &ModelPolicy,
-    (effort, sizing): (Effort, &str),
+    (effort, sizing): (&str, &str),
     governed: bool,
 ) -> String {
-    assert!(!sizing.is_empty(), "a rule for sizing the effort");
+    assert!(!effort.is_empty(), "an effort to name");
+    assert!(
+        sizing.is_empty() || sizing.starts_with(' '),
+        "a sizing rule follows a sentence"
+    );
     let Some(model) = unplaced_model(own, policy, governed) else {
         return format!(
             "- Delegate no reviewer: the model policy ({}) allows no model{}.\n",
@@ -174,7 +189,7 @@ fn unplaced_rules(
     format!(
         "- Delegate every reviewer with role `reviewer`, on {model} at effort {effort}: \
          Archon's cached catalog places no allowed model by tier, and the model policy \
-         ({}) permits it. {sizing}\n",
+         ({}) permits it.{sizing}\n",
         policy.describe()
     )
 }
@@ -208,9 +223,10 @@ mod tests {
         let own: ModelRef = "claude-code/sonnet".parse().unwrap();
         let config = ReviewConfig::default();
         let args = (&config, &catalog());
-        let free = governed_reviewer_rules(None, &own, &ModelPolicy::default(), args, false);
+        let free = governed_reviewer_rules(None, &own, &ModelPolicy::default(), args, false, false);
         assert!(free.contains("codex/balanced"), "{free}");
-        let governed = governed_reviewer_rules(None, &own, &ModelPolicy::default(), args, true);
+        let governed =
+            governed_reviewer_rules(None, &own, &ModelPolicy::default(), args, true, false);
         assert!(governed.contains("claude-code/sonnet"), "{governed}");
         assert!(!governed.contains("codex"), "{governed}");
     }
@@ -229,7 +245,7 @@ mod tests {
         let config = ReviewConfig::default();
         let none = ModelCatalog::default();
         assert!(governed_review_refusal(None, &own, &both, (&config, &none)).is_none());
-        let rules = governed_reviewer_rules(None, &own, &both, (&config, &none), true);
+        let rules = governed_reviewer_rules(None, &own, &both, (&config, &none), true, false);
         assert!(rules.contains("claude-code/opus"), "{rules}");
     }
 
@@ -280,19 +296,15 @@ mod tests {
         let mut config = ReviewConfig::default();
         let rules =
             reviewer_profile_rules(None, &own, &ModelPolicy::default(), &config, &catalog());
+        assert!(rules.contains("codex/balanced at tier balanced and effort medium or higher"));
         assert!(
-            rules.contains("codex/balanced at tier balanced and effort medium. That effort is"),
-            "a configured low effort is raised to medium: {rules}"
-        );
-        assert!(
-            rules.contains("`low` for a trivial diff, `medium` for a small or low-risk diff")
-                && rules.contains(super::super::REASON_RULE),
-            "{rules}"
+            rules.contains("high or higher when you rate the change's risk medium or high"),
+            "a configured low effort is raised to the floor: {rules}"
         );
         config.prefer_other_provider = false;
         let rules =
             reviewer_profile_rules(None, &own, &ModelPolicy::default(), &config, &catalog());
-        assert!(rules.contains("claude-code/sonnet at tier balanced and effort medium."));
+        assert!(rules.contains("claude-code/sonnet at tier balanced and effort medium or higher"));
         config.prefer_other_provider = true;
         config.default_effort = Effort::High;
         let policy =
@@ -320,9 +332,54 @@ mod tests {
         );
         assert_eq!(
             rules,
-            super::super::reviewer_model_rules(Some(&named), &own, &policy)
+            super::super::reviewer_model_rules(Some(&named), &own, &policy, false)
         );
         assert!(rules.contains("claude-code/sonnet at effort high"));
+    }
+
+    /// Off by default, a reviewer's effort is 1.4.12's floor; the opt-in makes
+    /// it a default the rubric moves, for a named reviewer as for the profile.
+    #[test]
+    fn effort_sizing_turns_the_reviewer_floor_into_a_rubric_default() {
+        let own: ModelRef = "claude-code/sonnet".parse().unwrap();
+        let config = ReviewConfig::default();
+        let policy = ModelPolicy::default();
+        let rules = |sizing| {
+            governed_reviewer_rules(None, &own, &policy, (&config, &catalog()), false, sizing)
+        };
+        let floored = rules(false);
+        assert!(floored.contains("effort medium or higher, and high or higher when"));
+        assert!(!floored.contains("rubric"), "{floored}");
+        let sized = rules(true);
+        assert!(
+            sized.contains("codex/balanced at tier balanced and effort medium. That effort is"),
+            "{sized}"
+        );
+        assert!(
+            sized.contains("`low` for a trivial diff") && sized.contains(super::super::REASON_RULE)
+        );
+        assert!(
+            !sized.contains("or higher"),
+            "no floor under the opt-in: {sized}"
+        );
+        let named = [ModelChoice {
+            model: own.clone(),
+            effort: Effort::High,
+            tier: None,
+        }];
+        let at = |sizing| {
+            governed_reviewer_rules(
+                Some(&named),
+                &own,
+                &policy,
+                (&config, &catalog()),
+                false,
+                sizing,
+            )
+        };
+        assert!(at(false).contains("claude-code/sonnet at effort high or higher"));
+        assert!(at(false).contains("Each effort is a floor, never a ceiling"));
+        assert!(at(true).contains("claude-code/sonnet at effort high. That effort is the default"));
     }
 
     fn assert_no_lookup_instruction(rules: &str) {
@@ -364,7 +421,7 @@ mod tests {
             &single_fast_catalog(),
         );
         assert!(
-            rules.contains("on codex/luna at effort medium: "),
+            rules.contains("on codex/luna at effort medium or higher"),
             "{rules}"
         );
         assert!(rules.contains("balanced unavailable under policy"));
@@ -385,7 +442,7 @@ mod tests {
                 &catalog,
             );
             assert!(
-                rules.contains("on codex/luna at effort medium: "),
+                rules.contains("on codex/luna at effort medium or higher"),
                 "{rules}"
             );
             assert_no_lookup_instruction(&rules);
@@ -398,7 +455,7 @@ mod tests {
             &ModelCatalog::default(),
         );
         assert!(
-            rules.contains("on third/other at effort medium: "),
+            rules.contains("on third/other at effort medium or higher"),
             "{rules}"
         );
         let rules = reviewer_profile_rules(
@@ -429,9 +486,7 @@ mod tests {
             &single_fast_catalog(),
         );
         assert!(
-            rules.contains(
-                "codex/sol at tier balanced and effort medium. That effort is the default"
-            ),
+            rules.contains("codex/sol at tier balanced and effort medium or higher"),
             "{rules}"
         );
     }
@@ -449,7 +504,7 @@ mod tests {
         let narrowed = global.narrowed_by(&policy_allowing(&["codex/luna"]));
         let rules = reviewer_profile_rules(None, &own, &narrowed, &config, &single_fast_catalog());
         assert!(
-            rules.contains("on codex/luna at effort medium: "),
+            rules.contains("on codex/luna at effort medium or higher"),
             "{rules}"
         );
         assert_no_lookup_instruction(&rules);
@@ -466,7 +521,7 @@ mod tests {
         let rules =
             reviewer_profile_rules(None, &own, &ModelPolicy::default(), &config, &catalog());
         assert!(
-            rules.contains("on codex/strong at effort medium: "),
+            rules.contains("on codex/strong at effort medium or higher"),
             "{rules}"
         );
         assert!(rules.contains("frontier unavailable under policy"));

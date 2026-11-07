@@ -159,7 +159,7 @@ pub fn orchestrator_instructions(
         "orchestrator workspace must be absolute"
     );
     let user_pipelines = archon_core::paths::config_dir().join("pipelines");
-    let mut text = builtin_prompt(github);
+    let mut text = sized_efforts(builtin_prompt(github), config.models.effort_sizing);
     let depth = config.limits.max_delegation_depth;
     text.push_str(&installation(workspace, &user_pipelines, depth));
     if let Some(path) = &config.orchestrator.instructions_file {
@@ -188,6 +188,31 @@ fn builtin_prompt(github: bool) -> String {
     .concat();
     assert_eq!(text.len(), BUILTIN_PROMPT.len() + GITHUB_SECTION.len() + 1);
     text
+}
+
+/// 1.4.12's effort line of the built-in prompt, kept unless `[models]
+/// effort_sizing` swaps in the rubric that stage contracts give for children.
+const UNSIZED_EFFORTS: &str =
+    "`x_high` or `max` only for a named reasoning problem inspection left open.\n";
+
+/// `prompt` with its effort line as `[models] effort_sizing` asks.
+fn sized_efforts(prompt: String, effort_sizing: bool) -> String {
+    assert_eq!(
+        prompt.matches(UNSIZED_EFFORTS).count(),
+        1,
+        "the built-in prompt carries 1.4.12's effort line once"
+    );
+    if !effort_sizing {
+        return prompt;
+    }
+    let sized = format!(
+        "Size each stage's effort to its task: {} Off the learned or configured effort, \
+         lower or higher, state the reason in one line in `model_reasons`.\n",
+        archon_core::model::EFFORT_RUBRIC
+    );
+    let prompt = prompt.replacen(UNSIZED_EFFORTS, &sized, 1);
+    debug_assert!(!prompt.contains(UNSIZED_EFFORTS), "the line is replaced");
+    prompt
 }
 
 /// What the built-in prompt refers to but cannot know: paths, and how deep
@@ -1637,6 +1662,20 @@ mod tests {
         }
         let rubric = archon_core::model::EFFORT_RUBRIC;
         assert!(
+            prompt.contains(
+                "`x_high` or `max` only for a named reasoning problem inspection left open."
+            ),
+            "1.4.12's effort rule unless `[models] effort_sizing` opts in"
+        );
+        assert!(
+            !prompt.contains("Size each stage's effort"),
+            "no sizing by default"
+        );
+        let mut config = Config::default();
+        config.models.effort_sizing = true;
+        let sized = orchestrator_instructions(&config, Path::new("/data/orchestrator"), true);
+        let prompt = unwrapped(&sized.unwrap());
+        assert!(
             prompt.contains(&format!("Size each stage's effort to its task: {rubric}")),
             "the stage contracts' effort rubric, word for word"
         );
@@ -1854,7 +1893,7 @@ mod tests {
     }
 
     /// The prompt is paid for on every turn; the tools describe themselves.
-    /// The half KiB above 13 holds the effort rubric.
+    /// The half KiB above 13 holds the effort rubric `[models] effort_sizing` adds.
     const BUDGET_BYTES: usize = 13 * 1024 + 512;
 
     #[test]
@@ -1868,6 +1907,11 @@ mod tests {
         assert!(
             watching <= BUDGET_BYTES,
             "with the GitHub policy it grew to {watching} bytes"
+        );
+        let sized = sized_efforts(builtin_prompt(true), true).len();
+        assert!(
+            sized <= BUDGET_BYTES,
+            "with the GitHub policy and effort sizing it grew to {sized} bytes"
         );
     }
 }

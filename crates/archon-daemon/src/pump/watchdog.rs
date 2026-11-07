@@ -254,7 +254,10 @@ async fn violation(
     };
     Ok(match refusal {
         Some(refusal) => Some(refusal.to_string()),
-        None => held.and_then(|held| reviewer_refusal(named, model, &held)),
+        None => held.and_then(|held| {
+            let sizing = ctx.config.models.effort_sizing;
+            reviewer_refusal(named, model, &held, sizing)
+        }),
     })
 }
 
@@ -275,13 +278,25 @@ async fn policy_violation(
     Ok(policy_refusal(policy, model, &held).map(|refusal| refusal.to_string()))
 }
 
-/// Why a reviewer child runs on no model the plan names for reviewers. Its
-/// effort is the lead's to size to the diff, from the plan's as a default; the
-/// model policy's `max_effort` alone bounds it. A child whose role is no
+/// Why a reviewer child breaks the plan's reviewers: by default it runs on no
+/// model the plan names, or below that model's effort, a floor. With
+/// `effort_sizing` only the model is held; the lead sizes the effort, the
+/// model policy's `max_effort` alone bounding it. A child whose role is no
 /// reviewer's is not held to the plan.
-fn reviewer_refusal(named: &[ModelChoice], model: &ModelRef, held: &Value) -> Option<String> {
+fn reviewer_refusal(
+    named: &[ModelChoice],
+    model: &ModelRef,
+    held: &Value,
+    effort_sizing: bool,
+) -> Option<String> {
     let role = held.get("role").and_then(Value::as_str).unwrap_or_default();
-    if !role.eq_ignore_ascii_case("reviewer") || named.iter().any(|c| c.model == *model) {
+    if !role.eq_ignore_ascii_case("reviewer") {
+        return None;
+    }
+    if !effort_sizing {
+        return floored_reviewer_refusal(named, model, held);
+    }
+    if named.iter().any(|c| c.model == *model) {
         return None;
     }
     let listed: Vec<String> = named
@@ -291,6 +306,47 @@ fn reviewer_refusal(named: &[ModelChoice], model: &ModelRef, held: &Value) -> Op
     Some(format!(
         "reviewer on {model} breaks the item's reviewer plan; reviewers run on: {}; \
          delegate it again on one of them",
+        listed.join(", ")
+    ))
+}
+
+/// 1.4.12's rule: a reviewer runs on a planned model at that model's effort or
+/// higher; one whose effort cannot be read cannot be compared, so it is refused.
+fn floored_reviewer_refusal(
+    named: &[ModelChoice],
+    model: &ModelRef,
+    held: &Value,
+) -> Option<String> {
+    assert!(!named.is_empty(), "a reviewer plan names reviewers");
+    let effort = match child_effort(held) {
+        ChildEffort::Known(effort) => effort,
+        ChildEffort::Unknown => {
+            return Some(
+                "reviewer effort is missing; cannot compare with its reviewer plan".into(),
+            );
+        }
+        ChildEffort::Unrecognised(raw) => {
+            return Some(format!(
+                "reviewer effort {raw:?} cannot be compared with its reviewer plan"
+            ));
+        }
+    };
+    let on_model: Vec<&ModelChoice> = named.iter().filter(|c| c.model == *model).collect();
+    if on_model.iter().any(|c| effort >= c.effort) {
+        return None;
+    }
+    let listed: Vec<String> = named
+        .iter()
+        .map(|c| format!("{} at effort {} or higher", c.model, c.effort))
+        .collect();
+    let why = match on_model.is_empty() {
+        true => format!("reviewer on {model} breaks the item's reviewer plan"),
+        false => {
+            format!("reviewer on {model} at effort {effort} is below the item's reviewer plan")
+        }
+    };
+    Some(format!(
+        "{why}; reviewers run on: {}; delegate it again at the planned effort or higher",
         listed.join(", ")
     ))
 }
@@ -648,7 +704,7 @@ mod reviewer_tests {
     use serde_json::json;
 
     #[test]
-    fn named_reviewers_are_held_to_their_model_at_any_effort() {
+    fn named_reviewers_are_held_to_their_model_and_at_least_their_effort() {
         let model: ModelRef = "claude-code/claude-haiku-5-5".parse().unwrap();
         let named = [ModelChoice {
             model: model.clone(),
@@ -656,22 +712,53 @@ mod reviewer_tests {
             tier: None,
         }];
         let reviewer = |effort| json!({"role": "reviewer", "config": {"effort": effort}});
+        let refusal = |model: &ModelRef, held: &Value| reviewer_refusal(&named, model, held, false);
+        assert!(refusal(&model, &reviewer("medium")).is_none());
+        assert!(refusal(&model, &reviewer("high")).is_none());
+        assert!(refusal(&model, &reviewer("max")).is_none());
+        let below = refusal(&model, &reviewer("low")).expect("below the floor");
+        assert!(
+            below.contains("at effort low is below the item's reviewer plan")
+                && below.contains("at effort medium or higher"),
+            "{below}"
+        );
+        assert!(refusal(&model, &reviewer("invalid")).is_some());
+        assert!(refusal(&model, &json!({"role":"reviewer"})).is_some());
+        let other = "codex/gpt-6-luna".parse().unwrap();
+        assert!(refusal(&other, &reviewer("low")).is_some());
+        for role in ["worker", "preview-builder", "review-assistant"] {
+            assert!(refusal(&other, &json!({"role":role})).is_none());
+        }
+    }
+
+    /// `[models] effort_sizing` lets the lead size a reviewer's effort: only
+    /// its model is held to the plan.
+    #[test]
+    fn sized_reviewers_are_held_to_their_model_at_any_effort() {
+        let model: ModelRef = "claude-code/claude-haiku-5-5".parse().unwrap();
+        let named = [ModelChoice {
+            model: model.clone(),
+            effort: Effort::Medium,
+            tier: None,
+        }];
+        let reviewer = |effort| json!({"role": "reviewer", "config": {"effort": effort}});
+        let refusal = |model: &ModelRef, held: &Value| reviewer_refusal(&named, model, held, true);
         for effort in ["low", "medium", "high", "x_high", "max"] {
             assert!(
-                reviewer_refusal(&named, &model, &reviewer(effort)).is_none(),
+                refusal(&model, &reviewer(effort)).is_none(),
                 "a {effort} reviewer on the plan's model runs: the lead sizes it to the diff"
             );
         }
-        assert!(reviewer_refusal(&named, &model, &json!({"role":"reviewer"})).is_none());
+        assert!(refusal(&model, &json!({"role":"reviewer"})).is_none());
         let other = "codex/gpt-6-luna".parse().unwrap();
-        let off_plan = reviewer_refusal(&named, &other, &reviewer("high")).expect("off the plan");
+        let off_plan = refusal(&other, &reviewer("high")).expect("off the plan");
         assert!(
             off_plan.contains("reviewer on codex/gpt-6-luna breaks the item's reviewer plan")
                 && off_plan.contains("claude-code/claude-haiku-5-5 (default effort medium)"),
             "{off_plan}"
         );
         for role in ["worker", "preview-builder", "review-assistant"] {
-            assert!(reviewer_refusal(&named, &other, &json!({"role":role})).is_none());
+            assert!(refusal(&other, &json!({"role":role})).is_none());
         }
     }
 }

@@ -76,8 +76,10 @@ fn costs() -> Vec<Cost> {
                     .review_duty(stage)
                     .is_some_and(|duty| duty.reviewers > 0);
             let delegation = match delegates {
+                // Measured with `[models] effort_sizing` on, the longer section.
                 true => {
-                    contract::delegation_rules(mode, POLICY, 2, Some(Path::new(EXPERIMENTS))).len()
+                    let experiments = Some(Path::new(EXPERIMENTS));
+                    contract::delegation_rules(mode, POLICY, 2, experiments, true).len()
                 }
                 false => 0,
             };

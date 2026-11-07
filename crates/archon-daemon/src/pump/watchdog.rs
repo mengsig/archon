@@ -317,7 +317,6 @@ fn floored_reviewer_refusal(
     model: &ModelRef,
     held: &Value,
 ) -> Option<String> {
-    assert!(!named.is_empty(), "a reviewer plan names reviewers");
     let effort = match child_effort(held) {
         ChildEffort::Known(effort) => effort,
         ChildEffort::Unknown => {
@@ -729,6 +728,19 @@ mod reviewer_tests {
         for role in ["worker", "preview-builder", "review-assistant"] {
             assert!(refusal(&other, &json!({"role":role})).is_none());
         }
+    }
+
+    /// `"<stage>.review": []` parses; as in 1.4.12 a reviewer under it is
+    /// refused, never a panic, whichever effort rule applies.
+    #[test]
+    fn an_empty_reviewer_plan_refuses_its_reviewers_without_panicking() {
+        let model: ModelRef = "claude-code/claude-haiku-5-5".parse().unwrap();
+        let reviewer = json!({"role": "reviewer", "config": {"effort": "high"}});
+        for sizing in [false, true] {
+            let refusal = reviewer_refusal(&[], &model, &reviewer, sizing).expect("no plan");
+            assert!(refusal.contains("breaks the item's reviewer plan"), "{refusal}");
+        }
+        assert!(reviewer_refusal(&[], &model, &json!({"role": "worker"}), false).is_none());
     }
 
     /// `[models] effort_sizing` lets the lead size a reviewer's effort: only

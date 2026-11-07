@@ -85,8 +85,10 @@ only after `x_high` failed on the same task. A reviewer's `default_effort`, or
 its effort in a `<stage>.review` plan, becomes its default rather than a floor:
 the rubric moves it, from `low` for a trivial diff to `x_high` for concurrency
 or security analysis, the lead states the reason in one line, and archond
-cancels only a reviewer on a model the plan does not name. Off, agents see the
-effort rules of 1.4.12, and `max_effort` caps both.
+cancels only a reviewer on a model the plan does not name. The stage prompts
+keep 1.4.12's wording, effort floors included; under the opt-in the contract's
+reviewer rule says it replaces any floor a stage prompt names. Off, agents see
+the effort rules of 1.4.12, and `max_effort` caps both.
 
 `auto_repair` (default `true`) covers a run that fails only because the gate
 refused the review or the ship record it owes (a delta read not anchored, a

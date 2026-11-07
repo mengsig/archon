@@ -1765,10 +1765,7 @@ mod tests {
             )));
             assert!(rules.contains("`low` for a trivial diff"), "{rules}");
             assert!(rules.contains(REASON_RULE), "{rules}");
-            assert!(
-                !rules.contains(&format!("{effort} or higher")),
-                "{rules}"
-            );
+            assert!(!rules.contains(&format!("{effort} or higher")), "{rules}");
         }
         // Mixed defaults with the highest at the cap: one ceiling, no contradiction.
         let mixed = named_reviewer_rules(&[choice(Low), choice(High)], Some(High), true);

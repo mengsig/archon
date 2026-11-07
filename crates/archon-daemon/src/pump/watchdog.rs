@@ -738,7 +738,10 @@ mod reviewer_tests {
         let reviewer = json!({"role": "reviewer", "config": {"effort": "high"}});
         for sizing in [false, true] {
             let refusal = reviewer_refusal(&[], &model, &reviewer, sizing).expect("no plan");
-            assert!(refusal.contains("breaks the item's reviewer plan"), "{refusal}");
+            assert!(
+                refusal.contains("breaks the item's reviewer plan"),
+                "{refusal}"
+            );
         }
         assert!(reviewer_refusal(&[], &model, &json!({"role": "worker"}), false).is_none());
     }

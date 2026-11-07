@@ -1,6 +1,220 @@
 # Changelog
 
-## Unreleased
+## 1.5.0
+
+A minor release for the unified Aether app (#377). archond speaks daemon
+protocol 24: a gapless change stream and per-item history, a task graph and
+run plans, items linked to GitHub issues and pull requests with a read-only
+cache, issue import and an at-most-once comment outbox. Remote access is
+served through Aether's `/archon` mount instead of archond's own web app,
+paired devices get roles, and a device's chat or answer never carries
+operator authority. Lessons cluster near duplicates and can be measured
+against a holdout.
+
+**Read [docs/upgrading.md](docs/upgrading.md#from-14x-to-150) before
+upgrading.** The daemon protocol is 24 (was 23): `archon`, `archon mcp` and
+archond must match, and `archon update --yes` restarts archond for you; the
+Aether app may speak 23 or 24. The Aether protocol Archon asks for stays 24
+and the oldest it accepts stays 17, so Aether 1.2.11 still runs the queue.
+Remote access needs **Aether 1.3.0 or later**, which is released with this
+version. The store schema is 23 (was 18): archond's first start migrates a
+1.4.12 store through V19 to V23 in one transaction, forward-only. 1.4.12
+refuses the migrated store and archond takes no copy, so back up `archon.db`
+first. 1.4.12 also refuses the new `config.toml` keys and a `remote.json`
+that names an observer. After upgrading, run `archon remote setup` again if
+you use remote access. Devices paired before stay valid until revoked; pair
+again from the Aether app a browser that paired on another hostname.
+
+### Protocol
+
+- Daemon protocol 24 (#379). `hello` accepts protocol 23 or 24 from the
+  Aether app (`archon-web`) and an exact match from every other client; a
+  refused app is told the range. `Welcome` adds `min_protocol_version`, the
+  served `features` (`changes`, `task_graph`, `run_plan`, `item_history`,
+  `item_filters`, `github_links`, `github_import`, `device_roles`) and the
+  paired `device`. A cursor older than the kept history gets the new error
+  `history_expired {first_seq, last_seq}`.
+- `archon schema` prints the protocol as JSON Schema 2020-12, and `archon
+  schema --out crates/archon-core/protocol.schema.json` writes the committed
+  copy, which a test keeps current.
+
+### Update
+
+- `archon update --yes` from 1.4.x now finishes against the restarted
+  1.5.0 archond. archond answered a `hello` at another protocol as a
+  closing notice, which 1.4.x clients read as "archond is not running", so
+  their updater waited out its 30 seconds and reported that no new archond
+  answered. The refusal now carries the `hello`'s own id, which they read as
+  a newer archond.
+- The other way round, `archon` 1.5.0 reads a 1.4.x archond's refusal as
+  "archond speaks another protocol" instead of "archond is not running", so
+  it no longer tries to start a second archond beside it. An update
+  interrupted before archond restarted is recovered as
+  [upgrading.md](docs/upgrading.md#if-the-update-was-interrupted) says.
+
+### Changes and history
+
+- Every write of item, dependency, run, stage, gate, question, initiative
+  and GitHub link state appends a change with a gapless `seq` in the same
+  transaction (store V19, #381). `subscribe_changes` streams them in order
+  from a cursor and closes a subscriber that falls a full buffer behind;
+  `changes_page` reads them in pages. Changes are kept for 30 days or the
+  newest 100,000, whichever keeps more, pruned hourly.
+- `item_history` lists an item's state transitions and who made each: the
+  CLI, the Aether app, an agent's tools or archond itself.
+- `list_item_summaries` with `with_as_of` returns the summaries with the
+  change `seq` they were read at, in one snapshot.
+
+### Task graph, run plans and filters
+
+- `task_graph` returns items as nodes, with their waiting reasons, operator
+  gates, linked issue and pull request, and their dependency, initiative and
+  stacked edges, read at one `as_of` (#382). It filters by repository,
+  state, pipeline, priority, initiative, component and recently finished
+  items, up to 2,000 nodes, and gives the same bytes for the same store.
+- `run_plan` gives a run's frozen pipeline with its steer edits applied,
+  and `settings`: each stage's and reviewers key's resolved model choices,
+  effort and time limit, marked `default` or `override` (the model `tier` or
+  `exact`), so a client shows what really runs. The store keeps a run's
+  plan, marked `finished`, as it records the run finished, from the models
+  and limits the run ran with, until the run's history is pruned; a run that
+  finished before 1.5.0 has none and is `not_found`.
+- `list_items` and `list_item_summaries` take `updated_since`, `before` and
+  `text` (a title and brief substring).
+
+### GitHub
+
+- Items are linked to GitHub issues and pull requests in the store (V20,
+  #384), backfilled from item origins and delivered pull requests. The
+  watcher, ship and the operator (`link_issue`, `unlink_issue`) write links;
+  `item_links` and `issue_items` read them, and item summaries carry
+  `issue` and `pr`.
+- A read-only cache of linked issues and pull requests (V21, #385), kept by
+  a GitHub sync worker with conditional `GET`s: each object at most every
+  five minutes (a closed issue daily), 50 reads a pass, within GitHub's rate
+  limits. A linked pull request is watched until it is merged or closed,
+  and its review decision and checks fill `PrRef`. `list_github_objects`
+  reads the cache. A checkout whose origin cannot be read is skipped with a
+  warning.
+- `import_issue` and `archon github import owner/name#N` enqueue an issue of
+  a registered repository once, under the key
+  `github:<host>/<owner>/<repo>#<number>`: a repeat returns the first item.
+  The issue's title and body are fenced as untrusted text that grants no
+  authority.
+- GitHub comments go through an outbox (V22, #386): each is recorded with a
+  token before it is posted, and a worker checks the thread for the token
+  before posting again, so a crash never posts a comment twice. `archon
+  status` lists comments still pending. `github_reply` uses it.
+
+### Remote access
+
+- Archon is served through Aether (#383). `archon remote setup` now mounts
+  archond on an Aether listener at `/archon`, publishes that listener as the
+  one `tailscale serve` origin, writes `[remote] mounted_at` and
+  `trusted_origins` into `config.toml`, and asks for one `archon daemon
+  restart`. It needs Aether 1.3.0 or later and says so, stops with Aether's
+  own reason while anything on the machine is published through Funnel,
+  withdraws an earlier direct publication of archond, and reads before each
+  step, so a rerun changes nothing and says so. It keeps Aether's pairing
+  setting and writes through a symlinked `config.toml`. Archon's screens are
+  part of the Aether app; each daemon pairs the browser with its own device.
+- Mounted, archond scopes its device cookie to `/archon`, accepts only the
+  trusted origins and answers only loopback `Host` values on its own port.
+- Paired devices have a role (#380): `operator`, the default and every
+  device paired before, or `observer`, which only reads (`archon remote pair
+  --observer`, refused by an archond that does not serve roles).
+  `remote.json` moves to format 2 only once an observer is paired. A
+  device's requests run with the Aether app's standing, not the CLI's;
+  `pause` and `resume` with `hard` are refused to every device, and a soft
+  resume no longer lifts the operator's hard pause. Devices may read the
+  change stream, history, task graph, run plans and links; operators may
+  also link, unlink and import issues.
+
+### Security
+
+From the audit in [docs/security/vnext-audit.md](docs/security/vnext-audit.md)
+(#388): a paired device never carries operator authority.
+
+- A web device's `say` reaches the orchestrator marked, so `/archon`,
+  `/watch`, `/merge` and `/upgrade` in it are not run and the orchestrator
+  cannot cite it for `request_authority` (H3-A1).
+- Chat from a device paired with Aether is no longer operator chat; only
+  the host's own Aether connection is (H3-A2).
+- A web `answer` cannot confirm an authority change (H3-A5), and its reply
+  to an Aether question goes out marked like `say` (H3-A8).
+- An Aether-paired device's answer in the notification center is refused
+  for Archon's gates and questions (H3-A9).
+
+### Lessons
+
+- Near-duplicate lessons in one scope form a cluster (V23, #387), and a
+  contract or the orchestrator carries at most one lesson per cluster, so
+  the injection budget is unchanged. The migration rewrites no lesson row.
+- A lesson keeps its provenance (the item, its newest run and pull request,
+  or the distilling run) and the number of distinct items behind it.
+- `[learning] holdout_rate` (0 to 0.2, default 0) withholds that share of
+  lessons by a stable hash, records each run's given and held-out lessons,
+  and reports `holdout_lift` once both arms have 20 scored runs. Pinned
+  lessons are never held out, and held-out runs never change promotion.
+
+### Review
+
+- A reviewer's verdict word reads as it says on every path, `structured`,
+  summary JSON and the `VERDICT:` line: `changes_requested`,
+  `request_changes`, `needs_changes`, `needs work`, `blocking` and `block`
+  fail, and `lgtm`, `accept` and `accepted` pass, in any letter case with
+  `_`, `-` and spaces alike. Such a fail beside a blocking finding was
+  reported as a pass that lists one. A fail now always fails: one whose
+  findings are all follow-ups no longer counts as a pass, so reviewers pass
+  such a review. Any other word stays unreadable and fails, `passes`
+  included, which used to read as a pass.
+
+### Orchestrator
+
+- A hung orchestrator turn no longer holds your messages for hours (#393). When a
+  turn is still silent 5 minutes after the stall nudge, archond interrupts it,
+  as Esc would, so the queued inbox, operator messages included, reaches a fresh
+  turn; at most 3 times per orchestrator. Operator chat or an `@archon` request
+  delivered to a turn silent for 10 minutes starts this at once instead of
+  after 30.
+- Agents no longer run at `high` effort for every task. One effort rubric,
+  from `low` for lookups and mechanical edits through `x_high` for hard
+  reasoning (root-causing a regression, concurrency or security analysis, a fix
+  that failed twice) to `max` only after `x_high` failed on the same task, now
+  sizes every effort the orchestrator and stage leads choose. A reviewer plan's
+  effort is that reviewer's default instead of a floor, kept where the rubric
+  leaves the diff open; otherwise the rubric decides, from `low` for a trivial
+  diff to `x_high` for concurrency or security analysis, and the lead states the
+  reason in one line whether it goes lower or higher, within `max_effort`; archond
+  still cancels a reviewer on a model the plan does not name. A delegating
+  stage's cost split in `get_item` and `get_stage` counts its agents by effort.
+
+### Fixed
+
+- A model named for a stage by `steer_item` on a waiting item is the model
+  that runs. The steer kept the stage's tier, and dispatch resolved that
+  tier again to another model: an `ask` steered to Haiku while paused ran on
+  Sonnet. A named model is now an exact pin, on a waiting or a running
+  item, and no tier, retry or quota reroute replaces it.
+- A quota reroute that moves a stage to another model now says so in the
+  feed and in the item's `provider_switch`, naming each stage and both
+  models, also when it moved to follow the item's provider or
+  when dispatch resolved a queued item's tiers to other models.
+
+### Removed
+
+- `archon remote setup --proxy-url` and `--local`.
+- archond's embedded mobile web app (`crates/archon-remote/web`) and `make
+  e2e`. A browser visiting archond's listener directly gets a short page
+  without scripts that links to Aether's address.
+
+### Documentation
+
+- [docs/upgrading.md](docs/upgrading.md) covers the upgrade from 1.4.x, and
+  [docs/README.md](docs/README.md) indexes every page.
+- The vNext design is recorded in `docs/vnext/` (baseline, architecture,
+  contracts, workstreams and the Noesis study), and the security audit in
+  `docs/security/vnext-audit.md`.
 
 ## 1.4.12
 

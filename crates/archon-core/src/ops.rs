@@ -16,7 +16,7 @@ pub const MAX_DRAIN_SECS: u64 = 24 * 60 * 60;
 const MAX_VERSION_CHARS: usize = 40;
 
 /// What an upgrade installs for one program.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum UpgradeTarget {
     /// The latest published release.
@@ -65,7 +65,7 @@ impl fmt::Display for UpgradeTarget {
 /// An operator's upgrade: drain, install what is named, restart archond
 /// and, in dedicated mode, Archon's own aetherd. With neither program
 /// named it is a drained restart.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct UpgradeRequest {
     #[serde(default)]
     pub archon: Option<UpgradeTarget>,
@@ -113,7 +113,7 @@ impl UpgradeRequest {
 }
 
 /// One program's versions as archond last saw them; `None` is unknown.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ProgramVersions {
     /// What runs now: archond itself, or the aetherd it is connected to.
     pub running: Option<String>,
@@ -173,7 +173,7 @@ fn release_core(version: &str) -> Option<(u64, u64, u64)> {
 }
 
 /// Archon's and Aether's versions, for `status` and `queue_status`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Versions {
     pub archon: ProgramVersions,
     pub aether: ProgramVersions,

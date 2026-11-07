@@ -5,6 +5,7 @@ use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, RepoId};
 use archon_core::lesson::{CONTRACT_LESSON_BYTES, CONTRACT_LESSONS, Lesson, LessonState};
 use rusqlite::params;
+use std::collections::BTreeSet;
 
 impl Store {
     pub fn lessons_for_run(
@@ -23,16 +24,22 @@ impl Store {
         let stored = self.run(run)?;
         assert_eq!(stored.pipeline, pipeline);
         assert_eq!(self.item(&stored.item)?.repo.as_ref(), repo);
-        let lessons = self.select_lessons(
+        let selected = self.select_lessons(
             repo,
             Some(pipeline),
             CONTRACT_LESSONS,
             CONTRACT_LESSON_BYTES,
         )?;
+        let rate = self.learning_config()?.holdout_rate;
+        let (lessons, held) = super::holdout::split(selected, &stored.item, rate);
         let tx = self
             .conn
             .unchecked_transaction()
             .ctx("begin lesson snapshot")?;
+        // Trials start with a rate, so both arms come from the same period.
+        if rate > 0.0 {
+            super::holdout::record(&tx, run, &stored.item, &lessons, &held)?;
+        }
         for lesson in &lessons {
             let mut updated = lesson.clone();
             updated.last_used_at = Some(archon_core::now());
@@ -89,16 +96,26 @@ impl Store {
                 .then_with(|| a.id.cmp(&b.id))
         });
         let mut chosen = Vec::new();
+        let mut clusters = BTreeSet::new();
         let mut total = archon_core::lesson::CONTRACT_LESSON_NOTICE.len();
         for lesson in candidates {
             if chosen.len() == count {
                 break;
+            }
+            // One lesson of a cluster: the first is the best placed.
+            if lesson
+                .cluster
+                .as_ref()
+                .is_some_and(|c| clusters.contains(c))
+            {
+                continue;
             }
             let rendered_bytes = lesson.quoted_observation()?.len();
             if total + rendered_bytes > bytes {
                 continue;
             }
             total += rendered_bytes;
+            clusters.extend(lesson.cluster.clone());
             chosen.push(lesson);
         }
         assert!(chosen.len() <= count);
@@ -120,6 +137,12 @@ impl Store {
             b.confidence
                 .total_cmp(&a.confidence)
                 .then_with(|| a.id.cmp(&b.id))
+        });
+        let mut clusters = BTreeSet::new();
+        candidates.retain(|l| {
+            l.cluster
+                .as_ref()
+                .is_none_or(|c| clusters.insert(c.clone()))
         });
         let mut total = 0;
         let chosen: Vec<_> = candidates

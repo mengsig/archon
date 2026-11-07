@@ -1,30 +1,29 @@
 //! `github_reply`: the orchestrator's comment on a thread of a repository
-//! Archon watches, posted with `gh` under archond's login and recorded in
-//! the feed (`archon log`).
-
-use std::path::Path;
-use std::process::Stdio;
+//! Archon watches, posted through the outbox at most once, under archond's
+//! login, and recorded in the feed (`archon log`).
 
 use archon_core::error::ArchonError;
 use archon_core::github::{GithubThread, REPLY_BUDGET, REPLY_MARKER};
+use archon_core::id::OutboxToken;
 use archon_core::notify::NotificationKind;
-use tokio::io::AsyncWriteExt as _;
-use tokio::process::Command;
+use archon_core::protocol::{GithubKind, GithubRef};
+use archon_core::repo::GH_HOST;
+use archon_queue::store::{OutboxIntent, OutboxPurpose};
 use tokio::time::Instant;
 
+use super::outbox;
 use super::{require_dedicated, view};
 use crate::context::DaemonContext;
 use crate::feed;
 
-/// GitHub refuses comments over 65536 characters; the marker needs room.
+/// GitHub refuses comments over 65536 characters; the markers need room.
 pub const MAX_BODY_CHARS: usize = 65_000;
-/// Most characters of `gh`'s complaint an error carries.
-const MAX_ERROR_CHARS: usize = 2_000;
 
-/// `body` ready to post: non-empty, bounded, ending in exactly one marker
-/// so Aether's watcher never takes the comment as a new request.
-pub fn reply_body(body: &str) -> Result<String, ArchonError> {
-    let text = strip_markers(body);
+/// `body` ready to post as `token`'s comment: non-empty, bounded, carrying
+/// the token's marker and ending in exactly one reply marker, so Aether's
+/// watcher never takes the comment as a new request.
+pub fn reply_body(body: &str, token: &OutboxToken) -> Result<String, ArchonError> {
+    let text = outbox::strip_markers(&strip_markers(body));
     let text = text.trim();
     if text.is_empty() {
         return Err(ArchonError::Invalid("a GitHub reply needs a body".into()));
@@ -36,12 +35,18 @@ pub fn reply_body(body: &str) -> Result<String, ArchonError> {
              link a report instead"
         )));
     }
-    let posted = format!("{text}\n\n{REPLY_MARKER}");
+    let token_marker = outbox::marker(token);
+    let posted = format!("{text}\n\n{token_marker}\n{REPLY_MARKER}");
     assert!(
         posted.ends_with(REPLY_MARKER),
         "the marker closes every reply"
     );
     assert_eq!(posted.matches(REPLY_MARKER).count(), 1, "one marker");
+    assert_eq!(
+        posted.matches(outbox::MARKER_PREFIX).count(),
+        1,
+        "one token"
+    );
     Ok(posted)
 }
 
@@ -64,8 +69,43 @@ pub async fn post_reply(
     body: &str,
 ) -> Result<String, ArchonError> {
     require_dedicated(ctx)?;
-    let body = reply_body(body)?;
+    let token = OutboxToken::new();
+    let body = reply_body(body, &token)?;
     let deadline = Instant::now() + REPLY_BUDGET;
+    require_archons_repository(ctx, thread, deadline).await?;
+    let intent = OutboxIntent {
+        token,
+        purpose: OutboxPurpose::Reply,
+        item: None,
+        run: None,
+        target: GithubRef {
+            host: GH_HOST.to_owned(),
+            repo: thread.repository.as_str().to_owned(),
+            number: thread.number.get(),
+            kind: GithubKind::Issue,
+        },
+        body,
+    };
+    let posted = outbox::send(&ctx.store, &ctx.config.github.binary, intent, deadline).await?;
+    let url = posted.url;
+    let note = format!("Replied on GitHub {thread}: {url}");
+    tracing::info!(%thread, %url, "posted a GitHub reply");
+    if let Err(error) = feed::notify(ctx, NotificationKind::Progress, note, None, None).await {
+        // Posted already: a retry would post twice, so say where it went.
+        return Err(ArchonError::Corrupt(format!(
+            "posted {url} but could not record it: {error}"
+        )));
+    }
+    Ok(url)
+}
+
+/// Refuse `thread` unless its repository is one Archon's watcher sends to
+/// the orchestrator, asking Aether by `deadline`.
+async fn require_archons_repository(
+    ctx: &DaemonContext,
+    thread: &GithubThread,
+    deadline: Instant,
+) -> Result<(), ArchonError> {
     let client = ctx.aether.client()?;
     let status = tokio::time::timeout_at(deadline, client.github_watcher())
         .await
@@ -80,235 +120,77 @@ pub async fn post_reply(
             .eq_ignore_ascii_case(thread.repository.as_str())
     });
     match watched {
-        None => {
-            return Err(ArchonError::Forbidden(format!(
-                "{} is not a repository Archon watches; github_reply only answers \
-                 threads of watched repositories",
-                thread.repository
-            )));
-        }
-        Some(repo) if !repo.is_archons() => {
-            return Err(ArchonError::Forbidden(format!(
-                "{} is watched for another agent, not Archon's orchestrator",
-                thread.repository
-            )));
-        }
-        Some(_) => {}
+        None => Err(ArchonError::Forbidden(format!(
+            "{} is not a repository Archon watches; github_reply only answers \
+             threads of watched repositories",
+            thread.repository
+        ))),
+        Some(repo) if !repo.is_archons() => Err(ArchonError::Forbidden(format!(
+            "{} is watched for another agent, not Archon's orchestrator",
+            thread.repository
+        ))),
+        Some(_) => Ok(()),
     }
-    let url = gh_comment(&ctx.config.github.binary, thread, &body, deadline).await?;
-    let note = format!("Replied on GitHub {thread}: {url}");
-    tracing::info!(%thread, %url, "posted a GitHub reply");
-    if let Err(error) = feed::notify(ctx, NotificationKind::Progress, note, None, None).await {
-        // Posted already: a retry would post twice, so say where it went.
-        return Err(ArchonError::Corrupt(format!(
-            "posted {url} but could not record it: {error}"
-        )));
-    }
-    Ok(url)
-}
-
-/// `gh api` the comment in, pinned to github.com as Aether's watcher is,
-/// whatever `GH_HOST` says.
-fn gh_command(gh: &Path, endpoint: &str) -> Command {
-    let mut command = Command::new(gh);
-    command
-        .args([
-            "api",
-            "--hostname",
-            "github.com",
-            "--method",
-            "POST",
-            endpoint,
-        ])
-        .args(["--input", "-"])
-        .env("GH_PROMPT_DISABLED", "1")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    command
-}
-
-/// Post `body` with `gh` by `deadline`, stdin included; the comment's
-/// `html_url`. Past the deadline `gh` is killed and the outcome is unknown.
-async fn gh_comment(
-    gh: &Path,
-    thread: &GithubThread,
-    body: &str,
-    deadline: Instant,
-) -> Result<String, ArchonError> {
-    let endpoint = format!(
-        "repos/{}/issues/{}/comments",
-        thread.repository, thread.number
-    );
-    let context = || format!("{} api {endpoint}", gh.display());
-    let mut child = gh_command(gh, &endpoint)
-        .spawn()
-        .map_err(|e| ArchonError::io(context(), e))?;
-    let input = serde_json::json!({ "body": body }).to_string();
-    let mut stdin = child.stdin.take().expect("stdin was requested as a pipe");
-    // Written while `gh` runs: one that stops reading cannot outlast the deadline.
-    let write = async move {
-        let written = stdin.write_all(input.as_bytes()).await;
-        drop(stdin);
-        written
-    };
-    let run = async { tokio::join!(write, child.wait_with_output()) };
-    let (written, output) = tokio::time::timeout_at(deadline, run).await.map_err(|_| {
-        ArchonError::Unavailable(format!(
-            "{} did not finish within {REPLY_BUDGET:?} and was stopped; {}",
-            context(),
-            thread.check_before_retry()
-        ))
-    })?;
-    let output = output.map_err(|e| ArchonError::io(context(), e))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let why: String = stderr.trim().chars().take(MAX_ERROR_CHARS).collect();
-        return Err(ArchonError::Unavailable(format!(
-            "{} failed ({}): {why}",
-            context(),
-            output.status
-        )));
-    }
-    written.map_err(|e| ArchonError::io(context(), e))?;
-    comment_url(&output.stdout).ok_or_else(|| {
-        ArchonError::Protocol(format!(
-            "{} answered without a comment URL; {}",
-            context(),
-            thread.check_before_retry()
-        ))
-    })
-}
-
-fn comment_url(stdout: &[u8]) -> Option<String> {
-    let reply: serde_json::Value = serde_json::from_slice(stdout).ok()?;
-    let url = reply.get("html_url")?.as_str()?;
-    url.starts_with("https://").then(|| url.to_owned())
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use super::*;
+
+    fn token_marker(token: &OutboxToken) -> String {
+        outbox::marker(token)
+    }
 
     #[test]
     fn a_split_marker_is_stripped_to_one_closing_marker() {
+        let token = OutboxToken::new();
         let (head, tail) = REPLY_MARKER.split_at(10);
         let split = format!("hi {head}{REPLY_MARKER}{tail} there");
-        let posted = reply_body(&split).unwrap();
-        assert_eq!(posted, format!("hi  there\n\n{REPLY_MARKER}"));
+        let posted = reply_body(&split, &token).unwrap();
+        let marker = token_marker(&token);
+        assert_eq!(posted, format!("hi  there\n\n{marker}\n{REPLY_MARKER}"));
         assert_eq!(posted.matches(REPLY_MARKER).count(), 1);
     }
 
-    fn thread() -> GithubThread {
-        serde_json::from_value(serde_json::json!({"repository": "o/r", "number": 5})).unwrap()
-    }
-
-    /// An executable `gh` in `dir` running `script`.
-    fn fake_gh(dir: &Path, script: &str) -> std::path::PathBuf {
-        let path = dir.join("gh");
-        archon_core::testing::write_script(&path, &format!("#!/bin/sh\n{script}\n"));
-        path
-    }
-
-    /// `gh_comment` against `script` with a one-second deadline: its result
-    /// and how long it took.
-    async fn post_within_a_second(
-        script: &str,
-        body: &str,
-    ) -> (Result<String, ArchonError>, Duration) {
-        let dir = tempfile::tempdir().unwrap();
-        let gh = fake_gh(dir.path(), script);
-        let started = Instant::now();
-        let deadline = started + Duration::from_secs(1);
-        let result = gh_comment(&gh, &thread(), body, deadline).await;
-        (result, started.elapsed())
-    }
-
     #[test]
-    fn replies_go_to_github_com_whatever_gh_host_says() {
-        let command = gh_command(Path::new("gh"), "repos/o/r/issues/5/comments");
-        let command = command.as_std();
-        let args: Vec<_> = command.get_args().map(|a| a.to_str().unwrap()).collect();
-        let host = args.iter().position(|a| *a == "--hostname").unwrap();
-        assert_eq!(args[host + 1], "github.com");
+    fn every_reply_carries_its_token_and_ends_in_exactly_one_marker() {
+        let token = OutboxToken::new();
+        let marker = token_marker(&token);
+        let posted = reply_body("  Queued as qi_1.  ", &token).unwrap();
         assert_eq!(
-            args,
-            [
-                "api",
-                "--hostname",
-                "github.com",
-                "--method",
-                "POST",
-                "repos/o/r/issues/5/comments",
-                "--input",
-                "-"
-            ]
+            posted,
+            format!("Queued as qi_1.\n\n{marker}\n{REPLY_MARKER}")
         );
-    }
-
-    #[tokio::test]
-    async fn a_gh_that_stops_reading_stdin_is_stopped_at_the_deadline() {
-        // Far more than a pipe buffer, so the write blocks until `gh` dies.
-        let body = "é".repeat(MAX_BODY_CHARS);
-        let (result, took) = post_within_a_second("exec sleep 30", &body).await;
-        let Err(ArchonError::Unavailable(why)) = result else {
-            panic!("a stalled gh gave {result:?}");
-        };
-        assert!(why.contains("https://github.com/o/r/issues/5"), "{why}");
-        assert!(why.contains("never repeat"), "{why}");
-        assert!(took < Duration::from_secs(5), "took {took:?}");
-    }
-
-    #[tokio::test]
-    async fn a_slow_answer_is_stopped_at_the_deadline() {
-        let (result, took) = post_within_a_second("cat > /dev/null\nexec sleep 30", "hi").await;
-        let Err(ArchonError::Unavailable(why)) = result else {
-            panic!("a slow gh gave {result:?}");
-        };
-        assert!(why.contains("may have been posted"), "{why}");
-        assert!(took < Duration::from_secs(5), "took {took:?}");
-    }
-
-    #[tokio::test]
-    async fn gh_failing_early_reports_its_complaint() {
-        let body = "x".repeat(MAX_BODY_CHARS);
-        let script = "echo 'HTTP 404: Not Found' >&2\nexit 1";
-        let (result, _) = post_within_a_second(script, &body).await;
-        let Err(ArchonError::Unavailable(why)) = result else {
-            panic!("a failing gh gave {result:?}");
-        };
-        assert!(why.contains("HTTP 404"), "{why}");
-    }
-
-    #[test]
-    fn every_reply_ends_in_exactly_one_marker() {
-        let posted = reply_body("  Queued as qi_1.  ").unwrap();
-        assert_eq!(posted, format!("Queued as qi_1.\n\n{REPLY_MARKER}"));
-        let marked = reply_body(&format!("{REPLY_MARKER}\nDone.\n{REPLY_MARKER}")).unwrap();
-        assert_eq!(marked, format!("Done.\n\n{REPLY_MARKER}"));
+        let other = token_marker(&OutboxToken::new());
+        let marked = reply_body(
+            &format!("{REPLY_MARKER}\nDone.{other}\n{REPLY_MARKER}"),
+            &token,
+        )
+        .unwrap();
+        assert!(
+            !marked.contains(&other),
+            "a pasted token is defused: {marked}"
+        );
+        assert_eq!(marked.matches(outbox::MARKER_PREFIX).count(), 1);
+        assert!(
+            marked.starts_with("Done.") && marked.ends_with(&format!("{marker}\n{REPLY_MARKER}"))
+        );
     }
 
     #[test]
     fn empty_and_oversized_replies_are_refused() {
+        let token = OutboxToken::new();
         for empty in ["", "  \n", REPLY_MARKER] {
-            assert!(matches!(reply_body(empty), Err(ArchonError::Invalid(_))));
+            assert!(matches!(
+                reply_body(empty, &token),
+                Err(ArchonError::Invalid(_))
+            ));
         }
         let long = "x".repeat(MAX_BODY_CHARS + 1);
-        assert!(matches!(reply_body(&long), Err(ArchonError::Invalid(_))));
-        assert!(reply_body(&"é".repeat(MAX_BODY_CHARS)).is_ok());
-    }
-
-    #[test]
-    fn the_comment_url_comes_from_ghs_json() {
-        let json = br#"{"id": 1, "html_url": "https://github.com/o/r/issues/2#issuecomment-1"}"#;
-        assert_eq!(
-            comment_url(json).as_deref(),
-            Some("https://github.com/o/r/issues/2#issuecomment-1")
-        );
-        assert_eq!(comment_url(b"not json"), None);
-        assert_eq!(comment_url(br#"{"html_url": "javascript:x"}"#), None);
+        assert!(matches!(
+            reply_body(&long, &token),
+            Err(ArchonError::Invalid(_))
+        ));
+        assert!(reply_body(&"é".repeat(MAX_BODY_CHARS), &token).is_ok());
     }
 }

@@ -19,7 +19,9 @@ pub const ESCALATION_RESERVE: u32 = 3;
 /// note to it grants one, up to this many.
 pub const MAX_REPLY_GRANTS: u32 = 3;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageKind {
     Relay,
@@ -28,7 +30,7 @@ pub enum MessageKind {
     Info,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "actor", rename_all = "snake_case")]
 pub enum MessageSender {
     Operator,
@@ -36,7 +38,7 @@ pub enum MessageSender {
     System,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AgentMessage {
     pub item: QueueItemId,
     pub run: PipelineRunId,
@@ -52,7 +54,7 @@ pub struct AgentMessage {
 
 /// A stage agent whose `[limits] max_agent_messages` allowance is used up,
 /// as told once to the orchestrator and shown by `get_item` and `queue_status`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MessageCap {
     pub item: QueueItemId,
     pub stage_run: StageRunId,

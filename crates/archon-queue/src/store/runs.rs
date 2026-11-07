@@ -4,6 +4,7 @@ use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
+use archon_core::protocol::RunPlan;
 use archon_core::queue::QueueState;
 use archon_core::run::{PipelineRun, StageRun, StageState};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -170,6 +171,7 @@ pub(super) fn insert(conn: &mut Connection, run: &PipelineRun) -> Result<(), Arc
         )));
     }
     write_run(&tx, run, true)?;
+    super::changes::record_run(&tx, run, None)?;
     tx.commit().ctx("commit run")
 }
 
@@ -206,6 +208,7 @@ pub(super) fn update(conn: &mut Connection, run: &PipelineRun) -> Result<(), Arc
         )));
     }
     write_run(&tx, run, false)?;
+    super::changes::record_run(&tx, run, Some(&stored.state))?;
     tx.commit().ctx("commit run")
 }
 
@@ -217,6 +220,7 @@ pub(super) fn update(conn: &mut Connection, run: &PipelineRun) -> Result<(), Arc
 pub(super) fn finish(
     conn: &mut Connection,
     run: &PipelineRun,
+    plan: Option<&RunPlan>,
     next: QueueState,
     at: Timestamp,
 ) -> Result<FinishedRun, ArchonError> {
@@ -249,6 +253,8 @@ pub(super) fn finish(
         )));
     }
     write_run(&tx, run, false)?;
+    super::run_plans::keep(&tx, &run.id, plan)?;
+    super::changes::record_run(&tx, run, Some(&stored.state))?;
     let answers = gates::withdraw_open(&tx, run, at)?;
     let item = items::transition_in(&tx, &run.item, next, at)?;
     debug_assert!(active_run_of(&tx, &item.id)?.is_none());
@@ -602,10 +608,11 @@ pub(super) fn upsert_stage(conn: &mut Connection, stage: &StageRun) -> Result<()
     check_stage_shape(stage)?;
     let tx = write_tx(conn)?;
     let mut stage = stage.clone();
-    match load_stage(&tx, &stage.id)? {
+    let before = load_stage(&tx, &stage.id)?;
+    match &before {
         Some(stored) => {
             stage.model_segments = stored.model_segments.clone();
-            check_stage_change(&stored, &stage)?;
+            check_stage_change(stored, &stage)?;
         }
         None => {
             if load(&tx, &stage.run)?.state.is_terminal() {
@@ -618,6 +625,7 @@ pub(super) fn upsert_stage(conn: &mut Connection, stage: &StageRun) -> Result<()
     }
     let holds_agent = claim_agent(&tx, &stage)?;
     write_stage(&tx, &stage, holds_agent)?;
+    super::changes::record_stage(&tx, &stage, before.as_ref())?;
     tx.commit().ctx("commit stage run")
 }
 

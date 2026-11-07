@@ -115,6 +115,9 @@ fn serve(
                 protocol_version: PROTOCOL_VERSION,
                 daemon_version: "fixture".into(),
                 pid: std::process::id(),
+                min_protocol_version: PROTOCOL_VERSION,
+                features: Vec::new(),
+                device: None,
             }),
             Request::SubscribeFeed { .. } => {
                 subscribed = true;

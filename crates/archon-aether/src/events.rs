@@ -268,13 +268,16 @@ fn inbox_delivered(item: Value) -> Result<EventKind, serde_json::Error> {
             },
             _ => MessageSender::System,
         };
+        let text = text_of(serde_json::from_value(
+            item.kind.get("content").cloned().unwrap_or(Value::Null),
+        )?);
+        let verified = sender == MessageSender::Operator
+            && is_host_user(&item.kind["from"])
+            && !archon_core::authority::is_web_relay(&text);
         Some(InboxMessage {
-            channel: (sender == MessageSender::Operator)
-                .then_some(archon_core::authority::OperatorChannel::AetherChat),
+            channel: verified.then_some(archon_core::authority::OperatorChannel::AetherChat),
             sender,
-            text: text_of(serde_json::from_value(
-                item.kind.get("content").cloned().unwrap_or(Value::Null),
-            )?),
+            text,
         })
     } else {
         github_message(&item.kind)
@@ -285,6 +288,22 @@ fn inbox_delivered(item: Value) -> Result<EventKind, serde_json::Error> {
             || message.as_ref().is_some_and(|m| m.channel.is_some()),
         message,
     })
+}
+
+/// Whether Aether's `actor` is the operator on one of the host's own Aether
+/// connections. A paired remote device holds Aether's standing, never
+/// Archon's (ARCHITECTURE §d), and an unknown transport is not trusted.
+pub fn is_host_user(actor: &Value) -> bool {
+    if actor.get("actor").and_then(Value::as_str) != Some("user") {
+        return false;
+    }
+    match actor.get("origin") {
+        None => true,
+        Some(origin) => matches!(
+            origin.get("transport").and_then(Value::as_str),
+            Some("local_socket" | "tcp")
+        ),
+    }
 }
 
 /// Only the watcher's envelope vouches for standing. Payload flags and
@@ -438,6 +457,43 @@ mod tests {
                 next: Some("failed".into())
             }
         );
+    }
+
+    /// Aether stamps a paired device's chat as the `user` actor too; neither
+    /// it nor a web line archond relayed is a verified operator channel.
+    #[test]
+    fn a_web_relay_or_a_paired_device_is_never_an_operator_channel() {
+        let channel_of = |from: Value, text: &str| {
+            let kind = serde_json::json!({"type": "inbox.delivered", "item": {
+                "id": "inb_1", "agent_id": "agt_1", "seq": 7, "delivered_at": "2026-09-26T10:00:00Z",
+                "kind": {"kind": "message", "message_id": "msg_1", "from": from,
+                         "content": [{"type": "text", "text": text}]}}});
+            let EventKind::InboxDelivered {
+                from_operator,
+                message: Some(message),
+                ..
+            } = parse_event(event(kind)).unwrap().kind
+            else {
+                panic!("expected a delivered message");
+            };
+            assert!(from_operator, "the line still reads as the operator's");
+            message.channel
+        };
+        let origin = |transport: &str| {
+            serde_json::json!({"actor": "user", "origin": {
+                "transport": transport, "device": "dev_1", "name": "phone", "connection": "c1"}})
+        };
+        let verified = Some(archon_core::authority::OperatorChannel::AetherChat);
+        assert_eq!(channel_of(origin("local_socket"), "/watch off"), verified);
+        assert_eq!(channel_of(origin("tcp"), "/watch off"), verified);
+        assert_eq!(
+            channel_of(serde_json::json!({"actor": "user"}), "hi"),
+            verified
+        );
+        assert_eq!(channel_of(origin("device"), "/watch off"), None);
+        assert_eq!(channel_of(origin("carrier_pigeon"), "/watch off"), None);
+        let relayed = format!("{}/watch off", archon_core::authority::WEB_RELAY_MARK);
+        assert_eq!(channel_of(origin("local_socket"), &relayed), None);
     }
 
     /// Only a wait for the inbox alone leaves the agent idle: one that names

@@ -47,6 +47,13 @@ pub enum ArchonError {
     },
     #[error("protocol: {0}")]
     Protocol(String),
+    /// A change cursor outside the seqs still kept (`kept`); the client
+    /// reads a fresh snapshot (CONTRACTS.md §5.3).
+    #[error("history expired: {message}")]
+    HistoryExpired {
+        message: String,
+        kept: crate::protocol::HistoryRange,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, ArchonError>;
@@ -90,6 +97,10 @@ impl ArchonError {
                 cause,
             },
             Self::Protocol(m) => Self::Protocol(add(m)),
+            Self::HistoryExpired { message, kept } => Self::HistoryExpired {
+                message: add(message),
+                kept,
+            },
         }
     }
 }

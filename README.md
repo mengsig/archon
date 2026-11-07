@@ -13,7 +13,7 @@ ceiling. Agents run on [Aether](https://github.com/mengsig/aether).
   the CLI, or mention `@archon` on a watched GitHub repository. The
   orchestrator answers code questions from its own copy of your
   repositories and queues every change as an item.
-- **Pipelines with real gates.** Twelve built-in pipelines, from a single
+- **Pipelines with real gates.** Fourteen built-in pipelines, from a single
   agent with no reviewer to a lead with three independent ones, or your own
   in TOML. A failed gate sends the findings back to the implementer, which
   keeps its context through the fix.
@@ -164,8 +164,9 @@ standing directives, Lavish, GitHub, questions and lessons.
 | `swarm` | a strong planner splits the change into tasks, cheap workers build them in parallel, a strong lead integrates | as the item's level asks; one reviewer by default |
 | `refactor`, `performance` | baseline or measure → change → verify → review | a test gate and one reviewer |
 
-`agent-testing`, `e2e-testing`, `code-audit`, `design-doc`, `ask` and
-`errand` test, audit, design and answer without shipping. `review` reviews
+`agent-testing`, `e2e-testing`, `e2e-strict`, `release-journey`,
+`code-audit`, `design-doc`, `ask` and `errand` test, audit, design and
+answer without shipping. `review` reviews
 someone else's pull request, a fork's included, without pushing to it; its
 pass is what lets `archon merge` merge that pull request. See the
 [pipelines in the guide](docs/guide.md#pipelines), and
@@ -187,7 +188,7 @@ a backend and frontend team, an e2e gate and a review.
 | `archon merge <id>` | Merge a delivered pull request at its reviewed commit |
 | `archon log --item <id> --follow` | Follow one item's events |
 | `archon cost --since 7d --by repo` | Spending by repository |
-| `archon remote setup` | Use Archon from your phone: the [mobile web app](docs/remote-setup.md) over Tailscale |
+| `archon remote setup` | Use Archon from your phone: [served through Aether](docs/remote-setup.md) over Tailscale |
 
 An item id's unique prefix works too. The [user guide](docs/guide.md) covers
 the rest, and [queue scripting](docs/queue-scripting.md) enqueues from files.
@@ -228,8 +229,10 @@ Contributors are listed by GitHub handle, and the list is maintained by hand.
 [Configuration](docs/configuration.md) · [Pipelines](docs/PIPELINES.md) ·
 [Queue scripting](docs/queue-scripting.md) ·
 [GitHub watcher](docs/github-watcher.md) ·
-[Mobile web app](docs/remote-setup.md) ·
-[Operator authority](docs/operator-authority.md) · [Architecture](docs/ARCHITECTURE.md)
+[Remote access](docs/remote-setup.md) ·
+[Operator authority](docs/operator-authority.md) · [Architecture](docs/ARCHITECTURE.md) ·
+[Upgrading](docs/upgrading.md) · [Troubleshooting](docs/troubleshooting.md) ·
+[Every page](docs/README.md)
 
-Project version: **1.4.12**. Licensed under [MIT](LICENSE). For development,
+Project version: **1.5.0**. Licensed under [MIT](LICENSE). For development,
 see [CONTRIBUTING.md](CONTRIBUTING.md).

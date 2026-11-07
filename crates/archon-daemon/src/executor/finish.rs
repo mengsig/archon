@@ -54,6 +54,7 @@ pub(super) async fn finish_run(
         _ => ShippingProof::None,
     };
     Box::pin(delete_role_branches(ctx, &run)).await?;
+    let plan = super::plan_view::finished(ctx, table, (&run, &state)).await?;
     let now = archon_core::now();
     let finished = {
         let mut store = ctx.store.lock().await;
@@ -67,7 +68,8 @@ pub(super) async fn finish_run(
             ShippingProof::None => false,
         };
         run.finish(state, now)?;
-        let mut finished = store.finish_run(&run, item_state(&run), now)?;
+        let mut finished =
+            store.finish_run_with_plan(&run, plan.as_ref(), item_state(&run), now)?;
         if let Some(planned) = &repair {
             match planned.requeue(&mut store) {
                 Ok(queued) => finished.item = queued,

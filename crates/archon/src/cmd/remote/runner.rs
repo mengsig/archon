@@ -84,9 +84,19 @@ pub(super) async fn run(
     timeout: Duration,
 ) -> Result<Output, RunError> {
     assert!(!program.is_empty(), "a program name is required");
+    let mut command = Command::new(program);
+    command.args(args);
+    run_command(command, timeout).await
+}
+
+/// Runs a prepared `command` (its program, arguments and environment) as
+/// [`run`] does.
+pub(super) async fn run_command(
+    mut command: Command,
+    timeout: Duration,
+) -> Result<Output, RunError> {
     assert!(!timeout.is_zero(), "a timeout is required");
-    let mut child = Command::new(program)
-        .args(args)
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

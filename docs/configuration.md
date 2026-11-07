@@ -67,12 +67,17 @@ preference, not a floor: Archon picks the best model the effective model policy
 from the lead when `prefer_other_provider` is set and a permitted model of
 another provider exists. If no permitted model reaches the tier, the contract
 names the best permitted one, or the lead's own model, and says so; the agent is
-never sent to look for a model the policy would refuse. `default_effort` is a
-floor raised to at least medium: the contract asks for that effort or higher,
-and for at least high when the lead rates the change's risk medium or high. The
-model policy's effort cap still applies. In an explicit `<stage>.review` plan
-each effort is a floor too: a reviewer below it is cancelled as it spawns, and
-one above it runs, up to the policy's cap.
+never sent to look for a model the policy would refuse. `default_effort`,
+raised to at least medium, is the reviewer's default effort, kept where the
+effort rubric leaves the diff open; otherwise the rubric decides: `low` for a
+trivial diff, `medium` for a small or low-risk one, `high` for a risky diff or
+shared code, `x_high` for concurrency or security analysis, `max` only after
+`x_high` failed on the same review. Off the default, lower or higher, the lead
+states the reason in one line in its result.
+The model policy's effort cap still applies. In an explicit `<stage>.review`
+plan each effort is that reviewer's default in the same way: a reviewer on
+another model is cancelled as it spawns, and one at any effort on a named model
+runs, up to the policy's cap.
 
 `auto_repair` (default `true`) covers a run that fails only because the gate
 refused the review or the ship record it owes (a delta read not anchored, a
@@ -423,6 +428,7 @@ enabled = true
 distill_every = 20
 distill_daily_budget_usd = 3.0
 explore_rate = 0.1
+holdout_rate = 0.0
 ```
 
 Learning keeps an outcome for every finished run: its result, its stage
@@ -450,6 +456,15 @@ a positive reservation does not limit them; 0 still disables them. Imported hist
 and statistics but is never distilled, avoiding upgrade spending bursts.
 Proposed lessons and pipelines wait for operator acceptance; inspect pipelines with
 `archon pipelines proposals [name]` before `archon pipelines accept <name>`.
+
+`holdout_rate`, from 0 to 0.2 (default 0, off), withholds that share of lessons a
+contract would carry, chosen by a stable hash of the lesson and item IDs, so every run
+of an item gets the same answer. Each run records which lessons it was given and which
+it was denied; `archon lessons stats` reports the win rates of both once each has 20
+scored runs. Holding a lesson out never counts against it, the Wilson bound alone
+still activates and retracts lessons, and pinned lessons are never held out. Lessons
+whose text nearly repeats another in the same scope form a cluster: a contract carries
+at most one lesson of each, and clustering never accepts or promotes a lesson.
 
 `enabled = false` stops new learning and cancels queued distillation errands on the
 next maintenance pass. Recorded evidence stays readable, including offline lessons

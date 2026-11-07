@@ -7,7 +7,7 @@ use crate::Timestamp;
 use crate::id::QueueItemId;
 
 /// What the latest look at an integration branch found.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum IntegrationHealth {
     /// Its head passed the full check.
@@ -35,7 +35,7 @@ impl IntegrationHealth {
 }
 
 /// One repository's integration branch.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct IntegrationStatus {
     pub repo: String,
     pub branch: String,
@@ -93,7 +93,7 @@ impl IntegrationStatus {
 }
 
 /// How one promotion of an integration branch into its release branch ended.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Promotion {
     pub repo: String,
     pub branch: String,
@@ -109,7 +109,7 @@ pub struct Promotion {
     pub outcome: PromotionOutcome,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum PromotionOutcome {
     /// The pull request is open at the green head; merging waits for the
@@ -132,7 +132,7 @@ pub enum PromotionOutcome {
 }
 
 /// How the release hook ran after the merge.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ReleaseHook {
     pub command: String,
     pub passed: bool,

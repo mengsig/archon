@@ -61,7 +61,7 @@ fn allowed_up_to<K: Knob>(max: K) -> Vec<&'static str> {
 macro_rules! knob {
     ($(#[$doc:meta])* $name:ident, $label:literal, [$($variant:ident = $text:literal),+ $(,)?]) => {
         $(#[$doc])*
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
         #[serde(rename_all = "kebab-case")]
         pub enum $name {
             $($variant),+
@@ -118,7 +118,7 @@ knob!(
 
 /// Every knob set. The default is standard review, no proposal or report,
 /// manual merge and guarded tools.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct Autonomy {
     pub review: ReviewLevel,
@@ -240,7 +240,9 @@ impl Autonomy {
 
 /// Some knobs; unset ones come from elsewhere. Used for configured
 /// defaults and ceilings, a repository's registry ceiling, and enqueues.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(default, deny_unknown_fields)]
 pub struct AutonomyPatch {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -360,7 +362,7 @@ impl AutonomyPatch {
 
 /// `[autonomy]` in either configuration file: `default` knobs for items
 /// that name none, and the `max` ceiling.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct AutonomyConfig {
     pub default: AutonomyPatch,
@@ -386,7 +388,7 @@ impl AutonomyConfig {
 
 /// The knobs an item starts from and the ceiling it must stay within, for
 /// one repository (or none).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AutonomyPolicy {
     pub default: Autonomy,
     pub ceiling: Autonomy,
@@ -456,7 +458,7 @@ pub const DIRECTIVE_CEILING_NOTE: &str =
 
 /// Who recorded a directive: the operator from the CLI, or the orchestrator
 /// relaying what the operator said in chat.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DirectiveSource {
     Operator,
@@ -465,7 +467,7 @@ pub enum DirectiveSource {
 
 /// A standing operator instruction ("fully autonomous today") that steers
 /// the orchestrator's knob choices within the ceiling; it never raises it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Directive {
     pub id: DirectiveId,
     pub text: String,
@@ -516,7 +518,7 @@ impl Directive {
 }
 
 /// What `archon autonomy` and the `autonomy_policy` tool show.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AutonomyView {
     /// The repository the policy was resolved for; `None` is global.
     pub repo: Option<String>,

@@ -44,7 +44,7 @@ nothing.
 | Channel | Who is the operator | Notes |
 | --- | --- | --- |
 | `archon` CLI (operator socket) | the Unix user running `archon` | Reaches operator-only requests; `/archon undo` is available inside `archon chat`. It is your own socket, so there is no citation to check. |
-| Aether terminal UI / remote app | the Aether `user` actor in **dedicated** mode | Commands and prose. In `[aether] mode = "shared"` a `[listen]` client is the same actor as you, so chat authority is refused there. |
+| Aether terminal UI | the Aether `user` actor over a host connection (local socket or `[listen]` TCP) in **dedicated** mode | Commands and prose. In `[aether] mode = "shared"` a `[listen]` client is the same actor as you, so chat authority is refused there. A paired Aether remote device and the Archon web app are chat only: their lines never carry operator authority. |
 | `archon chat` commands | the operator socket | `/archon`, `/approve` and `/reject` work even in shared mode. Plain text is forwarded to Aether and follows its dedicated-mode rules. |
 | GitHub | a login you list with `archon github-watcher operators` | Only requests Aether's watcher envelope marks as an operator's own (top-level `operator` flag, Aether protocol 17 or newer). Text markers and payload fields alone are ignored. The command goes first: `@archon /approve 1`. |
 | Orchestrator MCP (`request_authority`) | nobody: it cites a verified message from one of the channels above | Only the current orchestrator may call it. Delegated agents, stage agents and relays are refused. |
@@ -322,7 +322,9 @@ guide topic ≤ 4 KiB, the MCP tool list ≤ 28 KiB, a new tool ≤ 1.5 KiB.
 
 The dedicated Aether socket trusts the Unix account. Its local connections,
 including archond, send messages with the `user` actor. Only genuine operator
-`Say` messages may be forwarded to the orchestrator with `send_message`;
+`Say` messages may be forwarded to the orchestrator with `send_message`; a
+web device's `Say` goes out marked (`WEB_RELAY_MARK`), and a marked line or a
+`user` line whose origin is a paired device is never a verified channel;
 daemon notices influenced by agents must use Archon triggers. Stage relays
 and refusal notices then remain non-authoritative.
 

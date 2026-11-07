@@ -664,6 +664,32 @@ async fn mcp_clients_cannot_lift_the_operators_hard_pause() {
 }
 
 #[tokio::test]
+async fn a_web_device_cannot_lift_the_operators_hard_pause() {
+    let h = Harness::new().await;
+    let web = |request| handlers::handle(&h.ctx, ClientKind::ArchonWeb, request);
+    h.cli(Request::Pause(PauseTarget::Global { hard: true }))
+        .await
+        .expect("no running agent to pause in Aether");
+    let resume = Request::Resume(PauseTarget::Global { hard: false });
+    let refused = web(resume.clone())
+        .await
+        .expect_err("a device cannot lift a hard pause");
+    assert!(
+        matches!(&refused, ArchonError::Forbidden(why) if why.contains("archon CLI")),
+        "{refused:?}"
+    );
+    let Ok(Reply::Status(status)) = h.cli(Request::Status(Default::default())).await else {
+        panic!("status");
+    };
+    assert!(status.pause.global, "the hard pause holds");
+    h.cli(resume.clone()).await.expect("the operator lifts it");
+    web(Request::Pause(PauseTarget::Global { hard: false }))
+        .await
+        .expect("a device pauses softly");
+    web(resume).await.expect("and lifts its own soft pause");
+}
+
+#[tokio::test]
 async fn item_detail_reports_each_stage_agents_ledger_cost() {
     let h = Harness::new().await;
     let item = h.enqueue("costed").await;

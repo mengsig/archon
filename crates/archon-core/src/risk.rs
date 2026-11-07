@@ -8,7 +8,19 @@ use serde::{Deserialize, Serialize};
 
 /// How much human attention a pull request asks for before it merges.
 /// Ordered: `Low < Medium < High`, so the higher of two calls is their `max`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RiskLevel {
     Low,

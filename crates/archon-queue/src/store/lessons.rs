@@ -1,4 +1,7 @@
 //! Bounded lessons, operator precedence, stable use snapshots and outcome scoring.
+mod consolidation;
+mod holdout;
+mod provenance;
 mod scoring;
 mod selection;
 
@@ -7,6 +10,7 @@ use super::codec::{SqlContext, from_json, to_json, ts};
 use archon_core::error::ArchonError;
 use archon_core::id::{LessonId, RepoId};
 use archon_core::lesson::{Lesson, LessonPatch, LessonQuery, LessonSource, LessonState};
+pub(super) use holdout::lift as holdout_lift;
 use rusqlite::{Connection, OptionalExtension, params};
 pub(super) use scoring::score_run;
 
@@ -87,6 +91,8 @@ impl Store {
         accept_rewrite(&tx, &lesson)?;
         merge_duplicates(&tx, &lesson)?;
         write(&tx, &lesson)?;
+        consolidation::consolidate(&tx, &lesson.scope)?;
+        let lesson = load(&tx, id)?;
         assert_eq!(lesson.source, LessonSource::Operator);
         assert!(lesson.confirmed_at.is_some());
         tx.commit().ctx("commit lesson edit")?;
@@ -110,6 +116,9 @@ impl Store {
                 scoring::save_scored(&tx, previous.state, lesson, at)?;
             }
         }
+        // After the loop: its lessons were read before, so consolidating
+        // inside it would have them write back their old clusters.
+        consolidation::consolidate_all(&tx)?;
         tx.commit().ctx("commit lesson decay")
     }
 }
@@ -183,17 +192,19 @@ fn merge_duplicates(conn: &Connection, lesson: &Lesson) -> Result<(), ArchonErro
 fn write(conn: &Connection, l: &Lesson) -> Result<(), ArchonError> {
     assert!(l.wins <= l.uses);
     assert!(l.confidence.is_finite() && (0.0..=1.0).contains(&l.confidence));
+    assert!(l.refs.len() <= archon_core::lesson::MAX_LESSON_REFS);
     conn.execute("INSERT INTO lessons (id,repo,pipeline,kind,state,pinned,uses,wins,confidence,source,
-        superseded_by,created_at,updated_at,confirmed_at,data)
-        VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)
+        superseded_by,created_at,updated_at,confirmed_at,data,cluster)
+        VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)
         ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,state=excluded.state,pinned=excluded.pinned,
         uses=excluded.uses,wins=excluded.wins,confidence=excluded.confidence,source=excluded.source,
         superseded_by=excluded.superseded_by,updated_at=excluded.updated_at,
-        confirmed_at=excluded.confirmed_at,data=excluded.data",
+        confirmed_at=excluded.confirmed_at,data=excluded.data,cluster=excluded.cluster",
         params![l.id.as_str(),l.scope.repo.as_ref().map(RepoId::as_str),l.scope.pipeline,l.kind.as_str(),
             l.state.as_str(),l.pinned,l.uses,l.wins,l.confidence,l.source.as_str(),
             l.superseded_by.as_ref().map(LessonId::as_str),ts(&l.created_at),ts(&l.updated_at),
-            l.confirmed_at.as_ref().map(ts),to_json(l,"lesson")?]).ctx("write lesson")?;
+            l.confirmed_at.as_ref().map(ts),to_json(l,"lesson")?,
+            l.cluster.as_ref().map(LessonId::as_str)]).ctx("write lesson")?;
     Ok(())
 }
 
@@ -218,6 +229,9 @@ fn accept_rewrite(conn: &Connection, lesson: &Lesson) -> Result<(), ArchonError>
 
 fn record_on(conn: &Connection, mut lesson: Lesson) -> Result<Lesson, ArchonError> {
     lesson.text = archon_core::lesson::sanitized_text(&lesson.text)?;
+    if let Some(item) = &lesson.item {
+        lesson.add_refs(provenance::of_item(conn, item)?);
+    }
     let at = lesson.created_at;
     scoring::refresh(&mut lesson, at);
     let existing = scoped(conn, lesson.scope.repo.as_ref())?;
@@ -227,13 +241,16 @@ fn record_on(conn: &Connection, mut lesson: Lesson) -> Result<Lesson, ArchonErro
     {
         assert_eq!(known.scope, lesson.scope);
         if known.source == LessonSource::Operator || lesson.source != LessonSource::Operator {
-            return Ok(known.clone());
+            return reinforced(conn, known.clone(), lesson.refs);
         }
+        let found = std::mem::take(&mut lesson.refs);
+        lesson.add_refs(known.refs.iter().cloned().chain(found));
         lesson.id = known.id.clone();
         lesson.created_at = known.created_at;
         lesson.uses = known.uses;
         lesson.wins = known.wins;
         lesson.confidence = known.confidence;
+        lesson.cluster = known.cluster.clone();
     } else if existing.len() >= MAX_SCOPE_LESSONS {
         return Err(ArchonError::Invalid(format!(
             "lesson scope limit is {MAX_SCOPE_LESSONS}; edit existing lessons"
@@ -241,7 +258,27 @@ fn record_on(conn: &Connection, mut lesson: Lesson) -> Result<Lesson, ArchonErro
     }
     assert!(lesson.wins <= lesson.uses);
     write(conn, &lesson)?;
-    Ok(lesson)
+    consolidation::consolidate(conn, &lesson.scope)?;
+    load(conn, &lesson.id)
+}
+
+/// A repeat of `known` adds its provenance to it and nothing else: the
+/// repeat never changes its text, state or weight.
+fn reinforced(
+    conn: &Connection,
+    mut known: Lesson,
+    refs: Vec<archon_core::lesson::LessonRef>,
+) -> Result<Lesson, ArchonError> {
+    let before = known.clone();
+    known.add_refs(refs);
+    assert_eq!(
+        (&known.text, known.state, known.confidence),
+        (&before.text, before.state, before.confidence)
+    );
+    if known != before {
+        write(conn, &known)?;
+    }
+    Ok(known)
 }
 
 impl Store {
@@ -262,7 +299,12 @@ impl Store {
             return Ok(());
         }
         assert!(lessons.len() <= 10);
-        for (lesson, replaces) in lessons {
+        let source = archon_core::lesson::LessonRef {
+            kind: archon_core::lesson::LessonRefKind::Run,
+            value: run.to_string(),
+        };
+        for (mut lesson, replaces) in lessons {
+            lesson.add_refs([source.clone()]);
             assert_eq!(lesson.state, LessonState::Proposed);
             assert_eq!(lesson.source, LessonSource::Distilled);
             if let Some(id) = &replaces {

@@ -14,8 +14,8 @@ use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::notify::{FeedEntry, FeedItem, NotificationKind};
 use archon_core::protocol::{
-    Clearable, ClientFrame, ClientKind, ErrorCode, ErrorReply, PROTOCOL_VERSION, Reply, RepoPatch,
-    RepoRef, Request, ServerFrame,
+    Clearable, ClientFrame, ClientKind, ErrorCode, ErrorReply, MIN_WEB_PROTOCOL_VERSION,
+    PROTOCOL_VERSION, Reply, RepoPatch, RepoRef, Request, ServerFrame, feature,
 };
 use archon_core::repo::{Repo, ShipMode};
 use archon_daemon::server;
@@ -51,6 +51,7 @@ impl Client {
             protocol_version: PROTOCOL_VERSION,
             client: kind,
             client_version: "test".into(),
+            features: Vec::new(),
         };
         let id = client.send(hello).await;
         match client.frame().await {
@@ -96,6 +97,7 @@ impl Client {
                 ServerFrame::Reply { id: got, result } if got == id => return result,
                 ServerFrame::Reply { id: got, result } => panic!("stray reply {got}: {result:?}"),
                 ServerFrame::Feed { item, .. } => feed.push(item),
+                ServerFrame::Change { change, .. } => panic!("stray change {change:?}"),
             }
         }
     }
@@ -247,21 +249,26 @@ async fn first_frame_must_be_hello_at_our_version() {
         protocol_version: PROTOCOL_VERSION + 1,
         client: ClientKind::ArchonCli,
         client_version: "future".into(),
+        features: Vec::new(),
     };
-    old.send(hello).await;
+    let hello_id = old.send(hello).await;
+    assert_ne!(hello_id, 0, "a request id is never the notice id");
+    // Under the hello's id, not as an id-0 notice: a 1.4.x client reads only
+    // that as `incompatible`, so its updater knows the new archond answered.
     match old.frame().await {
-        Some(ServerFrame::Reply {
-            id: 0,
-            result: Err(e),
-        }) => assert_eq!(e.code, ErrorCode::Incompatible),
-        other => panic!("expected incompatible, got {other:?}"),
+        Some(ServerFrame::Reply { id, result: Err(e) }) if id == hello_id => {
+            assert_eq!(e.code, ErrorCode::Incompatible);
+        }
+        other => panic!("expected incompatible under id {hello_id}, got {other:?}"),
     }
+    assert!(old.frame().await.is_none(), "the connection is closed");
 
     let mut cli = Client::hello(&socket, ClientKind::ArchonCli).await;
     let hello_again = Request::Hello {
         protocol_version: PROTOCOL_VERSION,
         client: ClientKind::ArchonCli,
         client_version: "test".into(),
+        features: Vec::new(),
     };
     let again = cli
         .call(hello_again, &mut Vec::new())
@@ -283,6 +290,103 @@ async fn first_frame_must_be_hello_at_our_version() {
         .call(Request::Status(Default::default()), &mut Vec::new())
         .await;
     assert!(status.is_ok(), "{status:?}");
+    serving.abort();
+}
+
+/// The first frame of a fresh connection: `hello` as `client` at `version`.
+async fn first_reply(socket: &Path, client: ClientKind, version: u32) -> Result<Reply, ErrorReply> {
+    let mut connection = Client::connect(socket).await;
+    let hello = Request::Hello {
+        protocol_version: version,
+        client,
+        client_version: "test".into(),
+        features: Vec::new(),
+    };
+    let id = connection.send(hello).await;
+    match connection.frame().await {
+        Some(ServerFrame::Reply { id: got, result }) if got == id || got == 0 => result,
+        other => panic!("expected a reply to hello, got {other:?}"),
+    }
+}
+
+/// `archon-web` may speak 23 or 24 and is told the range when it speaks
+/// 25, and is offered features only at 24; the CLI still needs an exact
+/// match, as one binary.
+#[tokio::test]
+async fn the_web_app_speaks_23_or_24_and_the_cli_only_24() {
+    let h = Harness::new().await;
+    let socket = h.ctx.paths.socket.clone();
+    let (listener, _lock) = server::bind(&h.ctx).expect("bind");
+    let serving = tokio::spawn(server::serve(h.ctx.clone(), listener));
+    for version in [MIN_WEB_PROTOCOL_VERSION, PROTOCOL_VERSION] {
+        match first_reply(&socket, ClientKind::ArchonWeb, version).await {
+            Ok(Reply::Welcome(welcome)) => {
+                assert_eq!(welcome.protocol_version, version);
+                assert_eq!(welcome.min_protocol_version, MIN_WEB_PROTOCOL_VERSION);
+                let roles = welcome.features.iter().any(|f| f == feature::DEVICE_ROLES);
+                assert_eq!(roles, version == PROTOCOL_VERSION, "{:?}", welcome.features);
+            }
+            other => panic!("archon-web {version}: {other:?}"),
+        }
+    }
+    let refused = first_reply(&socket, ClientKind::ArchonWeb, PROTOCOL_VERSION + 1)
+        .await
+        .expect_err("25 is refused");
+    assert_eq!(refused.code, ErrorCode::Incompatible);
+    let range = format!("accepts {MIN_WEB_PROTOCOL_VERSION} to {PROTOCOL_VERSION}");
+    assert!(refused.message.contains(&range), "{}", refused.message);
+    let cli = first_reply(&socket, ClientKind::ArchonCli, MIN_WEB_PROTOCOL_VERSION)
+        .await
+        .expect_err("the CLI needs its own version");
+    assert_eq!(cli.code, ErrorCode::Incompatible);
+    match first_reply(&socket, ClientKind::ArchonCli, PROTOCOL_VERSION).await {
+        Ok(Reply::Welcome(welcome)) => {
+            assert_eq!(welcome.min_protocol_version, PROTOCOL_VERSION);
+            let served = &welcome.features;
+            for served_feature in [
+                feature::DEVICE_ROLES,
+                feature::GITHUB_LINKS,
+                feature::GITHUB_IMPORT,
+                feature::TASK_GRAPH,
+                feature::RUN_PLAN,
+                feature::ITEM_FILTERS,
+            ] {
+                assert!(served.iter().any(|f| f == served_feature), "{served:?}");
+            }
+        }
+        other => panic!("the CLI at {PROTOCOL_VERSION}: {other:?}"),
+    }
+    serving.abort();
+}
+
+/// Every protocol 24 request is served: none answers `unavailable`. The
+/// import names an unregistered repository, so it is refused before any `gh` call.
+#[tokio::test]
+async fn every_protocol_24_request_is_served() {
+    let h = Harness::new().await;
+    let socket = h.ctx.paths.socket.clone();
+    let (listener, _lock) = server::bind(&h.ctx).expect("bind");
+    let serving = tokio::spawn(server::serve(h.ctx.clone(), listener));
+    let mut cli = Client::hello(&socket, ClientKind::ArchonCli).await;
+    let issue =
+        serde_json::json!({"host": "github.com", "repo": "o/r", "number": 1, "kind": "issue"});
+    let requests = [
+        serde_json::json!({"cmd": "task_graph", "filter": {}}),
+        serde_json::json!({"cmd": "run_plan", "run": archon_core::id::PipelineRunId::new()}),
+        serde_json::json!({"cmd": "list_items", "repo": null, "pipeline": null, "tag": null, "limit": null, "text": "x"}),
+        serde_json::json!({"cmd": "list_github_objects", "repo": "o/r"}),
+        serde_json::json!({"cmd": "import_issue", "ref": issue}),
+    ];
+    for json in requests {
+        let request: Request = serde_json::from_value(json.clone()).expect("a request");
+        if let Err(refusal) = cli.call(request, &mut Vec::new()).await {
+            assert_ne!(refusal.code, ErrorCode::Unavailable, "{json}: {refusal:?}");
+            assert!(
+                !refusal.message.contains("not implemented yet"),
+                "{json}: {refusal:?}"
+            );
+        }
+    }
     serving.abort();
 }
 
@@ -469,5 +573,41 @@ async fn a_subscription_ends_when_its_client_leaves() {
     tokio::time::timeout(WAIT, gone)
         .await
         .expect("the subscription ended with its connection");
+    serving.abort();
+}
+
+/// A socket's `subscribe_changes` answers `subscribed`, then streams each
+/// committed change as a `change` frame under its subscription id.
+#[tokio::test]
+async fn a_socket_subscription_streams_committed_changes() {
+    let h = Harness::new().await;
+    let socket = h.ctx.paths.socket.clone();
+    let (listener, _lock) = server::bind(&h.ctx).expect("bind");
+    let serving = tokio::spawn(server::serve(h.ctx.clone(), listener));
+    let pump = tokio::spawn(archon_daemon::handlers::changes::pump(h.ctx.clone()));
+    let mut cli = Client::hello(&socket, ClientKind::ArchonCli).await;
+    let id = cli.send(Request::SubscribeChanges { after: None }).await;
+    let sub = match cli.frame().await {
+        Some(ServerFrame::Reply {
+            id: got,
+            result:
+                Ok(Reply::Subscribed {
+                    id: sub,
+                    last_seq: 0,
+                }),
+        }) if got == id => sub,
+        other => panic!("expected subscribed at 0, got {other:?}"),
+    };
+    let item = h.enqueue("streamed").await;
+    match cli.frame().await {
+        Some(ServerFrame::Change { sub: got, change }) => {
+            assert_eq!((got, change.seq), (sub, 1));
+            let told = matches!(&change.subject,
+                archon_core::protocol::ChangeSubject::Item { item: id, .. } if *id == item.id);
+            assert!(told, "{change:?}");
+        }
+        other => panic!("expected the item's change, got {other:?}"),
+    }
+    pump.abort();
     serving.abort();
 }

@@ -564,6 +564,7 @@ pub fn context(
         aether,
         backend,
         feed,
+        changes: Default::default(),
         dispatch: dispatch.clone(),
         coordination: Default::default(),
         runs: Mutex::new(RunTable::default()),
@@ -1189,6 +1190,14 @@ impl FakeBackend {
         let mut state = self.state();
         let delegated = state.delegated.iter_mut().find(|d| d.agent == *agent);
         delegated.expect("a delegated agent").state = ended;
+    }
+
+    /// Aether no longer lists the delegated `agent` among any descendants.
+    pub fn forget_delegated(&self, agent: &AetherAgentId) {
+        let mut state = self.state();
+        let before = state.delegated.len();
+        state.delegated.retain(|d| d.agent != *agent);
+        assert_eq!(state.delegated.len() + 1, before, "a delegated agent");
     }
 
     /// The next `descendants` calls fail with these errors, in order.

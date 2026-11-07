@@ -52,7 +52,10 @@ pub(crate) use revival::prune_retired_keys;
 pub use revival::{
     Backoff, REVIVAL_BACKOFF, REVIVALS_BEFORE_BLOCKER, pause_after, revive_when_due, turn_ended,
 };
-pub use stall::{STALL_AFTER, STALL_CHECK_INTERVAL, report_stall, watch_stalls};
+pub use stall::{
+    INTERRUPT_GRACE, MAIL_STALL_AFTER, MAX_INTERRUPTS, STALL_AFTER, STALL_CHECK_INTERVAL,
+    report_stall, watch_stalls,
+};
 
 pub const ORCHESTRATOR_ROLE: &str = "archon-orchestrator";
 
@@ -98,6 +101,8 @@ pub struct Supervisor {
     mcp: Mutex<mcp::HealState>,
     mcp_check: Notify,
     liveness: std::sync::Mutex<stall::Liveness>,
+    /// Wakes the stall watch when operator mail reaches a stalled turn.
+    stall_check: Notify,
 }
 
 impl Default for Supervisor {
@@ -111,6 +116,7 @@ impl Default for Supervisor {
             mcp: Mutex::new(mcp::HealState::default()),
             mcp_check: Notify::new(),
             liveness: Default::default(),
+            stall_check: Notify::new(),
         }
     }
 }
@@ -121,13 +127,17 @@ impl Supervisor {
         self.current.subscribe()
     }
 
-    /// Record an event of the current orchestrator for the stall check.
+    /// Record an event of the current orchestrator for the stall check, and
+    /// check at once when it is operator mail to a turn already stalled.
     pub fn saw_event(&self, agent: &AetherAgentId, kind: &archon_aether::events::EventKind) {
-        let mut liveness = self
+        let due = self
             .liveness
             .lock()
-            .expect("liveness is never held across a panic");
-        liveness.saw(agent, kind, archon_core::now());
+            .expect("liveness is never held across a panic")
+            .saw(agent, kind, archon_core::now());
+        if due {
+            self.stall_check.notify_one();
+        }
     }
 
     /// When a deferred revival of a stopped orchestrator will run.
@@ -754,6 +764,22 @@ pub async fn route_answer(
             .await?;
         return Ok(None);
     }
+    route_archon_answer(ctx, question, text, via).await
+}
+
+/// The rest of `route_answer`, for a question Archon itself asked: its gate,
+/// its merge, its report's "Reopen it?", or the asker's `ask_operator`.
+pub async fn route_archon_answer(
+    ctx: &DaemonContext,
+    question: &Question,
+    text: &str,
+    via: AnswerVia,
+) -> Result<Option<Question>, ArchonError> {
+    assert!(
+        question.aether.is_none(),
+        "Aether's questions are replied to"
+    );
+    assert!(question.is_open(), "only an open question is routed");
     let gate = ctx.store.lock().await.gate_by_question(&question.id)?;
     if let Some(gate) = gate {
         let decision = GateDecision::from_answer(text)?;
@@ -1528,8 +1554,10 @@ mod tests {
             prompt.contains("Call `list_pipelines` to see the catalog"),
             "new pipelines must be discoverable without static prompt guidance"
         );
-        // Reports the operator asks for by name need no routing guidance.
-        let pending_catalog_guidance = ["code-audit", "design-doc"];
+        // Reports the operator asks for by name need no routing guidance, and the
+        // release gates get theirs with the release-validation prompts (#396, #397).
+        let pending_catalog_guidance =
+            ["code-audit", "design-doc", "e2e-strict", "release-journey"];
         let catalog = archon_pipeline::Catalog::builtin();
         for name in pending_catalog_guidance {
             catalog.get(name).expect("pending pipeline is discoverable");
@@ -1604,9 +1632,36 @@ mod tests {
             "Omit `model_plan` to use learned choices or the configured fallback.",
             "Override stages when task requirements or evidence (`model_evidence`) justify it; \
              explain why in `model_reasons`.",
-            "`x_high` or `max` only for a named reasoning problem inspection left open.",
         ] {
             assert!(prompt.contains(said), "missing {said:?}");
+        }
+        let rubric = archon_core::model::EFFORT_RUBRIC;
+        assert!(
+            prompt.contains(&format!("Size each stage's effort to its task: {rubric}")),
+            "the stage contracts' effort rubric, word for word"
+        );
+        for level in [
+            "`low` for lookups",
+            "`medium` for routine changes",
+            "`high` for non-trivial design",
+            "`x_high` for hard reasoning",
+            "`max` only after `x_high` failed on the same task",
+        ] {
+            assert!(prompt.contains(level), "missing {level:?}");
+        }
+        assert!(
+            prompt.contains(&format!(
+                "{rubric} Off the learned or configured effort, lower or higher, state the \
+                 reason in one line in `model_reasons`."
+            )),
+            "a move off the default is explained"
+        );
+        for gone in [
+            "only for a named reasoning problem",
+            "lower only for a trivial diff",
+            "`max` only when `x_high` failed.",
+        ] {
+            assert!(!prompt.contains(gone), "{gone:?} is the old rule");
         }
     }
 
@@ -1799,7 +1854,8 @@ mod tests {
     }
 
     /// The prompt is paid for on every turn; the tools describe themselves.
-    const BUDGET_BYTES: usize = 13 * 1024;
+    /// The half KiB above 13 holds the effort rubric.
+    const BUDGET_BYTES: usize = 13 * 1024 + 512;
 
     #[test]
     fn builtin_prompt_stays_within_its_budget() {

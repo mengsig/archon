@@ -40,18 +40,18 @@ profile, and it never touches Archon's configuration or data.
 Set these in the environment of `sh`, after the pipe:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mengsig/archon/main/install.sh | ARCHON_VERSION=v1.4.12 sh
+curl -fsSL https://raw.githubusercontent.com/mengsig/archon/main/install.sh | ARCHON_VERSION=v1.5.0 sh
 ```
 
 | Variable | Effect |
 | --- | --- |
-| `ARCHON_VERSION` | Install this release, such as `v1.4.12`, instead of the latest. |
+| `ARCHON_VERSION` | Install this release, such as `v1.5.0`, instead of the latest. |
 | `ARCHON_INSTALL_DIR` | Install here instead of `~/.local/bin`. The directory must be yours to write. |
 | `ARCHON_SKIP_AETHER=1` | Do not install Aether; print the command that does. |
 | `ARCHON_NONINTERACTIVE=1` | Ask nothing: a missing Aether is installed without a question. |
 | `ARCHON_INSTALL_BASE_URL` | Download from this address instead of `https://github.com/mengsig/archon/releases`. It must serve `latest/download/<file>` and `download/<tag>/<file>`. `archon update` honours it too. |
 | `ARCHON_AETHER_INSTALL_URL` | Fetch Aether's installer from this address. |
-| `ARCHON_REMOTE=1` | Set up the mobile web app without asking (`archon remote setup --yes`, [remote-setup.md](remote-setup.md)); `ARCHON_REMOTE=0` skips the question. Off a terminal it is skipped unless set to 1. A failed setup leaves Archon installed and prints the retry command. |
+| `ARCHON_REMOTE=1` | Set up remote access through Aether without asking (`archon remote setup --yes`, [remote-setup.md](remote-setup.md)); `ARCHON_REMOTE=0` skips the question. Off a terminal it is skipped unless set to 1. A failed setup leaves Archon installed and prints the retry command. |
 | `https_proxy`, `http_proxy` | Honoured by `curl` and `wget`. |
 
 The installer exits with 0 when everything is in place, 1 when it installed
@@ -81,8 +81,11 @@ aether schema | grep -E '^  "(min_)?protocol_version"'
 
 Update an Aether that is too old with `aether update`.
 
-Archon 1.4.12 needs **Aether 1.2.11**: it is released with and tested on that
-release. Neither the installer nor `archon update` pins an Aether version:
+Archon 1.5.0 is released with and tested on **Aether 1.3.0**. The queue
+runs on Aether 1.2.11 or later, and remote access needs Aether 1.3.0 or
+later, the first release that mounts archond at `/archon`
+([remote-setup.md](remote-setup.md)). Neither the installer nor `archon
+update` pins an Aether version:
 the installer installs the latest Aether release only when it finds no
 `aether`, and keeps one it finds. `archon update` runs `aether update
 --yes`, which installs the latest release, only on a confirmed update
@@ -91,10 +94,8 @@ and a declined question leave Aether as it is.
 Check with `aether --version` and update an older one with `aether update`.
 Archon checks
 Aether's protocol, not its version: it asks for protocol 24 and accepts down
-to 17. Aether 1.2.11 serves protocols 17 to 25, so it answers Archon on 24;
-protocol 25 only adds a `credentials` exhaustion class, which a client on 24
-sees as `usage_limit`. Archon does not refuse an older aetherd that serves
-protocol 24, but only Aether 1.2.11 is supported with it. Since Aether 1.2.7,
+to 17. Aether 1.2.11 serves protocols 17 to 25 and Aether 1.3.0 17 to 26, so
+both answer Archon on 24. Since Aether 1.2.7,
 Archon uses two features when they are offered: `subtree_update`, which
 raises a steer's deadline or budget for a stage agent and its helpers in one
 request (an older aetherd gets one request per helper), and
@@ -130,7 +131,7 @@ Every release carries, for each archive, a `.sha256` file, and one
 `SHA256SUMS` file that lists all of them.
 
 ```sh
-tag=v1.4.12
+tag=v1.5.0
 target=x86_64-unknown-linux-musl
 base=https://github.com/mengsig/archon/releases/download/$tag
 curl -fsSLO "$base/archon-$target.tar.gz"
@@ -151,8 +152,11 @@ archive holds `LICENSE` and `THIRD-PARTY-NOTICES`; the installer and
 ```sh
 archon update            # install the latest release when it is newer
 archon update --check    # only report: exit 0 when up to date, 10 when a newer release exists
-archon update --version v1.4.12    # install exactly this release
+archon update --version v1.5.0     # install exactly this release
 ```
+
+A release that needs more than this, such as 1.5.0 from 1.4.x, lists its
+steps in [upgrading.md](upgrading.md).
 
 `archon update` downloads the same archive as the installer, makes the same
 SHA-256 check, and renames the new binary over the old one in the same
@@ -242,7 +246,7 @@ Each `archon`, `archon tui` and `archon chat` on a terminal looks for a
 newer release of Archon and of Aether before it opens, and offers:
 
 ```text
-Archon 1.4.13 is available (this is 1.4.12).
+Archon 1.5.1 is available (this is 1.5.0).
 Update and restart now? [Y/n/s] (s: skip these versions)
 ```
 
@@ -289,6 +293,10 @@ new archond; restart the affected agents (`archon orchestrator restart`
 for the orchestrator). Dedicated mode restarts Aether and its tools too.
 
 ### Back up before a release that migrates the store
+
+The steps for each release that migrates the store, such as 1.5.0 (store
+schema 23), are in [upgrading.md](upgrading.md); this is the general
+procedure.
 
 A release may migrate the queue database (`archon.db` in the data
 directory) when its `archond` first starts, and an older `archond` refuses

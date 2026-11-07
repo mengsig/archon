@@ -7,6 +7,7 @@ mod session;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use archon_core::protocol::WelcomeDevice;
 use base64::Engine as _;
 use bytes::Bytes;
 use http_body_util::Full;
@@ -42,11 +43,16 @@ pub fn upgrade(
     admitted(shared, bound, &device.id, &request)?;
     let on_upgrade = hyper::upgrade::on(&mut request);
     let shared = shared.clone();
+    let named = WelcomeDevice {
+        id: device.id,
+        name: device.name,
+        role: device.role,
+    };
     tokio::spawn(async move {
         match on_upgrade.await {
             Ok(upgraded) => {
-                shared.note_seen(&device.id);
-                session::carry(TokioIo::new(upgraded), backend, registration).await;
+                shared.note_seen(&named.id);
+                session::carry(TokioIo::new(upgraded), backend, named, registration).await;
             }
             Err(error) => tracing::debug!(%error, "a WebSocket upgrade did not complete"),
         }
@@ -124,6 +130,7 @@ fn accept_key(headers: &HeaderMap) -> Result<String, &'static str> {
 
 #[cfg(test)]
 mod tests {
+    use archon_core::protocol::DeviceRole;
     use archon_core::remote::{RemoteChange, RemoteConfig};
 
     use super::*;
@@ -178,7 +185,7 @@ mod tests {
         let remote = Remote::open(config, dir.path(), "9.9.9").unwrap();
         let view = remote.configure(origins(&[PHONE], &[])).await.unwrap();
         let bound: SocketAddr = view.listening.unwrap().parse().unwrap();
-        let code = remote.pair().unwrap().code;
+        let code = remote.pair(DeviceRole::Operator).unwrap().code;
         let body = serde_json::json!({"code": code, "device_name": "Phone"});
         crate::http::api::claim(&remote.shared, PHONE, body).unwrap();
         let device = remote.view().devices[0].id.clone();

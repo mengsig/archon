@@ -28,7 +28,7 @@ pub fn feedback_window() -> chrono::Duration {
 }
 
 /// `archon learning correct`: what the operator says went wrong, where.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CorrectionRequest {
     pub item: QueueItemId,
@@ -91,7 +91,7 @@ impl CorrectionRequest {
 }
 
 /// What the feedback froze about the run when it was recorded.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Attribution {
     pub repo: Option<RepoId>,
     pub pipeline: String,
@@ -101,7 +101,7 @@ pub struct Attribution {
     pub credit: Credit,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "credit", rename_all = "snake_case")]
 pub enum Credit {
     /// The one completed model choice that produced the stage.
@@ -113,7 +113,7 @@ pub enum Credit {
     Unavailable { why: String },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CurationState {
     /// Recorded; Aether has not confirmed the forget.
@@ -136,7 +136,7 @@ impl CurationState {
 }
 
 /// The memory's state when Archon first read it, before forgetting it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryBefore {
     Current,
@@ -145,7 +145,7 @@ pub enum MemoryBefore {
 }
 
 /// The forget a correction asked for, and Aether's answer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MemoryCuration {
     pub memory: AetherMemoryId,
     /// The Aether instance the forget is bound to when it is recorded, before
@@ -181,7 +181,7 @@ impl MemoryCuration {
 }
 
 /// One recorded correction, with mutable revocation, curation and delivery state.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OperatorFeedback {
     pub id: FeedbackId,
     pub request_key: String,
@@ -250,7 +250,7 @@ impl OperatorFeedback {
 }
 
 /// An Aether memory as Archon shows it: where it came from, never its text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MemoryView {
     pub id: AetherMemoryId,
     /// Aether's authenticated provenance: `operator`, `agent agt_…`, a file.
@@ -265,7 +265,7 @@ pub struct MemoryView {
 }
 
 /// One choice's routing samples in the feedback's cohort, read now.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ChoiceStanding {
     pub choice: ModelChoice,
     pub runs: u32,
@@ -273,7 +273,7 @@ pub struct ChoiceStanding {
 }
 
 /// A feedback event with what it does now.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FeedbackView {
     pub feedback: OperatorFeedback,
     #[serde(default)]
@@ -292,7 +292,7 @@ pub struct FeedbackView {
 }
 
 /// The reply of `learning correct`, `undo`, `restore-memory` and `retry-memory`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FeedbackReceipt {
     pub view: FeedbackView,
     /// The same correction was already recorded; nothing new was.
@@ -300,7 +300,7 @@ pub struct FeedbackReceipt {
 }
 
 /// `archon learning why <item>`: every correction of the item's runs.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LearningWhy {
     pub item: QueueItemId,
     pub feedback: Vec<FeedbackView>,

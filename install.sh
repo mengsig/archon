@@ -289,23 +289,23 @@ run_remote_setup() {
     if "$INSTALL_DIR/archon" remote setup "$@"; then
         return 0
     fi
-    warn "the mobile web app is not set up. Archon is installed; to retry, run:"
+    warn "remote access is not set up. Archon is installed; to retry, run:"
     warn "  archon remote setup"
 }
 
-# The optional mobile web app (docs/remote-setup.md): ARCHON_REMOTE=1 sets it
+# Optional remote access through Aether (docs/remote-setup.md): ARCHON_REMOTE=1 sets it
 # up without asking, ARCHON_REMOTE=0 skips it, and a terminal is asked.
 remote_step() {
     case ${ARCHON_REMOTE:-} in
     0) return 0 ;;
     1)
-        say "Setting up the mobile web app (ARCHON_REMOTE=1)."
+        say "Setting up remote access (ARCHON_REMOTE=1)."
         run_remote_setup --yes </dev/null
         return 0
         ;;
     esac
     [ -z "$(no_question_reason)" ] || return 0
-    say "Archon can serve a mobile web app, published to your tailnet with 'tailscale serve'."
+    say "Archon can be served in the Aether app on your phone, through your tailnet with 'tailscale serve'."
     if confirm_no "Set it up now?"; then
         run_remote_setup </dev/tty
     else

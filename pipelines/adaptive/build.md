@@ -29,7 +29,8 @@ read again.
    Use leaf workers unless a bounded subproblem benefits from another level
    allowed by the contract; each works in an isolated workspace. Sequence
    dependent parts after their prerequisites and keep tightly coupled work yourself. Give
-   each child the model and effort its own task needs, whatever yours are.
+   each child the model and effort its own task needs, whatever yours are,
+   by your contract's effort rubric.
    Keep generated outputs ignored and check disk headroom before costly
    builds; never copy build caches or source trees into `/tmp`. Tell every
    child never to touch the operator's checkout at `{{repo.path}}`.
@@ -64,9 +65,13 @@ read again.
    - the repository guidance it must apply and only the parts of a spec that
      bear on the change: no conversation, no project history.
 
-   Choose its effort yourself, never below one your contract names: medium
-   for ordinary risk, high where the change's risk is medium or more,
-   security or an invariant is at stake, or the brief asks for depth. Require the
+   The effort your contract names is the default, for a diff the rubric
+   leaves open; otherwise the rubric decides: `low` for a trivial diff,
+   `medium` for a small or low-risk one, `high` for a risky diff, shared
+   code, an invariant at stake or a brief asking for depth, `x_high` for
+   concurrency or security analysis, `max` only after `x_high` failed on
+   the same review; never above the model policy's cap. Off the default,
+   lower or higher, state the reason in one line in your result. Require the
    verdict your contract shows, on the head it read, with actionable
    findings (path, issue, impact, remedy).
    Pass on your contract's bounds for reviewers and its blocking class:

@@ -140,6 +140,9 @@ impl Fake {
                 protocol_version: PROTOCOL_VERSION,
                 daemon_version: "fake".into(),
                 pid: std::process::id(),
+                min_protocol_version: PROTOCOL_VERSION,
+                features: Vec::new(),
+                device: None,
             }),
             Request::ResolveItem { prefix } => return self.resolve(prefix),
             Request::GetItem { item } => Reply::ItemDetail(Box::new(ItemDetail {

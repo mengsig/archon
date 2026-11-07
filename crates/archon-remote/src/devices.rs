@@ -3,6 +3,7 @@
 
 use archon_core::Timestamp;
 use archon_core::error::ArchonError;
+use archon_core::protocol::DeviceRole;
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -21,6 +22,9 @@ const ID_PREFIX: &str = "dev_";
 pub struct Device {
     pub id: String,
     pub name: String,
+    /// Chosen by the host when pairing; format-1 records are operators.
+    #[serde(default)]
+    pub role: DeviceRole,
     /// Lowercase hex SHA-256 of the secret's bytes.
     pub secret_sha256: String,
     pub paired_at: Timestamp,
@@ -36,8 +40,8 @@ pub struct Issued {
 }
 
 impl Device {
-    /// A new device named `name` with a fresh secret.
-    pub fn issue(name: String, now: Timestamp) -> Result<Issued, ArchonError> {
+    /// A new device named `name`, in `role`, with a fresh secret.
+    pub fn issue(name: String, role: DeviceRole, now: Timestamp) -> Result<Issued, ArchonError> {
         assert!(!name.is_empty(), "names are normalized first");
         let mut secret = [0u8; SECRET_BYTES];
         let mut id = [0u8; ID_BYTES];
@@ -52,6 +56,7 @@ impl Device {
             secret_sha256: digest(&secret),
             id,
             name,
+            role,
             paired_at: now,
             last_seen_at: None,
         };
@@ -121,8 +126,9 @@ mod tests {
     #[test]
     fn a_credential_authenticates_only_its_own_device() {
         let now = archon_core::now();
-        let a = Device::issue("Phone".into(), now).unwrap();
-        let b = Device::issue("Tablet".into(), now).unwrap();
+        let a = Device::issue("Phone".into(), DeviceRole::Operator, now).unwrap();
+        let b = Device::issue("Tablet".into(), DeviceRole::Observer, now).unwrap();
+        assert_eq!(b.device.role, DeviceRole::Observer);
         let devices = vec![a.device.clone(), b.device.clone()];
         assert_eq!(
             authenticate(&devices, &a.credential).map(|d| &d.id),

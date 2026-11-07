@@ -12,7 +12,7 @@ use crate::Timestamp;
 pub const MAX_HEADROOM: f64 = 2.0;
 
 /// One usage window as aetherd reports it (its protocol's `WindowHeadroom`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct QuotaWindow {
     pub name: String,
     #[serde(default)]
@@ -39,7 +39,7 @@ impl QuotaWindow {
 
 /// A provider's latest usage report (aetherd's `ProviderHeadroom`). A stale
 /// or empty one says nothing, so routing treats the provider as unknown.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ProviderHeadroom {
     #[serde(default)]
     pub windows: Vec<QuotaWindow>,
@@ -223,7 +223,7 @@ impl QuotaView {
 
 /// Why a queued item waits: every provider that could serve one of its
 /// tier-only stages at its floor is out of quota.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct QuotaHold {
     /// The plan key whose stage has nowhere to run.
     pub stage: String,

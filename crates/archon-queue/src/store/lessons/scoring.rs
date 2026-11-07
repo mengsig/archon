@@ -30,6 +30,12 @@ pub(in crate::store) fn score_run(conn: &Connection, outcome: &Outcome) -> Resul
         .ctx("score lesson use")?;
         score_lesson(conn, outcome, &LessonId::parse(&id)?)?;
     }
+    // Both holdout arms take the run's score; a held-out lesson's own counts never do.
+    conn.execute(
+        "UPDATE lesson_trials SET won=?1 WHERE run=?2",
+        params![won, outcome.run.as_str()],
+    )
+    .ctx("score lesson trials")?;
     Ok(())
 }
 
@@ -52,7 +58,12 @@ fn score_lesson(conn: &Connection, outcome: &Outcome, id: &LessonId) -> Result<(
     }
     let at = archon_core::now();
     refresh(&mut lesson, at);
-    save_scored(conn, before, lesson, at)
+    let (scope, changed) = (lesson.scope.clone(), lesson.state != before);
+    save_scored(conn, before, lesson, at)?;
+    if changed {
+        super::consolidation::consolidate(conn, &scope)?;
+    }
+    Ok(())
 }
 
 /// Sets a lesson's uses and wins from its scored uses since its epoch.

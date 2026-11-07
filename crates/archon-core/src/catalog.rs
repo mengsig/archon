@@ -14,7 +14,9 @@ fn default_effort() -> Effort {
 }
 
 /// Where a pipeline was found. Later sources replace earlier ones by name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum PipelineSource {
     Builtin,
@@ -22,7 +24,7 @@ pub enum PipelineSource {
     Repo,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum StageKind {
     /// Writes a proposal page and changes nothing; at most one, first.
@@ -49,7 +51,9 @@ impl StageKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Gate {
     #[default]
@@ -59,7 +63,9 @@ pub enum Gate {
     Any,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum WorkspaceMode {
     /// A fresh git worktree per pipeline run.
@@ -85,7 +91,7 @@ pub fn is_snapshot_of(workspace: &Path, item: &QueueItemId) -> bool {
 
 pub use crate::model_tier::Tier;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct Nudges {
     pub tier: Option<Tier>,
@@ -95,7 +101,7 @@ pub struct Nudges {
     pub notes: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StageSummary {
     pub id: String,
     pub kind: StageKind,
@@ -123,7 +129,7 @@ pub struct StageSummary {
     pub delegates_reviewers: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PipelineSummary {
     pub name: String,
     pub description: String,
@@ -144,7 +150,7 @@ impl PipelineSummary {
 
 /// A pipeline directory that failed to load; its name is unavailable until
 /// fixed, never silently replaced by a lower-precedence pipeline.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PipelineProblem {
     pub name: String,
     pub source: PipelineSource,
@@ -152,7 +158,7 @@ pub struct PipelineProblem {
     pub error: String,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CatalogListing {
     pub pipelines: Vec<PipelineSummary>,
     pub problems: Vec<PipelineProblem>,

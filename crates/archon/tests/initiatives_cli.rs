@@ -75,6 +75,9 @@ impl Fake {
                 protocol_version: PROTOCOL_VERSION,
                 daemon_version: "fake".into(),
                 pid: std::process::id(),
+                min_protocol_version: PROTOCOL_VERSION,
+                features: Vec::new(),
+                device: None,
             })),
             Request::ListInitiatives => Ok(Reply::Initiatives(self.initiatives.clone())),
             Request::EnqueueInitiative(asked) => {

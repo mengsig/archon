@@ -12,7 +12,19 @@ use crate::model::ModelChoice;
 const SMALL_LINES: u64 = 50;
 const MEDIUM_LINES: u64 = 400;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DiffSize {
     Small,
@@ -30,7 +42,9 @@ impl DiffSize {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct DiffStat {
     pub files: u32,
     pub added: u32,
@@ -47,7 +61,7 @@ impl DiffStat {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OutcomeResult {
     Succeeded,
@@ -73,7 +87,7 @@ pub const UNSCORED_FAILURES: [FailureClass; 3] = [
 ];
 
 /// Why a failed run failed, as far as the daemon can tell.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FailureClass {
     Budget,
@@ -109,7 +123,7 @@ impl FailureClass {
 }
 
 /// Someone had to step in after or during the run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Correction {
     RetryAfterDone,
@@ -133,7 +147,7 @@ impl Correction {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CorrectionCause {
     Quality,
@@ -153,7 +167,7 @@ impl CorrectionCause {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CorrectionEvent {
     pub item: QueueItemId,
@@ -162,7 +176,7 @@ pub struct CorrectionEvent {
     pub reason: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RouteContext {
     pub revision: String,
     pub review: String,
@@ -170,7 +184,7 @@ pub struct RouteContext {
 }
 
 /// One stage of the run under one model choice.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OutcomeStage {
     pub stage: String,
     pub choice: ModelChoice,
@@ -181,7 +195,7 @@ pub struct OutcomeStage {
     pub passed: Option<bool>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Outcome {
     pub run: PipelineRunId,
     pub item: QueueItemId,
@@ -273,7 +287,7 @@ impl Outcome {
 }
 
 /// A model choice the evidence makes the default for one kind of stage.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LearnedRoute {
     pub repo: Option<RepoId>,
     pub pipeline: String,

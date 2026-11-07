@@ -52,6 +52,12 @@ pub fn instructions(
     assert!(stage.fan_out >= 1, "validated specs have fan_out >= 1");
     let mut out = contract_header(stage, mode, workspace, team);
     out.push_str(kind_rules(stage.kind));
+    if builds_the_change(stage.kind, owed) {
+        out.push_str(OUTCOME_RULE);
+    }
+    if stage.kind == StageKind::Team {
+        out.push_str(TEAM_COORDINATION_RULES);
+    }
     if stage.kind == StageKind::Review {
         out.push_str(&review_bounds(experiments));
     }
@@ -123,11 +129,13 @@ fn relays_reviewer(owed: Owed) -> bool {
 
 /// The section for an agent that can delegate: `models` is its children's policy in words,
 /// `depth` is `[limits] max_delegation_depth`, `experiments` as for [`instructions`].
+/// `effort_sizing` (`[models] effort_sizing`) adds the effort rubric for its children.
 pub fn delegation_rules(
     mode: WorkspaceMode,
     models: &str,
     depth: u32,
     experiments: Option<&Path>,
+    effort_sizing: bool,
 ) -> String {
     assert!(!models.trim().is_empty(), "the policy is always stated");
     let workspaces = match mode {
@@ -136,6 +144,12 @@ pub fn delegation_rules(
     };
     let depth = depth_rule(depth);
     let bounds = review_bounds(experiments);
+    let sizing = match effort_sizing {
+        true => format!(
+            "- Size each child's effort to its own task, whatever yours is: {EFFORT_RUBRIC}\n"
+        ),
+        false => String::new(),
+    };
     format!(
         "\n## Delegation\n\n\
          - Aether's `delegate` hands a scoped part of this stage to a child agent. \
@@ -144,7 +158,7 @@ pub fn delegation_rules(
          - Choose each child's model and effort within Archon's policy for this item: \
          {models}. Archon cancels a child outside it. Aether's `list_models` lists what \
          is connected, not what is allowed.\n\
-         - Size each child's effort to its own task, whatever yours is: {EFFORT_RUBRIC}\n\
+         {sizing}\
          - Wait for every child (`wait_for`) or cancel it (`cancel_agent`) before you \
          finish: Archon cancels whatever still runs when your stage ends, and that work \
          is lost. A child that finished cannot be asked again: for a second look, \
@@ -475,21 +489,32 @@ fn review_rules(duty: ReviewDuty) -> String {
 
 /// Which models the review-holding stage, on `own`, delegates its reviewers to:
 /// the plan's, which the daemon enforces, or else ones `policy` allows.
+/// `effort_sizing` is `[models] effort_sizing`.
 pub fn reviewer_model_rules(
     named: Option<&[ModelChoice]>,
     own: &ModelRef,
     policy: &ModelPolicy,
+    effort_sizing: bool,
 ) -> String {
     match named {
-        Some(choices) if !choices.is_empty() => named_reviewer_rules(choices, policy.max_effort),
+        Some(choices) if !choices.is_empty() => {
+            named_reviewer_rules(choices, policy.max_effort, effort_sizing)
+        }
         _ => fallback_reviewer_rules(own, policy),
     }
 }
 
-/// The plan's reviewers: each effort is its reviewer's default, which the
-/// lead sizes to the diff; `cap` (the policy's `max_effort`) the only ceiling.
-fn named_reviewer_rules(choices: &[ModelChoice], cap: Option<Effort>) -> String {
+/// The plan's reviewers. By default each effort is a floor and `cap` (the
+/// policy's `max_effort`) the only ceiling; with `effort_sizing` it is a default.
+fn named_reviewer_rules(
+    choices: &[ModelChoice],
+    cap: Option<Effort>,
+    effort_sizing: bool,
+) -> String {
     assert!(!choices.is_empty(), "a plan names reviewers");
+    if !effort_sizing {
+        return floored_reviewer_rules(choices, cap);
+    }
     let models: Vec<String> = choices
         .iter()
         .map(|c| {
@@ -503,6 +528,52 @@ fn named_reviewer_rules(choices: &[ModelChoice], cap: Option<Effort>) -> String 
          model as it spawns.\n",
         models.join("; "),
         reviewer_effort_rule(cap)
+    )
+}
+
+/// The plan's reviewers with each effort a floor, never a ceiling, as the
+/// watchdog enforces unless `[models] effort_sizing` is on.
+fn floored_reviewer_rules(choices: &[ModelChoice], cap: Option<Effort>) -> String {
+    assert!(!choices.is_empty(), "a plan names reviewers");
+    let models: Vec<String> = choices
+        .iter()
+        .map(|c| format!("{} at effort {}", c.model, effort_range(c.effort, cap)))
+        .collect();
+    let rules = format!(
+        "- Delegate every reviewer with role `reviewer`, each on one of these models, \
+         taken in turn: {}. Each effort is a floor, never a ceiling: Archon cancels a \
+         child labelled `reviewer` on any other model, or below its model's effort, as it \
+         spawns.\n",
+        models.join("; ")
+    );
+    debug_assert!(rules.ends_with('\n'), "sections end with a newline");
+    rules
+}
+
+/// `floor` and the higher efforts `cap` leaves: `high`, `high or higher`, `high up to max`.
+fn effort_range(floor: Effort, cap: Option<Effort>) -> String {
+    match cap {
+        Some(cap) if cap <= floor => floor.to_string(),
+        Some(cap) => format!("{floor} up to {cap}"),
+        None => format!("{floor} or higher"),
+    }
+}
+
+/// The effort of a reviewer no plan names, from `floor`, which `cap` already
+/// bounds: at least that, and at least high for a change of medium risk or more.
+pub(crate) fn unnamed_reviewer_effort(floor: Effort, cap: Option<Effort>) -> String {
+    assert!(
+        cap.is_none_or(|cap| floor <= cap),
+        "the floor respects the policy"
+    );
+    let risky = cap.map_or(Effort::High, |cap| cap.min(Effort::High));
+    let at = effort_range(floor, cap);
+    if risky <= floor {
+        return at;
+    }
+    format!(
+        "{at}, and {} when you rate the change's risk medium or high",
+        effort_range(risky, cap)
     )
 }
 
@@ -530,7 +601,8 @@ pub(crate) fn reviewer_effort_rule(cap: Option<Effort>) -> String {
     };
     let rule = format!(
         "That effort is the default, for a diff the rubric leaves open; otherwise the \
-         rubric decides: {}{ceiling}. {REASON_RULE}",
+         rubric decides: {}{ceiling}. This replaces any effort floor the stage prompt \
+         names. {REASON_RULE}",
         levels.join(", ")
     );
     debug_assert!(
@@ -791,13 +863,27 @@ a tree holds for any later head with that tree. After a passing full check, a la
 diff of only prose or raster images that no build or test reads needs only the \
 repository's link and notice checks.\n";
 
+/// Whether a stage of `kind` builds the run's change: a team role, or the
+/// work stage that records what ships. Setup, plan and baseline stages do not.
+fn builds_the_change(kind: StageKind, owed: Owed) -> bool {
+    kind == StageKind::Team || (kind == StageKind::Work && owed.ship_record)
+}
+
+/// Code-level criteria can all hold while the product fails its user, so a
+/// building stage answers for the brief's user outcomes too (#397).
+const OUTCOME_RULE: &str = "\
+- Check your change against each user-outcome criterion in the brief and say how. \
+Say plainly which this environment cannot check, and why: never claim one you did \
+not check.\n";
+
 const TEAM_RULES: &str = "\n## Team stage\n\n\
 - Use the report format the stage prompt gives for your summary. If it gives none, \
 list what your role changed and why, the files touched, the commits you made, the \
 verification commands you ran with their results, any assumption you made about a \
 peer's work, and any known gaps.\n\
-- Run checks in the foreground or wait on them: never end your turn while one runs.\n\
-\n## Team coordination\n\n\
+- Run checks in the foreground or wait on them: never end your turn while one runs.\n";
+
+const TEAM_COORDINATION_RULES: &str = "\n## Team coordination\n\n\
 - Once every role has an agent, Archon sends you one roster message: each role's name, \
 Aether agent id, worktree and branch. If a role is replaced, a roster with a higher \
 version follows; it supersedes the earlier one.\n\
@@ -1062,7 +1148,7 @@ mod tests {
             Owed::default(),
             experiments,
         );
-        let delegated = delegation_rules(WorkspaceMode::Worktree, "a/one", 1, experiments);
+        let delegated = delegation_rules(WorkspaceMode::Worktree, "a/one", 1, experiments, false);
         [review, delegated]
     }
 
@@ -1157,7 +1243,7 @@ mod tests {
             }
             assert!(!text.contains("one new whole-change read at the new head"));
         }
-        let delegation = delegation_rules(WorkspaceMode::Worktree, "a/one", 1, None);
+        let delegation = delegation_rules(WorkspaceMode::Worktree, "a/one", 1, None, false);
         assert!(
             delegation.contains("Wait for every child (`wait_for`) or cancel it (`cancel_agent`)")
         );
@@ -1335,6 +1421,62 @@ mod tests {
         assert!(!solo.contains("roster"), "only team roles get a roster");
     }
 
+    /// The stages that build the change answer for the brief's user outcomes,
+    /// and say which they could not check rather than claiming them (#397).
+    #[test]
+    fn building_stages_check_the_brief_s_outcome_criteria_or_say_they_cannot() {
+        let rule = "Check your change against each user-outcome criterion in the brief and say \
+                    how. Say plainly which this environment cannot check, and why: never claim \
+                    one you did not check.";
+        let slot = TeamSlot {
+            role: "ui".into(),
+            branch: "archon/x--ui".into(),
+            workspace: "/t/s-ui".into(),
+        };
+        let contract = |kind: StageKind, ship_record: bool| {
+            let gate = match kind {
+                StageKind::Review | StageKind::Test => Gate::AllPass,
+                _ => Gate::None,
+            };
+            let mut spec = stage(kind, gate, 1);
+            let part = match kind {
+                StageKind::Team => {
+                    spec.roles = vec!["ui".into()];
+                    TeamPart::Role(&slot)
+                }
+                _ => TeamPart::Solo,
+            };
+            let owed = Owed {
+                review: None,
+                ship_record,
+            };
+            let text = instructions(&spec, WorkspaceMode::Worktree, "/w", part, owed, None);
+            text.split_whitespace().collect::<Vec<_>>().join(" ")
+        };
+        assert!(contract(StageKind::Work, true).contains(rule), "the lead");
+        assert!(contract(StageKind::Team, false).contains(rule), "a role");
+        assert!(
+            !contract(StageKind::Work, false).contains(rule),
+            "a setup or plan stage builds nothing"
+        );
+        for kind in [
+            StageKind::Review,
+            StageKind::Test,
+            StageKind::Ship,
+            StageKind::Report,
+            StageKind::Propose,
+        ] {
+            assert!(!contract(kind, false).contains(rule), "{kind:?}");
+        }
+        let team = contract(StageKind::Team, false);
+        let outcome = team.find(rule).unwrap();
+        assert!(
+            team.find("## Team stage").unwrap() < outcome
+                && outcome < team.find("## Team coordination").unwrap(),
+            "the rule belongs to the team stage, not to its coordination: {team}"
+        );
+    }
+
     #[test]
     fn work_stages_of_a_team_pipeline_must_commit() {
         let part = TeamPart::RunTree { branch: "archon/x" };
@@ -1383,7 +1525,7 @@ mod tests {
         );
         assert_eq!(contract.matches("delegate").count(), 0, "{contract}");
 
-        let writable = delegation_rules(WorkspaceMode::Worktree, "a/one, b/two", 2, None);
+        let writable = delegation_rules(WorkspaceMode::Worktree, "a/one, b/two", 2, None, false);
         assert!(writable.starts_with("\n## Delegation\n"), "{writable}");
         for said in [
             "A child may delegate once more when its part splits further",
@@ -1402,6 +1544,11 @@ mod tests {
             "Size each child's effort to its own task, whatever yours is: {EFFORT_RUBRIC}\n"
         );
         assert!(
+            !writable.contains("Size each child's effort"),
+            "1.4.12's rules unless `[models] effort_sizing` opts in: {writable}"
+        );
+        let writable = delegation_rules(WorkspaceMode::Worktree, "a/one, b/two", 2, None, true);
+        assert!(
             writable.contains(&sizing),
             "the rubric, word for word: {writable}"
         );
@@ -1416,10 +1563,10 @@ mod tests {
         }
         assert_eq!(
             writable,
-            delegation_rules(WorkspaceMode::Scratch, "a/one, b/two", 2, None)
+            delegation_rules(WorkspaceMode::Scratch, "a/one, b/two", 2, None, true)
         );
 
-        let read_only = delegation_rules(WorkspaceMode::RepoReadonly, "a/one", 2, None);
+        let read_only = delegation_rules(WorkspaceMode::RepoReadonly, "a/one", 2, None, false);
         assert!(read_only.contains("Your workspace is READ-ONLY, and so is every child's"));
         assert!(read_only.contains("Do not pass `workspace_mode: \"isolated\"`"));
         assert_eq!(
@@ -1434,11 +1581,11 @@ mod tests {
     /// they may delegate, and where Archon cancels.
     #[test]
     fn delegation_rules_follow_the_configured_depth() {
-        let only_children = delegation_rules(WorkspaceMode::Worktree, "a/one", 1, None);
+        let only_children = delegation_rules(WorkspaceMode::Worktree, "a/one", 1, None, false);
         assert!(only_children.contains("Pass `leaf: true` for every child"));
         assert!(only_children.contains("Archon cancels an agent a second level down."));
         assert!(!only_children.contains("delegate once more"));
-        let deeper = delegation_rules(WorkspaceMode::Worktree, "a/one", 3, None);
+        let deeper = delegation_rules(WorkspaceMode::Worktree, "a/one", 3, None, false);
         for said in [
             "down to 3 levels below you",
             "an agent at level 2 to pass `leaf: true` for its own children",
@@ -1453,7 +1600,7 @@ mod tests {
     #[test]
     fn delegation_rules_say_what_a_child_and_a_reviewer_are_handed() {
         for mode in [WorkspaceMode::Worktree, WorkspaceMode::RepoReadonly] {
-            let rules = delegation_rules(mode, "a/one", 2, None);
+            let rules = delegation_rules(mode, "a/one", 2, None, false);
             for said in [
                 "A child starts cold and pays to read whatever you do not tell it",
                 "Never your conversation or the project's history",
@@ -1525,7 +1672,7 @@ mod tests {
     #[test]
     fn a_delegating_agent_must_pass_its_rules_on_in_each_childs_instructions() {
         for mode in [WorkspaceMode::Worktree, WorkspaceMode::RepoReadonly] {
-            let rules = delegation_rules(mode, "a/one", 2, None);
+            let rules = delegation_rules(mode, "a/one", 2, None, false);
             for said in [
                 "A child inherits none of this contract or of the stage prompt",
                 "only the `objective` and `instructions` you pass to `delegate`",
@@ -1587,7 +1734,51 @@ mod tests {
             choice("claude-code/haiku", archon_core::model::Effort::Low),
         ];
         let own = model("claude-code/opus");
-        let rules = reviewer_model_rules(Some(&named), &own, &ModelPolicy::default());
+        let rules = reviewer_model_rules(Some(&named), &own, &ModelPolicy::default(), false);
+        assert!(rules.contains("role `reviewer`"), "{rules}");
+        assert!(rules.contains(
+            "claude-code/opus at effort medium or higher; claude-code/haiku at effort low or higher"
+        ));
+        assert!(rules.contains("Each effort is a floor, never a ceiling"));
+        assert!(rules.contains("on any other model, or below its model's effort, as it spawns"));
+        let capped = ModelPolicy::from_lists(&[], &[], Some(archon_core::model::Effort::Medium));
+        let rules = reviewer_model_rules(Some(&named), &own, &capped, false);
+        assert!(
+            rules.contains("opus at effort medium; claude-code/haiku at effort low up to medium")
+        );
+    }
+
+    #[test]
+    fn an_unnamed_reviewer_runs_at_medium_or_more_and_high_for_a_riskier_change() {
+        use archon_core::model::Effort::{High, Low, Medium, XHigh};
+        let open = unnamed_reviewer_effort(Medium, None);
+        assert_eq!(
+            open,
+            "medium or higher, and high or higher when you rate the change's risk medium or high"
+        );
+        assert_eq!(
+            unnamed_reviewer_effort(Medium, Some(XHigh)),
+            "medium up to x_high, and high up to x_high when you rate the change's risk medium or high"
+        );
+        assert_eq!(unnamed_reviewer_effort(Medium, Some(Medium)), "medium");
+        assert_eq!(unnamed_reviewer_effort(Low, Some(Low)), "low");
+        assert_eq!(unnamed_reviewer_effort(High, None), "high or higher");
+    }
+
+    /// `[models] effort_sizing` makes the plan's efforts defaults, not floors.
+    #[test]
+    fn sized_reviewers_get_the_plan_s_models_whatever_the_policy() {
+        let choice = |model: &str, effort| ModelChoice {
+            model: model.parse().unwrap(),
+            effort,
+            tier: None,
+        };
+        let named = [
+            choice("claude-code/opus", archon_core::model::Effort::Medium),
+            choice("claude-code/haiku", archon_core::model::Effort::Low),
+        ];
+        let own = model("claude-code/opus");
+        let rules = reviewer_model_rules(Some(&named), &own, &ModelPolicy::default(), true);
         assert!(rules.contains("role `reviewer`"), "{rules}");
         assert!(
             rules.contains("claude-code/opus at effort medium; claude-code/haiku at effort low."),
@@ -1596,11 +1787,11 @@ mod tests {
         assert!(rules.contains("That effort is the default, for a diff the rubric leaves open"));
         assert!(rules.contains("on any other model as it spawns"), "{rules}");
         assert!(
-            !rules.contains("floor"),
+            !rules.contains("medium or higher"),
             "the plan's effort is no floor: {rules}"
         );
         let capped = ModelPolicy::from_lists(&[], &[], Some(archon_core::model::Effort::Medium));
-        let rules = reviewer_model_rules(Some(&named), &own, &capped);
+        let rules = reviewer_model_rules(Some(&named), &own, &capped, true);
         assert!(rules.contains("opus at effort medium; claude-code/haiku at effort low."));
         assert!(rules.contains("`medium` for a small or low-risk diff; never above medium"));
         assert!(
@@ -1620,8 +1811,9 @@ mod tests {
             "That effort is the default, for a diff the rubric leaves open; otherwise the \
              rubric decides: `low` for a trivial diff, `medium` for a small or low-risk diff, \
              `high` for a risky diff or shared code, `x_high` for concurrency or security \
-             analysis, `max` only after `x_high` failed on the same review. Off the default, \
-             lower or higher, state the reason in one line in your result."
+             analysis, `max` only after `x_high` failed on the same review. This replaces any \
+             effort floor the stage prompt names. Off the default, lower or higher, state the \
+             reason in one line in your result."
         );
         assert_eq!(reviewer_effort_rule(Some(Max)), open, "max caps nothing");
         let below_max = reviewer_effort_rule(Some(XHigh));
@@ -1643,19 +1835,16 @@ mod tests {
         };
         // A trivial diff may go below any default; no default is a floor or a step up.
         for effort in [Medium, High, XHigh, Max] {
-            let rules = named_reviewer_rules(&[choice(effort)], None);
+            let rules = named_reviewer_rules(&[choice(effort)], None, true);
             assert!(rules.contains(&format!(
                 "codex/m at effort {effort}. That effort is the default"
             )));
             assert!(rules.contains("`low` for a trivial diff"), "{rules}");
             assert!(rules.contains(REASON_RULE), "{rules}");
-            assert!(
-                !rules.contains("floor") && !rules.contains(&format!("{effort} or higher")),
-                "{rules}"
-            );
+            assert!(!rules.contains(&format!("{effort} or higher")), "{rules}");
         }
         // Mixed defaults with the highest at the cap: one ceiling, no contradiction.
-        let mixed = named_reviewer_rules(&[choice(Low), choice(High)], Some(High));
+        let mixed = named_reviewer_rules(&[choice(Low), choice(High)], Some(High), true);
         assert!(
             mixed.contains("codex/m at effort low; codex/m at effort high."),
             "{mixed}"
@@ -1675,7 +1864,7 @@ mod tests {
             Some(archon_core::model::Effort::Medium),
         );
         for unnamed in [None, Some(&[][..])] {
-            let rules = reviewer_model_rules(unnamed, &own, &only);
+            let rules = reviewer_model_rules(unnamed, &own, &only, false);
             assert!(
                 rules.contains(
                     "on your own model claude-code/claude-haiku-5-5, at effort at most medium"
@@ -1690,7 +1879,7 @@ mod tests {
             &[model("codex/luna")],
             None,
         );
-        let rules = reviewer_model_rules(None, &own, &denied);
+        let rules = reviewer_model_rules(None, &own, &denied, false);
         assert!(rules.contains("on your own model"), "{rules}");
         assert!(!rules.contains("codex/luna"), "{rules}");
     }
@@ -1700,12 +1889,12 @@ mod tests {
         let own = model("claude-code/opus");
         let allow = [own.clone(), model("claude-code/haiku"), model("codex/luna")];
         let wide = ModelPolicy::from_lists(&allow, &[model("codex/luna")], None);
-        let rules = reviewer_model_rules(None, &own, &wide);
+        let rules = reviewer_model_rules(None, &own, &wide, false);
         assert!(rules.contains("on one of claude-code/haiku: "), "{rules}");
         assert!(!rules.contains("claude-code/opus"), "{rules}");
         assert!(!rules.contains("codex/luna"), "{rules}");
         let open = ModelPolicy::from_lists(&[], &[model("codex/luna")], None);
-        let rules = reviewer_model_rules(None, &own, &open);
+        let rules = reviewer_model_rules(None, &own, &open, false);
         assert!(rules.contains("on a model other than yours"), "{rules}");
         assert!(
             rules.contains("any model Aether lists except codex/luna"),

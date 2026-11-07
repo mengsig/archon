@@ -167,7 +167,8 @@ async fn an_update_item_model_plan_and_reviewer_plan_pin_their_models_through_di
     resume_and_dispatch(&h, &item.id).await;
     let spawned = h.backend.requests().pop().expect("the implementer");
     assert_eq!(spawned.choice, fast(Effort::Low), "the planned model runs");
-    let named = format!("taken in turn: {FAST} at effort low.");
+    // By default a planned reviewer effort is a floor ("low or higher").
+    let named = format!("taken in turn: {FAST} at effort low");
     assert!(
         spawned.instructions.contains(&named),
         "its reviewers run on the planned model: {}",

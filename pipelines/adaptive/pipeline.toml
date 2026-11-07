@@ -25,4 +25,4 @@ kind = "work"
 prompt = "build.md"
 allow_delegation = true
 timeout_minutes = 180
-nudge = "The strong tier at medium effort (the default); high for hard multi-file work; x_high for hard reasoning, such as root-causing a regression, concurrency or security analysis, or a fix that failed twice; max only after x_high failed on the same task. That the operator prefers strong models is no reason for either. The lead chooses its workers and its reviewer, and their models and efforts, at runtime within model policy."
+nudge = "The strong tier at medium effort (the default); high for hard multi-file work. x_high or max only for a reasoning problem you can name that inspecting the code left unresolved: that the operator prefers strong models is not one. The lead chooses its workers and its reviewer, and their models and efforts, at runtime within model policy."

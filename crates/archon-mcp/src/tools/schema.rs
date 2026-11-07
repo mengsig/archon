@@ -879,9 +879,9 @@ fn guide() -> ToolDefinition {
     define(
         "guide",
         "Read an Archon guide",
-        "Read action formats and workflows when needed; core safety rules always apply.",
+        "Read action formats and workflows as needed; your safety rules hold.",
         object(
-            json!({"topic":{"type":"string","enum":["authority","settings","github","models"]}}),
+            json!({"topic":{"type":"string","enum":["authority","settings","github","models","validation"]}}),
             &["topic"],
         ),
         false,

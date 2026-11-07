@@ -22,6 +22,61 @@ request (see [Work onto an existing pull request](guide.md#work-onto-an-existing
 The repository needs a manifest at `.archon/journeys.toml`. Without one, the
 setup stage stops with `BLOCKED:`.
 
+## Before a hand-off
+
+The orchestrator coordinates; it never builds, runs apps or drives journeys
+itself. Before it tells you a user-facing build is ready to try, it queues
+an independent validation item that `depends_on` the items that built it.
+The item stacks on their branches, so it tests the heads they delivered,
+team runs and stacked builds included. Only a build that itself went `onto`
+a pull request is validated `onto` that build once it has finished; in a
+split request, only when every build went into that same pull request, and
+otherwise the orchestrator says there is no combined head to validate. It runs `release-journey` when the build's own head has a
+`.archon/journeys.toml` with a journey for every outcome to check, and
+`e2e-strict`, with each outcome as a scenario, otherwise. Every one of its
+stages is pinned to a model no build stage runs: it is queued with the
+build only when the build's stages are pinned too, and otherwise once the
+build has finished and its models are known. When the model policy leaves
+none, the orchestrator says the build cannot be validated
+independently. The item reports the exact commit tested for each repository.
+Before hand-off, the orchestrator compares each delivering pull request's
+current head with the tested commit and queues validation again if any moved.
+In local ship mode it compares the branch head the validation names; mirror
+ref freshness is a known limitation. On a pass, the build is ready, with any outcome
+the run did not check named; on a failure, what failed, from the failed
+stage's scenario list since a strict run stops before its report, and that
+a fix is queued, never "ready". A success of an internal change (a refactor, tests,
+CI, docs) is relayed as before, without validation.
+
+The orchestrator's `guide(topic=validation)` holds the workflow
+([source](../crates/archon-daemon/prompts/topics/validation.md)). Turn the
+rule off with `validate_before_handoff = false` under `[orchestrator]`
+([configuration](configuration.md)); the orchestrator started next gets the
+change.
+
+### Outcome criteria and the item that owns them
+
+When the orchestrator splits a user-facing request into several items, each
+brief keeps its code-level criteria and adds the user outcomes it serves,
+written so they can be checked. One more item owns the end-to-end outcome:
+the hand-off's validation item, which `depends_on` all the others, so the
+outcome cannot fall between them. Each build stage checks its change against its brief's
+outcome criteria and says which ones its environment could not check,
+instead of claiming them.
+
+An example backlog for "let new users start an agent from the desktop app":
+
+| # | Pipeline | Depends on | Code criteria | Outcome criteria |
+| --- | --- | --- | --- | --- |
+| 1 | `direct` | | a first-run setup view, with tests | a new user sees a "Start an agent" step on first launch |
+| 2 | `adaptive` | 1 | start the agent and stream its reply, with tests | after "Start", the user sees a reply within 30 seconds |
+| 3 | `e2e-strict`, every stage on another provider's model | 1, 2 | none | on a fresh install, a new user starts an agent and gets a reply within 30 seconds |
+
+Item 3 owns the outcome; it would be `release-journey` once the manifest has
+a journey for it. Items 1 and 2 pin their stages to one provider's models
+and item 3 to another's, so all three are queued at once. The orchestrator calls the build ready only once
+it passes.
+
 ## How a run goes
 
 | Stage | What it does |

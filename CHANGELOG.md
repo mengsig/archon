@@ -185,17 +185,32 @@ From the audit in [docs/security/vnext-audit.md](docs/security/vnext-audit.md)
   turn; at most 3 times per orchestrator. Operator chat or an `@archon` request
   delivered to a turn silent for 10 minutes starts this at once instead of
   after 30.
-- Agents no longer run at `high` effort for every task. One effort rubric,
-  from `low` for lookups and mechanical edits through `x_high` for hard
+- Effort sizing, an opt-in: `[models] effort_sizing = true` (default `false`,
+  global only). Off, agents see 1.4.12's effort rules unchanged. On, one effort
+  rubric, from `low` for lookups and mechanical edits through `x_high` for hard
   reasoning (root-causing a regression, concurrency or security analysis, a fix
-  that failed twice) to `max` only after `x_high` failed on the same task, now
-  sizes every effort the orchestrator and stage leads choose. A reviewer plan's
-  effort is that reviewer's default instead of a floor, kept where the rubric
+  that failed twice) to `max` only after `x_high` failed on the same task, sizes
+  every effort the orchestrator and stage leads choose. A reviewer plan's effort
+  is then that reviewer's default instead of a floor, kept where the rubric
   leaves the diff open; otherwise the rubric decides, from `low` for a trivial
   diff to `x_high` for concurrency or security analysis, and the lead states the
-  reason in one line whether it goes lower or higher, within `max_effort`; archond
-  still cancels a reviewer on a model the plan does not name. A delegating
-  stage's cost split in `get_item` and `get_stage` counts its agents by effort.
+  reason in one line whether it goes lower or higher, within `max_effort`;
+  archond still cancels a reviewer on a model the plan does not name. A
+  delegating stage's cost split in `get_item` and `get_stage` counts its agents
+  by effort, whichever way it is set.
+- The orchestrator no longer calls a user-facing build ready on the pipeline's
+  success alone (#396). It first queues an independent validation item that
+  `depends_on` the items that built it, `release-journey` when the build's
+  journey manifest covers the outcomes and `e2e-strict` otherwise, every
+  stage on a model the build did not use, and reports only that item's
+  outcome. It never builds, runs apps or drives journeys itself.
+  `[orchestrator] validate_before_handoff = false` turns the rule off.
+- A split user-facing request carries user-outcome acceptance criteria in its
+  briefs and one validation item that `depends_on` the rest and owns the
+  end-to-end outcome (#397). The lead that records a change, and each team
+  role, check it against the brief's outcome criteria and say which they
+  could not check. The
+  orchestrator's new `guide(topic=validation)` holds both workflows.
 
 ### Fixed
 

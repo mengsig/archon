@@ -30,13 +30,9 @@ moves off that head.
      secrets, network or file access, build scripts, CI workflows, new
      dependencies, and anything that runs at install or build time.
 
-   The effort your contract names is each reviewer's default, for a diff
-   the rubric leaves open; otherwise the rubric decides: `low` for a
-   trivial diff, `medium` for a small or low-risk one, `high` for a risky
-   diff, shared code, or CI or release machinery, `x_high` for concurrency
-   or security analysis, `max` only after `x_high` failed on the same
-   review; never above the model policy's cap. Off the default, lower or
-   higher, state the reason in one line in your result. Require the verdict your
+   Choose each reviewer's effort, never below one your contract names:
+   medium for ordinary risk, high where security, CI or release machinery
+   is touched. Require the verdict your
    contract shows, on the head it read, with actionable findings (path,
    issue, impact, remedy), each marked blocking or not by your contract's
    blocking class.

@@ -202,6 +202,8 @@ Each runs with the Aether app's standing (`archon-web`), not the operator
 CLI's, so archond applies its own checks on top and records the same feed
 lines. `pause` and `resume` with `hard` are refused to every device, and a
 device's soft `resume` does not lift a hard pause the operator set.
+`steer_item` and `update_item` obey the autonomy ceiling and cannot set
+`merge=auto` or `tools=yolo` from a device, even if the ceiling allows them.
 `say` reaches the orchestrator
 marked as a web device's line: it is chat, never operator authority, so a
 `/archon`, `/watch` or `/merge` in it is not run and the orchestrator cannot

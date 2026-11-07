@@ -406,23 +406,37 @@ fn move_plans(
     moved
 }
 
-/// Resolve `item`'s stored tier-only choices again, so its later stages and
-/// a recovered run follow the provider it moved to.
+/// Resolve `item`'s stored tiered choices again, so its later stages and a
+/// recovered run follow the provider it moved to. A choice that no longer
+/// resolves keeps its model alone; the rest still follow.
 fn follow_plan(item: &mut QueueItem, spec: &PipelineSpec, tiers: TierScope<'_>) {
-    let before = item.model_plan.clone();
-    let resolved = item.model_plan.resolve_tiers(|key, tier, provider| {
-        tiers.resolve((tier, spec.tier_floor(key, tier)), provider)
-    });
-    if let Err(error) = resolved {
-        tracing::warn!(item = %item.id, %error, "the stored plan keeps its models");
-        item.model_plan = before;
-        return;
+    let before = plan_shape(&item.model_plan);
+    for (key, choices) in item.model_plan.0.iter_mut() {
+        for choice in choices.iter_mut() {
+            let Some(asked) = &choice.tier else {
+                continue;
+            };
+            let floor = spec.tier_floor(key, asked.requested);
+            match tiers.resolve((asked.requested, floor), asked.provider.as_deref()) {
+                Ok((model, tier)) => {
+                    debug_assert_eq!(tier.requested, asked.requested, "the tier asked for");
+                    choice.model = model;
+                    choice.tier = Some(tier);
+                }
+                Err(error) => {
+                    tracing::warn!(item = %item.id, stage = %key, %error, "a stored choice keeps its model");
+                }
+            }
+        }
     }
-    debug_assert_eq!(
-        item.model_plan.0.keys().collect::<Vec<_>>(),
-        before.0.keys().collect::<Vec<_>>(),
-        "only models change"
-    );
+    assert_eq!(plan_shape(&item.model_plan), before, "only models change");
+}
+
+/// Each plan key with its number of choices.
+fn plan_shape(plan: &ModelPlan) -> Vec<(String, usize)> {
+    (plan.0.iter())
+        .map(|(key, c)| (key.clone(), c.len()))
+        .collect()
 }
 
 #[cfg(test)]

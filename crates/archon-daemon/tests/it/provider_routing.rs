@@ -515,6 +515,55 @@ async fn a_quota_reroute_posts_each_model_it_swaps_and_never_moves_a_pin() {
     }
 }
 
+/// A stored choice that no longer resolves keeps its model alone: the stages
+/// a reroute moved are stored as they run, so the plan shows what runs.
+#[tokio::test]
+async fn a_choice_that_no_longer_resolves_keeps_the_rest_of_a_reroute_stored() {
+    let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![
+            ("claude-code", window(80, TimeDelta::hours(4))),
+            ("codex", window(0, TimeDelta::hours(1))),
+        ],
+    );
+    let item = enqueue(&h, ROUTED, "half resolvable", tier_plan()).await;
+    h.dispatch().await;
+    {
+        let mut store = h.ctx.store.lock().await;
+        let mut stored = store.item(&item.id).unwrap();
+        let ship = &mut stored.model_plan.0.get_mut("ship").unwrap()[0];
+        ship.tier.as_mut().expect("a tier").provider = Some("gone".into());
+        store.update_item(&stored).unwrap();
+    }
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![
+            ("claude-code", window(10, TimeDelta::hours(3))),
+            ("codex", window(90, TimeDelta::hours(4))),
+        ],
+    );
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    let reviews: Vec<String> = (h.stages(&item.id).await.into_iter())
+        .filter(|s| s.stage_id == "review")
+        .map(|s| s.choice.model.to_string())
+        .collect();
+    assert_eq!(reviews[1], "codex/mini", "the fast reviewer moved");
+    let stored = h.item(&item.id).await.model_plan;
+    let review: Vec<String> = (stored.0["review"].iter())
+        .map(|c| c.model.to_string())
+        .collect();
+    assert_eq!(review, reviews, "the stored plan is the models that run");
+    assert_eq!(
+        stored.0["ship"][0].model.to_string(),
+        "claude-code/haiku",
+        "the choice that does not resolve keeps its model"
+    );
+}
+
 #[tokio::test]
 async fn a_queued_item_that_dispatch_moves_off_a_spent_provider_posts_each_swap() {
     let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;

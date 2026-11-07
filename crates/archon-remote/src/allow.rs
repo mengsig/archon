@@ -75,6 +75,8 @@ fn operates(request: &Request) -> bool {
             | R::GetStage(_)
             | R::ResolveItem { .. }
             | R::ListPipelines { .. }
+            | R::ModelPolicy { .. }
+            | R::GetInitiative { .. }
             | R::ListQuestions { .. }
             | R::FeedHistory { .. }
             | R::SubscribeFeed { .. }
@@ -95,6 +97,8 @@ fn operates(request: &Request) -> bool {
             | R::IssueItems { .. }
             | R::ListGithubObjects { .. }
             | R::Enqueue(_)
+            | R::SteerItem { .. }
+            | R::UpdateItem { .. }
             | R::CancelItem { .. }
             | R::RetryItem { .. }
             | R::Pause(_)
@@ -141,6 +145,8 @@ mod tests {
             enqueue,
             serde_json::json!({"cmd": "cancel_item", "item": ITEM}),
             serde_json::json!({"cmd": "retry_item", "item": ITEM}),
+            serde_json::json!({"cmd": "steer_item", "item": ITEM, "steer": {"note": "note"}}),
+            serde_json::json!({"cmd": "update_item", "item": ITEM, "patch": {"priority": "high"}}),
             serde_json::json!({"cmd": "pause", "scope": "global"}),
             serde_json::json!({"cmd": "resume", "scope": "repo", "name": "archon"}),
             serde_json::json!({"cmd": "pause", "scope": "pipeline", "name": "adaptive"}),
@@ -168,7 +174,7 @@ mod tests {
             );
         }
         let changes = operator_changes();
-        assert_eq!(changes.len(), 11, "every change parsed");
+        assert_eq!(changes.len(), 13, "every change parsed");
         for request in &changes {
             assert!(allowed(DeviceRole::Operator, request), "{request:?}");
         }
@@ -193,9 +199,12 @@ mod tests {
             serde_json::json!({"cmd": "subscribe_feed", "after": null, "verbose": false}),
             serde_json::json!({"cmd": "item_history", "item": ITEM}),
             serde_json::json!({"cmd": "changes_page", "after": 0}),
+            serde_json::json!({"cmd": "model_policy", "repo": null}),
+            serde_json::json!({"cmd": "get_initiative", "initiative": "ini_01M621D9ZBJPTMDTV26KKQNBE1"}),
         ] {
             let request = parse(json.clone());
             assert_eq!(request.class(), RequestClass::Read, "{json}");
+            assert!(allowed(DeviceRole::Operator, &request), "{json}");
             assert!(allowed(DeviceRole::Observer, &request), "{json}");
         }
     }

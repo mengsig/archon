@@ -32,6 +32,7 @@ mod notional;
 pub(crate) mod onto;
 pub(crate) mod operator_merge;
 mod pages;
+pub(crate) mod plan_view;
 mod proposal;
 pub mod pull_requests;
 mod reap;

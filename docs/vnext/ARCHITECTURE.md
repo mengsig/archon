@@ -307,9 +307,10 @@ None calls a model. Each is specified in CONTRACTS.md §1.
   stage, waiting reason, cost, links) and typed edges (`depends_on`,
   `initiative_after`, `stacked_on`), plus `as_of` change seq.
 - *Pipelines:* `run_plan{run}` returns the frozen, steer-edited stage list of
-  an unfinished run, so steered runs render as they actually executed. On a
-  finished run `run_plan` returns `not_found`, and its plan is read from its
-  stage attempts.
+  a run with each stage's resolved models, effort and time limit, so steered
+  runs render as they actually executed. A finished run's plan is the one
+  kept as it finished; one that finished before plans were kept returns
+  `not_found`, and its plan is read from its stage attempts.
 - *History:* `list_items` gains `updated_since`, `before` and `text` filters.
   `item_history` returns transitions with timestamps.
 - *GitHub:* see §f.

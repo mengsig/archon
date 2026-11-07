@@ -9,6 +9,7 @@ use crate::Timestamp;
 use crate::catalog::StageSummary;
 use crate::id::{InitiativeId, PipelineRunId, QueueItemId, RepoId};
 use crate::initiative::InitiativeState;
+use crate::model::ModelChoice;
 use crate::queue::Priority;
 
 /// Nodes a `task_graph` returns unless asked otherwise.
@@ -121,9 +122,61 @@ pub struct RunPlan {
     pub run: PipelineRunId,
     pub pipeline: String,
     pub revision: String,
+    /// The pipeline's stages; their `effort` and `timeout_minutes` are the
+    /// pipeline defaults, which `settings` resolves for this run.
     pub stages: Vec<StageSummary>,
     /// Whether a steer changed the plan the run was frozen with.
     pub edited: bool,
+    /// What each plan key runs on: the stages in order, each stage's
+    /// reviewers key after it. Empty from an older archond.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub settings: Vec<StageSettings>,
+    /// Set once the run finished: the plan is the one kept as it finished.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub finished: bool,
+}
+
+/// Whether a run's per-stage setting is the pipeline's or set for the item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SettingSource {
+    /// The pipeline's own value for the stage.
+    Default,
+    /// Set for this item: at enqueue, by `update_item` or by a steer.
+    Override,
+}
+
+/// How a plan key's model is chosen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelSource {
+    /// Resolved from a tier, and resolved again from Aether's catalog when
+    /// the stage dispatches; its choice's `tier` says which.
+    Tier,
+    /// An exact model, which no tier replaces: one a plan, `update_item` or a
+    /// steer named, or the default model of a pipeline that names no tier.
+    Exact,
+}
+
+/// One plan key of a run as it resolves now: the model and effort of each
+/// agent its next attempt starts, and the time limit each gets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct StageSettings {
+    /// A stage id, or `<stage>.review` for the reviewers that stage delegates.
+    pub key: String,
+    /// One choice per agent, in fan-out slot order.
+    pub choices: Vec<ModelChoice>,
+    /// `tier` when every choice came from a tier, else `exact`.
+    pub model: ModelSource,
+    /// `override` when an effort differs from the stage's default effort.
+    pub effort: SettingSource,
+    /// Minutes each new agent of the stage may run; absent for a reviewers
+    /// key, whose reviewers run within their stage's limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_minutes: Option<u32>,
+    /// Where `timeout_minutes` comes from; absent with it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<SettingSource>,
 }
 
 #[cfg(test)]

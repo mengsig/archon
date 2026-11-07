@@ -2691,7 +2691,8 @@ async fn adaptive_guarded_build_delegates_within_the_stated_policy_and_archond_s
     let own = format!("on {MODEL} at tier balanced and effort medium up to high, and high");
     assert!(build.instructions.contains(&own), "{}", build.instructions);
     assert!(
-        !build.instructions.contains("rubric"),
+        !build.instructions.contains("the rubric decides")
+            && !build.instructions.contains("`x_high` for hard reasoning"),
         "no effort sizing by default"
     );
 

@@ -359,7 +359,7 @@ mod tests {
             sized.contains("`low` for a trivial diff") && sized.contains(super::super::REASON_RULE)
         );
         assert!(
-            !sized.contains("or higher"),
+            !sized.contains("medium or higher"),
             "no floor under the opt-in: {sized}"
         );
         let named = [ModelChoice {

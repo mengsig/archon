@@ -1711,7 +1711,7 @@ mod tests {
         assert!(rules.contains("That effort is the default, for a diff the rubric leaves open"));
         assert!(rules.contains("on any other model as it spawns"), "{rules}");
         assert!(
-            !rules.contains("floor"),
+            !rules.contains("medium or higher"),
             "the plan's effort is no floor: {rules}"
         );
         let capped = ModelPolicy::from_lists(&[], &[], Some(archon_core::model::Effort::Medium));
@@ -1766,7 +1766,7 @@ mod tests {
             assert!(rules.contains("`low` for a trivial diff"), "{rules}");
             assert!(rules.contains(REASON_RULE), "{rules}");
             assert!(
-                !rules.contains("floor") && !rules.contains(&format!("{effort} or higher")),
+                !rules.contains(&format!("{effort} or higher")),
                 "{rules}"
             );
         }

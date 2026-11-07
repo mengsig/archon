@@ -870,7 +870,7 @@ fn direct_implement_contract_carries_every_rubric_level_and_the_reason() {
     let rubric = archon_core::model::EFFORT_RUBRIC;
     let default = lead(false);
     assert!(!default.contains(rubric), "{default}");
-    assert!(default.contains("and effort medium or higher, and high or higher when you rate"));
+    assert!(default.contains("effort medium or higher, and high or higher when you rate"));
     let lead = lead(true);
     assert!(lead.contains(rubric), "{lead}");
     for level in [

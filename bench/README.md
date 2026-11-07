@@ -267,6 +267,17 @@ not probed` and the `archon` arm shows `refused`. With a valid sandbox it
 probes only the sandbox's sockets. Recorded version strings and connection
 diagnostics replace the operator's home path with `$HOME`.
 
+## SWE family and the never-worse gate
+
+`archon-bench swe` runs Aether's shared `swe-v1` set (real issues from
+SWE-bench Verified, plus a sealed holdout) through Aether's own runner. It
+runs per model on three arms: the best recent release (v1.4.9), the
+candidate, and the native CLI. It gates each release so that, on dev and
+on the holdout, the candidate is significantly worse than neither the
+native CLI nor the best release. archon-bench keeps no copy of the set and
+never prints or keeps holdout content. Arms, the rule, the noise bound
+and the commands are in [`results-swe/README.md`](results-swe/README.md).
+
 ## Quality smoke gate
 
 **Measured baseline:** `results-smoke/baseline.json` comes from run

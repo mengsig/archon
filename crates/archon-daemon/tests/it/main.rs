@@ -98,6 +98,7 @@ mod stability;
 mod stages;
 mod stall;
 mod steer;
+mod steered_models;
 mod swarm;
 mod team;
 mod team_coordination;

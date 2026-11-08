@@ -196,12 +196,14 @@ observer sends only the reads; an operator sends both columns:
 
 | Reads | Changes (operators only) |
 | --- | --- |
-| `status`, `repo_list`, `list_items`, `list_item_summaries`, `get_item`, `get_stage`, `resolve_item`, `list_pipelines`, `list_questions`, `feed_history`, `subscribe_feed`, `list_reports`, `orchestrator_status`, `cost_report`, `list_artifacts`, `read_artifact`, `item_diff`, `settings`, `autonomy`, `subscribe_changes`, `changes_page`, `item_history`, `task_graph`, `run_plan`, `item_links`, `issue_items`, `list_github_objects` | `enqueue`, `cancel_item`, `retry_item`, `pause`, `resume`, `answer`, `say`, `link_issue`, `unlink_issue`, `import_issue` |
+| `status`, `repo_list`, `list_items`, `list_item_summaries`, `get_item`, `get_stage`, `resolve_item`, `list_pipelines`, `model_policy`, `get_initiative`, `list_questions`, `feed_history`, `subscribe_feed`, `list_reports`, `orchestrator_status`, `cost_report`, `list_artifacts`, `read_artifact`, `item_diff`, `settings`, `autonomy`, `subscribe_changes`, `changes_page`, `item_history`, `task_graph`, `run_plan`, `item_links`, `issue_items`, `list_github_objects` | `enqueue`, `steer_item`, `update_item`, `cancel_item`, `retry_item`, `pause`, `resume`, `answer`, `say`, `link_issue`, `unlink_issue`, `import_issue` |
 
 Each runs with the Aether app's standing (`archon-web`), not the operator
 CLI's, so archond applies its own checks on top and records the same feed
 lines. `pause` and `resume` with `hard` are refused to every device, and a
 device's soft `resume` does not lift a hard pause the operator set.
+`steer_item` and `update_item` obey the autonomy ceiling and cannot set
+`merge=auto` or `tools=yolo` from a device, even if the ceiling allows them.
 `say` reaches the orchestrator
 marked as a web device's line: it is chat, never operator authority, so a
 `/archon`, `/watch` or `/merge` in it is not run and the orchestrator cannot

@@ -313,6 +313,9 @@ pub struct OrchestratorConfig {
     /// Wake the orchestrator for every success, so it reports it in its
     /// chat; off, a routine success waits for its next turn.
     pub wake_on_success: bool,
+    /// Have the orchestrator queue an independent validation item before it
+    /// calls a user-facing build ready; off, it relays the success as is.
+    pub validate_before_handoff: bool,
 }
 
 impl Default for OrchestratorConfig {
@@ -324,6 +327,7 @@ impl Default for OrchestratorConfig {
             instructions_file: None,
             trigger_coalesce_ms: 2000,
             wake_on_success: true,
+            validate_before_handoff: true,
         }
     }
 }
@@ -349,6 +353,9 @@ pub struct ModelsConfig {
     /// Providers the operator also uses by hand, which keep the
     /// `interactive` reserve; global only.
     pub interactive_providers: Vec<String>,
+    /// Opt in to sizing every agent's effort by the effort rubric; off, the
+    /// prompts and reviewer floors are 1.4.12's. Global only.
+    pub effort_sizing: bool,
 }
 
 /// Percent of each quota window held back from tier-only stage routing.
@@ -1199,10 +1206,11 @@ impl RepoConfig {
         config.models.check_weights()?;
         if config.models.reserve_percent.is_some()
             || !config.models.interactive_providers.is_empty()
+            || config.models.effort_sizing
         {
             return Err(ArchonError::Config(format!(
-                "{}: models.reserve_percent and models.interactive_providers are set in \
-                 Archon's global config only",
+                "{}: models.reserve_percent, models.interactive_providers and \
+                 models.effort_sizing are set in Archon's global config only",
                 path.display()
             )));
         }
@@ -1323,6 +1331,7 @@ mod tests {
         assert_eq!(config, Config::default());
         assert_eq!(config.limits.caps().max_parallel_agents, 8);
         assert!(config.orchestrator.wake_on_success);
+        assert!(config.orchestrator.validate_before_handoff);
     }
 
     #[test]
@@ -1427,6 +1436,26 @@ mod tests {
             toml::from_str("[models]\nprovider_weights = { \"codex/sol\" = 1 }").unwrap();
         let refused = model.validate().unwrap_err().to_string();
         assert!(refused.contains("must name a provider"), "{refused}");
+    }
+
+    /// Effort sizing is an opt-in: off, stage agents see 1.4.12's effort rules.
+    #[test]
+    fn effort_sizing_is_off_unless_the_global_config_opts_in() {
+        assert!(!Config::default().models.effort_sizing);
+        let blank: Config = toml::from_str("[models]\nmax_effort = 'x_high'").unwrap();
+        assert!(
+            !blank.models.effort_sizing,
+            "naming [models] opts in to nothing"
+        );
+        let opted: Config = toml::from_str("[models]\neffort_sizing = true").unwrap();
+        opted.validate().unwrap();
+        assert!(opted.models.effort_sizing);
+        let dir = tempfile::tempdir().unwrap();
+        let file = crate::paths::repo_archon_dir(dir.path()).join(CONFIG_FILE_NAME);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "[models]\neffort_sizing = true\n").unwrap();
+        let refused = RepoConfig::load(dir.path()).unwrap_err().to_string();
+        assert!(refused.contains("global config only"), "{refused}");
     }
 
     #[test]

@@ -6,15 +6,15 @@ use std::collections::BTreeMap;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId};
 use archon_core::protocol::{
-    QueueStateKind, Reply, RunPlan, TaskFilter, TaskGraph, WaitingReasonCode as Code, feature,
+    QueueStateKind, Reply, TaskFilter, TaskGraph, WaitingReasonCode as Code, feature,
 };
+use archon_core::run::PipelineRun;
 use archon_core::steer::RunEdit;
-use archon_pipeline::PipelineSpec;
 use archon_queue::Store;
 
 use crate::context::DaemonContext;
 use crate::dispatcher;
-use crate::executor::frozen;
+use crate::executor::{frozen, plan_view};
 
 /// The features `welcome` advertises for this file's requests.
 pub(super) const FEATURES: &[&str] = &[
@@ -100,104 +100,50 @@ fn operator_gate(store: &Store, item: &QueueItemId) -> Result<Option<Code>, Arch
     Ok(waiting.map(|_| Code::OperatorGate))
 }
 
-/// A live run's frozen pipeline with every edit recorded for it applied. A
-/// finished run's snapshot is gone, so its plan is not kept.
+/// A live run's frozen pipeline with every edit recorded for it applied and
+/// its settings resolved; a finished run's plan as it was kept.
 pub(super) async fn run_plan(
     ctx: &DaemonContext,
     run: &PipelineRunId,
 ) -> Result<Reply, ArchonError> {
-    let (stored, recorded) = {
+    let (stored, recorded, item) = {
         let store = ctx.read_store().await?;
-        (store.run(run)?, store.run_edits(run)?)
+        let stored = store.run(run)?;
+        let item = store.item(&stored.item)?;
+        (stored, store.run_edits(run)?, item)
     };
     assert_eq!(&stored.id, run, "the run asked for");
     if stored.state.is_terminal() {
-        return Err(finished(run));
+        return finished_plan(ctx, &stored).await;
     }
     let edits: Vec<RunEdit> = recorded.into_iter().map(|r| r.edit).collect();
     let thawed = frozen::thaw_edited(&ctx.paths.data_dir, run, &stored.pipeline, &edits).await;
     let spec = match thawed {
         Ok(spec) => spec,
         // A run that finished since it was read has dropped its snapshot.
-        Err(error) if ctx.read_store().await?.run(run)?.state.is_terminal() => {
+        Err(error) => {
+            let now = ctx.read_store().await?.run(run)?;
+            if !now.state.is_terminal() {
+                return Err(error);
+            }
             tracing::debug!(%run, %error, "the run finished while its plan was read");
-            return Err(finished(run));
+            return finished_plan(ctx, &now).await;
         }
-        Err(error) => return Err(error),
     };
-    let plan = RunPlan {
-        run: run.clone(),
-        pipeline: spec.name().to_owned(),
-        revision: revision(&spec)?,
-        stages: spec.summary().stages,
-        edited: edits.iter().any(changes_stages),
-    };
-    assert!(!plan.stages.is_empty(), "a run keeps a stage");
+    let plan = plan_view::plan_of(run, &spec, &edits, &item)?;
+    assert!(!plan.finished, "a live run's plan");
     Ok(Reply::RunPlan(Box::new(plan)))
 }
 
-fn finished(run: &PipelineRunId) -> ArchonError {
-    ArchonError::NotFound(format!(
-        "the plan of run {run}: it finished, and archond keeps a run's frozen pipeline \
-         only while it runs"
-    ))
-}
-
-/// Whether a steer's edit changed the stages, not only how one runs.
-fn changes_stages(edit: &RunEdit) -> bool {
-    match edit {
-        RunEdit::InsertStage { .. } | RunEdit::SwitchPipeline { .. } => true,
-        RunEdit::AbortStage { .. } | RunEdit::AssignRoles { .. } => false,
-    }
-}
-
-/// 64-bit FNV-1a, in hex, of the plan's manifest and prompts.
-fn revision(spec: &PipelineSpec) -> Result<String, ArchonError> {
-    let mut contents = spec.manifest()?;
-    for (name, prompt) in &spec.prompts {
-        contents.push_str(name);
-        contents.push('\0');
-        contents.push_str(prompt);
-    }
-    assert!(!contents.is_empty(), "a manifest is never empty");
-    let hash = contents.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
-        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
-    });
-    Ok(format!("{hash:016x}"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_inserted_and_switched_stages_mark_a_plan_edited() {
-        let insert = RunEdit::InsertStage {
-            after: None,
-            spec: serde_json::json!({}),
-        };
-        let switch = RunEdit::SwitchPipeline {
-            pipeline: "quick".into(),
-            stages: Vec::new(),
-        };
-        let roles = RunEdit::AssignRoles {
-            stage: "team".into(),
-            roles: vec!["a".into()],
-            role_prompts: BTreeMap::new(),
-        };
-        assert!(changes_stages(&insert) && changes_stages(&switch));
-        assert!(!changes_stages(&roles));
-    }
-
-    #[test]
-    fn the_revision_is_fnv1a_of_the_manifest() {
-        let catalog = archon_pipeline::catalog::Catalog::builtin();
-        let spec = catalog.get("direct").expect("a built-in pipeline").clone();
-        let revision = revision(&spec).unwrap();
-        assert_eq!(revision.len(), 16, "{revision}");
-        assert_eq!(revision, super::revision(&spec.clone()).unwrap(), "stable");
-        let mut changed = spec;
-        changed.prompts.insert("extra.md".into(), "more".into());
-        assert_ne!(super::revision(&changed).unwrap(), revision);
+/// The plan kept when `run` finished; none when it finished before archond
+/// kept plans, or its plan could not be built (logged then).
+async fn finished_plan(ctx: &DaemonContext, run: &PipelineRun) -> Result<Reply, ArchonError> {
+    assert!(run.state.is_terminal(), "a finished run's plan");
+    match ctx.read_store().await?.kept_run_plan(&run.id)? {
+        Some(plan) => Ok(Reply::RunPlan(Box::new(plan))),
+        None => Err(ArchonError::NotFound(format!(
+            "the plan of run {}: no plan was kept when it finished",
+            run.id
+        ))),
     }
 }

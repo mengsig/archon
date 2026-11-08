@@ -67,17 +67,28 @@ preference, not a floor: Archon picks the best model the effective model policy
 from the lead when `prefer_other_provider` is set and a permitted model of
 another provider exists. If no permitted model reaches the tier, the contract
 names the best permitted one, or the lead's own model, and says so; the agent is
-never sent to look for a model the policy would refuse. `default_effort`,
-raised to at least medium, is the reviewer's default effort, kept where the
-effort rubric leaves the diff open; otherwise the rubric decides: `low` for a
-trivial diff, `medium` for a small or low-risk one, `high` for a risky diff or
-shared code, `x_high` for concurrency or security analysis, `max` only after
-`x_high` failed on the same review. Off the default, lower or higher, the lead
-states the reason in one line in its result.
-The model policy's effort cap still applies. In an explicit `<stage>.review`
-plan each effort is that reviewer's default in the same way: a reviewer on
-another model is cancelled as it spawns, and one at any effort on a named model
-runs, up to the policy's cap.
+never sent to look for a model the policy would refuse. `default_effort` is a
+floor raised to at least medium: the contract asks for that effort or higher,
+and for at least high when the lead rates the change's risk medium or high. The
+model policy's effort cap still applies. In an explicit `<stage>.review` plan
+each effort is a floor too: a reviewer below it is cancelled as it spawns, and
+one above it runs, up to the policy's cap.
+
+`[models] effort_sizing = true` (default `false`, global only) opts in to
+sizing every effort by one rubric instead. The orchestrator then sizes each
+stage's effort, and every delegating contract each child's: `low` for lookups,
+listing, formatting and mechanical edits; `medium` for routine changes and
+reviews of small or low-risk diffs; `high` for non-trivial design, risky diffs
+and reviews of shared code; `x_high` for hard reasoning, such as root-causing a
+regression, concurrency or security analysis, or a fix that failed twice; `max`
+only after `x_high` failed on the same task. A reviewer's `default_effort`, or
+its effort in a `<stage>.review` plan, becomes its default rather than a floor:
+the rubric moves it, from `low` for a trivial diff to `x_high` for concurrency
+or security analysis, the lead states the reason in one line, and archond
+cancels only a reviewer on a model the plan does not name. The stage prompts
+keep 1.4.12's wording, effort floors included; under the opt-in the contract's
+reviewer rule says it replaces any floor a stage prompt names. Off, agents see
+the effort rules of 1.4.12, and `max_effort` caps both.
 
 `auto_repair` (default `true`) covers a run that fails only because the gate
 refused the review or the ship record it owes (a delta read not anchored, a
@@ -113,6 +124,7 @@ max_effort = "high"
 # default_provider_weight = 1  # a provider the table leaves out (the default; 0 = never)
 # reserve_percent = { orchestrator = 15, interactive = 10 }   # quota stages leave (the defaults)
 # interactive_providers = ["claude-code"]   # providers someone uses by hand; global only
+# effort_sizing = false        # true: size every agent's effort by the effort rubric; global only
 
 [limits]
 max_parallel_agents = 8        # running stage agents (default 8); 0 = unlimited
@@ -161,6 +173,7 @@ token_env = "AETHER_TOKEN"     # the variable holding the token for `address`
 name = "Archon"                # the orchestrator's name in Aether
 # instructions_file = "~/orchestrator.md"   # appended to the built-in prompt
 trigger_coalesce_ms = 2000     # triggers within this window wake it once
+validate_before_handoff = true # validate a user-facing build before calling it ready
 
 [models]
 # deny = ["codex/gpt-6.1-terra"] # never used, whatever `allow` says
@@ -324,6 +337,12 @@ in `archon chat` instead, set
 `wake_on_success = false` under `[orchestrator]`: a routine success then
 reaches the orchestrator with its next turn
 ([guide](guide.md#when-the-orchestrator-is-woken)).
+
+Before the orchestrator calls a user-facing build ready to try, it queues an
+independent validation item and reports that item's outcome
+([product journeys](journeys.md#before-a-hand-off)). Set
+`validate_before_handoff = false` under `[orchestrator]` to have it relay
+the build's success as is.
 
 The helper agents the orchestrator delegates to
 ([guide](guide.md#what-the-orchestrator-does-without-queueing)) work in a

@@ -771,7 +771,30 @@ async fn item_override_needs_verified_consent_and_preserves_the_repository_ceili
     .await
     .unwrap()
     .unwrap();
-    assert!(matches!(reply, Reply::Question(_)));
+    let Reply::Question(question) = reply else {
+        panic!("expected item override confirmation: {reply:?}");
+    };
+    for chat in [false, true] {
+        let answer = Request::Answer {
+            question: question.id.clone(),
+            text: "yes".into(),
+            chat,
+        };
+        let result = handlers::handle(&h.ctx, ClientKind::ArchonWeb, answer).await;
+        assert!(
+            matches!(result, Err(archon_core::error::ArchonError::Forbidden(_))),
+            "{result:?}"
+        );
+        assert!(
+            h.ctx
+                .store
+                .lock()
+                .await
+                .question(&question.id)
+                .unwrap()
+                .is_open()
+        );
+    }
     assert_eq!(
         h.ctx
             .store

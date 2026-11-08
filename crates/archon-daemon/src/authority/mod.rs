@@ -258,9 +258,11 @@ pub(crate) fn guide(topic: &str) -> Result<Reply, ArchonError> {
         "settings" => include_str!("../../prompts/topics/settings.md"),
         "github" => include_str!("../../prompts/topics/github.md"),
         "models" => include_str!("../../prompts/topics/models.md"),
+        "validation" => include_str!("../../prompts/topics/validation.md"),
         _ => {
             return Err(ArchonError::Invalid(
-                "unknown guide topic; choose authority, settings, github or models".into(),
+                "unknown guide topic; choose authority, settings, github, models or validation"
+                    .into(),
             ));
         }
     };
@@ -271,7 +273,7 @@ pub(crate) fn guide(topic: &str) -> Result<Reply, ArchonError> {
 mod tests {
     #[test]
     fn topics_stay_within_their_individual_budget() {
-        for topic in ["authority", "settings", "github", "models"] {
+        for topic in ["authority", "settings", "github", "models", "validation"] {
             let archon_core::protocol::Reply::Guide { text } = super::guide(topic).unwrap() else {
                 panic!("guide reply")
             };

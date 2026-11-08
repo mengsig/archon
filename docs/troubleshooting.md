@@ -4,6 +4,12 @@
 
 A detached `archond` writes `archond.log` next to its socket: `$XDG_RUNTIME_DIR/archon/archond.log`, or `archond.log` in the data directory when there is no runtime directory. `archon daemon start` prints the exact path as `startup log: …`, and repeats it when the daemon exits before it listens. The file rotates, keeping the active file and three archives (`archond.log.1` …). `archon log` is something else: it shows the notifications and outcomes archond posted, not its own log lines.
 
+## The daemon cannot start
+
+If startup reports a locked store or daemon lock, inspect the reported holder and confirm which instance and work it belongs to before stopping it. On Linux, a single verified shared holder can be stopped and startup retried after a terminal confirmation. Multiple or unidentifiable holders, unsupported platforms, and non-interactive sessions need manual investigation; stop the owning process through its normal controls and retry `archon daemon start`. Do not delete a lock file or stop an unknown process.
+
+If startup warns that free space is below `limits.min_free_gb`, it names the affected path and available space. Run `archon gc` to reclaim space; if archond cannot start, use `archon gc --offline`. These commands collect eligible data, so review `archon gc --preview` first when possible. Startup itself does not run gc as part of this diagnosis.
+
 ## An initiative is stuck
 
 Inspect it with `archon initiatives list` and `archon initiatives show <id>`. These need a running daemon.

@@ -25,7 +25,7 @@ chrono = { workspace = true }
 clap = { workspace = true }
 dirs = { workspace = true }
 qrcode = { workspace = true }
-rustix = { workspace = true }
+rustix = { workspace = true, features = ["param"] }
 rustyline = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

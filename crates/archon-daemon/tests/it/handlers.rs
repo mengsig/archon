@@ -285,6 +285,34 @@ async fn default_effort_cap_applies_to_plans_updates_and_steers() {
     );
 }
 
+async fn enqueue_reasoned(h: &Harness, plan: ModelPlan) -> archon_core::queue::QueueItem {
+    let request = EnqueueRequest {
+        onto: None,
+        stage_timeouts: Default::default(),
+        repo: Some(repo_ref()),
+        pipeline: Some(common::PIPELINE.into()),
+        title: "reasoned effort".into(),
+        brief: "hard reasoning".into(),
+        priority: Default::default(),
+        depends_on: Vec::new(),
+        tags: Vec::new(),
+        model_plan: plan.into(),
+        model_reasons: Some([("implement".into(), "hard reasoning".into())].into()),
+        budget_usd: None,
+        idempotency_key: None,
+        autonomy: Default::default(),
+        origin: None,
+    };
+    let Reply::Item(item) = h
+        .cli(Request::Enqueue(request))
+        .await
+        .expect("plan accepted")
+    else {
+        panic!("enqueue must return an item");
+    };
+    item
+}
+
 #[tokio::test]
 async fn x_high_plan_reaches_dispatch() {
     let h = Harness::new().await;
@@ -292,10 +320,7 @@ async fn x_high_plan_reaches_dispatch() {
     xhigh
         .0
         .insert("implement".into(), vec![choice(MODEL, Effort::XHigh)]);
-    let item = h
-        .enqueue_with("xhigh plan", xhigh)
-        .await
-        .expect("x_high accepted");
+    let item = enqueue_reasoned(&h, xhigh).await;
     h.dispatch().await;
     assert!(
         h.backend
@@ -318,10 +343,7 @@ async fn global_max_cap_survives_an_unset_repository_cap() {
     max_plan
         .0
         .insert("implement".into(), vec![choice(MODEL, Effort::Max)]);
-    let item = h
-        .enqueue_with("explicit max", max_plan)
-        .await
-        .expect("max allowed");
+    let item = enqueue_reasoned(&h, max_plan).await;
     assert_eq!(item.model_plan.0["implement"][0].effort, Effort::Max);
 }
 

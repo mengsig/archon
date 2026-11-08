@@ -349,6 +349,9 @@ fn retune(
     if blueprint.spec.stage(at.target).is_none() {
         return Err(no_stage(&blueprint.spec, at.target));
     }
+    if let Some(effort) = steer.effort {
+        asked.env.policy(&ctx.config).check_effort(effort)?;
+    }
     if let (Some(effort), Some(default)) = (steer.effort, blueprint.spec.default_effort(at.target))
     {
         let reasons = blueprint.item.model_reasons.as_ref();

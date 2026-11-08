@@ -289,6 +289,9 @@ async fn changed_item(
         item.stage_timeouts.extend(steer.stage_timeouts.clone());
         what.push("updated stage timeouts for future spawns".to_owned());
     }
+    if let Some(effort) = steer.effort {
+        asked.env.policy(&ctx.config).check_effort(effort)?;
+    }
     what.extend(retune(steer, stages, &mut item)?);
     items::check_plan(ctx, asked.env, stages, &item.model_plan)?;
     assert!(!what.is_empty(), "a checked steer changes something");

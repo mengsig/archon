@@ -715,24 +715,6 @@ async fn subcent_budget_holds_remain_visible() {
     assert!(wait.message.contains("<$0.01 / <$0.01"), "{}", wait.message);
 }
 
-async fn connect_aether_for_delegations(h: &Harness) -> archon_aether::fake::FakeAether {
-    let fake = archon_aether::fake::FakeAether::start(&h.dir.path().join("aetherd.sock"))
-        .await
-        .expect("fake aetherd binds");
-    fake.set_default(
-        "get_agent",
-        archon_aether::fake::Scripted::refuse("not_found", "agent already ended"),
-    );
-    let client = archon_aether::AetherClient::connect(&fake.endpoint())
-        .await
-        .expect("connect to fake aetherd");
-    h.ctx
-        .aether
-        .replace(Some(std::sync::Arc::new(client)))
-        .unwrap();
-    fake
-}
-
 async fn delegate(
     h: &Harness,
     parent: &archon_core::aether_ids::AetherAgentId,
@@ -776,7 +758,7 @@ async fn child_usage(h: &Harness, agent: &archon_core::aether_ids::AetherAgentId
 #[tokio::test]
 async fn a_stage_cost_includes_its_delegated_agents_and_counts_each_once() {
     let h = Harness::new().await;
-    let _aether = connect_aether_for_delegations(&h).await;
+    let _aether = common::connect_aether_for_delegations(&h).await;
     let item = h.enqueue("delegating stage").await;
     h.dispatch().await;
     let lead = h.running().await.remove(0);
@@ -838,7 +820,7 @@ async fn a_stage_cost_includes_its_delegated_agents_and_counts_each_once() {
 #[tokio::test]
 async fn a_running_stage_shows_the_effort_of_the_agents_it_delegated_to() {
     let h = Harness::new().await;
-    let _aether = connect_aether_for_delegations(&h).await;
+    let _aether = common::connect_aether_for_delegations(&h).await;
     let item = h.enqueue("delegating stage").await;
     h.dispatch().await;
     let lead = h.running().await.remove(0);
@@ -870,7 +852,7 @@ async fn a_running_stage_shows_the_effort_of_the_agents_it_delegated_to() {
 #[tokio::test]
 async fn delegated_descendant_cost_stays_with_its_run_after_retry_and_restart() {
     let mut h = Harness::new().await;
-    let _aether = connect_aether_for_delegations(&h).await;
+    let _aether = common::connect_aether_for_delegations(&h).await;
     let item = h.enqueue("descendant spend").await;
     h.dispatch().await;
     let old = h.running().await.remove(0);

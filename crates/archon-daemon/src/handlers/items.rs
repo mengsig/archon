@@ -998,6 +998,7 @@ pub(super) async fn resolve_draft(
     reasons: Option<&ModelReasons>,
 ) -> Result<ModelPlan, ArchonError> {
     let plan = resolve_tiers(ctx, (env, item), spec, draft).await?;
+    env.policy(&ctx.config).check_plan(&plan)?;
     knobs::check_plan_reasons(spec, &plan, reasons)?;
     Ok(plan)
 }

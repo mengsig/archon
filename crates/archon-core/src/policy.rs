@@ -70,12 +70,15 @@ impl ModelPolicy {
                 self.describe_allowed()
             )));
         }
+        self.check_effort(choice.effort)
+    }
+
+    pub fn check_effort(&self, effort: Effort) -> Result<(), ArchonError> {
         if let Some(cap) = self.max_effort
-            && choice.effort > cap
+            && effort > cap
         {
             return Err(ArchonError::Policy(format!(
-                "effort {} exceeds the configured maximum {cap}; raise [models] max_effort to allow it",
-                choice.effort
+                "effort {effort} exceeds the configured maximum {cap}; raise [models] max_effort to allow it"
             )));
         }
         Ok(())

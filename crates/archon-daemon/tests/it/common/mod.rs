@@ -124,6 +124,24 @@ const PROMPTS: [(&str, &str); 3] = [
     ),
 ];
 
+pub async fn connect_aether_for_delegations(h: &Harness) -> archon_aether::fake::FakeAether {
+    let fake = archon_aether::fake::FakeAether::start(&h.dir.path().join("aetherd.sock"))
+        .await
+        .expect("fake aetherd binds");
+    fake.set_default(
+        "get_agent",
+        archon_aether::fake::Scripted::refuse("not_found", "agent already ended"),
+    );
+    let client = archon_aether::AetherClient::connect(&fake.endpoint())
+        .await
+        .expect("connect to fake aetherd");
+    h.ctx
+        .aether
+        .replace(Some(std::sync::Arc::new(client)))
+        .unwrap();
+    fake
+}
+
 /// A daemon context over a temp directory with a registered repository.
 pub struct Harness {
     pub ctx: Arc<DaemonContext>,

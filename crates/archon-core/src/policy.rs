@@ -73,6 +73,7 @@ impl ModelPolicy {
         self.check_effort(choice.effort)
     }
 
+    /// Refuse an effort above the cap with the setting that can raise it.
     pub fn check_effort(&self, effort: Effort) -> Result<(), ArchonError> {
         if let Some(cap) = self.max_effort
             && effort > cap

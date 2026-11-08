@@ -285,6 +285,31 @@ async fn default_effort_cap_applies_to_plans_updates_and_steers() {
     );
 }
 
+#[tokio::test]
+async fn running_steer_refuses_max_before_requiring_a_reason() {
+    let h = Harness::new().await;
+    let item = h.enqueue("running effort").await;
+    h.dispatch().await;
+    let error = h
+        .cli(Request::SteerItem {
+            item: item.id.clone(),
+            steer: archon_core::steer::Steer {
+                stage: Some("implement".into()),
+                effort: Some(Effort::Max),
+                ..Default::default()
+            },
+        })
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("maximum x_high") && error.contains("max_effort"),
+        "{error}"
+    );
+    assert_eq!(h.item(&item.id).await.model_plan, plan());
+    assert!(h.backend.updates().is_empty());
+}
+
 async fn enqueue_reasoned(h: &Harness, plan: ModelPlan) -> archon_core::queue::QueueItem {
     let request = EnqueueRequest {
         onto: None,

@@ -1003,8 +1003,8 @@ pub(super) async fn resolve_draft(
     Ok(plan)
 }
 
-/// [`resolve_draft`] without its effort check, for a request that gives no
-/// `model_reasons`.
+/// Resolve tiers without checking policy or effort reasons, for a request
+/// that gives no `model_reasons`.
 pub(super) async fn resolve_tiers(
     ctx: &DaemonContext,
     (env, item): (&RepoEnv, ItemRoute<'_>),

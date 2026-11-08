@@ -296,15 +296,17 @@ mod tests {
         let mut config = ReviewConfig::default();
         let rules =
             reviewer_profile_rules(None, &own, &ModelPolicy::default(), &config, &catalog());
-        assert!(rules.contains("codex/balanced at tier balanced and effort medium or higher"));
+        assert!(rules.contains("codex/balanced at tier balanced and effort medium up to x_high"));
         assert!(
-            rules.contains("high or higher when you rate the change's risk medium or high"),
+            rules.contains("high up to x_high when you rate the change's risk medium or high"),
             "a configured low effort is raised to the floor: {rules}"
         );
         config.prefer_other_provider = false;
         let rules =
             reviewer_profile_rules(None, &own, &ModelPolicy::default(), &config, &catalog());
-        assert!(rules.contains("claude-code/sonnet at tier balanced and effort medium or higher"));
+        assert!(
+            rules.contains("claude-code/sonnet at tier balanced and effort medium up to x_high")
+        );
         config.prefer_other_provider = true;
         config.default_effort = Effort::High;
         let policy =
@@ -348,9 +350,13 @@ mod tests {
             governed_reviewer_rules(None, &own, &policy, (&config, &catalog()), false, sizing)
         };
         let floored = rules(false);
-        assert!(floored.contains("effort medium or higher, and high or higher when"));
+        assert!(floored.contains("effort medium up to x_high, and high up to x_high when"));
         assert!(!floored.contains("rubric"), "{floored}");
         let sized = rules(true);
+        assert!(
+            sized.contains("security analysis; never above x_high, the model policy's cap"),
+            "{sized}"
+        );
         assert!(
             sized.contains("codex/balanced at tier balanced and effort medium. That effort is"),
             "{sized}"
@@ -377,7 +383,7 @@ mod tests {
                 sizing,
             )
         };
-        assert!(at(false).contains("claude-code/sonnet at effort high or higher"));
+        assert!(at(false).contains("claude-code/sonnet at effort high up to x_high"));
         assert!(at(false).contains("Each effort is a floor, never a ceiling"));
         assert!(at(true).contains("claude-code/sonnet at effort high. That effort is the default"));
     }
@@ -421,7 +427,7 @@ mod tests {
             &single_fast_catalog(),
         );
         assert!(
-            rules.contains("on codex/luna at effort medium or higher"),
+            rules.contains("on codex/luna at effort medium up to x_high"),
             "{rules}"
         );
         assert!(rules.contains("balanced unavailable under policy"));
@@ -442,7 +448,7 @@ mod tests {
                 &catalog,
             );
             assert!(
-                rules.contains("on codex/luna at effort medium or higher"),
+                rules.contains("on codex/luna at effort medium up to x_high"),
                 "{rules}"
             );
             assert_no_lookup_instruction(&rules);
@@ -455,7 +461,7 @@ mod tests {
             &ModelCatalog::default(),
         );
         assert!(
-            rules.contains("on third/other at effort medium or higher"),
+            rules.contains("on third/other at effort medium up to x_high"),
             "{rules}"
         );
         let rules = reviewer_profile_rules(
@@ -486,7 +492,7 @@ mod tests {
             &single_fast_catalog(),
         );
         assert!(
-            rules.contains("codex/sol at tier balanced and effort medium or higher"),
+            rules.contains("codex/sol at tier balanced and effort medium up to x_high"),
             "{rules}"
         );
     }
@@ -504,7 +510,7 @@ mod tests {
         let narrowed = global.narrowed_by(&policy_allowing(&["codex/luna"]));
         let rules = reviewer_profile_rules(None, &own, &narrowed, &config, &single_fast_catalog());
         assert!(
-            rules.contains("on codex/luna at effort medium or higher"),
+            rules.contains("on codex/luna at effort medium up to x_high"),
             "{rules}"
         );
         assert_no_lookup_instruction(&rules);
@@ -521,7 +527,7 @@ mod tests {
         let rules =
             reviewer_profile_rules(None, &own, &ModelPolicy::default(), &config, &catalog());
         assert!(
-            rules.contains("on codex/strong at effort medium or higher"),
+            rules.contains("on codex/strong at effort medium up to x_high"),
             "{rules}"
         );
         assert!(rules.contains("frontier unavailable under policy"));

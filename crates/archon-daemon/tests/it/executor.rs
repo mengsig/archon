@@ -2604,7 +2604,7 @@ async fn a_policy_narrowed_mid_run_bounds_the_next_lead_s_reviewers() {
     h.dispatch().await;
     let build = h.backend.requests().last().unwrap().clone();
     assert_eq!(build.labels["archon.stage"], "build");
-    let own = format!("on {MODEL} at tier balanced and effort medium or higher");
+    let own = format!("on {MODEL} at tier balanced and effort medium up to x_high");
     assert!(build.instructions.contains(&own), "{}", build.instructions);
     let named = build.instructions.matches(REVIEW_MODEL).count();
     assert_eq!(named, 0, "{}", build.instructions);
@@ -3492,7 +3492,9 @@ async fn a_read_only_delegating_stage_has_nothing_to_integrate() {
     let rules = &request.instructions[request.instructions.find("## Delegation").unwrap()..];
     assert!(rules.contains("Your workspace is READ-ONLY, and so is every child's"));
     assert_eq!(rules.matches("integrate_workspace").count(), 0, "{rules}");
-    assert!(rules.contains("policy for this item: any model Aether lists. Archon cancels"));
+    assert!(rules.contains(
+        "policy for this item: any model Aether lists; effort at most x_high. Archon cancels"
+    ));
 }
 
 fn unreachable_aether() -> ArchonError {

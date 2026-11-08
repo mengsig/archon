@@ -231,8 +231,7 @@ by either route. It says to:
   cancels a child outside it;
 - with `[models] effort_sizing = true` only, size each child's effort to its
   own task by the effort rubric, from `low` for lookups and mechanical edits
-  up to `x_high` for hard reasoning and `max` only after `x_high` failed on
-  the same task, the cheapest that fits;
+  up to `x_high` for hard reasoning, the cheapest that fits;
 - wait for every child or cancel it before finishing;
 - delegate a new child for a second look, because a finished one cannot
   be asked again;

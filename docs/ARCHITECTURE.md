@@ -2134,14 +2134,15 @@ five places:
    and trigger. A delegating stage agent's contract states the configured
    depth (§8.6); at 2, its child may delegate once more.
 
-Effort is not restricted by default. `[models] max_effort` optionally caps it.
+Effort is capped at `x_high` by default. Set global `[models] max_effort` to
+`max` explicitly to allow it; a repository may only narrow the cap.
 
 The orchestrator chooses independently for each stage, following operator
 provider preferences and exact model requests first. Pipeline nudges are
 advice, not routing rules. Its prompt asks what reasoning and ambiguity remain,
 what a wrong result would break and how tests or review would catch it, and
 which available model and effort are the cheapest plausible choices. The
-highest efforts (`x_high`, `max`) are for a reasoning problem it can name that
+highest effort (`x_high`) is for a reasoning problem it can name that
 inspecting the work left unresolved; that the operator prefers strong models is
 not one. With `[models] effort_sizing = true` (off by default) one effort
 rubric (`archon_core::model::EFFORT_RUBRIC`) sizes every effort Archon asks an
@@ -2150,8 +2151,7 @@ stage contract that may delegate: `low` for lookups, listing, formatting and
 mechanical edits; `medium` for routine changes and reviews of small or low-risk
 diffs; `high` for non-trivial design, risky diffs and reviews of shared code;
 `x_high` for hard reasoning, such as root-causing a regression, concurrency or
-security analysis, or a fix that failed twice; `max` only after `x_high` failed
-on the same task. Take the cheapest that fits. Reviewers need independent
+security analysis, or a fix that failed twice. Take the cheapest that fits. Reviewers need independent
 discovery: another provider at the same tier counts, and several fast-tier reviewers, or a fast-tier team checked by
 one stronger-tier judge at low effort, can beat one balanced reviewer for far
 less. A failed stage prompts reconsideration through `retry_item`'s
@@ -2260,8 +2260,7 @@ any work, and the contract states the floor so the lead delegates at it. With
 reviewer, kept where the rubric leaves the diff open. Otherwise the rubric
 decides the review's level (`low` for a trivial diff, `medium` for a small or
 low-risk one, `high` for a risky diff or shared code, `x_high` for concurrency
-or security analysis, `max` only after `x_high` failed on the same review), and
-the lead states the reason in one line in its result, lower or higher; the
+or security analysis), and the lead states the reason in one line in its result, lower or higher; the
 watchdog then cancels only a reviewer on another model. This check relies on the lead using
 the required reviewer role; children with other roles follow the general model
 policy. The role matches `reviewer` exactly (case-insensitively); unless
@@ -3245,7 +3244,7 @@ validate_before_handoff = true # false: a user-facing build is relayed without v
 [models]
 allow = []                     # e.g. ["claude-code/claude-opus-5-5"]; [] = any
 deny = []
-# max_effort = "high"          # unset: no cap; else low|medium|high|x_high|max
+# max_effort = "high"          # unset: x_high; else low|medium|high|x_high|max
 # max_default_tier = "strong"  # the highest tier a default picks; a plan may name any
 provider_weights = {}          # e.g. { "claude-code" = 7, codex = 3 }; {} = orchestrator's provider
 # default_provider_weight = 1  # a provider the table omits; 0 never routes to it

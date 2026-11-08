@@ -550,7 +550,7 @@ fn floored_reviewer_rules(choices: &[ModelChoice], cap: Option<Effort>) -> Strin
     rules
 }
 
-/// `floor` and the higher efforts `cap` leaves: `high`, `high or higher`, `high up to max`.
+/// `floor` and the higher efforts `cap` leaves: `high`, `high or higher`, `high up to x_high`.
 fn effort_range(floor: Effort, cap: Option<Effort>) -> String {
     match cap {
         Some(cap) if cap <= floor => floor.to_string(),

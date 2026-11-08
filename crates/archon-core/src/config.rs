@@ -1282,6 +1282,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn repository_effort_cap_only_narrows_global_policy() {
+        let global: Config = toml::from_str("[models]\nmax_effort = 'max'").unwrap();
+        let empty = ModelsConfig::default();
+        assert_eq!(
+            global
+                .models
+                .policy()
+                .narrowed_by(&empty.policy_overlay())
+                .max_effort,
+            Some(Effort::Max)
+        );
+        let low: RepoConfig = toml::from_str("[models]\nmax_effort = 'low'").unwrap();
+        assert_eq!(
+            global
+                .models
+                .policy()
+                .narrowed_by(&low.models.policy_overlay())
+                .max_effort,
+            Some(Effort::Low)
+        );
+        let max: RepoConfig = toml::from_str("[models]\nmax_effort = 'max'").unwrap();
+        assert_eq!(
+            Config::default()
+                .models
+                .policy()
+                .narrowed_by(&max.models.policy_overlay())
+                .max_effort,
+            Some(Effort::XHigh)
+        );
+    }
+
+    #[test]
     fn review_defaults_and_overrides_are_validated() {
         let default: Config = toml::from_str("").unwrap();
         assert_eq!(default.review.default_tier, Tier::Balanced);

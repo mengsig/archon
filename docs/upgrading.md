@@ -30,6 +30,7 @@ are in the [changelog](../CHANGELOG.md).
 | Remote access | archond served its own web app over `tailscale serve` or your proxy | archond is mounted on Aether's listener and its screens are part of the Aether app |
 | A hung orchestrator turn | archond nudged it and told you after 30 silent minutes; your messages waited until you pressed Esc | the same notice, after 10 minutes once your message waits, then archond interrupts the turn 5 minutes later, as Esc would, so your messages reach a fresh turn ([troubleshooting](troubleshooting.md#the-orchestrator-or-aether-is-down)) |
 | Effort sizing | agents chose efforts by 1.4.x's rules; a reviewer plan's effort was a floor | the same by default; `[models] effort_sizing = true` opts in to sizing every effort by one rubric, a reviewer plan's effort then its default rather than a floor |
+| Default effort cap | no cap | `x_high`; set global `[models] max_effort = "max"` to allow existing `max` choices |
 | `config.toml` | | new keys `[remote] mounted_at`, `[remote] trusted_origins` and `[learning] holdout_rate` |
 
 A 1.5.0 `archon` and a 1.4.x archond refuse each other at `hello`, so
@@ -37,6 +38,11 @@ upgrade both together: `archon update --yes` restarts archond for you. A
 stage agent's `archon mcp` that outlives the update restarts itself on the
 new binary once archond refuses it, as since 1.4.2, so running stages carry
 on.
+
+With the new default cap, an orchestrator configured at `max` is refused, as
+are stored plans and running children above the cap. Set global `[models]
+max_effort = "max"` before upgrading if those choices must continue; repository
+settings can only narrow the global cap.
 
 ### Store migrations V19 to V23
 

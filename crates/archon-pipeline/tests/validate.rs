@@ -846,7 +846,7 @@ fn reviewer_delegating_templates_keep_the_contract_s_effort_floor() {
         assert!(!text.contains("rubric"), "{prompt}: {text}");
     }
     let rule = profile_reviewers(&"codex/m".parse().unwrap(), &Default::default(), false);
-    assert!(rule.contains("high or higher when you rate the change's risk medium or high"));
+    assert!(rule.contains("high up to x_high when you rate the change's risk medium or high"));
     assert!(!rule.contains("rubric"), "{rule}");
     let sized = profile_reviewers(&"codex/m".parse().unwrap(), &Default::default(), true);
     assert_sizes_reviews_by_the_rubric("the sized reviewer rules", &sized);
@@ -870,7 +870,7 @@ fn direct_implement_contract_carries_every_rubric_level_and_the_reason() {
     let rubric = archon_core::model::EFFORT_RUBRIC;
     let default = lead(false);
     assert!(!default.contains(rubric), "{default}");
-    assert!(default.contains("effort medium or higher, and high or higher when you rate"));
+    assert!(default.contains("effort medium up to x_high, and high up to x_high when you rate"));
     let lead = lead(true);
     assert!(lead.contains(rubric), "{lead}");
     for level in [

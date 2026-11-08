@@ -283,6 +283,11 @@ async fn default_effort_cap_applies_to_plans_updates_and_steers() {
         error.contains("maximum x_high") && error.contains("max_effort"),
         "{error}"
     );
+}
+
+#[tokio::test]
+async fn x_high_plan_reaches_dispatch() {
+    let h = Harness::new().await;
     let mut xhigh = plan();
     xhigh
         .0

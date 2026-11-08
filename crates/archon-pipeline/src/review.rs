@@ -733,6 +733,11 @@ mod tests {
         let fenced = format!(
             "Done.\n```json\n{{\"verdict\": \"FAIL\", \"head\": \"{HEAD}\", \"findings\": [{{}}, {{}}]}}\n```\n"
         );
+        assert_eq!(
+            Verdict::read_result(&fenced, None).unwrap_err(),
+            "its finding is unreadable: {}"
+        );
+        let fenced = fenced.replace("{}, {}", "{\"title\":\"first\"}, {\"title\":\"second\"}");
         let read = Verdict::read_result(&fenced, None).unwrap();
         assert!(!read.pass && read.head == HEAD && read.findings == Some(2));
         let line = format!("Looks right.\nhead: {HEAD}\nbase: 1234567abc\nverdict: Pass\n");
@@ -888,7 +893,10 @@ mod tests {
         let blocked =
             json!({"verdict": "pass", "head": HEAD, "findings": [{"severity": "blocking"}]});
         let refused = Verdict::read_result("", Some(&blocked)).unwrap_err();
-        assert!(refused.contains("lists a blocking finding"), "{refused}");
+        assert_eq!(
+            refused,
+            "its finding is unreadable: {\"severity\":\"blocking\"}"
+        );
         let held = format!("VERDICT: PASS — merge only with green CI\nhead: {HEAD}");
         assert!(Verdict::read_result(&held, None).is_err());
         let trailing = format!("VERDICT: PASS\nhead: {HEAD}\nDo not merge yet.");
@@ -928,6 +936,11 @@ mod tests {
         let blocked = json!({"verdict": "pass", "head": HEAD, "findings": [{"title": "defect", "blocking": true}]});
         let refused = Verdict::read_result("Verdict: pass.", Some(&blocked)).unwrap_err();
         assert!(refused.contains("lists a blocking finding"), "{refused}");
+        let unreadable = json!({"verdict": "pass", "head": HEAD, "findings": [{"blocking": true}]});
+        assert_eq!(
+            Verdict::read_result("Verdict: pass.", Some(&unreadable)).unwrap_err(),
+            "its finding is unreadable: {\"blocking\":true}"
+        );
     }
 
     #[test]

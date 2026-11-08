@@ -40,6 +40,13 @@ again from the Aether app a browser that paired on another hostname.
 
 ### Update
 
+- Startup warns when free space on the data or worktree filesystem is below
+  `limits.min_free_gb`, naming the free space and `archon gc` (or
+  `archon gc --offline` if archond cannot start). The diagnosis does not
+  run collection (#398). Troubleshooting also covers inspecting a lock holder
+  before stopping it and retrying.
+- When a shared store lock prevents startup, Archon identifies its holder when
+  possible and offers to stop a verified holder and retry in a terminal (#398).
 - `archon update --yes` from 1.4.x now finishes against the restarted
   1.5.0 archond. archond answered a `hello` at another protocol as a
   closing notice, which 1.4.x clients read as "archond is not running", so

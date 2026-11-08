@@ -109,7 +109,17 @@ async fn foreground(detached: bool) -> anyhow::Result<ExitCode> {
         archon_bin: archon_bin()?,
         aether_starter,
     };
-    archon_daemon::run(options).await?;
+    if !detached {
+        crate::startup_disk::warn_startup_disk(&options.config, &options.archon_bin);
+    }
+    let first = archon_daemon::run(options.clone()).await;
+    match first {
+        Ok(()) => {}
+        Err(error) if !detached && crate::startup_lock::recover(&error.to_string()).await? => {
+            archon_daemon::run(options).await?;
+        }
+        Err(error) => return Err(error.into()),
+    }
     Ok(ExitCode::SUCCESS)
 }
 
@@ -143,6 +153,16 @@ pub(super) fn refuse_mixed_locations(command: &str) -> anyhow::Result<()> {
 /// Start `archon daemon run` in its own process group, appending to the startup log
 /// beside the socket, and wait until it listens; fail as soon as it exits first.
 async fn detach(json: bool) -> anyhow::Result<ExitCode> {
+    match detach_once(json).await {
+        Ok(code) => Ok(code),
+        Err(error) if crate::startup_lock::recover(&format!("{error:#}")).await? => {
+            detach_once(json).await
+        }
+        Err(error) => Err(error),
+    }
+}
+
+async fn detach_once(json: bool) -> anyhow::Result<ExitCode> {
     warn_if_mixed(false);
     let socket = archon_client::default_socket();
     let socket =
@@ -152,14 +172,14 @@ async fn detach(json: bool) -> anyhow::Result<ExitCode> {
         log_path, socket,
         "the startup log never replaces the socket"
     );
+    // Validate before detaching, while diagnostics can still reach the terminal.
+    let config = Config::load_default()?;
+    crate::startup_disk::warn_startup_disk(&config, &archon_bin()?);
     create_private_dir(
         socket
             .parent()
             .context("the socket path has no directory")?,
     )?;
-    // Validate before detaching: a child with invalid config has no terminal
-    // on which to explain why it could not initialize its log.
-    Config::load_default()?;
     let mut command = daemon_command(&socket)?;
     let mut child = command
         .arg("--detached-child")

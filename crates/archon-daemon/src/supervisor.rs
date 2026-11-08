@@ -190,8 +190,7 @@ fn builtin_prompt(github: bool, handoff: bool) -> String {
 
 /// 1.4.12's effort line of the built-in prompt, kept unless `[models]
 /// effort_sizing` swaps in the rubric that stage contracts give for children.
-const UNSIZED_EFFORTS: &str =
-    "`x_high` or `max` only for a named reasoning problem inspection left open.\n";
+const UNSIZED_EFFORTS: &str = "`x_high` only for a named reasoning problem inspection left open.\n";
 
 /// `prompt` with its effort line as `[models] effort_sizing` asks.
 fn sized_efforts(prompt: String, effort_sizing: bool) -> String {
@@ -1670,10 +1669,9 @@ mod tests {
             assert!(prompt.contains(said), "missing {said:?}");
         }
         let rubric = archon_core::model::EFFORT_RUBRIC;
+        assert!(!prompt.contains("`max`"), "default prompt: {prompt}");
         assert!(
-            prompt.contains(
-                "`x_high` or `max` only for a named reasoning problem inspection left open."
-            ),
+            prompt.contains("`x_high` only for a named reasoning problem inspection left open."),
             "1.4.12's effort rule unless `[models] effort_sizing` opts in"
         );
         assert!(
@@ -1684,6 +1682,7 @@ mod tests {
         config.models.effort_sizing = true;
         let sized = orchestrator_instructions(&config, Path::new("/data/orchestrator"), true);
         let prompt = unwrapped(&sized.unwrap());
+        assert!(!prompt.contains("`max`"), "sized prompt: {prompt}");
         assert!(
             prompt.contains(&format!("Size each stage's effort to its task: {rubric}")),
             "the stage contracts' effort rubric, word for word"
@@ -1693,7 +1692,6 @@ mod tests {
             "`medium` for routine changes",
             "`high` for non-trivial design",
             "`x_high` for hard reasoning",
-            "`max` only after `x_high` failed on the same task",
         ] {
             assert!(prompt.contains(level), "missing {level:?}");
         }

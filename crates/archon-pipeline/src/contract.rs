@@ -578,12 +578,11 @@ pub(crate) fn unnamed_reviewer_effort(floor: Effort, cap: Option<Effort>) -> Str
 }
 
 /// The rubric's efforts for a review, cheapest first, with the diff each fits.
-const REVIEW_EFFORTS: [(Effort, &str); 5] = [
+const REVIEW_EFFORTS: [(Effort, &str); 4] = [
     (Effort::Low, "for a trivial diff"),
     (Effort::Medium, "for a small or low-risk diff"),
     (Effort::High, "for a risky diff or shared code"),
     (Effort::XHigh, "for concurrency or security analysis"),
-    (Effort::Max, "only after `x_high` failed on the same review"),
 ];
 
 /// Where the rubric is absolute: it sets a reviewer's effort from the diff,
@@ -1557,7 +1556,6 @@ mod tests {
             "`medium` for routine changes",
             "`high` for non-trivial design",
             "`x_high` for hard reasoning",
-            "`max` only after `x_high` failed on the same task",
         ] {
             assert!(writable.contains(rung), "missing {rung:?}");
         }
@@ -1811,7 +1809,7 @@ mod tests {
             "That effort is the default, for a diff the rubric leaves open; otherwise the \
              rubric decides: `low` for a trivial diff, `medium` for a small or low-risk diff, \
              `high` for a risky diff or shared code, `x_high` for concurrency or security \
-             analysis, `max` only after `x_high` failed on the same review. This replaces any \
+             analysis. This replaces any \
              effort floor the stage prompt names. Off the default, lower or higher, state the \
              reason in one line in your result."
         );

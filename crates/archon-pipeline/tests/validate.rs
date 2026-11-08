@@ -787,17 +787,16 @@ fn adaptive_prices_what_it_delegates_and_records_what_ships() {
     assert!(!spec.prompts.contains_key("ship.md"), "no agent ships");
     let nudge = spec.stage("build").unwrap().nudge.as_deref().unwrap();
     assert!(nudge.contains("at medium effort (the default); high for hard multi-file work"));
-    assert!(nudge.contains("x_high or max only for a reasoning problem you can name"));
+    assert!(nudge.contains("x_high only for a reasoning problem you can name"));
 }
 
-/// The five levels a review may take, as every reviewer-delegating prompt
+/// The four levels a review may take, as every reviewer-delegating prompt
 /// and contract words them, and the one-line reason a move off the default owes.
-const REVIEW_LEVELS: [&str; 5] = [
+const REVIEW_LEVELS: [&str; 4] = [
     "`low` for a trivial diff",
     "`medium` for a small or low-risk",
     "`high` for a risky diff",
     "`x_high` for concurrency or security analysis",
-    "`max` only after `x_high` failed on the same review",
 ];
 const OLD_EFFORT_RULES: [&str; 6] = [
     "lower only for a trivial diff",
@@ -826,6 +825,7 @@ fn assert_sizes_reviews_by_the_rubric(name: &str, text: &str) {
         assert!(text.contains(said), "{name} lacks {said:?}: {text}");
     }
     assert!(text.contains("the rubric decides"), "{name}: {text}");
+    assert!(!text.contains("`max`"), "{name}: {text}");
     for gone in OLD_EFFORT_RULES {
         assert!(!text.contains(gone), "{name} keeps {gone:?}");
     }
@@ -878,7 +878,6 @@ fn direct_implement_contract_carries_every_rubric_level_and_the_reason() {
         "`medium` for routine changes",
         "`high` for non-trivial design",
         "`x_high` for hard reasoning",
-        "`max` only after `x_high` failed on the same task",
     ] {
         assert!(lead.contains(level), "missing {level:?}");
     }

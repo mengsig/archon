@@ -236,6 +236,91 @@ async fn enqueue_refuses_models_outside_the_repository_policy() {
 }
 
 #[tokio::test]
+async fn default_effort_cap_applies_to_plans_updates_and_steers() {
+    let h = Harness::new().await;
+    let mut max_plan = plan();
+    max_plan
+        .0
+        .insert("implement".into(), vec![choice(MODEL, Effort::Max)]);
+    let error = h
+        .enqueue_with("max plan", max_plan.clone())
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("maximum x_high") && error.contains("max_effort"),
+        "{error}"
+    );
+    let item = h.enqueue("within cap").await;
+    let error = h
+        .cli(Request::UpdateItem {
+            item: item.id.clone(),
+            patch: ItemPatch {
+                model_plan: Some(max_plan.into()),
+                ..ItemPatch::default()
+            },
+        })
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("maximum x_high") && error.contains("max_effort"),
+        "{error}"
+    );
+    let error = h
+        .cli(Request::SteerItem {
+            item: item.id.clone(),
+            steer: archon_core::steer::Steer {
+                stage: Some("implement".into()),
+                effort: Some(Effort::Max),
+                ..Default::default()
+            },
+        })
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("maximum x_high") && error.contains("max_effort"),
+        "{error}"
+    );
+    let mut xhigh = plan();
+    xhigh
+        .0
+        .insert("implement".into(), vec![choice(MODEL, Effort::XHigh)]);
+    let item = h
+        .enqueue_with("xhigh plan", xhigh)
+        .await
+        .expect("x_high accepted");
+    h.dispatch().await;
+    assert!(
+        h.backend
+            .requests()
+            .iter()
+            .any(|request| request.choice.effort == Effort::XHigh)
+    );
+    assert_eq!(
+        h.item(&item.id).await.model_plan.0["implement"][0].effort,
+        Effort::XHigh
+    );
+}
+
+#[tokio::test]
+async fn global_max_cap_survives_an_unset_repository_cap() {
+    let mut config = Config::default();
+    config.models.max_effort = Some(Effort::Max);
+    let h = Harness::with_config(config).await;
+    let mut max_plan = plan();
+    max_plan
+        .0
+        .insert("implement".into(), vec![choice(MODEL, Effort::Max)]);
+    let item = h
+        .enqueue_with("explicit max", max_plan)
+        .await
+        .expect("max allowed");
+    assert_eq!(item.model_plan.0["implement"][0].effort, Effort::Max);
+}
+
+#[tokio::test]
 async fn enqueue_refuses_models_outside_the_global_allowlist() {
     let mut config = Config::default();
     config.models.allow = vec![MODEL.parse().expect("model")];

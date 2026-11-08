@@ -80,15 +80,16 @@ stage's effort, and every delegating contract each child's: `low` for lookups,
 listing, formatting and mechanical edits; `medium` for routine changes and
 reviews of small or low-risk diffs; `high` for non-trivial design, risky diffs
 and reviews of shared code; `x_high` for hard reasoning, such as root-causing a
-regression, concurrency or security analysis, or a fix that failed twice; `max`
-only after `x_high` failed on the same task. A reviewer's `default_effort`, or
+regression, concurrency or security analysis, or a fix that failed twice. A reviewer's `default_effort`, or
 its effort in a `<stage>.review` plan, becomes its default rather than a floor:
 the rubric moves it, from `low` for a trivial diff to `x_high` for concurrency
 or security analysis, the lead states the reason in one line, and archond
 cancels only a reviewer on a model the plan does not name. The stage prompts
 keep 1.4.12's wording, effort floors included; under the opt-in the contract's
 reviewer rule says it replaces any floor a stage prompt names. Off, agents see
-the effort rules of 1.4.12, and `max_effort` caps both.
+the effort rules of 1.4.12, and `max_effort` caps both. The default cap is
+`x_high`; set global `[models] max_effort = "max"` explicitly to allow `max`.
+A repository may only narrow the global cap.
 
 `auto_repair` (default `true`) covers a run that fails only because the gate
 refused the review or the ship record it owes (a delta read not anchored, a
@@ -118,7 +119,7 @@ auto_repair = true             # one automatic retry when the review, ship recor
 
 [models]                       # optional: leave it out to allow every ready model
 allow = ["claude-code/claude-opus-5-5", "codex/gpt-6.1-terra"]
-max_effort = "high"
+max_effort = "high"            # default x_high; max must be explicitly allowed
 # max_default_tier = "strong"  # the highest tier a default picks (the default)
 # provider_weights = { "claude-code" = 7, codex = 3 }   # route tier-only choices by share
 # default_provider_weight = 1  # a provider the table leaves out (the default; 0 = never)

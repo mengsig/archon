@@ -364,7 +364,7 @@ async fn item_policy(ctx: &DaemonContext, item: &QueueItemId) -> Result<ModelPol
         return Ok(global);
     };
     match RepoConfig::load(&repo.path) {
-        Ok(config) => Ok(global.narrowed_by(&config.models.policy())),
+        Ok(config) => Ok(global.narrowed_by(&config.models.policy_overlay())),
         // The dispatcher refuses such a repo's new work; keep watching
         // without its narrowing rather than stop watching.
         Err(error) => {

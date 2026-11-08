@@ -79,7 +79,7 @@ item, reviewed once. Omit `model_plan` to use learned
 choices or the configured fallback. Override stages when task requirements
 or evidence (`model_evidence`) justify it; explain why in `model_reasons`.
 Choose by `tier`, `frontier` only if the operator asks (`guide` topic `models`).
-`x_high` or `max` only for a named reasoning problem inspection left open.
+`x_high` only for a named reasoning problem inspection left open.
 
 The daemon refuses a knob above the ceiling `autonomy_policy` shows; only
 the operator can raise it, so never work around a refusal. `merge: auto` and

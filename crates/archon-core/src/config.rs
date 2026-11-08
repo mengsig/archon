@@ -385,6 +385,13 @@ impl ModelsConfig {
         ModelPolicy::from_lists(&self.allow, &self.deny, self.max_effort)
     }
 
+    /// Repository settings narrow the global cap only when explicitly set.
+    pub fn policy_overlay(&self) -> ModelPolicy {
+        let mut policy = self.policy();
+        policy.max_effort = self.max_effort;
+        policy
+    }
+
     /// The weights in force for `repo`: its entries and default over the
     /// global ones. `None` when neither names a provider, so routing is off.
     pub fn provider_weights(&self, repo: &ModelsConfig) -> Option<ProviderWeights> {

@@ -1418,3 +1418,17 @@ fn descriptions_carry_the_rules_the_prompt_leaves_to_them() {
         );
     }
 }
+
+#[test]
+fn model_policy_reports_the_default_effort_cap() {
+    let policy = archon_core::policy::ModelPolicy::default();
+    let text = render("model_policy", &Reply::ModelPolicy(policy));
+    assert!(text.contains("Max effort: x_high (default)"), "{text}");
+    let raised = archon_core::policy::ModelPolicy::from_lists(
+        &[],
+        &[],
+        Some(archon_core::model::Effort::Max),
+    );
+    let text = render("model_policy", &Reply::ModelPolicy(raised));
+    assert!(text.contains("Max effort: max"), "{text}");
+}

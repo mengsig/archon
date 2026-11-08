@@ -189,7 +189,7 @@ From the audit in [docs/security/vnext-audit.md](docs/security/vnext-audit.md)
   global only). Off, agents see 1.4.12's effort rules unchanged. On, one effort
   rubric, from `low` for lookups and mechanical edits through `x_high` for hard
   reasoning (root-causing a regression, concurrency or security analysis, a fix
-  that failed twice) to `max` only after `x_high` failed on the same task, sizes
+  that failed twice), sizes
   every effort the orchestrator and stage leads choose. A reviewer plan's effort
   is then that reviewer's default instead of a floor, kept where the rubric
   leaves the diff open; otherwise the rubric decides, from `low` for a trivial
@@ -197,7 +197,8 @@ From the audit in [docs/security/vnext-audit.md](docs/security/vnext-audit.md)
   reason in one line whether it goes lower or higher, within `max_effort`;
   archond still cancels a reviewer on a model the plan does not name. A
   delegating stage's cost split in `get_item` and `get_stage` counts its agents
-  by effort, whichever way it is set.
+  by effort, whichever way it is set. The default model policy caps effort at
+  `x_high`; set global `[models] max_effort = "max"` explicitly to allow `max`.
 - The orchestrator no longer calls a user-facing build ready on the pipeline's
   success alone (#396). It first queues an independent validation item that
   `depends_on` the items that built it, `release-journey` when the build's

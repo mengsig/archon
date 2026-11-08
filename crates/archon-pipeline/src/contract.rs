@@ -1735,7 +1735,7 @@ mod tests {
         let rules = reviewer_model_rules(Some(&named), &own, &ModelPolicy::default(), false);
         assert!(rules.contains("role `reviewer`"), "{rules}");
         assert!(rules.contains(
-            "claude-code/opus at effort medium or higher; claude-code/haiku at effort low or higher"
+            "claude-code/opus at effort medium up to x_high; claude-code/haiku at effort low up to x_high"
         ));
         assert!(rules.contains("Each effort is a floor, never a ceiling"));
         assert!(rules.contains("on any other model, or below its model's effort, as it spawns"));
@@ -1888,14 +1888,17 @@ mod tests {
         let allow = [own.clone(), model("claude-code/haiku"), model("codex/luna")];
         let wide = ModelPolicy::from_lists(&allow, &[model("codex/luna")], None);
         let rules = reviewer_model_rules(None, &own, &wide, false);
-        assert!(rules.contains("on one of claude-code/haiku: "), "{rules}");
+        assert!(
+            rules.contains("on one of claude-code/haiku, at effort at most x_high: "),
+            "{rules}"
+        );
         assert!(!rules.contains("claude-code/opus"), "{rules}");
         assert!(!rules.contains("codex/luna"), "{rules}");
         let open = ModelPolicy::from_lists(&[], &[model("codex/luna")], None);
         let rules = reviewer_model_rules(None, &own, &open, false);
         assert!(rules.contains("on a model other than yours"), "{rules}");
         assert!(
-            rules.contains("any model Aether lists except codex/luna"),
+            rules.contains("any model Aether lists except codex/luna; effort at most x_high"),
             "{rules}"
         );
     }

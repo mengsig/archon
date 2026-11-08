@@ -2151,8 +2151,8 @@ stage contract that may delegate: `low` for lookups, listing, formatting and
 mechanical edits; `medium` for routine changes and reviews of small or low-risk
 diffs; `high` for non-trivial design, risky diffs and reviews of shared code;
 `x_high` for hard reasoning, such as root-causing a regression, concurrency or
-security analysis, or a fix that failed twice. Take the cheapest that fits. Reviewers need independent
-discovery: another provider at the same tier counts, and several fast-tier reviewers, or a fast-tier team checked by
+security analysis, or a fix that failed twice. Take the cheapest that fits.
+Reviewers need independent discovery: another provider at the same tier counts, and several fast-tier reviewers, or a fast-tier team checked by
 one stronger-tier judge at low effort, can beat one balanced reviewer for far
 less. A failed stage prompts reconsideration through `retry_item`'s
 `model_plan`. The daemon validates policy and never replaces a choice the
@@ -2260,8 +2260,8 @@ any work, and the contract states the floor so the lead delegates at it. With
 reviewer, kept where the rubric leaves the diff open. Otherwise the rubric
 decides the review's level (`low` for a trivial diff, `medium` for a small or
 low-risk one, `high` for a risky diff or shared code, `x_high` for concurrency
-or security analysis), and the lead states the reason in one line in its result, lower or higher; the
-watchdog then cancels only a reviewer on another model. This check relies on the lead using
+or security analysis), and the lead states the reason in one line in its result,
+lower or higher; the watchdog then cancels only a reviewer on another model. This check relies on the lead using
 the required reviewer role; children with other roles follow the general model
 policy. The role matches `reviewer` exactly (case-insensitively); unless
 effort sizing is on, a reviewer with missing or unrecognised effort is refused. If Aether no longer has the

@@ -290,6 +290,10 @@ async fn running_steer_refuses_max_before_requiring_a_reason() {
     let h = Harness::new().await;
     let item = h.enqueue("running effort").await;
     h.dispatch().await;
+    assert!(matches!(
+        h.state(&item.id).await,
+        QueueState::Running { .. }
+    ));
     let error = h
         .cli(Request::SteerItem {
             item: item.id.clone(),

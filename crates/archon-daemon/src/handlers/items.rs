@@ -1003,7 +1003,7 @@ pub(super) async fn resolve_draft(
     Ok(plan)
 }
 
-/// Resolve tiers without checking policy or effort reasons, for a request
+/// Resolve tiers without checking the plan cap or effort reasons, for a request
 /// that gives no `model_reasons`.
 pub(super) async fn resolve_tiers(
     ctx: &DaemonContext,

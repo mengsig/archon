@@ -4459,6 +4459,9 @@ often its local `origin`; git runs programs those name. Every git command
   Known limit: git offers no way to name every hook at once, so a hook
   written into the config after the listing and before the command reads it
   is not disabled; closing that needs the config frozen or the agent stopped.
+  The same limit covers a receiver's `includeIf.hasconfig:remote.*.url`
+  that matches only the `-c` URL a pinned push gives receive-pack: the
+  listing reads the receiver's config without the sender's `-c` settings.
 - A command is killed with all it started after 120 s, a fetch or push
   after 180 s, and fails as unavailable.
 - `Sealed` git, on a repository or worktree an agent may write, reads no

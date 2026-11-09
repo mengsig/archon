@@ -1277,4 +1277,14 @@ async fn a_gh_failure_verifying_one_item_leaves_the_others_completing_and_shippi
     assert_eq!(told.len(), 1, "told once: {told:?}");
     assert!(told[0].contains("gh pr view"), "{told:?}");
     assert!(told[0].contains(&review.id.to_string()), "{told:?}");
+
+    // Once `gh` answers, the same completion settles the review.
+    gh.restore_base_ref_oid();
+    let agent = lead.aether_agent.clone().unwrap();
+    executor::stage_settled(&h.ctx, &agent, passed.clone())
+        .await
+        .expect("the retry settles");
+    h.dispatch().await;
+    let state = h.state(&review.id).await;
+    assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
 }

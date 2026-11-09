@@ -240,6 +240,11 @@ impl FakeGh {
         std::fs::write(self.state.join("old-gh"), "").expect("marker");
     }
 
+    /// `pr view` of `baseRefOid` works again.
+    pub fn restore_base_ref_oid(&self) {
+        std::fs::remove_file(self.state.join("old-gh")).expect("marker");
+    }
+
     /// GitHub opens the next pull request, but its answer and the one to the
     /// lookup that follows are lost.
     pub fn lose_next_create_reply(&self) {

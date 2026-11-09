@@ -99,8 +99,8 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
     };
     {
         // A retry whose stage is no longer live has nothing left to settle.
-        let store = ctx.store.lock().await;
         let mut table = ctx.runs.lock().await;
+        let store = ctx.store.lock().await;
         table.settle_retries.retain(|id, _| {
             store
                 .stage_run(id)

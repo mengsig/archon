@@ -103,10 +103,10 @@ pub async fn run(json: bool) -> anyhow::Result<ExitCode> {
     checks.push(check_crash(&archon_core::paths::data_dir()));
     checks.push(check_quarantine(&archon_core::paths::data_dir()));
     checks.push(orchestrator::check_orchestrator(&archond).await);
-    let registry = Registry::read(&archond, config.aether.mode).await;
+    let registry = Registry::read(&archond).await;
     checks.push(check_disk(&config)?);
     checks.push(check_git().await);
-    checks.push(registry::check_gh(&config.github.binary, &registry).await);
+    checks.push(registry::check_gh(&config.github.binary).await);
     checks.push(gh_users::check_gh_users(&config.github.binary, &registry).await);
     checks.push(registry::check_repos(&registry).await);
     checks.push(check_release().await);

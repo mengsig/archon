@@ -1,5 +1,4 @@
-//! The checks that read archond's registry: `gh` is logged in when work
-//! ships through GitHub, and every registered repository is a work tree.
+//! Checks for GitHub CLI readiness and registered repository work trees.
 
 use std::path::Path;
 use std::process::{Output, Stdio};

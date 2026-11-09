@@ -40,3 +40,27 @@ async fn an_ignored_legacy_config_is_reported_once_per_appearance() {
     let told = harness.notifications(NotificationKind::Blocker).await;
     assert_eq!(told.len(), 2, "a file that came back is news: {told:?}");
 }
+
+#[tokio::test]
+async fn startup_warns_once_for_an_old_or_missing_gh() {
+    use archon_core::testing::write_script;
+    let harness = Harness::new().await;
+    let dir = tempfile::tempdir().unwrap();
+    let gh = dir.path().join("gh");
+    write_script(&gh, "#!/bin/sh\necho 'gh version 2.45.0 (Ubuntu)'\n");
+    archon_daemon::warn_gh_at_start(&harness.ctx, &gh).await;
+    let notices = harness.notifications(NotificationKind::Blocker).await;
+    assert_eq!(notices.len(), 1);
+    assert!(notices[0].contains("2.63.0"));
+    assert!(notices[0].contains("~/.local/bin"));
+    write_script(&gh, "#!/bin/sh\necho 'gh version 2.63.0'\n");
+    archon_daemon::warn_gh_at_start(&harness.ctx, &gh).await;
+    assert_eq!(
+        harness.notifications(NotificationKind::Blocker).await.len(),
+        1
+    );
+    archon_daemon::warn_gh_at_start(&harness.ctx, &dir.path().join("missing")).await;
+    let notices = harness.notifications(NotificationKind::Blocker).await;
+    assert_eq!(notices.len(), 2);
+    assert!(notices[1].contains("could not run"));
+}

@@ -3,7 +3,7 @@
 ## Unreleased
 
 - Check for GitHub CLI 2.63.0 at startup and in doctor, while keeping gh
-  optional for local-only setups. Contributed by @AmmarBattah (#401).
+  optional for local-only setups. Contributed by @AmmarBattah (mengsig/archon#401).
 
 ## 1.4.12
 

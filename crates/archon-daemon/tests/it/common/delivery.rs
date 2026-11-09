@@ -58,6 +58,10 @@ if [ "$1 $2 $4 $5" = "pr view --json labels,body" ]; then
     python3 -c 'import json,sys; print(json.dumps({"labels": [{"name": l} for l in open(sys.argv[1]).read().splitlines()], "body": open(sys.argv[2]).read()}))' "$state/labels-$n" "$state/body-$n"
     exit 0
 fi
+if [ "$1 $2 $4 $5" = "pr view --json url,baseRefName,baseRefOid" ] && [ -f "$state/old-gh" ]; then
+    echo 'Unknown JSON field: "baseRefOid"' >&2
+    exit 1
+fi
 if [ "$1 $2 $4 $5" = "pr view --json url,baseRefName,baseRefOid" ]; then
     shown="$state/headed-${3##*/}.json"
     [ -f "$shown" ] || { echo "GraphQL: Could not resolve to a PullRequest" >&2; exit 1; }
@@ -229,6 +233,16 @@ impl FakeGh {
     pub fn fail_next(&self, command: &str, stderr: &str) {
         let file = format!("fail-{}", command.replace(' ', "-"));
         std::fs::write(self.state.join(file), stderr).expect("failure");
+    }
+
+    /// Every later `pr view` of `baseRefOid` fails, as an old `gh` that does not know the field.
+    pub fn lack_base_ref_oid(&self) {
+        std::fs::write(self.state.join("old-gh"), "").expect("marker");
+    }
+
+    /// `pr view` of `baseRefOid` works again.
+    pub fn restore_base_ref_oid(&self) {
+        std::fs::remove_file(self.state.join("old-gh")).expect("marker");
     }
 
     /// GitHub opens the next pull request, but its answer and the one to the

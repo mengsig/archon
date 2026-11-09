@@ -1,7 +1,7 @@
 //! Settling stage runs: infra retries, persisting outcomes and verdicts,
 //! and applying the driver's actions.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use archon_core::Timestamp;
 use archon_core::error::ArchonError;
@@ -12,14 +12,70 @@ use archon_core::steer::RunEdit;
 use archon_pipeline::{EngineAction, SpawnPlan};
 
 use super::{
-    FollowUp, RunTable, descendants, engine_wait, finish, gates, notional, pages, recover, resume,
-    ship, siblings, spawn, stall, swarm, team,
+    FollowUp, RunTable, SettleRetry, descendants, engine_wait, finish, gates, notional, pages,
+    recover, resume, ship, siblings, spawn, stall, swarm, team,
 };
 use crate::context::DaemonContext;
 use crate::disk::{self, FullDisk};
 use crate::resolve::RepoEnv;
 
+/// The first wait before a completed stage whose verification failed on a
+/// `gh` call is settled again; it doubles up to [`SETTLE_RETRY_MAX`].
+const SETTLE_RETRY_FIRST: Duration = Duration::from_secs(15);
+const SETTLE_RETRY_MAX: Duration = Duration::from_secs(15 * 60);
+
+/// Settle `id` with `outcome`. A `gh` call that fails while the outcome is
+/// verified is that stage's trouble alone: the stage stays live and is
+/// settled again after a growing wait (the sweep asks), its item's blocker
+/// told once, and the event stream and every other stage go on.
 pub(super) async fn settle(
+    ctx: &DaemonContext,
+    id: &StageRunId,
+    outcome: StageOutcome,
+) -> Result<FollowUp, ArchonError> {
+    match settle_verified(ctx, id, outcome).await {
+        Err(error) if super::gh::is_failure(&error) => hold_for_retry(ctx, id, error).await,
+        Err(error) => Err(error),
+        Ok(follow) => {
+            if ctx.runs.lock().await.settle_retries.remove(id).is_some() {
+                let subject = format!("stage:{id}");
+                super::coordination::isolate(ctx, &subject, None, "a stage", Ok(())).await?;
+            }
+            Ok(follow)
+        }
+    }
+}
+
+async fn hold_for_retry(
+    ctx: &DaemonContext,
+    id: &StageRunId,
+    error: ArchonError,
+) -> Result<FollowUp, ArchonError> {
+    let item = {
+        let store = ctx.store.lock().await;
+        let stage = store.stage_run(id)?;
+        store.run(&stage.run)?.item
+    };
+    let failures = {
+        let mut table = ctx.runs.lock().await;
+        let failures = table.settle_retries.get(id).map_or(0, |r| r.failures) + 1;
+        let wait = (SETTLE_RETRY_FIRST * 2u32.saturating_pow(failures - 1)).min(SETTLE_RETRY_MAX);
+        let not_before = Instant::now() + wait;
+        let retry = SettleRetry {
+            failures,
+            not_before,
+        };
+        table.settle_retries.insert(id.clone(), retry);
+        failures
+    };
+    tracing::warn!(stage = %id, %item, %error, failures, "verifying a completed stage failed on GitHub; retrying");
+    let what = format!("Item {item}: verifying the completed stage {id} against GitHub");
+    let subject = format!("stage:{id}");
+    super::coordination::isolate(ctx, &subject, Some(&item), &what, Err(error)).await?;
+    Ok(FollowUp::default())
+}
+
+async fn settle_verified(
     ctx: &DaemonContext,
     id: &StageRunId,
     outcome: StageOutcome,

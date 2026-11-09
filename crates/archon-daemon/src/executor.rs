@@ -108,6 +108,17 @@ pub struct RunTable {
     pub ship_retries: BTreeMap<PipelineRunId, ShipRetry>,
     /// The fast checks deliveries wait for, and their verdicts.
     pub gates: ship::Gates,
+    /// Completed stages whose verification failed on a `gh` call, to be
+    /// settled again once their wait has passed.
+    pub settle_retries: BTreeMap<StageRunId, SettleRetry>,
+}
+
+/// The failed verifications of one completed stage run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SettleRetry {
+    pub failures: u32,
+    /// The next try waits for this.
+    pub not_before: std::time::Instant,
 }
 
 /// The failed tries of one run's delivery.

@@ -15,7 +15,7 @@ use archon_core::protocol::{EnqueueRequest, Reply, RepoPatch, RepoRef, Request};
 use archon_core::pull_request::OntoTarget;
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::run::StageOutcome;
-use archon_daemon::executor::coordination;
+use archon_daemon::executor::{self, coordination};
 use common::delivery::{FakeGh, add_origin, origin_of, pushed, record, shipped_by};
 use common::{Harness, REPO_NAME, REVIEW_MODEL, git};
 use serde_json::{Value, json};
@@ -1219,4 +1219,72 @@ async fn a_stack_on_a_review_and_another_unmerged_parent_is_refused() {
         error.contains(parent.id.as_str()) && error.contains(FORK_PR),
         "{error}"
     );
+}
+
+/// One item's `gh` failing for good while its review is verified holds back
+/// that item alone: another item's completion is registered and ships, and
+/// the failing one's blocker names the command and what `gh` said.
+#[tokio::test]
+async fn a_gh_failure_verifying_one_item_leaves_the_others_completing_and_shipping() {
+    let (h, gh, head) = fork_pull_request().await;
+    let review = review_item(&h, &head, ReviewLevel::Standard).await;
+    let plain = enqueue(&h, enqueue_request("plain", "direct", ReviewLevel::None))
+        .await
+        .unwrap();
+    h.dispatch().await;
+    let stages = h.running().await;
+    assert_eq!(stages.len(), 2, "both items run");
+    gh.lack_base_ref_oid();
+
+    let review_run = h.run(&review.id).await.id;
+    let lead = stages.iter().find(|s| s.run == review_run).unwrap();
+    let reviewer = h
+        .backend
+        .delegate(lead.aether_agent.as_ref().unwrap(), REVIEW_MODEL);
+    let workspace = h.run(&review.id).await.workspace;
+    let base = git(&workspace, &["merge-base", "HEAD", "origin/main"]);
+    let verdict = json!({"verdict": "pass", "head": head, "base": base, "findings": []});
+    h.backend.complete_delegated(&reviewer, verdict);
+    let passed = StageOutcome::Completed {
+        summary: format!("Reviewed {FORK_PR} at {head}; checks green"),
+        structured: Some(json!({"review": {"verdict": "pass", "reviewers": [reviewer.as_str()]}})),
+    };
+    let agent = lead.aether_agent.clone().unwrap();
+    for _ in 0..3 {
+        executor::stage_settled(&h.ctx, &agent, passed.clone())
+            .await
+            .expect("the failure is the item's, not the event's");
+    }
+
+    let other = stages.iter().find(|s| s.run != review_run).unwrap();
+    let built = shipped_by(&h, other, "Built it; cargo test passes", json!({})).await;
+    let agent = other.aether_agent.clone().unwrap();
+    executor::stage_settled(&h.ctx, &agent, built)
+        .await
+        .unwrap();
+    h.dispatch().await;
+
+    let state = h.state(&plain.id).await;
+    assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+    assert!(gh.calls().iter().any(|c| c.starts_with("pr create")));
+    let state = h.state(&review.id).await;
+    assert!(!state.is_terminal(), "the review waits: {state:?}");
+    let told = h.notices(NotificationKind::Blocker).await;
+    let told: Vec<&String> = told
+        .iter()
+        .filter(|n| n.contains("Unknown JSON field"))
+        .collect();
+    assert_eq!(told.len(), 1, "told once: {told:?}");
+    assert!(told[0].contains("gh pr view"), "{told:?}");
+    assert!(told[0].contains(&review.id.to_string()), "{told:?}");
+
+    // Once `gh` answers, the same completion settles the review.
+    gh.restore_base_ref_oid();
+    let agent = lead.aether_agent.clone().unwrap();
+    executor::stage_settled(&h.ctx, &agent, passed.clone())
+        .await
+        .expect("the retry settles");
+    h.dispatch().await;
+    let state = h.state(&review.id).await;
+    assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
 }

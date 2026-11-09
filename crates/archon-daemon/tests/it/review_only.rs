@@ -1227,6 +1227,15 @@ async fn a_stack_on_a_review_and_another_unmerged_parent_is_refused() {
 /// the failing one's blocker names the command and what `gh` said.
 #[tokio::test]
 async fn a_gh_failure_verifying_one_item_leaves_the_others_completing_and_shipping() {
+    gh_failure_recovers(false).await;
+}
+
+#[tokio::test]
+async fn a_gh_failure_recovers_after_losing_retry_state() {
+    gh_failure_recovers(true).await;
+}
+
+async fn gh_failure_recovers(restarted: bool) {
     tokio::time::timeout(std::time::Duration::from_secs(30), async {
         let (h, gh, head) = fork_pull_request().await;
         let review = review_item(&h, &head, ReviewLevel::Standard).await;
@@ -1333,10 +1342,21 @@ async fn a_gh_failure_verifying_one_item_leaves_the_others_completing_and_shippi
         );
         let key = format!("coordination_blocker:stage:{}", lead.id);
         assert!(h.ctx.store.lock().await.kv_get(&key).unwrap().is_some());
-        h.ctx.runs.lock().await.settle_retries.clear();
-        executor::stage_settled(&h.ctx, lead.aether_agent.as_ref().unwrap(), passed)
-            .await
-            .unwrap();
+        if restarted {
+            h.ctx.runs.lock().await.settle_retries.clear();
+            executor::stage_settled(&h.ctx, lead.aether_agent.as_ref().unwrap(), passed)
+                .await
+                .unwrap();
+        } else {
+            h.ctx
+                .runs
+                .lock()
+                .await
+                .settle_retries
+                .get_mut(&lead.id)
+                .unwrap()
+                .not_before = std::time::Instant::now();
+        }
         h.dispatch().await;
         let state = h.state(&review.id).await;
         assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");

@@ -10,7 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use archon_core::error::ArchonError;
 
 use super::clean;
-use super::daemon_git::{Config, DaemonGit, Ran, config_hook_options, no_programs};
+use super::daemon_git::{Config, DaemonGit, Ran, config_hook_options, no_programs, shell_quote};
 use super::shadow::Shadow;
 use crate::gh_account::Token;
 
@@ -410,6 +410,31 @@ impl Pinned {
     }
 }
 
+/// `url` after the operator's `url.<base>.pushInsteadOf`, the longest prefix
+/// winning as in git; `None` if none matches.
+fn push_instead_of(shadow: &Shadow, url: &str) -> Result<Option<String>, ArchonError> {
+    let args = ["config", "-z", "--get-regexp", r"^url\..*\.pushinsteadof$"];
+    let ran = shadow.git(None, Config::Operator)?.args(args).output()?;
+    match ran.status.code() {
+        Some(0) => {}
+        Some(1) => return Ok(None),
+        _ => return Err(ran.failure()),
+    }
+    let listed = ran.stdout_text_untrimmed()?;
+    let mut best: Option<(usize, String)> = None;
+    for entry in listed.split('\0').filter(|entry| !entry.is_empty()) {
+        let Some((key, prefix)) = entry.split_once('\n') else {
+            continue;
+        };
+        let base = key.strip_prefix("url.").and_then(|k| k.rsplit_once('.'));
+        let Some((base, _)) = base else { continue };
+        if url.starts_with(prefix) && best.as_ref().is_none_or(|(len, _)| prefix.len() > *len) {
+            best = Some((prefix.len(), format!("{base}{}", &url[prefix.len()..])));
+        }
+    }
+    Ok(best.map(|(_, rewritten)| rewritten))
+}
+
 /// Where [`push_from`] to `url` without a token goes, as git resolves it with
 /// the operator's config in the same shadow: `url` after their `insteadOf`.
 pub(crate) fn pinned_url(shadow: &Shadow, url: &str) -> Result<String, ArchonError> {
@@ -479,30 +504,34 @@ fn push_refspec(
         "an unforced refspec"
     );
     let url = check_url(url)?;
-    // The operator's `insteadOf` may send a pinned remote URL to this machine.
-    let rewritten_local = pin && token.is_none() && is_local(&pinned_url(shadow, &url)?);
+    // The operator's `insteadOf` and `pushInsteadOf` may send the push to this machine.
+    let pushed_to = match token {
+        Some(_) => url.clone(),
+        // `pushInsteadOf` if one matches, else `insteadOf`.
+        None => match push_instead_of(shadow, &url)? {
+            Some(rewritten) => rewritten,
+            None => pinned_url(shadow, &url)?,
+        },
+    };
+    let rewritten_local = token.is_none() && is_local(&pushed_to);
     let receive_pack = match is_local(&url) || rewritten_local {
         true => {
             // Its hooks and config-defined hooks are the receiver's, not the shadow's.
             let target = match rewritten_local {
-                true => pinned_url(shadow, &url)?,
+                true => pushed_to,
                 false => url.clone(),
             };
             let place = shadow.git(None, Config::Operator)?.place().to_owned();
             let hooks = config_hook_options(&local_path(&target, &place)?, Config::Operator)?;
-            format!(
-                "git {} {} receive-pack",
-                no_programs().join(" "),
-                hooks.join(" ")
-            )
+            let words = ["git".to_owned()]
+                .into_iter()
+                .chain(no_programs())
+                .chain(hooks);
+            let words: Vec<String> = words.map(|word| shell_quote(&word)).collect();
+            format!("{} receive-pack", words.join(" "))
         }
         false => "git-receive-pack".to_owned(),
     };
-    if receive_pack.contains(['\'', '"', '\n']) {
-        return Err(ArchonError::Invalid(format!(
-            "the receiving repository's config names a hook archond cannot disable in {receive_pack:?}"
-        )));
-    }
     let receive_pack = format!("--receive-pack={receive_pack}");
     let pinned = Pinned::new(&url);
     let mut command = vec!["push", "--porcelain", "--no-verify", &receive_pack];
@@ -921,6 +950,17 @@ mod tests {
         let hook = origin.join("hooks/pre-receive");
         let script = format!("#!/bin/sh\ntouch '{}'\n", marker.display());
         archon_core::testing::write_script(&hook, &script);
+        // Hooks the receiver's config names, whatever the name holds, run no
+        // program, and the name is no shell code.
+        let injected = home.join("injected");
+        let planted = format!("touch '{}'", marker.display());
+        let hostile = format!("x$(touch {})", injected.display());
+        for name in [hostile.as_str(), "has space", "it's;quoted"] {
+            for (key, value) in [("command", planted.as_str()), ("event", "pre-receive")] {
+                let key = format!("hook.{name}.{key}");
+                run_git(&origin, &["config", &key, value]);
+            }
+        }
         let github = "https://github.com/o/r.git";
         let rewrite = format!("[url \"{}\"]\n\tinsteadOf = {github}\n", origin.display());
         std::fs::create_dir_all(home.join("git")).unwrap();
@@ -956,5 +996,6 @@ mod tests {
             Some(ours)
         );
         assert!(!marker.exists(), "the receiver ran its pre-receive hook");
+        assert!(!injected.exists(), "a hook name ran as shell code");
     }
 }

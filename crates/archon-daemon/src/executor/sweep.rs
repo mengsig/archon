@@ -126,9 +126,18 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
         }
         drop(store);
         for id in finished {
-            let subject = format!("stage:{id}");
-            super::coordination::isolate(ctx, &subject, None, "a stage", Ok(())).await?;
-            table.settle_retries.remove(&id);
+            if table
+                .settle_retries
+                .get(&id)
+                .is_some_and(|r| r.not_before > std::time::Instant::now())
+            {
+                continue;
+            }
+            if super::coordination::clear_stage(ctx, &id.to_string()).await? {
+                table.settle_retries.remove(&id);
+            } else {
+                settle::schedule_retry(&mut table, &id);
+            }
         }
     }
     follow.time_out = held::sweep(ctx, expired, &nearing, now).await?;

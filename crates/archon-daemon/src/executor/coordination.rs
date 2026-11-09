@@ -208,6 +208,26 @@ pub(super) async fn isolate(
     super::finish::notify(ctx, NotificationKind::Blocker, &text, item, None).await
 }
 
+pub(super) async fn clear_stage(ctx: &DaemonContext, id: &str) -> Result<bool, ArchonError> {
+    assert!(!id.is_empty());
+    let key = format!("{STAGE_BLOCKER_PREFIX}{id}");
+    let mut store = ctx.store.lock().await;
+    if store.kv_get(&key)?.is_none() {
+        let pending = Stuck {
+            error: "stage cleanup pending".into(),
+            failures: 1,
+            told: false,
+        };
+        store.kv_set(&key, &serde_json::to_string(&pending)?)?;
+    }
+    if let Err(error) = archon_core::quarantine::clear(&ctx.paths.data_dir, "stage", id) {
+        tracing::warn!(%id, %error, "stage quarantine cleanup will be retried");
+        return Ok(false);
+    }
+    store.kv_delete(&key)?;
+    Ok(true)
+}
+
 /// Keep `subject` (`kind:id`) in the quarantine list while its maintenance
 /// fails, with the commands that fix or cancel it; drop it once it passes.
 fn set_aside(

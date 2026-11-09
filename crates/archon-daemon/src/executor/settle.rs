@@ -45,9 +45,13 @@ pub(super) async fn settle(
         Err(error) if super::gh::is_failure(&error) => hold_for_retry(ctx, id, error).await,
         Err(error) => Err(error),
         Ok(follow) => {
-            let subject = format!("stage:{id}");
-            super::coordination::isolate(ctx, &subject, None, "a stage", Ok(())).await?;
-            ctx.runs.lock().await.settle_retries.remove(id);
+            let cleared = super::coordination::clear_stage(ctx, &id.to_string()).await?;
+            let mut table = ctx.runs.lock().await;
+            if cleared {
+                table.settle_retries.remove(id);
+            } else {
+                schedule_retry(&mut table, id);
+            }
             Ok(follow)
         }
     }
@@ -91,25 +95,30 @@ async fn hold_for_retry(
     };
     let failures = {
         let mut table = ctx.runs.lock().await;
-        let failures = table
-            .settle_retries
-            .get(id)
-            .map_or(0, |r| r.failures)
-            .saturating_add(1);
-        let wait = (SETTLE_RETRY_FIRST * 2u32.pow((failures - 1).min(6))).min(SETTLE_RETRY_MAX);
-        let not_before = Instant::now() + wait;
-        let retry = SettleRetry {
-            failures,
-            not_before,
-        };
-        table.settle_retries.insert(id.clone(), retry);
-        failures
+        schedule_retry(&mut table, id)
     };
     tracing::warn!(stage = %id, %item, %error, failures, "verifying a completed stage failed on GitHub; retrying");
     let what = format!("Item {item}: verifying the completed stage {id} against GitHub");
     let subject = format!("stage:{id}");
     super::coordination::isolate(ctx, &subject, Some(&item), &what, Err(error)).await?;
     Ok(FollowUp::default())
+}
+
+pub(super) fn schedule_retry(table: &mut RunTable, id: &StageRunId) -> u32 {
+    let failures = table
+        .settle_retries
+        .get(id)
+        .map_or(0, |r| r.failures)
+        .saturating_add(1);
+    let wait = (SETTLE_RETRY_FIRST * 2u32.pow((failures - 1).min(6))).min(SETTLE_RETRY_MAX);
+    table.settle_retries.insert(
+        id.clone(),
+        SettleRetry {
+            failures,
+            not_before: Instant::now() + wait,
+        },
+    );
+    failures
 }
 
 async fn settle_verified(

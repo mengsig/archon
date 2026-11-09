@@ -1342,6 +1342,15 @@ async fn gh_failure_recovers(restarted: bool) {
         );
         let key = format!("coordination_blocker:stage:{}", lead.id);
         assert!(h.ctx.store.lock().await.kv_get(&key).unwrap().is_some());
+        let quarantine = h
+            .ctx
+            .paths
+            .data_dir
+            .join("quarantine")
+            .join(format!("stage-{}.json", lead.id));
+        let record = std::fs::read(&quarantine).unwrap();
+        std::fs::remove_file(&quarantine).unwrap();
+        std::fs::create_dir(&quarantine).unwrap();
         if restarted {
             h.ctx.runs.lock().await.settle_retries.clear();
             executor::stage_settled(&h.ctx, lead.aether_agent.as_ref().unwrap(), passed)
@@ -1360,6 +1369,27 @@ async fn gh_failure_recovers(restarted: bool) {
         h.dispatch().await;
         let state = h.state(&review.id).await;
         assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+        assert!(h.ctx.store.lock().await.kv_get(&key).unwrap().is_some());
+        assert!(
+            h.ctx
+                .runs
+                .lock()
+                .await
+                .settle_retries
+                .contains_key(&lead.id)
+        );
+        std::fs::remove_dir(&quarantine).unwrap();
+        std::fs::write(&quarantine, record).unwrap();
+        h.ctx
+            .runs
+            .lock()
+            .await
+            .settle_retries
+            .get_mut(&lead.id)
+            .unwrap()
+            .not_before = std::time::Instant::now();
+        h.dispatch().await;
+        assert!(!quarantine.exists());
         assert!(
             !h.ctx
                 .runs

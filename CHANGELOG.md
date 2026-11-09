@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Isolate an item's GitHub verification failures so other items continue to
+  settle and ship; retry the affected stage with bounded backoff and report a
+  blocker. Contributed by @AmmarBattah (#402).
+
 ## 1.4.12
 
 Released 2026-11-04.

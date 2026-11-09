@@ -1278,13 +1278,31 @@ async fn a_gh_failure_verifying_one_item_leaves_the_others_completing_and_shippi
     assert!(told[0].contains("gh pr view"), "{told:?}");
     assert!(told[0].contains(&review.id.to_string()), "{told:?}");
 
-    // Once `gh` answers, the same completion settles the review.
+    h.backend
+        .settle_task(lead.aether_task.as_ref().unwrap(), passed);
     gh.restore_base_ref_oid();
-    let agent = lead.aether_agent.clone().unwrap();
-    executor::stage_settled(&h.ctx, &agent, passed.clone())
+    h.dispatch().await;
+    assert!(
+        !h.state(&review.id).await.is_terminal(),
+        "retry waits for its deadline"
+    );
+    h.ctx
+        .runs
+        .lock()
         .await
-        .expect("the retry settles");
+        .settle_retries
+        .get_mut(&lead.id)
+        .unwrap()
+        .not_before = std::time::Instant::now();
     h.dispatch().await;
     let state = h.state(&review.id).await;
     assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+    assert!(
+        !h.ctx
+            .runs
+            .lock()
+            .await
+            .settle_retries
+            .contains_key(&lead.id)
+    );
 }

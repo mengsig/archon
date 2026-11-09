@@ -37,7 +37,8 @@ pub(super) async fn settle(
         Err(error) if super::gh::is_failure(&error) => hold_for_retry(ctx, id, error).await,
         Err(error) => Err(error),
         Ok(follow) => {
-            if ctx.runs.lock().await.settle_retries.remove(id).is_some() {
+            let retried = ctx.runs.lock().await.settle_retries.remove(id).is_some();
+            if retried {
                 let subject = format!("stage:{id}");
                 super::coordination::isolate(ctx, &subject, None, "a stage", Ok(())).await?;
             }
@@ -58,8 +59,12 @@ async fn hold_for_retry(
     };
     let failures = {
         let mut table = ctx.runs.lock().await;
-        let failures = table.settle_retries.get(id).map_or(0, |r| r.failures) + 1;
-        let wait = (SETTLE_RETRY_FIRST * 2u32.saturating_pow(failures - 1)).min(SETTLE_RETRY_MAX);
+        let failures = table
+            .settle_retries
+            .get(id)
+            .map_or(0, |r| r.failures)
+            .saturating_add(1);
+        let wait = (SETTLE_RETRY_FIRST * 2u32.pow((failures - 1).min(6))).min(SETTLE_RETRY_MAX);
         let not_before = Instant::now() + wait;
         let retry = SettleRetry {
             failures,

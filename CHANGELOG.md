@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Check for GitHub CLI 2.63.0 at startup and in doctor, while keeping gh
+  optional for local-only setups. Contributed by @AmmarBattah (#401).
+
 ## 1.4.12
 
 Released 2026-11-04.

@@ -98,7 +98,6 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
         (running, expired, nearing)
     };
     {
-        // A retry whose stage is no longer live has nothing left to settle.
         let mut table = ctx.runs.lock().await;
         let store = ctx.store.lock().await;
         table
@@ -109,7 +108,18 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
             .into_iter()
             .map(|stage| stage.id)
             .collect();
-        table.settle_retries.retain(|id, _| live.contains(id));
+        drop(store);
+        let finished: Vec<_> = table
+            .settle_retries
+            .keys()
+            .filter(|id| !live.contains(*id) && !table.settle_claims.contains_key(*id))
+            .cloned()
+            .collect();
+        for id in finished {
+            let subject = format!("stage:{id}");
+            super::coordination::isolate(ctx, &subject, None, "a stage", Ok(())).await?;
+            table.settle_retries.remove(&id);
+        }
     }
     follow.time_out = held::sweep(ctx, expired, &nearing, now).await?;
     forewarn::sweep(ctx, &running, now).await?;

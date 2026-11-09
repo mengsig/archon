@@ -1350,6 +1350,45 @@ async fn a_gh_failure_verifying_one_item_leaves_the_others_completing_and_shippi
                 .settle_retries
                 .contains_key(&lead.id)
         );
+        let key = format!("coordination_blocker:stage:{}", lead.id);
+        h.ctx.store.lock().await.kv_set(&key, "pending").unwrap();
+        let claim = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+        let guard = claim.lock().await;
+        {
+            let mut table = h.ctx.runs.lock().await;
+            table
+                .settle_claims
+                .insert(lead.id.clone(), std::sync::Arc::downgrade(&claim));
+            table.settle_retries.insert(
+                lead.id.clone(),
+                executor::SettleRetry {
+                    failures: 1,
+                    not_before: std::time::Instant::now(),
+                },
+            );
+        }
+        h.dispatch().await;
+        assert!(
+            h.ctx
+                .runs
+                .lock()
+                .await
+                .settle_retries
+                .contains_key(&lead.id)
+        );
+        assert!(h.ctx.store.lock().await.kv_get(&key).unwrap().is_some());
+        drop(guard);
+        drop(claim);
+        h.dispatch().await;
+        assert!(
+            !h.ctx
+                .runs
+                .lock()
+                .await
+                .settle_retries
+                .contains_key(&lead.id)
+        );
+        assert!(h.ctx.store.lock().await.kv_get(&key).unwrap().is_none());
     })
     .await
     .expect("settlement and sweep must not deadlock");

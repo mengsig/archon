@@ -45,12 +45,9 @@ pub(super) async fn settle(
         Err(error) if super::gh::is_failure(&error) => hold_for_retry(ctx, id, error).await,
         Err(error) => Err(error),
         Ok(follow) => {
-            let retried = ctx.runs.lock().await.settle_retries.contains_key(id);
-            if retried {
-                let subject = format!("stage:{id}");
-                super::coordination::isolate(ctx, &subject, None, "a stage", Ok(())).await?;
-                ctx.runs.lock().await.settle_retries.remove(id);
-            }
+            let subject = format!("stage:{id}");
+            super::coordination::isolate(ctx, &subject, None, "a stage", Ok(())).await?;
+            ctx.runs.lock().await.settle_retries.remove(id);
             Ok(follow)
         }
     }

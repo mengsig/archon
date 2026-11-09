@@ -1324,21 +1324,19 @@ async fn a_gh_failure_verifying_one_item_leaves_the_others_completing_and_shippi
         assert!(told[0].contains(&review.id.to_string()), "{told:?}");
 
         h.backend
-            .settle_task(lead.aether_task.as_ref().unwrap(), passed);
+            .settle_task(lead.aether_task.as_ref().unwrap(), passed.clone());
         gh.restore_base_ref_oid();
         h.dispatch().await;
         assert!(
             !h.state(&review.id).await.is_terminal(),
             "retry waits for its deadline"
         );
-        h.ctx
-            .runs
-            .lock()
+        let key = format!("coordination_blocker:stage:{}", lead.id);
+        assert!(h.ctx.store.lock().await.kv_get(&key).unwrap().is_some());
+        h.ctx.runs.lock().await.settle_retries.clear();
+        executor::stage_settled(&h.ctx, lead.aether_agent.as_ref().unwrap(), passed)
             .await
-            .settle_retries
-            .get_mut(&lead.id)
-            .unwrap()
-            .not_before = std::time::Instant::now();
+            .unwrap();
         h.dispatch().await;
         let state = h.state(&review.id).await;
         assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
@@ -1350,7 +1348,7 @@ async fn a_gh_failure_verifying_one_item_leaves_the_others_completing_and_shippi
                 .settle_retries
                 .contains_key(&lead.id)
         );
-        let key = format!("coordination_blocker:stage:{}", lead.id);
+        assert!(h.ctx.store.lock().await.kv_get(&key).unwrap().is_none());
         h.ctx.store.lock().await.kv_set(&key, "pending").unwrap();
         let claim = std::sync::Arc::new(tokio::sync::Mutex::new(()));
         let guard = claim.lock().await;
@@ -1379,6 +1377,7 @@ async fn a_gh_failure_verifying_one_item_leaves_the_others_completing_and_shippi
         assert!(h.ctx.store.lock().await.kv_get(&key).unwrap().is_some());
         drop(guard);
         drop(claim);
+        h.ctx.runs.lock().await.settle_retries.clear();
         h.dispatch().await;
         assert!(
             !h.ctx

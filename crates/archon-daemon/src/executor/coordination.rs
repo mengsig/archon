@@ -31,6 +31,7 @@ const PULL_REQUESTS_EVERY: Duration = Duration::from_secs(600);
 const FALLBACK_EVERY: Duration = Duration::from_secs(300);
 /// `kv`: `coordination_blocker:<subject>` → the JSON [`Stuck`] of its maintenance.
 const BLOCKER_PREFIX: &str = "coordination_blocker:";
+pub(super) const STAGE_BLOCKER_PREFIX: &str = "coordination_blocker:stage:";
 /// Failed passes before a failure another pass might clear is a blocker.
 const TRANSIENT_PASSES: u32 = 3;
 

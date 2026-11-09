@@ -108,13 +108,23 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
             .into_iter()
             .map(|stage| stage.id)
             .collect();
-        drop(store);
-        let finished: Vec<_> = table
+        let mut finished: std::collections::BTreeSet<_> = table
             .settle_retries
             .keys()
             .filter(|id| !live.contains(*id) && !table.settle_claims.contains_key(*id))
             .cloned()
             .collect();
+        for (key, _) in store.kv_prefix(super::coordination::STAGE_BLOCKER_PREFIX)? {
+            let raw = key
+                .strip_prefix(super::coordination::STAGE_BLOCKER_PREFIX)
+                .expect("the store returns the requested prefix");
+            let id = StageRunId::parse(raw)
+                .map_err(|e| ArchonError::Corrupt(format!("kv {key}: {e}")))?;
+            if !live.contains(&id) && !table.settle_claims.contains_key(&id) {
+                finished.insert(id);
+            }
+        }
+        drop(store);
         for id in finished {
             let subject = format!("stage:{id}");
             super::coordination::isolate(ctx, &subject, None, "a stage", Ok(())).await?;

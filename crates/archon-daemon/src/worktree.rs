@@ -568,10 +568,16 @@ fn git_output(dir: &Path, args: &[&str]) -> Result<std::process::Output, ArchonE
     assert!(!args.is_empty(), "a git command needs arguments");
     // A role controls its worktree: no hook or fsmonitor command it
     // configured runs as the daemon.
+    // A directory that is gone has no config to read: `git -C` fails on it as before.
+    let hooks = match dir.is_dir() {
+        true => daemon_git::config_hook_options(dir, daemon_git::Config::Operator)?,
+        false => Vec::new(),
+    };
     Command::new("git")
         .arg("-C")
         .arg(dir)
         .args(daemon_git::no_programs())
+        .args(hooks)
         .args(args)
         .output()
         .map_err(|e| ArchonError::io(format!("running git in {}", dir.display()), e))

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+
+- Check for GitHub CLI 2.63.0 at startup and in doctor, while keeping gh
+  optional for local-only setups. Contributed by @AmmarBattah (#401).
+
 ### Dependencies
 
 - Bump `toml` 1.1.8 to 1.2.1 (with `serde_spanned`, `toml_datetime` and

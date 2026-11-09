@@ -1,13 +1,17 @@
-//! Checks for GitHub CLI readiness and registered repository work trees.
+//! The checks that read archond's registry: `gh` is logged in when work
+//! ships through GitHub, and every registered repository is a work tree.
 
 use std::path::Path;
 use std::process::{Output, Stdio};
 use std::time::Duration;
 
 use archon_client::ArchonClient;
-use archon_core::repo::Repo;
+use archon_core::config::AetherMode;
+use archon_core::protocol::{Reply, Request};
+use archon_core::repo::{Repo, ShipMode};
 
 use super::{Check, Level, check};
+use crate::connect::unexpected;
 use crate::views;
 
 /// Bounds every external command doctor runs, so a hung one cannot stall it.
@@ -16,6 +20,8 @@ pub(super) const COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 /// What archond knows that these checks need; an error says why it is unknown.
 pub(super) struct Registry {
     repos: Result<Vec<Repo>, String>,
+    /// Whether Archon's GitHub watcher delivers requests for any repository.
+    watcher_on: Result<bool, String>,
 }
 
 impl Registry {
@@ -24,7 +30,10 @@ impl Registry {
         self.repos.as_deref().map_err(String::as_str)
     }
 
-    pub(super) async fn read(archond: &anyhow::Result<Option<ArchonClient>>) -> Self {
+    pub(super) async fn read(
+        archond: &anyhow::Result<Option<ArchonClient>>,
+        mode: AetherMode,
+    ) -> Self {
         let client = match archond {
             Ok(Some(client)) => client,
             Ok(None) => return Self::unknown("archond is not running".to_owned()),
@@ -33,45 +42,96 @@ impl Registry {
         let repos = views::fetch_repos(client)
             .await
             .map_err(|e| format!("{e:#}"));
-        Self { repos }
+        let watcher_on = match mode {
+            AetherMode::Shared => Ok(false),
+            AetherMode::Dedicated => watcher_on(client).await.map_err(|e| format!("{e:#}")),
+        };
+        Self { repos, watcher_on }
     }
 
     fn unknown(why: String) -> Self {
-        Self { repos: Err(why) }
+        Self {
+            repos: Err(why.clone()),
+            watcher_on: Err(why),
+        }
     }
 }
 
-pub(super) async fn check_gh(binary: &Path) -> Check {
+async fn watcher_on(client: &ArchonClient) -> anyhow::Result<bool> {
+    let view = match client.request(Request::GithubWatcher).await? {
+        Reply::GithubWatcher(view) => view,
+        other => return Err(unexpected(&other, "github_watcher")),
+    };
+    Ok(view.enabled && view.repositories.iter().any(|r| r.enabled))
+}
+
+/// Whether anything Archon runs needs `gh`, and what does.
+#[derive(Debug, PartialEq, Eq)]
+enum GhNeed {
+    Needed(String),
+    NotNeeded,
+    Unknown(String),
+}
+
+fn gh_need(registry: &Registry) -> GhNeed {
+    let repos = registry.repos.as_deref().unwrap_or_default();
+    if let Some(repo) = repos.iter().find(|r| r.ship == ShipMode::Pr) {
+        return GhNeed::Needed(format!("repository {} ships in pr mode", repo.name));
+    }
+    match (&registry.watcher_on, &registry.repos) {
+        (Ok(true), _) => GhNeed::Needed("the GitHub watcher is on".to_owned()),
+        (Err(why), _) | (_, Err(why)) => GhNeed::Unknown(why.clone()),
+        (Ok(false), Ok(_)) => GhNeed::NotNeeded,
+    }
+}
+
+pub(super) async fn check_gh(binary: &Path, registry: &Registry) -> Check {
+    match gh_readiness(binary).await {
+        Ok(detail) => check("gh", Level::Ok, detail),
+        Err(problem) => gh_verdict(problem, gh_need(registry)),
+    }
+}
+
+fn gh_verdict(problem: String, need: GhNeed) -> Check {
+    assert!(!problem.is_empty(), "a failed readiness check says why");
+    match need {
+        GhNeed::Needed(what) => check("gh", Level::Fail, format!("{problem}; {what}")),
+        GhNeed::NotNeeded => check(
+            "gh",
+            Level::Ok,
+            format!(
+                "{problem}; nothing needs gh: every repository ships locally and the GitHub watcher is off"
+            ),
+        ),
+        GhNeed::Unknown(why) => check(
+            "gh",
+            Level::Warn,
+            format!("{problem}; whether anything needs it is unknown: {why}"),
+        ),
+    }
+}
+
+async fn gh_readiness(binary: &Path) -> Result<String, String> {
     use archon_core::github::{GH_INSTALL_HINT, MIN_GH, gh_version};
     let version = match run_bounded(binary, &["--version"], None, COMMAND_TIMEOUT).await {
         Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).trim().to_owned(),
         Ok(out) => {
-            return check(
-                "gh",
-                Level::Fail,
-                format!(
-                    "`{} --version` exited with {}; {GH_INSTALL_HINT}",
-                    binary.display(),
-                    out.status
-                ),
-            );
+            return Err(format!(
+                "`{} --version` exited with {}; {GH_INSTALL_HINT}",
+                binary.display(),
+                out.status
+            ));
         }
-        Err(error) => return check("gh", Level::Fail, format!("{error}; {GH_INSTALL_HINT}")),
+        Err(error) => return Err(format!("{error}; {GH_INSTALL_HINT}")),
     };
     if !gh_version(&version).is_some_and(|v| v >= MIN_GH) {
         let (major, minor, patch) = MIN_GH;
-        return check(
-            "gh",
-            Level::Fail,
-            format!(
-                "{version:?}: Archon needs gh {major}.{minor}.{patch} or later; {GH_INSTALL_HINT}"
-            ),
-        );
+        return Err(format!(
+            "{version:?}: Archon needs gh {major}.{minor}.{patch} or later; {GH_INSTALL_HINT}"
+        ));
     }
-    match gh_logged_in(binary).await {
-        Ok(()) => check("gh", Level::Ok, format!("{version}; logged in")),
-        Err(problem) => check("gh", Level::Fail, problem),
-    }
+    gh_logged_in(binary).await?;
+    Ok(format!("{version}; logged in"))
 }
 
 /// `gh auth status`. Its output is never shown: it can carry a token.
@@ -207,34 +267,54 @@ pub(super) mod tests {
         }
     }
 
-    pub(in crate::cmd::doctor) fn registry(repos: Vec<Repo>, _watcher_on: bool) -> Registry {
-        Registry { repos: Ok(repos) }
+    pub(in crate::cmd::doctor) fn registry(repos: Vec<Repo>, watcher_on: bool) -> Registry {
+        Registry {
+            repos: Ok(repos),
+            watcher_on: Ok(watcher_on),
+        }
     }
 
     #[tokio::test]
     async fn gh_check_requires_supported_version_and_login_without_exposing_tokens() {
         let dir = tempfile::tempdir().unwrap();
+        let needed = registry(vec![repo("web", dir.path(), ShipMode::Pr)], false);
+        let local = registry(vec![repo("lib", dir.path(), ShipMode::Local)], false);
         let good = dir.path().join("good");
         write_script(
             &good,
             "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'gh version 2.63.0 (2024-05-29)'; else exit 0; fi\n",
         );
-        assert_eq!(check_gh(&good).await.level, Level::Ok);
+        assert_eq!(check_gh(&good, &needed).await.level, Level::Ok);
         let old = dir.path().join("old");
         write_script(&old, "#!/bin/sh\necho 'gh version 2.45.0 (Ubuntu)'\n");
-        let fail = check_gh(&old).await;
+        let fail = check_gh(&old, &needed).await;
         assert_eq!(fail.level, Level::Fail);
         assert!(fail.detail.contains("~/.local/bin"));
+        assert_eq!(check_gh(&old, &local).await.level, Level::Ok);
+        assert_eq!(
+            check_gh(&dir.path().join("missing"), &local).await.level,
+            Level::Ok
+        );
+        assert_eq!(
+            check_gh(&old, &Registry::unknown("offline".into()))
+                .await
+                .level,
+            Level::Warn
+        );
+        assert_eq!(
+            check_gh(&old, &registry(vec![], true)).await.level,
+            Level::Fail
+        );
         let logged_out = dir.path().join("logged-out");
         write_script(
             &logged_out,
             "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'gh version 2.63.0'; else echo gho_SECRET >&2; exit 1; fi\n",
         );
-        let fail = check_gh(&logged_out).await;
+        let fail = check_gh(&logged_out, &needed).await;
         assert_eq!(fail.level, Level::Fail);
         assert!(!fail.detail.contains("gho_SECRET"));
         assert_eq!(
-            check_gh(&dir.path().join("missing")).await.level,
+            check_gh(&dir.path().join("missing"), &needed).await.level,
             Level::Fail
         );
     }

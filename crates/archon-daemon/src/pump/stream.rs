@@ -269,6 +269,9 @@ async fn handle_one(
         match handled.await {
             Ok(()) => return Ok(None),
             Err(error) if error.is_store() => return Err(error),
+            // One item's failed `gh` call is no reason to stop reading the fleet:
+            // it is reported and skipped below like any other.
+            Err(error) if crate::executor::gh::is_failure(&error) => break error,
             Err(ArchonError::Unavailable(reason)) => return Ok(Some(reason)),
             Err(error) if is_transient(&error) && attempt < TRANSIENT_ATTEMPTS => {
                 tracing::info!(seq = event.seq, attempt, %error, "event handling failed; retrying");

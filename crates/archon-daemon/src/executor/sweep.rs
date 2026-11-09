@@ -25,10 +25,15 @@ const DEADLINE_GRACE_SECS: i64 = 60;
 pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonError> {
     let now = archon_core::now();
     let grace = chrono::Duration::seconds(DEADLINE_GRACE_SECS);
-    let (in_flight, merge, ship) = {
+    let (in_flight, merge, ship, retry) = {
         let table = ctx.runs.lock().await;
         let due = ship::stalled(&table, std::time::Instant::now());
-        (table.in_flight.clone(), team::stalled(&table), due)
+        let at = std::time::Instant::now();
+        let retry: Vec<StageRunId> = (table.settle_retries.iter())
+            .filter(|(_, r)| r.not_before <= at)
+            .map(|(id, _)| id.clone())
+            .collect();
+        (table.in_flight.clone(), team::stalled(&table), due, retry)
     };
     let mut follow = FollowUp {
         merge,
@@ -60,6 +65,13 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
                 continue;
             }
             follow.roster.push(stage.run.clone());
+            if let Some(task) = stage
+                .aether_task
+                .as_ref()
+                .filter(|_| retry.contains(&stage.id))
+            {
+                follow.check.push((stage.id.clone(), task.clone()));
+            }
             if stage.aether_agent.is_some() && stage.aether_task.is_none() {
                 follow.resumed.push(stage.id.clone());
             }
@@ -85,6 +97,16 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
             .collect();
         (running, expired, nearing)
     };
+    {
+        // A retry whose stage is no longer live has nothing left to settle.
+        let store = ctx.store.lock().await;
+        let mut table = ctx.runs.lock().await;
+        table.settle_retries.retain(|id, _| {
+            store
+                .stage_run(id)
+                .is_ok_and(|stage| !stage.state.is_terminal())
+        });
+    }
     follow.time_out = held::sweep(ctx, expired, &nearing, now).await?;
     forewarn::sweep(ctx, &running, now).await?;
     let stalled = settle_stalled(ctx, &running, now, &mut follow).await;

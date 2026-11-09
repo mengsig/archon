@@ -433,6 +433,13 @@ fn succeeded(ran: Ran, doing: &str) -> Result<String, ArchonError> {
     }
 }
 
+/// Whether `error` is a `gh` call that failed (not found, refused, or an
+/// option this `gh` does not know): the fault of one item's GitHub request,
+/// not of Aether or of the daemon.
+pub(crate) fn is_failure(error: &ArchonError) -> bool {
+    matches!(error, ArchonError::Unavailable(why) if why.starts_with("gh "))
+}
+
 /// `gh pr list <filter>`, which is `doing`, each pull request checked.
 async fn list(
     binary: &Path,

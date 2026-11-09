@@ -683,8 +683,6 @@ mod tests {
             ("hook.dotted.name.here.event", "reference-transaction"),
             ("hook.Mixed Case.command", planted.as_str()),
             ("hook.Mixed Case.event", "reference-transaction"),
-            ("hook.reference-transaction.command", planted.as_str()),
-            ("hook.reference-transaction.event", "reference-transaction"),
             ("include.path", included.to_str().unwrap()),
         ];
         for (key, value) in sets {
@@ -703,9 +701,38 @@ mod tests {
                 "hook.Mixed Case.enabled",
                 "hook.dotted.name.here.enabled",
                 "hook.from.include.enabled",
-                "hook.reference-transaction.enabled",
             ]
         );
+    }
+
+    /// A hook named like its event: newer git rejects the config outright,
+    /// older git runs it as any other hook. Either way nothing runs.
+    #[test]
+    fn a_hook_named_like_its_event_runs_nothing_under_the_seal() {
+        let (_dir, path) = repo();
+        let marker = path.join("ran");
+        let planted = planted(&path, &marker);
+        let sets = [
+            ("hook.reference-transaction.command", planted.as_str()),
+            ("hook.reference-transaction.event", "reference-transaction"),
+        ];
+        for (key, value) in sets {
+            let set = DaemonGit::sealed_in(&path).args(["config", key, value]);
+            set.text().unwrap();
+        }
+        // Newer git refuses the config in every command, which is failing
+        // closed; older git runs the update, and the hook must not fire.
+        let empty = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+        let identity = ["-c", "user.name=a", "-c", "user.email=a@example.invalid"];
+        let commit = DaemonGit::sealed_in(&path)
+            .args(identity)
+            .args(["commit-tree", empty, "-m", "x"])
+            .text();
+        if let Ok(commit) = commit {
+            let update = ["update-ref", "refs/heads/main", commit.as_str()];
+            let _ = DaemonGit::sealed_in(&path).args(update).output();
+        }
+        assert!(!marker.exists(), "the hook named like its event ran");
     }
 
     /// The probe reads what the command will: its environment's config and the

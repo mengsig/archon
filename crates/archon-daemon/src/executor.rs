@@ -111,6 +111,8 @@ pub struct RunTable {
     /// Completed stages whose verification failed on a `gh` call, to be
     /// settled again once their wait has passed.
     pub settle_retries: BTreeMap<StageRunId, SettleRetry>,
+    /// Per-stage verification claims, weak so cancelled attempts release them.
+    pub settle_claims: BTreeMap<StageRunId, std::sync::Weak<tokio::sync::Mutex<()>>>,
 }
 
 /// The failed verifications of one completed stage run.

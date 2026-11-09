@@ -5,6 +5,7 @@
 //! `origin` holding the fork's head as `refs/pull/200/head`, and a fake `gh`.
 
 use crate::common;
+use std::os::unix::fs::PermissionsExt;
 
 use archon_core::autonomy::{AutonomyPatch, ReviewLevel};
 use archon_core::error::ArchonError;
@@ -1234,7 +1235,6 @@ async fn a_gh_failure_verifying_one_item_leaves_the_others_completing_and_shippi
     h.dispatch().await;
     let stages = h.running().await;
     assert_eq!(stages.len(), 2, "both items run");
-    gh.lack_base_ref_oid();
 
     let review_run = h.run(&review.id).await.id;
     let lead = stages.iter().find(|s| s.run == review_run).unwrap();
@@ -1250,11 +1250,51 @@ async fn a_gh_failure_verifying_one_item_leaves_the_others_completing_and_shippi
         structured: Some(json!({"review": {"verdict": "pass", "reviewers": [reviewer.as_str()]}})),
     };
     let agent = lead.aether_agent.clone().unwrap();
-    for _ in 0..3 {
+    let binary = &h.ctx.config.github.binary;
+    std::fs::set_permissions(binary, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let (first, duplicate) = tokio::join!(
+        executor::stage_settled(&h.ctx, &agent, passed.clone()),
         executor::stage_settled(&h.ctx, &agent, passed.clone())
-            .await
-            .expect("the failure is the item's, not the event's");
+    );
+    first.unwrap();
+    duplicate.unwrap();
+    assert_eq!(h.ctx.runs.lock().await.settle_retries[&lead.id].failures, 1);
+    std::fs::set_permissions(binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+    gh.fail_next("pr view", "HTTP 403: access denied");
+    h.ctx
+        .runs
+        .lock()
+        .await
+        .settle_retries
+        .get_mut(&lead.id)
+        .unwrap()
+        .not_before = std::time::Instant::now();
+    executor::stage_settled(&h.ctx, &agent, passed.clone())
+        .await
+        .unwrap();
+    assert_eq!(h.ctx.runs.lock().await.settle_retries[&lead.id].failures, 2);
+    gh.lack_base_ref_oid();
+    {
+        let mut table = h.ctx.runs.lock().await;
+        let retry = table.settle_retries.get_mut(&lead.id).unwrap();
+        retry.not_before = std::time::Instant::now();
+        retry.failures = u32::MAX;
     }
+    executor::stage_settled(&h.ctx, &agent, passed.clone())
+        .await
+        .unwrap();
+    let retry = h.ctx.runs.lock().await.settle_retries[&lead.id];
+    assert_eq!(retry.failures, u32::MAX);
+    assert!(retry.not_before <= std::time::Instant::now() + std::time::Duration::from_secs(900));
+    let before = gh.calls().len();
+    executor::stage_settled(&h.ctx, &agent, passed.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        gh.calls().len(),
+        before,
+        "duplicate completion respects backoff"
+    );
 
     let other = stages.iter().find(|s| s.run != review_run).unwrap();
     let built = shipped_by(&h, other, "Built it; cargo test passes", json!({})).await;

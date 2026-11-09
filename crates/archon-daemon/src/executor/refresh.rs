@@ -328,7 +328,9 @@ async fn check_pr_open(
     };
     let mut open = match settled {
         Some(_) => Vec::new(),
-        None => gh::of_branch(&ctx.config.github.binary, repo, branch, true).await?,
+        None => gh::of_branch(&ctx.config.github.binary, repo, branch, true)
+            .await
+            .map_err(gh::verification_failure)?,
     };
     // A newer pull request of the branch is not the one the run delivered to.
     open.retain(|pr| own.as_ref().is_none_or(|own| pr.identity() == *own));

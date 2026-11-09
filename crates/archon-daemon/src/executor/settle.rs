@@ -33,6 +33,14 @@ pub(super) async fn settle(
     id: &StageRunId,
     outcome: StageOutcome,
 ) -> Result<FollowUp, ArchonError> {
+    let _claim = if matches!(outcome, StageOutcome::Completed { .. }) {
+        let Some(claim) = claim_verification(ctx, id).await else {
+            return Ok(FollowUp::default());
+        };
+        Some(claim)
+    } else {
+        None
+    };
     match settle_verified(ctx, id, outcome).await {
         Err(error) if super::gh::is_failure(&error) => hold_for_retry(ctx, id, error).await,
         Err(error) => Err(error),
@@ -45,6 +53,32 @@ pub(super) async fn settle(
             Ok(follow)
         }
     }
+}
+
+async fn claim_verification(
+    ctx: &DaemonContext,
+    id: &StageRunId,
+) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+    let mut table = ctx.runs.lock().await;
+    if table
+        .settle_retries
+        .get(id)
+        .is_some_and(|r| r.not_before > Instant::now())
+    {
+        return None;
+    }
+    let lock = table
+        .settle_claims
+        .get(id)
+        .and_then(std::sync::Weak::upgrade)
+        .unwrap_or_else(|| {
+            let lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+            table
+                .settle_claims
+                .insert(id.clone(), std::sync::Arc::downgrade(&lock));
+            lock
+        });
+    lock.try_lock_owned().ok()
 }
 
 async fn hold_for_retry(

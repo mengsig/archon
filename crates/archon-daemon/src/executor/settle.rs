@@ -39,7 +39,7 @@ pub(super) async fn settle(
         Ok(follow) => {
             if ctx.runs.lock().await.settle_retries.remove(id).is_some() {
                 let subject = format!("stage:{id}");
-                super::coordination::isolate(ctx, &subject, None, "", Ok(())).await?;
+                super::coordination::isolate(ctx, &subject, None, "a stage", Ok(())).await?;
             }
             Ok(follow)
         }

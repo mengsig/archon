@@ -21,8 +21,8 @@ Aether daemon is never read or changed. In shared mode every
    `gh auth login`. The token needs read access to the repository and to
    collaborator permissions, and the right to comment. Both daemons run as
    you and use the same `gh` login. Archon never stores a token.
-   `archon doctor` runs `gh auth status` and fails while it does not pass
-   and the watcher is on or a repository ships in `pr` mode.
+   `archon doctor` fails if `gh` is missing, older than 2.63.0, or not
+   authenticated. It checks `gh auth status` after the version check.
 2. Watch a repository:
 
    ```sh

@@ -48,7 +48,7 @@ impl Env {
             std::fs::create_dir_all(&bin).unwrap();
             archon_core::testing::write_script(
                 &bin.join("gh"),
-                "#!/bin/sh\necho offline >&2\nexit 1\n",
+                "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'gh version 2.63.0'; fi\nexit 0\n",
             );
             // Both engine CLIs are found whatever the host has installed.
             for engine in ["claude", "codex"] {

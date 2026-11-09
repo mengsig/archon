@@ -706,12 +706,14 @@ mod tests {
     }
 
     /// A hook named like its event: newer git rejects the config outright,
-    /// older git runs it as any other hook. Either way nothing runs.
+    /// older git runs it as any other hook. Whichever this git does, the
+    /// sealed git does the same minus the program.
     #[test]
     fn a_hook_named_like_its_event_runs_nothing_under_the_seal() {
         let (_dir, path) = repo();
         let marker = path.join("ran");
         let planted = planted(&path, &marker);
+        let commit = signed_commit(&path);
         let sets = [
             ("hook.reference-transaction.command", planted.as_str()),
             ("hook.reference-transaction.event", "reference-transaction"),
@@ -720,17 +722,32 @@ mod tests {
             let set = DaemonGit::sealed_in(&path).args(["config", key, value]);
             set.text().unwrap();
         }
-        // Newer git refuses the config in every command, which is failing
-        // closed; older git runs the update, and the hook must not fire.
-        let empty = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
-        let identity = ["-c", "user.name=a", "-c", "user.email=a@example.invalid"];
-        let commit = DaemonGit::sealed_in(&path)
-            .args(identity)
-            .args(["commit-tree", empty, "-m", "x"])
-            .text();
-        if let Ok(commit) = commit {
-            let update = ["update-ref", "refs/heads/main", commit.as_str()];
-            let _ = DaemonGit::sealed_in(&path).args(update).output();
+        // Found by asking plain git, not by its version.
+        let plain = Command::new("git")
+            .arg("-C")
+            .arg(&path)
+            .args([
+                "-c",
+                "core.hooksPath=/dev/null",
+                "update-ref",
+                "refs/heads/plain",
+                &commit,
+            ])
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        let update = ["update-ref", "refs/heads/main", commit.as_str()];
+        let sealed = DaemonGit::sealed_in(&path).args(update).output();
+        if plain.success() {
+            assert!(sealed.unwrap().status.success(), "git accepts the config");
+        } else {
+            let sealed = sealed.map(|ran| ran.status.success());
+            assert!(
+                matches!(sealed, Ok(false) | Err(_)),
+                "refused, so fails closed"
+            );
+            eprintln!("this git rejects a hook named like its event");
         }
         assert!(!marker.exists(), "the hook named like its event ran");
     }

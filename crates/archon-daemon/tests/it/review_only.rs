@@ -1227,122 +1227,130 @@ async fn a_stack_on_a_review_and_another_unmerged_parent_is_refused() {
 /// the failing one's blocker names the command and what `gh` said.
 #[tokio::test]
 async fn a_gh_failure_verifying_one_item_leaves_the_others_completing_and_shipping() {
-    let (h, gh, head) = fork_pull_request().await;
-    let review = review_item(&h, &head, ReviewLevel::Standard).await;
-    let plain = enqueue(&h, enqueue_request("plain", "direct", ReviewLevel::None))
-        .await
-        .unwrap();
-    h.dispatch().await;
-    let stages = h.running().await;
-    assert_eq!(stages.len(), 2, "both items run");
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        let (h, gh, head) = fork_pull_request().await;
+        let review = review_item(&h, &head, ReviewLevel::Standard).await;
+        let plain = enqueue(&h, enqueue_request("plain", "direct", ReviewLevel::None))
+            .await
+            .unwrap();
+        h.dispatch().await;
+        let stages = h.running().await;
+        assert_eq!(stages.len(), 2, "both items run");
 
-    let review_run = h.run(&review.id).await.id;
-    let lead = stages.iter().find(|s| s.run == review_run).unwrap();
-    let reviewer = h
-        .backend
-        .delegate(lead.aether_agent.as_ref().unwrap(), REVIEW_MODEL);
-    let workspace = h.run(&review.id).await.workspace;
-    let base = git(&workspace, &["merge-base", "HEAD", "origin/main"]);
-    let verdict = json!({"verdict": "pass", "head": head, "base": base, "findings": []});
-    h.backend.complete_delegated(&reviewer, verdict);
-    let passed = StageOutcome::Completed {
-        summary: format!("Reviewed {FORK_PR} at {head}; checks green"),
-        structured: Some(json!({"review": {"verdict": "pass", "reviewers": [reviewer.as_str()]}})),
-    };
-    let agent = lead.aether_agent.clone().unwrap();
-    let binary = &h.ctx.config.github.binary;
-    std::fs::set_permissions(binary, std::fs::Permissions::from_mode(0o644)).unwrap();
-    let (first, duplicate) = tokio::join!(
-        executor::stage_settled(&h.ctx, &agent, passed.clone()),
-        executor::stage_settled(&h.ctx, &agent, passed.clone())
-    );
-    first.unwrap();
-    duplicate.unwrap();
-    assert_eq!(h.ctx.runs.lock().await.settle_retries[&lead.id].failures, 1);
-    std::fs::set_permissions(binary, std::fs::Permissions::from_mode(0o755)).unwrap();
-    gh.fail_next("pr view", "HTTP 403: access denied");
-    h.ctx
-        .runs
-        .lock()
-        .await
-        .settle_retries
-        .get_mut(&lead.id)
-        .unwrap()
-        .not_before = std::time::Instant::now();
-    executor::stage_settled(&h.ctx, &agent, passed.clone())
-        .await
-        .unwrap();
-    assert_eq!(h.ctx.runs.lock().await.settle_retries[&lead.id].failures, 2);
-    gh.lack_base_ref_oid();
-    {
-        let mut table = h.ctx.runs.lock().await;
-        let retry = table.settle_retries.get_mut(&lead.id).unwrap();
-        retry.not_before = std::time::Instant::now();
-        retry.failures = u32::MAX;
-    }
-    executor::stage_settled(&h.ctx, &agent, passed.clone())
-        .await
-        .unwrap();
-    let retry = h.ctx.runs.lock().await.settle_retries[&lead.id];
-    assert_eq!(retry.failures, u32::MAX);
-    assert!(retry.not_before <= std::time::Instant::now() + std::time::Duration::from_secs(900));
-    let before = gh.calls().len();
-    executor::stage_settled(&h.ctx, &agent, passed.clone())
-        .await
-        .unwrap();
-    assert_eq!(
-        gh.calls().len(),
-        before,
-        "duplicate completion respects backoff"
-    );
-
-    let other = stages.iter().find(|s| s.run != review_run).unwrap();
-    let built = shipped_by(&h, other, "Built it; cargo test passes", json!({})).await;
-    let agent = other.aether_agent.clone().unwrap();
-    executor::stage_settled(&h.ctx, &agent, built)
-        .await
-        .unwrap();
-    h.dispatch().await;
-
-    let state = h.state(&plain.id).await;
-    assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
-    assert!(gh.calls().iter().any(|c| c.starts_with("pr create")));
-    let state = h.state(&review.id).await;
-    assert!(!state.is_terminal(), "the review waits: {state:?}");
-    let told = h.notices(NotificationKind::Blocker).await;
-    let told: Vec<&String> = told
-        .iter()
-        .filter(|n| n.contains("Unknown JSON field"))
-        .collect();
-    assert_eq!(told.len(), 1, "told once: {told:?}");
-    assert!(told[0].contains("gh pr view"), "{told:?}");
-    assert!(told[0].contains(&review.id.to_string()), "{told:?}");
-
-    h.backend
-        .settle_task(lead.aether_task.as_ref().unwrap(), passed);
-    gh.restore_base_ref_oid();
-    h.dispatch().await;
-    assert!(
-        !h.state(&review.id).await.is_terminal(),
-        "retry waits for its deadline"
-    );
-    h.ctx
-        .runs
-        .lock()
-        .await
-        .settle_retries
-        .get_mut(&lead.id)
-        .unwrap()
-        .not_before = std::time::Instant::now();
-    h.dispatch().await;
-    let state = h.state(&review.id).await;
-    assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
-    assert!(
-        !h.ctx
+        let review_run = h.run(&review.id).await.id;
+        let lead = stages.iter().find(|s| s.run == review_run).unwrap();
+        let reviewer = h
+            .backend
+            .delegate(lead.aether_agent.as_ref().unwrap(), REVIEW_MODEL);
+        let workspace = h.run(&review.id).await.workspace;
+        let base = git(&workspace, &["merge-base", "HEAD", "origin/main"]);
+        let verdict = json!({"verdict": "pass", "head": head, "base": base, "findings": []});
+        h.backend.complete_delegated(&reviewer, verdict);
+        let passed = StageOutcome::Completed {
+            summary: format!("Reviewed {FORK_PR} at {head}; checks green"),
+            structured: Some(
+                json!({"review": {"verdict": "pass", "reviewers": [reviewer.as_str()]}}),
+            ),
+        };
+        let agent = lead.aether_agent.clone().unwrap();
+        let binary = &h.ctx.config.github.binary;
+        std::fs::set_permissions(binary, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let (first, duplicate) = tokio::join!(
+            executor::stage_settled(&h.ctx, &agent, passed.clone()),
+            executor::stage_settled(&h.ctx, &agent, passed.clone())
+        );
+        first.unwrap();
+        duplicate.unwrap();
+        assert_eq!(h.ctx.runs.lock().await.settle_retries[&lead.id].failures, 1);
+        std::fs::set_permissions(binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        gh.fail_next("pr view", "HTTP 403: access denied");
+        h.ctx
             .runs
             .lock()
             .await
             .settle_retries
-            .contains_key(&lead.id)
-    );
+            .get_mut(&lead.id)
+            .unwrap()
+            .not_before = std::time::Instant::now();
+        executor::stage_settled(&h.ctx, &agent, passed.clone())
+            .await
+            .unwrap();
+        assert_eq!(h.ctx.runs.lock().await.settle_retries[&lead.id].failures, 2);
+        gh.lack_base_ref_oid();
+        {
+            let mut table = h.ctx.runs.lock().await;
+            let retry = table.settle_retries.get_mut(&lead.id).unwrap();
+            retry.not_before = std::time::Instant::now();
+            retry.failures = u32::MAX;
+        }
+        executor::stage_settled(&h.ctx, &agent, passed.clone())
+            .await
+            .unwrap();
+        let retry = h.ctx.runs.lock().await.settle_retries[&lead.id];
+        assert_eq!(retry.failures, u32::MAX);
+        assert!(
+            retry.not_before <= std::time::Instant::now() + std::time::Duration::from_secs(900)
+        );
+        let before = gh.calls().len();
+        executor::stage_settled(&h.ctx, &agent, passed.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            gh.calls().len(),
+            before,
+            "duplicate completion respects backoff"
+        );
+
+        let other = stages.iter().find(|s| s.run != review_run).unwrap();
+        let built = shipped_by(&h, other, "Built it; cargo test passes", json!({})).await;
+        let agent = other.aether_agent.clone().unwrap();
+        executor::stage_settled(&h.ctx, &agent, built)
+            .await
+            .unwrap();
+        h.dispatch().await;
+
+        let state = h.state(&plain.id).await;
+        assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+        assert!(gh.calls().iter().any(|c| c.starts_with("pr create")));
+        let state = h.state(&review.id).await;
+        assert!(!state.is_terminal(), "the review waits: {state:?}");
+        let told = h.notices(NotificationKind::Blocker).await;
+        let told: Vec<&String> = told
+            .iter()
+            .filter(|n| n.contains("Unknown JSON field"))
+            .collect();
+        assert_eq!(told.len(), 1, "told once: {told:?}");
+        assert!(told[0].contains("gh pr view"), "{told:?}");
+        assert!(told[0].contains(&review.id.to_string()), "{told:?}");
+
+        h.backend
+            .settle_task(lead.aether_task.as_ref().unwrap(), passed);
+        gh.restore_base_ref_oid();
+        h.dispatch().await;
+        assert!(
+            !h.state(&review.id).await.is_terminal(),
+            "retry waits for its deadline"
+        );
+        h.ctx
+            .runs
+            .lock()
+            .await
+            .settle_retries
+            .get_mut(&lead.id)
+            .unwrap()
+            .not_before = std::time::Instant::now();
+        h.dispatch().await;
+        let state = h.state(&review.id).await;
+        assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+        assert!(
+            !h.ctx
+                .runs
+                .lock()
+                .await
+                .settle_retries
+                .contains_key(&lead.id)
+        );
+    })
+    .await
+    .expect("settlement and sweep must not deadlock");
 }

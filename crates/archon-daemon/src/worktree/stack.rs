@@ -1027,6 +1027,31 @@ mod tests {
         assert!(local_path(target.to_str().unwrap(), &repo).is_err());
     }
 
+    #[test]
+    fn a_nested_git_directory_cannot_hide_receiver_hooks() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().canonicalize().unwrap();
+        run_git(&home, &["init", "--quiet", "-b", "main", "source"]);
+        let source = home.join("source");
+        run_git(
+            &source,
+            &["commit", "--quiet", "--allow-empty", "-m", "one"],
+        );
+        let commit = run_git(&source, &["rev-parse", "HEAD"]);
+        run_git(&home, &["init", "--quiet", "receiver"]);
+        let receiver = home.join("receiver");
+        let git_dir = receiver.join(".git");
+        let marker = home.join("hook-ran");
+        let command = format!("touch '{}'", marker.display());
+        run_git(&receiver, &["config", "hook.bypass.command", &command]);
+        run_git(&receiver, &["config", "hook.bypass.event", "pre-receive"]);
+        run_git(&git_dir, &["init", "--quiet", "--bare", ".git"]);
+        let shadow = Shadow::of(&home.join("data"), &source).unwrap();
+        let pushed = push(&shadow, receiver.to_str().unwrap(), "proof", &commit, None).unwrap();
+        assert!(pushed.status.success(), "{pushed:?}");
+        assert!(!marker.exists(), "the outer receiver hook must not run");
+    }
+
     /// An operator `insteadOf` sending the GitHub URL to a repository on this
     /// machine still runs none of its hooks; run under that global config.
     #[test]

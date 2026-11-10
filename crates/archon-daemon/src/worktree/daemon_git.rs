@@ -195,9 +195,13 @@ pub(crate) fn config_hook_settings(
     Ok(disable_each(hook_names(probe, dir)?))
 }
 
-/// [`config_hook_settings`] as `-c` options.
+/// Hook-disabling options for an explicitly resolved receive-pack git directory.
 pub(crate) fn config_hook_options(dir: &Path, config: Config) -> Result<Vec<String>, ArchonError> {
-    as_options(config_hook_settings(dir, config)?)
+    assert!(dir.is_absolute(), "git directories are absolute");
+    let mut probe = Command::new("git");
+    clean_env(&mut probe, config);
+    probe.arg("--git-dir").arg(dir).current_dir(dir);
+    as_options(disable_each(hook_names(probe, dir)?))
 }
 
 /// `word` as one shell word.

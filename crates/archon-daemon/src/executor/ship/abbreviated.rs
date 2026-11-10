@@ -19,6 +19,9 @@ use crate::worktree::daemon_git::DaemonGit;
 /// replaced by its full id, lowercase.
 pub(super) fn resolve(workspace: &Path, data: &mut Value) -> Result<(), ArchonError> {
     assert!(workspace.is_absolute(), "run worktrees are absolute");
+    if !workspace.is_dir() {
+        return Ok(());
+    }
     let Some(fields) = data.as_object_mut() else {
         return Ok(());
     };

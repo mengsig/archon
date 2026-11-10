@@ -323,13 +323,76 @@ pub(crate) fn is_local(url: &str) -> bool {
 
 /// The directory of the local repository `url` names, for one git runs in `base`.
 fn local_path(url: &str, base: &Path) -> Result<PathBuf, ArchonError> {
+    assert!(
+        base.is_absolute(),
+        "local remotes are resolved from an absolute directory"
+    );
     let path = url.strip_prefix("file://").unwrap_or(url);
     if path.contains('%') || (url.starts_with("file://") && !path.starts_with('/')) {
         return Err(ArchonError::Invalid(format!(
             "the local remote {url:?} is not a plain path archond can read the config of"
         )));
     }
-    Ok(base.join(path))
+    let path = base.join(path);
+    if is_receiver(&path) {
+        return receiver_git_dir(&path, base);
+    }
+    if path.is_dir() {
+        let mut entries = std::fs::read_dir(&path)
+            .map_err(|e| ArchonError::io(format!("reading {}", path.display()), e))?;
+        if entries
+            .next()
+            .transpose()
+            .map_err(|e| ArchonError::io("reading local receiver", e))?
+            .is_some()
+        {
+            return Err(ArchonError::Invalid(format!(
+                "cannot identify local receiver {url:?}"
+            )));
+        }
+    } else if path.exists() {
+        return Err(ArchonError::Invalid(format!(
+            "cannot identify local receiver {url:?}"
+        )));
+    }
+    let mut suffixed = path.as_os_str().to_owned();
+    suffixed.push(".git");
+    let suffixed = PathBuf::from(suffixed);
+    if is_receiver(&suffixed) {
+        return receiver_git_dir(&suffixed, base);
+    }
+    Err(ArchonError::Invalid(format!(
+        "cannot identify local receiver {url:?}"
+    )))
+}
+
+fn receiver_git_dir(path: &Path, base: &Path) -> Result<PathBuf, ArchonError> {
+    assert!(path.is_absolute());
+    assert!(base.is_absolute());
+    let dot_git = path.join(".git");
+    let candidate = if dot_git.exists() { &dot_git } else { path };
+    let candidate = candidate.to_str().ok_or_else(|| {
+        ArchonError::Invalid(format!("local receiver {} is not UTF-8", path.display()))
+    })?;
+    let resolved = DaemonGit::configured_in(base)
+        .args(["rev-parse", "--resolve-git-dir", candidate])
+        .text()?;
+    let resolved = PathBuf::from(resolved);
+    if !resolved.is_absolute() {
+        return Err(ArchonError::Invalid(format!(
+            "invalid local receiver {}",
+            path.display()
+        )));
+    }
+    Ok(resolved)
+}
+
+fn is_receiver(path: &Path) -> bool {
+    path.is_dir()
+        && (path.join(".git").exists()
+            || (path.join("HEAD").is_file()
+                && path.join("objects").is_dir()
+                && (path.join("refs").is_dir() || path.join("commondir").is_file())))
 }
 
 /// Push `commit` to `refs/heads/<branch>` of `url`, never forced, from the
@@ -920,6 +983,49 @@ mod tests {
     }
 
     const HOOKED_ENV: &str = "ARCHON_TEST_HOOKED_ORIGIN";
+
+    #[test]
+    fn a_suffixed_local_receiver_is_probed_without_parent_discovery() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().canonicalize().unwrap();
+        run_git(&home, &["init", "--quiet", "-b", "main", "repo"]);
+        let repo = home.join("repo");
+        run_git(&repo, &["commit", "--quiet", "--allow-empty", "-m", "one"]);
+        let commit = run_git(&repo, &["rev-parse", "HEAD"]);
+        run_git(&repo, &["init", "--quiet", "--bare", "target.git"]);
+        let target = repo.join("target.git");
+        let marker = home.join("hook-ran");
+        let command = format!("touch '{}'", marker.display());
+        run_git(&target, &["config", "hook.arbitrary.command", &command]);
+        run_git(&target, &["config", "hook.arbitrary.event", "pre-receive"]);
+        let shadow = Shadow::of(&home.join("data"), &repo).unwrap();
+        let alias = repo.join("target");
+        let url = alias.to_str().unwrap();
+        let first = push(&shadow, url, "first", &commit, None).unwrap();
+        assert!(first.status.success(), "{first:?}");
+        std::fs::create_dir(&alias).unwrap();
+        let second = push(&shadow, url, "second", &commit, None).unwrap();
+        assert!(second.status.success(), "{second:?}");
+        assert_eq!(
+            run_git(&target, &["rev-parse", "refs/heads/second"]),
+            commit
+        );
+        assert!(!marker.exists(), "receiver hook must not run");
+    }
+
+    #[test]
+    fn an_unidentifiable_local_receiver_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().canonicalize().unwrap();
+        run_git(&home, &["init", "--quiet", "repo"]);
+        let repo = home.join("repo");
+        let target = repo.join("target");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("unrelated"), "not a repository").unwrap();
+        assert!(local_path(target.to_str().unwrap(), &repo).is_err());
+        std::fs::write(target.join(".git"), "not a gitfile").unwrap();
+        assert!(local_path(target.to_str().unwrap(), &repo).is_err());
+    }
 
     /// An operator `insteadOf` sending the GitHub URL to a repository on this
     /// machine still runs none of its hooks; run under that global config.

@@ -4456,6 +4456,8 @@ often its local `origin`; git runs programs those name. Every git command
   name a `-c` option cannot carry (`=`), refuses the command. The worktree,
   `gh` and local receive-pack gits do the same (the receiver is where
   `pushInsteadOf` and `insteadOf` send the push; its words are shell-quoted).
+  Local receiver paths that cannot be identified unambiguously are refused;
+  Git's `.git` suffix is supported for missing or empty unsuffixed paths.
   Known limit: git offers no way to name every hook at once, so a hook
   written into the config after the listing and before the command reads it
   is not disabled; closing that needs the config frozen or the agent stopped.

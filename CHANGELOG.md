@@ -246,6 +246,8 @@ From the audit in [docs/security/vnext-audit.md](docs/security/vnext-audit.md)
 - The vNext design is recorded in `docs/vnext/` (baseline, architecture,
   contracts, workstreams and the Noesis study), and the security audit in
   `docs/security/vnext-audit.md`.
+- Aether 1.3.0's `fable` now means Claude Fable 5.2; `claude-fable-5-1` stays
+  available.
 
 ## 1.4.12
 

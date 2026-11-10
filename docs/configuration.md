@@ -714,7 +714,7 @@ If you are already signed in to Claude Code or Codex, neither Archon nor Aether 
 After setup, `archon aether models` lists the models your Aether installation
 actually exposes: for example `claude-code/claude-opus-5-5`,
 `claude-code/claude-sonnet-5-5`, `claude-code/claude-haiku-5-5`,
-`claude-code/claude-fable-5-1`, `codex/gpt-6-astra`, `codex/gpt-6.1-terra`
+`claude-code/claude-fable-5-2`, `codex/gpt-6-astra`, `codex/gpt-6.1-terra`
 and `codex/gpt-6-luna`. The orchestrator's own model is the one model you
 set, because it must be known before any agent runs. To use Codex alone,
 set `[orchestrator] model` to an available `codex/…` entry before starting

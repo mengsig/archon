@@ -507,10 +507,11 @@ fn push_refspec(
     // The operator's `insteadOf` and `pushInsteadOf` may send the push to this machine.
     let pushed_to = match token {
         Some(_) => url.clone(),
-        // `pushInsteadOf` if one matches, else `insteadOf`.
-        None => match push_instead_of(shadow, &url)? {
-            Some(rewritten) => rewritten,
-            None => pinned_url(shadow, &url)?,
+        // A pinned remote has an explicit push URL, which only `insteadOf`
+        // rewrites; a raw URL takes `pushInsteadOf` if one matches.
+        None => match (pin, push_instead_of(shadow, &url)?) {
+            (false, Some(rewritten)) => rewritten,
+            _ => pinned_url(shadow, &url)?,
         },
     };
     let rewritten_local = token.is_none() && is_local(&pushed_to);
@@ -962,7 +963,27 @@ mod tests {
             }
         }
         let github = "https://github.com/o/r.git";
-        let rewrite = format!("[url \"{}\"]\n\tinsteadOf = {github}\n", origin.display());
+        // Conflicting rewrites: a pinned push follows `insteadOf` to `origin`, a
+        // raw one `pushInsteadOf` to `other`, and both receivers hold hooks.
+        let both = "https://github.com/o/both.git";
+        let other = home.join("other.git");
+        run_git(&home, &["init", "--quiet", "--bare", "other.git"]);
+        let marker_other = home.join("other-hook-ran");
+        let script = format!("#!/bin/sh\ntouch '{}'\n", marker_other.display());
+        archon_core::testing::write_script(&other.join("hooks/pre-receive"), &script);
+        for key in ["command", "event"] {
+            let value = if key == "event" {
+                "pre-receive"
+            } else {
+                planted.as_str()
+            };
+            run_git(&other, &["config", &format!("hook.planted.{key}"), value]);
+        }
+        let rewrite = format!(
+            "[url \"{o}\"]\n\tinsteadOf = {github}\n\tinsteadOf = {both}\n[url \"{x}\"]\n\tpushInsteadOf = {both}\n",
+            o = origin.display(),
+            x = other.display()
+        );
         std::fs::create_dir_all(home.join("git")).unwrap();
         std::fs::write(home.join("git/config"), rewrite).unwrap();
         run_git(&home, &["init", "--quiet", "-b", "main", "repo"]);
@@ -996,6 +1017,27 @@ mod tests {
             Some(ours)
         );
         assert!(!marker.exists(), "the receiver ran its pre-receive hook");
+        let seed = format!("{frozen}:refs/heads/conflict");
+        run_git(&repo, &["push", "--quiet", origin.to_str().unwrap(), &seed]);
+        std::fs::remove_file(&marker).ok();
+        let pinned = push_from(&shadow, both, ("conflict", ours), frozen, None);
+        assert!(pinned.unwrap().status.success());
+        assert_eq!(
+            run_git(&origin, &["rev-parse", "refs/heads/conflict"]),
+            *ours,
+            "a pinned push follows insteadOf"
+        );
+        let raw = push(&shadow, both, "raw", ours, None).unwrap();
+        assert!(raw.status.success(), "{raw:?}");
+        assert_eq!(
+            run_git(&other, &["rev-parse", "refs/heads/raw"]),
+            *ours,
+            "a raw push follows pushInsteadOf"
+        );
+        assert!(
+            !marker.exists() && !marker_other.exists(),
+            "a receiver hook ran"
+        );
         assert!(!injected.exists(), "a hook name ran as shell code");
     }
 }

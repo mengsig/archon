@@ -10,7 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use archon_core::error::ArchonError;
 
 use super::clean;
-use super::daemon_git::{Config, DaemonGit, Ran, no_programs};
+use super::daemon_git::{Config, DaemonGit, Ran, config_hook_options, no_programs};
 use super::shadow::Shadow;
 use crate::gh_account::Token;
 
@@ -321,6 +321,17 @@ pub(crate) fn is_local(url: &str) -> bool {
     }
 }
 
+/// The directory of the local repository `url` names, for one git runs in `base`.
+fn local_path(url: &str, base: &Path) -> Result<PathBuf, ArchonError> {
+    let path = url.strip_prefix("file://").unwrap_or(url);
+    if path.contains('%') || (url.starts_with("file://") && !path.starts_with('/')) {
+        return Err(ArchonError::Invalid(format!(
+            "the local remote {url:?} is not a plain path archond can read the config of"
+        )));
+    }
+    Ok(base.join(path))
+}
+
 /// Push `commit` to `refs/heads/<branch>` of `url`, never forced, from the
 /// shadow with the operator's credentials, or only `token`'s when given; a
 /// local receiver runs no hook.
@@ -471,13 +482,27 @@ fn push_refspec(
     // The operator's `insteadOf` may send a pinned remote URL to this machine.
     let rewritten_local = pin && token.is_none() && is_local(&pinned_url(shadow, &url)?);
     let receive_pack = match is_local(&url) || rewritten_local {
-        true => format!("git {} receive-pack", no_programs().join(" ")),
+        true => {
+            // Its hooks and config-defined hooks are the receiver's, not the shadow's.
+            let target = match rewritten_local {
+                true => pinned_url(shadow, &url)?,
+                false => url.clone(),
+            };
+            let place = shadow.git(None, Config::Operator)?.place().to_owned();
+            let hooks = config_hook_options(&local_path(&target, &place)?, Config::Operator)?;
+            format!(
+                "git {} {} receive-pack",
+                no_programs().join(" "),
+                hooks.join(" ")
+            )
+        }
         false => "git-receive-pack".to_owned(),
     };
-    assert!(
-        !receive_pack.contains(['\'', '"', '\n']),
-        "one shell word list"
-    );
+    if receive_pack.contains(['\'', '"', '\n']) {
+        return Err(ArchonError::Invalid(format!(
+            "the receiving repository's config names a hook archond cannot disable in {receive_pack:?}"
+        )));
+    }
     let receive_pack = format!("--receive-pack={receive_pack}");
     let pinned = Pinned::new(&url);
     let mut command = vec!["push", "--porcelain", "--no-verify", &receive_pack];

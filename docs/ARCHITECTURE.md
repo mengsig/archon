@@ -4062,7 +4062,7 @@ a tag or another ref counts as a branch not the role's. Roles fork from
 Every git the daemon runs has
 `core.fsmonitor=false`, `core.hooksPath=/dev/null`, no signing
 (`commit.gpgSign=false`, `tag.gpgSign=false`, `gpg.program=/bin/false`) and
-every `hook.<event>.enabled=false` (§13.4): `worktree add`, `switch`,
+`hook.<name>.enabled=false` for every hook the config defines (§13.4): `worktree add`, `switch`,
 `update-ref`, the `--quit`s and the daemon's commits and merges run no
 repository hook, which a role could have committed where `core.hooksPath`
 looks. A team's merges and status still read the repository's config, so
@@ -4444,11 +4444,17 @@ often its local `origin`; git runs programs those name. Every git command
   `GIT_TERMINAL_PROMPT=0`, an empty askpass, `GIT_ATTR_NOSYSTEM`,
   `GIT_NO_REPLACE_OBJECTS` and `GIT_NO_LAZY_FETCH` are set.
 - `-c` settings outrank every config file: `core.hooksPath=/dev/null`,
-  `hook.<event>.enabled=false` for every event (recent git also runs hooks
-  named in config), `core.fsmonitor=false`, `core.attributesFile=/dev/null`,
+  `core.fsmonitor=false`, `core.attributesFile=/dev/null`,
   no signing or signature check (`gpg.program=/bin/false`, so no program a
   repository configured signs for the daemon), no auto gc, no submodule recursion, and
   every transport but `file` refused.
+- Git 2.54 also runs hooks a config names (`hook.<name>.command` and
+  `.event`), with no switch for them all. Before each command, a git that
+  cannot yet run anything lists the `hook.<name>.*` names the config defines,
+  includes followed, and the command gets `hook.<name>.enabled=false` for each;
+  a failed listing, or a name a `-c` option cannot carry (`=`), refuses the
+  command. The same holds for the worktree, `gh` and local receive-pack gits.
+  A config written between the listing and the command is not seen.
 - A command is killed with all it started after 120 s, a fetch or push
   after 180 s, and fails as unavailable.
 - `Sealed` git, on a repository or worktree an agent may write, reads no

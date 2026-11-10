@@ -20,7 +20,7 @@ use archon_core::repo::{GH_HOST, Repo};
 
 use super::dependencies::{is_plain_branch, is_plain_url};
 use crate::gh_account::{self, Token};
-use crate::worktree::daemon_git::no_program_settings;
+use crate::worktree::daemon_git::{Config, config_hook_settings, no_program_settings};
 use crate::worktree::stack::is_commit_id;
 
 pub(crate) mod checks;
@@ -337,7 +337,7 @@ async fn spawn(
         "gh {}",
         args.iter().take(2).copied().collect::<Vec<_>>().join(" ")
     );
-    let mut command = command(binary, repo, args, auth);
+    let mut command = command(binary, repo, args, auth)?;
     command.stdin(if input.is_some() {
         Stdio::piped()
     } else {
@@ -368,14 +368,21 @@ async fn spawn(
     })
 }
 
-fn command(binary: &Path, repo: &Path, args: &[&str], auth: Auth<'_>) -> Command {
+fn command(
+    binary: &Path,
+    repo: &Path,
+    args: &[&str],
+    auth: Auth<'_>,
+) -> Result<Command, ArchonError> {
     let mut command = Command::new(binary);
     for (key, _) in std::env::vars_os() {
         if key.to_string_lossy().starts_with("GIT_") {
             command.env_remove(key);
         }
     }
-    let settings = no_program_settings();
+    // The git `gh` runs reads the operator's config too.
+    let mut settings = no_program_settings();
+    settings.extend(config_hook_settings(repo, Config::Operator)?);
     for (n, (key, value)) in settings.iter().enumerate() {
         command
             .env(format!("GIT_CONFIG_KEY_{n}"), key)
@@ -401,7 +408,7 @@ fn command(binary: &Path, repo: &Path, args: &[&str], auth: Auth<'_>) -> Command
     if let Auth::As(token) = auth {
         command.envs(token.gh_env());
     }
-    command
+    Ok(command)
 }
 
 /// End `gh` and whatever it started, after it overran.

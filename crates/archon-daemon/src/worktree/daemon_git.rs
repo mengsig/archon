@@ -737,6 +737,8 @@ mod tests {
             .stderr(Stdio::null())
             .status()
             .unwrap();
+        // The probe may have run the hook itself; only the sealed run counts.
+        let _ = std::fs::remove_file(&marker);
         let update = ["update-ref", "refs/heads/main", commit.as_str()];
         let sealed = DaemonGit::sealed_in(&path).args(update).output();
         if plain.success() {

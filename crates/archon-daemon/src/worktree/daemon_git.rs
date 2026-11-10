@@ -407,12 +407,11 @@ impl DaemonGit {
         // options in front of the subcommand can switch conditional includes on.
         let globals = leading_options(&self.shown);
         let probe = probe_of(&self.command, globals);
-        // A place that is gone has no config to read: git fails on it itself.
-        let hooks = match self.place.is_dir() {
-            true => as_options(disable_each(hook_names(probe, &self.place)?))?,
-            false => Vec::new(),
-        };
-        self.command.args(hooks).args(&self.shown);
+        let hooks = as_options(disable_each(hook_names(probe, &self.place)?))?;
+        self.command
+            .args(globals)
+            .args(hooks)
+            .args(&self.shown[globals.len()..]);
         self.command
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -690,7 +689,13 @@ mod tests {
             set.text().unwrap();
         }
         let commit = signed_commit(&path);
-        let update = ["update-ref", "refs/heads/main", commit.as_str()];
+        let update = [
+            "-c",
+            "hook.dotted.name.here.enabled=true",
+            "update-ref",
+            "refs/heads/main",
+            commit.as_str(),
+        ];
         DaemonGit::sealed_in(&path).args(update).text().unwrap();
         assert!(!marker.exists(), "no named hook ran");
         let names = config_hook_settings(&path, Config::Sealed).unwrap();
@@ -792,9 +797,24 @@ mod tests {
             refused.is_err(),
             "git is not run with a hook it cannot disable"
         );
-        // A directory that is gone has no config: git itself fails on it.
+        // A missing directory cannot be probed and is refused.
         let gone = DaemonGit::sealed_in(&path.join("missing")).args(["status"]);
-        assert!(!gone.output().unwrap().status.success());
+        assert!(gone.output().is_err());
+    }
+
+    #[test]
+    fn a_failed_config_listing_refuses_even_a_command_that_ignores_config() {
+        let (_dir, path) = repo();
+        std::fs::write(path.join(".git/config"), "[broken\n").unwrap();
+        let plain = Command::new("git")
+            .arg("-C")
+            .arg(&path)
+            .arg("--version")
+            .status()
+            .unwrap();
+        assert!(plain.success());
+        let result = DaemonGit::sealed_in(&path).args(["--version"]).output();
+        assert!(result.unwrap_err().to_string().contains("listing"));
     }
 
     #[test]

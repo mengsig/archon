@@ -873,6 +873,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn gh_disables_named_hooks_and_refuses_a_failed_probe() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let init = std::process::Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(&root)
+            .status()
+            .unwrap();
+        assert!(init.success());
+        let config = root.join(".git/config");
+        let original = std::fs::read_to_string(&config).unwrap();
+        std::fs::write(
+            &config,
+            format!("{original}\n[hook \"arbitrary.name\"]\ncommand = true\n"),
+        )
+        .unwrap();
+        let binary = root.join("gh");
+        archon_core::testing::write_script(
+            &binary,
+            "#!/bin/sh\ngit config --get hook.arbitrary.name.enabled\n",
+        );
+        let result = spawn(&binary, &root, &["test"], None, Auth::Ambient)
+            .await
+            .unwrap();
+        assert!(result.ok);
+        assert_eq!(result.stdout.trim(), "false");
+
+        let marker = root.join("ran");
+        archon_core::testing::write_script(
+            &binary,
+            &format!("#!/bin/sh\ntouch '{}'\n", marker.display()),
+        );
+        std::fs::write(&config, "[broken\n").unwrap();
+        let result = spawn(&binary, &root, &["test"], None, Auth::Ambient).await;
+        assert!(result.is_err());
+        assert!(!marker.exists(), "gh must not start after a failed probe");
+    }
+
+    #[tokio::test]
     async fn malformed_or_contradicting_gh_output_is_an_error_not_a_panic() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();

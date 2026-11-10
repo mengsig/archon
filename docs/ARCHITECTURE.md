@@ -4462,6 +4462,9 @@ often its local `origin`; git runs programs those name. Every git command
   The same limit covers a receiver's `includeIf.hasconfig:remote.*.url`
   that matches only the `-c` URL a pinned push gives receive-pack: the
   listing reads the receiver's config without the sender's `-c` settings.
+  Both limits, including the same probe-to-run race for `gh`, are addressed
+  by the queued design item “security design: sealed git that no repository
+  or included config can make run a hook” (qi_01M724MBB6RMGAK7GTGNYWA7KK).
 - A command is killed with all it started after 120 s, a fetch or push
   after 180 s, and fails as unavailable.
 - `Sealed` git, on a repository or worktree an agent may write, reads no

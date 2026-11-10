@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Disable config-defined git hooks under the daemon's sealed git, contributed by @AmmarBattah.
+
 ## 1.4.12
 
 Released 2026-11-04.

@@ -570,12 +570,8 @@ fn git_output(dir: &Path, args: &[&str]) -> Result<std::process::Output, ArchonE
     // configured runs as the daemon.
     let mut command = Command::new("git");
     command.arg("-C").arg(dir).args(daemon_git::no_programs());
-    // A directory that is gone has no config to read: `git -C` fails on it as before.
-    // The probe has the command's own inherited environment.
-    if dir.is_dir() {
-        let hooks = daemon_git::config_hook_options_of(&command, dir)?;
-        command.args(hooks);
-    }
+    let hooks = daemon_git::config_hook_options_of(&command, dir)?;
+    command.args(hooks);
     command
         .args(args)
         .output()

@@ -57,6 +57,31 @@ test('listener: the session cookie is HttpOnly and SameSite=Strict', async ({ pa
   expect(await page.evaluate(() => document.cookie)).not.toContain('archon_device');
 });
 
+test('listener: phone controls are at least 44px tall', async ({ page, fixture }) => {
+  await openApp(page, fixture);
+  await expect(page.locator('.item-row').first()).toBeVisible();
+  const heights = await page.locator('.filter-chip, .select-chip, .search, .fab').evaluateAll(
+    (nodes) => nodes.map((node) => node.getBoundingClientRect().height));
+  expect(heights.length, 'the queue shows its filters').toBeGreaterThan(4);
+  for (const height of heights) expect(height).toBeGreaterThanOrEqual(44);
+});
+
+test('listener: a desktop window gets a sidebar and a card grid', async ({ page, fixture }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await openApp(page, fixture);
+  await expect(page.locator('.item-row').first()).toBeVisible();
+  const nav = await page.getByRole('navigation', { name: 'Sections' }).boundingBox();
+  expect(nav.x).toBe(0);
+  expect(nav.height).toBe(1080);
+  const columns = await page.locator('.item-list').evaluate((list) => getComputedStyle(list).gridTemplateColumns.split(' ').length);
+  expect(columns, 'the queue lays its items out in columns').toBeGreaterThan(1);
+  await page.locator('.item-row').first().click();
+  await expect(page.getByRole('heading', { name: 'Stages' })).toBeVisible();
+  const strayText = await page.locator('.item-detail').evaluate((detail) =>
+    [...detail.childNodes].filter((node) => node.nodeType === Node.TEXT_NODE).map((node) => node.textContent));
+  expect(strayText, 'no section renders as bare text such as "null"').toEqual([]);
+});
+
 test('unpaired: revoking the device from the CLI sends the app back to pairing', async ({ page, fixture }) => {
   const before = new Set((await fixture.devices()).map((device) => device.id));
   await openApp(page, fixture);

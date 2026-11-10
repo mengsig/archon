@@ -68,7 +68,7 @@ export function mountItem(view, ctx) {
     }
     drawn = shownFromStore(state, id, detail);
     view.querySelector('.screen-title').textContent = detail.item.title;
-    content.replaceChildren(...renderDetail(ctx, detail, state, { reload, artifacts }));
+    content.replaceChildren(...renderDetail(ctx, detail, state, { reload, artifacts }).filter(Boolean));
   };
   const unfollow = followItem(ctx, id, () => detail, () => load(true));
   // A failed reload keeps its error and retry in view until a load succeeds;

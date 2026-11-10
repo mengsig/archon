@@ -45,3 +45,10 @@ test('every URL in the page and manifest is relative, so a mount prefix works', 
     assert.ok(!url.startsWith('/'), url);
   }
 });
+
+test('the worker deletes only its own stale caches, never another app\'s on the origin', () => {
+  const source = readFileSync(join(ROOT, 'sw.js'), 'utf8');
+  assert.match(source, /const CACHE_PREFIX = 'archon-shell-'/);
+  assert.match(source, /key\.startsWith\(CACHE_PREFIX\) && key !== CACHE/);
+  assert.match(source, /const CACHE = `?'?archon-shell-v\d+/);
+});

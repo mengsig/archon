@@ -39,6 +39,11 @@ What remote access protects, and from whom:
   `GET /api/health`, nothing else. Every API call and the WebSocket need a paired device's
   credential. Pairing needs the one-time code that only `archon remote
   pair` (or `setup`) shows on your terminal.
+- **Script on a shared origin.** Behind the mount the app runs on Aether's
+  origin, so a script injected into it would reach Aether's same-origin API.
+  The app's `script-src 'self'` policy, which Aether passes through, and its
+  Markdown renderer (no raw HTML, only http(s) and mailto links) guard
+  against that; its service worker deletes only `archon-shell-*` caches.
 - **Guessing the code.** It is 8 symbols of Crockford base32 (40 bits), open
   for 5 minutes, used once. Guesses are limited to 3 per 10 seconds across
   all clients (`429` with `Retry-After`), and the fifth wrong code closes

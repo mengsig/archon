@@ -1,6 +1,8 @@
 // Caches the app shell so Archon opens without a network. Never caches
 // the API or the live socket: those are always fresh or fail visibly.
-const CACHE = 'archon-shell-v1';
+const CACHE = 'archon-shell-v2';
+// CacheStorage is shared by the whole origin, so only caches with this prefix are ours.
+const CACHE_PREFIX = 'archon-shell-';
 // The worker sits at the app's root, "" or the mount prefix.
 const BASE = new URL('.', self.location.href).pathname.replace(/\/$/, '');
 const SHELL = [
@@ -64,7 +66,7 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(caches.keys()
-    .then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))))
+    .then((keys) => Promise.all(keys.filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE).map((key) => caches.delete(key))))
     .then(() => self.clients.claim()));
 });
 

@@ -4449,12 +4449,16 @@ often its local `origin`; git runs programs those name. Every git command
   repository configured signs for the daemon), no auto gc, no submodule recursion, and
   every transport but `file` refused.
 - Git 2.54 also runs hooks a config names (`hook.<name>.command` and
-  `.event`), with no switch for them all. Before each command, a git that
-  cannot yet run anything lists the `hook.<name>.*` names the config defines,
-  includes followed, and the command gets `hook.<name>.enabled=false` for each;
-  a failed listing, or a name a `-c` option cannot carry (`=`), refuses the
-  command. The same holds for the worktree, `gh` and local receive-pack gits.
-  A config written between the listing and the command is not seen.
+  `.event`), with no switch for them all. Before each command, a git with the
+  command's own options and environment, which cannot yet run anything, lists
+  the `hook.<name>.*` names the config defines, includes followed, and the
+  command gets `hook.<name>.enabled=false` for each; a failed listing, or a
+  name a `-c` option cannot carry (`=`), refuses the command. The worktree,
+  `gh` and local receive-pack gits do the same (the receiver is where
+  `pushInsteadOf` and `insteadOf` send the push; its words are shell-quoted).
+  Known limit: git offers no way to name every hook at once, so a hook
+  written into the config after the listing and before the command reads it
+  is not disabled; closing that needs the config frozen or the agent stopped.
 - A command is killed with all it started after 120 s, a fetch or push
   after 180 s, and fails as unavailable.
 - `Sealed` git, on a repository or worktree an agent may write, reads no

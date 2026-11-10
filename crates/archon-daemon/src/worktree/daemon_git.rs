@@ -138,6 +138,41 @@ fn hook_names(mut probe: Command, place: &Path) -> Result<Vec<String>, ArchonErr
     Ok(names)
 }
 
+/// The `-c` and `-C` options at the start of `args`, before the subcommand.
+fn leading_options(args: &[String]) -> &[String] {
+    let mut end = 0;
+    while args.len() >= end + 2 && (args[end] == "-c" || args[end] == "-C") {
+        end += 2;
+    }
+    &args[..end]
+}
+
+/// A git with `command`'s options, environment and directory, to list config
+/// with: it reads what `command` will, `globals` being options still to come.
+fn probe_of(command: &Command, globals: &[String]) -> Command {
+    let mut probe = Command::new("git");
+    probe.args(command.get_args()).args(globals);
+    for (key, value) in command.get_envs() {
+        match value {
+            Some(value) => probe.env(key, value),
+            None => probe.env_remove(key),
+        };
+    }
+    if let Some(dir) = command.get_current_dir() {
+        probe.current_dir(dir);
+    }
+    probe
+}
+
+/// `-c` options disabling every hook the config that `command` (a `git` with
+/// options and environment but no subcommand yet) will read defines.
+pub(crate) fn config_hook_options_of(
+    command: &Command,
+    dir: &Path,
+) -> Result<Vec<String>, ArchonError> {
+    as_options(disable_each(hook_names(probe_of(command, &[]), dir)?))
+}
+
 /// `hook.<name>.enabled=false` for each of `names`.
 fn disable_each(names: Vec<String>) -> Vec<(String, String)> {
     names
@@ -159,12 +194,17 @@ pub(crate) fn config_hook_settings(
     Ok(disable_each(hook_names(probe, dir)?))
 }
 
-/// [`config_hook_settings`] as `-c` options. A name with `=` cannot be given
-/// that way, and is refused.
+/// [`config_hook_settings`] as `-c` options.
 pub(crate) fn config_hook_options(dir: &Path, config: Config) -> Result<Vec<String>, ArchonError> {
     as_options(config_hook_settings(dir, config)?)
 }
 
+/// `word` as one shell word.
+pub(crate) fn shell_quote(word: &str) -> String {
+    format!("'{}'", word.replace('\'', "'\\''"))
+}
+
+/// A name with `=` cannot be given that way, and is refused.
 fn as_options(settings: Vec<(String, String)>) -> Result<Vec<String>, ArchonError> {
     let mut args = Vec::new();
     for (key, value) in settings {
@@ -363,18 +403,10 @@ impl DaemonGit {
     pub(crate) fn output(mut self) -> Result<Ran, ArchonError> {
         assert!(!self.shown.is_empty(), "a git command needs arguments");
         let what = format!("git {}", self.shown.join(" "));
-        // Before any git that reads the repository's config runs a hook.
-        let mut probe = Command::new("git");
-        probe.args(self.command.get_args());
-        for (key, value) in self.command.get_envs() {
-            match value {
-                Some(value) => probe.env(key, value),
-                None => probe.env_remove(key),
-            };
-        }
-        if let Some(dir) = self.command.get_current_dir() {
-            probe.current_dir(dir);
-        }
+        // Before any git that reads the repository's config runs a hook. The
+        // options in front of the subcommand can switch conditional includes on.
+        let globals = leading_options(&self.shown);
+        let probe = probe_of(&self.command, globals);
         // A place that is gone has no config to read: git fails on it itself.
         let hooks = match self.place.is_dir() {
             true => as_options(disable_each(hook_names(probe, &self.place)?))?,
@@ -425,6 +457,12 @@ impl Ran {
         let text = std::str::from_utf8(&self.stdout)
             .map_err(|_| ArchonError::Invalid(format!("{} printed non-UTF-8", self.what)))?;
         Ok(text.trim().to_owned())
+    }
+
+    /// Stdout as UTF-8, with its NULs and whitespace kept.
+    pub(crate) fn stdout_text_untrimmed(&self) -> Result<String, ArchonError> {
+        String::from_utf8(self.stdout.clone())
+            .map_err(|_| ArchonError::Invalid(format!("{} printed non-UTF-8", self.what)))
     }
 
     pub(crate) fn stderr_text(&self) -> String {
@@ -668,6 +706,34 @@ mod tests {
                 "hook.reference-transaction.enabled",
             ]
         );
+    }
+
+    /// The probe reads what the command will: its environment's config and the
+    /// options in front of its subcommand, conditional includes included.
+    #[test]
+    fn the_probe_sees_the_config_its_command_is_given() {
+        let (_dir, path) = repo();
+        let mut command = Command::new("git");
+        command
+            .arg("-C")
+            .arg(&path)
+            .env("GIT_CONFIG_COUNT", "1")
+            .env("GIT_CONFIG_KEY_0", "hook.from-env.command")
+            .env("GIT_CONFIG_VALUE_0", "true");
+        let options = config_hook_options_of(&command, &path).unwrap();
+        assert_eq!(options, ["-c", "hook.from-env.enabled=false"]);
+
+        let included = path.join("cond.config");
+        std::fs::write(&included, "[hook \"cond\"]\n\tcommand = true\n").unwrap();
+        let key = "includeif.hasconfig:remote.*.url:*://example.invalid/**.path";
+        let set = DaemonGit::sealed_in(&path).args(["config", key, included.to_str().unwrap()]);
+        set.text().unwrap();
+        let globals = ["-c", "remote.r.url=https://example.invalid/x"].map(str::to_owned);
+        let mut git = Command::new("git");
+        git.arg("-C").arg(&path);
+        let seen = hook_names(probe_of(&git, &globals), &path).unwrap();
+        assert_eq!(seen, ["cond"]);
+        assert!(hook_names(probe_of(&git, &[]), &path).unwrap().is_empty());
     }
 
     #[test]

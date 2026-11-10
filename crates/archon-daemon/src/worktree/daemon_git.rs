@@ -21,6 +21,7 @@ pub(crate) const LOCAL_TIMEOUT: Duration = Duration::from_secs(120);
 pub(crate) const NETWORK_TIMEOUT: Duration = Duration::from_secs(180);
 /// How often a running git is checked on.
 const POLL: Duration = Duration::from_millis(10);
+const PROBE_POLL: Duration = Duration::from_millis(1);
 /// Bytes of stderr kept for an error.
 const MAX_STDERR_BYTES: usize = 8192;
 
@@ -106,7 +107,7 @@ fn hook_names(mut probe: Command, place: &Path) -> Result<Vec<String>, ArchonErr
         .map_err(|e| ArchonError::io(format!("listing hooks in {}", place.display()), e))?;
     let stdout = reader(child.stdout.take().expect("piped"), usize::MAX);
     let stderr = reader(child.stderr.take().expect("piped"), MAX_STDERR_BYTES);
-    let status = wait(&mut child, LOCAL_TIMEOUT);
+    let status = wait(&mut child, LOCAL_TIMEOUT, PROBE_POLL);
     let (stdout, stderr) = (joined(stdout, what)?, joined(stderr, what)?);
     let status = status?.ok_or_else(|| {
         ArchonError::Unavailable(format!("listing hooks in {} timed out", place.display()))
@@ -422,7 +423,7 @@ impl DaemonGit {
         })?;
         let stdout = reader(child.stdout.take().expect("piped"), usize::MAX);
         let stderr = reader(child.stderr.take().expect("piped"), MAX_STDERR_BYTES);
-        let status = wait(&mut child, self.limit);
+        let status = wait(&mut child, self.limit, POLL);
         let (stdout, stderr) = (joined(stdout, &what)?, joined(stderr, &what)?);
         let Some(status) = status? else {
             return Err(ArchonError::Unavailable(format!(
@@ -479,8 +480,13 @@ impl Ran {
 }
 
 /// Wait for `child` up to `limit`; `None` once it was killed for overrunning.
-fn wait(child: &mut Child, limit: Duration) -> Result<Option<ExitStatus>, ArchonError> {
+fn wait(
+    child: &mut Child,
+    limit: Duration,
+    poll: Duration,
+) -> Result<Option<ExitStatus>, ArchonError> {
     assert!(!limit.is_zero(), "a time limit is positive");
+    assert!(!poll.is_zero(), "a polling interval is positive");
     let started = Instant::now();
     loop {
         let waited = child.try_wait();
@@ -497,7 +503,7 @@ fn wait(child: &mut Child, limit: Duration) -> Result<Option<ExitStatus>, Archon
                 .map_err(|e| ArchonError::io("reaping a git that overran", e))?;
             return Ok(None);
         }
-        std::thread::sleep(POLL);
+        std::thread::sleep(poll);
     }
 }
 

@@ -1,11 +1,12 @@
-# Remote access: Archon in the Aether app
+# Remote access: Archon on your phone
 
-Archon's screens (the queue, each item's stages and verdicts, the operator
-chat, the questions and gates waiting on you, and the actions you take every
-day) are part of the Aether app. Aether's listener serves the app and
-forwards `/archon/…` to archond's listener: the `/archon` mount. archond
-serves the API, the pairing and the WebSocket behind it, and no app of its
-own. This page is the reference: what archond serves, how a device is paired
+Archon's mobile web app (the queue, each item's stages and verdicts, the
+operator chat, the questions and gates waiting on you, and the actions you
+take every day) is embedded in archond. Aether's listener forwards
+`/archon/…` to archond's listener, the `/archon` mount, so the phone opens
+`https://<origin>/archon/`; archond serves the app, the API, the pairing and
+the WebSocket behind the mount. The app uses relative URLs, so it works at
+the mount and at the root of archond's own listener. This page is the reference: what archond serves, how a device is paired
 and authenticated, and what a paired device may do. To set it up, follow
 [Use Archon from your phone](remote-setup.md).
 
@@ -34,7 +35,7 @@ What remote access protects, and from whom:
 
 - **Someone who can reach the address but holds no credential** (another
   device on your tailnet, a local user on this machine, a browser tab on a
-  hostile site). They get a short page pointing at Aether's address and
+  hostile site). They get the app's static files (no data in them) and
   `GET /api/health`, nothing else. Every API call and the WebSocket need a paired device's
   credential. Pairing needs the one-time code that only `archon remote
   pair` (or `setup`) shows on your terminal.
@@ -118,8 +119,8 @@ in archond's memory and never outlives it.
 
 1. `archon remote pair` (or `archon remote setup`) opens a pairing and
    prints its code (`7K2M-9QXD`) and every address it works at; setup also
-   shows a QR code of the Aether app's Archon pairing screen,
-   `https://<origin>/#/pair/archon`. A new pairing replaces any open one.
+   shows a QR code of the app's pairing screen,
+   `https://<origin>/archon/pair`. A new pairing replaces any open one.
 2. The browser opens that screen, you type the code and name the device,
    and it sends `POST /archon/api/pair/claim`, which Aether forwards to
    archond's `POST /api/pair/claim`.
@@ -154,7 +155,7 @@ most 32 KiB; bodies at most 16 KiB (413) within 10 seconds. Errors are
 | `GET /api/session` | the cookie; same-site | `{"device","protocol_version","daemon_version"}`; `401` (and a cleared cookie) when not paired |
 | `POST /api/session/forget` | Origin, the cookie | unpairs this device and clears the cookie |
 | `GET /ws` | Origin, the cookie, subprotocol `archon` | the WebSocket |
-| `GET /…` | — | a short page with no script that links to Aether's address (`/pair` to its Archon pairing screen); `404` for a path with an extension |
+| `GET /…` | — | the embedded app: the file named, or `index.html` for a path with no extension (`/pair` is the pairing screen); `404` for a missing file. Every response carries a strict Content-Security-Policy (own origin only) and `no-cache` with a strong `ETag` |
 
 The cookie is `archon_device=<id>.<secret>; Path=/; HttpOnly;
 SameSite=Strict; Max-Age=34560000`, plus `Secure` when paired over HTTPS;

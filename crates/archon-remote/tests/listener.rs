@@ -292,7 +292,7 @@ async fn close_code(socket: &mut Socket) -> u16 {
 }
 
 #[tokio::test]
-async fn health_and_the_pointer_page_are_served_with_security_headers_to_known_hosts_only() {
+async fn health_and_the_app_are_served_with_security_headers_to_known_hosts_only() {
     let listener = Listener::start().await;
     let health = listener.request("GET", "/api/health", &[], "").await;
     assert_eq!(health.status, 200, "{}", health.body);
@@ -302,26 +302,17 @@ async fn health_and_the_pointer_page_are_served_with_security_headers_to_known_h
         csp.contains("default-src 'none'") && csp.contains("frame-ancestors 'none'"),
         "{csp}"
     );
-    assert!(!csp.contains("script-src"), "nothing may run: {csp}");
+    assert!(csp.contains("script-src 'self'"), "{csp}");
     assert_eq!(health.header("x-frame-options"), Some("DENY"));
-    let page = listener.request("GET", "/", &[], "").await;
-    assert_eq!(page.status, 200);
+    let app = listener.request("GET", "/", &[], "").await;
+    assert_eq!(app.status, 200);
     assert!(
-        page.header("content-type")
+        app.header("content-type")
             .unwrap_or_default()
             .starts_with("text/html")
     );
-    assert!(page.body.contains("archon remote setup"), "{}", page.body);
-    assert!(!page.body.contains("<script"), "{}", page.body);
-    for retired in [
-        "/index.html",
-        "/sw.js",
-        "/core/app.js",
-        "/manifest.webmanifest",
-    ] {
-        let file = listener.request("GET", retired, &[], "").await;
-        assert_eq!(file.status, 404, "{retired} is not served: {}", file.body);
-    }
+    let missing_file = listener.request("GET", "/missing.js", &[], "").await;
+    assert_eq!(missing_file.status, 404, "{}", missing_file.body);
     let rebound = raw(
         listener.port,
         "GET",
@@ -723,15 +714,6 @@ async fn mounted_the_cookie_is_scoped_to_the_mount_and_only_trusted_origins_are_
     let cookie = set.split(';').next().unwrap().to_owned();
     let welcome_socket = listener.socket(&cookie).await;
     drop(welcome_socket);
-    let headers = [("Origin", AETHER)];
-    let page = listener.request("GET", "/pair", &headers, "").await;
-    assert_eq!(page.status, 200, "{}", page.body);
-    assert!(
-        page.body
-            .contains(&format!("href=\"{AETHER}/#/pair/archon\"")),
-        "a direct visit points to the Aether origin: {}",
-        page.body
-    );
     let public = raw(
         listener.port,
         "GET",
@@ -755,6 +737,31 @@ async fn mounted_the_cookie_is_scoped_to_the_mount_and_only_trusted_origins_are_
         cleared.contains("Path=/archon;") && cleared.contains("Max-Age=0"),
         "{cleared}"
     );
+}
+
+#[tokio::test]
+async fn mounted_the_app_is_served_with_relative_urls_and_its_pair_page() {
+    let listener = Listener::mounted().await;
+    let headers = [("Origin", AETHER)];
+    for path in ["/", "/pair"] {
+        let page = listener.request("GET", path, &headers, "").await;
+        assert_eq!(page.status, 200, "{path}: {}", page.body);
+        assert!(page.body.contains("<base href=\"./\">"), "{}", page.body);
+        assert!(
+            page.body.contains("src=\"src/main.js\""),
+            "assets are relative to the mount: {}",
+            page.body
+        );
+        assert!(!page.body.contains("=\"/src/"), "{}", page.body);
+    }
+    let script = listener
+        .request("GET", "/src/core/base.js", &headers, "")
+        .await;
+    assert_eq!(script.status, 200, "{}", script.body);
+    assert!(script.body.contains("appBase"), "{}", script.body);
+    let worker = listener.request("GET", "/sw.js", &headers, "").await;
+    assert_eq!(worker.status, 200);
+    assert!(worker.body.contains("${BASE}/api/"), "{}", worker.body);
 }
 
 #[tokio::test]

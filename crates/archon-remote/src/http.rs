@@ -1,5 +1,5 @@
 //! Every HTTP request, checked in order: Host, path, method, Origin, body.
-//! `/api/*` answers JSON; any other page is a pointer to the Aether origin.
+//! `/api/*` answers JSON; anything else is the embedded web app.
 
 pub mod api;
 pub mod checks;
@@ -19,6 +19,10 @@ pub type Body = Full<Bytes>;
 
 /// The HttpOnly cookie a paired device authenticates with.
 pub const COOKIE: &str = "archon_device";
+
+const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; \
+    font-src 'self'; manifest-src 'self'; worker-src 'self'; connect-src 'self'; \
+    base-uri 'self'; form-action 'none'; frame-ancestors 'none'";
 
 /// A refused request: its status, a stable `code` and a message.
 #[derive(Debug)]
@@ -139,43 +143,44 @@ async fn route(
         )),
         _ => {
             checks::only(&method, &[Method::GET, Method::HEAD])?;
-            pointer(shared, &path, &method)
+            asset(&path, &method, request.headers())
         }
     }
 }
 
-/// The page that sends a browser to the Aether origin. A path naming a file
-/// (a last segment with a `.`) is not found: this listener serves no files.
-fn pointer(shared: &Shared, path: &str, method: &Method) -> Result<Response<Body>, HttpError> {
-    let last = path.rsplit('/').next().unwrap_or_default();
-    if last.contains('.') {
+fn asset(path: &str, method: &Method, headers: &HeaderMap) -> Result<Response<Body>, HttpError> {
+    let Some(asset) = crate::assets::find(path) else {
         return Err(HttpError::new(
             StatusCode::NOT_FOUND,
             "not_found",
             "no such file",
         ));
-    }
-    let config = &shared.config;
-    let html = crate::assets::pointer(path, config.mounted_at.as_deref(), &config.trusted_origins);
-    let body = match *method == Method::HEAD {
-        true => Bytes::new(),
-        false => Bytes::from(html),
+    };
+    let unchanged = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|tags| tags.split(',').any(|t| t.trim() == asset.etag));
+    let (status, body) = match (unchanged, method == Method::HEAD) {
+        (true, _) => (StatusCode::NOT_MODIFIED, Bytes::new()),
+        (false, true) => (StatusCode::OK, Bytes::new()),
+        (false, false) => (StatusCode::OK, Bytes::from_static(asset.bytes)),
     };
     let mut response = Response::new(Full::new(body));
+    *response.status_mut() = status;
     let headers = response.headers_mut();
     headers.insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_static("text/html; charset=utf-8"),
+        HeaderValue::from_static(asset.content_type),
     );
-    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    let etag = HeaderValue::from_str(&asset.etag).expect("a hex ETag is ASCII");
+    headers.insert(header::ETAG, etag);
     Ok(response)
 }
 
 fn secure(headers: &mut HeaderMap) {
-    let csp = HeaderValue::from_str(crate::assets::content_security_policy())
-        .expect("the policy is ASCII");
-    headers.insert(header::CONTENT_SECURITY_POLICY, csp);
     let fixed = [
+        (header::CONTENT_SECURITY_POLICY, CSP),
         (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         (header::X_FRAME_OPTIONS, "DENY"),
         (header::REFERRER_POLICY, "no-referrer"),

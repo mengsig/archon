@@ -105,13 +105,13 @@ names another shell.
 
 ## Remote access
 
-archond serves no web app: Archon's screens are part of the Aether app,
-which reaches archond through the `/archon` mount of Aether's listener. A
-direct visit to archond's listener gets a short page without scripts
-(`crates/archon-remote/src/assets.rs`). `crates/archon/tests/remote.rs`
-drives `archon remote setup` against stand-ins for `aether`, `tailscale`
+archond embeds the mobile web app (`crates/archon-remote/web`, built into the
+binary by `build.rs`) and serves it at its own root and, behind Aether's
+`/archon` mount, at `/archon/`; the app's URLs are relative to its `<base>`.
+`make e2e` runs it in headless Chromium against a real archond (releases only).
+`crates/archon/tests/remote.rs` drives `archon remote setup` against stand-ins for `aether`, `tailscale`
 and `curl` and a stand-in Aether listener, and checks that the `archon`
-binary carries no web app.
+binary carries the app.
 
 ## Releasing
 

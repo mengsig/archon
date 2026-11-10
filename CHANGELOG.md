@@ -12,8 +12,8 @@ A minor release for the unified Aether app (#377). archond speaks daemon
 protocol 24: a gapless change stream and per-item history, a task graph and
 run plans, items linked to GitHub issues and pull requests with a read-only
 cache, issue import and an at-most-once comment outbox. Remote access is
-served through Aether's `/archon` mount instead of archond's own web app,
-paired devices get roles, and a device's chat or answer never carries
+served through Aether's `/archon` mount (archond's mobile web app is
+unchanged and opens at `/archon/`), paired devices get roles, and a device's chat or answer never carries
 operator authority. Lessons cluster near duplicates and can be measured
 against a holdout.
 
@@ -235,9 +235,6 @@ From the audit in [docs/security/vnext-audit.md](docs/security/vnext-audit.md)
 ### Removed
 
 - `archon remote setup --proxy-url` and `--local`.
-- archond's embedded mobile web app (`crates/archon-remote/web`) and `make
-  e2e`. A browser visiting archond's listener directly gets a short page
-  without scripts that links to Aether's address.
 
 ### Documentation
 

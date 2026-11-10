@@ -1,9 +1,10 @@
 # Use Archon from your phone
 
-Archon's screens (the queue, each item's stages and verdicts, the operator
-chat and the questions waiting on you) are part of the Aether app. Aether's
-listener serves them and forwards Archon's requests to archond under the
-`/archon` mount, so a browser opens one address for both. One command sets
+Archon's mobile web app (the queue, each item's stages and verdicts, the
+operator chat and the questions waiting on you) is served by archond.
+Aether's listener forwards everything under `/archon` to archond (the
+`/archon` mount), so your phone opens `https://<address>/archon/` for Archon
+and `https://<address>/` for Aether, on one address. One command sets
 it up:
 
 ```sh
@@ -75,8 +76,8 @@ open it like an app.
    address with `curl`, as your phone will. The first request may wait a
    few seconds while Tailscale fetches the certificate.
 8. **Pair your browser with Archon.** It opens a one-time code for 5
-   minutes and shows a QR code of `https://<address>/#/pair/archon`, the
-   Aether app's Archon pairing screen, where you type the code. The code is
+   minutes and shows a QR code of `https://<address>/archon/pair`, the
+   Archon app's pairing screen, where you type the code. The code is
    never in the link. The first browser to claim it gets its own Archon
    device; the code then stops working.
 
@@ -112,9 +113,10 @@ run of a bare `archon` offers it right after setting Archon up.
 
 ## Visiting archond's listener directly
 
-archond serves no app of its own. A browser that reaches its listener
-directly gets a short page that links to Aether's address (or, before
-setup, says to run `archon remote setup`); it carries no script.
+A browser that reaches archond's listener directly gets the same app
+(its URLs are relative, so it works at `/` as well as at `/archon/`), but
+once archond is mounted only Aether's origins are accepted, so the app
+works through the mount alone.
 
 ## What protects you
 

@@ -27,7 +27,7 @@ are in the [changelog](../CHANGELOG.md).
 | Aether | 1.2.11 | 1.2.11 or later runs the queue. **Aether 1.3.0 or later** is needed for remote access: only it mounts archond at `/archon`. Archon 1.5.0 is released with Aether 1.3.0. |
 | Store schema (`archon.db`) | 18 | 23, migrated at archond's first start |
 | `remote.json` | format 1 | format 1 while every device is an operator; format 2 once an observer is paired |
-| Remote access | archond served its own web app over `tailscale serve` or your proxy | archond is mounted on Aether's listener and its screens are part of the Aether app |
+| Remote access | archond served its own web app over `tailscale serve` or your proxy | the same app, now reached through Aether's listener at `https://<address>/archon/` (archond is mounted at `/archon`) |
 | A hung orchestrator turn | archond nudged it and told you after 30 silent minutes; your messages waited until you pressed Esc | the same notice, after 10 minutes once your message waits, then archond interrupts the turn 5 minutes later, as Esc would, so your messages reach a fresh turn ([troubleshooting](troubleshooting.md#the-orchestrator-or-aether-is-down)) |
 | Effort sizing | agents chose efforts by 1.4.x's rules; a reviewer plan's effort was a floor | the same by default; `[models] effort_sizing = true` opts in to sizing every effort by one rubric, a reviewer plan's effort then its default rather than a floor |
 | Default effort cap | no cap | `x_high`; set global `[models] max_effort = "max"` to allow existing `max` choices |
@@ -71,9 +71,11 @@ the store up yourself first (step 2 below).
   a `tailscale serve` that published archond directly, publishes Aether's
   listener as the one origin, and asks for one `archon daemon restart`
   ([remote-setup.md](remote-setup.md)).
-- `--proxy-url` and `--local` are removed. A proxy that pointed at archond
-  finds no app there any more: a direct visit gets a short page, without
-  scripts, that links to Aether's address.
+- `--proxy-url` and `--local` are removed. Open the phone app at
+  `https://<address>/archon/` on the address `archon remote setup` prints;
+  update the home-screen shortcut or bookmark to that address. A proxy that
+  pointed at archond still finds the app at its listener, but a mounted
+  archond accepts only Aether's origins, so use the mount.
 - Setup writes two keys into `config.toml`, keeping the rest of the file:
 
   ```toml

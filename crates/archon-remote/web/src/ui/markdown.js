@@ -1,0 +1,101 @@
+// Markdown as DOM: the parsed tree is built with h(), so every character stays
+// text and no HTML string is ever parsed. Links are filtered by safeHref().
+import { h, replace } from './dom.js';
+import { parseMarkdown, parseInline } from './markdown-parse.js';
+
+const MAX_RENDER_DEPTH = 24;
+
+function inline(nodes, depth = 0) {
+  return nodes.map((node) => {
+    if (node.t === 'text') return node.v;
+    if (node.t === 'br') return h('br');
+    if (node.t === 'code') return h('code', { class: 'md-code' }, node.v);
+    const kids = depth >= MAX_RENDER_DEPTH ? node.c.map((n) => (n.t === 'text' ? n.v : '')) : inline(node.c, depth + 1);
+    if (node.t === 'link') {
+      if (!node.href) return kids;
+      return h('a', { class: 'md-link', href: node.href, title: node.title, target: '_blank', rel: 'noopener noreferrer' }, kids);
+    }
+    return h({ em: 'em', strong: 'strong', del: 'del' }[node.t], {}, kids);
+  });
+}
+
+const LANG = /^[A-Za-z0-9_+#.-]{1,32}/;
+
+function block(b, tight = false) {
+  switch (b.t) {
+    case 'p': return tight ? inline(b.c) : h('p', {}, inline(b.c));
+    case 'h': return h(`h${b.level}`, { class: 'md-heading' }, inline(b.c));
+    case 'hr': return h('hr', { class: 'md-rule' });
+    case 'code': {
+      const lang = LANG.exec(b.info)?.[0];
+      return h('pre', { class: 'md-pre' }, h('code', { class: lang ? `language-${lang}` : null }, b.text));
+    }
+    case 'quote': return h('blockquote', { class: 'md-quote' }, blocks(b.c));
+    case 'ul':
+    case 'ol': return h(b.t, { class: 'md-list', start: b.t === 'ol' && b.start !== 1 ? b.start : null },
+      b.items.map((item) => h('li', { class: item.task === null ? null : 'md-task' },
+        item.task === null ? null : h('input', { type: 'checkbox', class: 'md-check', disabled: true, checked: item.task, 'aria-label': item.task ? 'Done' : 'Not done' }),
+        blocks(item.c, !b.loose))));
+    case 'table': {
+      const cell = (tag, nodes, k) => h(tag, { class: b.aligns[k] ? `align-${b.aligns[k]}` : null }, inline(nodes));
+      return h('div', { class: 'md-scroll' }, h('table', { class: 'md-table' },
+        h('thead', {}, h('tr', {}, b.headInline.map((c, k) => cell('th', c, k)))),
+        b.rowsInline.length ? h('tbody', {}, b.rowsInline.map((row) => h('tr', {}, row.map((c, k) => cell('td', c, k))))) : null));
+    }
+    default: return null;
+  }
+}
+
+function blocks(list, tight = false) {
+  return list.map((b) => block(b, tight));
+}
+
+// A parser bug must not blank a screen: the text then shows as written, and
+// the error stays in the console.
+function parsedOrPlain(parse, text, plain) {
+  try {
+    return parse(text);
+  } catch (err) {
+    console.error('Markdown could not be rendered; showing it as plain text.', err);
+    return plain;
+  }
+}
+
+function parseBlocksSafely(source) {
+  const text = String(source ?? '');
+  return parsedOrPlain(parseMarkdown, text, [{ t: 'p', c: [{ t: 'text', v: text }], size: text.length }]);
+}
+
+// The whole document as a <div class="md">.
+export function renderMarkdown(source, { className } = {}) {
+  return h('div', { class: ['md', className] }, blocks(parseBlocksSafely(source)));
+}
+
+// One line of prose (a title, a label that may carry `code`): inline marks only.
+// Line breaks become spaces; the page collapses prose spaces, and code keeps its own.
+export function renderInline(source) {
+  const text = String(source ?? '').replace(/[\r\n]+/g, ' ').trim();
+  return h('span', { class: 'md-inline' }, inline(parsedOrPlain(parseInline, text, [{ t: 'text', v: text }])));
+}
+
+// Long Markdown folded by whole blocks: the first blocks that fit `limit`
+// source characters, then a toggle for the rest. When even the first block is
+// too long, the preview is the source cut at `limit`, rendered on its own.
+export function clampedMarkdown(source, { limit, more = 'Show all', less = 'Show less', className } = {}) {
+  if (!Number.isInteger(limit) || limit <= 0) throw new RangeError(`a clamp limit is a positive number of characters, got ${limit}`);
+  const all = parseBlocksSafely(source);
+  let used = 0;
+  let keep = 0;
+  while (keep < all.length && used + all[keep].size <= limit) { used += all[keep].size; keep += 1; }
+  if (keep === all.length) return h('div', { class: ['md', className] }, blocks(all));
+  const preview = keep > 0 ? all.slice(0, keep) : parseBlocksSafely(`${String(source ?? '').trim().slice(0, limit).trimEnd()}…`);
+  const body = h('div', { class: ['md', className] }, blocks(preview));
+  const toggle = h('button', { class: 'link-button', type: 'button', 'aria-expanded': 'false' }, more);
+  toggle.addEventListener('click', () => {
+    const open = toggle.getAttribute('aria-expanded') === 'true';
+    replace(body, blocks(open ? preview : all));
+    toggle.setAttribute('aria-expanded', String(!open));
+    toggle.textContent = open ? more : less;
+  });
+  return h('div', { class: 'md-clamp' }, body, toggle);
+}

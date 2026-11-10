@@ -146,8 +146,8 @@ fn the_listener_is_off_until_enabled_and_comes_back_after_a_restart() {
     let page = http(port_of(&listening), "GET", "/", &[], "");
     assert_eq!(page.status, 200, "{}", page.body);
     assert!(
-        page.body.contains("archon remote setup") && !page.body.contains("<script"),
-        "a direct visit gets the pointer page: {}",
+        page.body.contains("<base href=\"./\">") && page.body.contains("src/main.js"),
+        "a direct visit gets the app: {}",
         page.body
     );
     let mode = std::fs::metadata(env.path("data/remote.json")).unwrap();
@@ -517,28 +517,20 @@ fn setup_stops_with_the_fix_for_an_old_aether_or_an_unready_tailscale() {
     stop_daemon(&env, daemon);
 }
 
-/// The binary carries no Archon web app: no build step embeds one, and
-/// none of its files or markers is in what `archon` links.
+/// The binary carries the mobile web app, embedded by the crate's build
+/// script, with its runtime files and none of its tooling.
 #[test]
-fn the_build_embeds_no_archon_web_app() {
+fn the_build_embeds_the_archon_web_app() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../archon-remote");
     assert!(
-        !crate_dir.join("web").exists(),
-        "crates/archon-remote/web is retired"
-    );
-    assert!(
-        !crate_dir.join("build.rs").exists(),
-        "nothing is embedded at build time"
+        crate_dir.join("web/index.html").exists(),
+        "crates/archon-remote/web is the app"
     );
     let manifest = std::fs::read_to_string(crate_dir.join("Cargo.toml")).unwrap();
-    assert!(!manifest.contains("build ="), "{manifest}");
+    assert!(manifest.contains("build = \"build.rs\""), "{manifest}");
     let binary = std::fs::read(env!("CARGO_BIN_EXE_archon")).unwrap();
-    for marker in [
-        "manifest.webmanifest",
-        "navigator.serviceWorker",
-        "Archon needs JavaScript",
-    ] {
+    for marker in ["manifest.webmanifest", "navigator.serviceWorker"] {
         let found = binary.windows(marker.len()).any(|w| w == marker.as_bytes());
-        assert!(!found, "the archon binary still carries {marker}");
+        assert!(found, "the archon binary does not carry {marker}");
     }
 }

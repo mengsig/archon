@@ -27,8 +27,8 @@ use crate::connect::connect_or_start;
 
 /// The first request through `tailscale serve` may wait on a certificate.
 const VERIFY_TIMEOUT: Duration = Duration::from_secs(45);
-/// The Aether app's Archon pairing screen, relative to its origin.
-const PAIR_SCREEN: &str = "/#/pair/archon";
+/// archond's pairing screen behind Aether's mount, relative to its origin.
+const PAIR_SCREEN: &str = "/archon/pair";
 
 /// What `--json` prints once every step is done.
 #[derive(Debug, Serialize)]
@@ -162,8 +162,8 @@ async fn bring_up(
 ) -> anyhow::Result<Mounted> {
     steps.begin(
         "Check Aether and Tailscale",
-        "Archon's screens are part of the Aether app. Nothing is opened, published or \
-         mounted while Tailscale Funnel publishes anything on this machine.",
+        "Archon's phone app is served through Aether's mount. Nothing is opened, published \
+         or mounted while Tailscale Funnel publishes anything on this machine.",
     );
     let aether = Aether::new(config)?;
     let mounts = aether.mounts().await?;
@@ -489,13 +489,13 @@ async fn pair(
     Ok(code)
 }
 
-/// The QR code of the Aether app's Archon pairing screen and the code to
+/// The QR code of archond's pairing screen behind the mount and the code to
 /// type there. The code never goes in the link: only the browser sees it.
 fn pairing_text(code: &PairingCode, origin: &str) -> anyhow::Result<String> {
     let screen = format!("{origin}{PAIR_SCREEN}");
     let minutes = (code.expires_at - archon_core::now()).num_minutes().max(1);
     Ok(format!(
-        "{}\nScan it, or open {screen} in the browser you pair with Aether, and type the \
+        "{}\nScan it, or open {screen} in the browser you pair, and type the \
          code\n\n    {}\n\nIt works once and expires in {minutes} minutes ({} UTC).",
         super::qr::render(&screen)?,
         code.code,
@@ -513,10 +513,10 @@ fn closing_words(outcome: &Outcome, mode: AetherMode) -> String {
         false => "Nothing changed: everything was already set up.\n",
     };
     format!(
-        "{unchanged}Done: open {} for Aether and Archon. Pair the browser with Aether too \
-         (`{aether_pair}`); each daemon gives it its own device. `archon remote` shows \
+        "{unchanged}Done: open {}/archon/ for Archon and {} for Aether. Pair the browser with \
+         each (`{aether_pair}` for Aether); each daemon gives it its own device. `archon remote` shows \
          archond's side, and `archon remote pair` pairs another browser with Archon.",
-        outcome.origin
+        outcome.origin, outcome.origin
     )
 }
 
@@ -567,7 +567,7 @@ mod tests {
         };
         let text = pairing_text(&code, "https://box.ts.net").unwrap();
         assert!(
-            text.contains("open https://box.ts.net/#/pair/archon in"),
+            text.contains("open https://box.ts.net/archon/pair in"),
             "{text}"
         );
         assert!(text.contains("    7K2M-9QXD\n"), "{text}");

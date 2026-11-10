@@ -514,14 +514,12 @@ fn push_refspec(
             _ => pinned_url(shadow, &url)?,
         },
     };
-    let rewritten_local = token.is_none() && is_local(&pushed_to);
-    let receive_pack = match is_local(&url) || rewritten_local {
+    // The push goes where `pushed_to` says, which an `insteadOf` may have
+    // moved off a local-looking URL, or onto one.
+    let receive_pack = match is_local(&pushed_to) {
         true => {
             // Its hooks and config-defined hooks are the receiver's, not the shadow's.
-            let target = match rewritten_local {
-                true => pushed_to,
-                false => url.clone(),
-            };
+            let target = pushed_to;
             let place = shadow.git(None, Config::Operator)?.place().to_owned();
             let hooks = config_hook_options(&local_path(&target, &place)?, Config::Operator)?;
             let words = ["git".to_owned()]

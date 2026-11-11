@@ -293,13 +293,6 @@ What can never confer it:
 | Socket discovery (`$ARCHON_SOCKET`, then the Archon paths) | Aether side | archond's own paths: `crates/archon-core/src/paths.rs` |
 | `contextIsolation`, `sandbox`, preload, navigation, `openExternal`, permission handlers, renderer CSP, IPC sender and schema checks, privileged actions and confirmations, managed start, remote-window partitions | Aether side | mengsig/aether#414 |
 
-## Noesis data boundaries (ARCHITECTURE §g)
-
-Noesis lives in Aether and never connects to archond (ARCHITECTURE §g).
-Sealed fields are Aether's. Archon serves nothing sealed: no Archon read
-reply carries a Noesis field (`grep -rn -i noesis crates/archon-core/src/protocol.rs`
-prints nothing). Aether side otherwise.
-
 ## Fixes
 
 | Finding | Change | Test (fails before, passes after) |

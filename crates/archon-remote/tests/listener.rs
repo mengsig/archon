@@ -299,6 +299,31 @@ async fn close_code(socket: &mut Socket) -> u16 {
     }
 }
 
+/// The whole policy, pinned: no looser than 1.4.12's, which sent `base-uri 'none'`.
+const PINNED_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; \
+    img-src 'self' data:; font-src 'self'; manifest-src 'self'; worker-src 'self'; \
+    connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+
+#[tokio::test]
+async fn the_app_csp_is_pinned_direct_and_mounted() {
+    let direct = Listener::start().await;
+    let page = direct.request("GET", "/", &[], "").await;
+    assert_eq!(page.status, 200, "{}", page.body);
+    assert_eq!(page.header("content-security-policy"), Some(PINNED_CSP));
+    let mounted = Listener::mounted().await;
+    for path in ["/", "/pair"] {
+        let page = mounted
+            .request("GET", path, &[("Origin", AETHER)], "")
+            .await;
+        assert_eq!(page.status, 200, "{path}: {}", page.body);
+        assert_eq!(
+            page.header("content-security-policy"),
+            Some(PINNED_CSP),
+            "{path}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn health_and_the_app_are_served_with_security_headers_to_known_hosts_only() {
     let listener = Listener::start().await;
@@ -674,7 +699,10 @@ async fn an_observer_reads_and_is_refused_every_change() {
         let error = &answer["result"]["Err"];
         assert_eq!(error["code"], "forbidden", "{change}: {answer}");
         let message = error["message"].as_str().unwrap();
-        assert!(message.contains("paired as an observer"), "{message}");
+        assert!(
+            message.contains("This is an observer device: it can only read."),
+            "{message}"
+        );
     }
     assert_eq!(*listener.backend.asked.lock().unwrap(), ["repo_list"]);
     assert_eq!(listener.remote.view().devices[0].role, DeviceRole::Observer);
@@ -769,7 +797,7 @@ async fn mounted_the_app_is_served_with_relative_urls_and_its_pair_page() {
     for path in ["/", "/pair"] {
         let page = listener.request("GET", path, &headers, "").await;
         assert_eq!(page.status, 200, "{path}: {}", page.body);
-        assert!(page.body.contains("<base href=\"./\">"), "{}", page.body);
+        assert!(!page.body.contains("<base"), "{}", page.body);
         assert!(
             page.body.contains("src=\"src/main.js\""),
             "assets are relative to the mount: {}",

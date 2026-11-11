@@ -15,7 +15,7 @@ queue item, delivered onto its repository's integration PR
   enums and dispatch, migration lists, the config loader, workspace
   manifests and CI workflows. Each has one owner at a time, and every task that
   touches one depends on the previous owner:
-  - `crates/aether-protocol/**` and `clients/**`: AE-P → F3 → G3.
+  - `crates/aether-protocol/**` and `clients/**`: AE-P → G3.
   - Archon `crates/archon-core/src/protocol.rs`: AR-P only. Later tasks add
     optional fields through their own stub handler files.
   - Archon `crates/archon-queue/src/store/schema.rs`: AR-C → D1 → D2 → D3 → G5.
@@ -101,7 +101,6 @@ issue by its full name.
 | C | Archon daemon and screens | archon (daemon), aether (screens) | AR-P, AR-R, AR-C, AR-G, AR-L, C1, C2 |
 | D | GitHub linking | archon (daemon), aether (screens) | D1–D4 |
 | E | Electron shell | aether | E1–E3 |
-| F | Noesis | aether | F1–F8 |
 | G | Memory 2.0 | aether, archon | G0 (existing item), G1–G5 |
 | H | Quality and release | both | H1–H5 |
 
@@ -110,15 +109,15 @@ issue by its full name.
 | Wave | Tasks (≤ 4 agents) | Exclusive |
 | --- | --- | --- |
 | 1 | AE-P, AR-P, A1 (+ G0, already running) | — |
-| 2 | A2, A3, AR-R, F1 | — |
-| 3 | A4, AR-C, AE-M, F2 | — |
-| 4 | D1, A5, B1, F3 | — |
+| 2 | A2, A3, AR-R | — |
+| 3 | A4, AR-C, AE-M | — |
+| 4 | D1, A5, B1 | — |
 | 5 | AR-G, B2, E1, G1 | — |
-| 6 | C1, B3, D2, F4 | — |
-| 7 | C2, D3, E2, F8 | — |
-| 8 | D4, F5, G2, G4 | — |
-| 9 | AR-L, F6, G3, H1 | H1 |
-| 10 | G5, F7, E3 | E3 |
+| 6 | C1, B3, D2 | — |
+| 7 | C2, D3, E2 | — |
+| 8 | D4, G2, G4 | — |
+| 9 | AR-L, G3, H1 | H1 |
+| 10 | G5, E3 | E3 |
 | 11 | H2, H3 | H2 |
 | 12 | H4 | H4 |
 | 13 | H5 | — |
@@ -190,7 +189,7 @@ are relative to the repository root.
   entry `web/apps/web` with a service worker and manifest, and empty
   skeletons for every feature package.
 - **Owns:** `web/packages/ui/**`, `web/apps/web/**`, and
-  `web/packages/{aether,archon,github,noesis,settings}/{package.json,src/index.ts}`
+  `web/packages/{aether,archon,github,settings}/{package.json,src/index.ts}`
 - **Depends on:** A1
 - **Size:** L · **Pipeline:** adaptive
 - **Acceptance:** a token test fails if a name in CONTRACTS.md §4 is missing.
@@ -586,155 +585,6 @@ are relative to the repository root.
   labelled as such.
 - **Title:** vNext E3: desktop packaging, signing and confirmed updates
 
-### F: Noesis (aether)
-
-#### F1. Noesis crate, store and dormant lifecycle
-- **Goal:** add `crates/aether-noesis` with the settings of CONTRACTS.md §6.1,
-  `noesis.db` migration N1, the budget and concurrency accounting, and
-  `Noesis::start_if_enabled`. Disabled means nothing is opened, registered or
-  spawned.
-- **Owns:** `crates/aether-noesis/{Cargo.toml,src/lib.rs,src/settings.rs,src/store/**,src/budget.rs,README.md}`,
-  the workspace `members` line in `Cargo.toml`, the `[noesis]` hook in Aether's
-  config loader, and `THIRD-PARTY-NOTICES` if a dependency is added
-- **Depends on:** none (AE-P is not required)
-- **Size:** M · **Pipeline:** adaptive
-- **Acceptance:**
-  - With the default config, `noesis.db` does not exist after start and
-    stop.
-  - Budgets refuse at 0, and at the limit they refuse before the model call.
-  - The settings round-trip, and invalid values are rejected with useful
-    errors.
-  - The effective settings follow the prerequisite table of
-    ARCHITECTURE.md §g in every combination (an exhaustive test).
-  - No LearnHarness source or prompt text is present (provenance note in
-    the crate README).
-- **Title:** vNext F1: Noesis crate, store and dormant-by-default lifecycle
-
-#### F2. Teaching loop
-- **Goal:** add the Prober, Teacher and Practitioner agents with our own
-  prompts (NOESIS.md §3); the probe, plan, teach and practice phases;
-  structured questions; plan trees; problem and conclusion records; and the
-  Noesis-only harness tools.
-- **Owns:** `crates/aether-noesis/src/{teach,prompts,tools}/**`
-- **Depends on:** F1
-- **Size:** L · **Pipeline:** design-doc (settles NOESIS.md §6 parity
-  behaviours T1–T12 as tests), then adaptive
-- **Acceptance:** the parity tests T1–T12 pass against a faux engine. A
-  "don't know" answer never counts as mastery evidence. Every agent runs in
-  run `noesis` with a `noesis.*` role.
-- **Title:** vNext F2: Noesis teaching loop (probe, plan, teach, practice)
-
-#### F3. Noesis protocol and daemon wiring
-- **Goal:** add every CONTRACTS.md §6.2 command, wire object and event behind
-  feature `noesis`, with their access classes. Add the daemon wiring that
-  starts and stops the service, and the disable policy. Add the single
-  runtime admission guard keyed on `agents.subsystem` (ARCHITECTURE.md §g),
-  and settle CONTRACTS.md §6.5.
-- **Owns:** `crates/aether-protocol/**`, `clients/**`, `crates/aether-daemon/src/noesis/**` (new),
-  `crates/aether-runtime/src/noesis_guard.rs` (new), the guard's call sites in
-  scheduler dispatch, in the generic agent command handlers and in startup
-  recovery, `crates/aether-runtime/src/noesis_seal.rs` (new) and its call
-  sites where tool calls and thinking are produced as deltas and persisted
-  to the transcript (code AE-P merged earlier), the registration lines in
-  the Aether daemon dispatch, and CONTRACTS.md §6.5 (text)
-- **Depends on:** AE-P, F1
-- **Size:** M · **Pipeline:** adaptive
-- **Acceptance:**
-  - While disabled, every `noesis_*` command except `noesis_status` and
-    `noesis_configure` returns `unavailable{noesis_disabled}` with no store
-    change.
-  - `noesis_configure` while disabled writes config only, and enabling
-    through it opens `noesis.db` only after the write.
-  - Toggling on and off at runtime follows the disable policy (grace, then
-    cancel).
-  - Writing `enabled`, budgets, billing or prompt overrides is `host_only`.
-  - With Noesis disabled, `send_message`, `reply_to_question`, `wake`,
-    `resume` and `steer` to a Noesis agent start no model call.
-  - Every Noesis invocation is charged to the Noesis budgets.
-  - Sealed fields (CONTRACTS.md §6.2): for a posed question and an active
-    problem, no `tool_input` delta is produced and `invocation_seq` stays
-    gapless; the persisted entry holds `"<sealed>"`; `thinking` of Noesis
-    agents is never produced or returned; and the values appear only in
-    `noesis.answer_recorded` and `noesis.practice_concluded`.
-- **Title:** vNext F3: Noesis protocol commands, events and daemon wiring
-
-#### F4. Learner model
-- **Goal:** add N2: concepts, append-only evidence, a derived concept state,
-  misconceptions, decay, and operator correction (NOESIS.md §5). Settle
-  CONTRACTS.md §6.4.
-- **Owns:** `crates/aether-noesis/src/learner/**`, the N2 migration, and
-  CONTRACTS.md §6.4 (text)
-- **Depends on:** F2, F3
-- **Size:** M · **Pipeline:** design-doc then adaptive
-- **Acceptance:**
-  - The derived state is a pure function of the evidence (a rebuild test).
-  - Exposure alone never reaches `demonstrated`.
-  - A correction is evidence, not an overwrite.
-  - The tables are never joined to the proposition graph (schema test).
-- **Title:** vNext F4: Noesis learner-mastery model
-
-#### F5. Learning screens
-- **Goal:** session list and chat, question widgets, plan tree, practice, the
-  knowledge-graph view (force layout), "my understanding" from
-  `noesis_learner`, and the Noesis settings with spend.
-- **Owns:** `web/packages/noesis/src/**` except `src/understand/**`
-- **Depends on:** A3, A4, F3, F4
-- **Size:** L · **Pipeline:** adaptive
-- **Acceptance:** with Noesis disabled the route shows an off state and
-  sends nothing except `noesis_status` (a network-log test). Mastery uses the
-  `--mastery-*` tokens and their text labels.
-- **Title:** vNext F5: Noesis learning screens
-
-#### F6. Engineering context ("Understand this")
-- **Goal:** the frontend builds an `EvidenceBundle` from reads the user can
-  already make. Add N3 storage, the entity actions on item, run, PR and
-  agent, and opt-in engineering extraction behind both switches.
-- **Owns:** `web/packages/noesis/src/understand/**`, `crates/aether-noesis/src/evidence/**`,
-  the N3 migration, and `crates/aether-noesis/src/extract/engineering.rs`
-- **Depends on:** F5, F8
-- **Size:** M · **Pipeline:** adaptive
-- **Acceptance:** bundles over 32 KiB are refused. Noesis opens no
-  connection to archond (a test with a socket guard). Status labels are kept
-  through to the teaching prompt.
-- **Title:** vNext F6: Noesis engineering context via bounded evidence bundles
-
-#### F7. Off-by-default guarantees and parity suite
-- **Goal:** one test per guarantee in ARCHITECTURE.md §g, plus the NOESIS.md
-  §6 parity suite and the optional differential harness.
-- **Owns:** `crates/aether-noesis/tests/**`, `crates/aether-daemon/tests/noesis_*.rs`,
-  `evals/noesis/**`, `web/e2e/specs/noesis/**`
-- **Depends on:** F6, H1
-- **Size:** M · **Pipeline:** e2e-testing
-- **Acceptance:**
-  - Each guarantee is its own named test.
-  - The bypass tests cover every generic agent command, and a daemon
-    restart with a parked Noesis agent while disabled.
-  - Hidden answers: with a question open and with a problem active, a
-    `local` client and an observer device each read `get_transcript_page`,
-    `get_events`, a live delta subscription, agent reads and the daemon
-    log, both on a fresh subscription and after a reconnect, and none
-    contains the answer key, explanation or solution until the answer or
-    `conclude` is recorded.
-  - The differential harness is opt-in and needs a local LearnHarness
-    checkout. CI never runs it.
-- **Title:** vNext F7: Noesis off-by-default guarantees and behavioural parity suite
-
-#### F8. Knowledge-graph extraction
-- **Goal:** extraction from sessions and imported sources: an extractor,
-  an auditor, a deterministic merge with stable ids, chain simplification
-  and coverage. Implement `noesis_extract` and `noesis_import_source` jobs on
-  the background budget.
-- **Owns:** `crates/aether-noesis/src/{extract,graph}/**` except `extract/engineering.rs`
-- **Depends on:** F3
-- **Size:** L · **Pipeline:** adaptive
-- **Acceptance:**
-  - The merge is deterministic, and the same inputs always give the same
-    graph.
-  - Cancelling a job keeps the last committed merge.
-  - Jobs respect the background cap and the token budget, and never run
-    automatically unless `extraction.sessions = auto`.
-- **Title:** vNext F8: Noesis knowledge-graph extraction and merge
-
 ### G: Memory 2.0 (aether, archon)
 
 G0 is the existing Aether baseline item, which builds the replayable memory
@@ -773,7 +623,7 @@ PR, and a regression without an explained trade-off blocks it.
 - **Owns:** `crates/aether-protocol/**`, `clients/**`, `crates/aether-daemon/src/memory*`,
   the memory CLI in `crates/aether/src/`, the V32 migration,
   `web/packages/aether/src/memory/**`, and CONTRACTS.md §7 (text)
-- **Depends on:** F3 (protocol ownership), G2, G4, B3
+- **Depends on:** G2, G4, B3
 - **Size:** L · **Pipeline:** design-doc then adaptive
 - **Acceptance:**
   - Export followed by import round-trips exactly.
@@ -804,8 +654,7 @@ PR, and a regression without an explained trade-off blocks it.
 - **Depends on:** D3 (migration order), G0
 - **Size:** M · **Pipeline:** adaptive
 - **Acceptance:** existing lessons migrate unchanged. Lift is reported only
-  with enough holdout samples (the Wilson bound is kept). Noesis is never
-  involved.
+  with enough holdout samples (the Wilson bound is kept).
 - **Title:** vNext G5: Archon lessons consolidation, provenance and holdout lift
 
 ### H: Quality and release (both)
@@ -835,10 +684,9 @@ PR, and a regression without an explained trade-off blocks it.
 
 #### H3. Security audit of remote and desktop
 - **Goal:** audit the mount, the Archon roles and standing, the Electron
-  bridge and CSP, Electron remote windows, pairing across the shared origin,
-  and Noesis data boundaries including sealed fields. Findings are fixed in the owning task, or filed.
+  bridge and CSP, Electron remote windows and pairing across the shared origin. Findings are fixed in the owning task, or filed.
 - **Owns:** `docs/security/vnext-audit.md` in each repository
-- **Depends on:** AE-M, AR-L, E2, F6
+- **Depends on:** AE-M, AR-L, E2
 - **Size:** S · **Pipeline:** code-audit
 - **Acceptance:** each of ARCHITECTURE.md §c and §d has a checked item with
   evidence. No open high-severity finding remains.
@@ -846,14 +694,13 @@ PR, and a regression without an explained trade-off blocks it.
 
 #### H4. Cross-daemon flows (exclusive)
 - **Goal:** e2e flows: Aether only; Aether with Archon; an observer device;
-  an issue imported through to a merged PR (stubbed `gh`); Noesis off, then
-  on; the desktop bridge against the same daemons; and an Electron remote
+  an issue imported through to a merged PR (stubbed `gh`); the desktop bridge against the same daemons; and an Electron remote
   window that pairs with the real Aether listener and the mounted archond
   over a loopback HTTPS test origin, reconnects after a daemon restart,
   and, paired as observer, is refused every operate command, with the
   listeners' Origin and cookie checks unchanged.
 - **Owns:** `web/e2e/specs/flows/**`
-- **Depends on:** H1, D4, F7, E2
+- **Depends on:** H1, D4, E2
 - **Size:** M · **Pipeline:** e2e-testing
 - **Acceptance:** all the flows pass three times in a row. Each flow asserts
   the daemon-side state, not only the DOM.

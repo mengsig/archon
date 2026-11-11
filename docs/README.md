@@ -57,4 +57,3 @@ The design records of the unified Aether app (issue #377).
 | [Architecture decisions](vnext/ARCHITECTURE.md) | The decisions the work rests on. |
 | [Contracts](vnext/CONTRACTS.md) | Protocols, migrations, version rules and configuration keys. |
 | [Workstreams](vnext/WORKSTREAMS.md) | The tasks, their ownership and waves. |
-| [Noesis](vnext/NOESIS.md) | The Noesis study, licensing decision and learner model. |

@@ -107,7 +107,8 @@ names another shell.
 
 archond embeds the mobile web app (`crates/archon-remote/web`, built into the
 binary by `build.rs`) and serves it at its own root and, behind Aether's
-`/archon` mount, at `/archon/`; the app's URLs are relative to its `<base>`.
+`/archon` mount, at `/archon/`; the app's URLs are relative to the page's directory
+(its CSP sends `base-uri 'none'`, so it uses no `<base>`).
 `make e2e` runs it in headless Chromium against a real archond (releases only).
 `crates/archon/tests/remote.rs` drives `archon remote setup` against stand-ins for `aether`, `tailscale`
 and `curl` and a stand-in Aether listener, and checks that the `archon`

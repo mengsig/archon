@@ -510,7 +510,8 @@
   .view-inbox > :is(.screen-header, .section:has(.question-list)) { grid-column: 1 / -1; }
   .question-list { grid-template-columns: repeat(auto-fill, minmax(460px, 1fr)); align-items: start; }
 
-  /* Chat: the transcript spans the width like a desktop messenger. */
+  /* Chat: a centred conversation column; both sides' bubbles stay inside its edges. */
+  .transcript { width: min(100%, 1280px); margin-inline: auto; }
   .bubble-row { max-width: min(72%, 960px); }
   .bubble-row:has(.md-pre, .md-scroll) { width: min(72%, 960px); }
   .feed-line { justify-self: center; width: min(100%, 960px); }

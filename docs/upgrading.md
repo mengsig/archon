@@ -108,7 +108,8 @@ the store up yourself first (step 2 below).
   1.5.0 is an operator: re-pair a phone others may hold as an observer, and
   revoke any device you lost.
 - An observer only reads: the app's `say` and `answer` are refused to it
-  with "… paired as an observer; pair it as an operator to act from it". A
+  with "… This is an observer device: it can only read. Pair it as an operator
+  to act from it.". A
   device Aether paired without stamping its operator role (an older Aether)
   carries no operator authority
   ([vnext-audit.md](security/vnext-audit.md)): its chat is not operator

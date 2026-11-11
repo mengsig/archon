@@ -146,7 +146,7 @@ fn the_listener_is_off_until_enabled_and_comes_back_after_a_restart() {
     let page = http(port_of(&listening), "GET", "/", &[], "");
     assert_eq!(page.status, 200, "{}", page.body);
     assert!(
-        page.body.contains("<base href=\"./\">") && page.body.contains("src/main.js"),
+        !page.body.contains("<base") && page.body.contains("src/main.js"),
         "a direct visit gets the app: {}",
         page.body
     );

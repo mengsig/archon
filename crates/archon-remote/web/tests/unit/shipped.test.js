@@ -38,7 +38,7 @@ test('the page uses no inline script or style, which the CSP would block', () =>
 
 test('every URL in the page and manifest is relative, so a mount prefix works', () => {
   const html = readFileSync(join(ROOT, 'index.html'), 'utf8');
-  assert.match(html, /<base href="\.\/">/);
+  assert.doesNotMatch(html, /<base\b/i);
   assert.doesNotMatch(html, /(?:href|src)="\/(?!\/)/);
   const manifest = JSON.parse(readFileSync(join(ROOT, 'manifest.webmanifest'), 'utf8'));
   for (const url of [manifest.id, manifest.start_url, manifest.scope, ...manifest.icons.map((i) => i.src)]) {

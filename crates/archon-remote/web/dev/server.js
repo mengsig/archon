@@ -16,7 +16,7 @@ import { normalizePairingCode } from '../src/core/pairing-code.js';
 export const WEB_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const DEV_CODE = 'DEVCODE1';
 export const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; "
-  + "manifest-src 'self'; worker-src 'self'; connect-src 'self'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'";
+  + "manifest-src 'self'; worker-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 const COOKIE = 'archon_dev_session';
 const MAX_BODY_BYTES = 16 * 1024;
 const MIME = {

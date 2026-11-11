@@ -21,8 +21,8 @@ Invariants that every decision preserves (issue §2.2, §12):
 ## (a) One canonical frontend
 
 **Decision: the one frontend lives in the Aether repository under a new top-level
-`web/` npm workspace. It is a single TypeScript application with optional Archon
-and Noesis modules (the issue's first option). Its built output `web/dist/` is
+`web/` npm workspace. It is a single TypeScript application with an optional Archon
+module (the issue's first option). Its built output `web/dist/` is
 committed and embedded by `aether-remote`. The Electron shell lives beside it in
 `web/apps/desktop/`. Archon ships no UI bundle: browsers reach archond through
 a path mount on Aether's listener (§d), and the desktop app reaches it over IPC
@@ -92,8 +92,8 @@ the enforcement point: a hidden button is a convenience, never a control.**
    a `standing`: `local` (Electron IPC to a Unix socket), `device:operator` or
    `device:observer`. Aether's device role comes from `Welcome.device.role`.
    Archon gains the same role field (AR-R).
-3. **Daemon settings that affect the UI:** for example `noesis.enabled`, read
-   from `noesis_status`.
+3. **Daemon settings that affect the UI:** for example the remote and
+   memory settings each daemon reports.
 4. **Desktop adapters,** present only in Electron: notifications, dialogs, deep
    links, managed start.
 
@@ -290,8 +290,8 @@ None calls a model. Each is specified in CONTRACTS.md §1.
   `cost_gap` and `estimated_cost_usd` semantics; subscription dollars stay
   labelled as estimates.
 - *Mounts:* `get_remote` and `configure_remote` gain `mounts`.
-- *Noesis* and *Memory 2.0* additions land later in the same version, each
-  behind its own feature (§g, §h).
+- *Memory 2.0* additions land later in the same version, behind their own
+  feature (§h).
 
 **Archon, protocol 24 (task AR-P):**
 - *Negotiation:* `hello` accepts 23..24. `Welcome` gains `min_protocol_version`
@@ -358,99 +358,11 @@ never edits it implicitly.**
   client-side across the two connections. Neither daemon stores the other's
   state.
 
-## (g) Noesis
-
-**Decision: reimplement LearnHarness's architecture and behaviour, clean-room, as
-`crates/aether-noesis` in Aether. It is a dormant in-process service whose
-learning agents are ordinary Aether agents in a dedicated `noesis` run with
-their own budget. NOESIS.md gives the licensing analysis, the parity plan and
-the learner model.**
-
-Reasons: the teaching loop needs model calls, subscription engines, budgets,
-transcripts, question round-trips and persistence. Aether already has all of
-them. A Node sidecar would duplicate auth (and LearnHarness has no Codex path),
-put an AGPL process in the shipped product, and keep a single-process
-JSON-file store. Placing Noesis in Aether rather than Archon keeps it usable
-with Aether alone (issue §7.4).
-
-Process model:
-- Noesis owns a separate SQLite file, `noesis.db` in Aether's data dir. Aether
-  memory never reads it and Noesis never writes Aether memory (§h). Deleting
-  the file removes Noesis's own state: graph, learner model, plans, evidence
-  bundles and jobs. The conversations themselves are transcripts of Aether
-  agents in run `noesis`, kept and expired by Aether's history retention
-  (CONTRACTS.md §6.5).
-- Prober, Teacher, Practitioner, Extractor and Auditor run as Aether agents with
-  roles `noesis.<agent>`, in run `noesis`, with Noesis-only harness tools.
-  Interactive turns and background jobs have separate concurrency caps and
-  daily budgets, and background jobs use the scheduler's lowest priority. The
-  engineering queue is never blocked: Noesis agents count against the Noesis
-  caps, not against Archon's.
-- Engineering context comes in only as an explicit, bounded **evidence bundle**:
-  references and excerpts at most 32 KiB, each marked `verified`, `reviewed`
-  or `preliminary`. The frontend builds it from Archon and Aether reads when
-  the user presses "Understand this". Noesis never connects to archond.
-
-Off-by-default guarantees (issue §8), each with a test in task F7:
-- `noesis.enabled = false` is the default. While disabled:
-  - no Noesis harness tool is registered, and no `noesis.*` role can be
-    created;
-  - no worker or timer starts;
-  - `noesis.db` is not opened or created;
-  - no context layer is added to any agent;
-  - every `noesis_*` command except `noesis_status` and `noesis_configure`
-    returns `unavailable{reason: "noesis_disabled"}` with no side effect.
-  `noesis_configure` is the host-only control path. While disabled it only
-  validates and writes the `[noesis]` config. Setting `enabled = true` then
-  starts the service, which opens `noesis.db` only at that point.
-- **One runtime guard covers every path to execution.** Noesis agents carry a
-  persisted `subsystem = "noesis"` attribute, set at creation and never
-  changed; the role label is not trusted for this. Aether's runtime checks
-  that attribute in one admission guard before:
-  - every scheduler dispatch, meaning every model call;
-  - the generic agent commands (`send_message`, `reply_to_question`, `wake`,
-    `resume`, `steer`, model changes);
-  - delegation from a Noesis agent;
-  - startup recovery.
-  While Noesis is disabled or draining, the guard refuses new work for these
-  agents and parks them, so nothing resumes them later by surprise. Every
-  Noesis invocation is charged to the Noesis budgets on the same path. F3
-  owns the guard. F7 tests each generic command, and a daemon restart with
-  a parked Noesis agent.
-- **Answers stay hidden on every read path.** Noesis agents are ordinary
-  agents, so the generic transcript, event and delta reads would otherwise
-  show the committed answer key or solution in their tool calls. The
-  runtime seals those fields where the call is produced and persisted
-  (CONTRACTS.md §6.2), before any client, local or remote, can read them;
-  they are revealed only through Noesis objects after the answer. Residual
-  risk: the model can still restate an answer in its visible text; the
-  prompts forbid it and parity test T5 checks it. F3 owns the seal and F7
-  tests it.
-- Engineering context and the two automatic extraction modes are further
-  switches, all off by default. Their dependencies are:
-
-  | Switch | Requires |
-  | --- | --- |
-  | `noesis.engineering_context` | `enabled` |
-  | `noesis.extraction.sessions = "auto"` | `enabled` |
-  | `noesis.extraction.engineering = "auto"` | `enabled` and `engineering_context` |
-
-  A switch is effective only when its prerequisites are effective. Turning a
-  prerequisite off turns its dependents off in effect, but keeps their stored
-  values, and `noesis_status` reports both.
-- Disabling refuses new work at once. It cancels background jobs at their next
-  model-call boundary (each job's last committed merge stays). It lets an
-  in-flight interactive turn finish for up to 60 s and then cancels it. The
-  cancellation policy is reported in `noesis_status`.
-- Opening the Learning screen triggers nothing. Extraction runs only on an
-  explicit action, or when the matching auto switch is on.
-
 ## (h) Memory 2.0
 
 **Decision: evolve, do not replace. Keep Aether memory and Archon lessons as
 separate stores with their own owners. Improve them against a benchmark that
-exists before any behaviour change. Noesis's proposition graph is not used as
-coding-agent memory.**
+exists before any behaviour change.**
 
 Benchmark first: the Aether baseline item (G0, running in parallel) builds a
 replayable harness over recorded tasks with labelled relevant memories. It
@@ -495,22 +407,17 @@ Direction (each item is a task in workstream G, behind the `memory_v2` feature):
 
 ## (i) Subscription-first authentication
 
-**Decision: every model call, including Noesis, goes through Aether's existing
+**Decision: every model call goes through Aether's existing
 engines and providers. Subscription engines (Claude Code, Codex) come first. API
 billing is never a silent fallback.**
 
-- Noesis model slots (`noesis.models.strong|cheap`) default to the first *ready*
-  subscription engine model reported by `list_models` / `auth_status`. If none
-  is ready, Noesis reports `no_model` with the available alternatives. It does
-  not pick an API provider unless `noesis.billing.allow_api = true`.
 - Credentials stay where they are today: the engine CLIs own subscription
   logins, and API keys stay in Aether's credential store or the environment.
   The frontend shows readiness, limits and headroom from `providers` and
   `auth_status`, which return no secrets. Login is a host action: CLI, or a
   native-confirmed IPC call that opens a terminal.
 - Spending is attributed by subsystem through run and role
-  (`usage_breakdown{by: role}`): engineering, Archon, Noesis interactive, Noesis
-  background.
+  (`usage_breakdown{by: role}`): engineering and Archon.
 
 ## (j) Integration and branch strategy
 

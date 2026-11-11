@@ -24,8 +24,8 @@ impl Refusal {
                 format!("{name} is host administration, which only the archon CLI on the host does")
             }
             Self::Observer => format!(
-                "{name} changes Archon, and this device is paired as an observer; \
-                 pair it as an operator to act from it"
+                "{name} changes Archon. This is an observer device: it can only read. \
+                 Pair it as an operator to act from it."
             ),
             Self::Revoked => format!(
                 "{name} refused: this device was unpaired or remote access was turned off; \
@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn each_refusal_names_its_real_reason() {
         let observer = Refusal::Observer.message("set_directive");
-        assert!(observer.contains("paired as an observer"), "{observer}");
+        assert!(observer.contains("This is an observer device: it can only read. Pair it as an operator to act from it."), "{observer}");
         let revoked = Refusal::Revoked.message("say");
         assert!(revoked.contains("unpaired"), "{revoked}");
         let host = Refusal::HostOnly.message("shutdown");

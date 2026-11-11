@@ -6,8 +6,7 @@ rather than rebuilt. Every fact here was read from source at the commits
 below, recorded on 2026-11-03. Nothing was built or run.
 
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md),
-[CONTRACTS.md](CONTRACTS.md), [WORKSTREAMS.md](WORKSTREAMS.md),
-[NOESIS.md](NOESIS.md).
+[CONTRACTS.md](CONTRACTS.md), [WORKSTREAMS.md](WORKSTREAMS.md).
 
 ## 1. Repositories
 
@@ -15,7 +14,6 @@ Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md),
 | --- | --- | --- | --- | --- | --- |
 | [mengsig/archon](https://github.com/mengsig/archon) (MIT) | `main` | `29c9d2fda49a16c1d89eb197f7139accef125f2c` (tag `v1.4.11`) | 1.4.11 | `next` at `9166c62d0d2c54922f61ec63a758eb2b7bb28ede` | **1.5.0** |
 | [mengsig/aether](https://github.com/mengsig/aether) (MIT) | `main` | `ad7d94b809b6cdfebee3c83bc580fe71690bc04f` (tag `v1.2.11`) | 1.2.11 | `next` = `main` = `ad7d94b8` | **1.3.0** |
-| [amosblomqvist/learnharness](https://github.com/amosblomqvist/learnharness) (AGPL-3.0-only) | `main` | `e69e85269c064c6c9c49a8b06ae78c06e79c4a63` ("release: prepare 0.4.1", 2026-10-31) | 0.4.1 | read-only reference | none (see NOESIS.md) |
 
 A 1.4.12 Archon patch release is being prepared in parallel. It does not
 change the 1.5.0 target. When it lands on `next`, the integration branch takes
@@ -178,14 +176,3 @@ pass. This is task AR-R in WORKSTREAMS.md.
 Operator rules that bind this release: run `make bench-release` and e2e only
 for releases; run one heavy job on the host at a time; commit with the
 configured identity; and never merge, tag or publish automatically.
-
-## 4. LearnHarness summary
-
-Section 1 of [NOESIS.md](NOESIS.md) covers its architecture. The facts that
-drive decisions: TypeScript Next.js 16 / React 19, with an optional thin
-Electron shell that is already hardened (`contextIsolation`, `sandbox`, no
-Node, deny-by-default permissions). Teaching agents run on the Pi agent engine
-(MIT). Persistence is JSON/JSONL files on one process with no locks. It is
-AGPL-3.0-only with several contributors and no CLA. It has **no cross-session
-learner model**, and it extracts automatically after teaching turns with no
-spend cap.

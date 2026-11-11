@@ -38,7 +38,6 @@ Mount prefixes never shadow Aether's own paths: `validate_mounts` refuses
 
 | Item | Owner | Status |
 | --- | --- | --- |
-| Noesis commands and events, §6 | F3 | Frozen names and required fields; optional fields open |
 | Memory 2.0 commands and fields, §7 | G3 | Frozen, settled by G3 (feature `memory_v2`) |
 
 ### 1.3 Archon protocol 24 (owner AR-P for the wire, Frozen)
@@ -143,13 +142,10 @@ gives the same bytes.
 | | V21 | D2 | `github_objects` |
 | | V22 | D3 | `github_outbox` |
 | | V23 | G5 | lessons 2.0 columns |
-| Aether `aether.db` | V29 | AE-P | `agents.subsystem` (nullable text, set once at creation; `"noesis"` for Noesis agents), plus indexes for paging and `usage_breakdown` |
+| Aether `aether.db` | V29 | AE-P | `agents.subsystem` (nullable text, set once at creation), plus indexes for paging and `usage_breakdown` |
 | | V30 | G1 | memory tiers, candidate state, support, provenance refs |
 | | V31 | G2 | `memory_stale` and `memory_holdouts` (the stale mark lives in a store table, never in the record body) |
 | | V32 | G3 | no-op: moves the version stamp only, with the usual pre-migration backup (§7.3) |
-| Noesis `noesis.db` | N1 | F1 | sessions, messages index, questions, the problems tables, plans, the graph tables and their ledgers, coverage, jobs |
-| | N2 | F4 | learner tables (§6.4) |
-| | N3 | F6 | evidence bundles |
 
 Each task appends exactly its own line to its store's migration list. An
 unused slot ships as a no-op migration, so the numbering stays fixed.
@@ -183,11 +179,10 @@ unused slot ships as a no-op migration, so the numbering stays fixed.
 | `web/packages/aether/` | `@aether-ui/aether` | B1 `src/fleet`, `src/topology`; B2 `src/agent`, `src/conversation`; B3 `src/controls`, `src/inbox`, `src/activity`, `src/memory` (extended later by G3) | each directory exports `routes.ts` |
 | `web/packages/archon/` | `@aether-ui/archon` | C1 `src/queue`, `src/item`, `src/pipeline`; C2 `src/dag`, `src/initiatives`, `src/history` | `routes.ts` per directory |
 | `web/packages/github/` | `@aether-ui/github` | D4 | `routes.ts`, entity actions |
-| `web/packages/noesis/` | `@aether-ui/noesis` | F5 (F6 `src/understand`) | `routes.ts`, entity actions |
 | `web/packages/settings/` | `@aether-ui/settings` | B3 | `routes.ts` |
 | `web/apps/web/` | app | A3 | browser entry, `sw.js`, manifest |
 | `web/apps/desktop/` | app | E1 `src/{main,preload,bridge,security}`; E2 `src/{native,discovery,lifecycle}`; E3 packaging files | §2.4 |
-| `web/e2e/` | tests | H1 `harness/**` and `specs/smoke/**`; H4 `specs/flows/**`; F7 `specs/noesis/**`; feature specs live under `web/e2e/specs/<feature>/**`. Run by `scripts/e2e.sh`; not part of `make ci`. | |
+| `web/e2e/` | tests | H1 `harness/**` and `specs/smoke/**`; H4 `specs/flows/**`; feature specs live under `web/e2e/specs/<feature>/**`. Run by `scripts/e2e.sh`; not part of `make ci`. | |
 | `web/perf/` | tests | H2: the frontend performance runner and budgets, with the budgets in `web/perf/budgets.json`. The check fails more than 10% over budget. | |
 | `web/dist/`, `web/schemas/` | generated | SYNC | |
 
@@ -232,7 +227,6 @@ Electron serves `app://`.
 | `#/archon/queue`, `#/archon/items/:item`, `#/archon/items/:item/runs/:run` | C1 |
 | `#/archon/graph`, `#/archon/initiatives/:id`, `#/archon/history` | C2 |
 | `#/github/:host/:owner/:repo/:number` | D4 |
-| `#/learn`, `#/learn/sessions/:id`, `#/learn/graph`, `#/learn/me` | F5 |
 | `#/settings/*` | B3 |
 | `#/pair/:daemon` | A2 (flow) / A3 (screen) |
 
@@ -269,7 +263,6 @@ type PrivilegedAction =
   | {kind: "device.revoke"; conn: string; device: string}
   | {kind: "remote.enable" | "remote.disable"; conn: string}
   | {kind: "remote.mount"; conn: string; prefix: "/archon"; target_port: number}
-  | {kind: "noesis.configure"; conn: string; patch: NoesisSettingsPatch}   // host-only keys of §6.1
   | {kind: "archon.operator_change"; conn: string; request: "merge" | "unblock" | "settings"; item?: string; patch?: unknown}
   | {kind: "engine.login"; conn: string; engine: "claude" | "codex"};      // opens a terminal; no secret crosses IPC
 ```
@@ -289,7 +282,7 @@ connection that main discovered locally. Main:
   - *Consequential values* are always shown in full and never cut: role,
     memory id, mount prefix and port, `request` kind, item id, and **every
     changed key of a settings patch with its old and new value**.
-  - Patches are limited to known keys (§6.1, Archon settings), so their full
+  - Patches are limited to known keys (Archon settings), so their full
     rendering is bounded. If the full rendering exceeds 60 lines, main
     refuses the action and asks for smaller patches; it never shows a
     partial diff;
@@ -309,8 +302,7 @@ connections therefore never use the `ipc` transport; inside a remote window
 
 These types live in `web/packages/protocol/src/app.ts`, so `ui` and `graph`
 can use them without importing `core`. Runtime registries are in `core`.
-`app.ts` also declares the types §2.4 names, `LocalDaemon` and
-`NoesisSettingsPatch` among them.
+`app.ts` also declares the types §2.4 names, `LocalDaemon` among them.
 
 ```ts
 type ConnId = string;                                   // §5.1
@@ -369,8 +361,6 @@ welcome or setting changes.
 | `standing.<conn>` | `"local"` \| `"operator"` \| `"observer"` |
 | `can.operate.<conn>` | standing is `local` or `operator` |
 | `can.host_admin.<conn>` | standing is `local` (each use still needs native confirmation) |
-| `noesis.available` | an Aether connection lists `noesis` and `noesis_status.enabled` |
-| `noesis.engineering_context` | `noesis.available` and that setting is on |
 | `desktop.notifications`, `desktop.dialogs`, `desktop.deep_links`, `desktop.managed_start` | Electron with the matching adapter or setting |
 
 ## 4. Design tokens (Frozen names; values open, owner A3)
@@ -406,8 +396,7 @@ Follow-up requirement: the eslint-tokens rule's `TIMING_KEY` matches only
 duration and delay keys. Today it matches more than those.
 
 Fonts are bundled (OFL), never fetched. Focus is always visible through
-`--focus-ring`. LearnHarness's "no-ring" rule is not adopted, for
-accessibility.
+`--focus-ring`, for accessibility.
 
 ## 5. Event subscription and resync (Frozen; owner A2)
 
@@ -464,183 +453,6 @@ Store updates are batched to one per animation frame. Graph layouts recompute
 only on structural change (nodes or edges added or removed), never on a
 status change. Lists of more than 200 rows and every transcript are
 virtualized.
-
-## 6. Noesis service (owners F1–F8)
-
-### 6.1 Settings keys (Frozen; Aether config table `[noesis]`, read by `noesis_status`, written by `noesis_configure`)
-
-| Key | Type, default | Notes |
-| --- | --- | --- |
-| `noesis.enabled` | bool, `false` | master switch (§8 of the issue) |
-| `noesis.engineering_context` | bool, `false` | requires `enabled` |
-| `noesis.extraction.sessions` | `"manual"\|"auto"`, `"manual"` | auto requires `enabled`; extract after teaching turns |
-| `noesis.extraction.engineering` | `"off"\|"auto"`, `"off"` | auto requires `enabled` and `engineering_context` |
-| `noesis.budget.interactive_usd_daily` | f64 ≥ 0, `5.0` | 0 = refuse; estimates count for subscription engines |
-| `noesis.budget.background_usd_daily` | f64 ≥ 0, `1.0` | |
-| `noesis.budget.background_tokens_daily` | u64, `2_000_000` | |
-| `noesis.concurrency.interactive` | 1..=4, `2` | |
-| `noesis.concurrency.background` | 0..=3, `1` | 0 = no background jobs |
-| `noesis.priority.background` | `"low"\|"normal"`, `"low"` | |
-| `noesis.models.strong` / `noesis.models.cheap` | model id or unset | unset = first ready subscription model |
-| `noesis.billing.allow_api` | bool, `false` | API providers only when true |
-| `noesis.disable.grace_seconds` | 0..=300, `60` | in-flight interactive turn grace on disable |
-| `noesis.prompts.overrides` | bool, `false` | when true, a file `<aether data dir>/noesis/prompts/<agent>/<NN-name>.md` replaces the built-in segment of that name |
-
-Writing `enabled`, budgets, billing or `prompts.overrides` is `host_only`.
-The other keys are `operate`.
-
-Prerequisites (ARCHITECTURE.md §g): a switch is effective only when its
-prerequisites are effective. `noesis_configure` accepts any stored
-combination. `noesis_status` returns `settings` (as stored) and `effective`
-(after prerequisites). Turning a prerequisite off never rewrites a
-dependent's stored value.
-
-### 6.2 Commands (Frozen names and required fields; feature `noesis`)
-
-Every command except `noesis_status` and `noesis_configure` returns
-`unavailable {reason: "noesis_disabled"}` while disabled, with no side
-effect. While disabled, `noesis_configure` only validates and writes the
-`[noesis]` config. A patch setting `enabled = true` is written first, and the
-service starts only after the write succeeds; `noesis.db` is opened then and
-not before. Mutations take `idempotency_key`.
-
-| Command | Fields → reply | Class |
-| --- | --- | --- |
-| `noesis_status` | `{}` → `{enabled, settings, effective, jobs_running, spend_today: {interactive: Usage, background: Usage}, disable_policy: {grace_seconds, background: "cancel_at_model_boundary"}, prompt_overrides: string[]}` | observe |
-| `noesis_configure` | `{patch: settings subset}` → `noesis_status` | host_only / operate (§6.1) |
-| `noesis_create_session` | `{goal: string (1..=2000), mode: "teach"\|"practice", context?: EvidenceBundle, practice_targets?: PropositionId[]}` → `noesis_session` | operate |
-| `noesis_send` | `{session, text (1..=20000)}` → `ok` | operate |
-| `noesis_answer` | `{session, question: QuestionId, answer: {choices?: string[], text?: string, dont_know: bool, confidence?: 0\|30\|50\|70\|90\|100, thinking?: string}}` → `ok` | operate |
-| `noesis_get_session` / `noesis_list_sessions` | `{session}` / `{after?, limit? (1..=200)}` → `noesis_session` / `noesis_sessions {sessions: noesis_session[], next_after?}` | observe |
-| `noesis_delete_session` | `{session, graph: "preserve"\|"delete_nodes"}` → `ok` | operate |
-| `noesis_graph` | `{query?: string, session?, source?, limit? (1..=5000)}` → `noesis_graph {nodes: Proposition[], chains: Chain[], clusters: Cluster[], truncated: bool}` | observe |
-| `noesis_delete_proposition` | `{proposition}` → `ok` (its chains go with it) | operate |
-| `noesis_delete_source` | `{source, graph: "preserve"\|"delete_unsupported"}` → `ok`; `conflict` while a job on it runs | operate |
-| `noesis_extract` | exactly one of `{session}` / `{source}` → `noesis_job {job: Job}` | operate |
-| `noesis_import_source` | `{name (1..=200), artifact: ArtifactId}` → `noesis_import {source: SourceId, job: Job}` | operate |
-| `noesis_jobs` / `noesis_cancel_job` | `{state?}` → `noesis_jobs {jobs: Job[]}` / `{job}` → `ok` | observe / operate |
-| `noesis_learner` | `{concepts?: ConceptId[], query?: string, limit? (1..=1000)}` → `noesis_learner {concepts: ConceptState[]}` | observe |
-| `noesis_learner_evidence` | `{concept, before?: u64, limit? (1..=500)}` → `noesis_evidence {evidence: Evidence[], next_before?: u64}` | observe |
-| `noesis_correct_learner` | `{concept, state: ConceptStateKind, reason (1..=500)}` → `ConceptState` | operate |
-
-The conversation itself is the agent's transcript (`get_transcript_page`).
-
-**Sealed fields (Frozen; owner F3, tests F7).** `noesis.ask` `answer_key` and
-`explanation`, and `noesis.problem` `solution`, are *sealed*. The runtime
-seals them where the tool call is produced and persisted, so every read path
-sees the same projection, for every standing including `local`:
-- No `tool_input` delta is produced for a sealed tool call. The tool name is
-  known when the call starts, so this happens before `invocation_seq` is
-  assigned (§1.1) and leaves no gap.
-- The persisted tool-call entry stores the input with each sealed field
-  replaced by the string `"<sealed>"`. `get_transcript_page`, `get_events`,
-  `subscribe`, agent reads, run reports and logs
-  therefore never carry the value. The value is kept only in `noesis.db`,
-  keyed by question or problem id.
-- `thinking` of `subsystem = "noesis"` agents is neither produced as a delta
-  nor returned by any transcript read.
-- Reveal is only through Noesis objects: `QuestionResult` in
-  `noesis.answer_recorded` after the answer is recorded, and `solution` in
-  `noesis.practice_concluded` after `conclude`. The transcript stays sealed.
-- No command, of any class, reads a sealed value before its reveal. Outside
-  the daemon, the plaintext exists only in `noesis.db` and the engine CLI's
-  own session files on the host (the user's own files, mode 0600).
-
-**Wire objects (Frozen).** Ids are opaque strings with prefixes `ns_`
-(session), `q_` (question), `p_` (proposition), `c_` (chain), `k_` (concept),
-`s_` (source) and `j_` (job). Proposition and chain ids are content-derived.
-
-```text
-noesis_session = {id, goal, mode: teach|practice, phase: probe|plan|teach|practice, agent: AgentId,
-                  plan?: PlanTree, open_question?: Question, active_problem?: Problem, created_at, updated_at}
-PlanTree       = {revision: u32, nodes: [{id: slug, title, status: upcoming|current|visited}], edges: [{from, to}]}
-Question       = {id, kind: choice|recall|goal, prompt, options?: [{value, label}], multi: bool,
-                  collapsed: bool, plan_node?: slug, concepts: ConceptId[], posed_at}
-                  // the answer key is never sent before the answer is recorded
-QuestionResult = {question, correct?: bool, answer_key?: string[] | string, explanation?}
-Problem        = {id, statement, mode: recall|discrimination|composition, targets: PropositionId[], posed_at}
-Proposition    = {id, name, statement, aliases: string[], provenance: [{source: SessionId|SourceId, message_ref?}], created_at}
-Chain          = {id, premises: PropositionId[], conclusion: PropositionId, provenance, created_at}
-Cluster        = {id, session: SessionId, members: PropositionId[]}
-Job            = {id, kind: extract_session|extract_source|extract_engineering, target: string,
-                  state: queued|running|merging|succeeded|failed|cancelled, stats?: {nodes, chains, dropped_chains},
-                  error?: string, usage: Usage, created_at, updated_at}
-ConceptStateKind = unseen|exposed|demonstrated|fragile|misconception
-ConceptState   = {concept: {id, kind: proposition|plan_node|topic, ref, title}, state: ConceptStateKind,
-                  strength: f64 (0..=1), last_success_at?, review_due_at?, calibration?: f64,
-                  misconceptions: string[], as_of_evidence: u64}
-Evidence       = {id: u64, concept, session?, at, kind: probe_answer|predict_answer|check_answer|recall_judged|
-                  practice_conclude|exposure|misconception_observed|operator_correction,
-                  outcome: correct|incorrect|dont_know|exposed|observed|corrected,
-                  confidence?: 0|30|50|70|90|100, mode?, hint_rung?: 0..=5, miss_class?: cue|discrimination|execution|careless|structural, note?}
-```
-
-**Events (Frozen; family `noesis`, durable):**
-
-| Event | Payload |
-| --- | --- |
-| `noesis.session_created` | `{session: noesis_session}` |
-| `noesis.phase_changed` | `{session, from, to}` |
-| `noesis.question_posed` | `{session, question: Question}` |
-| `noesis.answer_recorded` | `{session, result: QuestionResult}` |
-| `noesis.plan_updated` | `{session, plan: PlanTree}` |
-| `noesis.problem_posed` | `{session, problem: Problem}` |
-| `noesis.practice_concluded` | `{session, problem, outcome: solved\|solved_with_hints\|moved_on\|surrendered\|dismissed, rung?, miss_class?, retest: bool, solution: string}` |
-| `noesis.job_updated` | `{job: Job}` |
-| `noesis.graph_merged` | `{job, stats}` |
-| `noesis.learner_updated` | `{concepts: ConceptId[]}` |
-| `noesis.settings_changed` | `{settings, effective}` |
-
-F3 generates every shape in this section, wiring included, in one change.
-F2, F4 and F8 fill these shapes and never edit the protocol. A shape change
-they need is a CONTRACTS.md edit, made by the current protocol owner (F3,
-and G3 after it merges) as an optional field. A required field is never
-added later.
-
-### 6.3 Evidence bundle (Frozen; owner F6)
-
-`EvidenceBundle = {title, items: [{ref: {kind: "pr"|"issue"|"item"|"run"|"stage"|"commit"|"file"|"agent", id: string, url?: string}, excerpt: string, status: "verified"|"reviewed"|"preliminary"}]}`.
-The total of all excerpts is at most 32 KiB. The frontend assembles it from
-reads the user can already make. Noesis stores it with the session and never
-fetches more on its own.
-
-### 6.4 Learner model (wire Frozen in §6.2; storage settled by F4)
-
-The wire shapes `ConceptState` and `Evidence` are frozen above. The storage
-follows NOESIS.md §5. N2 adds three tables to noesis.db.
-
-- `concepts`: id TEXT PK `k_…`; kind proposition|plan_node|topic; ref TEXT
-  non-empty; title TEXT; created_at TEXT RFC 3339 ms; UNIQUE(kind, ref).
-- `evidence`, append-only (a BEFORE UPDATE trigger aborts; the store has no
-  update or delete): id INTEGER PK AUTOINCREMENT, the wire `Evidence.id`;
-  concept → concepts(id); session TEXT nullable, a plain value with no key;
-  at TEXT; kind (the 8 §6.2 kinds); outcome (the 6 §6.2 outcomes);
-  confidence 0|30|50|70|90|100 nullable; dont_know 0|1 = (outcome =
-  'dont_know'), with no confidence when 1; mode
-  recall|discrimination|composition nullable; hint_rung 0..5 nullable;
-  miss_class nullable; note TEXT; corrected_state (a ConceptStateKind), set
-  exactly on operator_correction rows. CHECKs tie exposure↔exposed,
-  misconception_observed↔observed and operator_correction↔corrected. Index
-  (concept, id).
-- `concept_state`, a derived cache written only by the learner model's
-  rebuild: concept PK → concepts(id); state; strength REAL 0..1;
-  last_success_at; review_due_at (both null or both set); calibration REAL
-  0..1 nullable; misconceptions JSON string[]; as_of_evidence INTEGER;
-  derived_at TEXT. Indexes on state and on review_due_at.
-- No learner table has a key, trigger or view tied to a graph table. They
-  share proposition ids only as plain values in `concepts.ref`.
-- On the wire, a correction's state appears at the start of its note as
-  "<state>: <reason>".
-
-### 6.5 Learning data retention (settled by F3)
-
-`noesis.db` holds Noesis's own state. The teaching conversations are
-transcripts of Aether agents in run `noesis`, and Aether's history retention
-keeps and expires them. `noesis_delete_session` deletes the session's Noesis
-rows and its evidence bundle, not the Aether transcript: history is
-append-only, and only retention removes it. The UI states that the
-conversation remains in Aether history. Transcripts never hold sealed values
-(§6.2) or Noesis thinking.
 
 ## 7. Memory 2.0 (Aether side Frozen, settled by G3; Archon side settled by G5; owners G1–G5)
 
@@ -953,8 +765,7 @@ beside FILE, then renames it onto FILE, so FILE is never half an artifact. With 
   (at most 32, a PR by its URL), `support?: u32` (distinct item refs), `cluster?: LessonId`
   (the smallest id of its near-duplicate group). `holdout_lift` appears only when both arms
   have at least 20 scored runs; Archon config `learning.holdout_rate` (0..0.2, default 0).
-- Ownership stays split: Noesis never reads or writes either store, and
-  disabling Noesis changes nothing here.
+- Ownership stays split: each store keeps its own owner.
 
 ## 8. Remote configuration keys (Frozen; owners AE-M, AR-R)
 

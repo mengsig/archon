@@ -80,7 +80,7 @@ test('observer: a change from the app is refused with the reason', async ({ brow
   try {
     await pairAs(page, fixture, 'observer');
     const line = await send(page, '/archon apply {"cmd":"set_directive","text":"observer says","expires_in_hours":null}');
-    await expect(line).toContainText('Not sent: say changes Archon, and this device is paired as an observer; pair it as an operator to act from it');
+    await expect(line).toContainText('Not sent: say changes Archon. This is an observer device: it can only read. Pair it as an operator to act from it.');
     expect(await directives(fixture)).toEqual([]);
   } finally {
     await context.close();

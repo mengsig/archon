@@ -22,7 +22,7 @@ pub const COOKIE: &str = "archon_device";
 
 const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; \
     font-src 'self'; manifest-src 'self'; worker-src 'self'; connect-src 'self'; \
-    base-uri 'self'; form-action 'none'; frame-ancestors 'none'";
+    base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 /// A refused request: its status, a stable `code` and a message.
 #[derive(Debug)]

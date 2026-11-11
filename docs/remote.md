@@ -235,8 +235,8 @@ role, and whether it applied. Host administration (`shutdown`, `upgrade`,
 and every agent-side request stay with the CLI on the host; they and a
 second `hello` are refused with `forbidden` and the message "… is host
 administration, which only the archon CLI on the host does". A change from
-an observer gets "… changes Archon, and this device is paired as an
-observer; pair it as an operator to act from it", and a request a revoked
+an observer gets "… changes Archon. This is an observer device: it can
+only read. Pair it as an operator to act from it.", and a request a revoked
 device had already sent gets "… refused: this device was unpaired or remote
 access was turned off".
 

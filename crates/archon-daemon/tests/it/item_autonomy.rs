@@ -11,7 +11,8 @@ use archon_core::config::Config;
 use archon_core::error::ArchonError;
 use archon_core::model::ModelPlan;
 use archon_core::protocol::{
-    ClientKind, EnqueueRequest, ItemPatch, Reply, RepoPatch, RepoRef, Request,
+    ClientKind, DeviceRole, EnqueueRequest, ItemPatch, Reply, RepoPatch, RepoRef, Request,
+    WelcomeDevice,
 };
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::steer::Steer;
@@ -166,6 +167,47 @@ async fn web_cannot_set_privileged_knobs_even_when_the_ceiling_allows_them() {
         );
         assert_eq!(h.item(&item.id).await.autonomy.review, ReviewLevel::Strict);
     }
+}
+
+fn device(role: DeviceRole) -> WelcomeDevice {
+    WelcomeDevice {
+        id: "dev_01M621D9ZBJPTMDTV26KKQNBE1".into(),
+        name: "phone".into(),
+        role,
+    }
+}
+
+/// An operator-role device sets what the operator's CLI sets, within the
+/// ceiling; an observer device is told it observes.
+#[tokio::test]
+async fn an_operator_device_sets_privileged_knobs_within_the_ceiling_and_an_observer_cannot() {
+    let (h, _gh) = delivering().await;
+    ceiling(&h, "merge=auto,tools=yolo").await;
+    let item = enqueue(&h, AutonomyPatch::default()).await;
+    let observer = device(DeviceRole::Observer);
+    let refused =
+        handlers::handle_device(&h.ctx, &observer, web_change(&item, "merge=auto", false));
+    let Err(ArchonError::Forbidden(message)) = refused.await else {
+        panic!("an observer device set merge=auto");
+    };
+    assert!(message.contains("observer device"), "{message}");
+    let operator = device(DeviceRole::Operator);
+    for (knob, steer) in [("merge=auto", false), ("tools=yolo", true)] {
+        let result =
+            handlers::handle_device(&h.ctx, &operator, web_change(&item, knob, steer)).await;
+        assert!(matches!(result, Ok(Reply::Item(_))), "{knob}: {result:?}");
+    }
+    let stored = h.item(&item.id).await;
+    assert_eq!(stored.autonomy.merge, MergeMode::Auto);
+    assert_eq!(stored.autonomy.tools, ToolsMode::Yolo);
+    ceiling(&h, "merge=manual,tools=guarded").await;
+    let fresh = enqueue(&h, AutonomyPatch::default()).await;
+    let above = handlers::handle_device(&h.ctx, &operator, web_change(&fresh, "merge=auto", false));
+    assert!(
+        matches!(above.await, Err(ArchonError::Forbidden(_))),
+        "the ceiling still binds"
+    );
+    assert_eq!(h.item(&fresh.id).await.autonomy, fresh.autonomy);
 }
 
 async fn updated(h: &Harness, item: &QueueItem, list: &str) -> QueueItem {

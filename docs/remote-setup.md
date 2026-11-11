@@ -129,9 +129,10 @@ works through the mount alone.
   rate-limited and five wrong ones close the pairing.
 - Each device has its own credential per daemon, stored only as a hash.
   `archon remote revoke` takes Archon's back and disconnects it at once.
-- A paired browser can do only what Archon's screens offer, and each action
-  goes through archond's operator checks, as your CLI's do. Merges,
-  promotions, settings and ceilings stay on the CLI.
+- A device paired as an operator (the default) has your full operator
+  power: from the app it does what you do from the TUI, through archond's
+  operator checks, as your CLI's do. Pair a phone others may hold with
+  `archon remote pair --observer`, and revoke a lost one at once.
 
 ## Troubleshooting
 

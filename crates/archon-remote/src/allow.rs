@@ -1,41 +1,42 @@
-//! What a paired device may ask archond, by its role. An operator runs the
-//! queue, its gates and the operator chat; an observer only reads. Each
-//! request runs with `archon-web` standing, so archond's own checks apply
-//! as well; nothing here grants authority.
+//! What a paired device may ask archond, by its role. An operator-role
+//! device has the operator's own authority (docs/remote.md): the queue, its
+//! gates, the operator chat, directives, settings and the GitHub watcher. An
+//! observer only reads. Host administration stays with the CLI on the host.
 
-use archon_core::protocol::{DeviceRole, PauseTarget, Request};
+use archon_core::protocol::{DeviceRole, Request};
 
 /// Why a device may not send a request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Refusal {
-    /// Host administration, settings, merges and agent requests: CLI only.
+    /// Host administration and agent requests: the archon CLI on the host.
     HostOnly,
-    /// A hard pause or resume also stops or starts stage agents: CLI only.
-    Hard,
-    /// A change, and the device only observes.
+    /// A change, and the device was paired as an observer.
     Observer,
+    /// The device was unpaired, or remote access turned off, since it connected.
+    Revoked,
 }
 
 impl Refusal {
-    /// The refusal's message, naming the request.
+    /// The refusal's message, naming the request and the reason.
     pub fn message(self, name: &str) -> String {
         match self {
             Self::HostOnly => {
-                format!("{name} is not available from the web app; use the archon CLI")
+                format!("{name} is host administration, which only the archon CLI on the host does")
             }
-            Self::Hard => {
-                format!("{name} with hard is for the archon CLI; the web app pauses softly")
-            }
-            Self::Observer => format!("{name} changes Archon, and this device only observes"),
+            Self::Observer => format!(
+                "{name} changes Archon, and this device is paired as an observer; \
+                 pair it as an operator to act from it"
+            ),
+            Self::Revoked => format!(
+                "{name} refused: this device was unpaired or remote access was turned off; \
+                 pair it again"
+            ),
         }
     }
 }
 
 /// Whether a device in `role` may send `request`, or why not.
 pub fn check(role: DeviceRole, request: &Request) -> Result<(), Refusal> {
-    if hard(request) {
-        return Err(Refusal::Hard);
-    }
     if !operates(request) {
         return Err(Refusal::HostOnly);
     }
@@ -51,18 +52,15 @@ pub fn allowed(role: DeviceRole, request: &Request) -> bool {
     check(role, request).is_ok()
 }
 
-fn hard(request: &Request) -> bool {
-    matches!(
-        request,
-        Request::Pause(PauseTarget::Global { hard: true })
-            | Request::Resume(PauseTarget::Global { hard: true })
-    )
+/// What an operator device may send: what the operator does from the TUI.
+/// Host administration (shutdown, upgrade, gc, remote access itself), caps,
+/// repository removal and promotions, and every agent-side request stay with
+/// the CLI on the host.
+fn operates(request: &Request) -> bool {
+    reads(request) || operator_changes(request)
 }
 
-/// What an operator device may send. Host administration (shutdown,
-/// upgrade, gc, remote access itself), settings and ceilings, merges and
-/// promotions, and every agent-side request stay with the CLI.
-fn operates(request: &Request) -> bool {
+fn reads(request: &Request) -> bool {
     use Request as R;
     matches!(
         request,
@@ -96,7 +94,14 @@ fn operates(request: &Request) -> bool {
             | R::ItemLinks { .. }
             | R::IssueItems { .. }
             | R::ListGithubObjects { .. }
-            | R::Enqueue(_)
+    )
+}
+
+fn operator_changes(request: &Request) -> bool {
+    use Request as R;
+    matches!(
+        request,
+        R::Enqueue(_)
             | R::SteerItem { .. }
             | R::UpdateItem { .. }
             | R::CancelItem { .. }
@@ -105,6 +110,15 @@ fn operates(request: &Request) -> bool {
             | R::Resume(_)
             | R::Answer { .. }
             | R::Say { .. }
+            | R::OperatorCommand { .. }
+            | R::MergeItem { .. }
+            | R::SetDirective { .. }
+            | R::ClearDirective { .. }
+            | R::SetSettings { .. }
+            | R::ResetSettings { .. }
+            | R::RepoAdd(_)
+            | R::RepoUpdate { .. }
+            | R::ConfigureGithubWatcher { .. }
             | R::LinkIssue { .. }
             | R::UnlinkIssue { .. }
             | R::ImportIssue { .. }
@@ -141,17 +155,33 @@ mod tests {
             "cmd": "enqueue", "title": "t", "brief": "b", "repo": null, "pipeline": null,
             "depends_on": [], "budget_usd": null, "idempotency_key": null,
         });
+        let repo_add = serde_json::json!({
+            "cmd": "repo_add", "path": "/srv/r", "name": null, "ship": null, "base_branch": null,
+            "default_pipeline": null, "auto_merge": true, "github_watch": true,
+        });
         [
             enqueue,
             serde_json::json!({"cmd": "cancel_item", "item": ITEM}),
             serde_json::json!({"cmd": "retry_item", "item": ITEM}),
             serde_json::json!({"cmd": "steer_item", "item": ITEM, "steer": {"note": "note"}}),
             serde_json::json!({"cmd": "update_item", "item": ITEM, "patch": {"priority": "high"}}),
+            serde_json::json!({"cmd": "update_item", "item": ITEM, "patch": {"autonomy": {"merge": "auto", "tools": "yolo"}}}),
             serde_json::json!({"cmd": "pause", "scope": "global"}),
+            serde_json::json!({"cmd": "pause", "scope": "global", "hard": true}),
+            serde_json::json!({"cmd": "resume", "scope": "global", "hard": true}),
             serde_json::json!({"cmd": "resume", "scope": "repo", "name": "archon"}),
             serde_json::json!({"cmd": "pause", "scope": "pipeline", "name": "adaptive"}),
             serde_json::json!({"cmd": "answer", "question": "q_01M621D9ZBJPTMDTV26KKQNBE1", "text": "yes"}),
             serde_json::json!({"cmd": "say", "text": "hi"}),
+            serde_json::json!({"cmd": "operator_command", "text": "/archon pause --hard"}),
+            serde_json::json!({"cmd": "merge_item", "item": ITEM}),
+            serde_json::json!({"cmd": "set_directive", "text": "docs only", "expires_in_hours": null}),
+            serde_json::json!({"cmd": "clear_directive", "directive": null}),
+            serde_json::json!({"cmd": "set_settings", "repo": null, "settings": {}}),
+            serde_json::json!({"cmd": "reset_settings", "repo": null}),
+            repo_add,
+            serde_json::json!({"cmd": "repo_update", "repo": "archon", "patch": {}}),
+            serde_json::json!({"cmd": "configure_github_watcher", "change": {"action": "add", "repository": "o/r"}}),
             serde_json::json!({"cmd": "link_issue", "item": ITEM, "ref": github_ref(), "relation": "closes"}),
             serde_json::json!({"cmd": "unlink_issue", "item": ITEM, "ref": github_ref(), "relation": "closes"}),
             serde_json::json!({"cmd": "import_issue", "ref": github_ref()}),
@@ -174,7 +204,7 @@ mod tests {
             );
         }
         let changes = operator_changes();
-        assert_eq!(changes.len(), 13, "every change parsed");
+        assert_eq!(changes.len(), 25, "every change parsed");
         for request in &changes {
             assert!(allowed(DeviceRole::Operator, request), "{request:?}");
         }
@@ -210,27 +240,18 @@ mod tests {
     }
 
     #[test]
-    fn a_hard_pause_or_resume_is_refused_to_every_role() {
-        for role in [DeviceRole::Operator, DeviceRole::Observer] {
-            for request in [
-                Request::Pause(PauseTarget::Global { hard: true }),
-                Request::Resume(PauseTarget::Global { hard: true }),
-            ] {
-                assert_eq!(
-                    check(role, &request),
-                    Err(Refusal::Hard),
-                    "{role:?} {request:?}"
-                );
-            }
-            let soft = Request::Pause(PauseTarget::Global { hard: false });
-            assert_eq!(allowed(role, &soft), role == DeviceRole::Operator);
-        }
-        let hard = parse(serde_json::json!({"cmd": "resume", "scope": "global", "hard": true}));
-        assert!(!allowed(DeviceRole::Operator, &hard));
+    fn each_refusal_names_its_real_reason() {
+        let observer = Refusal::Observer.message("set_directive");
+        assert!(observer.contains("paired as an observer"), "{observer}");
+        let revoked = Refusal::Revoked.message("say");
+        assert!(revoked.contains("unpaired"), "{revoked}");
+        let host = Refusal::HostOnly.message("shutdown");
+        assert!(host.contains("host administration"), "{host}");
+        assert!(host.starts_with("shutdown"), "{host}");
     }
 
     #[test]
-    fn administration_merges_and_agent_requests_are_refused() {
+    fn administration_and_agent_requests_are_refused() {
         for json in [
             serde_json::json!({"cmd": "shutdown"}),
             serde_json::json!({"cmd": "remote_pair"}),
@@ -238,10 +259,12 @@ mod tests {
             serde_json::json!({"cmd": "remote_status"}),
             serde_json::json!({"cmd": "remote_revoke", "device": "x"}),
             serde_json::json!({"cmd": "orchestrator_restart"}),
-            serde_json::json!({"cmd": "operator_command", "text": "/archon resume --hard"}),
             serde_json::json!({"cmd": "ask_operator", "text": "?", "item": null}),
             serde_json::json!({"cmd": "for_agent", "caller": "agt_1", "request": {"cmd": "status"}}),
-            serde_json::json!({"cmd": "merge_item", "item": ITEM}),
+            serde_json::json!({"cmd": "repo_remove", "repo": "archon"}),
+            serde_json::json!({"cmd": "promote", "repo": "archon"}),
+            serde_json::json!({"cmd": "request_authority", "action": {"cmd": "status"}, "utterance": 1, "quote": "q", "reason": "r", "caller": null}),
+            serde_json::json!({"cmd": "gc", "older_than_secs": null, "force": false}),
         ] {
             let request = parse(json.clone());
             for role in [DeviceRole::Operator, DeviceRole::Observer] {

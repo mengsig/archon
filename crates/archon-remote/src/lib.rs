@@ -3,9 +3,10 @@
 //! until the operator enables it, bound to loopback, and reached through
 //! the `/archon` mount of Aether's listener, whose app has Archon's screens.
 //!
-//! A paired device gets no authority of its own: [`allow::check`] picks the
-//! requests its role may send, and [`Backend`] hands each to archond with
-//! `archon-web` standing.
+//! [`allow::check`] picks the requests a paired device's role may send, and
+//! [`Backend`] hands each to archond with the device that sent it: an
+//! operator-role device acts with the operator CLI's standing, an observer
+//! only reads.
 
 pub mod allow;
 mod assets;
@@ -22,7 +23,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Instant;
 
 use archon_core::error::ArchonError;
-use archon_core::protocol::{DeviceRole, Reply, Request, ServerFrame};
+use archon_core::protocol::{DeviceRole, Reply, Request, ServerFrame, WelcomeDevice};
 use archon_core::remote::{DeviceView, PairingCode, RemoteChange, RemoteConfig, RemoteView};
 use tokio::sync::mpsc;
 
@@ -34,9 +35,9 @@ use crate::store::Stored;
 /// How archond serves what a device sends.
 #[async_trait::async_trait]
 pub trait Backend: Send + Sync + 'static {
-    /// Answer one request a device in `role` is allowed, with `archon-web`
-    /// standing.
-    async fn handle(&self, role: DeviceRole, request: Request) -> Result<Reply, ArchonError>;
+    /// Answer one request `device` is allowed, with the standing its role
+    /// gives: the operator CLI's for an operator, `archon-web`'s otherwise.
+    async fn handle(&self, device: &WelcomeDevice, request: Request) -> Result<Reply, ArchonError>;
     /// Send `subscribe_feed`'s reply and then its feed frames to `frames`
     /// until it closes, as the Unix socket does.
     async fn feed(&self, subscription: FeedSubscription, frames: mpsc::Sender<ServerFrame>);

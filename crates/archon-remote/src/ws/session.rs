@@ -43,6 +43,8 @@ enum Ended {
 
 struct Session {
     backend: Arc<dyn Backend>,
+    /// The listener's state, to see a revoke before each request runs.
+    shared: Arc<crate::Shared>,
     /// The paired device the session runs for; its role is fixed at pairing.
     device: WelcomeDevice,
     outbox: mpsc::Sender<ServerFrame>,
@@ -57,6 +59,7 @@ struct Session {
 pub async fn carry<S>(
     io: S,
     backend: Arc<dyn Backend>,
+    shared: Arc<crate::Shared>,
     device: WelcomeDevice,
     mut registration: Registration,
 ) where
@@ -69,6 +72,7 @@ pub async fn carry<S>(
     let (outbox, mut frames) = mpsc::channel(OUTBOX_FRAMES);
     let mut session = Session {
         backend,
+        shared,
         device,
         outbox,
         in_flight: Arc::new(Semaphore::new(MAX_IN_FLIGHT)),
@@ -267,6 +271,8 @@ fn dispatch(session: &mut Session, id: u64, request: Request) -> Result<(), Ende
     let role = session.device.role;
     let refusal = match request {
         Request::Hello { .. } => Err(crate::allow::Refusal::HostOnly),
+        // A revoke closes the session too; this covers a request already read.
+        _ if !session.shared.admits(&session.device.id) => Err(crate::allow::Refusal::Revoked),
         ref request => crate::allow::check(role, request),
     };
     if let Err(refusal) = refusal {
@@ -285,8 +291,9 @@ fn dispatch(session: &mut Session, id: u64, request: Request) -> Result<(), Ende
         return queue(session, error_frame(id, ErrorCode::Unavailable, message));
     };
     let (backend, outbox) = (session.backend.clone(), session.outbox.clone());
+    let device = session.device.clone();
     session.tasks.spawn(async move {
-        let result = backend.handle(role, request).await;
+        let result = backend.handle(&device, request).await;
         let frame = ServerFrame::Reply {
             id,
             result: result.map_err(|e| ErrorReply::from(&e)),

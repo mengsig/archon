@@ -52,7 +52,8 @@ pub fn upgrade(
         match on_upgrade.await {
             Ok(upgraded) => {
                 shared.note_seen(&named.id);
-                session::carry(TokioIo::new(upgraded), backend, named, registration).await;
+                let io = TokioIo::new(upgraded);
+                session::carry(io, backend, shared, named, registration).await;
             }
             Err(error) => tracing::debug!(%error, "a WebSocket upgrade did not complete"),
         }

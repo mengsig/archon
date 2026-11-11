@@ -12,7 +12,7 @@ use archon_queue::store::keys;
 use common::{Harness, ORCHESTRATOR, REPO_NAME};
 use serde_json::{Value, json};
 
-async fn harness(mode: AetherMode) -> Harness {
+pub(crate) async fn harness(mode: AetherMode) -> Harness {
     let mut config = Config::default();
     config.aether.mode = mode;
     let h = Harness::with_config(config).await;
@@ -33,7 +33,7 @@ fn set_origin(h: &Harness) {
     );
 }
 
-fn user(text: &str) -> Value {
+pub(crate) fn user(text: &str) -> Value {
     json!({"kind":"message","from":{"actor":"user"},"content":[{"type":"text","text":text}]})
 }
 
@@ -50,11 +50,11 @@ async fn deliver_at(h: &Harness, seq: u64, kind: Value, at: archon_core::Timesta
     .unwrap();
 }
 
-async fn deliver(h: &Harness, seq: u64, kind: Value) {
+pub(crate) async fn deliver(h: &Harness, seq: u64, kind: Value) {
     deliver_at(h, seq, kind, archon_core::now()).await;
 }
 
-fn grant(value: bool) -> Request {
+pub(crate) fn grant(value: bool) -> Request {
     Request::RepoUpdate {
         repo: RepoRef(REPO_NAME.into()),
         patch: RepoPatch {
@@ -64,7 +64,7 @@ fn grant(value: bool) -> Request {
     }
 }
 
-fn cited(action: Request, seq: u64, quote: &str) -> Request {
+pub(crate) fn cited(action: Request, seq: u64, quote: &str) -> Request {
     Request::RequestAuthority {
         action: Box::new(action),
         utterance: seq,
@@ -74,7 +74,7 @@ fn cited(action: Request, seq: u64, quote: &str) -> Request {
     }
 }
 
-async fn granted(h: &Harness) -> bool {
+pub(crate) async fn granted(h: &Harness) -> bool {
     h.ctx
         .store
         .lock()
@@ -84,7 +84,7 @@ async fn granted(h: &Harness) -> bool {
         .grant_merge
 }
 
-async fn confirmation(h: &Harness, seq: u64) -> Question {
+pub(crate) async fn confirmation(h: &Harness, seq: u64) -> Question {
     let reply = h
         .orchestrator(cited(grant(true), seq, "grant requested merges"))
         .await
@@ -1124,7 +1124,10 @@ fn github_from(repository: &str, login: &str, text: &str) -> Value {
         "payload":{"repository":repository, "number":1,"requester":login,"operator":true,"text":text}})
 }
 
-async fn watched(h: &Harness, allowed: Option<Value>) -> archon_aether::fake::FakeAether {
+pub(crate) async fn watched(
+    h: &Harness,
+    allowed: Option<Value>,
+) -> archon_aether::fake::FakeAether {
     use archon_aether::{AetherClient, fake::FakeAether};
     let dir = tempfile::tempdir().unwrap();
     let fake = FakeAether::start(&dir.path().join("scope.sock"))
@@ -1208,15 +1211,16 @@ async fn a_login_outside_the_repository_allowlist_is_refused_for_it() {
     assert!(h.ctx.store.lock().await.questions(true).unwrap().is_empty());
 }
 
-fn user_from(origin: Value, text: &str) -> Value {
+pub(crate) fn user_from(origin: Value, text: &str) -> Value {
     json!({"kind":"message","from":{"actor":"user","origin":origin},
         "content":[{"type":"text","text":text}]})
 }
 
-/// Aether names a paired device's chat the `user` actor as well; only a
-/// connection to Aether's own host listeners speaks for the operator.
+/// Aether names a paired device's chat the `user` actor as well; a device
+/// Aether's session does not name an operator (an older Aether) speaks for
+/// no one, whatever its line says.
 #[tokio::test]
-async fn an_aether_paired_device_confers_no_archon_authority() {
+async fn an_aether_device_without_the_operator_role_confers_no_archon_authority() {
     let h = harness(AetherMode::Dedicated).await;
     let command = format!("/archon set --repo {REPO_NAME} grant_merge=true");
     let device = json!({"transport":"device","device":"dev_1","name":"phone","connection":"c1"});

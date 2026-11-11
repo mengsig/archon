@@ -100,23 +100,20 @@ the store up yourself first (step 2 below).
 - A device is an `operator` (the default, and every device paired before
   1.5.0) or an `observer`, paired with `archon remote pair --observer`,
   which only reads.
-- A device's requests run with the Aether app's standing (`archon-web`),
-  not the operator CLI's. `pause` and `resume` with `hard` are refused to
-  every device, and a soft resume no longer lifts the operator's hard pause.
-- From the security audit ([vnext-audit.md](security/vnext-audit.md)),
-  a device never carries operator authority:
-  - a web device's `say` reaches the orchestrator marked, so `/archon`,
-    `/watch`, `/merge` and `/upgrade` in it are not run and the
-    orchestrator cannot cite it for `request_authority`;
-  - chat from a device paired with Aether, rather than the host's own Aether
-    connection, is not operator chat either;
-  - a web `answer` cannot confirm an authority change, and its reply to an
-    Aether question goes out marked like `say`;
-  - an answer from an Aether-paired device in the notification center is
-    refused for Archon's gates and questions.
-
-  Answer these on the host instead: `archon answer`, the TUI, or Aether on
-  this machine.
+- **A device paired as an operator has your full operator power**: its
+  requests run with the operator CLI's standing and its chat lines are
+  yours, so from the app it does what you do from the TUI (`/archon`,
+  `/answer`, `/approve`, `/merge`, directives, settings, the GitHub watcher,
+  `merge=auto` within the ceiling, hard pause). Every device paired before
+  1.5.0 is an operator: re-pair a phone others may hold as an observer, and
+  revoke any device you lost.
+- An observer only reads: the app's `say` and `answer` are refused to it
+  with "… paired as an observer; pair it as an operator to act from it". A
+  device Aether paired without stamping its operator role (Aether before
+  1.3.0) carries no operator authority
+  ([vnext-audit.md](security/vnext-audit.md)): its chat is not operator
+  chat, and its answer in the notification center is refused for Archon's
+  gates and questions.
 - Devices may also read the change stream, item history, the task graph,
   run plans and GitHub links, and operators may link and unlink issues
   and import one ([remote.md](remote.md#what-a-device-may-do)).

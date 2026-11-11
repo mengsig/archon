@@ -509,6 +509,25 @@ async fn an_answer_from_an_aether_paired_device_is_refused() {
     assert!(question(&h, &asked.id).await.is_open());
 }
 
+/// A device Aether's session names an operator answers as the host does.
+#[tokio::test]
+async fn an_answer_from_a_device_aether_paired_as_operator_is_applied() {
+    let h = Harness::new().await;
+    let center = Center::default();
+    center.install(&h);
+    let _bridge = bridge(&h, h.connect().await).await;
+    let asked = ask(&h, "Ship it?", &["yes", "no"]).await;
+    posted(&h, &center, asked.id.as_str()).await;
+    let mut operator = paired_device();
+    operator["origin"]["role"] = json!("operator");
+    let record = center.answer(asked.id.as_str(), Some("1"), None, operator);
+    h.fake.push_event(answered_event(record));
+    h.eventually("the operator device's answer closes it", || async {
+        !question(&h, &asked.id).await.is_open()
+    })
+    .await;
+}
+
 #[tokio::test]
 async fn a_paired_devices_answer_given_meanwhile_is_refused_on_connect() {
     let h = Harness::new().await;

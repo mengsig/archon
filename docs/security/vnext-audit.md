@@ -336,3 +336,27 @@ test notification_center::an_answer_from_an_aether_paired_device_is_refused ... 
 With the fixes, `cargo test -p archon-aether --lib` passes 68 of 68, and
 `cargo test -p archon-daemon --test it -- operator_authority notification_center link_supervisor link_images chat_ops chat_answer handlers::`
 passes 167 of 167.
+
+## Since 1.5.0: operator-role devices carry operator authority
+
+The operator asked that a phone paired as an operator do what the TUI does,
+so H3-A1, H3-A2, H3-A5 and H3-A9 now hold for devices that are **not**
+paired as operators, and an operator-role device gets the operator's
+authority on purpose. The role comes only from the store of the daemon that
+paired the device:
+
+- archond's own devices: `crates/archon-daemon/src/remote.rs` hands the
+  device to `handlers::handle_device`, which gives an operator-role device
+  the CLI's standing and an observer `archon-web`'s. Tests:
+  `crates/archon-daemon/tests/it/device_authority.rs`.
+- Aether's devices: `archon_aether::events::is_operator_user` (formerly
+  `is_host_user`) accepts a device line only with the `role: "operator"`
+  Aether's session stamps on its origin; `NotificationAnswer::by_host` is now
+  `with_operator_standing`. Tests: `a_device_aether_paired_as_operator_is_an_operator_channel`
+  and `a_web_relay_or_a_device_not_paired_as_operator_is_never_an_operator_channel`
+  (`events.rs`), `an_aether_device_without_the_operator_role_confers_no_archon_authority`
+  (formerly `an_aether_paired_device_confers_no_archon_authority`) and
+  `an_answer_from_a_device_aether_paired_as_operator_is_applied`.
+
+The web relay mark, the observer refusals and shared mode's refusal of chat
+citations are unchanged.

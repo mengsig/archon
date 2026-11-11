@@ -91,8 +91,14 @@ pub(super) struct Attributed<F> {
 }
 
 pub(super) fn attributed<F: Future>(client: ClientKind, request: F) -> Attributed<F> {
+    attributed_as(actor_of(client), request)
+}
+
+/// [`attributed`] for a request whose actor its client kind does not say,
+/// such as a paired device's, which acts with the CLI's standing.
+pub(super) fn attributed_as<F: Future>(actor: TransitionActor, request: F) -> Attributed<F> {
     Attributed {
-        actor: actor_of(client),
+        actor,
         request: Box::pin(request),
     }
 }

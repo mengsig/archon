@@ -33,7 +33,9 @@ use archon_core::error::ArchonError;
 use archon_core::id::{QuestionId, QueueItemId};
 use archon_core::merge::MergeAuthority;
 use archon_core::notify::{AnswerVia, Question};
-use archon_core::protocol::{ClientKind, ItemPatch, Reply, RepoRef, Request};
+use archon_core::protocol::{
+    ClientKind, DeviceRole, ItemPatch, Reply, RepoRef, Request, TransitionActor, WelcomeDevice,
+};
 use tokio::sync::RwLockReadGuard;
 
 use crate::context::DaemonContext;
@@ -90,6 +92,43 @@ pub async fn handle(
     request: Request,
 ) -> Result<Reply, ArchonError> {
     changes::attributed(client, handle_unattributed(ctx, client, request)).await
+}
+
+/// A paired device's request (docs/remote.md). An operator-role device has
+/// the operator CLI's standing, and a host command typed in the app's chat
+/// runs as the TUI runs it; an observer keeps `archon-web` standing. The
+/// item transitions either makes are recorded as the web app's.
+pub async fn handle_device(
+    ctx: &DaemonContext,
+    device: &WelcomeDevice,
+    request: Request,
+) -> Result<Reply, ArchonError> {
+    assert!(!device.id.is_empty(), "the listener names the device");
+    assert!(
+        !matches!(request, Request::ForAgent { .. } | Request::Tracked { .. }),
+        "a device's request is its own, never forwarded"
+    );
+    let (client, request) = match device.role {
+        DeviceRole::Operator => (ClientKind::ArchonCli, as_tui_command(request)),
+        DeviceRole::Observer => (ClientKind::ArchonWeb, request),
+    };
+    let request = handle_unattributed(ctx, client, request);
+    changes::attributed_as(TransitionActor::Web, request).await
+}
+
+/// The TUI sends a host command (`/archon …`, `/answer …`) as an operator
+/// command, never as a chat line to the orchestrator; so does a device.
+fn as_tui_command(request: Request) -> Request {
+    match request {
+        Request::Say { text, images }
+            if images.is_empty() && crate::operator_commands::names_host_command(&text) =>
+        {
+            Request::OperatorCommand {
+                text: text.trim().to_owned(),
+            }
+        }
+        request => request,
+    }
 }
 
 async fn handle_unattributed(
@@ -168,7 +207,7 @@ async fn refuse_early(
             patch.merge == Some(MergeMode::Auto) || patch.tools == Some(ToolsMode::Yolo)
         }) {
             return Err(ArchonError::Forbidden(
-                "a paired device cannot set merge=auto or tools=yolo; use the operator's CLI"
+                "an observer device cannot set merge=auto or tools=yolo; pair it as an operator"
                     .into(),
             ));
         }

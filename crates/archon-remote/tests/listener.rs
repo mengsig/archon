@@ -7,7 +7,8 @@ use std::time::Duration;
 
 use archon_core::error::ArchonError;
 use archon_core::protocol::{
-    DeviceRole, MIN_WEB_PROTOCOL_VERSION, PROTOCOL_VERSION, Reply, Request, ServerFrame, feature,
+    DeviceRole, MIN_WEB_PROTOCOL_VERSION, PROTOCOL_VERSION, Reply, Request, ServerFrame,
+    WelcomeDevice, feature,
 };
 use archon_core::remote::{RemoteChange, RemoteConfig};
 use archon_remote::{Backend, ChangeSubscription, FeedSubscription, Remote};
@@ -28,8 +29,15 @@ struct FakeArchond {
 
 #[async_trait::async_trait]
 impl Backend for FakeArchond {
-    async fn handle(&self, role: DeviceRole, request: Request) -> Result<Reply, ArchonError> {
-        assert!(archon_remote::allow::allowed(role, &request), "{request:?}");
+    async fn handle(&self, device: &WelcomeDevice, request: Request) -> Result<Reply, ArchonError> {
+        assert!(
+            archon_remote::allow::allowed(device.role, &request),
+            "{request:?}"
+        );
+        assert!(
+            device.id.starts_with("dev_"),
+            "the listener names the device"
+        );
         let name = archon_remote::allow::command_name(&request);
         self.asked.lock().unwrap().push(name);
         Ok(Reply::Ok)
@@ -471,17 +479,21 @@ async fn the_socket_carries_allowed_requests_and_refuses_the_rest() {
     .await;
     assert_eq!(refused["id"], 3);
     assert_eq!(refused["result"]["Err"]["code"], "forbidden", "{refused}");
+    let message = refused["result"]["Err"]["message"].as_str().unwrap();
+    assert!(message.contains("host administration"), "{message}");
     let merge =
         serde_json::json!({"req": 4, "cmd": "merge_item", "item": "qi_01M621D9ZBJPTMDTV26KKQNBE1"});
-    let refused = exchange(&mut socket, merge).await;
-    assert_eq!(refused["result"]["Err"]["code"], "forbidden", "{refused}");
+    assert_eq!(outcome(&mut socket, merge).await, "ok");
     let feed = exchange(
         &mut socket,
         serde_json::json!({"req": 5, "cmd": "subscribe_feed", "after": null, "verbose": false}),
     )
     .await;
     assert_eq!(feed["result"]["Ok"]["reply"], "subscribed", "{feed}");
-    assert_eq!(*listener.backend.asked.lock().unwrap(), ["repo_list"]);
+    assert_eq!(
+        *listener.backend.asked.lock().unwrap(),
+        ["repo_list", "merge_item"]
+    );
     assert_eq!(listener.remote.view().devices[0].sessions, 1);
 }
 
@@ -662,27 +674,38 @@ async fn an_observer_reads_and_is_refused_every_change() {
         let error = &answer["result"]["Err"];
         assert_eq!(error["code"], "forbidden", "{change}: {answer}");
         let message = error["message"].as_str().unwrap();
-        assert!(message.contains("only observes"), "{message}");
+        assert!(message.contains("paired as an observer"), "{message}");
     }
     assert_eq!(*listener.backend.asked.lock().unwrap(), ["repo_list"]);
     assert_eq!(listener.remote.view().devices[0].role, DeviceRole::Observer);
 }
 
 #[tokio::test]
-async fn a_hard_pause_or_resume_is_refused_and_a_soft_one_reaches_archond() {
+async fn an_operator_device_sends_what_the_operator_does_from_the_tui() {
     let listener = Listener::start().await;
     let cookie = listener.pair().await;
     let mut socket = listener.socket(&cookie).await;
-    for cmd in ["pause", "resume"] {
-        let hard = serde_json::json!({"req": 2, "cmd": cmd, "scope": "global", "hard": true});
-        let answer = exchange(&mut socket, hard).await;
-        assert_eq!(answer["result"]["Err"]["code"], "forbidden", "{answer}");
-        let message = answer["result"]["Err"]["message"].as_str().unwrap();
-        assert!(message.contains("with hard"), "{message}");
+    let requests = [
+        serde_json::json!({"cmd": "pause", "scope": "global", "hard": true}),
+        serde_json::json!({"cmd": "resume", "scope": "global", "hard": true}),
+        serde_json::json!({"cmd": "set_directive", "text": "docs only", "expires_in_hours": null}),
+        serde_json::json!({"cmd": "clear_directive", "directive": null}),
+        serde_json::json!({"cmd": "operator_command", "text": "/archon pause --hard"}),
+    ];
+    for (n, mut request) in requests.into_iter().enumerate() {
+        request["req"] = serde_json::json!(10 + n);
+        assert_eq!(outcome(&mut socket, request).await, "ok");
     }
-    let soft = serde_json::json!({"req": 3, "cmd": "pause", "scope": "global", "hard": false});
-    assert_eq!(outcome(&mut socket, soft).await, "ok");
-    assert_eq!(*listener.backend.asked.lock().unwrap(), ["pause"]);
+    assert_eq!(
+        *listener.backend.asked.lock().unwrap(),
+        [
+            "pause",
+            "resume",
+            "set_directive",
+            "clear_directive",
+            "operator_command"
+        ]
+    );
 }
 
 #[tokio::test]

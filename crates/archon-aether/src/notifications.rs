@@ -121,10 +121,10 @@ impl NotificationAnswer {
         self.by.get("actor").and_then(|a| a.as_str()) == Some("user")
     }
 
-    /// Whether that person answered on one of the host's own Aether
-    /// connections, not from a paired remote device.
-    pub fn by_host(&self) -> bool {
-        crate::events::is_host_user(&self.by)
+    /// Whether that person has the operator's standing: on one of the host's
+    /// own Aether connections, or on a device Aether paired as an operator.
+    pub fn with_operator_standing(&self) -> bool {
+        crate::events::is_operator_user(&self.by)
     }
 }
 

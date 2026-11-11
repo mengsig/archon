@@ -12,11 +12,14 @@ and authenticated, and what a paired device may do. To set it up, follow
 
 Remote access is **off** until you switch it on. When on, archond listens on
 loopback only (`127.0.0.1:8378`); `tailscale serve` publishes Aether's
-listener, the one origin, and Aether forwards to archond. A paired device
-gets **no authority of its own**: each request it sends is checked against a fixed list
+listener, the one origin, and Aether forwards to archond. **Pairing a device as an operator (the default) gives it your full
+operator power**: from the app it does what you do from the TUI, including
+`/archon` commands, `/answer`, `/approve`, `/merge`, directives and settings.
+Pair a phone others may hold as an observer, and revoke a lost device at once
+(`archon remote revoke`). Each request is checked against a fixed list
 ([what a device may do](#what-a-device-may-do)) and then handled exactly as
-the same request from your `archon` CLI, so archond's own rules apply
-unchanged.
+the same request from your `archon` CLI, so archond's own rules (the
+autonomy ceiling, shared mode) apply unchanged.
 
 ## Contents
 
@@ -63,12 +66,14 @@ What remote access protects, and from whom:
   sessions at once (WebSocket close code 4401).
 - **A paired device doing more than you could.** It cannot: requests outside
   the [list](#what-a-device-may-do) are refused with `forbidden`, and the
-  rest go through archond's operator checks as the CLI's do, and its chat
-  lines carry no operator authority. Merges,
-  promotions, settings, autonomy ceilings, repository registration, gc,
-  upgrades and remote access itself stay on the CLI. A merge the
-  orchestrator proposes still waits for the confirmation question it
-  always asks, which you may answer from the app as from the chat.
+  rest go through archond's operator checks as the CLI's do. An operator
+  device has exactly your authority from the TUI; an observer's chat lines
+  carry none. Caps, promotions, repository removal, gc, upgrade requests and
+  remote access itself stay on the CLI. A merge the orchestrator proposes
+  still waits for the confirmation question it always asks, which you may
+  answer from the app as from the chat.
+- **A lost or stolen operator device.** It acts as you until you revoke it:
+  `archon remote revoke` refuses its next request and closes its sessions.
 - **Secrets in URLs and logs.** The pairing code is typed on the Aether
   app's Archon pairing screen and never put in a link. No credential is ever
   in a URL. archond logs device ids, never codes or credentials.
@@ -197,34 +202,55 @@ silent for 75.
 ## What a device may do
 
 A device is an **operator** (the default, and every device paired before
-1.5.0) or an **observer**, paired with `archon remote pair --observer`. An
-observer sends only the reads; an operator sends both columns:
+1.5.0) or an **observer**, paired with `archon remote pair --observer`. The
+role is the one archond stored when the device paired; nothing the browser
+sends, and no line of text, changes it. An observer sends only the reads; an
+operator sends both columns:
 
 | Reads | Changes (operators only) |
 | --- | --- |
-| `status`, `repo_list`, `list_items`, `list_item_summaries`, `get_item`, `get_stage`, `resolve_item`, `list_pipelines`, `model_policy`, `get_initiative`, `list_questions`, `feed_history`, `subscribe_feed`, `list_reports`, `orchestrator_status`, `cost_report`, `list_artifacts`, `read_artifact`, `item_diff`, `settings`, `autonomy`, `subscribe_changes`, `changes_page`, `item_history`, `task_graph`, `run_plan`, `item_links`, `issue_items`, `list_github_objects` | `enqueue`, `steer_item`, `update_item`, `cancel_item`, `retry_item`, `pause`, `resume`, `answer`, `say`, `link_issue`, `unlink_issue`, `import_issue` |
+| `status`, `repo_list`, `list_items`, `list_item_summaries`, `get_item`, `get_stage`, `resolve_item`, `list_pipelines`, `model_policy`, `get_initiative`, `list_questions`, `feed_history`, `subscribe_feed`, `list_reports`, `orchestrator_status`, `cost_report`, `list_artifacts`, `read_artifact`, `item_diff`, `settings`, `autonomy`, `subscribe_changes`, `changes_page`, `item_history`, `task_graph`, `run_plan`, `item_links`, `issue_items`, `list_github_objects` | `enqueue`, `steer_item`, `update_item`, `cancel_item`, `retry_item`, `pause`, `resume`, `answer`, `say`, `operator_command`, `merge_item`, `set_directive`, `clear_directive`, `set_settings`, `reset_settings`, `repo_add`, `repo_update`, `configure_github_watcher`, `link_issue`, `unlink_issue`, `import_issue` |
 
-Each runs with the Aether app's standing (`archon-web`), not the operator
-CLI's, so archond applies its own checks on top and records the same feed
-lines. `pause` and `resume` with `hard` are refused to every device, and a
-device's soft `resume` does not lift a hard pause the operator set.
-`steer_item` and `update_item` obey the autonomy ceiling and cannot set
-`merge=auto` or `tools=yolo` from a device, even if the ceiling allows them.
-`say` reaches the orchestrator
-marked as a web device's line: it is chat, never operator authority, so a
-`/archon`, `/watch` or `/merge` in it is not run and the orchestrator cannot
-cite it for `request_authority`. `answer` answers a question or gate as
-`archon answer` does, with two limits: it cannot confirm an authority change
-(answer that on the host), and a reply to an Aether question goes out marked
-as a web device's line, like `say`. Everything else, including a second `hello`, is refused with
-`forbidden` and the message "… is not available from the web app; use the
-archon CLI"; a change from an observer gets "… changes Archon, and this
-device only observes".
+An operator device's request runs with the operator CLI's standing, so it
+may set `merge=auto` or `tools=yolo` within the autonomy ceiling, pause or
+resume hard, and confirm an authority change with `answer`. A chat line from
+it reaches the orchestrator as your TUI's does: it is your line, and the
+orchestrator may cite it for `request_authority` (not in shared mode, which
+refuses chat citations to everyone). A line that is a host command
+(`/archon`, `/answer`, `/approve`, `/reject`, `/merge`, `/watch`,
+`/upgrade`, `/update`) runs as the TUI runs it, as an `operator_command`,
+never as a chat line, so it works while Aether is down and in shared mode as
+the CLI's does. For example, `/archon apply {"cmd":"set_directive",
+"text":"docs fixes only","expires_in_hours":null}` sets a directive and
+`/archon apply {"cmd":"clear_directive","directive":null}` clears them.
+
+An observer only reads: the listener refuses its `say` and `answer` before
+archond sees them. Behind that, archond still gives an observer's requests
+the Aether app's standing (`archon-web`), whose relayed lines go out marked
+as chat, never operator authority.
+
+archond logs every change a device asks for with the device's id, name and
+role, and whether it applied. Host administration (`shutdown`, `upgrade`,
+`gc`, `remote_*`, orchestrator restarts), caps, `repo_remove`, `promote`
+and every agent-side request stay with the CLI on the host; they and a
+second `hello` are refused with `forbidden` and the message "… is host
+administration, which only the archon CLI on the host does". A change from
+an observer gets "… changes Archon, and this device is paired as an
+observer; pair it as an operator to act from it", and a request a revoked
+device had already sent gets "… refused: this device was unpaired or remote
+access was turned off".
+
+A device Aether paired (Aether's own app) is Aether's business: its chat
+line is an operator's line for Archon only when Aether's session stamps the
+device's operator role on it (`origin.role`, Aether 1.3.0 and later). An
+older Aether, or a device Aether paired as an observer, confers nothing.
 
 ## Revoking and switching off
 
 - `archon remote revoke <id or name>` forgets one device and closes its
-  sessions at once; its cookie no longer works. "Forget this device" in the
+  sessions at once; its cookie no longer works, and a request it had
+  already sent is refused. Revoke a lost or stolen phone at once: an
+  operator device holds your full operator power. "Forget this device" in the
   app does the same for the browser in your hand. Aether's device for the
   same browser is Aether's to revoke (`archon aether remote revoke`).
 - `archon remote disable` closes the listener, every session (4403) and any

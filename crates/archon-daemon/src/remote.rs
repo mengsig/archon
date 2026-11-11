@@ -1,11 +1,11 @@
-//! archond's side of the remote listener: requests a paired device's role
-//! allows run with `archon-web` standing (docs/remote.md), so a handler can
-//! refuse what only the operator's CLI may do.
+//! archond's side of the remote listener: a paired device's request runs
+//! with the standing its role in archond's store gives (docs/remote.md). An
+//! operator-role device has the operator CLI's; an observer only reads.
 
 use std::sync::{Arc, Weak};
 
 use archon_core::error::ArchonError;
-use archon_core::protocol::{ClientKind, DeviceRole, Reply, Request, ServerFrame, feature};
+use archon_core::protocol::{Reply, Request, ServerFrame, WelcomeDevice, feature};
 use archon_remote::{Backend, ChangeSubscription, FeedSubscription};
 use tokio::sync::mpsc;
 
@@ -27,17 +27,19 @@ impl DaemonBackend {
 
 #[async_trait::async_trait]
 impl Backend for DaemonBackend {
-    async fn handle(&self, role: DeviceRole, request: Request) -> Result<Reply, ArchonError> {
+    async fn handle(&self, device: &WelcomeDevice, request: Request) -> Result<Reply, ArchonError> {
         assert!(
-            archon_remote::allow::allowed(role, &request),
+            archon_remote::allow::allowed(device.role, &request),
             "the listener sends only what the device's role allows"
         );
-        assert!(
-            !matches!(request, Request::ForAgent { .. } | Request::Tracked { .. }),
-            "a device's request is its own, never forwarded"
-        );
         let ctx = self.context()?;
-        crate::handlers::handle(&ctx, ClientKind::ArchonWeb, request).await
+        if request.is_read_only() {
+            return crate::handlers::handle_device(&ctx, device, request).await;
+        }
+        let command = archon_remote::allow::command_name(&request);
+        let result = crate::handlers::handle_device(&ctx, device, request).await;
+        log_change(device, &command, &result);
+        result
     }
 
     fn features(&self) -> Vec<&'static str> {
@@ -61,6 +63,19 @@ impl Backend for DaemonBackend {
             after: subscription.after,
         };
         crate::handlers::changes::stream(ctx, sub, frames).await;
+    }
+}
+
+/// Every change a device asks for names the device and its role in the log.
+fn log_change(device: &WelcomeDevice, command: &str, result: &Result<Reply, ArchonError>) {
+    let role = device.role;
+    match result {
+        Ok(_) => {
+            tracing::info!(device = %device.id, name = %device.name, ?role, command, "a paired device's request applied")
+        }
+        Err(error) => {
+            tracing::info!(device = %device.id, name = %device.name, ?role, command, %error, "a paired device's request refused")
+        }
     }
 }
 

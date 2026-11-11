@@ -96,6 +96,7 @@
   backdrop-filter: saturate(180%) blur(20px);
   transition: transform var(--t-med) var(--ease-out);
 }
+.tabbar-brand { display: none; }
 .keyboard-open .tabbar { transform: translateY(110%); }
 .tab {
   flex: 1;

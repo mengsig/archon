@@ -109,8 +109,8 @@ the store up yourself first (step 2 below).
   revoke any device you lost.
 - An observer only reads: the app's `say` and `answer` are refused to it
   with "… paired as an observer; pair it as an operator to act from it". A
-  device Aether paired without stamping its operator role (Aether before
-  1.3.0) carries no operator authority
+  device Aether paired without stamping its operator role (an older Aether)
+  carries no operator authority
   ([vnext-audit.md](security/vnext-audit.md)): its chat is not operator
   chat, and its answer in the notification center is refused for Archon's
   gates and questions.

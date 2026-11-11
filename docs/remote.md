@@ -242,8 +242,8 @@ access was turned off".
 
 A device Aether paired (Aether's own app) is Aether's business: its chat
 line is an operator's line for Archon only when Aether's session stamps the
-device's operator role on it (`origin.role`, Aether 1.3.0 and later). An
-older Aether, or a device Aether paired as an observer, confers nothing.
+device's operator role on it (`origin.role: "operator"`). An Aether that
+stamps no role, or a device Aether paired as an observer, confers nothing.
 
 ## Revoking and switching off
 

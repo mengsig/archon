@@ -12,9 +12,10 @@ A minor release for the unified Aether app (#377). archond speaks daemon
 protocol 24: a gapless change stream and per-item history, a task graph and
 run plans, items linked to GitHub issues and pull requests with a read-only
 cache, issue import and an at-most-once comment outbox. Remote access is
-served through Aether's `/archon` mount (archond's mobile web app is
-unchanged and opens at `/archon/`), paired devices get roles, and a device's chat or answer never carries
-operator authority. Lessons cluster near duplicates and can be measured
+served through Aether's `/archon` mount, where archond serves the 1.4.12
+phone app again (same tabs and functionality, with a light facelift), paired
+devices get roles, and an operator-role device has the operator's authority
+from the app. Lessons cluster near duplicates and can be measured
 against a holdout.
 
 **Read [docs/upgrading.md](docs/upgrading.md#from-14x-to-150) before
@@ -136,29 +137,38 @@ again from the Aether app a browser that paired on another hostname.
 - Paired devices have a role (#380): `operator`, the default and every
   device paired before, or `observer`, which only reads (`archon remote pair
   --observer`, refused by an archond that does not serve roles).
-  `remote.json` moves to format 2 only once an observer is paired. A
-  device's requests run with the Aether app's standing, not the CLI's;
-  `pause` and `resume` with `hard` are refused to every device, and a soft
-  resume no longer lifts the operator's hard pause. Devices may read the
+  `remote.json` moves to format 2 only once an observer is paired. An
+  operator device's requests run with the operator CLI's standing; an
+  observer's run with the Aether app's. Host administration stays CLI-only,
+  and a revoked device is refused on its next request. Devices may read the
   change stream, history, task graph, run plans, links, model policy and
   initiative detail; operators may also steer and update items, and link,
-  unlink and import issues. Daemon autonomy and authority checks still apply;
-  devices cannot set `merge=auto` or `tools=yolo` on items.
+  unlink and import issues. Daemon autonomy and authority checks still apply.
+- The 1.4.12 phone app is restored and served by archond, reached from the
+  phone through Aether's `/archon` mount (it opens at `/archon/`), with the
+  same tabs and functionality. A light CSS-only facelift, and fixes that keep
+  toasts clear of the composer and the worker from deleting other apps'
+  caches, come with it.
 
 ### Security
 
 From the audit in [docs/security/vnext-audit.md](docs/security/vnext-audit.md)
-(#388): a paired device never carries operator authority.
+(#388) and the operator-device change that followed it.
 
-- A web device's `say` reaches the orchestrator marked, so `/archon`,
-  `/watch`, `/merge` and `/upgrade` in it are not run and the orchestrator
-  cannot cite it for `request_authority` (H3-A1).
-- Chat from a device paired with Aether is no longer operator chat; only
-  the host's own Aether connection is (H3-A2).
-- A web `answer` cannot confirm an authority change (H3-A5), and its reply
-  to an Aether question goes out marked like `say` (H3-A8).
-- An Aether-paired device's answer in the notification center is refused
-  for Archon's gates and questions (H3-A9).
+- A device paired with archond as an operator has the operator CLI's
+  standing: its chat lines can be cited for `request_authority`, and a host
+  command typed in the app (`/archon`, `/answer`, `/approve`, `/merge`)
+  runs as an operator command. Shared mode still refuses chat citations.
+  Observers only read, a revoked device is refused on its next request, and
+  host administration stays CLI-only. Each change a device asks for is
+  logged with its id, name and role.
+- **Pairing a device as an operator grants full operator power; revoke lost
+  devices** with `archon remote revoke`.
+- An Aether device's line counts as the operator's only when Aether stamps
+  `origin.role == "operator"` on it; a missing or other role, or text in the
+  line, confers nothing.
+- An observer's `say` and `answer` are refused, and its relayed lines go out
+  marked as chat, never as operator authority.
 
 ### Lessons
 
@@ -189,7 +199,7 @@ From the audit in [docs/security/vnext-audit.md](docs/security/vnext-audit.md)
 - A hung orchestrator turn no longer holds your messages for hours (#393). When a
   turn is still silent 5 minutes after the stall nudge, archond interrupts it,
   as Esc would, so the queued inbox, operator messages included, reaches a fresh
-  turn; at most 3 times per orchestrator. Operator chat or an `@archon` request
+  turn; at most 3 times per orchestrator generation. Operator chat or an `@archon` request
   delivered to a turn silent for 10 minutes starts this at once instead of
   after 30.
 - Effort sizing, an opt-in: `[models] effort_sizing = true` (default `false`,
@@ -243,8 +253,8 @@ From the audit in [docs/security/vnext-audit.md](docs/security/vnext-audit.md)
 - The vNext design is recorded in `docs/vnext/` (baseline, architecture,
   contracts, workstreams and the Noesis study), and the security audit in
   `docs/security/vnext-audit.md`.
-- Aether 1.3.0's `fable` now means Claude Fable 5.2; `claude-fable-5-1` stays
-  available.
+- The model list in [docs/configuration.md](docs/configuration.md) now names
+  `claude-code/claude-fable-5-2`, the Fable model Aether lists.
 
 ## 1.4.12
 

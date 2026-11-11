@@ -130,8 +130,9 @@ again from the Aether app a browser that paired on another hostname.
   own reason while anything on the machine is published through Funnel,
   withdraws an earlier direct publication of archond, and reads before each
   step, so a rerun changes nothing and says so. It keeps Aether's pairing
-  setting and writes through a symlinked `config.toml`. Archon's screens are
-  part of the Aether app; each daemon pairs the browser with its own device.
+  setting and writes through a symlinked `config.toml`. Archon ships its own
+  phone app, served by archond; each daemon pairs the browser with its own
+  device.
 - Mounted, archond scopes its device cookie to `/archon`, accepts only the
   trusted origins and answers only loopback `Host` values on its own port.
 - Paired devices have a role (#380): `operator`, the default and every
@@ -146,7 +147,7 @@ again from the Aether app a browser that paired on another hostname.
   unlink and import issues. Daemon autonomy and authority checks still apply.
 - The 1.4.12 phone app is restored and served by archond, reached from the
   phone through Aether's `/archon` mount (it opens at `/archon/`), with the
-  same tabs and functionality. A light CSS-only facelift, and fixes that keep
+  same tabs and functionality. A light facelift (mostly CSS), and fixes that keep
   toasts clear of the composer and the worker from deleting other apps'
   caches, come with it.
 

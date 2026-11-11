@@ -58,8 +58,8 @@ runs the same checks without one. Without `flock` (util-linux) it runs
 without a slot and says so. GitHub CI runs one job per runner and is
 unaffected.
 
-Archon's screens are part of the Aether app, so this repository has no
-browser tests: `crates/archon-remote/tests/listener.rs` and
+Archon's phone app is served by archond and has no browser tests in this
+repository: `crates/archon-remote/tests/listener.rs` and
 `crates/archon/tests/remote.rs` cover the listener, pairing and `archon
 remote setup` against stand-ins.
 

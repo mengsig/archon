@@ -8,6 +8,7 @@ mod daemon;
 mod doctor;
 mod first_run;
 mod gc;
+pub(crate) mod github;
 mod github_watcher;
 mod initiatives;
 mod instance;
@@ -21,6 +22,7 @@ mod release;
 pub(crate) mod remote;
 mod repo;
 mod reports;
+pub(crate) mod schema;
 mod settings;
 mod talk;
 mod update;
@@ -82,6 +84,7 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
         } => cost::evidence(repo, pipeline, stage, since.as_deref(), json).await,
         Command::Autonomy(args) => autonomy::run(args, json).await,
         Command::Settings { repo, set, reset } => settings::run(repo, set, reset, json).await,
+        Command::Github { command } => github::run(command, json).await,
         Command::GithubWatcher { command } => github_watcher::run(command, json).await,
         Command::Remote { command } => remote::run(command, json).await,
         Command::Pause(args) => control::pause(args, true, json).await,
@@ -98,6 +101,7 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
         Command::Reports { command } => reports::run(command, json).await,
         Command::Setup { print, resync } => instance::setup(print, resync, json).await,
         Command::Release(command) => release::run(command, json).await,
+        Command::Schema(args) => schema::run(&args),
         Command::Doctor => doctor::run(json).await,
         Command::Tui(args) => instance::tui(args).await,
         Command::Aether { args } => instance::passthrough(&args).await,
@@ -167,6 +171,7 @@ fn json_refusal(command: Option<&Command>) -> Option<&'static str> {
         | Command::Reports { .. }
         | Command::Settings { .. }
         | Command::Autonomy(_)
+        | Command::Github { .. }
         | Command::GithubWatcher { .. }
         | Command::Remote { .. }
         | Command::Pause(_)
@@ -174,6 +179,7 @@ fn json_refusal(command: Option<&Command>) -> Option<&'static str> {
         | Command::Setup { .. }
         | Command::Doctor
         | Command::Release(_)
+        | Command::Schema(_)
         | Command::Gc { .. }
         | Command::Orchestrator { .. }
         | Command::Update(_) => None,
@@ -280,8 +286,10 @@ mod tests {
             &["reports"],
             &["reports", "reopen", "rpt_1"],
             &["doctor"],
+            &["schema"],
             &["github-watcher"],
             &["github-watcher", "add", "o/r"],
+            &["github", "import", "o/r#1"],
             &["update", "--check"],
         ] {
             assert_eq!(refusal(args), None, "{args:?}");

@@ -49,6 +49,7 @@ impl Store {
                 _ => return Err(ArchonError::Store("unknown lesson state".into())),
             }
         }
+        stats.holdout_lift = super::super::lessons::holdout_lift(&self.conn, repo)?;
         assert!(stats.corrected <= stats.outcomes);
         Ok(stats)
     }

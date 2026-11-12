@@ -98,6 +98,9 @@ async fn serve_connection(
                     protocol_version: PROTOCOL_VERSION,
                     daemon_version: "fake".into(),
                     pid: 7,
+                    min_protocol_version: PROTOCOL_VERSION,
+                    features: Vec::new(),
+                    device: None,
                 }))
             }
             request => {
@@ -635,6 +638,8 @@ fn answer_long_history(request: &Request) -> Result<Reply, ErrorReply> {
                         next_action,
                     }),
                     switched_to: None,
+                    issue: None,
+                    pr: None,
                 }
             })
             .collect(),

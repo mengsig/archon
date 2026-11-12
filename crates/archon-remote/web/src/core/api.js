@@ -1,3 +1,5 @@
+import { BASE } from './base.js';
+
 // The HTTP half of the server contract: health, session and pairing.
 export class ApiError extends Error {
   constructor(code, message, status, retryAfterSecs = null, options = undefined) {
@@ -16,7 +18,7 @@ async function call(method, path, body) {
   }
   let response;
   try {
-    response = await fetch(path, init);
+    response = await fetch(BASE + path, init);
   } catch (err) {
     throw new ApiError('network', 'The host cannot be reached.', 0, null, { cause: err });
   }

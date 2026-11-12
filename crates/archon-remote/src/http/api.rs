@@ -64,8 +64,9 @@ pub fn claim(
             return Err(refused(refusal));
         }
     }
+    let role = open.role();
     *pairing = None;
-    let issued = Device::issue(name, archon_core::now()).map_err(internal)?;
+    let issued = Device::issue(name, role, archon_core::now()).map_err(internal)?;
     let device = issued.device.clone();
     state
         .update(&shared.path, |stored| {
@@ -79,7 +80,8 @@ pub fn claim(
         StatusCode::OK,
         &serde_json::json!({"device": device_json(&device)}),
     );
-    let cookie = credential_cookie(&issued.credential, origin.starts_with("https://"));
+    let secure = origin.starts_with("https://");
+    let cookie = credential_cookie(&issued.credential, secure, shared.config.cookie_path());
     response.headers_mut().insert(header::SET_COOKIE, cookie);
     Ok(response)
 }
@@ -100,9 +102,8 @@ pub fn forget(shared: &Shared, headers: &HeaderMap) -> Result<Response<Body>, Ht
     let device = authenticate(shared, headers)?;
     shared.revoke(&device.id).map_err(internal)?;
     let mut response = json(StatusCode::OK, &serde_json::json!({}));
-    response
-        .headers_mut()
-        .insert(header::SET_COOKIE, super::clear_cookie());
+    let cleared = super::clear_cookie(shared.config.cookie_path());
+    response.headers_mut().insert(header::SET_COOKIE, cleared);
     Ok(response)
 }
 
@@ -136,13 +137,17 @@ pub fn authenticate(shared: &Shared, headers: &HeaderMap) -> Result<Device, Http
 }
 
 fn device_json(device: &Device) -> serde_json::Value {
-    serde_json::json!({"id": device.id, "name": device.name, "paired_at": device.paired_at})
+    serde_json::json!({
+        "id": device.id, "name": device.name, "role": device.role, "paired_at": device.paired_at,
+    })
 }
 
-fn credential_cookie(credential: &str, secure: bool) -> HeaderValue {
+/// The device's credential, sent back only on `path`: `/`, or the mount.
+fn credential_cookie(credential: &str, secure: bool, path: &str) -> HeaderValue {
+    assert!(path.starts_with('/'), "a cookie path is absolute: {path:?}");
     let secure = if secure { "; Secure" } else { "" };
     let cookie = format!(
-        "{COOKIE}={credential}; Path=/; HttpOnly; SameSite=Strict; Max-Age={COOKIE_MAX_AGE_SECS}{secure}"
+        "{COOKIE}={credential}; Path={path}; HttpOnly; SameSite=Strict; Max-Age={COOKIE_MAX_AGE_SECS}{secure}"
     );
     HeaderValue::from_str(&cookie).expect("credentials are base64url")
 }

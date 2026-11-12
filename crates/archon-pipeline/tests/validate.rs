@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use archon_core::autonomy::{Autonomy, ProposalMode, ReportMode};
 use archon_core::catalog::{Gate, StageKind};
 use archon_pipeline::builtin::BUILTINS;
-use archon_pipeline::{Catalog, autonomy, template};
+use archon_pipeline::{Catalog, autonomy, contract, template};
 
 const HEADER: &str = r#"
 [pipeline]
@@ -787,7 +787,101 @@ fn adaptive_prices_what_it_delegates_and_records_what_ships() {
     assert!(!spec.prompts.contains_key("ship.md"), "no agent ships");
     let nudge = spec.stage("build").unwrap().nudge.as_deref().unwrap();
     assert!(nudge.contains("at medium effort (the default); high for hard multi-file work"));
-    assert!(nudge.contains("x_high or max only for a reasoning problem you can name"));
+    assert!(nudge.contains("x_high only for a reasoning problem you can name"));
+}
+
+/// The four levels a review may take, as every reviewer-delegating prompt
+/// and contract words them, and the one-line reason a move off the default owes.
+const REVIEW_LEVELS: [&str; 4] = [
+    "`low` for a trivial diff",
+    "`medium` for a small or low-risk",
+    "`high` for a risky diff",
+    "`x_high` for concurrency or security analysis",
+];
+const OLD_EFFORT_RULES: [&str; 6] = [
+    "lower only for a trivial diff",
+    "Going below the default",
+    "never below one your contract names",
+    "is a floor",
+    "or higher, and high",
+    "`max` only when `x_high` failed.",
+];
+
+/// The reviewer rules archond gives a lead with no reviewer plan, sized by
+/// the rubric when `[models] effort_sizing` is on.
+fn profile_reviewers(
+    own: &archon_core::model::ModelRef,
+    policy: &archon_core::policy::ModelPolicy,
+    effort_sizing: bool,
+) -> String {
+    let profile = archon_core::config::ReviewConfig::default();
+    let catalog = archon_core::model_tier::ModelCatalog::default();
+    let args = (&profile, &catalog);
+    contract::governed_reviewer_rules(None, own, policy, args, false, effort_sizing)
+}
+
+fn assert_sizes_reviews_by_the_rubric(name: &str, text: &str) {
+    for said in REVIEW_LEVELS.iter().chain([&contract::REASON_RULE]) {
+        assert!(text.contains(said), "{name} lacks {said:?}: {text}");
+    }
+    assert!(text.contains("the rubric decides"), "{name}: {text}");
+    assert!(!text.contains("`max`"), "{name}: {text}");
+    for gone in OLD_EFFORT_RULES {
+        assert!(!text.contains(gone), "{name} keeps {gone:?}");
+    }
+}
+
+/// Both reviewer-delegating templates keep 1.4.12's reviewer efforts, the
+/// contract's floor, as the default reviewer rules do.
+#[test]
+fn reviewer_delegating_templates_keep_the_contract_s_effort_floor() {
+    let catalog = Catalog::builtin();
+    let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    for (pipeline, prompt) in [("adaptive", "build.md"), ("review", "review.md")] {
+        let text = flat(&catalog.get(pipeline).unwrap().prompts[prompt]);
+        assert!(
+            text.contains("never below one your contract names: medium for ordinary risk"),
+            "{prompt}: {text}"
+        );
+        assert!(!text.contains("rubric"), "{prompt}: {text}");
+    }
+    let rule = profile_reviewers(&"codex/m".parse().unwrap(), &Default::default(), false);
+    assert!(rule.contains("high up to x_high when you rate the change's risk medium or high"));
+    assert!(!rule.contains("rubric"), "{rule}");
+    let sized = profile_reviewers(&"codex/m".parse().unwrap(), &Default::default(), true);
+    assert_sizes_reviews_by_the_rubric("the sized reviewer rules", &sized);
+}
+
+/// By default `direct`'s lead reads 1.4.12's effort rules, no rubric. With
+/// `[models] effort_sizing` it reads the whole rubric twice: for every child
+/// in its delegation section, and for its reviewers with the reason a move owes.
+#[test]
+fn direct_implement_contract_carries_every_rubric_level_and_the_reason() {
+    let catalog = Catalog::builtin();
+    let spec = catalog.get("direct").unwrap();
+    let mode = spec.file.pipeline.workspace;
+    let own: archon_core::model::ModelRef = "claude-code/opus".parse().unwrap();
+    let policy = archon_core::policy::ModelPolicy::default();
+    let lead = |sizing| {
+        let delegation = contract::delegation_rules(mode, "any model", 2, None, sizing);
+        let reviewers = profile_reviewers(&own, &policy, sizing);
+        format!("{}{delegation}{reviewers}", spec.prompts["implement.md"])
+    };
+    let rubric = archon_core::model::EFFORT_RUBRIC;
+    let default = lead(false);
+    assert!(!default.contains(rubric), "{default}");
+    assert!(default.contains("effort medium up to x_high, and high up to x_high when you rate"));
+    let lead = lead(true);
+    assert!(lead.contains(rubric), "{lead}");
+    for level in [
+        "`low` for lookups",
+        "`medium` for routine changes",
+        "`high` for non-trivial design",
+        "`x_high` for hard reasoning",
+    ] {
+        assert!(lead.contains(level), "missing {level:?}");
+    }
+    assert_sizes_reviews_by_the_rubric("direct/implement", &lead);
 }
 
 /// `direct` escalates on what a change risks and reaches into, not on its
@@ -1019,4 +1113,25 @@ fn code_audit_auditors_take_their_lens_from_the_brief_before_the_defaults() {
         !audit.contains("Apply only lens {{fan.index}}"),
         "no fixed lens"
     );
+}
+
+#[test]
+fn strict_scenarios_need_a_test_stage_with_one_agent() {
+    let needle = "scenarios = \"strict\" needs a test stage with one agent";
+    let work = stage("build", "work", "scenarios = \"strict\"");
+    assert_refused(&work, &[], needle);
+    let fanned = stage(
+        "check",
+        "test",
+        "fan_out = 2\ngate = \"all_pass\"\nscenarios = \"strict\"",
+    );
+    assert_refused(&fanned, &[], needle);
+    let strict = stage(
+        "check",
+        "test",
+        "gate = \"all_pass\"\nscenarios = \"strict\"",
+    );
+    validate(&strict, &[]).expect("a one-agent strict test stage is valid");
+    let lenient = stage("build", "work", "scenarios = \"lenient\"");
+    validate(&lenient, &[]).expect("lenient is the default anywhere");
 }

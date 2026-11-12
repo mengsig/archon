@@ -110,12 +110,20 @@ async fn start(socket: &Path) -> anyhow::Result<ArchonClient> {
         "a mix of moved and default locations is never started"
     );
     let bin = archon_bin()?;
+    crate::startup_disk::warn_startup_disk(&Config::load_default()?, &bin);
     eprintln!(
         "archon: archond is not running; starting it (data {}, socket {})",
         archon_core::paths::data_dir().display(),
         socket.display()
     );
-    let client = ArchonClient::connect_or_start(socket, ClientKind::ArchonCli, &bin).await?;
+    let first = ArchonClient::connect_or_start(socket, ClientKind::ArchonCli, &bin).await;
+    let client = match first {
+        Ok(client) => client,
+        Err(error) if crate::startup_lock::recover(&error.to_string()).await? => {
+            ArchonClient::connect_or_start(socket, ClientKind::ArchonCli, &bin).await?
+        }
+        Err(error) => return Err(error.into()),
+    };
     assert!(client.welcome().pid > 0, "a started archond names its pid");
     Ok(client.acting_for(principal()))
 }
@@ -274,6 +282,9 @@ mod tests {
                         protocol_version: PROTOCOL_VERSION,
                         daemon_version: "test".into(),
                         pid: 1,
+                        min_protocol_version: PROTOCOL_VERSION,
+                        features: Vec::new(),
+                        device: None,
                     }),
                     Request::Status(_) => {
                         answered += 1;

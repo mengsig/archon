@@ -1110,6 +1110,8 @@ fn list_queue_shows_the_risk_level_an_item_s_delivery_labelled() {
         waiting_on: None,
         waiting_reason: None,
         switched_to: None,
+        issue: None,
+        pr: None,
     };
     let listed = render("list_queue", &Reply::ItemSummaries(vec![row(labelled)]));
     assert!(listed.contains(", risk medium"), "{listed}");
@@ -1167,6 +1169,8 @@ fn get_item_lists_the_steers_made_to_the_item() {
         waiting_on: None,
         waiting_reason: None,
         switched_to: detail.switched_to.clone(),
+        issue: None,
+        pr: None,
     };
     let listed = render("list_queue", &Reply::ItemSummaries(vec![summary]));
     let shown = render("get_item", &Reply::ItemDetail(Box::new(detail)));
@@ -1203,6 +1207,8 @@ fn list_queue_and_get_item_expose_stable_waiting_reasons_in_text_and_json() {
                 waiting_on: None,
                 waiting_reason: Some(wait.clone()),
                 switched_to: None,
+                issue: None,
+                pr: None,
             }]),
         ),
         (
@@ -1262,6 +1268,8 @@ fn dependency_titles_are_escaped_in_waiting_text() {
                 waiting_on: None,
                 waiting_reason: Some(wait.clone()),
                 switched_to: None,
+                issue: None,
+                pr: None,
             }]),
         ),
         (
@@ -1409,4 +1417,18 @@ fn descriptions_carry_the_rules_the_prompt_leaves_to_them() {
             "{tool} no longer says {rule:?}: {shown}"
         );
     }
+}
+
+#[test]
+fn model_policy_reports_the_default_effort_cap() {
+    let policy = archon_core::policy::ModelPolicy::default();
+    let text = render("model_policy", &Reply::ModelPolicy(policy));
+    assert!(text.contains("Max effort: x_high (default)"), "{text}");
+    let raised = archon_core::policy::ModelPolicy::from_lists(
+        &[],
+        &[],
+        Some(archon_core::model::Effort::Max),
+    );
+    let text = render("model_policy", &Reply::ModelPolicy(raised));
+    assert!(text.contains("Max effort: max"), "{text}");
 }

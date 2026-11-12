@@ -1,5 +1,5 @@
 //! Embeds the web app: every runtime file under `web/`, as written. Tooling,
-//! tests and dependencies are left out (docs/remote.md, "Assets").
+//! tests and dependencies are left out (web/README.md).
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};

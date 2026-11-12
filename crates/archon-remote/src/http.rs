@@ -47,7 +47,8 @@ impl HttpError {
         }
     }
 
-    fn response(self) -> Response<Body> {
+    /// The response; a cleared cookie names `cookie_path`, as it was set.
+    fn response(self, cookie_path: &str) -> Response<Body> {
         let body = serde_json::json!({"error": {"code": self.code, "message": self.message}});
         let mut response = json(self.status, &body);
         let headers = response.headers_mut();
@@ -55,7 +56,7 @@ impl HttpError {
             headers.insert(header::RETRY_AFTER, HeaderValue::from(secs));
         }
         if self.clear_cookie {
-            headers.insert(header::SET_COOKIE, clear_cookie());
+            headers.insert(header::SET_COOKIE, clear_cookie(cookie_path));
         }
         response
     }
@@ -73,8 +74,10 @@ pub fn json(status: StatusCode, body: &serde_json::Value) -> Response<Body> {
     response
 }
 
-pub fn clear_cookie() -> HeaderValue {
-    let cookie = format!("{COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0");
+/// Drop the credential cookie set at `path`, `/` or the mount prefix.
+pub fn clear_cookie(path: &str) -> HeaderValue {
+    assert!(path.starts_with('/'), "a cookie path is absolute: {path:?}");
+    let cookie = format!("{COOKIE}=; Path={path}; HttpOnly; SameSite=Strict; Max-Age=0");
     HeaderValue::from_str(&cookie).expect("the cookie is ASCII")
 }
 
@@ -88,7 +91,7 @@ pub async fn respond(
         Ok(response) => response,
         Err(error) => {
             tracing::debug!(status = %error.status, code = error.code, "remote request refused");
-            error.response()
+            error.response(shared.config.cookie_path())
         }
     };
     secure(response.headers_mut());

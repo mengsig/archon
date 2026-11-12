@@ -1,58 +1,63 @@
 // Caches the app shell so Archon opens without a network. Never caches
 // the API or the live socket: those are always fresh or fail visibly.
-const CACHE = 'archon-shell-v1';
+const CACHE = 'archon-shell-v2';
+// CacheStorage is shared by the whole origin, so only caches with this prefix are ours.
+const CACHE_PREFIX = 'archon-shell-';
+// The worker sits at the app's root, "" or the mount prefix.
+const BASE = new URL('.', self.location.href).pathname.replace(/\/$/, '');
 const SHELL = [
-  '/',
-  '/manifest.webmanifest',
-  '/icons/icon.svg',
-  '/icons/icon-192.png',
-  '/icons/icon-512.png',
-  '/icons/apple-touch-icon.png',
-  '/src/app.js',
-  '/src/core/api.js',
-  '/src/core/backoff.js',
-  '/src/core/daemon.js',
-  '/src/core/device-name.js',
-  '/src/core/feed.js',
-  '/src/core/format.js',
-  '/src/core/pairing-code.js',
-  '/src/core/router.js',
-  '/src/core/store.js',
-  '/src/core/theme.js',
-  '/src/core/transport.js',
-  '/src/features/chat/chat.js',
-  '/src/features/chat/entries.js',
-  '/src/features/chat/outbox.js',
-  '/src/features/inbox/inbox.js',
-  '/src/features/inbox/question-card.js',
-  '/src/features/item/actions.js',
-  '/src/features/item/artifacts.js',
-  '/src/features/item/item.js',
-  '/src/features/item/stages.js',
-  '/src/features/new-item/new-item.js',
-  '/src/features/overview/catalog.js',
-  '/src/features/overview/overview.js',
-  '/src/features/pairing/pairing.js',
-  '/src/features/queue/item-row.js',
-  '/src/features/queue/queue.js',
-  '/src/features/settings/settings.js',
-  '/src/main.js',
-  '/src/shell.js',
-  '/src/ui/components.js',
-  '/src/ui/dom.js',
-  '/src/ui/entities.js',
-  '/src/ui/icons.js',
-  '/src/ui/list.js',
-  '/src/ui/markdown-parse.js',
-  '/src/ui/markdown.js',
-  '/src/ui/motion.js',
-  '/src/ui/sheet.js',
-  '/src/ui/toast.js',
-  '/src/version.js',
-  '/styles/base.css',
-  '/styles/components.css',
-  '/styles/screens.css',
-  '/styles/tokens.css',
+  `${BASE}/`,
+  `${BASE}/manifest.webmanifest`,
+  `${BASE}/icons/icon.svg`,
+  `${BASE}/icons/icon-192.png`,
+  `${BASE}/icons/icon-512.png`,
+  `${BASE}/icons/apple-touch-icon.png`,
+  `${BASE}/src/app.js`,
+  `${BASE}/src/core/api.js`,
+  `${BASE}/src/core/backoff.js`,
+  `${BASE}/src/core/base.js`,
+  `${BASE}/src/core/daemon.js`,
+  `${BASE}/src/core/device-name.js`,
+  `${BASE}/src/core/feed.js`,
+  `${BASE}/src/core/format.js`,
+  `${BASE}/src/core/pairing-code.js`,
+  `${BASE}/src/core/router.js`,
+  `${BASE}/src/core/store.js`,
+  `${BASE}/src/core/theme.js`,
+  `${BASE}/src/core/transport.js`,
+  `${BASE}/src/features/chat/chat.js`,
+  `${BASE}/src/features/chat/entries.js`,
+  `${BASE}/src/features/chat/outbox.js`,
+  `${BASE}/src/features/inbox/inbox.js`,
+  `${BASE}/src/features/inbox/question-card.js`,
+  `${BASE}/src/features/item/actions.js`,
+  `${BASE}/src/features/item/artifacts.js`,
+  `${BASE}/src/features/item/item.js`,
+  `${BASE}/src/features/item/stages.js`,
+  `${BASE}/src/features/new-item/new-item.js`,
+  `${BASE}/src/features/overview/catalog.js`,
+  `${BASE}/src/features/overview/overview.js`,
+  `${BASE}/src/features/pairing/pairing.js`,
+  `${BASE}/src/features/queue/item-row.js`,
+  `${BASE}/src/features/queue/queue.js`,
+  `${BASE}/src/features/settings/settings.js`,
+  `${BASE}/src/main.js`,
+  `${BASE}/src/shell.js`,
+  `${BASE}/src/ui/components.js`,
+  `${BASE}/src/ui/dom.js`,
+  `${BASE}/src/ui/entities.js`,
+  `${BASE}/src/ui/icons.js`,
+  `${BASE}/src/ui/list.js`,
+  `${BASE}/src/ui/markdown-parse.js`,
+  `${BASE}/src/ui/markdown.js`,
+  `${BASE}/src/ui/motion.js`,
+  `${BASE}/src/ui/sheet.js`,
+  `${BASE}/src/ui/toast.js`,
+  `${BASE}/src/version.js`,
+  `${BASE}/styles/base.css`,
+  `${BASE}/styles/components.css`,
+  `${BASE}/styles/screens.css`,
+  `${BASE}/styles/tokens.css`,
 ];
 
 self.addEventListener('install', (event) => {
@@ -61,7 +66,7 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(caches.keys()
-    .then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))))
+    .then((keys) => Promise.all(keys.filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE).map((key) => caches.delete(key))))
     .then(() => self.clients.claim()));
 });
 
@@ -69,9 +74,9 @@ self.addEventListener('fetch', (event) => {
   const request = event.request;
   const url = new URL(request.url);
   if (request.method !== 'GET' || url.origin !== self.location.origin) return;
-  if (url.pathname.startsWith('/api/') || url.pathname === '/ws') return;
+  if (url.pathname.startsWith(`${BASE}/api/`) || url.pathname === `${BASE}/ws`) return;
   // Every navigation is the one page; keep the fragment-free root as its key.
-  const key = request.mode === 'navigate' ? '/' : url.pathname;
+  const key = request.mode === 'navigate' ? `${BASE}/` : url.pathname;
   if (request.mode !== 'navigate' && !SHELL.includes(key)) return;
   event.respondWith(networkFirst(request, key));
 });

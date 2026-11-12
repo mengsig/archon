@@ -4,11 +4,11 @@
 use archon_core::error::ArchonError;
 use archon_core::id::PipelineRunId;
 use archon_core::pull_request::PullRequestRef;
-use rusqlite::{OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use super::Store;
 use super::codec::{SqlContext, to_i64, to_u64, write_tx};
-use super::runs;
+use super::{github_links, runs};
 
 /// The pull request a run delivered to, with GitHub's node id once known.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,7 +38,8 @@ impl Store {
         }
         let number = to_i64(pr.number, "pull request number")?;
         let tx = write_tx(&mut self.conn)?;
-        runs::load(&tx, run)?;
+        let item = runs::load(&tx, run)?.item;
+        let before = recorded(&tx, run)?.map(|recorded| recorded.pr);
         let changed = tx
             .execute(
                 "INSERT INTO run_pull_requests (run, host, repository, number, node_id)
@@ -65,6 +66,7 @@ impl Store {
             params![pr.host, pr.repository, number],
         )
         .ctx("share a pull request's node id")?;
+        github_links::record_delivery(&tx, &item, before.as_ref(), pr)?;
         tx.commit().ctx("commit a run's pull request")
     }
 
@@ -73,28 +75,32 @@ impl Store {
         &self,
         run: &PipelineRunId,
     ) -> Result<Option<RunPullRequest>, ArchonError> {
-        let row: Option<(String, String, i64, Option<String>)> = self
-            .conn
-            .query_row(
-                "SELECT host, repository, number, node_id FROM run_pull_requests WHERE run = ?1",
-                [run.as_str()],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-            )
-            .optional()
-            .ctx("read a run's pull request")?;
-        let Some((host, repository, number, node_id)) = row else {
-            return Ok(None);
-        };
-        let pr = PullRequestRef {
-            host,
-            repository,
-            number: to_u64(number, "pull request number")?,
-        };
-        if PullRequestRef::from_url(&pr.url()).as_ref() != Some(&pr) {
-            return Err(ArchonError::Store(format!(
-                "run {run} records a malformed pull request {pr}"
-            )));
-        }
-        Ok(Some(RunPullRequest { pr, node_id }))
+        recorded(&self.conn, run)
     }
+}
+
+/// What `run_pull_requests` holds for `run`, checked as its URL reads.
+fn recorded(conn: &Connection, run: &PipelineRunId) -> Result<Option<RunPullRequest>, ArchonError> {
+    let row: Option<(String, String, i64, Option<String>)> = conn
+        .query_row(
+            "SELECT host, repository, number, node_id FROM run_pull_requests WHERE run = ?1",
+            [run.as_str()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()
+        .ctx("read a run's pull request")?;
+    let Some((host, repository, number, node_id)) = row else {
+        return Ok(None);
+    };
+    let pr = PullRequestRef {
+        host,
+        repository,
+        number: to_u64(number, "pull request number")?,
+    };
+    if PullRequestRef::from_url(&pr.url()).as_ref() != Some(&pr) {
+        return Err(ArchonError::Store(format!(
+            "run {run} records a malformed pull request {pr}"
+        )));
+    }
+    Ok(Some(RunPullRequest { pr, node_id }))
 }

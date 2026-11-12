@@ -162,6 +162,9 @@ pub struct LearningConfig {
     pub distill_every: u32,
     pub distill_daily_budget_usd: f64,
     pub explore_rate: f64,
+    /// Share of (lesson, item) pairs whose lesson is withheld to measure its
+    /// lift; 0, the default, holds nothing out.
+    pub holdout_rate: f64,
 }
 
 impl Default for LearningConfig {
@@ -171,6 +174,7 @@ impl Default for LearningConfig {
             distill_every: 20,
             distill_daily_budget_usd: 3.0,
             explore_rate: 0.1,
+            holdout_rate: 0.0,
         }
     }
 }
@@ -190,6 +194,11 @@ impl LearningConfig {
         if !self.explore_rate.is_finite() || !(0.0..=0.1).contains(&self.explore_rate) {
             return Err(ArchonError::Config(
                 "learning.explore_rate must be between 0 and 0.1".into(),
+            ));
+        }
+        if !self.holdout_rate.is_finite() || !(0.0..=0.2).contains(&self.holdout_rate) {
+            return Err(ArchonError::Config(
+                "learning.holdout_rate must be between 0 and 0.2".into(),
             ));
         }
         Ok(())
@@ -233,7 +242,18 @@ pub enum AetherMode {
 
 /// Host context requested for newly created agents; full preserves host tools.
 #[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum HostContext {
@@ -293,6 +313,9 @@ pub struct OrchestratorConfig {
     /// Wake the orchestrator for every success, so it reports it in its
     /// chat; off, a routine success waits for its next turn.
     pub wake_on_success: bool,
+    /// Have the orchestrator queue an independent validation item before it
+    /// calls a user-facing build ready; off, it relays the success as is.
+    pub validate_before_handoff: bool,
 }
 
 impl Default for OrchestratorConfig {
@@ -304,6 +327,7 @@ impl Default for OrchestratorConfig {
             instructions_file: None,
             trigger_coalesce_ms: 2000,
             wake_on_success: true,
+            validate_before_handoff: true,
         }
     }
 }
@@ -329,6 +353,9 @@ pub struct ModelsConfig {
     /// Providers the operator also uses by hand, which keep the
     /// `interactive` reserve; global only.
     pub interactive_providers: Vec<String>,
+    /// Opt in to sizing every agent's effort by the effort rubric; off, the
+    /// prompts and reviewer floors are 1.4.12's. Global only.
+    pub effort_sizing: bool,
 }
 
 /// Percent of each quota window held back from tier-only stage routing.
@@ -356,6 +383,13 @@ pub const DEFAULT_MAX_TIER: Tier = Tier::Strong;
 impl ModelsConfig {
     pub fn policy(&self) -> ModelPolicy {
         ModelPolicy::from_lists(&self.allow, &self.deny, self.max_effort)
+    }
+
+    /// Repository settings narrow the global cap only when explicitly set.
+    pub fn policy_overlay(&self) -> ModelPolicy {
+        let mut policy = self.policy();
+        policy.max_effort = self.max_effort;
+        policy
     }
 
     /// The weights in force for `repo`: its entries and default over the
@@ -432,7 +466,7 @@ impl ModelsConfig {
 }
 
 /// Where a structural limit's value comes from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LimitSource {
     /// Not set in `[limits]`, or set to its default.
@@ -445,7 +479,7 @@ pub enum LimitSource {
 
 /// One structural limit as in force, for `archon autonomy` and the
 /// `autonomy_policy` tool.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StructuralLimit {
     pub key: String,
     pub value: u64,
@@ -1179,10 +1213,11 @@ impl RepoConfig {
         config.models.check_weights()?;
         if config.models.reserve_percent.is_some()
             || !config.models.interactive_providers.is_empty()
+            || config.models.effort_sizing
         {
             return Err(ArchonError::Config(format!(
-                "{}: models.reserve_percent and models.interactive_providers are set in \
-                 Archon's global config only",
+                "{}: models.reserve_percent, models.interactive_providers and \
+                 models.effort_sizing are set in Archon's global config only",
                 path.display()
             )));
         }
@@ -1247,6 +1282,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn repository_effort_cap_only_narrows_global_policy() {
+        let global: Config = toml::from_str("[models]\nmax_effort = 'max'").unwrap();
+        let empty = ModelsConfig::default();
+        assert_eq!(
+            global
+                .models
+                .policy()
+                .narrowed_by(&empty.policy_overlay())
+                .max_effort,
+            Some(Effort::Max)
+        );
+        let low: RepoConfig = toml::from_str("[models]\nmax_effort = 'low'").unwrap();
+        assert_eq!(
+            global
+                .models
+                .policy()
+                .narrowed_by(&low.models.policy_overlay())
+                .max_effort,
+            Some(Effort::Low)
+        );
+        let max: RepoConfig = toml::from_str("[models]\nmax_effort = 'max'").unwrap();
+        assert_eq!(
+            Config::default()
+                .models
+                .policy()
+                .narrowed_by(&max.models.policy_overlay())
+                .max_effort,
+            Some(Effort::XHigh)
+        );
+    }
+
+    #[test]
     fn review_defaults_and_overrides_are_validated() {
         let default: Config = toml::from_str("").unwrap();
         assert_eq!(default.review.default_tier, Tier::Balanced);
@@ -1303,6 +1370,7 @@ mod tests {
         assert_eq!(config, Config::default());
         assert_eq!(config.limits.caps().max_parallel_agents, 8);
         assert!(config.orchestrator.wake_on_success);
+        assert!(config.orchestrator.validate_before_handoff);
     }
 
     #[test]
@@ -1407,6 +1475,26 @@ mod tests {
             toml::from_str("[models]\nprovider_weights = { \"codex/sol\" = 1 }").unwrap();
         let refused = model.validate().unwrap_err().to_string();
         assert!(refused.contains("must name a provider"), "{refused}");
+    }
+
+    /// Effort sizing is an opt-in: off, stage agents see 1.4.12's effort rules.
+    #[test]
+    fn effort_sizing_is_off_unless_the_global_config_opts_in() {
+        assert!(!Config::default().models.effort_sizing);
+        let blank: Config = toml::from_str("[models]\nmax_effort = 'x_high'").unwrap();
+        assert!(
+            !blank.models.effort_sizing,
+            "naming [models] opts in to nothing"
+        );
+        let opted: Config = toml::from_str("[models]\neffort_sizing = true").unwrap();
+        opted.validate().unwrap();
+        assert!(opted.models.effort_sizing);
+        let dir = tempfile::tempdir().unwrap();
+        let file = crate::paths::repo_archon_dir(dir.path()).join(CONFIG_FILE_NAME);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "[models]\neffort_sizing = true\n").unwrap();
+        let refused = RepoConfig::load(dir.path()).unwrap_err().to_string();
+        assert!(refused.contains("global config only"), "{refused}");
     }
 
     #[test]

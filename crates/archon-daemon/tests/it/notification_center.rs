@@ -478,6 +478,72 @@ async fn an_answer_no_person_gave_is_refused() {
     assert!(question(&h, &asked.id).await.is_open());
 }
 
+fn paired_device() -> Value {
+    json!({"actor": "user", "origin": {"transport": "device", "device": "dev_1",
+        "name": "phone", "connection": "c1"}})
+}
+
+async fn device_refusal_told(h: &Harness) {
+    h.eventually("the device's refusal is told", || async {
+        h.system_notes()
+            .await
+            .iter()
+            .any(|n| n.contains("carries no Archon authority"))
+    })
+    .await;
+}
+
+/// Aether names a paired device's answer the `user` actor too; only the
+/// host's own connections answer for Archon (ARCHITECTURE §d).
+#[tokio::test]
+async fn an_answer_from_an_aether_paired_device_is_refused() {
+    let h = Harness::new().await;
+    let center = Center::default();
+    center.install(&h);
+    let _bridge = bridge(&h, h.connect().await).await;
+    let asked = ask(&h, "Ship it?", &["yes", "no"]).await;
+    posted(&h, &center, asked.id.as_str()).await;
+    let record = center.answer(asked.id.as_str(), Some("1"), None, paired_device());
+    h.fake.push_event(answered_event(record));
+    device_refusal_told(&h).await;
+    assert!(question(&h, &asked.id).await.is_open());
+}
+
+/// A device Aether's session names an operator answers as the host does.
+#[tokio::test]
+async fn an_answer_from_a_device_aether_paired_as_operator_is_applied() {
+    let h = Harness::new().await;
+    let center = Center::default();
+    center.install(&h);
+    let _bridge = bridge(&h, h.connect().await).await;
+    let asked = ask(&h, "Ship it?", &["yes", "no"]).await;
+    posted(&h, &center, asked.id.as_str()).await;
+    let mut operator = paired_device();
+    operator["origin"]["role"] = json!("operator");
+    let record = center.answer(asked.id.as_str(), Some("1"), None, operator);
+    h.fake.push_event(answered_event(record));
+    h.eventually("the operator device's answer closes it", || async {
+        !question(&h, &asked.id).await.is_open()
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_paired_devices_answer_given_meanwhile_is_refused_on_connect() {
+    let h = Harness::new().await;
+    let center = Center::default();
+    center.install(&h);
+    let asked = ask(&h, "Merge #12?", &["yes", "no"]).await;
+    center.post(
+        &json!("archon"),
+        &json!({"kind": "question", "title": "Q1", "key": asked.id}),
+    );
+    center.answer(asked.id.as_str(), Some("1"), None, paired_device());
+    let _bridge = bridge(&h, h.connect().await).await;
+    device_refusal_told(&h).await;
+    assert!(question(&h, &asked.id).await.is_open());
+}
+
 #[tokio::test]
 async fn an_aetherd_without_the_center_is_left_alone() {
     let h = Harness::new().await;

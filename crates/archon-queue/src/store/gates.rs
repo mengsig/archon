@@ -160,6 +160,7 @@ pub(super) fn open(
         )));
     }
     write(&tx, gate)?;
+    super::changes::record_gate(&tx, gate)?;
     tx.commit().ctx("commit gate")?;
     Ok(gate.clone())
 }
@@ -191,6 +192,9 @@ pub(super) fn update(conn: &mut Connection, gate: &OperatorGate) -> Result<(), A
         )));
     }
     write(&tx, gate)?;
+    if stored.decision != gate.decision && gate.withdrawn.is_none() {
+        super::changes::record_gate(&tx, gate)?;
+    }
     if matches!(
         gate.decision,
         Some(

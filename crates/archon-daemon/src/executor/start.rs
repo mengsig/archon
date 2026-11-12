@@ -228,6 +228,8 @@ async fn tiers_at_dispatch(
     if let Some(note) = crate::quota::switch_note(moved, quota.as_ref(), "its run") {
         stored.provider_switch = Some(note);
     }
+    let unstarted = (&[][..], &plan_before);
+    crate::quota::record_moves(ctx, &mut store, &mut stored, unstarted, quota.as_ref())?;
     if stored.model_plan != plan_before || stored.routed_provider != held_before {
         tracing::info!(item = %item.id, provider = ?held, "re-resolved tiered model choices at dispatch");
         stored.updated_at = archon_core::now();

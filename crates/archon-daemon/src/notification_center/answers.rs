@@ -105,6 +105,11 @@ async fn permitted(
             "only a person answers in the notification center".into(),
         ));
     }
+    if !answer.with_operator_standing() {
+        return Err(ArchonError::Forbidden(
+            "this answer came from a device Aether did not pair as an operator, so it carries no Archon authority; answer with archon or from an operator device".into(),
+        ));
+    }
     if ctx.config.aether.mode != AetherMode::Dedicated {
         return Err(ArchonError::Forbidden(
             "answers in the notification center are off while Archon shares the operator's Aether instance".into(),

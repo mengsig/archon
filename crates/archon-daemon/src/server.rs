@@ -13,8 +13,7 @@ use std::time::Duration;
 use archon_client::framing::{encode_frame, read_frame};
 use archon_core::error::ArchonError;
 use archon_core::protocol::{
-    ClientFrame, ClientKind, ErrorCode, ErrorReply, PROTOCOL_VERSION, Reply, Request, ServerFrame,
-    Welcome,
+    ClientFrame, ClientKind, ErrorCode, ErrorReply, Reply, Request, ServerFrame, negotiate,
 };
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
@@ -224,6 +223,25 @@ pub(crate) async fn send(outbox: &Outbox, frame: ServerFrame) -> bool {
     outbox.send(out).await.is_ok()
 }
 
+/// A change subscription on the socket: its frames join the connection's
+/// outbox, so a client that stops reading holds the stream up until it lags.
+async fn change_frames(
+    ctx: Arc<DaemonContext>,
+    sub: handlers::changes::ChangeSubscription,
+    outbox: Outbox,
+) {
+    let (frames, mut queued) = mpsc::channel::<ServerFrame>(OUTBOX_FRAMES);
+    let forward = async move {
+        while let Some(frame) = queued.recv().await {
+            if !send(&outbox, frame).await {
+                return;
+            }
+        }
+    };
+    // As in `feed_frames`: either side ending ends the other.
+    tokio::join!(handlers::changes::stream(ctx, sub, frames), forward);
+}
+
 /// A feed subscription for the remote listener: its frames go to `frames`
 /// until that closes, exactly as a socket connection would get them.
 pub(crate) async fn feed_frames(
@@ -335,6 +353,15 @@ async fn session(
                 };
                 feeds.spawn(subscription::run(ctx.clone(), sub, outbox.clone()));
             }
+            Request::SubscribeChanges { after } => {
+                subscriptions += 1;
+                let sub = handlers::changes::ChangeSubscription {
+                    id: subscriptions,
+                    request: frame.id,
+                    after,
+                };
+                feeds.spawn(change_frames(ctx.clone(), sub, outbox.clone()));
+            }
             Request::Shutdown => return shutdown(ctx, client, frame.id, &outbox, stop).await,
             request => {
                 let (ctx, outbox) = (ctx.clone(), outbox.clone());
@@ -372,8 +399,10 @@ async fn shutdown(
     Ok(())
 }
 
-/// The first frame must be `hello` at our protocol version; anything else
-/// gets an id-0 error and the connection is closed.
+/// The first frame must be `hello` at a version archond accepts from that
+/// client (`negotiate`); anything else gets an id-0 error and the
+/// connection is closed. A refused version is answered under the hello's
+/// own id, which a 1.4.x updater reads as a new archond.
 async fn handshake(
     reader: &mut BufReader<OwnedReadHalf>,
     outbox: &Outbox,
@@ -385,6 +414,7 @@ async fn handshake(
         protocol_version,
         client,
         client_version,
+        ..
     } = frame.request
     else {
         refuse(
@@ -395,17 +425,21 @@ async fn handshake(
         .await;
         return Ok(None);
     };
-    if protocol_version != PROTOCOL_VERSION {
-        let message = format!(
-            "archond speaks protocol {PROTOCOL_VERSION}, this client {client_version} speaks {protocol_version}; upgrade the older one"
-        );
-        refuse(outbox, ErrorCode::Incompatible, message).await;
-        return Ok(None);
-    }
-    let welcome = Welcome {
-        protocol_version: PROTOCOL_VERSION,
-        daemon_version: env!("CARGO_PKG_VERSION").to_owned(),
-        pid: std::process::id(),
+    let features = crate::handlers::features();
+    let welcome = match negotiate(client, protocol_version, &client_version, &features) {
+        Ok(welcome) => welcome,
+        Err(message) => {
+            let refusal = ErrorReply {
+                code: ErrorCode::Incompatible,
+                message,
+            };
+            let refused = ServerFrame::Reply {
+                id: frame.id,
+                result: Err(refusal),
+            };
+            send(outbox, refused).await;
+            return Ok(None);
+        }
     };
     send(outbox, reply(frame.id, Ok(Reply::Welcome(welcome)))).await;
     tracing::debug!(?client, %client_version, "client connected");

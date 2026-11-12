@@ -222,7 +222,7 @@ fn write_question(conn: &Connection, question: &Question, insert: bool) -> Resul
         "write of question {} touched {changed} rows",
         question.id
     );
-    Ok(())
+    super::changes::record_question(conn, question)
 }
 
 pub(super) fn load_question(conn: &Connection, id: &QuestionId) -> Result<Question, ArchonError> {

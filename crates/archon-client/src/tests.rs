@@ -74,6 +74,9 @@ fn welcome() -> Welcome {
         protocol_version: PROTOCOL_VERSION,
         daemon_version: "fake".into(),
         pid: 42,
+        min_protocol_version: PROTOCOL_VERSION,
+        features: Vec::new(),
+        device: None,
     }
 }
 
@@ -348,6 +351,32 @@ async fn an_incompatible_daemon_is_explained() {
     let theirs = format!("protocol {}", PROTOCOL_VERSION + 1);
     assert!(text.contains(&ours) && text.contains(&theirs), "{text}");
     assert!(text.contains("archon daemon stop"), "{text}");
+}
+
+#[tokio::test]
+async fn an_older_daemon_refusing_as_a_notice_is_incompatible_not_gone() {
+    let dir = tempfile::tempdir().unwrap();
+    let (socket, listener) = listen(dir.path());
+    let theirs = format!("archond speaks protocol {}", PROTOCOL_VERSION - 1);
+    let server = async {
+        let mut conn = accept(&listener).await;
+        let hello = conn.recv().await;
+        assert!(matches!(hello.request, Request::Hello { .. }), "{hello:?}");
+        let refusal = ErrorReply {
+            code: ErrorCode::Incompatible,
+            message: theirs.clone(),
+        };
+        // archond 1.4.x answers a refused hello under id 0, then closes.
+        conn.reply(0, Err(refusal)).await;
+    };
+    let (client, ()) = tokio::join!(
+        ArchonClient::connect(&socket, ClientKind::ArchonCli),
+        server
+    );
+    let error = client.expect_err("refused");
+    assert!(crate::is_incompatible(&error), "{error:?}");
+    assert!(!matches!(error, ArchonError::Unavailable(_)), "{error:?}");
+    assert!(error.to_string().contains(&theirs), "{error}");
 }
 
 #[tokio::test]

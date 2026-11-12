@@ -14,7 +14,7 @@ pub const MAX_EXTEND_MINUTES: u32 = 24 * 60;
 pub const MAX_STEER_RECORDS: usize = 100;
 
 /// Who may steer an item (ARCHITECTURE §6.6).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SteeredBy {
     Operator,
@@ -31,7 +31,7 @@ impl std::fmt::Display for SteeredBy {
 }
 
 /// One steer in an item's history.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SteerRecord {
     pub at: Timestamp,
     pub by: SteeredBy,
@@ -43,7 +43,7 @@ pub struct SteerRecord {
 }
 
 /// What the run does once a stage was aborted.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "then", rename_all = "snake_case")]
 pub enum Then {
     Retry,
@@ -53,7 +53,7 @@ pub enum Then {
 
 /// `stage` of catalog pipeline `from` (the item's own when left out),
 /// placed after stage `after` (before the first unstarted one when left out).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct InsertStage {
     pub stage: String,
@@ -63,7 +63,7 @@ pub struct InsertStage {
     pub after: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Steer {
     /// Amends the brief and is sent to the item's live agents.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -154,7 +154,7 @@ impl Steer {
 
 /// One recorded change to a run's shape. A run's edits apply in order before
 /// it resumes, and each holds what it needs, so replay never reads the catalog.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "edit", rename_all = "snake_case")]
 pub enum RunEdit {
     /// `spec` is the stage as the catalog had it when the edit was recorded.

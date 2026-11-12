@@ -407,13 +407,21 @@ text, and not from an earlier request.
   orchestrator (enabled or disabled);
 - posts to github.com only, the host Aether's watcher reads and authorizes,
   whatever `GH_HOST` says;
+- records the comment in its GitHub outbox, under a token, before it calls
+  `gh`, and marks it posted with GitHub's comment id once `gh` answers. The
+  body carries the token as `<!-- archon-outbox:<token> -->`;
 - finishes the whole reply, from the watcher lookup to `gh`'s answer, within
   10 seconds, under the MCP call budget. A `gh` still running then is
-  stopped, and the error names the thread to check: the comment may have
-  been posted, so it must not be repeated blindly;
+  stopped. When the post fails or its answer is lost, the comment stays
+  pending in the outbox and the error says so: never send it again.
+  archond retries it on its own with a backoff of one minute doubling to an
+  hour. Each retry, and the first look after a restart, first lists the
+  thread's comments and looks for the token, so a comment GitHub already
+  holds is marked posted, never posted twice. `archon status` lists each
+  pending comment with its attempts and last error;
 - always appends `<!-- aether:github-reply -->`, the marker Aether's watcher
   skips, so a reply never triggers another request, and strips any copy of
-  it from the body;
+  it, or of an outbox marker, from the body;
 - refuses an empty body or one over 65,000 characters;
 - records each posted comment in the log (`archon log`) as progress:
   `Replied on GitHub owner/repo#N: <url>`.

@@ -36,9 +36,9 @@
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
-  height: 40px;
+  height: var(--tap);
   padding: 0 var(--space-3);
-  border-radius: var(--radius-s);
+  border-radius: var(--radius-m);
   background: var(--neutral-soft);
   color: var(--text-2);
 }
@@ -58,13 +58,13 @@
 .select-chip {
   flex: none;
   max-width: 42%;
-  height: 40px;
+  height: var(--tap);
   padding: 0 28px 0 var(--space-3);
   border: 0;
-  border-radius: var(--radius-s);
+  border-radius: var(--radius-m);
   background-color: var(--neutral-soft);
   background-image: linear-gradient(45deg, transparent 50%, var(--text-2) 50%), linear-gradient(135deg, var(--text-2) 50%, transparent 50%);
-  background-position: calc(100% - 16px) 18px, calc(100% - 11px) 18px;
+  background-position: calc(100% - 16px) 20px, calc(100% - 11px) 20px;
   background-size: 5px 5px;
   background-repeat: no-repeat;
   font-size: 15px;
@@ -87,8 +87,8 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: 36px;
-  padding: 0 14px;
+  min-height: var(--tap);
+  padding: 0 16px;
   border: 0;
   border-radius: var(--radius-pill);
   background: var(--surface);
@@ -97,7 +97,7 @@
   font-weight: 500;
   transition: background-color var(--t-fast) ease, color var(--t-fast) ease, transform var(--t-fast) var(--ease-out);
 }
-.filter-chip:active { transform: scale(0.95); }
+.filter-chip:active { transform: scale(0.96); }
 .filter-chip[aria-pressed="true"] { background: var(--text); color: var(--bg); }
 .filter-count { font-size: 13px; font-variant-numeric: tabular-nums; opacity: 0.6; }
 
@@ -114,6 +114,10 @@
   transition: transform var(--t-fast) var(--ease-out), background-color var(--t-fast) ease;
 }
 .item-row:active { transform: scale(0.985); background: var(--surface-pressed); }
+@media (hover: hover) {
+  .item-row:hover, .question-card:hover { box-shadow: var(--shadow-hover); }
+  .filter-chip:hover:not([aria-pressed="true"]) { background: var(--surface-2); }
+}
 .item-row-main { flex: 1; min-width: 0; display: grid; gap: 3px; }
 .item-row-title { font-size: 17px; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
 .item-row-meta { font-size: 14px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -237,6 +241,7 @@
   background: var(--surface);
   box-shadow: var(--shadow);
   border-left: 4px solid var(--amber);
+  transition: box-shadow var(--t-fast) ease;
 }
 .question-card.is-answered { border-left-color: var(--green); }
 .question-head { display: flex; justify-content: space-between; align-items: center; }
@@ -275,11 +280,11 @@
 .plain-row-title { font-weight: 600; font-size: 15px; overflow-wrap: anywhere; }
 .plain-row-text { font-size: 15px; overflow-wrap: anywhere; }
 .plain-row-age { font-size: 13px; color: var(--text-3); }
-.plain-row .link-button { min-height: 32px; justify-self: start; }
+.plain-row .link-button { min-height: var(--tap); justify-self: start; }
 .plain-empty { padding: var(--space-4); text-align: center; font-size: 15px; }
 
 /* Chat: the transcript scrolls with the page; the composer floats above the tab bar. */
-.view-chat { padding-bottom: 76px; }
+.view-chat { padding-bottom: 80px; }
 .chat-presence {
   display: flex;
   align-items: center;
@@ -315,7 +320,8 @@
 .bubble-text { font-size: 16.5px; line-height: 1.4; overflow-wrap: anywhere; }
 .bubble-meta { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 2px var(--space-3); padding: 0 6px; font-size: 12px; color: var(--text-3); }
 .from-orchestrator .bubble-meta { justify-content: flex-start; }
-.bubble-meta .link-button { min-height: 28px; font-size: 13px; }
+.bubble-meta .link-button { position: relative; min-height: 28px; font-size: 13px; }
+.bubble-meta .link-button::after { content: ""; position: absolute; inset: -8px -6px; }
 .bubble-note { font-weight: 500; }
 .is-pending .bubble { opacity: 0.7; }
 .is-failed .bubble { background: var(--red-soft); color: var(--text); }
@@ -328,7 +334,7 @@
 }
 .feed-line-text { display: grid; justify-self: stretch; font-size: 14px; color: var(--text-2); overflow-wrap: anywhere; }
 .feed-line-label { font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em; color: var(--text-3); }
-.feed-line .link-button { min-height: 30px; font-size: 14px; }
+.feed-line .link-button { min-height: var(--tap); font-size: 14px; }
 .feed-question .feed-line-label, .feed-note-blocker .feed-line-label { color: var(--amber); }
 .feed-note-outcome .feed-line-label { color: var(--green); }
 
@@ -351,13 +357,16 @@
   transition: bottom var(--t-med) var(--ease-out);
 }
 .keyboard-open .composer { bottom: var(--keyboard, 0px); padding-bottom: var(--space-2); }
+/* Toasts clear the composer even at its tallest. */
+:root:has(.composer) .toasts { bottom: calc(var(--tabbar-h) + var(--safe-bottom) + var(--composer-max) + 2 * var(--space-2) + var(--space-3)); }
+.keyboard-open:has(.composer) .toasts { bottom: calc(var(--keyboard, 0px) + var(--composer-max) + 2 * var(--space-2) + var(--space-3)); }
 .composer-input {
   flex: 1;
-  min-height: 40px;
-  max-height: 140px;
-  padding: 9px 16px;
+  min-height: var(--tap);
+  max-height: var(--composer-max);
+  padding: 11px 16px;
   border: 1px solid var(--separator);
-  border-radius: 20px;
+  border-radius: 22px;
   background: var(--surface);
   font-size: 17px;
   line-height: 1.3;
@@ -368,8 +377,8 @@
   flex: none;
   display: grid;
   place-items: center;
-  width: 40px;
-  height: 40px;
+  width: var(--tap);
+  height: var(--tap);
   border: 0;
   border-radius: 50%;
   background: var(--accent);
@@ -410,8 +419,111 @@
 .catalog-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-weight: 600; overflow-wrap: anywhere; }
 .catalog-sub { font-size: 14px; color: var(--text-2); overflow-wrap: anywhere; }
 
-/* Desktop: the column stays centred; the large title gets a little more room. */
+/* Tablet: the column stays centred; the large title gets a little more room. */
 @media (min-width: 760px) {
   .screen-header { padding-top: var(--space-6); }
   .tab { font-size: 11.5px; }
+}
+
+/* Desktop: the tab bar becomes a sidebar and every screen lays its cards out
+   in a grid across the width, so nothing sits in a narrow middle column. */
+@media (min-width: 1100px) {
+  :root { --sidebar: 232px; --wide-gap: var(--space-6); }
+
+  .shell { padding-left: var(--sidebar); padding-bottom: var(--space-8); }
+  .views { max-width: 2200px; padding-left: 40px; padding-right: 40px; }
+  .screen-header { padding-top: var(--space-8); }
+
+  .tabbar {
+    top: 0;
+    right: auto;
+    width: var(--sidebar);
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: var(--space-1);
+    padding: var(--space-6) var(--space-3);
+    border-top: 0;
+    border-right: 0.5px solid var(--separator);
+  }
+  .tabbar-brand {
+    display: block;
+    padding: 0 var(--space-3) var(--space-5);
+    font-family: var(--font-display);
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text);
+  }
+  .tab {
+    flex: none;
+    max-width: none;
+    height: var(--tap);
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: var(--space-3);
+    padding: 0 var(--space-3);
+    border-radius: var(--radius-s);
+    color: var(--text-2);
+    font-size: 15px;
+    font-weight: 500;
+    transition: color var(--t-fast) ease, background-color var(--t-fast) ease;
+  }
+  .tab:hover { background: var(--neutral-soft); }
+  .tab[aria-current="page"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .tab-badge { box-shadow: 0 0 0 2px var(--bg); }
+
+  .conn-banner { margin-left: calc(-1 * var(--sidebar)); padding-left: var(--sidebar); }
+  .fab { right: 40px; bottom: var(--space-8); }
+  .toasts { left: calc(50% + var(--sidebar) / 2); bottom: var(--space-8); }
+  :root:has(.composer) .toasts { bottom: calc(var(--composer-max) + 2 * var(--space-3) + var(--space-4)); }
+
+  /* Queue: the two filter rows share one line; items fill a card grid. */
+  .view-queue { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); column-gap: var(--space-3); }
+  .view-queue > :not(.toolbar) { grid-column: 1 / -1; }
+  .view-queue .toolbar-filters { margin-top: 0; }
+  .filter-chips { margin: 0; padding: 2px 0; flex-wrap: wrap; overflow: visible; }
+  .item-list { grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: var(--space-3); }
+  .item-list .item-row { height: 100%; }
+
+  /* Item, Overview and Settings: sections flow into columns; the summary spans. */
+  .item-detail, .overview {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(480px, 1fr));
+    align-items: start;
+    gap: var(--space-4) var(--wide-gap);
+  }
+  .item-detail > :is(.item-hero, .callout, .action-bar, .error-note, .skeleton-list, .empty),
+  .overview > :is(.hero-card, .error-note, .skeleton-list) { grid-column: 1 / -1; }
+  .item-detail > .section, .overview > .section { margin-top: 0; }
+  /* The pipeline catalogue is the long list: it spans and wraps into columns. */
+  .overview > .section:last-child { grid-column: 1 / -1; }
+  .overview > .section:last-child > .card { display: grid; grid-template-columns: repeat(auto-fill, minmax(440px, 1fr)); }
+  .overview > .section:last-child > .card > .card-foot { grid-column: 1 / -1; }
+  .action-bar { grid-auto-columns: minmax(0, 150px); justify-content: start; }
+
+  .view-settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); align-items: start; column-gap: var(--wide-gap); }
+  .view-settings > :not(.section) { grid-column: 1 / -1; }
+  .view-settings > .button { justify-self: start; width: auto; min-width: 280px; }
+
+  /* Inbox: open questions fill a grid; the answered and notification lists sit side by side. */
+  .view-inbox { display: grid; grid-template-columns: repeat(auto-fit, minmax(480px, 1fr)); align-items: start; column-gap: var(--wide-gap); }
+  .view-inbox > :is(.screen-header, .section:has(.question-list)) { grid-column: 1 / -1; }
+  .question-list { grid-template-columns: repeat(auto-fill, minmax(460px, 1fr)); align-items: start; }
+
+  /* Chat: a centred conversation column; both sides' bubbles stay inside its edges. */
+  .transcript { width: min(100%, 1280px); margin-inline: auto; }
+  .bubble-row { max-width: min(72%, 960px); }
+  .bubble-row:has(.md-pre, .md-scroll) { width: min(72%, 960px); }
+  .feed-line { justify-self: center; width: min(100%, 960px); }
+  .view-chat { padding-bottom: 96px; }
+  .composer {
+    left: var(--sidebar);
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-width: none;
+    padding: var(--space-3) 40px;
+    transform: none;
+  }
+  .composer-input { max-width: none; }
 }

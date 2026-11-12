@@ -18,6 +18,7 @@ Everyday:
   chat, say       Talk to the orchestrator: the line chat, or one message
   questions       List what the orchestrator is waiting on; `answer` replies
   queue           Inspect and change queue items
+  github          Import a GitHub issue as an item: `archon github import o/r#1`
   status          Daemon, orchestrator, caps, spend and Aether link
   repo            Register and configure repositories
   merge           Merge a succeeded item's pull request, or land its local branch
@@ -32,7 +33,7 @@ Setup:
 
 Advanced:
   log, cost, reports, model-evidence, lessons, learning, clear-notifications,
-  promote, release, orchestrator, daemon, aether, tui, gc, mcp
+  promote, release, orchestrator, daemon, aether, tui, gc, mcp, schema
                   Inspection, release and internals; see `archon <command> --help`
 
 Options:
@@ -256,15 +257,20 @@ pub enum Command {
         #[command(subcommand)]
         command: Option<ReportCommand>,
     },
+    /// GitHub issues as items: `archon github import owner/name#123`.
+    Github {
+        #[command(subcommand)]
+        command: crate::cmd::github::GithubCommand,
+    },
     /// Route `@archon` on GitHub issues and pull requests to the orchestrator,
     /// through Archon's own Aether's watcher (docs/github-watcher.md).
     GithubWatcher {
         #[command(subcommand)]
         command: Option<GithubWatcherCommand>,
     },
-    /// Reach Archon from your phone: the mobile web app archond serves
-    /// over Tailscale or your own HTTPS proxy (docs/remote.md). Shows the
-    /// status by default.
+    /// Reach Archon from your phone: archond mounted on Aether's listener,
+    /// published to your tailnet (docs/remote.md). Shows the status by
+    /// default.
     Remote {
         #[command(subcommand)]
         command: Option<RemoteCommand>,
@@ -288,6 +294,8 @@ pub enum Command {
     /// Audit release assets, Latest, and whether CI started.
     #[command(subcommand)]
     Release(ReleaseCommand),
+    /// Print the daemon protocol's JSON Schema, or write it with `--out`.
+    Schema(crate::cmd::schema::SchemaArgs),
     /// Open the terminal UI: Aether's TUI on Archon's main orchestrator
     /// (what a bare `archon` opens).
     Tui(TuiArgs),
@@ -545,11 +553,12 @@ pub enum AutonomyCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum RemoteCommand {
-    /// Switch remote access on, publish it on your tailnet and pair a
-    /// phone, explaining each step. Safe to run again.
+    /// Serve Archon through the `/archon` mount of Aether's listener,
+    /// publish that listener on your tailnet and pair a browser, explaining
+    /// each step. Safe to run again: a rerun changes nothing and says so.
     #[command(after_help = "Examples:\n  archon remote setup\n  \
                             archon remote setup --yes --json\n  \
-                            archon remote setup --proxy-url https://archon.example.com")]
+                            archon remote setup --https-port 8443")]
     Setup(RemoteSetupArgs),
     /// Whether the listener is on, where it is published, and the paired
     /// devices (the default).
@@ -559,7 +568,11 @@ pub enum RemoteCommand {
     /// Close the listener and every device's session; pairings are kept.
     Disable,
     /// Open a one-time pairing code (5 minutes) and show it as a QR code.
-    Pair,
+    Pair {
+        /// Pair a device that only reads: it may not change the queue.
+        #[arg(long)]
+        observer: bool,
+    },
     /// The paired devices.
     Devices,
     /// Forget a paired device and close its sessions at once.
@@ -591,17 +604,9 @@ pub struct RemoteSetupArgs {
     /// Answer yes to every question: publish without asking.
     #[arg(long)]
     pub yes: bool,
-    /// Serve through your own HTTPS reverse proxy at this origin instead of
-    /// `tailscale serve`.
-    #[arg(long, value_name = "URL", conflicts_with = "local")]
-    pub proxy_url: Option<String>,
-    /// Publish nothing, and withdraw origins earlier runs allowed: the app
-    /// answers on this machine's loopback only.
+    /// The HTTPS port `tailscale serve` publishes Aether's listener on (443,
+    /// 8443 or 10000); default: one already serving it, else the first free.
     #[arg(long)]
-    pub local: bool,
-    /// The HTTPS port `tailscale serve` publishes on (443, 8443 or 10000);
-    /// default: the first one free.
-    #[arg(long, conflicts_with_all = ["proxy_url", "local"])]
     pub https_port: Option<u16>,
     /// Set everything up but open no pairing code.
     #[arg(long)]
@@ -1344,6 +1349,22 @@ mod tests {
         let mut argv = vec!["archon"];
         argv.extend_from_slice(args);
         Cli::try_parse_from(argv).unwrap().command.unwrap()
+    }
+
+    #[test]
+    fn remote_pair_pairs_an_operator_unless_told_observer() {
+        for (args, expected) in [
+            (&["remote", "pair"][..], false),
+            (&["remote", "pair", "--observer"][..], true),
+        ] {
+            let Command::Remote {
+                command: Some(RemoteCommand::Pair { observer }),
+            } = parse(args)
+            else {
+                panic!("remote pair");
+            };
+            assert_eq!(observer, expected, "{args:?}");
+        }
     }
 
     #[test]

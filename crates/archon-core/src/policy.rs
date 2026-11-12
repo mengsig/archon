@@ -9,13 +9,19 @@ use serde::{Deserialize, Serialize};
 use crate::error::ArchonError;
 use crate::model::{Effort, ModelChoice, ModelPlan, ModelRef};
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ModelPolicy {
     /// `None` allows any model; `Some(empty)` allows none (an empty
     /// intersection of global and repository allowlists).
     pub allow: Option<BTreeSet<ModelRef>>,
     pub deny: BTreeSet<ModelRef>,
     pub max_effort: Option<Effort>,
+}
+
+impl Default for ModelPolicy {
+    fn default() -> Self {
+        Self::from_lists(&[], &[], None)
+    }
 }
 
 impl ModelPolicy {
@@ -25,7 +31,7 @@ impl ModelPolicy {
         Self {
             allow,
             deny: deny.iter().cloned().collect(),
-            max_effort,
+            max_effort: Some(max_effort.unwrap_or(Effort::XHigh)),
         }
     }
 
@@ -64,12 +70,16 @@ impl ModelPolicy {
                 self.describe_allowed()
             )));
         }
+        self.check_effort(choice.effort)
+    }
+
+    /// Refuse an effort above the cap with the setting that can raise it.
+    pub fn check_effort(&self, effort: Effort) -> Result<(), ArchonError> {
         if let Some(cap) = self.max_effort
-            && choice.effort > cap
+            && effort > cap
         {
             return Err(ArchonError::Policy(format!(
-                "effort {} exceeds the configured maximum {cap}",
-                choice.effort
+                "effort {effort} exceeds the configured maximum {cap}; raise [models] max_effort to allow it"
             )));
         }
         Ok(())
@@ -144,7 +154,7 @@ mod tests {
         let policy = ModelPolicy::from_lists(&[], &[m("codex/x")], None);
         assert!(
             policy
-                .check(&choice("claude-code/opus", Effort::Max))
+                .check(&choice("claude-code/opus", Effort::XHigh))
                 .is_ok()
         );
         assert!(policy.check(&choice("codex/x", Effort::Low)).is_err());
@@ -175,6 +185,21 @@ mod tests {
     }
 
     #[test]
+    fn default_cap_refuses_max_and_explicit_max_allows_it() {
+        let default = ModelPolicy::default();
+        assert_eq!(default.max_effort, Some(Effort::XHigh));
+        assert!(default.check(&choice("a/1", Effort::XHigh)).is_ok());
+        let error = default
+            .check(&choice("a/1", Effort::Max))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("maximum x_high"), "{error}");
+        assert!(error.contains("[models] max_effort"), "{error}");
+        let raised = ModelPolicy::from_lists(&[], &[], Some(Effort::Max));
+        assert!(raised.check(&choice("a/1", Effort::Max)).is_ok());
+    }
+
+    #[test]
     fn effort_cap_is_enforced() {
         let policy = ModelPolicy::from_lists(&[], &[], Some(Effort::High));
         assert!(policy.check(&choice("a/1", Effort::High)).is_ok());
@@ -184,16 +209,25 @@ mod tests {
     #[test]
     fn a_description_names_every_limit_an_agent_must_choose_within() {
         let open = ModelPolicy::from_lists(&[], &[], None);
-        assert_eq!(open.describe(), "any model Aether lists");
+        assert_eq!(
+            open.describe(),
+            "any model Aether lists; effort at most x_high"
+        );
         let denied = ModelPolicy::from_lists(&[], &[m("codex/x")], Some(Effort::High));
         assert_eq!(
             denied.describe(),
             "any model Aether lists except codex/x; effort at most high"
         );
         let listed = ModelPolicy::from_lists(&[m("a/1"), m("b/2")], &[m("b/2")], None);
-        assert_eq!(listed.describe(), "a/1");
+        assert_eq!(listed.describe(), "a/1; effort at most x_high");
         let none = ModelPolicy::from_lists(&[m("b/2")], &[m("b/2")], None);
-        assert_eq!(none.describe(), "none (every allowed model is denied)");
-        assert_eq!(none.describe_allowed(), none.describe());
+        assert_eq!(
+            none.describe(),
+            "none (every allowed model is denied); effort at most x_high"
+        );
+        assert_eq!(
+            none.describe_allowed(),
+            "none (every allowed model is denied)"
+        );
     }
 }

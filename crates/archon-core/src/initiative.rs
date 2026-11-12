@@ -41,7 +41,7 @@ impl InitiativeLimits {
 
 /// How `update_initiative` changes the shared contract; the field named is
 /// the variant (`contract_append` or `contract`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum ContractChange {
     /// Text added after the contract, separated by a blank line.
     #[serde(rename = "contract_append")]
@@ -77,8 +77,9 @@ impl ContractChange {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[schemars(transform = crate::protocol::schema::AlsoReads("succeeded"))]
 pub enum InitiativeState {
     /// At least one member has not finished.
     Open,
@@ -106,7 +107,7 @@ impl InitiativeState {
 }
 
 /// Its members are the items whose `initiative` names it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Initiative {
     pub id: InitiativeId,
     pub title: String,
@@ -164,7 +165,7 @@ pub fn check_contract(contract: &str, limits: &InitiativeLimits) -> Result<(), A
 }
 
 /// One item an `enqueue_initiative` creates.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct InitiativeMember {
     pub repo: RepoRef,
@@ -188,7 +189,7 @@ pub struct InitiativeMember {
     pub onto: Option<OntoTarget>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EnqueueInitiative {
     pub title: String,
     pub contract: String,
@@ -227,14 +228,14 @@ impl EnqueueInitiative {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct InitiativeDetail {
     pub initiative: Initiative,
     pub members: Vec<QueueItem>,
 }
 
 /// What a member's stage agents are told about its initiative.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct InitiativeBrief {
     pub title: String,
     pub contract: String,
@@ -243,7 +244,7 @@ pub struct InitiativeBrief {
 }
 
 /// Another member, as far as its work exists yet.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Sibling {
     pub item: QueueItemId,
     /// The repository's registry name.

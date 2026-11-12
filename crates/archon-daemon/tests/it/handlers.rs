@@ -236,6 +236,147 @@ async fn enqueue_refuses_models_outside_the_repository_policy() {
 }
 
 #[tokio::test]
+async fn default_effort_cap_applies_to_plans_updates_and_steers() {
+    let h = Harness::new().await;
+    let mut max_plan = plan();
+    max_plan
+        .0
+        .insert("implement".into(), vec![choice(MODEL, Effort::Max)]);
+    let error = h
+        .enqueue_with("max plan", max_plan.clone())
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("maximum x_high") && error.contains("max_effort"),
+        "{error}"
+    );
+    let item = h.enqueue("within cap").await;
+    let error = h
+        .cli(Request::UpdateItem {
+            item: item.id.clone(),
+            patch: ItemPatch {
+                model_plan: Some(max_plan.into()),
+                ..ItemPatch::default()
+            },
+        })
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("maximum x_high") && error.contains("max_effort"),
+        "{error}"
+    );
+    let error = h
+        .cli(Request::SteerItem {
+            item: item.id.clone(),
+            steer: archon_core::steer::Steer {
+                stage: Some("implement".into()),
+                effort: Some(Effort::Max),
+                ..Default::default()
+            },
+        })
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("maximum x_high") && error.contains("max_effort"),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn running_steer_refuses_max_before_requiring_a_reason() {
+    let h = Harness::new().await;
+    let item = h.enqueue("running effort").await;
+    h.dispatch().await;
+    assert!(matches!(
+        h.state(&item.id).await,
+        QueueState::Running { .. }
+    ));
+    let error = h
+        .cli(Request::SteerItem {
+            item: item.id.clone(),
+            steer: archon_core::steer::Steer {
+                stage: Some("implement".into()),
+                effort: Some(Effort::Max),
+                ..Default::default()
+            },
+        })
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("maximum x_high") && error.contains("max_effort"),
+        "{error}"
+    );
+    assert_eq!(h.item(&item.id).await.model_plan, plan());
+    assert!(h.backend.updates().is_empty());
+}
+
+async fn enqueue_reasoned(h: &Harness, plan: ModelPlan) -> archon_core::queue::QueueItem {
+    let request = EnqueueRequest {
+        onto: None,
+        stage_timeouts: Default::default(),
+        repo: Some(repo_ref()),
+        pipeline: Some(common::PIPELINE.into()),
+        title: "reasoned effort".into(),
+        brief: "hard reasoning".into(),
+        priority: Default::default(),
+        depends_on: Vec::new(),
+        tags: Vec::new(),
+        model_plan: plan.into(),
+        model_reasons: Some([("implement".into(), "hard reasoning".into())].into()),
+        budget_usd: None,
+        idempotency_key: None,
+        autonomy: Default::default(),
+        origin: None,
+    };
+    let Reply::Item(item) = h
+        .cli(Request::Enqueue(request))
+        .await
+        .expect("plan accepted")
+    else {
+        panic!("enqueue must return an item");
+    };
+    item
+}
+
+#[tokio::test]
+async fn x_high_plan_reaches_dispatch() {
+    let h = Harness::new().await;
+    let mut xhigh = plan();
+    xhigh
+        .0
+        .insert("implement".into(), vec![choice(MODEL, Effort::XHigh)]);
+    let item = enqueue_reasoned(&h, xhigh).await;
+    h.dispatch().await;
+    assert!(
+        h.backend
+            .requests()
+            .iter()
+            .any(|request| request.choice.effort == Effort::XHigh)
+    );
+    assert_eq!(
+        h.item(&item.id).await.model_plan.0["implement"][0].effort,
+        Effort::XHigh
+    );
+}
+
+#[tokio::test]
+async fn global_max_cap_survives_an_unset_repository_cap() {
+    let mut config = Config::default();
+    config.models.max_effort = Some(Effort::Max);
+    let h = Harness::with_config(config).await;
+    let mut max_plan = plan();
+    max_plan
+        .0
+        .insert("implement".into(), vec![choice(MODEL, Effort::Max)]);
+    let item = enqueue_reasoned(&h, max_plan).await;
+    assert_eq!(item.model_plan.0["implement"][0].effort, Effort::Max);
+}
+
+#[tokio::test]
 async fn enqueue_refuses_models_outside_the_global_allowlist() {
     let mut config = Config::default();
     config.models.allow = vec![MODEL.parse().expect("model")];
@@ -661,6 +802,32 @@ async fn mcp_clients_cannot_lift_the_operators_hard_pause() {
     h.orchestrator(resume)
         .await
         .expect("the orchestrator lifts a soft pause");
+}
+
+#[tokio::test]
+async fn a_web_device_cannot_lift_the_operators_hard_pause() {
+    let h = Harness::new().await;
+    let web = |request| handlers::handle(&h.ctx, ClientKind::ArchonWeb, request);
+    h.cli(Request::Pause(PauseTarget::Global { hard: true }))
+        .await
+        .expect("no running agent to pause in Aether");
+    let resume = Request::Resume(PauseTarget::Global { hard: false });
+    let refused = web(resume.clone())
+        .await
+        .expect_err("a device cannot lift a hard pause");
+    assert!(
+        matches!(&refused, ArchonError::Forbidden(why) if why.contains("archon CLI")),
+        "{refused:?}"
+    );
+    let Ok(Reply::Status(status)) = h.cli(Request::Status(Default::default())).await else {
+        panic!("status");
+    };
+    assert!(status.pause.global, "the hard pause holds");
+    h.cli(resume.clone()).await.expect("the operator lifts it");
+    web(Request::Pause(PauseTarget::Global { hard: false }))
+        .await
+        .expect("a device pauses softly");
+    web(resume).await.expect("and lifts its own soft pause");
 }
 
 #[tokio::test]

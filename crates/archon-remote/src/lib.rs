@@ -1,11 +1,12 @@
-//! archond's remote listener (docs/remote.md): the embedded mobile web app,
-//! one-time pairing, per-device credentials, and a WebSocket that carries
-//! archond's own protocol. Off until the operator enables it, bound to
-//! loopback, and published over HTTPS by `tailscale serve` or a proxy.
+//! archond's remote listener (docs/remote.md): one-time pairing, per-device
+//! credentials, and a WebSocket that carries archond's own protocol. Off
+//! until the operator enables it, bound to loopback, and reached through
+//! the `/archon` mount of Aether's listener, whose app has Archon's screens.
 //!
-//! A paired device gets no authority of its own: [`allow::allowed`] picks
-//! the requests it may send, and [`Backend`] hands each to archond exactly
-//! as the operator's CLI would.
+//! [`allow::check`] picks the requests a paired device's role may send, and
+//! [`Backend`] hands each to archond with the device that sent it: an
+//! operator-role device acts with the operator CLI's standing, an observer
+//! only reads.
 
 pub mod allow;
 mod assets;
@@ -22,7 +23,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Instant;
 
 use archon_core::error::ArchonError;
-use archon_core::protocol::{Reply, Request, ServerFrame};
+use archon_core::protocol::{DeviceRole, Reply, Request, ServerFrame, WelcomeDevice};
 use archon_core::remote::{DeviceView, PairingCode, RemoteChange, RemoteConfig, RemoteView};
 use tokio::sync::mpsc;
 
@@ -34,11 +35,24 @@ use crate::store::Stored;
 /// How archond serves what a device sends.
 #[async_trait::async_trait]
 pub trait Backend: Send + Sync + 'static {
-    /// Answer one allowed request with the operator CLI's standing.
-    async fn handle(&self, request: Request) -> Result<Reply, ArchonError>;
+    /// Answer one request `device` is allowed, with the standing its role
+    /// gives: the operator CLI's for an operator, `archon-web`'s otherwise.
+    async fn handle(&self, device: &WelcomeDevice, request: Request) -> Result<Reply, ArchonError>;
     /// Send `subscribe_feed`'s reply and then its feed frames to `frames`
     /// until it closes, as the Unix socket does.
     async fn feed(&self, subscription: FeedSubscription, frames: mpsc::Sender<ServerFrame>);
+    /// Send `subscribe_changes`' reply and then its change frames to
+    /// `frames` until it closes. A backend without a change stream refuses it.
+    async fn changes(&self, subscription: ChangeSubscription, frames: mpsc::Sender<ServerFrame>) {
+        let refusal = ArchonError::Unavailable("this archond serves no change stream".into());
+        let frame = ServerFrame::Reply {
+            id: subscription.request,
+            result: Err((&refusal).into()),
+        };
+        let _gone = frames.send(frame).await;
+    }
+    /// The protocol 24 features archond serves, for a session's `welcome`.
+    fn features(&self) -> Vec<&'static str>;
 }
 
 /// One `subscribe_feed` on a device's WebSocket.
@@ -50,6 +64,15 @@ pub struct FeedSubscription {
     pub request: u64,
     pub after: Option<u64>,
     pub verbose: bool,
+}
+
+/// One `subscribe_changes` on a device's WebSocket, numbered with its feeds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChangeSubscription {
+    pub id: u64,
+    /// The request's `req`, for the `subscribed` reply.
+    pub request: u64,
+    pub after: Option<u64>,
 }
 
 /// The remote listener and its state; one per archond.
@@ -135,7 +158,7 @@ impl Remote {
         data_dir: &Path,
         daemon_version: &str,
     ) -> Result<Self, ArchonError> {
-        config.validate()?;
+        let config = config.normalized()?;
         let path = data_dir.join(store::FILE_NAME);
         let stored = store::load(&path)?;
         let state = State {
@@ -190,6 +213,8 @@ impl Remote {
             listening: state.listener.as_ref().map(|l| l.address.to_string()),
             error: state.error.clone(),
             public_origins: state.stored.public_origins.clone(),
+            mounted_at: self.shared.config.mounted_at.clone(),
+            trusted_origins: self.shared.config.trusted_origins.clone(),
             devices,
             pairing_expires_at: state
                 .pairing
@@ -234,8 +259,9 @@ impl Remote {
         Ok(self.view())
     }
 
-    /// Open a pairing, replacing any open one. Only while listening.
-    pub fn pair(&self) -> Result<PairingCode, ArchonError> {
+    /// Open a pairing for a device in `role`, replacing any open one. Only
+    /// while listening.
+    pub fn pair(&self, role: DeviceRole) -> Result<PairingCode, ArchonError> {
         let mut state = self.shared.lock();
         let Some(listening) = state.listener.as_ref().map(|l| l.address) else {
             return Err(ArchonError::Invalid(
@@ -249,24 +275,16 @@ impl Remote {
                 devices::MAX_DEVICES
             )));
         }
-        let pairing = Pairing::open(Instant::now())?;
-        let mut urls: Vec<String> = state
-            .stored
-            .public_origins
-            .iter()
-            .map(|origin| format!("{origin}/pair"))
-            .collect();
-        urls.push(format!(
-            "{}/pair",
-            archon_core::remote::local_origin(listening)
-        ));
+        let pairing = Pairing::open(Instant::now(), role)?;
+        let urls = pairing_urls(&self.shared.config, &state.stored, listening);
+        assert!(!urls.is_empty(), "a pairing names somewhere to claim it");
         let code = PairingCode {
             code: pairing.display_code(),
             expires_at: pairing.expires_at(),
             urls,
         };
         state.pairing = Some(pairing);
-        tracing::info!("a remote pairing was opened");
+        tracing::info!(?role, "a remote pairing was opened");
         Ok(code)
     }
 
@@ -338,10 +356,38 @@ impl State {
     }
 }
 
+/// Where the app claims a pairing: through the mount on each trusted origin
+/// while mounted, which is the only way in then; otherwise on each public
+/// origin and on loopback.
+fn pairing_urls(
+    config: &RemoteConfig,
+    stored: &Stored,
+    listening: std::net::SocketAddr,
+) -> Vec<String> {
+    if let Some(prefix) = &config.mounted_at {
+        return config
+            .trusted_origins
+            .iter()
+            .map(|origin| format!("{origin}{prefix}/pair"))
+            .collect();
+    }
+    let mut urls: Vec<String> = stored
+        .public_origins
+        .iter()
+        .map(|origin| format!("{origin}/pair"))
+        .collect();
+    urls.push(format!(
+        "{}/pair",
+        archon_core::remote::local_origin(listening)
+    ));
+    urls
+}
+
 fn device_view(device: &Device, sessions: u32) -> DeviceView {
     DeviceView {
         id: device.id.clone(),
         name: device.name.clone(),
+        role: device.role,
         paired_at: device.paired_at,
         last_seen_at: device.last_seen_at,
         sessions,

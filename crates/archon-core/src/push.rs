@@ -9,7 +9,19 @@ use crate::error::ArchonError;
 pub const MAX_MIN_GAP_SECS: u64 = 24 * 60 * 60;
 
 /// What a push notification is about; the `[notify] on` vocabulary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum PushKind {
     /// An operator gate waits for a decision.
@@ -49,7 +61,7 @@ impl PushKind {
 }
 
 /// `[notify]`: nothing is sent until `command` or `webhook` is set.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct NotifyConfig {
     /// The kinds that are sent; every kind by default.

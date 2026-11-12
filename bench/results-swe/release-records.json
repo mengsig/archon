@@ -1,0 +1,35 @@
+{
+  "current": "v1.4.12",
+  "window": "1.4.x releases on the current review policy: v1.4.9 (#329's reviewer effort floor, accepted by the operator on 2026-10-31) and later.",
+  "measure": "Each released archon on the released Aether it shipped with, as the old arm of the next release's smoke gate.",
+  "records": [
+    {
+      "archon": "v1.4.12",
+      "aether": "v1.2.11",
+      "source": "bench/results-release-1.5.0",
+      "haiku": { "passed": 8, "trials": 8, "usd_per_run": 0.1225 },
+      "luna": { "passed": 7, "trials": 8, "usd_per_run": 0.0520 }
+    },
+    {
+      "archon": "v1.4.11",
+      "aether": "v1.2.10",
+      "source": "bench/results-release-1.4.12",
+      "haiku": { "passed": 8, "trials": 8, "usd_per_run": 0.1220 },
+      "luna": { "passed": 7, "trials": 8, "usd_per_run": 0.0493 }
+    },
+    {
+      "archon": "v1.4.10",
+      "aether": "v1.2.9",
+      "source": "bench/results-release-1.4.11 (Luna not measured: Codex quota, see bench/results-release-1.4.10)",
+      "haiku": { "passed": 8, "trials": 8, "usd_per_run": 0.1851 },
+      "luna": null
+    },
+    {
+      "archon": "v1.4.9",
+      "aether": "v1.2.8",
+      "source": "bench/results-release-1.4.10 (Haiku), bench/results-release-1.4.11 (Luna)",
+      "haiku": { "passed": 8, "trials": 8, "usd_per_run": 0.1723 },
+      "luna": { "passed": 8, "trials": 8, "usd_per_run": 0.0649 }
+    }
+  ]
+}

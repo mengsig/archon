@@ -64,6 +64,7 @@ function buildTabbar() {
   const buttons = new Map();
   const badge = h('span', { class: 'tab-badge', 'aria-hidden': 'true', hidden: true });
   const nav = h('nav', { class: 'tabbar', 'aria-label': 'Sections' },
+    h('span', { class: 'tabbar-brand', text: 'Archon' }),
     TABS.map((tab) => {
       const link = h('a', { class: 'tab', href: `#/${tab.id}`, dataset: { tab: tab.id } },
         h('span', { class: 'tab-icon' }, icon(tab.icon, { size: 24 }), tab.id === 'inbox' ? badge : null),

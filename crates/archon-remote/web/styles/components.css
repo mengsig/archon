@@ -42,7 +42,8 @@
 }
 .conn-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--amber); animation: pulse 1.6s ease-in-out infinite; }
 .conn-banner[data-state="disabled"] .conn-dot { background: var(--text-3); animation: none; }
-.conn-banner .link-button { min-height: 30px; font-size: 13px; }
+.conn-banner .link-button { position: relative; min-height: 30px; font-size: 13px; }
+.conn-banner .link-button::after { content: ""; position: absolute; inset: -7px -8px; }
 
 /* Screen header: iOS-style large title, compact bar with back and actions. */
 .screen-header { padding-top: calc(var(--safe-top) + var(--space-2)); }
@@ -95,6 +96,7 @@
   backdrop-filter: saturate(180%) blur(20px);
   transition: transform var(--t-med) var(--ease-out);
 }
+.tabbar-brand { display: none; }
 .keyboard-open .tabbar { transform: translateY(110%); }
 .tab {
   flex: 1;
@@ -149,7 +151,7 @@
 .button:active:not(:disabled) { transform: scale(0.97); }
 .button:disabled { opacity: 0.5; cursor: default; }
 .button-block { width: 100%; }
-.button-small { min-height: 34px; padding: 0 var(--space-3); font-size: 15px; border-radius: var(--radius-pill); }
+.button-small { min-height: var(--tap); padding: 0 var(--space-3); font-size: 15px; border-radius: var(--radius-pill); }
 .button-primary { background: var(--accent); color: var(--on-accent); }
 .button-danger { background: var(--red); color: #fff; }
 .button-plain { background: var(--neutral-soft); color: var(--accent); }
@@ -244,7 +246,7 @@
   padding: 0 var(--space-1);
   font-size: 13px;
   font-weight: 600;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-2);
 }
@@ -349,6 +351,7 @@ select.input {
   background: var(--red-soft);
   color: var(--red);
   font-size: 15px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--red) 22%, transparent);
 }
 
 /* Segmented control. */
@@ -421,15 +424,15 @@ select.input {
 .empty-icon {
   display: grid;
   place-items: center;
-  width: 56px;
-  height: 56px;
+  width: 60px;
+  height: 60px;
   margin-bottom: var(--space-2);
   border-radius: 50%;
   background: var(--neutral-soft);
   color: var(--text-2);
 }
 .empty-title { font-size: 17px; font-weight: 600; }
-.empty-text { font-size: 15px; color: var(--text-2); max-width: 300px; }
+.empty-text { font-size: 15px; color: var(--text-2); max-width: 340px; text-wrap: pretty; }
 .spinner {
   width: 22px;
   height: 22px;
@@ -443,8 +446,9 @@ select.input {
 .skeleton-row {
   height: 72px;
   border-radius: var(--radius-l);
-  background: var(--surface);
-  animation: pulse 1.4s ease-in-out infinite;
+  background: linear-gradient(90deg, var(--surface) 30%, var(--surface-2) 50%, var(--surface) 70%) 0 0 / 300% 100%;
+  box-shadow: var(--shadow);
+  animation: shimmer 1.6s ease-in-out infinite;
 }
 
 /* List rows entering and leaving. */

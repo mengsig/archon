@@ -1,0 +1,66 @@
+# Independent validation and outcome criteria
+
+The daemon's gates check code and tests, not whether a person can use what
+was built. An independent validation item checks that; you never do it.
+
+**Before a hand-off.** Before you tell the operator a user-facing build (an
+app, UI, CLI or installer a person runs) is ready to try or test:
+
+- Queue one validation item that `depends_on` every item that built it: the
+  one build item, or all of a split request's (then it is the outcome owner
+  below; queue no second one). It stacks on their branches, so it tests the
+  heads they delivered, team runs and stacked builds included. Exception: a
+  build queued `onto` a pull request has no branch to stack on. Validate it
+  `onto` that build item once it finished, and in a split request only if
+  every build went `onto` that same pull request, so its head holds them
+  all; else say the builds have no combined head to validate, not "ready".
+- Pipeline, by the build's head, not the base: `release-journey` only when
+  the head's `.archon/journeys.toml` has a journey for every outcome to
+  check (`git show refs/mirror/<branch>:.archon/journeys.toml` in its
+  mirror, `get_item` names the branch; before the build ran, when the
+  briefs have the build keep or add those journeys), else `e2e-strict`,
+  briefed with every outcome as a scenario.
+- Independence: its `model_plan` pins a `model` for every stage of its
+  pipeline (`list_pipelines`), none a model a build stage runs, so no stage
+  falls back to a learned or default choice. Know the build's models first:
+  queue it with the build only when every build item's `model_plan` pins
+  each of its stages to models outside the validation's; else queue it once
+  every build item has finished, from the models `get_item` shows they ran.
+  A fix follows the same rule. If `model_policy` leaves no other
+  model, tell the operator the build cannot be validated independently
+  instead of queueing a self-check.
+- Brief it to report the exact commit tested for each repository. Report only
+  that item's outcome: before saying "ready", read each delivering pull
+  request's current head (`get_item` on the delivering item, or the pull
+  request itself). Hand over only if every head equals its tested commit;
+  if any moved, queue validation again. In local ship mode, with no pull
+  request, compare the branch head the validation names; mirror ref freshness
+  is a known limitation. A pass counts for the outcomes its journeys or scenarios
+  checked: the build is ready to try, with its pull request and the
+  report; name any outcome it did not check. On a failure, tell the
+  operator what failed, from the failed stage's `scenarios` (`get_stage`;
+  a strict run fails before its report), and that a fix is queued; queue
+  it, then a new validation item that `depends_on` the fix. Never say
+  "ready" before a pass.
+- An internal change (refactor, tests, CI, docs, a library no person runs)
+  needs none: relay its success as usual.
+
+You never build, run apps or drive journeys yourself or through a helper:
+the validation item does.
+
+**Outcome criteria.** When a user-facing request splits into several items:
+
+- Each brief keeps its code-level criteria (functions, tests, files) and
+  adds the user outcomes its part serves, written so they can be checked:
+  who, on what setup, does what and sees what, within what bound. Example:
+  "on a fresh install, a new user starts an agent and gets a reply within
+  30 seconds".
+- One item owns the end-to-end outcome: the hand-off's validation item,
+  which `depends_on` every build item, briefed with the whole request's
+  outcome criteria. Its pass is the request's pass; the hand-off waits for
+  it.
+- A build stage checks its change against its brief's outcome criteria and
+  says which it could not check where it ran. Such an unchecked outcome is
+  left to the owning item, never assumed met.
+
+See `docs/journeys.md` for an example backlog.

@@ -1,6 +1,7 @@
 // Boot: take a pairing link's code, ask the host who we are, then show
 // either pairing or the app.
 import * as api from './core/api.js';
+import { BASE } from './core/base.js';
 import { codeFromHash } from './core/pairing-code.js';
 import { followSystemTheme } from './core/theme.js';
 import { createApp } from './app.js';
@@ -19,7 +20,7 @@ boot({ code: takeLinkCode() });
 // The fragment never stays in the address bar or history once read.
 function takeLinkCode() {
   const code = codeFromHash(location.hash);
-  if (code !== null || location.pathname === '/pair') history.replaceState(null, '', '/');
+  if (code !== null || location.pathname === `${BASE}/pair`) history.replaceState(null, '', `${BASE}/`);
   return code;
 }
 
@@ -71,7 +72,7 @@ function renderBootError(err) {
 
 function registerServiceWorker() {
   if (!('serviceWorker' in navigator)) return;
-  navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch((err) => {
+  navigator.serviceWorker.register(`${BASE}/sw.js`, { scope: `${BASE}/` }).catch((err) => {
     console.warn('Archon works without offline support: the service worker did not register.', err);
   });
 }

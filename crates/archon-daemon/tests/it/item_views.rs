@@ -758,6 +758,7 @@ async fn child_usage(h: &Harness, agent: &archon_core::aether_ids::AetherAgentId
 #[tokio::test]
 async fn a_stage_cost_includes_its_delegated_agents_and_counts_each_once() {
     let h = Harness::new().await;
+    let _aether = common::connect_aether_for_delegations(&h).await;
     let item = h.enqueue("delegating stage").await;
     h.dispatch().await;
     let lead = h.running().await.remove(0);
@@ -819,6 +820,7 @@ async fn a_stage_cost_includes_its_delegated_agents_and_counts_each_once() {
 #[tokio::test]
 async fn a_running_stage_shows_the_effort_of_the_agents_it_delegated_to() {
     let h = Harness::new().await;
+    let _aether = common::connect_aether_for_delegations(&h).await;
     let item = h.enqueue("delegating stage").await;
     h.dispatch().await;
     let lead = h.running().await.remove(0);
@@ -850,6 +852,7 @@ async fn a_running_stage_shows_the_effort_of_the_agents_it_delegated_to() {
 #[tokio::test]
 async fn delegated_descendant_cost_stays_with_its_run_after_retry_and_restart() {
     let mut h = Harness::new().await;
+    let _aether = common::connect_aether_for_delegations(&h).await;
     let item = h.enqueue("descendant spend").await;
     h.dispatch().await;
     let old = h.running().await.remove(0);

@@ -290,7 +290,7 @@ impl Plan {
             Ok(config) => config,
             Err(error) => return (Outcome::Stale(error.to_string()), None),
         };
-        let policy = self.global.narrowed_by(&config.models.policy());
+        let policy = self.global.narrowed_by(&config.models.policy_overlay());
         if let Err(refusal) = policy.check(&self.orchestrator) {
             let removed = lock::open(&self.mirror.work)
                 .and_then(|()| git::remove_entry(&self.mirror.work))
@@ -542,7 +542,7 @@ pub(crate) async fn helper_policy(
     let mut policy = ctx.config.models.policy();
     for repo in repos.iter().filter(|repo| reach.includes(&repo.name)) {
         match RepoConfig::load(&repo.path) {
-            Ok(config) => policy = policy.narrowed_by(&config.models.policy()),
+            Ok(config) => policy = policy.narrowed_by(&config.models.policy_overlay()),
             // The dispatcher refuses such a repo's new work, and it has no
             // mirror; keep watching without its narrowing.
             Err(error) => {

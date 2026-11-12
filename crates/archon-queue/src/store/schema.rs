@@ -611,8 +611,175 @@ CREATE TABLE spend_pruned (
 );
 "#;
 
+/// Version 19 (vNext AR-C): the gapless change stream and item transitions.
+/// Items that predate it get one change naming their current state, so a
+/// replay from 0 still reaches every item's state.
+const V19: &str = r#"
+CREATE TABLE changes (
+    seq  INTEGER PRIMARY KEY AUTOINCREMENT,
+    at   TEXT NOT NULL,
+    data TEXT NOT NULL
+);
+CREATE TABLE item_transitions (
+    seq        INTEGER PRIMARY KEY,
+    item       TEXT NOT NULL REFERENCES items (id) ON DELETE CASCADE,
+    at         TEXT NOT NULL,
+    from_state TEXT,
+    to_state   TEXT NOT NULL,
+    reason     TEXT,
+    actor      TEXT NOT NULL
+);
+CREATE INDEX item_transitions_by_item ON item_transitions (item, seq);
+INSERT INTO changes (at, data)
+SELECT updated_at, json_object('subject', 'item', 'item', id, 'state', state)
+FROM items ORDER BY seq;
+"#;
+
+/// The V20 backfill as a statement list of its own, so a test can run it
+/// again: rows already linked are skipped, and each new one gets its change.
+/// An origin number past `i64::MAX` reads back as REAL and names no GitHub
+/// thread, so it is left unlinked rather than stored unreadable.
+macro_rules! github_links_backfill {
+    () => {
+        r#"
+CREATE TEMP TABLE github_links_backfill (
+    item       TEXT NOT NULL,
+    host       TEXT NOT NULL,
+    repo       TEXT NOT NULL,
+    number     INTEGER NOT NULL,
+    kind       TEXT NOT NULL,
+    relation   TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+INSERT INTO temp.github_links_backfill
+SELECT id, 'github.com', lower(json_extract(data, '$.origin.repository')),
+       json_extract(data, '$.origin.number'), 'issue', 'origin', created_at
+FROM items
+WHERE json_type(data, '$.origin.repository') = 'text'
+  AND typeof(json_extract(data, '$.origin.number')) = 'integer'
+  AND json_extract(data, '$.origin.number') > 0;
+INSERT INTO temp.github_links_backfill
+SELECT r.item, p.host, p.repository, p.number, 'pull_request', 'delivered', MIN(r.started_at)
+FROM run_pull_requests p JOIN runs r ON r.id = p.run
+GROUP BY r.item, p.host, p.repository, p.number;
+DELETE FROM temp.github_links_backfill WHERE EXISTS (
+    SELECT 1 FROM github_links l
+    WHERE (l.item, l.host, l.repo, l.number, l.relation)
+        = (github_links_backfill.item, github_links_backfill.host, github_links_backfill.repo,
+           github_links_backfill.number, github_links_backfill.relation));
+INSERT INTO github_links (item, host, repo, number, kind, relation, source, created_at)
+SELECT item, host, repo, number, kind, relation, 'backfill', created_at
+FROM temp.github_links_backfill;
+INSERT INTO changes (at, data)
+SELECT created_at, json_object('subject', 'link', 'item', item, 'host', host, 'repo', repo,
+                               'number', number, 'relation', relation)
+FROM temp.github_links_backfill ORDER BY created_at, item, relation, host, repo, number;
+DROP TABLE temp.github_links_backfill;
+"#
+    };
+}
+
+/// Version 20 (vNext D1): the links between items and GitHub issues and pull
+/// requests, backfilled from item origins and `run_pull_requests`.
+const V20: &str = concat!(
+    r#"
+CREATE TABLE github_links (
+    item       TEXT NOT NULL REFERENCES items (id) ON DELETE CASCADE,
+    host       TEXT NOT NULL CHECK (host <> '' AND host = lower(host)),
+    repo       TEXT NOT NULL CHECK (repo GLOB '?*/?*' AND repo = lower(repo)),
+    number     INTEGER NOT NULL CHECK (number > 0),
+    kind       TEXT NOT NULL CHECK (kind IN ('issue', 'pull_request')),
+    relation   TEXT NOT NULL
+               CHECK (relation IN ('origin', 'imported', 'delivered', 'closes', 'mentioned')),
+    source     TEXT NOT NULL
+               CHECK (source IN ('watcher', 'operator', 'import', 'ship', 'backfill')),
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (item, host, repo, number, relation)
+) WITHOUT ROWID;
+CREATE INDEX github_links_by_object ON github_links (host, repo, number);
+"#,
+    github_links_backfill!()
+);
+
+/// V20's backfill alone, run again by its idempotence test.
+#[cfg(test)]
+const GITHUB_LINKS_BACKFILL: &str = github_links_backfill!();
+
+/// Version 21 (vNext D2): the read-only cache of linked GitHub issues and
+/// pull requests, one row per number, with the ETag its refresh sends.
+const V21: &str = r#"
+CREATE TABLE github_objects (
+    host            TEXT NOT NULL CHECK (host <> '' AND host = lower(host)),
+    repo            TEXT NOT NULL CHECK (repo GLOB '?*/?*' AND repo = lower(repo)),
+    number          INTEGER NOT NULL CHECK (number > 0),
+    kind            TEXT NOT NULL CHECK (kind IN ('issue', 'pull_request')),
+    title           TEXT NOT NULL,
+    state           TEXT NOT NULL CHECK (state IN ('open', 'closed', 'merged')),
+    state_reason    TEXT,
+    draft           INTEGER CHECK (draft IN (0, 1)),
+    merged_at       TEXT,
+    labels          TEXT NOT NULL,
+    author          TEXT,
+    updated_at      TEXT NOT NULL,
+    etag            TEXT,
+    fetched_at      TEXT NOT NULL,
+    review_decision TEXT,
+    checks          TEXT,
+    PRIMARY KEY (host, repo, number)
+) WITHOUT ROWID;
+"#;
+
+/// Version 22 (vNext D3): every GitHub comment Archon posts, written before
+/// the post under a token its body carries, so a restart never posts it twice.
+const V22: &str = r#"
+CREATE TABLE github_outbox (
+    token           TEXT PRIMARY KEY CHECK (token GLOB 'obx_?*'),
+    purpose         TEXT NOT NULL CHECK (purpose IN ('reply', 'ship')),
+    item            TEXT,
+    run             TEXT,
+    host            TEXT NOT NULL CHECK (host <> '' AND host = lower(host)),
+    repo            TEXT NOT NULL CHECK (repo GLOB '?*/?*' AND repo = lower(repo)),
+    number          INTEGER NOT NULL CHECK (number > 0),
+    body            TEXT NOT NULL CHECK (instr(body, token) > 0),
+    state           TEXT NOT NULL CHECK (state IN ('pending', 'posted')),
+    attempts        INTEGER NOT NULL CHECK (attempts >= 0),
+    next_attempt_at TEXT NOT NULL,
+    last_error      TEXT,
+    comment_id      INTEGER CHECK (comment_id > 0),
+    comment_url     TEXT,
+    created_at      TEXT NOT NULL,
+    posted_at       TEXT,
+    CHECK ((state = 'posted') = (comment_id IS NOT NULL)),
+    CHECK ((state = 'posted') = (posted_at IS NOT NULL)),
+    CHECK (purpose <> 'ship' OR (item IS NOT NULL AND run IS NOT NULL))
+);
+CREATE UNIQUE INDEX github_outbox_once ON github_outbox (item, run, purpose)
+    WHERE item IS NOT NULL AND run IS NOT NULL;
+CREATE INDEX github_outbox_pending ON github_outbox (next_attempt_at)
+    WHERE state = 'pending';
+"#;
+
+/// Version 23 (vNext G5): each lesson's near-duplicate cluster, and the
+/// holdout trials lift is measured from. Additive: no lesson row changes.
+const V23: &str = r#"
+ALTER TABLE lessons ADD COLUMN cluster TEXT REFERENCES lessons (id);
+CREATE INDEX lessons_by_cluster ON lessons (cluster) WHERE cluster IS NOT NULL;
+
+CREATE TABLE lesson_trials (
+    lesson TEXT NOT NULL REFERENCES lessons (id),
+    run    TEXT NOT NULL,
+    item   TEXT NOT NULL,
+    held   INTEGER NOT NULL CHECK (held IN (0, 1)),
+    at     TEXT NOT NULL,
+    won    INTEGER CHECK (won IN (0, 1)),
+    PRIMARY KEY (lesson, run)
+) WITHOUT ROWID;
+CREATE INDEX lesson_trials_by_run ON lesson_trials (run);
+"#;
+
 pub(super) const MIGRATIONS: &[&str] = &[
-    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18,
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
+    V22, V23,
 ];
 
 /// Pragmas every connection needs. `on_disk` connections must end up in
@@ -803,6 +970,8 @@ pub(super) fn migrate(conn: &mut Connection) -> Result<usize, ArchonError> {
     Ok(MIGRATIONS.len())
 }
 
+#[cfg(test)]
+mod github_links_backfill;
 #[cfg(test)]
 mod history_upgrade;
 #[cfg(test)]
@@ -1253,7 +1422,11 @@ mod tests {
         insert_feedback(&conn, "fb_old", V11_ROW).unwrap();
         conn.execute_batch(
             "DROP TABLE run_pull_requests; DROP TABLE merge_requests; DROP TABLE tracked_requests;
-             DROP TABLE spend_pruned; DELETE FROM schema_migrations WHERE version >= 12",
+             DROP TABLE spend_pruned; DROP TABLE item_transitions; DROP TABLE changes;
+             DROP TABLE github_links; DROP TABLE github_objects; DROP TABLE github_outbox;
+             DROP TABLE lesson_trials; DROP INDEX lessons_by_cluster;
+             ALTER TABLE lessons DROP COLUMN cluster;
+             DELETE FROM schema_migrations WHERE version >= 12",
         )
         .unwrap();
         assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());

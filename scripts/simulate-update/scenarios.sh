@@ -145,17 +145,37 @@ stop_archond() {
         || bounded 60 sb archon daemon stop --force >>"$ROOT/out/reset.log" 2>&1
 }
 
-# Back to BIN: installed, and no archond running. A restart an earlier update
-# asked for may start archond again once it stops, so stop until it stays down.
+# Back to BIN: installed, no archond running, and a fresh store, as NEW may have
+# migrated the old one past what BIN opens. A restart an earlier update asked
+# for may start archond again once it stops, so stop until it stays down.
+# The first stop uses the archon that started it: an older one may not speak
+# its protocol.
 reset_to() {
+    stop_archond || die "archond would not stop before installing $1; see $ROOT/out/reset.log"
     install_archon "$1"
     for round in 1 2 3; do
         stop_archond || die "archond would not stop for scenario B; see $ROOT/out/reset.log"
         sleep 5
-        daemon_answers || return 0
+        if ! daemon_answers; then
+            fresh_store
+            return 0
+        fi
         say "archond came back after stop $round ($(daemon_field daemon_version) pid $(daemon_field pid)); stopping it again"
     done
     die "archond keeps coming back after it stops; see $ROOT/out/reset.log"
+}
+
+# Move the stopped archond's store into out/, so the next start creates one
+# and registers the repository again.
+fresh_store() {
+    kept=$ROOT/out/store-before-reset.$$.$(date +%s)
+    mkdir -p "$kept" || die "creating $kept"
+    for file in "$ROOT/archon-data"/archon.db*; do
+        [ -e "$file" ] || continue
+        mv "$file" "$kept/" || die "moving $file out of the sandbox store"
+    done
+    [ ! -e "$ROOT/archon-data/archon.db" ] || die "the sandbox store is still there"
+    rm -f "$ROOT/repo-added"
 }
 
 check_interrupt() {
@@ -183,6 +203,7 @@ scenario_b() {
     installed=$(version_of "$ROOT/bin/archon")
     expect "B: installed archon runs" "reports '$installed', want $OLD_VERSION or $NEW_VERSION" \
         is_one_of "$installed" "$OLD_VERSION" "$NEW_VERSION"
+    recover_other_protocol B
     started=$(now)
     bounded 30 sb archon daemon start >>"$ROOT/out/scenario-b-start.log" 2>&1
     if wait_until 30 "archond to answer" daemon_answers; then
@@ -196,6 +217,28 @@ scenario_b() {
     finish_stage B
     check_interrupt_told "$transcript"
 }
+
+# Interrupted across a protocol change, the old archond still runs and the
+# installed archon cannot reach it: stop it as docs/upgrading.md says.
+recover_other_protocol() {
+    status_file=$ROOT/out/status-after-$1.txt
+    bounded 30 sb archon daemon status >"$status_file" 2>&1
+    grep -q 'speaks daemon protocol' "$status_file" || return 0
+    pid=$(cat "$RUN/archond.pid" 2>/dev/null)
+    if [ -z "$pid" ] || [ "$pid" != "$DAEMON_PID" ]; then
+        check "$1: pid file names archond" FAIL "archond.pid says '$pid', archond is pid $DAEMON_PID"
+        return
+    fi
+    sandbox_pid "$pid" || die "pid $pid from archond.pid is not this sandbox's"
+    kill -TERM "$pid" || die "signalling archond pid $pid"
+    if wait_until 30 "archond pid $pid to exit" gone_pid "$pid"; then
+        check "$1: other-protocol recovery" OK "archond pid $pid, unreachable by the installed archon, stopped by its pid file"
+    else
+        check "$1: other-protocol recovery" FAIL "pid $pid still runs 30s after SIGTERM"
+    fi
+}
+
+gone_pid() { ! kill -0 "$1" 2>/dev/null; }
 
 # What the interrupt said happens to archond must be what happens.
 check_interrupt_told() {

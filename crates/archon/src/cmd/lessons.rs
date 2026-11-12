@@ -160,6 +160,16 @@ fn stats_text(stats: &archon_core::lesson::LessonStats) -> String {
             r.passed
         ));
     }
+    if let Some(h) = &stats.holdout_lift {
+        text.push_str(&format!(
+            "holdout lift={:+.0} pts: given {}/{} won, held out {}/{} won\n",
+            h.lift() * 100.0,
+            h.wins,
+            h.uses,
+            h.holdout_wins,
+            h.holdout_uses
+        ));
+    }
     text.trim_end().to_owned()
 }
 
@@ -243,8 +253,15 @@ fn parse_kind(kind: &str) -> anyhow::Result<LessonKind> {
 }
 
 fn line(l: &archon_core::lesson::Lesson) -> String {
+    let mut provenance = String::new();
+    if l.support > 0 {
+        provenance.push_str(&format!(" support={}", l.support));
+    }
+    if let Some(cluster) = &l.cluster {
+        provenance.push_str(&format!(" cluster={cluster}"));
+    }
     format!(
-        "{} [{}{}] {} confidence={:.2} wins={}/{}: {}",
+        "{} [{}{}] {} confidence={:.2} wins={}/{}{provenance}: {}",
         l.id,
         l.state.as_str(),
         if l.pinned { ", pinned" } else { "" },
@@ -334,5 +351,18 @@ mod proposed_tests {
     #[test]
     fn no_proposed_lessons_says_so_and_a_list_says_how_to_settle_them() {
         assert!(proposed_text(&[]).starts_with("No proposed lessons"));
+    }
+
+    #[test]
+    fn stats_show_holdout_lift_only_once_measured() {
+        let mut stats = archon_core::lesson::LessonStats::default();
+        assert!(!stats_text(&stats).contains("holdout"));
+        stats.holdout_lift = archon_core::lesson::HoldoutLift::measured(40, 30, 20, 10);
+        assert!(
+            stats_text(&stats)
+                .contains("holdout lift=+25 pts: given 30/40 won, held out 10/20 won"),
+            "{}",
+            stats_text(&stats)
+        );
     }
 }

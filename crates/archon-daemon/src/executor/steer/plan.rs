@@ -330,11 +330,7 @@ fn refuse_unshipped(
 
 /// `choice` with the model and the effort the steer names.
 fn retuned(choice: &ModelChoice, steer: &Steer) -> ModelChoice {
-    ModelChoice {
-        model: steer.model.clone().unwrap_or_else(|| choice.model.clone()),
-        effort: steer.effort.unwrap_or(choice.effort),
-        tier: None,
-    }
+    choice.steered(steer.model.as_ref(), steer.effort)
 }
 
 /// A new model or effort for the target stage: in the plan for its later
@@ -352,6 +348,9 @@ fn retune(
     let blueprint = &mut change.blueprint;
     if blueprint.spec.stage(at.target).is_none() {
         return Err(no_stage(&blueprint.spec, at.target));
+    }
+    if let Some(effort) = steer.effort {
+        asked.env.policy(&ctx.config).check_effort(effort)?;
     }
     if let (Some(effort), Some(default)) = (steer.effort, blueprint.spec.default_effort(at.target))
     {

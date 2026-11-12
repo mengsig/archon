@@ -91,6 +91,14 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
         | Reply::Versions(_)
         | Reply::Remote(_)
         | Reply::RemotePairing(_)
+        | Reply::ItemSummariesAt { .. }
+        | Reply::Changes { .. }
+        | Reply::ItemHistory { .. }
+        | Reply::TaskGraph(_)
+        | Reply::RunPlan(_)
+        | Reply::ItemLinks { .. }
+        | Reply::IssueItems { .. }
+        | Reply::GithubObjects { .. }
         | Reply::Gc(_) => serde_json::to_string(reply)
             .unwrap_or_else(|e| format!("(reply could not be encoded: {e})")),
     }
@@ -699,9 +707,10 @@ fn policy_text(policy: &ModelPolicy) -> String {
         true => "none".to_owned(),
         false => denied.join(", "),
     };
-    let effort = policy
-        .max_effort
-        .map_or("no cap".to_owned(), |e| e.to_string());
+    let effort = policy.max_effort.map_or("no cap".to_owned(), |e| match e {
+        archon_core::model::Effort::XHigh => "x_high (default)".to_owned(),
+        _ => e.to_string(),
+    });
     format!(
         "Allowed models: {}. Denied: {denied}. Max effort: {effort}.",
         policy.describe_allowed()

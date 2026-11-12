@@ -4,6 +4,12 @@
 
 A detached `archond` writes `archond.log` next to its socket: `$XDG_RUNTIME_DIR/archon/archond.log`, or `archond.log` in the data directory when there is no runtime directory. `archon daemon start` prints the exact path as `startup log: …`, and repeats it when the daemon exits before it listens. The file rotates, keeping the active file and three archives (`archond.log.1` …). `archon log` is something else: it shows the notifications and outcomes archond posted, not its own log lines.
 
+## The daemon cannot start
+
+If startup reports a locked store or daemon lock, inspect the reported holder and confirm which instance and work it belongs to before stopping it. On Linux, a single verified shared holder can be stopped and startup retried after a terminal confirmation. Multiple or unidentifiable holders, unsupported platforms, and non-interactive sessions need manual investigation; stop the owning process through its normal controls and retry `archon daemon start`. Do not delete a lock file or stop an unknown process.
+
+If startup warns that free space is below `limits.min_free_gb`, it names the affected path and available space. Run `archon gc` to reclaim space; if archond cannot start, use `archon gc --offline`. These commands collect eligible data, so review `archon gc --preview` first when possible. Startup itself does not run gc as part of this diagnosis.
+
 ## An initiative is stuck
 
 Inspect it with `archon initiatives list` and `archon initiatives show <id>`. These need a running daemon.
@@ -83,7 +89,8 @@ The daemon did not answer the change within the MCP call's 15 s budget, but may 
 - **"Archon's own aetherd is not running, and archond could not start it"** archond retries every few minutes. `archon daemon start` tries at once and says what fails; `archon doctor` checks the setup.
 - **"Archon revives it again in"** The orchestrator is stopped or failing, and the next automatic revival is that many seconds away; "Archon is reviving it now" means it is already due. `archon orchestrator` shows its state; `archon orchestrator restart` starts a fresh one now.
 - **"Archon keeps reviving it, waiting longer each time"** The orchestrator stopped many times in a row. Its news is held until it recovers; item outcomes still appear. When the notice says its engine `is not logged in`, run the command it names (for example `claude` once), or set `[orchestrator] model` to a provider that is logged in; the next revival picks it up. Otherwise read `archond.log`, then run `archon orchestrator restart`.
-- **"minutes without a message, tool result or usage update"** The orchestrator's turn looks hung. Run `archon orchestrator restart`; ignore the notice if you know it is waiting on a long command.
+- **"minutes without a message, tool result or usage update"** The orchestrator's turn looks hung: nothing came from it for 30 minutes, or for 10 once you sent it a message (chat or an `@archon` request) that it has not read. Archon nudges it, and if it is still silent 5 minutes later, interrupts the turn as Esc in its terminal would, so the messages waiting for it, yours included, reach a fresh turn. A turn that keeps sending messages or usage updates, as one working through a long task does, is left alone.
+- **"so Archon interrupted it"** That recovery ran. If the orchestrator stays silent, or the notice says **"could not interrupt it"**, **"no turn running"** or that Archon **"has used its 3 interrupts"**, run `archon orchestrator restart`.
 - **"Archon will not start the orchestrator:"** `[orchestrator] model` is outside your model policy. Change `[orchestrator] model` or `[models]` in the config, then `archon orchestrator restart`.
 - **"Archon could not bring back the archon MCP server in Aether"** The orchestrator has none of Archon's tools. `archon doctor` shows the server's state; heal it by hand with `archon aether mcp refresh archon`, then `archon orchestrator restart`.
 - **"could not restart the orchestrator to give it Archon's tools back"** The MCP server is back but the orchestrator did not restart. Run `archon orchestrator restart`.

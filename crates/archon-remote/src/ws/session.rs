@@ -6,7 +6,8 @@ use std::time::Duration;
 
 use archon_core::error::ArchonError;
 use archon_core::protocol::{
-    ClientFrame, ErrorCode, ErrorReply, PROTOCOL_VERSION, Reply, Request, ServerFrame, Welcome,
+    ClientFrame, ErrorCode, ErrorReply, PROTOCOL_VERSION, Reply, Request, ServerFrame,
+    WelcomeDevice, negotiate,
 };
 use futures_util::{SinkExt as _, StreamExt as _};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -18,7 +19,7 @@ use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::protocol::{CloseFrame, Role, WebSocketConfig};
 
 use crate::sessions::Registration;
-use crate::{Backend, FeedSubscription};
+use crate::{Backend, ChangeSubscription, FeedSubscription};
 
 /// The largest message a device may send; the app sends small requests.
 pub const MAX_MESSAGE: usize = 1024 * 1024;
@@ -30,7 +31,7 @@ const SILENT_AFTER: Duration = Duration::from_secs(75);
 const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 const OUTBOX_FRAMES: usize = 256;
 const MAX_IN_FLIGHT: usize = 16;
-const MAX_SUBSCRIPTIONS: u64 = 4;
+const MAX_SUBSCRIPTIONS: usize = 4;
 
 /// How a session ended, and so how its socket is closed.
 #[derive(Debug)]
@@ -42,14 +43,26 @@ enum Ended {
 
 struct Session {
     backend: Arc<dyn Backend>,
+    /// The listener's state, to see a revoke before each request runs.
+    shared: Arc<crate::Shared>,
+    /// The paired device the session runs for; its role is fixed at pairing.
+    device: WelcomeDevice,
     outbox: mpsc::Sender<ServerFrame>,
     in_flight: Arc<Semaphore>,
     tasks: JoinSet<()>,
+    /// The last subscription id handed out; ids are never reused.
     subscriptions: u64,
+    /// One permit per live subscription, given back when its stream ends.
+    live_subscriptions: Arc<Semaphore>,
 }
 
-pub async fn carry<S>(io: S, backend: Arc<dyn Backend>, mut registration: Registration)
-where
+pub async fn carry<S>(
+    io: S,
+    backend: Arc<dyn Backend>,
+    shared: Arc<crate::Shared>,
+    device: WelcomeDevice,
+    mut registration: Registration,
+) where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     let config = WebSocketConfig::default()
@@ -59,12 +72,15 @@ where
     let (outbox, mut frames) = mpsc::channel(OUTBOX_FRAMES);
     let mut session = Session {
         backend,
+        shared,
+        device,
         outbox,
         in_flight: Arc::new(Semaphore::new(MAX_IN_FLIGHT)),
         tasks: JoinSet::new(),
         subscriptions: 0,
+        live_subscriptions: Arc::new(Semaphore::new(MAX_SUBSCRIPTIONS)),
     };
-    let ended = match greet(&mut socket, &mut registration).await {
+    let ended = match greet(&mut socket, &mut registration, &session).await {
         Ok(()) => run(&mut socket, &mut session, &mut frames, &mut registration).await,
         Err(ended) => ended,
     };
@@ -97,10 +113,12 @@ where
     Ok(())
 }
 
-/// The first message must be `hello` at archond's protocol version.
+/// The first message must be `hello` at a protocol archond accepts from the
+/// web app. At protocol 24 the `welcome` names the device and its role.
 async fn greet<S>(
     socket: &mut WebSocketStream<S>,
     registration: &mut Registration,
+    session: &Session,
 ) -> Result<(), Ended>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -117,22 +135,31 @@ where
     let frame: ClientFrame = serde_json::from_str(&text)
         .map_err(|_| Ended::Violation(CloseCode::Policy, "send hello first"))?;
     let Request::Hello {
-        protocol_version, ..
+        protocol_version,
+        client,
+        client_version,
+        ..
     } = frame.request
     else {
         return Err(Ended::Violation(CloseCode::Policy, "send hello first"));
     };
-    if protocol_version != PROTOCOL_VERSION {
-        let message = format!("archond speaks protocol {PROTOCOL_VERSION}; reload the app");
-        let refusal = error_frame(0, ErrorCode::Incompatible, message);
-        send(socket, &refusal).await?;
-        return Err(Ended::Violation(CloseCode::Policy, "protocol mismatch"));
-    }
-    let welcome = Welcome {
-        protocol_version: PROTOCOL_VERSION,
-        daemon_version: env!("CARGO_PKG_VERSION").to_owned(),
-        pid: std::process::id(),
+    let features = session.backend.features();
+    let mut welcome = match negotiate(client, protocol_version, &client_version, &features) {
+        Ok(welcome) => welcome,
+        Err(message) => {
+            let message = format!("{message}, or reload the app");
+            let refusal = error_frame(0, ErrorCode::Incompatible, message);
+            send(socket, &refusal).await?;
+            return Err(Ended::Violation(CloseCode::Policy, "protocol mismatch"));
+        }
     };
+    assert!(
+        welcome.device.is_none(),
+        "only the listener knows the device"
+    );
+    if welcome.protocol_version == PROTOCOL_VERSION {
+        welcome.device = Some(session.device.clone());
+    }
     let reply = ServerFrame::Reply {
         id: frame.id,
         result: Ok(Reply::Welcome(welcome)),
@@ -241,13 +268,22 @@ fn receive(session: &mut Session, message: Message) -> Result<(), Ended> {
 }
 
 fn dispatch(session: &mut Session, id: u64, request: Request) -> Result<(), Ended> {
-    if !crate::allow::allowed(&request) || matches!(request, Request::Hello { .. }) {
-        let name = crate::allow::command_name(&request);
-        let message = format!("{name} is not available from the web app; use the archon CLI");
+    let role = session.device.role;
+    let refusal = match request {
+        Request::Hello { .. } => Err(crate::allow::Refusal::HostOnly),
+        // A revoke closes the session too; this covers a request already read.
+        _ if !session.shared.admits(&session.device.id) => Err(crate::allow::Refusal::Revoked),
+        ref request => crate::allow::check(role, request),
+    };
+    if let Err(refusal) = refusal {
+        let message = refusal.message(&crate::allow::command_name(&request));
         return queue(session, error_frame(id, ErrorCode::Forbidden, message));
     }
     if let Request::SubscribeFeed { after, verbose } = request {
-        return subscribe(session, id, after, verbose);
+        return subscribe(session, id, Stream::Feed { verbose }, after);
+    }
+    if let Request::SubscribeChanges { after } = request {
+        return subscribe(session, id, Stream::Changes, after);
     }
     let Ok(permit) = session.in_flight.clone().try_acquire_owned() else {
         let message =
@@ -255,8 +291,9 @@ fn dispatch(session: &mut Session, id: u64, request: Request) -> Result<(), Ende
         return queue(session, error_frame(id, ErrorCode::Unavailable, message));
     };
     let (backend, outbox) = (session.backend.clone(), session.outbox.clone());
+    let device = session.device.clone();
     session.tasks.spawn(async move {
-        let result = backend.handle(request).await;
+        let result = backend.handle(&device, request).await;
         let frame = ServerFrame::Reply {
             id,
             result: result.map_err(|e| ErrorReply::from(&e)),
@@ -267,30 +304,54 @@ fn dispatch(session: &mut Session, id: u64, request: Request) -> Result<(), Ende
     Ok(())
 }
 
+/// What a subscription streams.
+#[derive(Debug, Clone, Copy)]
+enum Stream {
+    Feed { verbose: bool },
+    Changes,
+}
+
 fn subscribe(
     session: &mut Session,
     id: u64,
+    stream: Stream,
     after: Option<u64>,
-    verbose: bool,
 ) -> Result<(), Ended> {
-    if session.subscriptions >= MAX_SUBSCRIPTIONS {
-        let message = format!("at most {MAX_SUBSCRIPTIONS} feed subscriptions per connection");
+    let Ok(live) = session.live_subscriptions.clone().try_acquire_owned() else {
+        let message = format!("at most {MAX_SUBSCRIPTIONS} live subscriptions per connection");
         return queue(
             session,
             error_frame(id, ErrorCode::InvalidArgument, message),
         );
-    }
-    session.subscriptions += 1;
-    let subscription = FeedSubscription {
-        id: session.subscriptions,
-        request: id,
-        after,
-        verbose,
     };
+    session.subscriptions += 1;
+    let sub = session.subscriptions;
     let (backend, outbox) = (session.backend.clone(), session.outbox.clone());
-    session
-        .tasks
-        .spawn(async move { backend.feed(subscription, outbox).await });
+    match stream {
+        Stream::Feed { verbose } => {
+            let subscription = FeedSubscription {
+                id: sub,
+                request: id,
+                after,
+                verbose,
+            };
+            session.tasks.spawn(async move {
+                backend.feed(subscription, outbox).await;
+                drop(live);
+            });
+        }
+        Stream::Changes => {
+            let subscription = ChangeSubscription {
+                id: sub,
+                request: id,
+                after,
+            };
+            session.tasks.spawn(async move {
+                backend.changes(subscription, outbox).await;
+                drop(live);
+            });
+        }
+    }
     Ok(())
 }
 

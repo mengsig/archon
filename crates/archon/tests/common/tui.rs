@@ -75,6 +75,9 @@ pub fn serve_with(
                             protocol_version: PROTOCOL_VERSION,
                             daemon_version: "test".into(),
                             pid: std::process::id(),
+                            min_protocol_version: PROTOCOL_VERSION,
+                            features: Vec::new(),
+                            device: None,
                         }))
                     }
                     Request::OrchestratorAttach | Request::OrchestratorStatus => {

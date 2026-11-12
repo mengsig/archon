@@ -12,7 +12,7 @@ use archon_queue::store::keys;
 use common::{Harness, ORCHESTRATOR, REPO_NAME};
 use serde_json::{Value, json};
 
-async fn harness(mode: AetherMode) -> Harness {
+pub(crate) async fn harness(mode: AetherMode) -> Harness {
     let mut config = Config::default();
     config.aether.mode = mode;
     let h = Harness::with_config(config).await;
@@ -33,7 +33,7 @@ fn set_origin(h: &Harness) {
     );
 }
 
-fn user(text: &str) -> Value {
+pub(crate) fn user(text: &str) -> Value {
     json!({"kind":"message","from":{"actor":"user"},"content":[{"type":"text","text":text}]})
 }
 
@@ -50,11 +50,11 @@ async fn deliver_at(h: &Harness, seq: u64, kind: Value, at: archon_core::Timesta
     .unwrap();
 }
 
-async fn deliver(h: &Harness, seq: u64, kind: Value) {
+pub(crate) async fn deliver(h: &Harness, seq: u64, kind: Value) {
     deliver_at(h, seq, kind, archon_core::now()).await;
 }
 
-fn grant(value: bool) -> Request {
+pub(crate) fn grant(value: bool) -> Request {
     Request::RepoUpdate {
         repo: RepoRef(REPO_NAME.into()),
         patch: RepoPatch {
@@ -64,7 +64,7 @@ fn grant(value: bool) -> Request {
     }
 }
 
-fn cited(action: Request, seq: u64, quote: &str) -> Request {
+pub(crate) fn cited(action: Request, seq: u64, quote: &str) -> Request {
     Request::RequestAuthority {
         action: Box::new(action),
         utterance: seq,
@@ -74,7 +74,7 @@ fn cited(action: Request, seq: u64, quote: &str) -> Request {
     }
 }
 
-async fn granted(h: &Harness) -> bool {
+pub(crate) async fn granted(h: &Harness) -> bool {
     h.ctx
         .store
         .lock()
@@ -84,7 +84,7 @@ async fn granted(h: &Harness) -> bool {
         .grant_merge
 }
 
-async fn confirmation(h: &Harness, seq: u64) -> Question {
+pub(crate) async fn confirmation(h: &Harness, seq: u64) -> Question {
     let reply = h
         .orchestrator(cited(grant(true), seq, "grant requested merges"))
         .await
@@ -771,7 +771,30 @@ async fn item_override_needs_verified_consent_and_preserves_the_repository_ceili
     .await
     .unwrap()
     .unwrap();
-    assert!(matches!(reply, Reply::Question(_)));
+    let Reply::Question(question) = reply else {
+        panic!("expected item override confirmation: {reply:?}");
+    };
+    for chat in [false, true] {
+        let answer = Request::Answer {
+            question: question.id.clone(),
+            text: "yes".into(),
+            chat,
+        };
+        let result = handlers::handle(&h.ctx, ClientKind::ArchonWeb, answer).await;
+        assert!(
+            matches!(result, Err(archon_core::error::ArchonError::Forbidden(_))),
+            "{result:?}"
+        );
+        assert!(
+            h.ctx
+                .store
+                .lock()
+                .await
+                .question(&question.id)
+                .unwrap()
+                .is_open()
+        );
+    }
     assert_eq!(
         h.ctx
             .store
@@ -1101,7 +1124,10 @@ fn github_from(repository: &str, login: &str, text: &str) -> Value {
         "payload":{"repository":repository, "number":1,"requester":login,"operator":true,"text":text}})
 }
 
-async fn watched(h: &Harness, allowed: Option<Value>) -> archon_aether::fake::FakeAether {
+pub(crate) async fn watched(
+    h: &Harness,
+    allowed: Option<Value>,
+) -> archon_aether::fake::FakeAether {
     use archon_aether::{AetherClient, fake::FakeAether};
     let dir = tempfile::tempdir().unwrap();
     let fake = FakeAether::start(&dir.path().join("scope.sock"))
@@ -1183,4 +1209,126 @@ async fn a_login_outside_the_repository_allowlist_is_refused_for_it() {
     deliver(&h, 1, github(&own, 1)).await;
     assert!(!granted(&h).await);
     assert!(h.ctx.store.lock().await.questions(true).unwrap().is_empty());
+}
+
+pub(crate) fn user_from(origin: Value, text: &str) -> Value {
+    json!({"kind":"message","from":{"actor":"user","origin":origin},
+        "content":[{"type":"text","text":text}]})
+}
+
+/// Aether names a paired device's chat the `user` actor as well; a device
+/// Aether's session does not name an operator (an older Aether) speaks for
+/// no one, whatever its line says.
+#[tokio::test]
+async fn an_aether_device_without_the_operator_role_confers_no_archon_authority() {
+    let h = harness(AetherMode::Dedicated).await;
+    let command = format!("/archon set --repo {REPO_NAME} grant_merge=true");
+    let device = json!({"transport":"device","device":"dev_1","name":"phone","connection":"c1"});
+    deliver(&h, 1, user_from(device.clone(), &command)).await;
+    assert!(!granted(&h).await, "a paired device's command applied");
+    deliver(&h, 2, user_from(device, "grant requested merges")).await;
+    let cited_device = h.orchestrator(cited(grant(true), 2, "grant requested merges"));
+    assert!(cited_device.await.is_err(), "a device line was citable");
+    let socket = json!({"transport":"local_socket","connection":"c2"});
+    deliver(&h, 3, user_from(socket, &command)).await;
+    assert!(granted(&h).await, "the host's own chat must still apply");
+}
+
+/// archond sends a web device's line from its own socket, so Aether names it
+/// the operator; the mark archond adds keeps it from carrying authority.
+#[tokio::test]
+async fn a_web_devices_say_carries_no_operator_authority() {
+    use archon_aether::fake::Scripted;
+    let h = harness(AetherMode::Dedicated).await;
+    let fake = watched(&h, None).await;
+    let mut agent = archon_aether::fake::agent(ORCHESTRATOR, None);
+    agent["role"] = json!(archon_daemon::supervisor::ORCHESTRATOR_ROLE);
+    agent["status"] = json!({"state": "running"});
+    fake.set_default("get_agent", Scripted::reply("agent", agent));
+    fake.set_default("send_message", Scripted::reply("message_sent", json!({})));
+    let command = format!("/archon set --repo {REPO_NAME} grant_merge=true");
+    let say = Request::Say {
+        text: command.clone(),
+        images: vec![],
+    };
+    handlers::handle(&h.ctx, ClientKind::ArchonWeb, say)
+        .await
+        .unwrap();
+    let sent = fake.received_named("send_message").remove(0);
+    let content = sent["content"].as_str().unwrap().to_owned();
+    assert!(archon_core::authority::is_web_relay(&content), "{content}");
+    assert!(content.ends_with(&command));
+    let socket = json!({"transport":"local_socket","connection":"archond"});
+    deliver(&h, 1, user_from(socket, &content)).await;
+    assert!(!granted(&h).await, "a web device's command applied");
+    let cited_web = h.orchestrator(cited(grant(true), 1, &command));
+    assert!(cited_web.await.is_err(), "a web line was citable");
+}
+
+fn web_answer(question: &archon_core::id::QuestionId, text: &str) -> Request {
+    Request::Answer {
+        question: question.clone(),
+        text: text.into(),
+        chat: false,
+    }
+}
+
+/// A host request waiting for its confirmation is not yet approved, and a
+/// paired device may not approve it: it is answered on the host.
+#[tokio::test]
+async fn a_web_device_cannot_confirm_an_authority_change() {
+    let h = harness(AetherMode::Dedicated).await;
+    deliver(&h, 1, user("grant requested merges")).await;
+    let q = confirmation(&h, 1).await;
+    let web = handlers::handle(&h.ctx, ClientKind::ArchonWeb, web_answer(&q.id, "yes")).await;
+    assert!(
+        matches!(web, Err(archon_core::error::ArchonError::Forbidden(_))),
+        "{web:?}"
+    );
+    assert!(!granted(&h).await, "a web device confirmed the grant");
+    assert!(h.ctx.store.lock().await.question(&q.id).unwrap().is_open());
+    deliver(&h, 2, user("yes")).await;
+    assert!(granted(&h).await, "the host's own reply still confirms");
+}
+
+/// archond replies to an Aether question from its own socket, which Aether
+/// delivers as the operator's line; a web device's reply goes out marked.
+#[tokio::test]
+async fn a_web_answer_to_an_aether_question_carries_no_operator_authority() {
+    use archon_aether::fake::Scripted;
+    use archon_core::aether_ids::AetherQuestionRef;
+    let h = harness(AetherMode::Dedicated).await;
+    let fake = watched(&h, None).await;
+    fake.set_default(
+        "reply_to_question",
+        Scripted::reply("message_sent", json!({})),
+    );
+    let asked = AetherQuestionRef {
+        agent: AetherAgentId::parse(ORCHESTRATOR).unwrap(),
+        seq: 17,
+    };
+    let question = archon_daemon::feed::aether_question(&h.ctx, asked, "Which?", None)
+        .await
+        .unwrap()
+        .unwrap();
+    let command = format!("/archon set --repo {REPO_NAME} grant_merge=true");
+    handlers::handle(
+        &h.ctx,
+        ClientKind::ArchonWeb,
+        web_answer(&question.id, &command),
+    )
+    .await
+    .unwrap();
+    let replied = fake.received_named("reply_to_question").remove(0);
+    let content = replied["content"].as_str().unwrap().to_owned();
+    assert!(archon_core::authority::is_web_relay(&content), "{content}");
+    assert!(content.ends_with(&command));
+    let socket = json!({"transport":"local_socket","connection":"archond"});
+    deliver(&h, 1, user_from(socket, &content)).await;
+    assert!(
+        !granted(&h).await,
+        "a web device's answer applied a command"
+    );
+    let cited_web = h.orchestrator(cited(grant(true), 1, &command));
+    assert!(cited_web.await.is_err(), "a web answer was citable");
 }

@@ -14,7 +14,7 @@ pub const RESUME_MEMORY_FACTOR: f64 = 1.1;
 const KIB_PER_GIB: f64 = 1024.0 * 1024.0;
 
 /// One reading of the host.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HostSample {
     /// The 1-minute load average divided by the CPU count.
     pub load_per_cpu: f64,
@@ -30,14 +30,14 @@ pub struct HostLimits {
 }
 
 /// A measured value past its limit.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Breach {
     pub measured: f64,
     pub limit: f64,
 }
 
 /// Why dispatch is held for the host: at least one of the two is set.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HostLoadHold {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub load: Option<Breach>,

@@ -147,7 +147,7 @@ protocol 17 and later alone do not imply support.
 
 ```json
 {"req":1,"cmd":"hello","protocol_version":24,"client_name":"archon",
- "client_version":"1.4.12","features":["history_expired"]}
+ "client_version":"1.5.0","features":["history_expired"]}
 ```
 
 The reply is `Welcome {protocol_version, daemon_version, instance_id,
@@ -946,7 +946,10 @@ each attempt is charged only what was spent between its hand-off and the
 next, so an item's attempts add up to what its agents cost.
 A stage that delegated also reports the split (`delegations` in `GetItem`,
 `delegation` in `GetStage`): its own agent's cost, the delegated agents'
-cost, and each delegated agent with its parent, model, effort and cost.
+cost, and each delegated agent with its parent, model, effort and cost. Its
+text in `get_item` and `get_stage` counts the agents by effort
+(`… for 3 delegated agent(s) at effort 2 medium, 1 x_high`), so the mix shows
+at a glance.
 Schema V8 (`delegated_agents`) records who delegated to whom as the watcher
 links each child, and the child's effort, read from Aether's agent record
 as it is linked and again when the stage's owed stop is confirmed (§6.3);
@@ -1619,7 +1622,11 @@ Per stage:
    every agent completed. For gated stages, the `Verdict`s of completed agents
    are evaluated: `all_pass` needs every verdict to be `pass`, `majority`
    needs more than half, and `any` needs at least one. `unknown` counts as
-   fail.
+   fail. A passing `test` stage with `scenarios = "strict"` passes only if
+   its structured `scenarios` all have status `pass` and cover every
+   `expected` id, neither list empty; otherwise it is a product defect that
+   finishes `failed{stage_id, error}` at once, with no `on_fail` loop
+   (`scenarios.rs`; [PIPELINES.md](PIPELINES.md#strict-scenarios)).
 3. On success, go to the next stage. After the last one, a pipeline with
    `[pipeline.ship]` emits `Ship` and waits for `on_shipped(outcome)`:
    `Shipped` finishes `succeeded`, `Failed` finishes
@@ -2127,17 +2134,25 @@ five places:
    and trigger. A delegating stage agent's contract states the configured
    depth (§8.6); at 2, its child may delegate once more.
 
-Effort is not restricted by default. `[models] max_effort` optionally caps it.
+Effort is capped at `x_high` by default. Set global `[models] max_effort` to
+`max` explicitly to allow it; a repository may only narrow the cap.
 
 The orchestrator chooses independently for each stage, following operator
 provider preferences and exact model requests first. Pipeline nudges are
 advice, not routing rules. Its prompt asks what reasoning and ambiguity remain,
 what a wrong result would break and how tests or review would catch it, and
 which available model and effort are the cheapest plausible choices. The
-highest efforts (`x_high`, `max`) are for a reasoning problem it can name that
+highest effort (`x_high`) is for a reasoning problem it can name that
 inspecting the work left unresolved; that the operator prefers strong models is
-not one. Reviewers need independent discovery: another provider at the same
-tier counts, and several fast-tier reviewers, or a fast-tier team checked by
+not one. With `[models] effort_sizing = true` (off by default) one effort
+rubric (`archon_core::model::EFFORT_RUBRIC`) sizes every effort Archon asks an
+agent to choose instead, word for word in the orchestrator prompt and in every
+stage contract that may delegate: `low` for lookups, listing, formatting and
+mechanical edits; `medium` for routine changes and reviews of small or low-risk
+diffs; `high` for non-trivial design, risky diffs and reviews of shared code;
+`x_high` for hard reasoning, such as root-causing a regression, concurrency or
+security analysis, or a fix that failed twice. Take the cheapest that fits.
+Reviewers need independent discovery: another provider at the same tier counts, and several fast-tier reviewers, or a fast-tier team checked by
 one stronger-tier judge at low effort, can beat one balanced reviewer for far
 less. A failed stage prompts reconsideration through `retry_item`'s
 `model_plan`. The daemon validates policy and never replaces a choice the
@@ -2240,17 +2255,25 @@ The stage contract tells the lead to delegate reviewers with role `reviewer` on
 those models, each effort a floor and the model policy's `max_effort` the
 only ceiling: the delegation watchdog (§7.4) cancels a child with such a role
 on another model or below its model's effort as it spawns, before it does
-any work, and the contract states the floor so the lead delegates at it. This check relies on the lead using
+any work, and the contract states the floor so the lead delegates at it. With
+`[models] effort_sizing = true` each effort is instead the default for its
+reviewer, kept where the rubric leaves the diff open. Otherwise the rubric
+decides the review's level (`low` for a trivial diff, `medium` for a small or
+low-risk one, `high` for a risky diff or shared code, `x_high` for concurrency
+or security analysis), and the lead states the reason in one line in its result,
+lower or higher; the watchdog then cancels only a reviewer on another model. This check relies on the lead using
 the required reviewer role; children with other roles follow the general model
-policy. The role matches `reviewer` exactly (case-insensitively); a reviewer
-with missing or unrecognised effort is refused. If Aether no longer has the
+policy. The role matches `reviewer` exactly (case-insensitively); unless
+effort sizing is on, a reviewer with missing or unrecognised effort is refused. If Aether no longer has the
 child when the watchdog reads it, only its event model can be checked: its role
 and effort are unavailable. With no such key the contract names the models the
 item's effective policy allows, as it stands when the lead spawns, other than the
 lead's, or the lead's own when the policy allows no other, and the watchdog holds
 reviewers only to the model policy. The `[review]` profile's contract asks such
 reviewers for at least medium effort, and at least high when the lead rates the
-change's risk medium or high, within the policy's `max_effort`.
+change's risk medium or high, within the policy's `max_effort`. With effort
+sizing on it names its `default_effort`, raised to medium, as such a reviewer's
+default, sized to the diff the same way.
 
 **Stage timeouts.** `enqueue`, `update_item` and `steer_item` take `stage_timeouts`, a
 `{"<stage-id>": minutes}` map for the item: each stage it names runs with that
@@ -2352,6 +2375,9 @@ prompt = "build.md"
 roles = ["api", "ui"]                # 2 to 8, unique across the pipeline
 role_prompts = { ui = "Own the CSS." }   # optional, appended per role
 ```
+
+A `test` stage with one agent may set `scenarios = "strict"` (default
+`lenient`): see step 2 of §6.4.
 
 Validation rules (load-time errors):
 
@@ -2472,8 +2498,10 @@ than being left out. Whatever the record names, every fail returned by a
 reviewer of the stage attempt (from the review-round tally, so a resumed
 lead's earlier attempts are not read) stands as a named fail would: the
 review is refused, with the reason, until a counted pass reads past it. A
-fail listing only follow-ups reads as a pass, unless another list in its
-result (`structured` or summary JSON) holds a blocking finding. A pass counts when it read the
+fail fails whatever its findings; one listing only follow-ups adds no review
+round, but the tally keeps its head, so it stands after Aether forgets its
+reviewer. A tally an earlier archond began kept only blocking fails' heads:
+there a left-out reviewer Aether forgot refuses the review. A pass counts when it read the
 branch head, or when a counted pass read every commit after its head
 (`base` at or before it). A fail never counts and must be followed by such
 a pass, or by a later fail that read every commit after its head and was
@@ -2563,6 +2591,8 @@ literal `{{`.
 | `agent-testing` | plan → exercise (fan_out 2, report) → report | Agents drive the product as a user would and report defects. workspace = worktree |
 | `code-audit` | scope (work) → audit (fan_out 3, report) → report | Security, reliability and maintainability lenses produce HTML with high/critical issue drafts. No code changes or ship. workspace = worktree, tier = strong, independent_reviewers. Use `ask` for one question. |
 | `e2e-testing` | setup → e2e (test gate, goto setup ×1) → report | The report stage produces HTML and screenshots under `.archon/reports/` for Lavish. |
+| `e2e-strict` | setup → e2e (test gate, `scenarios = "strict"`, goto setup ×1) → report | As `e2e-testing`, but archond fails the run on any failed, skipped or missing scenario of the manifest setup writes, with no loop back. |
+| `release-journey` | setup → journeys (test gate, `scenarios = "strict"`, goto setup ×1) → report | Runs the repository's `.archon/journeys.toml` journeys in the shipped artifact, with real engines, in a private stack; archond fails the run on any journey run that does not pass ([journeys.md](journeys.md)). |
 | `review` | review (work, `allow_delegation`, holds the review) | tier = balanced, independent_reviewers. Queued `onto` someone else's pull request, a fork's included; no `[pipeline.ship]`, so it commits and pushes nothing. Its lead has the frozen head reviewed at the item's review level, `standard` unless the item asks (§8.2); a pass lets the operator merge that pull request at that head (§18.6). |
 | `ask` | answer | workspace = repo-readonly (a disposable snapshot of the repository's `HEAD` commit, §13), requires_repo = false, tier = balanced |
 | `errand` | errand (report) | workspace = scratch, requires_repo = false, tier = balanced. A small job answered in its summary and optionally as one self-contained Lavish page. No repository changes or outward side effects; read an attached checkout only, and run code on a throwaway copy in scratch. Other files are temporary and collected after `worktrees.gc_after` (default 7d; §13.2). |
@@ -3209,16 +3239,18 @@ name = "Archon"
 # instructions_file = "~/.config/archon/orchestrator.md"  # appended to the built-in prompt
 trigger_coalesce_ms = 2000
 wake_on_success = true         # false: a routine success waits for its next turn (§5.4)
+validate_before_handoff = true # false: a user-facing build is relayed without validation
 
 [models]
 allow = []                     # e.g. ["claude-code/claude-opus-5-5"]; [] = any
 deny = []
-# max_effort = "high"          # unset: no cap; else low|medium|high|x_high|max
+# max_effort = "high"          # unset: x_high; else low|medium|high|x_high|max
 # max_default_tier = "strong"  # the highest tier a default picks; a plan may name any
 provider_weights = {}          # e.g. { "claude-code" = 7, codex = 3 }; {} = orchestrator's provider
 # default_provider_weight = 1  # a provider the table omits; 0 never routes to it
 # reserve_percent = { orchestrator = 15, interactive = 10 }   # quota stages leave; global only
 interactive_providers = []     # providers also used by hand; they keep the interactive reserve
+effort_sizing = false          # true: size every agent's effort by the effort rubric; global only
 
 [limits]
 budgets_enabled = true         # false: no dollar budget is enforced; spend still recorded
@@ -3491,6 +3523,12 @@ defined in `archon_core::protocol` and served by `archon-daemon`.
   `grant_merge`. Protocol 15 added `RepoPatch.gh_user`, a `Clearable`
   GitHub login. Protocol 17 added `RepoPatch.merge_waive_checks`, a plain
   option holding the whole list.
+- Protocol 24 is the unified frontend's wire (docs/vnext/CONTRACTS.md
+  §1.3). `archon-web` may still say hello at 23; every other client must
+  match exactly. `welcome` names the oldest version accepted and the
+  features served, and a request whose feature is not served answers
+  `unavailable`. `archon schema` prints the protocol as a JSON Schema, and
+  a test keeps the committed `crates/archon-core/protocol.schema.json` current.
 
 The command set is `archon_core::protocol::Request`, and every variant is
 documented there. Reply kinds are `archon_core::protocol::Reply`. Error codes
@@ -4835,6 +4873,20 @@ spec tests, multi-file refactor keeping tests green, multi-repo change (two
 fixtures, API and client), a question-only task (`ask` arm grading by keyword
 rubric), and a review task (seeded bug must be reported).
 
+The SWE family (`archon-bench swe`, `bench/src/swe/`) adds no task of its
+own. It runs Aether's shared `swe-v1` set through Aether's runner, which
+owns the instances, the sealed holdout, the labelled image cache and the
+official grading. archon-bench chooses the arms: per model, the best recent
+release on its released Aether, the candidate, and the native CLI. It
+prints the estimate and the noise bound, drives Aether's
+`evals/release_bench.py run --set swe-v1` and reads its
+`aether-release-bench-aggregate/1` file through one adapter
+(`swe/runner.rs`, `swe/runner/output.rs`). It saves its own reduced
+aggregate and gates the release with an exact one-sided paired test per
+model and split. On the holdout it discards the runner's output and Aether's
+own gate reasons, and keeps only the validated totals. See
+`bench/results-swe/README.md`.
+
 ## 16. Failure modes and recovery
 
 | Failure | Detection | Recovery |
@@ -4850,6 +4902,7 @@ rubric), and a review task (seeded bug must be reported).
 | Aether restart kills native processes | `agent.failed` or an interrupted task. | Stage: infra retry (§6.3). Orchestrator: the supervisor path below. |
 | Orchestrator failed or cancelled | Orchestrator subscription, or `get_agent` at start. | `wake` in place. If refused, `restart` (new agent from checkpoint), store the new id, and write a `System` feed entry. The first revival of a streak runs at once; each later one waits 10s, 30s, 2m, 5m, then every 10m (`supervisor::REVIVAL_BACKOFF`). A turn that ends `ready` or `waiting` closes the streak. After 3 revivals in a row, post one `Blocker`; revival never stops for good, and `archon orchestrator restart` starts a fresh agent at once. Dispatch continues, because the queue does not depend on the orchestrator. |
 | Orchestrator restarted in Aether (`aether restart`) | `agent.restarted` on the orchestrator's subscription, or `restarted_as` at start and on reconnect. | Adopt the successor if its role is `archon-orchestrator`: store its id, close the failure streak, move the subscription to it, and write a `System` feed entry. Its held news follows (§5.4). A successor with another role is not adopted. A chain of restarts is followed to its newest orchestrator, and every agent left behind on the way is retired (next row). |
+| Orchestrator turn hung (a model request or tool call that never answers; mail queues unread behind it) | `supervisor::watch_stalls`, every 60 s: an open turn with no event of the orchestrator for 30 minutes, or 10 minutes once operator mail (chat, or a GitHub request with operator standing) was delivered in that silence, checked at once when such mail arrives. Delivered mail is not progress; any other event, a message, usage update or consumed inbox among them, rearms the watch, so a turn that keeps emitting is never stalled. | Send a nudge and a `Blocker` saying what was silent for how long. If the turn is still silent 5 minutes later, `interrupt` it, as Esc would, so Aether delivers the queued inbox in a fresh turn, and tell the operator; an `interrupt` that fails or finds no turn is a `Blocker` naming `archon orchestrator restart`. Each generation gets at most 3 nudges and 3 interrupts, counted since `archond` started. |
 | `archon` MCP server died in Aether (after a redeploy, say) | `mcp_servers` reports it `failed`: at every connect to Aether and every 60 s (`supervisor::MCP_CHECK_INTERVAL`). | `refresh` it, then restart the orchestrator so it gets the tools back. Both back off like revivals, and 3 failures in a row post one `Blocker` (below). |
 | Orchestrator replaced while its delegated children run | Any path above that puts a new agent in charge. | The children end. Aether's `cancel` takes an agent's live descendants along; a failure does not, and neither does Aether's `restart`. So every agent that stops being the orchestrator is written to `kv.orchestrator_retired`, with the sweep it is owed, before its successor is stored, and Archon sends `cancel` for it, which Aether applies to the subtree of an agent already stopped. An adoption retires every agent between the stored orchestrator and the adopted one, each with children of its own; a manual restart and a relink follow the same chain first, so they act on the agent in charge rather than on one Aether already replaced. A background task makes the owed sweeps from `archond`'s start on: at once when one becomes owed or Aether reconnects, then with the revival backoff while it fails. A sweep is done only when Aether answers its `cancel`, no longer knows the agent, or reports it ended. Its first failure and its later success are each a `System` entry. A sweep holds no lifecycle lock, so it never delays the orchestrator in charge, which is never swept. A record that cannot be read is reset with a `Blocker` that quotes it, rather than stopping the orchestrator. Records stay through the 7-day event retention, so a retired agent's late events and its children's spend are still Archon's, and are then pruned unless a sweep is still owed. The new agent does not know what was delegated. A `wake` in place keeps the children. |
 | archond's delivery of a run fails | `git push` or `gh` exits non-zero or times out, or a check of the run worktree does not hold (§8.7). | A check that does not hold, a remote branch with other commits, or several open pull requests fail the item as `stage ship: <what to change>`; missing access, a missing `origin` or a branch rule as `stage ship: BLOCKED: …`, which is a `Blocker`. Anything else is tried again by the sweep after 15 s, doubling, five times in all, then fails the item with the last error. A retry of the item delivers the same branch: nothing is forced, and the open pull request is reused. |

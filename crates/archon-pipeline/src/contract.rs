@@ -5,12 +5,12 @@
 use std::path::Path;
 
 use archon_core::catalog::{Gate, StageKind, WorkspaceMode};
-use archon_core::model::{Effort, ModelChoice, ModelRef};
+use archon_core::model::{EFFORT_RUBRIC, Effort, ModelChoice, ModelRef};
 use archon_core::policy::ModelPolicy;
 use archon_core::run::StageOutcome;
 use serde::Serialize;
 
-use crate::spec::{Owed, ReviewDuty, StageSpec};
+use crate::spec::{Owed, ReviewDuty, Scenarios, StageSpec};
 use crate::team::TeamSlot;
 
 mod checks;
@@ -52,6 +52,12 @@ pub fn instructions(
     assert!(stage.fan_out >= 1, "validated specs have fan_out >= 1");
     let mut out = contract_header(stage, mode, workspace, team);
     out.push_str(kind_rules(stage.kind));
+    if builds_the_change(stage.kind, owed) {
+        out.push_str(OUTCOME_RULE);
+    }
+    if stage.kind == StageKind::Team {
+        out.push_str(TEAM_COORDINATION_RULES);
+    }
     if stage.kind == StageKind::Review {
         out.push_str(&review_bounds(experiments));
     }
@@ -62,6 +68,9 @@ pub fn instructions(
     }
     if needs_verdict(stage) {
         out.push_str(VERDICT_RULES);
+    }
+    if stage.scenarios == Scenarios::Strict {
+        out.push_str(STRICT_SCENARIO_RULES);
     }
     // An agent that cannot delegate needs no telling that it reviews nothing.
     if let Some(duty) = owed
@@ -120,11 +129,13 @@ fn relays_reviewer(owed: Owed) -> bool {
 
 /// The section for an agent that can delegate: `models` is its children's policy in words,
 /// `depth` is `[limits] max_delegation_depth`, `experiments` as for [`instructions`].
+/// `effort_sizing` (`[models] effort_sizing`) adds the effort rubric for its children.
 pub fn delegation_rules(
     mode: WorkspaceMode,
     models: &str,
     depth: u32,
     experiments: Option<&Path>,
+    effort_sizing: bool,
 ) -> String {
     assert!(!models.trim().is_empty(), "the policy is always stated");
     let workspaces = match mode {
@@ -133,6 +144,12 @@ pub fn delegation_rules(
     };
     let depth = depth_rule(depth);
     let bounds = review_bounds(experiments);
+    let sizing = match effort_sizing {
+        true => format!(
+            "- Size each child's effort to its own task, whatever yours is: {EFFORT_RUBRIC}\n"
+        ),
+        false => String::new(),
+    };
     format!(
         "\n## Delegation\n\n\
          - Aether's `delegate` hands a scoped part of this stage to a child agent. \
@@ -141,6 +158,7 @@ pub fn delegation_rules(
          - Choose each child's model and effort within Archon's policy for this item: \
          {models}. Archon cancels a child outside it. Aether's `list_models` lists what \
          is connected, not what is allowed.\n\
+         {sizing}\
          - Wait for every child (`wait_for`) or cancel it (`cancel_agent`) before you \
          finish: Archon cancels whatever still runs when your stage ends, and that work \
          is lost. A child that finished cannot be asked again: for a second look, \
@@ -471,35 +489,68 @@ fn review_rules(duty: ReviewDuty) -> String {
 
 /// Which models the review-holding stage, on `own`, delegates its reviewers to:
 /// the plan's, which the daemon enforces, or else ones `policy` allows.
+/// `effort_sizing` is `[models] effort_sizing`.
 pub fn reviewer_model_rules(
     named: Option<&[ModelChoice]>,
     own: &ModelRef,
     policy: &ModelPolicy,
+    effort_sizing: bool,
 ) -> String {
     match named {
-        Some(choices) if !choices.is_empty() => named_reviewer_rules(choices, policy.max_effort),
+        Some(choices) if !choices.is_empty() => {
+            named_reviewer_rules(choices, policy.max_effort, effort_sizing)
+        }
         _ => fallback_reviewer_rules(own, policy),
     }
 }
 
-/// The plan's reviewers: each effort is a floor, and `cap` (the policy's
-/// `max_effort`) the only ceiling.
-fn named_reviewer_rules(choices: &[ModelChoice], cap: Option<Effort>) -> String {
+/// The plan's reviewers. By default each effort is a floor and `cap` (the
+/// policy's `max_effort`) the only ceiling; with `effort_sizing` it is a default.
+fn named_reviewer_rules(
+    choices: &[ModelChoice],
+    cap: Option<Effort>,
+    effort_sizing: bool,
+) -> String {
+    assert!(!choices.is_empty(), "a plan names reviewers");
+    if !effort_sizing {
+        return floored_reviewer_rules(choices, cap);
+    }
+    let models: Vec<String> = choices
+        .iter()
+        .map(|c| {
+            let effort = cap.map_or(c.effort, |cap| c.effort.min(cap));
+            format!("{} at effort {effort}", c.model)
+        })
+        .collect();
+    format!(
+        "- Delegate every reviewer with role `reviewer`, each on one of these models, \
+         taken in turn: {}. {} Archon cancels a child labelled `reviewer` on any other \
+         model as it spawns.\n",
+        models.join("; "),
+        reviewer_effort_rule(cap)
+    )
+}
+
+/// The plan's reviewers with each effort a floor, never a ceiling, as the
+/// watchdog enforces unless `[models] effort_sizing` is on.
+fn floored_reviewer_rules(choices: &[ModelChoice], cap: Option<Effort>) -> String {
     assert!(!choices.is_empty(), "a plan names reviewers");
     let models: Vec<String> = choices
         .iter()
         .map(|c| format!("{} at effort {}", c.model, effort_range(c.effort, cap)))
         .collect();
-    format!(
+    let rules = format!(
         "- Delegate every reviewer with role `reviewer`, each on one of these models, \
          taken in turn: {}. Each effort is a floor, never a ceiling: Archon cancels a \
          child labelled `reviewer` on any other model, or below its model's effort, as it \
          spawns.\n",
         models.join("; ")
-    )
+    );
+    debug_assert!(rules.ends_with('\n'), "sections end with a newline");
+    rules
 }
 
-/// `floor` and the higher efforts `cap` leaves: `high`, `high or higher`, `high up to max`.
+/// `floor` and the higher efforts `cap` leaves: `high`, `high or higher`, `high up to x_high`.
 fn effort_range(floor: Effort, cap: Option<Effort>) -> String {
     match cap {
         Some(cap) if cap <= floor => floor.to_string(),
@@ -525,6 +576,44 @@ pub(crate) fn unnamed_reviewer_effort(floor: Effort, cap: Option<Effort>) -> Str
         effort_range(risky, cap)
     )
 }
+
+/// The rubric's efforts for a review, cheapest first, with the diff each fits.
+const REVIEW_EFFORTS: [(Effort, &str); 4] = [
+    (Effort::Low, "for a trivial diff"),
+    (Effort::Medium, "for a small or low-risk diff"),
+    (Effort::High, "for a risky diff or shared code"),
+    (Effort::XHigh, "for concurrency or security analysis"),
+];
+
+/// Where the rubric is absolute: it sets a reviewer's effort from the diff,
+/// the default only where it leaves the diff open, and never above `cap`.
+pub(crate) fn reviewer_effort_rule(cap: Option<Effort>) -> String {
+    let levels: Vec<String> = REVIEW_EFFORTS
+        .iter()
+        .filter(|(effort, _)| cap.is_none_or(|cap| *effort <= cap))
+        .map(|(effort, fits)| format!("`{effort}` {fits}"))
+        .collect();
+    assert!(!levels.is_empty(), "low is within every cap");
+    let ceiling = match cap {
+        Some(cap) if cap < Effort::Max => format!("; never above {cap}, the model policy's cap"),
+        _ => String::new(),
+    };
+    let rule = format!(
+        "That effort is the default, for a diff the rubric leaves open; otherwise the \
+         rubric decides: {}{ceiling}. This replaces any effort floor the stage prompt \
+         names. {REASON_RULE}",
+        levels.join(", ")
+    );
+    debug_assert!(
+        rule.contains("`low`"),
+        "every cap leaves the cheapest level"
+    );
+    rule
+}
+
+/// What a lead owes whenever it moves a reviewer off the plan's effort.
+pub const REASON_RULE: &str =
+    "Off the default, lower or higher, state the reason in one line in your result.";
 
 /// A model other than `own` where `policy` allows one, else `own`: advice
 /// that names only what the daemon lets a reviewer run on.
@@ -586,7 +675,9 @@ starts the diff read:\n\n\
 ```json\n\
 {\"verdict\": \"pass\", \"head\": \"<commit>\", \"base\": \"<commit>\", \"findings\": []}\n\
 ```\n\n\
-Use `\"fail\"` with findings for failures. A reviewer that cannot set `structured` \
+Use `\"fail\"` with findings for failures. The `verdict` is exactly `\"pass\"` or \
+`\"fail\"`; a fail always fails, so a review with only follow-ups passes. A reviewer \
+that cannot set `structured` \
 makes that JSON its whole last message: no `complete_task` or YAML, nothing \
 before or after it.\n\n\
 - Blocking findings are correctness bugs, security or safety issues, failing or missing \
@@ -771,13 +862,27 @@ a tree holds for any later head with that tree. After a passing full check, a la
 diff of only prose or raster images that no build or test reads needs only the \
 repository's link and notice checks.\n";
 
+/// Whether a stage of `kind` builds the run's change: a team role, or the
+/// work stage that records what ships. Setup, plan and baseline stages do not.
+fn builds_the_change(kind: StageKind, owed: Owed) -> bool {
+    kind == StageKind::Team || (kind == StageKind::Work && owed.ship_record)
+}
+
+/// Code-level criteria can all hold while the product fails its user, so a
+/// building stage answers for the brief's user outcomes too (#397).
+const OUTCOME_RULE: &str = "\
+- Check your change against each user-outcome criterion in the brief and say how. \
+Say plainly which this environment cannot check, and why: never claim one you did \
+not check.\n";
+
 const TEAM_RULES: &str = "\n## Team stage\n\n\
 - Use the report format the stage prompt gives for your summary. If it gives none, \
 list what your role changed and why, the files touched, the commits you made, the \
 verification commands you ran with their results, any assumption you made about a \
 peer's work, and any known gaps.\n\
-- Run checks in the foreground or wait on them: never end your turn while one runs.\n\
-\n## Team coordination\n\n\
+- Run checks in the foreground or wait on them: never end your turn while one runs.\n";
+
+const TEAM_COORDINATION_RULES: &str = "\n## Team coordination\n\n\
 - Once every role has an agent, Archon sends you one roster message: each role's name, \
 Aether agent id, worktree and branch. If a role is replaced, a roster with a higher \
 version follows; it supersedes the earlier one.\n\
@@ -880,12 +985,24 @@ const VERDICT_RULES: &str = "\n## Verdict\n\n\
 \"findings\": [{\"severity\": \"critical|high|medium|low\", \"title\": \"…\", \
 \"detail\": \"…\", \"path\": \"relative/path:line\"}]}\n\
 ```\n\n\
-- The stage prompt defines which findings make the verdict `fail`; apply its rule \
-exactly. A `fail` lists at least one finding. A `pass` may still list findings the \
-prompt treats as advice.\n\
+- The `verdict` is exactly `\"pass\"` or `\"fail\"`, no other word. The stage prompt \
+defines which findings make it `fail`; apply its rule exactly. A `fail` lists a \
+finding and always fails; a review with only advice is a `pass`.\n\
 - End the `summary` with a final line that is exactly `VERDICT: PASS` or \
 `VERDICT: FAIL`, matching the structured verdict. A missing or unreadable verdict \
 counts as a fail.\n";
+
+const STRICT_SCENARIO_RULES: &str = "\n## Strict scenario gate\n\n\
+- Archon judges your scenarios itself. Put in `structured`, beside the verdict: \
+`\"expected\": [\"<id>\", …]`, every scenario id the manifest lists, and \
+`\"scenarios\": [{\"id\", \"title\", \"status\": \"pass\" | \"fail\" | \"skipped\" | \
+\"blocked\", \"evidence\"}]`, every scenario you ran.\n\
+- The gate fails on any status but `pass`, on an expected id missing from `scenarios`, \
+and on an empty list. Such a product defect fails the run with no loop back. Your verdict \
+judges only the environment: `fail` sends the run back to setup.\n\
+- The stack you test is private: temporary homes (`HOME`, `XDG_*`), private sockets and \
+ports, config copied without secrets. Never read or write the state of the daemons \
+installed on this machine, or the user's homes.\n";
 
 #[cfg(test)]
 mod tests {
@@ -908,6 +1025,7 @@ mod tests {
             roles: Vec::new(),
             role_prompts: Default::default(),
             roles_from: None,
+            scenarios: Default::default(),
         }
     }
 
@@ -1003,6 +1121,8 @@ mod tests {
             assert!(text.contains("\"verdict\""), "{kind:?}");
             // The contract fixes the format; the prompt owns the threshold.
             assert!(text.contains("stage prompt defines which findings"));
+            assert!(text.contains("exactly `\"pass\"` or `\"fail\"`, no other word"));
+            assert!(text.contains("a review with only advice is a `pass`"));
         }
         let work = instructions(
             &stage(StageKind::Work, Gate::None, 1),
@@ -1027,7 +1147,7 @@ mod tests {
             Owed::default(),
             experiments,
         );
-        let delegated = delegation_rules(WorkspaceMode::Worktree, "a/one", 1, experiments);
+        let delegated = delegation_rules(WorkspaceMode::Worktree, "a/one", 1, experiments, false);
         [review, delegated]
     }
 
@@ -1122,7 +1242,7 @@ mod tests {
             }
             assert!(!text.contains("one new whole-change read at the new head"));
         }
-        let delegation = delegation_rules(WorkspaceMode::Worktree, "a/one", 1, None);
+        let delegation = delegation_rules(WorkspaceMode::Worktree, "a/one", 1, None, false);
         assert!(
             delegation.contains("Wait for every child (`wait_for`) or cancel it (`cancel_agent`)")
         );
@@ -1300,6 +1420,62 @@ mod tests {
         assert!(!solo.contains("roster"), "only team roles get a roster");
     }
 
+    /// The stages that build the change answer for the brief's user outcomes,
+    /// and say which they could not check rather than claiming them (#397).
+    #[test]
+    fn building_stages_check_the_brief_s_outcome_criteria_or_say_they_cannot() {
+        let rule = "Check your change against each user-outcome criterion in the brief and say \
+                    how. Say plainly which this environment cannot check, and why: never claim \
+                    one you did not check.";
+        let slot = TeamSlot {
+            role: "ui".into(),
+            branch: "archon/x--ui".into(),
+            workspace: "/t/s-ui".into(),
+        };
+        let contract = |kind: StageKind, ship_record: bool| {
+            let gate = match kind {
+                StageKind::Review | StageKind::Test => Gate::AllPass,
+                _ => Gate::None,
+            };
+            let mut spec = stage(kind, gate, 1);
+            let part = match kind {
+                StageKind::Team => {
+                    spec.roles = vec!["ui".into()];
+                    TeamPart::Role(&slot)
+                }
+                _ => TeamPart::Solo,
+            };
+            let owed = Owed {
+                review: None,
+                ship_record,
+            };
+            let text = instructions(&spec, WorkspaceMode::Worktree, "/w", part, owed, None);
+            text.split_whitespace().collect::<Vec<_>>().join(" ")
+        };
+        assert!(contract(StageKind::Work, true).contains(rule), "the lead");
+        assert!(contract(StageKind::Team, false).contains(rule), "a role");
+        assert!(
+            !contract(StageKind::Work, false).contains(rule),
+            "a setup or plan stage builds nothing"
+        );
+        for kind in [
+            StageKind::Review,
+            StageKind::Test,
+            StageKind::Ship,
+            StageKind::Report,
+            StageKind::Propose,
+        ] {
+            assert!(!contract(kind, false).contains(rule), "{kind:?}");
+        }
+        let team = contract(StageKind::Team, false);
+        let outcome = team.find(rule).unwrap();
+        assert!(
+            team.find("## Team stage").unwrap() < outcome
+                && outcome < team.find("## Team coordination").unwrap(),
+            "the rule belongs to the team stage, not to its coordination: {team}"
+        );
+    }
+
     #[test]
     fn work_stages_of_a_team_pipeline_must_commit() {
         let part = TeamPart::RunTree { branch: "archon/x" };
@@ -1348,7 +1524,7 @@ mod tests {
         );
         assert_eq!(contract.matches("delegate").count(), 0, "{contract}");
 
-        let writable = delegation_rules(WorkspaceMode::Worktree, "a/one, b/two", 2, None);
+        let writable = delegation_rules(WorkspaceMode::Worktree, "a/one, b/two", 2, None, false);
         assert!(writable.starts_with("\n## Delegation\n"), "{writable}");
         for said in [
             "A child may delegate once more when its part splits further",
@@ -1363,12 +1539,32 @@ mod tests {
         ] {
             assert!(writable.contains(said), "missing {said:?} in {writable}");
         }
+        let sizing = format!(
+            "Size each child's effort to its own task, whatever yours is: {EFFORT_RUBRIC}\n"
+        );
+        assert!(
+            !writable.contains("Size each child's effort"),
+            "1.4.12's rules unless `[models] effort_sizing` opts in: {writable}"
+        );
+        let writable = delegation_rules(WorkspaceMode::Worktree, "a/one, b/two", 2, None, true);
+        assert!(
+            writable.contains(&sizing),
+            "the rubric, word for word: {writable}"
+        );
+        for rung in [
+            "`low` for lookups",
+            "`medium` for routine changes",
+            "`high` for non-trivial design",
+            "`x_high` for hard reasoning",
+        ] {
+            assert!(writable.contains(rung), "missing {rung:?}");
+        }
         assert_eq!(
             writable,
-            delegation_rules(WorkspaceMode::Scratch, "a/one, b/two", 2, None)
+            delegation_rules(WorkspaceMode::Scratch, "a/one, b/two", 2, None, true)
         );
 
-        let read_only = delegation_rules(WorkspaceMode::RepoReadonly, "a/one", 2, None);
+        let read_only = delegation_rules(WorkspaceMode::RepoReadonly, "a/one", 2, None, false);
         assert!(read_only.contains("Your workspace is READ-ONLY, and so is every child's"));
         assert!(read_only.contains("Do not pass `workspace_mode: \"isolated\"`"));
         assert_eq!(
@@ -1383,11 +1579,11 @@ mod tests {
     /// they may delegate, and where Archon cancels.
     #[test]
     fn delegation_rules_follow_the_configured_depth() {
-        let only_children = delegation_rules(WorkspaceMode::Worktree, "a/one", 1, None);
+        let only_children = delegation_rules(WorkspaceMode::Worktree, "a/one", 1, None, false);
         assert!(only_children.contains("Pass `leaf: true` for every child"));
         assert!(only_children.contains("Archon cancels an agent a second level down."));
         assert!(!only_children.contains("delegate once more"));
-        let deeper = delegation_rules(WorkspaceMode::Worktree, "a/one", 3, None);
+        let deeper = delegation_rules(WorkspaceMode::Worktree, "a/one", 3, None, false);
         for said in [
             "down to 3 levels below you",
             "an agent at level 2 to pass `leaf: true` for its own children",
@@ -1402,7 +1598,7 @@ mod tests {
     #[test]
     fn delegation_rules_say_what_a_child_and_a_reviewer_are_handed() {
         for mode in [WorkspaceMode::Worktree, WorkspaceMode::RepoReadonly] {
-            let rules = delegation_rules(mode, "a/one", 2, None);
+            let rules = delegation_rules(mode, "a/one", 2, None, false);
             for said in [
                 "A child starts cold and pays to read whatever you do not tell it",
                 "Never your conversation or the project's history",
@@ -1474,7 +1670,7 @@ mod tests {
     #[test]
     fn a_delegating_agent_must_pass_its_rules_on_in_each_childs_instructions() {
         for mode in [WorkspaceMode::Worktree, WorkspaceMode::RepoReadonly] {
-            let rules = delegation_rules(mode, "a/one", 2, None);
+            let rules = delegation_rules(mode, "a/one", 2, None, false);
             for said in [
                 "A child inherits none of this contract or of the stage prompt",
                 "only the `objective` and `instructions` you pass to `delegate`",
@@ -1536,15 +1732,15 @@ mod tests {
             choice("claude-code/haiku", archon_core::model::Effort::Low),
         ];
         let own = model("claude-code/opus");
-        let rules = reviewer_model_rules(Some(&named), &own, &ModelPolicy::default());
+        let rules = reviewer_model_rules(Some(&named), &own, &ModelPolicy::default(), false);
         assert!(rules.contains("role `reviewer`"), "{rules}");
         assert!(rules.contains(
-            "claude-code/opus at effort medium or higher; claude-code/haiku at effort low or higher"
+            "claude-code/opus at effort medium up to x_high; claude-code/haiku at effort low up to x_high"
         ));
         assert!(rules.contains("Each effort is a floor, never a ceiling"));
         assert!(rules.contains("on any other model, or below its model's effort, as it spawns"));
         let capped = ModelPolicy::from_lists(&[], &[], Some(archon_core::model::Effort::Medium));
-        let rules = reviewer_model_rules(Some(&named), &own, &capped);
+        let rules = reviewer_model_rules(Some(&named), &own, &capped, false);
         assert!(
             rules.contains("opus at effort medium; claude-code/haiku at effort low up to medium")
         );
@@ -1567,6 +1763,94 @@ mod tests {
         assert_eq!(unnamed_reviewer_effort(High, None), "high or higher");
     }
 
+    /// `[models] effort_sizing` makes the plan's efforts defaults, not floors.
+    #[test]
+    fn sized_reviewers_get_the_plan_s_models_whatever_the_policy() {
+        let choice = |model: &str, effort| ModelChoice {
+            model: model.parse().unwrap(),
+            effort,
+            tier: None,
+        };
+        let named = [
+            choice("claude-code/opus", archon_core::model::Effort::Medium),
+            choice("claude-code/haiku", archon_core::model::Effort::Low),
+        ];
+        let own = model("claude-code/opus");
+        let rules = reviewer_model_rules(Some(&named), &own, &ModelPolicy::default(), true);
+        assert!(rules.contains("role `reviewer`"), "{rules}");
+        assert!(
+            rules.contains("claude-code/opus at effort medium; claude-code/haiku at effort low."),
+            "{rules}"
+        );
+        assert!(rules.contains("That effort is the default, for a diff the rubric leaves open"));
+        assert!(rules.contains("on any other model as it spawns"), "{rules}");
+        assert!(
+            !rules.contains("medium or higher"),
+            "the plan's effort is no floor: {rules}"
+        );
+        let capped = ModelPolicy::from_lists(&[], &[], Some(archon_core::model::Effort::Medium));
+        let rules = reviewer_model_rules(Some(&named), &own, &capped, true);
+        assert!(rules.contains("opus at effort medium; claude-code/haiku at effort low."));
+        assert!(rules.contains("`medium` for a small or low-risk diff; never above medium"));
+        assert!(
+            !rules.contains("x_high"),
+            "the cap rules x_high out: {rules}"
+        );
+    }
+
+    /// The rubric sets a reviewer's effort from the diff, lower or higher than
+    /// the plan's default, with the reason on record; the cap bounds it.
+    #[test]
+    fn the_rubric_sizes_a_review_and_the_plan_s_effort_is_its_default() {
+        use archon_core::model::Effort::{High, Low, Max, Medium, XHigh};
+        let open = reviewer_effort_rule(None);
+        assert_eq!(
+            open,
+            "That effort is the default, for a diff the rubric leaves open; otherwise the \
+             rubric decides: `low` for a trivial diff, `medium` for a small or low-risk diff, \
+             `high` for a risky diff or shared code, `x_high` for concurrency or security \
+             analysis. This replaces any \
+             effort floor the stage prompt names. Off the default, lower or higher, state the \
+             reason in one line in your result."
+        );
+        assert_eq!(reviewer_effort_rule(Some(Max)), open, "max caps nothing");
+        let below_max = reviewer_effort_rule(Some(XHigh));
+        assert!(below_max.contains("security analysis; never above x_high"));
+        assert!(!below_max.contains("`max`"), "{below_max}");
+        let capped = reviewer_effort_rule(Some(Medium));
+        assert!(
+            capped.contains("`medium` for a small or low-risk diff; never above medium"),
+            "{capped}"
+        );
+        assert!(!capped.contains("`high`"), "{capped}");
+        assert!(
+            reviewer_effort_rule(Some(Low)).contains("`low` for a trivial diff; never above low")
+        );
+        let choice = |effort| ModelChoice {
+            model: "codex/m".parse().unwrap(),
+            effort,
+            tier: None,
+        };
+        // A trivial diff may go below any default; no default is a floor or a step up.
+        for effort in [Medium, High, XHigh, Max] {
+            let rules = named_reviewer_rules(&[choice(effort)], None, true);
+            assert!(rules.contains(&format!(
+                "codex/m at effort {effort}. That effort is the default"
+            )));
+            assert!(rules.contains("`low` for a trivial diff"), "{rules}");
+            assert!(rules.contains(REASON_RULE), "{rules}");
+            assert!(!rules.contains(&format!("{effort} or higher")), "{rules}");
+        }
+        // Mixed defaults with the highest at the cap: one ceiling, no contradiction.
+        let mixed = named_reviewer_rules(&[choice(Low), choice(High)], Some(High), true);
+        assert!(
+            mixed.contains("codex/m at effort low; codex/m at effort high."),
+            "{mixed}"
+        );
+        assert!(mixed.contains("`high` for a risky diff or shared code; never above high"));
+        assert!(!mixed.contains("x_high"), "{mixed}");
+    }
+
     /// The bench's smoke preset allows one model: a reviewer must run on it,
     /// not be sent to one the daemon cancels.
     #[test]
@@ -1578,7 +1862,7 @@ mod tests {
             Some(archon_core::model::Effort::Medium),
         );
         for unnamed in [None, Some(&[][..])] {
-            let rules = reviewer_model_rules(unnamed, &own, &only);
+            let rules = reviewer_model_rules(unnamed, &own, &only, false);
             assert!(
                 rules.contains(
                     "on your own model claude-code/claude-haiku-5-5, at effort at most medium"
@@ -1593,7 +1877,7 @@ mod tests {
             &[model("codex/luna")],
             None,
         );
-        let rules = reviewer_model_rules(None, &own, &denied);
+        let rules = reviewer_model_rules(None, &own, &denied, false);
         assert!(rules.contains("on your own model"), "{rules}");
         assert!(!rules.contains("codex/luna"), "{rules}");
     }
@@ -1603,15 +1887,18 @@ mod tests {
         let own = model("claude-code/opus");
         let allow = [own.clone(), model("claude-code/haiku"), model("codex/luna")];
         let wide = ModelPolicy::from_lists(&allow, &[model("codex/luna")], None);
-        let rules = reviewer_model_rules(None, &own, &wide);
-        assert!(rules.contains("on one of claude-code/haiku: "), "{rules}");
+        let rules = reviewer_model_rules(None, &own, &wide, false);
+        assert!(
+            rules.contains("on one of claude-code/haiku, at effort at most x_high: "),
+            "{rules}"
+        );
         assert!(!rules.contains("claude-code/opus"), "{rules}");
         assert!(!rules.contains("codex/luna"), "{rules}");
         let open = ModelPolicy::from_lists(&[], &[model("codex/luna")], None);
-        let rules = reviewer_model_rules(None, &own, &open);
+        let rules = reviewer_model_rules(None, &own, &open, false);
         assert!(rules.contains("on a model other than yours"), "{rules}");
         assert!(
-            rules.contains("any model Aether lists except codex/luna"),
+            rules.contains("any model Aether lists except codex/luna; effort at most x_high"),
             "{rules}"
         );
     }
@@ -1632,6 +1919,8 @@ mod tests {
             "never prose alone",
             "{\"verdict\": \"pass\", \"head\": \"<commit>\", \"base\": \"<commit>\"",
             "Use `\"fail\"` with findings for failures",
+            "The `verdict` is exactly `\"pass\"` or `\"fail\"`; a fail always fails",
+            "so a review with only follow-ups passes",
             "A reviewer that cannot set `structured` makes that JSON its whole last message",
             "no `complete_task` or YAML, nothing before or after it",
             "Each agent named must be a different one you delegated to yourself",

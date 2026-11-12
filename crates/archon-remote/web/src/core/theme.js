@@ -1,7 +1,7 @@
 // Theme preference (system, light or dark), resolved onto <html data-theme>.
 const KEY = 'archon.theme';
 export const THEMES = ['system', 'light', 'dark'];
-const THEME_COLORS = { light: '#f5f5f7', dark: '#000000' };
+const THEME_COLORS = { light: '#f4f5f7', dark: '#0c0d0f' };
 
 export function themePreference() {
   const stored = readStored();

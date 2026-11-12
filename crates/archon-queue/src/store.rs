@@ -9,12 +9,22 @@
 //! finished runs staying finished, stage runs only moving forward) before
 //! the first statement, so a refused change writes nothing.
 
+mod changes;
+pub use changes::{KEEP_DAYS as CHANGES_KEEP_DAYS, KEEP_ROWS as CHANGES_KEEP_ROWS, acting_as};
 mod codec;
 mod cost;
 mod delegated;
 mod directives;
 mod feed;
 mod gates;
+mod github_links;
+mod github_objects;
+pub use github_objects::{CachedObject, MAX_ETAG_BYTES, SyncTarget};
+mod github_outbox;
+pub use github_outbox::{
+    MAX_OUTBOX_ERROR_CHARS, OutboxIntent, OutboxPurpose, OutboxRow, OutboxState,
+};
+mod graph;
 mod handoffs;
 pub mod initiatives;
 mod items;
@@ -31,6 +41,7 @@ mod retention;
 pub use retention::HistoryPruned;
 pub use schema::WAL_SIZE_LIMIT;
 mod run_edits;
+mod run_plans;
 mod run_reviews;
 pub use run_reviews::RunReview;
 mod runs;
@@ -55,7 +66,7 @@ use archon_core::id::{
 };
 use archon_core::merge::MergeRequest;
 use archon_core::notify::{FeedEntry, FeedItem, Question};
-use archon_core::protocol::{ItemQuery, RepoRef};
+use archon_core::protocol::{ItemQuery, RepoRef, RunPlan};
 use archon_core::queue::{PauseState, QueueItem, QueueState};
 use archon_core::repo::Repo;
 use archon_core::run::{OperatorGate, PipelineRun, StageRun};
@@ -431,7 +442,18 @@ impl Store {
         next: QueueState,
         at: Timestamp,
     ) -> Result<FinishedRun, ArchonError> {
-        runs::finish(&mut self.conn, run, next, at)
+        runs::finish(&mut self.conn, run, None, next, at)
+    }
+    /// [`Store::finish_run`], keeping `plan` as the plan the run finished
+    /// with in the same transaction; with none, any earlier one is dropped.
+    pub fn finish_run_with_plan(
+        &mut self,
+        run: &PipelineRun,
+        plan: Option<&RunPlan>,
+        next: QueueState,
+        at: Timestamp,
+    ) -> Result<FinishedRun, ArchonError> {
+        runs::finish(&mut self.conn, run, plan, next, at)
     }
     pub fn run(&self, id: &PipelineRunId) -> Result<PipelineRun, ArchonError> {
         runs::load(&self.conn, id)

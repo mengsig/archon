@@ -97,6 +97,8 @@ pub struct DaemonContext {
     pub backend: Arc<dyn AgentBackend>,
     /// Every appended feed item, for `SubscribeFeed` connections.
     pub feed: broadcast::Sender<FeedItem>,
+    /// Committed changes, for `subscribe_changes` streams.
+    pub changes: crate::handlers::changes::ChangeHub,
     /// Poked on enqueue, settle, caps or pause change, and when a gc mark
     /// goes.
     pub dispatch: Arc<Notify>,
@@ -160,7 +162,7 @@ pub struct DaemonContext {
     pub push: crate::push::Pusher,
     /// The newest Aether event of each agent, for the stage watchdog.
     pub activity: crate::executor::Activity,
-    /// The mobile web app's listener, off until the operator enables it.
+    /// The remote listener Aether mounts, off until the operator enables it.
     pub remote: archon_remote::Remote,
 }
 

@@ -389,6 +389,7 @@ fn delete_chosen(
     pruned: &mut HistoryPruned,
 ) -> Result<(), ArchonError> {
     pruned.kv += prune_item_kv(tx)?;
+    super::github_links::record_pruned(tx)?;
     let run_owned = [
         "DELETE FROM run_edits WHERE run IN (SELECT id FROM temp.prune_runs)",
         "DELETE FROM agent_runs WHERE run IN (SELECT id FROM temp.prune_runs)",
@@ -434,7 +435,7 @@ fn delete_chosen(
 }
 
 /// The per-item `kv` families: an item's steers, steered stages and restack
-/// index entries, a distillation run's applied mark, and how a pull request only
+/// index entries, a run's applied mark, review and plan, and how a pull request only
 /// pruned runs delivered to ended. A reshaped run's outcome keeps saying so
 /// once its run edits are gone, as learning leaves reshaped runs out.
 fn prune_item_kv(tx: &Transaction<'_>) -> Result<usize, ArchonError> {
@@ -450,10 +451,11 @@ fn prune_item_kv(tx: &Transaction<'_>) -> Result<usize, ArchonError> {
             "DELETE FROM kv WHERE key IN (SELECT 'steers:' || id FROM temp.prune_items
                                           UNION SELECT 'shape:' || id FROM temp.prune_items
                                           UNION SELECT 'learning/applied/' || id FROM temp.prune_runs
-                                          UNION SELECT 'run_review:' || id FROM temp.prune_runs)",
-            [],
+                                          UNION SELECT 'run_review:' || id FROM temp.prune_runs
+                                          UNION SELECT ?1 || id FROM temp.prune_runs)",
+            [super::run_plans::PREFIX],
         )
-        .ctx("prune steer histories")?;
+        .ctx("prune steer histories and finished run plans")?;
     let settled = tx
         .execute(
             "DELETE FROM kv WHERE key IN (

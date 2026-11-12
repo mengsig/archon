@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use crate::Timestamp;
 use crate::aether_ids::AetherAgentId;
 use crate::error::ArchonError;
+use crate::protocol::{GithubKind, GithubRef};
+use crate::pull_request::PullRequestRef;
 
 /// Aether's watcher skips comments carrying it, so replies never re-trigger.
 pub const REPLY_MARKER: &str = "<!-- aether:github-reply -->";
@@ -26,7 +28,9 @@ pub const MENTION_REGEX: &str = "(?i)(?:^|[^a-z0-9_@])@archon(?:$|[^a-z0-9_-])";
 pub const LABEL_REGEX: &str = "(?i)archon";
 
 /// A GitHub.com `owner/name`, lowercased as Aether stores it.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(try_from = "String", into = "String")]
 pub struct GithubRepo(String);
 
@@ -118,7 +122,7 @@ pub fn is_github_login(login: &str) -> bool {
 /// The GitHub logins that alone may dispatch for one repository: non-empty,
 /// at most [`MAX_ALLOWED_USERS`], lowercased and de-duplicated in first-seen
 /// order, as Aether stores them.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(try_from = "Vec<String>", into = "Vec<String>")]
 pub struct AllowedUsers(Vec<String>);
 
@@ -186,7 +190,7 @@ impl From<AllowedUsers> for Vec<String> {
 
 /// The GitHub logins whose own requests carry the operator's authority.
 /// A type of its own, so that no allowlist is ever saved as operator logins.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(try_from = "Vec<String>", into = "Vec<String>")]
 pub struct OperatorUsers(Vec<String>);
 
@@ -218,7 +222,7 @@ impl From<OperatorUsers> for Vec<String> {
 
 /// One issue or pull request conversation: where a request came from and
 /// where its replies go.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GithubThread {
     pub repository: GithubRepo,
@@ -251,9 +255,68 @@ impl fmt::Display for GithubThread {
     }
 }
 
+/// The host of every watcher thread: Aether watches github.com alone.
+pub const GITHUB_HOST: &str = "github.com";
+
+impl GithubThread {
+    /// This thread as a link names it. A thread does not tell an issue from a
+    /// pull request, so it is linked as the issue GitHub's `/issues/N` names.
+    pub fn reference(&self) -> GithubRef {
+        GithubRef {
+            host: GITHUB_HOST.to_owned(),
+            repo: self.repository.as_str().to_owned(),
+            number: self.number.get(),
+            kind: GithubKind::Issue,
+        }
+    }
+}
+
+impl From<&PullRequestRef> for GithubRef {
+    fn from(pr: &PullRequestRef) -> Self {
+        Self {
+            host: pr.host.clone(),
+            repo: pr.repository.clone(),
+            number: pr.number,
+            kind: GithubKind::PullRequest,
+        }
+    }
+}
+
+/// `reference` as a request names it, checked, with its host and repository
+/// lowercased as the link store keys them.
+pub fn normalized_ref(reference: &GithubRef) -> Result<GithubRef, ArchonError> {
+    let host = reference.host.to_ascii_lowercase();
+    // The host rule of `PullRequestRef::from_url`, so every delivered pull request links.
+    let host_ok = !host.is_empty()
+        && host
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-.:".contains(&b));
+    if !host_ok {
+        return Err(ArchonError::Invalid(format!(
+            "{:?} is not a GitHub host",
+            reference.host
+        )));
+    }
+    let repo = GithubRepo::parse(&reference.repo)?;
+    if reference.number == 0 || i64::try_from(reference.number).is_err() {
+        return Err(ArchonError::Invalid(format!(
+            "{} is not an issue or pull request number",
+            reference.number
+        )));
+    }
+    let normalized = GithubRef {
+        host,
+        repo: repo.into(),
+        number: reference.number,
+        kind: reference.kind,
+    };
+    debug_assert_eq!(normalized.repo.matches('/').count(), 1, "owner/name");
+    Ok(normalized)
+}
+
 /// An operator's edit to Archon's watcher. Nothing here names a target:
 /// archond always points Archon's repositories at the live orchestrator.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum WatcherChange {
     /// Watch a repository (and switch the watcher on). An allowlist replaces
@@ -293,7 +356,7 @@ pub enum WatcherChange {
 }
 
 /// Archon's view of its aetherd's GitHub watcher.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GithubWatcherView {
     /// Aether's config revision; every edit is a compare-and-swap on it.
     pub revision: u64,
@@ -319,7 +382,7 @@ impl GithubWatcherView {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct WatchedRepo {
     pub repository: String,
     pub enabled: bool,
@@ -346,7 +409,7 @@ impl WatchedRepo {
 }
 
 /// Where a watched repository's requests go.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WatchTarget {
     /// Archon's: fixed dispatch to the current orchestrator.
@@ -359,7 +422,7 @@ pub enum WatchTarget {
 }
 
 /// The watcher in `archon status`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum GithubWatch {
     Watching(Box<GithubWatcherView>),
@@ -372,6 +435,75 @@ pub enum GithubWatch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_reference_is_checked_and_lowercased_as_links_key_it() {
+        let named = GithubRef {
+            host: "GitHub.com".into(),
+            repo: "Mengsig/Archon".into(),
+            number: 384,
+            kind: GithubKind::Issue,
+        };
+        let normal = normalized_ref(&named).unwrap();
+        assert_eq!(
+            (normal.host.as_str(), normal.repo.as_str()),
+            ("github.com", "mengsig/archon")
+        );
+        assert_eq!(
+            normalized_ref(&normal).unwrap(),
+            normal,
+            "normalizing is idempotent"
+        );
+        let bad = [
+            GithubRef {
+                host: String::new(),
+                ..normal.clone()
+            },
+            GithubRef {
+                host: "git/hub.com".into(),
+                ..normal.clone()
+            },
+            GithubRef {
+                repo: "archon".into(),
+                ..normal.clone()
+            },
+            GithubRef {
+                repo: "a/b/c".into(),
+                ..normal.clone()
+            },
+            GithubRef {
+                number: 0,
+                ..normal.clone()
+            },
+            GithubRef {
+                number: u64::MAX,
+                ..normal.clone()
+            },
+        ];
+        for reference in bad {
+            assert!(
+                normalized_ref(&reference).is_err(),
+                "{reference:?} accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn threads_link_as_issues_and_pull_requests_as_pull_requests() {
+        let thread = GithubThread {
+            repository: GithubRepo::parse("o/r").unwrap(),
+            number: NonZeroU64::new(7).unwrap(),
+        };
+        let issue = thread.reference();
+        assert_eq!(
+            (issue.host.as_str(), issue.number, issue.kind),
+            (GITHUB_HOST, 7, GithubKind::Issue)
+        );
+        let pr = PullRequestRef::from_url("https://ghe.example/o/r/pull/9").unwrap();
+        let reference = GithubRef::from(&pr);
+        assert_eq!(reference.kind, GithubKind::PullRequest);
+        assert_eq!(normalized_ref(&reference).unwrap(), reference);
+    }
 
     #[test]
     fn repositories_parse_like_aether_and_lowercase() {

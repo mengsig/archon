@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use archon_aether::fake::{self, Scripted};
-use archon_core::aether_ids::AetherQuestionRef;
+use archon_core::aether_ids::{AetherAgentId, AetherQuestionRef};
 use archon_core::autonomy::{Directive, DirectiveSource};
 use archon_core::config::Config;
 use archon_core::error::ArchonError;
@@ -1647,6 +1647,33 @@ async fn a_turn_silent_for_half_an_hour_is_reported_to_the_operator_once() {
         "{nudges:?}"
     );
 
+    harness.fake.script(
+        "interrupt",
+        Scripted::reply("interrupted", json!({"was_running": true})),
+    );
+    let in_grace = later + chrono::TimeDelta::minutes(4);
+    assert!(
+        !supervisor::report_stall(&harness.ctx, in_grace)
+            .await
+            .unwrap()
+    );
+    let past_grace = later + supervisor::INTERRUPT_GRACE;
+    assert!(
+        supervisor::report_stall(&harness.ctx, past_grace)
+            .await
+            .unwrap()
+    );
+    let interrupts = harness.fake.received_named("interrupt");
+    assert_eq!(interrupts.len(), 1, "{interrupts:?}");
+    assert_eq!(interrupts[0]["agent"], ORCH);
+    let decisions = harness.notifications(NotificationKind::Decision).await;
+    assert!(
+        decisions
+            .iter()
+            .any(|d| d.contains("Archon interrupted it")),
+        "{decisions:?}"
+    );
+
     let ended = EventKind::AgentTurnCompleted {
         turn: 241,
         next: Some("ready".into()),
@@ -1675,4 +1702,91 @@ async fn a_turn_already_open_when_archond_restarts_is_still_watched() {
     let later = now + chrono::TimeDelta::minutes(31);
     assert!(supervisor::report_stall(&harness.ctx, later).await.unwrap());
     assert_eq!(harness.fake.received_named("send_message").len(), 1);
+}
+
+/// One stall of `orch`: a fresh turn, its stall at 31 minutes, then the
+/// check past the grace. Returns the notices of that check.
+async fn stall_round(harness: &Harness, orch: &AetherAgentId) -> Vec<String> {
+    use archon_aether::events::EventKind;
+    let before = harness.feed().await.len();
+    harness
+        .ctx
+        .supervisor
+        .saw_event(orch, &EventKind::AgentStarted { turn: 3 });
+    let stalled = archon_core::now() + chrono::TimeDelta::minutes(31);
+    assert!(
+        supervisor::report_stall(&harness.ctx, stalled)
+            .await
+            .unwrap()
+    );
+    let past_grace = stalled + supervisor::INTERRUPT_GRACE;
+    supervisor::report_stall(&harness.ctx, past_grace)
+        .await
+        .unwrap();
+    let feed = harness.feed().await;
+    feed[before..]
+        .iter()
+        .filter_map(|entry| match entry {
+            FeedEntry::Notification(n) => Some(n.text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_failed_interrupt_is_told_with_the_restart_remedy_and_interrupts_are_bounded() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    agent_table(&harness, &[(ORCH, "running")]);
+    harness
+        .fake
+        .set_default("send_message", Scripted::reply("message_sent", json!({})));
+    let orch = agent_id(ORCH);
+    harness.fake.script(
+        "interrupt",
+        Scripted::refuse("unavailable", "the engine does not answer"),
+    );
+    harness.fake.script(
+        "interrupt",
+        Scripted::reply("interrupted", json!({"was_running": false})),
+    );
+    harness.fake.script(
+        "interrupt",
+        Scripted::reply("interrupted", json!({"was_running": true})),
+    );
+
+    let refused = stall_round(&harness, &orch).await;
+    assert_eq!(
+        refused.len(),
+        2,
+        "the stall, then the interrupt: {refused:?}"
+    );
+    assert!(
+        refused[1].contains("could not interrupt it")
+            && refused[1].contains("the engine does not answer")
+            && refused[1].contains("archon orchestrator restart"),
+        "{refused:?}"
+    );
+    let idle = stall_round(&harness, &orch).await;
+    assert!(
+        idle[1].contains("no turn running") && idle[1].contains("archon orchestrator restart"),
+        "{idle:?}"
+    );
+    let stopped = stall_round(&harness, &orch).await;
+    assert!(stopped[1].contains("Archon interrupted it"), "{stopped:?}");
+    let blockers = harness.notifications(NotificationKind::Blocker).await;
+    assert_eq!(
+        blockers.len(),
+        5,
+        "three stalls, two failed interrupts: {blockers:?}"
+    );
+
+    let spent = stall_round(&harness, &orch).await;
+    assert_eq!(spent.len(), 1, "no interrupt is left: {spent:?}");
+    assert!(spent[0].contains("used its 3 interrupts"), "{spent:?}");
+    assert_eq!(
+        harness.fake.received_named("interrupt").len(),
+        usize::from(supervisor::MAX_INTERRUPTS)
+    );
 }

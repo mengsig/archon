@@ -16,7 +16,7 @@ use crate::protocol::RepoRef;
 pub const DEFAULT_DAYS: u32 = 30;
 pub const MAX_ROWS: usize = 60;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ModelEvidenceQuery {
     pub repo: Option<RepoRef>,
     pub pipeline: Option<String>,
@@ -34,7 +34,7 @@ impl ModelEvidenceQuery {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ModelEvidenceRow {
     pub stage: String,
     pub choice: ModelChoice,
@@ -53,7 +53,7 @@ pub struct ModelEvidenceRow {
 
 /// The same observations pooled by the tier of the model that ran, so they
 /// outlive a model replaced within its tier.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TierEvidenceRow {
     pub stage: String,
     pub tier: Tier,
@@ -69,7 +69,7 @@ pub struct TierEvidenceRow {
 
 /// One provider's attempts and completed cost: the split provider weights
 /// achieved over the range.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ProviderEvidenceRow {
     pub provider: String,
     pub attempts: usize,
@@ -77,7 +77,7 @@ pub struct ProviderEvidenceRow {
     pub cost_usd: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ModelEvidenceReport {
     pub range: DayRange,
     pub estimates_counted: bool,

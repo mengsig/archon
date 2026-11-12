@@ -2604,7 +2604,7 @@ async fn a_policy_narrowed_mid_run_bounds_the_next_lead_s_reviewers() {
     h.dispatch().await;
     let build = h.backend.requests().last().unwrap().clone();
     assert_eq!(build.labels["archon.stage"], "build");
-    let own = format!("on {MODEL} at tier balanced and effort medium or higher");
+    let own = format!("on {MODEL} at tier balanced and effort medium up to x_high");
     assert!(build.instructions.contains(&own), "{}", build.instructions);
     let named = build.instructions.matches(REVIEW_MODEL).count();
     assert_eq!(named, 0, "{}", build.instructions);
@@ -2690,6 +2690,11 @@ async fn adaptive_guarded_build_delegates_within_the_stated_policy_and_archond_s
     // The repository leaves the lead's model alone: its reviewers run on it.
     let own = format!("on {MODEL} at tier balanced and effort medium up to high, and high");
     assert!(build.instructions.contains(&own), "{}", build.instructions);
+    assert!(
+        !build.instructions.contains("the rubric decides")
+            && !build.instructions.contains("`x_high` for hard reasoning"),
+        "no effort sizing by default"
+    );
 
     let (built, reviewer) = reviewed_by_one(&h, "Verified; one reviewer passed it").await;
     h.settle_running(|_| built.clone()).await;
@@ -2701,6 +2706,35 @@ async fn adaptive_guarded_build_delegates_within_the_stated_policy_and_archond_s
     assert_eq!(title, "Change the thing");
     let review = format!("REVIEW: pass, by {REVIEW_MODEL} (agent {reviewer})");
     assert!(body.contains(&review), "{body}");
+}
+
+/// `[models] effort_sizing` reaches the lead's contract: its children and its
+/// reviewers are sized by the effort rubric, within the policy's cap.
+#[tokio::test]
+async fn an_opted_in_lead_sizes_its_children_and_reviewers_by_the_rubric() {
+    let mut config = Config::default();
+    config.models.allow = vec![MODEL.parse().unwrap(), REVIEW_MODEL.parse().unwrap()];
+    config.models.max_effort = Some(Effort::High);
+    config.models.effort_sizing = true;
+    let h = Harness::with_config(config).await;
+    seed_review_catalog(&h).await;
+    h.repo_config(&format!("[models]\ndeny = [\"{REVIEW_MODEL}\"]\n"));
+    adaptive_item(&h).await;
+    let build = h.backend.requests()[0].clone();
+    assert_eq!(build.labels["archon.stage"], "build");
+    let rules = &build.instructions[build.instructions.find("## Delegation").unwrap()..];
+    let sizing = format!(
+        "Size each child's effort to its own task, whatever yours is: {}",
+        archon_core::model::EFFORT_RUBRIC
+    );
+    assert!(rules.contains(&sizing), "{rules}");
+    let own = format!(
+        "on {MODEL} at tier balanced and effort medium. That effort is the default, for a diff \
+         the rubric leaves open; otherwise the rubric decides: `low` for a trivial diff, \
+         `medium` for a small or low-risk diff, `high` for a risky diff or shared code; never \
+         above high, the model policy's cap."
+    );
+    assert!(build.instructions.contains(&own), "{}", build.instructions);
 }
 
 /// A pass is the lead's word until Aether shows the reviewer: an agent it
@@ -3010,7 +3044,7 @@ fn fail_on(built: &StageOutcome, blocking: bool) -> serde_json::Value {
 }
 
 /// A fail of the commit `built` records: with a blocking finding, with an
-/// empty list or none, or with follow-ups alone, which reads as a pass.
+/// empty list or none, or with follow-ups alone, which still fails.
 fn fail_of_kind(built: &StageOutcome, kind: &str) -> serde_json::Value {
     let mut fail = verdict_on(built, "fail");
     match kind {
@@ -3025,7 +3059,7 @@ fn fail_of_kind(built: &StageOutcome, kind: &str) -> serde_json::Value {
 }
 
 /// The lead names the reviewer that passed its head and leaves out the one
-/// that failed it: the fail stands, unless it lists follow-ups alone.
+/// that failed it: the fail stands, whatever findings it lists.
 #[tokio::test]
 async fn a_reviewer_that_failed_the_head_and_is_left_out_of_the_record_is_refused() {
     for kind in ["blocking", "empty", "unlisted", "follow-ups"] {
@@ -3041,11 +3075,6 @@ async fn a_reviewer_that_failed_the_head_and_is_left_out_of_the_record_is_refuse
         h.backend
             .complete_delegated(&passing, verdict_on(&built, "pass"));
         h.settle_running(|_| built.clone()).await;
-        if kind == "follow-ups" {
-            h.dispatch().await;
-            assert!(delivered(&h, &item).await, "{:?}", h.state(&item.id).await);
-            continue;
-        }
         let error = refused_review(&h, &item).await;
         let stands = format!("reviewer {failing} failed the change at");
         assert!(error.contains(&stands), "{kind}: {error}");
@@ -3053,6 +3082,71 @@ async fn a_reviewer_that_failed_the_head_and_is_left_out_of_the_record_is_refuse
             error.contains("the record leaves that reviewer out"),
             "{kind}: {error}"
         );
+    }
+}
+
+/// A fail naming nothing blocking adds no round, but the tally keeps its head:
+/// left out of the record after Aether stops listing its reviewer, it stands.
+#[tokio::test]
+async fn a_left_out_fail_with_nothing_blocking_stands_after_aether_forgets_its_reviewer() {
+    for kind in ["empty", "unlisted", "follow-ups"] {
+        let h = Harness::new().await;
+        let item = adaptive_item(&h).await;
+        let lead = h.running().await.remove(0);
+        let lead_id = lead_agent(&lead);
+        let failing = h.backend.delegate(&lead_id, REVIEW_MODEL);
+        let passing = h.backend.delegate(&lead_id, REVIEW_MODEL);
+        let named = pass_by(std::slice::from_ref(&passing));
+        let built = shipped_by(&h, &lead, "Reviewed", named).await;
+        h.backend
+            .complete_delegated(&failing, fail_of_kind(&built, kind));
+        executor::reviewer_settled(&h.ctx, &lead_id, &failing)
+            .await
+            .unwrap();
+        assert_eq!(escalated(&h, &lead).await, None, "{kind}: no round");
+        h.backend.forget_delegated(&failing);
+        h.backend
+            .complete_delegated(&passing, verdict_on(&built, "pass"));
+        h.settle_running(|_| built.clone()).await;
+        let error = refused_review(&h, &item).await;
+        let stands = format!("reviewer {failing} failed the change at");
+        assert!(error.contains(&stands), "{kind}: {error}");
+    }
+}
+
+/// A tally an earlier archond began kept no head for a fail naming nothing
+/// blocking. Its reviewer is read again while Aether lists it; once Aether
+/// forgets it, the review is refused rather than guessed.
+#[tokio::test]
+async fn a_left_out_reviewer_an_earlier_archond_s_tally_read_is_never_guessed_passed() {
+    for forgotten in [false, true] {
+        let h = Harness::new().await;
+        let item = adaptive_item(&h).await;
+        let lead = h.running().await.remove(0);
+        let lead_id = lead_agent(&lead);
+        let failing = h.backend.delegate(&lead_id, REVIEW_MODEL);
+        let passing = h.backend.delegate(&lead_id, REVIEW_MODEL);
+        let named = pass_by(std::slice::from_ref(&passing));
+        let built = shipped_by(&h, &lead, "Reviewed", named).await;
+        h.backend
+            .complete_delegated(&failing, fail_of_kind(&built, "follow-ups"));
+        let legacy = serde_json::json!({"fails": [], "read": [failing.as_str()]});
+        let key = format!("review_rounds:{}", lead.id);
+        let mut store = h.ctx.store.lock().await;
+        store.kv_set(&key, &legacy.to_string()).unwrap();
+        drop(store);
+        if forgotten {
+            h.backend.forget_delegated(&failing);
+        }
+        h.backend
+            .complete_delegated(&passing, verdict_on(&built, "pass"));
+        h.settle_running(|_| built.clone()).await;
+        let error = refused_review(&h, &item).await;
+        let why = match forgotten {
+            true => "did not keep whether it failed the change: retry the stage".to_owned(),
+            false => format!("reviewer {failing} failed the change at"),
+        };
+        assert!(error.contains(&why), "forgotten {forgotten}: {error}");
     }
 }
 
@@ -3398,7 +3492,9 @@ async fn a_read_only_delegating_stage_has_nothing_to_integrate() {
     let rules = &request.instructions[request.instructions.find("## Delegation").unwrap()..];
     assert!(rules.contains("Your workspace is READ-ONLY, and so is every child's"));
     assert_eq!(rules.matches("integrate_workspace").count(), 0, "{rules}");
-    assert!(rules.contains("policy for this item: any model Aether lists. Archon cancels"));
+    assert!(rules.contains(
+        "policy for this item: any model Aether lists; effort at most x_high. Archon cancels"
+    ));
 }
 
 fn unreachable_aether() -> ArchonError {
@@ -3765,7 +3861,117 @@ async fn the_third_failing_review_round_stops_the_stage_and_escalates() {
     assert!(error.contains("failed 3 rounds"), "{error}");
 }
 
-/// A fail whose findings are all follow-ups is a pass: it adds no round.
+/// An earlier archond read a `changes_requested` fail as no verdict and kept
+/// only that it read it. Upgraded, the tally reads it again once: it is a round.
+#[tokio::test]
+async fn a_fail_an_earlier_archond_could_not_read_counts_as_a_round_after_the_upgrade() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let lead_id = lead_agent(&lead);
+    let unread = h.backend.delegate(&lead_id, REVIEW_MODEL);
+    let mut fail = round_fail(1);
+    fail["verdict"] = serde_json::json!("changes_requested");
+    h.backend.complete_delegated(&unread, fail);
+    let legacy = serde_json::json!({"fails": [], "read": [unread.as_str()]});
+    let key = format!("review_rounds:{}", lead.id);
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(&key, &legacy.to_string())
+        .unwrap();
+    review_round_fails(&h, &lead, 2).await;
+    assert_eq!(escalated(&h, &lead).await, None, "two rounds go on");
+    review_round_fails(&h, &lead, 3).await;
+    let error = escalated(&h, &lead)
+        .await
+        .expect("the reread fail is the first of three rounds");
+    assert!(error.contains("failed 3 rounds"), "{error}");
+    assert!(error.contains("finding 1"), "{error}");
+}
+
+/// The event of `reviewer`, a child of `lead`, completing `verdict`.
+fn settled_event(
+    lead: &AetherAgentId,
+    reviewer: &AetherAgentId,
+    verdict: serde_json::Value,
+    seq: u64,
+) -> AetherEvent {
+    AetherEvent {
+        seq,
+        at: archon_core::now(),
+        agent: Some(reviewer.clone()),
+        task: None,
+        parent: Some(lead.clone()),
+        run: None,
+        kind: EventKind::TaskCompleted {
+            result: archon_aether::wire::TaskResult {
+                summary: "reviewed".into(),
+                artifacts: Vec::new(),
+                structured: Some(verdict),
+            },
+        },
+    }
+}
+
+/// A lead an earlier archond woke without recording its earlier children
+/// counts only the reviewer each event names. Its two `changes_requested`
+/// fails that archond read as nothing are read again when their events
+/// replay after a newer reviewer's, and count as rounds once each.
+#[tokio::test]
+async fn a_woken_lead_s_earlier_read_fails_count_when_their_events_replay_after_the_upgrade() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let first = h.running().await.remove(0);
+    let agent = lead_agent(&first);
+    h.backend.fail_agent(&agent);
+    h.settle_running(|_| StageOutcome::Failed {
+        error: "engine died".into(),
+        infra: true,
+    })
+    .await;
+    h.dispatch().await;
+    let woken = h.running().await.remove(0);
+    assert_eq!(woken.aether_agent.as_ref(), Some(&agent), "woken in place");
+    let mut old = Vec::new();
+    for n in 1..=2 {
+        let reviewer = h.backend.delegate(&agent, REVIEW_MODEL);
+        let mut fail = round_fail(n);
+        fail["verdict"] = serde_json::json!("changes_requested");
+        h.backend.complete_delegated(&reviewer, fail.clone());
+        old.push(settled_event(&agent, &reviewer, fail, n as u64));
+    }
+    let read: Vec<&str> = old
+        .iter()
+        .map(|e| e.agent.as_ref().unwrap().as_str())
+        .collect();
+    let legacy = serde_json::json!({"fails": [], "read": read});
+    let key = format!("review_rounds:{}", woken.id);
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(&key, &legacy.to_string())
+        .unwrap();
+    review_round_fails(&h, &woken, 3).await;
+    assert_eq!(
+        escalated(&h, &woken).await,
+        None,
+        "only the named reviewer counts"
+    );
+    pump::handle_fleet_event(&h.ctx, &old[0]).await.unwrap();
+    pump::handle_fleet_event(&h.ctx, &old[0]).await.unwrap();
+    assert_eq!(escalated(&h, &woken).await, None, "a replay counts once");
+    pump::handle_fleet_event(&h.ctx, &old[1]).await.unwrap();
+    let error = escalated(&h, &woken)
+        .await
+        .expect("both earlier-read fails are rounds");
+    assert!(error.contains("failed 3 rounds"), "{error}");
+}
+
+/// A fail whose findings are all follow-ups still fails, but names nothing
+/// blocking, so it adds no round.
 #[tokio::test]
 async fn a_fail_listing_only_follow_ups_adds_no_round() {
     let h = Harness::new().await;

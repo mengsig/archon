@@ -659,8 +659,13 @@ impl Target<'_> {
             Err(error) => format!("none: the repository's model policy cannot be read ({error})"),
         };
         let depth = self.config.limits.max_delegation_depth;
-        let rules =
-            contract::delegation_rules(plan.workspace, &models, depth, Some(self.experiments));
+        let rules = contract::delegation_rules(
+            plan.workspace,
+            &models,
+            depth,
+            Some(self.experiments),
+            self.config.models.effort_sizing,
+        );
         format!("{contract}{rules}")
     }
 }
@@ -686,6 +691,7 @@ fn reviewer_rules(
             policy,
             (&target.config.review, target.catalog),
             target.governed,
+            target.config.models.effort_sizing,
         ),
         Err(error) => format!(
             "- Delegate no reviewer: the repository's model policy cannot be read ({error}).\n"

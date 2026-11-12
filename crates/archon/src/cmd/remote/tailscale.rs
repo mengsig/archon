@@ -405,6 +405,11 @@ fn same_target(a: &str, b: &str) -> bool {
 }
 
 impl ServeConfig {
+    /// The `host:port` keys Tailscale Funnel opens to the internet.
+    pub(super) fn funnels(&self) -> &[String] {
+        &self.funnel
+    }
+
     /// What `host`'s HTTPS `port` is doing, given that `target` is the
     /// address the wizard wants served.
     pub(super) fn port_use(&self, host: &str, port: u16, target: &str) -> PortUse {

@@ -8,14 +8,14 @@ use crate::aether_ids::{AetherMemoryFeedbackId, AetherMemoryId, AetherTaskId};
 use crate::error::ArchonError;
 use crate::id::FeedbackId;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MemoryFeedback {
     pub instance_id: String,
     pub skipped: Option<String>,
     pub tasks: Vec<MemoryFeedbackTask>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MemoryFeedbackTask {
     pub task: AetherTaskId,
     pub discovered: bool,
@@ -25,7 +25,7 @@ pub struct MemoryFeedbackTask {
     pub records: Vec<MemoryFeedbackEntry>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MemoryFeedbackEntry {
     pub memory: AetherMemoryId,
     pub feedback: Option<AetherMemoryFeedbackId>,
@@ -42,7 +42,7 @@ pub struct MemoryFeedbackEntry {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MemoryFeedbackCounts {
     pub sent: usize,
     /// Includes tasks still awaiting context discovery.

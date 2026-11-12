@@ -90,6 +90,7 @@ async fn unread_keys(h: &Harness) -> usize {
 #[tokio::test]
 async fn an_inbox_item_left_unread_past_the_threshold_warns_until_it_is_taken() {
     let h = Harness::new().await;
+    let _aether = common::connect_aether_for_delegations(&h).await;
     let item = h.enqueue("a lead that stopped reading").await;
     h.dispatch().await;
     let stage = h.running().await.remove(0);
@@ -144,6 +145,7 @@ async fn an_inbox_item_left_unread_past_the_threshold_warns_until_it_is_taken() 
 #[tokio::test]
 async fn an_ended_agent_or_a_settled_stage_does_not_warn() {
     let h = Harness::new().await;
+    let _aether = common::connect_aether_for_delegations(&h).await;
     let item = h.enqueue("ended agents").await;
     h.dispatch().await;
     let stage = h.running().await.remove(0);

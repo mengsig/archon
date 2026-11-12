@@ -46,7 +46,7 @@ pub fn check_key(key: &str) -> Result<(), ArchonError> {
 }
 
 /// Where a tracked request stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TrackedState {
     /// archond is still carrying it out.
@@ -85,7 +85,7 @@ impl TrackedState {
 }
 
 /// What `request_status`, or a repeat under the same key, reports.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RequestStatus {
     pub request: RequestId,
     /// The wire name of the change (`cmd`), e.g. `refresh_item`.

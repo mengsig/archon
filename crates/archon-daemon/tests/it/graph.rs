@@ -1,0 +1,465 @@
+//! The task graph and run plans as archond serves them (CONTRACTS.md §1.3):
+//! a steered run's plan is the stages it runs, and the graph's waiting
+//! reasons are the ones the summaries give.
+
+use crate::common;
+
+use archon_core::autonomy::{AutonomyPatch, ProposalMode};
+use archon_core::error::ArchonError;
+use archon_core::id::{PipelineRunId, QueueItemId};
+use archon_core::model::Effort;
+use archon_core::protocol::{
+    EnqueueRequest, ItemQuery, ModelSource, Reply, RepoRef, Request, RunPlan, SettingSource,
+    TaskFilter, TaskGraph, WaitingReasonCode,
+};
+use archon_core::queue::{QueueItem, QueueState};
+use archon_core::steer::{InsertStage, Steer};
+use common::{Harness, PIPELINE, REPO_NAME, completed, plan, verdict};
+
+/// The pipeline the steer borrows stage `verify` from.
+const EXTRA: &str = r#"[pipeline]
+name = "graph-extra"
+description = "a stage to borrow"
+version = 1
+workspace = "worktree"
+requires_repo = true
+
+[[stage]]
+id = "verify"
+kind = "work"
+prompt = "verify.md"
+timeout_minutes = 30
+"#;
+
+async fn harness() -> Harness {
+    let h = Harness::new().await;
+    h.add_pipeline("graph-extra", EXTRA);
+    let prompt = h.repo.join(".archon/pipelines/graph-extra/verify.md");
+    std::fs::write(prompt, "Verify {{task.title}}.\n\n{{task.brief}}\n").expect("prompt");
+    h
+}
+
+async fn run_plan(h: &Harness, item: &QueueItemId) -> Result<RunPlan, ArchonError> {
+    let run = h.run(item).await.id;
+    match h.cli(Request::RunPlan { run: run.clone() }).await? {
+        Reply::RunPlan(plan) => {
+            assert_eq!(plan.run, run, "the plan of the run asked for");
+            Ok(*plan)
+        }
+        other => panic!("run_plan replied {other:?}"),
+    }
+}
+
+fn stage_ids(plan: &RunPlan) -> Vec<&str> {
+    plan.stages.iter().map(|s| s.id.as_str()).collect()
+}
+
+/// The stages the item's run started, each once, in the order they started.
+async fn executed(h: &Harness, item: &QueueItemId) -> Vec<String> {
+    let mut ids: Vec<String> = h
+        .stages(item)
+        .await
+        .into_iter()
+        .map(|s| s.stage_id)
+        .collect();
+    ids.dedup();
+    ids
+}
+
+async fn graph(h: &Harness) -> TaskGraph {
+    let request = Request::TaskGraph {
+        filter: TaskFilter::default(),
+        limit: None,
+    };
+    match h.cli(request).await.expect("task_graph") {
+        Reply::TaskGraph(graph) => *graph,
+        other => panic!("task_graph replied {other:?}"),
+    }
+}
+
+/// Each summary's waiting reason code, by item.
+async fn summary_codes(h: &Harness) -> Vec<(QueueItemId, Option<WaitingReasonCode>)> {
+    let query = ItemQuery {
+        limit: Some(usize::MAX),
+        ..ItemQuery::default()
+    };
+    let Ok(Reply::ItemSummaries(rows)) = h.cli(Request::ListItemSummaries(query)).await else {
+        panic!("list_item_summaries failed");
+    };
+    let mut codes: Vec<_> = rows
+        .into_iter()
+        .map(|row| (row.item.id, row.waiting_reason.map(|r| r.code)))
+        .collect();
+    codes.sort_by(|a, b| a.0.cmp(&b.0));
+    codes
+}
+
+#[tokio::test]
+async fn a_steered_runs_plan_is_the_stages_it_ran() {
+    let h = harness().await;
+    let item = h.enqueue("verify before shipping").await;
+    h.dispatch().await;
+    let frozen = run_plan(&h, &item.id).await.expect("a live run's plan");
+    assert_eq!(stage_ids(&frozen), ["implement", "review", "ship"]);
+    assert!(!frozen.edited, "nothing steered it yet");
+    assert_eq!(frozen.pipeline, PIPELINE);
+
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    let steer = Steer {
+        insert_stage: Some(InsertStage {
+            stage: "verify".into(),
+            from: Some("graph-extra".into()),
+            after: None,
+        }),
+        ..Steer::default()
+    };
+    let request = Request::SteerItem {
+        item: item.id.clone(),
+        steer,
+    };
+    h.cli(request).await.expect("verify is inserted");
+    let steered = run_plan(&h, &item.id).await.expect("the steered plan");
+    assert!(steered.edited);
+    assert_ne!(
+        steered.revision, frozen.revision,
+        "the edit changed the plan"
+    );
+    assert_eq!(
+        stage_ids(&steered),
+        ["implement", "review", "verify", "ship"]
+    );
+
+    h.settle_running(|_| verdict(true)).await;
+    h.dispatch().await;
+    h.settle_running(|_| completed("verified")).await;
+    h.dispatch().await;
+    let shipping: Vec<_> = h.running().await.into_iter().map(|s| s.stage_id).collect();
+    assert_eq!(shipping, ["ship"]);
+    let last = run_plan(&h, &item.id)
+        .await
+        .expect("the plan while it ships");
+    assert_eq!(last, steered, "the plan holds while the run goes on");
+    assert_eq!(executed(&h, &item.id).await, stage_ids(&last));
+}
+
+/// Settle every stage the item runs until it is done.
+async fn run_to_the_end(h: &Harness, item: &QueueItemId) {
+    for _ in 0..6 {
+        h.settle_running(|stage| match stage.stage_id.as_str() {
+            "review" => verdict(true),
+            _ => completed("done"),
+        })
+        .await;
+        h.dispatch().await;
+    }
+    assert!(matches!(h.state(item).await, QueueState::Succeeded { .. }));
+}
+
+#[tokio::test]
+async fn a_finished_runs_plan_is_kept_as_it_finished() {
+    let h = harness().await;
+    let item = h.enqueue("ship it").await;
+    h.dispatch().await;
+    let live = run_plan(&h, &item.id).await.expect("a live run's plan");
+    assert!(!live.finished);
+    let stale = RunPlan {
+        revision: "stale".into(),
+        finished: true,
+        ..live.clone()
+    };
+    let key = format!("run_plan:{}", live.run);
+    let raw = serde_json::to_string(&stale).unwrap();
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(&key, &raw)
+        .expect("a stale plan");
+    assert_eq!(
+        run_plan(&h, &item.id).await.unwrap(),
+        live,
+        "a live run serves its live plan"
+    );
+    run_to_the_end(&h, &item.id).await;
+    let kept = run_plan(&h, &item.id).await.expect("the kept plan");
+    assert!(kept.finished, "it says the run finished");
+    assert_eq!(
+        RunPlan {
+            finished: false,
+            ..kept.clone()
+        },
+        live,
+        "the plan it ran"
+    );
+    assert_eq!(
+        run_plan(&h, &item.id).await.unwrap(),
+        kept,
+        "read again, unchanged"
+    );
+
+    h.ctx.store.lock().await.kv_delete(&key).expect("forget it");
+    let gone = run_plan(&h, &item.id)
+        .await
+        .expect_err("an older run kept none");
+    assert!(
+        matches!(&gone, ArchonError::NotFound(m) if m.contains("no plan was kept")),
+        "{gone}"
+    );
+}
+
+/// A store read that fails as the run finishes fails the finish: the run
+/// stays live with its snapshot, and the finish that follows keeps the plan
+/// of the settings it then has.
+#[tokio::test]
+async fn a_finish_that_cannot_read_the_store_keeps_the_plan_of_its_retry() {
+    let h = harness().await;
+    let item = h.enqueue("finished twice").await;
+    h.dispatch().await;
+    let live = run_plan(&h, &item.id).await.expect("a live run's plan");
+    let db = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    let at = archon_core::now().to_rfc3339();
+    let unreadable = "INSERT INTO run_edits (run, seq, at, edit) VALUES (?1, 1, ?2, '[1]')";
+    db.execute(unreadable, [live.run.as_str(), at.as_str()])
+        .unwrap();
+    let cancel = || Request::CancelItem {
+        item: item.id.clone(),
+        reason: None,
+    };
+    let refused = h.cli(cancel()).await.expect_err("its edits do not read");
+    assert!(refused.to_string().contains("run edit"), "{refused}");
+    assert!(
+        !h.run(&item.id).await.state.is_terminal(),
+        "the run is live"
+    );
+    let snapshot = h.ctx.paths.data_dir.join("pipeline-runs");
+    assert!(
+        snapshot.join(live.run.as_str()).is_dir(),
+        "and keeps its snapshot"
+    );
+
+    db.execute("DELETE FROM run_edits WHERE run = ?1", [live.run.as_str()])
+        .unwrap();
+    drop(db);
+    let steer = Steer {
+        stage_timeouts: [("review".to_owned(), 9)].into(),
+        ..Steer::default()
+    };
+    let request = Request::SteerItem {
+        item: item.id.clone(),
+        steer,
+    };
+    h.cli(request).await.expect("the review gets nine minutes");
+    h.cli(cancel()).await.expect("the finish goes through");
+    let kept = plan_of_run(&h, &live.run).await;
+    assert!(kept.finished);
+    let review = kept.settings.iter().find(|s| s.key == "review").unwrap();
+    assert_eq!(
+        (review.timeout_minutes, review.timeout),
+        (Some(9), Some(SettingSource::Override)),
+        "the settings the run finished with"
+    );
+    assert!(!snapshot.join(live.run.as_str()).exists(), "now discarded");
+}
+
+async fn plan_of_run(h: &Harness, run: &PipelineRunId) -> RunPlan {
+    match h.cli(Request::RunPlan { run: run.clone() }).await {
+        Ok(Reply::RunPlan(plan)) => *plan,
+        other => panic!("run_plan replied {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_finished_runs_plan_outlives_its_snapshot_and_a_retry_with_other_models() {
+    let h = harness().await;
+    let item = h.enqueue("cancelled").await;
+    h.dispatch().await;
+    let live = run_plan(&h, &item.id).await.expect("a live run's plan");
+    let snapshot = h
+        .ctx
+        .paths
+        .data_dir
+        .join("pipeline-runs")
+        .join(live.run.as_str());
+    std::fs::remove_dir_all(&snapshot).expect("the run's snapshot");
+    let cancel = Request::CancelItem {
+        item: item.id.clone(),
+        reason: None,
+    };
+    h.cli(cancel).await.expect("cancel");
+    let kept = plan_of_run(&h, &live.run).await;
+    assert!(kept.finished, "kept from the run's driver as it finished");
+    assert_eq!(
+        RunPlan {
+            finished: false,
+            ..kept.clone()
+        },
+        live,
+        "the plan it ran"
+    );
+
+    let mut other = plan();
+    other.0.get_mut("implement").unwrap()[0] = common::choice(common::REVIEW_MODEL, Effort::Low);
+    let retry = Request::RetryItem {
+        item: item.id.clone(),
+        model_plan: Some(other.clone().into()),
+        model_reasons: None,
+        fresh: false,
+        brief_append: None,
+        stage_timeouts: [("implement".to_owned(), 7)].into(),
+    };
+    h.cli(retry).await.expect("retry");
+    h.dispatch().await;
+    let runs = h.ctx.store.lock().await.runs_for_item(&item.id).unwrap();
+    let new_run = runs.iter().find(|r| r.id != live.run).expect("a new run");
+    let retried = plan_of_run(&h, &new_run.id).await;
+    assert!(!retried.finished, "the retry runs");
+    assert_eq!(retried.settings[0].choices, other.0["implement"]);
+    assert_eq!(
+        plan_of_run(&h, &live.run).await,
+        kept,
+        "the finished run keeps the models and limits it ran with"
+    );
+}
+
+#[tokio::test]
+async fn a_runs_plan_carries_the_settings_its_stages_run_with() {
+    let h = harness().await;
+    let mut plan = plan();
+    plan.0.get_mut("implement").unwrap()[0].effort = Effort::Low;
+    let request = EnqueueRequest {
+        onto: None,
+        stage_timeouts: [("implement".to_owned(), 5)].into(),
+        repo: Some(RepoRef(REPO_NAME.into())),
+        pipeline: Some(PIPELINE.into()),
+        title: "five minutes".into(),
+        brief: "brief".into(),
+        priority: Default::default(),
+        depends_on: Vec::new(),
+        tags: Vec::new(),
+        model_plan: plan.clone().into(),
+        model_reasons: None,
+        budget_usd: None,
+        idempotency_key: None,
+        autonomy: Default::default(),
+        origin: None,
+    };
+    let Ok(Reply::Item(item)) = h.cli(Request::Enqueue(request)).await else {
+        panic!("enqueued");
+    };
+    h.dispatch().await;
+    let shown = run_plan(&h, &item.id).await.expect("a live run's plan");
+    let keys: Vec<&str> = shown.settings.iter().map(|s| s.key.as_str()).collect();
+    assert_eq!(keys, ["implement", "review", "ship"]);
+    let implement = &shown.settings[0];
+    assert_eq!(
+        implement.choices, plan.0["implement"],
+        "the models that run"
+    );
+    assert_eq!(implement.model, ModelSource::Exact);
+    assert_eq!(
+        implement.effort,
+        SettingSource::Override,
+        "low, not the default"
+    );
+    assert_eq!(
+        (implement.timeout_minutes, implement.timeout),
+        (Some(5), Some(SettingSource::Override))
+    );
+    let pipeline_default = shown.stages[0].timeout_minutes;
+    assert_ne!(
+        pipeline_default, 5,
+        "the summary keeps the pipeline's default"
+    );
+    let ship = &shown.settings[2];
+    assert_eq!(
+        (ship.timeout_minutes, ship.timeout),
+        (
+            Some(shown.stages[2].timeout_minutes),
+            Some(SettingSource::Default)
+        )
+    );
+    let running = h.stages(&item.id).await;
+    assert_eq!(
+        running[0].choice, implement.choices[0],
+        "the plan shows what runs"
+    );
+}
+
+/// Enqueue with a proposal stage and leave its run at the proposal gate.
+async fn at_proposal_gate(h: &Harness, title: &str) -> QueueItem {
+    let request = EnqueueRequest {
+        onto: None,
+        stage_timeouts: Default::default(),
+        repo: Some(RepoRef(REPO_NAME.into())),
+        pipeline: Some(PIPELINE.into()),
+        title: title.into(),
+        brief: format!("brief for {title}"),
+        priority: Default::default(),
+        depends_on: Vec::new(),
+        tags: Vec::new(),
+        model_plan: plan().into(),
+        model_reasons: None,
+        budget_usd: None,
+        idempotency_key: None,
+        autonomy: AutonomyPatch {
+            proposal: Some(ProposalMode::Lavish),
+            ..AutonomyPatch::default()
+        },
+        origin: None,
+    };
+    let Reply::Item(item) = h.cli(Request::Enqueue(request)).await.expect("enqueued") else {
+        panic!("enqueue replies with the item");
+    };
+    h.dispatch().await;
+    let page = h.run(&item.id).await.workspace;
+    let page = page.join(".archon/reports/proposal/index.html");
+    std::fs::create_dir_all(page.parent().expect("a directory")).expect("page directory");
+    std::fs::write(&page, "<html><body>page</body></html>").expect("page");
+    h.settle_running(|_| completed("Approach: add a flag."))
+        .await;
+    h.dispatch().await;
+    item
+}
+
+#[tokio::test]
+async fn the_graph_gives_the_waiting_reasons_the_summaries_give() {
+    let h = harness().await;
+    let gated = at_proposal_gate(&h, "gated").await;
+    let queued = h.enqueue("waiting its turn").await;
+    let graph = graph(&h).await;
+    let reason = |id: &QueueItemId| {
+        let node = graph.nodes.iter().find(|n| &n.id == id).expect("a node");
+        node.waiting_reason
+    };
+    assert_eq!(reason(&gated.id), Some(WaitingReasonCode::OperatorGate));
+    assert!(
+        reason(&queued.id).is_some(),
+        "a queued item says why it waits"
+    );
+    let mut from_graph: Vec<_> = graph
+        .nodes
+        .iter()
+        .map(|n| (n.id.clone(), n.waiting_reason))
+        .collect();
+    from_graph.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(from_graph, summary_codes(&h).await);
+    let as_of = h.ctx.store.lock().await.last_change_seq().expect("seq");
+    assert_eq!(graph.as_of, as_of, "nothing was written since");
+}
+
+#[tokio::test]
+async fn list_items_serves_the_text_filter() {
+    let h = harness().await;
+    let wanted = h.enqueue("Fix the parser").await;
+    h.enqueue("unrelated").await;
+    let query = ItemQuery {
+        text: Some("PARSER".into()),
+        ..ItemQuery::default()
+    };
+    let Ok(Reply::Items(items)) = h.cli(Request::ListItems(query)).await else {
+        panic!("list_items with text failed");
+    };
+    let ids: Vec<_> = items.into_iter().map(|i| i.id).collect();
+    assert_eq!(ids, [wanted.id]);
+}

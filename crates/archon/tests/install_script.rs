@@ -570,7 +570,7 @@ fn the_mobile_web_app_is_set_up_only_when_asked_for() {
     let text = stdout(&out);
     assert!(out.status.success(), "{out:?}");
     assert!(
-        text.contains("Setting up the mobile web app (ARCHON_REMOTE=1)."),
+        text.contains("Setting up remote access (ARCHON_REMOTE=1)."),
         "{text}"
     );
     assert!(
@@ -591,10 +591,7 @@ fn the_mobile_web_app_is_set_up_only_when_asked_for() {
         out.status.success(),
         "a failed remote step keeps the install: {out:?}"
     );
-    assert!(
-        errors.contains("the mobile web app is not set up"),
-        "{errors}"
-    );
+    assert!(errors.contains("remote access is not set up"), "{errors}");
     assert!(errors.contains("  archon remote setup"), "{errors}");
 }
 

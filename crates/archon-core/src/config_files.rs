@@ -27,11 +27,12 @@ pub const STARTER_CONFIG: &str = r#"# Archon's configuration. Every key is optio
 # be used. Tiers (fast, balanced, strong, frontier) come from Aether's catalog.
 # [models]
 # allow = ["claude-code/claude-opus-5-5", "codex/gpt-6.1-terra"]
-# max_effort = "high"
+# max_effort = "x_high"    # default cap; set "max" explicitly to allow it
 # max_default_tier = "strong"   # the most a default picks; a plan may ask higher
 # provider_weights = { "claude-code" = 7, codex = 3 }   # share of tier-only items
 # reserve_percent = { orchestrator = 15, interactive = 10 }   # quota stages never spend
 # interactive_providers = ["claude-code"]   # providers also used by hand
+# effort_sizing = false   # true: size every agent's effort by the effort rubric
 
 # Reviewers without an explicit <stage>.review model plan. The tier is a
 # preference: with no permitted model at it, the best permitted one is used.

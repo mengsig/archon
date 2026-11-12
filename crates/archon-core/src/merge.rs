@@ -9,7 +9,7 @@ use crate::Timestamp;
 use crate::id::{MergeRequestId, PipelineRunId, QuestionId, QueueItemId, RepoId};
 
 /// Who authorised a merge, as archond verified it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "via", rename_all = "snake_case")]
 pub enum MergeAuthority {
     /// `archon merge` on the operator's socket.
@@ -66,7 +66,7 @@ impl MergeAuthority {
 }
 
 /// Where a merge request stands.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum MergeState {
     /// The operator has not answered the confirmation question yet.
@@ -151,7 +151,7 @@ impl MergeState {
 
 /// One request to merge an item's pull request, and how it ended: the audit
 /// record and the one source of truth for a waiting confirmation.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MergeRequest {
     pub id: MergeRequestId,
     pub item: QueueItemId,
@@ -193,7 +193,7 @@ pub struct MergeRequest {
 
 /// A review that covers a later head than the commit it passed: every commit
 /// since merges in only what the pull request's base holds.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CarriedReview {
     /// The commit the review passed.
     pub reviewed: String,
@@ -304,7 +304,7 @@ impl MergeRequest {
 
 /// What a `ship = local` item left on its branch, for review before
 /// `archon merge` lands it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LocalReview {
     pub item: QueueItemId,
     pub repo_path: std::path::PathBuf,

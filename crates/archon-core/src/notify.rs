@@ -8,7 +8,7 @@ use crate::aether_ids::{AetherAgentId, AetherQuestionRef};
 use crate::id::{FeedItemId, NotificationId, PipelineRunId, QuestionId, QueueItemId, ReportId};
 
 /// The orchestrator's `notify(kind=...)` vocabulary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NotificationKind {
     /// Needs an operator answer; pairs with a `Question`.
@@ -31,7 +31,7 @@ impl NotificationKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Notification {
     pub id: NotificationId,
     pub kind: NotificationKind,
@@ -44,7 +44,7 @@ pub struct Notification {
 /// A question the orchestrator asked without blocking (Archon MCP
 /// `ask_operator`). Aether's own `ask_user` questions are mirrored here too
 /// so one place holds everything awaiting an answer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Question {
     pub id: QuestionId,
     /// The operator's `Q<n>`, the same in every listing and chat. The store
@@ -118,7 +118,9 @@ impl Question {
 }
 
 /// The surface an answer came in through; the audit mark of a feed answer.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum AnswerVia {
     /// archond's own socket (`archon answer`, the line chat), Lavish, or a
@@ -154,7 +156,7 @@ impl AnswerVia {
 
 /// One line of the operator chat. Persisted so `archon chat` can replay.
 /// Tagged `entry` because the wrapped `Notification` already has a `kind`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "entry", rename_all = "snake_case")]
 pub enum FeedEntry {
     /// The daemon observed an authenticated operator command.
@@ -196,7 +198,7 @@ pub enum FeedEntry {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FeedItem {
     pub id: FeedItemId,
     /// Gapless per-store sequence for `SubscribeFeed { after }`.

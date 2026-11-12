@@ -135,10 +135,12 @@ fn builtins_load_without_problems() {
             "code-audit",
             "design-doc",
             "direct",
+            "e2e-strict",
             "e2e-testing",
             "errand",
             "performance",
             "refactor",
+            "release-journey",
             "review",
             "swarm",
         ]
@@ -705,4 +707,57 @@ fn design_doc_researches_and_critiques_before_reporting_without_shipping() {
     assert_eq!(critique.loops_to.as_deref(), Some("research"));
     assert_eq!(critique.max_loops, 2);
     assert_eq!(summary.stage("report").expect("report").gate, Gate::None);
+}
+
+/// `e2e-strict` is `e2e-testing` with the strict gate, and `release-journey`
+/// has the stage names other items rely on; `e2e-testing` stays lenient.
+#[test]
+fn the_strict_e2e_pipelines_keep_their_shared_shape() {
+    use archon_pipeline::spec::Scenarios;
+    let catalog = Catalog::builtin();
+    let shape = |name: &str| {
+        let spec = catalog.get(name).expect("a built-in loads");
+        let stages = &spec.file.stages;
+        let ids: Vec<&str> = stages.iter().map(|s| s.id.as_str()).collect();
+        let test = stages.iter().find(|s| s.kind == StageKind::Test);
+        let test = test.unwrap_or_else(|| panic!("{name} has a test stage"));
+        let on_fail = test.on_fail.as_ref().expect("a test stage loops back");
+        assert_eq!(test.gate, Gate::AllPass, "{name}");
+        assert_eq!(
+            (on_fail.goto.as_str(), on_fail.max_loops),
+            ("setup", 1),
+            "{name}"
+        );
+        (ids, test.scenarios)
+    };
+    let lenient = shape("e2e-testing");
+    assert_eq!(
+        lenient,
+        (vec!["setup", "e2e", "report"], Scenarios::Lenient)
+    );
+    let strict = shape("e2e-strict");
+    assert_eq!(strict, (vec!["setup", "e2e", "report"], Scenarios::Strict));
+    let journey = shape("release-journey");
+    assert_eq!(
+        journey,
+        (vec!["setup", "journeys", "report"], Scenarios::Strict)
+    );
+    let setup = &catalog.get("release-journey").unwrap().prompts["setup.md"];
+    let setup = setup.split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        ".archon/journeys.toml",
+        "never as copied credential files",
+        "Nothing you start may read or write the state of the daemons installed",
+        "prints `ENV-FAULT: <why>` to stderr, exits 3 and launches nothing",
+        "Confirm that it exits 3 and the file does not exist",
+    ] {
+        assert!(setup.contains(said), "missing {said:?} in {setup}");
+    }
+    // `eval "$(env.sh …)"` ran the journey even when env.sh failed.
+    for (file, prompt) in &catalog.get("release-journey").unwrap().prompts {
+        assert!(
+            !prompt.contains("eval "),
+            "release-journey/{file} evals a run's environment"
+        );
+    }
 }

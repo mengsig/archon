@@ -10,7 +10,17 @@ use crate::error::ArchonError;
 
 macro_rules! aether_id {
     ($name:ident, $prefix:literal) => {
-        #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+        #[derive(
+            Clone,
+            PartialEq,
+            Eq,
+            Hash,
+            PartialOrd,
+            Ord,
+            Serialize,
+            Deserialize,
+            schemars::JsonSchema,
+        )]
         #[serde(try_from = "String", into = "String")]
         pub struct $name(String);
 
@@ -72,7 +82,9 @@ aether_id!(AetherMemoryFeedbackId, "mfb");
 
 /// An Aether memory id, checked exactly as Aether's schema states it
 /// (`mem_` and an upper-case ULID): the operator types it for a forget.
-#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(try_from = "String", into = "String")]
 pub struct AetherMemoryId(String);
 
@@ -126,7 +138,7 @@ impl From<AetherMemoryId> for String {
 }
 
 /// A pending Aether `ask_user` question: answered with `reply_to_question`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AetherQuestionRef {
     pub agent: AetherAgentId,
     /// Event sequence of the `question.asked` event.

@@ -2047,13 +2047,13 @@ async fn a_compacted_orchestrator_is_told_its_directives_again() {
     assert_eq!(harness.drain_triggers().await, vec![restated]);
 }
 
-/// The plan's reviewer effort is a floor: a reviewer above it runs up to the
-/// policy's `max_effort`, and one below it is cancelled as it spawns.
-#[tokio::test]
-async fn reviewer_spawn_is_checked_against_the_items_named_model_and_effort() {
+/// The plan's named reviewers, as `effort_sizing` sets the watchdog: the
+/// reasons it gave for each reviewer it cancelled, in spawn order.
+async fn reviewer_cancels(effort_sizing: bool) -> Vec<(String, String)> {
     use archon_core::model::ModelChoice;
     let mut config = Config::default();
     config.models.max_effort = Some(Effort::High);
+    config.models.effort_sizing = effort_sizing;
     let harness = Harness::with(config, None).await;
     let repo = tempfile::tempdir().unwrap();
     let stage = running_stage(&harness.ctx, repo.path(), STAGE, STAGE_TASK).await;
@@ -2088,12 +2088,25 @@ async fn reviewer_spawn_is_checked_against_the_items_named_model_and_effort() {
     }
     pump.abort();
     let cancels = harness.fake.received_named("cancel");
-    let cancelled: Vec<_> = cancels
+    assert!(cancels.len() <= 5, "at most every reviewer is cancelled");
+    cancels
         .iter()
-        .map(|c| c["agent"].as_str().unwrap())
-        .collect();
+        .map(|c| {
+            let agent = c["agent"].as_str().unwrap().to_owned();
+            (agent, c["reason"].as_str().unwrap().to_owned())
+        })
+        .collect()
+}
+
+/// By default, as in 1.4.12, the plan's reviewer effort is a floor: a reviewer
+/// above it runs up to the policy's `max_effort`, and one below it is cancelled
+/// as it spawns.
+#[tokio::test]
+async fn reviewer_spawn_is_checked_against_the_items_named_model_and_effort() {
+    let cancels = reviewer_cancels(false).await;
+    let cancelled: Vec<&str> = cancels.iter().map(|(agent, _)| agent.as_str()).collect();
     assert_eq!(cancelled, ["agt_0103", "agt_0104", "agt_0105"]);
-    let reason = |n: usize| cancels[n]["reason"].as_str().unwrap();
+    let reason = |n: usize| cancels[n].1.as_str();
     assert!(
         reason(0).contains("breaks the item's reviewer plan"),
         "{}",
@@ -2105,6 +2118,30 @@ async fn reviewer_spawn_is_checked_against_the_items_named_model_and_effort() {
         reason(1)
     );
     assert!(reason(2).contains("high"), "the policy cap: {}", reason(2));
+}
+
+/// With `[models] effort_sizing` the plan's reviewer effort is a default the
+/// lead sizes to the diff: a reviewer below or above it runs up to the policy's
+/// `max_effort`; one on another model, or above the cap, is cancelled.
+#[tokio::test]
+async fn a_sized_reviewer_spawn_is_checked_against_the_named_model_and_the_cap() {
+    let cancels = reviewer_cancels(true).await;
+    let cancelled: Vec<&str> = cancels.iter().map(|(agent, _)| agent.as_str()).collect();
+    assert_eq!(
+        cancelled,
+        ["agt_0103", "agt_0105"],
+        "a low reviewer of a trivial diff runs"
+    );
+    assert!(
+        cancels[0].1.contains("breaks the item's reviewer plan"),
+        "{}",
+        cancels[0].1
+    );
+    assert!(
+        cancels[1].1.contains("high"),
+        "the policy cap: {}",
+        cancels[1].1
+    );
 }
 
 /// With one model allowed and no reviewer plan, a reviewer on the lead's own

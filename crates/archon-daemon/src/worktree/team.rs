@@ -187,6 +187,10 @@ fn prefixed(error: ArchonError, prefix: &str) -> ArchonError {
         ArchonError::Forbidden(why) => ArchonError::Forbidden(with(why)),
         ArchonError::Recovering(why) => ArchonError::Recovering(with(why)),
         ArchonError::Protocol(why) => ArchonError::Protocol(with(why)),
+        ArchonError::HistoryExpired { message, kept } => ArchonError::HistoryExpired {
+            message: with(message),
+            kept,
+        },
     }
 }
 

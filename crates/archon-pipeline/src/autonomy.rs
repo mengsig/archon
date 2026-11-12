@@ -145,6 +145,7 @@ fn inserted(id: &str, kind: StageKind, prompt: &str) -> StageSpec {
         roles: Vec::new(),
         role_prompts: Default::default(),
         roles_from: None,
+        scenarios: Default::default(),
     }
 }
 

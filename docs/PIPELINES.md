@@ -113,6 +113,7 @@ tier = "strong"              # default: the pipeline's default choice; this stag
 allow_delegation = false     # true lets the stage agent delegate, whatever the item's tools
 nudge = "Advice for this stage's model choice."
 on_fail = { goto = "fix", max_loops = 2 }   # optional fix loop
+scenarios = "lenient"        # default lenient; strict lets archond fail a test stage on its scenario list (see "Strict scenarios")
 
 [[stage]]                    # a team stage (see "Team stages")
 id = "build"
@@ -166,6 +167,7 @@ the field:
   or `any`): their agents return a verdict, and `gate = "none"` would ignore
   it.
 - `on_fail.goto` names an **earlier** stage, and `max_loops` is at most 10.
+- `scenarios = "strict"` is only allowed on a `test` stage with one agent.
 
 These bounds (32 stages, `fan_out` 16, `max_loops` 10) belong to the file
 format and are the same on every installation, unlike `[limits]`: a
@@ -227,6 +229,9 @@ by either route. It says to:
 - choose each child's model and effort within the model policy that
   applies to the item, which the section states in words. The watchdog
   cancels a child outside it;
+- with `[models] effort_sizing = true` only, size each child's effort to its
+  own task by the effort rubric, from `low` for lookups and mechanical edits
+  up to `x_high` for hard reasoning, the cheapest that fits;
 - wait for every child or cancel it before finishing;
 - delegate a new child for a second look, because a finished one cannot
   be asked again;
@@ -338,10 +343,10 @@ Each finding is marked `"blocking": true` or `false`. Blocking findings are
 correctness bugs, security or safety issues, failing or missing tests for
 changed behaviour, and broken documented behaviour; a brief may narrow or
 extend the class. The rest are follow-ups the lead lists in its summary and
-`pr.body`: a `fail` whose every finding is marked `"blocking": false`,
-whatever its `severity`, counts as a pass unless its `structured` or summary
-JSON lists a blocking finding too, and a `pass` with a finding
-marked `"blocking": true` is refused. A finding with no mark blocks a `fail`.
+`pr.body`: a `pass` beside follow-ups passes, and a `pass` with a finding
+marked `"blocking": true` is refused. A `fail` always fails, whatever its
+findings, but only its blocking ones (a finding with no mark among them)
+count as a review round.
 A `verdict` (or `result`, `status`) that is exactly
 `approve_with_nonblocking_finding(s)` or `pass_with_nonblocking_finding(s)`
 reads as `pass`, with every rule of a pass: it needs its `head`, and a
@@ -906,8 +911,12 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   paragraph as in CommonMark until a blank line or a block that interrupts
   a paragraph: a heading, a thematic break, a bullet or `1.` item, a fence).
   Letter case and markdown emphasis
-  (`**Verdict:** PASS`) do not matter, and `passed`, `approved`, `failed` and
-  `rejected` read as pass and fail. Anything else counts as fail, and so
+  (`**Verdict:** PASS`) do not matter, and `_`, `-` and spaces between words
+  are alike. Contracts ask for `pass` or `fail`; `pass`, `passed`,
+  `approve`, `approved`, `lgtm`, `accept`, `accepted` and `ok` read as pass,
+  and `fail`, `failed`, `fails`, `reject`, `rejected`, `changes requested`,
+  `request changes`, `needs changes`, `needs work`, `blocking` and `block`
+  read as fail. Anything else counts as fail, and so
   does a choice or a hedge: any word after the verdict word, in
   parentheses too, before the first `—`, `:`, `;`, `.`, `!`, ` - ` or line
   break (`PASS or FAIL`, `PASS, but two failed`, `PASS (pending fixes)`). A
@@ -1184,7 +1193,9 @@ back to the built-in.
 | `performance` | measure → optimize → verify (`all_pass`, back to optimize ×3) → review (1, `all_pass`, back to optimize ×2) | strong tier, independent reviewer. For a specific slow path with a measurable goal, not speculative micro-optimization; use `direct` for ordinary changes. |
 | `agent-testing` | plan → exercise (2 exploratory testers) → report (HTML) | balanced tier, independent testers |
 | `code-audit` | scope → audit (3 lenses, report) → report (HTML with issue drafts) | strong tier, independent auditors. Read-and-report only; findings become follow-up items. Use `ask` for a single question or `agent-testing` to exercise the product. |
-| `e2e-testing` | setup → e2e (`all_pass`, back to setup ×1) → report (HTML with screenshots) | balanced tier |
+| `e2e-testing` | setup → e2e (`all_pass`, back to setup ×1) → report (HTML with screenshots) | balanced tier. Lenient: product defects land in the report, not the gate. |
+| `e2e-strict` | setup → e2e (`all_pass`, strict scenarios, back to setup ×1) → report (HTML with screenshots) | balanced tier. Any failed, skipped or missing scenario fails the run. For release validation. |
+| `release-journey` | setup → journeys (`all_pass`, strict scenarios, back to setup ×1) → report (HTML with screenshots) | balanced tier. Runs the repository's [product journeys](journeys.md) in the shipped artifact with real engines; any journey that does not pass fails the run. |
 | `review` | review (work, delegation enabled, holds the review) | balanced tier; review level `standard` unless the item asks. Queued `onto` someone else's pull request, a fork's included; changes and pushes nothing. A pass of the frozen head is what lets `archon merge` merge that pull request (see the [guide](guide.md#reviewing-a-contributors-pull-request)). |
 | `ask` | answer | balanced tier. Read-only, and no repository required. With one, it works in a disposable snapshot of the repository's `HEAD` commit, so it sees committed work only. |
 | `errand` | errand (report) | balanced tier. A small job answered in text or as a Lavish page, with no repository changes or outward side effects. Scratch workspace, repository optional. Use `ask` for repository questions in text, and a shipping pipeline for changes. |
@@ -1245,7 +1256,9 @@ verifies and fixes the change. Its prompt has it spend where spending pays:
   the known risks, not the conversation. Its effort is the lead's choice,
   never below the effort its contract names: medium for ordinary risk,
   high where the risk is medium or more, or security or an invariant is at
-  stake.
+  stake. With `[models] effort_sizing = true` the contract's effort is a
+  default instead and its effort rubric decides, the lead stating the reason
+  for a move in one line in its result.
 - **Fixes.** Blocking findings are fixed in new commits and the affected
   checks rerun; the full suite runs again only for a fix with broad impact
   or where the project's policy demands it. A second look, by new children
@@ -1411,6 +1424,51 @@ after `worktrees.gc_after` (default seven days) following the last finished
 run, once the item also passes gc's age checks. `--older-than` overrides
 the age cutoff. With `worktrees.auto_gc` on, passes run at startup and
 every 30 minutes. See [workspace retention](ARCHITECTURE.md#132-worktree-gc).
+
+### End-to-end modes: `e2e-testing`, `e2e-strict` and `release-journey`
+
+All three set up the product, run user scenarios against it and report with
+screenshots. They differ in what fails the run.
+
+| Pipeline | Scenarios come from | A product defect | An environment fault |
+| --- | --- | --- | --- |
+| `e2e-testing` | the brief, derived by the tester | passes the gate and lands in the report | loops back to setup once, then fails |
+| `e2e-strict` | `.archon/e2e/scenarios.json`, which setup writes from the brief | fails the run at once | loops back to setup once, then fails |
+| `release-journey` | the repository's `.archon/journeys.toml` ([format](journeys.md#archonjourneystoml)) | fails the run at once | loops back to setup once, then fails |
+
+Use `e2e-testing` to explore and report: a run can succeed while its
+scenarios fail, so read the report, not the run state. Use `e2e-strict` when
+the run decides whether a change is fit to ship, and `release-journey` for
+release preparation and changes to user-facing behaviour in a repository
+that keeps a journey manifest. In every mode, the test stage's structured
+result lists each scenario and its status as `scenarios`, so `get_item` and
+`get_stage` show them without the report.
+
+#### Strict scenarios
+
+A `test` stage with `scenarios = "strict"` lists, in its structured result,
+the manifest's scenario ids as `expected` and every scenario it ran as
+`scenarios`:
+
+```json
+{"verdict": "pass",
+ "expected": ["login", "checkout"],
+ "scenarios": [{"id": "login", "title": "…", "status": "pass", "evidence": "…"},
+               {"id": "checkout", "title": "…", "status": "fail", "evidence": "…"}],
+ "findings": [{"severity": "high", "blocking": false, "title": "checkout: pay does nothing"}]}
+```
+
+The verdict judges only the environment: `fail` means the results cannot be
+trusted, and the run loops back as `on_fail` says. Given a `pass`, archond
+judges the list itself. The gate fails when any scenario's status is not
+`pass` (a `fail`, `skipped` or `blocked` one), when an `expected` id is
+missing from `scenarios`, and when either list is empty or unreadable: a run
+cannot pass by running nothing. That failure is a product defect, which no
+loop back can fix, so the run fails at once, whatever `on_fail` says. Its
+error names each failed or missing scenario, at most 20 of them. The stage
+contract tells the agent the format, and that the stack it tests is private:
+temporary homes, private sockets and ports, and config copied without
+secrets, never the installed daemons' state or the user's homes.
 
 ### The `team-pr` example
 

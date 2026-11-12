@@ -15,18 +15,39 @@ use crate::Shared;
 pub const MAX_BODY: usize = 16 * 1024;
 const BODY_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// The origins this listener answers now: the public allowlist, and
-/// loopback on the bound port, and the bound address itself.
+/// The hosts and origins this listener answers now. Unmounted, both are
+/// the public allowlist, loopback on the bound port and the bound address.
+/// Mounted, the mount names this listener as `Host` and passes the
+/// browser's `Origin` on, so hosts are local and origins only the trusted.
 #[derive(Debug)]
 pub struct Allowed {
+    /// `Host` values served, as authorities.
+    hosts: Vec<String>,
+    /// `Origin` values accepted.
     origins: Vec<String>,
 }
 
 impl Allowed {
     pub fn now(shared: &Shared, bound: SocketAddr) -> Self {
+        if shared.config.mounted_at.is_some() {
+            // Aether mounts only loopback targets, whatever address is bound.
+            let loopback = loopback_origins(bound);
+            return Self::serving(&loopback, shared.config.trusted_origins.clone());
+        }
         let mut origins = shared.lock().stored.public_origins.clone();
         origins.extend(local_origins(bound));
-        Self { origins }
+        Self::serving(&origins, origins.clone())
+    }
+
+    /// Serve the authorities of `host_origins` and accept `origins`.
+    fn serving(host_origins: &[String], origins: Vec<String>) -> Self {
+        assert!(!host_origins.is_empty(), "loopback is always a host");
+        assert!(!origins.is_empty(), "a mount trusts at least one origin");
+        let hosts = host_origins
+            .iter()
+            .map(|o| authority(o).to_owned())
+            .collect();
+        Self { hosts, origins }
     }
 
     /// Exactly one `Host`, naming an allowed origin's authority.
@@ -39,7 +60,7 @@ impl Allowed {
             )
         };
         let host = single(headers, &header::HOST).ok_or_else(forbidden)?;
-        let known = self.origins.iter().any(|o| authority(o) == host);
+        let known = self.hosts.iter().any(|known| known == host);
         if !known {
             return Err(forbidden());
         }
@@ -69,16 +90,19 @@ impl Allowed {
     }
 }
 
-/// Loopback by number and by name on the bound port, and the bound address,
-/// each as browsers write it.
-fn local_origins(bound: SocketAddr) -> Vec<String> {
-    use archon_core::remote::{http_origin, local_origin};
+/// Loopback by number and by name on the bound port, as browsers write it.
+fn loopback_origins(bound: SocketAddr) -> Vec<String> {
     assert!(bound.port() > 0, "the listener is bound");
-    let mut origins: Vec<String> = ["127.0.0.1", "localhost", "[::1]"]
+    ["127.0.0.1", "localhost", "[::1]"]
         .into_iter()
-        .map(|host| http_origin(host, bound.port()))
-        .collect();
-    let local = local_origin(bound);
+        .map(|host| archon_core::remote::http_origin(host, bound.port()))
+        .collect()
+}
+
+/// [`loopback_origins`], and the bound address as browsers write it.
+fn local_origins(bound: SocketAddr) -> Vec<String> {
+    let mut origins = loopback_origins(bound);
+    let local = archon_core::remote::local_origin(bound);
     if !origins.contains(&local) {
         origins.push(local);
     }
@@ -192,9 +216,8 @@ mod tests {
     use super::*;
 
     fn allowed() -> Allowed {
-        Allowed {
-            origins: vec!["https://box.ts.net".into(), "http://127.0.0.1:8378".into()],
-        }
+        let origins = vec!["https://box.ts.net".into(), "http://127.0.0.1:8378".into()];
+        Allowed::serving(&origins, origins.clone())
     }
 
     fn headers(pairs: &[(&'static str, &str)]) -> HeaderMap {
@@ -209,9 +232,8 @@ mod tests {
     fn a_listener_on_port_80_answers_the_host_and_origin_browsers_send() {
         let uri: Uri = "/".parse().unwrap();
         for bound in ["127.0.0.1:80", "[::1]:80"] {
-            let ok = Allowed {
-                origins: local_origins(bound.parse().unwrap()),
-            };
+            let local = local_origins(bound.parse().unwrap());
+            let ok = Allowed::serving(&local, local.clone());
             for (host, origin) in [
                 ("127.0.0.1", "http://127.0.0.1"),
                 ("localhost", "http://localhost"),
@@ -279,6 +301,61 @@ mod tests {
             assert!(ok.check_origin(&bad).is_err(), "{bad:?}");
         }
         assert!(check_fetch_site(&headers(&[("sec-fetch-site", "cross-site")])).is_err());
+    }
+
+    #[test]
+    fn mounted_the_host_is_only_loopback_even_on_a_non_loopback_bind() {
+        let uri: Uri = "/".parse().unwrap();
+        let bound: SocketAddr = "192.0.2.1:8378".parse().unwrap();
+        assert!(local_origins(bound).contains(&"http://192.0.2.1:8378".to_owned()));
+        let mounted = Allowed::serving(&loopback_origins(bound), vec!["https://box.ts.net".into()]);
+        assert!(
+            mounted
+                .check_host(&headers(&[("host", "192.0.2.1:8378")]), &uri)
+                .is_err()
+        );
+        for host in ["127.0.0.1:8378", "localhost:8378", "[::1]:8378"] {
+            assert!(
+                mounted
+                    .check_host(&headers(&[("host", host)]), &uri)
+                    .is_ok(),
+                "{host}"
+            );
+        }
+    }
+
+    #[test]
+    fn mounted_the_host_is_local_and_only_trusted_origins_are_accepted() {
+        let uri: Uri = "/".parse().unwrap();
+        let local = loopback_origins("127.0.0.1:8378".parse().unwrap());
+        let mounted = Allowed::serving(&local, vec!["https://box.ts.net".into()]);
+        assert!(
+            mounted
+                .check_host(&headers(&[("host", "127.0.0.1:8378")]), &uri)
+                .is_ok()
+        );
+        assert!(
+            mounted
+                .check_host(&headers(&[("host", "box.ts.net")]), &uri)
+                .is_err()
+        );
+        let trusted = headers(&[("origin", "https://box.ts.net")]);
+        assert_eq!(
+            mounted.check_origin(&trusted).unwrap(),
+            "https://box.ts.net"
+        );
+        for origin in [
+            "http://127.0.0.1:8378",
+            "http://localhost:8378",
+            "https://evil.example",
+        ] {
+            assert!(
+                mounted
+                    .check_origin(&headers(&[("origin", origin)]))
+                    .is_err(),
+                "{origin}"
+            );
+        }
     }
 
     #[test]

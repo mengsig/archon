@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use archon_core::Timestamp;
 use archon_core::error::ArchonError;
+use archon_core::protocol::DeviceRole;
 
 pub const PAIRING_TTL: Duration = Duration::from_secs(5 * 60);
 pub const MAX_FAILURES: u32 = 5;
@@ -19,6 +20,8 @@ const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 #[derive(Debug)]
 pub struct Pairing {
     code: String,
+    /// The role the host chose for the device that claims it.
+    role: DeviceRole,
     opened: Instant,
     expires_at: Timestamp,
     failures: u32,
@@ -63,8 +66,8 @@ impl GuessLimit {
 }
 
 impl Pairing {
-    /// A new pairing with a fresh random code.
-    pub fn open(now: Instant) -> Result<Self, ArchonError> {
+    /// A new pairing with a fresh random code, for a device in `role`.
+    pub fn open(now: Instant, role: DeviceRole) -> Result<Self, ArchonError> {
         let mut bytes = [0u8; 5];
         getrandom::fill(&mut bytes).map_err(|e| {
             ArchonError::Unavailable(format!("no randomness for a pairing code: {e}"))
@@ -78,6 +81,7 @@ impl Pairing {
         let ttl = chrono::Duration::from_std(PAIRING_TTL).expect("the TTL fits");
         Ok(Self {
             code,
+            role,
             opened: now,
             expires_at: archon_core::now() + ttl,
             failures: 0,
@@ -87,6 +91,10 @@ impl Pairing {
     /// The code as the operator reads it: `ABCD-EFGH`.
     pub fn display_code(&self) -> String {
         format!("{}-{}", &self.code[..4], &self.code[4..])
+    }
+
+    pub fn role(&self) -> DeviceRole {
+        self.role
     }
 
     pub fn expires_at(&self) -> Timestamp {
@@ -156,8 +164,12 @@ mod tests {
     #[test]
     fn codes_are_eight_crockford_symbols_and_differ() {
         let now = Instant::now();
-        let a = Pairing::open(now).unwrap();
-        let b = Pairing::open(now).unwrap();
+        let a = Pairing::open(now, DeviceRole::Operator).unwrap();
+        let b = Pairing::open(now, DeviceRole::Observer).unwrap();
+        assert_eq!(
+            (a.role(), b.role()),
+            (DeviceRole::Operator, DeviceRole::Observer)
+        );
         assert_eq!(a.code.len(), 8);
         assert!(a.code.bytes().all(|c| ALPHABET.contains(&c)));
         assert_ne!(a.code, b.code, "40 random bits do not repeat");
@@ -182,7 +194,7 @@ mod tests {
     #[test]
     fn the_right_code_is_accepted_and_wrong_ones_close_the_pairing() {
         let now = Instant::now();
-        let mut pairing = Pairing::open(now).unwrap();
+        let mut pairing = Pairing::open(now, DeviceRole::Operator).unwrap();
         let code = pairing.code.clone();
         let wrong = if code.starts_with('0') {
             "11111111"
@@ -200,7 +212,7 @@ mod tests {
         }
         let mut limit = GuessLimit::default();
         assert_eq!(pairing.claim(wrong, now, &mut limit), Err(Refusal::Closed));
-        let mut fresh = Pairing::open(now).unwrap();
+        let mut fresh = Pairing::open(now, DeviceRole::Operator).unwrap();
         let code = fresh.code.clone();
         assert_eq!(fresh.claim(&code.to_lowercase(), now, &mut limit), Ok(()));
         assert_ne!(code, "");
@@ -209,7 +221,7 @@ mod tests {
     #[test]
     fn guesses_are_rate_limited_and_expired_pairings_refused() {
         let now = Instant::now();
-        let mut pairing = Pairing::open(now).unwrap();
+        let mut pairing = Pairing::open(now, DeviceRole::Operator).unwrap();
         let mut limit = GuessLimit::default();
         for _ in 0..GUESSES_PER_WINDOW {
             limit.take(now).unwrap();

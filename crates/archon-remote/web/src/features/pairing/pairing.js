@@ -1,5 +1,6 @@
 // Pairing: the one-time code from the host and a name for this device.
 import * as api from '../../core/api.js';
+import { BASE } from '../../core/base.js';
 import { formatPairingCode, normalizePairingCode, pairingCodeProblem } from '../../core/pairing-code.js';
 import { suggestDeviceName, deviceNameProblem, MAX_DEVICE_NAME } from '../../core/device-name.js';
 import { h } from '../../ui/dom.js';
@@ -43,7 +44,7 @@ export function showPairing(root, { code = null, notice = null, onPaired }) {
   });
 
   root.replaceChildren(h('div', { class: 'pairing' },
-    h('div', { class: 'pair-mark', 'aria-hidden': 'true' }, h('img', { src: '/icons/icon.svg', alt: '', width: '72', height: '72' })),
+    h('div', { class: 'pair-mark', 'aria-hidden': 'true' }, h('img', { src: `${BASE}/icons/icon.svg`, alt: '', width: '72', height: '72' })),
     h('h1', { class: 'pair-title', text: 'Pair this device' }),
     h('p', { class: 'pair-lead', text: 'Pairing lets this device watch and steer Archon on your host. Enter the code shown in the host’s terminal, or scan its QR code.' }),
     notice ? h('p', { class: 'callout', role: 'status', text: notice }) : null,

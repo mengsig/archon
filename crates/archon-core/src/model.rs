@@ -72,9 +72,48 @@ impl<'de> Deserialize<'de> for ModelRef {
     }
 }
 
+/// Not derived: the schema names both shapes `Deserialize` accepts, the
+/// `provider/model` string and the `{provider, model}` object it writes.
+impl schemars::JsonSchema for ModelRef {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ModelRef".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "description": "`provider/model`, e.g. `claude-code/opus`. Written as Aether's \
+                `{provider, model}` object; read from that object or from the string.",
+            "anyOf": [
+                {"type": "string", "pattern": "^[^/]+/.+$"},
+                {
+                    "type": "object",
+                    "properties": {
+                        "provider": {"type": "string", "minLength": 1},
+                        "model": {"type": "string", "minLength": 1}
+                    },
+                    "required": ["provider", "model"]
+                }
+            ]
+        })
+    }
+}
+
 /// Aether's effort scale; the wire spelling is snake_case (`x_high`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
+#[schemars(transform = crate::protocol::schema::AlsoReads("xhigh"))]
 pub enum Effort {
     Low,
     Medium,
@@ -114,9 +153,17 @@ impl fmt::Display for Effort {
     }
 }
 
+/// How every agent Archon prompts sizes an effort, from the cheapest up. The
+/// orchestrator prompt and every stage contract carry it word for word.
+pub const EFFORT_RUBRIC: &str = "`low` for lookups, listing, formatting and mechanical \
+edits; `medium` for routine changes and reviews of small or low-risk diffs; `high` for \
+non-trivial design, risky diffs and reviews of shared code; `x_high` for hard reasoning, \
+such as root-causing a regression, concurrency or security analysis, or a fix that \
+failed twice. Take the cheapest that fits.";
+
 /// What the orchestrator chose for one agent: model and effort are
 /// mandatory, mirroring Aether's `delegate`, which inherits neither.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelChoice {
     pub model: ModelRef,
@@ -141,6 +188,21 @@ impl ModelChoice {
     pub fn without_tier(&self) -> Self {
         Self::pinned(self.model.clone(), self.effort)
     }
+
+    /// This choice with the `model` and `effort` a steer names. A named model
+    /// is an exact pin, which no tier resolves to another model later.
+    pub fn steered(&self, model: Option<&ModelRef>, effort: Option<Effort>) -> Self {
+        let steered = match model {
+            Some(model) => Self::pinned(model.clone(), effort.unwrap_or(self.effort)),
+            None => Self {
+                effort: effort.unwrap_or(self.effort),
+                ..self.clone()
+            },
+        };
+        debug_assert!(model.is_none_or(|m| *m == steered.model && steered.tier.is_none()));
+        debug_assert!(model.is_some() || steered.model == self.model);
+        steered
+    }
 }
 
 impl fmt::Display for ModelChoice {
@@ -157,7 +219,7 @@ impl fmt::Display for ModelChoice {
 /// A [`ModelChoice`] as a request gives it: an exact `model`, or a `tier`
 /// (optionally on `provider`) that Archon resolves from Aether's catalog.
 /// `effort` may be left out, and the stage's default effort stands in.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelChoiceDraft {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -222,7 +284,7 @@ impl ModelChoiceDraft {
 }
 
 /// A [`ModelPlan`] as a request gives it, keyed like it.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(transparent)]
 pub struct ModelPlanDraft(pub std::collections::BTreeMap<String, Vec<ModelChoiceDraft>>);
 
@@ -295,7 +357,7 @@ pub fn check_reason_lengths(reasons: &ModelReasons) -> Result<(), crate::ArchonE
 
 /// Per-stage choices for one pipeline run, keyed by stage id. A fan-out
 /// stage lists one choice per parallel agent; every other stage lists one.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(transparent)]
 pub struct ModelPlan(pub std::collections::BTreeMap<String, Vec<ModelChoice>>);
 
@@ -473,6 +535,38 @@ mod tests {
         assert_eq!(
             tiered.to_string(),
             "p/m high (tier frontier, fell back to strong)"
+        );
+    }
+
+    #[test]
+    fn a_steered_model_is_a_pin_no_tier_resolves_away_and_an_effort_keeps_the_tier() {
+        let tiered = ModelChoice {
+            model: "p/balanced".parse().unwrap(),
+            effort: Effort::Medium,
+            tier: Some(TierChoice {
+                requested: Tier::Balanced,
+                provider: None,
+                resolved: Tier::Balanced,
+            }),
+        };
+        let fast: ModelRef = "p/fast".parse().unwrap();
+        let mut plan = ModelPlan::default();
+        plan.0.insert(
+            "answer".into(),
+            vec![tiered.steered(Some(&fast), Some(Effort::Low))],
+        );
+        plan.resolve_tiers(|_, _, _| unreachable!("a steered model is not resolved again"))
+            .unwrap();
+        assert_eq!(
+            plan.0["answer"],
+            [ModelChoice::pinned(fast, Effort::Low)],
+            "the steered model runs"
+        );
+        let retuned = tiered.steered(None, Some(Effort::High));
+        assert_eq!(retuned.tier, tiered.tier, "an effort alone keeps the tier");
+        assert_eq!(
+            (retuned.model, retuned.effort),
+            (tiered.model, Effort::High)
         );
     }
 

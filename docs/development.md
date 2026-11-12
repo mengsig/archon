@@ -103,22 +103,16 @@ tree or command, or a restart of archond, runs it again.
 run it under `dash` when there is one, else under `sh`; `ARCHON_TEST_SH`
 names another shell.
 
-## The mobile web app
+## Remote access
 
-The app lives in `crates/archon-remote/web` as plain ES modules and CSS, with
-no build step; `build.rs` embeds the shipped files into archond. Its tests:
-
-```sh
-make e2e     # unit tests, then every flow in headless Chromium against archond
-```
-
-`make e2e` builds `archon`, installs the npm packages and Chromium on first
-use, starts archond in a temp home under `/tmp`, sets remote access up with
-`archon remote setup --local` and pairs with `archon remote pair`. It skips
-with a message when Chromium cannot be installed, unless `CI` is set. The
-release pull request into `main` runs it in CI. `node scripts/screens.js`
-in that directory regenerates the screenshots in `docs/assets/remote/`;
-`crates/archon-remote/web/README.md` has the rest.
+archond embeds the mobile web app (`crates/archon-remote/web`, built into the
+binary by `build.rs`) and serves it at its own root and, behind Aether's
+`/archon` mount, at `/archon/`; the app's URLs are relative to the page's directory
+(its CSP sends `base-uri 'none'`, so it uses no `<base>`).
+`make e2e` runs it in headless Chromium against a real archond (releases only).
+`crates/archon/tests/remote.rs` drives `archon remote setup` against stand-ins for `aether`, `tailscale`
+and `curl` and a stand-in Aether listener, and checks that the `archon`
+binary carries the app.
 
 ## Releasing
 

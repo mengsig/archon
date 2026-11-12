@@ -354,6 +354,9 @@ fn insert_requested_in(
     )
     .ctx("insert item")?;
     replace_deps(tx, item)?;
+    super::changes::record_item(tx, item, None)?;
+    super::changes::record_dependencies(tx, &item.id, &[], &item.dependencies)?;
+    super::github_links::record_origin(tx, item)?;
     Ok(item.clone())
 }
 
@@ -443,6 +446,7 @@ pub(super) fn transition_in(
     debug_assert!(before.can_transition_to(&item.state));
     check_run_refs(tx, id, &item.state)?;
     write_columns(tx, &item)?;
+    super::changes::record_item(tx, &item, Some(&before))?;
     if let QueueState::Succeeded { run, .. } = &before
         && item.state == QueueState::Queued
     {
@@ -498,6 +502,12 @@ pub(super) fn update_with_kv(
     write_columns(&tx, item)?;
     if deps_changed {
         replace_deps(&tx, item)?;
+        super::changes::record_dependencies(
+            &tx,
+            &item.id,
+            &stored.dependencies,
+            &item.dependencies,
+        )?;
     }
     for (key, value) in updates {
         super::settings::kv_set(&tx, key, value)?;
@@ -585,6 +595,7 @@ pub(super) fn requeue_orphaned_dispatching(
         item.state = QueueState::Queued;
         item.updated_at = at.max(item.updated_at);
         write_columns(&tx, &item)?;
+        super::changes::record_item(&tx, &item, Some(&QueueState::Dispatching))?;
         requeued.push(item.id);
     }
     tx.commit().ctx("commit recovery")?;
@@ -623,12 +634,73 @@ fn query_filters(
         clauses.push("EXISTS (SELECT 1 FROM json_each(items.tags) WHERE value = ?)".to_owned());
         args.push(Value::Text(tag.clone()));
     }
+    history_filters(query, &mut clauses, &mut args)?;
     let filter = if clauses.is_empty() {
         String::new()
     } else {
         format!("WHERE {}", clauses.join(" AND "))
     };
     Ok((filter, args))
+}
+
+/// The longest `text` filter, in characters.
+const MAX_TEXT_FILTER_CHARS: usize = 200;
+
+/// The protocol 24 filters (feature `item_filters`): a window on
+/// `updated_at`, and `text` found in the title or brief, ignoring ASCII case.
+fn history_filters(
+    query: &ItemQuery,
+    clauses: &mut Vec<String>,
+    args: &mut Vec<Value>,
+) -> Result<(), ArchonError> {
+    if let (Some(since), Some(before)) = (&query.updated_since, &query.before)
+        && since >= before
+    {
+        return Err(ArchonError::Invalid(format!(
+            "updated_since {since} must be earlier than before {before}"
+        )));
+    }
+    if let Some(since) = &query.updated_since {
+        clauses.push("updated_at >= ?".to_owned());
+        args.push(Value::Text(ts(since)));
+    }
+    if let Some(before) = &query.before {
+        clauses.push("updated_at < ?".to_owned());
+        args.push(Value::Text(ts(before)));
+    }
+    let Some(text) = &query.text else {
+        return Ok(());
+    };
+    let chars = text.chars().count();
+    if !(1..=MAX_TEXT_FILTER_CHARS).contains(&chars) {
+        return Err(ArchonError::Invalid(format!(
+            "a text filter is 1 to {MAX_TEXT_FILTER_CHARS} characters, not {chars}"
+        )));
+    }
+    let pattern = like_pattern(text);
+    clauses.push(
+        "(json_extract(data, '$.title') LIKE ? ESCAPE '\\' \
+          OR json_extract(data, '$.brief') LIKE ? ESCAPE '\\')"
+            .to_owned(),
+    );
+    args.push(Value::Text(pattern.clone()));
+    args.push(Value::Text(pattern));
+    Ok(())
+}
+
+/// `%text%` with LIKE's own characters escaped, so `text` matches literally.
+fn like_pattern(text: &str) -> String {
+    let mut pattern = String::with_capacity(text.len() + 2);
+    pattern.push('%');
+    for c in text.chars() {
+        if matches!(c, '%' | '_' | '\\') {
+            pattern.push('\\');
+        }
+        pattern.push(c);
+    }
+    pattern.push('%');
+    debug_assert!(pattern.len() >= text.len() + 2);
+    pattern
 }
 
 /// Newest first; `limit` defaults to [`DEFAULT_LIST_LIMIT`].

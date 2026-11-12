@@ -24,7 +24,7 @@ pub const MAX_MESSAGE_IMAGE_BYTES: usize = 10 * 1024 * 1024;
 pub const MAX_ATTACHMENT_NAME_CHARS: usize = 120;
 
 /// One image as a client sends it: Aether's `ImageAttachment`, field for field.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ImageAttachment {
     /// `image/png`, `image/jpeg`, `image/gif` or `image/webp`, checked
     /// against the bytes.
@@ -85,7 +85,7 @@ impl fmt::Debug for ImageAttachment {
 }
 
 /// An image a message carried, as the feed records it: no bytes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ImageRef {
     pub media_type: String,
     pub size_bytes: u64,

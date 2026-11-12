@@ -48,6 +48,9 @@ pub(crate) async fn handle(
         at: event.at,
     };
     evidence::record(ctx, &evidence).await?;
+    if let Some(device) = &message.device {
+        tracing::info!(device, role = "operator", %agent, seq, "a line from an Aether operator device carries operator authority");
+    }
     execute(ctx, evidence, &message.text).await
 }
 
@@ -186,7 +189,7 @@ const SHARED_CHAT_COMMANDS: &[&str] = &[
 const SHARED_REFUSAL: &str = "Operator commands are disabled in shared-mode Aether chat; use Archon's dedicated Aether or the operator socket.";
 
 /// Whether the whole message is led by one of the host command words.
-fn names_host_command(text: &str) -> bool {
+pub(crate) fn names_host_command(text: &str) -> bool {
     let first = text.split_whitespace().next().unwrap_or("");
     SHARED_CHAT_COMMANDS
         .iter()

@@ -83,7 +83,7 @@ impl RepoEnv {
         config
             .models
             .policy()
-            .narrowed_by(&self.config.models.policy())
+            .narrowed_by(&self.config.models.policy_overlay())
     }
 
     /// The provider weights routing this repository's tier-only choices;

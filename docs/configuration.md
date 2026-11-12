@@ -74,6 +74,23 @@ model policy's effort cap still applies. In an explicit `<stage>.review` plan
 each effort is a floor too: a reviewer below it is cancelled as it spawns, and
 one above it runs, up to the policy's cap.
 
+`[models] effort_sizing = true` (default `false`, global only) opts in to
+sizing every effort by one rubric instead. The orchestrator then sizes each
+stage's effort, and every delegating contract each child's: `low` for lookups,
+listing, formatting and mechanical edits; `medium` for routine changes and
+reviews of small or low-risk diffs; `high` for non-trivial design, risky diffs
+and reviews of shared code; `x_high` for hard reasoning, such as root-causing a
+regression, concurrency or security analysis, or a fix that failed twice. A reviewer's `default_effort`, or
+its effort in a `<stage>.review` plan, becomes its default rather than a floor:
+the rubric moves it, from `low` for a trivial diff to `x_high` for concurrency
+or security analysis, the lead states the reason in one line, and archond
+cancels only a reviewer on a model the plan does not name. The stage prompts
+keep 1.4.12's wording, effort floors included; under the opt-in the contract's
+reviewer rule says it replaces any floor a stage prompt names. Off, agents see
+the effort rules of 1.4.12, and `max_effort` caps both. The default cap is
+`x_high`; set global `[models] max_effort = "max"` explicitly to allow `max`.
+A repository may only narrow the global cap.
+
 `auto_repair` (default `true`) covers a run that fails only because the gate
 refused the review or the ship record it owes (a delta read not anchored, a
 mistyped reviewer id, no review object, an unreadable verdict, an invalid ship
@@ -102,12 +119,13 @@ auto_repair = true             # one automatic retry when the review, ship recor
 
 [models]                       # optional: leave it out to allow every ready model
 allow = ["claude-code/claude-opus-5-5", "codex/gpt-6.1-terra"]
-max_effort = "high"
+max_effort = "high"            # default x_high; max must be explicitly allowed
 # max_default_tier = "strong"  # the highest tier a default picks (the default)
 # provider_weights = { "claude-code" = 7, codex = 3 }   # route tier-only choices by share
 # default_provider_weight = 1  # a provider the table leaves out (the default; 0 = never)
 # reserve_percent = { orchestrator = 15, interactive = 10 }   # quota stages leave (the defaults)
 # interactive_providers = ["claude-code"]   # providers someone uses by hand; global only
+# effort_sizing = false        # true: size every agent's effort by the effort rubric; global only
 
 [limits]
 max_parallel_agents = 8        # running stage agents (default 8); 0 = unlimited
@@ -156,6 +174,7 @@ token_env = "AETHER_TOKEN"     # the variable holding the token for `address`
 name = "Archon"                # the orchestrator's name in Aether
 # instructions_file = "~/orchestrator.md"   # appended to the built-in prompt
 trigger_coalesce_ms = 2000     # triggers within this window wake it once
+validate_before_handoff = true # validate a user-facing build before calling it ready
 
 [models]
 # deny = ["codex/gpt-6.1-terra"] # never used, whatever `allow` says
@@ -320,6 +339,12 @@ in `archon chat` instead, set
 reaches the orchestrator with its next turn
 ([guide](guide.md#when-the-orchestrator-is-woken)).
 
+Before the orchestrator calls a user-facing build ready to try, it queues an
+independent validation item and reports that item's outcome
+([product journeys](journeys.md#before-a-hand-off)). Set
+`validate_before_handoff = false` under `[orchestrator]` to have it relay
+the build's success as is.
+
 The helper agents the orchestrator delegates to
 ([guide](guide.md#what-the-orchestrator-does-without-queueing)) work in a
 mirror or in a scratch directory, never in your checkout. A helper is held
@@ -423,6 +448,7 @@ enabled = true
 distill_every = 20
 distill_daily_budget_usd = 3.0
 explore_rate = 0.1
+holdout_rate = 0.0
 ```
 
 Learning keeps an outcome for every finished run: its result, its stage
@@ -450,6 +476,15 @@ a positive reservation does not limit them; 0 still disables them. Imported hist
 and statistics but is never distilled, avoiding upgrade spending bursts.
 Proposed lessons and pipelines wait for operator acceptance; inspect pipelines with
 `archon pipelines proposals [name]` before `archon pipelines accept <name>`.
+
+`holdout_rate`, from 0 to 0.2 (default 0, off), withholds that share of lessons a
+contract would carry, chosen by a stable hash of the lesson and item IDs, so every run
+of an item gets the same answer. Each run records which lessons it was given and which
+it was denied; `archon lessons stats` reports the win rates of both once each has 20
+scored runs. Holding a lesson out never counts against it, the Wilson bound alone
+still activates and retracts lessons, and pinned lessons are never held out. Lessons
+whose text nearly repeats another in the same scope form a cluster: a contract carries
+at most one lesson of each, and clustering never accepts or promotes a lesson.
 
 `enabled = false` stops new learning and cancels queued distillation errands on the
 next maintenance pass. Recorded evidence stays readable, including offline lessons
@@ -679,7 +714,7 @@ If you are already signed in to Claude Code or Codex, neither Archon nor Aether 
 After setup, `archon aether models` lists the models your Aether installation
 actually exposes: for example `claude-code/claude-opus-5-5`,
 `claude-code/claude-sonnet-5-5`, `claude-code/claude-haiku-5-5`,
-`claude-code/claude-fable-5-1`, `codex/gpt-6-astra`, `codex/gpt-6.1-terra`
+`claude-code/claude-fable-5-2`, `codex/gpt-6-astra`, `codex/gpt-6.1-terra`
 and `codex/gpt-6-luna`. The orchestrator's own model is the one model you
 set, because it must be known before any agent runs. To use Codex alone,
 set `[orchestrator] model` to an available `codex/…` entry before starting

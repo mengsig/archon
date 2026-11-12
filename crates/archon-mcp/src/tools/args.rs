@@ -537,6 +537,7 @@ fn list_queue(args: &mut Args) -> Result<Request, ToolError> {
         pipeline: args.optional_text("pipeline")?,
         tag: args.optional_text("tag")?,
         limit,
+        ..ItemQuery::default()
     }))
 }
 

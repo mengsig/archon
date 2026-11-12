@@ -152,6 +152,13 @@ pub(super) async fn orchestrator_replaced(ctx: &DaemonContext) {
     }
 }
 
+/// Whether the orchestrator still owes a restart. Asked under the
+/// supervisor's serialization, it is not stale: every path that creates an
+/// orchestrator settles the debt before it releases the serialization.
+pub(super) async fn restart_owed(ctx: &DaemonContext) -> bool {
+    ctx.supervisor.mcp.lock().await.relink_pending
+}
+
 /// The server's process was replaced (an Archon upgrade): whatever
 /// orchestrator runs now holds the old tools, so it owes a restart.
 pub async fn owe_orchestrator_restart(ctx: &DaemonContext) {

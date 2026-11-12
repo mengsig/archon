@@ -46,6 +46,8 @@ pub const BUILTINS: &[BuiltinPipeline] = &[
     builtin!("agent-testing", ["plan.md", "exercise.md", "report.md"]),
     builtin!("code-audit", ["scope.md", "audit.md", "report.md"]),
     builtin!("e2e-testing", ["setup.md", "e2e.md", "report.md"]),
+    builtin!("e2e-strict", ["setup.md", "e2e.md", "report.md"]),
+    builtin!("release-journey", ["setup.md", "journeys.md", "report.md"]),
     builtin!("ask", ["answer.md"]),
     builtin!("errand", ["errand.md"]),
     builtin!("design-doc", ["research.md", "critique.md", "report.md"]),

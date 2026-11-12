@@ -10,7 +10,10 @@ use archon_core::autonomy::{AutonomyPatch, MergeMode, ReviewLevel, ToolsMode};
 use archon_core::config::Config;
 use archon_core::error::ArchonError;
 use archon_core::model::ModelPlan;
-use archon_core::protocol::{EnqueueRequest, ItemPatch, Reply, RepoPatch, RepoRef, Request};
+use archon_core::protocol::{
+    ClientKind, DeviceRole, EnqueueRequest, ItemPatch, Reply, RepoPatch, RepoRef, Request,
+    WelcomeDevice,
+};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::steer::Steer;
 use archon_daemon::handlers;
@@ -76,6 +79,135 @@ fn update(item: &QueueItem, list: &str) -> Request {
             ..ItemPatch::default()
         },
     }
+}
+
+fn web_change(item: &QueueItem, list: &str, steer: bool) -> Request {
+    if steer {
+        return Request::SteerItem {
+            item: item.id.clone(),
+            steer: Steer {
+                note: Some("This must not be applied on refusal".into()),
+                autonomy: Some(knobs(list)),
+                ..Steer::default()
+            },
+        };
+    }
+    let mut request = update(item, list);
+    if let Request::UpdateItem { patch, .. } = &mut request {
+        patch.brief_append = Some("This must not be applied on refusal".into());
+    }
+    request
+}
+
+#[tokio::test]
+async fn web_item_changes_obey_every_ceiling_without_partial_writes() {
+    let (h, _gh) = delivering().await;
+    ceiling(
+        &h,
+        "review=strict,proposal=lavish,report=before-pr,merge=manual,tools=guarded",
+    )
+    .await;
+    let item = enqueue(&h, AutonomyPatch::default()).await;
+    for steer in [false, true] {
+        for knob in [
+            "review=none",
+            "proposal=off",
+            "report=off",
+            "merge=auto",
+            "tools=yolo",
+        ] {
+            let result = handlers::handle(
+                &h.ctx,
+                ClientKind::ArchonWeb,
+                web_change(&item, knob, steer),
+            )
+            .await;
+            assert!(
+                matches!(result, Err(ArchonError::Forbidden(_))),
+                "{knob}, steer={steer}: {result:?}"
+            );
+            let stored = h.item(&item.id).await;
+            assert_eq!(stored.autonomy, item.autonomy, "{knob}, steer={steer}");
+            assert_eq!(stored.brief, item.brief, "{knob}, steer={steer}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn web_cannot_set_privileged_knobs_even_when_the_ceiling_allows_them() {
+    let (h, _gh) = delivering().await;
+    ceiling(&h, "merge=auto,tools=yolo").await;
+    let item = enqueue(&h, AutonomyPatch::default()).await;
+    for steer in [false, true] {
+        for knob in ["merge=auto", "tools=yolo"] {
+            let before = h.item(&item.id).await;
+            let result = handlers::handle(
+                &h.ctx,
+                ClientKind::ArchonWeb,
+                web_change(&item, knob, steer),
+            )
+            .await;
+            assert!(
+                matches!(result, Err(ArchonError::Forbidden(_))),
+                "{knob}, steer={steer}: {result:?}"
+            );
+            let stored = h.item(&item.id).await;
+            assert_eq!(stored.autonomy, before.autonomy);
+            assert_eq!(stored.brief, before.brief);
+        }
+        let result = handlers::handle(
+            &h.ctx,
+            ClientKind::ArchonWeb,
+            web_change(&item, "review=strict", steer),
+        )
+        .await;
+        assert!(
+            matches!(result, Ok(Reply::Item(_))),
+            "steer={steer}: {result:?}"
+        );
+        assert_eq!(h.item(&item.id).await.autonomy.review, ReviewLevel::Strict);
+    }
+}
+
+fn device(role: DeviceRole) -> WelcomeDevice {
+    WelcomeDevice {
+        id: "dev_01M621D9ZBJPTMDTV26KKQNBE1".into(),
+        name: "phone".into(),
+        role,
+    }
+}
+
+/// An operator-role device sets what the operator's CLI sets, within the
+/// ceiling; an observer device is told it observes.
+#[tokio::test]
+async fn an_operator_device_sets_privileged_knobs_within_the_ceiling_and_an_observer_cannot() {
+    let (h, _gh) = delivering().await;
+    ceiling(&h, "merge=auto,tools=yolo").await;
+    let item = enqueue(&h, AutonomyPatch::default()).await;
+    let observer = device(DeviceRole::Observer);
+    let refused =
+        handlers::handle_device(&h.ctx, &observer, web_change(&item, "merge=auto", false));
+    let Err(ArchonError::Forbidden(message)) = refused.await else {
+        panic!("an observer device set merge=auto");
+    };
+    assert!(message.contains("observer device"), "{message}");
+    let operator = device(DeviceRole::Operator);
+    for (knob, steer) in [("merge=auto", false), ("tools=yolo", true)] {
+        let result =
+            handlers::handle_device(&h.ctx, &operator, web_change(&item, knob, steer)).await;
+        assert!(matches!(result, Ok(Reply::Item(_))), "{knob}: {result:?}");
+    }
+    let stored = h.item(&item.id).await;
+    assert_eq!(stored.autonomy.merge, MergeMode::Auto);
+    assert_eq!(stored.autonomy.tools, ToolsMode::Yolo);
+    ceiling(&h, "merge=manual,tools=guarded").await;
+    let fresh = enqueue(&h, AutonomyPatch::default()).await;
+    let above = handlers::handle_device(&h.ctx, &operator, web_change(&fresh, "merge=auto", false));
+    assert!(
+        matches!(above.await, Err(ArchonError::Forbidden(_))),
+        "the ceiling still binds"
+    );
+    assert_eq!(h.item(&fresh.id).await.autonomy, fresh.autonomy);
 }
 
 async fn updated(h: &Harness, item: &QueueItem, list: &str) -> QueueItem {

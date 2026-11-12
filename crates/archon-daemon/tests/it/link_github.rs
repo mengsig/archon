@@ -712,7 +712,7 @@ fn fake_gh(dir: &Path) -> std::path::PathBuf {
     let script = dir.join("gh");
     let body = format!(
         "#!/bin/sh\nprintf '%s ' \"$@\" > {dir}/args\ncat > {dir}/stdin\n\
-         echo '{{\"html_url\": \"https://github.com/o/r/issues/5#issuecomment-9\"}}'\n",
+         echo '{{\"id\": 9, \"html_url\": \"https://github.com/o/r/issues/5#issuecomment-9\"}}'\n",
         dir = dir.display()
     );
     archon_core::testing::write_script(&script, &body);
@@ -761,6 +761,9 @@ async fn a_reply_on_a_watched_thread_is_posted_marked_and_logged() {
             .unwrap();
     let body = stdin["body"].as_str().unwrap();
     assert!(body.starts_with("Queued as qi_1;") && body.ends_with(REPLY_MARKER));
+    assert_eq!(body.matches("<!-- archon-outbox:obx_").count(), 1, "{body}");
+    let (pending, total) = harness.ctx.store.lock().await.pending_outbox(10).unwrap();
+    assert!(pending.is_empty() && total == 0, "recorded as posted");
     let logged = harness.notifications(NotificationKind::Progress).await;
     assert!(
         logged

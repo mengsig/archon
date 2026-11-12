@@ -359,6 +359,9 @@ mod tests {
                 protocol_version: PROTOCOL_VERSION,
                 daemon_version: "test".into(),
                 pid: 1,
+                min_protocol_version: PROTOCOL_VERSION,
+                features: Vec::new(),
+                device: None,
             };
             let frame = ServerFrame::Reply {
                 id: 1,
@@ -393,6 +396,9 @@ mod tests {
                 protocol_version: PROTOCOL_VERSION,
                 daemon_version: "test".into(),
                 pid: 1,
+                min_protocol_version: PROTOCOL_VERSION,
+                features: Vec::new(),
+                device: None,
             };
             let frames = [(hello.id, Ok(Reply::Welcome(welcome)))];
             write_frames(&mut write, frames).await;

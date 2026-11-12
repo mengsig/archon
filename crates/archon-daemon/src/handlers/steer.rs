@@ -289,6 +289,9 @@ async fn changed_item(
         item.stage_timeouts.extend(steer.stage_timeouts.clone());
         what.push("updated stage timeouts for future spawns".to_owned());
     }
+    if let Some(effort) = steer.effort {
+        asked.env.policy(&ctx.config).check_effort(effort)?;
+    }
     what.extend(retune(steer, stages, &mut item)?);
     items::check_plan(ctx, asked.env, stages, &item.model_plan)?;
     assert!(!what.is_empty(), "a checked steer changes something");
@@ -407,8 +410,7 @@ fn retune(
     };
     assert!(!choices.is_empty(), "a plan gives every stage a choice");
     for choice in choices.iter_mut() {
-        choice.model = steer.model.clone().unwrap_or_else(|| choice.model.clone());
-        choice.effort = steer.effort.unwrap_or(choice.effort);
+        *choice = choice.steered(steer.model.as_ref(), steer.effort);
     }
     Ok(Some(format!(
         "stage `{stage}` now runs on {} at effort {}",

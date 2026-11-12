@@ -1,6 +1,8 @@
-//! `archon remote setup`: switch the listener on, publish it over HTTPS,
-//! check that it answers there and pair a phone, saying what each step
-//! does. Every step finds what an earlier run did, so running it again is safe.
+//! `archon remote setup`: serve archond through the `/archon` mount of an
+//! Aether listener, publish that listener as the one `tailscale serve`
+//! origin, and pair a browser there, saying what each step does. Every step
+//! reads what is there first and changes only what differs, so a rerun
+//! changes nothing and says so.
 
 use std::io::IsTerminal as _;
 use std::process::ExitCode;
@@ -8,31 +10,49 @@ use std::time::Duration;
 
 use anyhow::{Context as _, bail};
 use archon_client::ArchonClient;
+use archon_core::config::{AetherMode, CONFIG_FILE_NAME, Config};
 use archon_core::protocol::Request;
-use archon_core::remote::{PairingCode, RemoteChange, RemoteView, normalize_origin};
+use archon_core::remote::{
+    MAX_TRUSTED_ORIGINS, PairingCode, RemoteChange, RemoteView, normalize_trusted_origin,
+};
 use serde::Serialize;
 
-use super::runner::{RunError, display, run};
-use super::tailscale::{PortUse, PublishOutcome, SERVE_PORTS, Tailscale, TailscaleState};
-use super::{open_pairing, pairing_text, remote_view};
+use super::runner::{RunError, run};
+use super::setup_aether::{Aether, PREFIX, Status};
+use super::setup_publish::Tailnet;
+use super::tailscale::{PortUse, PublishOutcome, TailscaleState};
+use super::{open_pairing, remote_view};
 use crate::cli::RemoteSetupArgs;
 use crate::connect::connect_or_start;
 
 /// The first request through `tailscale serve` may wait on a certificate.
 const VERIFY_TIMEOUT: Duration = Duration::from_secs(45);
+/// archond's pairing screen behind Aether's mount, relative to its origin.
+const PAIR_SCREEN: &str = "/archon/pair";
 
 /// What `--json` prints once every step is done.
 #[derive(Debug, Serialize)]
 struct Outcome {
     remote: RemoteView,
-    origin: Option<String>,
+    /// The Aether origin a browser opens; archond answers under its mount.
+    origin: String,
+    mount: MountOutcome,
+    /// Whether this run changed anything.
+    changed: bool,
     pairing: Option<PairingCode>,
 }
 
+#[derive(Debug, Serialize)]
+struct MountOutcome {
+    prefix: &'static str,
+    target: String,
+}
+
 /// Step lines, kept off stdout under `--json` so it stays one document.
-struct Steps {
-    json: bool,
+pub(super) struct Steps {
+    pub(super) json: bool,
     count: u8,
+    changed: bool,
 }
 
 impl Steps {
@@ -43,41 +63,73 @@ impl Steps {
         }
     }
 
-    fn note(&self, text: &str) {
+    pub(super) fn note(&self, text: &str) {
         if !self.json {
             println!("   {text}");
         }
     }
+
+    /// Say what this run changed.
+    pub(super) fn changed(&mut self, text: &str) {
+        self.changed = true;
+        self.note(text);
+    }
+}
+
+/// What a finished bring-up serves.
+struct Mounted {
+    origin: String,
+    target: String,
+    /// archond runs without the mount config.toml now names.
+    restart_owed: bool,
 }
 
 pub(crate) async fn setup(args: RemoteSetupArgs, json: bool) -> anyhow::Result<ExitCode> {
-    let mut steps = Steps { json, count: 0 };
+    let mut steps = Steps {
+        json,
+        count: 0,
+        changed: false,
+    };
     set_up_archon(&mut steps).await?;
     steps.begin(
         "Start archond",
-        "The app talks to archond, so it must run; nothing else changes here.",
+        "Aether's listener forwards to archond, so it must run; nothing else changes here.",
     );
     let client = connect_or_start().await?;
     let was_enabled = remote_view(&client, Request::RemoteStatus).await?.enabled;
-    let origin = match bring_up(&client, &args, json, &mut steps).await {
-        Ok(origin) => origin,
+    let config = Config::load_default()?;
+    let aether_mode = config.aether.mode;
+    let mounted = match bring_up(&client, &args, config, &mut steps).await {
+        Ok(mounted) => mounted,
         Err(error) if was_enabled => return Err(error),
         Err(error) => return Err(switch_back_off(&client, error).await),
     };
+    if mounted.restart_owed {
+        bail!(
+            "archond reads [remote] mounted_at and trusted_origins only when it starts. \
+             Restart it with `archon daemon restart` (running work survives), then run \
+             `archon remote setup` again to check the address and pair"
+        );
+    }
     let remote = remote_view(&client, Request::RemoteStatus).await?;
     let pairing = match args.no_pair {
         true => None,
-        false => Some(pair(&client, origin.as_deref(), &mut steps).await?),
+        false => Some(pair(&client, &mounted.origin, &mut steps).await?),
     };
     let outcome = Outcome {
         remote,
-        origin,
+        origin: mounted.origin,
+        mount: MountOutcome {
+            prefix: PREFIX,
+            target: mounted.target,
+        },
+        changed: steps.changed,
         pairing,
     };
     if json {
         crate::connect::print_json(&super::to_json(&outcome)?)?;
     } else {
-        println!("\n{}", closing_words(&outcome));
+        println!("\n{}", closing_words(&outcome, aether_mode));
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -100,21 +152,72 @@ async fn set_up_archon(steps: &mut Steps) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Switch the listener on and return the loopback address it serves.
-async fn enable(client: &ArchonClient, steps: &mut Steps) -> anyhow::Result<String> {
+/// Every step after archond runs; the caller switches archond's listener
+/// back off when one fails and it was off before.
+async fn bring_up(
+    client: &ArchonClient,
+    args: &RemoteSetupArgs,
+    config: Config,
+    steps: &mut Steps,
+) -> anyhow::Result<Mounted> {
     steps.begin(
-        "Open the listener",
-        "archond serves the app on this machine's loopback only; nothing off it can \
-         connect until a proxy publishes it.",
+        "Check Aether and Tailscale",
+        "Archon's phone app is served through Aether's mount. Nothing is opened, published \
+         or mounted while Tailscale Funnel publishes anything on this machine.",
     );
-    let change = RemoteChange {
-        enabled: Some(true),
-        ..RemoteChange::default()
+    let aether = Aether::new(config)?;
+    let mounts = aether.mounts().await?;
+    let before = aether.status().await?;
+    let mut tailnet = Tailnet::read().await?;
+    tailnet.refuse_funnel(listener_target(&before, true).ok().as_deref())?;
+    steps.note("Aether can mount Archon, and nothing is published through Funnel.");
+    let target = enable(client, steps).await?;
+    let status = aether.ensure_listening(steps).await?;
+    let aether_target = listener_target(&status, false)?;
+    steps.begin(
+        "Publish Aether's listener on your tailnet",
+        "`tailscale serve` gives it an HTTPS address only devices signed in to your tailnet \
+         can reach; it is the one address, and archond stays on loopback.",
+    );
+    tailnet.withdraw_archond(&target, args, steps).await?;
+    let origin = tailnet.publish_aether(&aether_target, args, steps).await?;
+    let public = aether.ensure_origin(&status, &origin, steps).await?;
+    steps.begin(
+        "Mount Archon on Aether",
+        "Aether forwards /archon to archond, which then answers only Aether's origins.",
+    );
+    withdraw_public_origins(client, steps).await?;
+    aether.ensure_mount(&mounts, &target, steps).await?;
+    let trusted = trusted_origins(&public, &origin)?;
+    let restart_owed = restart_owed(client, &trusted, steps).await?;
+    if !restart_owed {
+        verify(&origin, steps).await?;
+    }
+    Ok(Mounted {
+        origin,
+        target,
+        restart_owed,
+    })
+}
+
+/// Switch archond's listener on and return the loopback address Aether
+/// forwards to.
+async fn enable(client: &ArchonClient, steps: &mut Steps) -> anyhow::Result<String> {
+    let view = remote_view(client, Request::RemoteStatus).await?;
+    let view = match (&view.listening, view.enabled) {
+        (Some(_), true) => view,
+        _ => {
+            let change = RemoteChange {
+                enabled: Some(true),
+                ..RemoteChange::default()
+            };
+            steps.changed("Opening archond's listener.");
+            remote_view(client, Request::ConfigureRemote { change }).await?
+        }
     };
-    let view = remote_view(client, Request::ConfigureRemote { change }).await?;
-    let Some(listening) = view.listening else {
+    let Some(listening) = &view.listening else {
         bail!(
-            "the listener did not open: {}. Change [remote] address in config.toml if \
+            "archond's listener did not open: {}. Change [remote] address in config.toml if \
              another program holds the port, then run this again",
             view.error.as_deref().unwrap_or("no reason was given")
         );
@@ -122,29 +225,78 @@ async fn enable(client: &ArchonClient, steps: &mut Steps) -> anyhow::Result<Stri
     let bound: std::net::SocketAddr = listening
         .parse()
         .with_context(|| format!("archond listens on {listening}, which is not an address"))?;
-    assert!(bound.port() > 0, "a bound listener has a port");
-    steps.note(&format!("Listening on {listening}."));
+    anyhow::ensure!(
+        bound.ip().is_loopback(),
+        "archond listens on {bound}; Aether mounts only loopback listeners, so set [remote] \
+         address = \"127.0.0.1:{}\" in config.toml and restart archond",
+        bound.port()
+    );
+    steps.note(&format!(
+        "archond listens on {listening}, on this machine only."
+    ));
     Ok(archon_core::remote::local_target(bound))
 }
 
-/// Open the listener, publish it and check that it answers at the published
-/// address; the caller undoes all of it when any step fails.
-async fn bring_up(
-    client: &ArchonClient,
-    args: &RemoteSetupArgs,
-    json: bool,
-    steps: &mut Steps,
-) -> anyhow::Result<Option<String>> {
-    let target = enable(client, steps).await?;
-    let origin = publish(client, args, &target, json, steps).await?;
-    if let Some(origin) = &origin {
-        verify(origin, steps).await?;
-    }
-    Ok(origin)
+/// Where this machine reaches Aether's listener: where it is bound, or with
+/// `configured`, where it will bind while it is still closed.
+fn listener_target(status: &Status, configured: bool) -> anyhow::Result<String> {
+    let address = match (&status.listening, configured) {
+        (Some(listening), _) => listening,
+        (None, true) => &status.address,
+        (None, false) => bail!("Aether's listener is not open"),
+    };
+    let bound: std::net::SocketAddr = address
+        .parse()
+        .with_context(|| format!("Aether listens on {address}, which is not an address"))?;
+    Ok(archon_core::remote::local_target(bound))
 }
 
-/// An open, publish or check that failed leaves the listener as this run found it:
-/// off, so nothing an earlier run published keeps answering.
+/// Aether's public origins as archond's `trusted_origins`, the published
+/// one among them.
+fn trusted_origins(public: &[String], published: &str) -> anyhow::Result<Vec<String>> {
+    let mut trusted: Vec<String> = Vec::with_capacity(public.len());
+    for origin in public {
+        let origin = normalize_trusted_origin(origin)
+            .with_context(|| format!("Aether's public origin {origin} cannot be trusted"))?;
+        if !trusted.contains(&origin) {
+            trusted.push(origin);
+        }
+    }
+    anyhow::ensure!(
+        trusted.len() <= MAX_TRUSTED_ORIGINS,
+        "Aether has {} public origins; archond trusts at most {MAX_TRUSTED_ORIGINS}",
+        trusted.len()
+    );
+    anyhow::ensure!(
+        trusted.iter().any(|o| o == published),
+        "Aether's origins lack the published {published}"
+    );
+    Ok(trusted)
+}
+
+/// Write the mount into config.toml; whether the running archond still
+/// serves without it, so a restart is owed.
+async fn restart_owed(
+    client: &ArchonClient,
+    trusted: &[String],
+    steps: &mut Steps,
+) -> anyhow::Result<bool> {
+    let path = archon_core::paths::config_dir().join(CONFIG_FILE_NAME);
+    if super::setup_config::ensure_mounted(&path, PREFIX, trusted)? {
+        steps.changed(&format!(
+            "Wrote [remote] mounted_at and trusted_origins to {}.",
+            path.display()
+        ));
+    } else {
+        steps.note(&format!("{} already names the mount.", path.display()));
+    }
+    let live = remote_view(client, Request::RemoteStatus).await?;
+    let serving = live.mounted_at.as_deref() == Some(PREFIX) && live.trusted_origins == trusted;
+    Ok(!serving)
+}
+
+/// A failed step leaves archond's listener as this run found it: off, so
+/// nothing an earlier run published keeps answering.
 async fn switch_back_off(client: &ArchonClient, error: anyhow::Error) -> anyhow::Error {
     let change = RemoteChange {
         enabled: Some(false),
@@ -163,49 +315,9 @@ async fn switch_back_off(client: &ArchonClient, error: anyhow::Error) -> anyhow:
     }
 }
 
-/// Publish the listener and allow its origin; `None` with `--local`.
-async fn publish(
-    client: &ArchonClient,
-    args: &RemoteSetupArgs,
-    target: &str,
-    json: bool,
-    steps: &mut Steps,
-) -> anyhow::Result<Option<String>> {
-    if args.local {
-        withdraw_public_origins(client, steps).await?;
-        return Ok(None);
-    }
-    let origin = match &args.proxy_url {
-        Some(url) => {
-            steps.begin(
-                "Use your HTTPS proxy",
-                "Your proxy terminates TLS and forwards to the listener; archond answers \
-                 only the origins it was told about.",
-            );
-            let origin = normalize_origin(url)?;
-            steps.note(&format!(
-                "Forward {origin} to {target}, passing the Host header through unchanged."
-            ));
-            origin
-        }
-        None => tailscale_origin(args, target, json, steps).await?,
-    };
-    let change = RemoteChange {
-        add_origins: vec![origin.clone()],
-        ..RemoteChange::default()
-    };
-    remote_view(client, Request::ConfigureRemote { change }).await?;
-    steps.note(&format!("archond now answers browsers at {origin}."));
-    Ok(Some(origin))
-}
-
-/// `--local`: drop the origins earlier runs allowed, so no proxy that still
-/// forwards to the listener is answered.
+/// Drop the origins an earlier, direct publication of archond allowed:
+/// mounted, archond answers Aether's origins alone.
 async fn withdraw_public_origins(client: &ArchonClient, steps: &mut Steps) -> anyhow::Result<()> {
-    steps.begin(
-        "Keep it on this machine",
-        "Not published (--local); archond refuses every browser origin but this machine's.",
-    );
     let before = remote_view(client, Request::RemoteStatus).await?;
     if before.public_origins.is_empty() {
         return Ok(());
@@ -220,82 +332,23 @@ async fn withdraw_public_origins(client: &ArchonClient, steps: &mut Steps) -> an
         "archond still answers {}; remove them with `archon remote origin remove`",
         after.public_origins.join(", ")
     );
-    steps.note(&format!(
-        "No longer answers {}. Stop the proxy that published it too.",
+    steps.changed(&format!(
+        "archond no longer answers {} directly.",
         before.public_origins.join(", ")
     ));
     Ok(())
 }
 
-/// Publish `target` with `tailscale serve`, reusing a port that already
-/// serves it, and return the HTTPS origin.
-async fn tailscale_origin(
-    args: &RemoteSetupArgs,
-    target: &str,
-    json: bool,
-    steps: &mut Steps,
-) -> anyhow::Result<String> {
-    steps.begin(
-        "Publish on your tailnet",
-        "`tailscale serve` gives the listener an HTTPS address only devices signed in \
-         to your tailnet can reach; it is never opened to the internet.",
-    );
-    let Some(tailscale) = Tailscale::locate().await? else {
-        bail!(
-            "Tailscale is not installed. Install it from https://tailscale.com/download, sign \
-             in, and run this again; or pass --proxy-url for your own HTTPS proxy, or --local"
-        );
-    };
-    let node = match tailscale.state().await? {
-        TailscaleState::Ready(node) => node,
-        other => bail!("{}", not_ready(&other, tailscale.program())),
-    };
-    let served = tailscale.serve_config().await?;
-    let ports = match args.https_port {
-        Some(port) if SERVE_PORTS.contains(&port) => vec![port],
-        Some(port) => {
-            bail!("--https-port {port}: tailscale serves HTTPS only on 443, 8443 or 10000")
-        }
-        None => SERVE_PORTS.to_vec(),
-    };
-    let uses: Vec<(u16, PortUse)> = ports
-        .iter()
-        .map(|&port| (port, served.port_use(&node.dns_name, port, target)))
-        .collect();
-    let port = choose_port(&uses)?;
-    let origin = match port {
-        443 => format!("https://{}", node.dns_name),
-        port => format!("https://{}:{port}", node.dns_name),
-    };
-    if uses.contains(&(port, PortUse::Ours { funnel: false })) {
-        steps.note(&format!("Already published at {origin}."));
-        return Ok(origin);
-    }
-    let command = display(
-        tailscale.program(),
-        &["serve", "--bg", &format!("--https={port}"), target],
-    );
-    if !args.yes && !confirm(&format!("Run `{command}`?"), json).await? {
-        bail!("not published. Run this again and answer yes, or pass --yes");
-    }
-    match tailscale.publish(port, target).await? {
-        PublishOutcome::Published => {}
-        refused => bail!("{}", publish_refusal(&refused)),
-    }
-    steps.note(&format!("Published at {origin}."));
-    Ok(origin)
-}
-
 /// A port already serving the target first, else the first free one. A
 /// target that Funnel opens to the internet is refused, never reused.
-fn choose_port(uses: &[(u16, PortUse)]) -> anyhow::Result<u16> {
+pub(super) fn choose_port(uses: &[(u16, PortUse)]) -> anyhow::Result<u16> {
     assert!(!uses.is_empty(), "at least one port is considered");
     if let Some((port, _)) = uses
         .iter()
         .find(|(_, u)| *u == PortUse::Ours { funnel: true })
     {
         bail!(
-            "port {port} publishes archond to the whole internet through Tailscale Funnel. \
+            "port {port} publishes it to the whole internet through Tailscale Funnel. \
              Turn that off with `tailscale funnel --https={port} off`, then run this again"
         );
     }
@@ -317,13 +370,13 @@ fn choose_port(uses: &[(u16, PortUse)]) -> anyhow::Result<u16> {
         })
         .collect();
     bail!(
-        "no HTTPS port is free for tailscale serve: {}. Free one, or pass --proxy-url",
+        "no HTTPS port is free for tailscale serve: {}. Free one, or pass --https-port",
         taken.join("; ")
     )
 }
 
 /// What to do about a Tailscale that cannot serve HTTPS by name yet.
-fn not_ready(state: &TailscaleState, program: &str) -> String {
+pub(super) fn not_ready(state: &TailscaleState, program: &str) -> String {
     let admin = "https://login.tailscale.com/admin/dns";
     match state {
         TailscaleState::NotRunning { detail } => {
@@ -352,7 +405,7 @@ fn not_ready(state: &TailscaleState, program: &str) -> String {
     }
 }
 
-fn publish_refusal(outcome: &PublishOutcome) -> String {
+pub(super) fn publish_refusal(outcome: &PublishOutcome) -> String {
     match outcome {
         PublishOutcome::NotPermitted { command } => format!(
             "`{command}` was refused: this user may not change Tailscale. Run \
@@ -369,7 +422,7 @@ fn publish_refusal(outcome: &PublishOutcome) -> String {
 }
 
 /// Ask on the terminal; no terminal (or `--json`) is never a yes.
-async fn confirm(question: &str, json: bool) -> anyhow::Result<bool> {
+pub(super) async fn confirm(question: &str, json: bool) -> anyhow::Result<bool> {
     let terminal = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
     if json || !terminal {
         return Ok(false);
@@ -383,13 +436,14 @@ async fn confirm(question: &str, json: bool) -> anyhow::Result<bool> {
     .context("asking on the terminal")?
 }
 
-/// GET `/api/health` through the published origin, as a phone would.
+/// GET archond's health check through Aether's published origin and its
+/// mount, as a browser would.
 async fn verify(origin: &str, steps: &mut Steps) -> anyhow::Result<()> {
     steps.begin(
         "Check the address",
-        "Fetch the app's health check through the HTTPS address, as your phone will.",
+        "Fetch archond's health check through Aether's HTTPS address and its mount.",
     );
-    let url = format!("{origin}/api/health");
+    let url = format!("{origin}{PREFIX}/api/health");
     let limit = VERIFY_TIMEOUT.as_secs().to_string();
     let args = ["-fsS", "--max-time", limit.as_str(), url.as_str()];
     let output = match run("curl", &args, VERIFY_TIMEOUT + Duration::from_secs(5)).await {
@@ -404,8 +458,8 @@ async fn verify(origin: &str, steps: &mut Steps) -> anyhow::Result<()> {
     };
     if !output.success() || !output.stdout.contains("\"ok\"") {
         bail!(
-            "{url} did not answer: {}. Check that the proxy forwards to archond's listener \
-             and passes the Host header, then run this again",
+            "{url} did not answer: {}. Check `aether remote status`: Aether forwards to \
+             archond only while no Funnel is published",
             output.complaint()
         );
     }
@@ -415,48 +469,54 @@ async fn verify(origin: &str, steps: &mut Steps) -> anyhow::Result<()> {
 
 async fn pair(
     client: &ArchonClient,
-    origin: Option<&str>,
+    origin: &str,
     steps: &mut Steps,
 ) -> anyhow::Result<PairingCode> {
     steps.begin(
-        "Pair your phone",
-        "A one-time code: the device that types it first gets its own credential, which \
-         `archon remote revoke` takes back.",
+        "Pair your browser with Archon",
+        "A one-time code: the browser that types it first gets its own Archon device, which \
+         `archon remote revoke` takes back. Aether pairs the same browser on its own.",
     );
-    let mut code = open_pairing(client).await?;
-    if let Some(origin) = origin {
-        verified_first(&mut code, origin)?;
-    }
+    let code = open_pairing(client).await?;
+    let mounted = format!("{origin}{PREFIX}/pair");
+    anyhow::ensure!(
+        code.urls.contains(&mounted),
+        "archond offers no pairing at {mounted}; restart it with `archon daemon restart`"
+    );
     if !steps.json {
-        println!("\n{}", pairing_text(&code)?);
+        println!("\n{}", pairing_text(&code, origin)?);
     }
     Ok(code)
 }
 
-/// Put the address this run just checked first, so the QR code opens it
-/// rather than an older origin that is still allowed.
-fn verified_first(code: &mut PairingCode, origin: &str) -> anyhow::Result<()> {
-    let url = format!("{origin}/pair");
-    let at = code
-        .urls
-        .iter()
-        .position(|offered| *offered == url)
-        .with_context(|| {
-            format!("archond offers no pairing at {origin}, which this run allowed")
-        })?;
-    code.urls[..=at].rotate_right(1);
-    assert_eq!(code.urls[0], url, "the checked address leads");
-    Ok(())
+/// The QR code of archond's pairing screen behind the mount and the code to
+/// type there. The code never goes in the link: only the browser sees it.
+fn pairing_text(code: &PairingCode, origin: &str) -> anyhow::Result<String> {
+    let screen = format!("{origin}{PAIR_SCREEN}");
+    let minutes = (code.expires_at - archon_core::now()).num_minutes().max(1);
+    Ok(format!(
+        "{}\nScan it, or open {screen} in the browser you pair, and type the \
+         code\n\n    {}\n\nIt works once and expires in {minutes} minutes ({} UTC).",
+        super::qr::render(&screen)?,
+        code.code,
+        code.expires_at.format("%H:%M")
+    ))
 }
 
-fn closing_words(outcome: &Outcome) -> String {
-    let place = outcome
-        .origin
-        .as_deref()
-        .map_or_else(|| "this machine's loopback".to_owned(), str::to_owned);
+fn closing_words(outcome: &Outcome, mode: AetherMode) -> String {
+    let aether_pair = match mode {
+        AetherMode::Shared => "aether remote pair",
+        AetherMode::Dedicated => "archon aether remote pair",
+    };
+    let unchanged = match outcome.changed {
+        true => "",
+        false => "Nothing changed: everything was already set up.\n",
+    };
     format!(
-        "Done: the app is at {place}. `archon remote` shows its state, `archon remote pair` \
-         pairs another device, and `archon remote disable` closes it."
+        "{unchanged}Done: open {}/archon/ for Archon and {} for Aether. Pair the browser with \
+         each (`{aether_pair}` for Aether); each daemon gives it its own device. `archon remote` shows \
+         archond's side, and `archon remote pair` pairs another browser with Archon.",
+        outcome.origin, outcome.origin
     )
 }
 
@@ -465,7 +525,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_port_already_serving_archond_is_reused_before_a_free_one() {
+    fn a_port_already_serving_aether_is_reused_before_a_free_one() {
         let uses = [
             (443, PortUse::Taken("http://127.0.0.1:3000".into())),
             (8443, PortUse::Free),
@@ -473,16 +533,6 @@ mod tests {
         ];
         assert_eq!(choose_port(&uses).unwrap(), 10000);
         assert_eq!(choose_port(&uses[..2]).unwrap(), 8443);
-    }
-
-    #[test]
-    fn funnel_is_refused_and_a_full_tailnet_names_what_holds_each_port() {
-        let public = [(443, PortUse::Ours { funnel: true }), (8443, PortUse::Free)];
-        let refused = choose_port(&public).unwrap_err().to_string();
-        assert!(
-            refused.contains("Funnel") && refused.contains("off"),
-            "{refused}"
-        );
         let full = [
             (443, PortUse::Taken("http://127.0.0.1:3000".into())),
             (8443, PortUse::Unknown("`Mystery`".into())),
@@ -496,23 +546,35 @@ mod tests {
     }
 
     #[test]
-    fn the_checked_origin_leads_the_pairing_addresses() {
-        let mut code = PairingCode {
-            code: "ABCD-EFGH".into(),
-            expires_at: archon_core::now(),
-            urls: [
-                "https://old.example",
-                "https://new.example",
-                "http://127.0.0.1:8378",
-            ]
-            .map(|origin| format!("{origin}/pair"))
-            .to_vec(),
+    fn aether_origins_become_trusted_origins_with_the_published_one() {
+        let public = [
+            "https://Box.ts.net".to_owned(),
+            "https://box.ts.net".to_owned(),
+            "https://box.ts.net:8443".to_owned(),
+        ];
+        let trusted = trusted_origins(&public, "https://box.ts.net").unwrap();
+        assert_eq!(trusted, ["https://box.ts.net", "https://box.ts.net:8443"]);
+        assert!(trusted_origins(&public, "https://other.ts.net").is_err());
+        assert!(trusted_origins(&["ftp://x".to_owned()], "ftp://x").is_err());
+    }
+
+    #[test]
+    fn the_pairing_link_opens_the_archon_screen_without_the_code() {
+        let code = PairingCode {
+            code: "7K2M-9QXD".into(),
+            expires_at: archon_core::now() + chrono::Duration::minutes(5),
+            urls: vec!["https://box.ts.net/archon/pair".into()],
         };
-        verified_first(&mut code, "https://new.example").unwrap();
-        assert_eq!(code.urls[0], "https://new.example/pair");
-        assert_eq!(code.urls[1], "https://old.example/pair");
-        assert_eq!(code.urls.len(), 3);
-        assert!(verified_first(&mut code, "https://gone.example").is_err());
+        let text = pairing_text(&code, "https://box.ts.net").unwrap();
+        assert!(
+            text.contains("open https://box.ts.net/archon/pair in"),
+            "{text}"
+        );
+        assert!(text.contains("    7K2M-9QXD\n"), "{text}");
+        assert!(
+            !text.contains("code=7K2M"),
+            "the code is typed, never linked"
+        );
     }
 
     #[test]

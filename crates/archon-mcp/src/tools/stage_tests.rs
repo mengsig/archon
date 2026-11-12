@@ -203,7 +203,7 @@ fn a_delegating_stage_shows_its_cost_split_in_the_listing_and_the_item() {
         cost_usd: 0.75,
     };
     let split = StageDelegation::of(0.25, vec![helper]);
-    let expected = "cost split: $0.25 own + $0.75 for 1 delegated agent(s): \
+    let expected = "cost split: $0.25 own + $0.75 for 1 delegated agent(s) at effort 1 medium: \
                     agt_helper codex/astra (medium) $0.75";
     let delegating = StageRunView {
         cost_usd: split.total_usd(),

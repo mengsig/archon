@@ -6,6 +6,7 @@ import { createStore } from './core/store.js';
 import { daemonCommands } from './core/daemon.js';
 import { ACTIVE_STATES, stateKind, isTerminal, waitsOnOperator } from './core/format.js';
 import * as api from './core/api.js';
+import { BASE } from './core/base.js';
 import { matchEchoes } from './features/chat/outbox.js';
 import { APP_VERSION } from './version.js';
 
@@ -72,7 +73,7 @@ export function createApp({ session, onUnpaired }) {
 function openTransport({ session, feedSync, feed, store, refresh }) {
   const setError = (name, err) => store.set({ errors: { ...store.get().errors, [name]: err } });
   return createTransport({
-    url: `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`,
+    url: `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${BASE}/ws`,
     hello: { protocol_version: session.protocol_version, client: 'archon-web', client_version: APP_VERSION },
     onFeed: (item) => feed.push(item),
     onReady: () => {

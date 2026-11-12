@@ -939,6 +939,9 @@ impl RunDriver {
         let owed = self.spec.owed(stage);
         let (headline, report) = match gate::evaluate(stage, at.attempt, members, owed) {
             GroupResult::Fail { headline, report } => (headline, report),
+            GroupResult::Defect { headline, report } => {
+                return Some(self.stop_failed(at.stage, "", &headline, &report));
+            }
             GroupResult::Pass { summary } if stage.kind != StageKind::Team => {
                 if owed.ship_record {
                     note_record(at, members, owed.review);
@@ -1242,6 +1245,13 @@ impl RunDriver {
             ),
             None => String::new(),
         };
+        self.stop_failed(stage, &exhausted, headline, report)
+    }
+
+    /// The run fails at `stage`; `exhausted` says which fix loops it spent.
+    fn stop_failed(&self, stage: usize, exhausted: &str, headline: &str, report: &str) -> Replay {
+        let spec = &self.spec.file.stages[stage];
+        assert!(!headline.is_empty(), "a failed stage says why");
         let error = format!(
             "stage `{}` failed{exhausted}: {headline}\n\n{report}",
             spec.id

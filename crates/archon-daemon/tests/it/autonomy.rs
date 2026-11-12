@@ -774,7 +774,9 @@ async fn yolo_stage_agents_may_delegate_and_read_archon() {
         rules.contains("A child may delegate once more when its part splits further"),
         "{rules}"
     );
-    assert!(rules.contains("policy for this item: any model Aether lists. Archon cancels"));
+    assert!(rules.contains(
+        "policy for this item: any model Aether lists; effort at most x_high. Archon cancels"
+    ));
 }
 
 /// The test pipeline's stages, each allowing delegation.

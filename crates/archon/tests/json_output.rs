@@ -196,6 +196,8 @@ fn linked_status() -> archon_core::protocol::DaemonStatus {
         integration: vec![],
         stage_warnings: vec![],
         message_caps: Vec::new(),
+        github_outbox: Vec::new(),
+        github_outbox_pending: 0,
     }
 }
 
@@ -264,6 +266,9 @@ impl Canned {
                 protocol_version: PROTOCOL_VERSION,
                 daemon_version: "fake".into(),
                 pid: std::process::id(),
+                min_protocol_version: PROTOCOL_VERSION,
+                features: Vec::new(),
+                device: None,
             }),
             Request::RepoList => Reply::Repos(vec![]),
             Request::Status(_) if self.status.is_some() => {
@@ -279,6 +284,8 @@ impl Canned {
                     waiting_on: self.waiting_on.clone(),
                     waiting_reason: self.waiting_reason.clone(),
                     switched_to: None,
+                    issue: None,
+                    pr: None,
                 }])
             }
             Request::Say { .. } | Request::Answer { .. } => Reply::Ok,
@@ -464,6 +471,7 @@ fn caller_errors_have_typed_json_categories() {
         (&["reports", "reopen", "bad-id"], "invalid_argument"),
         (&["autonomy", "clear", "bad-id"], "invalid_argument"),
         (&["github-watcher", "add", "bad-repo"], "invalid_argument"),
+        (&["github", "import", "o/r"], "invalid_argument"),
         (
             &["github-watcher", "allow", "o/r", "bad_login"],
             "invalid_argument",
@@ -521,6 +529,8 @@ fn queue_and_status_views_put_the_current_operator_wait_first() {
         waiting_on: canned.waiting_on.clone(),
         waiting_reason: None,
         switched_to: None,
+        issue: None,
+        pr: None,
     }];
     canned.status = Some(status);
     let id = canned.item.id.to_string();
@@ -611,6 +621,8 @@ fn queued_waiting_reason_is_visible_in_queue_and_status_text_and_json() {
         waiting_on: None,
         waiting_reason: canned.waiting_reason.clone(),
         switched_to: None,
+        issue: None,
+        pr: None,
     }];
     canned.status = Some(status);
     let id = canned.item.id.to_string();

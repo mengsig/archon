@@ -298,9 +298,9 @@ async fn left_out_fails(
         .as_ref()
         .expect("a checked stage has its agent");
     assert!(!picked.is_empty(), "a review names its reviewers");
-    let children = rounds::attempt_children(ctx, &stage.id).await?;
-    let mut reads = Vec::with_capacity(children.len());
-    for (agent, tallied) in children {
+    let tallied = rounds::attempt_children(ctx, &stage.id).await?;
+    let mut reads = Vec::with_capacity(tallied.children.len());
+    for (agent, tallied_head) in tallied.children {
         if picked.iter().any(|p| p.agent.as_str() == agent) {
             continue;
         }
@@ -308,9 +308,13 @@ async fn left_out_fails(
             .iter()
             .find(|d| d.parent == *lead && d.agent.as_str() == agent && d.task.is_some());
         let Some(child) = listed else {
-            // Aether no longer lists it: a blocking fail the tally kept still stands.
-            if let Some(head) = tallied {
-                reads.push((agent, tallied_fail(head)));
+            // Aether no longer lists it: any fail the tally kept still stands.
+            match tallied_head {
+                Some(head) => reads.push((agent, tallied_fail(head))),
+                None if !tallied.every_fail_kept => {
+                    return Ok(Err(forgotten_unkept(&agent)));
+                }
+                None => {}
             }
             continue;
         };
@@ -336,7 +340,18 @@ async fn left_out_fails(
     Ok(Ok(reads))
 }
 
-/// The fail of `head` the attempt's tally counted, for a reviewer Aether no
+/// Why a left-out reviewer that Aether no longer lists refuses the review when
+/// the attempt's tally, begun by an earlier archond, kept no head for its fail.
+fn forgotten_unkept(agent: &str) -> String {
+    assert!(!agent.is_empty(), "a reviewer's agent id");
+    format!(
+        "reviewer {agent} of this attempt, which the record leaves out, is no longer listed \
+         by Aether, and this attempt's review tally, begun by an earlier archond, did not keep \
+         whether it failed the change: retry the stage"
+    )
+}
+
+/// The fail of `head` the attempt's tally read, for a reviewer Aether no
 /// longer lists: read as a whole-change fail.
 fn tallied_fail(head: String) -> Verdict {
     assert!(!head.is_empty(), "a counted fail names its head");

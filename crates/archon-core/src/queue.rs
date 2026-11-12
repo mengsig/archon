@@ -89,7 +89,18 @@ pub fn check_item_budget(budget: Option<f64>) -> Result<(), ArchonError> {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Default,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    Default,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum Priority {
@@ -102,7 +113,7 @@ pub enum Priority {
 
 /// Lifecycle of a backlog item. Terminal states never leave their column
 /// except through an explicit operator `retry`, which re-queues.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum QueueState {
     /// Waiting for dependencies, capacity, or an unpause.
@@ -188,7 +199,7 @@ impl QueueState {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct QueueItem {
     pub id: QueueItemId,
     /// `None` only for pipelines with `requires_repo = false` (e.g. `ask`).
@@ -293,7 +304,7 @@ impl QueueItem {
 
 /// Concurrency and spend limits the dispatcher enforces. Zero means
 /// "no limit" for every field, matching the config file's convention.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Caps {
     /// Master switch for every dollar budget below, the items' own and the
     /// distillation reservation; spend is still recorded when off.
@@ -348,7 +359,7 @@ impl Default for Caps {
 
 /// What is paused right now. Global pause stops all dispatch; the others
 /// stop only their slice.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PauseState {
     pub global: bool,
     pub repos: Vec<RepoId>,

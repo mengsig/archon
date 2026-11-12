@@ -998,12 +998,13 @@ pub(super) async fn resolve_draft(
     reasons: Option<&ModelReasons>,
 ) -> Result<ModelPlan, ArchonError> {
     let plan = resolve_tiers(ctx, (env, item), spec, draft).await?;
+    env.policy(&ctx.config).check_plan(&plan)?;
     knobs::check_plan_reasons(spec, &plan, reasons)?;
     Ok(plan)
 }
 
-/// [`resolve_draft`] without its effort check, for a request that gives no
-/// `model_reasons`.
+/// Resolve tiers without checking the plan cap or effort reasons, for a request
+/// that gives no `model_reasons`.
 pub(super) async fn resolve_tiers(
     ctx: &DaemonContext,
     (env, item): (&RepoEnv, ItemRoute<'_>),

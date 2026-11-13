@@ -32,7 +32,7 @@ use crate::style::{Palette, Style, terminal_width};
 /// operator already sees them after the prompt, so they are not printed twice.
 const MAX_PENDING_ECHOES: usize = 16;
 const HISTORY_FILE: &str = "chat_history";
-/// Events the opening read covers; the newest `chat.history` entries show.
+/// Events the opening read covers, as on the phone; all its entries show.
 const OPENING_EVENTS: u32 = 200;
 /// How long leaving the chat waits to learn whether the orchestrator failed.
 const STATUS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
@@ -47,8 +47,6 @@ enum Flow {
 struct Chat {
     output: Output,
     palette: Palette,
-    /// Entries the opening page shows.
-    history: usize,
     /// The last conversation event read; `None` until the opening page.
     cursor: Option<u64>,
     /// The `(seq, part)` of the last entry shown, so none shows twice.
@@ -76,7 +74,6 @@ pub async fn run(progress: bool) -> anyhow::Result<ExitCode> {
     let mut chat = Chat {
         output: Output::Stdout,
         palette: Palette::detect(),
-        history: config.chat.history,
         cursor: None,
         shown: None,
         book: QuestionBook::default(),
@@ -179,17 +176,13 @@ impl Chat {
         }
     }
 
-    /// Print a page's new entries: all of a live page, the newest
-    /// `history` of the opening one. `true` when one may ask or answer.
+    /// Print a page's new entries, the opening page's whole as the phone
+    /// and the TUI's calm view show it. `true` when one may ask or answer.
     fn show_page(&mut self, page: &ConversationPage) -> anyhow::Result<bool> {
         assert!(page.is_ordered(), "archond checked the page's order");
         let opening = self.cursor.is_none();
-        let skip = match opening {
-            true => page.entries.len().saturating_sub(self.history),
-            false => 0,
-        };
         let mut asks = false;
-        for entry in &page.entries[skip..] {
+        for entry in &page.entries {
             asks |= matches!(entry.kind, EntryKind::Post | EntryKind::Question);
             self.show(entry, !opening)?;
         }
@@ -457,7 +450,6 @@ mod tests {
         Chat {
             output: Output::Stdout,
             palette: Palette::new(false),
-            history: 30,
             cursor: None,
             shown: None,
             book: QuestionBook::default(),
@@ -557,33 +549,47 @@ mod tests {
         assert_eq!(shown, expected);
         for (line, said) in shown.iter().zip(&turn) {
             let first = said.text.strip_prefix(WEB_RELAY_MARK).unwrap_or(&said.text);
-            let first = first.lines().next().unwrap();
-            assert!(line.contains(first), "{line:?} shows {first:?}");
+            let first = first.lines().next().unwrap().replace("**", "");
+            assert!(line.contains(&first), "{line:?} shows {first:?}");
         }
         assert_eq!(chat.cursor, Some(20));
         assert_eq!(chat.shown, Some((20, 0)));
     }
 
     #[test]
-    fn the_opening_page_shows_the_newest_history_and_a_typed_line_shows_once() {
+    fn the_opening_page_shows_all_its_history_in_order() {
         let printed = Printed::default();
         let mut chat = quiet_chat();
         chat.output = Output::AbovePrompt(Box::new(printed.clone()));
-        chat.history = 2;
+        let history: Vec<ConversationEntry> = (1..=40)
+            .map(|seq| entry(seq, 0, EntryKind::Assistant, &format!("reply {seq}")))
+            .collect();
+        chat.show_page(&page(history.clone(), 40)).unwrap();
+        let shown = printed.0.lock().unwrap().clone();
+        assert_eq!(shown.len(), 40, "more than 30 entries replay whole");
+        for (line, said) in shown.iter().zip(&history) {
+            assert!(line.ends_with(&said.text), "{line:?} shows {:?}", said.text);
+        }
+        assert_eq!(chat.shown, Some((40, 0)));
+    }
+
+    #[test]
+    fn a_typed_line_shows_once() {
+        let printed = Printed::default();
+        let mut chat = quiet_chat();
+        chat.output = Output::AbovePrompt(Box::new(printed.clone()));
         let turn = mixed_turn();
         chat.show_page(&page(turn[..4].to_vec(), 15)).unwrap();
-        let shown = printed.0.lock().unwrap().clone();
-        assert_eq!(shown.len(), 2, "the newest two of the opening page");
-        assert!(shown[0].contains("Queued qi_7 on api."), "{shown:#?}");
+        assert_eq!(printed.0.lock().unwrap().len(), 4, "the whole opening page");
         chat.expect_echo("thanks");
         chat.show_page(&page(turn[4..].to_vec(), 20)).unwrap();
         let shown = printed.0.lock().unwrap().clone();
         assert_eq!(
             shown.len(),
-            3,
+            5,
             "the phone-marked echo of a typed line is not repeated"
         );
-        assert!(shown[2].contains("PR #7 merged"));
+        assert!(shown[4].contains("PR #7 merged"));
         assert!(chat.pending_echoes.is_empty());
     }
 

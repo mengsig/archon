@@ -201,7 +201,7 @@ inbox_unread_after = "15m"     # an inbox item a running stage's agent leaves un
 
 [chat]
 show_progress = false          # no effect: `archon log` shows progress
-history = 30                   # feed entries replayed when `archon chat` opens
+history = 30                   # no effect: `archon chat` replays what the phone shows
 
 [update]
 check_on_launch = true         # `archon`, `archon tui` and `archon chat` look for a newer Archon or Aether and offer to update

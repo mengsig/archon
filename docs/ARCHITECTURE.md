@@ -3276,7 +3276,7 @@ tick_secs = 15
 
 [chat]
 show_progress = false          # no effect: `archon log` shows progress
-history = 30                   # conversation entries shown when chat opens
+history = 30                   # no effect: chat replays what the phone shows
 
 [worktrees]
 # root = "/srv/archon/worktrees"  # unset: <data>/worktrees
@@ -3776,8 +3776,8 @@ order, with the same markdown text.
   20 s until the conversation grows (a pump event or a post), then returns
   what follows the cursor; with nothing new it returns an empty page whose
   `to_seq` is the cursor.
-- On open, `archon chat` reads the newest page (200 events) and prints its last
-  `chat.history` entries. It then waits for what follows. A line it sent is
+- On open, `archon chat` reads the newest page (200 events), as the phone
+  does, and prints all its entries. It then waits for what follows. A line it sent is
   not printed again when it comes back.
 - Input lines are sent with `Say`. Slash commands: `/answer <n> <text>`, `/questions`, `/status`, `/queue [state …]`,
   `/item <id>`, `/merge <id> [--ignore-checks]` (§18.6), `/pause`,

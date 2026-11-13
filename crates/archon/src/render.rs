@@ -109,7 +109,7 @@ impl Renderer {
         let parts = Parts {
             label,
             tone,
-            text: text.unwrap_or(&entry.text).to_owned(),
+            text: without_bold_marks(text.unwrap_or(&entry.text)),
             notes: entry.links.clone(),
             reference: None,
         };
@@ -169,6 +169,33 @@ impl Renderer {
             local.format("%b %d %H:%M %z").to_string()
         }
     }
+}
+
+/// `text` with Markdown's `**` bold marks dropped, as a terminal shows them
+/// plain; code spans and fenced blocks keep theirs (`src/**/*.rs`).
+fn without_bold_marks(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_fence = false;
+    for line in text.split_inclusive('\n') {
+        let fence = line.trim_start().starts_with("```");
+        in_fence ^= fence;
+        if in_fence || fence {
+            out.push_str(line);
+            continue;
+        }
+        for (i, span) in line.split('`').enumerate() {
+            if i > 0 {
+                out.push('`');
+            }
+            match i % 2 {
+                0 => out.push_str(&span.replace("**", "")),
+                _ => out.push_str(span),
+            }
+        }
+    }
+    debug_assert!(out.len() <= text.len(), "only marks are dropped");
+    debug_assert_eq!(out.matches('`').count(), text.matches('`').count());
+    out
 }
 
 fn describe(entry: &FeedEntry) -> Parts {
@@ -504,7 +531,7 @@ mod tests {
         ];
         for (kind, label) in cases {
             let rendered = render_entry_plain(&said(kind, "**Outcome**: merged", &[]), 100);
-            assert_eq!(head(&rendered), format!("{label}  **Outcome**: merged"));
+            assert_eq!(head(&rendered), format!("{label}  Outcome: merged"));
         }
         let phone = format!("{WEB_RELAY_MARK}thanks");
         let rendered = render_entry_plain(&said(EntryKind::Operator, &phone, &[]), 100);
@@ -513,6 +540,23 @@ mod tests {
         let rendered = render_entry_plain(&said(EntryKind::Assistant, text, &[]), 100);
         let body: Vec<&str> = rendered.lines().map(|l| l[HH_MM_ZONE..].trim()).collect();
         assert_eq!(body, ["orchestrator  Looking.", "", "- one", "- two"]);
+    }
+
+    #[test]
+    fn bold_marks_show_plain_but_code_keeps_them() {
+        let text = "**Archon:** aetherd had stopped\n**Decision** (qi_7): see `src/**/*.rs`\n```\na**b\n```";
+        let rendered = render_entry_plain(&said(EntryKind::Post, text, &[]), 100);
+        let body: Vec<&str> = rendered.lines().map(|l| l[HH_MM_ZONE..].trim()).collect();
+        assert_eq!(
+            body,
+            [
+                "archon  Archon: aetherd had stopped",
+                "Decision (qi_7): see `src/**/*.rs`",
+                "```",
+                "a**b",
+                "```",
+            ]
+        );
     }
 
     #[test]

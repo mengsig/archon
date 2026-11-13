@@ -15,6 +15,30 @@ use crate::error::ArchonError;
 use crate::protocol::{GithubKind, GithubRef};
 use crate::pull_request::PullRequestRef;
 
+/// Minimum gh version: `gh pr view --json baseRefOid` was added in 2.63.0.
+pub const MIN_GH: (u32, u32, u32) = (2, 63, 0);
+
+/// Parse the version at the start of `gh --version`, including vendor builds.
+pub fn gh_version(printed: &str) -> Option<(u32, u32, u32)> {
+    let number = printed
+        .strip_prefix("gh version ")?
+        .split_whitespace()
+        .next()?;
+    let mut parts = number.split('.');
+    let version = (
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+    );
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(version)
+}
+
+/// Installation advice shared by doctor and daemon startup.
+pub const GH_INSTALL_HINT: &str = "Install a release tarball from https://github.com/cli/cli/releases into ~/.local/bin and put ~/.local/bin ahead of /usr/bin on PATH (or configure github.binary); no sudo needed";
+
 /// Aether's watcher skips comments carrying it, so replies never re-trigger.
 pub const REPLY_MARKER: &str = "<!-- aether:github-reply -->";
 
@@ -434,6 +458,21 @@ pub enum GithubWatch {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn gh_versions_and_minimum() {
+        use super::{MIN_GH, gh_version};
+        let ubuntu = "gh version 2.45.0 (2025-07-18 Ubuntu 2.45.0-1ubuntu0.3)";
+        let release = "gh version 2.103.3 (2026-10-26)";
+        assert_eq!(gh_version(ubuntu), Some((2, 45, 0)));
+        assert_eq!(gh_version(release), Some((2, 103, 3)));
+        assert!(gh_version(ubuntu).unwrap() < MIN_GH);
+        assert!(gh_version("gh version 2.62.9").unwrap() < MIN_GH);
+        assert_eq!(gh_version("gh version 2.63.0"), Some(MIN_GH));
+        assert!(gh_version(release).unwrap() > MIN_GH);
+        assert_eq!(gh_version("gh version unknown"), None);
+        assert_eq!(gh_version("other version 2.63.0"), None);
+    }
+
     use super::*;
 
     #[test]

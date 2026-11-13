@@ -86,8 +86,52 @@ fn gh_need(registry: &Registry) -> GhNeed {
 }
 
 pub(super) async fn check_gh(binary: &Path, registry: &Registry) -> Check {
-    let login = gh_logged_in(binary).await;
-    gh_verdict(binary, login, gh_need(registry))
+    match gh_readiness(binary).await {
+        Ok(detail) => check("gh", Level::Ok, detail),
+        Err(problem) => gh_verdict(problem, gh_need(registry)),
+    }
+}
+
+fn gh_verdict(problem: String, need: GhNeed) -> Check {
+    assert!(!problem.is_empty(), "a failed readiness check says why");
+    match need {
+        GhNeed::Needed(what) => check("gh", Level::Fail, format!("{problem}; {what}")),
+        GhNeed::NotNeeded => check(
+            "gh",
+            Level::Ok,
+            format!(
+                "{problem}; nothing needs gh: every repository ships locally and the GitHub watcher is off"
+            ),
+        ),
+        GhNeed::Unknown(why) => check(
+            "gh",
+            Level::Warn,
+            format!("{problem}; whether anything needs it is unknown: {why}"),
+        ),
+    }
+}
+
+async fn gh_readiness(binary: &Path) -> Result<String, String> {
+    use archon_core::github::{GH_INSTALL_HINT, MIN_GH, gh_version};
+    let version = match run_bounded(binary, &["--version"], None, COMMAND_TIMEOUT).await {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).trim().to_owned(),
+        Ok(out) => {
+            return Err(format!(
+                "`{} --version` exited with {}; {GH_INSTALL_HINT}",
+                binary.display(),
+                out.status
+            ));
+        }
+        Err(error) => return Err(format!("{error}; {GH_INSTALL_HINT}")),
+    };
+    if !gh_version(&version).is_some_and(|v| v >= MIN_GH) {
+        let (major, minor, patch) = MIN_GH;
+        return Err(format!(
+            "{version:?}: Archon needs gh {major}.{minor}.{patch} or later; {GH_INSTALL_HINT}"
+        ));
+    }
+    gh_logged_in(binary).await?;
+    Ok(format!("{version}; logged in"))
 }
 
 /// `gh auth status`. Its output is never shown: it can carry a token.
@@ -101,32 +145,6 @@ async fn gh_logged_in(binary: &Path) -> Result<(), String> {
         binary.display(),
         output.status
     ))
-}
-
-fn gh_verdict(binary: &Path, login: Result<(), String>, need: GhNeed) -> Check {
-    const NAME: &str = "gh";
-    let Err(problem) = login else {
-        return check(
-            NAME,
-            Level::Ok,
-            format!("{} is logged in", binary.display()),
-        );
-    };
-    assert!(!problem.is_empty(), "a failed login check says why");
-    match need {
-        GhNeed::Needed(what) => check(NAME, Level::Fail, format!("{problem}; {what}")),
-        GhNeed::NotNeeded => check(
-            NAME,
-            Level::Ok,
-            "not logged in, and nothing needs it: every repository ships locally and the GitHub \
-             watcher is off (`gh auth login` if you later ship in pr mode)",
-        ),
-        GhNeed::Unknown(why) => check(
-            NAME,
-            Level::Warn,
-            format!("{problem}; whether anything needs it is unknown: {why}"),
-        ),
-    }
 }
 
 pub(super) async fn check_repos(registry: &Registry) -> Check {
@@ -222,9 +240,8 @@ pub(super) async fn run_bounded_with(
 
 #[cfg(test)]
 pub(super) mod tests {
-    use std::path::PathBuf;
-
     use archon_core::id::RepoId;
+    use archon_core::repo::ShipMode;
     use archon_core::testing::write_script;
 
     use super::*;
@@ -257,64 +274,48 @@ pub(super) mod tests {
         }
     }
 
-    /// A fake `gh` that prints a token, as `gh auth status --show-token` would.
-    fn fake_gh(dir: &Path, exit: u8) -> PathBuf {
-        let path = dir.join(format!("gh-{exit}"));
-        let script = format!("#!/bin/sh\necho 'Token: gho_SECRET' >&2\nexit {exit}\n");
-        write_script(&path, &script);
-        path
-    }
-
-    #[test]
-    fn pr_repositories_and_the_watcher_need_gh() {
-        let tmp = Path::new("/tmp");
-        let local = || repo("local", tmp, ShipMode::Local);
-        let pr = repo("web", tmp, ShipMode::Pr);
-        let need = gh_need(&registry(vec![local(), pr], false));
-        assert_eq!(
-            need,
-            GhNeed::Needed("repository web ships in pr mode".into())
-        );
-        let need = gh_need(&registry(vec![local()], true));
-        assert_eq!(need, GhNeed::Needed("the GitHub watcher is on".into()));
-        assert_eq!(gh_need(&registry(vec![local()], false)), GhNeed::NotNeeded);
-        let unknown = Registry::unknown("archond is not running".into());
-        assert_eq!(
-            gh_need(&unknown),
-            GhNeed::Unknown("archond is not running".into())
-        );
-    }
-
     #[tokio::test]
-    async fn gh_logged_out_fails_only_when_needed_and_never_shows_its_output() {
+    async fn gh_check_requires_supported_version_and_login_without_exposing_tokens() {
         let dir = tempfile::tempdir().unwrap();
-        let (good, bad) = (fake_gh(dir.path(), 0), fake_gh(dir.path(), 1));
         let needed = registry(vec![repo("web", dir.path(), ShipMode::Pr)], false);
-        let unneeded = registry(vec![repo("lib", dir.path(), ShipMode::Local)], false);
+        let local = registry(vec![repo("lib", dir.path(), ShipMode::Local)], false);
+        let good = dir.path().join("good");
+        write_script(
+            &good,
+            "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'gh version 2.63.0 (2024-05-29)'; else exit 0; fi\n",
+        );
         assert_eq!(check_gh(&good, &needed).await.level, Level::Ok);
-        let fail = check_gh(&bad, &needed).await;
+        let old = dir.path().join("old");
+        write_script(&old, "#!/bin/sh\necho 'gh version 2.45.0 (Ubuntu)'\n");
+        let fail = check_gh(&old, &needed).await;
         assert_eq!(fail.level, Level::Fail);
-        assert!(
-            fail.detail.contains("web ships in pr mode"),
-            "{}",
-            fail.detail
-        );
-        let warn = check_gh(&bad, &unneeded).await;
+        assert!(fail.detail.contains("~/.local/bin"));
+        assert_eq!(check_gh(&old, &local).await.level, Level::Ok);
         assert_eq!(
-            warn.level,
-            Level::Ok,
-            "no warning when all repos ship local"
+            check_gh(&dir.path().join("missing"), &local).await.level,
+            Level::Ok
         );
-        assert!(warn.detail.contains("ship"), "{}", warn.detail);
-        for c in [&fail, &warn] {
-            assert!(!c.detail.contains("gho_"), "{}", c.detail);
-        }
-        let missing = check_gh(&dir.path().join("no-gh"), &needed).await;
-        assert_eq!(missing.level, Level::Fail);
-        assert!(
-            missing.detail.contains("could not run"),
-            "{}",
-            missing.detail
+        assert_eq!(
+            check_gh(&old, &Registry::unknown("offline".into()))
+                .await
+                .level,
+            Level::Warn
+        );
+        assert_eq!(
+            check_gh(&old, &registry(vec![], true)).await.level,
+            Level::Fail
+        );
+        let logged_out = dir.path().join("logged-out");
+        write_script(
+            &logged_out,
+            "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'gh version 2.63.0'; else echo gho_SECRET >&2; exit 1; fi\n",
+        );
+        let fail = check_gh(&logged_out, &needed).await;
+        assert_eq!(fail.level, Level::Fail);
+        assert!(!fail.detail.contains("gho_SECRET"));
+        assert_eq!(
+            check_gh(&dir.path().join("missing"), &needed).await.level,
+            Level::Fail
         );
     }
 

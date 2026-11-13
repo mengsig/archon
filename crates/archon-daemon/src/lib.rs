@@ -116,6 +116,7 @@ async fn run_until_stopped(options: DaemonOptions) -> Result<(), ArchonError> {
     // touches live runs. The lock is released only once the socket is gone.
     let (listener, lock) = server::bind(&ctx)?;
     let mut signals = Signals::install()?;
+    warn_gh_at_start(&ctx, &ctx.config.github.binary).await;
     // Begun before the server starts, so no change slips in ahead of recovery.
     ctx.recovery.begin();
     let server: standby::Server = tokio::spawn(server::serve(ctx.clone(), listener));
@@ -165,6 +166,57 @@ fn record_fatal_stop(data_dir: &Path, started: archon_core::Timestamp, error: &A
     if let Err(write_error) = archon_core::crash::write_pending(data_dir, &record) {
         tracing::error!(%write_error, "the crash marker was not written");
     }
+}
+
+/// Check the configured binary once at startup; a bad installation must not stop archond.
+pub async fn warn_gh_at_start(ctx: &DaemonContext, binary: &Path) {
+    let Some(problem) = gh_start_problem(binary).await else {
+        return;
+    };
+    let text = format!(
+        "GitHub CLI warning: {problem}. {}",
+        archon_core::github::GH_INSTALL_HINT
+    );
+    tracing::warn!("{text}");
+    if let Err(error) = feed::notify(ctx, NotificationKind::Blocker, text, None, None).await {
+        tracing::warn!(%error, "could not post GitHub CLI startup warning");
+    }
+}
+
+async fn gh_start_problem(binary: &Path) -> Option<String> {
+    use archon_core::github::{MIN_GH, gh_version};
+    let mut command = tokio::process::Command::new(binary);
+    command
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true);
+    let output = match tokio::time::timeout(Duration::from_secs(5), command.output()).await {
+        Ok(Ok(output)) if output.status.success() => output,
+        Ok(Ok(output)) => {
+            return Some(format!(
+                "`{} --version` exited with {}",
+                binary.display(),
+                output.status
+            ));
+        }
+        Ok(Err(error)) => {
+            return Some(format!(
+                "`{} --version` could not run: {error}",
+                binary.display()
+            ));
+        }
+        Err(_) => return Some(format!("`{} --version` timed out", binary.display())),
+    };
+    let printed = String::from_utf8_lossy(&output.stdout);
+    if gh_version(printed.trim()).is_some_and(|version| version >= MIN_GH) {
+        return None;
+    }
+    let (major, minor, patch) = MIN_GH;
+    Some(format!(
+        "{} reports {:?}; Archon needs gh {major}.{minor}.{patch} or later",
+        binary.display(),
+        printed.trim()
+    ))
 }
 
 /// Tell the operator, once, of the crash an earlier run left: in the log and

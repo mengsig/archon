@@ -261,6 +261,8 @@ From the audit in [docs/security/vnext-audit.md](docs/security/vnext-audit.md)
   settle and ship; retry the affected stage with bounded backoff and report a
   blocker. Contributed by @AmmarBattah (#402).
 
+- Disable config-defined git hooks under the daemon's sealed git, contributed by @AmmarBattah.
+
 ## 1.4.12
 
 Released 2026-11-04.

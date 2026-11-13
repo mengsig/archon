@@ -21,32 +21,10 @@ pub(crate) const LOCAL_TIMEOUT: Duration = Duration::from_secs(120);
 pub(crate) const NETWORK_TIMEOUT: Duration = Duration::from_secs(180);
 /// How often a running git is checked on.
 const POLL: Duration = Duration::from_millis(10);
+const PROBE_POLL: Duration = Duration::from_millis(1);
 /// Bytes of stderr kept for an error.
 const MAX_STDERR_BYTES: usize = 8192;
 
-/// Every hook event a daemon git or the receive-pack it pushes to fires.
-/// Recent git also runs hooks named in config, which `core.hooksPath` misses.
-const HOOK_EVENTS: [&str; 19] = [
-    "pre-commit",
-    "pre-merge-commit",
-    "prepare-commit-msg",
-    "commit-msg",
-    "post-commit",
-    "pre-rebase",
-    "post-checkout",
-    "post-merge",
-    "pre-push",
-    "reference-transaction",
-    "post-index-change",
-    "pre-auto-gc",
-    "post-rewrite",
-    "pre-receive",
-    "update",
-    "proc-receive",
-    "post-receive",
-    "post-update",
-    "push-to-checkout",
-];
 /// Settings naming a program, forced off for every git the daemon runs.
 const NO_PROGRAM: [&str; 6] = [
     "core.hooksPath=/dev/null",
@@ -81,17 +59,17 @@ const FORCED: [&str; 21] = [
     "push.recurseSubmodules=no",
     "advice.detachedHead=false",
 ];
-/// The settings that keep git from running any program a repository's
-/// config or hooks directory names: no hook, fsmonitor or signature check.
+/// The fixed settings that keep git from running any program a repository's
+/// config or hooks directory names: no hooks directory, fsmonitor or
+/// signature check. Hooks a config defines by name need
+/// [`config_hook_settings`] besides.
 pub(crate) fn no_program_settings() -> Vec<(String, String)> {
-    let hooks = HOOK_EVENTS.map(|event| format!("hook.{event}.enabled=false"));
-    let settings = NO_PROGRAM.iter().map(|s| (*s).to_owned()).chain(hooks);
-    let split = |setting: String| {
+    let split = |setting: &str| {
         let (key, value) = setting.split_once('=').expect("key=value");
         (key.to_owned(), value.to_owned())
     };
-    let pairs: Vec<(String, String)> = settings.map(split).collect();
-    assert_eq!(pairs.len(), NO_PROGRAM.len() + HOOK_EVENTS.len());
+    let pairs: Vec<(String, String)> = NO_PROGRAM.iter().map(|s| split(s)).collect();
+    assert_eq!(pairs.len(), NO_PROGRAM.len());
     assert!(pairs.iter().all(|(key, _)| !key.is_empty()));
     pairs
 }
@@ -104,6 +82,145 @@ pub(crate) fn no_programs() -> Vec<String> {
         .collect();
     assert!(args.iter().any(|arg| arg == "core.hooksPath=/dev/null"));
     args
+}
+
+/// Git 2.54 runs the hooks a config defines (`hook.<name>.command` and
+/// `hook.<name>.event`) besides the hooks directory. They are keyed by a name
+/// the config picks, and git has no switch that turns them all off or that
+/// names an event to silence: only `hook.<name>.enabled=false` per name, which
+/// a later `-c` outranks. So the names are read first, by a git that cannot
+/// run anything yet, and the caller disables each; a failed read is an error,
+/// never a git left running them.
+///
+/// `probe` is the git that will run, with its options and environment but no
+/// subcommand; it only lists config keys.
+fn hook_names(mut probe: Command, place: &Path) -> Result<Vec<String>, ArchonError> {
+    let what = "git config --get-regexp ^hook\\.";
+    probe
+        .args(["config", "-z", "--name-only", "--get-regexp", "^hook\\."])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0);
+    let mut child = probe
+        .spawn()
+        .map_err(|e| ArchonError::io(format!("listing hooks in {}", place.display()), e))?;
+    let stdout = reader(child.stdout.take().expect("piped"), usize::MAX);
+    let stderr = reader(child.stderr.take().expect("piped"), MAX_STDERR_BYTES);
+    let status = wait(&mut child, LOCAL_TIMEOUT, PROBE_POLL);
+    let (stdout, stderr) = (joined(stdout, what)?, joined(stderr, what)?);
+    let status = status?.ok_or_else(|| {
+        ArchonError::Unavailable(format!("listing hooks in {} timed out", place.display()))
+    })?;
+    // Exit 1: no key matches.
+    match status.code() {
+        Some(0) => {}
+        Some(1) => return Ok(Vec::new()),
+        _ => {
+            return Err(ArchonError::io(
+                format!("listing the hooks config defines in {}", place.display()),
+                std::io::Error::other(format!(
+                    "{status}: {}",
+                    String::from_utf8_lossy(&stderr).trim()
+                )),
+            ));
+        }
+    }
+    let keys = String::from_utf8(stdout).map_err(|_| {
+        ArchonError::Invalid(format!("hook names in {} are not UTF-8", place.display()))
+    })?;
+    let mut names: Vec<String> = keys
+        .split('\0')
+        .filter_map(|key| key.strip_prefix("hook.")?.rsplit_once('.'))
+        .map(|(name, _)| name.to_owned())
+        .collect();
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
+/// The `-c` and `-C` options at the start of `args`, before the subcommand.
+fn leading_options(args: &[String]) -> &[String] {
+    let mut end = 0;
+    while args.len() >= end + 2 && (args[end] == "-c" || args[end] == "-C") {
+        end += 2;
+    }
+    &args[..end]
+}
+
+/// A git with `command`'s options, environment and directory, to list config
+/// with: it reads what `command` will, `globals` being options still to come.
+fn probe_of(command: &Command, globals: &[String]) -> Command {
+    let mut probe = Command::new("git");
+    probe.args(command.get_args()).args(globals);
+    for (key, value) in command.get_envs() {
+        match value {
+            Some(value) => probe.env(key, value),
+            None => probe.env_remove(key),
+        };
+    }
+    if let Some(dir) = command.get_current_dir() {
+        probe.current_dir(dir);
+    }
+    probe
+}
+
+/// `-c` options disabling every hook the config that `command` (a `git` with
+/// options and environment but no subcommand yet) will read defines.
+pub(crate) fn config_hook_options_of(
+    command: &Command,
+    dir: &Path,
+) -> Result<Vec<String>, ArchonError> {
+    as_options(disable_each(hook_names(probe_of(command, &[]), dir)?))
+}
+
+/// `hook.<name>.enabled=false` for each of `names`.
+fn disable_each(names: Vec<String>) -> Vec<(String, String)> {
+    names
+        .into_iter()
+        .map(|name| (format!("hook.{name}.enabled"), "false".to_owned()))
+        .collect()
+}
+
+/// The settings that disable every hook the config git reads in `dir` defines,
+/// for a git that [`Config`] describes: add them to [`no_program_settings`].
+pub(crate) fn config_hook_settings(
+    dir: &Path,
+    config: Config,
+) -> Result<Vec<(String, String)>, ArchonError> {
+    assert!(dir.is_absolute(), "daemon git runs at absolute paths");
+    let mut probe = Command::new("git");
+    clean_env(&mut probe, config);
+    probe.arg("-C").arg(dir);
+    Ok(disable_each(hook_names(probe, dir)?))
+}
+
+/// Hook-disabling options for an explicitly resolved receive-pack git directory.
+pub(crate) fn config_hook_options(dir: &Path, config: Config) -> Result<Vec<String>, ArchonError> {
+    assert!(dir.is_absolute(), "git directories are absolute");
+    let mut probe = Command::new("git");
+    clean_env(&mut probe, config);
+    probe.arg("--git-dir").arg(dir).current_dir(dir);
+    as_options(disable_each(hook_names(probe, dir)?))
+}
+
+/// `word` as one shell word.
+pub(crate) fn shell_quote(word: &str) -> String {
+    format!("'{}'", word.replace('\'', "'\\''"))
+}
+
+/// A name with `=` cannot be given that way, and is refused.
+fn as_options(settings: Vec<(String, String)>) -> Result<Vec<String>, ArchonError> {
+    let mut args = Vec::new();
+    for (key, value) in settings {
+        if key.contains(['=', '\n']) {
+            return Err(ArchonError::Invalid(format!(
+                "a hook named {key:?} cannot be disabled on a command line; refusing to run git"
+            )));
+        }
+        args.extend(["-c".to_owned(), format!("{key}={value}")]);
+    }
+    Ok(args)
 }
 
 /// The transports a fetch or push may also use.
@@ -121,6 +238,24 @@ pub(crate) enum Config {
     /// The operator's system and global files too (credential helpers, `insteadOf`, ssh,
     /// filters); only on a git directory the daemon writes, or [`DaemonGit::configured_in`].
     Operator,
+}
+
+/// `command` without the caller's `GIT_*` environment and, for a sealed
+/// `config`, without any config file but the repository's.
+fn clean_env(command: &mut Command, config: Config) {
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(key);
+        }
+    }
+    // Git's identity of last resort: the daemon's is never the repository's.
+    command.env_remove("EMAIL");
+    if config == Config::Sealed {
+        command
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .args(["-c", "credential.helper="]);
+    }
 }
 
 /// One daemon git command, built then run once.
@@ -177,19 +312,7 @@ impl DaemonGit {
 
     fn new(config: Config, place: &Path) -> Self {
         let mut command = Command::new("git");
-        for (key, _) in std::env::vars_os() {
-            if key.to_string_lossy().starts_with("GIT_") {
-                command.env_remove(key);
-            }
-        }
-        // Git's identity of last resort: the daemon's is never the repository's.
-        command.env_remove("EMAIL");
-        if config == Config::Sealed {
-            command
-                .env("GIT_CONFIG_NOSYSTEM", "1")
-                .env("GIT_CONFIG_GLOBAL", "/dev/null")
-                .args(["-c", "credential.helper="]);
-        }
+        clean_env(&mut command, config);
         command
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("GIT_ASKPASS", "")
@@ -231,6 +354,11 @@ impl DaemonGit {
         self
     }
 
+    /// The directory it runs in or on.
+    pub(crate) fn place(&self) -> &Path {
+        &self.place
+    }
+
     /// Allow it `limit` instead of the default for its kind.
     pub(crate) fn limit(mut self, limit: Duration) -> Self {
         assert!(!limit.is_zero(), "a time limit is positive");
@@ -263,10 +391,7 @@ impl DaemonGit {
     }
 
     pub(crate) fn args<'a>(mut self, args: impl IntoIterator<Item = &'a str>) -> Self {
-        for arg in args {
-            self.shown.push(arg.to_owned());
-            self.command.arg(arg);
-        }
+        self.shown.extend(args.into_iter().map(str::to_owned));
         self
     }
 
@@ -283,6 +408,15 @@ impl DaemonGit {
     pub(crate) fn output(mut self) -> Result<Ran, ArchonError> {
         assert!(!self.shown.is_empty(), "a git command needs arguments");
         let what = format!("git {}", self.shown.join(" "));
+        // Before any git that reads the repository's config runs a hook. The
+        // options in front of the subcommand can switch conditional includes on.
+        let globals = leading_options(&self.shown);
+        let probe = probe_of(&self.command, globals);
+        let hooks = as_options(disable_each(hook_names(probe, &self.place)?))?;
+        self.command
+            .args(globals)
+            .args(hooks)
+            .args(&self.shown[globals.len()..]);
         self.command
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -293,7 +427,7 @@ impl DaemonGit {
         })?;
         let stdout = reader(child.stdout.take().expect("piped"), usize::MAX);
         let stderr = reader(child.stderr.take().expect("piped"), MAX_STDERR_BYTES);
-        let status = wait(&mut child, self.limit);
+        let status = wait(&mut child, self.limit, POLL);
         let (stdout, stderr) = (joined(stdout, &what)?, joined(stderr, &what)?);
         let Some(status) = status? else {
             return Err(ArchonError::Unavailable(format!(
@@ -329,6 +463,12 @@ impl Ran {
         Ok(text.trim().to_owned())
     }
 
+    /// Stdout as UTF-8, with its NULs and whitespace kept.
+    pub(crate) fn stdout_text_untrimmed(&self) -> Result<String, ArchonError> {
+        String::from_utf8(self.stdout.clone())
+            .map_err(|_| ArchonError::Invalid(format!("{} printed non-UTF-8", self.what)))
+    }
+
     pub(crate) fn stderr_text(&self) -> String {
         String::from_utf8_lossy(&self.stderr).trim().to_owned()
     }
@@ -344,8 +484,13 @@ impl Ran {
 }
 
 /// Wait for `child` up to `limit`; `None` once it was killed for overrunning.
-fn wait(child: &mut Child, limit: Duration) -> Result<Option<ExitStatus>, ArchonError> {
+fn wait(
+    child: &mut Child,
+    limit: Duration,
+    poll: Duration,
+) -> Result<Option<ExitStatus>, ArchonError> {
     assert!(!limit.is_zero(), "a time limit is positive");
+    assert!(!poll.is_zero(), "a polling interval is positive");
     let started = Instant::now();
     loop {
         let waited = child.try_wait();
@@ -362,7 +507,7 @@ fn wait(child: &mut Child, limit: Duration) -> Result<Option<ExitStatus>, Archon
                 .map_err(|e| ArchonError::io("reaping a git that overran", e))?;
             return Ok(None);
         }
-        std::thread::sleep(POLL);
+        std::thread::sleep(poll);
     }
 }
 
@@ -467,6 +612,132 @@ mod tests {
         assert!(!fetch.output().unwrap().status.success(), "ext is refused");
         assert!(!marker.exists(), "nothing the config names ran");
 
+        assert!(
+            !config_hooks_exist() || plain_git_runs_planted(&path, &marker, &commit),
+            "the planted hook is real: plain git runs it"
+        );
+    }
+
+    /// Whether the installed git runs hooks a config defines (2.54), found by
+    /// making it run one, not by its version.
+    fn config_hooks_exist() -> bool {
+        let (_dir, path) = repo();
+        let marker = path.join("probe-ran");
+        let planted = planted(&path, &marker);
+        let commit = signed_commit(&path);
+        plain_git(&path, &planted, "probe", &commit);
+        let supported = marker.exists();
+        if !supported {
+            eprintln!("skipped: this git has no config-defined hooks, so none can be planted");
+        }
+        supported
+    }
+
+    /// Plain git, with no daemon seal, firing `reference-transaction` in `path`
+    /// under a hook that `planted` defines by config.
+    fn plain_git(path: &Path, planted: &str, name: &str, commit: &str) {
+        let command = format!("hook.{name}.command={planted}");
+        let event = format!("hook.{name}.event=reference-transaction");
+        // Whether the update itself succeeds is beside the point.
+        Command::new("git")
+            .arg("-C")
+            .arg(path)
+            .args([
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                &command,
+                "-c",
+                &event,
+            ])
+            .args(["update-ref", "refs/heads/probe", commit])
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+    }
+
+    fn plain_git_runs_planted(path: &Path, marker: &Path, commit: &str) -> bool {
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(path)
+            .args([
+                "-c",
+                "core.hooksPath=/dev/null",
+                "update-ref",
+                "refs/heads/b",
+                commit,
+            ])
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        marker.exists()
+    }
+
+    /// Hooks are named by their config, whatever the name looks like and
+    /// wherever the config is read from.
+    #[test]
+    fn every_hook_a_config_names_is_disabled_whatever_its_name() {
+        let (_dir, path) = repo();
+        let marker = path.join("ran");
+        let planted = planted(&path, &marker);
+        let included = path.join("included.config");
+        let body = format!(
+            "[hook \"from.include\"]\n\tcommand = {planted}\n\tevent = reference-transaction\n"
+        );
+        std::fs::write(&included, body).unwrap();
+        let sets = [
+            ("hook.dotted.name.here.command", planted.as_str()),
+            ("hook.dotted.name.here.event", "reference-transaction"),
+            ("hook.Mixed Case.command", planted.as_str()),
+            ("hook.Mixed Case.event", "reference-transaction"),
+            ("include.path", included.to_str().unwrap()),
+        ];
+        for (key, value) in sets {
+            let set = DaemonGit::sealed_in(&path).args(["config", key, value]);
+            set.text().unwrap();
+        }
+        let commit = signed_commit(&path);
+        let update = [
+            "-c",
+            "hook.dotted.name.here.enabled=true",
+            "update-ref",
+            "refs/heads/main",
+            commit.as_str(),
+        ];
+        DaemonGit::sealed_in(&path).args(update).text().unwrap();
+        assert!(!marker.exists(), "no named hook ran");
+        let names = config_hook_settings(&path, Config::Sealed).unwrap();
+        let keys: Vec<&str> = names.iter().map(|(key, _)| key.as_str()).collect();
+        assert_eq!(
+            keys,
+            [
+                "hook.Mixed Case.enabled",
+                "hook.dotted.name.here.enabled",
+                "hook.from.include.enabled",
+            ]
+        );
+    }
+
+    /// A hook named like its event: newer git rejects the config outright,
+    /// older git runs it as any other hook. Whichever this git does, the
+    /// sealed git does the same minus the program.
+    #[test]
+    fn a_hook_named_like_its_event_runs_nothing_under_the_seal() {
+        let (_dir, path) = repo();
+        let marker = path.join("ran");
+        let planted = planted(&path, &marker);
+        let commit = signed_commit(&path);
+        let sets = [
+            ("hook.reference-transaction.command", planted.as_str()),
+            ("hook.reference-transaction.event", "reference-transaction"),
+        ];
+        for (key, value) in sets {
+            let set = DaemonGit::sealed_in(&path).args(["config", key, value]);
+            set.text().unwrap();
+        }
+        // Found by asking plain git, not by its version.
         let plain = Command::new("git")
             .arg("-C")
             .arg(&path)
@@ -474,17 +745,86 @@ mod tests {
                 "-c",
                 "core.hooksPath=/dev/null",
                 "update-ref",
-                "refs/heads/b",
+                "refs/heads/plain",
                 &commit,
             ])
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        // The probe may have run the hook itself; only the sealed run counts.
+        let _ = std::fs::remove_file(&marker);
+        let update = ["update-ref", "refs/heads/main", commit.as_str()];
+        let sealed = DaemonGit::sealed_in(&path).args(update).output();
+        if plain.success() {
+            assert!(sealed.unwrap().status.success(), "git accepts the config");
+        } else {
+            let sealed = sealed.map(|ran| ran.status.success());
+            assert!(
+                matches!(sealed, Ok(false) | Err(_)),
+                "refused, so fails closed"
+            );
+            eprintln!("this git rejects a hook named like its event");
+        }
+        assert!(!marker.exists(), "the hook named like its event ran");
+    }
+
+    /// The probe reads what the command will: its environment's config and the
+    /// options in front of its subcommand, conditional includes included.
+    #[test]
+    fn the_probe_sees_the_config_its_command_is_given() {
+        let (_dir, path) = repo();
+        let mut command = Command::new("git");
+        command
+            .arg("-C")
+            .arg(&path)
+            .env("GIT_CONFIG_COUNT", "1")
+            .env("GIT_CONFIG_KEY_0", "hook.from-env.command")
+            .env("GIT_CONFIG_VALUE_0", "true");
+        let options = config_hook_options_of(&command, &path).unwrap();
+        assert_eq!(options, ["-c", "hook.from-env.enabled=false"]);
+
+        let included = path.join("cond.config");
+        std::fs::write(&included, "[hook \"cond\"]\n\tcommand = true\n").unwrap();
+        let key = "includeif.hasconfig:remote.*.url:*://example.invalid/**.path";
+        let set = DaemonGit::sealed_in(&path).args(["config", key, included.to_str().unwrap()]);
+        set.text().unwrap();
+        let globals = ["-c", "remote.r.url=https://example.invalid/x"].map(str::to_owned);
+        let mut git = Command::new("git");
+        git.arg("-C").arg(&path);
+        let seen = hook_names(probe_of(&git, &globals), &path).unwrap();
+        assert_eq!(seen, ["cond"]);
+        assert!(hook_names(probe_of(&git, &[]), &path).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_hook_name_a_command_line_cannot_carry_is_refused() {
+        let (_dir, path) = repo();
+        let set = DaemonGit::sealed_in(&path).args(["config", "hook.a=b.event", "update"]);
+        set.text().unwrap();
+        let refused = DaemonGit::sealed_in(&path).args(["status"]).output();
+        assert!(
+            refused.is_err(),
+            "git is not run with a hook it cannot disable"
+        );
+        // A missing directory cannot be probed and is refused.
+        let gone = DaemonGit::sealed_in(&path.join("missing")).args(["status"]);
+        assert!(gone.output().is_err());
+    }
+
+    #[test]
+    fn a_failed_config_listing_refuses_even_a_command_that_ignores_config() {
+        let (_dir, path) = repo();
+        std::fs::write(path.join(".git/config"), "[broken\n").unwrap();
+        let plain = Command::new("git")
+            .arg("-C")
+            .arg(&path)
+            .arg("--version")
             .status()
             .unwrap();
         assert!(plain.success());
-        assert!(
-            marker.exists(),
-            "the planted hook is real: plain git runs it"
-        );
+        let result = DaemonGit::sealed_in(&path).args(["--version"]).output();
+        assert!(result.unwrap_err().to_string().contains("listing"));
     }
 
     #[test]

@@ -20,7 +20,7 @@ use archon_core::repo::{GH_HOST, Repo};
 
 use super::dependencies::{is_plain_branch, is_plain_url};
 use crate::gh_account::{self, Token};
-use crate::worktree::daemon_git::no_program_settings;
+use crate::worktree::daemon_git::{Config, config_hook_settings, no_program_settings};
 use crate::worktree::stack::is_commit_id;
 
 pub(crate) mod checks;
@@ -337,7 +337,7 @@ async fn spawn(
         "gh {}",
         args.iter().take(2).copied().collect::<Vec<_>>().join(" ")
     );
-    let mut command = command(binary, repo, args, auth);
+    let mut command = command(binary, repo, args, auth)?;
     command.stdin(if input.is_some() {
         Stdio::piped()
     } else {
@@ -368,14 +368,21 @@ async fn spawn(
     })
 }
 
-fn command(binary: &Path, repo: &Path, args: &[&str], auth: Auth<'_>) -> Command {
+fn command(
+    binary: &Path,
+    repo: &Path,
+    args: &[&str],
+    auth: Auth<'_>,
+) -> Result<Command, ArchonError> {
     let mut command = Command::new(binary);
     for (key, _) in std::env::vars_os() {
         if key.to_string_lossy().starts_with("GIT_") {
             command.env_remove(key);
         }
     }
-    let settings = no_program_settings();
+    // The git `gh` runs reads the operator's config too.
+    let mut settings = no_program_settings();
+    settings.extend(config_hook_settings(repo, Config::Operator)?);
     for (n, (key, value)) in settings.iter().enumerate() {
         command
             .env(format!("GIT_CONFIG_KEY_{n}"), key)
@@ -401,7 +408,7 @@ fn command(binary: &Path, repo: &Path, args: &[&str], auth: Auth<'_>) -> Command
     if let Auth::As(token) = auth {
         command.envs(token.gh_env());
     }
-    command
+    Ok(command)
 }
 
 /// End `gh` and whatever it started, after it overran.
@@ -876,6 +883,45 @@ mod tests {
         let body = format!("#!/bin/sh\ncat <<'EOF'\n{stdout}\nEOF\n");
         archon_core::testing::write_script(&script, &body);
         script
+    }
+
+    #[tokio::test]
+    async fn gh_disables_named_hooks_and_refuses_a_failed_probe() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let init = std::process::Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(&root)
+            .status()
+            .unwrap();
+        assert!(init.success());
+        let config = root.join(".git/config");
+        let original = std::fs::read_to_string(&config).unwrap();
+        std::fs::write(
+            &config,
+            format!("{original}\n[hook \"arbitrary.name\"]\ncommand = true\n"),
+        )
+        .unwrap();
+        let binary = root.join("gh");
+        archon_core::testing::write_script(
+            &binary,
+            "#!/bin/sh\ngit config --get hook.arbitrary.name.enabled\n",
+        );
+        let result = spawn(&binary, &root, &["test"], None, Auth::Ambient)
+            .await
+            .unwrap();
+        assert!(result.ok);
+        assert_eq!(result.stdout.trim(), "false");
+
+        let marker = root.join("ran");
+        archon_core::testing::write_script(
+            &binary,
+            &format!("#!/bin/sh\ntouch '{}'\n", marker.display()),
+        );
+        std::fs::write(&config, "[broken\n").unwrap();
+        let result = spawn(&binary, &root, &["test"], None, Auth::Ambient).await;
+        assert!(result.is_err());
+        assert!(!marker.exists(), "gh must not start after a failed probe");
     }
 
     #[tokio::test]

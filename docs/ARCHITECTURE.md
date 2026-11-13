@@ -4100,7 +4100,7 @@ a tag or another ref counts as a branch not the role's. Roles fork from
 Every git the daemon runs has
 `core.fsmonitor=false`, `core.hooksPath=/dev/null`, no signing
 (`commit.gpgSign=false`, `tag.gpgSign=false`, `gpg.program=/bin/false`) and
-every `hook.<event>.enabled=false` (§13.4): `worktree add`, `switch`,
+`hook.<name>.enabled=false` for every hook the config defines (§13.4): `worktree add`, `switch`,
 `update-ref`, the `--quit`s and the daemon's commits and merges run no
 repository hook, which a role could have committed where `core.hooksPath`
 looks. A team's merges and status still read the repository's config, so
@@ -4482,11 +4482,29 @@ often its local `origin`; git runs programs those name. Every git command
   `GIT_TERMINAL_PROMPT=0`, an empty askpass, `GIT_ATTR_NOSYSTEM`,
   `GIT_NO_REPLACE_OBJECTS` and `GIT_NO_LAZY_FETCH` are set.
 - `-c` settings outrank every config file: `core.hooksPath=/dev/null`,
-  `hook.<event>.enabled=false` for every event (recent git also runs hooks
-  named in config), `core.fsmonitor=false`, `core.attributesFile=/dev/null`,
+  `core.fsmonitor=false`, `core.attributesFile=/dev/null`,
   no signing or signature check (`gpg.program=/bin/false`, so no program a
   repository configured signs for the daemon), no auto gc, no submodule recursion, and
   every transport but `file` refused.
+- Git 2.54 also runs hooks a config names (`hook.<name>.command` and
+  `.event`), with no switch for them all. Before each command, a git with the
+  command's own options and environment, which cannot yet run anything, lists
+  the `hook.<name>.*` names the config defines, includes followed, and the
+  command gets `hook.<name>.enabled=false` for each; a failed listing, or a
+  name a `-c` option cannot carry (`=`), refuses the command. The worktree,
+  `gh` and local receive-pack gits do the same (the receiver is where
+  `pushInsteadOf` and `insteadOf` send the push; its words are shell-quoted).
+  Local receiver paths that cannot be identified unambiguously are refused;
+  Git's `.git` suffix is supported for missing or empty unsuffixed paths.
+  Known limit: git offers no way to name every hook at once, so a hook
+  written into the config after the listing and before the command reads it
+  is not disabled; closing that needs the config frozen or the agent stopped.
+  The same limit covers a receiver's `includeIf.hasconfig:remote.*.url`
+  that matches only the `-c` URL a pinned push gives receive-pack: the
+  listing reads the receiver's config without the sender's `-c` settings.
+  Both limits, including the same probe-to-run race for `gh`, are addressed
+  by the queued design item “security design: sealed git that no repository
+  or included config can make run a hook” (qi_01M724MBB6RMGAK7GTGNYWA7KK).
 - A command is killed with all it started after 120 s, a fetch or push
   after 180 s, and fails as unavailable.
 - `Sealed` git, on a repository or worktree an agent may write, reads no

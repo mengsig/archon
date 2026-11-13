@@ -109,7 +109,7 @@ impl Renderer {
         let parts = Parts {
             label,
             tone,
-            text: crate::bold::without_bold_marks(text.unwrap_or(&entry.text)),
+            text: crate::bold::without_leading_bold(text.unwrap_or(&entry.text)),
             notes: entry.links.clone(),
             reference: None,
         };
@@ -516,17 +516,22 @@ mod tests {
     }
 
     #[test]
-    fn bold_marks_show_plain_but_literal_asterisks_stay() {
-        let text = "**Archon:** aetherd had stopped\n**Decision** (qi_7): `src/**/*.rs` 2 ** 10";
-        let rendered = render_entry_plain(&said(EntryKind::Post, text, &[]), 100);
-        let body: Vec<&str> = rendered.lines().map(|l| l[HH_MM_ZONE..].trim()).collect();
-        assert_eq!(
-            body,
-            [
-                "archon  Archon: aetherd had stopped",
-                "Decision (qi_7): `src/**/*.rs` 2 ** 10",
-            ]
-        );
+    fn a_leading_bold_label_shows_plain_and_the_rest_as_written() {
+        let cases = [
+            (
+                "**Archon:** aetherd had stopped",
+                "Archon: aetherd had stopped",
+            ),
+            (
+                "**Decision** (qi_7): `src/**/*.rs`, 2 ** 10",
+                "Decision (qi_7): `src/**/*.rs`, 2 ** 10",
+            ),
+            ("see **this**", "see **this**"),
+        ];
+        for (text, shown) in cases {
+            let rendered = render_entry_plain(&said(EntryKind::Post, text, &[]), 100);
+            assert_eq!(head(&rendered), format!("archon  {shown}"));
+        }
     }
 
     #[test]

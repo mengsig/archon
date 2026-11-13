@@ -17,15 +17,18 @@ pub fn without_leading_bold(text: &str) -> String {
     plain
 }
 
-/// The label of a leading `**label**`: one line of text that hugs its
-/// marks, holds no `*`, backtick or backslash, and ends where a word may.
+/// The label of a leading `**label**`: words, digits, spaces and `:` that
+/// hug the marks, so no link, code or HTML can start inside it.
 fn leading_bold(text: &str) -> Option<&str> {
     let body = text.strip_prefix(MARK)?;
     let end = body.find(MARK)?;
     let label = &body[..end];
     let after = body[end + MARK.len()..].chars().next();
     let hugs = !label.starts_with(char::is_whitespace) && !label.ends_with(char::is_whitespace);
-    let inert = !label.is_empty() && !label.contains(['*', '`', '\\', '\n']);
+    let inert = !label.is_empty()
+        && label
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == ' ' || c == ':');
     let closes = after.is_none_or(|c| c.is_whitespace() || (c.is_ascii_punctuation() && c != '*'));
     (hugs && inert && closes).then_some(label)
 }
@@ -67,6 +70,11 @@ mod tests {
             "****",
             "**unclosed",
             "\\**escaped**",
+            "**<https://example.com/**> tail",
+            "**[a](b**)",
+            "**<b>**",
+            "**a&amp;**",
+            "**a_b**",
             "```\n**x**\n```",
             "plain",
             "",

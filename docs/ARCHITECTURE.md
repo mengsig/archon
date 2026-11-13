@@ -3755,12 +3755,19 @@ order, with the same markdown text.
   notices, `ask_operator` questions, answers, reports, item outcomes, gates,
   merges, stage messages, `System` lines and command results. The
   `transcript posts` link worker reads them from the feed in seq order and
-  keeps its cursor in kv `transcript_posted_seq`. A post waits while Aether or
-  the orchestrator is away, so none is lost or reordered. Progress goes as a
-  plain note, which the focused views leave out. Operator lines, orchestrator
-  replies and `ask_user` questions are already in the transcript and are not
-  posted again. On its first start the cursor begins at the feed's end, so
-  older lines stay readable in `archon log` and `FeedHistory`.
+  keeps its cursor in kv `transcript_posted_seq`. A post waits, and so do the
+  ones after it, while Aether is away or lacks posts, no orchestrator exists,
+  or an append fails. Only a post Aether refuses as invalid is skipped (and
+  logged). Delivery is at least once: `append_note` takes no idempotency key,
+  so a crash between the append and the cursor write posts that item again.
+  Progress goes as a plain note, which the focused views leave out. Operator
+  lines, orchestrator replies, `ask_user` questions and answers given by
+  `/answer` in Aether are not posted again. Those are already in the
+  transcript or have their own result line. A command's result line (§18.6)
+  is a feed `System` entry where aetherd keeps posts, so it is posted in
+  order like the rest. When the store opens on the first start, the cursor is
+  set to the feed's end before anything writes. Older lines stay readable in
+  `archon log` and `FeedHistory`.
 - `Conversation{after, before, limit, wait}` reads one page of the current
   orchestrator's conversation through `get_conversation{important_only:true}`.
   The cursor is Aether's event seq, which is global, so it carries across an

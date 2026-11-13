@@ -12,6 +12,7 @@ use archon_core::config::AetherMode;
 use archon_core::error::ArchonError;
 use archon_core::notify::{AnswerVia, Question, QuestionRef};
 
+use crate::command_notice::Shown;
 use crate::context::DaemonContext;
 use crate::executor::clip;
 use crate::triggers::{self, TriggerEvent};
@@ -213,7 +214,12 @@ async fn not_applied(
 /// from; a refusal is also noted in Archon's own feed.
 async fn report(ctx: &DaemonContext, outcome: Outcome) -> Result<(), ArchonError> {
     assert!(!outcome.text.trim().is_empty(), "an outcome says something");
-    if !outcome.applied {
+    let label = match outcome.number {
+        Some(n) => format!("/answer Q{n}"),
+        None => "/answer".to_owned(),
+    };
+    let shown = crate::command_notice::show(ctx, &label, outcome.applied, &outcome.text).await?;
+    if !outcome.applied && shown != Shown::InFeed {
         let named = outcome
             .number
             .map(|n| format!(" for Q{n}"))
@@ -224,11 +230,6 @@ async fn report(ctx: &DaemonContext, outcome: Outcome) -> Result<(), ArchonError
         );
         feed::system(ctx, clip(&note, 2 * MAX_NEWS_CHARS)).await?;
     }
-    let label = match outcome.number {
-        Some(n) => format!("/answer Q{n}"),
-        None => "/answer".to_owned(),
-    };
-    crate::command_notice::show(ctx, &label, outcome.applied, &outcome.text).await;
     let news = TriggerEvent::ChatAnswer {
         number: outcome.number,
         applied: outcome.applied,

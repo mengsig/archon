@@ -6,21 +6,26 @@ use std::sync::Arc;
 
 use crate::link_common::{self, Harness, WAIT};
 
+use archon_aether::events::parse_event;
 use archon_aether::fake::Scripted;
 use archon_core::conversation::{ConversationEntry, ConversationPage, EntryKind};
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 use archon_core::notify::NotificationKind;
 use archon_core::protocol::{ClientKind, Reply, Request};
-use archon_daemon::posts;
+use archon_daemon::{posts, pump};
 use archon_queue::store::keys;
 use serde_json::{Value, json};
 
 const ORCH: &str = "agt_orch";
 
 async fn harness() -> Harness {
+    harness_serving(&["notes", "conversation"]).await
+}
+
+async fn harness_serving(features: &[&str]) -> Harness {
     let harness = Harness::new().await;
-    let features = ["notes", "conversation"].map(str::to_owned).to_vec();
+    let features = features.iter().map(|f| (*f).to_owned()).collect();
     harness.fake.set_features(features);
     harness.fake.set_default(
         "append_note",
@@ -231,4 +236,79 @@ async fn a_read_refuses_a_wait_without_a_cursor_and_an_oversized_page() {
         );
     }
     assert!(harness.fake.received_named("get_conversation").is_empty());
+}
+
+/// An aetherd without posts holds them back: nothing is skipped, and the
+/// cursor stays before them until an aetherd that keeps posts comes.
+#[tokio::test]
+async fn posts_wait_for_an_aetherd_that_keeps_them() {
+    let harness = harness_serving(&["notes"]).await;
+    let before = harness.ctx.store.lock().await.last_feed_seq().unwrap();
+    let poster = start_posting(&harness).await;
+    notify(&harness, NotificationKind::Blocker, "CI is red", None).await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(appended(&harness).is_empty(), "{:?}", appended(&harness));
+    assert_eq!(
+        harness.kv(posts::POSTED_KEY).await,
+        Some(before.to_string())
+    );
+    poster.abort();
+}
+
+/// A post Aether refuses as invalid is skipped, so it cannot hold the rest.
+#[tokio::test]
+async fn a_refused_post_does_not_hold_back_the_next() {
+    let harness = harness().await;
+    harness
+        .fake
+        .script("append_note", Scripted::refuse("invalid_argument", "no"));
+    let poster = start_posting(&harness).await;
+    notify(&harness, NotificationKind::Decision, "first", None).await;
+    notify(&harness, NotificationKind::Decision, "second", None).await;
+    harness
+        .eventually("both tried", || async { appended(&harness).len() == 2 })
+        .await;
+    let last = harness.ctx.store.lock().await.last_feed_seq().unwrap();
+    harness
+        .eventually("the cursor passes both", || async {
+            harness.kv(posts::POSTED_KEY).await == Some(last.to_string())
+        })
+        .await;
+    poster.abort();
+}
+
+fn operator_says(seq: u64, text: &str) -> archon_aether::AetherEvent {
+    let kind = json!({"kind": "message", "message_id": "msg_1", "from": {"actor": "user"},
+                      "content": [{"type": "text", "text": text}]});
+    parse_event(json!({
+        "id": format!("evt_{seq}"), "seq": seq, "at": "2026-10-12T10:00:00Z",
+        "actor": {"type": "system"}, "agent_id": ORCH,
+        "kind": {"type": "inbox.delivered", "item": {
+            "id": format!("inb_{seq}"), "agent_id": ORCH, "seq": seq,
+            "delivered_at": "2026-10-12T10:00:00Z", "kind": kind}}
+    }))
+    .expect("a valid event")
+}
+
+/// A command's result goes through the feed, so it is posted once and in
+/// order, with no second copy of its audit line.
+#[tokio::test]
+async fn a_command_result_reaches_the_conversation_once() {
+    let harness = harness().await;
+    let poster = start_posting(&harness).await;
+    pump::handle_orchestrator_event(&harness.ctx, &operator_says(1, "/answer 99 hi"))
+        .await
+        .expect("the pump handles the event");
+    harness
+        .eventually("the result post", || async {
+            !appended(&harness).is_empty()
+        })
+        .await;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let posts = appended(&harness);
+    assert_eq!(posts.len(), 1, "{posts:?}");
+    let (text, important) = &posts[0];
+    assert!(text.starts_with("**Archon:** Refused: /answer"), "{text}");
+    assert!(important);
+    poster.abort();
 }

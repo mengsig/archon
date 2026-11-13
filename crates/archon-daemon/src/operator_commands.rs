@@ -9,6 +9,7 @@ use archon_core::merge::MergeAuthority;
 use archon_core::notify::QuestionRef;
 
 use crate::authority::evidence;
+use crate::command_notice::Shown;
 use crate::context::DaemonContext;
 use crate::{chat_answer, chat_merge, feed};
 
@@ -116,8 +117,10 @@ async fn execute(
             Err(error) if error.is_store() => return Err(error),
             Err(error) => (false, error.to_string()),
         };
-        feed::system(ctx, format!("Operator command: {text}")).await?;
-        crate::command_notice::show(ctx, &label, applied, &text).await;
+        let shown = crate::command_notice::show(ctx, &label, applied, &text).await?;
+        if shown != Shown::InFeed {
+            feed::system(ctx, format!("Operator command: {text}")).await?;
+        }
         return crate::triggers::push(
             ctx,
             crate::triggers::TriggerEvent::ChatAnswer {
@@ -220,8 +223,11 @@ async fn refuse_in_shared(ctx: &DaemonContext, message: &InboxMessage) -> Result
         crate::chat_ops::handle(ctx, &text).await?;
         return chat_merge::handle(ctx, &text, MergeAuthority::AetherChat).await;
     }
-    feed::system(ctx, SHARED_REFUSAL).await?;
-    crate::command_notice::show(ctx, &command_label(&text), false, SHARED_REFUSAL).await;
+    let label = command_label(&text);
+    let shown = crate::command_notice::show(ctx, &label, false, SHARED_REFUSAL).await?;
+    if shown != Shown::InFeed {
+        feed::system(ctx, SHARED_REFUSAL).await?;
+    }
     let news = crate::triggers::TriggerEvent::ChatAnswer {
         number: None,
         applied: false,

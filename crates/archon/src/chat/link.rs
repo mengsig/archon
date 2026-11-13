@@ -97,8 +97,10 @@ impl Link {
         else {
             unreachable!("only an up link reads");
         };
-        if let Some(at) = retry_at.take() {
+        // Cleared only after the wait, so a read dropped mid-wait still waits.
+        if let Some(at) = *retry_at {
             tokio::time::sleep_until(at).await;
+            *retry_at = None;
         }
         let request = Request::Conversation {
             after,

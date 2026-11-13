@@ -11,6 +11,7 @@ use archon_core::config::AetherMode;
 use archon_core::error::ArchonError;
 use archon_core::merge::MergeAuthority;
 
+use crate::command_notice::Shown;
 use crate::context::DaemonContext;
 use crate::executor::{clip, operator_merge};
 use crate::triggers::{self, TriggerEvent};
@@ -131,9 +132,12 @@ async fn apply(
 /// restates it in the chat the command came from.
 async fn refused(ctx: &DaemonContext, why: &str) -> Result<(), ArchonError> {
     assert!(!why.trim().is_empty(), "a refusal gives its reason");
-    let note = format!("A `/merge` sent in the orchestrator's Aether chat was not applied: {why}");
-    feed::system(ctx, clip(&note, 2 * MAX_NEWS_CHARS)).await?;
-    crate::command_notice::show(ctx, "/merge", false, why).await;
+    let shown = crate::command_notice::show(ctx, "/merge", false, why).await?;
+    if shown != Shown::InFeed {
+        let note =
+            format!("A `/merge` sent in the orchestrator's Aether chat was not applied: {why}");
+        feed::system(ctx, clip(&note, 2 * MAX_NEWS_CHARS)).await?;
+    }
     let news = TriggerEvent::ChatMergeRefused {
         text: clip(why, MAX_NEWS_CHARS),
     };

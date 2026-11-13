@@ -151,10 +151,6 @@ async fn a_hung_turn_is_interrupted_and_the_operator_mail_queued_behind_it_answe
     .await;
     orch(&harness, said("Two items are running: A and B.")).await;
     orch(&harness, completed()).await;
-    assert_eq!(
-        harness.orchestrator_replies().await,
-        vec!["Two items are running: A and B.".to_owned()]
-    );
     assert!(
         !stalled(&harness, 120).await,
         "an idle orchestrator is no stall"

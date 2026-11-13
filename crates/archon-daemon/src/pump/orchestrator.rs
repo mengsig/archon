@@ -24,9 +24,25 @@ pub(super) async fn handle(ctx: &DaemonContext, event: &AetherEvent) -> Result<(
         return Ok(());
     }
     ctx.supervisor.saw_event(agent, &event.kind);
+    let handled = apply(ctx, agent, event).await;
+    // After applying, so a woken reader finds what the event recorded, such
+    // as the numbered question of an `ask_user`.
     if grows_conversation(&event.kind) {
         ctx.conversation.send_modify(|grown| *grown += 1);
     }
+    handled
+}
+
+async fn apply(
+    ctx: &DaemonContext,
+    agent: &AetherAgentId,
+    event: &AetherEvent,
+) -> Result<(), ArchonError> {
+    assert_eq!(
+        event.agent.as_ref(),
+        Some(agent),
+        "the event is the agent's"
+    );
     match &event.kind {
         EventKind::InboxDelivered {
             from_operator: true,

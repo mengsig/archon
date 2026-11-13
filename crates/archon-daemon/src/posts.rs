@@ -8,7 +8,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use archon_core::error::ArchonError;
-use archon_core::notify::{FeedEntry, FeedItem, Notification, NotificationKind, Question};
+use archon_core::notify::{
+    AnswerVia, FeedEntry, FeedItem, Notification, NotificationKind, Question,
+};
+use archon_queue::Store;
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::context::DaemonContext;
@@ -35,7 +38,11 @@ pub struct Post {
 /// Post every feed item after the saved cursor, then each one appended.
 pub async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
     let mut live = ctx.feed.subscribe();
-    let mut cursor = start_cursor(&ctx).await?;
+    let mut cursor = {
+        let mut store = ctx.store.lock().await;
+        mark_start(&mut store)?;
+        saved_cursor(&store)?
+    };
     loop {
         let stalled = post_pending(&ctx, &mut cursor).await?;
         if stalled {
@@ -49,18 +56,24 @@ pub async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
     }
 }
 
-/// The saved cursor. The first start begins at the feed's end: older lines
-/// stay readable where they always were, `archon log` and the feed history.
-async fn start_cursor(ctx: &DaemonContext) -> Result<u64, ArchonError> {
-    let mut store = ctx.store.lock().await;
-    if let Some(raw) = store.kv_get(POSTED_KEY)? {
-        return raw
-            .parse::<u64>()
-            .map_err(|e| ArchonError::Corrupt(format!("kv {POSTED_KEY} = {raw:?}: {e}")));
+/// On the first start, begin posting at the feed's end: older lines stay
+/// readable in `archon log`. archond calls it before anything writes the feed.
+pub fn mark_start(store: &mut Store) -> Result<(), ArchonError> {
+    if store.kv_get(POSTED_KEY)?.is_some() {
+        return Ok(());
     }
     let head = store.last_feed_seq()?;
     store.kv_set(POSTED_KEY, &head.to_string())?;
-    Ok(head)
+    assert_eq!(saved_cursor(store)?, head, "the cursor reads back");
+    Ok(())
+}
+
+fn saved_cursor(store: &Store) -> Result<u64, ArchonError> {
+    let raw = store
+        .kv_get(POSTED_KEY)?
+        .ok_or_else(|| ArchonError::Corrupt(format!("kv {POSTED_KEY} is not set")))?;
+    raw.parse::<u64>()
+        .map_err(|e| ArchonError::Corrupt(format!("kv {POSTED_KEY} = {raw:?}: {e}")))
 }
 
 /// Post the items after `cursor` in order. `true` when one must wait for
@@ -86,8 +99,10 @@ async fn post_pending(ctx: &DaemonContext, cursor: &mut u64) -> Result<bool, Arc
     }
 }
 
-/// `false` when the item must wait; a post Aether refuses is logged and
-/// skipped, so one bad item never holds the rest back.
+/// `false` when the item must wait: Aether away or without posts, no
+/// orchestrator, or a failure that may pass. Only a post Aether refuses as
+/// invalid is logged and skipped, so it cannot hold the rest back. Delivery
+/// is at least once: Aether takes no key that would drop a repeated post.
 async fn post_item(ctx: &DaemonContext, item: &FeedItem) -> Result<bool, ArchonError> {
     let Some(post) = post_of(ctx, item).await? else {
         return Ok(true);
@@ -95,16 +110,12 @@ async fn post_item(ctx: &DaemonContext, item: &FeedItem) -> Result<bool, ArchonE
     let Ok(client) = ctx.aether.client() else {
         return Ok(false);
     };
+    if !client.serves_conversation() {
+        return Ok(false);
+    }
     let Some(orchestrator) = supervisor::current_orchestrator(ctx).await? else {
         return Ok(false);
     };
-    if !client.serves_conversation() {
-        tracing::debug!(
-            seq = item.seq,
-            "aetherd keeps no posts; this one stays in the feed"
-        );
-        return Ok(true);
-    }
     let sent = match post.important {
         true => client.post(&orchestrator, &post.text, &post.links).await,
         // 500 characters stay under a plain note's 2048 bytes.
@@ -119,17 +130,20 @@ async fn post_item(ctx: &DaemonContext, item: &FeedItem) -> Result<bool, ArchonE
             ctx.conversation.send_modify(|posts| *posts += 1);
             Ok(true)
         }
-        Err(ArchonError::Unavailable(_)) => Ok(false),
-        Err(error) => {
+        Err(error @ ArchonError::Invalid(_)) => {
             tracing::warn!(seq = item.seq, %error, "aetherd refused a post; it stays in the feed");
             Ok(true)
+        }
+        Err(error) => {
+            tracing::debug!(seq = item.seq, %error, "a post waits to be retried");
+            Ok(false)
         }
     }
 }
 
 /// The post a feed item makes, `None` for what the transcript holds already:
 /// operator lines, orchestrator replies, `ask_user` questions, and the
-/// authority audit records whose results command notices post.
+/// audit records of commands whose result lines are posted.
 async fn post_of(ctx: &DaemonContext, item: &FeedItem) -> Result<Option<Post>, ArchonError> {
     let post = match &item.entry {
         FeedEntry::Operator { .. } | FeedEntry::Orchestrator { .. } => None,
@@ -137,6 +151,11 @@ async fn post_of(ctx: &DaemonContext, item: &FeedItem) -> Result<Option<Post>, A
         FeedEntry::Question(question) if question.aether.is_some() => None,
         FeedEntry::Question(question) => Some(question_post(question)),
         FeedEntry::Notification(notification) => Some(notification_post(notification)),
+        // The command's own result line says it.
+        FeedEntry::Answer {
+            via: AnswerVia::ChatCommand,
+            ..
+        } => None,
         FeedEntry::Answer { question, text, .. } => {
             let number = match ctx.store.lock().await.question(question) {
                 Ok(asked) => format!("Q{}", asked.number),

@@ -705,7 +705,7 @@ fn notify() -> ToolDefinition {
         "Notify operator",
         "Post a line to the operator's conversation, for news outside a reply. `decision`: a choice of yours they should know. `blocker`: work \
          cannot go on without them. `outcome`: more than the automatic item outcome. \
-         `progress`: kept out of the conversation, in `archon log`. A question goes through ask_operator, not \
+         `progress`: only in `archon log`. A question goes through ask_operator, not \
          `question`.",
         object(
             json!({

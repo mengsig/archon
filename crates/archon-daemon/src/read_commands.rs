@@ -67,7 +67,8 @@ pub(crate) async fn answer(ctx: &DaemonContext, command: &ReadCommand) -> Result
         Err(error) => (Some(NoteLevel::Refused), error.to_string()),
     };
     assert!(!text.trim().is_empty(), "every answer says something");
-    if crate::command_notice::show_level(ctx, command.label(), level, &text).await {
+    let shown = crate::command_notice::show_level(ctx, command.label(), level, &text).await?;
+    if shown != crate::command_notice::Shown::Not {
         return Ok(());
     }
     let news = crate::triggers::TriggerEvent::ChatAnswer {

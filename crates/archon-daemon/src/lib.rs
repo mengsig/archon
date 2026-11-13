@@ -660,6 +660,7 @@ fn open_store(paths: &DaemonPaths, config: &Config) -> Result<Store, ArchonError
     );
     let lock = archon_queue::DataLock::acquire(&paths.data_dir, &paths.socket)?;
     let mut store = Store::open_owned(&paths.store, lock)?;
+    posts::mark_start(&mut store)?;
     store.configure_learning(&config.learning)?;
     if !config.learning.enabled
         && let Err(error) = store.cancel_queued_distillations()

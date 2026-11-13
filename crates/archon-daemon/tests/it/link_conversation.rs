@@ -12,8 +12,8 @@ use archon_core::conversation::{ConversationEntry, ConversationPage, EntryKind};
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 use archon_core::notify::NotificationKind;
-use archon_core::protocol::{ClientKind, Reply, Request};
-use archon_daemon::{posts, pump};
+use archon_core::protocol::{ClientKind, DeviceRole, Reply, Request, WelcomeDevice};
+use archon_daemon::{handlers, posts, pump};
 use archon_queue::store::keys;
 use serde_json::{Value, json};
 
@@ -313,37 +313,76 @@ async fn a_command_result_reaches_the_conversation_once() {
     poster.abort();
 }
 
-/// A question asked and answered from `archon chat` both reach the
-/// conversation, so the phone and the TUI see it closed.
-#[tokio::test]
-async fn a_question_and_its_chat_answer_are_both_posted() {
-    let harness = harness().await;
-    let poster = start_posting(&harness).await;
+async fn ask_ship(harness: &Harness) -> u64 {
     let ask = Request::AskOperator {
         text: "Ship to prod?".into(),
         item: None,
         options: vec!["yes".into(), "no".into()],
         caller: None,
     };
-    let Ok(Reply::Question(asked)) = request(&harness, ask).await else {
+    let Ok(Reply::Question(asked)) = request(harness, ask).await else {
         panic!("the question is recorded")
     };
+    asked.number
+}
+
+/// `/answer` typed in the phone's chat, as an operator device sends it.
+async fn answer_from_the_phone(harness: &Harness, number: u64) {
+    let phone = WelcomeDevice {
+        id: "dev_phone".into(),
+        name: "phone".into(),
+        role: DeviceRole::Operator,
+    };
+    let say = Request::Say {
+        text: format!("/answer {number} yes"),
+        images: Vec::new(),
+    };
+    let reply = handlers::handle_device(&harness.ctx, &phone, say).await;
+    assert!(matches!(reply, Ok(Reply::Ok)), "{reply:?}");
+}
+
+/// `/answer` typed in `archon chat`, which sends the expanded answer.
+async fn answer_from_archon_chat(harness: &Harness, number: u64) {
+    let open = harness.ctx.store.lock().await.questions(true).unwrap();
+    let asked = open.into_iter().find(|q| q.number == number).unwrap();
     let answer = Request::Answer {
-        question: asked.id.clone(),
+        question: asked.id,
         text: "yes".into(),
         chat: true,
     };
-    let answered = request(&harness, answer).await;
-    assert!(answered.is_ok(), "{answered:?}");
-    harness
-        .eventually("two posts", || async { appended(&harness).len() == 2 })
-        .await;
-    let posts = appended(&harness);
-    let n = asked.number;
-    assert!(
-        posts[0].0.starts_with(&format!("**Q{n}:** Ship to prod?")),
-        "{posts:?}"
+    let reply = request(harness, answer).await;
+    assert!(matches!(reply, Ok(Reply::Question(_))), "{reply:?}");
+}
+
+/// The posts of one question, answered `yes`: asked, answered, applied.
+fn answered_posts(n: u64) -> Vec<(String, bool)> {
+    let asked = format!(
+        "**Q{n}:** Ship to prod?\n1. yes\n2. no\n\nAnswer with `/answer {n} …` or `archon answer {n} …`."
     );
-    assert_eq!(posts[1], (format!("**Answered Q{n}:** yes"), true));
+    vec![
+        (asked, true),
+        (format!("**Answered Q{n}:** yes"), true),
+        (format!("**Archon:** Applied: /answer Q{n}: yes"), true),
+    ]
+}
+
+/// An answer from the phone and one from `archon chat` post the same:
+/// exactly one "Answered" and one "Applied" each, in the same order.
+#[tokio::test]
+async fn a_phone_and_an_archon_chat_answer_post_the_same() {
+    let harness = harness().await;
+    let poster = start_posting(&harness).await;
+    let phone = ask_ship(&harness).await;
+    answer_from_the_phone(&harness, phone).await;
+    let chat = ask_ship(&harness).await;
+    answer_from_archon_chat(&harness, chat).await;
+    harness
+        .eventually("both answers", || async { appended(&harness).len() >= 5 })
+        .await;
+    // Room for a missing or doubled post to show in the comparison.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let mut want = answered_posts(phone);
+    want.extend(answered_posts(chat));
+    assert_eq!(appended(&harness), want);
     poster.abort();
 }

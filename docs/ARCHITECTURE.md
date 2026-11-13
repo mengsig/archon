@@ -3762,7 +3762,9 @@ order, with the same markdown text.
   so a crash between the append and the cursor write posts that item again.
   Progress goes as a plain note, which the focused views leave out. Operator
   lines, orchestrator replies and `ask_user` questions are not posted again,
-  because they are already in the transcript. Every answer is posted. A command's result line (§18.6)
+  because they are already in the transcript. Every answer is posted. An answer typed in
+  `archon chat` is followed by the same `Applied: /answer Q<n>` result line
+  as one typed in the phone's chat. A command's result line (§18.6)
   is a feed `System` entry where aetherd keeps posts, so it is posted in
   order like the rest. When the store opens on the first start, the cursor is
   set to the feed's end before anything writes. Older lines stay readable in

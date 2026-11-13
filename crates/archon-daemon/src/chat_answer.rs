@@ -210,6 +210,24 @@ async fn not_applied(
     Ok(Outcome::refused(Some(question.number), why))
 }
 
+/// Show an answer applied from `archon chat` as the phone's `/answer` shows
+/// its own: one `Applied: /answer Q<n>` result line after the answer.
+pub(crate) async fn show_applied(
+    ctx: &DaemonContext,
+    answered: &Question,
+    text: &str,
+) -> Result<(), ArchonError> {
+    assert!(
+        !answered.is_open(),
+        "only an applied answer is shown as one"
+    );
+    assert!(answered.number > 0, "a recorded question is numbered");
+    let label = format!("{COMMAND} Q{}", answered.number);
+    crate::command_notice::show(ctx, &label, true, text)
+        .await
+        .map(drop)
+}
+
 /// Tell the orchestrator, which restates it in the chat the command came
 /// from; a refusal is also noted in Archon's own feed.
 async fn report(ctx: &DaemonContext, outcome: Outcome) -> Result<(), ArchonError> {

@@ -456,9 +456,9 @@ pub(crate) async fn route(
             } else {
                 AnswerVia::Archon
             };
-            Box::pin(operator::answer_from(ctx, client, &question, &text, via))
-                .await
-                .map(Reply::Question)
+            let answered =
+                Box::pin(operator::answer_from(ctx, client, &question, &text, via)).await?;
+            chat_answered(ctx, answered, &text, chat).await
         }
         request => handle_adaptive(ctx, client, request).await,
     }
@@ -506,6 +506,20 @@ pub(crate) async fn answer_question(
     via: AnswerVia,
 ) -> Result<Question, ArchonError> {
     operator::answer(ctx, question, text, via).await
+}
+
+/// The reply to an answer; one typed in `archon chat` also gets the result
+/// line the phone's `/answer` gets.
+async fn chat_answered(
+    ctx: &DaemonContext,
+    answered: Question,
+    text: &str,
+    chat: bool,
+) -> Result<Reply, ArchonError> {
+    if chat {
+        crate::chat_answer::show_applied(ctx, &answered, text).await?;
+    }
+    Ok(Reply::Question(answered))
 }
 
 /// Watch a registered repository on GitHub; the `/watch` chat command.
@@ -683,9 +697,8 @@ async fn handle_operator(ctx: &DaemonContext, request: Request) -> Result<Reply,
             } else {
                 AnswerVia::Archon
             };
-            answer_question(ctx, &question, &text, via)
-                .await
-                .map(Reply::Question)
+            let answered = answer_question(ctx, &question, &text, via).await?;
+            chat_answered(ctx, answered, &text, chat).await
         }
         Request::RecordChatAnswer {
             question,

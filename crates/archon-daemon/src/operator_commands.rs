@@ -13,6 +13,9 @@ use crate::command_notice::Shown;
 use crate::context::DaemonContext;
 use crate::{chat_answer, chat_merge, feed};
 
+/// The audit result of a command whose own result line follows it.
+pub(crate) const OUTCOME_FOLLOWS: &str = "received; outcome follows";
+
 pub(crate) async fn handle(
     ctx: &DaemonContext,
     event: &AetherEvent,
@@ -158,7 +161,7 @@ async fn execute(
             archon_core::notify::FeedEntry::Authority {
                 evidence: evidence.clone(),
                 action: command.clone(),
-                result: "received; outcome follows".into(),
+                result: OUTCOME_FOLLOWS.into(),
                 before: serde_json::Value::Null,
                 after: serde_json::Value::Null,
             },

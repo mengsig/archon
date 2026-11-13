@@ -312,3 +312,38 @@ async fn a_command_result_reaches_the_conversation_once() {
     assert!(important);
     poster.abort();
 }
+
+/// A question asked and answered from `archon chat` both reach the
+/// conversation, so the phone and the TUI see it closed.
+#[tokio::test]
+async fn a_question_and_its_chat_answer_are_both_posted() {
+    let harness = harness().await;
+    let poster = start_posting(&harness).await;
+    let ask = Request::AskOperator {
+        text: "Ship to prod?".into(),
+        item: None,
+        options: vec!["yes".into(), "no".into()],
+        caller: None,
+    };
+    let Ok(Reply::Question(asked)) = request(&harness, ask).await else {
+        panic!("the question is recorded")
+    };
+    let answer = Request::Answer {
+        question: asked.id.clone(),
+        text: "yes".into(),
+        chat: true,
+    };
+    let answered = request(&harness, answer).await;
+    assert!(answered.is_ok(), "{answered:?}");
+    harness
+        .eventually("two posts", || async { appended(&harness).len() == 2 })
+        .await;
+    let posts = appended(&harness);
+    let n = asked.number;
+    assert!(
+        posts[0].0.starts_with(&format!("**Q{n}:** Ship to prod?")),
+        "{posts:?}"
+    );
+    assert_eq!(posts[1], (format!("**Answered Q{n}:** yes"), true));
+    poster.abort();
+}

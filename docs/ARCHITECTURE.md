@@ -3753,7 +3753,7 @@ order, with the same markdown text.
 - `archond` appends each of its own posts there, as an important post
   (`append_note{important:true}`, Aether feature `conversation`). That covers
   notices, `ask_operator` questions, answers, reports, item outcomes, gates,
-  merges, stage messages, `System` lines and command results. The
+  merges, stage messages, `System` lines, authority changes and command results. The
   `transcript posts` link worker reads them from the feed in seq order and
   keeps its cursor in kv `transcript_posted_seq`. A post waits, and so do the
   ones after it, while Aether is away or lacks posts, no orchestrator exists,
@@ -3761,9 +3761,8 @@ order, with the same markdown text.
   logged). Delivery is at least once: `append_note` takes no idempotency key,
   so a crash between the append and the cursor write posts that item again.
   Progress goes as a plain note, which the focused views leave out. Operator
-  lines, orchestrator replies, `ask_user` questions and answers given by
-  `/answer` in Aether are not posted again. Those are already in the
-  transcript or have their own result line. A command's result line (§18.6)
+  lines, orchestrator replies and `ask_user` questions are not posted again,
+  because they are already in the transcript. Every answer is posted. A command's result line (§18.6)
   is a feed `System` entry where aetherd keeps posts, so it is posted in
   order like the rest. When the store opens on the first start, the cursor is
   set to the feed's end before anything writes. Older lines stay readable in

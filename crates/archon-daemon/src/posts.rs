@@ -8,14 +8,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use archon_core::error::ArchonError;
-use archon_core::notify::{
-    AnswerVia, FeedEntry, FeedItem, Notification, NotificationKind, Question,
-};
+use archon_core::notify::{FeedEntry, FeedItem, Notification, NotificationKind, Question};
 use archon_queue::Store;
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::context::DaemonContext;
 use crate::executor::clip;
+use crate::operator_commands::OUTCOME_FOLLOWS;
 use crate::supervisor;
 
 /// `kv`: the seq of the last feed item posted to the transcript.
@@ -134,28 +133,31 @@ async fn post_item(ctx: &DaemonContext, item: &FeedItem) -> Result<bool, ArchonE
             tracing::warn!(seq = item.seq, %error, "aetherd refused a post; it stays in the feed");
             Ok(true)
         }
+        Err(error @ ArchonError::Unavailable(_)) => {
+            tracing::debug!(seq = item.seq, %error, "a post waits for aetherd");
+            Ok(false)
+        }
         Err(error) => {
-            tracing::debug!(seq = item.seq, %error, "a post waits to be retried");
+            tracing::warn!(seq = item.seq, %error, "a post failed; it and later ones are retried");
             Ok(false)
         }
     }
 }
 
 /// The post a feed item makes, `None` for what the transcript holds already:
-/// operator lines, orchestrator replies, `ask_user` questions, and the
-/// audit records of commands whose result lines are posted.
+/// operator lines, orchestrator replies and `ask_user` questions; and the
+/// audit line of a command whose result line follows it.
 async fn post_of(ctx: &DaemonContext, item: &FeedItem) -> Result<Option<Post>, ArchonError> {
     let post = match &item.entry {
         FeedEntry::Operator { .. } | FeedEntry::Orchestrator { .. } => None,
-        FeedEntry::Authority { .. } => None,
+        // Its own result line follows.
+        FeedEntry::Authority { result, .. } if result == OUTCOME_FOLLOWS => None,
+        FeedEntry::Authority { action, result, .. } => {
+            Some(plain(format!("**Authority:** {action}: {result}")))
+        }
         FeedEntry::Question(question) if question.aether.is_some() => None,
         FeedEntry::Question(question) => Some(question_post(question)),
         FeedEntry::Notification(notification) => Some(notification_post(notification)),
-        // The command's own result line says it.
-        FeedEntry::Answer {
-            via: AnswerVia::ChatCommand,
-            ..
-        } => None,
         FeedEntry::Answer { question, text, .. } => {
             let number = match ctx.store.lock().await.question(question) {
                 Ok(asked) => format!("Q{}", asked.number),

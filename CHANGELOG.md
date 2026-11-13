@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Dependencies
+
+- Bump `toml` 1.1.8 to 1.2.1 (with `serde_spanned`, `toml_datetime` and
+  `toml_writer`) and `taiki-e/install-action` 2.88.0 to 2.90.1 in CI.
+
 ### Tooling
 
 - Host CI slots now share Aether's FIFO queue, preventing newer Archon runs

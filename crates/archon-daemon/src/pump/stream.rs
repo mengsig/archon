@@ -269,7 +269,9 @@ async fn handle_one(
         match handled.await {
             Ok(()) => return Ok(None),
             Err(error) if error.is_store() => return Err(error),
-            Err(ArchonError::Unavailable(reason)) => return Ok(Some(reason)),
+            // One item's failed `gh` call is no reason to stop reading the fleet:
+            // it is reported and skipped below like any other.
+            Err(error) if holds_cursor(&error) => return Ok(Some(error.to_string())),
             Err(error) if is_transient(&error) && attempt < TRANSIENT_ATTEMPTS => {
                 tracing::info!(seq = event.seq, attempt, %error, "event handling failed; retrying");
                 tokio::time::sleep(TRANSIENT_RETRY * attempt).await;
@@ -286,6 +288,29 @@ async fn handle_one(
     );
     feed::system(ctx, text).await?;
     Ok(None)
+}
+
+fn holds_cursor(error: &ArchonError) -> bool {
+    matches!(error, ArchonError::Unavailable(_)) && !crate::executor::gh::is_failure(error)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn github_failure_advances_but_aether_outage_holds_the_event() {
+        let github = ArchonError::Unavailable("gh pr view failed: offline".into());
+        let aether = ArchonError::Unavailable("Aether disconnected".into());
+        assert!(
+            !holds_cursor(&github),
+            "report and advance past GitHub failure"
+        );
+        assert!(
+            holds_cursor(&aether),
+            "retry the event after Aether reconnects"
+        );
+    }
 }
 
 /// A failure that may pass on its own: local I/O (a held `.git/index.lock`),

@@ -31,6 +31,7 @@ const PULL_REQUESTS_EVERY: Duration = Duration::from_secs(600);
 const FALLBACK_EVERY: Duration = Duration::from_secs(300);
 /// `kv`: `coordination_blocker:<subject>` → the JSON [`Stuck`] of its maintenance.
 const BLOCKER_PREFIX: &str = "coordination_blocker:";
+pub(super) const STAGE_BLOCKER_PREFIX: &str = "coordination_blocker:stage:";
 /// Failed passes before a failure another pass might clear is a blocker.
 const TRANSIENT_PASSES: u32 = 3;
 
@@ -205,6 +206,26 @@ pub(super) async fn isolate(
          nothing more until it passes"
     );
     super::finish::notify(ctx, NotificationKind::Blocker, &text, item, None).await
+}
+
+pub(super) async fn clear_stage(ctx: &DaemonContext, id: &str) -> Result<bool, ArchonError> {
+    assert!(!id.is_empty());
+    let key = format!("{STAGE_BLOCKER_PREFIX}{id}");
+    let mut store = ctx.store.lock().await;
+    if store.kv_get(&key)?.is_none() {
+        let pending = Stuck {
+            error: "stage cleanup pending".into(),
+            failures: 1,
+            told: false,
+        };
+        store.kv_set(&key, &serde_json::to_string(&pending)?)?;
+    }
+    if let Err(error) = archon_core::quarantine::clear(&ctx.paths.data_dir, "stage", id) {
+        tracing::warn!(%id, %error, "stage quarantine cleanup will be retried");
+        return Ok(false);
+    }
+    store.kv_delete(&key)?;
+    Ok(true)
 }
 
 /// Keep `subject` (`kind:id`) in the quarantine list while its maintenance

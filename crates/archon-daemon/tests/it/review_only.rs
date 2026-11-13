@@ -5,6 +5,7 @@
 //! `origin` holding the fork's head as `refs/pull/200/head`, and a fake `gh`.
 
 use crate::common;
+use std::os::unix::fs::PermissionsExt;
 
 use archon_core::autonomy::{AutonomyPatch, ReviewLevel};
 use archon_core::error::ArchonError;
@@ -15,7 +16,7 @@ use archon_core::protocol::{EnqueueRequest, Reply, RepoPatch, RepoRef, Request};
 use archon_core::pull_request::OntoTarget;
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::run::StageOutcome;
-use archon_daemon::executor::coordination;
+use archon_daemon::executor::{self, coordination};
 use common::delivery::{FakeGh, add_origin, origin_of, pushed, record, shipped_by};
 use common::{Harness, REPO_NAME, REVIEW_MODEL, git};
 use serde_json::{Value, json};
@@ -1219,4 +1220,225 @@ async fn a_stack_on_a_review_and_another_unmerged_parent_is_refused() {
         error.contains(parent.id.as_str()) && error.contains(FORK_PR),
         "{error}"
     );
+}
+
+/// One item's `gh` failing for good while its review is verified holds back
+/// that item alone: another item's completion is registered and ships, and
+/// the failing one's blocker names the command and what `gh` said.
+#[tokio::test]
+async fn a_gh_failure_verifying_one_item_leaves_the_others_completing_and_shipping() {
+    gh_failure_recovers(false).await;
+}
+
+#[tokio::test]
+async fn a_gh_failure_recovers_after_losing_retry_state() {
+    gh_failure_recovers(true).await;
+}
+
+async fn gh_failure_recovers(restarted: bool) {
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        let (h, gh, head) = fork_pull_request().await;
+        let review = review_item(&h, &head, ReviewLevel::Standard).await;
+        let plain = enqueue(&h, enqueue_request("plain", "direct", ReviewLevel::None))
+            .await
+            .unwrap();
+        h.dispatch().await;
+        let stages = h.running().await;
+        assert_eq!(stages.len(), 2, "both items run");
+
+        let review_run = h.run(&review.id).await.id;
+        let lead = stages.iter().find(|s| s.run == review_run).unwrap();
+        let reviewer = h
+            .backend
+            .delegate(lead.aether_agent.as_ref().unwrap(), REVIEW_MODEL);
+        let workspace = h.run(&review.id).await.workspace;
+        let base = git(&workspace, &["merge-base", "HEAD", "origin/main"]);
+        let verdict = json!({"verdict": "pass", "head": head, "base": base, "findings": []});
+        h.backend.complete_delegated(&reviewer, verdict);
+        let passed = StageOutcome::Completed {
+            summary: format!("Reviewed {FORK_PR} at {head}; checks green"),
+            structured: Some(
+                json!({"review": {"verdict": "pass", "reviewers": [reviewer.as_str()]}}),
+            ),
+        };
+        let agent = lead.aether_agent.clone().unwrap();
+        let binary = &h.ctx.config.github.binary;
+        std::fs::set_permissions(binary, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let (first, duplicate) = tokio::join!(
+            executor::stage_settled(&h.ctx, &agent, passed.clone()),
+            executor::stage_settled(&h.ctx, &agent, passed.clone())
+        );
+        first.unwrap();
+        duplicate.unwrap();
+        assert_eq!(h.ctx.runs.lock().await.settle_retries[&lead.id].failures, 1);
+        std::fs::set_permissions(binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        gh.fail_next("pr view", "HTTP 403: access denied");
+        h.ctx
+            .runs
+            .lock()
+            .await
+            .settle_retries
+            .get_mut(&lead.id)
+            .unwrap()
+            .not_before = std::time::Instant::now();
+        executor::stage_settled(&h.ctx, &agent, passed.clone())
+            .await
+            .unwrap();
+        assert_eq!(h.ctx.runs.lock().await.settle_retries[&lead.id].failures, 2);
+        gh.lack_base_ref_oid();
+        {
+            let mut table = h.ctx.runs.lock().await;
+            let retry = table.settle_retries.get_mut(&lead.id).unwrap();
+            retry.not_before = std::time::Instant::now();
+            retry.failures = u32::MAX;
+        }
+        executor::stage_settled(&h.ctx, &agent, passed.clone())
+            .await
+            .unwrap();
+        let retry = h.ctx.runs.lock().await.settle_retries[&lead.id];
+        assert_eq!(retry.failures, u32::MAX);
+        assert!(
+            retry.not_before <= std::time::Instant::now() + std::time::Duration::from_secs(900)
+        );
+        let before = gh.calls().len();
+        executor::stage_settled(&h.ctx, &agent, passed.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            gh.calls().len(),
+            before,
+            "duplicate completion respects backoff"
+        );
+
+        let other = stages.iter().find(|s| s.run != review_run).unwrap();
+        let built = shipped_by(&h, other, "Built it; cargo test passes", json!({})).await;
+        let agent = other.aether_agent.clone().unwrap();
+        executor::stage_settled(&h.ctx, &agent, built)
+            .await
+            .unwrap();
+        h.dispatch().await;
+
+        let state = h.state(&plain.id).await;
+        assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+        assert!(gh.calls().iter().any(|c| c.starts_with("pr create")));
+        let state = h.state(&review.id).await;
+        assert!(!state.is_terminal(), "the review waits: {state:?}");
+        let told = h.notices(NotificationKind::Blocker).await;
+        let told: Vec<&String> = told
+            .iter()
+            .filter(|n| n.contains("Unknown JSON field"))
+            .collect();
+        assert_eq!(told.len(), 1, "told once: {told:?}");
+        assert!(told[0].contains("gh pr view"), "{told:?}");
+        assert!(told[0].contains(&review.id.to_string()), "{told:?}");
+
+        h.backend
+            .settle_task(lead.aether_task.as_ref().unwrap(), passed.clone());
+        gh.restore_base_ref_oid();
+        h.dispatch().await;
+        assert!(
+            !h.state(&review.id).await.is_terminal(),
+            "retry waits for its deadline"
+        );
+        let key = format!("coordination_blocker:stage:{}", lead.id);
+        assert!(h.ctx.store.lock().await.kv_get(&key).unwrap().is_some());
+        let quarantine = h
+            .ctx
+            .paths
+            .data_dir
+            .join("quarantine")
+            .join(format!("stage-{}.json", lead.id));
+        let record = std::fs::read(&quarantine).unwrap();
+        std::fs::remove_file(&quarantine).unwrap();
+        std::fs::create_dir(&quarantine).unwrap();
+        if restarted {
+            h.ctx.runs.lock().await.settle_retries.clear();
+            executor::stage_settled(&h.ctx, lead.aether_agent.as_ref().unwrap(), passed)
+                .await
+                .unwrap();
+        } else {
+            h.ctx
+                .runs
+                .lock()
+                .await
+                .settle_retries
+                .get_mut(&lead.id)
+                .unwrap()
+                .not_before = std::time::Instant::now();
+        }
+        h.dispatch().await;
+        let state = h.state(&review.id).await;
+        assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+        assert!(h.ctx.store.lock().await.kv_get(&key).unwrap().is_some());
+        assert!(
+            h.ctx
+                .runs
+                .lock()
+                .await
+                .settle_retries
+                .contains_key(&lead.id)
+        );
+        std::fs::remove_dir(&quarantine).unwrap();
+        std::fs::write(&quarantine, record).unwrap();
+        h.ctx
+            .runs
+            .lock()
+            .await
+            .settle_retries
+            .get_mut(&lead.id)
+            .unwrap()
+            .not_before = std::time::Instant::now();
+        h.dispatch().await;
+        assert!(!quarantine.exists());
+        assert!(
+            !h.ctx
+                .runs
+                .lock()
+                .await
+                .settle_retries
+                .contains_key(&lead.id)
+        );
+        assert!(h.ctx.store.lock().await.kv_get(&key).unwrap().is_none());
+        h.ctx.store.lock().await.kv_set(&key, "pending").unwrap();
+        let claim = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+        let guard = claim.lock().await;
+        {
+            let mut table = h.ctx.runs.lock().await;
+            table
+                .settle_claims
+                .insert(lead.id.clone(), std::sync::Arc::downgrade(&claim));
+            table.settle_retries.insert(
+                lead.id.clone(),
+                executor::SettleRetry {
+                    failures: 1,
+                    not_before: std::time::Instant::now(),
+                },
+            );
+        }
+        h.dispatch().await;
+        assert!(
+            h.ctx
+                .runs
+                .lock()
+                .await
+                .settle_retries
+                .contains_key(&lead.id)
+        );
+        assert!(h.ctx.store.lock().await.kv_get(&key).unwrap().is_some());
+        drop(guard);
+        drop(claim);
+        h.ctx.runs.lock().await.settle_retries.clear();
+        h.dispatch().await;
+        assert!(
+            !h.ctx
+                .runs
+                .lock()
+                .await
+                .settle_retries
+                .contains_key(&lead.id)
+        );
+        assert!(h.ctx.store.lock().await.kv_get(&key).unwrap().is_none());
+    })
+    .await
+    .expect("settlement and sweep must not deadlock");
 }

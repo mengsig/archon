@@ -25,10 +25,15 @@ const DEADLINE_GRACE_SECS: i64 = 60;
 pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonError> {
     let now = archon_core::now();
     let grace = chrono::Duration::seconds(DEADLINE_GRACE_SECS);
-    let (in_flight, merge, ship) = {
+    let (in_flight, merge, ship, retry) = {
         let table = ctx.runs.lock().await;
         let due = ship::stalled(&table, std::time::Instant::now());
-        (table.in_flight.clone(), team::stalled(&table), due)
+        let at = std::time::Instant::now();
+        let retry: Vec<StageRunId> = (table.settle_retries.iter())
+            .filter(|(_, r)| r.not_before <= at)
+            .map(|(id, _)| id.clone())
+            .collect();
+        (table.in_flight.clone(), team::stalled(&table), due, retry)
     };
     let mut follow = FollowUp {
         merge,
@@ -60,6 +65,13 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
                 continue;
             }
             follow.roster.push(stage.run.clone());
+            if let Some(task) = stage
+                .aether_task
+                .as_ref()
+                .filter(|_| retry.contains(&stage.id))
+            {
+                follow.check.push((stage.id.clone(), task.clone()));
+            }
             if stage.aether_agent.is_some() && stage.aether_task.is_none() {
                 follow.resumed.push(stage.id.clone());
             }
@@ -85,6 +97,49 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
             .collect();
         (running, expired, nearing)
     };
+    {
+        let mut table = ctx.runs.lock().await;
+        let store = ctx.store.lock().await;
+        table
+            .settle_claims
+            .retain(|_, claim| claim.strong_count() > 0);
+        let live: std::collections::BTreeSet<_> = store
+            .live_stage_runs()?
+            .into_iter()
+            .map(|stage| stage.id)
+            .collect();
+        let mut finished: std::collections::BTreeSet<_> = table
+            .settle_retries
+            .keys()
+            .filter(|id| !live.contains(*id) && !table.settle_claims.contains_key(*id))
+            .cloned()
+            .collect();
+        for (key, _) in store.kv_prefix(super::coordination::STAGE_BLOCKER_PREFIX)? {
+            let raw = key
+                .strip_prefix(super::coordination::STAGE_BLOCKER_PREFIX)
+                .expect("the store returns the requested prefix");
+            let id = StageRunId::parse(raw)
+                .map_err(|e| ArchonError::Corrupt(format!("kv {key}: {e}")))?;
+            if !live.contains(&id) && !table.settle_claims.contains_key(&id) {
+                finished.insert(id);
+            }
+        }
+        drop(store);
+        for id in finished {
+            if table
+                .settle_retries
+                .get(&id)
+                .is_some_and(|r| r.not_before > std::time::Instant::now())
+            {
+                continue;
+            }
+            if super::coordination::clear_stage(ctx, &id.to_string()).await? {
+                table.settle_retries.remove(&id);
+            } else {
+                settle::schedule_retry(&mut table, &id);
+            }
+        }
+    }
     follow.time_out = held::sweep(ctx, expired, &nearing, now).await?;
     forewarn::sweep(ctx, &running, now).await?;
     let stalled = settle_stalled(ctx, &running, now, &mut follow).await;

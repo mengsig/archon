@@ -433,6 +433,17 @@ fn succeeded(ran: Ran, doing: &str) -> Result<String, ArchonError> {
     }
 }
 
+/// Whether `error` is a `gh` call that failed (not found, refused, or an
+/// option this `gh` does not know): the fault of one item's GitHub request,
+/// not of Aether or of the daemon.
+pub(crate) fn is_failure(error: &ArchonError) -> bool {
+    matches!(error, ArchonError::Unavailable(why) if why.starts_with("gh "))
+}
+
+pub(crate) fn verification_failure(error: ArchonError) -> ArchonError {
+    ArchonError::Unavailable(format!("gh verification failed: {error}"))
+}
+
 /// `gh pr list <filter>`, which is `doing`, each pull request checked.
 async fn list(
     binary: &Path,
@@ -640,7 +651,9 @@ pub(crate) async fn base_commit(
     let asked = PullRequestRef::from_url(url);
     assert!(asked.is_some(), "a pull request URL");
     let args = ["pr", "view", url, "--json", "url,baseRefName,baseRefOid"];
-    let raw = text(binary, repo, &args).await?;
+    let raw = text(binary, repo, &args)
+        .await
+        .map_err(verification_failure)?;
     #[derive(Deserialize)]
     struct Viewed {
         url: String,

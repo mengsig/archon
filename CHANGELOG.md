@@ -257,6 +257,10 @@ From the audit in [docs/security/vnext-audit.md](docs/security/vnext-audit.md)
 - The model list in [docs/configuration.md](docs/configuration.md) now names
   `claude-code/claude-fable-5-2`, the Fable model Aether lists.
 
+- Isolate an item's GitHub verification failures so other items continue to
+  settle and ship; retry the affected stage with bounded backoff and report a
+  blocker. Contributed by @AmmarBattah (#402).
+
 ## 1.4.12
 
 Released 2026-11-04.

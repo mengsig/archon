@@ -1,7 +1,7 @@
 //! Settling stage runs: infra retries, persisting outcomes and verdicts,
 //! and applying the driver's actions.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use archon_core::Timestamp;
 use archon_core::error::ArchonError;
@@ -12,14 +12,116 @@ use archon_core::steer::RunEdit;
 use archon_pipeline::{EngineAction, SpawnPlan};
 
 use super::{
-    FollowUp, RunTable, descendants, engine_wait, finish, gates, notional, pages, recover, resume,
-    ship, siblings, spawn, stall, swarm, team,
+    FollowUp, RunTable, SettleRetry, descendants, engine_wait, finish, gates, notional, pages,
+    recover, resume, ship, siblings, spawn, stall, swarm, team,
 };
 use crate::context::DaemonContext;
 use crate::disk::{self, FullDisk};
 use crate::resolve::RepoEnv;
 
+/// The first wait before a completed stage whose verification failed on a
+/// `gh` call is settled again; it doubles up to [`SETTLE_RETRY_MAX`].
+const SETTLE_RETRY_FIRST: Duration = Duration::from_secs(15);
+const SETTLE_RETRY_MAX: Duration = Duration::from_secs(15 * 60);
+
+/// Settle `id` with `outcome`. A `gh` call that fails while the outcome is
+/// verified is that stage's trouble alone: the stage stays live and is
+/// settled again after a growing wait (the sweep asks), its item's blocker
+/// told once, and the event stream and every other stage go on.
 pub(super) async fn settle(
+    ctx: &DaemonContext,
+    id: &StageRunId,
+    outcome: StageOutcome,
+) -> Result<FollowUp, ArchonError> {
+    let _claim = if matches!(outcome, StageOutcome::Completed { .. }) {
+        let Some(claim) = claim_verification(ctx, id).await else {
+            return Ok(FollowUp::default());
+        };
+        Some(claim)
+    } else {
+        None
+    };
+    match settle_verified(ctx, id, outcome).await {
+        Err(error) if super::gh::is_failure(&error) => hold_for_retry(ctx, id, error).await,
+        Err(error) => Err(error),
+        Ok(follow) => {
+            let cleared = super::coordination::clear_stage(ctx, &id.to_string()).await?;
+            let mut table = ctx.runs.lock().await;
+            if cleared {
+                table.settle_retries.remove(id);
+            } else {
+                schedule_retry(&mut table, id);
+            }
+            Ok(follow)
+        }
+    }
+}
+
+async fn claim_verification(
+    ctx: &DaemonContext,
+    id: &StageRunId,
+) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+    let mut table = ctx.runs.lock().await;
+    if table
+        .settle_retries
+        .get(id)
+        .is_some_and(|r| r.not_before > Instant::now())
+    {
+        return None;
+    }
+    let lock = table
+        .settle_claims
+        .get(id)
+        .and_then(std::sync::Weak::upgrade)
+        .unwrap_or_else(|| {
+            let lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+            table
+                .settle_claims
+                .insert(id.clone(), std::sync::Arc::downgrade(&lock));
+            lock
+        });
+    lock.try_lock_owned().ok()
+}
+
+async fn hold_for_retry(
+    ctx: &DaemonContext,
+    id: &StageRunId,
+    error: ArchonError,
+) -> Result<FollowUp, ArchonError> {
+    let item = {
+        let store = ctx.store.lock().await;
+        let stage = store.stage_run(id)?;
+        store.run(&stage.run)?.item
+    };
+    let failures = {
+        let mut table = ctx.runs.lock().await;
+        schedule_retry(&mut table, id)
+    };
+    tracing::warn!(stage = %id, %item, %error, failures, "verifying a completed stage failed on GitHub; retrying");
+    let what = format!("Item {item}: verifying the completed stage {id} against GitHub");
+    let subject = format!("stage:{id}");
+    super::coordination::isolate(ctx, &subject, Some(&item), &what, Err(error)).await?;
+    Ok(FollowUp::default())
+}
+
+pub(super) fn schedule_retry(table: &mut RunTable, id: &StageRunId) -> u32 {
+    let failures = table
+        .settle_retries
+        .get(id)
+        .map_or(0, |r| r.failures)
+        .saturating_add(1);
+    let wait = (SETTLE_RETRY_FIRST * 2u32.pow((failures - 1).min(6))).min(SETTLE_RETRY_MAX);
+    table.settle_retries.insert(
+        id.clone(),
+        SettleRetry {
+            failures,
+            not_before: Instant::now() + wait,
+        },
+    );
+    failures
+}
+
+async fn settle_verified(
     ctx: &DaemonContext,
     id: &StageRunId,
     outcome: StageOutcome,

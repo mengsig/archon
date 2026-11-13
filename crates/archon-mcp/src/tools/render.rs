@@ -85,6 +85,7 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
         | Reply::Welcome(_)
         | Reply::Subscribed { .. }
         | Reply::Feed(_)
+        | Reply::Conversation(_)
         | Reply::Orchestrator(_)
         | Reply::GithubWatcher(_)
         | Reply::UpgradeStarted { .. }

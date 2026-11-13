@@ -18,6 +18,7 @@ pub mod autonomy;
 pub mod catalog;
 pub mod config;
 pub mod config_files;
+pub mod conversation;
 pub mod cost;
 pub mod crash;
 pub mod engine_login;

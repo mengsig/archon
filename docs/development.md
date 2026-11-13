@@ -68,7 +68,7 @@ results and caveats are in [`bench/README.md`](../bench/README.md).
 | `crates/archon-mcp` | MCP server exposing Archon to the orchestrator |
 | `crates/archon-lavish` | Optional lavish-axi review-surface plugin |
 | `crates/archon-daemon` | `archond`, the Archon daemon |
-| `crates/archon` | `archon` CLI and quiet operator chat |
+| `crates/archon` | `archon` CLI and line chat |
 | `pipelines/` | Built-in pipelines |
 | `bench/` | Benchmarks |
 

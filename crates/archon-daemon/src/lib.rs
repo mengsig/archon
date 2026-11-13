@@ -29,6 +29,7 @@ pub mod notification_center;
 mod operator_commands;
 mod operator_sentence;
 pub mod ops;
+pub mod posts;
 pub mod prune;
 pub mod pump;
 pub mod push;
@@ -410,6 +411,7 @@ fn spawn_link_workers(
         supervisor::watch_stalls
     );
     supervised!(workers, ctx, "mcp health", supervisor::watch_mcp);
+    supervised!(workers, ctx, "transcript posts", posts::run);
     supervised!(workers, ctx, "github watcher", github::watch_github);
     supervised!(
         workers,
@@ -417,7 +419,7 @@ fn spawn_link_workers(
         "memory feedback",
         handlers::deliver_memory_feedback
     );
-    assert_eq!(workers.len(), before + 8, "every link worker is supervised");
+    assert_eq!(workers.len(), before + 9, "every link worker is supervised");
 }
 
 /// The link workers (`spawn_link_workers`) under `policy`, handled as the
@@ -431,7 +433,7 @@ pub async fn run_link_workers(
     assert!(ctx.recovery.is_recovered(), "workers start once recovered");
     let mut workers = Workers::new(policy);
     spawn_link_workers(&mut workers, &ctx, endpoint, starter);
-    assert_eq!(workers.len(), 8, "only the link workers run");
+    assert_eq!(workers.len(), 9, "only the link workers run");
     while let Some(ended) = workers.next_ended().await {
         if let Some(fatal) = worker_ended(&ctx, ended).await {
             return Err(fatal);
@@ -479,7 +481,7 @@ fn spawn_workers(
     }
     assert_eq!(
         workers.len(),
-        20 + usize::from(auto_gc) + usize::from(verifies),
+        21 + usize::from(auto_gc) + usize::from(verifies),
         "every daemon worker is supervised"
     );
 }
@@ -615,7 +617,8 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
         dispatch: dispatch.clone(),
         coordination: Default::default(),
         runs: Mutex::new(executor::RunTable::default()),
-        replies: Mutex::new(feed::ReplyTracker::default()),
+        seen: Mutex::new(feed::SeenEvents::default()),
+        conversation: tokio::sync::watch::Sender::new(0),
         answering: Mutex::new(()),
         authority_changes: Mutex::new(()),
         learning_memory: Mutex::new(()),

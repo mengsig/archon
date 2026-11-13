@@ -8,6 +8,10 @@ use archon_core::protocol::{PauseTarget, RepoRef};
 
 use crate::questions::QuestionRef;
 
+/// What `/progress` says now that the chat shows only the conversation.
+pub const PROGRESS_MOVED: &str =
+    "the chat shows the conversation as Aether's /focus does; `archon log` shows progress";
+
 /// The chat's own commands, after the operator commands every surface takes.
 const CHAT_HELP: &str = "\
   /archon answer|approve|reject|merge   the same as /answer, /approve, /reject, /merge
@@ -15,7 +19,6 @@ const CHAT_HELP: &str = "\
   /archon reset [--repo NAME]   forget the saved settings of a scope
   /diff <id>              show the branch a local-ship item left, before /merge
   /image <path>           attach an image file to the next message
-  /progress               show or hide progress notes (also /verbose)
   /help                   this list
   /quit                   leave (also Ctrl-D, or Ctrl-C twice)
 Start a line with // to send literal slash text; the escape stays in the message.
@@ -46,7 +49,6 @@ pub enum SlashCommand {
     Help,
     Authority(String),
     Quit,
-    ToggleProgress,
     Answer {
         question: QuestionRef,
         text: String,
@@ -99,7 +101,7 @@ fn parse_command(name: &str, rest: &str) -> Result<SlashCommand, String> {
     match name {
         "help" | "h" | "?" => no_args(SlashCommand::Help),
         "quit" | "exit" | "q" => no_args(SlashCommand::Quit),
-        "progress" | "verbose" => no_args(SlashCommand::ToggleProgress),
+        "progress" | "verbose" => Err(PROGRESS_MOVED.to_owned()),
         "questions" => no_args(SlashCommand::Questions),
         "status" => no_args(SlashCommand::Status),
         "repos" => no_args(SlashCommand::Repos),
@@ -359,7 +361,7 @@ mod tests {
         assert_eq!(parse_line("/QUIT"), ChatInput::Command(SlashCommand::Quit));
         assert_eq!(
             parse_line("/verbose"),
-            ChatInput::Command(SlashCommand::ToggleProgress)
+            ChatInput::Invalid(PROGRESS_MOVED.to_owned())
         );
         assert_eq!(
             parse_line("/queue running failed"),

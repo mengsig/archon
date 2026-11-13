@@ -1,5 +1,6 @@
 //! Shows the result of a host command as a note row in the orchestrator's
-//! transcript, at once and without a model turn.
+//! transcript, at once and without a model turn: an important post, which
+//! the focused views and the phone show, where aetherd keeps posts.
 
 use archon_aether::wire::{NOTE_LEVEL_PROTOCOL_VERSION, NOTES_FEATURE, NoteLevel, Welcome};
 
@@ -75,10 +76,19 @@ pub(crate) async fn show_level(
             return false;
         }
     };
-    let has_level = welcome.protocol_version >= NOTE_LEVEL_PROTOCOL_VERSION;
+    // A post carries no level, so its line leads with the word instead.
+    let important = client.serves_conversation();
+    let has_level = welcome.protocol_version >= NOTE_LEVEL_PROTOCOL_VERSION && !important;
     let line = note_line(label, level, text, has_level);
-    match client.append_note(&orchestrator, &line, level).await {
-        Ok(()) => true,
+    let shown = match important {
+        true => client.post(&orchestrator, &line, &[]).await,
+        false => client.append_note(&orchestrator, &line, level).await,
+    };
+    match shown {
+        Ok(()) => {
+            ctx.conversation.send_modify(|grown| *grown += 1);
+            true
+        }
         Err(error) => {
             tracing::warn!(%error, command = label, "a command result was not shown in the TUI");
             false

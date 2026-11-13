@@ -1,0 +1,218 @@
+{
+  "$defs": {
+    "ClientFrame": {
+      "oneOf": [
+        {
+          "properties": {
+            "agent": {
+              "$ref": "#/$defs/AgentId"
+            },
+            "cmd": {
+              "const": "append_note",
+              "type": "string"
+            },
+            "context": {
+              "$ref": "#/$defs/NoteContext",
+              "default": "none"
+            },
+            "important": {
+              "description": "A readable post for the operator: every focused view shows it, and\nit may hold [`aether_core::note::MAX_POST_BYTES`]. Needs\n`features::CONVERSATION` when set.",
+              "type": "boolean"
+            },
+            "level": {
+              "$ref": "#/$defs/NoteLevel",
+              "description": "Needs protocol 24 unless `info`; the TUI shows `applied` and\n`refused` notes as the result of a host command."
+            },
+            "links": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "text": {
+              "description": "At most [`aether_core::note::MAX_NOTE_BYTES`] bytes.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "agent",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "after": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "agent": {
+              "$ref": "#/$defs/AgentId"
+            },
+            "before": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "cmd": {
+              "const": "get_conversation",
+              "type": "string"
+            },
+            "important_only": {
+              "type": "boolean"
+            },
+            "limit": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "agent"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "AgentId": {
+      "description": "A agt_ prefixed ULID.",
+      "pattern": "^agt_[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "NoteContext": {
+      "description": "Whether the agent's model is shown the note as well as people.",
+      "oneOf": [
+        {
+          "const": "none",
+          "description": "Only people see it: the model is never given it.",
+          "type": "string"
+        },
+        {
+          "const": "digest",
+          "description": "The agent's next turn is also given it, in a compact digest.",
+          "type": "string"
+        }
+      ]
+    },
+    "NoteLevel": {
+      "description": "How a note reads on screen: a plain remark, or the result of something a\nhost did for the operator. It never reaches the model on its own.",
+      "oneOf": [
+        {
+          "enum": [
+            "info"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "applied",
+          "description": "The host carried out what the operator asked.",
+          "type": "string"
+        },
+        {
+          "const": "refused",
+          "description": "The host declined what the operator asked.",
+          "type": "string"
+        }
+      ]
+    },
+    "ConversationEntry": {
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "important": {
+          "type": "boolean"
+        },
+        "kind": {
+          "$ref": "#/$defs/ConversationEntryKind"
+        },
+        "links": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "part": {
+          "description": "Its place among the entries of the same event.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "seq": {
+          "description": "The event this entry came from; with `part`, the entry's id.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "text": {
+          "description": "Markdown for operator, assistant, post and question entries.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "part",
+        "at",
+        "kind",
+        "important",
+        "text"
+      ],
+      "type": "object"
+    },
+    "ConversationEntryKind": {
+      "oneOf": [
+        {
+          "enum": [
+            "thinking",
+            "tool_call",
+            "tool_result"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "operator",
+          "description": "What the operator sent: a message, or a task they created.",
+          "type": "string"
+        },
+        {
+          "const": "assistant",
+          "description": "The agent's own text, including text beside its tool calls.",
+          "type": "string"
+        },
+        {
+          "const": "post",
+          "description": "A readable post a host appended (`append_note`).",
+          "type": "string"
+        },
+        {
+          "const": "question",
+          "description": "The agent asking the operator (`ask_user`).",
+          "type": "string"
+        },
+        {
+          "const": "message",
+          "description": "A message or task from another agent.",
+          "type": "string"
+        },
+        {
+          "const": "trigger",
+          "description": "A raw external trigger payload.",
+          "type": "string"
+        }
+      ]
+    }
+  }
+}

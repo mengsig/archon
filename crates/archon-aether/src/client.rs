@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use archon_core::aether_ids::{AetherAgentId, AetherTaskId};
 use archon_core::attachment::ImageAttachment;
+use archon_core::conversation::ConversationPage;
 use archon_core::error::ArchonError;
 use archon_core::protocol::McpHealth;
 use serde::de::DeserializeOwned;
@@ -21,10 +22,11 @@ use crate::connection::{BoxRead, BoxWrite, EventSink, Router, Shared, WRITE_QUEU
 use crate::events::AetherEvent;
 use crate::github::{WatcherConfig, WatcherStatus};
 use crate::wire::{
-    Agent, AgentPatch, AgentQuery, CLIENT_NAME, Command, CreateAgent, DaemonDefaults, EventQuery,
-    ExpiredSpan, HISTORY_EXPIRED_FEATURE, Hello, IMAGES_PROTOCOL_VERSION, MIN_PROTOCOL_VERSION,
-    ModelInfo, NOTE_LEVEL_PROTOCOL_VERSION, NOTES_FEATURE, NOTES_PROTOCOL_VERSION, NoteLevel,
-    PROTOCOL_VERSION, ProviderInfo, RawReply, Subscribed, Task, Welcome,
+    Agent, AgentPatch, AgentQuery, CLIENT_NAME, CONVERSATION_FEATURE, Command, CreateAgent,
+    DaemonDefaults, EventQuery, ExpiredSpan, HISTORY_EXPIRED_FEATURE, Hello,
+    IMAGES_PROTOCOL_VERSION, MIN_PROTOCOL_VERSION, ModelInfo, NOTE_LEVEL_PROTOCOL_VERSION,
+    NOTES_FEATURE, NOTES_PROTOCOL_VERSION, NoteLevel, PROTOCOL_VERSION, ProviderInfo, RawReply,
+    Subscribed, Task, Welcome,
 };
 
 /// Events Aether replays to a subscription per page, each page checked
@@ -494,8 +496,79 @@ impl AetherClient {
             agent: agent.clone(),
             text: text.to_owned(),
             level,
+            links: Vec::new(),
+            important: false,
         };
         self.request(command, "note_appended").await.map(drop)
+    }
+
+    /// Whether aetherd keeps important posts and serves `get_conversation`.
+    pub fn serves_conversation(&self) -> bool {
+        let features = &self.welcome().features;
+        features.iter().any(|f| f == CONVERSATION_FEATURE)
+    }
+
+    fn require_conversation(&self, what: &str) -> Result<(), ArchonError> {
+        if self.serves_conversation() {
+            return Ok(());
+        }
+        let welcome = self.welcome();
+        Err(ArchonError::Unavailable(format!(
+            "aetherd {} does not serve {what} (protocol {}, no `{CONVERSATION_FEATURE}` feature)",
+            welcome.daemon_version, welcome.protocol_version
+        )))
+    }
+
+    /// Append an important note: a post the operator reads in every view of
+    /// `agent`'s transcript and in its conversation. Starts no turn.
+    pub async fn post(
+        &self,
+        agent: &AetherAgentId,
+        text: &str,
+        links: &[String],
+    ) -> Result<(), ArchonError> {
+        assert!(!text.trim().is_empty(), "a post says something");
+        assert!(
+            links.iter().all(|link| !link.trim().is_empty()),
+            "a post's links are not blank"
+        );
+        self.require_conversation("important posts")?;
+        let command = Command::AppendNote {
+            agent: agent.clone(),
+            text: text.to_owned(),
+            level: None,
+            links: links.to_vec(),
+            important: true,
+        };
+        self.request(command, "note_appended").await.map(drop)
+    }
+
+    /// The important entries of `agent`'s conversation after `after` (the
+    /// newest page when `None`), at most `limit` events read.
+    pub async fn conversation(
+        &self,
+        agent: &AetherAgentId,
+        after: Option<u64>,
+        before: Option<u64>,
+        limit: Option<u32>,
+    ) -> Result<ConversationPage, ArchonError> {
+        assert!(limit != Some(0), "a page reads at least one event");
+        self.require_conversation("get_conversation")?;
+        let command = Command::GetConversation {
+            agent: agent.clone(),
+            after,
+            before,
+            limit,
+            important_only: true,
+        };
+        let page: ConversationPage = self.typed(command, "conversation").await?;
+        if !page.is_ordered() || page.entries.iter().any(|e| !e.important) {
+            return Err(ArchonError::Protocol(format!(
+                "aetherd's conversation page {}..={} is out of order or holds unimportant entries",
+                page.from_seq, page.to_seq
+            )));
+        }
+        Ok(page)
     }
 
     /// Deliver a keyed message to `to`'s inbox. Images need an aetherd that

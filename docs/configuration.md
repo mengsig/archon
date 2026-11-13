@@ -200,7 +200,7 @@ tick_secs = 15                 # how often the queue is scanned
 inbox_unread_after = "15m"     # an inbox item a running stage's agent leaves unread this long warns in get_item and status
 
 [chat]
-show_progress = false          # print stage progress in `archon chat`
+show_progress = false          # no effect: `archon log` shows progress
 history = 30                   # feed entries replayed when `archon chat` opens
 
 [update]

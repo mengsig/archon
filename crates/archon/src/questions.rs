@@ -2,10 +2,8 @@
 //! archond gave each one (`Q7` everywhere, never reused) or by id, with
 //! numbered options.
 
+use archon_core::notify::Question;
 pub use archon_core::notify::QuestionRef;
-use archon_core::notify::{FeedEntry, Question};
-
-use crate::render::QuestionLabels;
 
 /// The open question `reference` names, if it is still open. A number
 /// matches only the question archond gave it, so a question that closed
@@ -30,15 +28,10 @@ struct Entry {
 /// questions` too.
 #[derive(Debug, Default)]
 pub struct QuestionBook {
-    labels: QuestionLabels,
     entries: Vec<Entry>,
 }
 
 impl QuestionBook {
-    pub fn labels(&self) -> &QuestionLabels {
-        &self.labels
-    }
-
     /// Adopt the daemon's list of open questions: new ones are added,
     /// known ones missing from it are closed.
     pub fn sync_open(&mut self, open: Vec<Question>) {
@@ -47,20 +40,6 @@ impl QuestionBook {
         }
         for question in open.into_iter().filter(Question::is_open) {
             self.add(question);
-        }
-    }
-
-    /// Track a live feed entry. Only live entries: a replayed question may
-    /// have been answered since, and would wrongly get a number.
-    pub fn observe(&mut self, entry: &FeedEntry) {
-        match entry {
-            FeedEntry::Question(question) if question.is_open() => self.add(question.clone()),
-            FeedEntry::Answer { question, .. } => {
-                if let Some(entry) = self.entries.iter_mut().find(|e| &e.question.id == question) {
-                    entry.open = false;
-                }
-            }
-            _ => {}
         }
     }
 
@@ -93,7 +72,6 @@ impl QuestionBook {
         if question.number == 0 {
             return;
         }
-        self.labels.insert(question.id.clone(), question.number);
         let at = self
             .entries
             .partition_point(|e| e.question.number < question.number);
@@ -116,7 +94,6 @@ impl QuestionBook {
 #[cfg(test)]
 mod tests {
     use archon_core::id::QuestionId;
-    use archon_core::notify::AnswerVia;
     use chrono::Duration;
 
     use super::*;
@@ -162,15 +139,10 @@ mod tests {
         assert_eq!(book.find(&QuestionRef::Number(4)).unwrap().text, "old");
         assert!(book.find(&QuestionRef::Number(1)).is_none());
         assert_eq!(book.open().count(), 2);
-        book.observe(&FeedEntry::Answer {
-            question: new.id.clone(),
-            text: "ok".into(),
-            via: AnswerVia::Archon,
-        });
+        book.sync_open(vec![old.clone()]);
         assert_eq!(book.open().map(|q| q.number).collect::<Vec<_>>(), [4]);
+        assert_eq!(book.find(&QuestionRef::Number(9)).unwrap().text, "new");
         let later = question(10, "later", 0, &[]);
-        book.observe(&FeedEntry::Question(later.clone()));
-        assert_eq!(book.labels().get(&later.id), Some(10));
         book.sync_open(vec![later]);
         assert_eq!(book.open().map(|q| q.number).collect::<Vec<_>>(), [10]);
     }
@@ -178,12 +150,11 @@ mod tests {
     #[test]
     fn open_questions_list_by_number_and_unnumbered_ones_are_skipped() {
         let mut book = QuestionBook::default();
-        let live = question(12, "live", 0, &[]);
-        book.observe(&FeedEntry::Question(live.clone()));
         let unnumbered = question(0, "from an older archond", 10, &[]);
+        let live = question(12, "live", 0, &[]);
         let synced = question(11, "synced", 5, &[]);
         book.sync_open(vec![live, synced, unnumbered.clone()]);
         assert_eq!(book.open().map(|q| q.number).collect::<Vec<_>>(), [11, 12]);
-        assert_eq!(book.labels().get(&unnumbered.id), None);
+        assert!(book.find(&QuestionRef::Id(unnumbered.id)).is_none());
     }
 }

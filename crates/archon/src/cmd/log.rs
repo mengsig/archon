@@ -14,7 +14,7 @@ use archon_core::protocol::{Reply, Request};
 use super::to_json;
 use crate::cli::LogKind;
 use crate::connect::{connect_running, unexpected};
-use crate::render::{QuestionLabels, Renderer};
+use crate::render::Renderer;
 use crate::style::{Palette, terminal_width};
 use crate::views;
 
@@ -108,12 +108,10 @@ enum Reader {
 impl Output {
     fn print(&self, entry: &FeedItem) -> anyhow::Result<Reader> {
         let text = match self {
-            Self::Text(renderer) => {
-                match renderer.render(entry, true, &QuestionLabels::default()) {
-                    Some(text) => text,
-                    None => return Ok(Reader::Present),
-                }
-            }
+            Self::Text(renderer) => match renderer.render(entry, true) {
+                Some(text) => text,
+                None => return Ok(Reader::Present),
+            },
             Self::JsonLines => to_json(entry)?.to_string(),
         };
         write_line(&text)

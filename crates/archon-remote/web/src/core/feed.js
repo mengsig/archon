@@ -43,8 +43,3 @@ export function createFeed({ request, keep = KEEP }) {
     get lastSeq() { return lastSeq; },
   };
 }
-
-// The quiet-chat filter: progress notifications only drive refreshes.
-export function isQuiet(item) {
-  return item.entry?.entry === 'notification' && item.entry.kind === 'progress';
-}

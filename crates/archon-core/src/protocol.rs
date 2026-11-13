@@ -460,6 +460,20 @@ pub enum Request {
         limit: usize,
         verbose: bool,
     },
+    /// The important entries of the orchestrator's conversation, as the
+    /// Aether TUI's `/focus` shows them: the newest page when neither
+    /// `after` nor `before` is set. `wait` (with `after`) holds the reply
+    /// until something follows `after`, or about 20 seconds pass.
+    Conversation {
+        #[serde(default)]
+        after: Option<u64>,
+        #[serde(default)]
+        before: Option<u64>,
+        #[serde(default)]
+        limit: Option<u32>,
+        #[serde(default)]
+        wait: bool,
+    },
 
     PublishReport {
         title: String,
@@ -767,6 +781,7 @@ impl Request {
             | Self::ListQuestions { .. }
             | Self::SubscribeFeed { .. }
             | Self::FeedHistory { .. }
+            | Self::Conversation { .. }
             | Self::ListReports
             | Self::OrchestratorStatus
             | Self::CostReport(_)
@@ -1155,6 +1170,7 @@ pub enum Reply {
         last_seq: u64,
     },
     Feed(Vec<FeedItem>),
+    Conversation(crate::conversation::ConversationPage),
     Report(ReportPublished),
     Reports(Vec<ReportSummary>),
     Orchestrator(OrchestratorInfo),

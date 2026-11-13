@@ -5,6 +5,7 @@ mod autonomy;
 mod budget_cost;
 pub mod changes;
 mod control;
+mod conversation;
 mod cost;
 mod github_links;
 mod graph;
@@ -697,6 +698,12 @@ async fn handle_operator(ctx: &DaemonContext, request: Request) -> Result<Reply,
             limit,
             verbose,
         } => operator::history(ctx, before, limit, verbose).await,
+        Request::Conversation {
+            after,
+            before,
+            limit,
+            wait,
+        } => conversation::conversation(ctx, after, before, limit, wait).await,
         Request::PublishReport { title, path, item } => {
             operator::publish_report(ctx, &title, &path, item.as_ref()).await
         }

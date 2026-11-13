@@ -1,7 +1,7 @@
-//! `archon chat`: the quiet operator chat (ARCHITECTURE §12); also what a bare
-//! `archon` opens where the terminal UI cannot run.
-//! A line REPL, not a TUI: it replays recent history, follows the feed,
-//! sends plain lines to the orchestrator and runs slash commands.
+//! `archon chat`: the line chat with the orchestrator (ARCHITECTURE §12);
+//! also what a bare `archon` opens where the terminal UI cannot run.
+//! A line REPL, not a TUI: it shows the orchestrator's conversation as the
+//! Aether TUI's `/focus` does, sends plain lines and runs slash commands.
 
 mod actions;
 pub mod commands;
@@ -14,9 +14,10 @@ use std::collections::VecDeque;
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 
-use archon_client::{ArchonClient, FeedSubscription};
+use archon_client::ArchonClient;
+use archon_core::authority::WEB_RELAY_MARK;
 use archon_core::config::Config;
-use archon_core::notify::{FeedEntry, FeedItem};
+use archon_core::conversation::{ConversationEntry, ConversationPage, EntryKind};
 use archon_core::protocol::{AetherLinkStatus, Reply, Request};
 
 use crate::chat::draft::Draft;
@@ -27,10 +28,12 @@ use crate::questions::QuestionBook;
 use crate::render::Renderer;
 use crate::style::{Palette, Style, terminal_width};
 
-/// Lines this chat sent whose feed echo is still due; the operator already
-/// sees them after the prompt, so the echo is not printed twice.
+/// Lines this chat sent whose echo in the conversation is still due; the
+/// operator already sees them after the prompt, so they are not printed twice.
 const MAX_PENDING_ECHOES: usize = 16;
 const HISTORY_FILE: &str = "chat_history";
+/// Events the opening read covers; the newest `chat.history` entries show.
+const OPENING_EVENTS: u32 = 200;
 /// How long leaving the chat waits to learn whether the orchestrator failed.
 const STATUS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
@@ -44,9 +47,12 @@ enum Flow {
 struct Chat {
     output: Output,
     palette: Palette,
-    verbose: bool,
-    /// Highest feed seq handled; the resume cursor after a reconnect.
-    last_seq: u64,
+    /// Entries the opening page shows.
+    history: usize,
+    /// The last conversation event read; `None` until the opening page.
+    cursor: Option<u64>,
+    /// The `(seq, part)` of the last entry shown, so none shows twice.
+    shown: Option<(u64, u32)>,
     book: QuestionBook,
     pending_echoes: VecDeque<String>,
     /// Consecutive Ctrl-C presses at the prompt.
@@ -70,8 +76,9 @@ pub async fn run(progress: bool) -> anyhow::Result<ExitCode> {
     let mut chat = Chat {
         output: Output::Stdout,
         palette: Palette::detect(),
-        verbose: progress || config.chat.show_progress,
-        last_seq: 0,
+        history: config.chat.history,
+        cursor: None,
+        shown: None,
         book: QuestionBook::default(),
         pending_echoes: VecDeque::new(),
         interrupts: 0,
@@ -79,54 +86,18 @@ pub async fn run(progress: bool) -> anyhow::Result<ExitCode> {
         prefill: None,
         unsent: None,
     };
-    let feed = chat.open(&client, config.chat.history).await?;
+    chat.sync_questions(&client).await?;
+    chat.header(&client).await?;
+    if progress || config.chat.show_progress {
+        chat.note(commands::PROGRESS_MOVED)?;
+    }
     let (input, output) = Input::start(history, chat.draft.clone())?;
     chat.output = output;
-    let link = Link::up(socket, client, feed);
+    let link = Link::up(socket, client);
     chat.run(input, link).await
 }
 
 impl Chat {
-    /// Replay recent history, number open questions, say where things
-    /// stand, and subscribe after the last replayed item.
-    async fn open(
-        &mut self,
-        client: &ArchonClient,
-        history: usize,
-    ) -> anyhow::Result<FeedSubscription> {
-        let replay = match history {
-            0 => Vec::new(),
-            limit => {
-                let request = Request::FeedHistory {
-                    before: None,
-                    limit,
-                    verbose: self.verbose,
-                };
-                match client.request(request).await? {
-                    Reply::Feed(items) => items,
-                    other => return Err(unexpected(&other, "feed")),
-                }
-            }
-        };
-        assert!(
-            replay.windows(2).all(|w| w[0].seq < w[1].seq),
-            "history is in seq order"
-        );
-        self.sync_questions(client).await?;
-        for item in &replay {
-            self.show(item, false)?;
-        }
-        // Always verbose: /progress then filters locally without resubscribing.
-        let after = replay.last().map(|item| item.seq);
-        let feed = client.subscribe_feed(after, true).await?;
-        if after.is_none() {
-            self.last_seq = feed.last_seq;
-        }
-        debug_assert_eq!(after.unwrap_or(self.last_seq), self.last_seq);
-        self.header(client).await?;
-        Ok(feed)
-    }
-
     async fn run(&mut self, mut input: Input, mut link: Link) -> anyhow::Result<ExitCode> {
         loop {
             tokio::select! {
@@ -144,7 +115,7 @@ impl Chat {
                         }
                     },
                 },
-                event = link.next(self.last_seq) => self.on_link(event, &link).await?,
+                event = link.next(self.cursor, OPENING_EVENTS) => self.on_link(event, &link).await?,
             }
         }
     }
@@ -187,19 +158,77 @@ impl Chat {
 
     async fn on_link(&mut self, event: LinkEvent, link: &Link) -> anyhow::Result<()> {
         match event {
-            LinkEvent::Item(item) => self.show(&item, true),
+            LinkEvent::Page(page) => {
+                let asks = self.show_page(&page)?;
+                match asks {
+                    true => self.refresh_questions(link.client()).await,
+                    false => Ok(()),
+                }
+            }
             LinkEvent::Lost(reason) => self.warn(&format!(
                 "lost the connection to archond ({reason}); reconnecting…"
             )),
             LinkEvent::StillDown(reason) => self.note(&format!("still reconnecting: {reason}")),
-            LinkEvent::Restored { reset_to } => {
-                if let Some(head) = reset_to {
-                    self.last_seq = head;
-                    self.warn("archond's feed is behind this chat (a different store?); showing new items from here")?;
-                }
+            LinkEvent::Unreadable(reason) => self.warn(&format!(
+                "cannot read the conversation ({reason}); retrying…"
+            )),
+            LinkEvent::Restored => {
                 self.note("reconnected to archond")?;
                 self.resync(link.client()).await
             }
+        }
+    }
+
+    /// Print a page's new entries: all of a live page, the newest
+    /// `history` of the opening one. `true` when one may ask or answer.
+    fn show_page(&mut self, page: &ConversationPage) -> anyhow::Result<bool> {
+        assert!(page.is_ordered(), "archond checked the page's order");
+        let opening = self.cursor.is_none();
+        let skip = match opening {
+            true => page.entries.len().saturating_sub(self.history),
+            false => 0,
+        };
+        let mut asks = false;
+        for entry in &page.entries[skip..] {
+            asks |= matches!(entry.kind, EntryKind::Post | EntryKind::Question);
+            self.show(entry, !opening)?;
+        }
+        self.cursor = Some(self.cursor.unwrap_or(0).max(page.to_seq));
+        Ok(asks)
+    }
+
+    /// Print one entry unless it was shown or is the echo of a line typed
+    /// here, which the prompt already shows.
+    fn show(&mut self, entry: &ConversationEntry, live: bool) -> anyhow::Result<()> {
+        let at = (entry.seq, entry.part);
+        if self.shown.is_some_and(|shown| at <= shown) {
+            return Ok(());
+        }
+        self.shown = Some(at);
+        if live && entry.kind == EntryKind::Operator {
+            let text = entry
+                .text
+                .strip_prefix(WEB_RELAY_MARK)
+                .unwrap_or(&entry.text);
+            if let Some(at) = self.pending_echoes.iter().position(|sent| sent == text) {
+                self.pending_echoes.remove(at);
+                return Ok(());
+            }
+        }
+        let renderer = Renderer::new(self.palette, terminal_width());
+        let text = renderer.render_entry(entry);
+        self.print(&text)
+    }
+
+    /// Renumber questions after a post that may ask or answer one; a failure
+    /// is only reported, as the next read reports a lost connection.
+    async fn refresh_questions(&mut self, client: Option<&ArchonClient>) -> anyhow::Result<()> {
+        let Some(client) = client else {
+            return Ok(());
+        };
+        match self.sync_questions(client).await {
+            Ok(()) => Ok(()),
+            Err(e) => self.warn(&format!("could not refresh the open questions: {e:#}")),
         }
     }
 
@@ -217,29 +246,6 @@ impl Chat {
         match result {
             Ok(()) => Ok(()),
             Err(e) => self.warn(&format!("reconnected, but could not refresh: {e:#}")),
-        }
-    }
-
-    /// Print one feed item unless it is a duplicate, hidden, or the echo of
-    /// a line typed here. `live` items also update the question numbers.
-    fn show(&mut self, item: &FeedItem, live: bool) -> anyhow::Result<()> {
-        if item.seq <= self.last_seq {
-            return Ok(());
-        }
-        self.last_seq = item.seq;
-        if live {
-            self.book.observe(&item.entry);
-            if let FeedEntry::Operator { text, .. } = &item.entry
-                && let Some(at) = self.pending_echoes.iter().position(|sent| sent == text)
-            {
-                self.pending_echoes.remove(at);
-                return Ok(());
-            }
-        }
-        let renderer = Renderer::new(self.palette, terminal_width());
-        match renderer.render(item, self.verbose, self.book.labels()) {
-            Some(text) => self.print(&text),
-            None => Ok(()),
         }
     }
 
@@ -451,8 +457,9 @@ mod tests {
         Chat {
             output: Output::Stdout,
             palette: Palette::new(false),
-            verbose: false,
-            last_seq: 0,
+            history: 30,
+            cursor: None,
+            shown: None,
             book: QuestionBook::default(),
             pending_echoes: VecDeque::new(),
             interrupts: 0,
@@ -460,6 +467,124 @@ mod tests {
             prefill: None,
             unsent: None,
         }
+    }
+
+    /// What a chat printed, block by block.
+    #[derive(Clone, Default)]
+    struct Printed(Arc<Mutex<Vec<String>>>);
+
+    impl rustyline::ExternalPrinter for Printed {
+        fn print(&mut self, msg: String) -> rustyline::Result<()> {
+            self.0
+                .lock()
+                .unwrap()
+                .push(msg.trim_end_matches('\n').to_owned());
+            Ok(())
+        }
+    }
+
+    fn entry(seq: u64, part: u32, kind: EntryKind, text: &str) -> ConversationEntry {
+        ConversationEntry {
+            seq,
+            part,
+            at: archon_core::now(),
+            kind,
+            important: true,
+            text: text.into(),
+            links: Vec::new(),
+        }
+    }
+
+    fn page(entries: Vec<ConversationEntry>, to_seq: u64) -> ConversationPage {
+        ConversationPage {
+            from_seq: entries.first().map_or(to_seq, |e| e.seq),
+            to_seq,
+            last_seq: to_seq,
+            entries,
+            ..ConversationPage::default()
+        }
+    }
+
+    /// A mixed turn as Aether's `/focus` holds it: the operator's line, the
+    /// orchestrator's text before and between tool calls, a notify and an
+    /// item outcome archond posted, and the phone's marked line.
+    fn mixed_turn() -> Vec<ConversationEntry> {
+        vec![
+            entry(10, 0, EntryKind::Operator, "add caching to api"),
+            entry(
+                11,
+                0,
+                EntryKind::Assistant,
+                "Looking at the api repo first.",
+            ),
+            entry(
+                14,
+                0,
+                EntryKind::Assistant,
+                "Queued qi_7 on api.\n\n- cache layer",
+            ),
+            entry(
+                15,
+                0,
+                EntryKind::Post,
+                "**Decision** (qi_7): build runs on opus",
+            ),
+            entry(19, 0, EntryKind::Post, "**Outcome** (qi_7): PR #7 merged"),
+            entry(
+                20,
+                0,
+                EntryKind::Operator,
+                &format!("{WEB_RELAY_MARK}thanks"),
+            ),
+        ]
+    }
+
+    #[test]
+    fn the_chat_prints_exactly_the_focused_entries_in_order_and_once() {
+        let printed = Printed::default();
+        let mut chat = quiet_chat();
+        chat.output = Output::AbovePrompt(Box::new(printed.clone()));
+        let turn = mixed_turn();
+        let asks = chat.show_page(&page(turn[..3].to_vec(), 14)).unwrap();
+        assert!(!asks, "no post yet");
+        assert_eq!(chat.cursor, Some(14));
+        // A live page repeating the last entry, then the rest of the turn.
+        let asks = chat.show_page(&page(turn[2..].to_vec(), 20)).unwrap();
+        assert!(asks, "posts may ask or answer questions");
+        let renderer = Renderer::new(Palette::new(false), terminal_width());
+        let expected: Vec<String> = turn.iter().map(|e| renderer.render_entry(e)).collect();
+        let shown = printed.0.lock().unwrap().clone();
+        assert_eq!(shown, expected);
+        for (line, said) in shown.iter().zip(&turn) {
+            let first = said.text.strip_prefix(WEB_RELAY_MARK).unwrap_or(&said.text);
+            let first = first.lines().next().unwrap();
+            assert!(line.contains(first), "{line:?} shows {first:?}");
+        }
+        assert_eq!(chat.cursor, Some(20));
+        assert_eq!(chat.shown, Some((20, 0)));
+    }
+
+    #[test]
+    fn the_opening_page_shows_the_newest_history_and_a_typed_line_shows_once() {
+        let printed = Printed::default();
+        let mut chat = quiet_chat();
+        chat.output = Output::AbovePrompt(Box::new(printed.clone()));
+        chat.history = 2;
+        let turn = mixed_turn();
+        chat.show_page(&page(turn[..4].to_vec(), 15)).unwrap();
+        let shown = printed.0.lock().unwrap().clone();
+        assert_eq!(shown.len(), 2, "the newest two of the opening page");
+        assert!(shown[0].contains("Queued qi_7 on api."), "{shown:#?}");
+        chat.expect_echo("thanks");
+        chat.show_page(&page(turn[4..].to_vec(), 20)).unwrap();
+        let shown = printed.0.lock().unwrap().clone();
+        assert_eq!(
+            shown.len(),
+            3,
+            "the phone-marked echo of a typed line is not repeated"
+        );
+        assert!(shown[2].contains("PR #7 merged"));
+        assert!(chat.pending_echoes.is_empty());
     }
 
     #[tokio::test]

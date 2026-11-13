@@ -49,11 +49,6 @@ pub(super) async fn handle_line(
     match command {
         SlashCommand::Quit => return Ok(Flow::Quit),
         SlashCommand::Help => chat.note(&help())?,
-        SlashCommand::ToggleProgress => {
-            chat.verbose = !chat.verbose;
-            let state = if chat.verbose { "shown" } else { "hidden" };
-            chat.note(&format!("progress notes are {state}"))?;
-        }
         remote => {
             if let Some(client) = connected(chat, client)? {
                 let result = run_remote(chat, client, remote).await;
@@ -141,10 +136,7 @@ async fn run_remote(
         }
         SlashCommand::Pause(target) => pause(chat, client, target, true).await,
         SlashCommand::Resume(target) => pause(chat, client, target, false).await,
-        SlashCommand::Help
-        | SlashCommand::Quit
-        | SlashCommand::ToggleProgress
-        | SlashCommand::Image(_) => {
+        SlashCommand::Help | SlashCommand::Quit | SlashCommand::Image(_) => {
             unreachable!("local commands are handled before reaching archond")
         }
     }

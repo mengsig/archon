@@ -1,15 +1,16 @@
-//! The chat's connection to `archond`: one client plus one feed
-//! subscription, re-established with backoff after the daemon restarts or
-//! the connection drops, resuming after the last seq the chat has seen.
+//! The chat's connection to `archond`: one client that reads the
+//! orchestrator's conversation page by page, each read waiting for what
+//! follows the chat's cursor. It reconnects with backoff after the daemon
+//! restarts or the connection drops, and resumes after the cursor.
 //! Reconnecting never starts `archond`: an operator who stopped it meant it.
 
 use std::path::PathBuf;
 use std::time::Duration;
 
-use archon_client::{ArchonClient, FeedSubscription};
+use archon_client::ArchonClient;
+use archon_core::conversation::ConversationPage;
 use archon_core::error::ArchonError;
-use archon_core::notify::FeedItem;
-use archon_core::protocol::ClientKind;
+use archon_core::protocol::{ClientKind, Reply, Request};
 use tokio::time::Instant;
 
 const FIRST_RETRY: Duration = Duration::from_millis(500);
@@ -18,24 +19,26 @@ const NOT_RUNNING: &str = "archond is not running; `archon daemon start` starts 
 
 #[derive(Debug)]
 pub enum LinkEvent {
-    Item(Box<FeedItem>),
+    Page(Box<ConversationPage>),
     /// The connection just dropped, with why.
     Lost(String),
-    /// Connected and subscribed again. `reset_to` is set when the daemon's
-    /// feed is behind the chat's cursor (a different store): the chat
-    /// continues from that seq instead.
-    Restored {
-        reset_to: Option<u64>,
-    },
+    /// Connected again.
+    Restored,
     /// A reconnect attempt failed for a reason not reported yet.
     StillDown(String),
+    /// archond is there but could not read the conversation (Aether down),
+    /// for a reason not reported yet; the read is retried.
+    Unreadable(String),
 }
 
 #[derive(Debug)]
 enum State {
     Up {
         client: ArchonClient,
-        feed: FeedSubscription,
+        /// When the next read may start, after a failed one.
+        retry_at: Option<Instant>,
+        backoff: Duration,
+        reported: Option<String>,
     },
     Down {
         retry_at: Instant,
@@ -51,11 +54,11 @@ pub struct Link {
 }
 
 impl Link {
-    pub fn up(socket: PathBuf, client: ArchonClient, feed: FeedSubscription) -> Self {
+    pub fn up(socket: PathBuf, client: ArchonClient) -> Self {
         assert!(!socket.as_os_str().is_empty(), "the chat knows its socket");
         Self {
             socket,
-            state: State::Up { client, feed },
+            state: up(client),
         }
     }
 
@@ -67,68 +70,96 @@ impl Link {
         }
     }
 
-    /// The next thing that happened. Cancel-safe: dropping the future loses
-    /// no feed item, and an interrupted reconnect is simply retried.
-    pub async fn next(&mut self, after: u64) -> LinkEvent {
+    /// The next thing that happened after `after` (the newest page of
+    /// `history` events when `None`). Cancel-safe: a dropped read is asked
+    /// again, and an interrupted reconnect is simply retried.
+    pub async fn next(&mut self, after: Option<u64>, history: u32) -> LinkEvent {
+        assert!(history > 0, "a page reads at least one event");
         loop {
-            match &mut self.state {
-                State::Up { feed, .. } => match feed.items.recv().await {
-                    Some(item) => return LinkEvent::Item(Box::new(item)),
-                    None => {
-                        let reason = feed.close_reason();
-                        self.state = down(FIRST_RETRY, None);
-                        return LinkEvent::Lost(reason);
-                    }
-                },
-                State::Down {
-                    retry_at,
-                    backoff,
-                    reported,
-                } => {
-                    let (retry_at, backoff, reported) = (*retry_at, *backoff, reported.clone());
-                    tokio::time::sleep_until(retry_at).await;
-                    match self.reconnect(after).await {
-                        Ok(event) => return event,
-                        Err(error) => {
-                            let message = describe(&error);
-                            let fresh = reported.as_deref() != Some(message.as_str());
-                            let next = (backoff * 2).min(MAX_RETRY);
-                            self.state = down(next, Some(message.clone()));
-                            if fresh {
-                                return LinkEvent::StillDown(message);
-                            }
-                        }
-                    }
-                }
+            let event = match &mut self.state {
+                State::Up { .. } => self.read(after, history).await,
+                State::Down { .. } => self.retry().await,
+            };
+            if let Some(event) = event {
+                return event;
             }
         }
     }
 
-    /// Connect to a running daemon and resume the feed after `after`.
-    async fn reconnect(&mut self, after: u64) -> Result<LinkEvent, ArchonError> {
-        let (client, feed) = self.subscribe(after).await?;
-        if feed.last_seq >= after {
-            self.state = State::Up { client, feed };
-            return Ok(LinkEvent::Restored { reset_to: None });
+    /// One conversation read; `None` when a repeated failure was reported.
+    async fn read(&mut self, after: Option<u64>, history: u32) -> Option<LinkEvent> {
+        let State::Up {
+            client,
+            retry_at,
+            backoff,
+            reported,
+        } = &mut self.state
+        else {
+            unreachable!("only an up link reads");
+        };
+        if let Some(at) = retry_at.take() {
+            tokio::time::sleep_until(at).await;
         }
-        // Resubscribing on a fresh connection: the client refuses items at or
-        // below the cursor it subscribed with, and this feed is behind it.
-        let head = feed.last_seq;
-        drop((client, feed));
-        let (client, feed) = self.subscribe(head).await?;
-        self.state = State::Up { client, feed };
-        Ok(LinkEvent::Restored {
-            reset_to: Some(head),
-        })
+        let request = Request::Conversation {
+            after,
+            before: None,
+            limit: after.is_none().then_some(history),
+            wait: after.is_some(),
+        };
+        let error = match client.request(request).await {
+            Ok(Reply::Conversation(page)) => {
+                (*backoff, *reported) = (FIRST_RETRY, None);
+                return Some(LinkEvent::Page(Box::new(page)));
+            }
+            Ok(other) => ArchonError::Protocol(format!("conversation answered {other:?}")),
+            Err(error) => error,
+        };
+        if client.is_closed() {
+            self.state = down(FIRST_RETRY, None);
+            return Some(LinkEvent::Lost(error.to_string()));
+        }
+        let message = error.to_string();
+        let fresh = reported.as_deref() != Some(message.as_str());
+        *retry_at = Some(Instant::now() + *backoff);
+        *backoff = (*backoff * 2).min(MAX_RETRY);
+        *reported = Some(message.clone());
+        fresh.then_some(LinkEvent::Unreadable(message))
     }
 
-    async fn subscribe(&self, after: u64) -> Result<(ArchonClient, FeedSubscription), ArchonError> {
-        let client = ArchonClient::connect(&self.socket, ClientKind::ArchonCli)
-            .await?
-            .acting_for(crate::connect::principal());
-        // Always verbose: /progress then filters locally without resubscribing.
-        let feed = client.subscribe_feed(Some(after), true).await?;
-        Ok((client, feed))
+    /// One reconnect attempt; `None` when a repeated failure was reported.
+    async fn retry(&mut self) -> Option<LinkEvent> {
+        let State::Down {
+            retry_at,
+            backoff,
+            reported,
+        } = &self.state
+        else {
+            unreachable!("only a down link reconnects");
+        };
+        let (retry_at, backoff, reported) = (*retry_at, *backoff, reported.clone());
+        tokio::time::sleep_until(retry_at).await;
+        let connected = ArchonClient::connect(&self.socket, ClientKind::ArchonCli).await;
+        match connected {
+            Ok(client) => {
+                self.state = up(client.acting_for(crate::connect::principal()));
+                Some(LinkEvent::Restored)
+            }
+            Err(error) => {
+                let message = describe(&error);
+                let fresh = reported.as_deref() != Some(message.as_str());
+                self.state = down((backoff * 2).min(MAX_RETRY), Some(message.clone()));
+                fresh.then_some(LinkEvent::StillDown(message))
+            }
+        }
+    }
+}
+
+fn up(client: ArchonClient) -> State {
+    State::Up {
+        client,
+        retry_at: None,
+        backoff: FIRST_RETRY,
+        reported: None,
     }
 }
 

@@ -88,10 +88,11 @@ pub enum Command {
     /// Correct one stage of a finished run and curate the memory that misled it.
     #[command(subcommand)]
     Learning(crate::cmd::learning::LearningCommand),
-    /// Open the quiet line chat with the orchestrator.
+    /// Open the line chat with the orchestrator: its conversation as the
+    /// Aether TUI's `/focus` shows it.
     Chat {
-        /// Also show progress notifications.
-        #[arg(long)]
+        /// Kept for scripts; progress now shows in `archon log`.
+        #[arg(long, hide = true)]
         progress: bool,
     },
     /// Send one message to the orchestrator and exit.

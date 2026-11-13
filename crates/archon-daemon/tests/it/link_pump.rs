@@ -152,15 +152,6 @@ fn delivered(seq: u64, kind: Value) -> Value {
         "delivered_at": "2026-09-26T10:00:00Z", "kind": kind}})
 }
 
-fn trigger_delivered(seq: u64) -> Value {
-    delivered(
-        seq,
-        json!({"kind": "external_trigger", "source": "archon",
-                          "idempotency_key": format!("trg_{seq}"), "payload": {}}),
-    )
-}
-
-/// A turn reads its inbox up to `seq`.
 fn consumed(up_to: u64) -> Value {
     json!({"type": "inbox.consumed", "up_to": up_to, "items": []})
 }
@@ -208,17 +199,6 @@ async fn say(harness: &Harness, seq: u64, text: &str) {
     orch(harness, delivered(seq, message)).await;
 }
 
-async fn awaiting_reply(harness: &Harness) -> bool {
-    let saved = harness.kv(archon_daemon::feed::REPLY_STATE_KEY).await;
-    let tracker = archon_daemon::feed::restore_replies(saved.as_deref()).unwrap();
-    assert_eq!(
-        tracker,
-        *harness.ctx.replies.lock().await,
-        "persisted as held"
-    );
-    tracker.awaiting_reply()
-}
-
 async fn hangup_and_replay(harness: &Harness, cursor: &str) {
     harness.set_kv(cursor, "0").await;
     let before = harness.fake.connections_accepted();
@@ -226,141 +206,24 @@ async fn hangup_and_replay(harness: &Harness, cursor: &str) {
     wait_for_streams(harness, before + 1).await;
 }
 
+/// The orchestrator's own text stays in its transcript, the one chat: no
+/// feed line copies it, and each of its writes wakes `conversation` readers.
 #[tokio::test]
-async fn only_the_answer_to_an_operator_message_reaches_the_chat() {
+async fn orchestrator_text_wakes_conversation_readers_and_adds_no_feed_line() {
     let harness = Harness::new().await;
     let (_agents, pump) = running_pump(&harness).await;
-    // A trigger-woken turn: its text is the orchestrator's own business.
-    orch(&harness, trigger_delivered(1)).await;
+    let mut grown = harness.ctx.conversation.subscribe();
+    grown.borrow_and_update();
+    say(&harness, 1, "What is running?").await;
     orch(&harness, consumed(1)).await;
-    orch(&harness, said("Noted item 3 finished; nothing to tell.")).await;
-    orch(&harness, completed()).await;
-    assert!(harness.orchestrator_replies().await.is_empty());
-
-    say(&harness, 2, "What is running?").await;
-    assert!(awaiting_reply(&harness).await);
-    orch(&harness, consumed(2)).await;
-    orch(&harness, tool_call()).await;
     orch(&harness, said("Let me check the queue.")).await;
-    let child_text = fake::event(Some(CHILD), None, said("child chatter"));
-    let mut child_text = child_text;
-    child_text["parent_agent_id"] = json!(ORCH);
-    harness.fake.push_event(child_text);
     orch(&harness, tool_call()).await;
     orch(&harness, said("Two items are running: A and B.")).await;
-    orch(&harness, said("   ")).await;
-    orch(&harness, completed()).await;
-
-    orch(&harness, trigger_delivered(3)).await;
-    orch(&harness, consumed(3)).await;
-    orch(&harness, said("Later trigger work.")).await;
     orch(&harness, completed()).await;
     pump.abort();
-    assert_eq!(
-        harness.orchestrator_replies().await,
-        vec!["Two items are running: A and B."]
-    );
-    assert!(!awaiting_reply(&harness).await);
-}
-
-/// A turn ends waiting; `condition` is what Aether resumes it on.
-async fn waits_for(harness: &Harness, condition: Value) {
-    let waiting = json!({"type": "agent.waiting", "condition": condition});
-    orch(harness, waiting).await;
-    let done = json!({"type": "agent.turn_completed", "turn": 1, "invocation": "inv_1",
-                      "next": "waiting"});
-    orch(harness, done).await;
-}
-
-/// `delegate` with `wait` ends the answering turn; the answer is written by
-/// the turn the helper's result wakes, and it reaches the chat.
-#[tokio::test]
-async fn an_answer_that_waits_for_a_delegated_helper_reaches_the_chat() {
-    let harness = Harness::new().await;
-    let (_agents, pump) = running_pump(&harness).await;
-    say(&harness, 1, "Which tests are flaky?").await;
-    orch(&harness, consumed(1)).await;
-    orch(&harness, said("A helper is reading the CI history.")).await;
-    orch(&harness, tool_call()).await;
-    let helper_task = json!({"on": "any", "of": [
-        {"on": "task", "id": "tsk_0101"}, {"on": "deadline", "at": "2026-09-26T10:30:00Z"}]});
-    waits_for(&harness, helper_task).await;
-    assert!(awaiting_reply(&harness).await, "the answer is still owed");
-
-    let result = json!({"kind": "task_completed", "task": "tsk_0101",
-                        "result": {"summary": "three tests"}});
-    orch(&harness, delivered(2, result)).await;
-    orch(&harness, consumed(2)).await;
-    orch(&harness, said("Three tests are flaky: a, b and c.")).await;
-    waits_for(&harness, json!({"on": "inbox"})).await;
-    assert!(!awaiting_reply(&harness).await);
-
-    orch(&harness, trigger_delivered(3)).await;
-    orch(&harness, consumed(3)).await;
-    orch(&harness, said("Later trigger work.")).await;
-    waits_for(&harness, json!({"on": "inbox"})).await;
-    hangup_and_replay(&harness, keys::CURSOR_ORCHESTRATOR).await;
-    orch(&harness, trigger_delivered(4)).await;
-    pump.abort();
-    assert_eq!(
-        harness.orchestrator_replies().await,
-        vec![
-            "A helper is reading the CI history.",
-            "Three tests are flaky: a, b and c."
-        ]
-    );
-}
-
-#[tokio::test]
-async fn a_message_sent_mid_turn_is_answered_by_the_turn_that_consumes_it() {
-    let harness = Harness::new().await;
-    let (_agents, pump) = running_pump(&harness).await;
-    orch(&harness, trigger_delivered(1)).await;
-    say(&harness, 2, "Pause the queue?").await;
-    // The trigger turn starts after the message arrived but reads only item 1.
-    orch(&harness, consumed(1)).await;
-    orch(&harness, said("Handling a trigger.")).await;
-    orch(&harness, completed()).await;
-    assert!(
-        harness.orchestrator_replies().await.is_empty(),
-        "that turn never saw the message"
-    );
-
-    orch(&harness, consumed(2)).await;
-    orch(&harness, said("Paused.")).await;
-    orch(&harness, completed()).await;
-    pump.abort();
-    assert_eq!(harness.orchestrator_replies().await, vec!["Paused."]);
-}
-
-#[tokio::test]
-async fn an_answer_in_progress_survives_an_archond_restart_and_a_replay() {
-    let harness = Harness::new().await;
-    let (_agents, pump) = running_pump(&harness).await;
-    say(&harness, 1, "Is item 4 done?").await;
-    orch(&harness, consumed(1)).await;
-    orch(&harness, said("Checking.")).await;
-    pump.abort();
-    let _ = pump.await;
-    // A fresh archond starts from what the store kept.
-    *harness.ctx.replies.lock().await = Default::default();
-    let pump = spawn_link(&harness, harness.fake.endpoint(), None);
-    wait_for_streams(&harness, 2).await;
-    orch(&harness, said("Yes, it merged.")).await;
-    let seq = orch(&harness, completed()).await;
-
-    hangup_and_replay(&harness, keys::CURSOR_ORCHESTRATOR).await;
-    harness
-        .eventually("the replay was handled", || async {
-            harness.kv(keys::CURSOR_ORCHESTRATOR).await.as_deref() == Some(&*seq.to_string())
-        })
-        .await;
-    pump.abort();
-    assert_eq!(
-        harness.orchestrator_replies().await,
-        vec!["Yes, it merged."]
-    );
-    assert!(!awaiting_reply(&harness).await);
+    assert!(grown.has_changed().unwrap(), "readers were woken");
+    assert!(*grown.borrow() >= 3, "consumed and both texts wake readers");
+    assert!(harness.orchestrator_replies().await.is_empty());
 }
 
 #[tokio::test]

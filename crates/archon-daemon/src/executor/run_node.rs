@@ -715,21 +715,25 @@ enum Found {
 /// replayed under its key first, so a node Aether created behind a lost
 /// reply is found and cancelled rather than leaked. Waiting and an
 /// unanswered call both leave the entry for the next sweep
-/// (`runs_to_retire`).
-pub(super) async fn retire(ctx: &DaemonContext, run: &PipelineRunId) -> Result<(), ArchonError> {
+/// (`runs_to_retire`). Once retired, the stage runs whose ended agents to
+/// archive (`archive::owe_finished`); none while it waits.
+pub(super) async fn retire(
+    ctx: &DaemonContext,
+    run: &PipelineRunId,
+) -> Result<Vec<StageRunId>, ArchonError> {
     let node = load_node(&*ctx.store.lock().await, run)?;
     if turn_still_ending(ctx, run, archon_core::now()).await? {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let agent = match find_agent(ctx, run, node).await? {
         Found::Agent(agent) => Some(agent),
         Found::Nothing => None,
-        Found::Unanswered => return Ok(()),
+        Found::Unanswered => return Ok(Vec::new()),
     };
     if let Some(agent) = agent
         && (!cancel_node(ctx, run, &agent).await? || !subtree_stopped(ctx, &agent).await?)
     {
-        return Ok(());
+        return Ok(Vec::new());
     }
     // Older node generations may no longer enumerate their stage agents.
     // Keep the durable node entry until every recorded builder is confirmed
@@ -739,10 +743,13 @@ pub(super) async fn retire(ctx: &DaemonContext, run: &PipelineRunId) -> Result<(
         if let Some(agent) = stage.aether_agent
             && !subtree_stopped(ctx, &agent).await?
         {
-            return Ok(());
+            return Ok(Vec::new());
         }
     }
-    ctx.store.lock().await.kv_delete(&node_key(run))
+    let mut store = ctx.store.lock().await;
+    let owed = super::archive::owe_finished(&mut store, run)?;
+    store.kv_delete(&node_key(run))?;
+    Ok(owed)
 }
 
 /// Cancellation is cooperative. An unanswered lookup keeps the durable

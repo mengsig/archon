@@ -768,6 +768,9 @@ struct FakeState {
     by_key: BTreeMap<String, SpawnedAgent>,
     failures: VecDeque<ArchonError>,
     cancel_failures: VecDeque<ArchonError>,
+    /// Every accepted `archive`, in order, repeats included.
+    archived: Vec<AetherAgentId>,
+    archive_failures: VecDeque<ArchonError>,
     /// Agents whose accepted cancel leaves them live until `kill`.
     slow_cancels: BTreeSet<AetherAgentId>,
     outcome_failures: VecDeque<ArchonError>,
@@ -946,6 +949,16 @@ impl FakeBackend {
 
     pub fn cancelled(&self) -> Vec<AetherAgentId> {
         self.state().cancelled.clone()
+    }
+
+    /// Every agent `archive` cleared from the view, in order, repeats included.
+    pub fn archived(&self) -> Vec<AetherAgentId> {
+        self.state().archived.clone()
+    }
+
+    /// The next `archive` calls fail with these errors, in order.
+    pub fn fail_next_archive(&self, error: ArchonError) {
+        self.state().archive_failures.push_back(error);
     }
 
     /// The next `update_agent` calls fail with these errors, in order.
@@ -1390,6 +1403,26 @@ impl AgentBackend for FakeBackend {
             )));
         }
         state.woken.push(agent.clone());
+        Ok(())
+    }
+
+    async fn archive(&self, agent: &AetherAgentId) -> Result<(), ArchonError> {
+        let mut state = self.state();
+        if let Some(error) = state.archive_failures.pop_front() {
+            return Err(error);
+        }
+        let delegated_live = (state.delegated.iter())
+            .any(|d| d.agent == *agent && d.state == DescendantState::Live);
+        let stage_live = state.is_node(agent)
+            || state.in_turn.contains(agent)
+            || state.is_kept(agent)
+            || state.woken.contains(agent);
+        if delegated_live || (stage_live && !state.dead.contains(agent)) {
+            return Err(ArchonError::Invalid(format!(
+                "aether: agent {agent} is live; only finished work can be cleared from the view"
+            )));
+        }
+        state.archived.push(agent.clone());
         Ok(())
     }
 

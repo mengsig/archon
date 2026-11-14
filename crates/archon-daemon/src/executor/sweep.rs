@@ -13,7 +13,7 @@ use archon_core::run::{StageOutcome, StageRun, StageState};
 use archon_queue::Store;
 
 use super::{
-    FollowUp, descendants, forewarn, held, load_spawn, resume, run_follow_up, run_node, settle,
+    FollowUp, archive, descendants, forewarn, held, load_spawn, resume, run_follow_up, run_node, settle,
     ship, siblings, stall, team,
 };
 use crate::context::DaemonContext;
@@ -91,6 +91,7 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
         follow.sibling_stops = siblings::owed(&store)?;
         follow.steers = super::steer::owed(&store)?;
         follow.descendant_stops = descendants::owed(&store)?;
+        follow.archive = archive::marked(&store)?;
         follow.release_builds = crate::build_cache::owed_releases(&store)?
             .into_iter()
             .map(|(item, repo_name)| super::ItemBuild { item, repo_name })

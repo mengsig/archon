@@ -1533,6 +1533,7 @@ async fn spawned_ok(
     }
     Ok(FollowUp {
         check: vec![(current.id, spawned.task)],
+        superseded: vec![run.id.clone()],
         roster: vec![run.id],
         ..FollowUp::default()
     })

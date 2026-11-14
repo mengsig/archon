@@ -333,6 +333,11 @@ pub trait AgentBackend: Send + Sync {
     /// cooperatively: `Ok` means accepted, not that any of them has ended.
     async fn cancel(&self, agent: &AetherAgentId, reason: &str) -> Result<(), ArchonError>;
 
+    /// Clear the finished `agent` out of Aether's live view; Aether keeps it
+    /// in its store. `NotFound` for an agent it does not know, `Invalid` or
+    /// `InvalidTransition` for a live one; archiving twice is `Ok`.
+    async fn archive(&self, agent: &AetherAgentId) -> Result<(), ArchonError>;
+
     /// Change a live agent in place; it keeps its transcript. Implementations
     /// re-check the model policy. Aether decides when a new model takes over.
     async fn update_agent(

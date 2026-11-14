@@ -612,8 +612,16 @@ fn notice_sentence(text: &str) -> String {
 
 /// Whether the item failed on a stage that only the operator can unblock. A
 /// success never does, whatever words its summary holds.
+/// An item failed on a `BLOCKED:` stage, or on one that escalated and
+/// whose agent stays in Aether's view for the operator (`archive`).
 fn failed_blocked(item: &QueueItem) -> bool {
-    matches!(&item.state, QueueState::Failed { error, .. } if error.contains(StageOutcome::BLOCKED_PREFIX))
+    let QueueState::Failed { error, .. } = &item.state else {
+        return false;
+    };
+    // `item_state` writes `stage <id>: <the stage's error>`.
+    let escalated = (error.split_once(": "))
+        .is_some_and(|(_, stage_error)| stage_error.starts_with(StageOutcome::ESCALATE_PREFIX));
+    error.contains(StageOutcome::BLOCKED_PREFIX) || escalated
 }
 
 /// Where a succeeded `ship = local` item's change is, what it changed, and

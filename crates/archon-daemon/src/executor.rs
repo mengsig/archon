@@ -8,6 +8,7 @@
 //! is returned as a `FollowUp` and run once the run table is released.
 
 pub mod coordination;
+mod archive;
 mod dependencies;
 mod descendants;
 mod discard;
@@ -218,6 +219,10 @@ pub(crate) struct FollowUp {
     pub kept: Vec<resume::Kept>,
     /// Live stage runs a steer still owes a patch or a message (§6.6).
     pub steers: Vec<StageRunId>,
+    /// Live runs where a fresh agent took a stage: archive what it moved past.
+    pub superseded: Vec<PipelineRunId>,
+    /// Ended stage runs whose agent tree an archive mark may owe.
+    pub archive: Vec<StageRunId>,
     /// Capacity or pending spawns changed: wake the dispatcher.
     pub poke: bool,
 }
@@ -252,6 +257,8 @@ impl FollowUp {
         self.resumed.extend(other.resumed);
         self.kept.extend(other.kept);
         self.steers.extend(other.steers);
+        self.superseded.extend(other.superseded);
+        self.archive.extend(other.archive);
         self.poke |= other.poke;
     }
 
@@ -277,6 +284,8 @@ impl FollowUp {
             && self.resumed.is_empty()
             && self.kept.is_empty()
             && self.steers.is_empty()
+            && self.superseded.is_empty()
+            && self.archive.is_empty()
     }
 }
 
@@ -623,8 +632,9 @@ async fn stop_and_spawn(ctx: &DaemonContext, round: &mut Round, follow: &mut Fol
     for run in dedup(take(&mut follow.retire)) {
         let retired = run_node::retire(ctx, &run).await;
         let discard = vec![run];
-        round.record(retired.map(|()| FollowUp {
+        round.record(retired.map(|archive| FollowUp {
             discard,
+            archive,
             ..FollowUp::default()
         }));
     }
@@ -690,6 +700,12 @@ async fn deliver_and_tidy(ctx: &DaemonContext, round: &mut Round, follow: Follow
     }
     for run in dedup(follow.discard) {
         round.record(discard::discard(ctx, &run).await);
+    }
+    for run in dedup(follow.superseded) {
+        round.record(archive::superseded(ctx, &run).await);
+    }
+    for stage in dedup(follow.archive) {
+        round.record(archive::release(ctx, &stage).await);
     }
 }
 

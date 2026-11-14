@@ -591,6 +591,10 @@ impl AgentBackend for AetherBackend {
         self.link.client()?.wake(agent).await.map(|_| ())
     }
 
+    async fn archive(&self, agent: &AetherAgentId) -> Result<(), ArchonError> {
+        self.link.client()?.archive(agent).await
+    }
+
     async fn engine_login(&self, provider: &str) -> Result<Option<String>, ArchonError> {
         assert!(!provider.is_empty(), "a model names its provider");
         let auth = self.link.client()?.auth_status().await?;

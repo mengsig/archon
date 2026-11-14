@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use archon_aether::github::{RepositoryConfig, WatcherConfig};
 use archon_aether::memory::MemoryQuery;
 use archon_aether::wire::{
-    AgentConfig, AgentPatch, AgentQuery, ApprovalPolicy, ClientFrame, Command, CreateAgent,
+    AgentConfig, AgentPatch, AgentQuery, ApprovalPolicy, ArchiveTarget, ClientFrame, Command, CreateAgent,
     EventQuery, Hello, NetworkPolicy, Scope, ToolExposure,
 };
 use archon_core::aether_ids::{AetherAgentId, AetherMemoryId, AetherRunId, AetherTaskId};
@@ -58,6 +58,7 @@ fn variant_name(command: &Command) -> &'static str {
         Command::Interrupt { .. } => "interrupt",
         Command::Wake { .. } => "wake",
         Command::Restart { .. } => "restart",
+        Command::Archive { .. } => "archive",
         Command::Pause { .. } => "pause",
         Command::Resume { .. } => "resume",
         Command::GetTask { .. } => "get_task",
@@ -253,6 +254,10 @@ fn control_samples() -> Vec<Command> {
     vec![
         Command::Wake { agent: agent() },
         Command::Restart { agent: agent() },
+        Command::Archive {
+            target: ArchiveTarget::Agent(agent()),
+            archived: true,
+        },
         Command::Pause {
             agent: agent(),
             subtree: true,

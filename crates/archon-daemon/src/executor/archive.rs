@@ -10,10 +10,13 @@
 //! live, so each tree is archived once. An owed mark is written in the same
 //! transaction as the spawn or node retirement that owes it, so a restart
 //! never loses one, and retention keeps its item while it stands. The sweep
-//! retries owed marks after a restart or an unanswered call; archiving is
-//! best-effort and never fails a run.
+//! retries owed marks after a restart or an unanswered call, at most
+//! [`PER_SWEEP`] trees a pass, each call bounded by [`CALL_LIMIT`];
+//! archiving is best-effort and never fails a run.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::future::Future;
+use std::time::Duration;
 
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
@@ -23,12 +26,20 @@ use archon_core::queue::QueueState;
 use archon_core::run::{StageOutcome, StageRun, StageState};
 use archon_queue::Store;
 
-use super::{FollowUp, run_node};
+use super::run_node;
+use super::sweep::is_passing;
 use crate::context::DaemonContext;
 
 const MARK_PREFIX: &str = "archive:";
 const OWED: &str = "owed";
 const DONE: &str = "done";
+
+/// Trees asked of Aether a pass, oldest stage run first; the rest wait for
+/// the next sweep, so slow answers never hold dispatch up for long.
+pub(super) const PER_SWEEP: usize = 8;
+/// How long one `archive` or `descendants` call may take before it counts
+/// as unanswered and its mark stays owed.
+const CALL_LIMIT: Duration = Duration::from_secs(5);
 
 fn mark_key(stage: &StageRunId) -> String {
     format!("{MARK_PREFIX}{stage}")
@@ -227,20 +238,18 @@ fn due(store: &mut Store, stage: &StageRunId) -> Result<Option<AetherAgentId>, A
 
 /// Archive `stage`'s tree if its mark owes it now, and record that it is
 /// settled: a finished run's mark is dropped, a live one's kept as done.
-pub(super) async fn release(
-    ctx: &DaemonContext,
-    stage: &StageRunId,
-) -> Result<FollowUp, ArchonError> {
+/// Returns whether Aether was asked, which [`PER_SWEEP`] counts.
+pub(super) async fn release(ctx: &DaemonContext, stage: &StageRunId) -> Result<bool, ArchonError> {
     let Some(agent) = due(&mut *ctx.store.lock().await, stage)? else {
-        return Ok(FollowUp::default());
+        return Ok(false);
     };
     if archive_tree(ctx, stage, &agent).await == Archived::Later {
-        return Ok(FollowUp::default());
+        return Ok(true);
     }
     let mut store = ctx.store.lock().await;
     let key = mark_key(stage);
     if store.kv_get(&key)?.is_none() {
-        return Ok(FollowUp::default());
+        return Ok(true);
     }
     let run = store.stage_run(stage)?.run;
     if store.run(&run)?.state.is_terminal() {
@@ -248,7 +257,7 @@ pub(super) async fn release(
     } else {
         store.kv_set(&key, DONE)?;
     }
-    Ok(FollowUp::default())
+    Ok(true)
 }
 
 /// What became of an archive of one agent or a tree.
@@ -262,12 +271,18 @@ enum Archived {
     GaveUp,
 }
 
-/// Whether Aether gave no answer, so the same call is worth repeating.
-fn unanswered(error: &ArchonError) -> bool {
-    matches!(
-        error,
-        ArchonError::Unavailable(_) | ArchonError::Protocol(_) | ArchonError::Io { .. }
-    )
+/// `call` to Aether, counted unanswered once it takes over [`CALL_LIMIT`].
+async fn bounded<T>(
+    call: impl Future<Output = Result<T, ArchonError>>,
+    what: &str,
+) -> Result<T, ArchonError> {
+    match tokio::time::timeout(CALL_LIMIT, call).await {
+        Ok(answer) => answer,
+        Err(_) => Err(ArchonError::Unavailable(format!(
+            "aether did not answer {what} within {}s",
+            CALL_LIMIT.as_secs()
+        ))),
+    }
 }
 
 /// Archive every agent beneath `agent`, then `agent` itself, only once the
@@ -276,9 +291,9 @@ fn unanswered(error: &ArchonError) -> bool {
 /// left for later; a stage agent Aether no longer knows lists no delegates,
 /// and its own `archive` then finds it gone.
 async fn archive_tree(ctx: &DaemonContext, stage: &StageRunId, agent: &AetherAgentId) -> Archived {
-    let descendants = match ctx.backend.descendants(agent).await {
+    let descendants = match bounded(ctx.backend.descendants(agent), "descendants").await {
         Ok(descendants) => descendants,
-        Err(error) if unanswered(&error) => {
+        Err(error) if is_passing(&error) => {
             tracing::info!(%stage, %agent, %error, "stage agent tree unanswered; archive retried later");
             return Archived::Later;
         }
@@ -298,28 +313,25 @@ async fn archive_tree(ctx: &DaemonContext, stage: &StageRunId, agent: &AetherAge
         descendants.iter().all(|d| d.agent != *agent),
         "an agent is not its own descendant"
     );
-    let mut tree = Archived::Done;
+    let mut gave_up = false;
     for member in &descendants {
         match archive_one(ctx, stage, &member.agent).await {
             Archived::Done => {}
-            Archived::Later => tree = Archived::Later,
-            Archived::GaveUp if tree == Archived::Done => tree = Archived::GaveUp,
-            Archived::GaveUp => {}
+            // The rest would likely wait as long; the next sweep asks again.
+            Archived::Later => return Archived::Later,
+            Archived::GaveUp => gave_up = true,
         }
     }
-    match tree {
-        Archived::Done => archive_one(ctx, stage, agent).await,
-        Archived::Later => Archived::Later,
-        Archived::GaveUp => {
-            tracing::warn!(%stage, %agent, "a delegate of the stage agent cannot be archived; the tree stays in Aether's view");
-            Archived::GaveUp
-        }
+    if gave_up {
+        tracing::warn!(%stage, %agent, "a delegate of the stage agent cannot be archived; the tree stays in Aether's view");
+        return Archived::GaveUp;
     }
+    archive_one(ctx, stage, agent).await
 }
 
 /// One `archive` call.
 async fn archive_one(ctx: &DaemonContext, stage: &StageRunId, agent: &AetherAgentId) -> Archived {
-    match ctx.backend.archive(agent).await {
+    match bounded(ctx.backend.archive(agent), "archive").await {
         Ok(()) => Archived::Done,
         // Retention may have removed it: nothing is left to show.
         Err(ArchonError::NotFound(_)) => Archived::Done,
@@ -327,8 +339,8 @@ async fn archive_one(ctx: &DaemonContext, stage: &StageRunId, agent: &AetherAgen
             tracing::info!(%stage, %agent, %error, "Aether refused to archive a stage agent it holds live; retried later");
             Archived::Later
         }
-        Err(error) if unanswered(&error) => {
-            tracing::warn!(%stage, %agent, %error, "archiving a stage agent went unanswered; retried later");
+        Err(error) if is_passing(&error) => {
+            tracing::warn!(%stage, %agent, %error, "archiving a stage agent went unanswered or failed inside Aether; retried later");
             Archived::Later
         }
         Err(error) => {

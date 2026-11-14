@@ -697,13 +697,32 @@ async fn deliver_and_tidy(ctx: &DaemonContext, round: &mut Round, follow: Follow
     for run in dedup(follow.discard) {
         round.record(discard::discard(ctx, &run).await);
     }
-    // Best-effort cleanup whose mark stays for the next sweep: its failure
-    // fails neither the round nor any other duty.
-    for stage in dedup(follow.archive) {
-        if let Err(error) = archive::release(ctx, &stage).await {
-            tracing::error!(%stage, %error, "archiving a moved-past stage agent failed; its mark is retried by the sweep");
+    archive_owed(ctx, dedup(follow.archive)).await;
+}
+
+/// Archive the trees `owed` names, oldest stage run first, asking Aether of
+/// at most `archive::PER_SWEEP`. Best-effort cleanup whose mark stays for
+/// the next sweep: its failure fails neither the round nor any other duty.
+async fn archive_owed(ctx: &DaemonContext, owed: BTreeSet<StageRunId>) {
+    let mut asked = 0;
+    for stage in &owed {
+        if asked == archive::PER_SWEEP {
+            tracing::info!(
+                owed = owed.len(),
+                "archive marks past this pass's cap wait for the next sweep"
+            );
+            break;
+        }
+        match archive::release(ctx, stage).await {
+            Ok(true) => asked += 1,
+            Ok(false) => {}
+            Err(error) => {
+                asked += 1;
+                tracing::error!(%stage, %error, "archiving a moved-past stage agent failed; its mark is retried by the sweep");
+            }
         }
     }
+    assert!(asked <= archive::PER_SWEEP, "the cap bounds Aether's calls");
 }
 
 /// Issue `spawns`: one run's in order, as its first may create the run's

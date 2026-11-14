@@ -207,6 +207,7 @@ async fn a_delegate_not_archived_yet_keeps_its_stage_agent_for_the_next_sweep() 
         ArchonError::InvalidTransition("aether: agent is live".into()),
         ArchonError::Protocol("garbled reply".into()),
         ArchonError::io("aether socket", std::io::Error::other("reset")),
+        ArchonError::Aether("internal: database is locked".into()),
     ];
     for error in errors {
         let h = Harness::new().await;
@@ -236,7 +237,7 @@ async fn a_delegate_aether_no_longer_knows_counts_as_archived() {
 #[tokio::test]
 async fn a_delegate_refused_for_good_keeps_its_tree_in_view() {
     let h = Harness::new().await;
-    let refused = ArchonError::Aether("archive: internal error".into());
+    let refused = ArchonError::Aether("permission_denied: archive refused".into());
     let (mark, _, worker) = refused_worker(&h, refused).await;
     assert!(h.backend.archived().is_empty(), "the stage agent stays too");
     assert_eq!(h.kv(&mark).await, None, "given up");
@@ -455,6 +456,96 @@ async fn an_unanswered_archive_is_retried_by_the_sweep() {
     h.dispatch().await;
     assert_eq!(h.backend.archived(), [agent]);
     assert_eq!(h.kv(&mark).await, None, "done and forgotten");
+}
+
+/// A failure inside Aether, such as a busy database, passes: the stage
+/// agent's archive is owed and the next sweep makes it.
+#[tokio::test]
+async fn an_internal_aether_error_on_the_stage_agent_is_retried() {
+    let h = Harness::new().await;
+    let item = h.enqueue("aether busy").await;
+    h.dispatch().await;
+    let agent = lead_agent(&h.running().await[0]);
+    h.backend
+        .fail_next_archive(ArchonError::Aether("internal: disk full".into()));
+    h.settle_running(|_| failed("tests failed")).await;
+    let stage = h.stages(&item.id).await.remove(0);
+    let mark = format!("archive:{}", stage.id);
+    assert_eq!(h.backend.archive_calls(), std::slice::from_ref(&agent));
+    assert_eq!(h.kv(&mark).await.as_deref(), Some("owed"), "still owed");
+
+    h.dispatch().await;
+    assert_eq!(h.backend.archived(), [agent]);
+    assert_eq!(h.kv(&mark).await, None);
+}
+
+/// A tree listing Aether does not answer in time is left owed, so a stuck
+/// Aether cannot hold the sweep up; the next sweep archives the tree.
+#[tokio::test(start_paused = true)]
+async fn a_tree_listing_that_hangs_times_out_and_is_retried() {
+    let h = Harness::new().await;
+    let (mark, agent, worker) = owed_tree(&h).await;
+    let calls = h.backend.archive_calls().len();
+    let gate = h.backend.hold_descendants_after(0);
+    let bounded = tokio::time::timeout(std::time::Duration::from_secs(60), h.dispatch());
+    bounded.await.expect("the hung listing times out");
+    assert_eq!(h.backend.archive_calls().len(), calls, "none asked");
+    assert_eq!(h.kv(&mark).await.as_deref(), Some("owed"));
+
+    gate.add_permits(1);
+    h.dispatch().await;
+    assert_eq!(h.backend.archived(), [worker, agent]);
+    assert_eq!(h.kv(&mark).await, None);
+}
+
+/// Each sweep asks Aether of at most eight owed trees, oldest first; the
+/// rest wait for the next sweep.
+#[tokio::test]
+async fn a_sweep_archives_at_most_eight_trees() {
+    const CAP: usize = 8;
+    let h = Harness::new().await;
+    let (mut items, mut workers) = (Vec::new(), Vec::new());
+    // Two waves, as at most eight items run at once; the second is newest.
+    for wave in [CAP, 1] {
+        for n in 0..wave {
+            items.push(h.enqueue(&format!("failing build {n} of {wave}")).await);
+        }
+        h.dispatch().await;
+        let running = h.running().await;
+        assert_eq!(running.len(), wave, "the wave runs at once");
+        for stage in &running {
+            workers.push(h.backend.delegate(&lead_agent(stage), MODEL));
+        }
+        h.settle_running(|_| failed("tests failed")).await;
+    }
+    assert!(
+        h.backend.archive_calls().is_empty(),
+        "live delegates hold all"
+    );
+
+    for worker in &workers {
+        h.backend.end_delegated(worker, DescendantState::Stopped);
+    }
+    h.dispatch().await;
+    assert_eq!(
+        h.backend.archived().len(),
+        2 * CAP,
+        "eight trees this sweep"
+    );
+    let mut owed = 0;
+    for item in &items {
+        let stage = h.stages(&item.id).await.remove(0);
+        if h.kv(&format!("archive:{}", stage.id)).await.is_some() {
+            owed += 1;
+        }
+    }
+    let newest = h.stages(&items[CAP].id).await.remove(0);
+    assert_eq!(owed, 1, "one waits");
+    let newest_mark = h.kv(&format!("archive:{}", newest.id)).await;
+    assert_eq!(newest_mark.as_deref(), Some("owed"), "the newest waits");
+
+    h.dispatch().await;
+    assert_eq!(h.backend.archived().len(), 2 * (CAP + 1), "the rest next");
 }
 
 /// A corrupt archive mark is dropped by the sweep, which still archives

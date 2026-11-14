@@ -93,10 +93,6 @@ async fn post_pending(ctx: &DaemonContext, cursor: &mut u64) -> Result<bool, Arc
                 return Ok(true);
             }
             *cursor = item.seq;
-            ctx.store
-                .lock()
-                .await
-                .kv_set(POSTED_KEY, &cursor.to_string())?;
         }
         if done {
             return Ok(false);
@@ -104,12 +100,14 @@ async fn post_pending(ctx: &DaemonContext, cursor: &mut u64) -> Result<bool, Arc
     }
 }
 
-/// `false` when the item must wait: Aether away or without posts, no
-/// orchestrator, or a failure that may pass. Only a post Aether refuses as
-/// invalid is logged and skipped, so it cannot hold the rest back. Delivery
-/// is at least once: Aether takes no key that would drop a repeated post.
+/// Post `item` and save the cursor past it; `false` when it must wait:
+/// Aether away or without posts, no orchestrator, or a failure that may pass.
+/// Only a post Aether refuses as invalid is logged and skipped, so it cannot
+/// hold the rest back. Delivery is at least once: Aether takes no key that
+/// would drop a repeated post.
 async fn post_item(ctx: &DaemonContext, item: &FeedItem) -> Result<bool, ArchonError> {
     let Some(post) = post_of(ctx, item).await? else {
+        save_cursor(ctx, item.seq).await?;
         return Ok(true);
     };
     let Ok(client) = ctx.aether.client() else {
@@ -122,12 +120,16 @@ async fn post_item(ctx: &DaemonContext, item: &FeedItem) -> Result<bool, ArchonE
     // transcript only, so it goes to the successor too: a repeat, not a loss.
     let mut posted_to = None;
     for _ in 0..MAX_SWITCHES_PER_POST {
+        let steady = supervisor::steady(ctx).await;
         let Some(orchestrator) = supervisor::current_orchestrator(ctx).await? else {
             return Ok(false);
         };
         if posted_to.as_ref() == Some(&orchestrator) {
+            // Under `steady`: no switch between this check and the saved cursor.
+            save_cursor(ctx, item.seq).await?;
             return Ok(true);
         }
+        drop(steady);
         if !send(ctx, &client, &orchestrator, &post, item.seq).await {
             return Ok(false);
         }
@@ -135,6 +137,16 @@ async fn post_item(ctx: &DaemonContext, item: &FeedItem) -> Result<bool, ArchonE
     }
     // Still switching: the retry posts it to whichever orchestrator is then current.
     Ok(false)
+}
+
+async fn save_cursor(ctx: &DaemonContext, seq: u64) -> Result<(), ArchonError> {
+    let mut store = ctx.store.lock().await;
+    let saved = saved_cursor(&store)?;
+    assert!(
+        seq > saved,
+        "the cursor only moves forward: {saved} to {seq}"
+    );
+    store.kv_set(POSTED_KEY, &seq.to_string())
 }
 
 /// Append `post` to `orchestrator`'s transcript; `false` when it must be

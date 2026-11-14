@@ -31,7 +31,7 @@ use archon_core::protocol::{OrchestratorFreshness, OrchestratorInfo};
 use archon_core::run::GateDecision;
 use archon_queue::store::keys;
 
-use tokio::sync::{Mutex, Notify, RwLock, RwLockWriteGuard, watch};
+use tokio::sync::{Mutex, Notify, RwLock, RwLockReadGuard, RwLockWriteGuard, watch};
 
 use crate::context::DaemonContext;
 use crate::feed;
@@ -96,8 +96,9 @@ const GITHUB_WANTED_KEY: &str = "orchestrator_github";
 #[derive(Debug)]
 pub struct Supervisor {
     serial: Mutex<()>,
-    /// Read by a call that changes Archon for as long as it runs; written
-    /// while the stored orchestrator id changes. Taken after `serial`.
+    /// Read by a call that changes Archon for as long as it runs, and by the
+    /// poster while it saves its cursor; written while the stored orchestrator
+    /// id changes. Taken after `serial`.
     authority: RwLock<()>,
     current: watch::Sender<Option<AetherAgentId>>,
     revive_at: watch::Sender<Option<Timestamp>>,
@@ -530,6 +531,17 @@ async fn adopt_successor(
 /// against the old orchestrator or the new, never a half switch. Not reentrant.
 async fn switching(ctx: &DaemonContext) -> RwLockWriteGuard<'_, ()> {
     ctx.supervisor.authority.write().await
+}
+
+/// Hold off every orchestrator switch until the guard drops, as a switch in
+/// progress does: for tests that replace the orchestrator by hand.
+pub async fn hold_switch(ctx: &DaemonContext) -> RwLockWriteGuard<'_, ()> {
+    switching(ctx).await
+}
+
+/// Held while a caller acts on the current orchestrator: no switch until it drops.
+pub(crate) async fn steady(ctx: &DaemonContext) -> RwLockReadGuard<'_, ()> {
+    ctx.supervisor.authority.read().await
 }
 
 /// Whether `agent` is the orchestrator, or one Archon replaced whose events

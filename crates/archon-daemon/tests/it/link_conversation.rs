@@ -14,7 +14,7 @@ use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 use archon_core::notify::NotificationKind;
 use archon_core::protocol::{ClientKind, DeviceRole, Reply, Request, WelcomeDevice};
-use archon_daemon::{handlers, posts, pump};
+use archon_daemon::{handlers, posts, pump, supervisor};
 use archon_queue::store::keys;
 use serde_json::{Value, json};
 
@@ -457,5 +457,62 @@ async fn a_post_made_during_a_replacement_reaches_the_successor() {
         notes.iter().all(|n| n["text"] == "**Blocker**: CI is red"),
         "{notes:?}"
     );
+    poster.abort();
+}
+
+/// A switch under way once the post is appended, the stored orchestrator
+/// still the old one: the cursor waits for it to finish, then the successor
+/// gets the post too, so no switch can fall between the check and the cursor.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_switch_under_way_after_the_append_holds_the_cursor_until_the_successor_has_it() {
+    const SUCCESSOR: &str = "agt_successor";
+    let harness = harness().await;
+    let (held_tx, held_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+    // Taken by the first append, to the old orchestrator.
+    let first = std::sync::Mutex::new(Some((held_tx, held_rx, release_rx)));
+    let ctx = Arc::clone(&harness.ctx);
+    let switch = move |note: &Value| {
+        let once = (note["agent"] == ORCH).then(|| first.lock().unwrap().take());
+        if let Some((held_tx, held_rx, release)) = once.flatten() {
+            let ctx = Arc::clone(&ctx);
+            tokio::spawn(async move {
+                let _switch = supervisor::hold_switch(&ctx).await;
+                held_tx.send(()).unwrap();
+                release.await.unwrap();
+                let mut store = ctx.store.lock().await;
+                store.kv_set(keys::ORCHESTRATOR_AGENT, SUCCESSOR).unwrap();
+            });
+            // The append is answered only once the switch holds.
+            tokio::task::block_in_place(|| held_rx.recv().unwrap());
+        }
+        Scripted::reply("note_appended", json!({"seq": 1}))
+    };
+    harness.fake.set_responder("append_note", Arc::new(switch));
+    let before = harness.ctx.store.lock().await.last_feed_seq().unwrap();
+    let poster = start_posting(&harness).await;
+    notify(&harness, NotificationKind::Blocker, "CI is red", None).await;
+    harness
+        .eventually("the first append", || async {
+            !harness.fake.received_named("append_note").is_empty()
+        })
+        .await;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let posted = harness.kv(posts::POSTED_KEY).await;
+    assert_eq!(
+        posted,
+        Some(before.to_string()),
+        "the cursor waits for the switch"
+    );
+    release_tx.send(()).unwrap();
+    let last = harness.ctx.store.lock().await.last_feed_seq().unwrap();
+    harness
+        .eventually("the cursor passes the post", || async {
+            harness.kv(posts::POSTED_KEY).await == Some(last.to_string())
+        })
+        .await;
+    let notes = harness.fake.received_named("append_note");
+    let to: Vec<_> = notes.iter().map(|n| n["agent"].as_str().unwrap()).collect();
+    assert_eq!(to, [ORCH, SUCCESSOR], "{notes:?}");
     poster.abort();
 }

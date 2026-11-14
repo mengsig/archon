@@ -272,14 +272,12 @@ fn unanswered(error: &ArchonError) -> bool {
 
 /// Archive every agent beneath `agent`, then `agent` itself, only once the
 /// whole tree is confirmed stopped and every delegate archived or gone. A
-/// tree it cannot read, or with an agent still live, is left for later.
+/// tree it cannot read, for any reason, or with an agent still live, is
+/// left for later; a stage agent Aether no longer knows lists no delegates,
+/// and its own `archive` then finds it gone.
 async fn archive_tree(ctx: &DaemonContext, stage: &StageRunId, agent: &AetherAgentId) -> Archived {
     let descendants = match ctx.backend.descendants(agent).await {
         Ok(descendants) => descendants,
-        Err(ArchonError::NotFound(error)) => {
-            tracing::info!(%stage, %agent, %error, "Aether no longer knows the stage agent; nothing to archive");
-            return Archived::Done;
-        }
         Err(error) if unanswered(&error) => {
             tracing::info!(%stage, %agent, %error, "stage agent tree unanswered; archive retried later");
             return Archived::Later;

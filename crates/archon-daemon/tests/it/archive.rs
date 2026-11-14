@@ -254,21 +254,32 @@ async fn owed_tree(h: &Harness) -> (String, AetherAgentId, AetherAgentId) {
     (mark, agent, worker)
 }
 
-/// A tree Aether cannot list, for any reason, is not archived in part.
+/// A tree Aether cannot list, for any reason, is not archived in part:
+/// a `NotFound` listing the run's agents does not prove the tree gone.
 #[tokio::test]
 async fn an_unreadable_tree_is_never_archived_in_part() {
-    let h = Harness::new().await;
-    let (mark, agent, worker) = owed_tree(&h).await;
-    let calls = h.backend.archive_calls().len();
-    h.backend
-        .fail_next_descendants(ArchonError::Aether("descendants: internal error".into()));
-    h.dispatch().await;
-    assert_eq!(h.backend.archive_calls().len(), calls, "no agent alone");
-    assert_eq!(h.kv(&mark).await.as_deref(), Some("owed"));
+    let errors = [
+        ArchonError::Aether("descendants: internal error".into()),
+        ArchonError::NotFound("aether: run not found".into()),
+    ];
+    for error in errors {
+        let h = Harness::new().await;
+        let shown = error.to_string();
+        let (mark, agent, worker) = owed_tree(&h).await;
+        let calls = h.backend.archive_calls().len();
+        h.backend.fail_next_descendants(error);
+        h.dispatch().await;
+        assert_eq!(
+            h.backend.archive_calls().len(),
+            calls,
+            "{shown}: no agent alone"
+        );
+        assert_eq!(h.kv(&mark).await.as_deref(), Some("owed"), "{shown}");
 
-    h.dispatch().await;
-    assert_eq!(h.backend.archived(), [worker, agent]);
-    assert_eq!(h.kv(&mark).await, None);
+        h.dispatch().await;
+        assert_eq!(h.backend.archived(), [worker, agent], "{shown}");
+        assert_eq!(h.kv(&mark).await, None, "{shown}");
+    }
 }
 
 /// No agent of a tree is asked to archive while one of it still runs.

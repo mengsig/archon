@@ -36,15 +36,17 @@ never writes. The operator decides. One follow-up would be for the bench's
 Archon arm to read the conversation (the new `conversation` request)
 instead of the feed.
 
-Leaving that trial out, the head is within noise. The other three Archon
-trials cost $0.1063 on the head against $0.1174 on v1.5.0 (−9%). Their wall
-times were 285 s against 328 s, with no repairs on either arm. The Aether arm
-passed 4/4 in every run.
+The other three Archon trials passed on every arm. On the head they cost at
+least $0.1063, against $0.1174 on v1.5.0. That figure is only a lower bound,
+because Aether reported the head's `quality-ledger-transfer` cost as
+incomplete (`interrupted`), so this gate cannot say whether the head's cost
+moved. Their wall times were 285 s against 328 s, with no repairs on either
+arm. The Aether arm passed 4/4 in every run.
 
 | Model | Arm | Runs | Trials passed | Archon cost/run | Wall/run | Repairs/run | Review cost/run |
 |---|---|---|---|---|---|---|---|
 | Haiku | v1.5.0, Aether 1.3.0 | 1 | 4/4 | $0.1280 | 363 s | 0 | $0.0248 |
-| Haiku | head `8eef65c3`, Aether 1.3.1 | 1 | 3/4 | ≥ $0.1157 (−10%) | 1186 s † | 0 | $0.0193 |
+| Haiku | head `8eef65c3`, Aether 1.3.1 | 1 | 3/4 | ≥ $0.1157 (lower bound) | 1186 s † | 0 | $0.0193 |
 | Haiku | isolation: head `8eef65c3`, Aether 1.3.0 | 1 | 3/4 | $0.1749 (+37%) ‡ | 1389 s † | 0 | $0.0489 |
 
 - Haiku costs are billed. `≥` marks a run in which Aether reported a

@@ -23,7 +23,7 @@ use archon_queue::store::keys;
 use tokio::time::Instant;
 
 use crate::context::DaemonContext;
-use crate::feed::{self, REPLY_STATE_KEY};
+use crate::feed::{self, SEEN_KEY};
 use crate::{executor, github, supervisor};
 
 pub use aetherd::AetherStarter;
@@ -36,17 +36,14 @@ pub const BACKOFF_MAX: std::time::Duration = std::time::Duration::from_secs(30);
 pub const ORCHESTRATOR_EVENT_TYPES: &[&str] = &[
     "agent.message",
     "agent.turn_completed",
-    // Whether the turn's wait ends by itself, so that the turn after it
-    // continues the same answer (see `ReplyTracker`).
-    "agent.waiting",
     "agent.started",
     "question.asked",
     "agent.failed",
     "agent.cancelled",
     "agent.completed",
     "agent.usage_updated",
-    // Not in ARCHITECTURE §4.6: which turn reads an operator message, in
-    // stream order (see `ReplyTracker`).
+    // Not in ARCHITECTURE §4.6: operator messages (their chat commands) and
+    // when the orchestrator reads them, which grows its conversation.
     "inbox.delivered",
     "inbox.consumed",
     // Aether restarted the orchestrator into a new agent (`aether restart`).
@@ -112,12 +109,12 @@ pub async fn link_to_aether(
     endpoint: Endpoint,
     starter: Option<Arc<dyn AetherStarter>>,
 ) -> Result<(), ArchonError> {
-    let saved = ctx.store.lock().await.kv_get(REPLY_STATE_KEY)?;
-    *ctx.replies.lock().await = match feed::restore_replies(saved.as_deref()) {
-        Ok(replies) => replies,
+    let saved = ctx.store.lock().await.kv_get(SEEN_KEY)?;
+    *ctx.seen.lock().await = match feed::restore_seen(saved.as_deref()) {
+        Ok(seen) => seen,
         Err(error) => {
-            tracing::warn!(%error, "the saved chat reply state is unusable; starting it afresh");
-            feed::ReplyTracker::default()
+            tracing::warn!(%error, "the saved replay guard is unusable; starting it afresh");
+            feed::SeenEvents::default()
         }
     };
     link_loop(ctx, endpoint, OwnAetherd::new(starter)).await
@@ -390,7 +387,7 @@ pub async fn handle_fleet_event(
     fleet::handle(ctx, event).await
 }
 
-/// Chat replies via `ReplyTracker`, questions, and orchestrator failure →
+/// Conversation wake-ups, chat commands, questions, and orchestrator failure →
 /// `supervisor::ensure_orchestrator`.
 pub async fn handle_orchestrator_event(
     ctx: &DaemonContext,

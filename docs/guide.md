@@ -471,7 +471,7 @@ writes to the operator's Aether configuration in dedicated mode. After you chang
 ```sh
 archon        # the terminal UI: calm Aether TUI on Archon's main orchestrator
 archon tui    # the same by name; it takes the options below
-archon chat   # the quiet line chat, for SSH, scripts and pipes
+archon chat   # the line chat, for SSH, scripts and pipes
 aether tui    # plain Aether, untouched
 ```
 
@@ -567,7 +567,7 @@ install the definition there yourself to use `/calm`, or use built-in `/focus`.
 The standard transcript includes tools and trigger turns. Direct TUI messages
 live in Aether's history; they do not add an Archon user-feed entry. Archon's
 pipeline gates and notifications remain in Lavish / `archon questions` /
-`archon answer` and the quiet chat; they are separate from native Aether
+`archon answer` and the conversation's posts; they are separate from native Aether
 approval cards. A gate or question can also be answered from this chat with
 `/answer <n> …` (see [Answering in the orchestrator's chat](#answering-in-the-orchestrators-chat)).
 Existing orchestrators receive updated built-in instructions
@@ -576,37 +576,24 @@ does not force a restart.
 
 ### What the terminal UI shows, and what it does not
 
-The terminal UI shows the orchestrator's transcript. The line chat shows
-Archon's feed. They overlap, but they are not the same list.
+There is one conversation: the orchestrator's transcript in Aether. The
+terminal UI's `/focus`, `archon chat` and the phone app show the same list,
+in the same order and with the same text. That list is your messages, every
+reply the orchestrator writes (including the text between its tool calls),
+its `ask_user` questions, and what archond posts there itself:
 
-- **Always shown:** every reply the orchestrator writes (also in turns woken
-  by Archon news, which the line chat never shows), your own messages,
-  Aether's native questions and approvals, delegations, stage messages,
-  failures, and one row per Archon news trigger, such as
-  `Trigger from archon · item finished: qi_… failed — <title>`.
-- **Shown later than in the line chat, with `wake_on_success = false`:** an
-  item that simply succeeded. The orchestrator is then not woken for it (see
-  [When the orchestrator is woken](#when-the-orchestrator-is-woken)), so the
-  terminal UI shows it with the orchestrator's next turn, as a row
-  `3 routine items finished`, while `archon chat`, `archon log` and
-  `archon status` show it as it happens.
-- **Shown because the orchestrator restates them** (its instructions say so;
-  the tool calls themselves are hidden in calm): the text of each `notify`
-  and `ask_operator`, a published report's title and location, an item's
-  outcome with its pull request URL, and each proposal or report gate when
-  it opens: what is asked, a short summary, its number and the
-  `/answer <n> …` line that answers it. Ctrl+T shows the calls and payloads.
-- **Shown at once as a note row:** the result of a command archond applies
-  itself (`/answer`, `/approve`, `/reject`, `/merge` refusals, `/upgrade`,
-  `/watch`, `/archon …`), as `Applied: …` or `Refused: …` (coloured when
-  aetherd speaks protocol 24 or newer), with no orchestrator turn. This needs
-  aetherd protocol 23 (the `notes` feature); with an older one the result
-  reaches the TUI only when the orchestrator restates it.
-- **Not shown:** the rest of what archond posts to the feed itself. That is
-  "reopen the review window?" questions, reports published by stages,
-  progress notices, system notices, and the chat's "open questions" header.
-  A gate also opens in Lavish when it is installed; `archon status` and
-  `archon questions` always show what waits.
+- each `notify`, `ask_operator` question and published report;
+- item outcomes, gates (with the `/answer <n> …` line that answers them),
+  merges, stage messages and system notices;
+- the result of a command archond applies itself (`/answer`, `/approve`,
+  `/reject`, `/merge`, `/upgrade`, `/watch`, `/archon …`), at once and with no
+  orchestrator turn. A command sent from `archon chat` or the phone shows
+  before it, as `**Operator:** <command>`.
+
+This needs an aetherd that serves the `conversation` feature. Progress
+notices are left out of the focused views; `archon log` shows them, and the
+terminal UI's full view shows tool calls and trigger rows too. Lines from
+before this change stay in `archon log`.
 
 ### When the orchestrator is woken
 
@@ -614,11 +601,9 @@ Every turn of the orchestrator reads its whole context again, so a wake
 costs money whether or not there is anything to decide. `archond` posts
 every outcome to the feed itself and wakes the orchestrator for:
 
-- an item that succeeded, so the terminal UI shows it: Aether's chat shows
-  only what the orchestrator says, and Aether has no way to add an entry to
-  it without a turn. While other items are still queued or running, a
-  routine success waits for them, up to five minutes, so one turn reports
-  the batch;
+- an item that succeeded, so the orchestrator can act on it. While other
+  items are still queued or running, a routine success waits for them, up to
+  five minutes, so one turn handles the batch;
 - an item that failed or is blocked, to diagnose it, retry it or tell you;
 - an item tagged `notify` (`archon queue add --tag notify`, or the
   orchestrator's own choice when it wants to act on the result);
@@ -631,8 +616,8 @@ every outcome to the feed itself and wakes the orchestrator for:
   feedback on a report, a budget that was reached, a cancelled helper.
 
 A cancelled item waits. So does a routine success when you turn success
-wakes off, which saves a turn per item when you follow Archon in
-`archon chat` or `archon status` rather than in the terminal UI:
+wakes off, which saves a turn per item; the outcome is still posted to the
+conversation as it happens:
 
 ```toml
 [orchestrator]
@@ -833,8 +818,7 @@ In `archon chat`, just talk. Slash commands cover the rest: `/questions`,
 `/answer <n> <answer>`, `/status`, `/queue [state …]` (the queue, e.g.
 `/queue running failed`), `/item <id>` (one item), `/merge <id>
 [--ignore-checks]` (merge its pull request; see
-[Merging on request](#merging-on-request)), `/progress` (show stage
-progress too; also `/verbose`), `/pause` and `/resume` (optionally `hard`,
+[Merging on request](#merging-on-request)), `/pause` and `/resume` (optionally `hard`,
 `repo <name>` or `pipeline <name>`), `/image <path>` (attach an image file),
 `/help` and `/quit`. Start a line with `//` to send a message that begins
 with `/`.
@@ -876,7 +860,7 @@ reference, `[image: shot.png, 14.2 KB]`, not the image. In the terminal UI
 | Command | What it does |
 | --- | --- |
 | `archon` / `archon tui [options]` | the terminal UI on the orchestrator; a bare `archon` opens the line chat instead off a terminal or with `[aether] address` set |
-| `archon chat [--progress]` | the quiet line chat with the orchestrator |
+| `archon chat` | the line chat with the orchestrator: the conversation as `/focus` shows it |
 | `archon say [--image <path>]… "…"` | send one message, with any images, to the orchestrator and exit |
 | `archon questions` / `archon answer <n> "…"` | list or answer open questions; `Q<n>` is permanent and the same in the chat |
 | `archon status` | waiting items and their next action, daemon, orchestrator, `archon` MCP server health, caps, spend, Aether link and total storage (`--verbose` lists each directory) |
@@ -890,7 +874,7 @@ reference, `[image: shot.png, 14.2 KB]`, not the image. In the terminal UI
 | `archon queue retry <id> [--fresh] [--append "…"] [--stage-timeout <stage>=<minutes>]…` | queue a finished item again in its worktree and branch (a succeeded one delivers into its pull request again, and the retry counts against the run that passed); `--fresh` starts over from the base branch on a new branch and sets the old worktree aside, which worktree gc deletes, uncommitted work included, `worktrees.gc_after` (7 days) after the item's last run; `--append` adds guidance to the brief |
 | `archon queue refresh <id>` | merge a finished item's base branch, fetched from `origin`, into its branch: a new item resolves any conflicts, runs the checks, is reviewed from the new merge base and updates the same pull request (never a rebase or a second pull request); an item queued `onto` a pull request merges that pull request's current head instead. Work no agent needs is done in place and queues nothing: a child whose parent was squash- or rebase-merged is merged over that landing and pushed, and an `onto` item whose branch already holds the pull request's moved head freezes that head for its next ship |
 | `archon queue steer <id> [--note "…"] [--stage <stage>] [--model <provider/model>] [--effort <effort>] [--budget-usd <usd>] [--extend <minutes>] [--stage-timeout <stage>=<minutes>]… [--abort [--then retry\|skip] [--goto <stage>]] [--remove <stage>] [--insert <stage> [--from <pipeline>] [--after <stage>]] [--switch <pipeline>]` | change an item without cancelling it; see [steering an item](#steering-an-item) |
-| `archon log` | the complete feed; `--item <id>` keeps one item's entries, `--kind <kind>` (repeatable) some kinds, and `--follow` keeps printing new ones |
+| `archon log` | the complete feed; `--item <id>` keeps one item's entries, `--kind <kind>` (repeatable) some kinds, and `--follow` keeps printing new ones. The orchestrator's replies are in `archon chat`; `--kind orchestrator` finds only those an older Archon recorded, and says so |
 | `archon merge <id> [--ignore-checks]` | merge a succeeded item's pull request at its reviewed commit; see [Merging on request](#merging-on-request). For a `ship = local` repository it fast-forwards the base branch to the item's reviewed commit and keeps the branch; refused, changing nothing, when the base moved, shares no history, or is checked out with local changes. After `archon queue refresh <id>` succeeds, it lands the refresh's reviewed commit |
 | `archon diff <id> [--full]` | show the branch, repository, base and diffstat a `ship = local` item left, and whether `archon merge` would land it now (`/diff <id>` in the chat) |
 | `archon reports` / `archon reports reopen <rpt_…>` | list published reports with their state and URL, or show a closed one again |

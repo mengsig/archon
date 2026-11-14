@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { expect } from '@playwright/test';
 import { openApp } from './flows.js';
 import { notify } from './support/seed.js';
+import { standInConversation } from './support/conversation.js';
 
 const THEMES = ['light', 'dark'];
 
@@ -22,6 +23,7 @@ export async function captureScreens(page, fixture, outDir) {
 
   await page.goto(`${fixture.baseURL}/`);
   await shoot('pairing', () => expect(page.getByRole('form', { name: 'Pair this device' })).toBeVisible());
+  await standInConversation(page, CHAT_ENTRIES);
   await openApp(page, fixture);
   await seedConversation(fixture);
 
@@ -44,14 +46,14 @@ export async function captureScreens(page, fixture, outDir) {
   await shoot('new-item', () => expect(page.getByRole('dialog', { name: 'New item' })).toBeVisible());
 }
 
-// Operator lines are recorded even while Aether is down (say answers unavailable).
+const CHAT_ENTRIES = [
+  { kind: 'operator', text: 'Morning. What is left before the remote listener can ship?' },
+  { kind: 'assistant', text: 'Two things: the **pairing** flow and a pass over the web app.' },
+  { kind: 'post', text: 'The listener design is **approved**.', links: ['https://example.com'] },
+  { kind: 'question', text: 'Is an eight character pairing code short enough?' },
+  { kind: 'operator', text: 'Keep the pairing code short, eight characters is fine.' },
+];
+
 async function seedConversation(fixture) {
-  for (const text of ['Morning. What is left before the remote listener can ship?', 'Keep the pairing code short, eight characters is fine.']) {
-    try {
-      await fixture.archond.request({ cmd: 'say', text });
-    } catch (err) {
-      if (err.code !== 'unavailable') throw err;
-    }
-  }
   await notify(fixture.archond, 'outcome', 'The listener design is **approved**. Next in line:\n\n- the `pairing` flow\n- a [web app](https://example.com) pass');
 }

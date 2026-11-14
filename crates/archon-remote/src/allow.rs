@@ -78,6 +78,7 @@ fn reads(request: &Request) -> bool {
             | R::ListQuestions { .. }
             | R::FeedHistory { .. }
             | R::SubscribeFeed { .. }
+            | R::Conversation { .. }
             | R::ListReports
             | R::OrchestratorStatus
             | R::CostReport(_)

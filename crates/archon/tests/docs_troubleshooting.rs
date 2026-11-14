@@ -240,6 +240,10 @@ const BLOCKERS: &[(&str, &str)] = &[
 /// Daemon files that name the kind without carrying a blocker text of their own.
 const EXEMPT: &[(&str, &str)] = &[
     (
+        "crates/archon-daemon/src/posts.rs",
+        "labels feed notices it relays",
+    ),
+    (
         "crates/archon-daemon/src/notification_center/posts.rs",
         "maps one kind enum to another",
     ),

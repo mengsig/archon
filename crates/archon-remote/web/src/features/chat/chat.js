@@ -1,12 +1,12 @@
-// Chat with the orchestrator, like `archon chat`: the replayed feed, live
-// lines, and a composer that sends optimistically.
+// Chat with the orchestrator: its conversation as archond serves it (the
+// same entries as Aether's focus view), and a composer that sends optimistically.
 import { h } from '../../ui/dom.js';
 import { icon } from '../../ui/icons.js';
 import { reconcile } from '../../ui/list.js';
 import { screenHeader, errorNote, loadErrorNotes, describeError } from '../../ui/components.js';
-import { isQuiet } from '../../core/feed.js';
+import { entryKey } from '../../core/conversation.js';
 import { addPending, settlePending, removePending } from './outbox.js';
-import { transcriptEntry, pendingEntry, dayKey } from './entries.js';
+import { conversationEntry, pendingEntry, dayKey } from './entries.js';
 
 const NEAR_BOTTOM_PX = 120;
 const MAX_LINE_CHARS = 16_000;
@@ -22,12 +22,12 @@ export function mountChat(view, ctx) {
     const nearBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - NEAR_BOTTOM_PX;
     renderTranscript(ctx, transcript);
     const { errors } = ctx.store.get();
-    status.replaceChildren(...(errors.feed ? [errorNote(errors.feed, ctx.resyncFeed)] : []),
-      ...loadErrorNotes(errors, ['questions', 'status'], ctx.refresh.one));
+    status.replaceChildren(...(errors.conversation ? [errorNote(errors.conversation, ctx.resyncConversation)] : []),
+      ...loadErrorNotes(errors, ['status'], ctx.refresh.one));
     if (nearBottom) scrollToEnd();
   };
   const offs = [
-    ctx.store.watch((s) => [s.feed, s.outbox, s.chatNotes, s.questions, s.errors.feed, s.errors.questions, s.errors.status], render),
+    ctx.store.watch((s) => [s.conversation, s.outbox, s.chatNotes, s.errors.conversation, s.errors.status], render),
     ctx.store.watch((s) => [s.status, s.connection.state], () => renderPresence(subtitle, ctx.store.get())),
     trackKeyboard(),
   ];
@@ -35,37 +35,29 @@ export function mountChat(view, ctx) {
   return () => offs.forEach((off) => off());
 }
 
-// What a question or answer row shows of the question it names.
-function questionShown(entry, numbers) {
-  if (entry?.entry === 'question') return numbers.get(entry.id)?.answer ?? null;
-  if (entry?.entry === 'answer') return numbers.get(entry.question)?.number ?? null;
-  return null;
-}
-
 function scrollToEnd() {
   window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' });
 }
 
 function renderTranscript(ctx, transcript) {
-  const { feed, outbox, chatNotes, questions } = ctx.store.get();
-  const numbers = new Map((questions ?? []).map((q) => [q.id, q]));
+  const { conversation, outbox, chatNotes } = ctx.store.get();
   const rows = [];
   let lastDay = null;
-  for (const item of feed) {
-    if (isQuiet(item)) continue;
-    const day = dayKey(item.at);
-    if (day !== lastDay) rows.push({ kind: 'day', key: `d-${day}`, at: item.at });
+  for (const entry of conversation) {
+    const day = dayKey(entry.at);
+    if (day !== lastDay) rows.push({ kind: 'day', key: `d-${day}`, at: entry.at });
     lastDay = day;
-    rows.push({ kind: 'feed', key: `f-${item.seq}`, item, note: chatNotes[item.seq] ?? null });
+    const key = `c-${entryKey(entry)}`;
+    rows.push({ kind: 'entry', key, entry, note: chatNotes[entryKey(entry)] ?? null });
   }
-  for (const entry of outbox) rows.push({ kind: 'pending', key: `p-${entry.localId}`, entry });
+  for (const pending of outbox) rows.push({ kind: 'pending', key: `p-${pending.localId}`, pending });
   reconcile(transcript, rows, {
     key: (row) => row.key,
-    signature: (row) => JSON.stringify([row.note, row.entry, questionShown(row.item?.entry, numbers)]),
+    signature: (row) => JSON.stringify([row.note, row.pending]),
     render: (row) => {
-      if (row.kind === 'pending') return pendingEntry(row.entry, { retry: () => resend(ctx, row.entry), discard: () => removePending(ctx.store, row.entry.localId) });
+      if (row.kind === 'pending') return pendingEntry(row.pending, { retry: () => resend(ctx, row.pending), discard: () => removePending(ctx.store, row.pending.localId) });
       if (row.kind === 'day') return h('li', { class: 'day-divider', text: new Date(row.at).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' }) });
-      return transcriptEntry(row.item, row.note, numbers);
+      return conversationEntry(row.entry, row.note);
     },
   });
   if (rows.length === 0) transcript.replaceChildren(h('li', { class: 'transcript-empty', text: 'Say hello. The orchestrator reads every line you send here.' }));

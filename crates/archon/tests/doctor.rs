@@ -154,3 +154,50 @@ async fn an_engine_that_is_not_logged_in_fails_with_its_login_command() {
     let (_, checks) = doctor_with_login(true).await;
     assert_eq!(level_of(&checks, "engine"), "ok", "{checks:#?}");
 }
+
+/// Startup checks the configured binary once and persists its warning in the feed.
+#[test]
+fn daemon_start_checks_gh_and_notifies_the_operator() {
+    use archon_core::notify::FeedEntry;
+    use common::{start_daemon, stop_daemon};
+
+    for (version, expected) in [("2.45.0", true), ("2.63.0", false)] {
+        let env = Env::new();
+        let gh = env.path("gh");
+        let calls = env.path("gh-calls");
+        archon_core::testing::write_script(
+            &gh,
+            &format!(
+                "#!/bin/sh\necho call >> '{}'\necho 'gh version {version}'\n",
+                calls.display()
+            ),
+        );
+        std::fs::write(
+            env.path("config/config.toml"),
+            format!(
+                "[aether]\nmode = \"shared\"\n[github]\nbinary = {:?}\n",
+                gh.to_str().unwrap()
+            ),
+        )
+        .unwrap();
+        let daemon = start_daemon(&env);
+        stop_daemon(&env, daemon);
+        assert_eq!(std::fs::read_to_string(calls).unwrap().lines().count(), 1);
+        let store = archon_queue::Store::open(&env.path("data/archon.db")).unwrap();
+        let warnings: Vec<_> = store
+            .feed_after(0, 1000)
+            .unwrap()
+            .into_iter()
+            .filter_map(|item| match item.entry {
+                FeedEntry::Notification(note) if note.text.contains("GitHub CLI warning") => {
+                    Some(note.text)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(warnings.len(), usize::from(expected), "{warnings:?}");
+        if expected {
+            assert!(warnings[0].contains("2.63.0"));
+        }
+    }
+}

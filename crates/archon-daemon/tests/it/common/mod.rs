@@ -35,7 +35,7 @@ use archon_core::run::{PipelineRun, StageOutcome, StageRun, StageState};
 use archon_daemon::context::{DaemonContext, DaemonPaths};
 use archon_daemon::disk::DiskWatch;
 use archon_daemon::executor::RunTable;
-use archon_daemon::feed::ReplyTracker;
+use archon_daemon::feed::SeenEvents;
 use archon_daemon::triggers::TriggerQueue;
 use archon_daemon::{dispatcher, executor, handlers};
 use archon_lavish::Lavish;
@@ -586,7 +586,8 @@ pub fn context(
         dispatch: dispatch.clone(),
         coordination: Default::default(),
         runs: Mutex::new(RunTable::default()),
-        replies: Mutex::new(ReplyTracker::default()),
+        seen: Mutex::new(SeenEvents::default()),
+        conversation: tokio::sync::watch::Sender::new(0),
         answering: Mutex::new(()),
         authority_changes: Mutex::new(()),
         learning_memory: Mutex::new(()),

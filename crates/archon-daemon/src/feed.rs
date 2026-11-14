@@ -1,5 +1,6 @@
-//! The operator feed and chat reply detection (ARCHITECTURE §12).
-//! `append` is the one way anything reaches the operator.
+//! The operator feed (ARCHITECTURE §12): archond's record of what it told
+//! the operator, and the outbox `posts` copies into the orchestrator's
+//! transcript. `append` is the one way anything reaches the operator.
 
 use archon_core::aether_ids::AetherQuestionRef;
 use archon_core::error::ArchonError;
@@ -31,10 +32,6 @@ pub fn publish(ctx: &DaemonContext, items: Vec<FeedItem>) {
         let _ = ctx.feed.send(item);
     }
 }
-
-/// `kv` copy of the [`ReplyTracker`], so a reply still shows when `archond`
-/// restarts while the orchestrator is answering.
-pub const REPLY_STATE_KEY: &str = "chat_reply_state";
 
 pub async fn notify(
     ctx: &DaemonContext,
@@ -138,63 +135,19 @@ pub async fn aether_question(
     Ok(Some(question))
 }
 
-/// Apply `change` to the chat reply tracker and persist it when it changed.
-/// Lock order: replies, then store.
-pub async fn track<T>(
-    ctx: &DaemonContext,
-    change: impl FnOnce(&mut ReplyTracker) -> T,
-) -> Result<T, ArchonError> {
-    let mut replies = ctx.replies.lock().await;
-    let before = replies.clone();
-    let result = change(&mut replies);
-    if *replies != before {
-        let raw = serde_json::to_string(&*replies)?;
-        ctx.store.lock().await.kv_set(REPLY_STATE_KEY, &raw)?;
-    }
-    Ok(result)
-}
+/// `kv`: the last orchestrator event applied, so a replay (after a restart
+/// or reconnect) applies nothing twice. The key is the one the old chat reply
+/// tracker used, whose saved state carries the same `seen`.
+pub const SEEN_KEY: &str = "chat_reply_state";
 
-/// The persisted tracker; a fresh one when none was saved.
-pub fn restore_replies(raw: Option<&str>) -> Result<ReplyTracker, ArchonError> {
-    match raw.filter(|raw| !raw.is_empty()) {
-        None => Ok(ReplyTracker::default()),
-        Some(raw) => serde_json::from_str(raw)
-            .map_err(|e| ArchonError::Corrupt(format!("kv {REPLY_STATE_KEY} = {raw:?}: {e}"))),
-    }
-}
-
-/// Decides which orchestrator assistant text becomes an `Orchestrator` feed
-/// entry (ARCHITECTURE §12): the last non-empty text of a turn that consumed
-/// an operator message, written after it consumed it, and of each turn that
-/// continues it after a wait that ends by itself. Trigger-woken turns,
-/// tool calls, thinking and earlier text never show. Pure; driven only by
-/// the orchestrator's ordered event stream, so it cannot race `Say` or a
-/// lagging pump, and it is persisted so a restart resumes it exactly.
-#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ReplyTracker {
-    /// Inbox seqs of operator messages no turn has consumed yet, ascending.
-    pending: Vec<u64>,
-    /// A consumed operator message awaits this turn's (or, after a wait or
-    /// an interruption, the next turn's) final text.
-    answering: bool,
-    /// The last non-empty text written since the message was consumed.
-    text: Option<String>,
-    /// Seq of the last Aether event applied, so a replay changes nothing.
+/// The replay guard over the orchestrator's ordered event stream.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeenEvents {
+    /// Seq of the last Aether event applied.
     seen: u64,
-    /// The running turn ends in a wait that ends by itself (a delegated
-    /// task, a deadline): the turn after it continues the same answer.
-    #[serde(default)]
-    resumes: bool,
-    /// Operator messages the current answer covers; above one, the reply
-    /// says so and keeps every text written for them.
-    #[serde(default)]
-    batch: u32,
-    /// Earlier texts of a batched answer, before `text`.
-    #[serde(default)]
-    earlier: Vec<String>,
 }
 
-impl ReplyTracker {
+impl SeenEvents {
     /// `true` the first time event `seq` is seen; replays return `false`.
     pub fn first_sight(&mut self, seq: u64) -> bool {
         assert!(seq > 0, "event seqs start at 1");
@@ -204,541 +157,54 @@ impl ReplyTracker {
         self.seen = seq;
         true
     }
+}
 
-    /// `inbox.delivered`: only a person's message is answered in the chat.
-    pub fn delivered(&mut self, seq: u64, from_operator: bool) {
-        assert!(seq > 0, "inbox seqs start at 1");
-        if from_operator && self.pending.last().is_none_or(|last| *last < seq) {
-            self.pending.push(seq);
-        }
+/// The saved guard; a fresh one when none was saved.
+pub fn restore_seen(raw: Option<&str>) -> Result<SeenEvents, ArchonError> {
+    match raw.filter(|raw| !raw.is_empty()) {
+        None => Ok(SeenEvents::default()),
+        Some(raw) => serde_json::from_str(raw)
+            .map_err(|e| ArchonError::Corrupt(format!("kv {SEEN_KEY} = {raw:?}: {e}"))),
     }
+}
 
-    /// `inbox.consumed`: the running turn read the inbox up to `up_to`, at
-    /// its start or mid-turn. Text written before it read a first operator
-    /// message cannot answer it. Messages read together, or before the
-    /// answer has any text, share one reply. When a further one is read
-    /// after text was written, that answer is returned to be shown now and
-    /// the new message starts a fresh one.
-    pub fn consumed(&mut self, up_to: u64) -> Option<String> {
-        let before = self.pending.len();
-        self.pending.retain(|seq| *seq > up_to);
-        let count = u32::try_from(before - self.pending.len()).expect("a short inbox");
-        if count == 0 {
-            return None;
-        }
-        assert!(
-            self.pending.iter().all(|seq| *seq > up_to),
-            "consumed messages are no longer pending"
-        );
-        if self.answering && self.text.is_none() {
-            // An answer saved before batches were tracked covers one message.
-            self.batch = self.batch.max(1) + count;
-            return None;
-        }
-        let finished = if self.answering {
-            self.take_reply()
-        } else {
-            None
-        };
-        self.answering = true;
-        self.batch = count;
-        finished
+/// Whether event `seq` is new, persisting the guard when it is.
+pub async fn first_sight(ctx: &DaemonContext, seq: u64) -> Result<bool, ArchonError> {
+    let mut seen = ctx.seen.lock().await;
+    if !seen.first_sight(seq) {
+        return Ok(false);
     }
-
-    /// The text of the answer so far, and clears it. A batched answer keeps
-    /// every text written for its messages and names how many it covers.
-    fn take_reply(&mut self) -> Option<String> {
-        let last = self.text.take()?;
-        let mut parts = std::mem::take(&mut self.earlier);
-        parts.push(last);
-        let body = parts.join("\n\n");
-        if self.batch > 1 {
-            return Some(format!(
-                "Replying to your {} messages:\n\n{body}",
-                self.batch
-            ));
-        }
-        Some(body)
-    }
-
-    /// `agent.message {role: assistant}`. Whitespace-only text (a message
-    /// that was all tool calls or thinking) does not replace it.
-    pub fn assistant_text(&mut self, text: &str) {
-        if !self.answering || text.trim().is_empty() {
-            return;
-        }
-        if self.batch > 1 {
-            self.earlier.extend(self.text.take());
-        }
-        self.text = Some(text.to_owned());
-    }
-
-    /// `agent.waiting`, sent before the `agent.turn_completed` of the turn
-    /// it ends. `idle`: the agent waits for its inbox alone.
-    pub fn waiting(&mut self, idle: bool) {
-        self.resumes = !idle;
-    }
-
-    /// `agent.turn_completed`: the reply to show, if this turn answered the
-    /// operator and said something. A `failed` or `cancelled` turn answered
-    /// nothing; one that waits for a helper is still answering.
-    pub fn turn_completed(&mut self, next: Option<&str>) -> Option<String> {
-        let resumes = std::mem::take(&mut self.resumes) && next == Some("waiting");
-        if !self.answering {
-            return None;
-        }
-        if matches!(next, Some("failed" | "cancelled")) {
-            self.interrupted();
-            return None;
-        }
-        self.answering = resumes;
-        let reply = self.take_reply();
-        if !resumes {
-            self.batch = 0;
-        }
-        reply
-    }
-
-    /// The orchestrator failed or was cancelled mid-turn and is revived in
-    /// place: half an answer is dropped, the message stays awaited.
-    pub fn interrupted(&mut self) {
-        self.text = None;
-        self.earlier.clear();
-    }
-
-    /// Another agent now orchestrates. Inbox seqs are per agent, so pending
-    /// ones are forgotten; a consumed message is still answered only by a
-    /// successor that kept the conversation, not by a fresh generation.
-    pub fn agent_replaced(&mut self, kept_conversation: bool) {
-        self.pending.clear();
-        self.text = None;
-        self.earlier.clear();
-        self.resumes = false;
-        self.answering &= kept_conversation;
-    }
-
-    /// An operator message is waiting for its reply.
-    pub fn awaiting_reply(&self) -> bool {
-        !self.pending.is_empty() || self.answering
-    }
+    let raw = serde_json::to_string(&*seen)?;
+    ctx.store.lock().await.kv_set(SEEN_KEY, &raw)?;
+    assert_eq!(seen.seen, seq, "the guard moved to this event");
+    Ok(true)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const OPERATOR: bool = true;
-
-    /// A turn that consumes the inbox up to `up_to` at its start.
-    fn turn(tracker: &mut ReplyTracker, up_to: u64, texts: &[&str]) -> Option<String> {
-        tracker.consumed(up_to);
-        for text in texts {
-            tracker.assistant_text(text);
-        }
-        tracker.turn_completed(Some("ready"))
-    }
-
-    #[test]
-    fn the_turn_that_consumes_an_operator_message_is_shown() {
-        let mut tracker = ReplyTracker::default();
-        tracker.delivered(1, OPERATOR);
-        assert!(tracker.awaiting_reply());
-        assert_eq!(
-            turn(&mut tracker, 1, &["Queued it."]).as_deref(),
-            Some("Queued it.")
-        );
-        assert!(!tracker.awaiting_reply());
-    }
-
-    /// A turn that ends waiting; `idle` as `agent.waiting` reports it.
-    fn waits(tracker: &mut ReplyTracker, idle: bool) -> Option<String> {
-        tracker.waiting(idle);
-        tracker.turn_completed(Some("waiting"))
-    }
-
-    #[test]
-    fn an_answer_that_waits_for_a_helper_is_finished_by_the_turn_its_result_wakes() {
-        let mut tracker = ReplyTracker::default();
-        tracker.delivered(1, OPERATOR);
-        tracker.consumed(1);
-        tracker.assistant_text("A helper is looking into it.");
-        let before = waits(&mut tracker, false);
-        assert_eq!(before.as_deref(), Some("A helper is looking into it."));
-        assert!(tracker.awaiting_reply(), "the answer is still to come");
-
-        tracker.delivered(2, !OPERATOR);
-        tracker.consumed(2);
-        tracker.assistant_text("It found three flaky tests.");
-        let answer = waits(&mut tracker, true);
-        assert_eq!(answer.as_deref(), Some("It found three flaky tests."));
-        assert!(!tracker.awaiting_reply());
-        tracker.delivered(3, !OPERATOR);
-        assert_eq!(turn(&mut tracker, 3, &["a later trigger"]), None);
-    }
-
-    #[test]
-    fn a_turn_silent_before_its_wait_is_still_answered_after_it() {
-        let mut tracker = ReplyTracker::default();
-        tracker.delivered(1, OPERATOR);
-        tracker.consumed(1);
-        assert_eq!(waits(&mut tracker, false), None);
-        assert!(tracker.awaiting_reply());
-        tracker.assistant_text("Nothing is broken.");
-        let answer = waits(&mut tracker, true);
-        assert_eq!(answer.as_deref(), Some("Nothing is broken."));
-        assert!(!tracker.awaiting_reply());
-    }
-
-    #[test]
-    fn only_a_wait_that_ends_by_itself_keeps_the_answer_open() {
-        let mut idle = ReplyTracker::default();
-        idle.delivered(1, OPERATOR);
-        idle.consumed(1);
-        idle.assistant_text("Done.");
-        assert_eq!(waits(&mut idle, true).as_deref(), Some("Done."));
-        assert!(!idle.awaiting_reply(), "idle: nothing follows by itself");
-
-        // The wait a failed turn announced is not the next turn's.
-        let mut failed = ReplyTracker::default();
-        failed.delivered(1, OPERATOR);
-        failed.consumed(1);
-        failed.waiting(false);
-        assert_eq!(failed.turn_completed(Some("failed")), None);
-        failed.assistant_text("Recovered: done.");
-        let answer = failed.turn_completed(Some("waiting"));
-        assert_eq!(answer.as_deref(), Some("Recovered: done."));
-        assert!(!failed.awaiting_reply());
-    }
-
-    #[test]
-    fn a_tracker_saved_before_waits_were_tracked_is_restored() {
-        let saved = r#"{"pending":[4],"answering":true,"text":"Checking.","seen":9}"#;
-        let mut tracker = restore_replies(Some(saved)).unwrap();
-        assert!(tracker.awaiting_reply());
-        let shown = tracker.turn_completed(Some("waiting"));
-        assert_eq!(shown.as_deref(), Some("Checking."));
-        assert!(tracker.awaiting_reply(), "message 4 is still unread");
-        tracker.consumed(4);
-        assert_eq!(waits(&mut tracker, true), None);
-        assert!(!tracker.awaiting_reply());
-    }
-
-    #[test]
-    fn trigger_woken_turns_are_hidden() {
-        let mut tracker = ReplyTracker::default();
-        tracker.delivered(1, !OPERATOR);
-        assert_eq!(turn(&mut tracker, 1, &["item finished; noted"]), None);
-        tracker.delivered(2, OPERATOR);
-        assert_eq!(
-            turn(&mut tracker, 2, &["Answer"]).as_deref(),
-            Some("Answer")
-        );
-        tracker.delivered(3, !OPERATOR);
-        assert_eq!(
-            turn(&mut tracker, 3, &["another trigger"]),
-            None,
-            "one reply per message"
-        );
-    }
-
-    #[test]
-    fn only_the_last_text_of_the_turn_is_shown() {
-        let mut tracker = ReplyTracker::default();
-        tracker.delivered(1, OPERATOR);
-        let shown = turn(
-            &mut tracker,
-            1,
-            &["Let me check the queue.", "", "Two items are running."],
-        );
-        assert_eq!(shown.as_deref(), Some("Two items are running."));
-    }
-
-    #[test]
-    fn tool_only_messages_do_not_replace_the_last_text() {
-        let mut tracker = ReplyTracker::default();
-        tracker.delivered(1, OPERATOR);
-        let shown = turn(&mut tracker, 1, &["Done: PR #4 is open.", "  \n", ""]);
-        assert_eq!(shown.as_deref(), Some("Done: PR #4 is open."));
-    }
-
-    #[test]
-    fn an_empty_turn_shows_nothing_and_consumes_the_message() {
-        let mut tracker = ReplyTracker::default();
-        tracker.delivered(1, OPERATOR);
-        assert_eq!(turn(&mut tracker, 1, &[]), None);
-        assert!(!tracker.awaiting_reply());
-        tracker.delivered(2, !OPERATOR);
-        assert_eq!(turn(&mut tracker, 2, &["later trigger turn"]), None);
-    }
-
-    #[test]
-    fn a_message_delivered_mid_turn_but_not_consumed_waits_for_the_next_turn() {
-        let mut tracker = ReplyTracker::default();
-        tracker.delivered(1, !OPERATOR);
-        tracker.consumed(1);
-        tracker.assistant_text("working on a trigger");
-        tracker.delivered(2, OPERATOR);
-        tracker.assistant_text("trigger handled");
-        assert_eq!(tracker.turn_completed(Some("ready")), None);
-        assert!(tracker.awaiting_reply());
-        assert_eq!(
-            turn(&mut tracker, 2, &["Here is your answer."]).as_deref(),
-            Some("Here is your answer.")
-        );
-    }
-
-    #[test]
-    fn a_trigger_consumed_after_the_message_arrived_does_not_answer_it() {
-        let mut tracker = ReplyTracker::default();
-        tracker.delivered(1, !OPERATOR);
-        tracker.delivered(2, OPERATOR);
-        tracker.consumed(1);
-        tracker.assistant_text("trigger handled");
-        assert_eq!(tracker.turn_completed(Some("ready")), None);
-        assert_eq!(
-            turn(&mut tracker, 2, &["Answer"]).as_deref(),
-            Some("Answer")
-        );
-    }
-
-    #[test]
-    fn messages_consumed_by_different_turns_each_get_their_reply() {
-        let mut tracker = ReplyTracker::default();
-        tracker.delivered(1, OPERATOR);
-        tracker.delivered(2, !OPERATOR);
-        tracker.delivered(3, OPERATOR);
-        assert_eq!(
-            turn(&mut tracker, 2, &["First."]).as_deref(),
-            Some("First.")
-        );
-        assert!(tracker.awaiting_reply(), "the second is still unread");
-        assert_eq!(
-            turn(&mut tracker, 3, &["Second."]).as_deref(),
-            Some("Second.")
-        );
-        assert!(!tracker.awaiting_reply());
-    }
-
-    #[test]
-    fn a_message_steered_in_after_the_answer_began_keeps_both_replies() {
-        let mut tracker = ReplyTracker::default();
-        tracker.delivered(1, OPERATOR);
-        tracker.delivered(2, OPERATOR);
-        assert_eq!(tracker.consumed(1), None);
-        tracker.assistant_text("A");
-        assert_eq!(tracker.consumed(2).as_deref(), Some("A"));
-        tracker.assistant_text("B");
-        assert_eq!(tracker.turn_completed(Some("ready")).as_deref(), Some("B"));
-        assert!(!tracker.awaiting_reply());
-    }
-
-    #[test]
-    fn a_message_steered_in_before_any_text_does_not_show_an_empty_reply() {
-        let mut tracker = ReplyTracker::default();
-        tracker.delivered(1, OPERATOR);
-        assert_eq!(tracker.consumed(1), None);
-        tracker.delivered(2, OPERATOR);
-        assert_eq!(tracker.consumed(2), None);
-        tracker.assistant_text("Both done.");
-        assert_eq!(
-            tracker.turn_completed(Some("ready")).as_deref(),
-            Some("Replying to your 2 messages:\n\nBoth done.")
-        );
-    }
-
-    #[test]
-    fn messages_consumed_together_give_one_reply_with_every_text() {
-        let mut tracker = ReplyTracker::default();
-        for seq in 1..=4 {
-            tracker.delivered(seq, OPERATOR);
-        }
-        assert_eq!(tracker.consumed(4), None);
-        for text in ["A1", "A2", "", "A3", "A4"] {
-            tracker.assistant_text(text);
-        }
-        let reply = tracker.turn_completed(Some("ready")).unwrap();
-        assert_eq!(
-            reply,
-            "Replying to your 4 messages:\n\nA1\n\nA2\n\nA3\n\nA4"
-        );
-        assert!(!tracker.awaiting_reply());
-        assert_eq!(turn(&mut tracker, 5, &["trigger"]), None);
-    }
-
-    #[test]
-    fn a_single_message_keeps_its_plain_reply() {
-        let mut tracker = ReplyTracker::default();
-        tracker.delivered(1, OPERATOR);
-        tracker.consumed(1);
-        tracker.assistant_text("Looking.");
-        tracker.assistant_text("Done.");
-        assert_eq!(
-            tracker.turn_completed(Some("ready")).as_deref(),
-            Some("Done.")
-        );
-    }
-
-    #[test]
-    fn messages_queued_in_a_busy_turn_are_all_answered_by_the_next_one() {
-        let mut tracker = ReplyTracker::default();
-        tracker.delivered(1, !OPERATOR);
-        tracker.consumed(1);
-        tracker.assistant_text("busy with a trigger");
-        for seq in 2..=5 {
-            tracker.delivered(seq, OPERATOR);
-        }
-        assert_eq!(tracker.turn_completed(Some("ready")), None);
-        assert!(tracker.awaiting_reply());
-        let shown = turn(
-            &mut tracker,
-            5,
-            &["Q1: yes", "Q2: no", "Q3: 3", "Q4: later"],
-        );
-        assert_eq!(
-            shown.as_deref(),
-            Some("Replying to your 4 messages:\n\nQ1: yes\n\nQ2: no\n\nQ3: 3\n\nQ4: later")
-        );
-        assert!(!tracker.awaiting_reply());
-    }
-
-    #[test]
-    fn a_legacy_active_answer_joined_by_another_message_keeps_every_text() {
-        let saved = r#"{"pending":[2],"answering":true,"text":null,"seen":3}"#;
-        let mut tracker = restore_replies(Some(saved)).unwrap();
-        assert_eq!(tracker.consumed(2), None);
-        tracker.assistant_text("A1");
-        tracker.assistant_text("A2");
-        assert_eq!(
-            tracker.turn_completed(Some("ready")).as_deref(),
-            Some("Replying to your 2 messages:\n\nA1\n\nA2")
-        );
-    }
-
-    #[test]
-    fn a_saved_tracker_without_batch_fields_is_restored() {
-        let saved = r#"{"pending":[],"answering":true,"text":"Hi.","seen":3}"#;
-        let mut tracker = restore_replies(Some(saved)).unwrap();
-        assert_eq!(tracker.turn_completed(None).as_deref(), Some("Hi."));
-    }
-
-    #[test]
-    fn a_tracker_restored_between_two_replies_yields_the_same_ones() {
-        let mut tracker = ReplyTracker::default();
-        tracker.delivered(1, OPERATOR);
-        tracker.delivered(2, OPERATOR);
-        tracker.consumed(1);
-        tracker.assistant_text("A");
-        let raw = serde_json::to_string(&tracker).unwrap();
-        let mut restored = restore_replies(Some(&raw)).unwrap();
-        assert_eq!(restored.consumed(2).as_deref(), Some("A"));
-        restored.assistant_text("B");
-        assert_eq!(restored.turn_completed(None).as_deref(), Some("B"));
-    }
-
-    #[test]
-    fn a_message_steered_into_the_running_turn_is_answered_by_it() {
-        let mut tracker = ReplyTracker::default();
-        tracker.delivered(1, !OPERATOR);
-        tracker.consumed(1);
-        tracker.assistant_text("before the message arrived");
-        tracker.delivered(2, OPERATOR);
-        tracker.consumed(2);
-        assert_eq!(
-            tracker.turn_completed(Some("ready")),
-            None,
-            "text before consumption is not an answer"
-        );
-        assert!(!tracker.awaiting_reply());
-
-        tracker.delivered(3, OPERATOR);
-        tracker.consumed(3);
-        tracker.assistant_text("Switching to the other repo.");
-        assert_eq!(
-            tracker.turn_completed(Some("waiting")).as_deref(),
-            Some("Switching to the other repo.")
-        );
-    }
-
-    #[test]
-    fn a_second_message_arriving_mid_answer_keeps_the_first_reply() {
-        let mut tracker = ReplyTracker::default();
-        tracker.delivered(1, OPERATOR);
-        tracker.consumed(1);
-        tracker.delivered(2, OPERATOR);
-        tracker.assistant_text("Answer to the first.");
-        assert_eq!(
-            tracker.turn_completed(Some("ready")).as_deref(),
-            Some("Answer to the first.")
-        );
-        assert!(tracker.awaiting_reply());
-        assert_eq!(
-            turn(&mut tracker, 2, &["Answer to the second."]).as_deref(),
-            Some("Answer to the second.")
-        );
-    }
-
-    #[test]
-    fn an_interrupted_turn_keeps_the_message_awaited() {
-        let mut tracker = ReplyTracker::default();
-        tracker.delivered(1, OPERATOR);
-        tracker.consumed(1);
-        tracker.assistant_text("half an answer");
-        assert_eq!(tracker.turn_completed(Some("failed")), None);
-        assert!(tracker.awaiting_reply());
-        tracker.assistant_text("Full answer");
-        assert_eq!(
-            tracker.turn_completed(Some("ready")).as_deref(),
-            Some("Full answer")
-        );
-    }
-
-    #[test]
-    fn a_fresh_orchestrator_does_not_answer_its_predecessors_message() {
-        let mut tracker = ReplyTracker::default();
-        tracker.delivered(1, OPERATOR);
-        tracker.consumed(1);
-        tracker.delivered(2, OPERATOR);
-        tracker.agent_replaced(false);
-        assert!(!tracker.awaiting_reply());
-        tracker.delivered(1, !OPERATOR);
-        assert_eq!(turn(&mut tracker, 1, &["first trigger"]), None);
-
-        let mut successor = ReplyTracker::default();
-        successor.delivered(4, OPERATOR);
-        successor.consumed(4);
-        successor.agent_replaced(true);
-        successor.assistant_text("Answer from the restarted agent");
-        assert_eq!(
-            successor.turn_completed(Some("ready")).as_deref(),
-            Some("Answer from the restarted agent")
-        );
-    }
-
     #[test]
     fn a_replayed_event_is_seen_once() {
-        let mut tracker = ReplyTracker::default();
-        assert!(tracker.first_sight(10));
-        assert!(!tracker.first_sight(10));
-        assert!(!tracker.first_sight(4));
-        assert!(tracker.first_sight(11));
+        let mut seen = SeenEvents::default();
+        assert!(seen.first_sight(10));
+        assert!(!seen.first_sight(10));
+        assert!(!seen.first_sight(4));
+        assert!(seen.first_sight(11));
     }
 
     #[test]
-    fn the_tracker_round_trips_through_kv_json() {
-        let mut tracker = ReplyTracker::default();
-        tracker.delivered(5, OPERATOR);
-        tracker.consumed(5);
-        tracker.assistant_text("Answer so far");
-        let raw = serde_json::to_string(&tracker).unwrap();
-        let mut restored = restore_replies(Some(&raw)).unwrap();
-        assert_eq!(restored, tracker);
-        assert_eq!(
-            restored.turn_completed(None).as_deref(),
-            Some("Answer so far")
+    fn the_old_reply_tracker_state_restores_its_seen_seq() {
+        let saved = r#"{"pending":[4],"answering":true,"text":"Checking.","seen":9}"#;
+        let mut seen = restore_seen(Some(saved)).unwrap();
+        assert!(
+            !seen.first_sight(9),
+            "event 9 was applied before the upgrade"
         );
-        assert_eq!(restore_replies(None).unwrap(), ReplyTracker::default());
+        assert!(seen.first_sight(10));
+        assert_eq!(restore_seen(None).unwrap(), SeenEvents::default());
         assert!(matches!(
-            restore_replies(Some("{")),
+            restore_seen(Some("{")),
             Err(ArchonError::Corrupt(_))
         ));
     }

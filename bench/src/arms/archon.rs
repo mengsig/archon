@@ -13,10 +13,14 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+mod replies;
+mod tracker;
+
 use anyhow::{Context, bail, ensure};
 use archon_aether::AetherClient;
 use archon_aether::wire::EventQuery;
 use archon_client::ArchonClient;
+use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::autonomy::ReviewLevel;
 use archon_core::error::ArchonError;
@@ -37,6 +41,8 @@ use crate::grade::ResultSource;
 use crate::metrics::{ArchonItem, Arm};
 use crate::usage::{Usage, aether_usage};
 use crate::workspace::{self, BASE_BRANCH, TrialLayout};
+pub use replies::{Replies, ReplyLog, lacks_conversation};
+pub use tracker::{Answer, ReplyTracker};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
 /// How long the fleet must stay quiet before the trial counts as finished;
@@ -278,6 +284,8 @@ async fn session(input: &TrialInput<'_>, client: &ArchonClient) -> anyhow::Resul
     let setup_secs = setup.elapsed().as_secs_f64();
     let repos = register_repos(input, client).await?;
     let baseline = last_feed_seq(client).await?;
+    let aether_socket = &input.settings.private_sockets()?.aether;
+    let mut replies = ReplyLog::start(client, aether_socket).await?;
     let started = Instant::now();
     client
         .request(Request::Say {
@@ -286,9 +294,12 @@ async fn session(input: &TrialInput<'_>, client: &ArchonClient) -> anyhow::Resul
         })
         .await
         .context("sending the prompt with Say")?;
-    let (timed_out, finished) = wait_until_settled(client, baseline, input.timeout).await?;
+    let (timed_out, finished) =
+        wait_until_settled(client, baseline, &mut replies, aether_socket, input.timeout).await?;
     let wall_secs = finished.duration_since(started).as_secs_f64();
     let feed = feed_after(client, baseline).await?;
+    let current = orchestrator_agent(client).await?;
+    let replies = replies.refresh(&current, aether_socket).await?;
     let details = item_details(client).await?;
     std::fs::write(
         input.layout.logs.join("archon-items.json"),
@@ -297,8 +308,8 @@ async fn session(input: &TrialInput<'_>, client: &ArchonClient) -> anyhow::Resul
     let usage = fleet_usage(client, input, &details).await?;
     Ok(ArmOutcome {
         usage: Some(input.settings.price(Arm::Archon, usage)),
-        answer: answer_text(&feed, &details),
-        operator_messages: operator_messages(&feed),
+        answer: answer_text(&feed, &replies, &details),
+        operator_messages: operator_messages(&feed, &replies),
         wall_secs,
         setup_secs: Some(setup_secs),
         timed_out,
@@ -396,12 +407,14 @@ async fn feed_after(client: &ArchonClient, baseline: u64) -> anyhow::Result<Vec<
 async fn wait_until_settled(
     client: &ArchonClient,
     baseline: u64,
+    replies: &mut ReplyLog,
+    aether_socket: &Path,
     timeout: Duration,
 ) -> anyhow::Result<(bool, Instant)> {
     let deadline = Instant::now() + timeout;
     let mut settle = Settle::default();
     loop {
-        let observed = observe(client, baseline).await?;
+        let observed = observe(client, baseline, replies, aether_socket).await?;
         if settle.update(&observed, Instant::now()) {
             let quiet_since = settle.quiet_since().expect("settled means quiet");
             return Ok((false, quiet_since));
@@ -467,7 +480,12 @@ impl Settle {
     }
 }
 
-async fn observe(client: &ArchonClient, baseline: u64) -> anyhow::Result<Observation> {
+async fn observe(
+    client: &ArchonClient,
+    baseline: u64,
+    replies: &mut ReplyLog,
+    aether_socket: &Path,
+) -> anyhow::Result<Observation> {
     let Reply::Items(items) = client
         .request(Request::ListItems(ItemQuery::default()))
         .await?
@@ -478,10 +496,9 @@ async fn observe(client: &ArchonClient, baseline: u64) -> anyhow::Result<Observa
         bail!("orchestrator_status returned another reply kind");
     };
     let feed = feed_after(client, baseline).await?;
+    let replies = replies.refresh(&info.agent, aether_socket).await?;
     Ok(Observation {
-        replied: feed
-            .iter()
-            .any(|i| matches!(i.entry, FeedEntry::Orchestrator { .. })),
+        replied: replies.replied(&feed),
         orchestrator_busy: BUSY_STATUSES.contains(&info.status.as_str()),
         items,
     })
@@ -548,9 +565,10 @@ async fn fleet_usage(
     })
 }
 
-/// Default-visible feed items, excluding the operator's own lines.
-pub fn operator_messages(feed: &[FeedItem]) -> u32 {
-    let count = feed
+/// Default-visible feed items, excluding the operator's own lines, plus the
+/// orchestrator's answers when the transcript holds them.
+pub fn operator_messages(feed: &[FeedItem], replies: &Replies) -> u32 {
+    let shown = feed
         .iter()
         .filter(|i| i.visible(false))
         .filter(|i| {
@@ -560,32 +578,47 @@ pub fn operator_messages(feed: &[FeedItem]) -> u32 {
             )
         })
         .count();
-    u32::try_from(count).unwrap_or(u32::MAX)
+    let replied = match replies {
+        Replies::Feed => 0,
+        Replies::Transcript(answers) => answers.len(),
+    };
+    u32::try_from(shown + replied).unwrap_or(u32::MAX)
 }
 
-/// What the operator reads: every visible feed text, then the summaries of
-/// succeeded items (one `archon queue show` away).
-pub fn answer_text(feed: &[FeedItem], details: &[ItemDetail]) -> String {
-    let mut parts: Vec<String> = feed
+/// What the operator reads: every visible feed text with the orchestrator's
+/// answers in time order, then the summaries of succeeded items (one
+/// `archon queue show` away).
+pub fn answer_text(feed: &[FeedItem], replies: &Replies, details: &[ItemDetail]) -> String {
+    let mut timed: Vec<(Timestamp, String)> = feed
         .iter()
         .filter(|i| i.visible(false))
-        .filter_map(|i| match &i.entry {
-            FeedEntry::Orchestrator { text } | FeedEntry::System { text } => Some(text.clone()),
-            FeedEntry::Authority { action, result, .. } => Some(format!("{action}: {result}")),
-            FeedEntry::Notification(n) => Some(n.text.clone()),
-            FeedEntry::Question(q) => Some(q.text.clone()),
-            FeedEntry::Report {
-                title, location, ..
-            } => Some(format!("{title}: {location}")),
-            FeedEntry::Operator { .. } | FeedEntry::Answer { .. } => None,
-        })
+        .filter_map(|i| feed_text(&i.entry).map(|text| (i.at, text)))
         .collect();
+    // Feed replies already sit in seq order; only merged ones need sorting.
+    if let Replies::Transcript(answers) = replies {
+        timed.extend(answers.iter().map(|a| (a.at, a.text.clone())));
+        timed.sort_by_key(|(at, _)| *at);
+    }
+    let mut parts: Vec<String> = timed.into_iter().map(|(_, text)| text).collect();
     for detail in details {
         if let QueueState::Succeeded { summary, .. } = &detail.item.state {
             parts.push(summary.clone());
         }
     }
     parts.join("\n\n")
+}
+
+fn feed_text(entry: &FeedEntry) -> Option<String> {
+    match entry {
+        FeedEntry::Orchestrator { text } | FeedEntry::System { text } => Some(text.clone()),
+        FeedEntry::Authority { action, result, .. } => Some(format!("{action}: {result}")),
+        FeedEntry::Notification(n) => Some(n.text.clone()),
+        FeedEntry::Question(q) => Some(q.text.clone()),
+        FeedEntry::Report {
+            title, location, ..
+        } => Some(format!("{title}: {location}")),
+        FeedEntry::Operator { .. } | FeedEntry::Answer { .. } => None,
+    }
 }
 
 /// Per repository name, the latest run branch of each succeeded item, in

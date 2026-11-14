@@ -69,12 +69,14 @@ class Transport {
     this.connect();
   }
 
-  request(cmd, fields = {}) {
+  // `timeoutMs` lets a long poll outlast the default answer deadline.
+  request(cmd, fields = {}, { timeoutMs = this.requestTimeoutMs } = {}) {
+    if (!(timeoutMs > 0)) throw new RangeError(`timeoutMs must be positive, got ${timeoutMs}`);
     if (typeof cmd !== 'string' || cmd === 'hello') throw new TypeError(`not a request command: ${cmd}`);
     if (this.current === 'revoked' || this.stopped) return Promise.reject(new DaemonError('unauthorized', 'not connected'));
     return new Promise((resolve, reject) => {
-      const entry = { cmd, fields, resolve, reject, timer: null };
-      entry.timer = this.setTimer(() => this.expire(entry), this.requestTimeoutMs);
+      const entry = { cmd, fields, resolve, reject, timer: null, timeoutMs };
+      entry.timer = this.setTimer(() => this.expire(entry), timeoutMs);
       if (this.current === 'open') this.dispatch(entry);
       else this.queued.push(entry);
     });
@@ -208,6 +210,6 @@ class Transport {
     const at = this.queued.indexOf(entry);
     if (at >= 0) this.queued.splice(at, 1);
     for (const [id, value] of this.pending) if (value === entry) this.pending.delete(id);
-    entry.reject(new DaemonError('timeout', `${entry.cmd} got no answer in ${Math.round(this.requestTimeoutMs / 1000)} s`));
+    entry.reject(new DaemonError('timeout', `${entry.cmd} got no answer in ${Math.round(entry.timeoutMs / 1000)} s`));
   }
 }

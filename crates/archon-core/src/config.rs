@@ -808,6 +808,7 @@ impl Default for UpdateConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct ChatConfig {
     pub show_progress: bool,
+    /// No effect: `archon chat` replays the same page the phone shows.
     pub history: usize,
 }
 

@@ -10,7 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use archon_core::error::ArchonError;
 
 use super::clean;
-use super::daemon_git::{Config, DaemonGit, Ran, no_programs};
+use super::daemon_git::{Config, DaemonGit, Ran, config_hook_options, no_programs, shell_quote};
 use super::shadow::Shadow;
 use crate::gh_account::Token;
 
@@ -321,6 +321,80 @@ pub(crate) fn is_local(url: &str) -> bool {
     }
 }
 
+/// The directory of the local repository `url` names, for one git runs in `base`.
+fn local_path(url: &str, base: &Path) -> Result<PathBuf, ArchonError> {
+    assert!(
+        base.is_absolute(),
+        "local remotes are resolved from an absolute directory"
+    );
+    let path = url.strip_prefix("file://").unwrap_or(url);
+    if path.contains('%') || (url.starts_with("file://") && !path.starts_with('/')) {
+        return Err(ArchonError::Invalid(format!(
+            "the local remote {url:?} is not a plain path archond can read the config of"
+        )));
+    }
+    let path = base.join(path);
+    if is_receiver(&path) {
+        return receiver_git_dir(&path, base);
+    }
+    if path.is_dir() {
+        let mut entries = std::fs::read_dir(&path)
+            .map_err(|e| ArchonError::io(format!("reading {}", path.display()), e))?;
+        if entries
+            .next()
+            .transpose()
+            .map_err(|e| ArchonError::io("reading local receiver", e))?
+            .is_some()
+        {
+            return Err(ArchonError::Invalid(format!(
+                "cannot identify local receiver {url:?}"
+            )));
+        }
+    } else if path.exists() {
+        return Err(ArchonError::Invalid(format!(
+            "cannot identify local receiver {url:?}"
+        )));
+    }
+    let mut suffixed = path.as_os_str().to_owned();
+    suffixed.push(".git");
+    let suffixed = PathBuf::from(suffixed);
+    if is_receiver(&suffixed) {
+        return receiver_git_dir(&suffixed, base);
+    }
+    Err(ArchonError::Invalid(format!(
+        "cannot identify local receiver {url:?}"
+    )))
+}
+
+fn receiver_git_dir(path: &Path, base: &Path) -> Result<PathBuf, ArchonError> {
+    assert!(path.is_absolute());
+    assert!(base.is_absolute());
+    let dot_git = path.join(".git");
+    let candidate = if dot_git.exists() { &dot_git } else { path };
+    let candidate = candidate.to_str().ok_or_else(|| {
+        ArchonError::Invalid(format!("local receiver {} is not UTF-8", path.display()))
+    })?;
+    let resolved = DaemonGit::configured_in(base)
+        .args(["rev-parse", "--resolve-git-dir", candidate])
+        .text()?;
+    let resolved = PathBuf::from(resolved);
+    if !resolved.is_absolute() {
+        return Err(ArchonError::Invalid(format!(
+            "invalid local receiver {}",
+            path.display()
+        )));
+    }
+    Ok(resolved)
+}
+
+fn is_receiver(path: &Path) -> bool {
+    path.is_dir()
+        && (path.join(".git").exists()
+            || (path.join("HEAD").is_file()
+                && path.join("objects").is_dir()
+                && (path.join("refs").is_dir() || path.join("commondir").is_file())))
+}
+
 /// Push `commit` to `refs/heads/<branch>` of `url`, never forced, from the
 /// shadow with the operator's credentials, or only `token`'s when given; a
 /// local receiver runs no hook.
@@ -399,6 +473,31 @@ impl Pinned {
     }
 }
 
+/// `url` after the operator's `url.<base>.pushInsteadOf`, the longest prefix
+/// winning as in git; `None` if none matches.
+fn push_instead_of(shadow: &Shadow, url: &str) -> Result<Option<String>, ArchonError> {
+    let args = ["config", "-z", "--get-regexp", r"^url\..*\.pushinsteadof$"];
+    let ran = shadow.git(None, Config::Operator)?.args(args).output()?;
+    match ran.status.code() {
+        Some(0) => {}
+        Some(1) => return Ok(None),
+        _ => return Err(ran.failure()),
+    }
+    let listed = ran.stdout_text_untrimmed()?;
+    let mut best: Option<(usize, String)> = None;
+    for entry in listed.split('\0').filter(|entry| !entry.is_empty()) {
+        let Some((key, prefix)) = entry.split_once('\n') else {
+            continue;
+        };
+        let base = key.strip_prefix("url.").and_then(|k| k.rsplit_once('.'));
+        let Some((base, _)) = base else { continue };
+        if url.starts_with(prefix) && best.as_ref().is_none_or(|(len, _)| prefix.len() > *len) {
+            best = Some((prefix.len(), format!("{base}{}", &url[prefix.len()..])));
+        }
+    }
+    Ok(best.map(|(_, rewritten)| rewritten))
+}
+
 /// Where [`push_from`] to `url` without a token goes, as git resolves it with
 /// the operator's config in the same shadow: `url` after their `insteadOf`.
 pub(crate) fn pinned_url(shadow: &Shadow, url: &str) -> Result<String, ArchonError> {
@@ -468,16 +567,33 @@ fn push_refspec(
         "an unforced refspec"
     );
     let url = check_url(url)?;
-    // The operator's `insteadOf` may send a pinned remote URL to this machine.
-    let rewritten_local = pin && token.is_none() && is_local(&pinned_url(shadow, &url)?);
-    let receive_pack = match is_local(&url) || rewritten_local {
-        true => format!("git {} receive-pack", no_programs().join(" ")),
+    // The operator's `insteadOf` and `pushInsteadOf` may send the push to this machine.
+    let pushed_to = match token {
+        Some(_) => url.clone(),
+        // A pinned remote has an explicit push URL, which only `insteadOf`
+        // rewrites; a raw URL takes `pushInsteadOf` if one matches.
+        None => match (pin, push_instead_of(shadow, &url)?) {
+            (false, Some(rewritten)) => rewritten,
+            _ => pinned_url(shadow, &url)?,
+        },
+    };
+    // The push goes where `pushed_to` says, which an `insteadOf` may have
+    // moved off a local-looking URL, or onto one.
+    let receive_pack = match is_local(&pushed_to) {
+        true => {
+            // Its hooks and config-defined hooks are the receiver's, not the shadow's.
+            let target = pushed_to;
+            let place = shadow.git(None, Config::Operator)?.place().to_owned();
+            let hooks = config_hook_options(&local_path(&target, &place)?, Config::Operator)?;
+            let words = ["git".to_owned()]
+                .into_iter()
+                .chain(no_programs())
+                .chain(hooks);
+            let words: Vec<String> = words.map(|word| shell_quote(&word)).collect();
+            format!("{} receive-pack", words.join(" "))
+        }
         false => "git-receive-pack".to_owned(),
     };
-    assert!(
-        !receive_pack.contains(['\'', '"', '\n']),
-        "one shell word list"
-    );
     let receive_pack = format!("--receive-pack={receive_pack}");
     let pinned = Pinned::new(&url);
     let mut command = vec!["push", "--porcelain", "--no-verify", &receive_pack];
@@ -868,6 +984,74 @@ mod tests {
 
     const HOOKED_ENV: &str = "ARCHON_TEST_HOOKED_ORIGIN";
 
+    #[test]
+    fn a_suffixed_local_receiver_is_probed_without_parent_discovery() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().canonicalize().unwrap();
+        run_git(&home, &["init", "--quiet", "-b", "main", "repo"]);
+        let repo = home.join("repo");
+        run_git(&repo, &["commit", "--quiet", "--allow-empty", "-m", "one"]);
+        let commit = run_git(&repo, &["rev-parse", "HEAD"]);
+        run_git(&repo, &["init", "--quiet", "--bare", "target.git"]);
+        let target = repo.join("target.git");
+        let marker = home.join("hook-ran");
+        let command = format!("touch '{}'", marker.display());
+        run_git(&target, &["config", "hook.arbitrary.command", &command]);
+        run_git(&target, &["config", "hook.arbitrary.event", "pre-receive"]);
+        let shadow = Shadow::of(&home.join("data"), &repo).unwrap();
+        let alias = repo.join("target");
+        let url = alias.to_str().unwrap();
+        let first = push(&shadow, url, "first", &commit, None).unwrap();
+        assert!(first.status.success(), "{first:?}");
+        std::fs::create_dir(&alias).unwrap();
+        let second = push(&shadow, url, "second", &commit, None).unwrap();
+        assert!(second.status.success(), "{second:?}");
+        assert_eq!(
+            run_git(&target, &["rev-parse", "refs/heads/second"]),
+            commit
+        );
+        assert!(!marker.exists(), "receiver hook must not run");
+    }
+
+    #[test]
+    fn an_unidentifiable_local_receiver_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().canonicalize().unwrap();
+        run_git(&home, &["init", "--quiet", "repo"]);
+        let repo = home.join("repo");
+        let target = repo.join("target");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("unrelated"), "not a repository").unwrap();
+        assert!(local_path(target.to_str().unwrap(), &repo).is_err());
+        std::fs::write(target.join(".git"), "not a gitfile").unwrap();
+        assert!(local_path(target.to_str().unwrap(), &repo).is_err());
+    }
+
+    #[test]
+    fn a_nested_git_directory_cannot_hide_receiver_hooks() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().canonicalize().unwrap();
+        run_git(&home, &["init", "--quiet", "-b", "main", "source"]);
+        let source = home.join("source");
+        run_git(
+            &source,
+            &["commit", "--quiet", "--allow-empty", "-m", "one"],
+        );
+        let commit = run_git(&source, &["rev-parse", "HEAD"]);
+        run_git(&home, &["init", "--quiet", "receiver"]);
+        let receiver = home.join("receiver");
+        let git_dir = receiver.join(".git");
+        let marker = home.join("hook-ran");
+        let command = format!("touch '{}'", marker.display());
+        run_git(&receiver, &["config", "hook.bypass.command", &command]);
+        run_git(&receiver, &["config", "hook.bypass.event", "pre-receive"]);
+        run_git(&git_dir, &["init", "--quiet", "--bare", ".git"]);
+        let shadow = Shadow::of(&home.join("data"), &source).unwrap();
+        let pushed = push(&shadow, receiver.to_str().unwrap(), "proof", &commit, None).unwrap();
+        assert!(pushed.status.success(), "{pushed:?}");
+        assert!(!marker.exists(), "the outer receiver hook must not run");
+    }
+
     /// An operator `insteadOf` sending the GitHub URL to a repository on this
     /// machine still runs none of its hooks; run under that global config.
     #[test]
@@ -896,8 +1080,39 @@ mod tests {
         let hook = origin.join("hooks/pre-receive");
         let script = format!("#!/bin/sh\ntouch '{}'\n", marker.display());
         archon_core::testing::write_script(&hook, &script);
+        // Hooks the receiver's config names, whatever the name holds, run no
+        // program, and the name is no shell code.
+        let injected = home.join("injected");
+        let planted = format!("touch '{}'", marker.display());
+        let hostile = format!("x$(touch {})", injected.display());
+        for name in [hostile.as_str(), "has space", "it's;quoted"] {
+            for (key, value) in [("command", planted.as_str()), ("event", "pre-receive")] {
+                let key = format!("hook.{name}.{key}");
+                run_git(&origin, &["config", &key, value]);
+            }
+        }
         let github = "https://github.com/o/r.git";
-        let rewrite = format!("[url \"{}\"]\n\tinsteadOf = {github}\n", origin.display());
+        // Conflicting rewrites: a pinned push follows `insteadOf` to `origin`, a
+        // raw one `pushInsteadOf` to `other`, and both receivers hold hooks.
+        let both = "https://github.com/o/both.git";
+        let other = home.join("other.git");
+        run_git(&home, &["init", "--quiet", "--bare", "other.git"]);
+        let marker_other = home.join("other-hook-ran");
+        let script = format!("#!/bin/sh\ntouch '{}'\n", marker_other.display());
+        archon_core::testing::write_script(&other.join("hooks/pre-receive"), &script);
+        for key in ["command", "event"] {
+            let value = if key == "event" {
+                "pre-receive"
+            } else {
+                planted.as_str()
+            };
+            run_git(&other, &["config", &format!("hook.planted.{key}"), value]);
+        }
+        let rewrite = format!(
+            "[url \"{o}\"]\n\tinsteadOf = {github}\n\tinsteadOf = {both}\n[url \"{x}\"]\n\tpushInsteadOf = {both}\n",
+            o = origin.display(),
+            x = other.display()
+        );
         std::fs::create_dir_all(home.join("git")).unwrap();
         std::fs::write(home.join("git/config"), rewrite).unwrap();
         run_git(&home, &["init", "--quiet", "-b", "main", "repo"]);
@@ -931,5 +1146,27 @@ mod tests {
             Some(ours)
         );
         assert!(!marker.exists(), "the receiver ran its pre-receive hook");
+        let seed = format!("{frozen}:refs/heads/conflict");
+        run_git(&repo, &["push", "--quiet", origin.to_str().unwrap(), &seed]);
+        std::fs::remove_file(&marker).ok();
+        let pinned = push_from(&shadow, both, ("conflict", ours), frozen, None);
+        assert!(pinned.unwrap().status.success());
+        assert_eq!(
+            run_git(&origin, &["rev-parse", "refs/heads/conflict"]),
+            *ours,
+            "a pinned push follows insteadOf"
+        );
+        let raw = push(&shadow, both, "raw", ours, None).unwrap();
+        assert!(raw.status.success(), "{raw:?}");
+        assert_eq!(
+            run_git(&other, &["rev-parse", "refs/heads/raw"]),
+            *ours,
+            "a raw push follows pushInsteadOf"
+        );
+        assert!(
+            !marker.exists() && !marker_other.exists(),
+            "a receiver hook ran"
+        );
+        assert!(!injected.exists(), "a hook name ran as shell code");
     }
 }

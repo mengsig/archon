@@ -4,15 +4,15 @@
 use std::path::Path;
 
 use archon_client::ArchonClient;
-use archon_core::protocol::{ItemQuery, PauseTarget, Request};
+use archon_core::protocol::{ItemQuery, PauseTarget, Reply, Request};
 
 use super::commands::{ChatInput, SlashCommand, help, parse_line};
 use super::draft::{chip, without_chips};
 use super::{Chat, Flow};
+use crate::connect::unexpected;
 use crate::format;
 use crate::images::{expand_home, pasted_image_path, read_image_file};
 use crate::ops;
-use crate::questions::QuestionRef;
 use crate::views;
 
 const QUEUE_LIMIT: usize = 50;
@@ -49,11 +49,6 @@ pub(super) async fn handle_line(
     match command {
         SlashCommand::Quit => return Ok(Flow::Quit),
         SlashCommand::Help => chat.note(&help())?,
-        SlashCommand::ToggleProgress => {
-            chat.verbose = !chat.verbose;
-            let state = if chat.verbose { "shown" } else { "hidden" };
-            chat.note(&format!("progress notes are {state}"))?;
-        }
         remote => {
             if let Some(client) = connected(chat, client)? {
                 let result = run_remote(chat, client, remote).await;
@@ -90,11 +85,7 @@ async fn run_remote(
     command: SlashCommand,
 ) -> anyhow::Result<()> {
     match command {
-        SlashCommand::Authority(text) => {
-            client.request(Request::OperatorCommand { text }).await?;
-            Ok(())
-        }
-        SlashCommand::Answer { question, text } => answer(chat, client, question, &text).await,
+        SlashCommand::Authority(text) => operator_command(chat, client, text).await,
         SlashCommand::Questions => {
             chat.sync_questions(client).await?;
             let text = format::questions(chat.book.open());
@@ -126,14 +117,6 @@ async fn run_remote(
             let text = views::item_text(client, item, false).await?;
             chat.print(&text)
         }
-        SlashCommand::Merge {
-            item,
-            ignore_checks,
-        } => {
-            let item = views::resolve_item(client, &item).await?;
-            let merge = ops::merge(client, item, ignore_checks, true).await?;
-            chat.print(&format::merge(&merge))
-        }
         SlashCommand::Diff(item) => {
             let item = views::resolve_item(client, &item).await?;
             let review = ops::diff(client, item, true).await?;
@@ -141,10 +124,7 @@ async fn run_remote(
         }
         SlashCommand::Pause(target) => pause(chat, client, target, true).await,
         SlashCommand::Resume(target) => pause(chat, client, target, false).await,
-        SlashCommand::Help
-        | SlashCommand::Quit
-        | SlashCommand::ToggleProgress
-        | SlashCommand::Image(_) => {
+        SlashCommand::Help | SlashCommand::Quit | SlashCommand::Image(_) => {
             unreachable!("local commands are handled before reaching archond")
         }
     }
@@ -267,19 +247,19 @@ fn prefill_chips(chat: &mut Chat) {
     chat.prefill = (!chips.is_empty()).then(|| format!("{chips} "));
 }
 
-async fn answer(
+/// Run a host command in archond as the phone's chat does: archond posts it
+/// to the conversation, which shows its result, and the post is this line's echo.
+async fn operator_command(
     chat: &mut Chat,
     client: &ArchonClient,
-    question: QuestionRef,
-    text: &str,
+    text: String,
 ) -> anyhow::Result<()> {
-    let Some(found) = chat.book.find(&question) else {
-        return chat.error("no such open question; /questions lists them");
-    };
-    let number = found.number;
-    assert!(number > 0, "the chat only tracks numbered questions");
-    ops::answer(client, found, text, true).await?;
-    chat.note(&format!("answered Q{number}"))
+    assert!(text.starts_with('/'), "a host command: {text}");
+    chat.expect_echo(&text);
+    match client.request(Request::OperatorCommand { text }).await? {
+        Reply::Ok => Ok(()),
+        other => Err(unexpected(&other, "ok")),
+    }
 }
 
 async fn pause(

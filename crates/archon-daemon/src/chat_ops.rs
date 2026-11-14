@@ -9,6 +9,7 @@ use archon_core::error::ArchonError;
 use archon_core::ops::{DEFAULT_DRAIN_SECS, UpgradeRequest, UpgradeTarget};
 use archon_core::protocol::RepoRef;
 
+use crate::command_notice::Shown;
 use crate::context::DaemonContext;
 use crate::executor::clip;
 use crate::triggers::{self, TriggerEvent};
@@ -142,11 +143,11 @@ async fn report(
     let applied = outcome.is_ok();
     let text = outcome.unwrap_or_else(|why| why);
     assert!(!text.trim().is_empty(), "an outcome says something");
-    if !applied {
+    let shown = crate::command_notice::show(ctx, name, applied, &text).await?;
+    if !applied && shown != Shown::InFeed {
         let note = format!("A `{name}` sent in the orchestrator's Aether chat was refused: {text}");
         feed::system(ctx, clip(&note, 2 * MAX_NEWS_CHARS)).await?;
     }
-    crate::command_notice::show(ctx, name, applied, &text).await;
     let news = TriggerEvent::ChatCommand {
         command: name.to_owned(),
         applied,

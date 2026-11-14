@@ -40,12 +40,12 @@ profile, and it never touches Archon's configuration or data.
 Set these in the environment of `sh`, after the pipe:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mengsig/archon/main/install.sh | ARCHON_VERSION=v1.5.0 sh
+curl -fsSL https://raw.githubusercontent.com/mengsig/archon/main/install.sh | ARCHON_VERSION=v1.5.1 sh
 ```
 
 | Variable | Effect |
 | --- | --- |
-| `ARCHON_VERSION` | Install this release, such as `v1.5.0`, instead of the latest. |
+| `ARCHON_VERSION` | Install this release, such as `v1.5.1`, instead of the latest. |
 | `ARCHON_INSTALL_DIR` | Install here instead of `~/.local/bin`. The directory must be yours to write. |
 | `ARCHON_SKIP_AETHER=1` | Do not install Aether; print the command that does. |
 | `ARCHON_NONINTERACTIVE=1` | Ask nothing: a missing Aether is installed without a question. |
@@ -81,10 +81,12 @@ aether schema | grep -E '^  "(min_)?protocol_version"'
 
 Update an Aether that is too old with `aether update`.
 
-Archon 1.5.0 is released with and tested on **Aether 1.3.0**. The queue
+Archon 1.5.1 is released with and tested on **Aether 1.3.1**. The queue
 runs on Aether 1.2.11 or later, and remote access needs Aether 1.3.0 or
 later, the first release that mounts archond at `/archon`
-([remote-setup.md](remote-setup.md)). Neither the installer nor `archon
+([remote-setup.md](remote-setup.md)). `archon chat` and the phone app's
+chat need Aether 1.3.1 or later, the first release that serves the
+`conversation` feature. Neither the installer nor `archon
 update` pins an Aether version:
 the installer installs the latest Aether release only when it finds no
 `aether`, and keeps one it finds. `archon update` runs `aether update
@@ -94,8 +96,8 @@ and a declined question leave Aether as it is.
 Check with `aether --version` and update an older one with `aether update`.
 Archon checks
 Aether's protocol, not its version: it asks for protocol 24 and accepts down
-to 17. Aether 1.2.11 serves protocols 17 to 25 and Aether 1.3.0 17 to 26, so
-both answer Archon on 24. Since Aether 1.2.7,
+to 17. Aether 1.2.11 serves protocols 17 to 25, and Aether 1.3.0 and 1.3.1
+serve 17 to 26, so each answers Archon on 24. Since Aether 1.2.7,
 Archon uses two features when they are offered: `subtree_update`, which
 raises a steer's deadline or budget for a stage agent and its helpers in one
 request (an older aetherd gets one request per helper), and
@@ -131,7 +133,7 @@ Every release carries, for each archive, a `.sha256` file, and one
 `SHA256SUMS` file that lists all of them.
 
 ```sh
-tag=v1.5.0
+tag=v1.5.1
 target=x86_64-unknown-linux-musl
 base=https://github.com/mengsig/archon/releases/download/$tag
 curl -fsSLO "$base/archon-$target.tar.gz"
@@ -152,7 +154,7 @@ archive holds `LICENSE` and `THIRD-PARTY-NOTICES`; the installer and
 ```sh
 archon update            # install the latest release when it is newer
 archon update --check    # only report: exit 0 when up to date, 10 when a newer release exists
-archon update --version v1.5.0     # install exactly this release
+archon update --version v1.5.1     # install exactly this release
 ```
 
 A release that needs more than this, such as 1.5.0 from 1.4.x, lists its
@@ -246,7 +248,7 @@ Each `archon`, `archon tui` and `archon chat` on a terminal looks for a
 newer release of Archon and of Aether before it opens, and offers:
 
 ```text
-Archon 1.5.1 is available (this is 1.5.0).
+Archon 1.5.2 is available (this is 1.5.1).
 Update and restart now? [Y/n/s] (s: skip these versions)
 ```
 

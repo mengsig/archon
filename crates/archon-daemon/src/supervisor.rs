@@ -31,7 +31,7 @@ use archon_core::protocol::{OrchestratorFreshness, OrchestratorInfo};
 use archon_core::run::GateDecision;
 use archon_queue::store::keys;
 
-use tokio::sync::{Mutex, Notify, RwLock, RwLockWriteGuard, watch};
+use tokio::sync::{Mutex, Notify, RwLock, RwLockReadGuard, RwLockWriteGuard, watch};
 
 use crate::context::DaemonContext;
 use crate::feed;
@@ -96,8 +96,9 @@ const GITHUB_WANTED_KEY: &str = "orchestrator_github";
 #[derive(Debug)]
 pub struct Supervisor {
     serial: Mutex<()>,
-    /// Read by a call that changes Archon for as long as it runs; written
-    /// while the stored orchestrator id changes. Taken after `serial`.
+    /// Read by a call that changes Archon for as long as it runs, and by the
+    /// poster while it saves its cursor; written while the stored orchestrator
+    /// id changes. Taken after `serial`.
     authority: RwLock<()>,
     current: watch::Sender<Option<AetherAgentId>>,
     revive_at: watch::Sender<Option<Timestamp>>,
@@ -532,6 +533,17 @@ async fn switching(ctx: &DaemonContext) -> RwLockWriteGuard<'_, ()> {
     ctx.supervisor.authority.write().await
 }
 
+/// Hold off every orchestrator switch until the guard drops, as a switch in
+/// progress does: for tests that replace the orchestrator by hand.
+pub async fn hold_switch(ctx: &DaemonContext) -> RwLockWriteGuard<'_, ()> {
+    switching(ctx).await
+}
+
+/// Held while a caller acts on the current orchestrator: no switch until it drops.
+pub(crate) async fn steady(ctx: &DaemonContext) -> RwLockReadGuard<'_, ()> {
+    ctx.supervisor.authority.read().await
+}
+
 /// Whether `agent` is the orchestrator, or one Archon replaced whose events
 /// may still arrive: what it delegated to and what it spent are Archon's.
 pub(crate) async fn is_own_orchestrator(
@@ -752,8 +764,7 @@ pub async fn freshness(
 }
 
 /// Deliver an operator chat line (`Say`), keyed by its feed item id. The
-/// chat learns of it from the orchestrator's `inbox.delivered` event, in
-/// order with its turns (see `ReplyTracker`), not from this call.
+/// conversation shows it where the orchestrator reads it, not at this call.
 pub async fn deliver_operator_message(
     ctx: &DaemonContext,
     feed_item: &FeedItemId,
@@ -978,7 +989,7 @@ async fn announce_revival(
     Ok(())
 }
 
-/// Store the new id, count the restart and update the chat's reply tracker.
+/// Store the new id and count the restart.
 async fn record_revival(
     ctx: &DaemonContext,
     id: &AetherAgentId,
@@ -993,12 +1004,6 @@ async fn record_revival(
             .unwrap_or(0);
         store.kv_set(RESTARTS_KEY, &(restarts + 1).to_string())?;
     }
-    feed::track(ctx, |replies| match how {
-        Revival::Woken => replies.interrupted(),
-        Revival::Restarted => replies.agent_replaced(true),
-        Revival::Recreated => replies.agent_replaced(false),
-    })
-    .await?;
     // Aether restarts from a checkpoint and the transcript's tail, which may
     // not hold them; a new generation was told as it was created.
     if matches!(how, Revival::Restarted) {
@@ -1479,20 +1484,23 @@ mod tests {
     }
 
     #[test]
-    fn builtin_prompt_serves_the_terminal_ui_and_the_line_chat() {
+    fn builtin_prompt_says_one_reply_reaches_every_surface() {
         let prompt = unwrapped(&prompt());
         for said in [
-            "The line chat, `archon chat`, shows the quiet feed: only your **final reply** to \
-             each operator message, what you `notify`, `ask_operator` or `publish_report`",
-            "So put the whole answer in the final reply, and in a turn woken by news `notify` \
-             what the operator must know or decide.",
-            "The terminal UI, which a bare `archon` (or `archon tui`) opens, shows only your \
-             assistant messages.",
-            "So also say there, a line each: what you `notify`, ask or publish; a finished \
-             item's id, state and pull request URL or failure; a waiting question and its \
-             `archon answer <n> …`.",
+            "The operator reads one conversation: your replies and the daemon's posts",
+            "the same in the terminal UI, `archon chat` and the phone. Say each thing once, \
+             where it fits; never repeat a post in a reply.",
+            "In a turn woken by news, `notify` what the operator must know or decide.",
         ] {
             assert!(prompt.contains(said), "missing {said:?}");
+        }
+        for gone in [
+            "final reply",
+            "quiet feed",
+            "So also say there",
+            "restate its",
+        ] {
+            assert!(!prompt.contains(gone), "{gone:?} is the two-feed guidance");
         }
         assert!(
             !prompt.contains("`archon` / `archon chat`"),
@@ -1500,15 +1508,13 @@ mod tests {
         );
     }
 
-    /// The daemon posts every outcome, gate and stage message to the feed
-    /// itself: the orchestrator repeats none of them there.
+    /// The daemon posts every outcome, gate and stage message to the
+    /// conversation itself: the orchestrator repeats none of them.
     #[test]
     fn builtin_prompt_leaves_outcomes_and_stage_messages_to_the_daemons_feed() {
         let prompt = unwrapped(&prompt());
-        assert!(prompt.contains("the daemon's own posts (outcomes, gates, stage messages)"));
-        assert!(prompt.contains(
-            "Other outcomes come with your next turn as `items_finished`, already in the feed."
-        ));
+        assert!(prompt.contains("outcomes, gates, merges, stage messages, command results"));
+        assert!(prompt.contains("Other outcomes come with your next turn as `items_finished`."));
         for gone in ["echo every received", "Echoing", "calm TUI"] {
             assert!(!prompt.contains(gone), "{gone:?} is the daemon's work now");
         }
@@ -1543,8 +1549,8 @@ mod tests {
             "You are woken for:",
             "`item_finished`: a failure, a blocker, an item tagged `notify`, one with a GitHub \
              `origin` to answer, and a success unless the operator turned that off.",
-            "Relay a success in a line with its pull request or commit; run no tool to verify it: \
-             the daemon did.",
+            "The daemon posts every outcome: add only what it lacks, such as what comes next; run \
+             no tool to verify it: the daemon did.",
             "A trigger states all `directives` once, then only `directive_changes`; if you hold \
              fewer than `directives_in_force`, read `autonomy_policy`.",
             "A mirror holds the registered repository's local base commit (HEAD when no base \
@@ -1897,8 +1903,8 @@ mod tests {
             "**Hand-off.** Before telling the operator a user-facing build is ready to try, \
              read `guide(topic=validation)` and queue the independent validation it names; \
              report only its outcome, never \"ready\" on a failure. Internal changes need none.",
-            "Relay a success in a line with its pull request or commit; run no tool to verify it: \
-             the daemon did.",
+            "The daemon posts every outcome: add only what it lacks, such as what comes next; run \
+             no tool to verify it: the daemon did.",
         ] {
             assert!(prompt.contains(said), "missing {said:?}");
         }

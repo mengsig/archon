@@ -172,6 +172,10 @@ pub enum FeedEntry {
         /// What the images sent with the line were; Aether keeps the bytes.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         images: Vec<crate::attachment::ImageRef>,
+        /// archond ran the line itself and never sent it to Aether, so the
+        /// conversation gets it as a post.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        local: bool,
     },
     /// Final text of an orchestrator turn that answered the operator.
     Orchestrator {
@@ -229,6 +233,24 @@ mod tests {
         assert_eq!(QuestionRef::parse(id.as_str()), Ok(QuestionRef::Id(id)));
         assert!(QuestionRef::parse("0").is_err());
         assert!(QuestionRef::parse("qi_01").is_err());
+    }
+
+    /// A line stored before `local` existed reads as delivered, and only a
+    /// local line writes the field.
+    #[test]
+    fn an_operator_line_is_local_only_when_it_says_so() {
+        let stored = serde_json::json!({"entry": "operator", "text": "hi"});
+        let old: FeedEntry = serde_json::from_value(stored.clone()).unwrap();
+        assert!(matches!(old, FeedEntry::Operator { local: false, .. }));
+        assert_eq!(serde_json::to_value(&old).unwrap(), stored);
+        let local = FeedEntry::Operator {
+            text: "/status".into(),
+            images: Vec::new(),
+            local: true,
+        };
+        let wire = serde_json::to_value(&local).unwrap();
+        assert_eq!(wire["local"], true);
+        assert_eq!(serde_json::from_value::<FeedEntry>(wire).unwrap(), local);
     }
 
     #[test]

@@ -145,8 +145,8 @@ async fn post_item(ctx: &DaemonContext, item: &FeedItem) -> Result<bool, ArchonE
 }
 
 /// The post a feed item makes, `None` for what the transcript holds already:
-/// operator lines, orchestrator replies and `ask_user` questions; and the
-/// audit line of a command whose result line follows it.
+/// operator lines, orchestrator replies and the orchestrator's own `ask_user`
+/// questions; and the audit line of a command whose result line follows it.
 async fn post_of(ctx: &DaemonContext, item: &FeedItem) -> Result<Option<Post>, ArchonError> {
     let post = match &item.entry {
         FeedEntry::Operator { .. } | FeedEntry::Orchestrator { .. } => None,
@@ -155,7 +155,7 @@ async fn post_of(ctx: &DaemonContext, item: &FeedItem) -> Result<Option<Post>, A
         FeedEntry::Authority { action, result, .. } => {
             Some(plain(format!("**Authority:** {action}: {result}")))
         }
-        FeedEntry::Question(question) if question.aether.is_some() => None,
+        FeedEntry::Question(question) if asked_by_orchestrator(ctx, question).await? => None,
         FeedEntry::Question(question) => Some(question_post(question)),
         FeedEntry::Notification(notification) => Some(notification_post(notification)),
         FeedEntry::Answer { question, text, .. } => {
@@ -175,6 +175,19 @@ async fn post_of(ctx: &DaemonContext, item: &FeedItem) -> Result<Option<Post>, A
         text: clip(&post.text, MAX_POST_CHARS),
         ..post
     }))
+}
+
+/// A stage agent's `ask_user` is not in the orchestrator's transcript, so
+/// only the current orchestrator's own questions are left out.
+async fn asked_by_orchestrator(
+    ctx: &DaemonContext,
+    question: &Question,
+) -> Result<bool, ArchonError> {
+    let Some(aether) = &question.aether else {
+        return Ok(false);
+    };
+    let orchestrator = supervisor::current_orchestrator(ctx).await?;
+    Ok(orchestrator.as_ref() == Some(&aether.agent))
 }
 
 fn plain(text: String) -> Post {

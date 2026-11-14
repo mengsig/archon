@@ -13,7 +13,10 @@
   tracker are gone, and the orchestrator no longer says things twice. Older
   chat lines stay in `archon log`. `archon chat --progress`, `/progress` and
   `[chat] show_progress` no longer do anything: `archon log` shows progress.
-  This needs an aetherd that serves the `conversation` feature.
+  This needs an aetherd that serves the `conversation` feature. Restart an
+  `archon chat` and reload a phone page opened before the upgrade, or they
+  show no replies. A stage agent's `ask_user` question is posted, numbered,
+  with how to answer it; the orchestrator's own stays in its transcript.
 
 ### Fixed
 

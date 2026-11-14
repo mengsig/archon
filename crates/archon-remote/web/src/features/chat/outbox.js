@@ -2,9 +2,13 @@ import { entryKey, stripRelayMark } from '../../core/conversation.js';
 
 // Chat lines sent from here, until the orchestrator reads them and the
 // conversation shows them. The outcome of each send (offline, refused) stays
-// beside its operator entry.
+// beside its operator entry. `after` is the last seq shown when the send began:
+// only a later operator entry can be its echo.
 export function addPending(store, text) {
-  const entry = { localId: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, text, status: 'sending', error: null };
+  const { conversation } = store.get();
+  if (!Array.isArray(conversation)) throw new TypeError('addPending needs the conversation in the store');
+  const after = conversation.at(-1)?.seq ?? 0;
+  const entry = { localId: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, text, after, status: 'sending', error: null };
   store.set({ outbox: [...store.get().outbox, entry] });
   return entry.localId;
 }
@@ -26,7 +30,8 @@ export function removePending(store, localId) {
   store.set({ outbox: store.get().outbox.filter((e) => e.localId !== localId) });
 }
 
-// Fresh operator entries replace the oldest pending send with the same text.
+// Fresh operator entries replace the oldest pending send with the same text
+// that began before them.
 export function matchEchoes(store, fresh) {
   if (!Array.isArray(fresh)) throw new TypeError('matchEchoes needs the fresh conversation entries');
   let { outbox, chatNotes } = store.get();
@@ -34,7 +39,7 @@ export function matchEchoes(store, fresh) {
   for (const item of fresh) {
     if (item.kind !== 'operator') continue;
     const text = stripRelayMark(String(item.text)).trim();
-    const at = outbox.findIndex((e) => e.text.trim() === text);
+    const at = outbox.findIndex((e) => item.seq > e.after && e.text.trim() === text);
     if (at < 0) continue;
     const entry = outbox[at];
     outbox = outbox.filter((_, i) => i !== at);

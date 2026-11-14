@@ -4,7 +4,7 @@ import { createStore } from '../../src/core/store.js';
 import { WEB_RELAY_MARK } from '../../src/core/conversation.js';
 import { addPending, settlePending, matchEchoes, removePending } from '../../src/features/chat/outbox.js';
 
-const store = () => createStore({ outbox: [], chatNotes: {} });
+const store = (conversation = []) => createStore({ conversation, outbox: [], chatNotes: {} });
 const operator = (seq, text, part = 0) => ({ seq, part, at: '2026-11-13T10:00:00Z', kind: 'operator', important: true, text });
 
 test('an operator entry replaces the pending send with the same trimmed text', () => {
@@ -44,6 +44,16 @@ test('each operator entry takes one pending send, oldest first', () => {
   matchEchoes(s, [operator(5, 'same')]);
   assert.deepEqual(s.get().outbox.map((e) => e.localId), [b]);
   assert.equal(s.get().chatNotes['5-0'].localId, a);
+});
+
+test('an identical older line does not settle a send that began after it', () => {
+  const s = store([operator(20, 'ship it')]);
+  const id = addPending(s, 'ship it');
+  matchEchoes(s, [operator(19, 'ship it'), operator(20, 'ship it')]);
+  assert.deepEqual(s.get().outbox.map((e) => e.localId), [id], 'a resync page replays old lines');
+  matchEchoes(s, [operator(21, 'ship it')]);
+  assert.equal(s.get().outbox.length, 0);
+  assert.equal(s.get().chatNotes['21-0'].localId, id);
 });
 
 test('a send outcome that arrives after the echo lands on the entry', () => {

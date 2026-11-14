@@ -8,6 +8,7 @@ use crate::link_common::{self, Harness, WAIT};
 
 use archon_aether::events::parse_event;
 use archon_aether::fake::Scripted;
+use archon_core::aether_ids::{AetherAgentId, AetherQuestionRef};
 use archon_core::conversation::{ConversationEntry, ConversationPage, EntryKind};
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
@@ -384,5 +385,40 @@ async fn a_phone_and_an_archon_chat_answer_post_the_same() {
     let mut want = answered_posts(phone);
     want.extend(answered_posts(chat));
     assert_eq!(appended(&harness), want);
+    poster.abort();
+}
+
+async fn ask_user(harness: &Harness, agent: &str, text: &str) -> u64 {
+    let aether = AetherQuestionRef {
+        agent: AetherAgentId::parse(agent).unwrap(),
+        seq: 7,
+    };
+    let asked = archon_daemon::feed::aether_question(&harness.ctx, aether, text, None)
+        .await
+        .expect("the question is recorded")
+        .expect("a first ask");
+    asked.number
+}
+
+/// The orchestrator's own `ask_user` is in its transcript already, so it is
+/// not posted again; a stage agent's is not, so it is posted once, numbered.
+#[tokio::test]
+async fn only_a_stage_agents_ask_user_is_posted() {
+    let harness = harness().await;
+    let poster = start_posting(&harness).await;
+    ask_user(&harness, ORCH, "Which repo?").await;
+    let stage = ask_user(&harness, "agt_stage", "Keep the old API?").await;
+    let last = harness.ctx.store.lock().await.last_feed_seq().unwrap();
+    harness
+        .eventually("the cursor passes both", || async {
+            harness.kv(posts::POSTED_KEY).await == Some(last.to_string())
+        })
+        .await;
+    // Room for a doubled post to show.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let asked = format!(
+        "**Q{stage}:** Keep the old API?\n\nAnswer with `/answer {stage} …` or `archon answer {stage} …`."
+    );
+    assert_eq!(appended(&harness), [(asked, true)]);
     poster.abort();
 }

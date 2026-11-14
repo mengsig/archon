@@ -260,6 +260,8 @@ pub(super) fn save_spawned(
 /// The finished `run`'s node is retiring, every agent of it stopped: owe an
 /// archive of each ended attempt not archived yet, drop the marks of those
 /// that were, and forget the node at `node_key`, all in one transaction.
+/// Owes nothing once the node is forgotten: the retirement that forgot it
+/// owed them, and the worker may have archived and dropped those marks since.
 /// Called under the store lock.
 pub(super) fn owe_finished(
     store: &mut Store,
@@ -267,9 +269,17 @@ pub(super) fn owe_finished(
     node_key: &str,
 ) -> Result<Vec<StageRunId>, ArchonError> {
     assert!(
+        node_key.ends_with(&run.to_string()),
+        "the node key is the run's own"
+    );
+    assert!(
         store.run(run)?.state.is_terminal(),
         "only a finished run's attempts are all moved past"
     );
+    if store.kv_get(node_key)?.is_none() {
+        tracing::debug!(%run, "run node already retired; its archives were owed then");
+        return Ok(Vec::new());
+    }
     let stages = store.stage_runs(run)?;
     assert!(
         stages.iter().all(|s| s.state.is_terminal()),

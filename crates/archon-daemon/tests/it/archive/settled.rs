@@ -111,6 +111,49 @@ async fn a_tree_whose_archive_outlasts_its_node_s_retirement_is_archived_once() 
     archived_once_around_retirement(false).await;
 }
 
+/// Two retirements of one run overlap: the first is held in its check that
+/// the node stopped while the second retires the node and a pass archives
+/// and forgets the tree. The first then owes nothing, so no second archive.
+#[tokio::test]
+async fn a_retirement_overtaken_by_another_and_a_pass_owes_no_second_archive() {
+    let h = Harness::new().await;
+    let (item, mark, agent) = replaced_attempt(&h).await;
+    let last = finish_with_the_node_kept(&h, &item).await;
+    let node = format!("run_node:{}", h.run(&item.id).await.id);
+    let stored = h.kv(&node).await.expect("the node waits for the turn");
+    let stored: serde_json::Value = serde_json::from_str(&stored).expect("node entry");
+    let node_agent = AetherAgentId::parse(stored["agent"].as_str().expect("node agent")).unwrap();
+    h.backend.end_turn(&last);
+    let checks = h.backend.descendant_checks().len();
+    let gate = h.backend.hold_descendants_after(0);
+    let mut stale = std::pin::pin!(h.dispatch());
+    let held = async {
+        while h.backend.descendant_checks().len() == checks {
+            tokio::task::yield_now().await;
+        }
+    };
+    tokio::select! {
+        biased;
+        () = &mut stale => panic!("the first retirement is held in its check"),
+        () = promptly("the first retirement's check", held) => {}
+    }
+    let asked = h.backend.descendant_checks().last().cloned();
+    assert_eq!(asked, Some(node_agent), "held checking the node stopped");
+
+    promptly("the second retirement", h.dispatch()).await;
+    assert_eq!(h.kv(&node).await, None, "the node retired");
+    assert_eq!(h.kv(&mark).await.as_deref(), Some("owed"));
+    h.archive().await;
+    assert_eq!(h.backend.archived(), std::slice::from_ref(&agent));
+    assert_eq!(h.kv(&mark).await, None, "archived for good");
+
+    gate.add_permits(1);
+    promptly("the first retirement", stale).await;
+    assert_eq!(h.kv(&mark).await, None, "nothing is owed a second time");
+    h.archive().await;
+    assert_eq!(h.backend.archived(), [agent], "archived once");
+}
+
 /// A stage agent a fresh one replaced after an abort whose cancel Aether
 /// only accepted: the agent runs on. Its tree is neither listed nor asked
 /// of, so the delegate it makes while a pass would have been archiving is

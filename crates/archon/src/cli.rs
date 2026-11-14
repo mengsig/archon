@@ -714,7 +714,8 @@ pub enum GithubWatcherCommand {
 pub enum LogKind {
     /// The operator's chat lines.
     Operator,
-    /// The orchestrator's replies.
+    /// The orchestrator's replies an older Archon recorded; newer ones are
+    /// in `archon chat`.
     Orchestrator,
     /// Questions asked, and the notices that announce them.
     Question,

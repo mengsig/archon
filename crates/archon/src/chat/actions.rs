@@ -13,7 +13,6 @@ use crate::connect::unexpected;
 use crate::format;
 use crate::images::{expand_home, pasted_image_path, read_image_file};
 use crate::ops;
-use crate::questions::QuestionRef;
 use crate::views;
 
 const QUEUE_LIMIT: usize = 50;
@@ -87,7 +86,6 @@ async fn run_remote(
 ) -> anyhow::Result<()> {
     match command {
         SlashCommand::Authority(text) => operator_command(chat, client, text).await,
-        SlashCommand::Answer { question, text } => answer(chat, client, question, &text).await,
         SlashCommand::Questions => {
             chat.sync_questions(client).await?;
             let text = format::questions(chat.book.open());
@@ -118,18 +116,6 @@ async fn run_remote(
             let item = views::resolve_item(client, &id).await?;
             let text = views::item_text(client, item, false).await?;
             chat.print(&text)
-        }
-        SlashCommand::Merge {
-            item,
-            ignore_checks,
-        } => {
-            let item = views::resolve_item(client, &item).await?;
-            let flag = if ignore_checks {
-                " --ignore-checks"
-            } else {
-                ""
-            };
-            operator_command(chat, client, format!("/merge {item}{flag}")).await
         }
         SlashCommand::Diff(item) => {
             let item = views::resolve_item(client, &item).await?;
@@ -259,24 +245,6 @@ fn warn_not_sent(chat: &mut Chat, dropped: &[u32]) -> anyhow::Result<()> {
 fn prefill_chips(chat: &mut Chat) {
     let chips = chat.lock_draft().chips();
     chat.prefill = (!chips.is_empty()).then(|| format!("{chips} "));
-}
-
-async fn answer(
-    chat: &mut Chat,
-    client: &ArchonClient,
-    question: QuestionRef,
-    text: &str,
-) -> anyhow::Result<()> {
-    let Some(found) = chat.book.find(&question) else {
-        return chat.error("no such open question; /questions lists them");
-    };
-    let number = found.number;
-    assert!(number > 0, "the chat only tracks numbered questions");
-    assert!(
-        !text.trim().is_empty(),
-        "the parser refuses an empty answer"
-    );
-    operator_command(chat, client, format!("/answer {number} {text}")).await
 }
 
 /// Run a host command in archond as the phone's chat does: archond posts it

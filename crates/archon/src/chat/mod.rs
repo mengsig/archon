@@ -681,34 +681,28 @@ mod tests {
         assert_eq!((chat.prefill.take(), chat.unsent.take()), (None, None));
     }
 
-    /// `/answer` runs in archond as the phone's does, so the conversation
-    /// gets the command and its result; its post is this line's echo.
+    /// `/answer` and `/merge` run in archond as the phone's do, as typed, so
+    /// the conversation gets the command and its result, a refusal included.
     #[tokio::test]
-    async fn an_answer_is_sent_as_an_operator_command() {
+    async fn answers_and_merges_are_sent_as_typed_operator_commands() {
         let dir = tempfile::tempdir().unwrap();
-        let mut chat = quiet_chat();
-        chat.book.sync_open(vec![archon_core::notify::Question {
-            id: archon_core::id::QuestionId::new(),
-            number: 3,
-            text: "Ship it?".into(),
-            options: vec!["yes".into(), "no".into()],
-            item: None,
-            aether: None,
-            asked_by: None,
-            asked_at: archon_core::now(),
-            answer: None,
-            answered_at: None,
-        }]);
-        let socket = dir.path().join("d.sock");
-        let (client, server) =
-            client_of_a_daemon_answering_once(&socket, Some(Ok(Reply::Ok))).await;
-        actions::handle_line(&mut chat, "/answer 3 yes", Some(&client))
-            .await
-            .unwrap();
-        let sent = server.await.unwrap();
-        let want = "/answer 3 yes".to_owned();
-        assert_eq!(sent, Request::OperatorCommand { text: want.clone() });
-        assert_eq!(chat.pending_echoes, [want]);
+        let typed = [
+            "/answer 99 hi",
+            "/answer Q2 1",
+            "/merge qi_nope --ignore-checks",
+        ];
+        for (n, line) in typed.into_iter().enumerate() {
+            let mut chat = quiet_chat();
+            let socket = dir.path().join(format!("d{n}.sock"));
+            let (client, server) =
+                client_of_a_daemon_answering_once(&socket, Some(Ok(Reply::Ok))).await;
+            actions::handle_line(&mut chat, line, Some(&client))
+                .await
+                .unwrap();
+            let sent = server.await.unwrap();
+            assert_eq!(sent, Request::OperatorCommand { text: line.into() });
+            assert_eq!(chat.pending_echoes, [line], "its post is the echo");
+        }
     }
 
     #[tokio::test]

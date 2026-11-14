@@ -43,6 +43,7 @@ impl QuestionBook {
         }
     }
 
+    #[cfg(test)]
     pub fn find(&self, reference: &QuestionRef) -> Option<&Question> {
         self.entries
             .iter()

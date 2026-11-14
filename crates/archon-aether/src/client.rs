@@ -22,8 +22,8 @@ use crate::connection::{BoxRead, BoxWrite, EventSink, Router, Shared, WRITE_QUEU
 use crate::events::AetherEvent;
 use crate::github::{WatcherConfig, WatcherStatus};
 use crate::wire::{
-    Agent, AgentPatch, AgentQuery, ArchiveTarget, CLIENT_NAME, CONVERSATION_FEATURE, Command, CreateAgent,
-    DaemonDefaults, EventQuery, ExpiredSpan, HISTORY_EXPIRED_FEATURE, Hello,
+    Agent, AgentPatch, AgentQuery, ArchiveTarget, CLIENT_NAME, CONVERSATION_FEATURE, Command,
+    CreateAgent, DaemonDefaults, EventQuery, ExpiredSpan, HISTORY_EXPIRED_FEATURE, Hello,
     IMAGES_PROTOCOL_VERSION, MIN_PROTOCOL_VERSION, ModelInfo, NOTE_LEVEL_PROTOCOL_VERSION,
     NOTES_FEATURE, NOTES_PROTOCOL_VERSION, NoteLevel, PROTOCOL_VERSION, ProviderInfo, RawReply,
     Subscribed, Task, Welcome,

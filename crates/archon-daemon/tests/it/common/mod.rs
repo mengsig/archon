@@ -1411,8 +1411,8 @@ impl AgentBackend for FakeBackend {
         if let Some(error) = state.archive_failures.pop_front() {
             return Err(error);
         }
-        let delegated_live = (state.delegated.iter())
-            .any(|d| d.agent == *agent && d.state == DescendantState::Live);
+        let delegated_live =
+            (state.delegated.iter()).any(|d| d.agent == *agent && d.state == DescendantState::Live);
         let stage_live = state.is_node(agent)
             || state.in_turn.contains(agent)
             || state.is_kept(agent)

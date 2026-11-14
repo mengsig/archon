@@ -53,7 +53,8 @@ fn ended_agents(stages: &[StageRun]) -> Vec<(&StageRun, &AetherAgentId)> {
         let Some(agent) = &stage.aether_agent else {
             continue;
         };
-        let later = |seen: &StageRun| (stage.started_at, stage.attempt) > (seen.started_at, seen.attempt);
+        let later =
+            |seen: &StageRun| (stage.started_at, stage.attempt) > (seen.started_at, seen.attempt);
         if last.get(agent).is_none_or(|seen| later(seen)) {
             last.insert(agent, stage);
         }
@@ -64,19 +65,21 @@ fn ended_agents(stages: &[StageRun]) -> Vec<(&StageRun, &AetherAgentId)> {
         .map(|(agent, stage)| (stage, agent))
         .collect();
     assert!(
-        ended.iter().all(|(s, a)| s.aether_agent.as_ref() == Some(*a)),
+        ended
+            .iter()
+            .all(|(s, a)| s.aether_agent.as_ref() == Some(*a)),
         "each ended agent is its stage run's own"
     );
     ended
 }
 
-/// The ended agents of a live run that no live attempt of their slot can
-/// still wake: a slot's replacement, spawning or running, may take its
-/// failed agent back (ARCHITECTURE §6.3).
+/// The ended agents of a live run that no attempt of their slot can still
+/// wake: a replacement not yet bound to an agent may take its slot's failed
+/// one back (ARCHITECTURE §6.3); one bound to a fresh agent moved past it.
 fn superseded_in(stages: &[StageRun]) -> Vec<StageRunId> {
     let live_slots: BTreeSet<(&str, u32)> = stages
         .iter()
-        .filter(|s| !s.state.is_terminal())
+        .filter(|s| !s.state.is_terminal() && s.aether_agent.is_none())
         .map(|s| (s.stage_id.as_str(), s.fan_index))
         .collect();
     ended_agents(stages)
@@ -127,7 +130,10 @@ pub(super) fn owe_finished(
         "only a finished run's attempts are all moved past"
     );
     let stages = store.stage_runs(run)?;
-    assert!(stages.iter().all(|s| s.state.is_terminal()), "no stage is left live");
+    assert!(
+        stages.iter().all(|s| s.state.is_terminal()),
+        "no stage is left live"
+    );
     let mut owed = Vec::new();
     for (stage, _) in ended_agents(&stages) {
         let key = mark_key(&stage.id);
@@ -185,7 +191,9 @@ fn due(store: &mut Store, stage: &StageRunId) -> Result<Option<AetherAgentId>, A
         return Ok(None);
     }
     let agent = found.aether_agent;
-    Ok(Some(agent.expect("only a stage run with an agent is marked")))
+    Ok(Some(
+        agent.expect("only a stage run with an agent is marked"),
+    ))
 }
 
 /// Archive `stage`'s tree if its mark owes it now, and record that it did:
@@ -237,7 +245,10 @@ async fn archive_tree(ctx: &DaemonContext, stage: &StageRunId, agent: &AetherAge
             Vec::new()
         }
     };
-    if let Some(live) = descendants.iter().find(|d| d.state == DescendantState::Live) {
+    if let Some(live) = descendants
+        .iter()
+        .find(|d| d.state == DescendantState::Live)
+    {
         tracing::info!(%stage, %agent, live = %live.agent, "an agent beneath the stage agent still runs; archive retried later");
         return false;
     }
@@ -312,9 +323,19 @@ mod tests {
         let retry = stage("build", 2, None, StageState::Spawning);
         let other = stage("review", 1, Some("agt_3"), StageState::Running);
         let stages = vec![first.clone(), retry.clone(), other.clone()];
-        assert!(superseded_in(&stages).is_empty(), "the replacement may wake it");
+        assert!(
+            superseded_in(&stages).is_empty(),
+            "the replacement may wake it"
+        );
         let mut running = retry.clone();
         running.aether_agent = Some(AetherAgentId::parse("agt_2").unwrap());
+        running.state = StageState::Running;
+        let stages = vec![first.clone(), running.clone(), other.clone()];
+        assert_eq!(
+            superseded_in(&stages),
+            std::slice::from_ref(&first.id),
+            "a fresh agent took over"
+        );
         running.state = failed();
         let stages = vec![first.clone(), running, other];
         let ids = superseded_in(&stages);
@@ -327,7 +348,10 @@ mod tests {
         let first = stage("build", 1, Some("agt_1"), failed());
         let woken = stage("build", 2, Some("agt_1"), StageState::Completed);
         let stages = vec![first.clone(), woken];
-        assert!(ended_agents(&stages).is_empty(), "its last attempt completed");
+        assert!(
+            ended_agents(&stages).is_empty(),
+            "its last attempt completed"
+        );
         let later_failed = stage("build", 2, Some("agt_1"), failed());
         let stages = vec![first, later_failed.clone()];
         let ended = ended_agents(&stages);
@@ -349,7 +373,10 @@ mod tests {
         let other_run = PipelineRunId::new();
         assert!(!needs_operator(&escalated, Some(&failed_by(&other_run))));
         assert!(!needs_operator(&escalated, Some(&QueueState::Queued)));
-        assert!(!needs_operator(&escalated, None), "a deleted item needs no one");
+        assert!(
+            !needs_operator(&escalated, None),
+            "a deleted item needs no one"
+        );
         let routine = stage("build", 1, Some("agt_2"), failed());
         assert!(!needs_operator(&routine, Some(&failed_by(&routine.run))));
     }

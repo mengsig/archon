@@ -7,8 +7,8 @@ use std::collections::BTreeSet;
 use archon_aether::github::{RepositoryConfig, WatcherConfig};
 use archon_aether::memory::MemoryQuery;
 use archon_aether::wire::{
-    AgentConfig, AgentPatch, AgentQuery, ApprovalPolicy, ArchiveTarget, ClientFrame, Command, CreateAgent,
-    EventQuery, Hello, NetworkPolicy, Scope, ToolExposure,
+    AgentConfig, AgentPatch, AgentQuery, ApprovalPolicy, ArchiveTarget, ClientFrame, Command,
+    CreateAgent, EventQuery, Hello, NetworkPolicy, Scope, ToolExposure,
 };
 use archon_core::aether_ids::{AetherAgentId, AetherMemoryId, AetherRunId, AetherTaskId};
 use archon_core::model::Effort;
@@ -451,7 +451,7 @@ fn every_command_archon_emits_matches_the_schema() {
     );
     assert_eq!(
         seen.len(),
-        29,
+        30,
         "every Command variant has a sample: {seen:?}"
     );
 }

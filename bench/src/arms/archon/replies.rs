@@ -82,7 +82,8 @@ pub struct ReplyLog {
 
 impl ReplyLog {
     /// Probe archond for the conversation before the prompt and take its
-    /// end as the baseline; an archond without it keeps replies in the feed.
+    /// end as the baseline, enrolling the orchestrator that will read the
+    /// prompt; an archond without it keeps replies in the feed.
     pub async fn start(client: &ArchonClient) -> anyhow::Result<Self> {
         let request = Request::Conversation {
             after: None,
@@ -93,7 +94,9 @@ impl ReplyLog {
         match client.request(request).await {
             Ok(Reply::Conversation(page)) => {
                 assert!(page.is_ordered(), "archond serves ordered pages");
-                Ok(Self::after(page.last_seq.max(page.to_seq)))
+                let mut log = Self::after(page.last_seq.max(page.to_seq));
+                log.enroll(super::orchestrator_agent(client).await?);
+                Ok(log)
             }
             Ok(other) => bail!("conversation returned another reply kind: {other:?}"),
             Err(e) if lacks_conversation(&e) => Ok(Self::feed()),
@@ -124,18 +127,30 @@ impl ReplyLog {
         &self.replies
     }
 
-    /// Note the current orchestrator, then read what every orchestrator
-    /// seen so far added to its transcript since the last read.
+    /// Read `agent`'s transcript from the baseline on every refresh until
+    /// the trial ends, even once another orchestrator replaces it.
+    pub fn enroll(&mut self, agent: AetherAgentId) {
+        assert!(self.replies != Replies::Feed, "only a conversation is read");
+        self.cursors.entry(agent).or_insert(self.baseline);
+        assert!(!self.cursors.is_empty(), "an enrolled agent is read");
+    }
+
+    /// The orchestrators whose transcripts are read, with their cursors.
+    pub fn cursors(&self) -> &BTreeMap<AetherAgentId, u64> {
+        &self.cursors
+    }
+
+    /// Enroll `current`, the orchestrator archond reports now, then read
+    /// what every enrolled orchestrator added since the last read.
     pub async fn refresh(
         &mut self,
-        client: &ArchonClient,
+        current: AetherAgentId,
         aether_socket: &Path,
     ) -> anyhow::Result<&Replies> {
         if self.replies == Replies::Feed {
             return Ok(&self.replies);
         }
-        let current = super::orchestrator_agent(client).await?;
-        self.cursors.entry(current).or_insert(self.baseline);
+        self.enroll(current);
         let aether = AetherClient::connect(&endpoint(aether_socket)).await?;
         let agents: Vec<AetherAgentId> = self.cursors.keys().cloned().collect();
         for agent in agents {

@@ -590,6 +590,85 @@ fn replies_survive_an_orchestrator_replaced_mid_trial() {
 }
 
 #[test]
+fn an_enrolled_orchestrator_stays_read_from_the_baseline_after_its_successor() {
+    let (first, second) = (agent("agt_first"), agent("agt_second"));
+    let mut log = ReplyLog::after(100);
+    log.enroll(first.clone());
+    log.enroll(second.clone());
+    log.enroll(first.clone());
+    let cursors: Vec<(&AetherAgentId, u64)> = log.cursors().iter().map(|(a, c)| (a, *c)).collect();
+    assert_eq!(cursors, [(&first, 100), (&second, 100)]);
+    log.record(&second, Vec::new(), 130).unwrap();
+    assert_eq!(log.cursors()[&first], 100, "the first is still unread");
+}
+
+/// A fake aetherd whose transcripts are `(agent, entries)`, each served
+/// after the requested cursor as one whole page.
+fn serve_transcripts(
+    daemon: &FakeAether,
+    transcripts: Vec<(&'static str, Vec<ConversationEntry>)>,
+) {
+    daemon.set_features(vec!["conversation".into()]);
+    daemon.set_responder(
+        "get_conversation",
+        Arc::new(move |command| {
+            let after = command["after"].as_u64().unwrap();
+            let entries: Vec<ConversationEntry> = transcripts
+                .iter()
+                .filter(|(id, _)| command["agent"] == *id)
+                .flat_map(|(_, entries)| entries.iter().filter(|e| e.seq > after).cloned())
+                .collect();
+            let to_seq = entries.last().map_or(after, |e| e.seq);
+            let page = archon_core::conversation::ConversationPage {
+                from_seq: entries.first().map_or(after, |e| e.seq),
+                to_seq,
+                last_seq: to_seq,
+                entries,
+                ..Default::default()
+            };
+            Scripted::reply("conversation", serde_json::to_value(page).unwrap())
+        }),
+    );
+}
+
+#[tokio::test]
+async fn a_refresh_after_a_replacement_still_reads_the_retired_orchestrator() {
+    let sockets = tempfile::tempdir().unwrap();
+    let socket = sockets.path().join("aether.sock");
+    let daemon = FakeAether::start(&socket).await.unwrap();
+    // The first orchestrator answered and was replaced before any poll.
+    serve_transcripts(
+        &daemon,
+        vec![
+            (
+                "agt_first",
+                vec![
+                    said(EntryKind::Operator, 99, 0, "before the trial"),
+                    said(EntryKind::Assistant, 101, 10, "verify() accepts forgeries."),
+                ],
+            ),
+            (
+                "agt_second",
+                vec![said(EntryKind::Assistant, 120, 30, "Restarted.")],
+            ),
+        ],
+    );
+    let mut log = ReplyLog::after(100);
+    log.enroll(agent("agt_first"));
+    log.refresh(agent("agt_second"), &socket).await.unwrap();
+    assert_eq!(
+        kept_texts(&log),
+        ["verify() accepts forgeries.", "Restarted."]
+    );
+    assert_eq!(log.cursors()[&agent("agt_first")], 101);
+    log.refresh(agent("agt_second"), &socket).await.unwrap();
+    assert_eq!(kept_texts(&log).len(), 2, "a second read adds nothing");
+    let asked = daemon.received_named("get_conversation");
+    assert_eq!(asked.len(), 4, "both transcripts on every refresh");
+    assert!(asked.iter().all(|c| c["important_only"] == true));
+}
+
+#[test]
 fn a_successor_that_kept_the_transcript_adds_no_duplicate() {
     let mut log = ReplyLog::after(0);
     let reply = said(EntryKind::Assistant, 5, 0, "Done.");

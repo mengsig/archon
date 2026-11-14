@@ -296,7 +296,8 @@ async fn session(input: &TrialInput<'_>, client: &ArchonClient) -> anyhow::Resul
         wait_until_settled(client, baseline, &mut replies, aether_socket, input.timeout).await?;
     let wall_secs = finished.duration_since(started).as_secs_f64();
     let feed = feed_after(client, baseline).await?;
-    let replies = replies.refresh(client, aether_socket).await?;
+    let current = orchestrator_agent(client).await?;
+    let replies = replies.refresh(current, aether_socket).await?;
     let details = item_details(client).await?;
     std::fs::write(
         input.layout.logs.join("archon-items.json"),
@@ -493,7 +494,7 @@ async fn observe(
         bail!("orchestrator_status returned another reply kind");
     };
     let feed = feed_after(client, baseline).await?;
-    let replies = replies.refresh(client, aether_socket).await?;
+    let replies = replies.refresh(info.agent, aether_socket).await?;
     Ok(Observation {
         replied: replies.replied(&feed),
         orchestrator_busy: BUSY_STATUSES.contains(&info.status.as_str()),

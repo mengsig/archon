@@ -626,3 +626,43 @@ async fn an_escalation_revived_by_an_inserted_stage_is_archived() {
     assert_eq!(verifying.stage_id, "verify");
     assert_eq!(h.backend.archived(), std::slice::from_ref(&agent));
 }
+
+/// The cap holds for the whole sweep, not each follow-up round: a run the
+/// sweep retires owes its archive in a later round, behind a backlog.
+#[tokio::test]
+async fn marks_owed_during_a_sweep_share_its_cap() {
+    const CAP: usize = 8;
+    let h = Harness::new().await;
+    h.enqueue("retires during the sweep").await;
+    h.dispatch().await;
+    let held = h
+        .backend
+        .delegate(&lead_agent(&h.running().await[0]), MODEL);
+    h.settle_running(|_| failed("tests failed")).await;
+    for n in 0..CAP {
+        h.enqueue(&format!("failing build {n}")).await;
+    }
+    h.dispatch().await;
+    for stage in &h.running().await {
+        let worker = h.backend.delegate(&lead_agent(stage), MODEL);
+        h.backend.end_delegated(&worker, DescendantState::Stopped);
+        h.backend
+            .fail_next_archive(ArchonError::Unavailable("aether away".into()));
+    }
+    h.settle_running(|_| failed("tests failed")).await;
+    assert!(h.backend.archived().is_empty(), "a backlog of eight owed");
+
+    h.backend.end_delegated(&held, DescendantState::Stopped);
+    h.dispatch().await;
+    assert_eq!(
+        h.backend.archived().len(),
+        2 * CAP,
+        "eight trees in all this sweep"
+    );
+    h.dispatch().await;
+    assert_eq!(
+        h.backend.archived().len(),
+        2 * (CAP + 1),
+        "the last next sweep"
+    );
+}

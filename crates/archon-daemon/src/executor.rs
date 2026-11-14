@@ -546,18 +546,21 @@ pub async fn recover(ctx: &DaemonContext) -> Result<(), ArchonError> {
     Ok(())
 }
 
-/// Run follow-ups until none are left. Every step is attempted even when
-/// an earlier one fails; the first error is returned, the others logged.
+/// Run follow-ups until none are left, then the archives they owe, under one
+/// `archive::PER_SWEEP` budget. Every step is attempted even when an
+/// earlier one fails; the first error is returned, the others logged.
 pub(crate) async fn run_follow_up(
     ctx: &DaemonContext,
     mut follow: FollowUp,
 ) -> Result<(), ArchonError> {
     let mut first_error: Option<ArchonError> = None;
     let mut poke = follow.poke;
+    let mut owed: BTreeSet<StageRunId> = std::mem::take(&mut follow.archive).into_iter().collect();
     // Each round settles or spawns something, so chains end (a spawn's check
     // can settle it, whose driver only queues pending spawns).
     while !follow.is_empty() {
-        let (next, error) = follow_up_round(ctx, follow).await;
+        let (mut next, error) = follow_up_round(ctx, follow).await;
+        owed.extend(std::mem::take(&mut next.archive));
         poke |= next.poke;
         if let Some(error) = error {
             match first_error {
@@ -567,6 +570,7 @@ pub(crate) async fn run_follow_up(
         }
         follow = next;
     }
+    archive_owed(ctx, owed).await;
     if poke {
         ctx.dispatch.notify_one();
     }
@@ -697,7 +701,10 @@ async fn deliver_and_tidy(ctx: &DaemonContext, round: &mut Round, follow: Follow
     for run in dedup(follow.discard) {
         round.record(discard::discard(ctx, &run).await);
     }
-    archive_owed(ctx, dedup(follow.archive)).await;
+    assert!(
+        follow.archive.is_empty(),
+        "the chain archives once, after its rounds"
+    );
 }
 
 /// Archive the trees `owed` names, oldest stage run first, asking Aether of

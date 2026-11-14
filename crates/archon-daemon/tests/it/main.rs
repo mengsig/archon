@@ -2,6 +2,7 @@
 
 mod adaptive_surface;
 mod agent_messages;
+mod archive;
 mod autonomy;
 mod carried_review;
 mod changes;

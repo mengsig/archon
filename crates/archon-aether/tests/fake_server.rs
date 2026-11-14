@@ -454,6 +454,37 @@ async fn is_live_reads_the_agent_state_and_treats_unknown_as_dead() {
 }
 
 #[tokio::test]
+async fn is_stopped_takes_only_a_final_state_or_a_forgotten_agent() {
+    let (_dir, fake) = fake_aether().await;
+    let with_status = |status| {
+        let mut agent = fake::agent(NODE, None);
+        agent["status"] = status;
+        Scripted::reply("agent", agent)
+    };
+    fake.script("get_agent", with_status(json!({"state": "failed"})));
+    fake.script("get_agent", with_status(json!({"state": "running"})));
+    fake.script("get_agent", with_status(json!({"state": "bogus"})));
+    fake.script("get_agent", with_status(json!({})));
+    fake.script("get_agent", Scripted::refuse("not_found", "no such agent"));
+    fake.script("get_agent", Scripted::refuse("invalid_argument", "bad id"));
+    let backend = backend(&fake, any_model()).await;
+    let node = AetherAgentId::parse(NODE).unwrap();
+    assert!(
+        backend.is_stopped(&node).await.unwrap(),
+        "failed is stopped"
+    );
+    assert!(!backend.is_stopped(&node).await.unwrap(), "running is not");
+    assert!(!backend.is_stopped(&node).await.unwrap(), "bogus is not");
+    assert!(!backend.is_stopped(&node).await.unwrap(), "none is not");
+    assert!(
+        backend.is_stopped(&node).await.unwrap(),
+        "a forgotten agent is"
+    );
+    let error = backend.is_stopped(&node).await.unwrap_err();
+    assert!(!matches!(error, ArchonError::NotFound(_)), "{error}");
+}
+
+#[tokio::test]
 async fn update_agent_patches_only_what_the_update_names() {
     let (_dir, fake) = fake_aether().await;
     fake.set_default(
@@ -982,6 +1013,46 @@ async fn list_models_reads_aethers_nested_model_ref() {
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].model.to_string(), "claude-code/claude-opus-5-5");
     assert!(listed[0].configured && listed[0].is_default);
+}
+
+/// `archive` names one agent and reads the `agents` it moved: that agent,
+/// or none when it was archived already; any other agent is a protocol error.
+#[tokio::test]
+async fn archive_reads_the_agents_it_moved() {
+    let (_dir, fake) = fake_aether().await;
+    let replies = [
+        Scripted::reply("agents", json!([fake::agent(AGENT, None)])),
+        Scripted::reply("agents", json!([])),
+        Scripted::reply("agents", json!([fake::agent(common::AGENT_2, None)])),
+        Scripted::reply("agent", fake::agent(AGENT, None)),
+        Scripted::refuse("invalid_transition", "agent is running"),
+        Scripted::refuse("not_found", "no agent"),
+    ];
+    for reply in replies {
+        fake.script("archive", reply);
+    }
+    let client = connect(&fake).await;
+    let agent = AetherAgentId::parse(AGENT).unwrap();
+    client.archive(&agent).await.expect("moved");
+    client.archive(&agent).await.expect("archived already");
+    let other = client.archive(&agent).await.unwrap_err();
+    assert!(
+        matches!(&other, ArchonError::Protocol(m) if m.contains("moved another agent")),
+        "{other:?}"
+    );
+    let kind = client.archive(&agent).await.unwrap_err();
+    assert!(matches!(kind, ArchonError::Protocol(_)), "{kind:?}");
+    let live = client.archive(&agent).await.unwrap_err();
+    assert!(
+        matches!(live, ArchonError::InvalidTransition(_)),
+        "{live:?}"
+    );
+    let gone = client.archive(&agent).await.unwrap_err();
+    assert!(matches!(gone, ArchonError::NotFound(_)), "{gone:?}");
+    let sent = fake.received_named("archive");
+    assert_eq!(sent.len(), 6);
+    assert_eq!(sent[0]["target"], json!({"agent": AGENT}));
+    assert_eq!(sent[0]["archived"], json!(true));
 }
 
 #[tokio::test]

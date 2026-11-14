@@ -22,8 +22,8 @@ use crate::connection::{BoxRead, BoxWrite, EventSink, Router, Shared, WRITE_QUEU
 use crate::events::AetherEvent;
 use crate::github::{WatcherConfig, WatcherStatus};
 use crate::wire::{
-    Agent, AgentPatch, AgentQuery, CLIENT_NAME, CONVERSATION_FEATURE, Command, CreateAgent,
-    DaemonDefaults, EventQuery, ExpiredSpan, HISTORY_EXPIRED_FEATURE, Hello,
+    Agent, AgentPatch, AgentQuery, ArchiveTarget, CLIENT_NAME, CONVERSATION_FEATURE, Command,
+    CreateAgent, DaemonDefaults, EventQuery, ExpiredSpan, HISTORY_EXPIRED_FEATURE, Hello,
     IMAGES_PROTOCOL_VERSION, MIN_PROTOCOL_VERSION, ModelInfo, NOTE_LEVEL_PROTOCOL_VERSION,
     NOTES_FEATURE, NOTES_PROTOCOL_VERSION, NoteLevel, PROTOCOL_VERSION, ProviderInfo, RawReply,
     Subscribed, Task, Welcome,
@@ -767,6 +767,22 @@ impl AetherClient {
             .await?;
         ensure_same(agent.as_str(), woken.id.as_str(), "wake")?;
         Ok(woken)
+    }
+
+    /// Clear the finished `agent` out of Aether's live view. Aether refuses a
+    /// live agent and one it does not know; an archived one is a no-op.
+    pub async fn archive(&self, agent: &AetherAgentId) -> Result<(), ArchonError> {
+        let command = Command::Archive {
+            target: ArchiveTarget::Agent(agent.clone()),
+            archived: true,
+        };
+        let moved: Vec<Agent> = self.typed(command, "agents").await?;
+        if moved.iter().any(|a| a.id.as_str() != agent.as_str()) {
+            return Err(ArchonError::Protocol(format!(
+                "archive of {agent} moved another agent"
+            )));
+        }
+        Ok(())
     }
 
     /// Recreate a failed or cancelled agent from its checkpoint as a new id.

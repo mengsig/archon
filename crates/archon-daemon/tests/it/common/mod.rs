@@ -437,6 +437,15 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
             .expect("dispatch pass");
     }
 
+    /// One pass of the archive worker, which a daemon runs beside dispatch,
+    /// with nothing carried over from an earlier pass.
+    pub async fn archive(&self) {
+        let mut fresh = executor::archive::Progress::default();
+        executor::archive::pass(&self.ctx, &mut fresh)
+            .await
+            .expect("archive pass");
+    }
+
     /// The item's only run.
     pub async fn run(&self, id: &QueueItemId) -> PipelineRun {
         let mut runs = self.ctx.store.lock().await.runs_for_item(id).expect("runs");
@@ -768,6 +777,17 @@ struct FakeState {
     by_key: BTreeMap<String, SpawnedAgent>,
     failures: VecDeque<ArchonError>,
     cancel_failures: VecDeque<ArchonError>,
+    /// Every accepted `archive`, in order, repeats included.
+    archived: Vec<AetherAgentId>,
+    /// Every `archive` call, refused ones included, in order.
+    archive_calls: Vec<AetherAgentId>,
+    archive_failures: VecDeque<ArchonError>,
+    /// The error the next `archive` of each of these agents fails with.
+    archive_refusals: BTreeMap<AetherAgentId, ArchonError>,
+    /// Agents whose `archive` waits for its gate, once recorded.
+    archive_holds: BTreeMap<AetherAgentId, Arc<tokio::sync::Semaphore>>,
+    /// How long every `archive` takes to answer.
+    archive_delay: std::time::Duration,
     /// Agents whose accepted cancel leaves them live until `kill`.
     slow_cancels: BTreeSet<AetherAgentId>,
     outcome_failures: VecDeque<ArchonError>,
@@ -794,14 +814,19 @@ struct FakeState {
     dead: BTreeSet<AetherAgentId>,
     /// Agents Aether holds as failed, which `wake` revives; it refuses others.
     failed: BTreeSet<AetherAgentId>,
+    /// Agents whose state Aether names as one Archon does not know: neither
+    /// live nor stopped.
+    unknown_state: BTreeSet<AetherAgentId>,
     /// Agents `wake` revived, in order; live until cancelled or killed.
     woken: Vec<AetherAgentId>,
     /// Engines whose login fails, with what `engine_login` says of each.
     logged_out: BTreeMap<String, String>,
     /// Every `engine_login` probe, in order.
     login_probes: Vec<String>,
-    /// Every `is_live` call, in order.
+    /// Every `is_live` and `is_stopped` call, in order.
     live_checks: Vec<AetherAgentId>,
+    /// Agents whose `is_live` or `is_stopped` waits for its gate, once recorded.
+    live_holds: BTreeMap<AetherAgentId, Arc<tokio::sync::Semaphore>>,
     next_node: u32,
     /// Messages delivered, once per key, in order: key, recipient, content.
     delivered: Vec<(String, AetherAgentId, String)>,
@@ -871,6 +896,17 @@ impl FakeState {
             .any(|(key, s)| s.agent == *agent && kept(key))
     }
 
+    /// Whether `is_live` holds `agent` live.
+    fn holds_live(&self, agent: &AetherAgentId) -> bool {
+        // A failed agent is finished work until `wake` revives it.
+        let ended = self.dead.contains(agent) || self.failed.contains(agent);
+        if ended || self.unknown_state.contains(agent) {
+            return false;
+        }
+        let woken = self.woken.contains(agent);
+        self.is_node(agent) || self.in_turn.contains(agent) || self.is_kept(agent) || woken
+    }
+
     /// The network a node's request stated.
     fn node_network(&self, node: &AetherAgentId) -> Option<NetworkPolicy> {
         let (key, _) = self.node_by_key.iter().find(|(_, n)| n.agent == *node)?;
@@ -905,6 +941,18 @@ impl FakeBackend {
 
     fn state(&self) -> std::sync::MutexGuard<'_, FakeState> {
         self.state.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Record a state check of `agent`, then wait out any hold on it.
+    async fn check_state(&self, agent: &AetherAgentId) {
+        let hold = {
+            let mut state = self.state();
+            state.live_checks.push(agent.clone());
+            state.live_holds.get(agent).cloned()
+        };
+        if let Some(gate) = hold {
+            let _open = gate.acquire().await.expect("the hold's gate stays open");
+        }
     }
 
     /// The next `spawn` calls fail with these errors, in order.
@@ -946,6 +994,50 @@ impl FakeBackend {
 
     pub fn cancelled(&self) -> Vec<AetherAgentId> {
         self.state().cancelled.clone()
+    }
+
+    /// Every agent `archive` cleared from the view, in order, repeats included.
+    pub fn archived(&self) -> Vec<AetherAgentId> {
+        self.state().archived.clone()
+    }
+
+    /// The next `archive` calls fail with these errors, in order.
+    pub fn fail_next_archive(&self, error: ArchonError) {
+        self.state().archive_failures.push_back(error);
+    }
+
+    /// The next `archive` of `agent` fails with `error`, whenever it comes.
+    pub fn fail_next_archive_of(&self, agent: &AetherAgentId, error: ArchonError) {
+        let earlier = (self.state().archive_refusals).insert(agent.clone(), error);
+        assert!(earlier.is_none(), "one refusal per agent");
+    }
+
+    /// Every agent `archive` was asked about, refused ones included.
+    pub fn archive_calls(&self) -> Vec<AetherAgentId> {
+        self.state().archive_calls.clone()
+    }
+
+    /// Hold every `archive` of `agent`, once recorded, until the returned
+    /// gate gets a permit.
+    pub fn hold_archive(&self, agent: &AetherAgentId) -> Arc<tokio::sync::Semaphore> {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let earlier = (self.state().archive_holds).insert(agent.clone(), gate.clone());
+        assert!(earlier.is_none(), "one hold per agent");
+        gate
+    }
+
+    /// Hold every `is_live` of `agent`, once recorded, until the returned
+    /// gate gets a permit.
+    pub fn hold_live_check(&self, agent: &AetherAgentId) -> Arc<tokio::sync::Semaphore> {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let earlier = (self.state().live_holds).insert(agent.clone(), gate.clone());
+        assert!(earlier.is_none(), "one hold per agent");
+        gate
+    }
+
+    /// Every `archive` answers only after `each`.
+    pub fn slow_archives(&self, each: std::time::Duration) {
+        self.state().archive_delay = each;
     }
 
     /// The next `update_agent` calls fail with these errors, in order.
@@ -1023,6 +1115,20 @@ impl FakeBackend {
     /// `take_live_checks`.
     pub fn take_live_checks(&self) -> Vec<AetherAgentId> {
         std::mem::take(&mut self.state().live_checks)
+    }
+
+    /// Aether names `agent`'s state as one Archon does not know, or none:
+    /// `is_live` and `is_stopped` both say no.
+    pub fn report_unknown_state(&self, agent: &AetherAgentId) {
+        let mut state = self.state();
+        assert!(state.knows(agent), "only a created agent has a state");
+        state.unknown_state.insert(agent.clone());
+    }
+
+    /// Aether names `agent`'s state again as its own.
+    pub fn report_known_state(&self, agent: &AetherAgentId) {
+        let removed = self.state().unknown_state.remove(agent);
+        assert!(removed, "only an unknown state becomes known");
     }
 
     /// Aether holds `agent` as failed, so `wake` revives it once.
@@ -1373,13 +1479,14 @@ impl AgentBackend for FakeBackend {
     }
 
     async fn is_live(&self, agent: &AetherAgentId) -> Result<bool, ArchonError> {
-        let mut state = self.state();
-        state.live_checks.push(agent.clone());
-        if state.dead.contains(agent) {
-            return Ok(false);
-        }
-        let woken = state.woken.contains(agent);
-        Ok(state.is_node(agent) || state.in_turn.contains(agent) || state.is_kept(agent) || woken)
+        self.check_state(agent).await;
+        Ok(self.state().holds_live(agent))
+    }
+
+    async fn is_stopped(&self, agent: &AetherAgentId) -> Result<bool, ArchonError> {
+        self.check_state(agent).await;
+        let state = self.state();
+        Ok(!state.unknown_state.contains(agent) && !state.holds_live(agent))
     }
 
     async fn wake(&self, agent: &AetherAgentId) -> Result<(), ArchonError> {
@@ -1390,6 +1497,42 @@ impl AgentBackend for FakeBackend {
             )));
         }
         state.woken.push(agent.clone());
+        Ok(())
+    }
+
+    async fn archive(&self, agent: &AetherAgentId) -> Result<(), ArchonError> {
+        let (hold, delay) = {
+            let mut state = self.state();
+            state.archive_calls.push(agent.clone());
+            (state.archive_holds.get(agent).cloned(), state.archive_delay)
+        };
+        if let Some(gate) = hold {
+            let _open = gate.acquire().await.expect("the hold's gate stays open");
+        }
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
+        let mut state = self.state();
+        if let Some(error) = state.archive_failures.pop_front() {
+            return Err(error);
+        }
+        if let Some(error) = state.archive_refusals.remove(agent) {
+            return Err(error);
+        }
+        let delegated_live =
+            (state.delegated.iter()).any(|d| d.agent == *agent && d.state == DescendantState::Live);
+        let stage_live = state.is_node(agent)
+            || state.in_turn.contains(agent)
+            || state.is_kept(agent)
+            || state.woken.contains(agent);
+        // A failed agent is finished work until `wake` revives it.
+        let ended = state.dead.contains(agent) || state.failed.contains(agent);
+        if delegated_live || (stage_live && !ended) {
+            return Err(ArchonError::Invalid(format!(
+                "aether: agent {agent} is live; only finished work can be cleared from the view"
+            )));
+        }
+        state.archived.push(agent.clone());
         Ok(())
     }
 

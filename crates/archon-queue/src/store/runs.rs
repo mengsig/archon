@@ -603,8 +603,13 @@ fn claim_agent(conn: &Connection, stage: &StageRun) -> Result<bool, ArchonError>
 }
 
 /// Inserts a new stage run into a live pipeline run, or applies a forward
-/// change to an existing one.
-pub(super) fn upsert_stage(conn: &mut Connection, stage: &StageRun) -> Result<(), ArchonError> {
+/// change to an existing one, writing `updates` to `kv` in the same
+/// transaction.
+pub(super) fn upsert_stage(
+    conn: &mut Connection,
+    stage: &StageRun,
+    updates: &[(&str, &str)],
+) -> Result<(), ArchonError> {
     check_stage_shape(stage)?;
     let tx = write_tx(conn)?;
     let mut stage = stage.clone();
@@ -626,6 +631,9 @@ pub(super) fn upsert_stage(conn: &mut Connection, stage: &StageRun) -> Result<()
     let holds_agent = claim_agent(&tx, &stage)?;
     write_stage(&tx, &stage, holds_agent)?;
     super::changes::record_stage(&tx, &stage, before.as_ref())?;
+    for (key, value) in updates {
+        super::settings::kv_set(&tx, key, value)?;
+    }
     tx.commit().ctx("commit stage run")
 }
 

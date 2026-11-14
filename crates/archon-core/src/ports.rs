@@ -321,6 +321,11 @@ pub trait AgentBackend: Send + Sync {
     /// Aether no longer knows is `false`, not an error.
     async fn is_live(&self, agent: &AetherAgentId) -> Result<bool, ArchonError>;
 
+    /// Whether Aether holds `agent` in a state it names final (completed,
+    /// failed, cancelled or imported), or no longer knows it. Stricter than
+    /// `!is_live`: a state Archon does not know, or none, is `false`.
+    async fn is_stopped(&self, agent: &AetherAgentId) -> Result<bool, ArchonError>;
+
     /// Revive the failed `agent` in place, with its transcript and session;
     /// `Err` when Aether refuses, as it does for an agent that did not fail.
     async fn wake(&self, agent: &AetherAgentId) -> Result<(), ArchonError>;
@@ -332,6 +337,11 @@ pub trait AgentBackend: Send + Sync {
     /// Ask Aether to cancel an agent and its live descendants. Aether cancels
     /// cooperatively: `Ok` means accepted, not that any of them has ended.
     async fn cancel(&self, agent: &AetherAgentId, reason: &str) -> Result<(), ArchonError>;
+
+    /// Clear the finished `agent` out of Aether's live view; Aether keeps it
+    /// in its store. `NotFound` for an agent it does not know, `Invalid` or
+    /// `InvalidTransition` for a live one; archiving twice is `Ok`.
+    async fn archive(&self, agent: &AetherAgentId) -> Result<(), ArchonError>;
 
     /// Change a live agent in place; it keeps its transcript. Implementations
     /// re-check the model policy. Aether decides when a new model takes over.

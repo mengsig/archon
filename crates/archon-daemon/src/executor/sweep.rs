@@ -447,7 +447,7 @@ async fn settle_after_cancel(
 
 /// A lookup failure a later sweep may not repeat: no answer, local I/O, a
 /// garbled reply or a failure inside Aether.
-fn is_passing(error: &ArchonError) -> bool {
+pub(super) fn is_passing(error: &ArchonError) -> bool {
     matches!(
         error,
         ArchonError::Unavailable(_) | ArchonError::Io { .. } | ArchonError::Protocol(_)

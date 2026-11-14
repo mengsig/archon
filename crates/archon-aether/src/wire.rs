@@ -176,6 +176,11 @@ pub enum Command {
     Restart {
         agent: AetherAgentId,
     },
+    /// Clear a finished agent out of Aether's live view; it stays in the store.
+    Archive {
+        target: ArchiveTarget,
+        archived: bool,
+    },
     Pause {
         agent: AetherAgentId,
         subtree: bool,
@@ -454,6 +459,13 @@ impl ToolExposure {
             Self::Except { names } => !names.contains(name),
         }
     }
+}
+
+/// What an `archive` command marks; Archon only ever names one agent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArchiveTarget {
+    Agent(AetherAgentId),
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize)]

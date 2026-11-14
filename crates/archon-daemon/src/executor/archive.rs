@@ -32,15 +32,33 @@ fn mark_key(stage: &StageRunId) -> String {
     format!("{MARK_PREFIX}{stage}")
 }
 
-/// Every stage run with an archive mark: what the sweep looks at.
-pub(super) fn marked(store: &Store) -> Result<Vec<StageRunId>, ArchonError> {
+/// Every stage run with an archive mark: what the sweep looks at. A mark
+/// whose key or value does not parse is logged and dropped, never fatal.
+pub(super) fn marked(store: &mut Store) -> Result<Vec<StageRunId>, ArchonError> {
     let mut stages = Vec::new();
-    for (key, _) in store.kv_prefix(MARK_PREFIX)? {
+    for (key, value) in store.kv_prefix(MARK_PREFIX)? {
         let raw = key.strip_prefix(MARK_PREFIX).expect("ranged by prefix");
-        let id = StageRunId::parse(raw)
-            .map_err(|e| ArchonError::Corrupt(format!("archive mark key {key}: {e}")))?;
-        stages.push(id);
+        let parsed = StageRunId::parse(raw)
+            .map_err(|e| e.to_string())
+            .and_then(|id| {
+                if value == OWED || value == DONE {
+                    Ok(id)
+                } else {
+                    Err(format!("value {value:?} is neither {OWED} nor {DONE}"))
+                }
+            });
+        match parsed {
+            Ok(id) => stages.push(id),
+            Err(error) => {
+                tracing::warn!(%key, %error, "corrupt archive mark dropped");
+                store.kv_delete(&key)?;
+            }
+        }
     }
+    assert!(
+        stages.len() == stages.iter().collect::<BTreeSet<_>>().len(),
+        "one mark per stage run"
+    );
     Ok(stages)
 }
 

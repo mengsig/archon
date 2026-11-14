@@ -215,3 +215,37 @@ async fn an_unanswered_archive_is_retried_by_the_sweep() {
     assert_eq!(h.backend.archived(), [agent]);
     assert_eq!(h.kv(&mark).await, None, "done and forgotten");
 }
+
+/// A corrupt archive mark is dropped by the sweep, which still archives
+/// the valid owed agent and does the rest of its work.
+#[tokio::test]
+async fn a_corrupt_archive_mark_does_not_stop_the_sweep() {
+    let h = Harness::new().await;
+    let item = h.enqueue("aether away").await;
+    h.dispatch().await;
+    let agent = lead_agent(&h.running().await[0]);
+    h.backend
+        .fail_next_archive(ArchonError::Unavailable("aether away".into()));
+    h.settle_running(|_| failed("tests failed")).await;
+    let stage = h.stages(&item.id).await.remove(0);
+    let mark = format!("archive:{}", stage.id);
+    assert_eq!(h.kv(&mark).await.as_deref(), Some("owed"));
+    let bad_key = "archive:not-a-stage-run";
+    let bad_value = format!("archive:{}", archon_core::id::StageRunId::new());
+    {
+        let mut store = h.ctx.store.lock().await;
+        store.kv_set(bad_key, "owed").unwrap();
+        store.kv_set(&bad_value, "garbled").unwrap();
+    }
+    let next = h.enqueue("after the corrupt marks").await;
+
+    h.dispatch().await;
+    assert_eq!(h.kv(bad_key).await, None, "corrupt key dropped");
+    assert_eq!(h.kv(&bad_value).await, None, "corrupt value dropped");
+    assert_eq!(h.backend.archived(), [agent]);
+    assert_eq!(h.kv(&mark).await, None, "valid mark done and forgotten");
+    assert!(matches!(
+        h.state(&next.id).await,
+        QueueState::Running { .. }
+    ));
+}

@@ -29,8 +29,8 @@ use serde::{Deserialize, Serialize};
 
 use super::resume::Takeover;
 use super::{
-    FollowUp, RunTable, dependencies, descendants, fast_check, finish, naming, resume, run_node,
-    settle, team,
+    FollowUp, RunTable, archive, dependencies, descendants, fast_check, finish, naming, resume,
+    run_node, settle, team,
 };
 use crate::context::DaemonContext;
 use crate::disk::{self, FullDisk};
@@ -1519,21 +1519,24 @@ async fn spawned_ok(
     current.aether_agent = Some(spawned.agent);
     current.aether_task = Some(spawned.task.clone());
     current.state = StageState::Running;
-    store.upsert_stage_run(&current)?;
     let mut run = store.run(&stage.run)?;
     if run.state.is_terminal() {
+        // Its node's retirement owes the archives once every agent stopped.
+        store.upsert_stage_run(&current)?;
         return Ok(FollowUp {
             stop: vec![run.id],
             ..FollowUp::default()
         });
     }
+    // The caller holds the run table, as `save_spawned` needs.
+    let archive = archive::save_spawned(&mut store, &current)?;
     if run.aether_run.is_none() {
         run.aether_run = Some(spawned.run);
         store.update_run(&run)?;
     }
     Ok(FollowUp {
         check: vec![(current.id, spawned.task)],
-        superseded: vec![run.id.clone()],
+        archive,
         roster: vec![run.id],
         ..FollowUp::default()
     })

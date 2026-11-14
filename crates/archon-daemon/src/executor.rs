@@ -219,8 +219,6 @@ pub(crate) struct FollowUp {
     pub kept: Vec<resume::Kept>,
     /// Live stage runs a steer still owes a patch or a message (§6.6).
     pub steers: Vec<StageRunId>,
-    /// Live runs where a fresh agent took a stage: archive what it moved past.
-    pub superseded: Vec<PipelineRunId>,
     /// Ended stage runs whose agent tree an archive mark may owe.
     pub archive: Vec<StageRunId>,
     /// Capacity or pending spawns changed: wake the dispatcher.
@@ -257,7 +255,6 @@ impl FollowUp {
         self.resumed.extend(other.resumed);
         self.kept.extend(other.kept);
         self.steers.extend(other.steers);
-        self.superseded.extend(other.superseded);
         self.archive.extend(other.archive);
         self.poke |= other.poke;
     }
@@ -284,7 +281,6 @@ impl FollowUp {
             && self.resumed.is_empty()
             && self.kept.is_empty()
             && self.steers.is_empty()
-            && self.superseded.is_empty()
             && self.archive.is_empty()
     }
 }
@@ -701,11 +697,12 @@ async fn deliver_and_tidy(ctx: &DaemonContext, round: &mut Round, follow: Follow
     for run in dedup(follow.discard) {
         round.record(discard::discard(ctx, &run).await);
     }
-    for run in dedup(follow.superseded) {
-        round.record(archive::superseded(ctx, &run).await);
-    }
+    // Best-effort cleanup whose mark stays for the next sweep: its failure
+    // fails neither the round nor any other duty.
     for stage in dedup(follow.archive) {
-        round.record(archive::release(ctx, &stage).await);
+        if let Err(error) = archive::release(ctx, &stage).await {
+            tracing::error!(%stage, %error, "archiving a moved-past stage agent failed; its mark is retried by the sweep");
+        }
     }
 }
 

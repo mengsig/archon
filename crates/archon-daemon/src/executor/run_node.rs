@@ -747,9 +747,7 @@ pub(super) async fn retire(
         }
     }
     let mut store = ctx.store.lock().await;
-    let owed = super::archive::owe_finished(&mut store, run)?;
-    store.kv_delete(&node_key(run))?;
-    Ok(owed)
+    super::archive::owe_finished(&mut store, run, &node_key(run))
 }
 
 /// Cancellation is cooperative. An unanswered lookup keeps the durable

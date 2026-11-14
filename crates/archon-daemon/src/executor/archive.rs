@@ -7,9 +7,11 @@
 //!
 //! A `kv` mark per stage run, `archive:<stage run id>`, makes this durable:
 //! `owed` until Aether confirmed the archive, then `done` while the run is
-//! live, so each tree is archived once. The sweep retries owed marks after
-//! a restart or an unanswered call; archiving is best-effort and never
-//! fails a run.
+//! live, so each tree is archived once. An owed mark is written in the same
+//! transaction as the spawn or node retirement that owes it, so a restart
+//! never loses one, and retention keeps its item while it stands. The sweep
+//! retries owed marks after a restart or an unanswered call; archiving is
+//! best-effort and never fails a run.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -107,41 +109,44 @@ fn superseded_in(stages: &[StageRun]) -> Vec<StageRunId> {
         .collect()
 }
 
-/// A fresh agent took a stage of live `run`: owe an archive of each ended
-/// attempt it moved past. The run table is held while the stages are read,
-/// so no settle is half applied.
-pub(super) async fn superseded(
-    ctx: &DaemonContext,
-    run: &PipelineRunId,
-) -> Result<FollowUp, ArchonError> {
-    let _table = ctx.runs.lock().await;
-    let mut store = ctx.store.lock().await;
-    if store.run(run)?.state.is_terminal() {
-        // Its node's retirement owes the archives once every agent stopped.
-        return Ok(FollowUp::default());
-    }
-    let stages = store.stage_runs(run)?;
-    assert!(stages.iter().all(|s| s.run == *run), "the run's own stages");
+/// Save `spawned`, just bound to a fresh agent in a live run, with an owed
+/// mark for each ended attempt of its run it moved past, in one transaction.
+/// Called under the run table, so no settle is half applied.
+pub(super) fn save_spawned(
+    store: &mut Store,
+    spawned: &StageRun,
+) -> Result<Vec<StageRunId>, ArchonError> {
+    assert!(
+        spawned.state == StageState::Running && spawned.aether_agent.is_some(),
+        "only a stage bound to its agent moves past others"
+    );
+    let mut stages = store.stage_runs(&spawned.run)?;
+    assert!(
+        stages.iter().all(|s| s.run == spawned.run),
+        "the run's own stages"
+    );
+    let saved = stages.iter_mut().find(|s| s.id == spawned.id);
+    *saved.expect("the spawned stage is its run's") = spawned.clone();
     let mut owed = Vec::new();
     for stage in superseded_in(&stages) {
-        let key = mark_key(&stage);
-        if store.kv_get(&key)?.is_none() {
-            store.kv_set(&key, OWED)?;
+        if store.kv_get(&mark_key(&stage))?.is_none() {
             owed.push(stage);
         }
     }
-    Ok(FollowUp {
-        archive: owed,
-        ..FollowUp::default()
-    })
+    let keys: Vec<String> = owed.iter().map(mark_key).collect();
+    let marks: Vec<(&str, &str)> = keys.iter().map(|key| (key.as_str(), OWED)).collect();
+    store.upsert_stage_run_with_kv(spawned, &marks)?;
+    Ok(owed)
 }
 
 /// The finished `run`'s node is retiring, every agent of it stopped: owe an
-/// archive of each ended attempt not archived yet, and drop the marks of
-/// those that were. Called under the store lock that forgets the node.
+/// archive of each ended attempt not archived yet, drop the marks of those
+/// that were, and forget the node at `node_key`, all in one transaction.
+/// Called under the store lock.
 pub(super) fn owe_finished(
     store: &mut Store,
     run: &PipelineRunId,
+    node_key: &str,
 ) -> Result<Vec<StageRunId>, ArchonError> {
     assert!(
         store.run(run)?.state.is_terminal(),
@@ -152,16 +157,20 @@ pub(super) fn owe_finished(
         stages.iter().all(|s| s.state.is_terminal()),
         "no stage is left live"
     );
-    let mut owed = Vec::new();
+    let (mut owed, mut done) = (Vec::new(), Vec::new());
     for (stage, _) in ended_agents(&stages) {
         let key = mark_key(&stage.id);
         if store.kv_get(&key)?.as_deref() == Some(DONE) {
-            store.kv_delete(&key)?;
-            continue;
+            done.push(key);
+        } else {
+            owed.push(stage.id.clone());
         }
-        store.kv_set(&key, OWED)?;
-        owed.push(stage.id.clone());
     }
+    let keys: Vec<String> = owed.iter().map(mark_key).collect();
+    let marks: Vec<(&str, &str)> = keys.iter().map(|key| (key.as_str(), OWED)).collect();
+    let mut forget: Vec<&str> = done.iter().map(String::as_str).collect();
+    forget.push(node_key);
+    store.kv_update(&marks, &forget)?;
     Ok(owed)
 }
 
@@ -185,7 +194,9 @@ fn due(store: &mut Store, stage: &StageRunId) -> Result<Option<AetherAgentId>, A
     };
     let found = match store.stage_run(stage) {
         Ok(found) => found,
-        Err(ArchonError::NotFound(_)) => {
+        Err(ArchonError::NotFound(error)) => {
+            // Retention keeps a marked stage run; one gone anyway leaves no agent to name.
+            tracing::warn!(%stage, %error, "archive mark of a stage run no longer stored dropped");
             store.kv_delete(&key)?;
             return Ok(None);
         }
@@ -214,8 +225,8 @@ fn due(store: &mut Store, stage: &StageRunId) -> Result<Option<AetherAgentId>, A
     ))
 }
 
-/// Archive `stage`'s tree if its mark owes it now, and record that it did:
-/// a finished run's mark is dropped, a live one's kept as done.
+/// Archive `stage`'s tree if its mark owes it now, and record that it is
+/// settled: a finished run's mark is dropped, a live one's kept as done.
 pub(super) async fn release(
     ctx: &DaemonContext,
     stage: &StageRunId,
@@ -223,7 +234,7 @@ pub(super) async fn release(
     let Some(agent) = due(&mut *ctx.store.lock().await, stage)? else {
         return Ok(FollowUp::default());
     };
-    if !archive_tree(ctx, stage, &agent).await {
+    if archive_tree(ctx, stage, &agent).await == Archived::Later {
         return Ok(FollowUp::default());
     }
     let mut store = ctx.store.lock().await;
@@ -240,6 +251,17 @@ pub(super) async fn release(
     Ok(FollowUp::default())
 }
 
+/// What became of an archive of one agent or a tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Archived {
+    /// Archived, or Aether no longer knows it: nothing is left to show.
+    Done,
+    /// Not yet: Aether did not answer or holds it live; the mark stays owed.
+    Later,
+    /// Refused for good: it stays in view and the mark is settled.
+    GaveUp,
+}
+
 /// Whether Aether gave no answer, so the same call is worth repeating.
 fn unanswered(error: &ArchonError) -> bool {
     matches!(
@@ -248,19 +270,23 @@ fn unanswered(error: &ArchonError) -> bool {
     )
 }
 
-/// Archive `agent` and every ended agent beneath it; `false` when a later
-/// sweep should try again: Aether did not answer, or some agent still runs.
-/// A refusal is logged and given up on, as the archive is only cleanup.
-async fn archive_tree(ctx: &DaemonContext, stage: &StageRunId, agent: &AetherAgentId) -> bool {
+/// Archive every agent beneath `agent`, then `agent` itself, only once the
+/// whole tree is confirmed stopped and every delegate archived or gone. A
+/// tree it cannot read, or with an agent still live, is left for later.
+async fn archive_tree(ctx: &DaemonContext, stage: &StageRunId, agent: &AetherAgentId) -> Archived {
     let descendants = match ctx.backend.descendants(agent).await {
         Ok(descendants) => descendants,
+        Err(ArchonError::NotFound(error)) => {
+            tracing::info!(%stage, %agent, %error, "Aether no longer knows the stage agent; nothing to archive");
+            return Archived::Done;
+        }
         Err(error) if unanswered(&error) => {
-            tracing::info!(%stage, %agent, %error, "stage agent tree unreadable; archive retried later");
-            return false;
+            tracing::info!(%stage, %agent, %error, "stage agent tree unanswered; archive retried later");
+            return Archived::Later;
         }
         Err(error) => {
-            tracing::warn!(%stage, %agent, %error, "stage agent tree unreadable; archiving the agent alone");
-            Vec::new()
+            tracing::warn!(%stage, %agent, %error, "stage agent tree unreadable; archive retried later");
+            return Archived::Later;
         }
     };
     if let Some(live) = descendants
@@ -268,33 +294,48 @@ async fn archive_tree(ctx: &DaemonContext, stage: &StageRunId, agent: &AetherAge
         .find(|d| d.state == DescendantState::Live)
     {
         tracing::info!(%stage, %agent, live = %live.agent, "an agent beneath the stage agent still runs; archive retried later");
-        return false;
+        return Archived::Later;
     }
-    let mut complete = true;
-    let tree = descendants.iter().map(|d| &d.agent).chain([agent]);
-    for member in tree {
-        complete &= archive_one(ctx, stage, member).await;
+    assert!(
+        descendants.iter().all(|d| d.agent != *agent),
+        "an agent is not its own descendant"
+    );
+    let mut tree = Archived::Done;
+    for member in &descendants {
+        match archive_one(ctx, stage, &member.agent).await {
+            Archived::Done => {}
+            Archived::Later => tree = Archived::Later,
+            Archived::GaveUp if tree == Archived::Done => tree = Archived::GaveUp,
+            Archived::GaveUp => {}
+        }
     }
-    complete
+    match tree {
+        Archived::Done => archive_one(ctx, stage, agent).await,
+        Archived::Later => Archived::Later,
+        Archived::GaveUp => {
+            tracing::warn!(%stage, %agent, "a delegate of the stage agent cannot be archived; the tree stays in Aether's view");
+            Archived::GaveUp
+        }
+    }
 }
 
-/// One `archive` call; `false` when it is worth repeating.
-async fn archive_one(ctx: &DaemonContext, stage: &StageRunId, agent: &AetherAgentId) -> bool {
+/// One `archive` call.
+async fn archive_one(ctx: &DaemonContext, stage: &StageRunId, agent: &AetherAgentId) -> Archived {
     match ctx.backend.archive(agent).await {
-        Ok(()) => true,
+        Ok(()) => Archived::Done,
         // Retention may have removed it: nothing is left to show.
-        Err(ArchonError::NotFound(_)) => true,
+        Err(ArchonError::NotFound(_)) => Archived::Done,
         Err(error @ (ArchonError::Invalid(_) | ArchonError::InvalidTransition(_))) => {
             tracing::info!(%stage, %agent, %error, "Aether refused to archive a stage agent it holds live; retried later");
-            false
+            Archived::Later
         }
         Err(error) if unanswered(&error) => {
             tracing::warn!(%stage, %agent, %error, "archiving a stage agent went unanswered; retried later");
-            false
+            Archived::Later
         }
         Err(error) => {
             tracing::warn!(%stage, %agent, %error, "archiving a stage agent failed; it stays in Aether's view");
-            true
+            Archived::GaveUp
         }
     }
 }

@@ -3,9 +3,11 @@
 **Verdict: PASS (release check: PASS), on the rerun after the bench fix.**
 The release head `5d5644d6` on the published Aether 1.3.1 passed 8/8 Archon
 trials over two runs. v1.5.0 on the published Aether 1.3.0 passed 8/8. The
-mean Archon cost per run moved −3.1% and the mean wall time +2.2%, both
-within the ±10% band, so no third head run was needed. The Aether arm
-passed 4/4 in every run, and no trial needed a repair.
+mean wall time per run moved +2.2%, within the ±10% band. Both arms' mean
+costs are lower bounds (−3.1% between them), so the cost check rests on the
+six trials whose cost is complete on both arms: $0.2413 on v1.5.0 against
+$0.2383 on the head, −1.2%, within the band. No third head run was needed.
+The Aether arm passed 4/4 in every run, and no trial needed a repair.
 
 The first run of this gate (below, **superseded**) reported a DECREASE,
 3/4 against 4/4. Its cause was the bench's Archon arm reading feed entries
@@ -22,6 +24,14 @@ that #411 no longer writes, not the agents' work. #413 fixed the arm, and
   Aether reported part of a trial's cost as incomplete, so it is a lower
   bound: v1.5.0 run 1 and head run 1 (`fix-off-by-one`, `mixed`) and head
   run 2 (`review-seeded-bug`, `interrupted`). Both arms carry such a run.
+  In each, the one agent whose cost is incomplete is that trial's
+  orchestrator. Two lower bounds do not bound their ratio, so the −3.1% is
+  not the cost verdict.
+- **Complete-cost comparison.** Leaving out the two trial pairs with an
+  incomplete cost on either arm (`fix-off-by-one` in run 1,
+  `review-seeded-bug` in run 2) leaves the same six trials on each arm, all
+  with complete costs: $0.2413 and 712 s on v1.5.0 against $0.2383 (−1.2%)
+  and 734 s (+3.1%) on the head.
 - Review cost is summed from each run's Aether data over every agent with
   role `reviewer`.
 - A repair is an Archon run of an item that did not ship. No trial in this

@@ -17,8 +17,8 @@ use crate::images::read_image_file;
 use crate::ops;
 use crate::questions::{QuestionRef, find_open};
 
-const SAID: &str = "Sent to the orchestrator. Follow its work with `archon log --follow`, \
-                    or talk with it in `archon chat`.";
+const SAID: &str = "Sent to the orchestrator. Its reply shows in `archon chat`; follow \
+                    its work with `archon log --follow`.";
 const LINK_WAIT: Duration = Duration::from_secs(10);
 const MAYBE_SENT: &str = "the message may or may not have arrived: check `archon log --follow` \
                           before sending it again";
@@ -145,6 +145,10 @@ mod tests {
     #[test]
     fn the_reply_names_the_next_commands() {
         assert!(SAID.contains("`archon log --follow`") && SAID.contains("`archon chat`"));
+        assert!(
+            SAID.contains("reply shows in `archon chat`"),
+            "replies are no longer in the log"
+        );
     }
 
     #[test]

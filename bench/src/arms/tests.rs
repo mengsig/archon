@@ -3,20 +3,23 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use archon_aether::AetherEvent;
+use archon_aether::events::EventKind;
 use archon_aether::fake::{self, FakeAether, Scripted};
 use archon_aether::wire::{ApprovalPolicy, NetworkPolicy, TaskResult, TaskStatus};
 use archon_core::aether_ids::AetherAgentId;
+use archon_core::error::ArchonError;
 use archon_core::id::{FeedItemId, NotificationId, PipelineRunId, QueueItemId, RepoId};
 use archon_core::model::ModelPlan;
 use archon_core::notify::{FeedEntry, FeedItem, Notification, NotificationKind};
-use archon_core::protocol::ItemDetail;
+use archon_core::protocol::{ItemDetail, Request};
 use archon_core::queue::{Priority, QueueItem, QueueState};
 use archon_core::run::{PipelineRun, RunState};
 use serde_json::json;
 
 use super::archon::{
-    Daemon, Observation, SETTLE_WINDOW, Settle, TIMEOUT_REASON, answer_text, operator_messages,
-    result_branches, timeout_branches,
+    Daemon, Observation, Replies, ReplyLog, ReplyTracker, SETTLE_WINDOW, Settle, TIMEOUT_REASON,
+    answer_text, lacks_conversation, operator_messages, result_branches, timeout_branches,
 };
 use super::*;
 use crate::task::BenchTask;
@@ -428,30 +431,309 @@ fn settle_needs_quiet_for_a_whole_window() {
     );
 }
 
-#[test]
-fn operator_messages_count_what_the_quiet_chat_shows() {
-    let items = [
-        feed(
-            1,
-            FeedEntry::Operator {
-                text: "do it".into(),
-                images: Vec::new(),
-                local: false,
-            },
-        ),
-        feed(
+fn at(second: i64) -> archon_core::Timestamp {
+    chrono::DateTime::from_timestamp(1_800_000_000 + second, 0).unwrap()
+}
+
+fn timed_feed(seq: u64, second: i64, entry: FeedEntry) -> FeedItem {
+    FeedItem {
+        at: at(second),
+        ..feed(seq, entry)
+    }
+}
+
+fn operator_line(text: &str) -> FeedEntry {
+    FeedEntry::Operator {
+        text: text.into(),
+        images: Vec::new(),
+        local: false,
+    }
+}
+
+/// One trial as a 1.5.0 archond records it: replies are feed lines.
+fn feed_shape() -> Vec<FeedItem> {
+    vec![
+        timed_feed(1, 0, operator_line("review it")),
+        timed_feed(
             2,
+            10,
             FeedEntry::Orchestrator {
                 text: "Queued two items.".into(),
             },
         ),
-        feed(3, notification(NotificationKind::Progress, "50%")),
-        feed(4, notification(NotificationKind::Outcome, "item done")),
-    ];
-    assert_eq!(operator_messages(&items), 2);
+        timed_feed(3, 20, notification(NotificationKind::Progress, "50%")),
+        timed_feed(4, 30, notification(NotificationKind::Outcome, "item done")),
+        timed_feed(
+            5,
+            40,
+            FeedEntry::Orchestrator {
+                text: "The forgery bug is in verify().".into(),
+            },
+        ),
+    ]
+}
+
+fn agent(id: &str) -> AetherAgentId {
+    AetherAgentId::parse(id).unwrap()
+}
+
+const ORCHESTRATOR: &str = "agt_orch";
+
+fn event(seq: u64, second: i64, kind: EventKind) -> AetherEvent {
+    AetherEvent {
+        seq,
+        at: at(second),
+        agent: Some(agent(ORCHESTRATOR)),
+        task: None,
+        parent: None,
+        run: None,
+        kind,
+    }
+}
+
+fn delivered(inbox: u64, from_operator: bool) -> EventKind {
+    EventKind::InboxDelivered {
+        seq: inbox,
+        from_operator,
+        message: None,
+    }
+}
+
+fn wrote(text: &str) -> EventKind {
+    EventKind::AgentMessage {
+        assistant: true,
+        text: text.into(),
+    }
+}
+
+fn turn_ended(next: &str) -> EventKind {
+    EventKind::AgentTurnCompleted {
+        turn: 1,
+        next: Some(next.into()),
+    }
+}
+
+/// The trial of `feed_shape` as the orchestrator's events record it: the
+/// prompt's turn queues work and waits on it, its continuation answers, and
+/// a turn woken by the item's trigger says something that is no answer.
+fn transcript_shape() -> Vec<AetherEvent> {
+    vec![
+        event(101, 0, delivered(1, true)),
+        event(102, 1, EventKind::InboxConsumed { up_to: 1 }),
+        event(103, 2, wrote("Let me read src/tokens.js.")),
+        event(104, 9, wrote("Queued two items.")),
+        event(105, 10, EventKind::AgentWaiting { idle: false }),
+        event(106, 10, turn_ended("waiting")),
+        event(107, 38, wrote("The forgery bug is in verify().")),
+        event(108, 40, EventKind::AgentWaiting { idle: true }),
+        event(109, 40, turn_ended("ready")),
+        event(110, 41, delivered(2, false)),
+        event(111, 42, EventKind::InboxConsumed { up_to: 2 }),
+        event(112, 43, wrote("The item finished; nothing to do.")),
+        event(113, 44, turn_ended("ready")),
+    ]
+}
+
+fn answers(events: &[AetherEvent]) -> Vec<String> {
+    let mut tracker = ReplyTracker::default();
+    events
+        .iter()
+        .filter_map(|e| tracker.apply(e))
+        .map(|a| a.text)
+        .collect()
+}
+
+#[test]
+fn both_reply_sources_grade_and_count_a_trial_the_same() {
     let repo = RepoId::new();
-    let text = answer_text(&items, &[succeeded(&repo, "archon/x", 0)]);
-    assert_eq!(text, "Queued two items.\n\nitem done\n\nmerged archon/x");
+    let details = [succeeded(&repo, "archon/x", 0)];
+    let expected =
+        "Queued two items.\n\nitem done\n\nThe forgery bug is in verify().\n\nmerged archon/x";
+
+    let old = feed_shape();
+    assert!(Replies::Feed.replied(&old));
+    assert_eq!(operator_messages(&old, &Replies::Feed), 3);
+    assert_eq!(answer_text(&old, &Replies::Feed, &details), expected);
+
+    let feed: Vec<FeedItem> = old
+        .into_iter()
+        .filter(|i| !matches!(i.entry, FeedEntry::Orchestrator { .. }))
+        .collect();
+    let mut log = ReplyLog::transcript(agent(ORCHESTRATOR), 100);
+    log.apply(&transcript_shape()).unwrap();
+    let replies = log.replies();
+    assert!(!Replies::Feed.replied(&feed), "the head's feed holds none");
+    assert!(replies.replied(&feed));
+    assert_eq!(operator_messages(&feed, &replies), 3);
+    assert_eq!(answer_text(&feed, &replies, &details), expected);
+}
+
+#[test]
+fn a_transcript_before_the_answer_has_not_replied() {
+    let unanswered = &transcript_shape()[..4];
+    let mut log = ReplyLog::transcript(agent(ORCHESTRATOR), 100);
+    log.apply(unanswered).unwrap();
+    assert!(!log.replies().replied(&[]));
+    assert_eq!(answer_text(&[], &log.replies(), &[]), "");
+}
+
+#[test]
+fn only_text_written_after_the_prompt_was_read_answers_it() {
+    let early = [
+        event(1, 0, delivered(1, true)),
+        event(2, 1, wrote("Booted.")),
+        event(3, 2, EventKind::InboxConsumed { up_to: 1 }),
+        event(4, 3, wrote("   ")),
+        event(5, 4, turn_ended("ready")),
+    ];
+    assert!(answers(&early).is_empty(), "no text after it was read");
+    let woken = [
+        event(1, 0, delivered(1, false)),
+        event(2, 1, EventKind::InboxConsumed { up_to: 1 }),
+        event(3, 2, wrote("A trigger.")),
+        event(4, 3, turn_ended("ready")),
+    ];
+    assert!(answers(&woken).is_empty(), "a trigger is not the operator");
+}
+
+#[test]
+fn a_failed_turn_drops_its_half_answer_and_the_next_turn_answers() {
+    let events = [
+        event(1, 0, delivered(1, true)),
+        event(2, 1, EventKind::InboxConsumed { up_to: 1 }),
+        event(3, 2, wrote("Half.")),
+        event(4, 3, turn_ended("failed")),
+        event(5, 4, wrote("Whole.")),
+        event(6, 5, turn_ended("ready")),
+    ];
+    assert_eq!(answers(&events), ["Whole."]);
+}
+
+#[test]
+fn messages_read_together_share_one_answer() {
+    let events = [
+        event(1, 0, delivered(1, true)),
+        event(2, 0, delivered(2, true)),
+        event(3, 1, EventKind::InboxConsumed { up_to: 2 }),
+        event(4, 2, wrote("First.")),
+        event(5, 3, wrote("Second.")),
+        event(6, 4, turn_ended("ready")),
+    ];
+    assert_eq!(
+        answers(&events),
+        ["Replying to your 2 messages:\n\nFirst.\n\nSecond."]
+    );
+}
+
+#[test]
+fn a_replaced_orchestrator_ends_the_trial_on_either_source() {
+    let (first, second) = (agent(ORCHESTRATOR), agent("agt_next"));
+    for log in [
+        ReplyLog::feed(first.clone()),
+        ReplyLog::transcript(first.clone(), 0),
+    ] {
+        assert!(log.check_orchestrator(&first).is_ok());
+        let error = log.check_orchestrator(&second).unwrap_err().to_string();
+        assert!(error.starts_with("orchestrator replaced"), "{error}");
+    }
+}
+
+#[test]
+fn a_transcript_applies_only_its_orchestrators_new_events() {
+    let mut log = ReplyLog::transcript(agent(ORCHESTRATOR), 100);
+    assert!(log.apply(&[event(100, 0, delivered(1, true))]).is_err());
+    let mut theirs = event(101, 0, delivered(1, true));
+    theirs.agent = Some(agent("agt_other"));
+    assert!(log.apply(&[theirs]).is_err());
+    assert!(ReplyLog::feed(agent(ORCHESTRATOR)).apply(&[]).is_err());
+}
+
+/// The wire form of `transcript_shape`, as aetherd serves `get_events`.
+fn wire_events() -> Vec<serde_json::Value> {
+    let message = |text: &str| {
+        json!({"type": "agent.message", "role": "assistant",
+               "content": [{"type": "text", "text": text}]})
+    };
+    let operator = json!({"type": "inbox.delivered", "item": {"seq": 1, "kind": {
+        "kind": "message", "message_id": "msg_1", "from": {"actor": "user"},
+        "content": [{"type": "text", "text": "review it"}]}}});
+    let kinds = [
+        operator,
+        json!({"type": "inbox.consumed", "up_to": 1}),
+        message("Reading."),
+        message("verify() accepts forgeries."),
+        json!({"type": "agent.waiting", "condition": {"on": "inbox"}}),
+        json!({"type": "agent.turn_completed", "turn": 2, "next": "ready"}),
+    ];
+    kinds
+        .into_iter()
+        .map(|kind| fake::event(Some(ORCHESTRATOR), None, kind))
+        .collect()
+}
+
+#[tokio::test]
+async fn a_refresh_reads_the_orchestrators_new_events_from_aetherd() {
+    let sockets = tempfile::tempdir().unwrap();
+    let socket = sockets.path().join("aether.sock");
+    let daemon = FakeAether::start(&socket).await.unwrap();
+    let before = fake::event(Some("agt_stage"), None, json!({"type": "agent.completed"}));
+    let baseline = daemon.push_event(before);
+    let mut log = ReplyLog::transcript(agent(ORCHESTRATOR), baseline);
+    let mut events = wire_events().into_iter();
+    for event in events.by_ref().take(4) {
+        daemon.push_event(event);
+    }
+    let orchestrator = agent(ORCHESTRATOR);
+    let replies = log.refresh(&orchestrator, &socket).await.unwrap();
+    assert!(!replies.replied(&[]), "the turn has not ended");
+    for event in events {
+        daemon.push_event(event);
+    }
+    let replies = log.refresh(&orchestrator, &socket).await.unwrap();
+    let Replies::Transcript(answers) = replies else {
+        unreachable!("read from a transcript");
+    };
+    let texts: Vec<&str> = answers.iter().map(|a| a.text.as_str()).collect();
+    assert_eq!(texts, ["verify() accepts forgeries."]);
+    let asked = daemon.received_named("get_events");
+    assert_eq!(asked.len(), 2);
+    assert!(asked.iter().all(|c| c["query"]["agent"] == ORCHESTRATOR));
+    assert_eq!(asked[1]["after"], baseline + 4, "the cursor moved on");
+}
+
+#[test]
+fn only_an_unknown_conversation_command_means_the_feed() {
+    // How archond 1.5.0 refuses the request: a frame whose `cmd` its
+    // `Request` lacks, parsed as server.rs does.
+    #[derive(Debug, serde::Deserialize)]
+    #[serde(tag = "cmd", rename_all = "snake_case")]
+    enum OldRequest {
+        Status,
+    }
+    #[derive(Debug, serde::Deserialize)]
+    struct OldFrame {
+        #[serde(rename = "req")]
+        _id: u64,
+        #[serde(flatten)]
+        _request: OldRequest,
+    }
+    let wire = serde_json::to_value(archon_core::protocol::ClientFrame {
+        id: 7,
+        request: Request::Conversation {
+            after: None,
+            before: None,
+            limit: Some(1),
+            wait: false,
+        },
+    })
+    .unwrap();
+    let refused = serde_json::from_value::<OldFrame>(wire).unwrap_err();
+    let old = ArchonError::Invalid(format!("not a request: {refused}"));
+    assert!(lacks_conversation(&old), "{old}");
+    let other = ArchonError::Invalid("not a request: unknown variant `status_x`".into());
+    assert!(!lacks_conversation(&other));
+    let away = ArchonError::Unavailable("aetherd lacks `conversation`".into());
+    assert!(!lacks_conversation(&away));
 }
 
 #[test]

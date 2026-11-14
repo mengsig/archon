@@ -109,7 +109,7 @@ impl Renderer {
         let parts = Parts {
             label,
             tone,
-            text: crate::bold::without_leading_bold(text.unwrap_or(&entry.text)),
+            text: text.unwrap_or(&entry.text).to_owned(),
             notes: entry.links.clone(),
             reference: None,
         };
@@ -504,7 +504,7 @@ mod tests {
         ];
         for (kind, label) in cases {
             let rendered = render_entry_plain(&said(kind, "**Outcome**: merged", &[]), 100);
-            assert_eq!(head(&rendered), format!("{label}  Outcome: merged"));
+            assert_eq!(head(&rendered), format!("{label}  **Outcome**: merged"));
         }
         let phone = format!("{WEB_RELAY_MARK}thanks");
         let rendered = render_entry_plain(&said(EntryKind::Operator, &phone, &[]), 100);
@@ -513,25 +513,6 @@ mod tests {
         let rendered = render_entry_plain(&said(EntryKind::Assistant, text, &[]), 100);
         let body: Vec<&str> = rendered.lines().map(|l| l[HH_MM_ZONE..].trim()).collect();
         assert_eq!(body, ["orchestrator  Looking.", "", "- one", "- two"]);
-    }
-
-    #[test]
-    fn a_leading_bold_label_shows_plain_and_the_rest_as_written() {
-        let cases = [
-            (
-                "**Archon:** aetherd had stopped",
-                "Archon: aetherd had stopped",
-            ),
-            (
-                "**Decision** (qi_7): `src/**/*.rs`, 2 ** 10",
-                "Decision (qi_7): `src/**/*.rs`, 2 ** 10",
-            ),
-            ("see **this**", "see **this**"),
-        ];
-        for (text, shown) in cases {
-            let rendered = render_entry_plain(&said(EntryKind::Post, text, &[]), 100);
-            assert_eq!(head(&rendered), format!("archon  {shown}"));
-        }
     }
 
     #[test]

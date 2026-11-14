@@ -2,7 +2,6 @@
 //! and the entry points for `archon daemon run` and `archon mcp`
 //! (ARCHITECTURE §2, §12).
 
-mod bold;
 mod chat;
 mod cli;
 mod clipboard;

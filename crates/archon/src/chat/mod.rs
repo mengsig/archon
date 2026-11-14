@@ -549,8 +549,8 @@ mod tests {
         assert_eq!(shown, expected);
         for (line, said) in shown.iter().zip(&turn) {
             let first = said.text.strip_prefix(WEB_RELAY_MARK).unwrap_or(&said.text);
-            let first = first.lines().next().unwrap().replace("**", "");
-            assert!(line.contains(&first), "{line:?} shows {first:?}");
+            let first = first.lines().next().unwrap();
+            assert!(line.contains(first), "{line:?} shows {first:?}");
         }
         assert_eq!(chat.cursor, Some(20));
         assert_eq!(chat.shown, Some((20, 0)));

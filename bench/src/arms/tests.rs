@@ -6,17 +6,19 @@ use std::time::{Duration, Instant};
 use archon_aether::fake::{self, FakeAether, Scripted};
 use archon_aether::wire::{ApprovalPolicy, NetworkPolicy, TaskResult, TaskStatus};
 use archon_core::aether_ids::AetherAgentId;
+use archon_core::conversation::{ConversationEntry, EntryKind};
+use archon_core::error::ArchonError;
 use archon_core::id::{FeedItemId, NotificationId, PipelineRunId, QueueItemId, RepoId};
 use archon_core::model::ModelPlan;
 use archon_core::notify::{FeedEntry, FeedItem, Notification, NotificationKind};
-use archon_core::protocol::ItemDetail;
+use archon_core::protocol::{ItemDetail, Request};
 use archon_core::queue::{Priority, QueueItem, QueueState};
 use archon_core::run::{PipelineRun, RunState};
 use serde_json::json;
 
 use super::archon::{
-    Daemon, Observation, SETTLE_WINDOW, Settle, TIMEOUT_REASON, answer_text, operator_messages,
-    result_branches, timeout_branches,
+    Daemon, Observation, Replies, SETTLE_WINDOW, Settle, TIMEOUT_REASON, answer_text,
+    lacks_conversation, operator_messages, result_branches, timeout_branches,
 };
 use super::*;
 use crate::task::BenchTask;
@@ -428,30 +430,159 @@ fn settle_needs_quiet_for_a_whole_window() {
     );
 }
 
-#[test]
-fn operator_messages_count_what_the_quiet_chat_shows() {
-    let items = [
-        feed(
-            1,
-            FeedEntry::Operator {
-                text: "do it".into(),
-                images: Vec::new(),
-                local: false,
-            },
-        ),
-        feed(
+fn at(second: i64) -> archon_core::Timestamp {
+    chrono::DateTime::from_timestamp(1_800_000_000 + second, 0).unwrap()
+}
+
+fn timed_feed(seq: u64, second: i64, entry: FeedEntry) -> FeedItem {
+    FeedItem {
+        at: at(second),
+        ..feed(seq, entry)
+    }
+}
+
+fn said(kind: EntryKind, seq: u64, second: i64, text: &str) -> ConversationEntry {
+    ConversationEntry {
+        seq,
+        part: 0,
+        at: at(second),
+        kind,
+        important: true,
+        text: text.into(),
+        links: Vec::new(),
+    }
+}
+
+fn operator_line(text: &str) -> FeedEntry {
+    FeedEntry::Operator {
+        text: text.into(),
+        images: Vec::new(),
+        local: false,
+    }
+}
+
+/// One trial as a 1.5.0 archond records it: replies are feed lines.
+fn feed_shape() -> Vec<FeedItem> {
+    vec![
+        timed_feed(1, 0, operator_line("review it")),
+        timed_feed(
             2,
+            10,
             FeedEntry::Orchestrator {
                 text: "Queued two items.".into(),
             },
         ),
-        feed(3, notification(NotificationKind::Progress, "50%")),
-        feed(4, notification(NotificationKind::Outcome, "item done")),
+        timed_feed(3, 20, notification(NotificationKind::Progress, "50%")),
+        timed_feed(4, 30, notification(NotificationKind::Outcome, "item done")),
+        timed_feed(
+            5,
+            40,
+            FeedEntry::Orchestrator {
+                text: "The forgery bug is in verify().".into(),
+            },
+        ),
+    ]
+}
+
+/// The same trial as 1.5.1 records it: the feed lacks the replies, which
+/// the conversation holds beside archond's posts and the operator's line.
+fn conversation_shape() -> (Vec<FeedItem>, Vec<ConversationEntry>) {
+    let feed = feed_shape()
+        .into_iter()
+        .filter(|i| !matches!(i.entry, FeedEntry::Orchestrator { .. }))
+        .collect();
+    let conversation = vec![
+        said(EntryKind::Operator, 100, 0, "review it"),
+        said(EntryKind::Assistant, 101, 10, "Queued two items."),
+        said(EntryKind::Post, 102, 30, "item done"),
+        said(EntryKind::Question, 103, 35, "Which branch?"),
+        said(
+            EntryKind::Assistant,
+            104,
+            40,
+            "The forgery bug is in verify().",
+        ),
     ];
-    assert_eq!(operator_messages(&items), 2);
+    (feed, conversation)
+}
+
+#[test]
+fn both_reply_sources_grade_and_count_a_trial_the_same() {
     let repo = RepoId::new();
-    let text = answer_text(&items, &[succeeded(&repo, "archon/x", 0)]);
-    assert_eq!(text, "Queued two items.\n\nitem done\n\nmerged archon/x");
+    let details = [succeeded(&repo, "archon/x", 0)];
+    let expected =
+        "Queued two items.\n\nitem done\n\nThe forgery bug is in verify().\n\nmerged archon/x";
+
+    let old = feed_shape();
+    assert!(Replies::Feed.replied(&old));
+    assert_eq!(operator_messages(&old, &Replies::Feed), 3);
+    assert_eq!(answer_text(&old, &Replies::Feed, &details), expected);
+
+    let (feed, conversation) = conversation_shape();
+    let replies = Replies::from_conversation(conversation);
+    let Replies::Conversation(kept) = &replies else {
+        unreachable!("built from a conversation");
+    };
+    assert_eq!(kept.len(), 2, "only the orchestrator's own text");
+    assert!(
+        !Replies::Feed.replied(&feed),
+        "the head's feed holds no reply"
+    );
+    assert!(replies.replied(&feed));
+    assert_eq!(operator_messages(&feed, &replies), 3);
+    assert_eq!(answer_text(&feed, &replies, &details), expected);
+}
+
+#[test]
+fn a_conversation_without_replies_has_not_replied() {
+    let (feed, _) = conversation_shape();
+    let posts = vec![said(EntryKind::Post, 7, 30, "item done")];
+    let replies = Replies::from_conversation(posts);
+    assert!(!replies.replied(&feed));
+    assert_eq!(answer_text(&feed, &replies, &[]), "item done");
+}
+
+#[test]
+fn conversation_replies_supersede_any_feed_reply() {
+    let old = feed_shape();
+    let replies = Replies::from_conversation(vec![said(EntryKind::Assistant, 9, 40, "Only once.")]);
+    assert_eq!(answer_text(&old, &replies, &[]), "item done\n\nOnly once.");
+    assert_eq!(operator_messages(&old, &replies), 2);
+}
+
+#[test]
+fn only_an_unknown_conversation_command_means_the_feed() {
+    // How archond 1.5.0 refuses the request: a frame whose `cmd` its
+    // `Request` lacks, parsed as server.rs does.
+    #[derive(Debug, serde::Deserialize)]
+    #[serde(tag = "cmd", rename_all = "snake_case")]
+    enum OldRequest {
+        Status,
+    }
+    #[derive(Debug, serde::Deserialize)]
+    struct OldFrame {
+        #[serde(rename = "req")]
+        _id: u64,
+        #[serde(flatten)]
+        _request: OldRequest,
+    }
+    let wire = serde_json::to_value(archon_core::protocol::ClientFrame {
+        id: 7,
+        request: Request::Conversation {
+            after: None,
+            before: None,
+            limit: Some(1),
+            wait: false,
+        },
+    })
+    .unwrap();
+    let refused = serde_json::from_value::<OldFrame>(wire).unwrap_err();
+    let old = ArchonError::Invalid(format!("not a request: {refused}"));
+    assert!(lacks_conversation(&old), "{old}");
+    let other = ArchonError::Invalid("not a request: unknown variant `status_x`".into());
+    assert!(!lacks_conversation(&other));
+    let away = ArchonError::Unavailable("aetherd lacks `conversation`".into());
+    assert!(!lacks_conversation(&away));
 }
 
 #[test]

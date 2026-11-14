@@ -22,6 +22,10 @@
 
 ### Fixed
 
+- The bench's `archon` arm reads the orchestrator's replies from the
+  conversation where archond serves one, and from the feed on 1.5.0 and
+  older. A question-only trial no longer waits for the timeout and is graded
+  on the real answer, not an empty one.
 - Check for GitHub CLI 2.63.0 at startup and in doctor, while keeping gh
   optional for local-only setups. Contributed by @AmmarBattah (mengsig/archon#401).
 

@@ -519,6 +519,32 @@ async fn a_refresh_is_refused_for_work_that_is_not_finished_or_is_a_refresh() {
     assert!(nested.contains("refresh that item instead"), "{nested}");
 }
 
+/// A refresh's lead whose engine died past waking is replaced by a fresh
+/// agent, which archives it; the owner's completed agents stay in view.
+#[tokio::test]
+async fn a_refresh_archives_the_lead_its_cold_retry_replaced() {
+    let (h, _gh) = delivering().await;
+    let (owner, _) = shipped(&h, "the change").await;
+    advance_origin(&h, "upstream.txt", "elsewhere\n");
+    let fix = refresh(&h, &owner).await.expect("queued");
+    h.dispatch().await;
+    let lead = h.running().await.remove(0);
+    assert_eq!(lead.run, h.run(&fix.id).await.id, "the refresh runs");
+    let agent = lead.aether_agent.clone().expect("spawned");
+    let died = || archon_core::run::StageOutcome::Failed {
+        error: "engine died".into(),
+        infra: true,
+    };
+    for _ in 0..2 {
+        h.backend.fail_agent(&agent);
+        h.settle_running(|_| died()).await;
+        h.dispatch().await;
+    }
+    let cold = h.running().await.remove(0);
+    assert_ne!(cold.aether_agent.as_ref(), Some(&agent), "a fresh agent");
+    assert_eq!(h.backend.archived(), [agent]);
+}
+
 /// The pull request a run delivered to ended and its branch carries a newer
 /// one: that one is not the run's, so nothing is refreshed.
 #[tokio::test]

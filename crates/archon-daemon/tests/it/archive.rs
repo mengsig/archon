@@ -12,7 +12,7 @@ use archon_core::ports::DescendantState;
 use archon_core::protocol::Request;
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::run::{StageOutcome, StageRun};
-use archon_core::steer::Steer;
+use archon_core::steer::{InsertStage, Steer, Then};
 use common::{Harness, MODEL, PIPELINE};
 
 fn failed(error: &str) -> StageOutcome {
@@ -93,18 +93,248 @@ async fn a_retried_attempt_archives_the_agent_it_replaced() {
         h.state(&item.id).await,
         QueueState::Running { .. }
     ));
-
-    h.settle_running(|_| completed_implement()).await;
+    let woken_attempt = h.stages(&item.id).await.remove(1);
+    let mark = format!("archive:{}", woken_attempt.id);
+    assert_eq!(
+        h.kv(&mark).await.as_deref(),
+        Some("done"),
+        "kept while the run is live, so it is archived once"
+    );
     h.dispatch().await;
+    assert_eq!(h.backend.archived().len(), 1, "archived once");
+
+    run_out(&h).await;
     assert_eq!(
         h.backend.archived(),
         std::slice::from_ref(&agent),
-        "a completed attempt stays"
+        "completed attempts stay"
     );
+    assert!(matches!(
+        h.state(&item.id).await,
+        QueueState::Succeeded { .. }
+    ));
+    assert_eq!(h.kv(&mark).await, None, "dropped when the node retired");
 }
 
-fn completed_implement() -> StageOutcome {
-    common::completed("implemented")
+/// The cold retry's spawn owes the archive of the agent it replaced in the
+/// same store write as its own `running`: a daemon gone before the round's
+/// follow-up still archives it after a restart.
+#[tokio::test]
+async fn a_replacement_s_owed_archive_survives_a_restart_right_after_its_spawn() {
+    let mut h = Harness::new().await;
+    let item = h.enqueue("flaky engine, then a crash").await;
+    h.dispatch().await;
+    let agent = lead_agent(&h.running().await[0]);
+    h.backend.fail_agent(&agent);
+    h.settle_running(|_| engine_died()).await;
+    h.dispatch().await;
+    assert_eq!(h.backend.woken(), std::slice::from_ref(&agent));
+
+    h.backend.fail_agent(&agent);
+    let reached = h.backend.hold_next_outcome();
+    let pass = async {
+        h.settle_running(|_| engine_died()).await;
+        h.dispatch().await;
+    };
+    tokio::select! {
+        () = pass => panic!("the pass stops at the new agent's first check"),
+        held = reached.acquire() => drop(held.expect("open")),
+    }
+    let cold = lead_agent(&h.running().await[0]);
+    assert_ne!(cold, agent, "the cold retry is spawned");
+    assert!(
+        h.backend.archive_calls().is_empty(),
+        "cut before any archive"
+    );
+    let woken_attempt = h.stages(&item.id).await.remove(1);
+    let mark = format!("archive:{}", woken_attempt.id);
+    assert_eq!(h.kv(&mark).await.as_deref(), Some("owed"));
+
+    h.restart();
+    h.dispatch().await;
+    assert_eq!(h.backend.archived(), std::slice::from_ref(&agent));
+    assert_eq!(h.kv(&mark).await.as_deref(), Some("done"));
+}
+
+/// An archive owed when the daemon stopped is made after its restart.
+#[tokio::test]
+async fn a_mark_owed_across_a_restart_is_archived_after_it() {
+    let mut h = Harness::new().await;
+    let item = h.enqueue("aether away, then a restart").await;
+    h.dispatch().await;
+    let agent = lead_agent(&h.running().await[0]);
+    h.backend
+        .fail_next_archive(ArchonError::Unavailable("aether away".into()));
+    h.settle_running(|_| failed("tests failed")).await;
+    let stage = h.stages(&item.id).await.remove(0);
+    let mark = format!("archive:{}", stage.id);
+    assert_eq!(h.kv(&mark).await.as_deref(), Some("owed"));
+    assert!(h.backend.archived().is_empty());
+
+    h.restart();
+    h.dispatch().await;
+    assert_eq!(h.backend.archived(), [agent]);
+    assert_eq!(h.kv(&mark).await, None);
+}
+
+/// A failed run whose implementer delegated `worker`, which ended; the
+/// worker's first archive fails with `error`. Returns the item's mark key,
+/// the stage agent and the worker.
+async fn refused_worker(h: &Harness, error: ArchonError) -> (String, AetherAgentId, AetherAgentId) {
+    let item = h.enqueue("a delegate refused").await;
+    h.dispatch().await;
+    let agent = lead_agent(&h.running().await[0]);
+    let worker = h.backend.delegate(&agent, MODEL);
+    h.backend.end_delegated(&worker, DescendantState::Stopped);
+    h.backend.fail_next_archive(error);
+    h.settle_running(|_| failed("tests failed")).await;
+    assert!(matches!(h.state(&item.id).await, QueueState::Failed { .. }));
+    assert_eq!(
+        h.backend.archive_calls().first(),
+        Some(&worker),
+        "delegates go first"
+    );
+    let stage = h.stages(&item.id).await.remove(0);
+    (format!("archive:{}", stage.id), agent, worker)
+}
+
+/// A delegate Aether holds live, or did not answer for, keeps its stage
+/// agent in view and the mark owed; the next sweep archives the tree.
+#[tokio::test]
+async fn a_delegate_not_archived_yet_keeps_its_stage_agent_for_the_next_sweep() {
+    let errors = [
+        ArchonError::Invalid("aether: agent is live".into()),
+        ArchonError::InvalidTransition("aether: agent is live".into()),
+        ArchonError::Protocol("garbled reply".into()),
+        ArchonError::io("aether socket", std::io::Error::other("reset")),
+    ];
+    for error in errors {
+        let h = Harness::new().await;
+        let shown = error.to_string();
+        let (mark, agent, worker) = refused_worker(&h, error).await;
+        assert!(h.backend.archived().is_empty(), "{shown}: none archived");
+        assert_eq!(h.kv(&mark).await.as_deref(), Some("owed"), "{shown}");
+
+        h.dispatch().await;
+        assert_eq!(h.backend.archived(), [worker, agent], "{shown}");
+        assert_eq!(h.kv(&mark).await, None, "{shown}");
+    }
+}
+
+/// A delegate Aether no longer knows is gone: its stage agent is archived.
+#[tokio::test]
+async fn a_delegate_aether_no_longer_knows_counts_as_archived() {
+    let h = Harness::new().await;
+    let gone = ArchonError::NotFound("aether: no agent".into());
+    let (mark, agent, _) = refused_worker(&h, gone).await;
+    assert_eq!(h.backend.archived(), [agent]);
+    assert_eq!(h.kv(&mark).await, None);
+}
+
+/// A delegate Aether refuses for good keeps the whole tree in view, and
+/// the mark is settled: it is never asked again.
+#[tokio::test]
+async fn a_delegate_refused_for_good_keeps_its_tree_in_view() {
+    let h = Harness::new().await;
+    let refused = ArchonError::Aether("archive: internal error".into());
+    let (mark, _, worker) = refused_worker(&h, refused).await;
+    assert!(h.backend.archived().is_empty(), "the stage agent stays too");
+    assert_eq!(h.kv(&mark).await, None, "given up");
+
+    h.dispatch().await;
+    assert_eq!(h.backend.archive_calls(), [worker], "never asked again");
+}
+
+/// An owed mark of `h`'s new failed run whose implementer delegated a
+/// worker that ended: the first archive went unanswered.
+async fn owed_tree(h: &Harness) -> (String, AetherAgentId, AetherAgentId) {
+    let unanswered = ArchonError::Unavailable("aether away".into());
+    let (mark, agent, worker) = refused_worker(h, unanswered).await;
+    assert_eq!(h.kv(&mark).await.as_deref(), Some("owed"));
+    (mark, agent, worker)
+}
+
+/// A tree Aether cannot list, for any reason, is not archived in part.
+#[tokio::test]
+async fn an_unreadable_tree_is_never_archived_in_part() {
+    let h = Harness::new().await;
+    let (mark, agent, worker) = owed_tree(&h).await;
+    let calls = h.backend.archive_calls().len();
+    h.backend
+        .fail_next_descendants(ArchonError::Aether("descendants: internal error".into()));
+    h.dispatch().await;
+    assert_eq!(h.backend.archive_calls().len(), calls, "no agent alone");
+    assert_eq!(h.kv(&mark).await.as_deref(), Some("owed"));
+
+    h.dispatch().await;
+    assert_eq!(h.backend.archived(), [worker, agent]);
+    assert_eq!(h.kv(&mark).await, None);
+}
+
+/// No agent of a tree is asked to archive while one of it still runs.
+#[tokio::test]
+async fn a_tree_with_a_live_delegate_waits_for_it() {
+    let h = Harness::new().await;
+    let (mark, agent, worker) = owed_tree(&h).await;
+    let late = h.backend.delegate(&agent, MODEL);
+    let calls = h.backend.archive_calls();
+    h.dispatch().await;
+    assert_eq!(h.backend.archive_calls(), calls, "no member asked");
+    assert_eq!(h.kv(&mark).await.as_deref(), Some("owed"));
+
+    h.backend.end_delegated(&late, DescendantState::Stopped);
+    h.dispatch().await;
+    let mut archived = h.backend.archived();
+    assert_eq!(archived.pop(), Some(agent), "the stage agent last");
+    archived.sort();
+    let mut delegates = vec![worker, late];
+    delegates.sort();
+    assert_eq!(archived, delegates);
+    assert_eq!(h.kv(&mark).await, None);
+}
+
+/// Aborting the running stage for a retry archives the aborted agent once
+/// the retry's fresh agent took its place, and the run goes on.
+#[tokio::test]
+async fn an_aborted_attempt_is_archived_once_its_retry_spawned() {
+    let h = Harness::new().await;
+    let item = h.enqueue("gone astray").await;
+    h.dispatch().await;
+    let aborted = h.running().await.remove(0);
+    let steer = Request::SteerItem {
+        item: item.id.clone(),
+        steer: Steer {
+            abort: Some(Then::Retry),
+            ..Steer::default()
+        },
+    };
+    h.cli(steer).await.expect("aborted");
+    h.dispatch().await;
+    let retry = h.running().await.remove(0);
+    assert_ne!(lead_agent(&retry), lead_agent(&aborted));
+    assert_eq!(h.backend.archived(), [lead_agent(&aborted)]);
+    let mark = format!("archive:{}", aborted.id);
+    assert_eq!(h.kv(&mark).await.as_deref(), Some("done"));
+    assert!(matches!(
+        h.state(&item.id).await,
+        QueueState::Running { .. }
+    ));
+}
+
+/// Settle what runs, passing every review, until nothing runs.
+async fn run_out(h: &Harness) {
+    for _ in 0..12 {
+        if h.running().await.is_empty() {
+            return;
+        }
+        h.settle_running(|stage| match stage.stage_id.as_str() {
+            "review" => common::verdict(true),
+            _ => common::completed("done"),
+        })
+        .await;
+        h.dispatch().await;
+    }
+    panic!("the run never ended");
 }
 
 /// Fail the only stage of a new item's run with `error`, which ends the run,
@@ -248,4 +478,49 @@ async fn a_corrupt_archive_mark_does_not_stop_the_sweep() {
         h.state(&next.id).await,
         QueueState::Running { .. }
     ));
+}
+
+/// A pipeline to borrow stage `verify` from.
+const EXTRA: &str = r#"[pipeline]
+name = "archive-extra"
+description = "a stage to borrow"
+version = 1
+workspace = "worktree"
+requires_repo = true
+
+[[stage]]
+id = "verify"
+kind = "work"
+prompt = "verify.md"
+timeout_minutes = 30
+"#;
+
+/// An escalation revived by inserting a stage moves past it: its agent is
+/// archived once the revived run starts.
+#[tokio::test]
+async fn an_escalation_revived_by_an_inserted_stage_is_archived() {
+    let h = Harness::new().await;
+    h.add_pipeline("archive-extra", EXTRA);
+    let prompt = h.repo.join(".archon/pipelines/archive-extra/verify.md");
+    std::fs::write(prompt, "Verify {{task.title}}.\n\n{{task.brief}}\n").expect("prompt");
+    let escalated = "ESCALATE: this needs a design pass first";
+    let (item, agent) = kept_failure(&h, escalated, NotificationKind::Outcome).await;
+
+    let insert = Steer {
+        insert_stage: Some(InsertStage {
+            stage: "verify".into(),
+            from: Some("archive-extra".into()),
+            after: None,
+        }),
+        ..Steer::default()
+    };
+    let steer = Request::SteerItem {
+        item: item.id.clone(),
+        steer: insert,
+    };
+    h.cli(steer).await.expect("revived");
+    h.dispatch().await;
+    let verifying = h.running().await.remove(0);
+    assert_eq!(verifying.stage_id, "verify");
+    assert_eq!(h.backend.archived(), std::slice::from_ref(&agent));
 }

@@ -770,6 +770,10 @@ struct FakeState {
     cancel_failures: VecDeque<ArchonError>,
     /// Every accepted `archive`, in order, repeats included.
     archived: Vec<AetherAgentId>,
+    /// Every `archive` call, refused ones included, in order.
+    archive_calls: Vec<AetherAgentId>,
+    /// The next `task_outcome` signals the first semaphore, then waits forever.
+    outcome_hold: Option<Arc<tokio::sync::Semaphore>>,
     archive_failures: VecDeque<ArchonError>,
     /// Agents whose accepted cancel leaves them live until `kill`.
     slow_cancels: BTreeSet<AetherAgentId>,
@@ -959,6 +963,19 @@ impl FakeBackend {
     /// The next `archive` calls fail with these errors, in order.
     pub fn fail_next_archive(&self, error: ArchonError) {
         self.state().archive_failures.push_back(error);
+    }
+
+    /// Every agent `archive` was asked about, refused ones included.
+    pub fn archive_calls(&self) -> Vec<AetherAgentId> {
+        self.state().archive_calls.clone()
+    }
+
+    /// Hold the next `task_outcome` call forever; the returned semaphore
+    /// gets a permit once it is held, so a test can drop the pass there.
+    pub fn hold_next_outcome(&self) -> Arc<tokio::sync::Semaphore> {
+        let reached = Arc::new(tokio::sync::Semaphore::new(0));
+        self.state().outcome_hold = Some(reached.clone());
+        reached
     }
 
     /// The next `update_agent` calls fail with these errors, in order.
@@ -1408,6 +1425,7 @@ impl AgentBackend for FakeBackend {
 
     async fn archive(&self, agent: &AetherAgentId) -> Result<(), ArchonError> {
         let mut state = self.state();
+        state.archive_calls.push(agent.clone());
         if let Some(error) = state.archive_failures.pop_front() {
             return Err(error);
         }
@@ -1417,7 +1435,9 @@ impl AgentBackend for FakeBackend {
             || state.in_turn.contains(agent)
             || state.is_kept(agent)
             || state.woken.contains(agent);
-        if delegated_live || (stage_live && !state.dead.contains(agent)) {
+        // A failed agent is finished work until `wake` revives it.
+        let ended = state.dead.contains(agent) || state.failed.contains(agent);
+        if delegated_live || (stage_live && !ended) {
             return Err(ArchonError::Invalid(format!(
                 "aether: agent {agent} is live; only finished work can be cleared from the view"
             )));
@@ -1601,6 +1621,11 @@ impl AgentBackend for FakeBackend {
     }
 
     async fn task_outcome(&self, task: &AetherTaskId) -> Result<Option<StageOutcome>, ArchonError> {
+        let hold = self.state().outcome_hold.take();
+        if let Some(reached) = hold {
+            reached.add_permits(1);
+            std::future::pending::<()>().await;
+        }
         let mut state = self.state();
         if let Some(error) = state.outcome_failures.pop_front() {
             return Err(error);

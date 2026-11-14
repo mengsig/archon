@@ -23,7 +23,7 @@ const NEVER: Duration = Duration::from_secs(3600);
 
 /// One pass over `progress`, which must end by its own limits: under the
 /// paused clock a pass that hangs fails here at once.
-async fn pass(h: &Harness, progress: &mut Progress) {
+pub(super) async fn pass(h: &Harness, progress: &mut Progress) {
     let ended = tokio::time::timeout(NEVER, archive::pass(&h.ctx, progress)).await;
     ended
         .expect("the pass ends by itself")
@@ -43,7 +43,7 @@ async fn eventually(what: &str, done: impl AsyncFn() -> bool) {
 }
 
 /// `work`, which must not wait on Aether's archiving.
-async fn promptly<T>(what: &str, work: impl Future<Output = T>) -> T {
+pub(super) async fn promptly<T>(what: &str, work: impl Future<Output = T>) -> T {
     let done = tokio::time::timeout(PROMPT, work).await;
     done.unwrap_or_else(|_| panic!("{what} waited on archiving"))
 }

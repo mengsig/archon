@@ -5,6 +5,7 @@
 //! Dispatch and settlement only write the owed marks; `Harness::archive` is
 //! one pass of the worker that asks Aether (`worker` covers its limits).
 
+mod settled;
 mod worker;
 
 use crate::common;
@@ -540,6 +541,28 @@ async fn a_corrupt_archive_mark_does_not_stop_the_pass() {
         h.state(&next.id).await,
         QueueState::Running { .. }
     ));
+}
+
+/// An owed mark naming a stage run that never had an agent is dropped as
+/// corrupt, not a panic that ends the worker; the pass still archives the
+/// valid owed agent.
+#[tokio::test]
+async fn an_owed_mark_of_a_stage_run_without_an_agent_is_dropped_as_corrupt() {
+    let h = Harness::new().await;
+    let (mark, agent, worker) = owed_tree(&h).await;
+    let unbound = h.enqueue("never spawned").await;
+    h.backend
+        .fail_next(ArchonError::Unavailable("aether away".into()));
+    h.dispatch().await;
+    let stage = h.stages(&unbound.id).await.remove(0);
+    assert_eq!(stage.aether_agent, None, "its spawn went unanswered");
+    let corrupt = format!("archive:{}", stage.id);
+    h.ctx.store.lock().await.kv_set(&corrupt, "owed").unwrap();
+
+    h.archive().await;
+    assert_eq!(h.kv(&corrupt).await, None, "corrupt mark dropped");
+    assert_eq!(h.backend.archived(), [worker, agent]);
+    assert_eq!(h.kv(&mark).await, None, "valid mark done and forgotten");
 }
 
 /// A pipeline to borrow stage `verify` from.

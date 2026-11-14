@@ -822,6 +822,8 @@ struct FakeState {
     login_probes: Vec<String>,
     /// Every `is_live` call, in order.
     live_checks: Vec<AetherAgentId>,
+    /// Agents whose `is_live` waits for its gate, once recorded.
+    live_holds: BTreeMap<AetherAgentId, Arc<tokio::sync::Semaphore>>,
     next_node: u32,
     /// Messages delivered, once per key, in order: key, recipient, content.
     delivered: Vec<(String, AetherAgentId, String)>,
@@ -994,6 +996,15 @@ impl FakeBackend {
     pub fn hold_archive(&self, agent: &AetherAgentId) -> Arc<tokio::sync::Semaphore> {
         let gate = Arc::new(tokio::sync::Semaphore::new(0));
         let earlier = (self.state().archive_holds).insert(agent.clone(), gate.clone());
+        assert!(earlier.is_none(), "one hold per agent");
+        gate
+    }
+
+    /// Hold every `is_live` of `agent`, once recorded, until the returned
+    /// gate gets a permit.
+    pub fn hold_live_check(&self, agent: &AetherAgentId) -> Arc<tokio::sync::Semaphore> {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let earlier = (self.state().live_holds).insert(agent.clone(), gate.clone());
         assert!(earlier.is_none(), "one hold per agent");
         gate
     }
@@ -1428,9 +1439,17 @@ impl AgentBackend for FakeBackend {
     }
 
     async fn is_live(&self, agent: &AetherAgentId) -> Result<bool, ArchonError> {
-        let mut state = self.state();
-        state.live_checks.push(agent.clone());
-        if state.dead.contains(agent) {
+        let hold = {
+            let mut state = self.state();
+            state.live_checks.push(agent.clone());
+            state.live_holds.get(agent).cloned()
+        };
+        if let Some(gate) = hold {
+            let _open = gate.acquire().await.expect("the hold's gate stays open");
+        }
+        let state = self.state();
+        // A failed agent is finished work until `wake` revives it.
+        if state.dead.contains(agent) || state.failed.contains(agent) {
             return Ok(false);
         }
         let woken = state.woken.contains(agent);

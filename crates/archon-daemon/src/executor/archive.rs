@@ -45,7 +45,7 @@ const MARK_PREFIX: &str = "archive:";
 const OWED: &str = "owed";
 const DONE: &str = "done";
 
-/// How long one `archive`, `descendants` or `is_live` call may take before
+/// How long one `archive`, `descendants` or `is_stopped` call may take before
 /// it counts as unanswered and its mark stays owed.
 pub const CALL_LIMIT: Duration = Duration::from_secs(5);
 /// How long one pass may spend asking Aether; what it did not reach stays owed.
@@ -451,18 +451,19 @@ async fn bounded<T>(
 
 /// Every agent beneath `agent`, once the whole tree is confirmed stopped;
 /// `None` while `agent` or one beneath it is live, or Aether cannot say.
-/// The stage agent is asked first: a terminal stage run does not prove its
-/// agent stopped, and one still running may delegate after the listing.
+/// The stage agent is asked first, and only a state Aether names final
+/// counts: a terminal stage run does not prove its agent stopped, and one
+/// still running may delegate after the listing.
 async fn stopped_tree(
     ctx: &DaemonContext,
     stage: &StageRunId,
     agent: &AetherAgentId,
     deadline: Instant,
 ) -> Option<Vec<Descendant>> {
-    match bounded(ctx.backend.is_live(agent), "agent state", deadline).await {
-        Ok(false) => {}
-        Ok(true) => {
-            tracing::info!(%stage, %agent, "the stage agent still runs; archive retried later");
+    match bounded(ctx.backend.is_stopped(agent), "agent state", deadline).await {
+        Ok(true) => {}
+        Ok(false) => {
+            tracing::info!(%stage, %agent, "the stage agent is in no state Aether names final; archive retried later");
             return None;
         }
         Err(error) if is_passing(&error) => {

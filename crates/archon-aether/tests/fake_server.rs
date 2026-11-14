@@ -454,6 +454,37 @@ async fn is_live_reads_the_agent_state_and_treats_unknown_as_dead() {
 }
 
 #[tokio::test]
+async fn is_stopped_takes_only_a_final_state_or_a_forgotten_agent() {
+    let (_dir, fake) = fake_aether().await;
+    let with_status = |status| {
+        let mut agent = fake::agent(NODE, None);
+        agent["status"] = status;
+        Scripted::reply("agent", agent)
+    };
+    fake.script("get_agent", with_status(json!({"state": "failed"})));
+    fake.script("get_agent", with_status(json!({"state": "running"})));
+    fake.script("get_agent", with_status(json!({"state": "bogus"})));
+    fake.script("get_agent", with_status(json!({})));
+    fake.script("get_agent", Scripted::refuse("not_found", "no such agent"));
+    fake.script("get_agent", Scripted::refuse("invalid_argument", "bad id"));
+    let backend = backend(&fake, any_model()).await;
+    let node = AetherAgentId::parse(NODE).unwrap();
+    assert!(
+        backend.is_stopped(&node).await.unwrap(),
+        "failed is stopped"
+    );
+    assert!(!backend.is_stopped(&node).await.unwrap(), "running is not");
+    assert!(!backend.is_stopped(&node).await.unwrap(), "bogus is not");
+    assert!(!backend.is_stopped(&node).await.unwrap(), "none is not");
+    assert!(
+        backend.is_stopped(&node).await.unwrap(),
+        "a forgotten agent is"
+    );
+    let error = backend.is_stopped(&node).await.unwrap_err();
+    assert!(!matches!(error, ArchonError::NotFound(_)), "{error}");
+}
+
+#[tokio::test]
 async fn update_agent_patches_only_what_the_update_names() {
     let (_dir, fake) = fake_aether().await;
     fake.set_default(

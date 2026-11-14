@@ -814,15 +814,18 @@ struct FakeState {
     dead: BTreeSet<AetherAgentId>,
     /// Agents Aether holds as failed, which `wake` revives; it refuses others.
     failed: BTreeSet<AetherAgentId>,
+    /// Agents whose state Aether names as one Archon does not know: neither
+    /// live nor stopped.
+    unknown_state: BTreeSet<AetherAgentId>,
     /// Agents `wake` revived, in order; live until cancelled or killed.
     woken: Vec<AetherAgentId>,
     /// Engines whose login fails, with what `engine_login` says of each.
     logged_out: BTreeMap<String, String>,
     /// Every `engine_login` probe, in order.
     login_probes: Vec<String>,
-    /// Every `is_live` call, in order.
+    /// Every `is_live` and `is_stopped` call, in order.
     live_checks: Vec<AetherAgentId>,
-    /// Agents whose `is_live` waits for its gate, once recorded.
+    /// Agents whose `is_live` or `is_stopped` waits for its gate, once recorded.
     live_holds: BTreeMap<AetherAgentId, Arc<tokio::sync::Semaphore>>,
     next_node: u32,
     /// Messages delivered, once per key, in order: key, recipient, content.
@@ -893,6 +896,17 @@ impl FakeState {
             .any(|(key, s)| s.agent == *agent && kept(key))
     }
 
+    /// Whether `is_live` holds `agent` live.
+    fn holds_live(&self, agent: &AetherAgentId) -> bool {
+        // A failed agent is finished work until `wake` revives it.
+        let ended = self.dead.contains(agent) || self.failed.contains(agent);
+        if ended || self.unknown_state.contains(agent) {
+            return false;
+        }
+        let woken = self.woken.contains(agent);
+        self.is_node(agent) || self.in_turn.contains(agent) || self.is_kept(agent) || woken
+    }
+
     /// The network a node's request stated.
     fn node_network(&self, node: &AetherAgentId) -> Option<NetworkPolicy> {
         let (key, _) = self.node_by_key.iter().find(|(_, n)| n.agent == *node)?;
@@ -927,6 +941,18 @@ impl FakeBackend {
 
     fn state(&self) -> std::sync::MutexGuard<'_, FakeState> {
         self.state.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Record a state check of `agent`, then wait out any hold on it.
+    async fn check_state(&self, agent: &AetherAgentId) {
+        let hold = {
+            let mut state = self.state();
+            state.live_checks.push(agent.clone());
+            state.live_holds.get(agent).cloned()
+        };
+        if let Some(gate) = hold {
+            let _open = gate.acquire().await.expect("the hold's gate stays open");
+        }
     }
 
     /// The next `spawn` calls fail with these errors, in order.
@@ -1089,6 +1115,20 @@ impl FakeBackend {
     /// `take_live_checks`.
     pub fn take_live_checks(&self) -> Vec<AetherAgentId> {
         std::mem::take(&mut self.state().live_checks)
+    }
+
+    /// Aether names `agent`'s state as one Archon does not know, or none:
+    /// `is_live` and `is_stopped` both say no.
+    pub fn report_unknown_state(&self, agent: &AetherAgentId) {
+        let mut state = self.state();
+        assert!(state.knows(agent), "only a created agent has a state");
+        state.unknown_state.insert(agent.clone());
+    }
+
+    /// Aether names `agent`'s state again as its own.
+    pub fn report_known_state(&self, agent: &AetherAgentId) {
+        let removed = self.state().unknown_state.remove(agent);
+        assert!(removed, "only an unknown state becomes known");
     }
 
     /// Aether holds `agent` as failed, so `wake` revives it once.
@@ -1439,21 +1479,14 @@ impl AgentBackend for FakeBackend {
     }
 
     async fn is_live(&self, agent: &AetherAgentId) -> Result<bool, ArchonError> {
-        let hold = {
-            let mut state = self.state();
-            state.live_checks.push(agent.clone());
-            state.live_holds.get(agent).cloned()
-        };
-        if let Some(gate) = hold {
-            let _open = gate.acquire().await.expect("the hold's gate stays open");
-        }
+        self.check_state(agent).await;
+        Ok(self.state().holds_live(agent))
+    }
+
+    async fn is_stopped(&self, agent: &AetherAgentId) -> Result<bool, ArchonError> {
+        self.check_state(agent).await;
         let state = self.state();
-        // A failed agent is finished work until `wake` revives it.
-        if state.dead.contains(agent) || state.failed.contains(agent) {
-            return Ok(false);
-        }
-        let woken = state.woken.contains(agent);
-        Ok(state.is_node(agent) || state.in_turn.contains(agent) || state.is_kept(agent) || woken)
+        Ok(!state.unknown_state.contains(agent) && !state.holds_live(agent))
     }
 
     async fn wake(&self, agent: &AetherAgentId) -> Result<(), ArchonError> {

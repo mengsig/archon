@@ -231,3 +231,25 @@ async fn a_stage_agent_of_unknown_state_times_out_and_keeps_its_tree_owed() {
     assert_eq!(h.backend.archived(), [worker, agent]);
     assert_eq!(h.kv(&mark).await, None);
 }
+
+/// Aether names the stage agent's state as one Archon does not know: that
+/// is no proof it stopped, so the tree is neither listed nor asked of and
+/// the mark stays owed until Aether names a final state.
+#[tokio::test]
+async fn a_stage_agent_in_a_state_archon_does_not_know_keeps_its_tree_owed() {
+    let h = Harness::new().await;
+    let (mark, agent, worker) = owed_tree(&h).await;
+    let calls = h.backend.archive_calls().len();
+    let listings = h.backend.descendant_checks().len();
+    h.backend.report_unknown_state(&agent);
+    h.archive().await;
+    h.archive().await;
+    assert_eq!(h.backend.archive_calls().len(), calls, "none asked");
+    assert_eq!(h.backend.descendant_checks().len(), listings, "nor listed");
+    assert_eq!(h.kv(&mark).await.as_deref(), Some("owed"));
+
+    h.backend.report_known_state(&agent);
+    h.archive().await;
+    assert_eq!(h.backend.archived(), [worker, agent]);
+    assert_eq!(h.kv(&mark).await, None);
+}

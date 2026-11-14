@@ -27,6 +27,10 @@ use crate::wire::{
 /// Everything else (`completed`, `failed`, `cancelled`, `imported`) is final.
 pub const LIVE_STATES: &[&str] = &["created", "ready", "running", "waiting", "blocked"];
 
+/// Aether agent states it names final: the agent can no longer act or take
+/// children. A state in neither list may still act.
+pub const STOPPED_STATES: &[&str] = &["completed", "failed", "cancelled", "imported"];
+
 #[derive(Debug)]
 pub struct AetherBackend {
     link: Arc<AetherLink>,
@@ -91,6 +95,12 @@ fn ended_why(agent: &Agent) -> String {
 
 pub fn agent_is_live(agent: &Agent) -> bool {
     LIVE_STATES.contains(&agent_state(agent).as_str())
+}
+
+/// Whether `agent` is in a state Aether names final; an unknown or missing
+/// state is not, so nothing that may still act counts as stopped.
+pub fn agent_is_stopped(agent: &Agent) -> bool {
+    STOPPED_STATES.contains(&agent_state(agent).as_str())
 }
 
 /// The pulse of `root` and the agents `beneath` it: whether any engine is
@@ -583,6 +593,14 @@ impl AgentBackend for AetherBackend {
         }
     }
 
+    async fn is_stopped(&self, agent: &AetherAgentId) -> Result<bool, ArchonError> {
+        match self.link.client()?.get_agent(agent).await {
+            Ok(found) => Ok(agent_is_stopped(&found)),
+            Err(ArchonError::NotFound(_)) => Ok(true),
+            Err(error) => Err(error),
+        }
+    }
+
     async fn cancel(&self, agent: &AetherAgentId, reason: &str) -> Result<(), ArchonError> {
         self.link.client()?.cancel(agent, reason).await
     }
@@ -926,6 +944,25 @@ mod tests {
         }
         agent.status = serde_json::json!({});
         assert_eq!(agent_state(&agent), "unknown");
+    }
+
+    #[test]
+    fn only_a_state_aether_names_final_is_stopped() {
+        let mut agent: Agent = serde_json::from_value(crate::fake::agent("agt_1", None)).unwrap();
+        for state in STOPPED_STATES {
+            agent.status = serde_json::json!({"state": state});
+            assert!(agent_is_stopped(&agent), "{state}");
+            assert!(!agent_is_live(&agent), "{state}");
+        }
+        for state in LIVE_STATES.iter().chain(&["bogus", ""]) {
+            agent.status = serde_json::json!({"state": state});
+            assert!(!agent_is_stopped(&agent), "{state}");
+        }
+        for status in [serde_json::json!({}), serde_json::json!({"state": 3})] {
+            agent.status = status;
+            assert!(!agent_is_stopped(&agent), "{}", agent.status);
+            assert!(!agent_is_live(&agent), "{}", agent.status);
+        }
     }
 
     fn held(id: &str, parent: Option<&str>, state: &str) -> Agent {

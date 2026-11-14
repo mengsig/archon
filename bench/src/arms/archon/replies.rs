@@ -12,17 +12,6 @@ use archon_core::protocol::{Reply, Request};
 /// Most events one conversation page reads, as archond caps it.
 const PAGE_EVENTS: u32 = 1000;
 
-/// Where this trial's archond keeps the orchestrator's replies, fixed
-/// before the prompt is sent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReplySource {
-    /// An archond without the `conversation` request: its feed's
-    /// `Orchestrator` lines.
-    Feed,
-    /// The conversation's events after `after`, its end before the prompt.
-    Conversation { after: u64 },
-}
-
 /// The orchestrator's replies since the prompt, read from their source.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Replies {
@@ -33,9 +22,9 @@ pub enum Replies {
 }
 
 impl Replies {
-    /// The orchestrator's own entries in a conversation read: its text,
-    /// not the operator's lines, archond's posts or `ask_user` questions,
-    /// which the feed already holds.
+    /// The orchestrator's own entries in a conversation read: all its text,
+    /// as the operator reads it there, not the operator's lines, archond's
+    /// posts or `ask_user` questions, which the feed already holds.
     pub fn from_conversation(entries: Vec<ConversationEntry>) -> Self {
         let replies: Vec<ConversationEntry> = entries
             .into_iter()
@@ -69,23 +58,86 @@ fn is_feed_reply(entry: &FeedEntry) -> bool {
     matches!(entry, FeedEntry::Orchestrator { .. })
 }
 
-/// Probe for the conversation and take its end as the trial's baseline.
-pub async fn reply_source(client: &ArchonClient) -> anyhow::Result<ReplySource> {
-    let request = Request::Conversation {
-        after: None,
-        before: None,
-        limit: Some(1),
-        wait: false,
-    };
-    match client.request(request).await {
-        Ok(Reply::Conversation(page)) => {
-            assert!(page.is_ordered(), "archond serves ordered pages");
-            let after = page.last_seq.max(page.to_seq);
-            Ok(ReplySource::Conversation { after })
+/// The replies read so far. They are kept across polls, so when the
+/// orchestrator is replaced mid-trial, the retired transcript's replies stay.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReplyLog {
+    /// The conversation's last event read; Aether's seq is global, so it
+    /// carries over to a successor's transcript.
+    cursor: u64,
+    replies: Replies,
+}
+
+impl ReplyLog {
+    /// Probe for the conversation before the prompt and take its end as
+    /// the baseline; an archond without it keeps the replies in the feed.
+    pub async fn start(client: &ArchonClient) -> anyhow::Result<Self> {
+        let request = Request::Conversation {
+            after: None,
+            before: None,
+            limit: Some(1),
+            wait: false,
+        };
+        match client.request(request).await {
+            Ok(Reply::Conversation(page)) => {
+                assert!(page.is_ordered(), "archond serves ordered pages");
+                Ok(Self::after(page.last_seq.max(page.to_seq)))
+            }
+            Ok(other) => bail!("conversation returned another reply kind: {other:?}"),
+            Err(e) if lacks_conversation(&e) => Ok(Self::feed()),
+            Err(e) => Err(e).context("reading the end of the orchestrator's conversation"),
         }
-        Ok(other) => bail!("conversation returned another reply kind: {other:?}"),
-        Err(e) if lacks_conversation(&e) => Ok(ReplySource::Feed),
-        Err(e) => Err(e).context("reading the end of the orchestrator's conversation"),
+    }
+
+    /// Replies kept in the feed: nothing to read.
+    pub fn feed() -> Self {
+        Self {
+            cursor: 0,
+            replies: Replies::Feed,
+        }
+    }
+
+    /// Replies read from the conversation's events after `cursor`.
+    pub fn after(cursor: u64) -> Self {
+        Self {
+            cursor,
+            replies: Replies::Conversation(Vec::new()),
+        }
+    }
+
+    pub fn replies(&self) -> &Replies {
+        &self.replies
+    }
+
+    /// Read what the conversation gained since the last read.
+    pub async fn refresh(&mut self, client: &ArchonClient) -> anyhow::Result<&Replies> {
+        if self.replies == Replies::Feed {
+            return Ok(&self.replies);
+        }
+        let (entries, reached) = conversation_after(client, self.cursor).await?;
+        self.record(entries, reached)?;
+        Ok(&self.replies)
+    }
+
+    /// Keep the orchestrator's own entries of one read that ended at event
+    /// `reached`, and move the cursor there.
+    pub fn record(&mut self, entries: Vec<ConversationEntry>, reached: u64) -> anyhow::Result<()> {
+        let Replies::Conversation(kept) = &mut self.replies else {
+            bail!("feed replies are not read from a conversation");
+        };
+        ensure!(
+            entries
+                .iter()
+                .all(|e| self.cursor < e.seq && e.seq <= reached),
+            "conversation entries fall outside events {}..={reached}",
+            self.cursor
+        );
+        let Replies::Conversation(new) = Replies::from_conversation(entries) else {
+            unreachable!("built from a conversation");
+        };
+        kept.extend(new);
+        self.cursor = self.cursor.max(reached);
+        Ok(())
     }
 }
 
@@ -99,20 +151,12 @@ pub fn lacks_conversation(error: &ArchonError) -> bool {
     )
 }
 
-/// Every reply since the baseline; the feed source needs no read.
-pub async fn read_replies(client: &ArchonClient, source: ReplySource) -> anyhow::Result<Replies> {
-    let ReplySource::Conversation { after } = source else {
-        return Ok(Replies::Feed);
-    };
-    let entries = conversation_after(client, after).await?;
-    Ok(Replies::from_conversation(entries))
-}
-
-/// Every important conversation entry after `after`, page by page.
+/// Every important conversation entry after `after`, page by page, and the
+/// last event read.
 async fn conversation_after(
     client: &ArchonClient,
     after: u64,
-) -> anyhow::Result<Vec<ConversationEntry>> {
+) -> anyhow::Result<(Vec<ConversationEntry>, u64)> {
     let mut cursor = after;
     let mut entries = Vec::new();
     loop {
@@ -131,7 +175,7 @@ async fn conversation_after(
         );
         entries.extend(page.entries);
         if !page.has_after {
-            return Ok(entries);
+            return Ok((entries, cursor.max(page.to_seq)));
         }
         ensure!(
             page.to_seq > cursor,

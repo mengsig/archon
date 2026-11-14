@@ -40,7 +40,7 @@ use crate::grade::ResultSource;
 use crate::metrics::{ArchonItem, Arm};
 use crate::usage::{Usage, aether_usage};
 use crate::workspace::{self, BASE_BRANCH, TrialLayout};
-pub use replies::{Replies, ReplySource, lacks_conversation};
+pub use replies::{Replies, ReplyLog, lacks_conversation};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
 /// How long the fleet must stay quiet before the trial counts as finished;
@@ -282,7 +282,7 @@ async fn session(input: &TrialInput<'_>, client: &ArchonClient) -> anyhow::Resul
     let setup_secs = setup.elapsed().as_secs_f64();
     let repos = register_repos(input, client).await?;
     let baseline = last_feed_seq(client).await?;
-    let source = replies::reply_source(client).await?;
+    let mut replies = ReplyLog::start(client).await?;
     let started = Instant::now();
     client
         .request(Request::Say {
@@ -291,10 +291,11 @@ async fn session(input: &TrialInput<'_>, client: &ArchonClient) -> anyhow::Resul
         })
         .await
         .context("sending the prompt with Say")?;
-    let (timed_out, finished) = wait_until_settled(client, baseline, source, input.timeout).await?;
+    let (timed_out, finished) =
+        wait_until_settled(client, baseline, &mut replies, input.timeout).await?;
     let wall_secs = finished.duration_since(started).as_secs_f64();
     let feed = feed_after(client, baseline).await?;
-    let replies = replies::read_replies(client, source).await?;
+    let replies = replies.refresh(client).await?;
     let details = item_details(client).await?;
     std::fs::write(
         input.layout.logs.join("archon-items.json"),
@@ -303,8 +304,8 @@ async fn session(input: &TrialInput<'_>, client: &ArchonClient) -> anyhow::Resul
     let usage = fleet_usage(client, input, &details).await?;
     Ok(ArmOutcome {
         usage: Some(input.settings.price(Arm::Archon, usage)),
-        answer: answer_text(&feed, &replies, &details),
-        operator_messages: operator_messages(&feed, &replies),
+        answer: answer_text(&feed, replies, &details),
+        operator_messages: operator_messages(&feed, replies),
         wall_secs,
         setup_secs: Some(setup_secs),
         timed_out,
@@ -402,13 +403,13 @@ async fn feed_after(client: &ArchonClient, baseline: u64) -> anyhow::Result<Vec<
 async fn wait_until_settled(
     client: &ArchonClient,
     baseline: u64,
-    source: ReplySource,
+    replies: &mut ReplyLog,
     timeout: Duration,
 ) -> anyhow::Result<(bool, Instant)> {
     let deadline = Instant::now() + timeout;
     let mut settle = Settle::default();
     loop {
-        let observed = observe(client, baseline, source).await?;
+        let observed = observe(client, baseline, replies).await?;
         if settle.update(&observed, Instant::now()) {
             let quiet_since = settle.quiet_since().expect("settled means quiet");
             return Ok((false, quiet_since));
@@ -477,7 +478,7 @@ impl Settle {
 async fn observe(
     client: &ArchonClient,
     baseline: u64,
-    source: ReplySource,
+    replies: &mut ReplyLog,
 ) -> anyhow::Result<Observation> {
     let Reply::Items(items) = client
         .request(Request::ListItems(ItemQuery::default()))
@@ -489,7 +490,7 @@ async fn observe(
         bail!("orchestrator_status returned another reply kind");
     };
     let feed = feed_after(client, baseline).await?;
-    let replies = replies::read_replies(client, source).await?;
+    let replies = replies.refresh(client).await?;
     Ok(Observation {
         replied: replies.replied(&feed),
         orchestrator_busy: BUSY_STATUSES.contains(&info.status.as_str()),

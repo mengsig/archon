@@ -17,7 +17,7 @@ use archon_core::run::{PipelineRun, RunState};
 use serde_json::json;
 
 use super::archon::{
-    Daemon, Observation, Replies, SETTLE_WINDOW, Settle, TIMEOUT_REASON, answer_text,
+    Daemon, Observation, Replies, ReplyLog, SETTLE_WINDOW, Settle, TIMEOUT_REASON, answer_text,
     lacks_conversation, operator_messages, result_branches, timeout_branches,
 };
 use super::*;
@@ -548,6 +548,54 @@ fn conversation_replies_supersede_any_feed_reply() {
     let replies = Replies::from_conversation(vec![said(EntryKind::Assistant, 9, 40, "Only once.")]);
     assert_eq!(answer_text(&old, &replies, &[]), "item done\n\nOnly once.");
     assert_eq!(operator_messages(&old, &replies), 2);
+}
+
+#[test]
+fn replies_survive_an_orchestrator_replaced_mid_trial() {
+    let mut log = ReplyLog::after(100);
+    let retired = vec![
+        said(EntryKind::Operator, 101, 0, "review it"),
+        said(EntryKind::Assistant, 102, 10, "Reading the module."),
+    ];
+    log.record(retired, 105).unwrap();
+    // The successor's transcript lacks 102; its events follow the cursor.
+    let successor = vec![said(
+        EntryKind::Assistant,
+        140,
+        40,
+        "verify() accepts forgeries.",
+    )];
+    log.record(successor, 140).unwrap();
+    let texts: Vec<&str> = match log.replies() {
+        Replies::Conversation(kept) => kept.iter().map(|e| e.text.as_str()).collect(),
+        Replies::Feed => unreachable!("read from a conversation"),
+    };
+    assert_eq!(
+        texts,
+        ["Reading the module.", "verify() accepts forgeries."]
+    );
+    let behind = vec![said(EntryKind::Assistant, 120, 50, "replayed")];
+    assert!(
+        log.record(behind, 150).is_err(),
+        "nothing at or before the cursor"
+    );
+    assert!(ReplyLog::feed().record(Vec::new(), 1).is_err());
+}
+
+#[test]
+fn every_assistant_entry_is_part_of_the_answer_as_the_conversation_shows_it() {
+    let mut log = ReplyLog::after(0);
+    let turn = vec![
+        said(EntryKind::Assistant, 1, 0, "Let me read src/tokens.js."),
+        said(EntryKind::Assistant, 2, 5, "The bug is in verify()."),
+    ];
+    log.record(turn, 2).unwrap();
+    assert!(log.replies().replied(&[]));
+    assert_eq!(operator_messages(&[], log.replies()), 2);
+    assert_eq!(
+        answer_text(&[], log.replies(), &[]),
+        "Let me read src/tokens.js.\n\nThe bug is in verify()."
+    );
 }
 
 #[test]

@@ -319,10 +319,12 @@ async fn refused_then_allowed(refuse_delegate: bool) {
     assert!(!h.backend.archived().contains(&agent), "it stays in view");
     assert_eq!(h.kv(&mark).await.as_deref(), Some("owed"), "never given up");
     let calls = h.backend.archive_calls().len();
+    let listings = h.backend.descendant_checks().len();
 
     tokio::time::advance(REFUSED_RETRY - Duration::from_secs(1)).await;
     pass(&h, &mut progress).await;
     assert_eq!(h.backend.archive_calls().len(), calls, "not asked so soon");
+    assert_eq!(h.backend.descendant_checks().len(), listings, "nor listed");
     assert_eq!(h.kv(&mark).await.as_deref(), Some("owed"));
 
     tokio::time::advance(Duration::from_secs(1)).await;
@@ -341,6 +343,61 @@ async fn a_refused_delegate_archive_stays_owed_and_is_asked_again_much_later() {
 #[tokio::test(start_paused = true)]
 async fn a_refused_stage_agent_archive_stays_owed_and_is_asked_again_much_later() {
     refused_then_allowed(false).await;
+}
+
+/// A delegate Aether refused is left alone for [`REFUSED_RETRY`] even while
+/// another of its tree goes unanswered: each pass asks of that other one
+/// alone, and of nothing once only the refusal is left.
+#[tokio::test(start_paused = true)]
+async fn a_refused_delegate_is_left_alone_while_another_goes_unanswered() {
+    let h = Harness::new().await;
+    let item = h.enqueue("archive refused and unanswered").await;
+    h.dispatch().await;
+    let agent = lead_agent(&h.running().await[0]);
+    let refused = h.backend.delegate(&agent, MODEL);
+    let silent = h.backend.delegate(&agent, MODEL);
+    for delegate in [&refused, &silent] {
+        h.backend.end_delegated(delegate, DescendantState::Stopped);
+    }
+    h.settle_running(|_| failed("tests failed")).await;
+    h.dispatch().await;
+    let mark = format!("archive:{}", h.stages(&item.id).await.remove(0).id);
+    let refusal = ArchonError::Aether("permission_denied: archive refused".into());
+    h.backend.fail_next_archive_of(&refused, refusal);
+    let gate = h.backend.hold_archive(&silent);
+
+    let mut progress = Progress::default();
+    let asked = Instant::now();
+    pass(&h, &mut progress).await;
+    assert_eq!(h.backend.archive_calls(), [refused.clone(), silent.clone()]);
+    for _ in 0..3 {
+        let calls = h.backend.archive_calls().len();
+        pass(&h, &mut progress).await;
+        assert_eq!(
+            &h.backend.archive_calls()[calls..],
+            std::slice::from_ref(&silent),
+            "the refused one is not asked of again"
+        );
+    }
+    assert!(h.backend.archived().is_empty(), "the tree stays in view");
+
+    gate.add_permits(1);
+    pass(&h, &mut progress).await;
+    assert_eq!(h.backend.archived(), std::slice::from_ref(&silent));
+    assert_eq!(h.kv(&mark).await.as_deref(), Some("owed"));
+    let calls = h.backend.archive_calls().len();
+    let listings = h.backend.descendant_checks().len();
+
+    let early = asked + REFUSED_RETRY - Duration::from_secs(1);
+    tokio::time::advance(early - Instant::now()).await;
+    pass(&h, &mut progress).await;
+    assert_eq!(h.backend.archive_calls().len(), calls, "not asked so soon");
+    assert_eq!(h.backend.descendant_checks().len(), listings, "nor listed");
+
+    tokio::time::advance(Duration::from_secs(1)).await;
+    pass(&h, &mut progress).await;
+    assert_eq!(h.backend.archived(), [silent, refused, agent]);
+    assert_eq!(h.kv(&mark).await, None);
 }
 
 /// A running worker asks of a mark as it is written, without waiting for

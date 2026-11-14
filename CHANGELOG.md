@@ -1,6 +1,23 @@
 # Changelog
 
-## Unreleased
+## 1.5.1
+
+Released 2026-11-14.
+
+A patch release on 1.5.0 that makes the orchestrator's Aether transcript the
+one operator conversation, shown alike in the terminal UI, `archon chat` and
+the phone app (#411), and fixes GitHub settlement, sealed git hooks and the
+GitHub CLI check.
+
+Archon 1.5.1 needs **Aether 1.3.1**: it is released with and tested on that
+release, the first that serves the `conversation` feature that `archon chat`
+and the phone app's chat read. The queue still runs on Aether 1.2.11 or
+later and remote access still needs Aether 1.3.0 or later, but the chat
+views need 1.3.1. The Aether protocol Archon asks for stays 24 and the
+oldest it accepts stays 17; Aether 1.3.1 serves 17 to 26, as 1.3.0 did. The
+daemon protocol stays 24 and the store schema stays 23, so a 1.5.0 store
+opens unchanged. `archon update --yes` restarts archond, which must be 1.5.1
+to answer the new `conversation` request.
 
 ### Changed
 
@@ -17,24 +34,36 @@
   `archon chat` and reload a phone page opened before the upgrade, or they
   show no replies. A stage agent's `ask_user` question is posted, numbered,
   with how to answer it; the orchestrator's own stays in its transcript. A
-  command sent from `archon chat` or the phone (`/answer`, `/status`,
-  `/archon …`) is posted once as `**Operator:** <command>`, before its result.
+  command archond applies itself, sent from `archon chat` or the phone (such
+  as `/answer`, `/merge`, `/approve`, `/reject` and `/archon …`), is posted
+  once as `**Operator:** <command>`, before its result. `archon chat`'s local
+  read-only views, such as `/status`, and `/pause` and `/resume` are not
+  posted (#411).
 
 ### Fixed
 
+- A GitHub call that fails while one item's completed stage is verified
+  (such as an old `gh` rejecting `baseRefOid`) no longer stalls the fleet
+  event stream, so the other items keep settling and shipping. The stage
+  stays live and is settled again with a bounded, growing wait, its item's
+  blocker is told once and cleared when it settles, and a failed `gh` call in
+  any other fleet event is reported and skipped. Contributed by @AmmarBattah
+  (#402, #406).
 - Check for GitHub CLI 2.63.0 at startup and in doctor, while keeping gh
-  optional for local-only setups. Contributed by @AmmarBattah (mengsig/archon#401).
+  optional for local-only setups. Contributed by @AmmarBattah (mengsig/archon#401, #410).
+
+### Security
+
+- The daemon's sealed git now disables hooks defined in git config (Git
+  2.54's `hook.<name>.command`) by name, not only hooks named like an event,
+  for the worktree, `gh` and local receive-pack gits; a git command is
+  refused when the hook names cannot be listed. Contributed by @AmmarBattah
+  (#403, #407).
 
 ### Dependencies
 
 - Bump `toml` 1.1.8 to 1.2.1 (with `serde_spanned`, `toml_datetime` and
-  `toml_writer`) and `taiki-e/install-action` 2.88.0 to 2.90.1 in CI.
-
-### Tooling
-
-- Host CI slots now share Aether's FIFO queue, preventing newer Archon runs
-  from bypassing waiting jobs. `sh scripts/ci-slot.sh --status` shows holders
-  and queued commands.
+  `toml_writer`) and `taiki-e/install-action` 2.88.0 to 2.90.1 in CI (#409).
 
 ## 1.5.0
 
@@ -287,11 +316,11 @@ From the audit in [docs/security/vnext-audit.md](docs/security/vnext-audit.md)
 - The model list in [docs/configuration.md](docs/configuration.md) now names
   `claude-code/claude-fable-5-2`, the Fable model Aether lists.
 
-- Isolate an item's GitHub verification failures so other items continue to
-  settle and ship; retry the affected stage with bounded backoff and report a
-  blocker. Contributed by @AmmarBattah (#402).
+### Tooling
 
-- Disable config-defined git hooks under the daemon's sealed git, contributed by @AmmarBattah.
+- Host CI slots now share Aether's FIFO queue, preventing newer Archon runs
+  from bypassing waiting jobs. `sh scripts/ci-slot.sh --status` shows holders
+  and queued commands.
 
 ## 1.4.12
 

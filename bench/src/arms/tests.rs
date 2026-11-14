@@ -3,10 +3,11 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use archon_aether::AetherEvent;
+use archon_aether::events::EventKind;
 use archon_aether::fake::{self, FakeAether, Scripted};
 use archon_aether::wire::{ApprovalPolicy, NetworkPolicy, TaskResult, TaskStatus};
 use archon_core::aether_ids::AetherAgentId;
-use archon_core::conversation::{ConversationEntry, EntryKind};
 use archon_core::error::ArchonError;
 use archon_core::id::{FeedItemId, NotificationId, PipelineRunId, QueueItemId, RepoId};
 use archon_core::model::ModelPlan;
@@ -17,8 +18,8 @@ use archon_core::run::{PipelineRun, RunState};
 use serde_json::json;
 
 use super::archon::{
-    Daemon, Observation, Replies, ReplyLog, SETTLE_WINDOW, Settle, TIMEOUT_REASON, answer_text,
-    lacks_conversation, operator_messages, result_branches, timeout_branches,
+    Daemon, Observation, Replies, ReplyLog, ReplyTracker, SETTLE_WINDOW, Settle, TIMEOUT_REASON,
+    answer_text, lacks_conversation, operator_messages, result_branches, timeout_branches,
 };
 use super::*;
 use crate::task::BenchTask;
@@ -441,18 +442,6 @@ fn timed_feed(seq: u64, second: i64, entry: FeedEntry) -> FeedItem {
     }
 }
 
-fn said(kind: EntryKind, seq: u64, second: i64, text: &str) -> ConversationEntry {
-    ConversationEntry {
-        seq,
-        part: 0,
-        at: at(second),
-        kind,
-        important: true,
-        text: text.into(),
-        links: Vec::new(),
-    }
-}
-
 fn operator_line(text: &str) -> FeedEntry {
     FeedEntry::Operator {
         text: text.into(),
@@ -484,26 +473,74 @@ fn feed_shape() -> Vec<FeedItem> {
     ]
 }
 
-/// The same trial as 1.5.1 records it: the feed lacks the replies, which
-/// the conversation holds beside archond's posts and the operator's line.
-fn conversation_shape() -> (Vec<FeedItem>, Vec<ConversationEntry>) {
-    let feed = feed_shape()
-        .into_iter()
-        .filter(|i| !matches!(i.entry, FeedEntry::Orchestrator { .. }))
-        .collect();
-    let conversation = vec![
-        said(EntryKind::Operator, 100, 0, "review it"),
-        said(EntryKind::Assistant, 101, 10, "Queued two items."),
-        said(EntryKind::Post, 102, 30, "item done"),
-        said(EntryKind::Question, 103, 35, "Which branch?"),
-        said(
-            EntryKind::Assistant,
-            104,
-            40,
-            "The forgery bug is in verify().",
-        ),
-    ];
-    (feed, conversation)
+fn agent(id: &str) -> AetherAgentId {
+    AetherAgentId::parse(id).unwrap()
+}
+
+const ORCHESTRATOR: &str = "agt_orch";
+
+fn event(seq: u64, second: i64, kind: EventKind) -> AetherEvent {
+    AetherEvent {
+        seq,
+        at: at(second),
+        agent: Some(agent(ORCHESTRATOR)),
+        task: None,
+        parent: None,
+        run: None,
+        kind,
+    }
+}
+
+fn delivered(inbox: u64, from_operator: bool) -> EventKind {
+    EventKind::InboxDelivered {
+        seq: inbox,
+        from_operator,
+        message: None,
+    }
+}
+
+fn wrote(text: &str) -> EventKind {
+    EventKind::AgentMessage {
+        assistant: true,
+        text: text.into(),
+    }
+}
+
+fn turn_ended(next: &str) -> EventKind {
+    EventKind::AgentTurnCompleted {
+        turn: 1,
+        next: Some(next.into()),
+    }
+}
+
+/// The trial of `feed_shape` as the orchestrator's events record it: the
+/// prompt's turn queues work and waits on it, its continuation answers, and
+/// a turn woken by the item's trigger says something that is no answer.
+fn transcript_shape() -> Vec<AetherEvent> {
+    vec![
+        event(101, 0, delivered(1, true)),
+        event(102, 1, EventKind::InboxConsumed { up_to: 1 }),
+        event(103, 2, wrote("Let me read src/tokens.js.")),
+        event(104, 9, wrote("Queued two items.")),
+        event(105, 10, EventKind::AgentWaiting { idle: false }),
+        event(106, 10, turn_ended("waiting")),
+        event(107, 38, wrote("The forgery bug is in verify().")),
+        event(108, 40, EventKind::AgentWaiting { idle: true }),
+        event(109, 40, turn_ended("ready")),
+        event(110, 41, delivered(2, false)),
+        event(111, 42, EventKind::InboxConsumed { up_to: 2 }),
+        event(112, 43, wrote("The item finished; nothing to do.")),
+        event(113, 44, turn_ended("ready")),
+    ]
+}
+
+fn answers(events: &[AetherEvent]) -> Vec<String> {
+    let mut tracker = ReplyTracker::default();
+    events
+        .iter()
+        .filter_map(|e| tracker.apply(e))
+        .map(|a| a.text)
+        .collect()
 }
 
 #[test]
@@ -518,180 +555,150 @@ fn both_reply_sources_grade_and_count_a_trial_the_same() {
     assert_eq!(operator_messages(&old, &Replies::Feed), 3);
     assert_eq!(answer_text(&old, &Replies::Feed, &details), expected);
 
-    let (feed, conversation) = conversation_shape();
-    let replies = Replies::from_conversation(conversation);
-    let Replies::Conversation(kept) = &replies else {
-        unreachable!("built from a conversation");
-    };
-    assert_eq!(kept.len(), 2, "only the orchestrator's own text");
-    assert!(
-        !Replies::Feed.replied(&feed),
-        "the head's feed holds no reply"
-    );
+    let feed: Vec<FeedItem> = old
+        .into_iter()
+        .filter(|i| !matches!(i.entry, FeedEntry::Orchestrator { .. }))
+        .collect();
+    let mut log = ReplyLog::transcript(agent(ORCHESTRATOR), 100);
+    log.apply(&transcript_shape()).unwrap();
+    let replies = log.replies();
+    assert!(!Replies::Feed.replied(&feed), "the head's feed holds none");
     assert!(replies.replied(&feed));
     assert_eq!(operator_messages(&feed, &replies), 3);
     assert_eq!(answer_text(&feed, &replies, &details), expected);
 }
 
 #[test]
-fn a_conversation_without_replies_has_not_replied() {
-    let (feed, _) = conversation_shape();
-    let posts = vec![said(EntryKind::Post, 7, 30, "item done")];
-    let replies = Replies::from_conversation(posts);
-    assert!(!replies.replied(&feed));
-    assert_eq!(answer_text(&feed, &replies, &[]), "item done");
+fn a_transcript_before_the_answer_has_not_replied() {
+    let unanswered = &transcript_shape()[..4];
+    let mut log = ReplyLog::transcript(agent(ORCHESTRATOR), 100);
+    log.apply(unanswered).unwrap();
+    assert!(!log.replies().replied(&[]));
+    assert_eq!(answer_text(&[], &log.replies(), &[]), "");
 }
 
 #[test]
-fn conversation_replies_supersede_any_feed_reply() {
-    let old = feed_shape();
-    let replies = Replies::from_conversation(vec![said(EntryKind::Assistant, 9, 40, "Only once.")]);
-    assert_eq!(answer_text(&old, &replies, &[]), "item done\n\nOnly once.");
-    assert_eq!(operator_messages(&old, &replies), 2);
+fn only_text_written_after_the_prompt_was_read_answers_it() {
+    let early = [
+        event(1, 0, delivered(1, true)),
+        event(2, 1, wrote("Booted.")),
+        event(3, 2, EventKind::InboxConsumed { up_to: 1 }),
+        event(4, 3, wrote("   ")),
+        event(5, 4, turn_ended("ready")),
+    ];
+    assert!(answers(&early).is_empty(), "no text after it was read");
+    let woken = [
+        event(1, 0, delivered(1, false)),
+        event(2, 1, EventKind::InboxConsumed { up_to: 1 }),
+        event(3, 2, wrote("A trigger.")),
+        event(4, 3, turn_ended("ready")),
+    ];
+    assert!(answers(&woken).is_empty(), "a trigger is not the operator");
 }
 
-fn agent(id: &str) -> AetherAgentId {
-    AetherAgentId::parse(id).unwrap()
+#[test]
+fn a_failed_turn_drops_its_half_answer_and_the_next_turn_answers() {
+    let events = [
+        event(1, 0, delivered(1, true)),
+        event(2, 1, EventKind::InboxConsumed { up_to: 1 }),
+        event(3, 2, wrote("Half.")),
+        event(4, 3, turn_ended("failed")),
+        event(5, 4, wrote("Whole.")),
+        event(6, 5, turn_ended("ready")),
+    ];
+    assert_eq!(answers(&events), ["Whole."]);
 }
 
-fn kept_texts(log: &ReplyLog) -> Vec<&str> {
-    match log.replies() {
-        Replies::Conversation(kept) => kept.iter().map(|e| e.text.as_str()).collect(),
-        Replies::Feed => unreachable!("read from a conversation"),
+#[test]
+fn messages_read_together_share_one_answer() {
+    let events = [
+        event(1, 0, delivered(1, true)),
+        event(2, 0, delivered(2, true)),
+        event(3, 1, EventKind::InboxConsumed { up_to: 2 }),
+        event(4, 2, wrote("First.")),
+        event(5, 3, wrote("Second.")),
+        event(6, 4, turn_ended("ready")),
+    ];
+    assert_eq!(
+        answers(&events),
+        ["Replying to your 2 messages:\n\nFirst.\n\nSecond."]
+    );
+}
+
+#[test]
+fn a_replaced_orchestrator_ends_the_trial_on_either_source() {
+    let (first, second) = (agent(ORCHESTRATOR), agent("agt_next"));
+    for log in [
+        ReplyLog::feed(first.clone()),
+        ReplyLog::transcript(first.clone(), 0),
+    ] {
+        assert!(log.check_orchestrator(&first).is_ok());
+        let error = log.check_orchestrator(&second).unwrap_err().to_string();
+        assert!(error.starts_with("orchestrator replaced"), "{error}");
     }
 }
 
 #[test]
-fn replies_survive_an_orchestrator_replaced_mid_trial() {
-    let (retired, successor) = (agent("agt_old"), agent("agt_new"));
-    let mut log = ReplyLog::after(100);
-    log.record(
-        &retired,
-        vec![said(EntryKind::Operator, 101, 0, "review it")],
-        101,
-    )
-    .unwrap();
-    // Replaced between polls: the successor is read from the baseline, and
-    // the retired transcript's unread tail is still read from its cursor.
-    let new_reply = said(EntryKind::Assistant, 140, 40, "verify() accepts forgeries.");
-    log.record(&successor, vec![new_reply], 140).unwrap();
-    let unread = said(EntryKind::Assistant, 102, 10, "Reading the module.");
-    log.record(&retired, vec![unread], 105).unwrap();
-    assert_eq!(
-        kept_texts(&log),
-        ["Reading the module.", "verify() accepts forgeries."]
-    );
-    let behind = vec![said(EntryKind::Assistant, 104, 50, "replayed")];
-    assert!(
-        log.record(&retired, behind, 150).is_err(),
-        "nothing at or before the cursor"
-    );
-    assert!(ReplyLog::feed().record(&retired, Vec::new(), 1).is_err());
+fn a_transcript_applies_only_its_orchestrators_new_events() {
+    let mut log = ReplyLog::transcript(agent(ORCHESTRATOR), 100);
+    assert!(log.apply(&[event(100, 0, delivered(1, true))]).is_err());
+    let mut theirs = event(101, 0, delivered(1, true));
+    theirs.agent = Some(agent("agt_other"));
+    assert!(log.apply(&[theirs]).is_err());
+    assert!(ReplyLog::feed(agent(ORCHESTRATOR)).apply(&[]).is_err());
 }
 
-#[test]
-fn an_enrolled_orchestrator_stays_read_from_the_baseline_after_its_successor() {
-    let (first, second) = (agent("agt_first"), agent("agt_second"));
-    let mut log = ReplyLog::after(100);
-    log.enroll(first.clone());
-    log.enroll(second.clone());
-    log.enroll(first.clone());
-    let cursors: Vec<(&AetherAgentId, u64)> = log.cursors().iter().map(|(a, c)| (a, *c)).collect();
-    assert_eq!(cursors, [(&first, 100), (&second, 100)]);
-    log.record(&second, Vec::new(), 130).unwrap();
-    assert_eq!(log.cursors()[&first], 100, "the first is still unread");
-}
-
-/// A fake aetherd whose transcripts are `(agent, entries)`, each served
-/// after the requested cursor as one whole page.
-fn serve_transcripts(
-    daemon: &FakeAether,
-    transcripts: Vec<(&'static str, Vec<ConversationEntry>)>,
-) {
-    daemon.set_features(vec!["conversation".into()]);
-    daemon.set_responder(
-        "get_conversation",
-        Arc::new(move |command| {
-            let after = command["after"].as_u64().unwrap();
-            let entries: Vec<ConversationEntry> = transcripts
-                .iter()
-                .filter(|(id, _)| command["agent"] == *id)
-                .flat_map(|(_, entries)| entries.iter().filter(|e| e.seq > after).cloned())
-                .collect();
-            let to_seq = entries.last().map_or(after, |e| e.seq);
-            let page = archon_core::conversation::ConversationPage {
-                from_seq: entries.first().map_or(after, |e| e.seq),
-                to_seq,
-                last_seq: to_seq,
-                entries,
-                ..Default::default()
-            };
-            Scripted::reply("conversation", serde_json::to_value(page).unwrap())
-        }),
-    );
+/// The wire form of `transcript_shape`, as aetherd serves `get_events`.
+fn wire_events() -> Vec<serde_json::Value> {
+    let message = |text: &str| {
+        json!({"type": "agent.message", "role": "assistant",
+               "content": [{"type": "text", "text": text}]})
+    };
+    let operator = json!({"type": "inbox.delivered", "item": {"seq": 1, "kind": {
+        "kind": "message", "message_id": "msg_1", "from": {"actor": "user"},
+        "content": [{"type": "text", "text": "review it"}]}}});
+    let kinds = [
+        operator,
+        json!({"type": "inbox.consumed", "up_to": 1}),
+        message("Reading."),
+        message("verify() accepts forgeries."),
+        json!({"type": "agent.waiting", "condition": {"on": "inbox"}}),
+        json!({"type": "agent.turn_completed", "turn": 2, "next": "ready"}),
+    ];
+    kinds
+        .into_iter()
+        .map(|kind| fake::event(Some(ORCHESTRATOR), None, kind))
+        .collect()
 }
 
 #[tokio::test]
-async fn a_refresh_after_a_replacement_still_reads_the_retired_orchestrator() {
+async fn a_refresh_reads_the_orchestrators_new_events_from_aetherd() {
     let sockets = tempfile::tempdir().unwrap();
     let socket = sockets.path().join("aether.sock");
     let daemon = FakeAether::start(&socket).await.unwrap();
-    // The first orchestrator answered and was replaced before any poll.
-    serve_transcripts(
-        &daemon,
-        vec![
-            (
-                "agt_first",
-                vec![
-                    said(EntryKind::Operator, 99, 0, "before the trial"),
-                    said(EntryKind::Assistant, 101, 10, "verify() accepts forgeries."),
-                ],
-            ),
-            (
-                "agt_second",
-                vec![said(EntryKind::Assistant, 120, 30, "Restarted.")],
-            ),
-        ],
-    );
-    let mut log = ReplyLog::after(100);
-    log.enroll(agent("agt_first"));
-    log.refresh(agent("agt_second"), &socket).await.unwrap();
-    assert_eq!(
-        kept_texts(&log),
-        ["verify() accepts forgeries.", "Restarted."]
-    );
-    assert_eq!(log.cursors()[&agent("agt_first")], 101);
-    log.refresh(agent("agt_second"), &socket).await.unwrap();
-    assert_eq!(kept_texts(&log).len(), 2, "a second read adds nothing");
-    let asked = daemon.received_named("get_conversation");
-    assert_eq!(asked.len(), 4, "both transcripts on every refresh");
-    assert!(asked.iter().all(|c| c["important_only"] == true));
-}
-
-#[test]
-fn a_successor_that_kept_the_transcript_adds_no_duplicate() {
-    let mut log = ReplyLog::after(0);
-    let reply = said(EntryKind::Assistant, 5, 0, "Done.");
-    log.record(&agent("agt_a"), vec![reply.clone()], 5).unwrap();
-    log.record(&agent("agt_b"), vec![reply], 5).unwrap();
-    assert_eq!(kept_texts(&log), ["Done."]);
-}
-
-#[test]
-fn every_assistant_entry_is_part_of_the_answer_as_the_conversation_shows_it() {
-    let mut log = ReplyLog::after(0);
-    let orchestrator = agent("agt_o");
-    let turn = vec![
-        said(EntryKind::Assistant, 1, 0, "Let me read src/tokens.js."),
-        said(EntryKind::Assistant, 2, 5, "The bug is in verify()."),
-    ];
-    log.record(&orchestrator, turn, 2).unwrap();
-    assert!(log.replies().replied(&[]));
-    assert_eq!(operator_messages(&[], log.replies()), 2);
-    assert_eq!(
-        answer_text(&[], log.replies(), &[]),
-        "Let me read src/tokens.js.\n\nThe bug is in verify()."
-    );
+    let before = fake::event(Some("agt_stage"), None, json!({"type": "agent.completed"}));
+    let baseline = daemon.push_event(before);
+    let mut log = ReplyLog::transcript(agent(ORCHESTRATOR), baseline);
+    let mut events = wire_events().into_iter();
+    for event in events.by_ref().take(4) {
+        daemon.push_event(event);
+    }
+    let orchestrator = agent(ORCHESTRATOR);
+    let replies = log.refresh(&orchestrator, &socket).await.unwrap();
+    assert!(!replies.replied(&[]), "the turn has not ended");
+    for event in events {
+        daemon.push_event(event);
+    }
+    let replies = log.refresh(&orchestrator, &socket).await.unwrap();
+    let Replies::Transcript(answers) = replies else {
+        unreachable!("read from a transcript");
+    };
+    let texts: Vec<&str> = answers.iter().map(|a| a.text.as_str()).collect();
+    assert_eq!(texts, ["verify() accepts forgeries."]);
+    let asked = daemon.received_named("get_events");
+    assert_eq!(asked.len(), 2);
+    assert!(asked.iter().all(|c| c["query"]["agent"] == ORCHESTRATOR));
+    assert_eq!(asked[1]["after"], baseline + 4, "the cursor moved on");
 }
 
 #[test]

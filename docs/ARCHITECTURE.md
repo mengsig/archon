@@ -3824,7 +3824,9 @@ notices, questions and their answers, reports), `--kind` keeps some kinds
 `outcome`, `progress`, `report`, `system`), paging back through
 `FeedHistory` until `--limit` entries match, and `--follow` then
 subscribes after the newest entry read and prints each new match (one JSON
-object per line under `--json`).
+object per line under `--json`). As the orchestrator's replies are in the
+conversation, `--kind orchestrator` first prints a line on stderr that points
+to `archon chat`.
 
 ## 13. Repositories and worktrees
 

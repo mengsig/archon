@@ -1,90 +1,70 @@
-//! Where the archon arm reads the orchestrator's replies. From 1.5.1
+//! Where the archon arm reads the orchestrator's answers. From 1.5.1
 //! archond keeps them only in the conversation that `archon chat`, the TUI
-//! and the phone show; 1.5.0 and older write them to the feed instead.
+//! and the phone show, which is the orchestrator's Aether transcript; 1.5.0
+//! and older write them to the feed. Both are measured by one rule, the
+//! tracker's, and a trial has one orchestrator from before the prompt on.
 
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{Context, bail, ensure};
 use archon_aether::AetherClient;
+use archon_aether::wire::EventQuery;
 use archon_client::ArchonClient;
 use archon_core::aether_ids::AetherAgentId;
-use archon_core::conversation::{ConversationEntry, EntryKind};
 use archon_core::error::ArchonError;
 use archon_core::notify::{FeedEntry, FeedItem};
 use archon_core::protocol::{Reply, Request};
 
+use super::tracker::{Answer, ReplyTracker};
 use crate::arms::aether::endpoint;
 
-/// Most events one conversation page reads, as Aether caps it.
-const PAGE_EVENTS: u32 = 1000;
+/// Most events one read of the transcript asks Aether for.
+const PAGE_EVENTS: usize = 1000;
 
-/// The orchestrator's replies since the prompt, read from their source.
+/// The orchestrator's answers since the prompt, read from their source.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Replies {
     /// They are the feed's `Orchestrator` lines.
     Feed,
-    /// The orchestrator's own text in the conversation, in order.
-    Conversation(Vec<ConversationEntry>),
+    /// Derived from the orchestrator's transcript, in order.
+    Transcript(Vec<Answer>),
 }
 
 impl Replies {
-    /// The orchestrator's own entries in a conversation read: all its text,
-    /// as the operator reads it there, not the operator's lines, archond's
-    /// posts or `ask_user` questions, which the feed already holds.
-    pub fn from_conversation(entries: Vec<ConversationEntry>) -> Self {
-        let replies: Vec<ConversationEntry> = entries
-            .into_iter()
-            .filter(|e| e.kind == EntryKind::Assistant)
-            .collect();
-        assert!(
-            replies
-                .windows(2)
-                .all(|w| (w[0].seq, w[0].part) < (w[1].seq, w[1].part)),
-            "replies keep the conversation's order"
-        );
-        Self::Conversation(replies)
-    }
-
     /// Whether the orchestrator has answered the prompt yet.
     pub fn replied(&self, feed: &[FeedItem]) -> bool {
         match self {
-            Self::Feed => feed.iter().any(|i| is_feed_reply(&i.entry)),
-            Self::Conversation(replies) => !replies.is_empty(),
+            Self::Feed => feed
+                .iter()
+                .any(|i| matches!(i.entry, FeedEntry::Orchestrator { .. })),
+            Self::Transcript(answers) => !answers.is_empty(),
         }
     }
-
-    /// Whether a feed entry is left out because the replies come from the
-    /// conversation, so no reply is counted twice.
-    pub fn supersedes(&self, entry: &FeedEntry) -> bool {
-        matches!(self, Self::Conversation(_)) && is_feed_reply(entry)
-    }
 }
 
-fn is_feed_reply(entry: &FeedEntry) -> bool {
-    matches!(entry, FeedEntry::Orchestrator { .. })
-}
-
-/// The replies read so far, from every orchestrator the trial had. Each
-/// transcript is read from aetherd itself: archond reads only the current
-/// one, so a retired orchestrator's last replies would be lost to it.
+/// The trial's one orchestrator and the answers read from it so far.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReplyLog {
-    /// The conversation's end before the prompt; a newly seen orchestrator
-    /// is read from here, as Aether's event seq is global.
-    baseline: u64,
-    /// Per orchestrator, the last event read of its transcript.
-    cursors: BTreeMap<AetherAgentId, u64>,
-    /// By `(seq, part)`, which a successor that kept the transcript repeats.
-    kept: BTreeMap<(u64, u32), ConversationEntry>,
-    replies: Replies,
+    orchestrator: AetherAgentId,
+    source: Source,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum Source {
+    Feed,
+    Transcript {
+        /// The last Aether event applied to the tracker.
+        cursor: u64,
+        tracker: ReplyTracker,
+        answers: Vec<Answer>,
+    },
 }
 
 impl ReplyLog {
-    /// Probe archond for the conversation before the prompt and take its
-    /// end as the baseline, enrolling the orchestrator that will read the
-    /// prompt; an archond without it keeps replies in the feed.
-    pub async fn start(client: &ArchonClient) -> anyhow::Result<Self> {
+    /// Before the prompt: record the orchestrator, and probe archond for
+    /// the conversation; an archond without it keeps answers in the feed.
+    pub async fn start(client: &ArchonClient, aether_socket: &Path) -> anyhow::Result<Self> {
+        let orchestrator = super::orchestrator_agent(client).await?;
         let request = Request::Conversation {
             after: None,
             before: None,
@@ -92,101 +72,131 @@ impl ReplyLog {
             wait: false,
         };
         match client.request(request).await {
-            Ok(Reply::Conversation(page)) => {
-                assert!(page.is_ordered(), "archond serves ordered pages");
-                let mut log = Self::after(page.last_seq.max(page.to_seq));
-                log.enroll(super::orchestrator_agent(client).await?);
-                Ok(log)
+            Ok(Reply::Conversation(_)) => {
+                let aether = AetherClient::connect(&endpoint(aether_socket)).await?;
+                let cursor = newest_event(&aether, &orchestrator).await?;
+                Ok(Self::transcript(orchestrator, cursor))
             }
             Ok(other) => bail!("conversation returned another reply kind: {other:?}"),
-            Err(e) if lacks_conversation(&e) => Ok(Self::feed()),
-            Err(e) => Err(e).context("reading the end of the orchestrator's conversation"),
+            Err(e) if lacks_conversation(&e) => Ok(Self::feed(orchestrator)),
+            Err(e) => Err(e).context("probing archond for the conversation"),
         }
     }
 
-    /// Replies kept in the feed: nothing to read.
-    pub fn feed() -> Self {
+    pub fn feed(orchestrator: AetherAgentId) -> Self {
         Self {
-            baseline: 0,
-            cursors: BTreeMap::new(),
-            kept: BTreeMap::new(),
-            replies: Replies::Feed,
+            orchestrator,
+            source: Source::Feed,
         }
     }
 
-    /// Replies read from the conversation's events after `baseline`.
-    pub fn after(baseline: u64) -> Self {
+    /// Answers read from `orchestrator`'s events after `cursor`.
+    pub fn transcript(orchestrator: AetherAgentId, cursor: u64) -> Self {
+        let source = Source::Transcript {
+            cursor,
+            tracker: ReplyTracker::default(),
+            answers: Vec::new(),
+        };
         Self {
-            replies: Replies::Conversation(Vec::new()),
-            baseline,
-            ..Self::feed()
+            orchestrator,
+            source,
         }
     }
 
-    pub fn replies(&self) -> &Replies {
-        &self.replies
+    pub fn replies(&self) -> Replies {
+        match &self.source {
+            Source::Feed => Replies::Feed,
+            Source::Transcript { answers, .. } => Replies::Transcript(answers.clone()),
+        }
     }
 
-    /// Read `agent`'s transcript from the baseline on every refresh until
-    /// the trial ends, even once another orchestrator replaces it.
-    pub fn enroll(&mut self, agent: AetherAgentId) {
-        assert!(self.replies != Replies::Feed, "only a conversation is read");
-        self.cursors.entry(agent).or_insert(self.baseline);
-        assert!(!self.cursors.is_empty(), "an enrolled agent is read");
-    }
-
-    /// The orchestrators whose transcripts are read, with their cursors.
-    pub fn cursors(&self) -> &BTreeMap<AetherAgentId, u64> {
-        &self.cursors
-    }
-
-    /// Enroll `current`, the orchestrator archond reports now, then read
-    /// what every enrolled orchestrator added since the last read.
+    /// Fail the trial when archond now reports another orchestrator, then
+    /// read what the transcript added since the last refresh.
     pub async fn refresh(
         &mut self,
-        current: AetherAgentId,
+        current: &AetherAgentId,
         aether_socket: &Path,
-    ) -> anyhow::Result<&Replies> {
-        if self.replies == Replies::Feed {
-            return Ok(&self.replies);
+    ) -> anyhow::Result<Replies> {
+        self.check_orchestrator(current)?;
+        if self.source == Source::Feed {
+            return Ok(Replies::Feed);
         }
-        self.enroll(current);
         let aether = AetherClient::connect(&endpoint(aether_socket)).await?;
-        let agents: Vec<AetherAgentId> = self.cursors.keys().cloned().collect();
-        for agent in agents {
-            let after = self.cursors[&agent];
-            let (entries, reached) = conversation_after(&aether, &agent, after).await?;
-            self.record(&agent, entries, reached)?;
+        loop {
+            let query = EventQuery {
+                agent: Some(self.orchestrator.clone()),
+                ..EventQuery::default()
+            };
+            let page = aether
+                .events_after(self.cursor(), query, PAGE_EVENTS)
+                .await
+                .with_context(|| format!("reading {}'s events", self.orchestrator))?;
+            let full = page.len() == PAGE_EVENTS;
+            self.apply(&page)?;
+            if !full {
+                return Ok(self.replies());
+            }
         }
-        Ok(&self.replies)
     }
 
-    /// Keep the orchestrator's own entries of one read of `agent`'s
-    /// transcript that ended at event `reached`, and move its cursor there.
-    pub fn record(
-        &mut self,
-        agent: &AetherAgentId,
-        entries: Vec<ConversationEntry>,
-        reached: u64,
-    ) -> anyhow::Result<()> {
+    /// The trial is void once another orchestrator answers it.
+    pub fn check_orchestrator(&self, current: &AetherAgentId) -> anyhow::Result<()> {
         ensure!(
-            self.replies != Replies::Feed,
-            "feed replies are not read from a conversation"
+            *current == self.orchestrator,
+            "orchestrator replaced: the trial began with {} and archond now reports {current}",
+            self.orchestrator
         );
-        let cursor = self.cursors.entry(agent.clone()).or_insert(self.baseline);
-        ensure!(
-            entries.iter().all(|e| *cursor < e.seq && e.seq <= reached),
-            "{agent}'s conversation entries fall outside events {cursor}..={reached}"
-        );
-        *cursor = (*cursor).max(reached);
-        let Replies::Conversation(new) = Replies::from_conversation(entries) else {
-            unreachable!("built from a conversation");
-        };
-        for entry in new {
-            self.kept.insert((entry.seq, entry.part), entry);
-        }
-        self.replies = Replies::Conversation(self.kept.values().cloned().collect());
         Ok(())
+    }
+
+    /// Apply a page of the orchestrator's events, oldest first.
+    pub fn apply(&mut self, page: &[archon_aether::AetherEvent]) -> anyhow::Result<()> {
+        let Source::Transcript {
+            cursor,
+            tracker,
+            answers,
+        } = &mut self.source
+        else {
+            bail!("feed answers are not read from a transcript");
+        };
+        for event in page {
+            ensure!(
+                event.seq > *cursor,
+                "event {} is not after the cursor {cursor}",
+                event.seq
+            );
+            ensure!(
+                event.agent.as_ref() == Some(&self.orchestrator),
+                "event {} is not the orchestrator's",
+                event.seq
+            );
+            *cursor = event.seq;
+            answers.extend(tracker.apply(event));
+        }
+        Ok(())
+    }
+
+    fn cursor(&self) -> u64 {
+        match &self.source {
+            Source::Feed => unreachable!("a feed log reads no events"),
+            Source::Transcript { cursor, .. } => *cursor,
+        }
+    }
+}
+
+/// The seq of `agent`'s newest event, 0 when it has none.
+async fn newest_event(aether: &AetherClient, agent: &AetherAgentId) -> anyhow::Result<u64> {
+    let query = EventQuery {
+        agent: Some(agent.clone()),
+        ..EventQuery::default()
+    };
+    let newest = aether
+        .latest_events_raw(query, 1)
+        .await
+        .with_context(|| format!("reading {agent}'s newest event"))?;
+    match newest.first() {
+        None => Ok(0),
+        Some(event) => event["seq"].as_u64().context("an event without seq"),
     }
 }
 
@@ -198,34 +208,4 @@ pub fn lacks_conversation(error: &ArchonError) -> bool {
         ArchonError::Invalid(text)
             if text.starts_with("not a request") && text.contains("`conversation`")
     )
-}
-
-/// Every important entry of `agent`'s transcript after `after`, page by
-/// page, and the last event read.
-async fn conversation_after(
-    aether: &AetherClient,
-    agent: &AetherAgentId,
-    after: u64,
-) -> anyhow::Result<(Vec<ConversationEntry>, u64)> {
-    let mut cursor = after;
-    let mut entries = Vec::new();
-    loop {
-        let page = aether
-            .conversation(agent, Some(cursor), None, Some(PAGE_EVENTS))
-            .await
-            .with_context(|| format!("reading {agent}'s conversation after {cursor}"))?;
-        ensure!(
-            page.entries.iter().all(|e| e.seq > cursor),
-            "{agent}'s conversation page after {cursor} is behind its cursor"
-        );
-        entries.extend(page.entries);
-        if !page.has_after {
-            return Ok((entries, cursor.max(page.to_seq)));
-        }
-        ensure!(
-            page.to_seq > cursor,
-            "{agent}'s conversation page after {cursor} has more but did not advance"
-        );
-        cursor = page.to_seq;
-    }
 }

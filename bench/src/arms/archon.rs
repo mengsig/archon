@@ -14,6 +14,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 mod replies;
+mod tracker;
 
 use anyhow::{Context, bail, ensure};
 use archon_aether::AetherClient;
@@ -41,6 +42,7 @@ use crate::metrics::{ArchonItem, Arm};
 use crate::usage::{Usage, aether_usage};
 use crate::workspace::{self, BASE_BRANCH, TrialLayout};
 pub use replies::{Replies, ReplyLog, lacks_conversation};
+pub use tracker::{Answer, ReplyTracker};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
 /// How long the fleet must stay quiet before the trial counts as finished;
@@ -282,8 +284,8 @@ async fn session(input: &TrialInput<'_>, client: &ArchonClient) -> anyhow::Resul
     let setup_secs = setup.elapsed().as_secs_f64();
     let repos = register_repos(input, client).await?;
     let baseline = last_feed_seq(client).await?;
-    let mut replies = ReplyLog::start(client).await?;
     let aether_socket = &input.settings.private_sockets()?.aether;
+    let mut replies = ReplyLog::start(client, aether_socket).await?;
     let started = Instant::now();
     client
         .request(Request::Say {
@@ -297,7 +299,7 @@ async fn session(input: &TrialInput<'_>, client: &ArchonClient) -> anyhow::Resul
     let wall_secs = finished.duration_since(started).as_secs_f64();
     let feed = feed_after(client, baseline).await?;
     let current = orchestrator_agent(client).await?;
-    let replies = replies.refresh(current, aether_socket).await?;
+    let replies = replies.refresh(&current, aether_socket).await?;
     let details = item_details(client).await?;
     std::fs::write(
         input.layout.logs.join("archon-items.json"),
@@ -306,8 +308,8 @@ async fn session(input: &TrialInput<'_>, client: &ArchonClient) -> anyhow::Resul
     let usage = fleet_usage(client, input, &details).await?;
     Ok(ArmOutcome {
         usage: Some(input.settings.price(Arm::Archon, usage)),
-        answer: answer_text(&feed, replies, &details),
-        operator_messages: operator_messages(&feed, replies),
+        answer: answer_text(&feed, &replies, &details),
+        operator_messages: operator_messages(&feed, &replies),
         wall_secs,
         setup_secs: Some(setup_secs),
         timed_out,
@@ -494,7 +496,7 @@ async fn observe(
         bail!("orchestrator_status returned another reply kind");
     };
     let feed = feed_after(client, baseline).await?;
-    let replies = replies.refresh(info.agent, aether_socket).await?;
+    let replies = replies.refresh(&info.agent, aether_socket).await?;
     Ok(Observation {
         replied: replies.replied(&feed),
         orchestrator_busy: BUSY_STATUSES.contains(&info.status.as_str()),
@@ -564,11 +566,11 @@ async fn fleet_usage(
 }
 
 /// Default-visible feed items, excluding the operator's own lines, plus the
-/// orchestrator's replies when the conversation holds them.
+/// orchestrator's answers when the transcript holds them.
 pub fn operator_messages(feed: &[FeedItem], replies: &Replies) -> u32 {
     let shown = feed
         .iter()
-        .filter(|i| i.visible(false) && !replies.supersedes(&i.entry))
+        .filter(|i| i.visible(false))
         .filter(|i| {
             !matches!(
                 i.entry,
@@ -578,23 +580,23 @@ pub fn operator_messages(feed: &[FeedItem], replies: &Replies) -> u32 {
         .count();
     let replied = match replies {
         Replies::Feed => 0,
-        Replies::Conversation(entries) => entries.len(),
+        Replies::Transcript(answers) => answers.len(),
     };
     u32::try_from(shown + replied).unwrap_or(u32::MAX)
 }
 
 /// What the operator reads: every visible feed text with the orchestrator's
-/// replies in time order, then the summaries of succeeded items (one
+/// answers in time order, then the summaries of succeeded items (one
 /// `archon queue show` away).
 pub fn answer_text(feed: &[FeedItem], replies: &Replies, details: &[ItemDetail]) -> String {
     let mut timed: Vec<(Timestamp, String)> = feed
         .iter()
-        .filter(|i| i.visible(false) && !replies.supersedes(&i.entry))
+        .filter(|i| i.visible(false))
         .filter_map(|i| feed_text(&i.entry).map(|text| (i.at, text)))
         .collect();
     // Feed replies already sit in seq order; only merged ones need sorting.
-    if let Replies::Conversation(entries) = replies {
-        timed.extend(entries.iter().map(|e| (e.at, e.text.clone())));
+    if let Replies::Transcript(answers) = replies {
+        timed.extend(answers.iter().map(|a| (a.at, a.text.clone())));
         timed.sort_by_key(|(at, _)| *at);
     }
     let mut parts: Vec<String> = timed.into_iter().map(|(_, text)| text).collect();

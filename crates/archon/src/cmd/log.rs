@@ -20,6 +20,9 @@ use crate::views;
 
 /// Most entries one `FeedHistory` returns (archond's own bound).
 const PAGE: usize = 1_000;
+/// Why `--kind orchestrator` finds no new reply: they live in the conversation.
+const REPLIES_MOVED: &str = "archon: new orchestrator replies are in `archon chat`; \
+                             `archon log` keeps only replies recorded by an older Archon";
 
 /// Which feed entries `archon log` prints.
 #[derive(Debug)]
@@ -140,6 +143,10 @@ pub async fn log(
     if limit == 0 {
         return Err(archon_core::ArchonError::Invalid("--limit must be at least 1".into()).into());
     }
+    if let Some(note) = replies_note(&kinds) {
+        // On stderr, so `--json` output stays one document or one object a line.
+        eprintln!("{note}");
+    }
     let client = connect_running().await?;
     let mut filter = match item {
         Some(text) => {
@@ -170,6 +177,13 @@ pub async fn log(
         return Ok(ExitCode::SUCCESS);
     }
     follow_feed(&client, &mut filter, newest, &output).await
+}
+
+/// The note a `--kind orchestrator` read prints first.
+fn replies_note(kinds: &[LogKind]) -> Option<&'static str> {
+    kinds
+        .contains(&LogKind::Orchestrator)
+        .then_some(REPLIES_MOVED)
 }
 
 /// Every question asked about `item`, answered or not.
@@ -354,6 +368,15 @@ mod tests {
         let mut filter = LogFilter::new(Some(mine), known, vec![]);
         assert!(!filter.is_open());
         assert_eq!(admitted(&mut filter, &entries), [1, 4, 5, 6, 9]);
+    }
+
+    #[test]
+    fn asking_for_orchestrator_replies_points_to_the_chat() {
+        let note = replies_note(&[LogKind::Outcome, LogKind::Orchestrator]).unwrap();
+        assert!(note.contains("`archon chat`"), "{note}");
+        assert_eq!(note.lines().count(), 1, "one line");
+        assert_eq!(replies_note(&[LogKind::Outcome]), None);
+        assert_eq!(replies_note(&[]), None);
     }
 
     #[test]

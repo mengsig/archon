@@ -22,10 +22,13 @@
 
 ### Fixed
 
-- The bench's `archon` arm reads the orchestrator's replies from the
-  conversation where archond serves one, and from the feed on 1.5.0 and
-  older. A question-only trial no longer waits for the timeout and is graded
-  on the real answer, not an empty one.
+- The bench's `archon` arm reads the orchestrator's answers from its
+  transcript where archond serves the conversation, by 1.5.0's reply rules,
+  and from the feed on 1.5.0 and older. A question-only trial no longer waits
+  for the timeout and is graded on the real answer, not an empty one. A trial
+  whose orchestrator is replaced ends as an error on either version.
+- `archon log --kind orchestrator` says that new orchestrator replies are in
+  `archon chat`; the log keeps only those an older Archon recorded.
 - Check for GitHub CLI 2.63.0 at startup and in doctor, while keeping gh
   optional for local-only setups. Contributed by @AmmarBattah (mengsig/archon#401).
 

@@ -422,3 +422,40 @@ async fn only_a_stage_agents_ask_user_is_posted() {
     assert_eq!(appended(&harness), [(asked, true)]);
     poster.abort();
 }
+
+/// The orchestrator is replaced while a post is on its way to it, after the
+/// poster read which one is current: the successor gets the post too before
+/// the cursor passes it, a repeat on the retired transcript but no loss.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_post_made_during_a_replacement_reaches_the_successor() {
+    const SUCCESSOR: &str = "agt_successor";
+    let harness = harness().await;
+    let ctx = Arc::clone(&harness.ctx);
+    let replace = move |note: &Value| {
+        if note["agent"] == ORCH {
+            // The fake answers synchronously; the append's reply waits for this.
+            tokio::task::block_in_place(|| {
+                let mut store = ctx.store.blocking_lock();
+                store.kv_set(keys::ORCHESTRATOR_AGENT, SUCCESSOR).unwrap();
+            });
+        }
+        Scripted::reply("note_appended", json!({"seq": 1}))
+    };
+    harness.fake.set_responder("append_note", Arc::new(replace));
+    let poster = start_posting(&harness).await;
+    notify(&harness, NotificationKind::Blocker, "CI is red", None).await;
+    let last = harness.ctx.store.lock().await.last_feed_seq().unwrap();
+    harness
+        .eventually("the cursor passes the post", || async {
+            harness.kv(posts::POSTED_KEY).await == Some(last.to_string())
+        })
+        .await;
+    let notes = harness.fake.received_named("append_note");
+    let to: Vec<_> = notes.iter().map(|n| n["agent"].as_str().unwrap()).collect();
+    assert_eq!(to, [ORCH, SUCCESSOR], "{notes:?}");
+    assert!(
+        notes.iter().all(|n| n["text"] == "**Blocker**: CI is red"),
+        "{notes:?}"
+    );
+    poster.abort();
+}

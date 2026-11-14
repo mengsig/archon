@@ -7,6 +7,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use archon_aether::AetherClient;
+use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::notify::{FeedEntry, FeedItem, Notification, NotificationKind, Question};
 use archon_queue::Store;
@@ -25,6 +27,10 @@ const MAX_POST_CHARS: usize = 4096;
 const BATCH: usize = 100;
 /// How long a post waits when Aether or the orchestrator is not there yet.
 const RETRY: Duration = Duration::from_secs(5);
+/// Orchestrators one post follows through replacements before it waits.
+const MAX_SWITCHES_PER_POST: usize = 3;
+/// Characters of one question option; ten of them leave the question room.
+const MAX_OPTION_CHARS: usize = 200;
 
 /// One post: its markdown, its links and whether the focused views show it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,34 +118,59 @@ async fn post_item(ctx: &DaemonContext, item: &FeedItem) -> Result<bool, ArchonE
     if !client.serves_conversation() {
         return Ok(false);
     }
-    let Some(orchestrator) = supervisor::current_orchestrator(ctx).await? else {
-        return Ok(false);
-    };
+    // A replacement during an append may leave the post on the retired
+    // transcript only, so it goes to the successor too: a repeat, not a loss.
+    let mut posted_to = None;
+    for _ in 0..MAX_SWITCHES_PER_POST {
+        let Some(orchestrator) = supervisor::current_orchestrator(ctx).await? else {
+            return Ok(false);
+        };
+        if posted_to.as_ref() == Some(&orchestrator) {
+            return Ok(true);
+        }
+        if !send(ctx, &client, &orchestrator, &post, item.seq).await {
+            return Ok(false);
+        }
+        posted_to = Some(orchestrator);
+    }
+    // Still switching: the retry posts it to whichever orchestrator is then current.
+    Ok(false)
+}
+
+/// Append `post` to `orchestrator`'s transcript; `false` when it must be
+/// retried, `true` once posted or refused as invalid.
+async fn send(
+    ctx: &DaemonContext,
+    client: &AetherClient,
+    orchestrator: &AetherAgentId,
+    post: &Post,
+    seq: u64,
+) -> bool {
     let sent = match post.important {
-        true => client.post(&orchestrator, &post.text, &post.links).await,
+        true => client.post(orchestrator, &post.text, &post.links).await,
         // 500 characters stay under a plain note's 2048 bytes.
         false => {
             client
-                .append_note(&orchestrator, &clip(&post.text, 500), None)
+                .append_note(orchestrator, &clip(&post.text, 500), None)
                 .await
         }
     };
     match sent {
         Ok(()) => {
             ctx.conversation.send_modify(|posts| *posts += 1);
-            Ok(true)
+            true
         }
         Err(error @ ArchonError::Invalid(_)) => {
-            tracing::warn!(seq = item.seq, %error, "aetherd refused a post; it stays in the feed");
-            Ok(true)
+            tracing::warn!(seq, %error, "aetherd refused a post; it stays in the feed");
+            true
         }
         Err(error @ ArchonError::Unavailable(_)) => {
-            tracing::debug!(seq = item.seq, %error, "a post waits for aetherd");
-            Ok(false)
+            tracing::debug!(seq, %error, "a post waits for aetherd");
+            false
         }
         Err(error) => {
-            tracing::warn!(seq = item.seq, %error, "a post failed; it and later ones are retried");
-            Ok(false)
+            tracing::warn!(seq, %error, "a post failed; it and later ones are retried");
+            false
         }
     }
 }
@@ -219,17 +250,30 @@ pub fn notification_post(notification: &Notification) -> Post {
     }
 }
 
-/// The question, its numbered options and how to answer it.
+/// The question, its numbered options and how to answer it. Only the
+/// question is clipped, so the options and the answer hint always fit.
 pub fn question_post(question: &Question) -> Post {
     assert!(question.number > 0, "a recorded question is numbered");
     let n = question.number;
-    let mut text = format!("**Q{n}:** {}", question.text);
+    let head = format!("**Q{n}:** ");
+    let mut tail = String::new();
     for (i, option) in question.options.iter().enumerate() {
-        text.push_str(&format!("\n{}. {option}", i + 1));
+        let option = clip(option, MAX_OPTION_CHARS);
+        tail.push_str(&format!("\n{}. {option}", i + 1));
     }
-    text.push_str(&format!(
+    tail.push_str(&format!(
         "\n\nAnswer with `/answer {n} …` or `archon answer {n} …`."
     ));
+    let room = MAX_POST_CHARS.saturating_sub(head.chars().count() + tail.chars().count());
+    // Ten options always leave room; more, never asked, clip the whole post.
+    let text = match room > 1 {
+        true => format!("{head}{}{tail}", clip(&question.text, room)),
+        false => clip(&format!("{head}{}{tail}", question.text), MAX_POST_CHARS),
+    };
+    assert!(
+        text.chars().count() <= MAX_POST_CHARS,
+        "a question post fits"
+    );
     plain(text)
 }
 
@@ -290,6 +334,32 @@ mod tests {
             "**Q4:** Ship it?\n1. yes\n2. no\n\nAnswer with `/answer 4 …` or `archon answer 4 …`."
         );
         assert!(post.important && post.links.is_empty());
+    }
+
+    /// A question as long as `ask` takes keeps its options and the answer
+    /// hint: only the question itself is clipped to fit one post.
+    #[test]
+    fn a_long_question_keeps_its_options_and_how_to_answer() {
+        let question = Question {
+            id: QuestionId::new(),
+            number: 9,
+            text: "why? ".repeat(4_000),
+            options: vec!["yes".into(), "no".into(), "x".repeat(1_000)],
+            item: None,
+            aether: None,
+            asked_by: None,
+            asked_at: archon_core::now(),
+            answer: None,
+            answered_at: None,
+        };
+        let post = question_post(&question);
+        assert_eq!(post.text.chars().count(), MAX_POST_CHARS);
+        assert!(post.text.starts_with("**Q9:** why? why?"), "{}", post.text);
+        let third = format!("{}…", "x".repeat(MAX_OPTION_CHARS - 1));
+        let tail = format!(
+            "…\n1. yes\n2. no\n3. {third}\n\nAnswer with `/answer 9 …` or `archon answer 9 …`."
+        );
+        assert!(post.text.ends_with(&tail), "{}", post.text);
     }
 
     #[test]

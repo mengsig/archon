@@ -147,7 +147,7 @@ pub fn provider_headroom(
             continue;
         };
         if paced <= 0.0 {
-            exhausted_resets.push(until.map(|s| now + chrono::TimeDelta::seconds(s)));
+            exhausted_resets.push(window.reset_at(read_at));
         }
         factor = Some(factor.map_or(paced, |f| f.min(paced)));
     }
@@ -270,6 +270,27 @@ mod tests {
         assert!(soon > later, "{soon} <= {later}");
         assert_eq!(soon, MAX_HEADROOM, "clamped");
         assert!((later - 0.42).abs() < 0.01, "30% over 5 of 7 days: {later}");
+    }
+
+    #[test]
+    fn an_exhausted_provider_keeps_the_readings_exact_reset() {
+        let now = at("2026-10-16T12:00:30.900Z");
+        let reset = at("2026-10-16T12:52:59.950Z");
+        let mut spent = window(0, 300, 0, now);
+        spent.resets_at = Some(reset);
+        let reading = ProviderHeadroom {
+            windows: vec![spent],
+            observed_at: Some(now),
+            age_seconds: Some(0),
+            stale: false,
+        };
+        let held = provider_headroom(&reading, 0, now, now).unwrap();
+        assert!(held.exhausted());
+        assert_eq!(
+            held.resets_at,
+            Some(reset),
+            "no truncation to whole seconds"
+        );
     }
 
     #[test]

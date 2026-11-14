@@ -4,11 +4,12 @@
 use std::path::Path;
 
 use archon_client::ArchonClient;
-use archon_core::protocol::{ItemQuery, PauseTarget, Request};
+use archon_core::protocol::{ItemQuery, PauseTarget, Reply, Request};
 
 use super::commands::{ChatInput, SlashCommand, help, parse_line};
 use super::draft::{chip, without_chips};
 use super::{Chat, Flow};
+use crate::connect::unexpected;
 use crate::format;
 use crate::images::{expand_home, pasted_image_path, read_image_file};
 use crate::ops;
@@ -85,12 +86,7 @@ async fn run_remote(
     command: SlashCommand,
 ) -> anyhow::Result<()> {
     match command {
-        SlashCommand::Authority(text) => {
-            // archond posts the command to the conversation, as a sent line comes back.
-            chat.expect_echo(&text);
-            client.request(Request::OperatorCommand { text }).await?;
-            Ok(())
-        }
+        SlashCommand::Authority(text) => operator_command(chat, client, text).await,
         SlashCommand::Answer { question, text } => answer(chat, client, question, &text).await,
         SlashCommand::Questions => {
             chat.sync_questions(client).await?;
@@ -128,8 +124,12 @@ async fn run_remote(
             ignore_checks,
         } => {
             let item = views::resolve_item(client, &item).await?;
-            let merge = ops::merge(client, item, ignore_checks, true).await?;
-            chat.print(&format::merge(&merge))
+            let flag = if ignore_checks {
+                " --ignore-checks"
+            } else {
+                ""
+            };
+            operator_command(chat, client, format!("/merge {item}{flag}")).await
         }
         SlashCommand::Diff(item) => {
             let item = views::resolve_item(client, &item).await?;
@@ -272,8 +272,26 @@ async fn answer(
     };
     let number = found.number;
     assert!(number > 0, "the chat only tracks numbered questions");
-    ops::answer(client, found, text, true).await?;
-    chat.note(&format!("answered Q{number}"))
+    assert!(
+        !text.trim().is_empty(),
+        "the parser refuses an empty answer"
+    );
+    operator_command(chat, client, format!("/answer {number} {text}")).await
+}
+
+/// Run a host command in archond as the phone's chat does: archond posts it
+/// to the conversation, which shows its result, and the post is this line's echo.
+async fn operator_command(
+    chat: &mut Chat,
+    client: &ArchonClient,
+    text: String,
+) -> anyhow::Result<()> {
+    assert!(text.starts_with('/'), "a host command: {text}");
+    chat.expect_echo(&text);
+    match client.request(Request::OperatorCommand { text }).await? {
+        Reply::Ok => Ok(()),
+        other => Err(unexpected(&other, "ok")),
+    }
 }
 
 async fn pause(

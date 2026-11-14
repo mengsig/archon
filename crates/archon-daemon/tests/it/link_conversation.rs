@@ -342,34 +342,31 @@ async fn answer_from_the_phone(harness: &Harness, number: u64) {
     assert!(matches!(reply, Ok(Reply::Ok)), "{reply:?}");
 }
 
-/// `/answer` typed in `archon chat`, which sends the expanded answer.
+/// `/answer` typed in `archon chat`, which sends it as an operator command.
 async fn answer_from_archon_chat(harness: &Harness, number: u64) {
-    let open = harness.ctx.store.lock().await.questions(true).unwrap();
-    let asked = open.into_iter().find(|q| q.number == number).unwrap();
-    let answer = Request::Answer {
-        question: asked.id,
-        text: "yes".into(),
-        chat: true,
+    let answer = Request::OperatorCommand {
+        text: format!("/answer {number} yes"),
     };
     let reply = request(harness, answer).await;
-    assert!(matches!(reply, Ok(Reply::Question(_))), "{reply:?}");
+    assert!(matches!(reply, Ok(Reply::Ok)), "{reply:?}");
 }
 
-/// The posts of one question, answered `yes`: asked, answered, applied.
+/// The posts of one question, answered `yes`: asked, the operator's
+/// command, answered, applied.
 fn answered_posts(n: u64) -> Vec<(String, bool)> {
     let asked = format!(
         "**Q{n}:** Ship to prod?\n1. yes\n2. no\n\nAnswer with `/answer {n} …` or `archon answer {n} …`."
     );
     vec![
         (asked, true),
+        (format!("**Operator:** /answer {n} yes"), true),
         (format!("**Answered Q{n}:** yes"), true),
         (format!("**Archon:** Applied: /answer Q{n}: yes"), true),
     ]
 }
 
-/// An answer from the phone and one from `archon chat` post the same:
-/// exactly one "Answered" and one "Applied" each, in the same order. The
-/// phone's line is a command archond runs itself, so it is posted first.
+/// An answer from the phone and one from `archon chat` post the same: the
+/// command, which archond runs itself, then one "Answered" and one "Applied".
 #[tokio::test]
 async fn a_phone_and_an_archon_chat_answer_post_the_same() {
     let harness = harness().await;
@@ -379,12 +376,11 @@ async fn a_phone_and_an_archon_chat_answer_post_the_same() {
     let chat = ask_ship(&harness).await;
     answer_from_archon_chat(&harness, chat).await;
     harness
-        .eventually("both answers", || async { appended(&harness).len() >= 7 })
+        .eventually("both answers", || async { appended(&harness).len() >= 8 })
         .await;
     // Room for a missing or doubled post to show in the comparison.
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     let mut want = answered_posts(phone);
-    want.insert(1, (format!("**Operator:** /answer {phone} yes"), true));
     want.extend(answered_posts(chat));
     assert_eq!(appended(&harness), want);
     poster.abort();

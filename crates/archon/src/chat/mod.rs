@@ -681,6 +681,36 @@ mod tests {
         assert_eq!((chat.prefill.take(), chat.unsent.take()), (None, None));
     }
 
+    /// `/answer` runs in archond as the phone's does, so the conversation
+    /// gets the command and its result; its post is this line's echo.
+    #[tokio::test]
+    async fn an_answer_is_sent_as_an_operator_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut chat = quiet_chat();
+        chat.book.sync_open(vec![archon_core::notify::Question {
+            id: archon_core::id::QuestionId::new(),
+            number: 3,
+            text: "Ship it?".into(),
+            options: vec!["yes".into(), "no".into()],
+            item: None,
+            aether: None,
+            asked_by: None,
+            asked_at: archon_core::now(),
+            answer: None,
+            answered_at: None,
+        }]);
+        let socket = dir.path().join("d.sock");
+        let (client, server) =
+            client_of_a_daemon_answering_once(&socket, Some(Ok(Reply::Ok))).await;
+        actions::handle_line(&mut chat, "/answer 3 yes", Some(&client))
+            .await
+            .unwrap();
+        let sent = server.await.unwrap();
+        let want = "/answer 3 yes".to_owned();
+        assert_eq!(sent, Request::OperatorCommand { text: want.clone() });
+        assert_eq!(chat.pending_echoes, [want]);
+    }
+
     #[tokio::test]
     async fn a_refused_send_keeps_the_images_and_puts_the_text_back() {
         let dir = tempfile::tempdir().unwrap();

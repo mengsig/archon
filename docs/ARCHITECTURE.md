@@ -3768,9 +3768,9 @@ order, with the same markdown text.
   itself and never sends to Aether (`FeedEntry::Operator{local:true}`: an
   `OperatorCommand` from `archon chat` or the phone, a socket settings change)
   is posted once as `**Operator:** <line>`, which `archon chat` and the phone
-  take as the echo of a line they sent. Every answer is posted. An answer typed in
-  `archon chat` is followed by the same `Applied: /answer Q<n>` result line
-  as one typed in the phone's chat. A command's result line (§18.6)
+  take as the echo of a line they sent. Every answer is posted. `archon chat` sends
+  `/answer`, `/merge` and the other host commands as `OperatorCommand`, as the
+  phone's chat does, so both post the same lines. A command's result line (§18.6)
   is a feed `System` entry where aetherd keeps posts, so it is posted in
   order like the rest. When the store opens on the first start, the cursor is
   set to the feed's end before anything writes. Older lines stay readable in

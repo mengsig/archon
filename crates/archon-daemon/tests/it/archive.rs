@@ -243,19 +243,23 @@ async fn a_delegate_aether_no_longer_knows_counts_as_archived() {
     assert_eq!(h.kv(&mark).await, None);
 }
 
-/// A delegate Aether refuses for good keeps the whole tree in view, and
-/// the mark is settled: it is never asked again.
+/// A delegate Aether refuses to archive keeps the whole tree in view and
+/// the mark owed: a restarted daemon asks again, and archives the tree once
+/// Aether allows it.
 #[tokio::test]
-async fn a_delegate_refused_for_good_keeps_its_tree_in_view() {
-    let h = Harness::new().await;
+async fn a_refused_delegate_keeps_its_tree_in_view_and_its_mark_owed() {
+    let mut h = Harness::new().await;
     let refused = ArchonError::Aether("permission_denied: archive refused".into());
-    let (mark, _, worker) = refused_worker(&h, refused).await;
+    let (mark, agent, worker) = refused_worker(&h, refused).await;
     assert!(h.backend.archived().is_empty(), "the stage agent stays too");
-    assert_eq!(h.kv(&mark).await, None, "given up");
+    assert_eq!(h.backend.archive_calls(), std::slice::from_ref(&worker));
+    assert_eq!(h.kv(&mark).await.as_deref(), Some("owed"), "never given up");
 
+    h.restart();
     h.dispatch().await;
     h.archive().await;
-    assert_eq!(h.backend.archive_calls(), [worker], "never asked again");
+    assert_eq!(h.backend.archived(), [worker, agent]);
+    assert_eq!(h.kv(&mark).await, None);
 }
 
 /// An owed mark of `h`'s new failed run whose implementer delegated a

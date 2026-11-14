@@ -16,7 +16,9 @@
 //! [`RETRY_EVERY`]. A pass reads the marks from the store and may take
 //! [`PASS_BUDGET`] in all and [`CALL_LIMIT`] a call, so a slow or silent
 //! Aether holds up nothing else; what a pass did not reach stays owed.
-//! Archiving is best-effort and never fails a run.
+//! So does a tree Aether refuses to archive, asked of again only every
+//! [`REFUSED_RETRY`] and after a restart. Archiving is best-effort and
+//! never fails a run.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
@@ -47,6 +49,8 @@ pub const CALL_LIMIT: Duration = Duration::from_secs(5);
 pub const PASS_BUDGET: Duration = Duration::from_secs(10);
 /// How long the worker waits for a new mark before it asks of the owed ones again.
 pub const RETRY_EVERY: Duration = Duration::from_secs(15);
+/// How long a tree Aether refused to archive waits before it is asked of again.
+pub const REFUSED_RETRY: Duration = Duration::from_secs(3600);
 // A pass outlasts one unanswered call, so one silent agent never takes it whole.
 const _: () = assert!(CALL_LIMIT.as_secs() < PASS_BUDGET.as_secs());
 
@@ -61,6 +65,8 @@ pub struct Progress {
     resume: Option<StageRunId>,
     /// What is archived already of each tree whose mark is still owed.
     archived: Delegates,
+    /// When each tree Aether refused to archive is asked of again.
+    refused: BTreeMap<StageRunId, Instant>,
 }
 
 /// Wake the worker for the `owed` marks just written; none wakes nobody.
@@ -99,9 +105,9 @@ pub async fn run_every(ctx: Arc<DaemonContext>, retry_every: Duration) -> Result
 pub async fn pass(ctx: &DaemonContext, progress: &mut Progress) -> Result<(), ArchonError> {
     let mut stages = marked(&mut *ctx.store.lock().await)?;
     stages.sort();
-    progress
-        .archived
-        .retain(|stage, _| stages.binary_search(stage).is_ok());
+    let marked = |stage: &StageRunId| stages.binary_search(stage).is_ok();
+    progress.archived.retain(|stage, _| marked(stage));
+    progress.refused.retain(|stage, _| marked(stage));
     let resume = progress.resume.take();
     let start = resume.map_or(0, |from| stages.partition_point(|stage| *stage < from));
     let (earlier, rest) = stages.split_at(start);
@@ -115,7 +121,7 @@ pub async fn pass(ctx: &DaemonContext, progress: &mut Progress) -> Result<(), Ar
             progress.resume = Some(stage.clone());
             break;
         }
-        match release(ctx, stage, deadline, &mut progress.archived).await {
+        match release(ctx, stage, deadline, progress).await {
             Ok(()) => {}
             Err(error) if error.is_store() => return Err(error),
             Err(error) => {
@@ -123,13 +129,12 @@ pub async fn pass(ctx: &DaemonContext, progress: &mut Progress) -> Result<(), Ar
             }
         }
     }
-    let stands = |stage: &StageRunId| stages.binary_search(stage).is_ok();
     assert!(
-        progress.archived.keys().all(stands),
+        progress.archived.keys().all(marked) && progress.refused.keys().all(marked),
         "progress is kept only of marked trees"
     );
     assert!(
-        progress.resume.as_ref().is_none_or(stands),
+        progress.resume.as_ref().is_none_or(marked),
         "the next pass resumes at a mark this one read"
     );
     Ok(())
@@ -332,33 +337,63 @@ fn due(store: &mut Store, stage: &StageRunId) -> Result<Option<AetherAgentId>, A
 
 /// Archive `stage`'s tree if its mark owes it now, and record that it is
 /// settled: a finished run's mark is dropped, a live one's kept as done.
-/// A tree not archived whole by `deadline` keeps its mark owed and, in
-/// `archived`, the delegates it need not ask of again.
+/// A tree not archived whole keeps its mark owed and, in `progress`, the
+/// delegates it need not ask of again; one Aether refused waits there for
+/// [`REFUSED_RETRY`] first.
 async fn release(
     ctx: &DaemonContext,
     stage: &StageRunId,
     deadline: Instant,
-    archived: &mut Delegates,
+    progress: &mut Progress,
 ) -> Result<(), ArchonError> {
     let Some(agent) = due(&mut *ctx.store.lock().await, stage)? else {
         return Ok(());
     };
-    let delegates = archived.entry(stage.clone()).or_default();
-    if archive_tree(ctx, stage, &agent, deadline, delegates).await == Archived::Later {
+    let now = Instant::now();
+    if progress
+        .refused
+        .get(stage)
+        .is_some_and(|again| now < *again)
+    {
         return Ok(());
     }
-    archived.remove(stage);
-    let mut store = ctx.store.lock().await;
+    let delegates = progress.archived.entry(stage.clone()).or_default();
+    match archive_tree(ctx, stage, &agent, deadline, delegates).await {
+        Archived::Done => {}
+        Archived::Later => return Ok(()),
+        Archived::Refused => {
+            let again = Instant::now() + REFUSED_RETRY;
+            progress.refused.insert(stage.clone(), again);
+            return Ok(());
+        }
+    }
+    progress.archived.remove(stage);
+    progress.refused.remove(stage);
+    settle(&mut *ctx.store.lock().await, stage)
+}
+
+/// `stage`'s tree is archived: drop its mark once its run finished, and
+/// keep it as done while the run is live, so the tree is archived once.
+fn settle(store: &mut Store, stage: &StageRunId) -> Result<(), ArchonError> {
     let key = mark_key(stage);
-    if store.kv_get(&key)?.is_none() {
+    let Some(mark) = store.kv_get(&key)? else {
         return Ok(());
-    }
+    };
+    assert!(
+        mark == OWED || mark == DONE,
+        "an archive mark is owed or done"
+    );
     let run = store.stage_run(stage)?.run;
     if store.run(&run)?.state.is_terminal() {
         store.kv_delete(&key)?;
     } else {
         store.kv_set(&key, DONE)?;
     }
+    assert_ne!(
+        store.kv_get(&key)?.as_deref(),
+        Some(OWED),
+        "an archived tree owes nothing"
+    );
     Ok(())
 }
 
@@ -369,8 +404,9 @@ enum Archived {
     Done,
     /// Not yet: Aether did not answer or holds it live; the mark stays owed.
     Later,
-    /// Refused for good: it stays in view and the mark is settled.
-    GaveUp,
+    /// Refused by Aether: it stays in view, its mark owed, to be asked of
+    /// again much later.
+    Refused,
 }
 
 /// `call` to Aether, counted unanswered once it takes over [`CALL_LIMIT`]
@@ -431,7 +467,7 @@ async fn archive_tree(
         !archived.contains(agent),
         "the stage agent goes last, so no pass remembers it"
     );
-    let mut gave_up = false;
+    let mut refused = false;
     for member in &descendants {
         if archived.contains(&member.agent) {
             continue;
@@ -442,12 +478,12 @@ async fn archive_tree(
             }
             // The rest would likely wait as long; the next pass asks again.
             Archived::Later => return Archived::Later,
-            Archived::GaveUp => gave_up = true,
+            Archived::Refused => refused = true,
         }
     }
-    if gave_up {
-        tracing::warn!(%stage, %agent, "a delegate of the stage agent cannot be archived; the tree stays in Aether's view");
-        return Archived::GaveUp;
+    if refused {
+        tracing::warn!(%stage, %agent, "Aether refused to archive a delegate of the stage agent; the tree stays in its view, owed");
+        return Archived::Refused;
     }
     archive_one(ctx, stage, agent, deadline).await
 }
@@ -476,8 +512,8 @@ async fn archive_one(
             Archived::Later
         }
         Err(error) => {
-            tracing::warn!(%stage, %agent, %error, "archiving a stage agent failed; it stays in Aether's view");
-            Archived::GaveUp
+            tracing::warn!(%stage, %agent, %error, "Aether refused to archive a stage agent; it stays in its view, owed");
+            Archived::Refused
         }
     }
 }

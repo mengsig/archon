@@ -7,9 +7,10 @@ use std::future::Future;
 use std::time::Duration;
 
 use archon_core::aether_ids::AetherAgentId;
+use archon_core::error::ArchonError;
 use archon_core::ports::DescendantState;
 use archon_core::queue::QueueState;
-use archon_daemon::executor::archive::{self, CALL_LIMIT, PASS_BUDGET, Progress};
+use archon_daemon::executor::archive::{self, CALL_LIMIT, PASS_BUDGET, Progress, REFUSED_RETRY};
 use tokio::time::Instant;
 
 use super::{engine_died, failed, lead_agent, owed_tree};
@@ -293,6 +294,53 @@ async fn a_pass_out_of_time_resumes_at_the_marks_it_did_not_reach() {
     for (mark, _) in &owed {
         assert_eq!(h.kv(mark).await, None);
     }
+}
+
+/// A tree Aether refuses to archive stays owed, with its stage agent in
+/// view, and is left alone until [`REFUSED_RETRY`] has passed. The refused
+/// agent is the tree's delegate, or else the stage agent itself.
+async fn refused_then_allowed(refuse_delegate: bool) {
+    let h = Harness::new().await;
+    let item = h.enqueue("archive refused").await;
+    h.dispatch().await;
+    let agent = lead_agent(&h.running().await[0]);
+    let worker = h.backend.delegate(&agent, MODEL);
+    h.backend.end_delegated(&worker, DescendantState::Stopped);
+    h.settle_running(|_| failed("tests failed")).await;
+    h.dispatch().await;
+    let stage = h.stages(&item.id).await.remove(0);
+    let mark = format!("archive:{}", stage.id);
+    let refused = if refuse_delegate { &worker } else { &agent };
+    let refusal = ArchonError::Aether("permission_denied: archive refused".into());
+    h.backend.fail_next_archive_of(refused, refusal);
+
+    let mut progress = Progress::default();
+    pass(&h, &mut progress).await;
+    assert!(!h.backend.archived().contains(&agent), "it stays in view");
+    assert_eq!(h.kv(&mark).await.as_deref(), Some("owed"), "never given up");
+    let calls = h.backend.archive_calls().len();
+
+    tokio::time::advance(REFUSED_RETRY - Duration::from_secs(1)).await;
+    pass(&h, &mut progress).await;
+    assert_eq!(h.backend.archive_calls().len(), calls, "not asked so soon");
+    assert_eq!(h.kv(&mark).await.as_deref(), Some("owed"));
+
+    tokio::time::advance(Duration::from_secs(1)).await;
+    pass(&h, &mut progress).await;
+    let mut archived = h.backend.archived();
+    assert_eq!(archived.pop(), Some(agent), "the stage agent last");
+    assert_eq!(archived, [worker], "its delegate once");
+    assert_eq!(h.kv(&mark).await, None);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_refused_delegate_archive_stays_owed_and_is_asked_again_much_later() {
+    refused_then_allowed(true).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_refused_stage_agent_archive_stays_owed_and_is_asked_again_much_later() {
+    refused_then_allowed(false).await;
 }
 
 /// A running worker asks of a mark as it is written, without waiting for

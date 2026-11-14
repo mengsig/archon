@@ -782,6 +782,8 @@ struct FakeState {
     /// Every `archive` call, refused ones included, in order.
     archive_calls: Vec<AetherAgentId>,
     archive_failures: VecDeque<ArchonError>,
+    /// The error the next `archive` of each of these agents fails with.
+    archive_refusals: BTreeMap<AetherAgentId, ArchonError>,
     /// Agents whose `archive` waits for its gate, once recorded.
     archive_holds: BTreeMap<AetherAgentId, Arc<tokio::sync::Semaphore>>,
     /// How long every `archive` takes to answer.
@@ -974,6 +976,12 @@ impl FakeBackend {
     /// The next `archive` calls fail with these errors, in order.
     pub fn fail_next_archive(&self, error: ArchonError) {
         self.state().archive_failures.push_back(error);
+    }
+
+    /// The next `archive` of `agent` fails with `error`, whenever it comes.
+    pub fn fail_next_archive_of(&self, agent: &AetherAgentId, error: ArchonError) {
+        let earlier = (self.state().archive_refusals).insert(agent.clone(), error);
+        assert!(earlier.is_none(), "one refusal per agent");
     }
 
     /// Every agent `archive` was asked about, refused ones included.
@@ -1454,6 +1462,9 @@ impl AgentBackend for FakeBackend {
         }
         let mut state = self.state();
         if let Some(error) = state.archive_failures.pop_front() {
+            return Err(error);
+        }
+        if let Some(error) = state.archive_refusals.remove(agent) {
             return Err(error);
         }
         let delegated_live =

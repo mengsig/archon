@@ -38,6 +38,7 @@ pub(super) async fn say(
     let entry = FeedEntry::Operator {
         text: text.clone(),
         images: refs,
+        local: false,
     };
     let item = feed::append(ctx, entry).await?;
     assert!(item.seq > 0, "feed sequences start at 1");

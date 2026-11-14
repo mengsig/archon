@@ -6,6 +6,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::Timestamp;
 
+/// What leads archond's post of an operator line it ran itself, such as a
+/// command from `archon chat` or the phone; the line follows it unchanged.
+pub const OPERATOR_POST_LABEL: &str = "**Operator:** ";
+
+/// The operator line a post carries, when it is one archond ran itself.
+pub fn operator_line(entry: &ConversationEntry) -> Option<&str> {
+    match entry.kind {
+        EntryKind::Post => entry.text.strip_prefix(OPERATOR_POST_LABEL),
+        _ => None,
+    }
+}
+
 /// Who said an entry, as Aether names it; a kind this Archon does not know
 /// reads as `Other` and still shows its text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

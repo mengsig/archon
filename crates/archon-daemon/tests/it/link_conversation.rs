@@ -368,7 +368,8 @@ fn answered_posts(n: u64) -> Vec<(String, bool)> {
 }
 
 /// An answer from the phone and one from `archon chat` post the same:
-/// exactly one "Answered" and one "Applied" each, in the same order.
+/// exactly one "Answered" and one "Applied" each, in the same order. The
+/// phone's line is a command archond runs itself, so it is posted first.
 #[tokio::test]
 async fn a_phone_and_an_archon_chat_answer_post_the_same() {
     let harness = harness().await;
@@ -378,13 +379,44 @@ async fn a_phone_and_an_archon_chat_answer_post_the_same() {
     let chat = ask_ship(&harness).await;
     answer_from_archon_chat(&harness, chat).await;
     harness
-        .eventually("both answers", || async { appended(&harness).len() >= 5 })
+        .eventually("both answers", || async { appended(&harness).len() >= 7 })
         .await;
     // Room for a missing or doubled post to show in the comparison.
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     let mut want = answered_posts(phone);
+    want.insert(1, (format!("**Operator:** /answer {phone} yes"), true));
     want.extend(answered_posts(chat));
     assert_eq!(appended(&harness), want);
+    poster.abort();
+}
+
+/// A command sent over the operator socket runs in archond and never reaches
+/// Aether, so archond posts it once, as the operator's line, before its result.
+#[tokio::test]
+async fn a_socket_command_reaches_the_conversation_once() {
+    let harness = harness().await;
+    let poster = start_posting(&harness).await;
+    let command = Request::OperatorCommand {
+        text: "/answer 99 hi".into(),
+    };
+    let reply = request(&harness, command).await;
+    assert!(matches!(reply, Ok(Reply::Ok)), "{reply:?}");
+    harness
+        .eventually("the result post", || async {
+            appended(&harness).len() >= 2
+        })
+        .await;
+    // Room for a doubled post to show.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let posts = appended(&harness);
+    assert_eq!(posts.len(), 2, "{posts:?}");
+    assert_eq!(posts[0], ("**Operator:** /answer 99 hi".to_owned(), true));
+    assert!(
+        posts[1].0.starts_with("**Archon:** Refused: /answer"),
+        "{posts:?}"
+    );
+    let last = harness.ctx.store.lock().await.last_feed_seq().unwrap();
+    assert_eq!(harness.kv(posts::POSTED_KEY).await, Some(last.to_string()));
     poster.abort();
 }
 
@@ -514,5 +546,41 @@ async fn a_switch_under_way_after_the_append_holds_the_cursor_until_the_successo
     let notes = harness.fake.received_named("append_note");
     let to: Vec<_> = notes.iter().map(|n| n["agent"].as_str().unwrap()).collect();
     assert_eq!(to, [ORCH, SUCCESSOR], "{notes:?}");
+    poster.abort();
+}
+
+/// The orchestrator's own `ask_user` arrives while a switch is under way: the
+/// skip waits for it, and the successor, whose transcript lacks the question,
+/// gets it posted before the cursor passes it.
+#[tokio::test]
+async fn an_orchestrators_question_during_a_replacement_reaches_the_successor() {
+    const SUCCESSOR: &str = "agt_successor";
+    let harness = harness().await;
+    let before = harness.ctx.store.lock().await.last_feed_seq().unwrap();
+    let poster = start_posting(&harness).await;
+    let switch = supervisor::hold_switch(&harness.ctx).await;
+    let number = ask_user(&harness, ORCH, "Which repo?").await;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert_eq!(
+        harness.kv(posts::POSTED_KEY).await,
+        Some(before.to_string()),
+        "the skip waits for the switch"
+    );
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, SUCCESSOR).await;
+    drop(switch);
+    let last = harness.ctx.store.lock().await.last_feed_seq().unwrap();
+    harness
+        .eventually("the cursor passes the question", || async {
+            harness.kv(posts::POSTED_KEY).await == Some(last.to_string())
+        })
+        .await;
+    let notes = harness.fake.received_named("append_note");
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert_eq!(notes[0]["agent"], SUCCESSOR);
+    let asked = format!("**Q{number}:** Which repo?");
+    assert!(
+        notes[0]["text"].as_str().unwrap().starts_with(&asked),
+        "{notes:?}"
+    );
     poster.abort();
 }

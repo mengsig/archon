@@ -16,7 +16,9 @@
   This needs an aetherd that serves the `conversation` feature. Restart an
   `archon chat` and reload a phone page opened before the upgrade, or they
   show no replies. A stage agent's `ask_user` question is posted, numbered,
-  with how to answer it; the orchestrator's own stays in its transcript.
+  with how to answer it; the orchestrator's own stays in its transcript. A
+  command sent from `archon chat` or the phone (`/answer`, `/status`,
+  `/archon …`) is posted once as `**Operator:** <command>`, before its result.
 
 ### Fixed
 

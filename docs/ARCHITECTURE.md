@@ -3761,8 +3761,14 @@ order, with the same markdown text.
   logged). Delivery is at least once: `append_note` takes no idempotency key,
   so a crash between the append and the cursor write posts that item again.
   Progress goes as a plain note, which the focused views leave out. Operator
-  lines, orchestrator replies and `ask_user` questions are not posted again,
-  because they are already in the transcript. Every answer is posted. An answer typed in
+  lines, orchestrator replies and the orchestrator's own `ask_user` questions
+  are not posted again, because they are already in the transcript; that skip
+  and its cursor write are made under the supervisor's steady lock, so a
+  successor without the question gets it posted. An operator line archond runs
+  itself and never sends to Aether (`FeedEntry::Operator{local:true}`: an
+  `OperatorCommand` from `archon chat` or the phone, a socket settings change)
+  is posted once as `**Operator:** <line>`, which `archon chat` and the phone
+  take as the echo of a line they sent. Every answer is posted. An answer typed in
   `archon chat` is followed by the same `Applied: /answer Q<n>` result line
   as one typed in the phone's chat. A command's result line (§18.6)
   is a feed `System` entry where aetherd keeps posts, so it is posted in

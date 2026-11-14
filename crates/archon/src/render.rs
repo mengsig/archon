@@ -193,7 +193,7 @@ fn describe(entry: &FeedEntry) -> Parts {
                 evidence.channel, evidence.seq
             ),
         ),
-        FeedEntry::Operator { text, images } => {
+        FeedEntry::Operator { text, images, .. } => {
             simple("you", Style::Bold, &with_image_labels(text, images))
         }
         FeedEntry::Orchestrator { text } => simple("orchestrator", Style::Cyan, text),
@@ -314,6 +314,7 @@ mod tests {
             &item(FeedEntry::Operator {
                 text: "add caching".into(),
                 images: Vec::new(),
+                local: false,
             }),
             false,
         );
@@ -337,6 +338,7 @@ mod tests {
         let line = item(FeedEntry::Operator {
             text: "what is this?".into(),
             images: vec![shot.clone()],
+            local: false,
         });
         let rendered = render_feed_item(&line, false).unwrap();
         assert_eq!(head(&rendered), "you  what is this?");
@@ -344,6 +346,7 @@ mod tests {
         let only = item(FeedEntry::Operator {
             text: String::new(),
             images: vec![shot],
+            local: false,
         });
         let rendered = render_feed_item(&only, false).unwrap();
         assert_eq!(head(&rendered), "you  [image: shot.png, 1.5 KB]");

@@ -4379,6 +4379,10 @@
               },
               "type": "array"
             },
+            "local": {
+              "description": "archond ran the line itself and never sent it to Aether, so the\nconversation gets it as a post.",
+              "type": "boolean"
+            },
             "text": {
               "type": "string"
             }

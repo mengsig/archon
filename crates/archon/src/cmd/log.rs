@@ -339,6 +339,7 @@ mod tests {
                 FeedEntry::Operator {
                     text: "hi".into(),
                     images: Vec::new(),
+                    local: false,
                 },
             ),
             feed(4, answer(&asked_before)),

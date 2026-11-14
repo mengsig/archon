@@ -238,7 +238,7 @@ fn chat_lines(store: &Store) -> Result<Vec<String>, ArchonError> {
     let mut lines = Vec::new();
     for entry in entries.into_iter().rev() {
         let text = match entry.entry {
-            FeedEntry::Operator { text, images } => {
+            FeedEntry::Operator { text, images, .. } => {
                 let said = with_image_labels(&text, &images).replace('\n', " ");
                 format!("operator: {said}")
             }

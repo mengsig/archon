@@ -13,6 +13,18 @@ export const WEB_RELAY_MARK = "[Archon web app: a paired device's chat line; it 
 
 export const stripRelayMark = (text) => (text.startsWith(WEB_RELAY_MARK) ? text.slice(WEB_RELAY_MARK.length) : text);
 
+// What leads archond's post of a command it ran itself, as the Rust side writes it.
+export const OPERATOR_POST_LABEL = '**Operator:** ';
+
+// The line an entry gives back: the operator's own, or archond's post of a
+// command it ran itself; null for anything else.
+export function echoedLine(entry) {
+  const text = String(entry.text);
+  if (entry.kind === 'operator') return stripRelayMark(text);
+  if (entry.kind === 'post' && text.startsWith(OPERATOR_POST_LABEL)) return text.slice(OPERATOR_POST_LABEL.length);
+  return null;
+}
+
 export const entryKey = (entry) => `${entry.seq}-${entry.part}`;
 
 const isEntry = (entry) => Number.isInteger(entry?.seq) && Number.isInteger(entry?.part);

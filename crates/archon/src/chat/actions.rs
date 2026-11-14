@@ -86,6 +86,8 @@ async fn run_remote(
 ) -> anyhow::Result<()> {
     match command {
         SlashCommand::Authority(text) => {
+            // archond posts the command to the conversation, as a sent line comes back.
+            chat.expect_echo(&text);
             client.request(Request::OperatorCommand { text }).await?;
             Ok(())
         }

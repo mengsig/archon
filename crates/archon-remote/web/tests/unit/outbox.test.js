@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createStore } from '../../src/core/store.js';
-import { WEB_RELAY_MARK } from '../../src/core/conversation.js';
+import { WEB_RELAY_MARK, OPERATOR_POST_LABEL } from '../../src/core/conversation.js';
 import { addPending, settlePending, matchEchoes, removePending } from '../../src/features/chat/outbox.js';
 
 const store = (conversation = []) => createStore({ conversation, outbox: [], chatNotes: {} });
@@ -35,6 +35,16 @@ test('other kinds and unmatched text leave the outbox alone', () => {
   matchEchoes(s, [{ ...operator(1, 'hello'), kind: 'assistant' }, operator(2, 'hello there')]);
   assert.equal(s.get().outbox.length, 1);
   assert.deepEqual(s.get().chatNotes, {});
+});
+
+test("archond's post of a command it ran settles the send; another post does not", () => {
+  const s = store();
+  const id = addPending(s, '/status');
+  matchEchoes(s, [{ ...operator(7, '/status'), kind: 'post' }]);
+  assert.equal(s.get().outbox.length, 1, 'a plain post is no echo');
+  matchEchoes(s, [{ ...operator(8, `${OPERATOR_POST_LABEL}/status`), kind: 'post' }]);
+  assert.equal(s.get().outbox.length, 0);
+  assert.equal(s.get().chatNotes['8-0'].localId, id);
 });
 
 test('each operator entry takes one pending send, oldest first', () => {

@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use archon_aether::AetherClient;
 use archon_core::aether_ids::AetherAgentId;
+use archon_core::conversation::OPERATOR_POST_LABEL;
 use archon_core::error::ArchonError;
 use archon_core::notify::{FeedEntry, FeedItem, Notification, NotificationKind, Question};
 use archon_queue::Store;
@@ -104,7 +105,8 @@ async fn post_pending(ctx: &DaemonContext, cursor: &mut u64) -> Result<bool, Arc
 /// Aether away or without posts, no orchestrator, or a failure that may pass.
 /// Only a post Aether refuses as invalid is logged and skipped, so it cannot
 /// hold the rest back. Delivery is at least once: Aether takes no key that
-/// would drop a repeated post.
+/// would drop a repeated post. The orchestrator's own `ask_user` question is
+/// in its transcript already: skipped, unless a successor took over first.
 async fn post_item(ctx: &DaemonContext, item: &FeedItem) -> Result<bool, ArchonError> {
     let Some(post) = post_of(ctx, item).await? else {
         save_cursor(ctx, item.seq).await?;
@@ -116,6 +118,7 @@ async fn post_item(ctx: &DaemonContext, item: &FeedItem) -> Result<bool, ArchonE
     if !client.serves_conversation() {
         return Ok(false);
     }
+    let in_transcript_of = asking_agent(item);
     // A replacement during an append may leave the post on the retired
     // transcript only, so it goes to the successor too: a repeat, not a loss.
     let mut posted_to = None;
@@ -124,7 +127,9 @@ async fn post_item(ctx: &DaemonContext, item: &FeedItem) -> Result<bool, ArchonE
         let Some(orchestrator) = supervisor::current_orchestrator(ctx).await? else {
             return Ok(false);
         };
-        if posted_to.as_ref() == Some(&orchestrator) {
+        let posted = posted_to.as_ref() == Some(&orchestrator);
+        let asked_here = in_transcript_of == Some(&orchestrator);
+        if posted || asked_here {
             // Under `steady`: no switch between this check and the saved cursor.
             save_cursor(ctx, item.seq).await?;
             return Ok(true);
@@ -188,17 +193,20 @@ async fn send(
 }
 
 /// The post a feed item makes, `None` for what the transcript holds already:
-/// operator lines, orchestrator replies and the orchestrator's own `ask_user`
-/// questions; and the audit line of a command whose result line follows it.
+/// operator lines Aether delivered and orchestrator replies; and the audit
+/// line of a command whose result line follows it.
 async fn post_of(ctx: &DaemonContext, item: &FeedItem) -> Result<Option<Post>, ArchonError> {
     let post = match &item.entry {
+        // A command archond ran itself never reached Aether.
+        FeedEntry::Operator {
+            text, local: true, ..
+        } if !text.trim().is_empty() => Some(plain(format!("{OPERATOR_POST_LABEL}{text}"))),
         FeedEntry::Operator { .. } | FeedEntry::Orchestrator { .. } => None,
         // Its own result line follows.
         FeedEntry::Authority { result, .. } if result == OUTCOME_FOLLOWS => None,
         FeedEntry::Authority { action, result, .. } => {
             Some(plain(format!("**Authority:** {action}: {result}")))
         }
-        FeedEntry::Question(question) if asked_by_orchestrator(ctx, question).await? => None,
         FeedEntry::Question(question) => Some(question_post(question)),
         FeedEntry::Notification(notification) => Some(notification_post(notification)),
         FeedEntry::Answer { question, text, .. } => {
@@ -220,17 +228,13 @@ async fn post_of(ctx: &DaemonContext, item: &FeedItem) -> Result<Option<Post>, A
     }))
 }
 
-/// A stage agent's `ask_user` is not in the orchestrator's transcript, so
-/// only the current orchestrator's own questions are left out.
-async fn asked_by_orchestrator(
-    ctx: &DaemonContext,
-    question: &Question,
-) -> Result<bool, ArchonError> {
-    let Some(aether) = &question.aether else {
-        return Ok(false);
-    };
-    let orchestrator = supervisor::current_orchestrator(ctx).await?;
-    Ok(orchestrator.as_ref() == Some(&aether.agent))
+/// The agent whose `ask_user` the item is: its transcript holds the question
+/// already. A stage agent is never the orchestrator, so its question is posted.
+fn asking_agent(item: &FeedItem) -> Option<&AetherAgentId> {
+    match &item.entry {
+        FeedEntry::Question(question) => question.aether.as_ref().map(|aether| &aether.agent),
+        _ => None,
+    }
 }
 
 fn plain(text: String) -> Post {

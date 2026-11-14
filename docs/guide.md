@@ -587,7 +587,8 @@ its `ask_user` questions, and what archond posts there itself:
   merges, stage messages and system notices;
 - the result of a command archond applies itself (`/answer`, `/approve`,
   `/reject`, `/merge`, `/upgrade`, `/watch`, `/archon …`), at once and with no
-  orchestrator turn.
+  orchestrator turn. A command sent from `archon chat` or the phone shows
+  before it, as `**Operator:** <command>`.
 
 This needs an aetherd that serves the `conversation` feature. Progress
 notices are left out of the focused views; `archon log` shows them, and the

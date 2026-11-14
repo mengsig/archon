@@ -74,6 +74,7 @@ pub(crate) async fn from_socket(
         archon_core::notify::FeedEntry::Operator {
             text: text.into(),
             images: Vec::new(),
+            local: true,
         },
     )
     .await?;

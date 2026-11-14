@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use archon_client::ArchonClient;
 use archon_core::authority::WEB_RELAY_MARK;
 use archon_core::config::Config;
-use archon_core::conversation::{ConversationEntry, ConversationPage, EntryKind};
+use archon_core::conversation::{ConversationEntry, ConversationPage, EntryKind, operator_line};
 use archon_core::protocol::{AetherLinkStatus, Reply, Request};
 
 use crate::chat::draft::Draft;
@@ -198,15 +198,12 @@ impl Chat {
             return Ok(());
         }
         self.shown = Some(at);
-        if live && entry.kind == EntryKind::Operator {
-            let text = entry
-                .text
-                .strip_prefix(WEB_RELAY_MARK)
-                .unwrap_or(&entry.text);
-            if let Some(at) = self.pending_echoes.iter().position(|sent| sent == text) {
-                self.pending_echoes.remove(at);
-                return Ok(());
-            }
+        if live
+            && let Some(text) = echoed_line(entry)
+            && let Some(at) = self.pending_echoes.iter().position(|sent| sent == text)
+        {
+            self.pending_echoes.remove(at);
+            return Ok(());
         }
         let renderer = Renderer::new(self.palette, terminal_width());
         let text = renderer.render_entry(entry);
@@ -331,6 +328,20 @@ impl Chat {
     fn error(&mut self, text: &str) -> anyhow::Result<()> {
         let line = format!("{} {text}", self.palette.paint(Style::Red, "error:"));
         self.print(&line)
+    }
+}
+
+/// The line an entry gives back: the operator's own, or archond's post of a
+/// command it ran itself.
+fn echoed_line(entry: &ConversationEntry) -> Option<&str> {
+    match entry.kind {
+        EntryKind::Operator => Some(
+            entry
+                .text
+                .strip_prefix(WEB_RELAY_MARK)
+                .unwrap_or(&entry.text),
+        ),
+        _ => operator_line(entry),
     }
 }
 
@@ -590,6 +601,28 @@ mod tests {
             "the phone-marked echo of a typed line is not repeated"
         );
         assert!(shown[4].contains("PR #7 merged"));
+        assert!(chat.pending_echoes.is_empty());
+    }
+
+    /// archond posts a command it ran itself; typed here, it is not repeated,
+    /// and typed elsewhere it shows.
+    #[test]
+    fn a_command_typed_here_shows_once() {
+        let printed = Printed::default();
+        let mut chat = quiet_chat();
+        chat.output = Output::AbovePrompt(Box::new(printed.clone()));
+        chat.show_page(&page(mixed_turn()[..1].to_vec(), 10))
+            .unwrap();
+        chat.expect_echo("/archon pause");
+        let label = archon_core::conversation::OPERATOR_POST_LABEL;
+        let posted = vec![
+            entry(21, 0, EntryKind::Post, &format!("{label}/archon pause")),
+            entry(22, 0, EntryKind::Post, &format!("{label}/archon resume")),
+        ];
+        chat.show_page(&page(posted, 22)).unwrap();
+        let shown = printed.0.lock().unwrap().clone();
+        assert_eq!(shown.len(), 2, "{shown:?}");
+        assert!(shown[1].contains("/archon resume"), "{shown:?}");
         assert!(chat.pending_echoes.is_empty());
     }
 

@@ -383,6 +383,7 @@ fn feed_entries_round_trip_with_gapless_seq() {
         FeedEntry::Operator {
             text: "hi".into(),
             images: Vec::new(),
+            local: false,
         },
         FeedEntry::Orchestrator {
             text: "hello".into(),

@@ -550,46 +550,63 @@ fn conversation_replies_supersede_any_feed_reply() {
     assert_eq!(operator_messages(&old, &replies), 2);
 }
 
-#[test]
-fn replies_survive_an_orchestrator_replaced_mid_trial() {
-    let mut log = ReplyLog::after(100);
-    let retired = vec![
-        said(EntryKind::Operator, 101, 0, "review it"),
-        said(EntryKind::Assistant, 102, 10, "Reading the module."),
-    ];
-    log.record(retired, 105).unwrap();
-    // The successor's transcript lacks 102; its events follow the cursor.
-    let successor = vec![said(
-        EntryKind::Assistant,
-        140,
-        40,
-        "verify() accepts forgeries.",
-    )];
-    log.record(successor, 140).unwrap();
-    let texts: Vec<&str> = match log.replies() {
+fn agent(id: &str) -> AetherAgentId {
+    AetherAgentId::parse(id).unwrap()
+}
+
+fn kept_texts(log: &ReplyLog) -> Vec<&str> {
+    match log.replies() {
         Replies::Conversation(kept) => kept.iter().map(|e| e.text.as_str()).collect(),
         Replies::Feed => unreachable!("read from a conversation"),
-    };
+    }
+}
+
+#[test]
+fn replies_survive_an_orchestrator_replaced_mid_trial() {
+    let (retired, successor) = (agent("agt_old"), agent("agt_new"));
+    let mut log = ReplyLog::after(100);
+    log.record(
+        &retired,
+        vec![said(EntryKind::Operator, 101, 0, "review it")],
+        101,
+    )
+    .unwrap();
+    // Replaced between polls: the successor is read from the baseline, and
+    // the retired transcript's unread tail is still read from its cursor.
+    let new_reply = said(EntryKind::Assistant, 140, 40, "verify() accepts forgeries.");
+    log.record(&successor, vec![new_reply], 140).unwrap();
+    let unread = said(EntryKind::Assistant, 102, 10, "Reading the module.");
+    log.record(&retired, vec![unread], 105).unwrap();
     assert_eq!(
-        texts,
+        kept_texts(&log),
         ["Reading the module.", "verify() accepts forgeries."]
     );
-    let behind = vec![said(EntryKind::Assistant, 120, 50, "replayed")];
+    let behind = vec![said(EntryKind::Assistant, 104, 50, "replayed")];
     assert!(
-        log.record(behind, 150).is_err(),
+        log.record(&retired, behind, 150).is_err(),
         "nothing at or before the cursor"
     );
-    assert!(ReplyLog::feed().record(Vec::new(), 1).is_err());
+    assert!(ReplyLog::feed().record(&retired, Vec::new(), 1).is_err());
+}
+
+#[test]
+fn a_successor_that_kept_the_transcript_adds_no_duplicate() {
+    let mut log = ReplyLog::after(0);
+    let reply = said(EntryKind::Assistant, 5, 0, "Done.");
+    log.record(&agent("agt_a"), vec![reply.clone()], 5).unwrap();
+    log.record(&agent("agt_b"), vec![reply], 5).unwrap();
+    assert_eq!(kept_texts(&log), ["Done."]);
 }
 
 #[test]
 fn every_assistant_entry_is_part_of_the_answer_as_the_conversation_shows_it() {
     let mut log = ReplyLog::after(0);
+    let orchestrator = agent("agt_o");
     let turn = vec![
         said(EntryKind::Assistant, 1, 0, "Let me read src/tokens.js."),
         said(EntryKind::Assistant, 2, 5, "The bug is in verify()."),
     ];
-    log.record(turn, 2).unwrap();
+    log.record(&orchestrator, turn, 2).unwrap();
     assert!(log.replies().replied(&[]));
     assert_eq!(operator_messages(&[], log.replies()), 2);
     assert_eq!(

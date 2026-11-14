@@ -283,6 +283,7 @@ async fn session(input: &TrialInput<'_>, client: &ArchonClient) -> anyhow::Resul
     let repos = register_repos(input, client).await?;
     let baseline = last_feed_seq(client).await?;
     let mut replies = ReplyLog::start(client).await?;
+    let aether_socket = &input.settings.private_sockets()?.aether;
     let started = Instant::now();
     client
         .request(Request::Say {
@@ -292,10 +293,10 @@ async fn session(input: &TrialInput<'_>, client: &ArchonClient) -> anyhow::Resul
         .await
         .context("sending the prompt with Say")?;
     let (timed_out, finished) =
-        wait_until_settled(client, baseline, &mut replies, input.timeout).await?;
+        wait_until_settled(client, baseline, &mut replies, aether_socket, input.timeout).await?;
     let wall_secs = finished.duration_since(started).as_secs_f64();
     let feed = feed_after(client, baseline).await?;
-    let replies = replies.refresh(client).await?;
+    let replies = replies.refresh(client, aether_socket).await?;
     let details = item_details(client).await?;
     std::fs::write(
         input.layout.logs.join("archon-items.json"),
@@ -404,12 +405,13 @@ async fn wait_until_settled(
     client: &ArchonClient,
     baseline: u64,
     replies: &mut ReplyLog,
+    aether_socket: &Path,
     timeout: Duration,
 ) -> anyhow::Result<(bool, Instant)> {
     let deadline = Instant::now() + timeout;
     let mut settle = Settle::default();
     loop {
-        let observed = observe(client, baseline, replies).await?;
+        let observed = observe(client, baseline, replies, aether_socket).await?;
         if settle.update(&observed, Instant::now()) {
             let quiet_since = settle.quiet_since().expect("settled means quiet");
             return Ok((false, quiet_since));
@@ -479,6 +481,7 @@ async fn observe(
     client: &ArchonClient,
     baseline: u64,
     replies: &mut ReplyLog,
+    aether_socket: &Path,
 ) -> anyhow::Result<Observation> {
     let Reply::Items(items) = client
         .request(Request::ListItems(ItemQuery::default()))
@@ -490,7 +493,7 @@ async fn observe(
         bail!("orchestrator_status returned another reply kind");
     };
     let feed = feed_after(client, baseline).await?;
-    let replies = replies.refresh(client).await?;
+    let replies = replies.refresh(client, aether_socket).await?;
     Ok(Observation {
         replied: replies.replied(&feed),
         orchestrator_busy: BUSY_STATUSES.contains(&info.status.as_str()),

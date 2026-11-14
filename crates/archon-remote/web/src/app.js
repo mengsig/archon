@@ -2,6 +2,7 @@
 // reads, and the loaders that keep it fresh.
 import { createTransport } from './core/transport.js';
 import { createFeed } from './core/feed.js';
+import { createConversation } from './core/conversation.js';
 import { createStore } from './core/store.js';
 import { daemonCommands } from './core/daemon.js';
 import { ACTIVE_STATES, stateKind, isTerminal, waitsOnOperator } from './core/format.js';
@@ -19,10 +20,10 @@ export function createApp({ session, onUnpaired }) {
   if (!session?.device) throw new TypeError('the app starts with a paired session');
   const store = createStore({
     session, connection: { state: 'connecting' }, summaries: null, questions: null, status: null,
-    cost: null, repos: null, reports: null, feed: [], outbox: [], chatNotes: {}, errors: {},
+    cost: null, repos: null, reports: null, feed: [], conversation: [], outbox: [], chatNotes: {}, errors: {},
   });
   let transport = null;
-  const request = (cmd, fields) => transport.request(cmd, fields);
+  const request = (cmd, fields, options) => transport.request(cmd, fields, options);
   const cmds = daemonCommands(request);
   const feed = createFeed({ request });
   const refresh = createLoaders(store, cmds);
@@ -31,13 +32,21 @@ export function createApp({ session, onUnpaired }) {
 
   feed.subscribe((fresh, items) => {
     store.set({ feed: items });
-    matchEchoes(store, fresh);
     if (fresh.some((item) => !item.replayed && drivesRefresh(item))) scheduleRefresh();
     if (fresh.some((item) => item.entry?.entry === 'report')) refresh.one('reports');
   });
 
-  const feedSync = feedSyncer({ feed, store, isOpen: () => transport.state === 'open' });
-  transport = openTransport({ session, feedSync, feed, store, refresh });
+  const isOpen = () => transport.state === 'open';
+  const feedSync = feedSyncer({ feed, store, isOpen });
+  const conversation = createConversation({
+    request, isOpen,
+    onChange: (entries, fresh) => {
+      store.set({ conversation: entries });
+      matchEchoes(store, fresh);
+    },
+    onError: (err) => store.set({ errors: { ...store.get().errors, conversation: err } }),
+  });
+  transport = openTransport({ session, feedSync, conversation, feed, store, refresh });
   store.watch((s) => s.connection.state, (state) => {
     if (state === 'revoked') {
       stop();
@@ -61,6 +70,7 @@ export function createApp({ session, onUnpaired }) {
   return {
     store, cmds, feed, refresh,
     resyncFeed: () => feedSync.run(),
+    resyncConversation: () => conversation.run(),
     start() {
       document.addEventListener('visibilitychange', onVisible);
       transport.start();
@@ -70,7 +80,7 @@ export function createApp({ session, onUnpaired }) {
   };
 }
 
-function openTransport({ session, feedSync, feed, store, refresh }) {
+function openTransport({ session, feedSync, conversation, feed, store, refresh }) {
   const setError = (name, err) => store.set({ errors: { ...store.get().errors, [name]: err } });
   return createTransport({
     url: `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${BASE}/ws`,
@@ -78,6 +88,7 @@ function openTransport({ session, feedSync, feed, store, refresh }) {
     onFeed: (item) => feed.push(item),
     onReady: () => {
       feedSync.start();
+      conversation.run();
       refresh.many(['summaries', 'questions', 'status', 'repos', 'reports', 'cost']);
     },
     onState: (state, info) => store.set({ connection: { state, ...info } }),

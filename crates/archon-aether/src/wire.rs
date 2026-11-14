@@ -34,6 +34,8 @@ pub const CLIENT_NAME: &str = "archon";
 pub const HOST_CONTEXT_FEATURE: &str = "host_context";
 pub const REPOSITORY_ROOT_FEATURE: &str = "repository_root";
 pub const NOTES_FEATURE: &str = "notes";
+/// The daemon serves `get_conversation` and keeps `append_note`'s `important`.
+pub const CONVERSATION_FEATURE: &str = "conversation";
 /// The daemon serves `storage_gc` (host-only access).
 pub const STORAGE_FEATURE: &str = "storage";
 /// The daemon serves the notification center (`post_notification` and kin).
@@ -124,6 +126,23 @@ pub enum Command {
         text: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         level: Option<NoteLevel>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        links: Vec<String>,
+        /// A post the operator reads ([`CONVERSATION_FEATURE`]).
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        important: bool,
+    },
+    /// A page of an agent's conversation ([`CONVERSATION_FEATURE`]).
+    GetConversation {
+        agent: AetherAgentId,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        after: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        before: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        important_only: bool,
     },
     /// Post, or update the one `key` names; the `notifications` feature.
     PostNotification {

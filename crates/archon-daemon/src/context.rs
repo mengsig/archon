@@ -14,7 +14,7 @@ use tokio::sync::{Mutex, Notify, broadcast};
 
 use crate::disk::DiskWatch;
 use crate::executor::RunTable;
-use crate::feed::ReplyTracker;
+use crate::feed::SeenEvents;
 use crate::github::GithubState;
 use crate::host_load::HostWatch;
 use crate::mirror::MirrorQueue;
@@ -105,8 +105,11 @@ pub struct DaemonContext {
     pub coordination: crate::executor::coordination::Coordination,
     /// Active run drivers and their pending spawns.
     pub runs: Mutex<RunTable>,
-    /// Orchestrator chat reply detection.
-    pub replies: Mutex<ReplyTracker>,
+    /// The replay guard over the orchestrator's events.
+    pub seen: Mutex<SeenEvents>,
+    /// Bumped when the orchestrator's conversation may have grown; wakes
+    /// waiting `conversation` reads.
+    pub conversation: tokio::sync::watch::Sender<u64>,
     /// Held while an operator answer is delivered and then recorded, so a
     /// question is delivered at most once (see `handlers::operator`).
     pub answering: Mutex<()>,

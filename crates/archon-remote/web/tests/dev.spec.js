@@ -4,6 +4,7 @@ import { FLOWS, openApp, ensureRepo } from './flows.js';
 import { enqueue, notify, askOperator } from './support/seed.js';
 import { startDevFixture } from './support/fixture.js';
 import { guardConsole } from './support/console-guard.js';
+import { conversationStandIn } from './support/conversation.js';
 
 const test = base.extend({
   fixture: [async ({}, use) => {
@@ -199,10 +200,15 @@ const SUMMARY_MD = [
   `A long tail paragraph. ${'More words follow here. '.repeat(30)}`, '', 'Final block with _emphasis_.',
 ].join('\n');
 
-async function laceReplies(page, edit) {
+// `conversation` frames are answered from `entries` instead of archond.
+async function laceReplies(page, edit, entries = []) {
+  const standIn = conversationStandIn(entries);
   await page.routeWebSocket(/\/ws$/, (ws) => {
     const server = ws.connectToServer();
-    ws.onMessage((message) => server.send(message));
+    ws.onMessage((message) => {
+      const frame = JSON.parse(message);
+      return frame.cmd === 'conversation' ? standIn.answer(ws, frame) : server.send(message);
+    });
     server.onMessage((message) => {
       const frame = JSON.parse(message);
       if (frame.frame === 'reply' && frame.result?.Ok) edit(frame.result.Ok);
@@ -215,14 +221,13 @@ test('Markdown renders as elements in chat and stage summaries, never as markup'
   await ensureRepo(fixture, 'archon');
   const item = await enqueue(fixture.archond, { repo: 'archon', title: `Markdown ${Date.now().toString(36)}`, brief: '# Brief\n\nSome **bold** brief text.' });
   await laceReplies(page, (reply) => {
-    if (reply.reply === 'feed') reply.data.push({ seq: 1_000_000, at: new Date().toISOString(), entry: { entry: 'orchestrator', text: ORCHESTRATOR_MD } });
     if (reply.reply === 'item_detail' && reply.data.item.id === item.id) {
       reply.data.stages = [{
         id: 'stage_md', run: reply.data.runs?.[0]?.id ?? 'run_md', stage_id: 'implement', attempt: 1, fan_index: 0, state: { state: 'succeeded' },
         started_at: new Date(Date.now() - 60_000).toISOString(), finished_at: new Date().toISOString(), cost_usd: 0, model_segments: [], summary: SUMMARY_MD,
       }];
     }
-  });
+  }, [{ kind: 'assistant', text: ORCHESTRATOR_MD }]);
 
   await openApp(page, fixture, '#/chat');
   const bubble = page.locator('.from-orchestrator .bubble').last();
@@ -293,17 +298,13 @@ test('wide Markdown code and tables scroll inside their block, never the page', 
   await notify(fixture.archond, 'outcome', WIDE_MD);
   await askOperator(fixture.archond, WIDE_MD);
   await laceReplies(page, (reply) => {
-    if (reply.reply === 'feed') {
-      reply.data.push({ seq: 1_000_001, at: new Date().toISOString(), entry: { entry: 'orchestrator', text: WIDE_MD } });
-      reply.data.push({ seq: 1_000_002, at: new Date().toISOString(), entry: { entry: 'orchestrator', text: DEEP_MD } });
-    }
     if (reply.reply === 'item_detail' && reply.data.item.id === item.id) {
       reply.data.stages = [{
         id: 'stage_wide', run: reply.data.runs?.[0]?.id ?? 'run_wide', stage_id: 'implement', attempt: 1, fan_index: 0, state: { state: 'failed', error: WIDE_MD },
         started_at: new Date(Date.now() - 60_000).toISOString(), finished_at: new Date().toISOString(), cost_usd: 0, model_segments: [], summary: WIDE_MD,
       }];
     }
-  });
+  }, [{ kind: 'assistant', text: WIDE_MD }, { kind: 'assistant', text: DEEP_MD }, { kind: 'post', text: WIDE_MD }]);
 
   await openApp(page, fixture, '#/chat');
   const wide = page.locator('.from-orchestrator .bubble').filter({ hasText: 'Wide content' }).last();
@@ -316,7 +317,7 @@ test('wide Markdown code and tables scroll inside their block, never the page', 
     const inside = await box.evaluate((el) => el.getBoundingClientRect().right <= el.closest('.bubble').getBoundingClientRect().right);
     expect(inside, 'deep code stays inside its bubble').toBe(true);
   }
-  await expectContained(page, page.locator('.feed-note-outcome').filter({ hasText: 'Wide content' }).last());
+  await expectContained(page, page.locator('.feed-post').filter({ hasText: 'Wide content' }).last());
 
   await page.goto(`${fixture.baseURL}/#/inbox`);
   await expect(page.locator('.question-text table').first()).toBeVisible();

@@ -164,3 +164,11 @@ test('backoff grows, is capped and keeps half its delay fixed', () => {
   assert.throws(() => backoffDelay(-1), RangeError);
   assert.throws(() => backoffDelay(0, () => 1), RangeError);
 });
+
+test('a request may ask for a longer answer deadline than the default', () => {
+  const h = harness();
+  h.transport.start(); h.last().open(); h.last().welcome();
+  h.transport.request('conversation', { wait: true }, { timeoutMs: 30_000 }).catch(() => {});
+  assert.ok(h.timers.some((t) => !t.done && t.ms === 30_000));
+  assert.throws(() => h.transport.request('status', {}, { timeoutMs: 0 }), RangeError);
+});

@@ -334,6 +334,7 @@
 }
 .feed-line-text { display: grid; justify-self: stretch; font-size: 14px; color: var(--text-2); overflow-wrap: anywhere; }
 .feed-line-label { font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em; color: var(--text-3); }
+.feed-line-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 0 var(--space-3); }
 .feed-line .link-button { min-height: var(--tap); font-size: 14px; }
 .feed-question .feed-line-label, .feed-note-blocker .feed-line-label { color: var(--amber); }
 .feed-note-outcome .feed-line-label { color: var(--green); }

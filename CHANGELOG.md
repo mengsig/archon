@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Changed
+
+- One operator conversation: archond posts its notices, questions, reports,
+  item outcomes, gates, merges, stage messages and command results into the
+  orchestrator's Aether transcript as important entries, in order. The phone
+  app's chat and `archon chat` now read that transcript's important entries
+  (a new `conversation` request, with a long poll) and show exactly what the
+  terminal UI's `/focus` shows. The separate quiet chat feed and its reply
+  tracker are gone, and the orchestrator no longer says things twice. Older
+  chat lines stay in `archon log`. `archon chat --progress`, `/progress` and
+  `[chat] show_progress` no longer do anything: `archon log` shows progress.
+  This needs an aetherd that serves the `conversation` feature. Restart an
+  `archon chat` and reload a phone page opened before the upgrade, or they
+  show no replies. A stage agent's `ask_user` question is posted, numbered,
+  with how to answer it; the orchestrator's own stays in its transcript. A
+  command sent from `archon chat` or the phone (`/answer`, `/status`,
+  `/archon …`) is posted once as `**Operator:** <command>`, before its result.
+
 ### Fixed
 
 - Check for GitHub CLI 2.63.0 at startup and in doctor, while keeping gh

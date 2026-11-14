@@ -125,20 +125,14 @@ impl Drop for Chat {
     }
 }
 
-/// `archon say` is refused while Aether is down, but archond still records
-/// the line in the feed, which is all these tests need.
-fn say(env: &Env, text: &str) {
-    env.command(&["say", text]).output().unwrap();
-}
-
 #[test]
 fn chat_follows_a_daemon_restart_without_restarting_it_itself() {
     let env = Env::new();
     let daemon = start_daemon(&env);
     let mut chat = Chat::start(&env);
     chat.wait_for("/help for commands");
-    say(&env, "before the restart");
-    chat.wait_for("before the restart");
+    // No Aether here: the chat says once that it cannot read the conversation.
+    chat.wait_for("cannot read the conversation");
 
     stop_daemon(&env, daemon);
     chat.wait_for("lost the connection to archond");
@@ -152,13 +146,14 @@ fn chat_follows_a_daemon_restart_without_restarting_it_itself() {
 
     let daemon = start_daemon(&env);
     chat.wait_for("reconnected to archond");
-    say(&env, "after the restart");
-    chat.wait_for("after the restart");
     drop(chat.child.stdin.take());
     let exit = chat.child.wait().unwrap();
     assert!(exit.success(), "end of input ends the chat cleanly");
-    assert_eq!(chat.count("before the restart"), 1, "no line twice");
-    assert_eq!(chat.count("after the restart"), 1);
+    let unreadable = chat.count("cannot read the conversation");
+    assert!(
+        (1..=2).contains(&unreadable),
+        "said once per connection, not per retry: {unreadable}"
+    );
     stop_daemon(&env, daemon);
 }
 

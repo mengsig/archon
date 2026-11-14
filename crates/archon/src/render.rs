@@ -1,13 +1,12 @@
-//! How feed items look in the chat and in `archon log` (ARCHITECTURE §12).
-//! Pure: an item in, the text to print (or `None` when the quiet filter
-//! hides it) out. Every line is `HH:MM  <label>  <text>`, with the text
+//! How conversation entries look in the chat and feed items in `archon log`
+//! (ARCHITECTURE §12). Pure: an entry or item in, the text to print (or
+//! `None` when the progress filter hides an item) out. Every line is `HH:MM  <label>  <text>`, with the text
 //! wrapped under itself and the label telling the kinds apart without colour.
-
-use std::collections::HashMap;
 
 use archon_core::Timestamp;
 use archon_core::attachment::with_image_labels;
-use archon_core::id::QuestionId;
+use archon_core::authority::WEB_RELAY_MARK;
+use archon_core::conversation::{ConversationEntry, EntryKind};
 use archon_core::notify::{FeedEntry, FeedItem, NotificationKind, Question};
 use chrono::{Local, NaiveDate};
 
@@ -19,26 +18,6 @@ const LABEL_WIDTH: usize = 12;
 /// Text never gets fewer columns than this, however narrow the terminal.
 const MIN_TEXT_WIDTH: usize = 24;
 
-/// The numbers (`Q1`, `Q2`) of the questions the chat knows to be open, so
-/// the operator can type `/answer 2 yes`; archond assigns them.
-#[derive(Debug, Default, Clone)]
-pub struct QuestionLabels(HashMap<QuestionId, u64>);
-
-impl QuestionLabels {
-    pub fn get(&self, id: &QuestionId) -> Option<u64> {
-        self.0.get(id).copied()
-    }
-
-    pub fn insert(&mut self, id: QuestionId, number: u64) {
-        assert!(number > 0, "question numbers start at 1");
-        let previous = self.0.insert(id, number);
-        assert!(
-            previous.is_none_or(|p| p == number),
-            "a question keeps its number"
-        );
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub struct Renderer {
     pub palette: Palette,
@@ -47,18 +26,23 @@ pub struct Renderer {
     pub today: NaiveDate,
 }
 
-/// The quiet-chat rendering of one item without colour, at the default
+/// The chat's rendering of one conversation entry without colour, at `width`.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the binary renders with a detected palette")
+)]
+pub fn render_entry_plain(entry: &ConversationEntry, width: usize) -> String {
+    Renderer::new(Palette::new(false), width).render_entry(entry)
+}
+
+/// The `archon log` rendering of one item without colour, at the default
 /// width; `None` when `verbose` is off and the item is progress.
 #[cfg_attr(
     not(test),
     expect(dead_code, reason = "the binary renders with a detected palette")
 )]
 pub fn render_feed_item(item: &FeedItem, verbose: bool) -> Option<String> {
-    Renderer::new(Palette::new(false), DEFAULT_WIDTH).render(
-        item,
-        verbose,
-        &QuestionLabels::default(),
-    )
+    Renderer::new(Palette::new(false), DEFAULT_WIDTH).render(item, verbose)
 }
 
 /// What one entry says, before layout.
@@ -81,16 +65,11 @@ impl Renderer {
         }
     }
 
-    pub fn render(
-        &self,
-        item: &FeedItem,
-        verbose: bool,
-        labels: &QuestionLabels,
-    ) -> Option<String> {
+    pub fn render(&self, item: &FeedItem, verbose: bool) -> Option<String> {
         if !item.visible(verbose) {
             return None;
         }
-        let mut parts = describe(&item.entry, labels);
+        let mut parts = describe(&item.entry);
         if let FeedEntry::Report {
             title, location, ..
         } = &item.entry
@@ -110,6 +89,33 @@ impl Renderer {
             return Some(rendered);
         }
         Some(self.layout(item.at, &parts))
+    }
+
+    /// One entry of the orchestrator's conversation: its text as said (a
+    /// phone line without its relay mark), under who said it, links below.
+    pub fn render_entry(&self, entry: &ConversationEntry) -> String {
+        assert!(entry.important, "the chat shows only important entries");
+        let (label, tone) = match entry.kind {
+            EntryKind::Operator => ("you", Style::Bold),
+            EntryKind::Assistant => ("orchestrator", Style::Cyan),
+            EntryKind::Post => ("archon", Style::Green),
+            EntryKind::Question => ("question", Style::Yellow),
+            EntryKind::Other => ("aether", Style::Dim),
+        };
+        let text = match entry.kind {
+            EntryKind::Operator => entry.text.strip_prefix(WEB_RELAY_MARK),
+            _ => None,
+        };
+        let parts = Parts {
+            label,
+            tone,
+            text: text.unwrap_or(&entry.text).to_owned(),
+            notes: entry.links.clone(),
+            reference: None,
+        };
+        let rendered = self.layout(entry.at, &parts);
+        assert!(rendered.contains(label), "every entry names who said it");
+        rendered
     }
 
     fn layout(&self, at: Timestamp, parts: &Parts) -> String {
@@ -165,7 +171,7 @@ impl Renderer {
     }
 }
 
-fn describe(entry: &FeedEntry, labels: &QuestionLabels) -> Parts {
+fn describe(entry: &FeedEntry) -> Parts {
     let simple = |label, tone, text: &str| Parts {
         label,
         tone,
@@ -187,7 +193,7 @@ fn describe(entry: &FeedEntry, labels: &QuestionLabels) -> Parts {
                 evidence.channel, evidence.seq
             ),
         ),
-        FeedEntry::Operator { text, images } => {
+        FeedEntry::Operator { text, images, .. } => {
             simple("you", Style::Bold, &with_image_labels(text, images))
         }
         FeedEntry::Orchestrator { text } => simple("orchestrator", Style::Cyan, text),
@@ -198,7 +204,7 @@ fn describe(entry: &FeedEntry, labels: &QuestionLabels) -> Parts {
             parts.reference = n.item.as_ref().map(|item| format!("[{item}]"));
             parts
         }
-        FeedEntry::Question(question) => describe_question(question, labels.get(&question.id)),
+        FeedEntry::Question(question) => describe_question(question),
         FeedEntry::Answer {
             question,
             text,
@@ -206,10 +212,7 @@ fn describe(entry: &FeedEntry, labels: &QuestionLabels) -> Parts {
         } => {
             let mut parts = simple("answer", Style::Green, text);
             parts.notes = via.note().map(str::to_owned).into_iter().collect();
-            match labels.get(question) {
-                Some(n) => parts.text = format!("Q{n}: {text}"),
-                None => parts.reference = Some(format!("[{question}]")),
-            }
+            parts.reference = Some(format!("[{question}]"));
             parts
         }
         FeedEntry::Report {
@@ -235,43 +238,27 @@ fn notification_style(kind: NotificationKind) -> (&'static str, Style) {
     }
 }
 
-/// Numbered questions get their options and a hint on how to answer;
-/// unnumbered ones (already answered when the chat opened) show their id.
-fn describe_question(question: &Question, number: Option<u64>) -> Parts {
-    let mut notes: Vec<String> = question
+/// A question with its options and id; `archon questions` shows how to
+/// answer the open ones.
+fn describe_question(question: &Question) -> Parts {
+    let notes = question
         .options
         .iter()
         .enumerate()
         .map(|(i, option)| format!("{}) {option}", i + 1))
         .collect();
-    let text = match number {
-        Some(n) => {
-            let pick = if question.options.is_empty() {
-                String::new()
-            } else {
-                format!(" or /answer {n} <option number>")
-            };
-            notes.push(format!("answer: /answer {n} <text>{pick}"));
-            format!("Q{n}  {}", question.text)
-        }
-        None => question.text.clone(),
-    };
-    let mut reference = question.item.as_ref().map(|item| format!("[{item}]"));
-    if number.is_none() {
-        reference = Some(format!("[{}]", question.id));
-    }
     Parts {
         label: "question",
         tone: Style::Yellow,
-        text,
+        text: question.text.clone(),
         notes,
-        reference,
+        reference: Some(format!("[{}]", question.id)),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use archon_core::id::{FeedItemId, NotificationId, QueueItemId, ReportId};
+    use archon_core::id::{FeedItemId, NotificationId, QuestionId, QueueItemId, ReportId};
     use archon_core::notify::{AnswerVia, Notification};
 
     use super::*;
@@ -327,6 +314,7 @@ mod tests {
             &item(FeedEntry::Operator {
                 text: "add caching".into(),
                 images: Vec::new(),
+                local: false,
             }),
             false,
         );
@@ -350,6 +338,7 @@ mod tests {
         let line = item(FeedEntry::Operator {
             text: "what is this?".into(),
             images: vec![shot.clone()],
+            local: false,
         });
         let rendered = render_feed_item(&line, false).unwrap();
         assert_eq!(head(&rendered), "you  what is this?");
@@ -357,6 +346,7 @@ mod tests {
         let only = item(FeedEntry::Operator {
             text: String::new(),
             images: vec![shot],
+            local: false,
         });
         let rendered = render_feed_item(&only, false).unwrap();
         assert_eq!(head(&rendered), "you  [image: shot.png, 1.5 KB]");
@@ -398,22 +388,13 @@ mod tests {
     }
 
     #[test]
-    fn numbered_questions_list_options_and_how_to_answer() {
+    fn questions_list_options_and_name_their_id() {
         let q = question(&["yes", "no"]);
-        let mut labels = QuestionLabels::default();
-        labels.insert(q.id.clone(), 2);
-        let renderer = Renderer::new(Palette::new(false), 100);
-        let rendered = renderer
-            .render(&item(FeedEntry::Question(q.clone())), false, &labels)
-            .unwrap();
+        let rendered = render_feed_item(&item(FeedEntry::Question(q.clone())), false).unwrap();
         let lines: Vec<&str> = rendered.lines().collect();
-        assert_eq!(head(&rendered), "question  Q2  Ship it?");
+        assert_eq!(head(&rendered), format!("question  Ship it?  [{}]", q.id));
         assert_eq!(lines[1].trim(), "1) yes");
         assert_eq!(lines[2].trim(), "2) no");
-        assert!(lines[3].contains("answer: /answer 2 <text> or /answer 2 <option number>"));
-        let unnumbered = render_feed_item(&item(FeedEntry::Question(q.clone())), false).unwrap();
-        assert!(unnumbered.contains(&format!("[{}]", q.id)));
-        assert!(!unnumbered.contains("/answer "));
     }
 
     #[test]
@@ -424,13 +405,6 @@ mod tests {
             text: "yes".into(),
             via: AnswerVia::Archon,
         });
-        let mut labels = QuestionLabels::default();
-        labels.insert(q.id.clone(), 1);
-        let renderer = Renderer::new(Palette::new(false), 80);
-        assert_eq!(
-            head(&renderer.render(&answer, false, &labels).unwrap()),
-            "answer  Q1: yes"
-        );
         let bare = render_feed_item(&answer, false).unwrap();
         assert_eq!(head(&bare), format!("answer  yes  [{}]", q.id));
         assert_eq!(bare.lines().count(), 1, "Archon's own surface goes unnamed");
@@ -494,9 +468,7 @@ mod tests {
         let mut palette = Palette::new(false);
         palette.hyperlinks = true;
         let renderer = Renderer::new(palette, 40);
-        let linked = renderer
-            .render(&report, false, &QuestionLabels::default())
-            .unwrap();
+        let linked = renderer.render(&report, false).unwrap();
         assert!(linked.contains("\x1b]8;;file:///a%20very%20long%20workspace/"));
         assert!(linked.contains("r%C3%A9sults.html"));
         assert!(linked.ends_with("open report\x1b]8;;\x1b\\"));
@@ -508,10 +480,56 @@ mod tests {
         if let FeedEntry::Report { location, .. } = &mut unsafe_report.entry {
             *location = "https://example.test/\x1b]52;;evil\x07".into();
         }
-        let inert = renderer
-            .render(&unsafe_report, false, &QuestionLabels::default())
-            .unwrap();
+        let inert = renderer.render(&unsafe_report, false).unwrap();
         assert!(!inert.contains('\x1b'));
+    }
+
+    fn said(kind: EntryKind, text: &str, links: &[&str]) -> ConversationEntry {
+        ConversationEntry {
+            seq: 9,
+            part: 0,
+            at: archon_core::now(),
+            kind,
+            important: true,
+            text: text.into(),
+            links: links.iter().map(|l| (*l).to_owned()).collect(),
+        }
+    }
+
+    #[test]
+    fn a_conversation_entry_shows_its_text_as_said_under_who_said_it() {
+        let cases = [
+            (EntryKind::Operator, "you"),
+            (EntryKind::Assistant, "orchestrator"),
+            (EntryKind::Post, "archon"),
+            (EntryKind::Question, "question"),
+            (EntryKind::Other, "aether"),
+        ];
+        for (kind, label) in cases {
+            let rendered = render_entry_plain(&said(kind, "**Outcome**: merged", &[]), 100);
+            assert_eq!(head(&rendered), format!("{label}  **Outcome**: merged"));
+        }
+        let phone = format!("{WEB_RELAY_MARK}thanks");
+        let rendered = render_entry_plain(&said(EntryKind::Operator, &phone, &[]), 100);
+        assert_eq!(rendered[HH_MM_ZONE..].trim(), "you  thanks");
+        let text = "Looking.\n\n- one\n- two";
+        let rendered = render_entry_plain(&said(EntryKind::Assistant, text, &[]), 100);
+        let body: Vec<&str> = rendered.lines().map(|l| l[HH_MM_ZONE..].trim()).collect();
+        assert_eq!(body, ["orchestrator  Looking.", "", "- one", "- two"]);
+    }
+
+    #[test]
+    fn a_conversation_entry_lists_its_links_below_and_drops_escapes() {
+        let entry = said(
+            EntryKind::Post,
+            "Report\u{1b}[31m",
+            &["https://r.example/1"],
+        );
+        let rendered = render_entry_plain(&entry, 100);
+        let lines: Vec<&str> = rendered.lines().collect();
+        assert_eq!(lines.len(), 2, "{rendered}");
+        assert_eq!(lines[1].trim(), "https://r.example/1");
+        assert!(!rendered.contains('\u{1b}'), "{rendered:?}");
     }
 
     #[test]
@@ -533,7 +551,7 @@ mod tests {
         let rendered = render_feed_item(&entry, false).unwrap();
         assert!(!rendered.contains('\x1b'));
         let colored = Renderer::new(Palette::new(true), 80)
-            .render(&entry, false, &QuestionLabels::default())
+            .render(&entry, false)
             .unwrap();
         assert!(
             colored.contains("\x1b[1;36m"),

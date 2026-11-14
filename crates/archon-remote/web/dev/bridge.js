@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 
 export const ALLOWED_COMMANDS = new Set([
   'hello', 'status', 'repo_list', 'list_items', 'list_item_summaries', 'get_item', 'get_stage',
-  'resolve_item', 'list_pipelines', 'list_questions', 'feed_history', 'subscribe_feed', 'list_reports',
+  'resolve_item', 'list_pipelines', 'list_questions', 'conversation', 'feed_history', 'subscribe_feed', 'list_reports',
   'orchestrator_status', 'cost_report', 'list_artifacts', 'read_artifact', 'item_diff', 'settings',
   'autonomy', 'enqueue', 'cancel_item', 'retry_item', 'pause', 'resume', 'answer', 'say',
 ]);

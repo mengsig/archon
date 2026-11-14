@@ -53,7 +53,7 @@ async fn say(
 fn operator_lines(feed: Vec<FeedEntry>) -> Vec<(String, Vec<ImageRef>)> {
     feed.into_iter()
         .filter_map(|entry| match entry {
-            FeedEntry::Operator { text, images } => Some((text, images)),
+            FeedEntry::Operator { text, images, .. } => Some((text, images)),
             _ => None,
         })
         .collect()

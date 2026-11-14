@@ -3,6 +3,7 @@
 // flows run against the dev bridge and against the real remote listener.
 import { expect } from '@playwright/test';
 import { formatPairingCode } from '../src/core/pairing-code.js';
+import { standInConversation } from './support/conversation.js';
 import { addRepo, askOperator, enqueue, notify } from './support/seed.js';
 
 function unique(label) {
@@ -84,6 +85,7 @@ export async function viewQueueAndItem(page, fixture) {
 
 export async function chat(page, fixture) {
   const line = unique('Hello from the phone');
+  await standInConversation(page);
   await openApp(page, fixture, '#/chat');
   await expect(page.getByRole('heading', { name: 'Chat', level: 1 })).toBeVisible();
   await page.getByRole('textbox', { name: 'Message' }).fill(line);

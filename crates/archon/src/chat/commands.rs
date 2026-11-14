@@ -6,7 +6,9 @@ use std::fmt::Write as _;
 use archon_core::operator_commands::OPERATOR_COMMANDS;
 use archon_core::protocol::{PauseTarget, RepoRef};
 
-use crate::questions::QuestionRef;
+/// What `/progress` says now that the chat shows only the conversation.
+pub const PROGRESS_MOVED: &str =
+    "the chat shows the conversation as Aether's /focus does; `archon log` shows progress";
 
 /// The chat's own commands, after the operator commands every surface takes.
 const CHAT_HELP: &str = "\
@@ -15,7 +17,6 @@ const CHAT_HELP: &str = "\
   /archon reset [--repo NAME]   forget the saved settings of a scope
   /diff <id>              show the branch a local-ship item left, before /merge
   /image <path>           attach an image file to the next message
-  /progress               show or hide progress notes (also /verbose)
   /help                   this list
   /quit                   leave (also Ctrl-D, or Ctrl-C twice)
 Start a line with // to send literal slash text; the escape stays in the message.
@@ -46,11 +47,6 @@ pub enum SlashCommand {
     Help,
     Authority(String),
     Quit,
-    ToggleProgress,
-    Answer {
-        question: QuestionRef,
-        text: String,
-    },
     Questions,
     Status,
     Queue {
@@ -61,10 +57,6 @@ pub enum SlashCommand {
     Lessons,
     /// Attach the image file at this path to the next message.
     Image(String),
-    Merge {
-        item: String,
-        ignore_checks: bool,
-    },
     /// Show a local-ship item's branch and diffstat.
     Diff(String),
     Pause(PauseTarget),
@@ -99,7 +91,7 @@ fn parse_command(name: &str, rest: &str) -> Result<SlashCommand, String> {
     match name {
         "help" | "h" | "?" => no_args(SlashCommand::Help),
         "quit" | "exit" | "q" => no_args(SlashCommand::Quit),
-        "progress" | "verbose" => no_args(SlashCommand::ToggleProgress),
+        "progress" | "verbose" => Err(PROGRESS_MOVED.to_owned()),
         "questions" => no_args(SlashCommand::Questions),
         "status" => no_args(SlashCommand::Status),
         "repos" => no_args(SlashCommand::Repos),
@@ -116,16 +108,15 @@ fn parse_command(name: &str, rest: &str) -> Result<SlashCommand, String> {
             false => Ok(SlashCommand::Image(rest.to_owned())),
         },
         "archon" => parse_archon(rest),
-        "approve" | "reject" | "upgrade" | "update" | "watch" => {
-            Ok(SlashCommand::Authority(format!("/{name} {rest}")))
-        }
-        "merge" => parse_merge(rest),
+        // archond resolves and refuses these itself, so a refusal is posted too.
+        "answer" | "merge" | "approve" | "reject" | "upgrade" | "update" | "watch" => Ok(
+            SlashCommand::Authority(format!("/{name} {rest}").trim_end().to_owned()),
+        ),
         "diff" => match split_word(rest) {
             (id, "") if !id.is_empty() => Ok(SlashCommand::Diff(id.to_owned())),
             _ => Err("usage: /diff <id>".to_owned()),
         },
         "a" => Err("use /answer <n> <text>".to_owned()),
-        "answer" => parse_answer(rest),
         "pause" => parse_pause_target(rest, "pause").map(SlashCommand::Pause),
         "resume" => parse_pause_target(rest, "resume").map(SlashCommand::Resume),
         other => Err(format!("unknown command /{other}; /help lists them")),
@@ -140,36 +131,6 @@ fn parse_archon(rest: &str) -> Result<SlashCommand, String> {
         "answer" | "approve" | "reject" | "merge" => parse_command(&verb, args),
         _ => Ok(SlashCommand::Authority(format!("/archon {rest}"))),
     }
-}
-
-fn parse_answer(rest: &str) -> Result<SlashCommand, String> {
-    const USAGE: &str = "usage: /answer <n|id> <text>";
-    let (question, text) = split_word(rest);
-    if question.is_empty() || text.is_empty() {
-        return Err(USAGE.to_owned());
-    }
-    let question = QuestionRef::parse(question).map_err(|e| format!("{e}; {USAGE}"))?;
-    Ok(SlashCommand::Answer {
-        question,
-        text: text.to_owned(),
-    })
-}
-
-fn parse_merge(rest: &str) -> Result<SlashCommand, String> {
-    const FLAG: &str = "--ignore-checks";
-    let words: Vec<&str> = rest.split_whitespace().collect();
-    let (item, ignore_checks) = match words.as_slice() {
-        [item] => (*item, false),
-        [item, FLAG] | [FLAG, item] => (*item, true),
-        _ => ("", false),
-    };
-    if item.is_empty() || item.starts_with('-') {
-        return Err(format!("usage: /merge <id> [{FLAG}]"));
-    }
-    Ok(SlashCommand::Merge {
-        item: item.to_owned(),
-        ignore_checks,
-    })
 }
 
 fn parse_pause_target(rest: &str, verb: &str) -> Result<PauseTarget, String> {
@@ -248,28 +209,18 @@ mod tests {
     }
 
     #[test]
-    fn answers_take_a_number_or_an_id() {
+    fn answers_go_to_archond_as_typed() {
+        let authority = |text: &str| ChatInput::Command(SlashCommand::Authority(text.into()));
         assert_eq!(
             parse_line("/answer 2 go with option b"),
-            ChatInput::Command(SlashCommand::Answer {
-                question: QuestionRef::Number(2),
-                text: "go with option b".into()
-            })
+            authority("/answer 2 go with option b")
         );
         let id = QuestionId::new();
-        let parsed = parse_line(&format!("/answer {id} yes"));
-        assert_eq!(
-            parsed,
-            ChatInput::Command(SlashCommand::Answer {
-                question: QuestionRef::Id(id),
-                text: "yes".into()
-            })
-        );
-        assert!(matches!(parse_line("/answer 2"), ChatInput::Invalid(_)));
-        assert!(matches!(
-            parse_line("/answer zero yes"),
-            ChatInput::Invalid(_)
-        ));
+        let typed = format!("/answer {id} yes");
+        assert_eq!(parse_line(&typed), authority(&typed));
+        // archond refuses these and posts why, as it does for the phone.
+        assert_eq!(parse_line("/answer 2"), authority("/answer 2"));
+        assert_eq!(parse_line("/answer"), authority("/answer"));
         for retired in ["/a", "/a 3 yes", "/A sounds good"] {
             assert_eq!(
                 parse_line(retired),
@@ -294,10 +245,10 @@ mod tests {
                 parse_line(&format!("/{verb} 4 ok"))
             );
         }
-        assert!(matches!(
+        assert_eq!(
             parse_line("/archon answer 73"),
-            ChatInput::Invalid(_)
-        ));
+            ChatInput::Command(SlashCommand::Authority("/answer 73".into()))
+        );
         assert_eq!(
             parse_line("/archon pause --hard"),
             ChatInput::Command(SlashCommand::Authority("/archon pause --hard".into()))
@@ -359,7 +310,7 @@ mod tests {
         assert_eq!(parse_line("/QUIT"), ChatInput::Command(SlashCommand::Quit));
         assert_eq!(
             parse_line("/verbose"),
-            ChatInput::Command(SlashCommand::ToggleProgress)
+            ChatInput::Invalid(PROGRESS_MOVED.to_owned())
         );
         assert_eq!(
             parse_line("/queue running failed"),
@@ -369,15 +320,16 @@ mod tests {
         );
         assert!(matches!(parse_line("/status now"), ChatInput::Invalid(_)));
         assert!(matches!(parse_line("/item"), ChatInput::Invalid(_)));
-        assert_eq!(
-            parse_line("/merge qi_01 --ignore-checks"),
-            ChatInput::Command(SlashCommand::Merge {
-                item: "qi_01".into(),
-                ignore_checks: true
-            })
-        );
-        for malformed in ["/merge", "/merge --ignore-checks", "/merge qi_01 --admin"] {
-            assert!(matches!(parse_line(malformed), ChatInput::Invalid(_)));
+        for typed in [
+            "/merge qi_01 --ignore-checks",
+            "/merge",
+            "/merge qi_01 --admin",
+        ] {
+            assert_eq!(
+                parse_line(typed),
+                ChatInput::Command(SlashCommand::Authority(typed.into())),
+                "archond takes the line as typed and posts any refusal"
+            );
         }
         let ChatInput::Invalid(message) = parse_line("/frobnicate") else {
             panic!("unknown commands are refused");

@@ -53,6 +53,7 @@ fn variant_name(command: &Command) -> &'static str {
         Command::ReplyToQuestion { .. } => "reply_to_question",
         Command::Trigger { .. } => "trigger",
         Command::AppendNote { .. } => "append_note",
+        Command::GetConversation { .. } => "get_conversation",
         Command::Cancel { .. } => "cancel",
         Command::Interrupt { .. } => "interrupt",
         Command::Wake { .. } => "wake",
@@ -832,4 +833,51 @@ fn a_message_with_images_matches_aethers_published_schema() {
     })
     .unwrap();
     assert!(frame.get("attachments").is_none(), "{frame}");
+}
+
+/// A subset of the schema Aether publishes with its `conversation` feature:
+/// an important post and a conversation page, and the entry Archon decodes.
+#[test]
+fn posts_and_conversation_reads_match_aethers_published_schema() {
+    use archon_aether::wire::NoteLevel;
+    use archon_core::conversation::ConversationEntry;
+    let schema: Value =
+        serde_json::from_str(include_str!("fixtures/aether-conversation.schema.json")).unwrap();
+    let post = Command::AppendNote {
+        agent: agent(),
+        text: "**Outcome**: shipped".into(),
+        level: None,
+        links: vec!["https://example.com/pr/7".into()],
+        important: true,
+    };
+    let plain = Command::AppendNote {
+        agent: agent(),
+        text: "/status: ok".into(),
+        level: Some(NoteLevel::Applied),
+        links: Vec::new(),
+        important: false,
+    };
+    let page = Command::GetConversation {
+        agent: agent(),
+        after: Some(41),
+        before: None,
+        limit: Some(200),
+        important_only: true,
+    };
+    for command in [&post, &plain, &page] {
+        assert_eq!(violations(&schema, command), Vec::<String>::new());
+    }
+    let plain = serde_json::to_value(&plain).unwrap();
+    assert!(
+        plain.get("important").is_none() && plain.get("links").is_none(),
+        "{plain}"
+    );
+    let entry = json!({
+        "seq": 42, "part": 1, "at": "2026-11-13T10:00:00Z", "kind": "post",
+        "important": true, "text": "shipped", "links": ["https://example.com/pr/7"],
+    });
+    let def = &schema["$defs"]["ConversationEntry"];
+    assert_eq!(check(&schema, def, &entry, "entry"), Vec::<String>::new());
+    let decoded: ConversationEntry = serde_json::from_value(entry).unwrap();
+    assert_eq!((decoded.seq, decoded.part), (42, 1));
 }

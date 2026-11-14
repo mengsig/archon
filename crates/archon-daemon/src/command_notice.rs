@@ -1,11 +1,13 @@
-//! Shows the result of a host command as a note row in the orchestrator's
-//! transcript, at once and without a model turn.
+//! Shows the result of a host command in the orchestrator's transcript, at
+//! once and without a model turn: a feed line archond posts to the
+//! conversation where aetherd keeps posts, else a note row.
 
 use archon_aether::wire::{NOTE_LEVEL_PROTOCOL_VERSION, NOTES_FEATURE, NoteLevel, Welcome};
+use archon_core::error::ArchonError;
 
 use crate::context::DaemonContext;
 use crate::executor::clip;
-use crate::supervisor;
+use crate::{feed, supervisor};
 
 const MAX_NOTE_CHARS: usize = 500;
 
@@ -41,47 +43,68 @@ pub(crate) fn warn_if_unsupported(welcome: &Welcome) {
     );
 }
 
-/// Best effort: the outcome is already in Archon's feed, so a note that cannot
-/// be added is logged and never fails the command. Nothing is shown when
-/// aetherd lacks notes or no orchestrator exists yet.
-pub(crate) async fn show(ctx: &DaemonContext, label: &str, applied: bool, text: &str) {
+/// Where a command's result line went.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Shown {
+    /// Into the feed, which posts it to the conversation in order.
+    InFeed,
+    /// Straight into the transcript as a note, for an aetherd without posts.
+    AsNote,
+    /// Nowhere: no notes, no orchestrator, or the note failed (logged).
+    Not,
+}
+
+/// Show an applied or refused command result; see [`show_level`].
+pub(crate) async fn show(
+    ctx: &DaemonContext,
+    label: &str,
+    applied: bool,
+    text: &str,
+) -> Result<Shown, ArchonError> {
     let level = match applied {
         true => NoteLevel::Applied,
         false => NoteLevel::Refused,
     };
-    // Whether it was shown is logged already; the result reaches the orchestrator anyway.
-    let _shown = show_level(ctx, label, Some(level), text).await;
+    show_level(ctx, label, Some(level), text).await
 }
 
-/// [`show`] at any level, `None` being a plain note. `true` when the note was added.
+/// The result line, at any level (`None` being a plain answer). Where
+/// aetherd keeps posts it goes into the feed, so it reaches the conversation
+/// in order and survives a restart; else it is a best-effort note.
 pub(crate) async fn show_level(
     ctx: &DaemonContext,
     label: &str,
     level: Option<NoteLevel>,
     text: &str,
-) -> bool {
+) -> Result<Shown, ArchonError> {
     let Ok(client) = ctx.aether.client() else {
-        return false;
+        return Ok(Shown::Not);
     };
+    if client.serves_conversation() {
+        // A post carries no level, so its line leads with the word instead.
+        let line = note_line(label, level, text, false);
+        feed::system(ctx, line).await?;
+        return Ok(Shown::InFeed);
+    }
     let welcome = client.welcome();
     if !welcome.features.iter().any(|f| f == NOTES_FEATURE) {
-        return false;
+        return Ok(Shown::Not);
     }
     let orchestrator = match supervisor::current_orchestrator(ctx).await {
         Ok(Some(id)) => id,
-        Ok(None) => return false,
+        Ok(None) => return Ok(Shown::Not),
         Err(error) => {
             tracing::warn!(%error, "no orchestrator to show a command result to");
-            return false;
+            return Ok(Shown::Not);
         }
     };
     let has_level = welcome.protocol_version >= NOTE_LEVEL_PROTOCOL_VERSION;
     let line = note_line(label, level, text, has_level);
     match client.append_note(&orchestrator, &line, level).await {
-        Ok(()) => true,
+        Ok(()) => Ok(Shown::AsNote),
         Err(error) => {
             tracing::warn!(%error, command = label, "a command result was not shown in the TUI");
-            false
+            Ok(Shown::Not)
         }
     }
 }

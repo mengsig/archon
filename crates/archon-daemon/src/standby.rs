@@ -100,6 +100,7 @@ fn allows(request: &Request) -> bool {
             | Request::OrchestratorStatus
             | Request::ListQuestions { .. }
             | Request::FeedHistory { .. }
+            | Request::Conversation { .. }
             | Request::ListReports
             | Request::Autonomy { .. }
             | Request::GithubWatcher

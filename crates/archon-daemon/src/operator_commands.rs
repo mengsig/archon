@@ -9,8 +9,12 @@ use archon_core::merge::MergeAuthority;
 use archon_core::notify::QuestionRef;
 
 use crate::authority::evidence;
+use crate::command_notice::Shown;
 use crate::context::DaemonContext;
 use crate::{chat_answer, chat_merge, feed};
+
+/// The audit result of a command whose own result line follows it.
+pub(crate) const OUTCOME_FOLLOWS: &str = "received; outcome follows";
 
 pub(crate) async fn handle(
     ctx: &DaemonContext,
@@ -70,6 +74,7 @@ pub(crate) async fn from_socket(
         archon_core::notify::FeedEntry::Operator {
             text: text.into(),
             images: Vec::new(),
+            local: true,
         },
     )
     .await?;
@@ -116,8 +121,10 @@ async fn execute(
             Err(error) if error.is_store() => return Err(error),
             Err(error) => (false, error.to_string()),
         };
-        feed::system(ctx, format!("Operator command: {text}")).await?;
-        crate::command_notice::show(ctx, &label, applied, &text).await;
+        let shown = crate::command_notice::show(ctx, &label, applied, &text).await?;
+        if shown != Shown::InFeed {
+            feed::system(ctx, format!("Operator command: {text}")).await?;
+        }
         return crate::triggers::push(
             ctx,
             crate::triggers::TriggerEvent::ChatAnswer {
@@ -155,7 +162,7 @@ async fn execute(
             archon_core::notify::FeedEntry::Authority {
                 evidence: evidence.clone(),
                 action: command.clone(),
-                result: "received; outcome follows".into(),
+                result: OUTCOME_FOLLOWS.into(),
                 before: serde_json::Value::Null,
                 after: serde_json::Value::Null,
             },
@@ -220,8 +227,11 @@ async fn refuse_in_shared(ctx: &DaemonContext, message: &InboxMessage) -> Result
         crate::chat_ops::handle(ctx, &text).await?;
         return chat_merge::handle(ctx, &text, MergeAuthority::AetherChat).await;
     }
-    feed::system(ctx, SHARED_REFUSAL).await?;
-    crate::command_notice::show(ctx, &command_label(&text), false, SHARED_REFUSAL).await;
+    let label = command_label(&text);
+    let shown = crate::command_notice::show(ctx, &label, false, SHARED_REFUSAL).await?;
+    if shown != Shown::InFeed {
+        feed::system(ctx, SHARED_REFUSAL).await?;
+    }
     let news = crate::triggers::TriggerEvent::ChatAnswer {
         number: None,
         applied: false,

@@ -12,6 +12,7 @@ fn store_snapshot_is_deterministic_and_frozen_until_the_next_generation() {
             FeedEntry::Operator {
                 text: "new context".into(),
                 images: Vec::new(),
+                local: false,
             },
             archon_core::now(),
         )

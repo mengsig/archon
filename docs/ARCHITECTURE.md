@@ -62,7 +62,7 @@ Contents:
 ```
  operator ──archon chat──▶ ┌──────────────────────────── archond ─────────────────────────────┐
                            │ socket server (archon protocol, NDJSON)                          │
- aether TUI (full detail)  │ feed (quiet chat) · dispatcher · pipeline engine · supervisor    │
+ aether TUI (full detail)  │ feed (posts' outbox) · dispatcher · pipeline engine · supervisor    │
         ▲                  │ aether link (1 connection, 2 subscriptions) · worktrees · lavish │
         │                  │ SQLite store (archon.db)                                         │
         │                  └───────────────▲──────────────────────────────┬───────────────────┘
@@ -79,7 +79,7 @@ Contents:
 | Process | What it is | Lifetime |
 | --- | --- | --- |
 | `archond` (`archon daemon run`) | The Archon daemon: store, dispatcher, pipeline engine, Aether link, orchestrator supervisor, feed, lavish plugin. | Long-running; one per data directory (§9). Autostarted by the TUI, the chat, and commands and `archon mcp` tool calls that change something; never by one that only reads. |
-| `archon` | The CLI, a client of `archond`. With no subcommand it opens the terminal UI (`archon tui`, §4.7); `archon chat` is the quiet operator chat (§12). | Per command. |
+| `archon` | The CLI, a client of `archond`. With no subcommand it opens the terminal UI (`archon tui`, §4.7); `archon chat` is the line chat over the orchestrator's conversation (§12). | Per command. |
 | `archon mcp` | Stdio MCP server. Aether spawns it as the `archon` MCP server, and it proxies each tool call to `archond`. | Owned by `aetherd`. |
 | `aetherd` (Archon's own) | In dedicated mode (the default), an unmodified `aether daemon` with its config, store and socket under Archon's directories (§4.7). | Started by any `archon` command that starts `archond`; stopped by `archon daemon stop` (not with `--keep-aether`). |
 | orchestrator | One long-lived root Aether agent (`role = "archon-orchestrator"`). Uses native tools plus `mcp__archon__*`. | Created once and supervised by `archond`. |
@@ -520,7 +520,7 @@ at-least-once, so every handler is idempotent.
 
 | Subscription | Query | Handles |
 | --- | --- | --- |
-| `orchestrator` | `{agent: <orchestrator>, types:["agent.message","agent.turn_completed","agent.waiting","agent.started","question.asked","agent.failed","agent.cancelled","agent.completed","agent.restarted","agent.usage_updated","inbox.delivered","inbox.consumed","compaction.completed"]}` | Chat replies (§12), questions, supervisor, adopting an Aether restart (§16), orchestrator spend, restating the directives after a compaction (§18.5). |
+| `orchestrator` | `{agent: <orchestrator>, types:["agent.message","agent.turn_completed","agent.started","question.asked","agent.failed","agent.cancelled","agent.completed","agent.restarted","agent.usage_updated","inbox.delivered","inbox.consumed","compaction.completed"]}` | Waking conversation reads (§12), questions, supervisor, adopting an Aether restart (§16), orchestrator spend, restating the directives after a compaction (§18.5). |
 | `fleet` | `{types:["agent.created","task.completed","task.failed","task.cancelled","agent.failed","agent.cancelled","agent.completed","agent.usage_updated","question.asked","inbox.delivered","inbox.consumed"]}` | Stage completion, spend ledger, stage questions, model-policy watchdog, run-node inbox forwarding, authenticated relay provenance and unread-inbox health. An agent's end (`agent.completed`, `agent.failed`, `agent.cancelled`) also wakes the dispatcher, which stops what a settled stage agent delegated (§6.3). |
 
 The `fleet` subscription also forwards message inbox entries addressed to
@@ -1140,8 +1140,8 @@ longer shows (it was retried since).
 
 An `agent_message` is one feed entry the daemon writes with the news, in
 the same transaction (§5.5), so the orchestrator does not echo it: an
-escalation shows in the quiet chat as a `Blocker`, a relay or info with
-progress.
+escalation shows in the conversation as a `Blocker`, a relay or info as
+progress in `archon log`.
 
 While the orchestrator is down this news is held. A new, revived or
 adopted orchestrator gets a retry at once, and the held batches reach it in
@@ -1293,7 +1293,7 @@ unknown callers and settled stage callers are refused visibly.
 
 Archond resolves the caller's stage and records the message in the feed
 for the operator to read as it is: `From <stage> (<sender>; <kind>): <text>`,
-the whole text, as a `Blocker` for an escalation, which the quiet chat
+the whole text, as a `Blocker` for an escalation, which the conversation
 shows, and as `Progress` for a relay or info. The orchestrator therefore
 never repeats a message to the operator; it acts on it. The news event
 carries item, pipeline run, stage run, stage, attempt, agent, kind, text and
@@ -3275,8 +3275,8 @@ initiative_contract_bytes = 2048  # 1..=16384
 tick_secs = 15
 
 [chat]
-show_progress = false          # the /progress toggle's initial value
-history = 30                   # feed entries replayed when chat opens
+show_progress = false          # no effect: `archon log` shows progress
+history = 30                   # no effect: chat replays what the phone shows
 
 [worktrees]
 # root = "/srv/archon/worktrees"  # unset: <data>/worktrees
@@ -3743,20 +3743,54 @@ idempotency_key}`), followed by the tool's own advice on checking it.
 
 `archon chat` opens a line-oriented chat. It is not a TUI, and it works over
 SSH and in pipes; it is also what a bare `archon` opens where the TUI cannot
-run (§4.7). The TUI shows the orchestrator's transcript, not this feed: what
-`archond` posts itself (gate questions, stage reports, `System` entries)
-appears there only as far as the orchestrator restates it; see
-[the guide](guide.md#what-the-terminal-ui-shows-and-what-it-does-not).
+run (§4.7).
 
-- On open, it prints the last `chat.history` **visible** feed items, then
-  subscribes with `SubscribeFeed{after, verbose}`.
-- Input lines are sent with `Say`. Slash commands: `/progress` (toggle
-  verbose), `/answer <n> <text>`, `/questions`, `/status`, `/queue [state …]`,
+**One conversation.** The orchestrator's Aether transcript is the only
+record of the operator conversation. The TUI's `/focus`, `archon chat` and
+the phone app show the same entries: the transcript's important ones, in
+order, with the same markdown text.
+
+- `archond` appends each of its own posts there, as an important post
+  (`append_note{important:true}`, Aether feature `conversation`). That covers
+  notices, `ask_operator` questions, answers, reports, item outcomes, gates,
+  merges, stage messages, `System` lines, authority changes and command results. The
+  `transcript posts` link worker reads them from the feed in seq order and
+  keeps its cursor in kv `transcript_posted_seq`. A post waits, and so do the
+  ones after it, while Aether is away or lacks posts, no orchestrator exists,
+  or an append fails. Only a post Aether refuses as invalid is skipped (and
+  logged). Delivery is at least once: `append_note` takes no idempotency key,
+  so a crash between the append and the cursor write posts that item again.
+  Progress goes as a plain note, which the focused views leave out. Operator
+  lines, orchestrator replies and the orchestrator's own `ask_user` questions
+  are not posted again, because they are already in the transcript; that skip
+  and its cursor write are made under the supervisor's steady lock, so a
+  successor without the question gets it posted. An operator line archond runs
+  itself and never sends to Aether (`FeedEntry::Operator{local:true}`: an
+  `OperatorCommand` from `archon chat` or the phone, a socket settings change)
+  is posted once as `**Operator:** <line>`, which `archon chat` and the phone
+  take as the echo of a line they sent. Every answer is posted. `archon chat` sends
+  `/answer`, `/merge` and the other host commands as `OperatorCommand`, as the
+  phone's chat does, so both post the same lines. A command's result line (§18.6)
+  is a feed `System` entry where aetherd keeps posts, so it is posted in
+  order like the rest. When the store opens on the first start, the cursor is
+  set to the feed's end before anything writes. Older lines stay readable in
+  `archon log` and `FeedHistory`.
+- `Conversation{after, before, limit, wait}` reads one page of the current
+  orchestrator's conversation through `get_conversation{important_only:true}`.
+  The cursor is Aether's event seq, which is global, so it carries across an
+  orchestrator restart. With `wait` (and `after`), the read holds for up to
+  20 s until the conversation grows (a pump event or a post), then returns
+  what follows the cursor; with nothing new it returns an empty page whose
+  `to_seq` is the cursor.
+- On open, `archon chat` reads the newest page (200 events), as the phone
+  does, and prints all its entries. It then waits for what follows. A line it sent is
+  not printed again when it comes back.
+- Input lines are sent with `Say`. Slash commands: `/answer <n> <text>`, `/questions`, `/status`, `/queue [state …]`,
   `/item <id>`, `/merge <id> [--ignore-checks]` (§18.6), `/pause`,
   `/resume`, `/help`, `/quit`. An operator gate's
   question (§18.3) reads `/answer 3 yes`, `/answer 3 <feedback>` or
   `/answer 3 reject`. `/a` is no longer a command: archon chat and archond
-  answer it with "use /answer". The commands besides `/progress`, `/help`
+  answer it with "use /answer". The commands besides `/image`, `/help`
   and `/quit` come from one list, `archon_core::operator_commands`.
   Question numbers are archond's permanent ones (§5.2).
 - Text that agents or repositories wrote (feed entries, questions and their
@@ -3765,37 +3799,26 @@ appears there only as far as the orchestrator restates it; see
   overrides are removed, and one-line fields have their line breaks turned into
   spaces. `--json` output is unchanged.
 
-A `FeedEntry` is created only by:
+The feed is `archond`'s durable record and the outbox of its posts.
+`archon log` reads it. A `FeedEntry` is created only by:
 
-| Source | Feed entry | Shown by default |
+| Source | Feed entry | Posted to the conversation |
 | --- | --- | --- |
-| Operator `Say` | `Operator` | yes (echo) |
-| Final assistant text of an orchestrator turn that consumed an operator message | `Orchestrator` | yes |
+| Operator `Say` | `Operator` | no: the line itself is in the transcript |
+| Final assistant text of an orchestrator turn, recorded by an older Archon | `Orchestrator` | no: kept for `archon log` |
 | `notify(kind)` | `Notification` | yes except `progress` |
-| `ask_operator`, `question.asked` (orchestrator or stage agent) | `Question` | yes |
+| `ask_operator`, `question.asked` (orchestrator or stage agent) | `Question` | yes, except an orchestrator's `ask_user` |
 | An answer | `Answer`, with `via` when it did not come through Archon's own surfaces: `chat_command` (the operator's `/answer` in the orchestrator's Aether chat) or `chat_reply` (recorded by the orchestrator with `record_chat_answer`); §5.2 | yes |
 | Item terminal state | `Notification{Blocker}` if operator action is needed, otherwise `Notification{Outcome}` | yes |
 | Blocked item, budget hit, policy violation, `BLOCKED:` stage | `Notification{Blocker}` | yes |
 | Daemon lifecycle (orchestrator restarted, Aether reconnected) | `System` | yes |
 
-**Reply detection** follows only the orchestrator's ordered event stream, so
-it cannot race `Say` or a lagging pump. An `inbox.delivered` message from the
-`user` actor is pending until an `inbox.consumed` (at turn start or steered
-mid-turn) covers its inbox seq. From then on `archond` keeps the last
-assistant text, and on `agent.turn_completed` it emits that text. A turn that
-ends `failed` or `cancelled` emits nothing; the revived agent answers. A
-turn that ends waiting for something other than its inbox (`agent.waiting`
-with a condition, as when the orchestrator waits for an agent it delegated
-to) emits what it said and leaves the answer open: the last text of the
-turn that the wait's end wakes is emitted too, so a delegated result is
-shown as the reply. The answer closes at the first turn that ends any other
-way. While it is open, a turn woken by Archon news is shown as well, which
-is the price of not dropping the answer. The
-tracker is persisted in kv `chat_reply_state` with the last event seq it
-applied, so neither a restart nor a replay loses or repeats a reply.
-Assistant text from other trigger-woken turns is never shown. Tool calls, thinking
-and intermediate text are never shown. `archon log` and Aether's TUI show
-everything. `archon log --item <id>` keeps the entries about one item (its
+**Commands typed in Aether.** A whole-message command the operator types
+in the orchestrator's chat is handled once per Aether event. The seqs already
+handled are kept in kv `chat_reply_state`, so a replay after a restart does
+not apply a command twice. Tool calls and thinking are
+never shown in the focused views. `archon log` shows the whole feed, and
+Aether's full TUI view shows the whole transcript. `archon log --item <id>` keeps the entries about one item (its
 notices, questions and their answers, reports), `--kind` keeps some kinds
 (`operator`, `orchestrator`, `question`, `answer`, `decision`, `blocker`,
 `outcome`, `progress`, `report`, `system`), paging back through

@@ -562,7 +562,7 @@ fn hold_as(store: &mut Store, news: Held) -> Result<(), ArchonError> {
 }
 
 /// Record a stage's or run node's message as one feed entry and the
-/// orchestrator's news together; only an escalation shows in the quiet chat.
+/// orchestrator's news together; only an escalation shows in the conversation.
 pub(crate) fn record_message(
     store: &mut Store,
     message: archon_core::agent_message::AgentMessage,

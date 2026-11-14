@@ -62,6 +62,7 @@ fn populate(store: &mut Store) -> (Vec<QueueItem>, archon_core::run::PipelineRun
             FeedEntry::Operator {
                 text: "go".into(),
                 images: Vec::new(),
+                local: false,
             },
             t(1),
         )

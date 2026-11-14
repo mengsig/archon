@@ -1966,6 +1966,50 @@
           "type": "object"
         },
         {
+          "description": "The important entries of the orchestrator's conversation, as the\nAether TUI's `/focus` shows them: the newest page when neither\n`after` nor `before` is set. `wait` (with `after`) holds the reply\nuntil something follows `after`, or about 20 seconds pass.",
+          "properties": {
+            "after": {
+              "default": null,
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "before": {
+              "default": null,
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "cmd": {
+              "const": "conversation",
+              "type": "string"
+            },
+            "limit": {
+              "default": null,
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "wait": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "cmd": {
               "const": "publish_report",
@@ -3153,6 +3197,94 @@
         }
       ]
     },
+    "ConversationEntry": {
+      "description": "One entry, identified and ordered by `(seq, part)`.",
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "important": {
+          "type": "boolean"
+        },
+        "kind": {
+          "$ref": "#/$defs/EntryKind"
+        },
+        "links": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "part": {
+          "description": "Its place among the entries of the same event.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "seq": {
+          "description": "The Aether event it came from.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "text": {
+          "description": "Markdown.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "part",
+        "at",
+        "kind",
+        "important",
+        "text"
+      ],
+      "type": "object"
+    },
+    "ConversationPage": {
+      "description": "One page of entries. Page backwards with `before: from_seq` and forwards\nwith `after: to_seq`; both are 0 for a page that read no event.",
+      "properties": {
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/ConversationEntry"
+          },
+          "type": "array"
+        },
+        "from_seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "has_after": {
+          "type": "boolean"
+        },
+        "has_before": {
+          "type": "boolean"
+        },
+        "last_seq": {
+          "description": "The newest conversation event of the agent.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "to_seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "entries",
+        "from_seq",
+        "to_seq",
+        "has_before",
+        "has_after",
+        "last_seq"
+      ],
+      "type": "object"
+    },
     "CorrectionCause": {
       "enum": [
         "quality",
@@ -4121,6 +4253,37 @@
       ],
       "type": "object"
     },
+    "EntryKind": {
+      "description": "Who said an entry, as Aether names it; a kind this Archon does not know\nreads as `Other` and still shows its text.",
+      "oneOf": [
+        {
+          "enum": [
+            "other"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "operator",
+          "description": "What the operator sent.",
+          "type": "string"
+        },
+        {
+          "const": "assistant",
+          "description": "The orchestrator's own text, including text between its tool calls.",
+          "type": "string"
+        },
+        {
+          "const": "post",
+          "description": "A readable post a host appended, such as archond's notices.",
+          "type": "string"
+        },
+        {
+          "const": "question",
+          "description": "The orchestrator asking the operator (`ask_user`).",
+          "type": "string"
+        }
+      ]
+    },
     "ErrorCode": {
       "oneOf": [
         {
@@ -4215,6 +4378,10 @@
                 "$ref": "#/$defs/ImageRef"
               },
               "type": "array"
+            },
+            "local": {
+              "description": "archond ran the line itself and never sent it to Aether, so the\nconversation gets it as a post.",
+              "type": "boolean"
             },
             "text": {
               "type": "string"
@@ -10163,6 +10330,22 @@
         {
           "properties": {
             "data": {
+              "$ref": "#/$defs/ConversationPage"
+            },
+            "reply": {
+              "const": "conversation",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
               "$ref": "#/$defs/ReportPublished"
             },
             "reply": {
@@ -12219,6 +12402,50 @@
             "cmd",
             "limit",
             "verbose"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The important entries of the orchestrator's conversation, as the\nAether TUI's `/focus` shows them: the newest page when neither\n`after` nor `before` is set. `wait` (with `after`) holds the reply\nuntil something follows `after`, or about 20 seconds pass.",
+          "properties": {
+            "after": {
+              "default": null,
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "before": {
+              "default": null,
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "cmd": {
+              "const": "conversation",
+              "type": "string"
+            },
+            "limit": {
+              "default": null,
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "wait": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "cmd"
           ],
           "type": "object"
         },

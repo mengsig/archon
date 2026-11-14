@@ -703,9 +703,9 @@ fn notify() -> ToolDefinition {
     define(
         "notify",
         "Notify operator",
-        "Post a line to the operator's chat, for what your final reply does not show. `decision`: a choice of yours they should know. `blocker`: work \
+        "Post a line to the operator's conversation, for news outside a reply. `decision`: a choice of yours they should know. `blocker`: work \
          cannot go on without them. `outcome`: more than the automatic item outcome. \
-         `progress`: hidden unless asked for. A question goes through ask_operator, not \
+         `progress`: only in `archon log`. A question goes through ask_operator, not \
          `question`.",
         object(
             json!({

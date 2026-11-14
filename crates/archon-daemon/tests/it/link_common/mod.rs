@@ -26,7 +26,7 @@ use archon_daemon::WorkerPolicy;
 use archon_daemon::context::{DaemonContext, DaemonPaths};
 use archon_daemon::disk::DiskWatch;
 use archon_daemon::executor::RunTable;
-use archon_daemon::feed::ReplyTracker;
+use archon_daemon::feed::SeenEvents;
 use archon_daemon::handlers;
 use archon_daemon::pump::AetherStarter;
 use archon_daemon::supervisor::{Backoff, Supervisor};
@@ -108,7 +108,8 @@ impl Harness {
             dispatch: dispatch.clone(),
             coordination: Default::default(),
             runs: Mutex::new(RunTable::default()),
-            replies: Mutex::new(ReplyTracker::default()),
+            seen: Mutex::new(SeenEvents::default()),
+            conversation: tokio::sync::watch::Sender::new(0),
             answering: Mutex::new(()),
             authority_changes: Mutex::new(()),
             learning_memory: Mutex::new(()),

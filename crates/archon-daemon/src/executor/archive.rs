@@ -19,8 +19,11 @@
 //! So does a tree whose stage agent Aether still holds live, or cannot say:
 //! it is not even listed until that agent stopped, so none it delegates to
 //! meanwhile is missed. So does a tree with an agent Aether refuses to
-//! archive: that agent is asked of again only every [`REFUSED_RETRY`] and
-//! after a restart.
+//! archive, such as a permission denied: that agent is asked of again only
+//! every [`REFUSED_RETRY`] and after a restart. An archive Aether answers
+//! with `Invalid` or `InvalidTransition` means it still holds the agent
+//! live, so it is exempt from that backoff: it is retried on the next pass
+//! and archived promptly once the agent stops.
 //! Archiving is best-effort and never fails a run.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -567,7 +570,9 @@ async fn archive_unrefused(
     outcome
 }
 
-/// One `archive` call; none once the pass is out of time.
+/// One `archive` call; none once the pass is out of time. `Invalid` and
+/// `InvalidTransition` mean the agent is still live: that is `Later`, retried
+/// on the next pass, not `Refused` with its [`REFUSED_RETRY`] backoff.
 async fn archive_one(
     ctx: &DaemonContext,
     stage: &StageRunId,

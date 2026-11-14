@@ -7,7 +7,7 @@
 //! across an Aether call. Work that needs Aether or git after a state change
 //! is returned as a `FollowUp` and run once the run table is released.
 
-mod archive;
+pub mod archive;
 pub mod coordination;
 mod dependencies;
 mod descendants;
@@ -219,8 +219,6 @@ pub(crate) struct FollowUp {
     pub kept: Vec<resume::Kept>,
     /// Live stage runs a steer still owes a patch or a message (§6.6).
     pub steers: Vec<StageRunId>,
-    /// Ended stage runs whose agent tree an archive mark may owe.
-    pub archive: Vec<StageRunId>,
     /// Capacity or pending spawns changed: wake the dispatcher.
     pub poke: bool,
 }
@@ -255,7 +253,6 @@ impl FollowUp {
         self.resumed.extend(other.resumed);
         self.kept.extend(other.kept);
         self.steers.extend(other.steers);
-        self.archive.extend(other.archive);
         self.poke |= other.poke;
     }
 
@@ -281,7 +278,6 @@ impl FollowUp {
             && self.resumed.is_empty()
             && self.kept.is_empty()
             && self.steers.is_empty()
-            && self.archive.is_empty()
     }
 }
 
@@ -546,21 +542,18 @@ pub async fn recover(ctx: &DaemonContext) -> Result<(), ArchonError> {
     Ok(())
 }
 
-/// Run follow-ups until none are left, then the archives they owe, under one
-/// `archive::PER_SWEEP` budget. Every step is attempted even when an
-/// earlier one fails; the first error is returned, the others logged.
+/// Run follow-ups until none are left. Every step is attempted even when
+/// an earlier one fails; the first error is returned, the others logged.
 pub(crate) async fn run_follow_up(
     ctx: &DaemonContext,
     mut follow: FollowUp,
 ) -> Result<(), ArchonError> {
     let mut first_error: Option<ArchonError> = None;
     let mut poke = follow.poke;
-    let mut owed: BTreeSet<StageRunId> = std::mem::take(&mut follow.archive).into_iter().collect();
     // Each round settles or spawns something, so chains end (a spawn's check
     // can settle it, whose driver only queues pending spawns).
     while !follow.is_empty() {
-        let (mut next, error) = follow_up_round(ctx, follow).await;
-        owed.extend(std::mem::take(&mut next.archive));
+        let (next, error) = follow_up_round(ctx, follow).await;
         poke |= next.poke;
         if let Some(error) = error {
             match first_error {
@@ -570,7 +563,6 @@ pub(crate) async fn run_follow_up(
         }
         follow = next;
     }
-    archive_owed(ctx, owed).await;
     if poke {
         ctx.dispatch.notify_one();
     }
@@ -632,9 +624,8 @@ async fn stop_and_spawn(ctx: &DaemonContext, round: &mut Round, follow: &mut Fol
     for run in dedup(take(&mut follow.retire)) {
         let retired = run_node::retire(ctx, &run).await;
         let discard = vec![run];
-        round.record(retired.map(|archive| FollowUp {
+        round.record(retired.map(|()| FollowUp {
             discard,
-            archive,
             ..FollowUp::default()
         }));
     }
@@ -701,35 +692,6 @@ async fn deliver_and_tidy(ctx: &DaemonContext, round: &mut Round, follow: Follow
     for run in dedup(follow.discard) {
         round.record(discard::discard(ctx, &run).await);
     }
-    assert!(
-        follow.archive.is_empty(),
-        "the chain archives once, after its rounds"
-    );
-}
-
-/// Archive the trees `owed` names, oldest stage run first, asking Aether of
-/// at most `archive::PER_SWEEP`. Best-effort cleanup whose mark stays for
-/// the next sweep: its failure fails neither the round nor any other duty.
-async fn archive_owed(ctx: &DaemonContext, owed: BTreeSet<StageRunId>) {
-    let mut asked = 0;
-    for stage in &owed {
-        if asked == archive::PER_SWEEP {
-            tracing::info!(
-                owed = owed.len(),
-                "archive marks past this pass's cap wait for the next sweep"
-            );
-            break;
-        }
-        match archive::release(ctx, stage).await {
-            Ok(true) => asked += 1,
-            Ok(false) => {}
-            Err(error) => {
-                asked += 1;
-                tracing::error!(%stage, %error, "archiving a moved-past stage agent failed; its mark is retried by the sweep");
-            }
-        }
-    }
-    assert!(asked <= archive::PER_SWEEP, "the cap bounds Aether's calls");
 }
 
 /// Issue `spawns`: one run's in order, as its first may create the run's

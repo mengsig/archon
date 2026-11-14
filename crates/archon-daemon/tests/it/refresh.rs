@@ -542,6 +542,7 @@ async fn a_refresh_archives_the_lead_its_cold_retry_replaced() {
     }
     let cold = h.running().await.remove(0);
     assert_ne!(cold.aether_agent.as_ref(), Some(&agent), "a fresh agent");
+    h.archive().await;
     assert_eq!(h.backend.archived(), [agent]);
 }
 

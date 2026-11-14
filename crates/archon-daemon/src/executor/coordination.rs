@@ -23,6 +23,8 @@ pub struct Coordination {
     pub(super) onto: super::ship::OntoLocks,
     /// Held while a stage run is delivered what its steers owe it.
     pub(super) steering: super::steer::Locks,
+    /// Signalled when an archive mark is owed; wakes the archive worker.
+    pub(super) archive_owed: Notify,
 }
 
 /// How often GitHub is asked what became of the pull requests of finished runs.

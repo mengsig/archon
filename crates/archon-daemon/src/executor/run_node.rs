@@ -715,25 +715,22 @@ enum Found {
 /// replayed under its key first, so a node Aether created behind a lost
 /// reply is found and cancelled rather than leaked. Waiting and an
 /// unanswered call both leave the entry for the next sweep
-/// (`runs_to_retire`). Once retired, the stage runs whose ended agents to
-/// archive (`archive::owe_finished`); none while it waits.
-pub(super) async fn retire(
-    ctx: &DaemonContext,
-    run: &PipelineRunId,
-) -> Result<Vec<StageRunId>, ArchonError> {
+/// (`runs_to_retire`). Retiring owes the archive of the run's ended agents
+/// (`archive::owe_finished`) and wakes the worker that makes it.
+pub(super) async fn retire(ctx: &DaemonContext, run: &PipelineRunId) -> Result<(), ArchonError> {
     let node = load_node(&*ctx.store.lock().await, run)?;
     if turn_still_ending(ctx, run, archon_core::now()).await? {
-        return Ok(Vec::new());
+        return Ok(());
     }
     let agent = match find_agent(ctx, run, node).await? {
         Found::Agent(agent) => Some(agent),
         Found::Nothing => None,
-        Found::Unanswered => return Ok(Vec::new()),
+        Found::Unanswered => return Ok(()),
     };
     if let Some(agent) = agent
         && (!cancel_node(ctx, run, &agent).await? || !subtree_stopped(ctx, &agent).await?)
     {
-        return Ok(Vec::new());
+        return Ok(());
     }
     // Older node generations may no longer enumerate their stage agents.
     // Keep the durable node entry until every recorded builder is confirmed
@@ -743,11 +740,12 @@ pub(super) async fn retire(
         if let Some(agent) = stage.aether_agent
             && !subtree_stopped(ctx, &agent).await?
         {
-            return Ok(Vec::new());
+            return Ok(());
         }
     }
-    let mut store = ctx.store.lock().await;
-    super::archive::owe_finished(&mut store, run, &node_key(run))
+    let owed = super::archive::owe_finished(&mut *ctx.store.lock().await, run, &node_key(run))?;
+    super::archive::announce(ctx, &owed);
+    Ok(())
 }
 
 /// Cancellation is cooperative. An unanswered lookup keeps the durable

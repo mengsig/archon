@@ -9,13 +9,18 @@
 //! `owed` until Aether confirmed the archive, then `done` while the run is
 //! live, so each tree is archived once. An owed mark is written in the same
 //! transaction as the spawn or node retirement that owes it, so a restart
-//! never loses one, and retention keeps its item while it stands. The sweep
-//! retries owed marks after a restart or an unanswered call, at most
-//! [`PER_SWEEP`] trees a pass, each call bounded by [`CALL_LIMIT`];
-//! archiving is best-effort and never fails a run.
+//! never loses one, and retention keeps its item while it stands.
+//!
+//! Dispatch, the sweep and the event pump only write marks. One worker
+//! ([`run`]) asks Aether: at start, when a mark is written and every
+//! [`RETRY_EVERY`]. A pass reads the marks from the store and may take
+//! [`PASS_BUDGET`] in all and [`CALL_LIMIT`] a call, so a slow or silent
+//! Aether holds up nothing else; what a pass did not reach stays owed.
+//! Archiving is best-effort and never fails a run.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
+use std::sync::Arc;
 use std::time::Duration;
 
 use archon_core::aether_ids::AetherAgentId;
@@ -25,6 +30,7 @@ use archon_core::ports::DescendantState;
 use archon_core::queue::QueueState;
 use archon_core::run::{StageOutcome, StageRun, StageState};
 use archon_queue::Store;
+use tokio::time::Instant;
 
 use super::run_node;
 use super::sweep::is_passing;
@@ -34,20 +40,108 @@ const MARK_PREFIX: &str = "archive:";
 const OWED: &str = "owed";
 const DONE: &str = "done";
 
-/// Trees asked of Aether a pass, oldest stage run first; the rest wait for
-/// the next sweep, so slow answers never hold dispatch up for long.
-pub(super) const PER_SWEEP: usize = 8;
 /// How long one `archive` or `descendants` call may take before it counts
 /// as unanswered and its mark stays owed.
-const CALL_LIMIT: Duration = Duration::from_secs(5);
+pub const CALL_LIMIT: Duration = Duration::from_secs(5);
+/// How long one pass may spend asking Aether; what it did not reach stays owed.
+pub const PASS_BUDGET: Duration = Duration::from_secs(10);
+/// How long the worker waits for a new mark before it asks of the owed ones again.
+pub const RETRY_EVERY: Duration = Duration::from_secs(15);
+// A pass outlasts one unanswered call, so one silent agent never takes it whole.
+const _: () = assert!(CALL_LIMIT.as_secs() < PASS_BUDGET.as_secs());
+
+/// The delegates Aether confirmed archived, by the stage run whose tree they are of.
+type Delegates = BTreeMap<StageRunId, BTreeSet<AetherAgentId>>;
+
+/// What the worker carries from one pass to the next. None of it is durable:
+/// after a restart Aether is asked again, and archiving twice does no harm.
+#[derive(Debug, Default)]
+pub struct Progress {
+    /// The mark a pass that ran out of time had reached; the next starts there.
+    resume: Option<StageRunId>,
+    /// What is archived already of each tree whose mark is still owed.
+    archived: Delegates,
+}
+
+/// Wake the worker for the `owed` marks just written; none wakes nobody.
+pub(super) fn announce(ctx: &DaemonContext, owed: &[StageRunId]) {
+    if !owed.is_empty() {
+        ctx.coordination.archive_owed.notify_one();
+    }
+}
+
+/// Archive what the marks owe at start, whenever one is written and every
+/// [`RETRY_EVERY`], until the daemon stops; only a store failure ends it.
+pub async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
+    run_every(ctx, RETRY_EVERY).await
+}
+
+/// [`run`] with the wait between passes no mark announced, for the
+/// deterministic harness. Dropped at any point, it leaves every mark it did
+/// not settle owed.
+pub async fn run_every(ctx: Arc<DaemonContext>, retry_every: Duration) -> Result<(), ArchonError> {
+    assert!(!retry_every.is_zero(), "a worker that never waits spins");
+    let mut progress = Progress::default();
+    loop {
+        if ctx.aether.is_connected() {
+            pass(&ctx, &mut progress).await?;
+        }
+        tokio::select! {
+            () = ctx.coordination.archive_owed.notified() => {}
+            () = tokio::time::sleep(retry_every) => {}
+        }
+    }
+}
+
+/// One pass of the worker: ask Aether of every tree a mark owes, oldest
+/// stage run first from where the last pass ran out of time, until
+/// [`PASS_BUDGET`] is spent. Only a store failure is returned.
+pub async fn pass(ctx: &DaemonContext, progress: &mut Progress) -> Result<(), ArchonError> {
+    let mut stages = marked(&mut *ctx.store.lock().await)?;
+    stages.sort();
+    progress
+        .archived
+        .retain(|stage, _| stages.binary_search(stage).is_ok());
+    let resume = progress.resume.take();
+    let start = resume.map_or(0, |from| stages.partition_point(|stage| *stage < from));
+    let (earlier, rest) = stages.split_at(start);
+    let deadline = Instant::now() + PASS_BUDGET;
+    for stage in rest.iter().chain(earlier) {
+        if Instant::now() >= deadline {
+            tracing::info!(
+                marks = stages.len(),
+                "archive pass out of time; the marks not reached wait for the next"
+            );
+            progress.resume = Some(stage.clone());
+            break;
+        }
+        match release(ctx, stage, deadline, &mut progress.archived).await {
+            Ok(()) => {}
+            Err(error) if error.is_store() => return Err(error),
+            Err(error) => {
+                tracing::error!(%stage, %error, "archiving a moved-past stage agent failed; its mark is retried");
+            }
+        }
+    }
+    let stands = |stage: &StageRunId| stages.binary_search(stage).is_ok();
+    assert!(
+        progress.archived.keys().all(stands),
+        "progress is kept only of marked trees"
+    );
+    assert!(
+        progress.resume.as_ref().is_none_or(stands),
+        "the next pass resumes at a mark this one read"
+    );
+    Ok(())
+}
 
 fn mark_key(stage: &StageRunId) -> String {
     format!("{MARK_PREFIX}{stage}")
 }
 
-/// Every stage run with an archive mark: what the sweep looks at. A mark
+/// Every stage run with an archive mark: what a pass looks at. A mark
 /// whose key or value does not parse is logged and dropped, never fatal.
-pub(super) fn marked(store: &mut Store) -> Result<Vec<StageRunId>, ArchonError> {
+fn marked(store: &mut Store) -> Result<Vec<StageRunId>, ArchonError> {
     let mut stages = Vec::new();
     for (key, value) in store.kv_prefix(MARK_PREFIX)? {
         let raw = key.strip_prefix(MARK_PREFIX).expect("ranged by prefix");
@@ -238,18 +332,26 @@ fn due(store: &mut Store, stage: &StageRunId) -> Result<Option<AetherAgentId>, A
 
 /// Archive `stage`'s tree if its mark owes it now, and record that it is
 /// settled: a finished run's mark is dropped, a live one's kept as done.
-/// Returns whether Aether was asked, which [`PER_SWEEP`] counts.
-pub(super) async fn release(ctx: &DaemonContext, stage: &StageRunId) -> Result<bool, ArchonError> {
+/// A tree not archived whole by `deadline` keeps its mark owed and, in
+/// `archived`, the delegates it need not ask of again.
+async fn release(
+    ctx: &DaemonContext,
+    stage: &StageRunId,
+    deadline: Instant,
+    archived: &mut Delegates,
+) -> Result<(), ArchonError> {
     let Some(agent) = due(&mut *ctx.store.lock().await, stage)? else {
-        return Ok(false);
+        return Ok(());
     };
-    if archive_tree(ctx, stage, &agent).await == Archived::Later {
-        return Ok(true);
+    let delegates = archived.entry(stage.clone()).or_default();
+    if archive_tree(ctx, stage, &agent, deadline, delegates).await == Archived::Later {
+        return Ok(());
     }
+    archived.remove(stage);
     let mut store = ctx.store.lock().await;
     let key = mark_key(stage);
     if store.kv_get(&key)?.is_none() {
-        return Ok(true);
+        return Ok(());
     }
     let run = store.stage_run(stage)?.run;
     if store.run(&run)?.state.is_terminal() {
@@ -257,7 +359,7 @@ pub(super) async fn release(ctx: &DaemonContext, stage: &StageRunId) -> Result<b
     } else {
         store.kv_set(&key, DONE)?;
     }
-    Ok(true)
+    Ok(())
 }
 
 /// What became of an archive of one agent or a tree.
@@ -271,16 +373,19 @@ enum Archived {
     GaveUp,
 }
 
-/// `call` to Aether, counted unanswered once it takes over [`CALL_LIMIT`].
+/// `call` to Aether, counted unanswered once it takes over [`CALL_LIMIT`]
+/// or runs past the pass's `deadline`, whichever comes first.
 async fn bounded<T>(
     call: impl Future<Output = Result<T, ArchonError>>,
     what: &str,
+    deadline: Instant,
 ) -> Result<T, ArchonError> {
-    match tokio::time::timeout(CALL_LIMIT, call).await {
+    let limit = CALL_LIMIT.min(deadline.saturating_duration_since(Instant::now()));
+    match tokio::time::timeout(limit, call).await {
         Ok(answer) => answer,
         Err(_) => Err(ArchonError::Unavailable(format!(
-            "aether did not answer {what} within {}s",
-            CALL_LIMIT.as_secs()
+            "aether did not answer {what} within {:.1}s",
+            limit.as_secs_f32()
         ))),
     }
 }
@@ -289,9 +394,18 @@ async fn bounded<T>(
 /// whole tree is confirmed stopped and every delegate archived or gone. A
 /// tree it cannot read, for any reason, or with an agent still live, is
 /// left for later; a stage agent Aether no longer knows lists no delegates,
-/// and its own `archive` then finds it gone.
-async fn archive_tree(ctx: &DaemonContext, stage: &StageRunId, agent: &AetherAgentId) -> Archived {
-    let descendants = match bounded(ctx.backend.descendants(agent), "descendants").await {
+/// and its own `archive` then finds it gone. Delegates in `archived` were
+/// archived by an earlier pass and are not asked of again; each one this
+/// pass archives joins them, so a tree too slow for one pass ends in a later.
+async fn archive_tree(
+    ctx: &DaemonContext,
+    stage: &StageRunId,
+    agent: &AetherAgentId,
+    deadline: Instant,
+    archived: &mut BTreeSet<AetherAgentId>,
+) -> Archived {
+    let listing = bounded(ctx.backend.descendants(agent), "descendants", deadline);
+    let descendants = match listing.await {
         Ok(descendants) => descendants,
         Err(error) if is_passing(&error) => {
             tracing::info!(%stage, %agent, %error, "stage agent tree unanswered; archive retried later");
@@ -313,11 +427,20 @@ async fn archive_tree(ctx: &DaemonContext, stage: &StageRunId, agent: &AetherAge
         descendants.iter().all(|d| d.agent != *agent),
         "an agent is not its own descendant"
     );
+    assert!(
+        !archived.contains(agent),
+        "the stage agent goes last, so no pass remembers it"
+    );
     let mut gave_up = false;
     for member in &descendants {
-        match archive_one(ctx, stage, &member.agent).await {
-            Archived::Done => {}
-            // The rest would likely wait as long; the next sweep asks again.
+        if archived.contains(&member.agent) {
+            continue;
+        }
+        match archive_one(ctx, stage, &member.agent, deadline).await {
+            Archived::Done => {
+                archived.insert(member.agent.clone());
+            }
+            // The rest would likely wait as long; the next pass asks again.
             Archived::Later => return Archived::Later,
             Archived::GaveUp => gave_up = true,
         }
@@ -326,12 +449,21 @@ async fn archive_tree(ctx: &DaemonContext, stage: &StageRunId, agent: &AetherAge
         tracing::warn!(%stage, %agent, "a delegate of the stage agent cannot be archived; the tree stays in Aether's view");
         return Archived::GaveUp;
     }
-    archive_one(ctx, stage, agent).await
+    archive_one(ctx, stage, agent, deadline).await
 }
 
-/// One `archive` call.
-async fn archive_one(ctx: &DaemonContext, stage: &StageRunId, agent: &AetherAgentId) -> Archived {
-    match bounded(ctx.backend.archive(agent), "archive").await {
+/// One `archive` call; none once the pass is out of time.
+async fn archive_one(
+    ctx: &DaemonContext,
+    stage: &StageRunId,
+    agent: &AetherAgentId,
+    deadline: Instant,
+) -> Archived {
+    if Instant::now() >= deadline {
+        tracing::info!(%stage, %agent, "archive pass out of time; this agent waits for the next");
+        return Archived::Later;
+    }
+    match bounded(ctx.backend.archive(agent), "archive", deadline).await {
         Ok(()) => Archived::Done,
         // Retention may have removed it: nothing is left to show.
         Err(ArchonError::NotFound(_)) => Archived::Done,

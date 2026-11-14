@@ -437,6 +437,15 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
             .expect("dispatch pass");
     }
 
+    /// One pass of the archive worker, which a daemon runs beside dispatch,
+    /// with nothing carried over from an earlier pass.
+    pub async fn archive(&self) {
+        let mut fresh = executor::archive::Progress::default();
+        executor::archive::pass(&self.ctx, &mut fresh)
+            .await
+            .expect("archive pass");
+    }
+
     /// The item's only run.
     pub async fn run(&self, id: &QueueItemId) -> PipelineRun {
         let mut runs = self.ctx.store.lock().await.runs_for_item(id).expect("runs");
@@ -772,9 +781,11 @@ struct FakeState {
     archived: Vec<AetherAgentId>,
     /// Every `archive` call, refused ones included, in order.
     archive_calls: Vec<AetherAgentId>,
-    /// The next `task_outcome` signals the first semaphore, then waits forever.
-    outcome_hold: Option<Arc<tokio::sync::Semaphore>>,
     archive_failures: VecDeque<ArchonError>,
+    /// Agents whose `archive` waits for its gate, once recorded.
+    archive_holds: BTreeMap<AetherAgentId, Arc<tokio::sync::Semaphore>>,
+    /// How long every `archive` takes to answer.
+    archive_delay: std::time::Duration,
     /// Agents whose accepted cancel leaves them live until `kill`.
     slow_cancels: BTreeSet<AetherAgentId>,
     outcome_failures: VecDeque<ArchonError>,
@@ -970,12 +981,18 @@ impl FakeBackend {
         self.state().archive_calls.clone()
     }
 
-    /// Hold the next `task_outcome` call forever; the returned semaphore
-    /// gets a permit once it is held, so a test can drop the pass there.
-    pub fn hold_next_outcome(&self) -> Arc<tokio::sync::Semaphore> {
-        let reached = Arc::new(tokio::sync::Semaphore::new(0));
-        self.state().outcome_hold = Some(reached.clone());
-        reached
+    /// Hold every `archive` of `agent`, once recorded, until the returned
+    /// gate gets a permit.
+    pub fn hold_archive(&self, agent: &AetherAgentId) -> Arc<tokio::sync::Semaphore> {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let earlier = (self.state().archive_holds).insert(agent.clone(), gate.clone());
+        assert!(earlier.is_none(), "one hold per agent");
+        gate
+    }
+
+    /// Every `archive` answers only after `each`.
+    pub fn slow_archives(&self, each: std::time::Duration) {
+        self.state().archive_delay = each;
     }
 
     /// The next `update_agent` calls fail with these errors, in order.
@@ -1424,8 +1441,18 @@ impl AgentBackend for FakeBackend {
     }
 
     async fn archive(&self, agent: &AetherAgentId) -> Result<(), ArchonError> {
+        let (hold, delay) = {
+            let mut state = self.state();
+            state.archive_calls.push(agent.clone());
+            (state.archive_holds.get(agent).cloned(), state.archive_delay)
+        };
+        if let Some(gate) = hold {
+            let _open = gate.acquire().await.expect("the hold's gate stays open");
+        }
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
         let mut state = self.state();
-        state.archive_calls.push(agent.clone());
         if let Some(error) = state.archive_failures.pop_front() {
             return Err(error);
         }
@@ -1621,11 +1648,6 @@ impl AgentBackend for FakeBackend {
     }
 
     async fn task_outcome(&self, task: &AetherTaskId) -> Result<Option<StageOutcome>, ArchonError> {
-        let hold = self.state().outcome_hold.take();
-        if let Some(reached) = hold {
-            reached.add_permits(1);
-            std::future::pending::<()>().await;
-        }
         let mut state = self.state();
         if let Some(error) = state.outcome_failures.pop_front() {
             return Err(error);

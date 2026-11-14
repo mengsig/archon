@@ -5040,7 +5040,7 @@ range over its prefix, so a pass costs what is still stored.
 | `report:<id>` | The report is settled and last changed more than 7 days ago (§14). An ended or disconnected report is kept while its HTML file exists. |
 | An entry of `orchestrator_retired` | The orchestrator was replaced more than 7 days ago and the sweep of what it left running is no longer owed (§16). |
 | `descendant_stop:<stage run>` | Not by this pass: the dispatcher deletes it once Aether has confirmed the stop (§6.3). |
-| `archive:<stage run>` | Not by this pass: the dispatcher deletes it once Aether archived the stage agent's tree and its run's node retired. |
+| `archive:<stage run>` | Not by this pass: the archive worker deletes it once Aether archived the stage agent's tree and its run's node retired. |
 | `steer_owed:<stage run>` | Not by this pass: the sweep deletes each step once Aether took it, and the rest when the stage run settled (§6.6). |
 | `orchestrator_gave_up`, `orchestrator_failures` | At once: the give-up rule that wrote them was replaced by the revival backoff, and nothing reads them. |
 

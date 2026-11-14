@@ -1529,14 +1529,14 @@ async fn spawned_ok(
         });
     }
     // The caller holds the run table, as `save_spawned` needs.
-    let archive = archive::save_spawned(&mut store, &current)?;
+    let owed = archive::save_spawned(&mut store, &current)?;
+    archive::announce(ctx, &owed);
     if run.aether_run.is_none() {
         run.aether_run = Some(spawned.run);
         store.update_run(&run)?;
     }
     Ok(FollowUp {
         check: vec![(current.id, spawned.task)],
-        archive,
         roster: vec![run.id],
         ..FollowUp::default()
     })

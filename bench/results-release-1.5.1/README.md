@@ -1,5 +1,145 @@
 # Release 1.5.1 smoke gate
 
+**Verdict: PASS (release check: PASS), on the rerun after the bench fix.**
+The release head `5d5644d6` on the published Aether 1.3.1 passed 8/8 Archon
+trials over two runs. v1.5.0 on the published Aether 1.3.0 passed 8/8. The
+mean Archon cost per run moved −3.1% and the mean wall time +2.2%, both
+within the ±10% band, so no third head run was needed. The Aether arm
+passed 4/4 in every run, and no trial needed a repair.
+
+The first run of this gate (below, **superseded**) reported a DECREASE,
+3/4 against 4/4. Its cause was the bench's Archon arm reading feed entries
+that #411 no longer writes, not the agents' work. #413 fixed the arm, and
+`5d5644d6` merges it. In the rerun both arms were measured by the same
+`archon-bench`, built from the head.
+
+| Model | Arm | Runs | Trials passed | Archon cost/run | Wall/run | Repairs/run | Review cost/run |
+|---|---|---|---|---|---|---|---|
+| Haiku | v1.5.0, Aether 1.3.0 | 2 | 8/8 | ≥ $0.1427 | 411 s | 0 | $0.0363 |
+| Haiku | head `5d5644d6`, Aether 1.3.1 | 2 | 8/8 | ≥ $0.1383 (−3.1%) | 420 s (+2.2%) | 0 | $0.0381 (+4.9%) |
+
+- Haiku costs are billed. `≥` marks a mean that includes a run in which
+  Aether reported part of a trial's cost as incomplete, so it is a lower
+  bound: v1.5.0 run 1 and head run 1 (`fix-off-by-one`, `mixed`) and head
+  run 2 (`review-seeded-bug`, `interrupted`). Both arms carry such a run.
+- Review cost is summed from each run's Aether data over every agent with
+  role `reviewer`.
+- A repair is an Archon run of an item that did not ship. No trial in this
+  gate started more than one run.
+- **The spread is the orchestrator's review choice.** In run 2 of both
+  arms the orchestrator chose `strict` review (3 reviewers) for
+  `quality-ledger-transfer`, and `standard` in run 1. That one task moves a
+  run by about $0.04 to $0.05 and 100 s to 165 s, on either version.
+- **Luna was not run.** By operator decision, this release is gated on
+  Haiku alone. Luna runs after the release and is report-only.
+
+## Runs
+
+In the order they ran, one at a time:
+
+| Run | Aether | Archon | Archon cost | Archon wall | Reviewers (cost) | Repairs (cost) | Aether arm | Smoke |
+|---|---|---|---|---|---|---|---|---|
+| Haiku v1.5.0, run 1 | 1.3.0 | 4/4 | ≥ $0.1210 | 318 s | 3 ($0.0206) | 0 | 4/4 | PASS |
+| Haiku head, run 1 | 1.3.1 | 4/4 | ≥ $0.1185 | 382 s | 3 ($0.0240) | 0 | 4/4 | PASS |
+| Haiku v1.5.0, run 2 | 1.3.0 | 4/4 | $0.1645 | 504 s | 6 ($0.0520) | 0 | 4/4 | PASS |
+| Haiku head, run 2 | 1.3.1 | 4/4 | ≥ $0.1580 | 459 s | 6 ($0.0521) | 0 | 4/4 | PASS |
+
+Archon's cost and wall time per task, with the review level the
+orchestrator chose (`standard` unless marked):
+
+| Task | v1.5.0 1 | v1.5.0 2 | head 1 | head 2 |
+|---|---|---|---|---|
+| `fix-off-by-one` | ≥ $0.0336 · 75 s | $0.0265 · 76 s | ≥ $0.0278 · 76 s | $0.0268 · 70 s |
+| `quality-ledger-transfer` | $0.0401 · 118 s | $0.0902 · 283 s strict | $0.0405 · 143 s | $0.0824 · 245 s strict |
+| `quality-retry-budget` | $0.0363 · 95 s | $0.0372 · 110 s | $0.0405 · 128 s | $0.0384 · 113 s |
+| `review-seeded-bug` | $0.0110 · 30 s, no item | $0.0106 · 35 s, no item | $0.0097 · 35 s, no item | ≥ $0.0104 · 30 s, no item |
+
+`review-seeded-bug`, the trial the first run lost to its time limit,
+settled in 30 s to 35 s on every run of both arms and passed: on the head
+the arm read the answer from the orchestrator's transcript, on v1.5.0 from
+the feed. Run by run, head run 1 took 20% longer than v1.5.0 run 1 (two
+`standard` tasks at 143 s and 128 s against 118 s and 95 s) and head run 2
+9% less than v1.5.0 run 2. Two runs per arm cannot tell those from noise;
+the means are within the band.
+
+## Aether
+
+- **Head arm: Aether 1.3.1**, the published `x86_64-unknown-linux-musl`
+  archive (`gh release download v1.3.1 -R mengsig/aether`). It passed the
+  release's `SHA256SUMS` and its own `.sha256`, and the binary reports
+  `aether 1.3.1 (protocol 26)`. A `hello` to a private aetherd from it is
+  answered with the `conversation` feature.
+- **Old arm: Aether 1.3.0**, the published `x86_64-unknown-linux-musl`
+  archive, as in the first run. It passed `SHA256SUMS` and its `.sha256`,
+  reports `aether 1.3.0 (protocol 26)`, and its `hello` has no
+  `conversation` feature.
+
+## Method
+
+The method is the first run's and 1.5.0's, with the stored baseline
+`baseline.json` (Haiku), with one change the amendment asked for: both
+arms ran one `archon-bench`, built from the head, which carries #413.
+
+- One trial per task and arm (`archon`, `aether`), medium effort, run
+  serially, under the default $7 cap. The same trials, model and settings
+  as the first run.
+- Haiku only, alternating v1.5.0 and head runs, one at a time, each inside
+  the host CI slot (`sh scripts/ci-slot.sh`).
+- **Load.** A run starts only when the host's 1-minute load is below 10.
+  The guard refused v1.5.0 run 1 once (10.65). The runs started at loads of
+  4.3, 1.9, 5.6 and 3.1.
+- **Token guard.** A run starts only when the host's Claude token has more
+  than an hour left. No run was refused; the last started with over six
+  hours left.
+- **Head arm.** `archon` and `archon-bench` were built from a `git archive`
+  of `5d5644d6` with `cargo build --release --locked -p archon -p
+  archon-bench`, inside the CI slot. `archon --version` reports `archon
+  1.5.1`. The commit after it adds only this file.
+- **Old arm.** The released `archon` 1.5.0 (`x86_64-unknown-linux-musl`
+  archive from `gh release download v1.5.0`, passing its `SHA256SUMS` and
+  `.sha256`, reporting `archon 1.5.0`), on the released Aether 1.3.0 that
+  1.5.0 shipped with, measured by the head's `archon-bench`. That archond
+  refuses the `conversation` request as an unknown command, so the arm
+  reads its replies from the feed, as before #413.
+- **Sandbox.** As in the first run: each run had a new private directory
+  under `~/.local/share/archon-bench/` with its own aetherd, Archon and
+  Aether config and data, sockets, `TMPDIR` and `HOME`, all started
+  through an `env -i` wrapper, with a mode-600 copy of the Claude
+  credentials and the `archon-bench` git identity. Each aetherd was stopped
+  by its socket and PID, and each sandbox, credentials included, was
+  removed after its run. No operator daemon, configuration or data was
+  used.
+- **Logs.** The four Aether logs hold no `ERROR` line.
+
+## `make ci`
+
+`make ci` ran on `5d5644d6` (tree `a5b8d627`), the merge of `origin/next`
+(#413) into this branch, from this item's worktree, outside `/tmp`, at a
+5-minute load of 4.2. It exited 0. It covered format, shell checks, the
+local release orchestration tests, clippy with `-D warnings`, and rustdoc
+with `-D warnings`. Its 110 test result lines (unit, integration and doc
+tests) show 4228 passed, 0 failed and 10 ignored. No test needed a rerun.
+
+## Evidence
+
+This item's artifact `release-1.5.1-rerun-evidence` keeps the results and
+logs of every rerun, each run's Aether data directory, the gate, probe and
+analysis scripts, the `SHA256SUMS` files and the `make ci` log. The first
+run's are in `release-1.5.1-gate-evidence`.
+
+| Binary | sha256 prefix |
+|---|---|
+| head `archon` (`5d5644d6`, release profile) | `c0c5e1f1` |
+| head `archon-bench` (`5d5644d6`, release profile), both arms | `0d767ca2` |
+| released Aether 1.3.1 (head arm) | `ad05f728` |
+| released Aether 1.3.0 (old arm) | `390557fa` |
+| released v1.5.0 `archon` (old arm) | `ec90dc5a` |
+
+## Superseded: first run, before the bench fix
+
+This first run's DECREASE was caused by the bench, not by Archon, and is
+superseded by the rerun above. It is kept as it was reported.
+
 **Verdict: FAIL (release check: DECREASE), on the Haiku pass rate.** The
 release head `8eef65c3` on Aether 1.3.1 passed 3/4 Archon trials. v1.5.0 on
 Aether 1.3.0 passed 4/4. The miss is `review-seeded-bug`: the Archon trial
@@ -66,7 +206,7 @@ arm. The Aether arm passed 4/4 in every run.
 - **Luna was not run.** By operator decision, this release is gated on
   Haiku alone. Luna runs after the release and is report-only.
 
-## Runs
+### Runs
 
 In the order they ran, one at a time:
 
@@ -90,7 +230,7 @@ For comparison, the 1.5.0 gate's two Haiku head runs cost $0.1166 and
 $0.1165 (380 s and 345 s). This gate's v1.5.0 run, at $0.1280 and 363 s,
 is close to them.
 
-## Aether
+### Aether
 
 - **Head arm: Aether 1.3.1.** Built from mengsig/aether `origin/next`,
   commit `58156d13b6576a885a6dbe2edf45b67dc14eb17b` (#420), in a read-only
@@ -104,7 +244,7 @@ is close to them.
   the binary reports `aether 1.3.0 (protocol 26)`. A `hello` to it is
   answered without the `conversation` feature.
 
-## Method
+### Method
 
 The method is 1.5.0's, with the stored baseline `baseline.json` (Haiku).
 `bench/` is unchanged between `v1.5.0` and `8eef65c3`, apart from one line
@@ -141,7 +281,7 @@ in `bench/src/arms/tests.rs`.
 - **Logs.** The Aether logs hold no errors, only the usual start-up
   warnings (no systemd scope under `env -i`).
 
-## `make ci`
+### `make ci`
 
 `make ci` ran on `8eef65c3` (tree `342c38f4`) from this item's worktree,
 outside `/tmp`. It exited 0. It covered format, shell checks, the local
@@ -149,7 +289,7 @@ release orchestration tests, clippy with `-D warnings`, and rustdoc with
 `-D warnings`. Its 110 test result lines (unit, integration and doc tests)
 show 4219 passed, 0 failed and 10 ignored. No test needed a rerun.
 
-## Evidence
+### Evidence
 
 This item's artifact (`release-1.5.1-gate-evidence`) keeps the results and
 logs of every run, each run's Aether data directory, the gate, probe and

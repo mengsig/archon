@@ -2841,6 +2841,45 @@ fn plan_of_build(effort: Effort) -> archon_core::model::ModelPlan {
     archon_core::model::ModelPlan([("build".to_owned(), vec![choice(MODEL, effort)])].into())
 }
 
+/// No permitted catalog model sits at or below the balanced worker default:
+/// the workers fall back to a pinned permitted model, and the lead's policy
+/// still exempts reviewers on the model its contract names, and only those.
+#[tokio::test]
+async fn a_worker_fallback_keeps_the_lead_s_reviewer_exemptions() {
+    use archon_core::model_tier::{CatalogModel, ModelCatalog, Tier};
+    let mut config = Config::default();
+    config.models.allow = vec![MODEL.parse().unwrap(), REVIEW_MODEL.parse().unwrap()];
+    let h = Harness::with_config(config).await;
+    let strong = |model: &str| CatalogModel {
+        model: model.parse().unwrap(),
+        tier: Some(Tier::Strong),
+        is_default: false,
+    };
+    let catalog = ModelCatalog::new(vec![strong(MODEL), strong(REVIEW_MODEL)]);
+    h.ctx.store.lock().await.set_model_catalog(catalog);
+    adaptive_item(&h).await;
+    let build = h.backend.requests()[0].clone();
+    let policy = build
+        .delegation_policy
+        .expect("a delegating lead is bounded");
+    let allowed: [archon_core::model::ModelRef; 2] =
+        [MODEL.parse().unwrap(), REVIEW_MODEL.parse().unwrap()];
+    assert_eq!(policy.workers.len(), 1, "{policy:?}");
+    let pinned = policy.workers[0].model.as_ref().expect("a pinned fallback");
+    assert!(allowed.contains(pinned) && policy.workers[0].tier.is_none());
+    assert_eq!(policy.exempt_roles, ["reviewer"]);
+    assert_eq!(policy.exempt_models.len(), 1, "{policy:?}");
+    assert!(allowed.contains(&policy.exempt_models[0]), "{policy:?}");
+    let named = policy.exempt_models[0].to_string();
+    assert!(
+        build
+            .instructions
+            .contains(&format!("with role `reviewer`, on {named} at")),
+        "the contract names the reviewer the policy exempts: {}",
+        build.instructions
+    );
+}
+
 /// The repository denies the reviewer the item's plan named once its first
 /// stage ran: the lead's spawn does not panic, and exempts no denied model.
 #[tokio::test]

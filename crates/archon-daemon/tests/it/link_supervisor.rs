@@ -1854,7 +1854,8 @@ async fn mail_behind_a_call(harness: &Harness, timeout_ms: u64) -> archon_core::
 /// 2026-11-15: a trivial Bash sat 11 minutes with three operator messages
 /// queued behind it. Its declared 2 minutes plus one is the bound.
 #[tokio::test]
-async fn a_hung_call_with_mail_waiting_is_interrupted_within_its_bound_and_the_mail_follows() {
+async fn a_hung_call_with_mail_waiting_is_interrupted_within_its_bound_and_the_fresh_turn_reads_both()
+ {
     let harness = Harness::new().await;
     let started = mail_behind_a_call(&harness, 120_000).await;
     harness.fake.script(
@@ -1903,6 +1904,36 @@ async fn a_hung_call_with_mail_waiting_is_interrupted_within_its_bound_and_the_m
             && d.contains("past its bound of 3 min")
             && d.contains("Archon interrupted it")),
         "{decisions:?}"
+    );
+
+    // Aether starts a fresh turn on the queued inbox: the note, then the mail.
+    use archon_aether::events::{EventKind, InboxMessage};
+    let orch = agent_id(ORCH);
+    let delivered = EventKind::InboxDelivered {
+        seq: 586,
+        from_operator: true,
+        message: Some(InboxMessage {
+            channel: None,
+            device: None,
+            sender: archon_core::agent_message::MessageSender::Operator,
+            text: note.to_owned(),
+        }),
+    };
+    let supervisor = &harness.ctx.supervisor;
+    supervisor.saw_event(&orch, &EventKind::AgentStarted { turn: 10 });
+    supervisor.saw_event(&orch, &delivered);
+    supervisor.saw_event(&orch, &EventKind::InboxConsumed { up_to: 586 });
+    let later = bound + chrono::TimeDelta::minutes(10);
+    assert!(!supervisor::report_stall(&harness.ctx, later).await.unwrap());
+    assert_eq!(
+        harness.fake.received_named("interrupt").len(),
+        1,
+        "the mail was read, so nothing waits"
+    );
+    let blockers = harness.notifications(NotificationKind::Blocker).await;
+    assert!(
+        blockers.is_empty(),
+        "Archon's note was not taken for mail: {blockers:?}"
     );
 }
 

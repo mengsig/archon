@@ -14,12 +14,6 @@ const CUT_OFF_PREFIX: &str = "Archon interrupted your turn";
 /// The longest command a note quotes.
 const COMMAND_QUOTE: usize = 300;
 
-/// Whether `text` is one of Archon's own notes to the orchestrator, which
-/// reach its inbox as operator mail would.
-pub(super) fn is_own_note(text: &str) -> bool {
-    text.starts_with(NUDGE_PREFIX) || text.starts_with(CUT_OFF_PREFIX)
-}
-
 pub(super) enum Nudge {
     Sent,
     Spent,
@@ -96,7 +90,10 @@ pub(super) fn cut_off_note(
         "{CUT_OFF_PREFIX}: it was silent for {minutes} minutes{waited}. {call} Messages that \
          waited for you follow."
     );
-    assert!(is_own_note(&note), "the note is recognised as Archon's own");
+    assert!(
+        note.starts_with(CUT_OFF_PREFIX),
+        "the note says who interrupted"
+    );
     note
 }
 

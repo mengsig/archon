@@ -271,6 +271,16 @@ pub struct OpenToolCall {
     pub last_event_at: Timestamp,
 }
 
+/// What an agent's newest turn events show: tool events among them, which
+/// Archon's own stream does not carry.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TurnActivity {
+    /// The newest tool, message or turn event of the agent; `None` when
+    /// none is in the page read, or the backend cannot tell.
+    pub last_event_at: Option<Timestamp>,
+    pub open_call: Option<OpenToolCall>,
+}
+
 /// A change to a live agent; `None` leaves that part as it is.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AgentUpdate {
@@ -410,6 +420,14 @@ pub trait AgentBackend: Send + Sync {
         _agent: &AetherAgentId,
     ) -> Result<Option<OpenToolCall>, ArchonError> {
         Ok(None)
+    }
+
+    /// The newest turn activity of `agent`, and the call its turn left open.
+    async fn turn_activity(&self, agent: &AetherAgentId) -> Result<TurnActivity, ArchonError> {
+        Ok(TurnActivity {
+            last_event_at: None,
+            open_call: self.open_tool_call(agent).await?,
+        })
     }
 
     /// Resume every agent of `lead`'s tree that Aether blocked for

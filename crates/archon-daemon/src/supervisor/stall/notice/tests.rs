@@ -5,6 +5,7 @@ use super::*;
 fn hung(minutes: u64, mail: bool) -> Hung {
     Hung {
         agent: AetherAgentId::parse("agt_01M5H1GBDP193XE44D522J0DN6").unwrap(),
+        since: chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap(),
         silent: Duration::from_secs(minutes * 60),
         mail,
     }
@@ -41,7 +42,7 @@ fn the_stall_notice_says_what_happened_and_what_follows() {
 #[test]
 fn the_orchestrator_is_told_which_call_was_cut_off() {
     let note = cut_off_note(&hung(7, true), &Ok(Some(bash("ls && head -40 fetch.sh"))));
-    assert!(is_own_note(&note), "{note}");
+    assert!(note.starts_with("Archon interrupted your turn"), "{note}");
     assert!(
         note.contains("silent for 7 minutes, while the operator's mail waited"),
         "{note}"
@@ -63,8 +64,6 @@ fn the_orchestrator_is_told_which_call_was_cut_off() {
         &Err(ArchonError::Unavailable("gone".into())),
     );
     assert!(unread.contains("could not read which tool call") && unread.contains("gone"));
-    assert!(is_own_note(&nudge_text(Duration::from_secs(1800))));
-    assert!(!is_own_note("Continue with the release, please"));
 }
 
 #[test]

@@ -180,8 +180,18 @@ fn interrupts(
     now: Timestamp,
     call: Result<Option<OpenToolCall>, ArchonError>,
 ) -> Option<Hung> {
+    seen_interrupts(live, now, None, call)
+}
+
+/// [`interrupts`], with Aether's newest event of the turn at `seen`.
+fn seen_interrupts(
+    live: &mut Liveness,
+    now: Timestamp,
+    seen: Option<Timestamp>,
+    call: Result<Option<OpenToolCall>, ArchonError>,
+) -> Option<Hung> {
     let silence = live.candidate(&agent(A), now)?;
-    if silence.mail && now < mail_deadline(silence.since, &call) {
+    if now < interrupt_deadline(&silence, seen, &call) {
         return None;
     }
     live.take_interrupt(&silence, now)
@@ -199,6 +209,7 @@ fn operator_mail_to_a_turn_with_no_call_running_interrupts_it_after_three_minute
         hung,
         Hung {
             agent: agent(A),
+            since: at(0),
             silent: MAIL_SILENCE,
             mail: true
         }
@@ -357,10 +368,11 @@ fn a_failed_interrupt_is_tried_again_after_the_spacing() {
 }
 
 #[test]
-fn archons_own_notes_are_not_operator_mail() {
+fn archons_own_notes_are_not_operator_mail_but_a_lookalike_is() {
     let mut live = Liveness::default();
     live.saw(&agent(A), &started(), at(0));
     let nudge = notice::nudge_text(STALL_AFTER);
+    live.sending_note(&nudge);
     assert!(!live.saw(&agent(A), &operator_text(1, &nudge), at(STALL)));
     assert!(
         live.take_stall(at(STALL)).is_some(),
@@ -370,11 +382,23 @@ fn archons_own_notes_are_not_operator_mail() {
         interrupts(&mut live, at(STALL + 1), Ok(None)).is_none(),
         "the nudge gets its grace"
     );
-    live.saw(&agent(A), &operator_text(2, "where are we?"), at(STALL + 1));
+    // The operator may well write what Archon once did; only a pending note is Archon's.
+    live.saw(&agent(A), &operator_text(2, &nudge), at(STALL + 1));
     assert!(
         interrupts(&mut live, at(STALL + 1), Ok(None)).is_some(),
         "real mail is due at once"
     );
+}
+
+#[test]
+fn pending_notes_stay_bounded() {
+    let mut live = Liveness::default();
+    for n in 0..3 * PENDING_NOTES {
+        live.sending_note(&format!("note {n}"));
+    }
+    assert_eq!(live.pending_notes.len(), PENDING_NOTES);
+    assert!(!live.take_note("note 0"), "the oldest is forgotten");
+    assert!(live.take_note(&format!("note {}", 3 * PENDING_NOTES - 1)));
 }
 
 #[test]
@@ -416,11 +440,63 @@ fn operator_mail_to_an_idle_orchestrator_is_no_stall() {
 }
 
 #[test]
-fn progress_forgets_the_operator_mail() {
+fn only_consuming_the_inbox_forgets_the_operator_mail() {
     let mut live = Liveness::default();
     live.saw(&agent(A), &started(), at(0));
-    live.saw(&agent(A), &operator_mail(1), at(60));
-    live.saw(&agent(A), &EventKind::InboxConsumed { up_to: 1 }, at(120));
-    assert!(live.candidate(&agent(A), at(120 + MAIL)).is_none());
-    assert!(live.take_stall(at(120 + STALL)).is_some());
+    live.saw(&agent(A), &operator_mail(4), at(60));
+    live.saw(&agent(A), &usage(), at(120));
+    assert!(
+        interrupts(&mut live, at(120 + MAIL), Ok(None)).is_some(),
+        "progress is not reading the mail"
+    );
+    live.saw(&agent(A), &started(), at(400));
+    live.saw(&agent(A), &EventKind::InboxConsumed { up_to: 3 }, at(401));
+    assert!(
+        live.candidate(&agent(A), at(401 + MAIL)).is_some(),
+        "seq 4 is unread"
+    );
+    live.saw(&agent(A), &EventKind::InboxConsumed { up_to: 4 }, at(402));
+    assert!(live.candidate(&agent(A), at(402 + MAIL)).is_none());
+    assert!(live.take_stall(at(402 + STALL)).is_some());
+}
+
+/// Archon's stream carries no tool events: a call that just ended, seen
+/// only in Aether, restarts the silence.
+#[test]
+fn a_tool_event_only_aether_saw_restarts_the_silence() {
+    let mut live = Liveness::default();
+    live.saw(&agent(A), &started(), at(0));
+    live.saw(&agent(A), &operator_mail(1), at(10));
+    assert!(seen_interrupts(&mut live, at(MAIL), Some(at(MAIL - 5)), Ok(None)).is_none());
+    assert!(seen_interrupts(&mut live, at(2 * MAIL - 6), Some(at(MAIL - 5)), Ok(None)).is_none());
+    assert!(seen_interrupts(&mut live, at(2 * MAIL - 5), Some(at(MAIL - 5)), Ok(None)).is_some());
+
+    let mut nudged = Liveness::default();
+    nudged.saw(&agent(A), &started(), at(0));
+    assert!(nudged.take_stall(at(STALL)).is_some());
+    let busy = Some(at(STALL + 60));
+    let candidate = nudged.candidate(&agent(A), at(STALL + GRACE)).unwrap();
+    assert!(at(STALL + GRACE) < interrupt_deadline(&candidate, busy, &Ok(None)));
+}
+
+#[test]
+fn progress_or_a_new_turn_while_the_note_is_sent_withdraws_the_interrupt() {
+    let claim = || {
+        let mut live = Liveness::default();
+        live.saw(&agent(A), &started(), at(0));
+        live.saw(&agent(A), &operator_mail(1), at(10));
+        let hung = interrupts(&mut live, at(MAIL), Ok(None)).unwrap();
+        assert!(live.still_hung(&hung));
+        (live, hung)
+    };
+    let (mut progressed, hung) = claim();
+    progressed.saw(&agent(A), &usage(), at(MAIL + 1));
+    assert!(!progressed.still_hung(&hung));
+    let (mut fresh, hung) = claim();
+    fresh.saw(&agent(A), &ended(), at(MAIL + 1));
+    fresh.saw(&agent(A), &started(), at(MAIL + 1));
+    assert!(!fresh.still_hung(&hung));
+    let (mut replaced, hung) = claim();
+    replaced.saw(&agent(B), &started(), at(MAIL + 1));
+    assert!(!replaced.still_hung(&hung));
 }

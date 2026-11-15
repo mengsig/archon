@@ -8,7 +8,7 @@ use std::time::Duration;
 use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
-use archon_core::ports::OpenToolCall;
+use archon_core::ports::{OpenToolCall, TurnActivity};
 use serde_json::Value;
 
 use crate::client::AetherClient;
@@ -40,21 +40,36 @@ pub(crate) async fn open(
     client: &AetherClient,
     agent: &AetherAgentId,
 ) -> Result<Option<OpenToolCall>, ArchonError> {
+    Ok(activity(client, agent).await?.open_call)
+}
+
+/// `agent`'s newest turn event and the call its turn left open, from one
+/// page of its events.
+pub(crate) async fn activity(
+    client: &AetherClient,
+    agent: &AetherAgentId,
+) -> Result<TurnActivity, ArchonError> {
     let query = EventQuery {
         agent: Some(agent.clone()),
         types: TURN_EVENT_TYPES.iter().map(|t| (*t).to_owned()).collect(),
         ..EventQuery::default()
     };
     let newest_first = client.latest_events_raw(query, PAGE).await?;
-    open_in(agent, &newest_first)
+    activity_in(agent, &newest_first)
 }
 
-/// [`open`] over `agent`'s events, newest first. Walking back from the
-/// newest, the first call with no outcome before its turn's start is open.
-pub(crate) fn open_in(
+/// [`open`] over `agent`'s events, newest first.
+#[cfg(test)]
+fn open_in(
     agent: &AetherAgentId,
     newest_first: &[Value],
 ) -> Result<Option<OpenToolCall>, ArchonError> {
+    Ok(activity_in(agent, newest_first)?.open_call)
+}
+
+/// [`activity`] over `agent`'s events, newest first. Walking back from the
+/// newest, the first call with no outcome before its turn's start is open.
+fn activity_in(agent: &AetherAgentId, newest_first: &[Value]) -> Result<TurnActivity, ArchonError> {
     let own: Vec<Event<'_>> = newest_first
         .iter()
         .map(Event::of)
@@ -68,20 +83,26 @@ pub(crate) fn open_in(
         ));
     }
     let Some(newest) = own.first() else {
-        return Ok(None);
+        return Ok(TurnActivity::default());
     };
     let last_event_at = newest.at;
+    let found = |open_call| TurnActivity {
+        last_event_at: Some(last_event_at),
+        open_call,
+    };
     let mut settled = BTreeSet::new();
     for event in &own {
         match event.type_name {
-            "agent.started" | "agent.interrupted" | "agent.turn_completed" => return Ok(None),
+            "agent.started" | "agent.interrupted" | "agent.turn_completed" => {
+                return Ok(found(None));
+            }
             "tool.requested" => {
                 let call = event.field("call");
                 let id = text(call.get("id"), "tool.requested call.id")?;
                 if settled.contains(id) {
                     continue;
                 }
-                let found = OpenToolCall {
+                let call = OpenToolCall {
                     id: id.to_owned(),
                     name: text(call.get("name"), "tool.requested call.name")?.to_owned(),
                     command: command_of(call.get("input")),
@@ -90,7 +111,7 @@ pub(crate) fn open_in(
                     // Aether's clock may step back; nothing is newer than the call.
                     last_event_at: last_event_at.max(event.at),
                 };
-                return Ok(Some(found));
+                return Ok(found(Some(call)));
             }
             "agent.message" | "agent.usage_updated" => {}
             // Every outcome names its call by id.
@@ -99,7 +120,7 @@ pub(crate) fn open_in(
             }
         }
     }
-    Ok(None)
+    Ok(found(None))
 }
 
 /// The shell command a call's input names: Claude's `command`, or Codex's
@@ -296,6 +317,16 @@ mod tests {
             "a background job's timeout is not the call's"
         );
         assert_eq!(open_with(json!({"command": "ls", "timeout": "soon"})), None);
+    }
+
+    #[test]
+    fn the_newest_event_is_reported_with_no_call_open() {
+        let events = [succeeded(5, 31, "call_a"), requested(4, 30, "call_a", "ls")];
+        let activity = activity_in(&lead(), &events).unwrap();
+        assert_eq!(activity.open_call, None);
+        let newest = activity.last_event_at.expect("a turn event was read");
+        assert_eq!(newest.to_rfc3339(), "2026-11-01T12:31:00+00:00");
+        assert_eq!(activity_in(&lead(), &[]).unwrap(), TurnActivity::default());
     }
 
     #[test]

@@ -31,6 +31,30 @@
   Items queued before the upgrade keep their plans and take the pipeline
   default; spawn requests stored before it are resent unchanged.
 
+### Fixed
+
+- Operator mail no longer waits for long behind a hung orchestrator turn.
+  Archon used to nudge such a turn after 10 minutes and interrupt it 5
+  minutes later, at most 3 times per orchestrator. Now it interrupts the
+  turn, as Esc would and with no nudge first, 3 minutes after its last
+  event when no tool call is running. A foreground command is given 1
+  minute past the timeout it declared (at most 10 minutes), and any other
+  call 4 minutes. A long command under its own timeout is left alone. The
+  fresh turn gets the waiting mail, with a note naming the call that was
+  cut off so the orchestrator can check and rerun it. The 3-interrupt cap is
+  replaced by a limit of one interrupt per 5 minutes, and the operator is
+  told each time one fires. Without mail, a turn silent for 30 minutes is
+  nudged as before, and is interrupted if it makes no progress within 2
+  minutes.
+- A detached `archond` now leads its own session with no controlling
+  terminal, instead of only its own process group. Before, a program it
+  started that read the terminal was stopped by `SIGTTIN` and hung where
+  it stood. That is how oh-my-zsh's daily update prompt, run by an engine's
+  shell snapshot, hung an orchestrator tool call. An aetherd that archond
+  starts again now has no terminal either. One that an `archon` command
+  started still shares that command's terminal until Aether starts its
+  daemon in a session of its own.
+
 ## 1.5.1
 
 Released 2026-11-14.

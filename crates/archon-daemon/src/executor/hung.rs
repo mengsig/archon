@@ -384,6 +384,7 @@ mod tests {
             id: "call_01".into(),
             name: "Bash".into(),
             command: Some(command.into()),
+            timeout: None,
             requested_at: at(0),
             last_event_at: at(0),
         }

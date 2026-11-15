@@ -50,6 +50,14 @@ fn wait_until_listening(detached: &Detached) {
     }
 }
 
+/// The session and controlling terminal of `pid`, from `/proc/<pid>/stat`.
+fn session_of(pid: u32) -> (u32, u32) {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
+    let after_name = &stat[stat.rfind(')').unwrap() + 2..];
+    let fields: Vec<&str> = after_name.split(' ').collect();
+    (fields[3].parse().unwrap(), fields[4].parse().unwrap())
+}
+
 fn cwd_of(pid: u32) -> PathBuf {
     std::fs::read_link(Path::new("/proc").join(pid.to_string()).join("cwd")).unwrap()
 }
@@ -84,6 +92,11 @@ fn the_detached_daemon_runs_in_the_data_dir_the_caller_named() {
             .split(|byte| *byte == 0)
             .any(|entry| entry.starts_with(b"ARCHON_DAEMON_DETACHED")),
         "the daemon's children inherit its environment, so it carries no detached marker"
+    );
+    assert_eq!(
+        session_of(pid),
+        (pid, 0),
+        "the daemon leads its own session, with no terminal for its children to read"
     );
     let data = caller.join("data");
     assert_eq!(

@@ -3,6 +3,7 @@
 //! them from Aether only for a lead that has gone quiet.
 
 use std::collections::BTreeSet;
+use std::time::Duration;
 
 use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
@@ -84,6 +85,7 @@ pub(crate) fn open_in(
                     id: id.to_owned(),
                     name: text(call.get("name"), "tool.requested call.name")?.to_owned(),
                     command: command_of(call.get("input")),
+                    timeout: foreground_timeout(call.get("input")),
                     requested_at: event.at,
                     // Aether's clock may step back; nothing is newer than the call.
                     last_event_at: last_event_at.max(event.at),
@@ -115,6 +117,17 @@ fn command_of(input: Option<&Value>) -> Option<String> {
         _ => return None,
     };
     (!command.trim().is_empty()).then_some(command)
+}
+
+/// The timeout a foreground call declares: Claude's Bash `timeout`, in
+/// milliseconds. A background call's `timeout` bounds its job, not the call.
+fn foreground_timeout(input: Option<&Value>) -> Option<Duration> {
+    let input = input?;
+    if input.get("run_in_background").and_then(Value::as_bool) == Some(true) {
+        return None;
+    }
+    let millis = input.get("timeout").and_then(Value::as_u64)?;
+    (millis > 0).then(|| Duration::from_millis(millis))
 }
 
 fn text<'a>(value: Option<&'a Value>, what: &str) -> Result<&'a str, ArchonError> {
@@ -254,6 +267,35 @@ mod tests {
             None,
             "an interrupted turn left nothing open"
         );
+    }
+
+    #[test]
+    fn a_foreground_bash_timeout_is_read_and_a_background_one_is_not() {
+        let open_with = |input: Value| {
+            let call = json!({"id": "call_t", "name": "Bash", "input": input});
+            let events = [event(
+                2,
+                30,
+                LEAD,
+                json!({"type": "tool.requested", "call": call}),
+            )];
+            open_in(&lead(), &events).unwrap().unwrap().timeout
+        };
+        assert_eq!(
+            open_with(json!({"command": "make ci", "timeout": 600_000})),
+            Some(Duration::from_secs(600))
+        );
+        assert_eq!(
+            open_with(json!({"command": "ls"})),
+            None,
+            "Claude's default is not declared"
+        );
+        assert_eq!(
+            open_with(json!({"command": "make ci", "timeout": 600_000, "run_in_background": true})),
+            None,
+            "a background job's timeout is not the call's"
+        );
+        assert_eq!(open_with(json!({"command": "ls", "timeout": "soon"})), None);
     }
 
     #[test]

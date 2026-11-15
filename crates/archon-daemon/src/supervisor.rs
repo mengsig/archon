@@ -53,8 +53,9 @@ pub use revival::{
     Backoff, REVIVAL_BACKOFF, REVIVALS_BEFORE_BLOCKER, pause_after, revive_when_due, turn_ended,
 };
 pub use stall::{
-    INTERRUPT_GRACE, MAIL_STALL_AFTER, MAX_INTERRUPTS, STALL_AFTER, STALL_CHECK_INTERVAL,
-    report_stall, watch_stalls,
+    FOREGROUND_CAP, INTERRUPT_SPACING, MAIL_SILENCE, NUDGE_GRACE, PAST_TIMEOUT, STALL_AFTER,
+    STALL_CHECK_INTERVAL, UNDECLARED_CALL_BOUND, call_bound, mail_deadline, report_stall,
+    watch_stalls,
 };
 
 pub const ORCHESTRATOR_ROLE: &str = "archon-orchestrator";

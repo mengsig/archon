@@ -175,8 +175,16 @@ const BLOCKERS: &[(&str, &str)] = &[
         "Archon keeps reviving it, waiting longer each time",
     ),
     (
-        "crates/archon-daemon/src/supervisor/stall.rs",
+        "crates/archon-daemon/src/supervisor/stall/notice.rs",
         "minutes without a message, tool result or usage update",
+    ),
+    (
+        "crates/archon-daemon/src/supervisor/stall/notice.rs",
+        "Operator mail waited on the orchestrator's turn",
+    ),
+    (
+        "crates/archon-daemon/src/supervisor/stall/notice.rs",
+        "could not tell it which call was cut off",
     ),
     (
         "crates/archon-daemon/src/supervisor.rs",
@@ -254,6 +262,10 @@ const EXEMPT: &[(&str, &str)] = &[
     (
         "crates/archon-daemon/src/triggers.rs",
         "an escalation is posted with the text the orchestrator wrote",
+    ),
+    (
+        "crates/archon-daemon/src/supervisor/stall.rs",
+        "its texts are built in crates/archon-daemon/src/supervisor/stall/notice.rs",
     ),
     (
         "crates/archon-daemon/src/integration/promote.rs",

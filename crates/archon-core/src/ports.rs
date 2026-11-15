@@ -262,6 +262,9 @@ pub struct OpenToolCall {
     pub name: String,
     /// The shell command it runs, when its input names one.
     pub command: Option<String>,
+    /// The timeout a foreground call's input declares (Claude's Bash
+    /// `timeout`); `None` when it declares none or runs in the background.
+    pub timeout: Option<std::time::Duration>,
     pub requested_at: Timestamp,
     /// The agent's newest tool, message or turn event, at or after
     /// `requested_at`: nothing of the agent came since.

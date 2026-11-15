@@ -5732,6 +5732,13 @@
           "format": "double",
           "type": "number"
         },
+        "stage_notes": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "What Archon recorded on a stage run as it spawned, by stage run: such\nas a lead the model policy left no permitted worker.",
+          "type": "object"
+        },
         "stage_warnings": {
           "description": "Agents of its running stages that leave inbox items unread.",
           "items": {

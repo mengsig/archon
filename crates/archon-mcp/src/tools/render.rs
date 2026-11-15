@@ -311,6 +311,9 @@ fn item_detail(detail: &ItemDetail) -> String {
             .collect();
         let _ = write!(text, "\nStage timeouts: {}", timeouts.join(", "));
     }
+    for (stage, policy) in &detail.worker_policies {
+        let _ = write!(text, "\nWorkers {stage}: {}", policy.describe());
+    }
     for gate in &detail.gates {
         let _ = write!(text, "\nGate {}", gate_line(gate));
     }
@@ -336,6 +339,9 @@ fn item_detail(detail: &ItemDetail) -> String {
             }
             for warning in detail.stage_warnings.iter().filter(|w| w.stage == stage.id) {
                 let _ = write!(text, "\n    health: {}", warning.describe());
+            }
+            if let Some(note) = detail.stage_notes.get(&stage.id) {
+                let _ = write!(text, "\n    note: {}", clip(note, CLIP_CHARS));
             }
             for cap in detail
                 .message_caps

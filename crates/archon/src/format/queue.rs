@@ -297,6 +297,9 @@ fn run_lines(out: &mut String, detail: &ItemDetail, run: &PipelineRun, full: boo
         for warning in detail.stage_warnings.iter().filter(|w| w.stage == stage.id) {
             let _ = writeln!(out, "    health: {}", sanitize_line(&warning.describe()));
         }
+        if let Some(note) = detail.stage_notes.get(&stage.id) {
+            let _ = writeln!(out, "    note: {}", sanitize_line(note));
+        }
         for cap in detail
             .message_caps
             .iter()
@@ -724,6 +727,7 @@ mod tests {
         ItemDetail {
             default_efforts: Default::default(),
             worker_policies: Default::default(),
+            stage_notes: Default::default(),
             steers: Vec::new(),
             waiting_on: None,
             waiting_reason: None,
@@ -1042,6 +1046,7 @@ mod tests {
         let detail = ItemDetail {
             default_efforts: Default::default(),
             worker_policies: Default::default(),
+            stage_notes: Default::default(),
             steers: Vec::new(),
             waiting_on: None,
             waiting_reason: None,

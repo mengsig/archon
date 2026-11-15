@@ -344,9 +344,11 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
     let steers = executor::steer::records(&store, id)?;
     let switched_to = executor::steer::switched_to(&store, &item)?;
     let message_caps = crate::agent_messages::caps(&store, Some(id))?;
+    let stage_notes = executor::stage_note::read(&store, &stages)?;
     Ok(Reply::ItemDetail(Box::new(ItemDetail {
         default_efforts,
         worker_policies,
+        stage_notes,
         switched_to,
         steers,
         waiting_reason,
@@ -397,12 +399,7 @@ async fn plan_defaults(ctx: &DaemonContext, id: &QueueItemId) -> Result<PlanDefa
     let policies = delegating
         .filter_map(|stage| {
             let planned = spec.worker_policy(stage, &item.model_plan)?;
-            let lead = item
-                .model_plan
-                .choices_for(&stage.id)
-                .and_then(|c| c.first());
-            let narrowed = planned.within(&models, &catalog, lead.map(|c| &c.model))?;
-            Some((stage.id.clone(), narrowed))
+            Some((stage.id.clone(), planned.within(&models, &catalog).policy))
         })
         .collect();
     Ok((efforts, policies))

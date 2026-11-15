@@ -170,14 +170,27 @@ pub fn delegation_rules(
     )
 }
 
-/// The rule for a lead whose workers Aether bounds by `policy`: every child
-/// but one with role `reviewer`, which the reviewer rule bounds instead.
-pub fn worker_rule(policy: &archon_core::delegation::WorkerPolicy) -> String {
-    assert!(!policy.workers.is_empty(), "a policy allows a worker");
+/// The rule for a lead whose workers Aether bounds by `narrowed`: every
+/// child but one with role `reviewer`, which the reviewer rule bounds instead.
+/// It lists exactly the workers the policy sent permits, or none.
+pub fn worker_rule(narrowed: &archon_core::delegation::Narrowed) -> String {
+    let policy = &narrowed.policy;
+    let why = narrowed
+        .note
+        .as_ref()
+        .map(|note| format!(" Archon narrowed them: {note}."))
+        .unwrap_or_default();
+    if policy.workers.is_empty() {
+        assert!(narrowed.note.is_some(), "a lead left alone is told why");
+        return format!(
+            "- Workers (every child but a reviewer): none. Do the work yourself and \
+             delegate only the reviewers you owe.{why}\n"
+        );
+    }
     format!(
         "- Workers (every child but a reviewer): {}. Not your own model unless it is \
          listed: Aether's `delegate` refuses a worker outside this, and the error names \
-         what is allowed.\n",
+         what is allowed.{why}\n",
         policy.describe()
     )
 }

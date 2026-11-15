@@ -315,11 +315,22 @@ so a lead cannot pass a clone of its own model off as a reviewer. A named
 reviewer the model policy has since denied is left out of `exempt_models`.
 The policy sent is narrowed to the model policy in force at the spawn, and
 `get_item` shows it so: each effort is capped at `[models] max_effort`, a
-denied planned model is dropped, and under an allow or deny list each tier
-becomes the permitted catalog model `resolve` picks at or below it, or is
-dropped when the catalog cannot place one. With no worker left, the lead's
-workers are pinned to the cheapest permitted catalog model, else to the
-lead's own model; a delegating lead is never sent without its policy.
+denied planned model is dropped, and a tier is kept whole only under an open
+policy with a catalog model of it; otherwise it becomes the permitted
+catalog model `resolve` picks at or below it, or is dropped when the catalog
+cannot place one. The contract's worker rule lists exactly what is sent.
+
+With no planned worker left (an empty catalog after a failed refresh, a
+restrictive allow or deny list, a lead the catalog does not rank), the
+workers fail closed and the review does not: the lead still spawns, with its
+reviewer exemptions, under the narrowest policy, which is one worker at a
+time (`max_parallel = 1`) at effort low on the cheapest permitted catalog
+model. Aether reads an empty `workers` as its tier rule, not as "none", so
+with no permitted catalog model at all the lead is sent `workers = []`
+capped the same way and told to work alone. The lead's own model is never
+the fallback. Either way Archon records a stage note, shown by `get_item`:
+`no permitted worker model resolved (<cause>); the lead works alone` (or the
+one worker it may use). The stage is neither deferred nor failed.
 
 Such a pipeline takes its review level from the item, not from its
 manifest. An item's `review` knob chooses `none`, `standard` or `strict`,

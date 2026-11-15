@@ -36,6 +36,7 @@ pub fn retention() -> chrono::Duration {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Pruned {
     pub spawn_requests: usize,
+    pub stage_notes: usize,
     pub run_vars: usize,
     pub team_merges: usize,
     pub ships: usize,
@@ -54,6 +55,7 @@ pub struct Pruned {
 impl Pruned {
     pub fn total(&self) -> usize {
         self.spawn_requests
+            + self.stage_notes
             + self.run_vars
             + self.team_merges
             + self.ships
@@ -98,6 +100,10 @@ pub async fn prune_once(ctx: &DaemonContext, now: Timestamp) -> Result<Pruned, A
     let spawn_requests = category(
         "spawn_requests",
         executor::prune_settled_requests(&mut *ctx.store.lock().await),
+    )?;
+    let stage_notes = category(
+        "stage_notes",
+        executor::stage_note::prune_orphans(&mut *ctx.store.lock().await),
     )?;
     let run_vars = category(
         "run_vars",
@@ -146,6 +152,7 @@ pub async fn prune_once(ctx: &DaemonContext, now: Timestamp) -> Result<Pruned, A
     let history = prune_history(ctx, now).await?;
     Ok(Pruned {
         spawn_requests,
+        stage_notes,
         run_vars,
         team_merges,
         ships,

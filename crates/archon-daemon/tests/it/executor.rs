@@ -2507,7 +2507,7 @@ async fn planned_item(
 
 /// An `adaptive` item, dispatched, in a repository with an `origin` for
 /// archond to deliver its one stage's commits to.
-async fn adaptive_item(h: &Harness) -> archon_core::queue::QueueItem {
+pub(crate) async fn adaptive_item(h: &Harness) -> archon_core::queue::QueueItem {
     add_origin(h);
     planned_item(h, "adaptive", &["build"]).await
 }
@@ -2538,14 +2538,14 @@ prompt = "implement.md"
 "#;
 
 /// An item on [`LED_THEN_SHIPPED`], dispatched: its lead's stage has a next one.
-async fn led_item(h: &Harness) -> archon_core::queue::QueueItem {
+pub(crate) async fn led_item(h: &Harness) -> archon_core::queue::QueueItem {
     h.add_pipeline("led", LED_THEN_SHIPPED);
     planned_item(h, "led", &["build", "ship"]).await
 }
 
 /// A draft, then a lead that holds the review: the lead's contract is built
 /// only once the draft settles.
-const DRAFTED_THEN_LED: &str = r#"[pipeline]
+pub(crate) const DRAFTED_THEN_LED: &str = r#"[pipeline]
 name = "drafted"
 description = "an agent drafts, then a lead builds and reviews"
 version = 1
@@ -2568,7 +2568,7 @@ prompt = "implement.md"
 allow_delegation = true
 "#;
 
-async fn seed_review_catalog(h: &Harness) {
+pub(crate) async fn seed_review_catalog(h: &Harness) {
     use archon_core::model_tier::{CatalogModel, ModelCatalog, Tier};
     let models = [MODEL, REVIEW_MODEL]
         .into_iter()
@@ -2706,260 +2706,6 @@ async fn adaptive_guarded_build_delegates_within_the_stated_policy_and_archond_s
     assert_eq!(title, "Change the thing");
     let review = format!("REVIEW: pass, by {REVIEW_MODEL} (agent {reviewer})");
     assert!(body.contains(&review), "{body}");
-}
-
-/// A delegating lead is sent its pipeline's worker default as Aether's
-/// delegation policy, the balanced tier resolved to the model the allowlist
-/// permits, its reviewers bounded to the model its contract names, and its
-/// contract and `get_item` say so.
-#[tokio::test]
-async fn an_adaptive_lead_is_sent_balanced_workers_and_its_reviewer_as_its_policy() {
-    use archon_core::delegation::WorkerChoice;
-    use archon_core::model::ModelChoice;
-    use archon_core::model_tier::Tier;
-    let mut config = Config::default();
-    config.models.allow = vec![MODEL.parse().unwrap(), REVIEW_MODEL.parse().unwrap()];
-    config.models.max_effort = Some(Effort::High);
-    let h = Harness::with_config(config).await;
-    seed_review_catalog(&h).await;
-    let item = adaptive_item(&h).await;
-    let build = h.backend.requests()[0].clone();
-    let policy = build
-        .delegation_policy
-        .expect("a delegating lead is bounded");
-    let allowed = ModelChoice::pinned(MODEL.parse().unwrap(), Effort::Medium);
-    assert_eq!(policy.workers, [WorkerChoice::from_plan(&allowed)]);
-    assert_eq!(
-        (policy.default_tier, policy.max_effort, policy.max_parallel),
-        (Some(Tier::Balanced), Some(Effort::Medium), Some(2))
-    );
-    assert_eq!(policy.exempt_roles, ["reviewer"]);
-    assert_eq!(policy.exempt_models.len(), 1, "{policy:?}");
-    let named = policy.exempt_models[0].to_string();
-    assert!(
-        build
-            .instructions
-            .contains(&format!("on {named} at tier balanced")),
-        "the contract names the reviewer the policy allows: {}",
-        build.instructions
-    );
-    let rule = format!(
-        "- Workers (every child but a reviewer): each worker on {MODEL} at effort medium, \
-         at most 2 at once."
-    );
-    assert!(build.instructions.contains(&rule), "{}", build.instructions);
-    let Reply::ItemDetail(detail) = h
-        .cli(Request::GetItem {
-            item: item.id.clone(),
-        })
-        .await
-        .unwrap()
-    else {
-        panic!("item detail expected");
-    };
-    let shown = &detail.worker_policies["build"];
-    assert_eq!(shown.workers, policy.workers);
-    assert!(
-        shown.exempt_models.is_empty(),
-        "reviewers are bounded at spawn"
-    );
-}
-
-/// An item queued before worker plans, under a repository capping effort at
-/// low: the pipeline's medium default is capped, not sent above the policy,
-/// and a lone allowed strong model, or an empty catalog, still bounds the
-/// workers: never an unresolved tier Aether might place on a denied model.
-#[tokio::test]
-async fn a_restrictive_model_policy_narrows_the_pipeline_s_worker_default() {
-    use archon_core::delegation::WorkerChoice;
-    use archon_core::model::ModelChoice;
-    use archon_core::model_tier::Tier;
-    let mut config = Config::default();
-    config.models.max_effort = Some(Effort::Low);
-    let h = Harness::with_config(config).await;
-    seed_review_catalog(&h).await;
-    add_origin(&h);
-    let plan = archon_core::model::ModelPlan(
-        [("build".to_owned(), vec![choice(MODEL, Effort::Low)])].into(),
-    );
-    h.enqueue_in("adaptive", "an old change", plan.clone())
-        .await
-        .unwrap();
-    h.dispatch().await;
-    let policy = h.backend.requests()[0].delegation_policy.clone();
-    let policy = policy.expect("a delegating lead is bounded");
-    assert_eq!(
-        policy.workers,
-        [WorkerChoice::of_tier(Tier::Balanced, Effort::Low)]
-    );
-    assert_eq!(policy.max_effort, Some(Effort::Low));
-
-    let mut config = Config::default();
-    config.models.allow = vec![MODEL.parse().unwrap()];
-    let h = Harness::with_config(config).await;
-    use archon_core::model_tier::{CatalogModel, ModelCatalog};
-    let strong = CatalogModel {
-        model: MODEL.parse().unwrap(),
-        tier: Some(Tier::Strong),
-        is_default: false,
-    };
-    h.ctx
-        .store
-        .lock()
-        .await
-        .set_model_catalog(ModelCatalog::new(vec![strong]));
-    add_origin(&h);
-    h.enqueue_in("adaptive", "an old change", plan)
-        .await
-        .unwrap();
-    h.dispatch().await;
-    let policy = h.backend.requests()[0].delegation_policy.clone();
-    let policy = policy.expect("the one permitted model bounds the workers");
-    let only = ModelChoice::pinned(MODEL.parse().unwrap(), Effort::Medium);
-    assert_eq!(policy.workers, [WorkerChoice::from_plan(&only)]);
-    assert_eq!(policy.max_parallel, Some(2));
-
-    let mut config = Config::default();
-    config.models.allow = vec![MODEL.parse().unwrap()];
-    let h = Harness::with_config(config).await;
-    add_origin(&h);
-    assert!(h.ctx.store.lock().await.model_catalog().is_empty());
-    h.enqueue_in("adaptive", "an old change", plan_of_build(Effort::Low))
-        .await
-        .unwrap();
-    h.dispatch().await;
-    let policy = h.backend.requests()[0].delegation_policy.clone();
-    let policy = policy.expect("an empty catalog still bounds the workers");
-    assert_eq!(
-        policy.workers,
-        [WorkerChoice::from_plan(&only)],
-        "never an unresolved tier"
-    );
-}
-
-fn plan_of_build(effort: Effort) -> archon_core::model::ModelPlan {
-    archon_core::model::ModelPlan([("build".to_owned(), vec![choice(MODEL, effort)])].into())
-}
-
-/// No permitted catalog model sits at or below the balanced worker default:
-/// the workers fall back to a pinned permitted model, and the lead's policy
-/// still exempts reviewers on the model its contract names, and only those.
-#[tokio::test]
-async fn a_worker_fallback_keeps_the_lead_s_reviewer_exemptions() {
-    use archon_core::model_tier::{CatalogModel, ModelCatalog, Tier};
-    let mut config = Config::default();
-    config.models.allow = vec![MODEL.parse().unwrap(), REVIEW_MODEL.parse().unwrap()];
-    let h = Harness::with_config(config).await;
-    let strong = |model: &str| CatalogModel {
-        model: model.parse().unwrap(),
-        tier: Some(Tier::Strong),
-        is_default: false,
-    };
-    let catalog = ModelCatalog::new(vec![strong(MODEL), strong(REVIEW_MODEL)]);
-    h.ctx.store.lock().await.set_model_catalog(catalog);
-    adaptive_item(&h).await;
-    let build = h.backend.requests()[0].clone();
-    let policy = build
-        .delegation_policy
-        .expect("a delegating lead is bounded");
-    let allowed: [archon_core::model::ModelRef; 2] =
-        [MODEL.parse().unwrap(), REVIEW_MODEL.parse().unwrap()];
-    assert_eq!(policy.workers.len(), 1, "{policy:?}");
-    let pinned = policy.workers[0].model.as_ref().expect("a pinned fallback");
-    assert!(allowed.contains(pinned) && policy.workers[0].tier.is_none());
-    assert_eq!(policy.exempt_roles, ["reviewer"]);
-    assert_eq!(policy.exempt_models.len(), 1, "{policy:?}");
-    assert!(allowed.contains(&policy.exempt_models[0]), "{policy:?}");
-    let named = policy.exempt_models[0].to_string();
-    assert!(
-        build
-            .instructions
-            .contains(&format!("with role `reviewer`, on {named} at")),
-        "the contract names the reviewer the policy exempts: {}",
-        build.instructions
-    );
-}
-
-/// The repository denies the reviewer the item's plan named once its first
-/// stage ran: the lead's spawn does not panic, and exempts no denied model.
-#[tokio::test]
-async fn a_named_reviewer_denied_mid_run_is_left_out_of_the_lead_s_policy() {
-    let mut config = Config::default();
-    config.models.allow = vec![MODEL.parse().unwrap(), REVIEW_MODEL.parse().unwrap()];
-    let h = Harness::with_config(config).await;
-    seed_review_catalog(&h).await;
-    let bounded = DRAFTED_THEN_LED.replace(
-        "[pipeline.review]",
-        "[pipeline.workers]\ntier = \"balanced\"\n\n[pipeline.review]",
-    );
-    h.add_pipeline("drafted", &bounded);
-    let planned = |stage: &str, model| (stage.to_owned(), vec![choice(model, Effort::Medium)]);
-    let plan = archon_core::model::ModelPlan(
-        [
-            planned("draft", MODEL),
-            planned("build", MODEL),
-            planned("build.review", REVIEW_MODEL),
-        ]
-        .into(),
-    );
-    let item = h
-        .enqueue_in("drafted", "a reviewed change", plan)
-        .await
-        .unwrap();
-    h.dispatch().await;
-    assert_eq!(h.backend.requests().len(), 1, "the draft spawned");
-    h.repo_config(&format!("[models]\ndeny = [\"{REVIEW_MODEL}\"]\n"));
-    h.settle_running(|_| completed("drafted")).await;
-    h.dispatch().await;
-    let denied: archon_core::model::ModelRef = REVIEW_MODEL.parse().unwrap();
-    let requests = h.backend.requests();
-    let state = h.state(&item.id).await;
-    assert_eq!(requests.len(), 2, "the lead spawned: {state:?}");
-    let policy = requests[1]
-        .delegation_policy
-        .clone()
-        .expect("a bounded lead");
-    assert_eq!(policy.exempt_roles, ["reviewer"]);
-    assert!(!policy.exempt_models.contains(&denied), "{policy:?}");
-}
-
-/// A plan's `<stage>.workers` replaces the pipeline default, and a pipeline
-/// that declares none sends its lead no policy: Aether's own rule stands.
-#[tokio::test]
-async fn a_planned_workers_key_replaces_the_default_and_no_default_sends_none() {
-    use archon_core::delegation::WorkerChoice;
-    let h = Harness::new().await;
-    add_origin(&h);
-    let low = choice(MODEL, Effort::Low);
-    let plan = archon_core::model::ModelPlan(
-        [
-            ("build".to_owned(), vec![choice(MODEL, Effort::Medium)]),
-            (archon_core::model::workers_key("build"), vec![low.clone()]),
-        ]
-        .into(),
-    );
-    h.enqueue_in("adaptive", "a planned change", plan)
-        .await
-        .unwrap();
-    h.dispatch().await;
-    let build = h.backend.requests()[0].clone();
-    let policy = build
-        .delegation_policy
-        .expect("a delegating lead is bounded");
-    assert_eq!(policy.workers, [WorkerChoice::from_plan(&low)]);
-    assert_eq!(policy.max_effort, Some(Effort::Low));
-    assert_eq!(policy.max_parallel, Some(2), "the pipeline's cap stays");
-
-    let h = Harness::new().await;
-    led_item(&h).await;
-    let lead = h.backend.requests()[0].clone();
-    assert!(!lead.leaf, "the lead delegates");
-    assert_eq!(lead.delegation_policy, None);
-    assert!(
-        !lead.instructions.contains("- Workers ("),
-        "{}",
-        lead.instructions
-    );
 }
 
 /// `[models] effort_sizing` reaches the lead's contract: its children and its

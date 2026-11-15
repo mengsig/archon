@@ -293,6 +293,7 @@ impl Canned {
             Request::GetItem { .. } => Reply::ItemDetail(Box::new(ItemDetail {
                 default_efforts: Default::default(),
                 worker_policies: Default::default(),
+                stage_notes: Default::default(),
                 steers: vec![SteerRecord {
                     at: self.item.created_at,
                     by: SteeredBy::Operator,

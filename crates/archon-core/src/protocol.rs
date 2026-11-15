@@ -1990,6 +1990,10 @@ pub struct ItemDetail {
     /// Its reviewers' bound is added when the lead spawns.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub worker_policies: BTreeMap<String, crate::delegation::WorkerPolicy>,
+    /// What Archon recorded on a stage run as it spawned, by stage run: such
+    /// as a lead the model policy left no permitted worker.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub stage_notes: BTreeMap<StageRunId, String>,
     /// Every steer of the item, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub steers: Vec<crate::steer::SteerRecord>,

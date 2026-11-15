@@ -1070,6 +1070,7 @@ fn get_item_shows_recorded_reasons_next_to_choices_and_omits_missing_reasons() {
     let mut detail = ItemDetail {
         default_efforts: Default::default(),
         worker_policies: Default::default(),
+        stage_notes: Default::default(),
         steers: Vec::new(),
         waiting_on: None,
         waiting_reason: None,
@@ -1131,6 +1132,7 @@ fn get_item_lists_the_steers_made_to_the_item() {
     let mut detail = ItemDetail {
         default_efforts: Default::default(),
         worker_policies: Default::default(),
+        stage_notes: Default::default(),
         steers: vec![SteerRecord {
             at,
             by: SteeredBy::Operator,
@@ -1218,6 +1220,7 @@ fn list_queue_and_get_item_expose_stable_waiting_reasons_in_text_and_json() {
             Reply::ItemDetail(Box::new(ItemDetail {
                 default_efforts: Default::default(),
                 worker_policies: Default::default(),
+                stage_notes: Default::default(),
                 steers: Vec::new(),
                 item,
                 runs: vec![],
@@ -1280,6 +1283,7 @@ fn dependency_titles_are_escaped_in_waiting_text() {
             Reply::ItemDetail(Box::new(ItemDetail {
                 default_efforts: Default::default(),
                 worker_policies: Default::default(),
+                stage_notes: Default::default(),
                 steers: Vec::new(),
                 item,
                 runs: vec![],

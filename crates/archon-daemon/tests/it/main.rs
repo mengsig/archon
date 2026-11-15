@@ -109,6 +109,7 @@ mod team_pr;
 mod tracked;
 mod trigger_summaries;
 mod upgrade;
+mod worker_policy;
 mod workspace_hygiene;
 mod worktree;
 mod worktree_git_calls;

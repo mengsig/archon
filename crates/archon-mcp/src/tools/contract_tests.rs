@@ -16,6 +16,7 @@ fn messaging_defaults_to_info_and_returns_a_non_blocking_receipt() {
     assert!(matches!(
         to_request("message_orchestrator", arguments).unwrap(),
         Request::MessageOrchestrator {
+            clarification: None,
             kind: archon_core::agent_message::MessageKind::Info,
             caller: None,
             ..
@@ -27,6 +28,7 @@ fn messaging_defaults_to_info_and_returns_a_non_blocking_receipt() {
         "message_orchestrator",
         &Reply::MessageReceipt {
             receipt: receipt.clone(),
+            clarification: None,
         },
     );
     assert!(rendered.contains(receipt.as_str()));
@@ -425,4 +427,31 @@ fn a_keyed_tool_carries_its_key_beside_the_request() {
         panic!("a key with a space is refused");
     };
     assert!(refused.contains("printable ASCII"), "{refused}");
+}
+
+#[test]
+fn questions_and_open_direction_have_matching_schema_and_parser() {
+    let arguments =
+        json!({"text": "Which format?", "kind": "question", "clarification": {"fallback": "JSON"}});
+    assert!(schema_verdict("message_orchestrator", &arguments).is_ok());
+    assert!(matches!(
+        to_request("message_orchestrator", arguments).unwrap(),
+        Request::MessageOrchestrator {
+            kind: archon_core::agent_message::MessageKind::Question,
+            clarification: Some(_),
+            ..
+        }
+    ));
+    let bare = json!({"text": "Which direction?", "kind": "question"});
+    assert!(schema_verdict("message_orchestrator", &bare).is_ok());
+    assert!(to_request("message_orchestrator", bare).is_ok());
+    let arguments = json!({"title": "new project", "brief": "Choose a direction", "direction_open": true, "autonomy": {"proposal": "off"}});
+    assert!(schema_verdict("enqueue", &arguments).is_ok());
+    let Request::Enqueue(request) = to_request("enqueue", arguments).unwrap() else {
+        panic!("enqueue")
+    };
+    assert_eq!(
+        request.autonomy.proposal,
+        Some(archon_core::autonomy::ProposalMode::Lavish)
+    );
 }

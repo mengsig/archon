@@ -54,6 +54,7 @@ fn insert_at(
 
 fn member(after: &[usize]) -> InitiativeMember {
     InitiativeMember {
+        intent: None,
         repo: RepoRef("alpha".into()),
         brief: "a member".into(),
         title: None,

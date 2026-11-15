@@ -83,6 +83,7 @@ fn label(event: &TriggerEvent) -> String {
                 MessageKind::Relay => "relay",
                 MessageKind::Escalation => "escalation",
                 MessageKind::Info => "info",
+                MessageKind::Question => "question",
             };
             let source = message.stage.as_deref().unwrap_or("run node");
             format!("stage {kind} from {source} ({})", message.item)
@@ -158,6 +159,7 @@ pub(super) fn feed_line(message: &archon_core::agent_message::AgentMessage) -> S
         MessageKind::Relay => "relay",
         MessageKind::Escalation => "escalation",
         MessageKind::Info => "info",
+        MessageKind::Question => "question",
     };
     let source = message.stage.as_deref().unwrap_or("run node");
     let sender = match &message.original_sender {

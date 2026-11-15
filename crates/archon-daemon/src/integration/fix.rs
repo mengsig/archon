@@ -126,6 +126,7 @@ fn request(repo: &Repo, state: &BranchState, red: &Red) -> EnqueueRequest {
         .take(MAX_TITLE_CHARS)
         .collect();
     EnqueueRequest {
+        intent: None,
         repo: Some(RepoRef(repo.name.clone())),
         pipeline: None,
         title,

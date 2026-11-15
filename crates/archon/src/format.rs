@@ -168,6 +168,9 @@ fn link_lines(out: &mut String, status: &DaemonStatus, verbose: bool) {
     for warning in &status.stage_warnings {
         let _ = writeln!(out, "stage health: {}", sanitize_line(&warning.describe()));
     }
+    for question in &status.clarifications {
+        let _ = writeln!(out, "{}", sanitize_line(&question.describe()));
+    }
     for cap in &status.message_caps {
         let _ = writeln!(out, "stage messages: {}", sanitize_line(&cap.describe()));
     }
@@ -498,9 +501,14 @@ pub fn directive_line(directive: &Directive) -> String {
         .map(|at| format!(", until {}", at.format("%Y-%m-%d %H:%M UTC")))
         .unwrap_or_default();
     format!(
-        "{}  {}  ({source}{until})",
+        "{}  {}  ({source}{until}{})",
         directive.id,
-        sanitize_line(&directive.text)
+        sanitize_line(&directive.text),
+        if directive.clarifications == archon_core::autonomy::ClarificationPolicy::Proceed {
+            ", proceed with recorded deviations and assumptions"
+        } else {
+            ""
+        }
     )
 }
 
@@ -995,6 +1003,7 @@ pub(crate) mod tests {
             integration: Vec::new(),
             stage_warnings: Vec::new(),
             message_caps: Vec::new(),
+            clarifications: Vec::new(),
             github_outbox: Vec::new(),
             github_outbox_pending: 0,
         }

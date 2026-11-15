@@ -26,6 +26,7 @@ fn passing(stage: &StageRun) -> StageOutcome {
 
 fn request(title: &str) -> EnqueueRequest {
     EnqueueRequest {
+        intent: None,
         onto: None,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
@@ -381,7 +382,10 @@ async fn a_waking_success_tells_the_later_settled_cost() {
     succeed(&h, &item).await;
     let told = told_after_settlement(&h, &item, |event| match event {
         TriggerEvent::ItemFinished {
-            item: id, cost_usd, ..
+            acceptance: None,
+            item: id,
+            cost_usd,
+            ..
         } if *id == item.id => Some(*cost_usd),
         _ => None,
     })

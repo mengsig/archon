@@ -563,6 +563,8 @@ pub struct LimitsConfig {
     /// Messages one agent may send the orchestrator, and one run node's
     /// inbox may relay, over its lifetime.
     pub max_agent_messages: u32,
+    /// How long an unanswered stage clarification holds dependent work.
+    pub clarification_timeout_minutes: u32,
     pub initiative_members: u32,
     pub initiative_contract_bytes: u32,
 }
@@ -592,6 +594,7 @@ impl Default for LimitsConfig {
             max_stage_timeout_minutes: DEFAULT_STAGE_TIMEOUT_MINUTES,
             refresh_stage_timeout_minutes: DEFAULT_REFRESH_STAGE_TIMEOUT_MINUTES,
             max_agent_messages: DEFAULT_AGENT_MESSAGES,
+            clarification_timeout_minutes: 30,
             initiative_members: InitiativeLimits::DEFAULT.members as u32,
             initiative_contract_bytes: InitiativeLimits::DEFAULT.contract_bytes as u32,
         }
@@ -676,7 +679,7 @@ impl LimitsConfig {
     }
 
     /// The structural limits `[limits]` may set: key, value, default, ceiling.
-    fn configurable(&self) -> [(&'static str, u32, u32, u32); 6] {
+    fn configurable(&self) -> [(&'static str, u32, u32, u32); 7] {
         let default = Self::default();
         let ceiling = InitiativeLimits::CEILING;
         [
@@ -696,6 +699,12 @@ impl LimitsConfig {
                 "refresh_stage_timeout_minutes",
                 self.refresh_stage_timeout_minutes,
                 default.refresh_stage_timeout_minutes,
+                STAGE_TIMEOUT_CEILING_MINUTES,
+            ),
+            (
+                "clarification_timeout_minutes",
+                self.clarification_timeout_minutes,
+                default.clarification_timeout_minutes,
                 STAGE_TIMEOUT_CEILING_MINUTES,
             ),
             (
@@ -1668,6 +1677,8 @@ mod tests {
             "refresh_stage_timeout_minutes = 0",
             "refresh_stage_timeout_minutes = 43201",
             "max_agent_messages = 0",
+            "clarification_timeout_minutes = 0",
+            "clarification_timeout_minutes = 43201",
             "initiative_members = 65",
             "initiative_contract_bytes = 16385",
         ] {
@@ -1696,6 +1707,7 @@ mod tests {
                 "max_delegation_depth",
                 "max_stage_timeout_minutes",
                 "refresh_stage_timeout_minutes",
+                "clarification_timeout_minutes",
                 "max_agent_messages",
                 "initiative_members",
                 "initiative_contract_bytes",

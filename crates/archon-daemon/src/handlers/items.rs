@@ -31,11 +31,24 @@ use archon_core::autonomy::MergeMode;
 
 pub(super) async fn enqueue(
     ctx: &DaemonContext,
-    req: EnqueueRequest,
+    mut req: EnqueueRequest,
 ) -> Result<Reply, ArchonError> {
+    req.intent = resolve_intent(ctx, req.intent.as_ref(), req.onto.as_ref()).await?;
     let title = req.title.trim().to_owned();
     check_enqueue(&req.title, &req.brief, &req.tags, req.budget_usd)?;
-    let (env, resolved) = enqueue_context(ctx, &req).await?;
+    let (env, mut resolved) = enqueue_context(ctx, &req).await?;
+    let key = req
+        .idempotency_key
+        .as_deref()
+        .filter(|k| !k.trim().is_empty());
+    let target = (req.onto.as_ref(), !req.depends_on.is_empty());
+    let onto = enqueue_onto(ctx, &env, &resolved.spec, target, key).await?;
+    req.intent = resolve_pull_request_intent(ctx, req.intent.as_ref(), onto.as_ref()).await?;
+    if req.intent.is_some()
+        || resolved.autonomy.proposal == archon_core::autonomy::ProposalMode::Lavish
+    {
+        resolved.spec = archon_pipeline::acceptance::augment(&resolved.spec)?;
+    }
     let asked = Asked {
         autonomy: req.autonomy,
         model_plan: req.model_plan.clone(),
@@ -51,32 +64,10 @@ pub(super) async fn enqueue(
         held: routed_provider.as_deref(),
         ..unrouted
     };
-    let given = resolve_draft(
-        ctx,
-        (&env, route),
-        &resolved.spec,
-        req.model_plan,
-        req.model_reasons.as_ref(),
-    )
-    .await?;
-    check_stage_timeouts(ctx, &resolved.spec, &req.stage_timeouts)?;
-    let plan = filled_plan(ctx, route, &env, &resolved.base, &resolved.spec, given).await?;
-    check_plan(ctx, &env, &resolved.spec, &plan)?;
-    let budgeted = Budgeted {
-        budget_usd: req.budget_usd,
-        review: resolved.autonomy.review,
-        repo: env.repo.as_ref(),
-    };
-    check_budget_models(ctx, &env, &id, &resolved.spec, (&plan, &budgeted))?;
-    check_reasons(&resolved.spec, req.model_reasons.as_ref())?;
-    let key = req
-        .idempotency_key
-        .as_deref()
-        .filter(|k| !k.trim().is_empty());
-    let target = (req.onto.as_ref(), !req.depends_on.is_empty());
-    let onto = enqueue_onto(ctx, &env, &resolved.spec, target, key).await?;
+    let plan = enqueue_plan(ctx, &req, &env, &resolved, route).await?;
     let now = archon_core::now();
     let item = QueueItem {
+        intent: req.intent.clone(),
         onto: onto.map(Box::new),
         id,
         repo: env.repo.as_ref().map(|r| r.id.clone()),
@@ -108,6 +99,99 @@ pub(super) async fn enqueue(
     );
     ctx.dispatch.notify_one();
     Ok(item_reply(ctx, stored, req.budget_usd.is_some()).await)
+}
+
+async fn enqueue_plan(
+    ctx: &DaemonContext,
+    req: &EnqueueRequest,
+    env: &RepoEnv,
+    resolved: &knobs::Resolved,
+    route: ItemRoute<'_>,
+) -> Result<archon_core::model::ModelPlan, ArchonError> {
+    let given = resolve_draft(
+        ctx,
+        (env, route),
+        &resolved.spec,
+        req.model_plan.clone(),
+        req.model_reasons.as_ref(),
+    )
+    .await?;
+    check_stage_timeouts(ctx, &resolved.spec, &req.stage_timeouts)?;
+    let plan = filled_plan(ctx, route, env, &resolved.base, &resolved.spec, given).await?;
+    check_plan(ctx, env, &resolved.spec, &plan)?;
+    let budgeted = Budgeted {
+        budget_usd: req.budget_usd,
+        review: resolved.autonomy.review,
+        repo: env.repo.as_ref(),
+    };
+    check_budget_models(ctx, env, route.id, &resolved.spec, (&plan, &budgeted))?;
+    check_reasons(&resolved.spec, req.model_reasons.as_ref())?;
+    Ok(plan)
+}
+
+pub(super) async fn resolve_intent(
+    ctx: &DaemonContext,
+    requested: Option<&archon_core::intent::IntentBinding>,
+    onto: Option<&OntoTarget>,
+) -> Result<Option<archon_core::intent::IntentBinding>, ArchonError> {
+    let store = ctx.store.lock().await;
+    let inherited = match onto {
+        Some(OntoTarget::Item(id)) => store.item(id)?.intent,
+        _ => None,
+    };
+    if requested.is_some() && inherited.is_some() && requested != inherited.as_ref() {
+        return Err(ArchonError::Invalid(
+            "onto item has a different approved intent".into(),
+        ));
+    }
+    let binding = requested.cloned().or(inherited);
+    if let Some(binding) = &binding {
+        store.approved_intent(binding)?.ok_or_else(|| {
+            ArchonError::NotFound(format!(
+                "approved intent {} version {}",
+                binding.id, binding.version
+            ))
+        })?;
+    }
+    Ok(binding)
+}
+
+pub(super) async fn resolve_pull_request_intent(
+    ctx: &DaemonContext,
+    requested: Option<&archon_core::intent::IntentBinding>,
+    onto: Option<&archon_core::pull_request::OntoPullRequest>,
+) -> Result<Option<archon_core::intent::IntentBinding>, ArchonError> {
+    let Some(onto) = onto else {
+        return Ok(requested.cloned());
+    };
+    let reference = archon_core::protocol::GithubRef {
+        host: onto.pr.host.clone(),
+        repo: onto.pr.repository.clone(),
+        number: onto.pr.number,
+        kind: archon_core::protocol::GithubKind::PullRequest,
+    };
+    let store = ctx.store.lock().await;
+    let mut inherited = requested.cloned();
+    for link in store.issue_items(&reference)? {
+        let Some(binding) = store.item(&link.item)?.intent else {
+            continue;
+        };
+        if inherited.as_ref().is_some_and(|known| known != &binding) {
+            return Err(ArchonError::Invalid(
+                "pull request has conflicting approved intents".into(),
+            ));
+        }
+        inherited = Some(binding);
+    }
+    if let Some(binding) = &inherited {
+        store.approved_intent(binding)?.ok_or_else(|| {
+            ArchonError::NotFound(format!(
+                "approved intent {} version {}",
+                binding.id, binding.version
+            ))
+        })?;
+    }
+    Ok(inherited)
 }
 
 /// `Reply::Item`, or `ItemBudgetsOff` when the change set a budget that
@@ -315,6 +399,7 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
     let stage_warnings = crate::inbox_health::warnings(ctx, archon_core::now(), Some(id)).await?;
     let store = ctx.read_store().await?;
     let item = store.item(id)?;
+    let acceptance = executor::acceptance::readiness(ctx, &item).await?;
     let mut runs = store.runs_for_item(id)?;
     let mut stages = Vec::new();
     let mut delegations = BTreeMap::new();
@@ -346,6 +431,7 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
     let message_caps = crate::agent_messages::caps(&store, Some(id))?;
     let stage_notes = executor::stage_note::read(&store, &stages)?;
     Ok(Reply::ItemDetail(Box::new(ItemDetail {
+        acceptance,
         default_efforts,
         worker_policies,
         stage_notes,
@@ -361,6 +447,7 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
         delegations,
         merges,
         stage_warnings,
+        clarifications: crate::clarifications::records(&store, Some(id), false)?,
         message_caps,
     })))
 }

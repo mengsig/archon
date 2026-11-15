@@ -37,7 +37,18 @@ const LINE_CHARS: usize = 200;
 pub(super) fn reply(tool: &str, reply: &Reply) -> String {
     match reply {
         Reply::Guide { text } => text.clone(),
-        Reply::MessageReceipt { receipt } => format!(
+        Reply::MessageReceipt {
+            clarification: Some(question),
+            ..
+        } => {
+            question.describe()
+                + if question.resolution.is_some() {
+                    " Proceed now; include the recorded assumption in the end-of-run review."
+                } else {
+                    " Keep working on independent parts. Hold dependent work until an answer or deadline; the daemon will deliver your recorded fallback at timeout."
+                }
+        }
+        Reply::MessageReceipt { receipt, .. } => format!(
             "Recorded message {receipt} for delivery to the orchestrator. Keep working on your stage; do not wait for a reply or end your turn."
         ),
         Reply::Ok => ok(tool).to_owned(),
@@ -355,6 +366,24 @@ fn item_detail(detail: &ItemDetail) -> String {
     if detail.runs.is_empty() {
         text.push_str("\nNo pipeline run yet.");
     }
+    if detail.item.intent.is_some() {
+        let _ = write!(
+            text,
+            "\nAcceptance: {:?} (separate from review and CI)",
+            detail.acceptance.status
+        );
+        if let Some(record) = &detail.acceptance.record {
+            let _ = write!(
+                text,
+                "\n  head {} · tree {} · intent {} v{}",
+                record.result.head,
+                record.result.tree,
+                record.result.intent.id,
+                record.result.intent.version
+            );
+        }
+    }
+    text.push_str(&clarifications_text(&detail.clarifications));
     for steer in &detail.steers {
         let at = steer.at.to_rfc3339();
         let _ = write!(text, "\nSteered {at} by {}: {}", steer.by, steer.what);
@@ -482,11 +511,16 @@ fn autonomy_text(view: &AutonomyView) -> String {
     for directive in &view.directives {
         let _ = write!(
             text,
-            "\nDirective {} ({}{}): {}",
+            "\nDirective {} ({}{}): {}{}",
             directive.id,
             snake(&directive.source),
             until(directive),
-            directive.text
+            directive.text,
+            if directive.clarifications == archon_core::autonomy::ClarificationPolicy::Proceed {
+                " [proceed with recorded deviations and assumptions]"
+            } else {
+                ""
+            }
         );
     }
     text
@@ -788,7 +822,15 @@ fn daemon_status(status: &DaemonStatus) -> String {
         + &integration_text(&status.integration)
         + &stage_warnings_text(&status.stage_warnings)
         + &message_caps_text(&status.message_caps)
+        + &clarifications_text(&status.clarifications)
         + &stale_text(status.health.as_ref())
+}
+
+fn clarifications_text(records: &[archon_core::agent_message::Clarification]) -> String {
+    records
+        .iter()
+        .map(|record| format!("\n{}", record.describe()))
+        .collect()
 }
 
 /// Agents of running stages that leave inbox items unread.
@@ -1060,6 +1102,7 @@ mod storage_tests {
     #[test]
     fn a_recorded_directive_ends_one_sentence_once_and_names_the_ceiling() {
         let mut directive = Directive {
+            clarifications: Default::default(),
             id: archon_core::id::DirectiveId::new(),
             text: "auto-merge every succeeded item.".into(),
             source: archon_core::autonomy::DirectiveSource::Orchestrator,

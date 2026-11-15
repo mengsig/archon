@@ -68,6 +68,7 @@ fn config(notify: impl FnOnce(&mut archon_core::push::NotifyConfig)) -> Config {
 /// Enqueue an item whose proposal gate opens, and wait until it is asked.
 async fn open_gate(h: &Harness, title: &str) -> QueueItem {
     let request = EnqueueRequest {
+        intent: None,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(PIPELINE.into()),

@@ -43,6 +43,19 @@ pub(super) async fn finish_run(
     blocker: bool,
 ) -> Result<FollowUp, ArchonError> {
     assert!(state.is_terminal(), "finish_run needs a terminal state");
+    if matches!(state, RunState::Succeeded { .. }) {
+        match super::acceptance::require_current(ctx, &run).await {
+            Ok(_) => {}
+            Err(ArchonError::Invalid(error)) => {
+                state = RunState::Failed {
+                    stage_id: archon_pipeline::acceptance::STAGE.into(),
+                    error,
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    super::acceptance::publish_deviations(ctx, &run).await?;
     let mut repair = None;
     match repair::decide(ctx, table, &run, &state).await? {
         Decision::Finish => {}
@@ -411,7 +424,16 @@ pub(super) async fn announce(
         item.state.is_terminal(),
         "only finished items are announced"
     );
-    let summary = outcome_text(item);
+    let acceptance = super::acceptance::readiness(ctx, item).await?;
+    let summary = if item.intent.is_some() {
+        format!(
+            "{}\n{}",
+            outcome_text(item),
+            super::acceptance::readiness_text(&acceptance)
+        )
+    } else {
+        outcome_text(item)
+    };
     let notice = if matches!(item.state, QueueState::Failed { .. }) {
         let stages = match run {
             Some(run) => match ctx.store.lock().await.stage_runs(&run.id) {
@@ -451,6 +473,7 @@ pub(super) async fn announce(
         .await
         .spend_for_item(&item.id, archon_core::cost::API_EQUIVALENT)?;
     let finished = TriggerEvent::ItemFinished {
+        acceptance: item.intent.as_ref().map(|_| acceptance),
         item: item.id.clone(),
         title: item.title.clone(),
         state: item.state.kind().to_owned(),

@@ -145,6 +145,16 @@ pub(crate) fn reshape(
         let base = sources.switch_to.as_ref().expect("read with the steer");
         let knobs = switched_knobs(base, item.autonomy);
         let target = augment(base, &knobs)?;
+        let target = if item.intent.is_some()
+            || item
+                .model_plan
+                .0
+                .contains_key(archon_pipeline::acceptance::STAGE)
+        {
+            archon_pipeline::acceptance::augment(&target)?
+        } else {
+            target
+        };
         let (edit, reshaped) = reshape::switch_edit(spec, prefix, &target)?;
         let what = format!("switched the stages still to run to `{}`", base.name());
         // The removed stages go with the pipeline switched away.

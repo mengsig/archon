@@ -287,6 +287,7 @@ pub fn stage_create_agent(request: &SpawnRequest, network: NetworkPolicy) -> Cre
         "only an agent that may delegate is sent a worker policy"
     );
     CreateAgent {
+        references: request.references.clone(),
         role: request.role.clone(),
         name: Some(request.name.clone()),
         objective: Some(request.objective.clone()),
@@ -338,6 +339,7 @@ pub fn run_node_create_agent(request: &RunNodeRequest) -> CreateAgent {
     );
     assert!(!request.name.trim().is_empty(), "a run node has a name");
     CreateAgent {
+        references: Vec::new(),
         role: request.role.clone(),
         name: Some(request.name.clone()),
         objective: None,
@@ -507,6 +509,13 @@ impl AgentBackend for AetherBackend {
             None => client.daemon_defaults().await?.network_default,
         };
         require_host_context(&client, request.host_context)?;
+        if !request.references.is_empty()
+            && !client.welcome().features.iter().any(|f| f == "references")
+        {
+            return Err(ArchonError::Unavailable(
+                "Aether lacks references required by the frozen creation request".into(),
+            ));
+        }
         let agent = client
             .create_agent(stage_create_agent(&request, network))
             .await?;
@@ -814,6 +823,7 @@ mod tests {
 
     fn request() -> SpawnRequest {
         SpawnRequest {
+            references: Vec::new(),
             host_context: Default::default(),
             idempotency_key: "stg_01".into(),
             role: "archon-stage:direct/implement".into(),
@@ -868,6 +878,7 @@ mod tests {
             .unwrap()
             .with_reviewers(vec!["codex/terra".parse().unwrap()]);
         let lead = SpawnRequest {
+            references: Vec::new(),
             leaf: false,
             delegation_policy: Some(policy),
             ..request()

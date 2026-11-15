@@ -7,6 +7,15 @@ pub(super) async fn refresh(ctx: &DaemonContext) -> Result<(), ArchonError> {
         return Ok(());
     }
     let models = ctx.aether.client()?.list_models().await?;
+    let vision: Vec<_> = models
+        .iter()
+        .filter(|m| m.configured && m.capabilities.vision)
+        .map(|m| m.model.clone())
+        .collect();
+    ctx.store
+        .lock()
+        .await
+        .kv_set("acceptance_vision_models", &serde_json::to_string(&vision)?)?;
     let ready = models
         .into_iter()
         .filter(|m| m.configured)

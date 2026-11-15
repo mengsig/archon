@@ -348,6 +348,7 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
         model_plan: ModelPlan,
     ) -> Result<QueueItem, ArchonError> {
         let request = EnqueueRequest {
+            intent: None,
             onto: None,
             stage_timeouts: Default::default(),
             repo: Some(RepoRef(repo.into())),
@@ -1854,4 +1855,21 @@ pub fn exact_test_name(module_path: &str, name: &str) -> String {
         .expect("tests live in a module of the test binary");
     assert!(!krate.is_empty() && !module.is_empty(), "{module_path}");
     format!("{module}::{name}")
+}
+
+/// Reproduce a persisted pre-intent item for the existing gate lifecycle tests.
+pub async fn legacy_gate_item(h: &Harness, mut item: QueueItem) -> QueueItem {
+    assert!(item.intent.is_none());
+    assert!(
+        h.ctx
+            .store
+            .lock()
+            .await
+            .runs_for_item(&item.id)
+            .unwrap()
+            .is_empty()
+    );
+    item.model_plan.0.remove("intent-acceptance");
+    h.ctx.store.lock().await.update_item(&item).unwrap();
+    item
 }

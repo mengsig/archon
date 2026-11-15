@@ -16,6 +16,7 @@ use serde_json::Value;
 
 fn item(state: QueueState) -> QueueItem {
     QueueItem {
+        intent: None,
         onto: None,
         id: QueueItemId::new(),
         repo: None,
@@ -61,6 +62,7 @@ fn wait(
 
 fn snapshot(row: QueueItem, waiting_reason: Option<archon_core::protocol::WaitingReason>) -> Reply {
     Reply::ItemDetail(Box::new(ItemDetail {
+        acceptance: Default::default(),
         default_efforts: Default::default(),
         worker_policies: Default::default(),
         stage_notes: Default::default(),
@@ -77,6 +79,7 @@ fn snapshot(row: QueueItem, waiting_reason: Option<archon_core::protocol::Waitin
         merges: Vec::new(),
         stage_warnings: Vec::new(),
         message_caps: Vec::new(),
+        clarifications: Vec::new(),
     }))
 }
 

@@ -15,7 +15,7 @@ const GITLINK_MODE: &str = "160000";
 /// Untracked build and tool caches that are never work, ignored or not: the
 /// directories by name at any depth, `target` and Archon's own report pages, evidence files
 /// and swarm plan under `.archon/` only at the top level; its config and pipelines are work.
-const CACHE_PATTERNS: [&str; 14] = [
+const CACHE_PATTERNS: [&str; 15] = [
     "__pycache__/",
     "*.pyc",
     "*.pyo",
@@ -29,6 +29,7 @@ const CACHE_PATTERNS: [&str; 14] = [
     "/target/",
     "/.archon/reports/",
     "/.archon/evidence/",
+    "/.archon/intent/",
     "/.archon/swarm-plan.json",
 ];
 
@@ -278,6 +279,7 @@ mod tests {
             "web/build/app.js",
             ".archon/reports/proposal/index.html",
             ".archon/evidence/after.png",
+            ".archon/intent/approved/1/reference.png",
             ".archon/swarm-plan.json",
         ] {
             write(cache);

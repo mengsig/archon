@@ -37,6 +37,7 @@ async fn only_advertised_lean_context_is_sent_on_every_create() {
         ] {
             let result = client
                 .create_agent(CreateAgent {
+                    references: Vec::new(),
                     role: "archon-test".into(),
                     parent,
                     config: Some(AgentConfig {

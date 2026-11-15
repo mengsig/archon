@@ -49,6 +49,7 @@ pub const TOOLS: &[ToolName] = &[
     tool("model_evidence", ToolClass::ReadOnly),
     tool("register_repo", ToolClass::Mutation),
     tool("enqueue", ToolClass::Mutation),
+    tool("approve_intent", ToolClass::Mutation),
     tool("update_item", ToolClass::Mutation),
     tool("cancel_item", ToolClass::Mutation),
     tool("retry_item", ToolClass::Mutation),

@@ -23,6 +23,7 @@ const DEADLINE_GRACE_SECS: i64 = 60;
 
 /// One pass over every live stage run (ARCHITECTURE §6.3, §16).
 pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonError> {
+    super::acceptance::resume_decisions(ctx).await?;
     let now = archon_core::now();
     let grace = chrono::Duration::seconds(DEADLINE_GRACE_SECS);
     let (in_flight, merge, ship, retry) = {
@@ -62,6 +63,9 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
             };
             if run_done {
                 follow.stop.push(stage.run.clone());
+                continue;
+            }
+            if super::acceptance::pending(&store, &stage.id)? {
                 continue;
             }
             follow.roster.push(stage.run.clone());

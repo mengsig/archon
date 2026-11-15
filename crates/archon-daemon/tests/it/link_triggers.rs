@@ -100,6 +100,7 @@ async fn stage_messages_survive_compaction_and_are_delivered_with_attribution() 
             &harness.ctx,
             ClientKind::ArchonMcp,
             Request::MessageOrchestrator {
+                clarification: None,
                 caller: stage.aether_agent.clone(),
                 kind: MessageKind::Escalation,
                 text: format!("message {index}"),
@@ -585,6 +586,7 @@ async fn news_held_behind_a_stuck_batch_stays_bounded() {
 /// The quiet `item_finished` news of the cancelled `item`.
 fn routine(item: &QueueItemId) -> TriggerEvent {
     TriggerEvent::ItemFinished {
+        acceptance: None,
         item: item.clone(),
         title: "bump a dependency".into(),
         state: "cancelled".into(),

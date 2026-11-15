@@ -63,6 +63,7 @@ async fn insert_copies(h: &Harness, like: &QueueItem, count: usize) -> Vec<Queue
     (0..count)
         .map(|_| {
             let copy = QueueItem {
+                intent: None,
                 id: QueueItemId::new(),
                 ..like.clone()
             };

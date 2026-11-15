@@ -130,6 +130,7 @@ async fn an_operator_device_sets_and_clears_a_directive_from_chat() {
         .unwrap();
     assert!(directives(&h).await.is_empty(), "the directive was cleared");
     let direct = Request::SetDirective {
+        clarifications: Default::default(),
         text: "pause big refactors".into(),
         expires_in_hours: Some(2),
     };

@@ -6,6 +6,7 @@
 //! (`scenarios`), and edits to the unstarted stages of a run (`reshape`).
 //! No process spawning and no store access: the daemon drives this crate.
 
+pub mod acceptance;
 pub mod autonomy;
 pub mod builtin;
 pub mod catalog;

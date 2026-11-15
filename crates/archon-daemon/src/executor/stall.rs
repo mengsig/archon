@@ -554,6 +554,7 @@ fn forget_settled(store: &mut Store, prefix: &str) -> Result<(), ArchonError> {
 
 /// The runs and items an operator gate or question holds open.
 struct Waiting {
+    stages: BTreeSet<StageRunId>,
     runs: BTreeSet<PipelineRunId>,
     items: BTreeSet<QueueItemId>,
 }
@@ -561,7 +562,13 @@ struct Waiting {
 impl Waiting {
     async fn read(ctx: &DaemonContext) -> Result<Self, ArchonError> {
         let store = ctx.store.lock().await;
+        let stages = crate::clarifications::records(&store, None, true)?
+            .into_iter()
+            .filter(|r| r.deadline > archon_core::now())
+            .map(|r| r.stage_run)
+            .collect();
         Ok(Self {
+            stages,
             runs: store.open_gates()?.into_iter().map(|g| g.run).collect(),
             items: store
                 .questions(true)?
@@ -578,7 +585,7 @@ impl Waiting {
         stage: &StageRun,
     ) -> Result<bool, ArchonError> {
         assert_eq!(&stage.run, run, "the stage belongs to the run asked about");
-        if self.runs.contains(run) {
+        if self.stages.contains(&stage.id) || self.runs.contains(run) {
             return Ok(true);
         }
         if self.items.is_empty() {

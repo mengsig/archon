@@ -326,17 +326,26 @@ nothing is recorded; `restore-memory` and `retry-memory` still work.
 
 Every stage agent can call Archon's `message_orchestrator(text, kind)` in
 guarded and yolo modes. Use `relay` to pass on an operator message sent to
-the wrong agent, `escalation` for a blocker outside the stage, or `info`
+the wrong agent, `escalation` for a blocker outside the stage, `question` for an
+important missing decision, or `info`
 (the default). Text must be non-blank and at most 4096 characters. The
 tool returns a receipt immediately; the agent must continue its stage
-without waiting for a reply or ending its turn.
+on independent work without ending its turn. For a clarification, hold dependent
+work until an answer or the deadline. Include `clarification.fallback` with the
+best judgment to apply if nobody answers (a conservative default is supplied
+when omitted). Questions bypass every message and escalation count cap. Open
+questions appear in `queue_status` and `get_item.clarifications`; the latter
+also retains answers and assumptions after the run. An answer sent to the live
+stage using `send_message` or a steer note includes `[clarification:<id>]`.
+After `[limits] clarification_timeout_minutes` (default 30), Archon records
+the fallback and delivers it to the stage, retrying delivery after disconnects.
 
 Archon writes the message to the feed itself, whole, with its stage, sender
 and kind (`archon log --item <id>`): an escalation shows in the chat as a
 blocker, a relay or info with progress. It also delivers an `agent_message`
 news event to the orchestrator, which acts on it and does not repeat it to
 you. Delivery is durable and coalesced; each
-agent can send at most 20 messages (`[limits] max_agent_messages`), with
+agent can send at most 20 counted messages (`[limits] max_agent_messages`), with
 a clear refusal after that. The cap never silences a stage:
 
 - Its first refused message posts one `message_cap_reached` news event that
@@ -1386,7 +1395,12 @@ defaults and the ceiling in `[autonomy]` in the config, or per repository
 with `archon repo set <repo> --autonomy-max review=none,merge=auto`. A
 repository's own `.archon/config.toml` can only lower them.
 `archon autonomy direct "…"` records a standing instruction, such as
-"auto-merge docs-only changes today". `archon autonomy` shows the defaults,
+"auto-merge docs-only changes today". To authorize proceeding with recorded
+deviations and assumptions without waiting, an operator records a directive
+with `archon autonomy direct --clarifications proceed --hours 12 "Going to sleep"`.
+The authorization expires or is revoked with that directive; agent-created
+directives cannot grant it. Decisions remain visible in the end-of-run review.
+`archon autonomy` shows the defaults,
 the ceiling and the directives. See
 [`docs/ARCHITECTURE.md` §18](ARCHITECTURE.md#18-autonomy).
 
@@ -1510,3 +1524,38 @@ if support disappears, with one warning per changed stage or node. Stage
 records and `archon model-evidence` retain the effective policy for comparing
 cost and outcomes; Codex stages always record full. See the
 [configuration reference](configuration.md) for the full contract.
+
+### Approved intent and acceptance
+
+`approve_intent` files an immutable requirement ledger against an authenticated
+operator inbox message; `operator_words` must be that message verbatim. A new
+Lavish proposal displays its ledger alongside the reference images and freezes it
+when approved. Enqueue and initiative members bind `{id, version, requirements}`;
+an empty requirement list selects the whole ledger. Work onto an item's PR
+inherits its binding, as do retries and refreshes.
+
+Every stage receives the words, selected requirements and preserved references.
+Aether daemons advertising `references` receive image attachments; older daemons
+receive explicit paths and instructions to pass them to children. HTML approvals
+preserve embedded and local raster image references. Remote image URLs and
+unsupported image types fail explicitly; supply local PNG, JPEG, GIF or WebP
+references. Artifacts are hash checked again when consumed.
+
+Builds submit `requirement_results` for every selected requirement, with evidence
+and reference/built pairs for visual requirements. The `intent-acceptance` stage
+uses a separate vision model and prefers a different vendor. An unavailable
+independent model prevents delivery. Missing or blocked requirements, changed
+images, unexplained gaps and unapproved deviations cannot pass.
+
+Deviations show a comparison page and wait for approval by default. An active
+operator `--clarifications proceed` directive permits recorded deviations without
+waiting. The run publishes one final “Deviations to review” page, including
+clarification fallback assumptions. Clearing or expiring the directive restores
+the default for future decisions.
+
+`get_item`, item completion news and PR bodies expose acceptance separately from
+code review and CI, pinned to the commit, tree and intent version. A new commit
+invalidates acceptance even if the tree is identical. Once a worktree is removed,
+Archon checks the retained branch; a missing branch cannot establish readiness.
+Existing items created without an intent or proposal ledger retain their original
+pipeline behavior.

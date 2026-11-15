@@ -121,6 +121,26 @@ pub fn item_detail(detail: &ItemDetail, names: &RepoNames, full: bool) -> String
     let item = &detail.item;
     let mut out = String::new();
     let _ = writeln!(out, "{}  {}", item.id, sanitize_line(&item.title));
+    if detail.item.intent.is_some() {
+        let _ = writeln!(
+            out,
+            "Acceptance: {:?} (separate from review and CI)",
+            detail.acceptance.status
+        );
+        if let Some(record) = &detail.acceptance.record {
+            let _ = writeln!(
+                out,
+                "  head {} · tree {} · intent {} v{}",
+                record.result.head,
+                record.result.tree,
+                record.result.intent.id,
+                record.result.intent.version
+            );
+        }
+    }
+    for question in &detail.clarifications {
+        let _ = writeln!(out, "{}", sanitize_line(&question.describe()));
+    }
     if let Some(wait) = &detail.waiting_on {
         let _ = writeln!(
             out,
@@ -482,6 +502,7 @@ mod tests {
 
     fn queue_item(repo: Option<&RepoId>, title: &str, pipeline: &str) -> QueueItem {
         QueueItem {
+            intent: None,
             onto: None,
             id: QueueItemId::new(),
             repo: repo.cloned(),
@@ -725,6 +746,7 @@ mod tests {
         ship.aether_agent = None;
         ship.structured = Some(serde_json::json!({"pr_url": "https://github.com/o/r/pull/12"}));
         ItemDetail {
+            acceptance: Default::default(),
             default_efforts: Default::default(),
             worker_policies: Default::default(),
             stage_notes: Default::default(),
@@ -741,6 +763,7 @@ mod tests {
             merges: Vec::new(),
             stage_warnings: Vec::new(),
             message_caps: Vec::new(),
+            clarifications: Vec::new(),
         }
     }
 
@@ -1044,6 +1067,7 @@ mod tests {
         stage.structured = Some(serde_json::json!({"pr_url": "https://x\x1b[2K\n/1"}));
         let gate = rejected_with_escapes(&run);
         let detail = ItemDetail {
+            acceptance: Default::default(),
             default_efforts: Default::default(),
             worker_policies: Default::default(),
             stage_notes: Default::default(),
@@ -1060,6 +1084,7 @@ mod tests {
             merges: Vec::new(),
             stage_warnings: Vec::new(),
             message_caps: Vec::new(),
+            clarifications: Vec::new(),
         };
         let text = item_detail(&detail, &RepoNames::new(), true);
         assert_inert(&text);

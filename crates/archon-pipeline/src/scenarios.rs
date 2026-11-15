@@ -37,7 +37,58 @@ pub(crate) fn shortfall(structured: Option<&Value>) -> Option<Shortfall> {
         Ok(ran) => ran,
         Err(why) => return Some(unlisted(&format!("`scenarios` {why}"))),
     };
+    if let Some(why) = required_steps(structured.get("scenarios")) {
+        return Some(unlisted(&why));
+    }
     judge(&expected, &ran)
+}
+
+/// Required substeps cannot disappear behind a scenario-level pass.
+fn required_steps(scenarios: Option<&Value>) -> Option<String> {
+    let scenarios = scenarios?.as_array()?;
+    for scenario in scenarios {
+        let id = scenario.get("id")?.as_str()?;
+        let expected = match scenario.get("required_steps") {
+            None => Vec::new(),
+            Some(value) => match ids(Some(value)) {
+                Ok(ids) => ids,
+                Err(why) => return Some(format!("scenario {id}: required_steps {why}")),
+            },
+        };
+        let steps = match scenario.get("steps") {
+            None if expected.is_empty() => continue,
+            value => match value.and_then(Value::as_array) {
+                Some(steps) => steps,
+                None => return Some(format!("scenario {id}: required steps were not recorded")),
+            },
+        };
+        let mut seen = BTreeSet::new();
+        for step in steps {
+            let Some(step_id) = step.get("id").and_then(Value::as_str) else {
+                return Some(format!("scenario {id}: a step has no id"));
+            };
+            if step_id.is_empty() || !seen.insert(step_id) {
+                return Some(format!("scenario {id}: duplicate or empty step id"));
+            }
+            let required = step
+                .get("required")
+                .and_then(Value::as_bool)
+                .unwrap_or(true)
+                || expected.iter().any(|id| id == step_id);
+            let passed = step.get("status").and_then(Value::as_str) == Some(PASS);
+            if required && !passed {
+                return Some(format!(
+                    "scenario {id}: required step {step_id} did not pass"
+                ));
+            }
+        }
+        if let Some(missing) = expected.iter().find(|id| !seen.contains(id.as_str())) {
+            return Some(format!("scenario {id}: required step {missing} is missing"));
+        }
+        assert!(seen.len() == steps.len(), "step ids are unique");
+        assert!(expected.iter().all(|id| seen.contains(id.as_str())));
+    }
+    None
 }
 
 /// The failed and the missing scenarios, when there are any.
@@ -148,6 +199,26 @@ mod tests {
         shortfall(Some(
             &json!({"verdict": "pass", "expected": expected, "scenarios": scenarios}),
         ))
+    }
+
+    #[test]
+    fn a_passed_scenario_cannot_hide_missing_or_skipped_required_steps() {
+        for status in ["skipped", "blocked", "fail"] {
+            let short = run(
+                json!(["import"]),
+                json!([{"id":"import","status":"pass","required_steps":["upload"],"steps":[{"id":"upload","status":status}]}]),
+            );
+            assert!(short.unwrap().headline.contains("required step"));
+        }
+        assert!(
+            run(
+                json!(["import"]),
+                json!([{"id":"import","status":"pass","required_steps":["upload"],"steps":[]}])
+            )
+            .is_some()
+        );
+        assert!(run(json!(["import"]), json!([{"id":"import","status":"pass","required_steps":["upload"],"steps":[{"id":"upload","status":"pass"}]}])).is_none());
+        assert!(run(json!(["import"]), json!([{"id":"import","status":"pass","steps":[{"id":"optional","required":false,"status":"skipped"}]}])).is_none());
     }
 
     #[test]

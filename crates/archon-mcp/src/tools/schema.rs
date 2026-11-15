@@ -31,6 +31,7 @@ pub(super) fn all() -> Vec<ToolDefinition> {
         model_evidence(),
         register_repo(),
         enqueue(),
+        approve_intent(),
         update_item(),
         cancel_item(),
         retry_item(),
@@ -61,6 +62,26 @@ pub(super) fn all() -> Vec<ToolDefinition> {
         clear_notifications(),
         request_status(),
     ]
+}
+
+fn approve_intent() -> ToolDefinition {
+    define(
+        "approve_intent",
+        "Approve intent",
+        "Record an operator instruction, quoted exactly from an authenticated inbox message. Supply the requirement ledger and SHA-256 hashes of referenced files.",
+        object(
+            json!({"record": {"type": "object", "properties": {
+                "id": {"type": "string"}, "version": {"type": "integer", "minimum": 1},
+                "operator_words": {"type": "string", "description": "The complete verbatim authenticated inbox message."},
+                "source": {"type": "object", "properties": {"kind": {"const": "inbox"}, "seq": {"type": "integer", "minimum": 1}}, "required": ["kind", "seq"]},
+                "artifacts": {"type": "array", "items": {"type": "object", "properties": {"path": {"type": "string"}, "sha256": {"type": "string"}}, "required": ["path", "sha256"]}},
+                "images": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"}, "path": {"type": "string"}, "sha256": {"type": "string"}, "viewport": {"type": ["object", "null"], "properties": {"width": {"type": "integer"}, "height": {"type": "integer"}}, "required": ["width", "height"]}, "theme": {"type": ["string", "null"]}, "state": {"type": ["string", "null"]}}, "required": ["id", "path", "sha256"]}},
+                "requirements": {"type": "array", "minItems": 1, "items": {"type": "object", "properties": {"id": {"type": "string"}, "text": {"type": "string"}, "kind": {"enum": ["visual", "behaviour", "wording", "data"]}, "images": {"type": "array", "items": {"type": "string"}}, "owner": {"type": "string"}}, "required": ["id", "text", "kind", "images", "owner"]}}
+            }, "required": ["id", "version", "operator_words", "source", "artifacts", "images", "requirements"]}}),
+            &["record"],
+        ),
+        false,
+    )
 }
 
 fn request_merge() -> ToolDefinition {
@@ -105,12 +126,21 @@ fn message_orchestrator() -> ToolDefinition {
         "Message orchestrator",
         "Send the orchestrator a message, recorded with your item and stage: `relay` for an \
          operator message meant for it, `escalation` for a blocker outside your stage, else \
-         `info`. Returns at once: keep working; never wait for a reply or end your turn \
-         over it. At most 20 per agent, then 3 more escalations.",
+         `info`. Use `question` for an important missing decision; questions are uncapped. \
+         Include clarification.fallback with your best judgment. Keep working on independent \
+         parts; hold dependent work until an answer or the configured timeout (default 30 min). \
+         An active operator proceed directive avoids the wait and records the assumption. \
+         Other messages have a 20-message allowance and 3 extra escalations.",
         object(
             json!({
-                "text": {"type": "string", "minLength": 1, "maxLength": archon_core::agent_message::MAX_MESSAGE_CHARS},
-                "kind": {"type": "string", "enum": ["relay", "escalation", "info"]}
+                "text": {"type": "string", "minLength": 1},
+                "kind": {"type": "string", "enum": ["relay", "escalation", "info", "question"]},
+                "clarification": {
+                    "type": "object", "properties": {
+                        "fallback": {"type": "string", "minLength": 1},
+                        "proceed_directive": {"type": "string", "description": "Active operator directive id authorizing proceeding without waiting."}
+                    }, "required": ["fallback"], "additionalProperties": false
+                }
             }),
             &["text"],
         ),
@@ -555,6 +585,7 @@ fn enqueue() -> ToolDefinition {
                 "pipeline": {"type": "string", "description": "Default: `direct` if `autonomy.review` is set, else the repository's, else `direct`."},
                 "title": {"type": "string", "description": "One line; names the branch too."},
                 "brief": {"type": "string", "description": "All the stage agents get besides the repository: the request's own words, then goal, context, constraints, acceptance criteria."},
+                "direction_open": {"type": "boolean", "description": "The central direction is open and taste-dependent: force proposal=lavish so the operator chooses before building."},
                 "priority": priority(),
                 "depends_on": string_list("Items (`qi_…`) that must succeed first, else this one is blocked. Its agents are told their branches and pull requests."),
                 "onto": onto(),
@@ -562,6 +593,7 @@ fn enqueue() -> ToolDefinition {
                 "model_reasons": model_reasons(),
                 "model_plan": model_plan("Model and effort for the stages you have a reason to choose; Archon fills the rest."),
                 "budget_usd": budget(),
+                "intent": {"type": "object", "description": "Approved intent id, version and optional requirement subset", "properties": {"id": {"type": "string"}, "version": {"type": "integer", "minimum": 1}, "requirements": {"type": "array", "items": {"type": "string"}}}, "required": ["id", "version"], "additionalProperties": false},
                 "stage_timeouts": stage_timeouts(),
                 "idempotency_key": {"type": "string", "description": "A repeat with the same key and arguments returns the first item."},
                 "autonomy": autonomy(),
@@ -815,6 +847,7 @@ fn set_directive() -> ToolDefinition {
         object(
             json!({
                 "text": {"type": "string", "description": format!("At most {MAX_DIRECTIVE_CHARS} characters.")},
+                "clarifications": {"type": "string", "enum": ["ask", "proceed"], "description": "Proceed authorizes recorded deviations and assumptions without waiting; requires an authenticated operator. Revoked or expired directives no longer authorize this."},
                 "expires_in_hours": {"type": "integer", "minimum": 1, "maximum": 720, "description": "When it lapses, if the operator gave a time frame (\"today\" is about 12)."},
             }),
             &["text"],

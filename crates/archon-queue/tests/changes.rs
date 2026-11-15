@@ -501,6 +501,7 @@ fn a_refused_write_records_no_change() {
     let refused = store.transition_item(&items[0].id, QueueState::Queued, t(5));
     assert!(refused.is_err(), "queued to queued is no edge");
     let cyclic = QueueItem {
+        intent: None,
         dependencies: vec![items[0].id.clone()],
         ..items[0].clone()
     };

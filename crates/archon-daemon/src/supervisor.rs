@@ -359,6 +359,7 @@ pub fn orchestrator_create_agent(
     let also_hidden = (!delegation).then_some(DELEGATE_TOOL);
     let hidden = ORCHESTRATOR_HIDDEN_TOOLS.iter().copied().chain(also_hidden);
     CreateAgent {
+        references: Vec::new(),
         role: ORCHESTRATOR_ROLE.into(),
         name: Some(config.orchestrator.name.clone()),
         objective: None,

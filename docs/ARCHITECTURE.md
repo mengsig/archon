@@ -1314,7 +1314,17 @@ skips the coalescing window, so the orchestrator hears of it once per agent.
 `get_item` and `status` list the records of stages still running. The receipt is the feed entry id. The tool does no Aether
 I/O and does not settle the stage. Stage instructions and the receipt say
 to continue working: ending a turn would complete the stage, and sending
-a message is never a reason to wait or end it.
+a counted message is never a reason to wait or end it. Clarification questions
+(`kind=question`) bypass all count caps before allowance charging. The feed/outbox
+transaction also persists `clarification:<id>` in Store kv. `get_item` lists the
+full history; status lists open questions. A marked live inbox answer or steer
+note resolves its question. A dispatch maintenance pass records an unanswered
+question's fallback after `clarification_timeout_minutes` (default 30) and
+retries its idempotent delivery until the live stage receives it. Open questions
+are valid watchdog waits. Active, operator-owned directives with typed
+`clarifications=proceed` record assumptions immediately, also when set after
+a question was opened; clearing or expiration revokes future authorization.
+These assumptions are retained for subsequent stage prompts and the final review.
 
 The fleet pump parses message content and sender from `inbox.delivered`.
 An authenticated Aether `user` sender becomes `original_sender.actor =
@@ -3276,7 +3286,8 @@ infra_retries = 1
 min_free_gb = 10               # hold dispatch below this much free disk; 0 = off
 max_delegation_depth = 2       # delegations below a stage agent or the orchestrator; 1..=4
 max_stage_timeout_minutes = 1440  # longest per-stage timeout an item may ask for; 1..=43200
-max_agent_messages = 20        # message_orchestrator calls per agent, lifetime; 1..=200
+max_agent_messages = 20        # counted message_orchestrator calls per agent; questions exempt; 1..=200
+clarification_timeout_minutes = 30 # unanswered clarification fallback; 1..=43200
 initiative_members = 16        # 1..=64
 initiative_contract_bytes = 2048  # 1..=16384
 [limits.per_pipeline]          # name = max running stage agents

@@ -44,6 +44,7 @@ fn balanced(keys: &[&str]) -> ModelPlanDraft {
 
 async fn enqueue(h: &Harness, pipeline: &str, plan: ModelPlanDraft, list: &str) -> QueueItem {
     let request = EnqueueRequest {
+        intent: None,
         onto: None,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),

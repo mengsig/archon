@@ -55,6 +55,7 @@ async fn prepare_member(
     member: &InitiativeMember,
     earlier: &[QueueItem],
 ) -> Result<QueueItem, ArchonError> {
+    let intent = items::resolve_intent(ctx, member.intent.as_ref(), member.onto.as_ref()).await?;
     let repo = ctx.store.lock().await.repo(&member.repo)?;
     let env = RepoEnv::new(Some(repo))?;
     let mut patch = member.autonomy;
@@ -66,26 +67,8 @@ async fn prepare_member(
         }
         patch.merge = Some(MergeMode::Manual);
     }
-    let resolved = knobs::resolve(ctx, &env, member.pipeline.clone(), &patch)?;
+    let mut resolved = knobs::resolve(ctx, &env, member.pipeline.clone(), &patch)?;
     items::check_runs_here(ctx, &env, &resolved.spec).await?;
-    let id = QueueItemId::new();
-    let unrouted = ItemRoute {
-        id: &id,
-        held: None,
-    };
-    let routed_provider = items::routed_provider(ctx, &env, unrouted).await?;
-    let route = ItemRoute {
-        held: routed_provider.as_deref(),
-        ..unrouted
-    };
-    let draft = member.model_plan.clone().unwrap_or_default();
-    let plan = member_plan(ctx, (&env, route), &resolved, draft).await?;
-    let title = member
-        .title
-        .clone()
-        .unwrap_or_else(|| member_title(&member.brief));
-    check_enqueue(&title, &member.brief, &[], None)?;
-    assert!(member.after.iter().all(|&i| i < earlier.len()));
     let onto = items::freeze_onto(
         ctx,
         &env,
@@ -94,6 +77,19 @@ async fn prepare_member(
         !member.after.is_empty(),
     )
     .await?;
+    let intent = items::resolve_pull_request_intent(ctx, intent.as_ref(), onto.as_ref()).await?;
+    if intent.is_some() || resolved.autonomy.proposal == archon_core::autonomy::ProposalMode::Lavish
+    {
+        resolved.spec = archon_pipeline::acceptance::augment(&resolved.spec)?;
+    }
+    let id = QueueItemId::new();
+    let (plan, routed_provider) = route_member(ctx, &env, &resolved, member, &id).await?;
+    let title = member
+        .title
+        .clone()
+        .unwrap_or_else(|| member_title(&member.brief));
+    check_enqueue(&title, &member.brief, &[], None)?;
+    assert!(member.after.iter().all(|&i| i < earlier.len()));
     let dependencies = member
         .after
         .iter()
@@ -101,6 +97,7 @@ async fn prepare_member(
         .collect();
     assert!(!title.trim().is_empty());
     Ok(QueueItem {
+        intent,
         onto: onto.map(Box::new),
         id,
         repo: env.repo.as_ref().map(|r| r.id.clone()),
@@ -129,6 +126,24 @@ async fn prepare_member(
 
 /// `draft` resolved, filled and checked as an enqueue's plan is. A member gives
 /// no model_reasons, so only the policy's ceiling bounds its effort.
+async fn route_member(
+    ctx: &DaemonContext,
+    env: &RepoEnv,
+    resolved: &knobs::Resolved,
+    member: &InitiativeMember,
+    id: &QueueItemId,
+) -> Result<(archon_core::model::ModelPlan, Option<String>), ArchonError> {
+    let unrouted = ItemRoute { id, held: None };
+    let routed_provider = items::routed_provider(ctx, env, unrouted).await?;
+    let route = ItemRoute {
+        held: routed_provider.as_deref(),
+        ..unrouted
+    };
+    let draft = member.model_plan.clone().unwrap_or_default();
+    let plan = member_plan(ctx, (env, route), resolved, draft).await?;
+    Ok((plan, routed_provider))
+}
+
 async fn member_plan(
     ctx: &DaemonContext,
     (env, route): (&RepoEnv, ItemRoute<'_>),

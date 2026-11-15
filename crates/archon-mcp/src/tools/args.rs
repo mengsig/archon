@@ -104,6 +104,7 @@ fn action_request(tool: &str, args: &mut Args) -> Result<Request, ToolError> {
     let request = match tool {
         "register_repo" => register_repo(args)?,
         "enqueue" => Request::Enqueue(enqueue(args)?),
+        "approve_intent" => Request::ApproveIntent(args.required("record")?),
         "update_item" => update_item(args)?,
         "cancel_item" => Request::CancelItem {
             item: args.required("item")?,
@@ -391,7 +392,8 @@ fn enqueue(args: &mut Args) -> Result<EnqueueRequest, ToolError> {
         return Err(args.error("title", "must be a single line; put the details in `brief`"));
     }
     let model_plan = args.optional_plan("model_plan")?.unwrap_or_default();
-    let request = EnqueueRequest {
+    let mut request = EnqueueRequest {
+        intent: args.optional("intent")?,
         onto: args.optional("onto")?,
         repo: args.optional("repo")?,
         pipeline: args.optional_text("pipeline")?,
@@ -408,6 +410,9 @@ fn enqueue(args: &mut Args) -> Result<EnqueueRequest, ToolError> {
         autonomy: args.optional("autonomy")?.unwrap_or_default(),
         origin: args.optional("origin")?,
     };
+    if args.optional::<bool>("direction_open")?.unwrap_or(false) {
+        request.autonomy.proposal = Some(archon_core::autonomy::ProposalMode::Lavish);
+    }
     assert!(!request.title.trim().is_empty() && !request.brief.trim().is_empty());
     Ok(request)
 }
@@ -432,6 +437,7 @@ fn set_directive(args: &mut Args) -> Result<Request, ToolError> {
     }
     assert!(!text.trim().is_empty(), "required_text refuses blank text");
     Ok(Request::SetDirective {
+        clarifications: args.optional("clarifications")?.unwrap_or_default(),
         text,
         expires_in_hours,
     })
@@ -485,10 +491,17 @@ fn day_bound(args: &mut Args, key: &str) -> Result<Option<DayBound>, ToolError> 
 
 fn message_orchestrator(args: &mut Args) -> Result<Request, ToolError> {
     let text = args.required_text("text")?;
-    archon_core::agent_message::check_text(&text).map_err(|e| args.error("text", e))?;
+    let kind = args.optional("kind")?.unwrap_or_default();
+    let validation = if kind == archon_core::agent_message::MessageKind::Question {
+        archon_core::agent_message::check_question(&text)
+    } else {
+        archon_core::agent_message::check_text(&text)
+    };
+    validation.map_err(|e| args.error("text", e))?;
     Ok(Request::MessageOrchestrator {
+        clarification: args.optional("clarification")?,
         text,
-        kind: args.optional("kind")?.unwrap_or_default(),
+        kind,
         caller: None,
     })
 }

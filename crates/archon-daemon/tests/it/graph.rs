@@ -328,6 +328,7 @@ async fn a_runs_plan_carries_the_settings_its_stages_run_with() {
     let mut plan = plan();
     plan.0.get_mut("implement").unwrap()[0].effort = Effort::Low;
     let request = EnqueueRequest {
+        intent: None,
         onto: None,
         stage_timeouts: [("implement".to_owned(), 5)].into(),
         repo: Some(RepoRef(REPO_NAME.into())),
@@ -389,6 +390,7 @@ async fn a_runs_plan_carries_the_settings_its_stages_run_with() {
 /// Enqueue with a proposal stage and leave its run at the proposal gate.
 async fn at_proposal_gate(h: &Harness, title: &str) -> QueueItem {
     let request = EnqueueRequest {
+        intent: None,
         onto: None,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),

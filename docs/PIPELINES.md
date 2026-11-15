@@ -316,9 +316,10 @@ reviewer the model policy has since denied is left out of `exempt_models`.
 The policy sent is narrowed to the model policy in force at the spawn, and
 `get_item` shows it so: each effort is capped at `[models] max_effort`, a
 denied planned model is dropped, and under an allow or deny list each tier
-becomes the permitted catalog model `resolve` picks at or below it (the
-cheapest permitted model when none is). With no permitted catalog model the
-lead is sent no policy.
+becomes the permitted catalog model `resolve` picks at or below it, or is
+dropped when the catalog cannot place one. With no worker left, the lead's
+workers are pinned to the cheapest permitted catalog model, else to the
+lead's own model; a delegating lead is never sent without its policy.
 
 Such a pipeline takes its review level from the item, not from its
 manifest. An item's `review` knob chooses `none`, `standard` or `strict`,

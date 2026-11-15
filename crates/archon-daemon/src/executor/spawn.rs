@@ -871,7 +871,7 @@ fn build_request(
 
 /// The worker policy `plan`'s lead is sent: its workers within the model
 /// policy as it stands now, and the reviewers it owes bounded to the models
-/// its contract names. `None` for a leaf or when no permitted worker is left.
+/// its contract names. `None` for a leaf or a stage with no worker policy.
 fn delegation_policy(target: &Target<'_>, plan: &SpawnPlan) -> Option<WorkerPolicy> {
     if !target.delegates(plan) {
         return None;
@@ -881,7 +881,9 @@ fn delegation_policy(target: &Target<'_>, plan: &SpawnPlan) -> Option<WorkerPoli
     let Ok(policy) = RepoEnv::new(target.repo.cloned()).map(|env| env.policy(target.config)) else {
         return Some(planned.clone());
     };
-    let workers = planned.within(&policy, target.catalog)?;
+    let workers = planned
+        .within(&policy, target.catalog, Some(&plan.choice.model))
+        .expect("the lead's model is the last fallback");
     let Some(named) = plan.reviewers.as_deref() else {
         return Some(workers);
     };

@@ -2767,7 +2767,8 @@ async fn an_adaptive_lead_is_sent_balanced_workers_and_its_reviewer_as_its_polic
 
 /// An item queued before worker plans, under a repository capping effort at
 /// low: the pipeline's medium default is capped, not sent above the policy,
-/// and a lone allowed strong model still bounds the workers, at medium.
+/// and a lone allowed strong model, or an empty catalog, still bounds the
+/// workers: never an unresolved tier Aether might place on a denied model.
 #[tokio::test]
 async fn a_restrictive_model_policy_narrows_the_pipeline_s_worker_default() {
     use archon_core::delegation::WorkerChoice;
@@ -2817,6 +2818,27 @@ async fn a_restrictive_model_policy_narrows_the_pipeline_s_worker_default() {
     let only = ModelChoice::pinned(MODEL.parse().unwrap(), Effort::Medium);
     assert_eq!(policy.workers, [WorkerChoice::from_plan(&only)]);
     assert_eq!(policy.max_parallel, Some(2));
+
+    let mut config = Config::default();
+    config.models.allow = vec![MODEL.parse().unwrap()];
+    let h = Harness::with_config(config).await;
+    add_origin(&h);
+    assert!(h.ctx.store.lock().await.model_catalog().is_empty());
+    h.enqueue_in("adaptive", "an old change", plan_of_build(Effort::Low))
+        .await
+        .unwrap();
+    h.dispatch().await;
+    let policy = h.backend.requests()[0].delegation_policy.clone();
+    let policy = policy.expect("an empty catalog still bounds the workers");
+    assert_eq!(
+        policy.workers,
+        [WorkerChoice::from_plan(&only)],
+        "never an unresolved tier"
+    );
+}
+
+fn plan_of_build(effort: Effort) -> archon_core::model::ModelPlan {
+    archon_core::model::ModelPlan([("build".to_owned(), vec![choice(MODEL, effort)])].into())
 }
 
 /// The repository denies the reviewer the item's plan named once its first

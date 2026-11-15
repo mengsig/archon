@@ -1,5 +1,97 @@
 {
   "$defs": {
+    "AcceptanceReadiness": {
+      "properties": {
+        "record": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AcceptanceRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/AcceptanceStatus"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "type": "object"
+    },
+    "AcceptanceRecord": {
+      "properties": {
+        "checked_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "model": {
+          "$ref": "#/$defs/ModelRef"
+        },
+        "page": {
+          "type": "string"
+        },
+        "result": {
+          "$ref": "#/$defs/AcceptanceResult"
+        },
+        "reviewer": {
+          "$ref": "#/$defs/AetherAgentId"
+        }
+      },
+      "required": [
+        "result",
+        "reviewer",
+        "model",
+        "checked_at",
+        "page"
+      ],
+      "type": "object"
+    },
+    "AcceptanceResult": {
+      "properties": {
+        "head": {
+          "type": "string"
+        },
+        "intent": {
+          "$ref": "#/$defs/IntentBinding"
+        },
+        "requirements": {
+          "items": {
+            "$ref": "#/$defs/RequirementJudgment"
+          },
+          "type": "array"
+        },
+        "tree": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "head",
+        "tree",
+        "intent",
+        "requirements"
+      ],
+      "type": "object"
+    },
+    "AcceptanceStatus": {
+      "enum": [
+        "not_required",
+        "pending",
+        "passed",
+        "failed",
+        "stale"
+      ],
+      "type": "string"
+    },
+    "AcceptanceVerdict": {
+      "enum": [
+        "pass",
+        "fail"
+      ],
+      "type": "string"
+    },
     "AetherAgentId": {
       "type": "string"
     },
@@ -143,6 +235,52 @@
           "type": "string"
         }
       ]
+    },
+    "ApprovedIntent": {
+      "properties": {
+        "artifacts": {
+          "items": {
+            "$ref": "#/$defs/IntentArtifact"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "images": {
+          "items": {
+            "$ref": "#/$defs/ReferenceImage"
+          },
+          "type": "array"
+        },
+        "operator_words": {
+          "type": "string"
+        },
+        "requirements": {
+          "items": {
+            "$ref": "#/$defs/Requirement"
+          },
+          "type": "array"
+        },
+        "source": {
+          "$ref": "#/$defs/IntentSource"
+        },
+        "version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "operator_words",
+        "source",
+        "artifacts",
+        "images",
+        "requirements"
+      ],
+      "type": "object"
     },
     "ArtifactFile": {
       "description": "One file of an item's artifact store, named relative to it.",
@@ -940,6 +1078,140 @@
       ],
       "type": "object"
     },
+    "Clarification": {
+      "description": "Durable question and its answer or recorded assumption, retained after the run.",
+      "properties": {
+        "agent": {
+          "$ref": "#/$defs/AetherAgentId"
+        },
+        "asked_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "deadline": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "fallback": {
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/NotificationId"
+        },
+        "item": {
+          "$ref": "#/$defs/QueueItemId"
+        },
+        "question": {
+          "type": "string"
+        },
+        "resolution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ClarificationResolution"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stage_run": {
+          "$ref": "#/$defs/StageRunId"
+        }
+      },
+      "required": [
+        "id",
+        "item",
+        "stage_run",
+        "agent",
+        "question",
+        "fallback",
+        "asked_at",
+        "deadline"
+      ],
+      "type": "object"
+    },
+    "ClarificationOptions": {
+      "additionalProperties": false,
+      "description": "A question carries the stage's best judgment in case no answer arrives.",
+      "properties": {
+        "fallback": {
+          "type": "string"
+        },
+        "proceed_directive": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DirectiveId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "fallback"
+      ],
+      "type": "object"
+    },
+    "ClarificationPolicy": {
+      "description": "Explicit authorization carried by a revocable, expiring operator directive.",
+      "enum": [
+        "ask",
+        "proceed"
+      ],
+      "type": "string"
+    },
+    "ClarificationResolution": {
+      "oneOf": [
+        {
+          "properties": {
+            "answer": {
+              "type": "string"
+            },
+            "at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "state": {
+              "const": "answered",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "answer",
+            "at"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "choice": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "state": {
+              "const": "assumed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "choice",
+            "reason",
+            "at"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "Clearable": {
       "description": "A patch to an optional setting. Explicit on the wire (`\"keep\"`,\n`\"clear\"`, `{\"set\":v}`) because JSON collapses `Option<Option<T>>`.",
       "oneOf": [
@@ -1071,6 +1343,17 @@
                 }
               ],
               "description": "Aether's out-of-band MCP caller identity, never a tool argument."
+            },
+            "clarification": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ClarificationOptions"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
             },
             "cmd": {
               "const": "message_orchestrator",
@@ -1320,6 +1603,19 @@
           "properties": {
             "cmd": {
               "const": "enqueue",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/ApprovedIntent",
+          "properties": {
+            "cmd": {
+              "const": "approve_intent",
               "type": "string"
             }
           },
@@ -2217,6 +2513,10 @@
         {
           "description": "Record a standing operator directive. It steers the orchestrator's\nchoices and never raises the ceiling, so the MCP proxy may send it.",
           "properties": {
+            "clarifications": {
+              "$ref": "#/$defs/ClarificationPolicy",
+              "default": "ask"
+            },
             "cmd": {
               "const": "set_directive",
               "type": "string"
@@ -3533,6 +3833,13 @@
         "caps": {
           "$ref": "#/$defs/Caps"
         },
+        "clarifications": {
+          "description": "Stage clarifications: open only in status, complete history in item detail.",
+          "items": {
+            "$ref": "#/$defs/Clarification"
+          },
+          "type": "array"
+        },
         "daemon_version": {
           "type": "string"
         },
@@ -3947,6 +4254,10 @@
     "Directive": {
       "description": "A standing operator instruction (\"fully autonomous today\") that steers\nthe orchestrator's knob choices within the ceiling; it never raises it.",
       "properties": {
+        "clarifications": {
+          "$ref": "#/$defs/ClarificationPolicy",
+          "default": "ask"
+        },
         "expires_at": {
           "format": "date-time",
           "type": [
@@ -4167,6 +4478,16 @@
           "type": [
             "string",
             "null"
+          ]
+        },
+        "intent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IntentBinding"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "model_plan": {
@@ -5489,6 +5810,16 @@
         "brief": {
           "type": "string"
         },
+        "intent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IntentBinding"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "model_plan": {
           "anyOf": [
             {
@@ -5681,8 +6012,102 @@
       ],
       "type": "object"
     },
+    "IntentArtifact": {
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "type": "object"
+    },
+    "IntentBinding": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "requirements": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ],
+      "type": "object"
+    },
+    "IntentSource": {
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "inbox",
+              "type": "string"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "seq"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "gate": {
+              "type": "string"
+            },
+            "item": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "gate",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "item",
+            "gate"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "ItemDetail": {
       "properties": {
+        "acceptance": {
+          "$ref": "#/$defs/AcceptanceReadiness",
+          "default": {
+            "status": "not_required"
+          }
+        },
+        "clarifications": {
+          "description": "Stage clarifications: open only in status, complete history in item detail.",
+          "items": {
+            "$ref": "#/$defs/Clarification"
+          },
+          "type": "array"
+        },
         "default_efforts": {
           "additionalProperties": {
             "$ref": "#/$defs/Effort"
@@ -6022,6 +6447,16 @@
             }
           ],
           "description": "The initiative it is a member of."
+        },
+        "intent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IntentBinding"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "issue": {
           "anyOf": [
@@ -7654,6 +8089,7 @@
     "MessageKind": {
       "enum": [
         "relay",
+        "question",
         "escalation",
         "info"
       ],
@@ -9467,6 +9903,16 @@
           ],
           "description": "The initiative it is a member of."
         },
+        "intent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IntentBinding"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "model_plan": {
           "$ref": "#/$defs/ModelPlan"
         },
@@ -9837,6 +10283,50 @@
       ],
       "type": "object"
     },
+    "ReferenceImage": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "state": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "theme": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "viewport": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Viewport"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "path",
+        "sha256"
+      ],
+      "type": "object"
+    },
     "ReleaseHook": {
       "description": "How the release hook ran after the merge.",
       "properties": {
@@ -9987,6 +10477,16 @@
           "properties": {
             "data": {
               "properties": {
+                "clarification": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/Clarification"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "receipt": {
                   "$ref": "#/$defs/FeedItemId"
                 }
@@ -11526,6 +12026,17 @@
               ],
               "description": "Aether's out-of-band MCP caller identity, never a tool argument."
             },
+            "clarification": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ClarificationOptions"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "cmd": {
               "const": "message_orchestrator",
               "type": "string"
@@ -11774,6 +12285,19 @@
           "properties": {
             "cmd": {
               "const": "enqueue",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/ApprovedIntent",
+          "properties": {
+            "cmd": {
+              "const": "approve_intent",
               "type": "string"
             }
           },
@@ -12671,6 +13195,10 @@
         {
           "description": "Record a standing operator directive. It steers the orchestrator's\nchoices and never raises the ceiling, so the MCP proxy may send it.",
           "properties": {
+            "clarifications": {
+              "$ref": "#/$defs/ClarificationPolicy",
+              "default": "ask"
+            },
             "cmd": {
               "const": "set_directive",
               "type": "string"
@@ -13690,6 +14218,64 @@
         "started_at"
       ],
       "type": "object"
+    },
+    "Requirement": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "images": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "$ref": "#/$defs/RequirementKind"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "text",
+        "kind",
+        "images",
+        "owner"
+      ],
+      "type": "object"
+    },
+    "RequirementJudgment": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "verdict": {
+          "$ref": "#/$defs/AcceptanceVerdict"
+        }
+      },
+      "required": [
+        "id",
+        "verdict",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "RequirementKind": {
+      "enum": [
+        "visual",
+        "behaviour",
+        "wording",
+        "data"
+      ],
+      "type": "string"
     },
     "Result_of_Reply_or_ErrorReply": {
       "oneOf": [
@@ -15603,6 +16189,25 @@
       "required": [
         "archon",
         "aether"
+      ],
+      "type": "object"
+    },
+    "Viewport": {
+      "properties": {
+        "height": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "width": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "width",
+        "height"
       ],
       "type": "object"
     },

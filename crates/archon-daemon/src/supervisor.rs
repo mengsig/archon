@@ -54,7 +54,7 @@ pub use revival::{
 };
 pub use stall::{
     FOREGROUND_CAP, INTERRUPT_SPACING, MAIL_SILENCE, NUDGE_GRACE, PAST_TIMEOUT, STALL_AFTER,
-    STALL_CHECK_INTERVAL, UNDECLARED_CALL_BOUND, call_bound, interrupt_deadline, mail_deadline,
+    STALL_CHECK_INTERVAL, UNDECLARED_CALL_BOUND, UNKNOWN_CALL_BOUND, call_bound, mail_deadline,
     report_stall, watch_stalls,
 };
 

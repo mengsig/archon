@@ -35,6 +35,9 @@ pub const PAST_TIMEOUT: Duration = Duration::from_secs(60);
 pub const UNDECLARED_CALL_BOUND: Duration = Duration::from_secs(4 * 60);
 /// Aether's cap on a foreground command: no declared timeout runs longer.
 pub const FOREGROUND_CAP: Duration = Duration::from_secs(10 * 60);
+/// The bound while the open call cannot be read: the longest a foreground
+/// call may take, so no healthy command is cut off.
+pub const UNKNOWN_CALL_BOUND: Duration = Duration::from_secs(11 * 60);
 /// How long a nudged stall may stay silent before its turn is interrupted.
 pub const NUDGE_GRACE: Duration = Duration::from_secs(2 * 60);
 /// The least time between two interrupts of the orchestrator.
@@ -66,8 +69,6 @@ pub struct Silence {
 #[derive(Debug, PartialEq, Eq)]
 pub struct Hung {
     pub agent: AetherAgentId,
-    /// The last event before the silence, as [`Silence::since`].
-    pub since: Timestamp,
     pub silent: Duration,
     pub mail: bool,
 }
@@ -116,29 +117,9 @@ pub fn call_bound(call: &OpenToolCall) -> Duration {
     bound
 }
 
-/// When `silence` makes an interrupt due. `seen` is Aether's newest event
-/// of the turn: tool events, which Archon's stream lacks, restart the silence.
-pub fn interrupt_deadline(
-    silence: &Silence,
-    seen: Option<Timestamp>,
-    call: &Result<Option<OpenToolCall>, ArchonError>,
-) -> Timestamp {
-    let since = seen.map_or(silence.since, |at| at.max(silence.since));
-    let deadline = match silence.mail {
-        true => mail_deadline(since, call),
-        false => after(since, STALL_AFTER),
-    };
-    assert!(
-        since >= silence.since,
-        "Aether's events never shorten a silence"
-    );
-    assert!(deadline > since, "every silence is given time");
-    deadline
-}
-
 /// When waiting operator mail interrupts a turn silent since `since`:
 /// [`MAIL_SILENCE`] after it, or later while the open call is in its bound.
-/// `Err` when the open call could not be read: the undeclared bound holds.
+/// `Err` when the open call could not be read: [`UNKNOWN_CALL_BOUND`] holds.
 pub fn mail_deadline(
     since: Timestamp,
     call: &Result<Option<OpenToolCall>, ArchonError>,
@@ -147,7 +128,7 @@ pub fn mail_deadline(
     let running = match call {
         Ok(None) => return quiet,
         Ok(Some(call)) => after(call.requested_at, call_bound(call)),
-        Err(_) => after(since, UNDECLARED_CALL_BOUND),
+        Err(_) => after(since, UNKNOWN_CALL_BOUND),
     };
     let deadline = quiet.max(running);
     assert!(deadline >= quiet, "a running call never shortens the wait");
@@ -261,14 +242,7 @@ impl Liveness {
     /// no operator mail waiting (that mail interrupts it instead). Any
     /// progress event rearms it. Only the first `MAX_NUDGES` get a nudge.
     pub fn take_stall(&mut self, now: Timestamp) -> Option<Stall> {
-        let last = self.last_event?;
-        if !self.turn_open || self.reported_at.is_some() || self.mail_waiting.is_some() {
-            return None;
-        }
-        let silent = since(last, now);
-        if silent < STALL_AFTER {
-            return None;
-        }
+        let silent = self.stall_silence(now)?;
         assert!(self.nudges <= MAX_NUDGES, "nudges stay bounded");
         assert!(
             !self.interrupted,
@@ -282,6 +256,43 @@ impl Liveness {
             silent,
             nudge,
         })
+    }
+
+    /// How long the open turn has been silent, once that is a stall not yet
+    /// reported and no operator mail waits on it.
+    fn stall_silence(&self, now: Timestamp) -> Option<Duration> {
+        let last = self.last_event?;
+        if !self.turn_open || self.reported_at.is_some() || self.mail_waiting.is_some() {
+            return None;
+        }
+        Some(since(last, now)).filter(|silent| *silent >= STALL_AFTER)
+    }
+
+    /// Whether `current` may be due a stall report or an interrupt at `now`,
+    /// by Archon's own stream: only then is Aether asked what it saw.
+    pub fn check_due(&self, current: &AetherAgentId, now: Timestamp) -> bool {
+        if self.agent.as_ref() != Some(current) {
+            return false;
+        }
+        self.stall_silence(now).is_some() || self.candidate(current, now).is_some()
+    }
+
+    /// Aether's newest turn event of `agent` was at `at`: a tool event among
+    /// them, which Archon's stream lacks, is progress like any other.
+    pub fn saw_activity(&mut self, agent: &AetherAgentId, at: Timestamp) {
+        let Some(last) = self.last_event else {
+            return;
+        };
+        if self.agent.as_ref() != Some(agent) || !self.turn_open || at <= last {
+            return;
+        }
+        self.last_event = Some(at);
+        self.reported_at = None;
+        self.interrupted = false;
+        assert!(
+            self.last_event > Some(last),
+            "activity only moves the silence later"
+        );
     }
 
     /// `current`'s silence an interrupt may be due for: operator mail waiting
@@ -328,19 +339,9 @@ impl Liveness {
         );
         Some(Hung {
             agent: silence.agent.clone(),
-            since: silence.since,
             silent: since(silence.since, now),
             mail: silence.mail,
         })
-    }
-
-    /// Whether `hung` is still the silence it was claimed for: no progress
-    /// came, nor a new turn, while its note was being sent.
-    pub fn still_hung(&self, hung: &Hung) -> bool {
-        self.agent.as_ref() == Some(&hung.agent)
-            && self.turn_open
-            && self.interrupted
-            && self.last_event == Some(hung.since)
     }
 
     /// The interrupt of this silence failed: the next check after
@@ -378,27 +379,25 @@ pub async fn watch_stalls(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
 /// interrupt a silence that operator mail or a nudged stall made due.
 /// Returns whether it did either.
 pub async fn report_stall(ctx: &DaemonContext, now: Timestamp) -> Result<bool, ArchonError> {
-    let current = probe_after_restart(ctx, now).await?;
+    let Some(current) = probe_after_restart(ctx, now).await? else {
+        return Ok(false);
+    };
+    if !lock(ctx).check_due(&current, now) {
+        return Ok(false);
+    }
+    let (seen, call) = read_turn(ctx, &current).await?;
+    if let Some(seen) = seen {
+        lock(ctx).saw_activity(&current, seen);
+    }
     let stall = lock(ctx).take_stall(now);
     if let Some(stall) = stall {
         report(ctx, &stall, now).await?;
         return Ok(true);
     }
-    let Some(current) = current else {
-        return Ok(false);
-    };
     let Some(silence) = lock(ctx).candidate(&current, now) else {
         return Ok(false);
     };
-    let (seen, call) = match ctx.backend.turn_activity(&current).await {
-        Ok(activity) => (activity.last_event_at, Ok(activity.open_call)),
-        Err(error) if error.is_store() => return Err(error),
-        Err(error) => {
-            tracing::warn!(%error, "could not read the orchestrator's turn from Aether");
-            (None, Err(error))
-        }
-    };
-    if now < interrupt_deadline(&silence, seen, &call) {
+    if silence.mail && now < mail_deadline(silence.since, &call) {
         return Ok(false);
     }
     let Some(hung) = lock(ctx).take_interrupt(&silence, now) else {
@@ -406,6 +405,29 @@ pub async fn report_stall(ctx: &DaemonContext, now: Timestamp) -> Result<bool, A
     };
     interrupt(ctx, &hung, &call, now).await?;
     Ok(true)
+}
+
+/// What Aether saw of `agent`'s turn: its newest event, and the open call,
+/// `Err` when that cannot be told. Only a store failure is returned as one.
+async fn read_turn(
+    ctx: &DaemonContext,
+    agent: &AetherAgentId,
+) -> Result<(Option<Timestamp>, Result<Option<OpenToolCall>, ArchonError>), ArchonError> {
+    match ctx.backend.turn_activity(agent).await {
+        Ok(activity) if activity.call_known => Ok((activity.last_event_at, Ok(activity.open_call))),
+        Ok(activity) => {
+            let unknown = "its turn began before the newest events Aether returned";
+            Ok((
+                activity.last_event_at,
+                Err(ArchonError::Unavailable(unknown.into())),
+            ))
+        }
+        Err(error) if error.is_store() => Err(error),
+        Err(error) => {
+            tracing::warn!(%error, "could not read the orchestrator's turn from Aether");
+            Ok((None, Err(error)))
+        }
+    }
 }
 
 fn lock(ctx: &DaemonContext) -> std::sync::MutexGuard<'_, Liveness> {
@@ -442,8 +464,8 @@ async fn nudge(ctx: &DaemonContext, stall: &Stall, now: Timestamp) -> Result<(),
 }
 
 /// Interrupt the hung turn, as the operator's Esc would: Aether then delivers
-/// the queued inbox in a fresh turn. The orchestrator is told first which
-/// call was cut off, so that note is in the inbox the fresh turn reads.
+/// the queued inbox in a fresh turn. Only a turn Aether reports stopped is
+/// told which call was cut off, so the note is never false.
 async fn interrupt(
     ctx: &DaemonContext,
     hung: &Hung,
@@ -451,29 +473,16 @@ async fn interrupt(
     now: Timestamp,
 ) -> Result<(), ArchonError> {
     let minutes = hung.silent.as_secs() / 60;
-    let note = notice::cut_off_note(hung, call);
-    let key = format!("stall-interrupt:{}:{}", hung.agent, now.timestamp());
-    lock(ctx).sending_note(&note);
-    let told = match ctx.backend.send_message(&hung.agent, &note, &key).await {
-        Ok(()) => Ok(()),
-        Err(error) if error.is_store() => return Err(error),
-        Err(error) => {
-            tracing::warn!(agent = %hung.agent, %error, "telling the orchestrator its cut-off call failed");
-            Err(error)
-        }
-    };
-    if !lock(ctx).still_hung(hung) {
-        tracing::info!(agent = %hung.agent, "the orchestrator moved on before its interrupt; none sent");
-        return Ok(());
-    }
     let outcome = match ctx.backend.interrupt(&hung.agent).await {
-        Ok(true) => Interrupted::Stopped,
+        Ok(true) => Interrupted::Stopped {
+            told: tell_cut_off(ctx, hung, call, now).await?,
+        },
         Ok(false) => Interrupted::NoTurn,
         Err(error) if error.is_store() => return Err(error),
         Err(error) => Interrupted::Failed(error),
     };
     let kind = match &outcome {
-        Interrupted::Stopped => {
+        Interrupted::Stopped { .. } => {
             tracing::warn!(agent = %hung.agent, minutes, mail = hung.mail, "orchestrator turn hung; interrupted it");
             NotificationKind::Decision
         }
@@ -487,9 +496,30 @@ async fn interrupt(
             NotificationKind::Blocker
         }
     };
-    let text = interrupt_text(hung, call, &outcome, &told);
+    let text = interrupt_text(hung, call, &outcome);
     feed::notify(ctx, kind, text, None, None).await?;
     Ok(())
+}
+
+/// Tell the interrupted orchestrator which call was cut off. `Err` inside
+/// when the note could not be sent; only a store failure is returned as one.
+async fn tell_cut_off(
+    ctx: &DaemonContext,
+    hung: &Hung,
+    call: &Result<Option<OpenToolCall>, ArchonError>,
+    now: Timestamp,
+) -> Result<Result<(), ArchonError>, ArchonError> {
+    let note = notice::cut_off_note(hung, call);
+    let key = format!("stall-interrupt:{}:{}", hung.agent, now.timestamp());
+    lock(ctx).sending_note(&note);
+    match ctx.backend.send_message(&hung.agent, &note, &key).await {
+        Ok(()) => Ok(Ok(())),
+        Err(error) if error.is_store() => Err(error),
+        Err(error) => {
+            tracing::warn!(agent = %hung.agent, %error, "telling the orchestrator its cut-off call failed");
+            Ok(Err(error))
+        }
+    }
 }
 
 /// Learn once from Aether whether the orchestrator is mid-turn, for an

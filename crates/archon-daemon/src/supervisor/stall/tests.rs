@@ -180,18 +180,8 @@ fn interrupts(
     now: Timestamp,
     call: Result<Option<OpenToolCall>, ArchonError>,
 ) -> Option<Hung> {
-    seen_interrupts(live, now, None, call)
-}
-
-/// [`interrupts`], with Aether's newest event of the turn at `seen`.
-fn seen_interrupts(
-    live: &mut Liveness,
-    now: Timestamp,
-    seen: Option<Timestamp>,
-    call: Result<Option<OpenToolCall>, ArchonError>,
-) -> Option<Hung> {
     let silence = live.candidate(&agent(A), now)?;
-    if now < interrupt_deadline(&silence, seen, &call) {
+    if silence.mail && now < mail_deadline(silence.since, &call) {
         return None;
     }
     live.take_interrupt(&silence, now)
@@ -209,7 +199,6 @@ fn operator_mail_to_a_turn_with_no_call_running_interrupts_it_after_three_minute
         hung,
         Hung {
             agent: agent(A),
-            since: at(0),
             silent: MAIL_SILENCE,
             mail: true
         }
@@ -267,7 +256,7 @@ fn a_long_foreground_command_under_its_own_timeout_is_not_interrupted() {
 }
 
 #[test]
-fn a_declared_timeout_is_capped_at_the_foreground_cap_and_an_unreadable_call_gets_four_minutes() {
+fn a_declared_timeout_is_capped_at_the_foreground_cap_and_an_unreadable_call_gets_the_cap() {
     let two_hours = bash(0, Some(Duration::from_secs(7200)));
     assert_eq!(call_bound(&two_hours), FOREGROUND_CAP + PAST_TIMEOUT);
     assert_eq!(
@@ -284,8 +273,10 @@ fn a_declared_timeout_is_capped_at_the_foreground_cap_and_an_unreadable_call_get
     let unreadable = Err(ArchonError::Unavailable("aetherd gone".into()));
     assert_eq!(
         mail_deadline(at(0), &unreadable),
-        at(UNDECLARED_CALL_BOUND.as_secs() as i64)
+        at(UNKNOWN_CALL_BOUND.as_secs() as i64),
+        "a call that cannot be read may be a healthy foreground one"
     );
+    assert_eq!(UNKNOWN_CALL_BOUND, FOREGROUND_CAP + PAST_TIMEOUT);
 }
 
 #[test]
@@ -461,42 +452,49 @@ fn only_consuming_the_inbox_forgets_the_operator_mail() {
 }
 
 /// Archon's stream carries no tool events: a call that just ended, seen
-/// only in Aether, restarts the silence.
+/// only in Aether, restarts the silence of either kind.
 #[test]
 fn a_tool_event_only_aether_saw_restarts_the_silence() {
     let mut live = Liveness::default();
     live.saw(&agent(A), &started(), at(0));
     live.saw(&agent(A), &operator_mail(1), at(10));
-    assert!(seen_interrupts(&mut live, at(MAIL), Some(at(MAIL - 5)), Ok(None)).is_none());
-    assert!(seen_interrupts(&mut live, at(2 * MAIL - 6), Some(at(MAIL - 5)), Ok(None)).is_none());
-    assert!(seen_interrupts(&mut live, at(2 * MAIL - 5), Some(at(MAIL - 5)), Ok(None)).is_some());
+    assert!(live.check_due(&agent(A), at(MAIL)));
+    live.saw_activity(&agent(A), at(MAIL - 5));
+    assert!(!live.check_due(&agent(A), at(MAIL)));
+    assert!(interrupts(&mut live, at(2 * MAIL - 6), Ok(None)).is_none());
+    live.saw_activity(&agent(A), at(1));
+    assert!(
+        interrupts(&mut live, at(2 * MAIL - 5), Ok(None)).is_some(),
+        "older activity is no news"
+    );
 
     let mut nudged = Liveness::default();
     nudged.saw(&agent(A), &started(), at(0));
-    assert!(nudged.take_stall(at(STALL)).is_some());
-    let busy = Some(at(STALL + 60));
-    let candidate = nudged.candidate(&agent(A), at(STALL + GRACE)).unwrap();
-    assert!(at(STALL + GRACE) < interrupt_deadline(&candidate, busy, &Ok(None)));
+    assert!(nudged.check_due(&agent(A), at(STALL)));
+    nudged.saw_activity(&agent(A), at(STALL - 60));
+    assert!(
+        nudged.take_stall(at(STALL)).is_none(),
+        "the tool kept the turn busy"
+    );
+    assert!(nudged.take_stall(at(2 * STALL)).is_some());
+    nudged.saw_activity(&agent(A), at(2 * STALL + 1));
+    assert!(
+        nudged.candidate(&agent(A), at(2 * STALL + GRACE)).is_none(),
+        "progress after the nudge"
+    );
+    assert!(
+        nudged.take_stall(at(3 * STALL + 1)).is_some(),
+        "a later stall gets its own nudge"
+    );
 }
 
 #[test]
-fn progress_or_a_new_turn_while_the_note_is_sent_withdraws_the_interrupt() {
-    let claim = || {
-        let mut live = Liveness::default();
-        live.saw(&agent(A), &started(), at(0));
-        live.saw(&agent(A), &operator_mail(1), at(10));
-        let hung = interrupts(&mut live, at(MAIL), Ok(None)).unwrap();
-        assert!(live.still_hung(&hung));
-        (live, hung)
-    };
-    let (mut progressed, hung) = claim();
-    progressed.saw(&agent(A), &usage(), at(MAIL + 1));
-    assert!(!progressed.still_hung(&hung));
-    let (mut fresh, hung) = claim();
-    fresh.saw(&agent(A), &ended(), at(MAIL + 1));
-    fresh.saw(&agent(A), &started(), at(MAIL + 1));
-    assert!(!fresh.still_hung(&hung));
-    let (mut replaced, hung) = claim();
-    replaced.saw(&agent(B), &started(), at(MAIL + 1));
-    assert!(!replaced.still_hung(&hung));
+fn nothing_is_due_for_another_agent_or_a_closed_turn() {
+    let mut live = Liveness::default();
+    live.saw(&agent(A), &started(), at(0));
+    assert!(!live.check_due(&agent(B), at(STALL)));
+    live.saw(&agent(A), &ended(), at(1));
+    assert!(!live.check_due(&agent(A), at(10 * STALL)));
+    live.saw_activity(&agent(A), at(2));
+    assert!(live.take_stall(at(10 * STALL)).is_none());
 }

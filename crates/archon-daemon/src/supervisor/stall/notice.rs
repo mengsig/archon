@@ -22,7 +22,10 @@ pub(super) enum Nudge {
 
 /// What the interrupt of a hung turn did.
 pub(super) enum Interrupted {
-    Stopped,
+    /// `told` is whether the orchestrator was told which call was cut off.
+    Stopped {
+        told: Result<(), ArchonError>,
+    },
     NoTurn,
     Failed(ArchonError),
 }
@@ -88,7 +91,7 @@ pub(super) fn cut_off_note(
     };
     let note = format!(
         "{CUT_OFF_PREFIX}: it was silent for {minutes} minutes{waited}. {call} Messages that \
-         waited for you follow."
+         waited for you are in your inbox."
     );
     assert!(
         note.starts_with(CUT_OFF_PREFIX),
@@ -119,13 +122,11 @@ fn span_text(span: Duration) -> String {
     }
 }
 
-/// What the operator reads after archond tried to interrupt a hung turn;
-/// `told` is whether the orchestrator was told which call was cut off.
+/// What the operator reads after archond tried to interrupt a hung turn.
 pub(super) fn interrupt_text(
     hung: &Hung,
     call: &Result<Option<OpenToolCall>, ArchonError>,
     outcome: &Interrupted,
-    told: &Result<(), ArchonError>,
 ) -> String {
     let minutes = hung.silent.as_secs() / 60;
     assert!(minutes > 0, "an interrupt follows minutes of silence");
@@ -151,7 +152,7 @@ pub(super) fn interrupt_text(
     };
     let retry = INTERRUPT_SPACING.as_secs() / 60;
     let text = match outcome {
-        Interrupted::Stopped => format!(
+        Interrupted::Stopped { .. } => format!(
             "{head}, so Archon interrupted it, as Esc in its terminal would. Messages waiting \
              for it, yours included, are delivered in a fresh turn, which is told which call \
              was cut off. If it stays silent, run `archon orchestrator restart` to start a \
@@ -168,9 +169,11 @@ pub(super) fn interrupt_text(
              one."
         ),
     };
-    match told {
-        Ok(()) => text,
-        Err(error) => format!("{text} Archon could not tell it which call was cut off ({error})."),
+    match outcome {
+        Interrupted::Stopped { told: Err(error) } => {
+            format!("{text} Archon could not tell it which call was cut off ({error}).")
+        }
+        _ => text,
     }
 }
 

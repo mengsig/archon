@@ -279,6 +279,9 @@ pub struct TurnActivity {
     /// none is in the page read, or the backend cannot tell.
     pub last_event_at: Option<Timestamp>,
     pub open_call: Option<OpenToolCall>,
+    /// Whether `open_call` is known: false when the events read do not
+    /// reach back to the turn's start, so a call may be open beyond them.
+    pub call_known: bool,
 }
 
 /// A change to a live agent; `None` leaves that part as it is.
@@ -427,6 +430,7 @@ pub trait AgentBackend: Send + Sync {
         Ok(TurnActivity {
             last_event_at: None,
             open_call: self.open_tool_call(agent).await?,
+            call_known: true,
         })
     }
 

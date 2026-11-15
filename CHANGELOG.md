@@ -38,10 +38,12 @@
   minutes later, at most 3 times per orchestrator. Now it interrupts the
   turn, as Esc would and with no nudge first, 3 minutes after its last
   event when no tool call is running. A foreground command is given 1
-  minute past the timeout it declared (at most 10 minutes), and any other
-  call 4 minutes. A long command under its own timeout is left alone. The
-  fresh turn gets the waiting mail, with a note naming the call that was
-  cut off so the orchestrator can check and rerun it. The 3-interrupt cap is
+  minute past the timeout it declared (at most 10 minutes), any other call
+  4 minutes, and a call Archon cannot read 11 minutes. A long command under
+  its own timeout is left alone. Tool events count as progress, read from
+  Aether, and mail counts as waiting until it is read. The fresh turn gets
+  the waiting mail, and once Aether reports the turn stopped, a note naming
+  the call that was cut off, so the orchestrator can check and rerun it. The 3-interrupt cap is
   replaced by a limit of one interrupt per 5 minutes, and the operator is
   told each time one fires. Without mail, a turn silent for 30 minutes is
   nudged as before, and is interrupted if it makes no progress within 2

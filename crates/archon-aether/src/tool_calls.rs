@@ -89,6 +89,7 @@ fn activity_in(agent: &AetherAgentId, newest_first: &[Value]) -> Result<TurnActi
     let found = |open_call| TurnActivity {
         last_event_at: Some(last_event_at),
         open_call,
+        call_known: true,
     };
     let mut settled = BTreeSet::new();
     for event in &own {
@@ -120,7 +121,11 @@ fn activity_in(agent: &AetherAgentId, newest_first: &[Value]) -> Result<TurnActi
             }
         }
     }
-    Ok(found(None))
+    // The turn's start is beyond the page: a call may be open before it.
+    Ok(TurnActivity {
+        call_known: false,
+        ..found(None)
+    })
 }
 
 /// The shell command a call's input names: Claude's `command`, or Codex's
@@ -320,13 +325,22 @@ mod tests {
     }
 
     #[test]
-    fn the_newest_event_is_reported_with_no_call_open() {
-        let events = [succeeded(5, 31, "call_a"), requested(4, 30, "call_a", "ls")];
+    fn the_newest_event_is_reported_and_a_call_beyond_the_page_is_unknown() {
+        let started = event(3, 29, LEAD, json!({"type": "agent.started", "turn": 2}));
+        let events = [
+            succeeded(5, 31, "call_a"),
+            requested(4, 30, "call_a", "ls"),
+            started,
+        ];
         let activity = activity_in(&lead(), &events).unwrap();
         assert_eq!(activity.open_call, None);
+        assert!(activity.call_known, "the turn's start was read");
         let newest = activity.last_event_at.expect("a turn event was read");
         assert_eq!(newest.to_rfc3339(), "2026-11-01T12:31:00+00:00");
-        assert_eq!(activity_in(&lead(), &[]).unwrap(), TurnActivity::default());
+        let cut = activity_in(&lead(), &events[..2]).unwrap();
+        assert!(!cut.call_known, "the open call may precede the page");
+        assert_eq!(cut.last_event_at, activity.last_event_at);
+        assert!(!activity_in(&lead(), &[]).unwrap().call_known);
     }
 
     #[test]

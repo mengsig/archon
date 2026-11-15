@@ -282,7 +282,7 @@ pub(super) async fn publish_deviations(
         _ => {
             let path = run.workspace.join(".archon/reports/deviations/index.html");
             pages::directory_in_workspace(&run.workspace, path.parent().expect("page has parent"))?;
-            std::fs::write(&path, "<!doctype html><meta charset=utf-8><title>Deviations to review</title><h1>Deviations to review</h1>").map_err(|e| ArchonError::io("write deviations report", e))?;
+            pages::save(&path, b"<!doctype html><meta charset=utf-8><title>Deviations to review</title><h1>Deviations to review</h1>")?;
             path.display().to_string()
         }
     };

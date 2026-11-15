@@ -187,7 +187,7 @@ pub(super) fn directory_in_workspace(
     Ok(())
 }
 
-fn save(path: &Path, bytes: &[u8]) -> Result<(), ArchonError> {
+pub(super) fn save(path: &Path, bytes: &[u8]) -> Result<(), ArchonError> {
     match path.symlink_metadata() {
         Ok(metadata) if !metadata.is_file() => {
             return Err(ArchonError::Invalid(format!(

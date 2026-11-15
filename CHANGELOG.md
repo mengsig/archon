@@ -14,7 +14,9 @@
   it owes exempt from the worker list but bound to the models its contract
   names (`exempt_roles = ["reviewer"]`, `exempt_models`), so
   an Aether that enforces it refuses a worker outside it; an older Aether
-  ignores the field. The stage contract states the worker rule, and
+  ignores the field. Archon's delegation watchdog cancels a reviewer on a
+  model outside `exempt_models`, so a lead cannot clone itself as a
+  reviewer either. The stage contract states the worker rule, and
   `get_item` (and `archon show`) shows each delegating stage's policy.
   Items queued before the upgrade keep their plans and take the pipeline
   default; spawn requests stored before it are resent unchanged.

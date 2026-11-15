@@ -178,11 +178,11 @@ mod tests {
     #[test]
     fn a_policy_serializes_as_aether_reads_it() {
         let workers = vec![
-            WorkerChoice::from_plan(&pinned(Effort::Medium)),
+            WorkerChoice::from_plan(&pinned(Effort::XHigh)),
             WorkerChoice::of_tier(Tier::Fast, Effort::Low),
         ];
         let reviewer: ModelRef = "claude-code/sonnet".parse().unwrap();
-        let policy = WorkerPolicy::new(workers, Some(Tier::Fast), None)
+        let policy = WorkerPolicy::new(workers, Some(Tier::Fast), Some(3))
             .unwrap()
             .with_reviewers(vec![reviewer]);
         let wire = serde_json::to_value(&policy).unwrap();
@@ -190,11 +190,12 @@ mod tests {
             wire,
             serde_json::json!({
                 "workers": [
-                    {"model": {"provider": "codex", "model": "terra"}, "effort": "medium"},
+                    {"model": {"provider": "codex", "model": "terra"}, "effort": "x_high"},
                     {"tier": "fast", "effort": "low"}
                 ],
                 "default_tier": "fast",
-                "max_effort": "medium",
+                "max_effort": "x_high",
+                "max_parallel": 3,
                 "exempt_roles": ["reviewer"],
                 "exempt_models": [{"provider": "claude-code", "model": "sonnet"}]
             })

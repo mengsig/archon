@@ -883,17 +883,17 @@ fn delegation_policy(target: &Target<'_>, plan: &SpawnPlan) -> Option<WorkerPoli
     let Ok(policy) = RepoEnv::new(target.repo.cloned()).map(|env| env.policy(target.config)) else {
         return Some(workers);
     };
-    let models = contract::reviewer_models(
+    let mut models = contract::reviewer_models(
         Some(named),
         &plan.choice.model,
         &policy,
         (&target.config.review, target.catalog),
         target.governed,
     );
-    assert!(
-        models.iter().all(|m| policy.permits_model(m)),
-        "reviewers stay within the model policy"
-    );
+    // A planned reviewer the policy has since denied is exempt from nothing;
+    // the watchdog cancels a reviewer on it, as for any denied model.
+    models.retain(|model| policy.permits_model(model));
+    assert!(models.iter().all(|m| policy.permits_model(m)));
     Some(workers.with_reviewers(models))
 }
 

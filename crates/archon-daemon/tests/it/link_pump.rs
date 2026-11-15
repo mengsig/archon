@@ -1961,6 +1961,48 @@ async fn reviewer_cancels(effort_sizing: bool) -> Vec<(String, String)> {
         .collect()
 }
 
+/// With no reviewer plan on the item, a lead's reviewers are held to the
+/// models its contract named, as its sent policy lists them: a clone of the
+/// lead passed off as a reviewer is cancelled, and a worker is Aether's.
+#[tokio::test]
+async fn a_reviewer_off_the_contract_s_named_models_is_cancelled() {
+    use archon_core::delegation::{WorkerChoice, WorkerPolicy};
+    use archon_core::model_tier::Tier;
+    const CLONE: (&str, &str) = ("claude-code", "claude-fable-5-2");
+    let harness = Harness::new().await;
+    let repo = tempfile::tempdir().unwrap();
+    let stage = running_stage(&harness.ctx, repo.path(), STAGE, STAGE_TASK).await;
+    let workers = vec![WorkerChoice::of_tier(Tier::Balanced, Effort::Medium)];
+    let policy = WorkerPolicy::new(workers, Some(Tier::Balanced), Some(2))
+        .unwrap()
+        .with_reviewers(vec![ModelRef::new(ALLOWED.0, ALLOWED.1)]);
+    link_common::sent_policy(&harness.ctx, &stage, policy).await;
+    let (agents, pump) = running_pump(&harness).await;
+    harness.fake.set_default("cancel", Scripted::ok());
+    for (id, model, role) in [
+        (CHILD, ALLOWED, "reviewer"),
+        (CHILD_2, CLONE, "reviewer"),
+        (GRANDCHILD, CLONE, "worker"),
+    ] {
+        let mut agent = agents.set(id, "running");
+        agent["role"] = json!(role);
+        agent["config"] = json!({"effort": "high"});
+        agents.0.lock().unwrap().insert(id.to_owned(), agent);
+        push(&harness, created(id, STAGE, model), keys::CURSOR_FLEET).await;
+    }
+    pump.abort();
+
+    let cancels = harness.fake.received_named("cancel");
+    assert_eq!(cancels.len(), 1, "{cancels:?}");
+    assert_eq!(cancels[0]["agent"], CHILD_2);
+    let reason = cancels[0]["reason"].as_str().unwrap();
+    let named = format!(
+        "not a model the stage contract names for its reviewers ({}/{})",
+        ALLOWED.0, ALLOWED.1
+    );
+    assert!(reason.contains(&named), "{reason}");
+}
+
 /// By default, as in 1.4.12, the plan's reviewer effort is a floor: a reviewer
 /// above it runs up to the policy's `max_effort`, and one below it is cancelled
 /// as it spawns.

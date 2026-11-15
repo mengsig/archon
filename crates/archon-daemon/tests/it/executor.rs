@@ -2761,6 +2761,49 @@ async fn an_adaptive_lead_is_sent_balanced_workers_and_its_reviewer_as_its_polic
     );
 }
 
+/// The repository denies the reviewer the item's plan named once its first
+/// stage ran: the lead's spawn does not panic, and exempts no denied model.
+#[tokio::test]
+async fn a_named_reviewer_denied_mid_run_is_left_out_of_the_lead_s_policy() {
+    let mut config = Config::default();
+    config.models.allow = vec![MODEL.parse().unwrap(), REVIEW_MODEL.parse().unwrap()];
+    let h = Harness::with_config(config).await;
+    seed_review_catalog(&h).await;
+    let bounded = DRAFTED_THEN_LED.replace(
+        "[pipeline.review]",
+        "[pipeline.workers]\ntier = \"balanced\"\n\n[pipeline.review]",
+    );
+    h.add_pipeline("drafted", &bounded);
+    let planned = |stage: &str, model| (stage.to_owned(), vec![choice(model, Effort::Medium)]);
+    let plan = archon_core::model::ModelPlan(
+        [
+            planned("draft", MODEL),
+            planned("build", MODEL),
+            planned("build.review", REVIEW_MODEL),
+        ]
+        .into(),
+    );
+    let item = h
+        .enqueue_in("drafted", "a reviewed change", plan)
+        .await
+        .unwrap();
+    h.dispatch().await;
+    assert_eq!(h.backend.requests().len(), 1, "the draft spawned");
+    h.repo_config(&format!("[models]\ndeny = [\"{REVIEW_MODEL}\"]\n"));
+    h.settle_running(|_| completed("drafted")).await;
+    h.dispatch().await;
+    let denied: archon_core::model::ModelRef = REVIEW_MODEL.parse().unwrap();
+    let requests = h.backend.requests();
+    let state = h.state(&item.id).await;
+    assert_eq!(requests.len(), 2, "the lead spawned: {state:?}");
+    let policy = requests[1]
+        .delegation_policy
+        .clone()
+        .expect("a bounded lead");
+    assert_eq!(policy.exempt_roles, ["reviewer"]);
+    assert!(!policy.exempt_models.contains(&denied), "{policy:?}");
+}
+
 /// A plan's `<stage>.workers` replaces the pipeline default, and a pipeline
 /// that declares none sends its lead no policy: Aether's own rule stands.
 #[tokio::test]

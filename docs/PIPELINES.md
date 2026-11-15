@@ -309,7 +309,10 @@ max_effort, max_parallel, exempt_roles, exempt_models}`. When the stage owes
 reviewers, `exempt_roles` is `["reviewer"]` and `exempt_models` the models
 the contract names for them: a child with that role is not held to
 `workers`, may run on those models, and on any other is held to the lead's
-tier. Aether's `delegate` refuses a child outside it.
+tier. Aether's `delegate` refuses a child outside it, and Archon's
+delegation watchdog cancels a reviewer on a model outside `exempt_models`,
+so a lead cannot pass a clone of its own model off as a reviewer. A named
+reviewer the model policy has since denied is left out of `exempt_models`.
 
 Such a pipeline takes its review level from the item, not from its
 manifest. An item's `review` knob chooses `none`, `standard` or `strict`,

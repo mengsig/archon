@@ -2005,19 +2005,48 @@ async fn a_reviewer_off_the_contract_s_named_models_is_cancelled() {
 
 /// A lead the model policy left no permitted worker is sent `workers = []`,
 /// which Aether reads as its tier rule: Archon cancels any child of it but a
-/// reviewer, so the lead works alone and its review still runs.
+/// reviewer, so the lead works alone and its review still runs, whether or
+/// not the item plans its reviewers.
 #[tokio::test]
 async fn a_worker_of_a_lead_left_alone_is_cancelled_and_its_reviewer_runs() {
+    for reviewer_plan in [false, true] {
+        let cancels = alone_cancels(reviewer_plan).await;
+        assert_eq!(
+            cancels.len(),
+            1,
+            "only the worker ({reviewer_plan}): {cancels:?}"
+        );
+        assert_eq!(cancels[0]["agent"], CHILD_2);
+        let reason = cancels[0]["reason"].as_str().unwrap();
+        assert!(reason.contains("its lead works alone"), "{reason}");
+    }
+}
+
+/// The cancels of a reviewer and a worker of a lead sent no worker, its item
+/// naming its reviewer in `implement.review` when `reviewer_plan`.
+async fn alone_cancels(reviewer_plan: bool) -> Vec<Value> {
     use archon_core::delegation::{WorkerChoice, WorkerPolicy};
+    use archon_core::model::ModelChoice;
     use archon_core::model_tier::{ModelCatalog, Tier};
     use archon_core::policy::ModelPolicy;
     let harness = Harness::new().await;
     let repo = tempfile::tempdir().unwrap();
     let stage = running_stage(&harness.ctx, repo.path(), STAGE, STAGE_TASK).await;
+    let reviewer = ModelRef::new(ALLOWED.0, ALLOWED.1);
+    if reviewer_plan {
+        let mut store = harness.ctx.store.lock().await;
+        let run = store.run(&stage.run).unwrap();
+        let mut item = store.item(&run.item).unwrap();
+        let named = ModelChoice::pinned(reviewer.clone(), Effort::Medium);
+        item.model_plan
+            .0
+            .insert("implement.review".into(), vec![named]);
+        store.update_item(&item).unwrap();
+    }
     let workers = vec![WorkerChoice::of_tier(Tier::Balanced, Effort::Medium)];
     let planned = WorkerPolicy::new(workers, Some(Tier::Balanced), Some(2))
         .unwrap()
-        .with_reviewers(vec![ModelRef::new(ALLOWED.0, ALLOWED.1)]);
+        .with_reviewers(vec![reviewer]);
     let open = ModelPolicy::from_lists(&[], &[], None);
     let alone = planned.within(&open, &ModelCatalog::default(), None);
     assert!(alone.policy.workers.is_empty(), "{alone:?}");
@@ -2027,17 +2056,12 @@ async fn a_worker_of_a_lead_left_alone_is_cancelled_and_its_reviewer_runs() {
     for (id, role) in [(CHILD, "reviewer"), (CHILD_2, "worker")] {
         let mut agent = agents.set(id, "running");
         agent["role"] = json!(role);
-        agent["config"] = json!({"effort": "low"});
+        agent["config"] = json!({"effort": "medium"});
         agents.0.lock().unwrap().insert(id.to_owned(), agent);
         push(&harness, created(id, STAGE, ALLOWED), keys::CURSOR_FLEET).await;
     }
     pump.abort();
-
-    let cancels = harness.fake.received_named("cancel");
-    assert_eq!(cancels.len(), 1, "only the worker: {cancels:?}");
-    assert_eq!(cancels[0]["agent"], CHILD_2);
-    let reason = cancels[0]["reason"].as_str().unwrap();
-    assert!(reason.contains("its lead works alone"), "{reason}");
+    harness.fake.received_named("cancel")
 }
 
 /// By default, as in 1.4.12, the plan's reviewer effort is a floor: a reviewer

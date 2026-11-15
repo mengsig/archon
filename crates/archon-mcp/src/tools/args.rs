@@ -431,13 +431,20 @@ fn github_reply(args: &mut Args) -> Result<Request, ToolError> {
 
 fn set_directive(args: &mut Args) -> Result<Request, ToolError> {
     let text = args.required_text("text")?;
+    let clarifications = args.optional("clarifications")?.unwrap_or_default();
+    if clarifications != archon_core::autonomy::ClarificationPolicy::Ask {
+        return Err(args.error(
+            "clarifications",
+            "Proceed authorization requires the authenticated operator CLI/app",
+        ));
+    }
     let expires_in_hours = args.optional::<u32>("expires_in_hours")?;
     if expires_in_hours.is_some_and(|hours| !(1..=720).contains(&hours)) {
         return Err(args.error("expires_in_hours", "must be between 1 and 720"));
     }
     assert!(!text.trim().is_empty(), "required_text refuses blank text");
     Ok(Request::SetDirective {
-        clarifications: args.optional("clarifications")?.unwrap_or_default(),
+        clarifications,
         text,
         expires_in_hours,
     })

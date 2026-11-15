@@ -467,5 +467,6 @@ fn question_schema_and_parser_exempt_long_questions_and_fallbacks() {
     assert!(to_request("message_orchestrator", info).is_err());
     let proceed = json!({"text":"proceed","clarifications":"proceed"});
     assert!(schema_verdict("set_directive", &proceed).is_err());
-    assert!(to_request("set_directive", proceed).is_err());
+    let error = to_request("set_directive", proceed).unwrap_err();
+    assert!(error.to_string().contains("authenticated operator CLI/app"));
 }

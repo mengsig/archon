@@ -642,16 +642,24 @@ impl AetherClient {
         query: EventQuery,
         limit: usize,
     ) -> Result<Vec<serde_json::Value>, ArchonError> {
+        self.events_before_raw(u64::MAX, query, limit).await
+    }
+
+    /// The newest `limit` events matching `query` with `seq < before`,
+    /// newest first and undecoded: one page of a walk back through history.
+    pub async fn events_before_raw(
+        &self,
+        before: u64,
+        query: EventQuery,
+        limit: usize,
+    ) -> Result<Vec<serde_json::Value>, ArchonError> {
         assert!(limit > 0, "a page holds at least one event");
-        assert!(
-            query.before.is_none(),
-            "the latest page is read from the top"
-        );
+        assert!(query.before.is_none(), "`before` names where the page ends");
         let command = Command::GetEvents {
             after: 0,
             limit,
             query: EventQuery {
-                before: Some(u64::MAX),
+                before: Some(before),
                 ..query
             },
         };

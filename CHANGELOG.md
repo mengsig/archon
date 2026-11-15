@@ -31,6 +31,39 @@
   Items queued before the upgrade keep their plans and take the pipeline
   default; spawn requests stored before it are resent unchanged.
 
+### Fixed
+
+- Operator mail no longer waits for long behind a hung orchestrator turn.
+  Archon used to nudge such a turn after 10 minutes and interrupt it 5
+  minutes later, at most 3 times per orchestrator. Now, once your message
+  has been unread for 3 minutes and the turn has made no progress for 3
+  minutes, Archon nudges the turn, and interrupts it, as Esc would, if it
+  makes no progress in the next 2 minutes. A foreground command still
+  running is first given 1 minute past the timeout it declared (at most 10
+  minutes) and any other open tool call 4 minutes, so a long command under
+  its own timeout is left alone. The fresh turn gets the waiting mail and a
+  note naming the tool calls that were open, so the orchestrator can check
+  and rerun them. The 3-interrupt cap is replaced by a limit of one
+  interrupt per 5 minutes, each after a nudge of its own, and the operator
+  is told each time one fires. Without mail, a turn silent for 30 minutes
+  is nudged as before, and is interrupted if it makes no progress within 2
+  minutes instead of 5.
+- The orchestrator stall watch keeps nothing in memory any more. Every 30
+  seconds it reads the turn from Aether's events, and its own last nudge
+  and interrupt from the store, so a restart of `archond` forgets neither
+  waiting mail nor a nudge already sent. Every tool event Aether records
+  counts as progress, every open tool call is considered rather than only
+  the newest, and Archon's own notes to the orchestrator are never taken
+  for operator mail.
+- A detached `archond` now leads its own session with no controlling
+  terminal, instead of only its own process group. Before, a program it
+  started that read the terminal was stopped by `SIGTTIN` and hung where
+  it stood. That is how oh-my-zsh's daily update prompt, run by an engine's
+  shell snapshot, hung an orchestrator tool call. An aetherd that archond
+  starts again now has no terminal either. One that an `archon` command
+  started still shares that command's terminal until Aether starts its
+  daemon in a session of its own.
+
 ## 1.5.1
 
 Released 2026-11-14.

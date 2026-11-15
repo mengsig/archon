@@ -37,6 +37,8 @@ use tempfile::TempDir;
 use tokio::sync::{Mutex, Notify, broadcast};
 use tokio::task::JoinHandle;
 
+pub mod turn;
+
 pub const WAIT: Duration = Duration::from_secs(5);
 
 /// The daemon's worker policy with restarts quick enough for a test to see.

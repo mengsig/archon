@@ -53,7 +53,8 @@ pub use revival::{
     Backoff, REVIVAL_BACKOFF, REVIVALS_BEFORE_BLOCKER, pause_after, revive_when_due, turn_ended,
 };
 pub use stall::{
-    INTERRUPT_GRACE, MAIL_STALL_AFTER, MAX_INTERRUPTS, STALL_AFTER, STALL_CHECK_INTERVAL,
+    Due, FOREGROUND_CAP, INTERRUPT_SPACING, MAIL_SILENCE, Marks, NUDGE_GRACE, PAST_TIMEOUT,
+    STALL_AFTER, STALL_CHECK_INTERVAL, Silence, UNDECLARED_CALL_BOUND, call_bound, due,
     report_stall, watch_stalls,
 };
 
@@ -105,9 +106,6 @@ pub struct Supervisor {
     sweeps: Notify,
     mcp: Mutex<mcp::HealState>,
     mcp_check: Notify,
-    liveness: std::sync::Mutex<stall::Liveness>,
-    /// Wakes the stall watch when operator mail reaches a stalled turn.
-    stall_check: Notify,
 }
 
 impl Default for Supervisor {
@@ -120,8 +118,6 @@ impl Default for Supervisor {
             sweeps: Notify::new(),
             mcp: Mutex::new(mcp::HealState::default()),
             mcp_check: Notify::new(),
-            liveness: Default::default(),
-            stall_check: Notify::new(),
         }
     }
 }
@@ -130,19 +126,6 @@ impl Supervisor {
     /// Sees every change of the orchestrator's agent id.
     pub fn watch(&self) -> watch::Receiver<Option<AetherAgentId>> {
         self.current.subscribe()
-    }
-
-    /// Record an event of the current orchestrator for the stall check, and
-    /// check at once when it is operator mail to a turn already stalled.
-    pub fn saw_event(&self, agent: &AetherAgentId, kind: &archon_aether::events::EventKind) {
-        let due = self
-            .liveness
-            .lock()
-            .expect("liveness is never held across a panic")
-            .saw(agent, kind, archon_core::now());
-        if due {
-            self.stall_check.notify_one();
-        }
     }
 
     /// When a deferred revival of a stopped orchestrator will run.

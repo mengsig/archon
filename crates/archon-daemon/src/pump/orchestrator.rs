@@ -23,7 +23,6 @@ pub(super) async fn handle(ctx: &DaemonContext, event: &AetherEvent) -> Result<(
     if supervisor::current_orchestrator(ctx).await?.as_ref() != Some(agent) {
         return Ok(());
     }
-    ctx.supervisor.saw_event(agent, &event.kind);
     let handled = apply(ctx, agent, event).await;
     // After applying, so a woken reader finds what the event recorded, such
     // as the numbered question of an `ask_user`.

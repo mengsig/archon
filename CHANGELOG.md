@@ -18,6 +18,10 @@
   model outside `exempt_models`, so a lead cannot clone itself as a
   reviewer either. The stage contract states the worker rule, and
   `get_item` (and `archon show`) shows each delegating stage's policy.
+  The policy is narrowed to the model policy in force at each spawn
+  (effort capped at `max_effort`, a tier resolved to a permitted model under
+  an allow or deny list), so a worker it prescribes is never one the
+  watchdog would cancel.
   Items queued before the upgrade keep their plans and take the pipeline
   default; spawn requests stored before it are resent unchanged.
 

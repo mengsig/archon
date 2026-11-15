@@ -313,6 +313,12 @@ tier. Aether's `delegate` refuses a child outside it, and Archon's
 delegation watchdog cancels a reviewer on a model outside `exempt_models`,
 so a lead cannot pass a clone of its own model off as a reviewer. A named
 reviewer the model policy has since denied is left out of `exempt_models`.
+The policy sent is narrowed to the model policy in force at the spawn, and
+`get_item` shows it so: each effort is capped at `[models] max_effort`, a
+denied planned model is dropped, and under an allow or deny list each tier
+becomes the permitted catalog model `resolve` picks at or below it (the
+cheapest permitted model when none is). With no permitted catalog model the
+lead is sent no policy.
 
 Such a pipeline takes its review level from the item, not from its
 manifest. An item's `review` knob chooses `none`, `standard` or `strict`,

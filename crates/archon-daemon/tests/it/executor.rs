@@ -2709,11 +2709,13 @@ async fn adaptive_guarded_build_delegates_within_the_stated_policy_and_archond_s
 }
 
 /// A delegating lead is sent its pipeline's worker default as Aether's
-/// delegation policy, its reviewers bounded to the model its contract names,
-/// and its contract and `get_item` say so.
+/// delegation policy, the balanced tier resolved to the model the allowlist
+/// permits, its reviewers bounded to the model its contract names, and its
+/// contract and `get_item` say so.
 #[tokio::test]
 async fn an_adaptive_lead_is_sent_balanced_workers_and_its_reviewer_as_its_policy() {
     use archon_core::delegation::WorkerChoice;
+    use archon_core::model::ModelChoice;
     use archon_core::model_tier::Tier;
     let mut config = Config::default();
     config.models.allow = vec![MODEL.parse().unwrap(), REVIEW_MODEL.parse().unwrap()];
@@ -2725,8 +2727,8 @@ async fn an_adaptive_lead_is_sent_balanced_workers_and_its_reviewer_as_its_polic
     let policy = build
         .delegation_policy
         .expect("a delegating lead is bounded");
-    let balanced = WorkerChoice::of_tier(Tier::Balanced, Effort::Medium);
-    assert_eq!(policy.workers, [balanced]);
+    let allowed = ModelChoice::pinned(MODEL.parse().unwrap(), Effort::Medium);
+    assert_eq!(policy.workers, [WorkerChoice::from_plan(&allowed)]);
     assert_eq!(
         (policy.default_tier, policy.max_effort, policy.max_parallel),
         (Some(Tier::Balanced), Some(Effort::Medium), Some(2))
@@ -2741,9 +2743,11 @@ async fn an_adaptive_lead_is_sent_balanced_workers_and_its_reviewer_as_its_polic
         "the contract names the reviewer the policy allows: {}",
         build.instructions
     );
-    let rule = "- Workers (every child but a reviewer): each worker on the balanced tier at \
-                effort medium, at most 2 at once.";
-    assert!(build.instructions.contains(rule), "{}", build.instructions);
+    let rule = format!(
+        "- Workers (every child but a reviewer): each worker on {MODEL} at effort medium, \
+         at most 2 at once."
+    );
+    assert!(build.instructions.contains(&rule), "{}", build.instructions);
     let Reply::ItemDetail(detail) = h
         .cli(Request::GetItem {
             item: item.id.clone(),
@@ -2759,6 +2763,60 @@ async fn an_adaptive_lead_is_sent_balanced_workers_and_its_reviewer_as_its_polic
         shown.exempt_models.is_empty(),
         "reviewers are bounded at spawn"
     );
+}
+
+/// An item queued before worker plans, under a repository capping effort at
+/// low: the pipeline's medium default is capped, not sent above the policy,
+/// and a lone allowed strong model still bounds the workers, at medium.
+#[tokio::test]
+async fn a_restrictive_model_policy_narrows_the_pipeline_s_worker_default() {
+    use archon_core::delegation::WorkerChoice;
+    use archon_core::model::ModelChoice;
+    use archon_core::model_tier::Tier;
+    let mut config = Config::default();
+    config.models.max_effort = Some(Effort::Low);
+    let h = Harness::with_config(config).await;
+    seed_review_catalog(&h).await;
+    add_origin(&h);
+    let plan = archon_core::model::ModelPlan(
+        [("build".to_owned(), vec![choice(MODEL, Effort::Low)])].into(),
+    );
+    h.enqueue_in("adaptive", "an old change", plan.clone())
+        .await
+        .unwrap();
+    h.dispatch().await;
+    let policy = h.backend.requests()[0].delegation_policy.clone();
+    let policy = policy.expect("a delegating lead is bounded");
+    assert_eq!(
+        policy.workers,
+        [WorkerChoice::of_tier(Tier::Balanced, Effort::Low)]
+    );
+    assert_eq!(policy.max_effort, Some(Effort::Low));
+
+    let mut config = Config::default();
+    config.models.allow = vec![MODEL.parse().unwrap()];
+    let h = Harness::with_config(config).await;
+    use archon_core::model_tier::{CatalogModel, ModelCatalog};
+    let strong = CatalogModel {
+        model: MODEL.parse().unwrap(),
+        tier: Some(Tier::Strong),
+        is_default: false,
+    };
+    h.ctx
+        .store
+        .lock()
+        .await
+        .set_model_catalog(ModelCatalog::new(vec![strong]));
+    add_origin(&h);
+    h.enqueue_in("adaptive", "an old change", plan)
+        .await
+        .unwrap();
+    h.dispatch().await;
+    let policy = h.backend.requests()[0].delegation_policy.clone();
+    let policy = policy.expect("the one permitted model bounds the workers");
+    let only = ModelChoice::pinned(MODEL.parse().unwrap(), Effort::Medium);
+    assert_eq!(policy.workers, [WorkerChoice::from_plan(&only)]);
+    assert_eq!(policy.max_parallel, Some(2));
 }
 
 /// The repository denies the reviewer the item's plan named once its first

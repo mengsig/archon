@@ -366,12 +366,16 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
 type PlanDefaults = (BTreeMap<String, Effort>, BTreeMap<String, WorkerPolicy>);
 
 /// The default effort of every key the item's plan names, and the worker
-/// policy of each stage whose lead may delegate; both empty when its
-/// pipeline can no longer be loaded, which the plan alone already shows.
+/// policy of each stage whose lead may delegate, within the model policy in
+/// force; both empty when its pipeline can no longer be loaded, which the
+/// plan alone already shows.
 async fn plan_defaults(ctx: &DaemonContext, id: &QueueItemId) -> Result<PlanDefaults, ArchonError> {
-    let item = ctx.read_store().await?.item(id)?;
-    let spec = match item_pipeline(ctx, &item).await {
-        Ok((_, _, spec)) => spec,
+    let (item, catalog) = {
+        let store = ctx.read_store().await?;
+        (store.item(id)?, store.model_catalog())
+    };
+    let (env, spec) = match item_pipeline(ctx, &item).await {
+        Ok((env, _, spec)) => (env, spec),
         Err(error) if error.is_store() => return Err(error),
         Err(error) => {
             tracing::warn!(%id, %error, "plan defaults not shown: pipeline unavailable");
@@ -383,6 +387,8 @@ async fn plan_defaults(ctx: &DaemonContext, id: &QueueItemId) -> Result<PlanDefa
         .filter_map(|key| Some((key.clone(), spec.default_effort(key)?)))
         .collect();
     let yolo = item.autonomy.tools == archon_core::autonomy::ToolsMode::Yolo;
+    // As a spawn now would send it: narrowed to the model policy in force.
+    let models = env.policy(&ctx.config);
     let delegating = spec
         .file
         .stages
@@ -390,8 +396,8 @@ async fn plan_defaults(ctx: &DaemonContext, id: &QueueItemId) -> Result<PlanDefa
         .filter(|stage| yolo || stage.allow_delegation || spec.holds_review(stage));
     let policies = delegating
         .filter_map(|stage| {
-            let policy = spec.worker_policy(stage, &item.model_plan)?;
-            Some((stage.id.clone(), policy))
+            let planned = spec.worker_policy(stage, &item.model_plan)?;
+            Some((stage.id.clone(), planned.within(&models, &catalog)?))
         })
         .collect();
     Ok((efforts, policies))

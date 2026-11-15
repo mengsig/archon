@@ -104,6 +104,11 @@ pub struct SpawnRequest {
     /// resume it by message instead of starting cold (§6.7).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub keep: bool,
+    /// What a delegating agent's workers may run on, sent as Aether's
+    /// `config.delegation_policy`. A request stored before it existed has
+    /// none, so its keyed retry sends the frame Aether first saw.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegation_policy: Option<crate::delegation::WorkerPolicy>,
 }
 
 /// A resumed attempt's outcome from its final message (§6.7): failed after

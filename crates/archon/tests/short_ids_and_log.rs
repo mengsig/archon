@@ -147,6 +147,8 @@ impl Fake {
             Request::ResolveItem { prefix } => return self.resolve(prefix),
             Request::GetItem { item } => Reply::ItemDetail(Box::new(ItemDetail {
                 default_efforts: Default::default(),
+                worker_policies: Default::default(),
+                stage_notes: Default::default(),
                 steers: Vec::new(),
                 waiting_on: None,
                 waiting_reason: None,

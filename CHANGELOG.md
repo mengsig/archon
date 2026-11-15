@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Worker model policy: a stage lead no longer clones its own model for its
+  workers. `model_plan` takes `<stage>.workers` (up to four `{model|tier,
+  effort}` choices, within model policy, like `<stage>.review`), and a
+  pipeline declares its default in `[pipeline.workers]` (`tier`, `effort`,
+  `max_parallel`): `adaptive` and `review` give balanced-tier workers at
+  medium, at most 2 at once; `swarm` gives fast-tier ones. Archon sends it to
+  the lead's Aether agent as `config.delegation_policy`, with the reviewers
+  it owes exempt from the worker list but bound to the models its contract
+  names (`exempt_roles = ["reviewer"]`, `exempt_models`), so
+  an Aether that enforces it refuses a worker outside it; an older Aether
+  ignores the field. Archon's delegation watchdog cancels a reviewer on a
+  model outside `exempt_models`, so a lead cannot clone itself as a
+  reviewer either. The stage contract states the worker rule, and
+  `get_item` (and `archon show`) shows each delegating stage's policy.
+  The policy is narrowed to the model policy in force at each spawn
+  (effort capped at `max_effort`, a tier resolved to a permitted model under
+  an allow or deny list), so a worker it prescribes is never one the
+  watchdog would cancel. When no planned worker is permitted (an empty
+  catalog, a restrictive allow or deny list), the workers fail closed and
+  the review does not: the lead spawns with its reviewer exemptions and at
+  most one worker, at effort low, on the cheapest permitted catalog model
+  other than its own, or none: the delegation watchdog then cancels any
+  child of it but a reviewer. Archon records a stage note that `get_item`
+  shows.
+  Items queued before the upgrade keep their plans and take the pipeline
+  default; spawn requests stored before it are resent unchanged.
+
 ## 1.5.1
 
 Released 2026-11-14.

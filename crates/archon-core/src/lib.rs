@@ -21,6 +21,7 @@ pub mod config_files;
 pub mod conversation;
 pub mod cost;
 pub mod crash;
+pub mod delegation;
 pub mod engine_login;
 pub mod error;
 pub mod feedback;

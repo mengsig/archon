@@ -51,6 +51,7 @@ mod settle;
 pub(crate) mod ship;
 mod siblings;
 mod spawn;
+pub(crate) mod stage_note;
 mod stall;
 mod start;
 pub(crate) mod steer;

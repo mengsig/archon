@@ -248,9 +248,7 @@ fn projected_plan(
         .filter_map(|stage| plan.choices_for(&stage.id))
         .find_map(|choices| choices.first().cloned());
     let mut kept = plan.clone();
-    let reviewers = new.reviewers_key();
-    kept.0
-        .retain(|id, _| new.stage(id).is_some() || Some(id) == reviewers.as_ref());
+    kept.0.retain(|id, _| new.is_plan_key(id));
     for (id, choices) in &mut kept.0 {
         if let Some(stage) = new.stage(id) {
             choices.truncate(stage.choice_limit() as usize);

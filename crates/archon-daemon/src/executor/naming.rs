@@ -128,6 +128,7 @@ mod tests {
             keep: false,
             resume: None,
             reviewers: None,
+            workers: None,
         }
     }
 

@@ -2507,7 +2507,7 @@ async fn planned_item(
 
 /// An `adaptive` item, dispatched, in a repository with an `origin` for
 /// archond to deliver its one stage's commits to.
-async fn adaptive_item(h: &Harness) -> archon_core::queue::QueueItem {
+pub(crate) async fn adaptive_item(h: &Harness) -> archon_core::queue::QueueItem {
     add_origin(h);
     planned_item(h, "adaptive", &["build"]).await
 }
@@ -2538,14 +2538,14 @@ prompt = "implement.md"
 "#;
 
 /// An item on [`LED_THEN_SHIPPED`], dispatched: its lead's stage has a next one.
-async fn led_item(h: &Harness) -> archon_core::queue::QueueItem {
+pub(crate) async fn led_item(h: &Harness) -> archon_core::queue::QueueItem {
     h.add_pipeline("led", LED_THEN_SHIPPED);
     planned_item(h, "led", &["build", "ship"]).await
 }
 
 /// A draft, then a lead that holds the review: the lead's contract is built
 /// only once the draft settles.
-const DRAFTED_THEN_LED: &str = r#"[pipeline]
+pub(crate) const DRAFTED_THEN_LED: &str = r#"[pipeline]
 name = "drafted"
 description = "an agent drafts, then a lead builds and reviews"
 version = 1
@@ -2568,7 +2568,7 @@ prompt = "implement.md"
 allow_delegation = true
 "#;
 
-async fn seed_review_catalog(h: &Harness) {
+pub(crate) async fn seed_review_catalog(h: &Harness) {
     use archon_core::model_tier::{CatalogModel, ModelCatalog, Tier};
     let models = [MODEL, REVIEW_MODEL]
         .into_iter()

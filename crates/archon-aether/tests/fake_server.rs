@@ -52,6 +52,7 @@ fn spawn_request() -> SpawnRequest {
         parent: Some(AetherAgentId::parse(NODE).unwrap()),
         network: Some(NetworkPolicy::Denied),
         keep: false,
+        delegation_policy: None,
     }
 }
 

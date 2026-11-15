@@ -62,6 +62,8 @@ fn wait(
 fn snapshot(row: QueueItem, waiting_reason: Option<archon_core::protocol::WaitingReason>) -> Reply {
     Reply::ItemDetail(Box::new(ItemDetail {
         default_efforts: Default::default(),
+        worker_policies: Default::default(),
+        stage_notes: Default::default(),
         steers: Vec::new(),
         item: row,
         runs: vec![],

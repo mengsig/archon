@@ -23,7 +23,8 @@ pub use checks::{FastCheck, check_rules};
 pub use initiative::initiative_rules;
 pub use lessons::lesson_rules;
 pub use reviewers::{
-    governed_review_refusal, governed_reviewer_rules, provider_reports_cost, reviewer_profile_rules,
+    governed_review_refusal, governed_reviewer_rules, provider_reports_cost, reviewer_models,
+    reviewer_profile_rules,
 };
 pub use storage::{artifact_rules, build_cache_rules};
 
@@ -166,6 +167,31 @@ pub fn delegation_rules(
          {DELEGATE_HAND_OFF}\
          {DELEGATE_CHILD_RULES}\
          {bounds}"
+    )
+}
+
+/// The rule for a lead whose workers Aether bounds by `narrowed`: every
+/// child but one with role `reviewer`, which the reviewer rule bounds instead.
+/// It lists exactly the workers the policy sent permits, or none.
+pub fn worker_rule(narrowed: &archon_core::delegation::Narrowed) -> String {
+    let policy = &narrowed.policy;
+    let why = narrowed
+        .note
+        .as_ref()
+        .map(|note| format!(" Archon narrowed them: {note}."))
+        .unwrap_or_default();
+    if policy.workers.is_empty() {
+        assert!(narrowed.note.is_some(), "a lead left alone is told why");
+        return format!(
+            "- Workers (every child but a reviewer): none. Do the work yourself and \
+             delegate only the reviewers you owe.{why}\n"
+        );
+    }
+    format!(
+        "- Workers (every child but a reviewer): {}. Not your own model unless it is \
+         listed: Aether's `delegate` refuses a worker outside this, and the error names \
+         what is allowed.{why}\n",
+        policy.describe()
     )
 }
 

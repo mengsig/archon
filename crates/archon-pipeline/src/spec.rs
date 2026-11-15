@@ -60,6 +60,10 @@ pub struct PipelineHeader {
     /// Set when archond ships the run itself, with no ship agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ship: Option<DaemonShip>,
+    /// `[pipeline.workers]`: what a delegating lead's workers run on when the
+    /// item's plan names no `<stage>.workers`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workers: Option<crate::workers::WorkersDefault>,
 }
 
 fn default_true() -> bool {
@@ -328,6 +332,7 @@ impl PipelineSpec {
         validate_ship_placement(stages, self.file.pipeline.workspace)?;
         validate_team_names(stages)?;
         self.validate_review()?;
+        self.validate_workers()?;
         self.validate_daemon_ship()
     }
 
@@ -374,6 +379,9 @@ impl PipelineSpec {
         if let Some(stage) = self.stage(key) {
             return Some(stage.effort);
         }
+        if let Some(effort) = self.workers_default_effort(key) {
+            return Some(effort);
+        }
         let holder = key.strip_suffix(archon_core::model::REVIEWERS_KEY_SUFFIX)?;
         let declared = self.file.pipeline.review.as_ref()?;
         (declared.stage == holder).then(|| self.stage(holder).map(|s| s.effort))?
@@ -394,23 +402,36 @@ impl PipelineSpec {
         floor
     }
 
-    /// Refuse a `plan` key that is neither a stage nor the reviewers key, and
-    /// more reviewer choices than the strictest review runs.
+    /// Whether `key` may stand in a plan or its reasons: a stage, the
+    /// reviewers key or a stage's workers key.
+    pub fn is_plan_key(&self, key: &str) -> bool {
+        self.stage(key).is_some()
+            || self.reviewers_key().as_deref() == Some(key)
+            || self.workers_stage(key).is_some()
+    }
+
+    /// The stage and reviewers keys this pipeline takes, for an error that
+    /// names them; each stage's `<stage>.workers` key is also taken.
+    pub fn plan_keys(&self) -> String {
+        let mut keys: Vec<String> = self.file.stages.iter().map(|s| s.id.clone()).collect();
+        keys.extend(self.reviewers_key());
+        keys.join(", ")
+    }
+
+    /// Refuse a `plan` key that is neither a stage, the reviewers key nor a
+    /// workers key, more reviewer choices than the strictest review runs, and
+    /// more worker choices than a lead is given.
     pub fn check_plan_keys(&self, plan: &ModelPlan) -> Result<(), ArchonError> {
         let reviewers = self.reviewers_key();
-        let unknown = plan
-            .0
-            .keys()
-            .find(|key| self.stage(key).is_none() && Some(*key) != reviewers.as_ref());
-        if let Some(extra) = unknown {
-            let mut keys: Vec<&str> = self.file.stages.iter().map(|s| s.id.as_str()).collect();
-            keys.extend(reviewers.as_deref());
+        if let Some(extra) = plan.0.keys().find(|key| !self.is_plan_key(key)) {
             return Err(ArchonError::Invalid(format!(
-                "model_plan names stage {extra:?}, which pipeline {:?} does not have (stages: {})",
+                "model_plan names stage {extra:?}, which pipeline {:?} does not have \
+                 (stages: {}); a stage's workers take `<stage>.workers`",
                 self.name(),
-                keys.join(", ")
+                self.plan_keys()
             )));
         }
+        crate::workers::check_worker_counts(plan)?;
         let listed = reviewers
             .as_ref()
             .and_then(|key| plan.choices_for(key))

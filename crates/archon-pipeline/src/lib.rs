@@ -25,6 +25,7 @@ pub mod spec;
 pub mod swarm;
 pub mod team;
 pub mod template;
+pub mod workers;
 
 pub use catalog::{Catalog, CatalogSources};
 pub use engine::{ApprovedProposal, EngineAction, OperatorWait, RunDriver, SpawnPlan};

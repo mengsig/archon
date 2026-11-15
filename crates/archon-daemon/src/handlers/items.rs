@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use archon_core::catalog::{StageKind, WorkspaceMode};
+use archon_core::delegation::WorkerPolicy;
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 use archon_core::initiative::InitiativeState;
@@ -310,7 +311,7 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
     mark_viewed(ctx, id).await?;
     let waiting = super::waiting::WaitingView::read(ctx).await?;
     let estimates = ctx.config.limits.count_estimated_cost;
-    let default_efforts = default_efforts(ctx, id).await?;
+    let (default_efforts, worker_policies) = plan_defaults(ctx, id).await?;
     let stage_warnings = crate::inbox_health::warnings(ctx, archon_core::now(), Some(id)).await?;
     let store = ctx.read_store().await?;
     let item = store.item(id)?;
@@ -343,8 +344,11 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
     let steers = executor::steer::records(&store, id)?;
     let switched_to = executor::steer::switched_to(&store, &item)?;
     let message_caps = crate::agent_messages::caps(&store, Some(id))?;
+    let stage_notes = executor::stage_note::read(&store, &stages)?;
     Ok(Reply::ItemDetail(Box::new(ItemDetail {
         default_efforts,
+        worker_policies,
+        stage_notes,
         switched_to,
         steers,
         waiting_reason,
@@ -361,25 +365,49 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
     })))
 }
 
-/// The default effort of every key the item's plan names; empty when its
-/// pipeline can no longer be loaded, which the plan alone already shows.
-async fn default_efforts(
-    ctx: &DaemonContext,
-    id: &QueueItemId,
-) -> Result<BTreeMap<String, Effort>, ArchonError> {
-    let item = ctx.read_store().await?.item(id)?;
-    let spec = match item_pipeline(ctx, &item).await {
-        Ok((_, _, spec)) => spec,
+type PlanDefaults = (BTreeMap<String, Effort>, BTreeMap<String, WorkerPolicy>);
+
+/// The default effort of every key the item's plan names, and the worker
+/// policy of each stage whose lead may delegate, within the model policy in
+/// force; both empty when its pipeline can no longer be loaded, which the
+/// plan alone already shows.
+async fn plan_defaults(ctx: &DaemonContext, id: &QueueItemId) -> Result<PlanDefaults, ArchonError> {
+    let (item, catalog) = {
+        let store = ctx.read_store().await?;
+        (store.item(id)?, store.model_catalog())
+    };
+    let (env, spec) = match item_pipeline(ctx, &item).await {
+        Ok((env, _, spec)) => (env, spec),
         Err(error) if error.is_store() => return Err(error),
         Err(error) => {
-            tracing::warn!(%id, %error, "default efforts not shown: pipeline unavailable");
-            return Ok(BTreeMap::new());
+            tracing::warn!(%id, %error, "plan defaults not shown: pipeline unavailable");
+            return Ok(Default::default());
         }
     };
     let keys = item.model_plan.0.keys();
-    Ok(keys
+    let efforts = keys
         .filter_map(|key| Some((key.clone(), spec.default_effort(key)?)))
-        .collect())
+        .collect();
+    let yolo = item.autonomy.tools == archon_core::autonomy::ToolsMode::Yolo;
+    // As a spawn now would send it: narrowed to the model policy in force.
+    let models = env.policy(&ctx.config);
+    let delegating = spec
+        .file
+        .stages
+        .iter()
+        .filter(|stage| yolo || stage.allow_delegation || spec.holds_review(stage));
+    let policies = delegating
+        .filter_map(|stage| {
+            let planned = spec.worker_policy(stage, &item.model_plan)?;
+            let lead = item
+                .model_plan
+                .choices_for(&stage.id)
+                .and_then(|c| c.first());
+            let narrowed = planned.within(&models, &catalog, lead.map(|c| &c.model));
+            Some((stage.id.clone(), narrowed.policy))
+        })
+        .collect();
+    Ok((efforts, policies))
 }
 
 /// Priority, tags, budget and dependencies change any time before success;
@@ -1110,18 +1138,12 @@ pub(crate) fn check_reasons(
         return Ok(());
     };
     check_reason_lengths(reasons)?;
-    let reviewers = spec.reviewers_key();
-    let unknown = reasons
-        .keys()
-        .find(|id| spec.stage(id).is_none() && Some(*id) != reviewers.as_ref());
-    if let Some(extra) = unknown {
-        let mut ids: Vec<&str> = spec.file.stages.iter().map(|s| s.id.as_str()).collect();
-        ids.extend(reviewers.as_deref());
+    if let Some(extra) = reasons.keys().find(|key| !spec.is_plan_key(key)) {
         return Err(ArchonError::Invalid(format!(
             "model_reasons key {extra:?} is not a stage id: keys are the stage ids of pipeline \
-             {:?}, not the pipeline name; valid ids: {}",
+             {:?}, not the pipeline name; valid ids: {}, or `<stage>.workers`",
             spec.name(),
-            ids.join(", ")
+            spec.plan_keys()
         )));
     }
     Ok(())

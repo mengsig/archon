@@ -142,12 +142,18 @@ impl WorkerPolicy {
     /// the catalog holds a model of it under an open policy, else resolved
     /// to a permitted catalog model, so Aether never picks a denied one.
     /// With no worker left, it fails closed: see [`Self::fallback`].
-    pub fn within(&self, policy: &ModelPolicy, catalog: &ModelCatalog) -> Narrowed {
+    pub fn within(
+        &self,
+        policy: &ModelPolicy,
+        catalog: &ModelCatalog,
+        lead: Option<&ModelRef>,
+    ) -> Narrowed {
         assert!(!self.workers.is_empty(), "validated in new");
         let cap = |effort: Effort| policy.max_effort.map_or(effort, |c| effort.min(c));
         let workers = self.permitted_workers(policy, catalog, cap);
         if workers.is_empty() {
-            return self.fallback(policy, catalog, &unresolved_cause(self, policy, catalog));
+            let cause = unresolved_cause(self, policy, catalog);
+            return self.fallback(policy, (catalog, lead), &cause);
         }
         let mut narrowed = Self::new(workers, self.default_tier, self.max_parallel)
             .expect("narrowed workers are non-empty and keep the validated cap");
@@ -165,27 +171,39 @@ impl WorkerPolicy {
 
     /// The narrowest policy when no planned worker is permitted, for `cause`:
     /// one worker at a time, at the lowest effort, on the cheapest permitted
-    /// catalog model. Aether reads an empty `workers` as its tier rule, not
-    /// as none, so with no such model the lead is told to work alone.
-    pub fn fallback(&self, policy: &ModelPolicy, catalog: &ModelCatalog, cause: &str) -> Narrowed {
+    /// catalog model other than the `lead`'s own. Aether reads an empty
+    /// `workers` as its tier rule, not as none, so with no such model that
+    /// rule is narrowed to the fast tier, and Archon's delegation watchdog
+    /// cancels any child but an exempt one: the lead works alone.
+    pub fn fallback(
+        &self,
+        policy: &ModelPolicy,
+        (catalog, lead): (&ModelCatalog, Option<&ModelRef>),
+        cause: &str,
+    ) -> Narrowed {
         assert!(!cause.is_empty(), "a fallback says why");
         let cheapest = catalog
             .models()
             .iter()
             .filter(|m| m.tier.is_some() && policy.permits_model(&m.model))
+            .filter(|m| Some(&m.model) != lead)
             .min_by_key(|m| m.tier)
             .map(|m| m.model.clone());
-        let (workers, rest) = match cheapest {
+        let (workers, default_tier, rest) = match cheapest {
             Some(model) => {
                 let rest = format!("the lead may use one worker, on {model} at effort low");
                 let only = WorkerChoice::from_plan(&ModelChoice::pinned(model, Effort::Low));
-                (vec![only], rest)
+                (vec![only], self.default_tier, rest)
             }
-            None => (Vec::new(), "the lead works alone".to_owned()),
+            None => (
+                Vec::new(),
+                Some(Tier::Fast),
+                "the lead works alone".to_owned(),
+            ),
         };
         let narrowed = Self {
             workers,
-            default_tier: self.default_tier,
+            default_tier,
             max_effort: Some(Effort::Low),
             max_parallel: Some(1),
             exempt_roles: self.exempt_roles.clone(),
@@ -194,6 +212,10 @@ impl WorkerPolicy {
         assert!(
             narrowed.workers.iter().all(|w| w.model.is_some()),
             "a fallback worker is a permitted model, never a tier"
+        );
+        assert!(
+            narrowed.workers.iter().all(|w| w.model.as_ref() != lead),
+            "a lead is never its own fallback worker"
         );
         Narrowed {
             policy: narrowed,
@@ -389,7 +411,7 @@ mod tests {
     #[test]
     fn narrowing_caps_effort_and_keeps_a_tier_under_an_open_policy() {
         let policy = ModelPolicy::from_lists(&[], &[], Some(Effort::Low));
-        let narrowed = balanced_default().within(&policy, &catalog());
+        let narrowed = balanced_default().within(&policy, &catalog(), None);
         assert_eq!(narrowed.note, None);
         let narrowed = narrowed.policy;
         assert_eq!(
@@ -415,7 +437,7 @@ mod tests {
 
     #[test]
     fn narrowing_resolves_a_tier_to_a_permitted_catalog_model() {
-        let within = |p: &ModelPolicy| balanced_default().within(p, &catalog());
+        let within = |p: &ModelPolicy| balanced_default().within(p, &catalog(), None);
         let fast = within(&allow(&["a/fast", "b/strong"]));
         assert_eq!(fast.note, None);
         assert_eq!(
@@ -430,7 +452,7 @@ mod tests {
             [pinned_at("a/fast", Effort::Medium)]
         );
         let open = ModelPolicy::from_lists(&[], &[], None);
-        let blind = balanced_default().within(&open, &ModelCatalog::default());
+        let blind = balanced_default().within(&open, &ModelCatalog::default(), None);
         assert!(
             blind.policy.workers.is_empty(),
             "no tier the catalog cannot place"
@@ -439,7 +461,7 @@ mod tests {
 
     #[test]
     fn with_no_permitted_worker_the_cheapest_permitted_model_takes_one_at_low() {
-        let narrowed = balanced_default().within(&allow(&["b/strong"]), &catalog());
+        let narrowed = balanced_default().within(&allow(&["b/strong"]), &catalog(), None);
         assert_eq!(
             narrowed.policy.workers,
             [pinned_at("b/strong", Effort::Low)]
@@ -460,6 +482,30 @@ mod tests {
     }
 
     #[test]
+    fn a_fallback_never_picks_the_lead_s_own_model() {
+        let lead: ModelRef = "b/strong".parse().unwrap();
+        let only_lead = balanced_default().within(&allow(&["b/strong"]), &catalog(), Some(&lead));
+        assert!(only_lead.policy.workers.is_empty(), "{only_lead:?}");
+        assert!(only_lead.note.unwrap().ends_with("; the lead works alone"));
+        let fast_lead: ModelRef = "a/fast".parse().unwrap();
+        let denied = WorkerPolicy::new(
+            vec![WorkerChoice::from_plan(&pinned(Effort::Medium))],
+            None,
+            None,
+        );
+        let other = denied.unwrap().within(
+            &allow(&["a/fast", "b/strong"]),
+            &catalog(),
+            Some(&fast_lead),
+        );
+        assert_eq!(
+            other.policy.workers,
+            [pinned_at("b/strong", Effort::Low)],
+            "the cheapest permitted model but the lead's"
+        );
+    }
+
+    #[test]
     fn with_no_permitted_model_at_all_the_lead_works_alone_and_keeps_its_reviewers() {
         let reviewer: ModelRef = "r/review".parse().unwrap();
         let planned = balanced_default().with_reviewers(vec![reviewer.clone()]);
@@ -471,13 +517,18 @@ mod tests {
                 ModelCatalog::default(),
             ),
         ] {
-            let narrowed = planned.within(&policy, &catalog);
+            let narrowed = planned.within(&policy, &catalog, None);
             assert!(
                 narrowed.policy.workers.is_empty(),
                 "never the lead's own model"
             );
             assert_eq!(narrowed.policy.max_parallel, Some(1));
             assert_eq!(narrowed.policy.max_effort, Some(Effort::Low));
+            assert_eq!(
+                narrowed.policy.default_tier,
+                Some(Tier::Fast),
+                "the narrowest tier rule"
+            );
             assert_eq!(narrowed.policy.exempt_roles, [REVIEWER_ROLE]);
             assert_eq!(
                 narrowed.policy.exempt_models,
@@ -487,7 +538,7 @@ mod tests {
             assert!(note.ends_with("; the lead works alone"), "{note}");
             assert_eq!(narrowed.policy.describe(), "none: work alone");
         }
-        let empty = planned.within(&allow(&["z/lead"]), &ModelCatalog::default());
+        let empty = planned.within(&allow(&["z/lead"]), &ModelCatalog::default(), None);
         let note = empty.note.unwrap();
         assert!(
             note.contains("(the model catalog is empty; planned: "),
@@ -513,7 +564,7 @@ mod tests {
             .unwrap()
             .with_reviewers(vec![reviewer.clone()]);
         let deny = ModelPolicy::from_lists(&[], &["codex/terra".parse().unwrap()], None);
-        let narrowed = planned.within(&deny, &catalog());
+        let narrowed = planned.within(&deny, &catalog(), None);
         assert_eq!(narrowed.note, None);
         let narrowed = narrowed.policy;
         assert_eq!(narrowed.workers, [pinned_at("a/fast", Effort::Low)]);

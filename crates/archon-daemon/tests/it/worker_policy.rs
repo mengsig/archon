@@ -147,6 +147,11 @@ async fn a_worker_fallback_keeps_the_lead_s_reviewer_exemptions() {
     let pinned = policy.workers[0].model.as_ref().expect("a pinned fallback");
     assert!(allowed.contains(pinned) && policy.workers[0].tier.is_none());
     assert_eq!(
+        pinned.to_string(),
+        REVIEW_MODEL,
+        "the permitted model but the lead's own"
+    );
+    assert_eq!(
         (policy.workers[0].effort, policy.max_parallel),
         (Effort::Low, Some(1)),
         "the narrowest policy: one worker at the lowest effort"
@@ -407,4 +412,36 @@ async fn a_lead_with_no_catalog_tier_is_never_its_own_worker() {
         note.contains("(the model policy permits none of: "),
         "{note}"
     );
+}
+
+/// The lead's own model is the only permitted catalog model: the fallback
+/// never picks it, so the lead works alone, reviewers still exempt.
+#[tokio::test]
+async fn a_lead_that_is_the_only_permitted_catalog_model_works_alone() {
+    let h = Harness::with_config(allowing(&[MODEL, REVIEW_MODEL])).await;
+    set_catalog(&h, &[(MODEL, Tier::Strong)]).await;
+    let plan = plan_of(&[("build", MODEL), ("build.review", REVIEW_MODEL)]);
+    let (item, build) = build_lead(&h, plan).await;
+    let policy = build
+        .delegation_policy
+        .clone()
+        .expect("a lead alone is still bounded");
+    assert!(
+        policy.workers.is_empty(),
+        "never the lead's own model: {policy:?}"
+    );
+    assert_eq!(
+        policy.default_tier,
+        Some(Tier::Fast),
+        "Aether's tier rule, narrowest"
+    );
+    assert_eq!(policy.exempt_roles, ["reviewer"]);
+    assert!(worker_line(&build).contains("): none. Do the work yourself"));
+    let shown = detail(&h, &item).await;
+    let note = shown
+        .stage_notes
+        .values()
+        .next()
+        .expect("the fallback is noted");
+    assert!(note.ends_with("; the lead works alone"), "{note}");
 }

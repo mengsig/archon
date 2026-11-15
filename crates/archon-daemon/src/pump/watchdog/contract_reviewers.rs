@@ -1,9 +1,12 @@
 //! A reviewer child of a lead whose item names no `<stage>.review` plan is
 //! held to the reviewer models the lead's contract named, as its stored
 //! delegation policy records them (`exempt_models`), so a lead cannot pass
-//! off a clone of its own model as a reviewer.
+//! off a clone of its own model as a reviewer. A lead sent no permitted
+//! worker (`workers` empty) may delegate only its exempt roles: Aether reads
+//! that list as its tier rule, so Archon holds the lead to working alone.
 
 use archon_core::aether_ids::AetherAgentId;
+use archon_core::delegation::WorkerPolicy;
 use archon_core::error::ArchonError;
 use archon_core::id::StageRunId;
 use archon_core::model::ModelRef;
@@ -21,7 +24,7 @@ pub(super) async fn violation(
     model: &ModelRef,
     held: &Value,
 ) -> Result<Option<String>, ArchonError> {
-    let role = held.get("role").and_then(Value::as_str).unwrap_or_default();
+    let role = role_of(held);
     if !role.eq_ignore_ascii_case(archon_core::delegation::REVIEWER_ROLE) {
         return Ok(None);
     }
@@ -49,12 +52,65 @@ fn refusal(named: &[ModelRef], model: &ModelRef) -> Option<String> {
     ))
 }
 
+/// Why child `held` of stage agent `parent` breaks a policy that left the
+/// lead no permitted worker; `None` for an exempt role or any other policy.
+pub(super) async fn alone_violation(
+    ctx: &DaemonContext,
+    parent: &AetherAgentId,
+    held: &Value,
+) -> Result<Option<String>, ArchonError> {
+    let Some(policy) = sent_policy(ctx, parent).await? else {
+        return Ok(None);
+    };
+    Ok(alone_refusal(&policy, role_of(held)))
+}
+
+fn role_of(held: &Value) -> &str {
+    held.get("role").and_then(Value::as_str).unwrap_or_default()
+}
+
+/// The refusal of a child with `role` under `policy` when it names no worker.
+fn alone_refusal(policy: &WorkerPolicy, role: &str) -> Option<String> {
+    if !policy.workers.is_empty() {
+        return None;
+    }
+    assert!(
+        policy.max_parallel == Some(1),
+        "a policy with no workers is only the fallback"
+    );
+    let exempt = policy
+        .exempt_roles
+        .iter()
+        .any(|r| r.eq_ignore_ascii_case(role));
+    if exempt {
+        return None;
+    }
+    Some(format!(
+        "child with role {role:?}: no permitted worker model resolved for this stage, so \
+         its lead works alone and delegates only {}",
+        match policy.exempt_roles.is_empty() {
+            true => "nothing".to_owned(),
+            false => format!("role {}", policy.exempt_roles.join(", ")),
+        }
+    ))
+}
+
 /// The reviewer models stage agent `parent` was sent; `None` when it is no
 /// stage agent, its request is gone, or its policy names none.
 async fn named_models(
     ctx: &DaemonContext,
     parent: &AetherAgentId,
 ) -> Result<Option<Vec<ModelRef>>, ArchonError> {
+    let models = sent_policy(ctx, parent).await?.map(|p| p.exempt_models);
+    Ok(models.filter(|models| !models.is_empty()))
+}
+
+/// The delegation policy stage agent `parent` was sent; `None` when it is
+/// no stage agent, its request is gone, or it was sent none.
+async fn sent_policy(
+    ctx: &DaemonContext,
+    parent: &AetherAgentId,
+) -> Result<Option<WorkerPolicy>, ArchonError> {
     let Some(stage_run) = stage_run_of(ctx, parent).await? else {
         return Ok(None);
     };
@@ -65,8 +121,7 @@ async fn named_models(
         Err(ArchonError::NotFound(_)) => return Ok(None),
         Err(error) => return Err(error),
     };
-    let models = spawn.request.delegation_policy.map(|p| p.exempt_models);
-    Ok(models.filter(|models| !models.is_empty()))
+    Ok(spawn.request.delegation_policy)
 }
 
 /// The stage run `parent` works for: as Archon recorded it, else by the
@@ -106,6 +161,40 @@ mod tests {
         assert!(
             why.contains("claude-code/fable") && why.contains("codex/terra"),
             "{why}"
+        );
+    }
+
+    #[test]
+    fn a_lead_sent_no_worker_delegates_only_its_exempt_roles() {
+        use archon_core::delegation::WorkerChoice;
+        use archon_core::model::Effort;
+        use archon_core::model_tier::{ModelCatalog, Tier};
+        use archon_core::policy::ModelPolicy;
+        let planned = WorkerPolicy::new(
+            vec![WorkerChoice::of_tier(Tier::Balanced, Effort::Medium)],
+            None,
+            Some(2),
+        )
+        .unwrap()
+        .with_reviewers(vec!["codex/terra".parse().unwrap()]);
+        let open = ModelPolicy::from_lists(&[], &[], None);
+        let alone = planned.within(&open, &ModelCatalog::default(), None).policy;
+        assert!(alone.workers.is_empty());
+        assert_eq!(
+            alone_refusal(&alone, "reviewer"),
+            None,
+            "reviewers are never failed closed"
+        );
+        assert_eq!(alone_refusal(&alone, "Reviewer"), None);
+        let why = alone_refusal(&alone, "worker").expect("a worker is cancelled");
+        assert!(
+            why.contains("works alone") && why.contains("role reviewer"),
+            "{why}"
+        );
+        assert_eq!(
+            alone_refusal(&planned, "worker"),
+            None,
+            "a policy with workers is Aether's to hold"
         );
     }
 }

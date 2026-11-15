@@ -325,10 +325,11 @@ restrictive allow or deny list, a lead the catalog does not rank), the
 workers fail closed and the review does not: the lead still spawns, with its
 reviewer exemptions, under the narrowest policy, which is one worker at a
 time (`max_parallel = 1`) at effort low on the cheapest permitted catalog
-model. Aether reads an empty `workers` as its tier rule, not as "none", so
-with no permitted catalog model at all the lead is sent `workers = []`
-capped the same way and told to work alone. The lead's own model is never
-the fallback. Either way Archon records a stage note, shown by `get_item`:
+model other than the lead's own. Aether reads an empty `workers` as its
+tier rule, not as "none", so with no such model the lead is sent
+`workers = []` capped the same way with `default_tier = "fast"`, told to
+work alone, and Archon's delegation watchdog cancels any child of it but a
+reviewer as it spawns. The lead's own model is never the fallback. Either way Archon records a stage note, shown by `get_item`:
 `no permitted worker model resolved (<cause>); the lead works alone` (or the
 one worker it may use). The stage is neither deferred nor failed.
 

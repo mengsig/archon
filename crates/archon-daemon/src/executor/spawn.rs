@@ -896,10 +896,11 @@ fn delegation_policy(target: &Target<'_>, plan: &SpawnPlan) -> Option<Narrowed> 
                 max_effort: Some(archon_core::model::Effort::Low),
             };
             let cause = format!("the repository's model policy cannot be read: {error}");
-            return Some(planned.fallback(&none, target.catalog, &cause));
+            let lead = Some(&plan.choice.model);
+            return Some(planned.fallback(&none, (target.catalog, lead), &cause));
         }
     };
-    let mut narrowed = planned.within(&policy, target.catalog);
+    let mut narrowed = planned.within(&policy, target.catalog, Some(&plan.choice.model));
     let Some(named) = plan.reviewers.as_deref() else {
         return Some(narrowed);
     };

@@ -399,7 +399,12 @@ async fn plan_defaults(ctx: &DaemonContext, id: &QueueItemId) -> Result<PlanDefa
     let policies = delegating
         .filter_map(|stage| {
             let planned = spec.worker_policy(stage, &item.model_plan)?;
-            Some((stage.id.clone(), planned.within(&models, &catalog).policy))
+            let lead = item
+                .model_plan
+                .choices_for(&stage.id)
+                .and_then(|c| c.first());
+            let narrowed = planned.within(&models, &catalog, lead.map(|c| &c.model));
+            Some((stage.id.clone(), narrowed.policy))
         })
         .collect();
     Ok((efforts, policies))

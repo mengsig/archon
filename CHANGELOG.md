@@ -24,9 +24,10 @@
   watchdog would cancel. When no planned worker is permitted (an empty
   catalog, a restrictive allow or deny list), the workers fail closed and
   the review does not: the lead spawns with its reviewer exemptions and at
-  most one worker, at effort low, on the cheapest permitted catalog model,
-  or none, and never on its own model. Archon records a stage note that
-  `get_item` shows.
+  most one worker, at effort low, on the cheapest permitted catalog model
+  other than its own, or none: the delegation watchdog then cancels any
+  child of it but a reviewer. Archon records a stage note that `get_item`
+  shows.
   Items queued before the upgrade keep their plans and take the pipeline
   default; spawn requests stored before it are resent unchanged.
 

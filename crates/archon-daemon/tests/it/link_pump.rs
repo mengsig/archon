@@ -2003,6 +2003,43 @@ async fn a_reviewer_off_the_contract_s_named_models_is_cancelled() {
     assert!(reason.contains(&named), "{reason}");
 }
 
+/// A lead the model policy left no permitted worker is sent `workers = []`,
+/// which Aether reads as its tier rule: Archon cancels any child of it but a
+/// reviewer, so the lead works alone and its review still runs.
+#[tokio::test]
+async fn a_worker_of_a_lead_left_alone_is_cancelled_and_its_reviewer_runs() {
+    use archon_core::delegation::{WorkerChoice, WorkerPolicy};
+    use archon_core::model_tier::{ModelCatalog, Tier};
+    use archon_core::policy::ModelPolicy;
+    let harness = Harness::new().await;
+    let repo = tempfile::tempdir().unwrap();
+    let stage = running_stage(&harness.ctx, repo.path(), STAGE, STAGE_TASK).await;
+    let workers = vec![WorkerChoice::of_tier(Tier::Balanced, Effort::Medium)];
+    let planned = WorkerPolicy::new(workers, Some(Tier::Balanced), Some(2))
+        .unwrap()
+        .with_reviewers(vec![ModelRef::new(ALLOWED.0, ALLOWED.1)]);
+    let open = ModelPolicy::from_lists(&[], &[], None);
+    let alone = planned.within(&open, &ModelCatalog::default(), None);
+    assert!(alone.policy.workers.is_empty(), "{alone:?}");
+    link_common::sent_policy(&harness.ctx, &stage, alone.policy).await;
+    let (agents, pump) = running_pump(&harness).await;
+    harness.fake.set_default("cancel", Scripted::ok());
+    for (id, role) in [(CHILD, "reviewer"), (CHILD_2, "worker")] {
+        let mut agent = agents.set(id, "running");
+        agent["role"] = json!(role);
+        agent["config"] = json!({"effort": "low"});
+        agents.0.lock().unwrap().insert(id.to_owned(), agent);
+        push(&harness, created(id, STAGE, ALLOWED), keys::CURSOR_FLEET).await;
+    }
+    pump.abort();
+
+    let cancels = harness.fake.received_named("cancel");
+    assert_eq!(cancels.len(), 1, "only the worker: {cancels:?}");
+    assert_eq!(cancels[0]["agent"], CHILD_2);
+    let reason = cancels[0]["reason"].as_str().unwrap();
+    assert!(reason.contains("its lead works alone"), "{reason}");
+}
+
 /// By default, as in 1.4.12, the plan's reviewer effort is a floor: a reviewer
 /// above it runs up to the policy's `max_effort`, and one below it is cancelled
 /// as it spawns.

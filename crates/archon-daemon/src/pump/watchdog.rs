@@ -255,20 +255,27 @@ async fn violation(
         let Some(held) = held_by_aether(ctx, agent).await? else {
             return Ok(None);
         };
-        return contract_reviewers::violation(ctx, parent, model, &held).await;
+        if let Some(refusal) = contract_reviewers::violation(ctx, parent, model, &held).await? {
+            return Ok(Some(refusal));
+        }
+        return contract_reviewers::alone_violation(ctx, parent, &held).await;
     };
     let held = held_by_aether(ctx, agent).await?;
     let refusal = match &held {
         Some(held) => policy_refusal(&policy, model, held),
         None => model_refusal(&policy, model),
     };
-    Ok(match refusal {
-        Some(refusal) => Some(refusal.to_string()),
-        None => held.and_then(|held| {
-            let sizing = ctx.config.models.effort_sizing;
-            reviewer_refusal(named, model, &held, sizing)
-        }),
-    })
+    if let Some(refusal) = refusal {
+        return Ok(Some(refusal.to_string()));
+    }
+    let Some(held) = held else {
+        return Ok(None);
+    };
+    let sizing = ctx.config.models.effort_sizing;
+    if let Some(refusal) = reviewer_refusal(named, model, &held, sizing) {
+        return Ok(Some(refusal));
+    }
+    contract_reviewers::alone_violation(ctx, parent, &held).await
 }
 
 /// Why a child of an item with no reviewer plan breaks the model policy.

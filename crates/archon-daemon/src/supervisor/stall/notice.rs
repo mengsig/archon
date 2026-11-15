@@ -1,27 +1,14 @@
 //! What the operator and the orchestrator read about a silent turn.
 
-use std::time::Duration;
-
+use archon_aether::turn::OpenCall;
 use archon_core::error::ArchonError;
-use archon_core::ports::OpenToolCall;
 
-use super::{Hung, INTERRUPT_SPACING, MAX_NUDGES, NUDGE_GRACE, call_bound};
+use super::{INTERRUPT_SPACING, NUDGE_GRACE, Silence, call_bound};
 
-/// How Archon's nudge to a silent turn begins.
-const NUDGE_PREFIX: &str = "Continue: your turn has made no progress";
-/// How Archon's note to an interrupted orchestrator begins.
-const CUT_OFF_PREFIX: &str = "Archon interrupted your turn";
-/// What the orchestrator reads when an interrupt it was told of stopped nothing.
-pub(super) const WITHDRAWN_NOTE: &str = "Archon's interrupt of your turn did not go through, \
-    so no tool call was cut off by it: disregard its note about a cut-off call.";
 /// The longest command a note quotes.
 const COMMAND_QUOTE: usize = 300;
-
-pub(super) enum Nudge {
-    Sent,
-    Spent,
-    Failed(ArchonError),
-}
+/// The most open calls a note names.
+const CALLS_NAMED: usize = 5;
 
 /// What the interrupt of a hung turn did.
 pub(super) enum Interrupted {
@@ -30,135 +17,151 @@ pub(super) enum Interrupted {
     Failed(ArchonError),
 }
 
-pub(super) fn nudge_text(silent: Duration) -> String {
-    let minutes = silent.as_secs() / 60;
-    assert!(minutes > 0, "a nudge follows minutes of silence");
-    format!(
-        "{NUDGE_PREFIX} for {minutes} minutes. If you ended it with work still pending, such \
-         as watching a release build, pick that work up now."
-    )
-}
-
-/// What the operator reads of a stall; `nudge` says how the nudge went.
-pub(super) fn stall_text(silent: Duration, nudge: Nudge) -> String {
-    let minutes = silent.as_secs() / 60;
-    assert!(minutes > 0, "a stall is minutes long");
-    let nudge = match nudge {
-        Nudge::Sent => "Archon sent it a nudge to continue.".to_owned(),
-        Nudge::Spent => {
-            format!("Archon has used its {MAX_NUDGES} nudge attempts on it and sends no more.")
+impl Interrupted {
+    pub(super) fn name(&self) -> &'static str {
+        match self {
+            Self::Stopped => "stopped",
+            Self::NoTurn => "no turn",
+            Self::Failed(_) => "failed",
         }
-        Nudge::Failed(error) => format!("Archon could not nudge it ({error})."),
+    }
+}
+
+fn minutes(silence: &Silence) -> u64 {
+    let minutes = silence.length.as_secs() / 60;
+    assert!(minutes > 0, "a silence acted on is minutes long");
+    minutes
+}
+
+/// What the orchestrator reads as its nudge.
+pub(super) fn nudge_text(silence: &Silence) -> String {
+    let waiting = match silence.mail {
+        true => " The operator's mail is waiting for you.",
+        false => "",
     };
-    let grace = NUDGE_GRACE.as_secs() / 60;
     format!(
-        "The orchestrator has been in one turn for {minutes} minutes without a message, tool \
-         result or usage update; its model request or a tool call may be hung, and nothing \
-         will wake it by itself. {nudge} If it is still silent in {grace} minutes, Archon \
-         interrupts the turn, as Esc in its terminal would, so that waiting messages reach a \
-         fresh turn; if that fails, run `archon orchestrator restart` to start a fresh one."
+        "Continue: your turn has made no progress for {} minutes.{waiting} If you ended it \
+         with work still pending, such as watching a release build, pick that work up now.",
+        minutes(silence)
     )
 }
 
-/// What the orchestrator reads in the fresh turn after an interrupt: which
-/// call was cut off, so it can check and rerun it.
-pub(super) fn cut_off_note(
-    hung: &Hung,
-    call: &Result<Option<OpenToolCall>, ArchonError>,
-) -> String {
-    let minutes = hung.silent.as_secs() / 60;
-    assert!(minutes > 0, "an interrupt follows minutes of silence");
-    let waited = if hung.mail {
-        ", while the operator's mail waited"
-    } else {
-        ""
-    };
-    let call = match call {
-        Ok(Some(call)) => format!(
-            "The tool call cut off was `{}`{}, started {}, with any other call you had \
-             running; their outcome is unknown, so check whether each took effect, and run it \
-             again if it still matters.",
-            call.name,
-            quoted_command(call),
-            call.requested_at.format("%H:%M:%SZ"),
-        ),
-        Ok(None) => "No tool call was open, so your model request was what hung; carry on \
-                     from where you were."
-            .to_owned(),
-        Err(error) => format!(
-            "Archon could not read which tool call was open ({error}); if you were running \
-             one, check whether it took effect, and run it again if it still matters."
-        ),
-    };
-    let note = format!(
-        "{CUT_OFF_PREFIX}: it was silent for {minutes} minutes{waited}. {call} Messages that \
-         waited for you follow."
-    );
-    assert!(
-        note.starts_with(CUT_OFF_PREFIX),
-        "the note says who interrupted"
-    );
-    note
+/// What the operator reads of a stall with no mail waiting, once nudged.
+pub(super) fn stall_text(silence: &Silence) -> String {
+    assert!(!silence.mail, "mail's nudge is not told; its interrupt is");
+    format!(
+        "The orchestrator has been in one turn for {} minutes without a message, tool result \
+         or usage update; its model request or a tool call may be hung, and nothing will wake \
+         it by itself. Archon sent it a nudge to continue. If it is still silent in {} \
+         minutes, Archon interrupts the turn, as Esc in its terminal would, so that waiting \
+         messages reach a fresh turn; if that fails, run `archon orchestrator restart` to \
+         start a fresh one.",
+        minutes(silence),
+        NUDGE_GRACE.as_secs() / 60
+    )
 }
 
-fn quoted_command(call: &OpenToolCall) -> String {
+/// What the fresh turn reads: which calls were open, to check and rerun. Sent
+/// before the interrupt, so it claims nothing a failed interrupt makes false.
+pub(super) fn cut_off_note(silence: &Silence, open_calls: &[OpenCall]) -> String {
+    let waited = match silence.mail {
+        true => " while the operator's mail waited",
+        false => "",
+    };
+    let calls = match open_calls {
+        [] => "No tool call was open, so your model request was what hung; carry on from \
+               where you were."
+            .to_owned(),
+        calls => format!(
+            "These tool calls were open then: {}. Any of them without a result was cut off \
+             and its outcome is unknown: check whether it took effect, and run it again if it \
+             still matters.",
+            named(calls)
+        ),
+    };
+    format!(
+        "Archon is interrupting your turn: it made no progress for {} minutes{waited}. \
+         {calls} Messages that waited for you follow.",
+        minutes(silence)
+    )
+}
+
+/// The first [`CALLS_NAMED`] of `calls`, each with its command and start.
+fn named(calls: &[OpenCall]) -> String {
+    assert!(!calls.is_empty(), "only open calls are named");
+    let mut named: Vec<String> = calls
+        .iter()
+        .take(CALLS_NAMED)
+        .map(|call| {
+            format!(
+                "`{}`{}, started {}",
+                call.name,
+                quoted_command(call),
+                call.requested_at.format("%H:%M:%SZ")
+            )
+        })
+        .collect();
+    if calls.len() > CALLS_NAMED {
+        named.push(format!("{} more", calls.len() - CALLS_NAMED));
+    }
+    named.join("; ")
+}
+
+fn quoted_command(call: &OpenCall) -> String {
     let Some(command) = call.command.as_deref() else {
         return String::new();
     };
     let quoted: String = command.chars().take(COMMAND_QUOTE).collect();
-    let cut = if quoted.len() < command.len() {
-        "…"
-    } else {
-        ""
+    let cut = match quoted.len() < command.len() {
+        true => "…",
+        false => "",
     };
     format!(" running `{quoted}{cut}`")
 }
 
-/// `span` in minutes, and seconds where it has any.
-fn span_text(span: Duration) -> String {
-    let (minutes, seconds) = (span.as_secs() / 60, span.as_secs() % 60);
-    match seconds {
-        0 => format!("{minutes} min"),
-        _ => format!("{minutes} min {seconds} s"),
-    }
+/// The open call that kept the mail waiting longest, as the operator reads it.
+fn longest_call(open_calls: &[OpenCall]) -> String {
+    let Some(longest) = open_calls
+        .iter()
+        .max_by_key(|call| call.requested_at + call_bound(call))
+    else {
+        return ", with no tool call running".to_owned();
+    };
+    let bound = call_bound(longest).as_secs();
+    let (whole, seconds) = (bound / 60, bound % 60);
+    let bound = match seconds {
+        0 => format!("{whole} min"),
+        _ => format!("{whole} min {seconds} s"),
+    };
+    format!(", in a `{}` call past its bound of {bound}", longest.name)
 }
 
-/// What the operator reads after archond tried to interrupt a hung turn;
-/// `note` is whether Archon's last note to the orchestrator was sent.
+/// What the operator reads after archond tried to interrupt a hung turn.
 pub(super) fn interrupt_text(
-    hung: &Hung,
-    call: &Result<Option<OpenToolCall>, ArchonError>,
+    silence: &Silence,
+    open_calls: &[OpenCall],
     outcome: &Interrupted,
-    note: &Result<(), ArchonError>,
 ) -> String {
-    let minutes = hung.silent.as_secs() / 60;
-    assert!(minutes > 0, "an interrupt follows minutes of silence");
-    let running = match call {
-        Ok(Some(call)) => format!(
-            ", in a `{}` call past its bound of {}",
-            call.name,
-            span_text(call_bound(call))
-        ),
-        Ok(None) => ", with no tool call running".to_owned(),
-        Err(_) => String::new(),
-    };
-    let head = match hung.mail {
+    let grace = NUDGE_GRACE.as_secs() / 60;
+    let head = match silence.mail {
         true => format!(
-            "Operator mail waited on the orchestrator's turn, silent for {minutes} \
-             minutes{running}"
+            "Operator mail waited on the orchestrator's turn, silent for {} minutes{}, and \
+             Archon's nudge brought no progress in {grace} minutes",
+            minutes(silence),
+            longest_call(open_calls)
         ),
         false => format!(
-            "The orchestrator's turn was silent for {minutes} minutes{running}, with no \
-             progress in the {} minutes after Archon's nudge",
-            NUDGE_GRACE.as_secs() / 60
+            "The orchestrator's turn was silent for {} minutes, with no progress in the \
+             {grace} minutes after Archon's nudge",
+            minutes(silence)
         ),
     };
     let retry = INTERRUPT_SPACING.as_secs() / 60;
-    let text = match outcome {
+    match outcome {
         Interrupted::Stopped => format!(
             "{head}, so Archon interrupted it, as Esc in its terminal would. Messages waiting \
-             for it, yours included, are delivered in a fresh turn, which is told which call \
-             was cut off. If it stays silent, run `archon orchestrator restart` to start a \
+             for it, yours included, are delivered in a fresh turn, which is told which calls \
+             were cut off. If it stays silent, run `archon orchestrator restart` to start a \
              fresh orchestrator."
         ),
         Interrupted::NoTurn => format!(
@@ -171,18 +174,5 @@ pub(super) fn interrupt_text(
              minutes; to recover it now, run `archon orchestrator restart` to start a fresh \
              one."
         ),
-    };
-    match (note, outcome) {
-        (Ok(()), _) => text,
-        (Err(error), Interrupted::Stopped) => {
-            format!("{text} Archon could not tell it which call was cut off ({error}).")
-        }
-        (Err(error), _) => format!(
-            "{text} Archon could not tell it that its note about a cut-off call is void \
-             ({error})."
-        ),
     }
 }
-
-#[cfg(test)]
-mod tests;

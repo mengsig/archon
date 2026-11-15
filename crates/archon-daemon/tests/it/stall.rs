@@ -641,7 +641,6 @@ fn open_call(id: &str, command: &str, minutes: i64) -> OpenToolCall {
         id: id.into(),
         name: "Bash".into(),
         command: Some(command.into()),
-        timeout: None,
         requested_at: then,
         last_event_at: then,
     }

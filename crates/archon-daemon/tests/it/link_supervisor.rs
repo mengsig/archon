@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use archon_aether::fake::{self, Scripted};
-use archon_core::aether_ids::{AetherAgentId, AetherQuestionRef};
+use archon_core::aether_ids::AetherQuestionRef;
 use archon_core::autonomy::{Directive, DirectiveSource};
 use archon_core::config::Config;
 use archon_core::error::ArchonError;
@@ -1597,306 +1597,63 @@ async fn operator_answer_carries_clipped_question_context() {
     );
 }
 
+/// 2026-11-15: a trivial Bash call never came back, and three operator
+/// messages sat queued behind it for 11 minutes.
 #[tokio::test]
-async fn a_turn_silent_for_half_an_hour_is_reported_to_the_operator_once() {
-    use archon_aether::events::EventKind;
+async fn mail_behind_a_hung_call_is_read_by_a_fresh_turn_within_minutes() {
+    use link_common::turn::{FakeTurn, after};
     let harness = Harness::new().await;
     harness.connect().await;
     harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
-    agent_table(&harness, &[(ORCH, "running")]);
-    harness
-        .fake
-        .script("send_message", Scripted::reply("message_sent", json!({})));
-    let orch = agent_id(ORCH);
-    let started = EventKind::AgentStarted { turn: 241 };
-    harness.ctx.supervisor.saw_event(&orch, &started);
+    let start = archon_core::now();
+    let turn = FakeTurn::serve(&harness, ORCH, start);
+    turn.started(start);
+    turn.bash(start, "call_hung", "ls && head -40 fetch.sh", Some(120_000));
+    turn.operator_says(after(start, 0, 10), "Go ahead with the release");
 
-    let soon = archon_core::now() + chrono::TimeDelta::minutes(5);
-    assert!(!supervisor::report_stall(&harness.ctx, soon).await.unwrap());
     assert!(
-        harness
-            .notifications(NotificationKind::Blocker)
-            .await
-            .is_empty()
+        !turn.check(&harness, after(start, 3, 9)).await,
+        "the call's two minutes and one more are over; the mail's three are not"
     );
-
-    let later = archon_core::now() + chrono::TimeDelta::minutes(31);
-    assert!(supervisor::report_stall(&harness.ctx, later).await.unwrap());
-    let blockers = harness.notifications(NotificationKind::Blocker).await;
-    assert_eq!(blockers.len(), 1, "{blockers:?}");
-    assert!(
-        blockers[0].contains("without a message")
-            && blockers[0].contains("archon orchestrator restart"),
-        "{blockers:?}"
-    );
-    assert!(!supervisor::report_stall(&harness.ctx, later).await.unwrap());
-    assert_eq!(
-        harness.notifications(NotificationKind::Blocker).await.len(),
-        1
-    );
-    let nudges = harness.fake.received_named("send_message");
-    assert_eq!(nudges.len(), 1, "one nudge per stall: {nudges:?}");
-    assert_eq!(nudges[0]["to"], ORCH);
-    assert!(
-        nudges[0]["content"]
-            .as_str()
-            .unwrap()
-            .starts_with("Continue:"),
-        "{nudges:?}"
-    );
-
-    harness.fake.script(
-        "interrupt",
-        Scripted::reply("interrupted", json!({"was_running": true})),
-    );
-    let in_grace = later + chrono::TimeDelta::minutes(1);
-    assert!(
-        !supervisor::report_stall(&harness.ctx, in_grace)
-            .await
-            .unwrap()
-    );
-    let past_grace = later + supervisor::NUDGE_GRACE;
-    assert!(
-        supervisor::report_stall(&harness.ctx, past_grace)
-            .await
-            .unwrap()
-    );
-    let interrupts = harness.fake.received_named("interrupt");
-    assert_eq!(interrupts.len(), 1, "{interrupts:?}");
-    assert_eq!(interrupts[0]["agent"], ORCH);
-    let decisions = harness.notifications(NotificationKind::Decision).await;
-    assert!(
-        decisions
-            .iter()
-            .any(|d| d.contains("Archon interrupted it")),
-        "{decisions:?}"
-    );
-
-    let ended = EventKind::AgentTurnCompleted {
-        turn: 241,
-        next: Some("ready".into()),
-    };
-    harness.ctx.supervisor.saw_event(&orch, &ended);
-    let much_later = archon_core::now() + chrono::TimeDelta::hours(5);
-    assert!(
-        !supervisor::report_stall(&harness.ctx, much_later)
-            .await
-            .unwrap()
-    );
-}
-
-#[tokio::test]
-async fn a_turn_already_open_when_archond_restarts_is_still_watched() {
-    let harness = Harness::new().await;
-    harness.connect().await;
-    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
-    agent_table(&harness, &[(ORCH, "running")]);
-    harness
-        .fake
-        .script("send_message", Scripted::reply("message_sent", json!({})));
-
-    let now = archon_core::now();
-    assert!(!supervisor::report_stall(&harness.ctx, now).await.unwrap());
-    let later = now + chrono::TimeDelta::minutes(31);
-    assert!(supervisor::report_stall(&harness.ctx, later).await.unwrap());
-    assert_eq!(harness.fake.received_named("send_message").len(), 1);
-}
-
-/// One stall of `orch`, `round` 40 minutes after the last: a fresh turn, its
-/// stall at 31 minutes, then the check past the nudge's grace. Returns when
-/// that check ran and the notices it gave.
-async fn stall_round(
-    harness: &Harness,
-    orch: &AetherAgentId,
-    round: i64,
-) -> (archon_core::Timestamp, Vec<String>) {
-    use archon_aether::events::EventKind;
-    let before = harness.feed().await.len();
-    harness
-        .ctx
-        .supervisor
-        .saw_event(orch, &EventKind::AgentStarted { turn: 3 });
-    let stalled = archon_core::now() + chrono::TimeDelta::minutes(31 + 40 * round);
-    assert!(
-        supervisor::report_stall(&harness.ctx, stalled)
-            .await
-            .unwrap()
-    );
-    let past_grace = stalled + supervisor::NUDGE_GRACE;
-    supervisor::report_stall(&harness.ctx, past_grace)
-        .await
-        .unwrap();
-    let feed = harness.feed().await;
-    let notices = feed[before..]
-        .iter()
-        .filter_map(|entry| match entry {
-            FeedEntry::Notification(n) => Some(n.text.clone()),
-            _ => None,
-        })
-        .collect();
-    (past_grace, notices)
-}
-
-#[tokio::test]
-async fn a_failed_interrupt_is_told_with_the_restart_remedy_and_tried_again_after_the_spacing() {
-    let harness = Harness::new().await;
-    harness.connect().await;
-    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
-    agent_table(&harness, &[(ORCH, "running")]);
-    harness
-        .fake
-        .set_default("send_message", Scripted::reply("message_sent", json!({})));
-    let orch = agent_id(ORCH);
-    harness.fake.script(
-        "interrupt",
-        Scripted::refuse("unavailable", "the engine does not answer"),
-    );
-    harness.fake.script(
-        "interrupt",
-        Scripted::reply("interrupted", json!({"was_running": true})),
-    );
-    harness.fake.script(
-        "interrupt",
-        Scripted::reply("interrupted", json!({"was_running": false})),
-    );
-
-    let (refused_at, refused) = stall_round(&harness, &orch, 0).await;
-    assert_eq!(
-        refused.len(),
-        2,
-        "the stall, then the interrupt: {refused:?}"
-    );
-    assert!(
-        refused[1].contains("could not interrupt it")
-            && refused[1].contains("the engine does not answer")
-            && refused[1].contains("tries again in 5 minutes")
-            && refused[1].contains("archon orchestrator restart"),
-        "{refused:?}"
-    );
-    let too_soon = refused_at + chrono::TimeDelta::minutes(1);
-    assert!(
-        !supervisor::report_stall(&harness.ctx, too_soon)
-            .await
-            .unwrap()
-    );
-    assert_eq!(
-        harness.fake.received_named("interrupt").len(),
-        1,
-        "rate limited"
-    );
-    let retry = refused_at + supervisor::INTERRUPT_SPACING;
-    assert!(supervisor::report_stall(&harness.ctx, retry).await.unwrap());
-    let decisions = harness.notifications(NotificationKind::Decision).await;
-    assert!(
-        decisions
-            .iter()
-            .any(|d| d.contains("Archon interrupted it")),
-        "{decisions:?}"
-    );
-
-    let (_, idle) = stall_round(&harness, &orch, 1).await;
-    assert!(
-        idle[1].contains("no turn running") && idle[1].contains("archon orchestrator restart"),
-        "{idle:?}"
-    );
-    assert_eq!(harness.fake.received_named("interrupt").len(), 3);
-    let blockers = harness.notifications(NotificationKind::Blocker).await;
-    assert_eq!(
-        blockers.len(),
-        4,
-        "two stalls, two failed interrupts: {blockers:?}"
-    );
-}
-
-/// The orchestrator's history as Aether pages it, newest first: its turn
-/// started, then a Bash call declaring `timeout_ms`, both at `at`.
-fn hung_bash_history(at: archon_core::Timestamp, timeout_ms: u64) -> Value {
-    let at = at.to_rfc3339();
-    let call = json!({"id": "call_hung", "name": "Bash",
-                      "input": {"command": "ls && head -40 fetch.sh", "timeout": timeout_ms}});
-    json!([
-        {"seq": 12, "at": at, "agent_id": ORCH,
-         "kind": {"type": "tool.requested", "call": call}},
-        {"seq": 11, "at": at, "agent_id": ORCH,
-         "kind": {"type": "agent.started", "turn": 9}},
-    ])
-}
-
-/// A turn that ran a Bash call declaring `timeout_ms`, then got operator
-/// mail; returns when the call started.
-async fn mail_behind_a_call(harness: &Harness, timeout_ms: u64) -> archon_core::Timestamp {
-    use archon_aether::events::EventKind;
-    harness.connect().await;
-    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
-    agent_table(&harness, &[(ORCH, "running")]);
-    harness
-        .fake
-        .set_default("send_message", Scripted::reply("message_sent", json!({})));
-    let started = archon_core::now();
-    harness.fake.set_default(
-        "get_events",
-        Scripted::reply("events", hung_bash_history(started, timeout_ms)),
-    );
-    let orch = agent_id(ORCH);
-    harness
-        .ctx
-        .supervisor
-        .saw_event(&orch, &EventKind::AgentStarted { turn: 9 });
-    let mail = EventKind::InboxDelivered {
-        seq: 585,
-        from_operator: true,
-        message: None,
-    };
-    harness.ctx.supervisor.saw_event(&orch, &mail);
-    started
-}
-
-/// 2026-11-15: a trivial Bash sat 11 minutes with three operator messages
-/// queued behind it. Its declared 2 minutes plus one is the bound.
-#[tokio::test]
-async fn a_hung_call_with_mail_waiting_is_interrupted_within_its_bound_and_the_fresh_turn_reads_both()
- {
-    let harness = Harness::new().await;
-    let started = mail_behind_a_call(&harness, 120_000).await;
-    harness.fake.script(
-        "interrupt",
-        Scripted::reply("interrupted", json!({"was_running": true})),
-    );
-    let within = started + chrono::TimeDelta::seconds(170);
-    assert!(
-        !supervisor::report_stall(&harness.ctx, within)
-            .await
-            .unwrap()
-    );
+    assert!(turn.check(&harness, after(start, 3, 10)).await);
+    let notes = turn.notes();
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].starts_with("Continue:"), "{notes:?}");
     assert!(harness.fake.received_named("interrupt").is_empty());
 
-    let bound = started + chrono::TimeDelta::seconds(181);
-    assert!(supervisor::report_stall(&harness.ctx, bound).await.unwrap());
+    assert!(!turn.check(&harness, after(start, 5, 9)).await);
     assert!(
-        harness
-            .notifications(NotificationKind::Blocker)
-            .await
-            .is_empty(),
-        "no nudge comes first"
+        turn.check(&harness, after(start, 5, 10)).await,
+        "five minutes after the operator wrote"
     );
-    let notes = harness.fake.received_named("send_message");
-    assert_eq!(notes.len(), 1, "{notes:?}");
-    let note = notes[0]["content"].as_str().unwrap();
+    let notes = turn.notes();
+    assert_eq!(notes.len(), 2, "{notes:?}");
     assert!(
-        note.starts_with("Archon interrupted your turn")
-            && note.contains("`Bash` running `ls && head -40 fetch.sh`")
-            && note.contains("Messages that waited for you follow"),
-        "{note}"
+        notes[1].starts_with("Archon is interrupting your turn")
+            && notes[1].contains("`Bash` running `ls && head -40 fetch.sh`"),
+        "{notes:?}"
     );
-    let calls = harness.fake.received();
-    let told = calls
+    let commands = harness.fake.received();
+    let told = commands
         .iter()
-        .position(|c| c["cmd"] == "send_message")
+        .rposition(|c| c["cmd"] == "trigger")
         .unwrap();
-    let stopped = calls.iter().position(|c| c["cmd"] == "interrupt").unwrap();
+    let stopped = commands
+        .iter()
+        .position(|c| c["cmd"] == "interrupt")
+        .unwrap();
     assert!(
         told < stopped,
-        "the note is queued before the fresh turn reads its inbox"
+        "the note is in the inbox before the interrupt"
+    );
+    assert_eq!(harness.fake.received_named("interrupt").len(), 1);
+
+    // Aether's fresh turn read the whole inbox: the mail, the nudge, the note.
+    assert_eq!(turn.events("agent.started").len(), 2);
+    assert_eq!(
+        turn.read_up_to(),
+        Some(3),
+        "the operator's mail was consumed"
     );
     let decisions = harness.notifications(NotificationKind::Decision).await;
     assert!(
@@ -1905,57 +1662,9 @@ async fn a_hung_call_with_mail_waiting_is_interrupted_within_its_bound_and_the_f
             && d.contains("Archon interrupted it")),
         "{decisions:?}"
     );
-
-    // Aether starts a fresh turn on the queued inbox: the note, then the mail.
-    use archon_aether::events::{EventKind, InboxMessage};
-    let orch = agent_id(ORCH);
-    let delivered = EventKind::InboxDelivered {
-        seq: 586,
-        from_operator: true,
-        message: Some(InboxMessage {
-            channel: None,
-            device: None,
-            sender: archon_core::agent_message::MessageSender::Operator,
-            text: note.to_owned(),
-        }),
-    };
-    let supervisor = &harness.ctx.supervisor;
-    supervisor.saw_event(&orch, &EventKind::AgentStarted { turn: 10 });
-    supervisor.saw_event(&orch, &delivered);
-    supervisor.saw_event(&orch, &EventKind::InboxConsumed { up_to: 586 });
-    let later = bound + chrono::TimeDelta::minutes(10);
-    assert!(!supervisor::report_stall(&harness.ctx, later).await.unwrap());
-    assert_eq!(
-        harness.fake.received_named("interrupt").len(),
-        1,
-        "the mail was read, so nothing waits"
-    );
-    let blockers = harness.notifications(NotificationKind::Blocker).await;
     assert!(
-        blockers.is_empty(),
-        "Archon's note was not taken for mail: {blockers:?}"
+        !turn.check(&harness, after(start, 20, 0)).await,
+        "nothing waits on the fresh turn"
     );
-}
-
-#[tokio::test]
-async fn a_long_foreground_command_under_its_own_timeout_is_not_interrupted() {
-    let harness = Harness::new().await;
-    let started = mail_behind_a_call(&harness, 600_000).await;
-    harness.fake.script(
-        "interrupt",
-        Scripted::reply("interrupted", json!({"was_running": true})),
-    );
-    for minutes in [4, 8, 10] {
-        let at = started + chrono::TimeDelta::minutes(minutes);
-        assert!(
-            !supervisor::report_stall(&harness.ctx, at).await.unwrap(),
-            "{minutes} min"
-        );
-    }
-    assert!(harness.fake.received_named("interrupt").is_empty());
-    assert!(harness.fake.received_named("send_message").is_empty());
-
-    let past = started + chrono::TimeDelta::seconds(11 * 60 + 1);
-    assert!(supervisor::report_stall(&harness.ctx, past).await.unwrap());
     assert_eq!(harness.fake.received_named("interrupt").len(), 1);
 }

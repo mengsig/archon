@@ -262,27 +262,10 @@ pub struct OpenToolCall {
     pub name: String,
     /// The shell command it runs, when its input names one.
     pub command: Option<String>,
-    /// The timeout a foreground call's input declares (Claude's Bash
-    /// `timeout`); `None` when it declares none or runs in the background.
-    pub timeout: Option<std::time::Duration>,
     pub requested_at: Timestamp,
     /// The agent's newest tool, message or turn event, at or after
     /// `requested_at`: nothing of the agent came since.
     pub last_event_at: Timestamp,
-}
-
-/// What an agent's newest turn events show: tool events among them, which
-/// Archon's own stream does not carry.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct TurnActivity {
-    /// The newest tool, message or turn event of the agent; `None` when
-    /// none is in the page read, or the backend cannot tell.
-    pub last_event_at: Option<Timestamp>,
-    /// Every call the turn has open, newest first: calls may run in parallel.
-    pub open_calls: Vec<OpenToolCall>,
-    /// Whether `open_calls` is complete: false when the events read do not
-    /// reach back to the turn's start, so more may be open beyond them.
-    pub call_known: bool,
 }
 
 /// A change to a live agent; `None` leaves that part as it is.
@@ -424,15 +407,6 @@ pub trait AgentBackend: Send + Sync {
         _agent: &AetherAgentId,
     ) -> Result<Option<OpenToolCall>, ArchonError> {
         Ok(None)
-    }
-
-    /// The newest turn activity of `agent`, and the call its turn left open.
-    async fn turn_activity(&self, agent: &AetherAgentId) -> Result<TurnActivity, ArchonError> {
-        Ok(TurnActivity {
-            last_event_at: None,
-            open_calls: self.open_tool_call(agent).await?.into_iter().collect(),
-            call_known: true,
-        })
     }
 
     /// Resume every agent of `lead`'s tree that Aether blocked for

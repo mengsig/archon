@@ -3,12 +3,11 @@
 //! them from Aether only for a lead that has gone quiet.
 
 use std::collections::BTreeSet;
-use std::time::Duration;
 
 use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
-use archon_core::ports::{OpenToolCall, TurnActivity};
+use archon_core::ports::OpenToolCall;
 use serde_json::Value;
 
 use crate::client::AetherClient;
@@ -40,39 +39,21 @@ pub(crate) async fn open(
     client: &AetherClient,
     agent: &AetherAgentId,
 ) -> Result<Option<OpenToolCall>, ArchonError> {
-    Ok(activity(client, agent).await?.open_calls.into_iter().next())
-}
-
-/// `agent`'s newest turn event and the call its turn left open, from one
-/// page of its events.
-pub(crate) async fn activity(
-    client: &AetherClient,
-    agent: &AetherAgentId,
-) -> Result<TurnActivity, ArchonError> {
     let query = EventQuery {
         agent: Some(agent.clone()),
         types: TURN_EVENT_TYPES.iter().map(|t| (*t).to_owned()).collect(),
         ..EventQuery::default()
     };
     let newest_first = client.latest_events_raw(query, PAGE).await?;
-    activity_in(agent, &newest_first)
+    open_in(agent, &newest_first)
 }
 
-/// [`open`] over `agent`'s events, newest first.
-#[cfg(test)]
-fn open_in(
+/// [`open`] over `agent`'s events, newest first. Walking back from the
+/// newest, the first call with no outcome before its turn's start is open.
+pub(crate) fn open_in(
     agent: &AetherAgentId,
     newest_first: &[Value],
 ) -> Result<Option<OpenToolCall>, ArchonError> {
-    Ok(activity_in(agent, newest_first)?
-        .open_calls
-        .into_iter()
-        .next())
-}
-
-/// [`activity`] over `agent`'s events, newest first. Walking back from the
-/// newest to its turn's start, every call with no outcome is open.
-fn activity_in(agent: &AetherAgentId, newest_first: &[Value]) -> Result<TurnActivity, ArchonError> {
     let own: Vec<Event<'_>> = newest_first
         .iter()
         .map(Event::of)
@@ -86,35 +67,28 @@ fn activity_in(agent: &AetherAgentId, newest_first: &[Value]) -> Result<TurnActi
         ));
     }
     let Some(newest) = own.first() else {
-        return Ok(TurnActivity::default());
+        return Ok(None);
     };
     let last_event_at = newest.at;
-    let mut open_calls = Vec::new();
     let mut settled = BTreeSet::new();
     for event in &own {
         match event.type_name {
-            "agent.started" | "agent.interrupted" | "agent.turn_completed" => {
-                return Ok(TurnActivity {
-                    last_event_at: Some(last_event_at),
-                    open_calls,
-                    call_known: true,
-                });
-            }
+            "agent.started" | "agent.interrupted" | "agent.turn_completed" => return Ok(None),
             "tool.requested" => {
                 let call = event.field("call");
                 let id = text(call.get("id"), "tool.requested call.id")?;
                 if settled.contains(id) {
                     continue;
                 }
-                open_calls.push(OpenToolCall {
+                let found = OpenToolCall {
                     id: id.to_owned(),
                     name: text(call.get("name"), "tool.requested call.name")?.to_owned(),
                     command: command_of(call.get("input")),
-                    timeout: foreground_timeout(call.get("input")),
                     requested_at: event.at,
                     // Aether's clock may step back; nothing is newer than the call.
                     last_event_at: last_event_at.max(event.at),
-                });
+                };
+                return Ok(Some(found));
             }
             "agent.message" | "agent.usage_updated" => {}
             // Every outcome names its call by id.
@@ -123,23 +97,12 @@ fn activity_in(agent: &AetherAgentId, newest_first: &[Value]) -> Result<TurnActi
             }
         }
     }
-    // The turn's start is beyond the page: more calls may be open before it.
-    assert!(
-        open_calls
-            .windows(2)
-            .all(|pair| pair[0].requested_at >= pair[1].requested_at),
-        "open calls are listed newest first"
-    );
-    Ok(TurnActivity {
-        last_event_at: Some(last_event_at),
-        open_calls,
-        call_known: false,
-    })
+    Ok(None)
 }
 
 /// The shell command a call's input names: Claude's `command`, or Codex's
 /// `command` list or `cmd`.
-fn command_of(input: Option<&Value>) -> Option<String> {
+pub(crate) fn command_of(input: Option<&Value>) -> Option<String> {
     let input = input?;
     let raw = input.get("command").or_else(|| input.get("cmd"))?;
     let command = match raw {
@@ -154,18 +117,7 @@ fn command_of(input: Option<&Value>) -> Option<String> {
     (!command.trim().is_empty()).then_some(command)
 }
 
-/// The timeout a foreground call declares: Claude's Bash `timeout`, in
-/// milliseconds. A background call's `timeout` bounds its job, not the call.
-fn foreground_timeout(input: Option<&Value>) -> Option<Duration> {
-    let input = input?;
-    if input.get("run_in_background").and_then(Value::as_bool) == Some(true) {
-        return None;
-    }
-    let millis = input.get("timeout").and_then(Value::as_u64)?;
-    (millis > 0).then(|| Duration::from_millis(millis))
-}
-
-fn text<'a>(value: Option<&'a Value>, what: &str) -> Result<&'a str, ArchonError> {
+pub(crate) fn text<'a>(value: Option<&'a Value>, what: &str) -> Result<&'a str, ArchonError> {
     value
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
@@ -173,16 +125,16 @@ fn text<'a>(value: Option<&'a Value>, what: &str) -> Result<&'a str, ArchonError
 }
 
 /// The parts of a raw event the walk reads.
-struct Event<'a> {
-    seq: u64,
-    at: Timestamp,
-    agent: Option<&'a str>,
-    type_name: &'a str,
-    kind: &'a Value,
+pub(crate) struct Event<'a> {
+    pub(crate) seq: u64,
+    pub(crate) at: Timestamp,
+    pub(crate) agent: Option<&'a str>,
+    pub(crate) type_name: &'a str,
+    pub(crate) kind: &'a Value,
 }
 
 impl<'a> Event<'a> {
-    fn of(raw: &'a Value) -> Result<Self, ArchonError> {
+    pub(crate) fn of(raw: &'a Value) -> Result<Self, ArchonError> {
         let bad = |what: &str| ArchonError::Protocol(format!("an event's {what} did not decode"));
         let seq = raw
             .get("seq")
@@ -207,7 +159,7 @@ impl<'a> Event<'a> {
         })
     }
 
-    fn field(&self, name: &str) -> &'a Value {
+    pub(crate) fn field(&self, name: &str) -> &'a Value {
         self.kind.get(name).unwrap_or(&Value::Null)
     }
 }
@@ -301,80 +253,6 @@ mod tests {
             open_in(&lead(), &ended).unwrap(),
             None,
             "an interrupted turn left nothing open"
-        );
-    }
-
-    #[test]
-    fn a_foreground_bash_timeout_is_read_and_a_background_one_is_not() {
-        let open_with = |input: Value| {
-            let call = json!({"id": "call_t", "name": "Bash", "input": input});
-            let events = [event(
-                2,
-                30,
-                LEAD,
-                json!({"type": "tool.requested", "call": call}),
-            )];
-            open_in(&lead(), &events).unwrap().unwrap().timeout
-        };
-        assert_eq!(
-            open_with(json!({"command": "make ci", "timeout": 600_000})),
-            Some(Duration::from_secs(600))
-        );
-        assert_eq!(
-            open_with(json!({"command": "ls"})),
-            None,
-            "Claude's default is not declared"
-        );
-        assert_eq!(
-            open_with(json!({"command": "make ci", "timeout": 600_000, "run_in_background": true})),
-            None,
-            "a background job's timeout is not the call's"
-        );
-        assert_eq!(open_with(json!({"command": "ls", "timeout": "soon"})), None);
-    }
-
-    #[test]
-    fn the_newest_event_is_reported_and_a_call_beyond_the_page_is_unknown() {
-        let started = event(3, 29, LEAD, json!({"type": "agent.started", "turn": 2}));
-        let events = [
-            succeeded(5, 31, "call_a"),
-            requested(4, 30, "call_a", "ls"),
-            started,
-        ];
-        let activity = activity_in(&lead(), &events).unwrap();
-        assert!(activity.open_calls.is_empty());
-        assert!(activity.call_known, "the turn's start was read");
-        let newest = activity.last_event_at.expect("a turn event was read");
-        assert_eq!(newest.to_rfc3339(), "2026-11-01T12:31:00+00:00");
-        let cut = activity_in(&lead(), &events[..2]).unwrap();
-        assert!(!cut.call_known, "the open call may precede the page");
-        assert_eq!(cut.last_event_at, activity.last_event_at);
-        assert!(!activity_in(&lead(), &[]).unwrap().call_known);
-    }
-
-    #[test]
-    fn every_call_open_in_the_turn_is_listed() {
-        let build = json!({"id": "call_b", "name": "Bash",
-                           "input": {"command": "make", "timeout": 600_000}});
-        let events = [
-            requested(5, 25, "call_c", "ls"),
-            succeeded(4, 24, "call_a"),
-            event(
-                3,
-                22,
-                LEAD,
-                json!({"type": "tool.requested", "call": build}),
-            ),
-            requested(2, 21, "call_a", "pwd"),
-            event(1, 20, LEAD, json!({"type": "agent.started", "turn": 2})),
-        ];
-        let activity = activity_in(&lead(), &events).unwrap();
-        let ids: Vec<&str> = activity.open_calls.iter().map(|c| c.id.as_str()).collect();
-        assert_eq!(ids, ["call_c", "call_b"], "the older build still runs");
-        assert!(activity.call_known);
-        assert_eq!(
-            activity.open_calls[1].timeout,
-            Some(Duration::from_secs(600))
         );
     }
 

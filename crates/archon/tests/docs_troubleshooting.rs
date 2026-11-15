@@ -183,10 +183,6 @@ const BLOCKERS: &[(&str, &str)] = &[
         "Operator mail waited on the orchestrator's turn",
     ),
     (
-        "crates/archon-daemon/src/supervisor/stall/notice.rs",
-        "could not tell it which call was cut off",
-    ),
-    (
         "crates/archon-daemon/src/supervisor.rs",
         "Archon will not start the orchestrator:",
     ),

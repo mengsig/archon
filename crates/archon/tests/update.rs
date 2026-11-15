@@ -378,7 +378,7 @@ fn yes_updates_aether_and_restarts_nothing_when_archond_is_not_running() {
         &archon_script("9.9.9"),
         true,
     );
-    let updating = aether_script(16, 17).replace("*) exit 64", "update) echo done ;;\n*) exit 64");
+    let updating = aether_script(16, 17).replace("*) exit 64", "update) [ \"$*\" = \"update --yes --version v1.4.0\" ] || exit 65; echo done ;;\n*) exit 64");
     write_script(&installed.path("tools/aether"), &updating);
     let out = installed.update(&["--yes"]);
     let stdout = text(&out.stdout);

@@ -5,6 +5,7 @@ set -eu
 
 ARCHON_REPOSITORY="mengsig/archon"
 AETHER_REPOSITORY="mengsig/aether"
+AETHER_VERSION="v1.4.0"
 # Every binary a release archive ships; archond is `archon daemon run`.
 BINARIES="archon"
 
@@ -230,13 +231,14 @@ schema_number() {
 }
 
 aether_retry_command() {
-    printf 'curl -fsSL %s | AETHER_INSTALL_DIR="%s" sh\n' "$AETHER_INSTALL_URL" "$INSTALL_DIR"
+    printf 'curl -fsSL %s | AETHER_VERSION="%s" AETHER_INSTALL_DIR="%s" sh\n' "$AETHER_INSTALL_URL" "$AETHER_VERSION" "$INSTALL_DIR"
 }
 
 # report_aether PROGRAM: its version, and whether this archon can use it.
 report_aether() {
     version=$("$1" --version 2>/dev/null | head -n 1) || version=""
     say "Aether: ${version:-unknown version} at $1."
+    say "Archon 1.6.0 requires Aether 1.4.0; upgrade an older installation with aether update --version $AETHER_VERSION."
     "$INSTALL_DIR/archon" update --requirements >"$STAGING/requirements" 2>/dev/null || true
     "$1" schema >"$STAGING/aether-schema" 2>/dev/null || true
     need_min=$(number_after aether_protocol_min "$STAGING/requirements")
@@ -315,7 +317,7 @@ remote_step() {
 
 run_aether_installer() {
     fetch "$AETHER_INSTALL_URL" "$STAGING/aether-install.sh" || return 1
-    AETHER_INSTALL_DIR="$INSTALL_DIR" sh "$STAGING/aether-install.sh" </dev/null || return 1
+    AETHER_VERSION="$AETHER_VERSION" AETHER_INSTALL_DIR="$INSTALL_DIR" sh "$STAGING/aether-install.sh" </dev/null || return 1
     [ -x "$INSTALL_DIR/aether" ] || has aether
 }
 

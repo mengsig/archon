@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 1.6.0
+
+Released 2026-11-16.
+
+Archon 1.6.0 requires **Aether 1.4.0**. The installer and confirmed
+updates select that release. Upgrade Aether and restart its daemon before
+using the new worker policy and reference attachments.
+
 ### Added
 
 - Approved intent: immutable operator words, artifact hashes and a per-requirement
@@ -50,6 +58,10 @@
 
 ### Fixed
 
+- Archive failed stage agents once a pipeline run moves past them (#415).
+- Preserve a spent provider’s exact quota reset time instead of truncating
+  it to whole seconds (#416).
+
 - Operator mail no longer waits for long behind a hung orchestrator turn.
   Archon used to nudge such a turn after 10 minutes and interrupt it 5
   minutes later, at most 3 times per orchestrator. Now, once your message
@@ -80,6 +92,20 @@
   starts again now has no terminal either. One that an `archon` command
   started still shares that command's terminal until Aether starts its
   daemon in a session of its own.
+
+### Known follow-ups
+
+- From #421: Aether daemon/engine session isolation, a conditional interrupt
+  tied to the last turn event, and documenting the `watchdog` trigger in the
+  orchestrator prompt. Session isolation is addressed by Aether 1.4.0 (#433 there).
+- From #422: index/prune clarification history without capping questions;
+  split long functions and avoid repeated case folding in image extraction;
+  match a pending deviation's named directive when a later Proceed resumes it.
+- From #422: independently discover required scenario steps, centralize
+  acceptance augmentation, document Proceed in `operator-authority.md`, and
+  tighten CLI/MCP escaping of verified pins. Remote/SVG references remain
+  unsupported. Live visual judgment, compaction reattachment and annotation
+  anchoring in the proposal iframe were not exercised by that change.
 
 ## 1.5.1
 

@@ -622,7 +622,12 @@ impl Steps for Live {
         let aether = find_program(Path::new(AETHER_PROGRAM))
             .context("no `aether` was found on PATH to update")?;
         let before = aether_version(&aether).await?;
-        let args = [OsStr::new("update"), OsStr::new("--yes")];
+        let args = [
+            OsStr::new("update"),
+            OsStr::new("--yes"),
+            OsStr::new("--version"),
+            OsStr::new("v1.4.0"),
+        ];
         let ran = tools::run(&aether, &args, AETHER_UPDATE_TIMEOUT).await?;
         let after = aether_version(&aether).await?;
         let said = String::from_utf8_lossy(&ran.stdout);

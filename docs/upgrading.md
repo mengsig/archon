@@ -5,6 +5,15 @@ that needs more than `archon update --yes` changes. The update command
 itself is in [install.md](install.md#updating), and every release's changes
 are in the [changelog](../CHANGELOG.md).
 
+## From 1.5.x to 1.6.0
+
+Archon 1.6.0 requires Aether 1.4.0. Update Aether with
+`aether update --version v1.4.0` and restart aetherd, then run
+`archon update --yes --version v1.6.0`. Confirmed Archon updates also select
+Aether 1.4.0. Keep a backup before the first daemon start: approved intent
+adds persistent requirement and clarification records. Existing queue items
+without intent keep their previous behavior.
+
 ## Contents
 
 - [From 1.4.x to 1.5.0](#from-14x-to-150)

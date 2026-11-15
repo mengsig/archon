@@ -1609,7 +1609,12 @@ async fn mail_behind_a_hung_call_is_read_by_a_fresh_turn_within_minutes() {
     let turn = FakeTurn::serve(&harness, ORCH, start);
     turn.started(start);
     turn.bash(start, "call_hung", "ls && head -40 fetch.sh", Some(120_000));
-    turn.operator_says(after(start, 0, 10), "Go ahead with the release");
+    turn.say(&harness, after(start, 0, 10), "Go ahead with the release")
+        .await;
+    let sent = harness.fake.received_named("send_message");
+    assert_eq!(sent.len(), 1, "archond sent the operator's line to Aether");
+    let mail = &turn.events("inbox.delivered")[0]["kind"]["item"]["kind"];
+    assert_eq!(mail["content"][0]["text"], sent[0]["content"]);
 
     assert!(
         !turn.check(&harness, after(start, 3, 9)).await,

@@ -50,6 +50,16 @@ impl History {
         self.push(at, &agent, json!({"type": "inbox.delivered", "item": item}));
     }
 
+    /// Aether takes a `send_message` from its socket: an inbox item from the user.
+    fn send_message(&mut self, command: &Value) -> Scripted {
+        let key = command["idempotency_key"].as_str().unwrap().to_owned();
+        if self.keys.insert(key) {
+            let now = self.now;
+            self.deliver(now, user_message(command["content"].as_str().unwrap()));
+        }
+        Scripted::reply("message_sent", json!({}))
+    }
+
     /// One page as Aether pages `get_events`: newest first, below `before`.
     fn page(&self, command: &Value) -> Scripted {
         let before = command["query"]["before"].as_u64().unwrap_or(u64::MAX);
@@ -135,6 +145,11 @@ impl FakeTurn {
             }),
         );
         let served = turn.clone();
+        harness.fake.set_responder(
+            "send_message",
+            Arc::new(move |command| served.history().send_message(command)),
+        );
+        let served = turn.clone();
         harness
             .fake
             .set_responder("interrupt", Arc::new(move |_| served.history().interrupt()));
@@ -178,10 +193,17 @@ impl FakeTurn {
 
     /// The operator's chat message, delivered at `at` and not yet read.
     pub fn operator_says(&self, at: Timestamp, text: &str) {
-        let from = json!({"actor": "user", "origin": {"transport": "local_socket"}});
-        let kind = json!({"kind": "message", "message_id": "msg_1", "from": from,
-                          "content": [{"type": "text", "text": text}]});
-        self.deliver(at, kind);
+        self.deliver(at, user_message(text));
+    }
+
+    /// The operator's chat line sent at `at` the way archond sends it: Aether
+    /// receives the `send_message` and puts it in the orchestrator's inbox.
+    pub async fn say(&self, harness: &Harness, at: Timestamp, text: &str) {
+        self.history().now = at;
+        let item = archon_core::id::FeedItemId::new();
+        supervisor::deliver_operator_message(&harness.ctx, &item, text, &[])
+            .await
+            .unwrap();
     }
 
     /// An inbox item of Aether's `kind`, delivered at `at` and not yet read.
@@ -232,6 +254,13 @@ impl FakeTurn {
             .last()
             .map(|e| e["kind"]["up_to"].as_u64().unwrap())
     }
+}
+
+/// The inbox item Aether makes of a message sent over its local socket.
+fn user_message(text: &str) -> Value {
+    let from = json!({"actor": "user", "origin": {"transport": "local_socket"}});
+    json!({"kind": "message", "message_id": "msg_1", "from": from,
+           "content": [{"type": "text", "text": text}]})
 }
 
 /// `minutes` and `seconds` after `start`.

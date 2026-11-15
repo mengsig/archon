@@ -7,8 +7,6 @@ use super::{INTERRUPT_SPACING, NUDGE_GRACE, Silence, call_bound};
 
 /// The longest command a note quotes.
 const COMMAND_QUOTE: usize = 300;
-/// The most open calls a note names.
-const CALLS_NAMED: usize = 5;
 
 /// What the interrupt of a hung turn did.
 pub(super) enum Interrupted {
@@ -86,12 +84,12 @@ pub(super) fn cut_off_note(silence: &Silence, open_calls: &[OpenCall]) -> String
     )
 }
 
-/// The first [`CALLS_NAMED`] of `calls`, each with its command and start.
+/// Every one of `calls`, each with its command and start: the fresh turn
+/// can only check and rerun a call it is told of.
 fn named(calls: &[OpenCall]) -> String {
     assert!(!calls.is_empty(), "only open calls are named");
-    let mut named: Vec<String> = calls
+    let named: Vec<String> = calls
         .iter()
-        .take(CALLS_NAMED)
         .map(|call| {
             format!(
                 "`{}`{}, started {}",
@@ -101,9 +99,6 @@ fn named(calls: &[OpenCall]) -> String {
             )
         })
         .collect();
-    if calls.len() > CALLS_NAMED {
-        named.push(format!("{} more", calls.len() - CALLS_NAMED));
-    }
     named.join("; ")
 }
 

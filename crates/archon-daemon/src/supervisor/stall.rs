@@ -103,7 +103,7 @@ pub fn call_bound(call: &OpenCall) -> Duration {
 }
 
 /// Whether unread operator mail makes `turn`'s silence due at `now`: both are
-/// [`MAIL_SILENCE`] old, and every open call is past its own bound.
+/// [`MAIL_SILENCE`] old, and every open call is past its bound from its start.
 fn mail_is_due(turn: &OpenTurn, now: Timestamp) -> bool {
     let Some(delivered) = turn.oldest_unread_mail else {
         return false;

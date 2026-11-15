@@ -134,6 +134,29 @@ fn a_foreground_call_within_its_declared_timeout_keeps_mail_waiting() {
     assert!(is_nudge(&due(&undeclared, &none, at(240)), true));
 }
 
+/// A call's bound runs from its own start: Aether ends a foreground call at
+/// its timeout, so later progress elsewhere in the turn buys it no more time.
+#[test]
+fn a_calls_bound_runs_from_its_start_however_late_the_turn_last_moved() {
+    let none = marks(None, None);
+    // A ten-minute call from nine minutes before the turn's last progress.
+    let late_progress = turn(Some(-600), vec![call(-540, Some(600))]);
+    assert_eq!(
+        due(&late_progress, &none, at(119)),
+        Due::Nothing,
+        "the call is not yet a minute past its timeout"
+    );
+    assert_eq!(
+        due(&late_progress, &none, at(179)),
+        Due::Nothing,
+        "the call is over, but the turn moved under three minutes ago"
+    );
+    assert!(
+        is_nudge(&due(&late_progress, &none, at(180)), true),
+        "mail waits three minutes past the call's timeout, not eleven more"
+    );
+}
+
 #[test]
 fn the_longest_bound_among_parallel_calls_holds() {
     let none = marks(None, None);
@@ -218,8 +241,18 @@ fn the_cut_off_note_names_every_open_call_and_claims_no_more_than_it_knows() {
         none_open.contains("No tool call was open") && !none_open.contains("mail"),
         "{none_open}"
     );
-    let many: Vec<OpenCall> = (0..8).map(|_| call(0, None)).collect();
-    assert!(cut_off_note(&silence(300, true), &many).contains("; 3 more."));
+    let many: Vec<OpenCall> = (0..8)
+        .map(|n| OpenCall {
+            command: Some(format!("step-{n}.sh")),
+            ..call(n, None)
+        })
+        .collect();
+    let all = cut_off_note(&silence(300, true), &many);
+    for n in 0..8 {
+        let one = format!("`Bash` running `step-{n}.sh`, started 19:12:0{n}Z");
+        assert!(all.contains(&one), "every open call is named: {all}");
+    }
+    assert!(!all.contains("more"), "none is only counted: {all}");
 }
 
 #[test]

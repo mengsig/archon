@@ -202,7 +202,7 @@ impl QueueState {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct QueueItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub intent: Option<crate::intent::IntentBinding>,
+    pub intent: Option<Box<crate::intent::IntentBinding>>,
     pub id: QueueItemId,
     /// `None` only for pipelines with `requires_repo = false` (e.g. `ask`).
     pub repo: Option<RepoId>,

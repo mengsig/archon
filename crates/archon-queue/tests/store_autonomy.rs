@@ -401,7 +401,10 @@ fn proposal_approval_freezes_record_binding_and_decision_together() {
         version: 1,
         requirements: vec![],
     };
-    assert_eq!(store.item(&run.item).unwrap().intent, Some(binding.clone()));
+    assert_eq!(
+        store.item(&run.item).unwrap().intent.as_deref(),
+        Some(&binding)
+    );
     assert_eq!(store.approved_intent(&binding).unwrap(), Some(record));
     assert_eq!(
         store.gate(&run.id, "propose", 1).unwrap().unwrap().decision,

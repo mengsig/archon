@@ -107,7 +107,7 @@ async fn verify_build(
     let StageOutcome::Completed { structured, .. } = &outcome else {
         unreachable!()
     };
-    let binding = item.intent.as_ref().expect("intent required");
+    let binding = item.intent.as_deref().expect("intent required");
     let results = archon_pipeline::acceptance::build_results(record, binding, structured.as_ref())?;
     let (head, tree) = records::head(&run.workspace).await?;
     let evidence = BuildEvidence {
@@ -138,7 +138,7 @@ async fn verify_acceptance(
     record: &ApprovedIntent,
     mut outcome: StageOutcome,
 ) -> Result<Option<StageOutcome>, ArchonError> {
-    let binding = item.intent.as_ref().expect("intent required");
+    let binding = item.intent.as_deref().expect("intent required");
     let evidence = build_evidence(ctx, run, record, binding, &outcome).await?;
     let (head, tree) = records::head(&run.workspace).await?;
     if evidence.head != head || evidence.tree != tree || evidence.intent != *binding {
@@ -217,7 +217,7 @@ async fn record_judgment(
     };
     records::save(&mut *ctx.store.lock().await, &item.id, &accepted)?;
     assert_eq!(stage.kind, Some(StageKind::Test));
-    assert_eq!(Some(&accepted.result.intent), item.intent.as_ref());
+    assert_eq!(Some(&accepted.result.intent), item.intent.as_deref());
     Ok(())
 }
 

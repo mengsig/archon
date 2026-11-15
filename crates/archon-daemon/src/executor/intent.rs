@@ -165,12 +165,8 @@ fn render_page(
 ) -> Result<PathBuf, ArchonError> {
     let html =
         std::fs::read_to_string(original).map_err(|e| ArchonError::io("read proposal page", e))?;
-    let ledger = archon_lavish::intent::render(record)?;
+    let content = archon_lavish::intent::proposal(record, &html)?;
     let page = original.with_file_name(format!("archon-intent-{attempt}.html"));
-    let content = match html.rfind("</body>") {
-        Some(index) => format!("{}{}{}", &html[..index], ledger, &html[index..]),
-        None => format!("{html}{ledger}"),
-    };
     crate::handlers::intent::save_bytes(&page, content.as_bytes())?;
     Ok(page)
 }
@@ -188,6 +184,29 @@ pub(super) fn verify_page(saved: &Pending) -> Result<(), ArchonError> {
             "proposal ledger page changed after it was shown".into(),
         ));
     }
+    Ok(())
+}
+
+pub(crate) fn extract_artifact(
+    source: &Path,
+    destination: &Path,
+    record: &mut ApprovedIntent,
+) -> Result<(), ArchonError> {
+    if !source
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| matches!(ext.to_ascii_lowercase().as_str(), "html" | "htm"))
+    {
+        return Ok(());
+    }
+    let html =
+        std::fs::read_to_string(source).map_err(|e| ArchonError::io("read approved HTML", e))?;
+    let parent = source
+        .parent()
+        .ok_or_else(|| ArchonError::Invalid("approved HTML has no directory".into()))?;
+    super::intent_images::extract(&html, destination, record)?;
+    super::intent_html::extract(&html, source, parent, destination, record)?;
+    record.validate()?;
     Ok(())
 }
 
@@ -230,27 +249,4 @@ mod tests {
         std::fs::write(&saved.page, "changed").unwrap();
         assert!(verify_page(&saved).is_err());
     }
-}
-
-pub(crate) fn extract_artifact(
-    source: &Path,
-    destination: &Path,
-    record: &mut ApprovedIntent,
-) -> Result<(), ArchonError> {
-    if !source
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| matches!(ext.to_ascii_lowercase().as_str(), "html" | "htm"))
-    {
-        return Ok(());
-    }
-    let html =
-        std::fs::read_to_string(source).map_err(|e| ArchonError::io("read approved HTML", e))?;
-    let parent = source
-        .parent()
-        .ok_or_else(|| ArchonError::Invalid("approved HTML has no directory".into()))?;
-    super::intent_images::extract(&html, destination, record)?;
-    super::intent_html::extract(&html, source, parent, destination, record)?;
-    record.validate()?;
-    Ok(())
 }

@@ -18,7 +18,7 @@ pub(in crate::executor) fn section(
     let Some(record) = super::intent(store, item)? else {
         return Ok(String::new());
     };
-    let binding = item.intent.as_ref().expect("intent found");
+    let binding = item.intent.as_deref().expect("intent found");
     let record = materialize(&run.workspace, record)?;
     let selected = record.selected_requirements(binding)?;
     let mut text = format!(

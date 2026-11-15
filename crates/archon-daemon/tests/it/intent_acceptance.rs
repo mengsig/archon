@@ -171,7 +171,7 @@ async fn references_reach_build_review_and_independent_acceptance() {
         .unwrap();
     assert!(page.contains("Approved reference") && page.contains("Built / proposed"));
     assert!(page.contains("PASS"));
-    capture(&h, &run, "acceptance");
+    capture(&run, "acceptance");
     common::git(
         &h.repo,
         &[
@@ -288,7 +288,7 @@ async fn proceed_directive_records_deviations_without_waiting_and_reverts_when_c
     let page = std::fs::read_to_string(run.workspace.join(".archon/reports/deviations/index.html"))
         .unwrap();
     assert!(page.contains("Deviations to review"));
-    capture(&h, &run, "deviations");
+    capture(&run, "deviations");
     assert!(page.contains("proceed under active operator directive"));
 }
 
@@ -300,7 +300,7 @@ fn viewport() -> Value {
     }
 }
 
-fn capture(h: &Harness, run: &archon_core::run::PipelineRun, name: &str) {
+fn capture(run: &archon_core::run::PipelineRun, name: &str) {
     let Some(directory) = std::env::var_os("ARCHON_INTENT_EVIDENCE_DIR") else {
         return;
     };
@@ -311,8 +311,6 @@ fn capture(h: &Harness, run: &archon_core::run::PipelineRun, name: &str) {
         let entry = entry.unwrap();
         std::fs::copy(entry.path(), dest.join(entry.file_name())).unwrap();
     }
-    let ledger = archon_lavish::intent::render(&record(h)).unwrap();
-    std::fs::write(directory.join("proposal.html"), format!("<!doctype html><html lang=en><meta charset=utf-8><title>Approved proposal</title><body>{ledger}</body></html>")).unwrap();
 }
 
 async fn proposed_item() -> (Harness, FakeAether, QueueItem) {
@@ -343,7 +341,15 @@ async fn proposed_item() -> (Harness, FakeAether, QueueItem) {
 #[tokio::test]
 async fn proposal_approval_freezes_the_visible_ledger_and_delivers_it_to_build() {
     let (h, _fake, item) = proposed_item().await;
-    let draft = json!({"approved_intent":{"operator_words":"Keep ISO labels visible","artifacts":[],"images":[],"requirements":[{"id":"R1","text":"Keep ISO labels visible","kind":"wording","images":[],"owner":"demo"}]}});
+    let mut approved = record(&h);
+    let image = h
+        .run(&item.id)
+        .await
+        .workspace
+        .join("proposal-reference.png");
+    std::fs::copy(&approved.images[0].path, &image).unwrap();
+    approved.images[0].path = image;
+    let draft = json!({"approved_intent": approved});
     settle(&h, draft).await;
     let gate = h
         .ctx
@@ -356,6 +362,14 @@ async fn proposal_approval_freezes_the_visible_ledger_and_delivers_it_to_build()
     let html = std::fs::read_to_string(gate.page.as_ref().unwrap()).unwrap();
     assert!(html.contains("Approved requirement ledger"));
     assert!(html.contains("R1: Keep ISO labels visible"));
+    assert!(html.contains("sandbox=\"allow-scripts\""));
+    if let Some(directory) = std::env::var_os("ARCHON_INTENT_EVIDENCE_DIR") {
+        std::fs::write(
+            std::path::PathBuf::from(directory).join("proposal.html"),
+            &html,
+        )
+        .unwrap();
+    }
     assert!(h.item(&item.id).await.intent.is_none(), "not approved yet");
     h.cli(Request::Answer {
         question: gate.question.unwrap(),
@@ -426,4 +440,40 @@ async fn changing_built_image_after_submission_fails_independent_acceptance() {
         h.state(&item.id).await,
         archon_core::queue::QueueState::Failed { .. }
     ));
+}
+
+#[tokio::test]
+async fn a_stage_cannot_file_an_intent_even_with_the_operator_quote() {
+    let (h, _, _) = fixture(false).await;
+    let stage = h.running().await.remove(0);
+    let mut approved = record(&h);
+    approved.id = "stage_authored".into();
+    for client in [
+        archon_core::protocol::ClientKind::ArchonMcp,
+        archon_core::protocol::ClientKind::ArchonCli,
+    ] {
+        let request = Request::ForAgent {
+            caller: stage.aether_agent.clone().unwrap(),
+            request: Box::new(Request::ApproveIntent(approved.clone())),
+        };
+        let result = archon_daemon::handlers::handle(&h.ctx, client, request).await;
+        assert!(
+            matches!(result, Err(archon_core::error::ArchonError::Forbidden(_))),
+            "{result:?}"
+        );
+    }
+    let binding = IntentBinding {
+        id: approved.id,
+        version: approved.version,
+        requirements: vec![],
+    };
+    assert!(
+        h.ctx
+            .store
+            .lock()
+            .await
+            .approved_intent(&binding)
+            .unwrap()
+            .is_none()
+    );
 }

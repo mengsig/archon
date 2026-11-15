@@ -338,6 +338,23 @@ async fn record(
     store.update_item(&stored)
 }
 
+pub(super) fn acceptance_body(body: &str, readiness: &str) -> String {
+    const START: &str = "<!-- archon:acceptance -->";
+    const END: &str = "<!-- /archon:acceptance -->";
+    let section = format!("{START}\n{readiness}\n{END}");
+    if let Some(start) = body.find(START)
+        && let Some(end) = body[start..].find(END)
+    {
+        return format!(
+            "{}{}{}",
+            &body[..start],
+            section,
+            &body[start + end + END.len()..]
+        );
+    }
+    format!("{body}\n\n{section}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -373,21 +390,4 @@ mod tests {
             line.ends_with("2 screenshot(s) could not be attached, as the evidence section says")
         );
     }
-}
-
-pub(super) fn acceptance_body(body: &str, readiness: &str) -> String {
-    const START: &str = "<!-- archon:acceptance -->";
-    const END: &str = "<!-- /archon:acceptance -->";
-    let section = format!("{START}\n{readiness}\n{END}");
-    if let Some(start) = body.find(START)
-        && let Some(end) = body[start..].find(END)
-    {
-        return format!(
-            "{}{}{}",
-            &body[..start],
-            section,
-            &body[start + end + END.len()..]
-        );
-    }
-    format!("{body}\n\n{section}")
 }

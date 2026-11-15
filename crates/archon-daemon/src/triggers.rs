@@ -71,7 +71,7 @@ pub enum TriggerEvent {
     },
     ItemFinished {
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        acceptance: Option<archon_core::acceptance::AcceptanceReadiness>,
+        acceptance: Option<Box<archon_core::acceptance::AcceptanceReadiness>>,
         item: QueueItemId,
         title: String,
         /// `QueueState::kind()`.

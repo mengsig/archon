@@ -404,7 +404,8 @@ async fn forwarded_cli_and_observer_cannot_grant_a_proceed_directive() {
         (
             ClientKind::ArchonCli,
             Request::ForAgent {
-                caller: common::ORCHESTRATOR.parse().unwrap(),
+                caller: archon_core::aether_ids::AetherAgentId::parse(common::ORCHESTRATOR)
+                    .unwrap(),
                 request: Box::new(request.clone()),
             },
         ),

@@ -473,7 +473,7 @@ pub(super) async fn announce(
         .await
         .spend_for_item(&item.id, archon_core::cost::API_EQUIVALENT)?;
     let finished = TriggerEvent::ItemFinished {
-        acceptance: item.intent.as_ref().map(|_| acceptance),
+        acceptance: item.intent.as_ref().map(|_| Box::new(acceptance)),
         item: item.id.clone(),
         title: item.title.clone(),
         state: item.state.kind().to_owned(),

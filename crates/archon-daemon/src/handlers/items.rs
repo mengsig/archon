@@ -67,7 +67,7 @@ pub(super) async fn enqueue(
     let plan = enqueue_plan(ctx, &req, &env, &resolved, route).await?;
     let now = archon_core::now();
     let item = QueueItem {
-        intent: req.intent.clone(),
+        intent: req.intent.clone().map(Box::new),
         onto: onto.map(Box::new),
         id,
         repo: env.repo.as_ref().map(|r| r.id.clone()),
@@ -136,7 +136,7 @@ pub(super) async fn resolve_intent(
 ) -> Result<Option<archon_core::intent::IntentBinding>, ArchonError> {
     let store = ctx.store.lock().await;
     let inherited = match onto {
-        Some(OntoTarget::Item(id)) => store.item(id)?.intent,
+        Some(OntoTarget::Item(id)) => store.item(id)?.intent.map(|binding| *binding),
         _ => None,
     };
     if requested.is_some() && inherited.is_some() && requested != inherited.as_ref() {
@@ -173,7 +173,7 @@ pub(super) async fn resolve_pull_request_intent(
     let store = ctx.store.lock().await;
     let mut inherited = requested.cloned();
     for link in store.issue_items(&reference)? {
-        let Some(binding) = store.item(&link.item)?.intent else {
+        let Some(binding) = store.item(&link.item)?.intent.map(|binding| *binding) else {
             continue;
         };
         if inherited.as_ref().is_some_and(|known| known != &binding) {

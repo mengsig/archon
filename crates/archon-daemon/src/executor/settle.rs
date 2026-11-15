@@ -1140,25 +1140,6 @@ async fn queue_spawns(
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_a_cause_that_clears_with_time_is_waited_out() {
-        let login = "model error from claude-code/opus: Auth: token expired";
-        assert_eq!(transient_cause(login), None, "a login holds its engine");
-        let limit = "model error: RateLimit: slow down";
-        assert_eq!(transient_cause(limit), Some("the rate limit to lift"));
-        assert_eq!(
-            transient_cause("engine unavailable"),
-            Some("the engine to come back")
-        );
-        assert_eq!(transient_cause("engine died"), None);
-        assert_eq!(transient_cause("the commit author is unknown"), None);
-    }
-}
-
 async fn open_gate(
     ctx: &DaemonContext,
     table: &mut RunTable,
@@ -1182,5 +1163,24 @@ async fn open_gate(
             finish::finish_run(ctx, table, run, state, false).await
         }
         result => result,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_cause_that_clears_with_time_is_waited_out() {
+        let login = "model error from claude-code/opus: Auth: token expired";
+        assert_eq!(transient_cause(login), None, "a login holds its engine");
+        let limit = "model error: RateLimit: slow down";
+        assert_eq!(transient_cause(limit), Some("the rate limit to lift"));
+        assert_eq!(
+            transient_cause("engine unavailable"),
+            Some("the engine to come back")
+        );
+        assert_eq!(transient_cause("engine died"), None);
+        assert_eq!(transient_cause("the commit author is unknown"), None);
     }
 }

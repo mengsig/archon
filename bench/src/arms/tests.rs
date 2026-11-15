@@ -297,6 +297,8 @@ fn succeeded(repo: &RepoId, branch: &str, minute: i64) -> ItemDetail {
         finished_at: Some(item.updated_at),
     };
     ItemDetail {
+        acceptance: Default::default(),
+        clarifications: Vec::new(),
         default_efforts: Default::default(),
         worker_policies: Default::default(),
         stage_notes: Default::default(),
@@ -748,6 +750,8 @@ fn result_branches_follow_completion_order_per_repo() {
     ]
     .into();
     let failed = ItemDetail {
+        acceptance: Default::default(),
+        clarifications: Vec::new(),
         default_efforts: Default::default(),
         worker_policies: Default::default(),
         stage_notes: Default::default(),

@@ -71,7 +71,7 @@ pub(crate) async fn readiness(
     };
     let (head, tree) = current.unwrap_or_default();
     Ok(AcceptanceReadiness::at_head(
-        item.intent.as_ref(),
+        item.intent.as_deref(),
         record,
         &head,
         &tree,
@@ -124,7 +124,7 @@ pub(super) fn failed(
     page: &str,
     reason: &str,
 ) -> Result<(), ArchonError> {
-    let binding = item.intent.as_ref().expect("acceptance requires intent");
+    let binding = item.intent.as_deref().expect("acceptance requires intent");
     let intent = super::intent(store, item)?.expect("acceptance requires intent");
     let requirements = intent
         .selected_requirements(binding)?

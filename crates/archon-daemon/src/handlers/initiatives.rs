@@ -97,7 +97,7 @@ async fn prepare_member(
         .collect();
     assert!(!title.trim().is_empty());
     Ok(QueueItem {
-        intent,
+        intent: intent.map(Box::new),
         onto: onto.map(Box::new),
         id,
         repo: env.repo.as_ref().map(|r| r.id.clone()),

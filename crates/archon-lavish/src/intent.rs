@@ -52,6 +52,15 @@ pub fn render(intent: &ApprovedIntent) -> Result<String, ArchonError> {
     Ok(html)
 }
 
+/// Isolate the proposal's scripts and styles from the ledger being approved.
+pub fn proposal(intent: &ApprovedIntent, original: &str) -> Result<String, ArchonError> {
+    let ledger = render(intent)?;
+    Ok(format!(
+        "<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\"><title>Approve intent</title><body style=\"margin:0;background:#eef2f6\">{ledger}<details style=\"max-width:1440px;margin:24px auto;padding:24px;font:16px system-ui\"><summary>Original proposal</summary><iframe title=\"Original proposal\" sandbox=\"allow-scripts\" style=\"width:100%;height:80vh;border:1px solid #d6dee8;margin-top:16px\" srcdoc=\"{}\"></iframe></details></body></html>",
+        escape(original)
+    ))
+}
+
 fn render_image(image: &ReferenceImage) -> Result<String, ArchonError> {
     let metadata = std::fs::metadata(&image.path)
         .map_err(|e| ArchonError::io(format!("inspect image {}", image.path.display()), e))?;
@@ -159,5 +168,14 @@ mod tests {
         assert!(html.contains("&lt;keep this&gt;"));
         assert!(html.contains("data:image/png;base64,"));
         assert!(html.find("Match screen") < html.find("data:image/png"));
+        let original =
+            "<style>body{display:none}</style><script>parent.document.body.remove()</script>";
+        let isolated = proposal(&intent, original).unwrap();
+        assert!(isolated.contains("sandbox=\"allow-scripts\""));
+        assert!(
+            !isolated.contains(original),
+            "proposal code cannot affect the ledger document"
+        );
+        assert!(isolated.contains("&lt;style&gt;body{display:none}"));
     }
 }

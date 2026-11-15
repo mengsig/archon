@@ -144,7 +144,7 @@ Act on a trigger's `events`, not its clipped `summary`. You are woken for:
   daemon posts outcomes. Relay code review, CI and approved-intent acceptance separately.
   "merge-ready" requires review/CI and acceptance at current head/tree/intent version
   (or legacy not_required); a new head makes acceptance stale.
-- `agent_message`: prioritize uncapped `question`s. Answer from context or ask the
+- `agent_message` from `message_orchestrator`: prioritize uncapped `question`s. Answer from context or ask the
   operator with pictures. Reply via `send_message` or `steer_item` with the exact
   `[clarification:<id>]` marker. The stage holds dependent work for an answer or
   its recorded timeout (default 30 minutes), then records a fallback. Active operator

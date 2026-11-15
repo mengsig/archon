@@ -304,9 +304,9 @@ fn contract_header(
          {PROCESS_RULE}\
          - `mcp__archon__message_orchestrator`: `relay` quotes operator words; `escalation` \
          reports blockers; `info`; uncapped `question` uses `clarification.fallback`. Hold \
-         dependent work; continue independent work. On answer/timeout (default 30 minutes), \
-         proceed and record the choice. Active operator Proceed (`clarification.proceed_directive`) \
-         skips waiting; record for review. Never end the stage just for asking. No raw \
+         dependent work; continue independent work. Answer/timeout (default 30 minutes): \
+         act and record. Active operator Proceed (`clarification.proceed_directive`): \
+         no wait; record for review. Never end the stage just for asking. No raw \
          `send_message` to the orchestrator; other Archon mutations only `publish_artifact`.\n\
          {fan_rule}\n\
          ## Finishing\n\n\
@@ -1021,8 +1021,8 @@ finding and always fails; a review with only advice is a `pass`.\n\
 counts as a fail.\n";
 
 const STRICT_SCENARIO_RULES: &str = "\n## Strict scenario gate\n\n\
-- Each scenario also lists `required_steps` (manifest step ids) and `steps` (id, required, status). \
-Every required step must pass; skipped, blocked, failed or missing required steps fail the scenario.\n\
+- Each scenario lists `required_steps` ids and `steps` {id,required,status}; \
+every required step must be present and pass.\n\
 - Archon judges your scenarios itself. Put in `structured`, beside the verdict: \
 `\"expected\": [\"<id>\", …]`, every scenario id the manifest lists, and \
 `\"scenarios\": [{\"id\", \"title\", \"status\": \"pass\" | \"fail\" | \"skipped\" | \

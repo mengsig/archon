@@ -260,7 +260,7 @@ async fn settle_verified(
     }
     // Other verification failures are final stage outcomes, not infrastructure
     // failures from Aether: they must not enter the stage's retry path.
-    persist(ctx, &mut table, stage, run, &all, outcome).await
+    Box::pin(persist(ctx, &mut table, stage, run, &all, outcome)).await
 }
 
 /// Settle a completion of a stage whose review already failed the round
@@ -336,7 +336,8 @@ pub(super) async fn settle_locked(
     if let Some(follow) = infra_retry(ctx, table, &stage, &run, &all, &outcome, false).await? {
         return Ok(follow);
     }
-    persist(ctx, table, stage, run, &all, outcome).await
+    // Cancellation also polls settlement deep inside a request's follow-up chain.
+    Box::pin(persist(ctx, table, stage, run, &all, outcome)).await
 }
 
 /// A stage that failed with its workspace gone failed for that, whatever

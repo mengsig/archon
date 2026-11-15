@@ -1329,15 +1329,15 @@ fn shown_bytes(definition: &ToolDefinition) -> usize {
     shown.to_string().len()
 }
 
-/// Every orchestrator turn pays for the tool list: 1.0's 25 tools (30,071 bytes
-/// then) stay within 67% of that (62% before `idempotency_key`, 61% before model_plan tiers, 18,500 bytes before stage_timeouts), and all of
-/// them within 33 KiB (28 KiB before `promote` and `onto`, 30 KiB before `idempotency_key` and `request_status`,
-/// 32 KiB before `update_item`'s `title`).
+/// Keep bounded allocations for new intent/question fields and the ledger tool.
+/// Every orchestrator turn pays for these serialized schema bytes.
 #[test]
 fn the_tool_list_stays_within_its_budget() {
     const FROM_1_0: usize = 25;
-    const FROM_1_0_BUDGET_BYTES: usize = 20_000;
-    const BUDGET_BYTES: usize = 33 * 1024;
+    const INTENT_BINDING_BYTES: usize = 2 * 1024;
+    const INTENT_RECORD_BYTES: usize = 2 * 1024;
+    const FROM_1_0_BUDGET_BYTES: usize = 20_000 + INTENT_BINDING_BYTES;
+    const BUDGET_BYTES: usize = 33 * 1024 + INTENT_BINDING_BYTES + INTENT_RECORD_BYTES;
     let definitions = definitions();
     assert_eq!(definitions[FROM_1_0 - 1].name, "message_orchestrator");
     let carried: usize = definitions[..FROM_1_0].iter().map(shown_bytes).sum();

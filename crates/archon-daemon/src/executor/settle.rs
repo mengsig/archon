@@ -196,13 +196,13 @@ async fn settle_verified(
         }
         (false, None) => outcome,
     };
-    let Some(outcome) = super::acceptance::verify(
+    let Some(outcome) = Box::pin(super::acceptance::verify(
         ctx,
         &run,
         &stage,
         records_build || review.records_ship,
         outcome,
-    )
+    ))
     .await?
     else {
         return Ok(FollowUp::default());

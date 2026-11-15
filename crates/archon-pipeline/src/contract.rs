@@ -299,22 +299,15 @@ fn contract_header(
          habit or instruction.\n\n\
          ## Workspace\n\n\
          - Work only in `{workspace}`. {mode_rule}\n\
-         - Ask the orchestrator when an important answer changes what gets built and is \
-         absent from the brief, repository or approved intent. A deviation from an approved \
-         requirement always asks. Never shrink acceptance to avoid asking. Otherwise choose \
-         reasonably and state the assumption visibly. When in doubt about importance, ask.\n\
+         - Ask about important unknowns and approved deviations; never shrink acceptance. \
+         State assumptions.\n\
          {PROCESS_RULE}\
-         - `mcp__archon__message_orchestrator` relays an operator message meant for the \
-         orchestrator (`kind=relay`, their exact text), reports a blocker outside your \
-         stage (`kind=escalation`), asks an uncapped clarification (`kind=question`, with \
-         `clarification.fallback` stating your best judgment) or sends low-priority `info`. \
-         Keep working on independent parts. Hold dependent work until the answer arrives \
-         in your live inbox or the configured timeout (default 30 minutes); then proceed \
-         with the recorded fallback. Under an applicable active operator proceed directive, \
-         cite its id in `clarification.proceed_directive`: never wait, decide and record \
-         the assumption for the end-of-run review. Never end the stage just for asking. \
-         Use no raw `send_message` to the orchestrator and no other Archon \
-         mutation tool but `publish_artifact`.\n\
+         - `mcp__archon__message_orchestrator`: `relay` quotes operator words; `escalation` \
+         reports blockers; `info`; uncapped `question` uses `clarification.fallback`. Hold \
+         dependent work; continue independent work. On answer/timeout (default 30 minutes), \
+         proceed and record the choice. Active operator Proceed (`clarification.proceed_directive`) \
+         skips waiting; record for review. Never end the stage just for asking. No raw \
+         `send_message` to the orchestrator; other Archon mutations only `publish_artifact`.\n\
          {fan_rule}\n\
          ## Finishing\n\n\
          - When done, call Aether's `complete_task` exactly once. Its `summary` is concise \
@@ -1121,9 +1114,9 @@ mod tests {
                 text.contains("mcp__archon__message_orchestrator"),
                 "{kind:?}"
             );
-            assert!(text.contains("asks an uncapped clarification"), "{kind:?}");
+            assert!(text.contains("uncapped `question`"), "{kind:?}");
             assert!(
-                text.contains("Hold dependent work until the answer arrives"),
+                text.contains("Hold dependent work; continue independent work"),
                 "{kind:?}"
             );
             assert!(

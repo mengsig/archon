@@ -49,7 +49,6 @@ pub const TOOLS: &[ToolName] = &[
     tool("model_evidence", ToolClass::ReadOnly),
     tool("register_repo", ToolClass::Mutation),
     tool("enqueue", ToolClass::Mutation),
-    tool("approve_intent", ToolClass::Mutation),
     tool("update_item", ToolClass::Mutation),
     tool("cancel_item", ToolClass::Mutation),
     tool("retry_item", ToolClass::Mutation),
@@ -79,6 +78,7 @@ pub const TOOLS: &[ToolName] = &[
     tool("settings", ToolClass::ReadOnly),
     tool("clear_notifications", ToolClass::Mutation),
     tool("request_status", ToolClass::ReadOnly),
+    tool("approve_intent", ToolClass::Mutation),
 ];
 
 /// The tools a stage agent keeps whatever its item's `tools` mode: its

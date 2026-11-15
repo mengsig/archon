@@ -455,3 +455,17 @@ fn questions_and_open_direction_have_matching_schema_and_parser() {
         Some(archon_core::autonomy::ProposalMode::Lavish)
     );
 }
+
+#[test]
+fn question_schema_and_parser_exempt_long_questions_and_fallbacks() {
+    let text = "é".repeat(archon_core::agent_message::MAX_MESSAGE_CHARS + 1);
+    let question = json!({"kind":"question","text":text,"clarification":{"fallback":text}});
+    assert!(schema_verdict("message_orchestrator", &question).is_ok());
+    assert!(to_request("message_orchestrator", question).is_ok());
+    let info = json!({"text":text});
+    assert!(schema_verdict("message_orchestrator", &info).is_err());
+    assert!(to_request("message_orchestrator", info).is_err());
+    let proceed = json!({"text":"proceed","clarifications":"proceed"});
+    assert!(schema_verdict("set_directive", &proceed).is_err());
+    assert!(to_request("set_directive", proceed).is_err());
+}

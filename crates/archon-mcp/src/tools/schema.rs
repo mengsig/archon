@@ -31,7 +31,6 @@ pub(super) fn all() -> Vec<ToolDefinition> {
         model_evidence(),
         register_repo(),
         enqueue(),
-        approve_intent(),
         update_item(),
         cancel_item(),
         retry_item(),
@@ -61,6 +60,7 @@ pub(super) fn all() -> Vec<ToolDefinition> {
         settings(),
         clear_notifications(),
         request_status(),
+        approve_intent(),
     ]
 }
 
@@ -73,7 +73,7 @@ fn approve_intent() -> ToolDefinition {
             json!({"record": {"type": "object", "properties": {
                 "id": {"type": "string"}, "version": {"type": "integer", "minimum": 1},
                 "operator_words": {"type": "string", "description": "The complete verbatim authenticated inbox message."},
-                "source": {"type": "object", "properties": {"kind": {"const": "inbox"}, "seq": {"type": "integer", "minimum": 1}}, "required": ["kind", "seq"]},
+                "source": {"type": "object", "properties": {"kind": {"enum": ["inbox"]}, "seq": {"type": "integer", "minimum": 1}}, "required": ["kind", "seq"]},
                 "artifacts": {"type": "array", "items": {"type": "object", "properties": {"path": {"type": "string"}, "sha256": {"type": "string"}}, "required": ["path", "sha256"]}},
                 "images": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"}, "path": {"type": "string"}, "sha256": {"type": "string"}, "viewport": {"type": ["object", "null"], "properties": {"width": {"type": "integer"}, "height": {"type": "integer"}}, "required": ["width", "height"]}, "theme": {"type": ["string", "null"]}, "state": {"type": ["string", "null"]}}, "required": ["id", "path", "sha256"]}},
                 "requirements": {"type": "array", "minItems": 1, "items": {"type": "object", "properties": {"id": {"type": "string"}, "text": {"type": "string"}, "kind": {"enum": ["visual", "behaviour", "wording", "data"]}, "images": {"type": "array", "items": {"type": "string"}}, "owner": {"type": "string"}}, "required": ["id", "text", "kind", "images", "owner"]}}
@@ -121,7 +121,7 @@ fn promote() -> ToolDefinition {
 }
 
 fn message_orchestrator() -> ToolDefinition {
-    define(
+    let mut definition = define(
         "message_orchestrator",
         "Message orchestrator",
         "Send the orchestrator a message, recorded with your item and stage: `relay` for an \
@@ -145,7 +145,12 @@ fn message_orchestrator() -> ToolDefinition {
             &["text"],
         ),
         false,
-    )
+    );
+    definition.input_schema["anyOf"] = json!([
+        {"properties": {"kind": {"enum": ["question"]}}, "required": ["kind"]},
+        {"properties": {"kind": {"enum": ["relay", "escalation", "info"]}, "text": {"maxLength": archon_core::agent_message::MAX_MESSAGE_CHARS}}}
+    ]);
+    definition
 }
 
 fn publish_artifact() -> ToolDefinition {
@@ -847,7 +852,7 @@ fn set_directive() -> ToolDefinition {
         object(
             json!({
                 "text": {"type": "string", "description": format!("At most {MAX_DIRECTIVE_CHARS} characters.")},
-                "clarifications": {"type": "string", "enum": ["ask", "proceed"], "description": "Proceed authorizes recorded deviations and assumptions without waiting; requires an authenticated operator. Revoked or expired directives no longer authorize this."},
+                "clarifications": {"type": "string", "enum": ["ask"], "description": "Proceed authorization requires the authenticated operator CLI/app."},
                 "expires_in_hours": {"type": "integer", "minimum": 1, "maximum": 720, "description": "When it lapses, if the operator gave a time frame (\"today\" is about 12)."},
             }),
             &["text"],

@@ -580,7 +580,7 @@ pub(crate) async fn resolve_item(
 async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, ArchonError> {
     match request {
         Request::Enqueue(enqueue) => items::enqueue(ctx, enqueue).await,
-        Request::ApproveIntent(record) => intent::approve(ctx, record).await,
+        Request::ApproveIntent(record) => Box::pin(intent::approve(ctx, record)).await,
         Request::ListItems(query) => items::list(ctx, &query).await,
         Request::GetItem { item } => items::get(ctx, &item).await,
         Request::GetStage(query) => stages::get(ctx, &query).await,

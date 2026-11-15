@@ -75,7 +75,7 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
             "enqueue",
             json!({
                 "repo": "web", "pipeline": "refactor", "title": "Fix login redirect",
-                "brief": "Users land on /404 after login.", "priority": "high", "depends_on": [qi()],
+                "brief": "Users land on /404 after login.", "direction_open": true, "intent": {"id":"layout","version":1,"requirements":["R1"]}, "priority": "high", "depends_on": [qi()],
                 "tags": ["auth"], "model_plan": plan(), "model_reasons": {"implement": "Apply supplied fix"}, "budget_usd": 5.0, "stage_timeouts": {"implement": 90}, "idempotency_key": "fix-login-1",
                 "autonomy": {"review": "standard", "proposal": "lavish", "report": "with-pr", "merge": "manual", "tools": "guarded"},
                 "origin": {"repository": "acme/web", "number": 42}, "onto": {"pr": 100}
@@ -130,7 +130,7 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
         ),
         (
             "set_directive",
-            json!({"text": "merge docs fixes yourself", "expires_in_hours": 12}),
+            json!({"text": "merge docs fixes yourself", "expires_in_hours": 12, "clarifications":"ask"}),
         ),
         (
             "clear_directive",
@@ -151,6 +151,8 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
             json!({"request": RequestId::new().to_string()}),
         ),
     ];
+    samples.push(("approve_intent", json!({"record":{"id":"layout","version":1,"operator_words":"Keep the title","source":{"kind":"inbox","seq":1},"artifacts":[],"images":[],"requirements":[{"id":"R1","text":"Keep the title","kind":"wording","images":[],"owner":"web"}]}})));
+    samples.push(("message_orchestrator", json!({"text":"Which title?","kind":"question","clarification":{"fallback":"Keep the current title","proceed_directive":DirectiveId::new().to_string()}})));
     samples.extend(adaptive_samples());
     samples
 }
@@ -1339,9 +1341,10 @@ fn the_tool_list_stays_within_its_budget() {
     let definitions = definitions();
     assert_eq!(definitions[FROM_1_0 - 1].name, "message_orchestrator");
     let carried: usize = definitions[..FROM_1_0].iter().map(shown_bytes).sum();
+    let all: usize = definitions.iter().map(shown_bytes).sum();
     assert!(
         carried <= FROM_1_0_BUDGET_BYTES,
-        "the tools of 1.0 grew to {carried} bytes"
+        "the tools of 1.0 grew to {carried} bytes; all tools: {all} bytes"
     );
     for definition in definitions
         .iter()
@@ -1353,7 +1356,6 @@ fn the_tool_list_stays_within_its_budget() {
             definition.name
         );
     }
-    let all: usize = definitions.iter().map(shown_bytes).sum();
     assert!(all <= BUDGET_BYTES, "the tool list grew to {all} bytes");
 }
 

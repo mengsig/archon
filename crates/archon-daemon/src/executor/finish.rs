@@ -55,7 +55,7 @@ pub(super) async fn finish_run(
             Err(error) => return Err(error),
         }
     }
-    super::acceptance::publish_deviations(ctx, &run).await?;
+    Box::pin(super::acceptance::publish_deviations(ctx, &run)).await?;
     let mut repair = None;
     match repair::decide(ctx, table, &run, &state).await? {
         Decision::Finish => {}

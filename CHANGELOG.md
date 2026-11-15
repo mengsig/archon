@@ -42,8 +42,9 @@
   4 minutes, and a call Archon cannot read 11 minutes. A long command under
   its own timeout is left alone. Tool events count as progress, read from
   Aether, and mail counts as waiting until it is read. The fresh turn gets
-  the waiting mail, and once Aether reports the turn stopped, a note naming
-  the call that was cut off, so the orchestrator can check and rerun it. The 3-interrupt cap is
+  the waiting mail and a note naming the call that was cut off, so the
+  orchestrator can check and rerun it. Mail still unread when archond
+  restarts is found again. The 3-interrupt cap is
   replaced by a limit of one interrupt per 5 minutes, and the operator is
   told each time one fires. Without mail, a turn silent for 30 minutes is
   nudged as before, and is interrupted if it makes no progress within 2

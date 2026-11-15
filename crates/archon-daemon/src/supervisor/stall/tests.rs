@@ -104,7 +104,7 @@ fn nudges_are_bounded_per_agent() {
 fn a_turn_found_open_after_a_restart_is_watched_from_the_probe() {
     let mut live = Liveness::default();
     assert!(live.needs_probe(&agent(A)));
-    live.probed(&agent(A), true, at(0));
+    live.probed(&agent(A), true, None, at(0));
     assert!(!live.needs_probe(&agent(A)));
     assert!(live.take_stall(at(STALL - 1)).is_none());
     assert!(live.take_stall(at(STALL)).is_some());
@@ -118,14 +118,14 @@ fn a_progress_event_before_the_probe_does_not_skip_it() {
     };
     live.saw(&agent(A), &usage, at(0));
     assert!(live.needs_probe(&agent(A)));
-    live.probed(&agent(A), true, at(5));
+    live.probed(&agent(A), true, None, at(5));
     assert!(live.take_stall(at(STALL)).is_some());
 }
 
 #[test]
 fn an_idle_orchestrator_found_by_the_probe_is_not_watched() {
     let mut live = Liveness::default();
-    live.probed(&agent(A), false, at(0));
+    live.probed(&agent(A), false, None, at(0));
     assert!(live.take_stall(at(10 * STALL)).is_none());
 }
 
@@ -497,4 +497,37 @@ fn nothing_is_due_for_another_agent_or_a_closed_turn() {
     assert!(!live.check_due(&agent(A), at(10 * STALL)));
     live.saw_activity(&agent(A), at(2));
     assert!(live.take_stall(at(10 * STALL)).is_none());
+}
+
+#[test]
+fn mail_found_unread_by_the_restart_probe_or_before_the_turn_was_seen_still_waits() {
+    let mut probed = Liveness::default();
+    probed.probed(&agent(A), true, Some(585), at(0));
+    assert!(
+        probed.take_stall(at(STALL)).is_none(),
+        "the mail rule, not the stall rule"
+    );
+    assert!(interrupts(&mut probed, at(MAIL), Ok(None)).is_some());
+
+    let mut early = Liveness::default();
+    assert!(
+        !early.saw(&agent(A), &operator_mail(7), at(0)),
+        "no turn known yet"
+    );
+    early.probed(&agent(A), true, None, at(1));
+    assert!(interrupts(&mut early, at(1 + MAIL), Ok(None)).is_some());
+}
+
+/// Once a generation's nudges are spent, a stall is still interrupted after
+/// the grace, as the stall notice says.
+#[test]
+fn a_stall_with_the_nudges_spent_is_interrupted_after_the_grace() {
+    let mut live = Liveness::default();
+    for round in 0..=i64::from(MAX_NUDGES) {
+        let base = round * 2 * STALL;
+        live.saw(&agent(A), &started(), at(base));
+        let stall = live.take_stall(at(base + STALL)).expect("stalled");
+        assert_eq!(stall.nudge, round < i64::from(MAX_NUDGES), "round {round}");
+        assert!(interrupts(&mut live, at(base + STALL + GRACE), Ok(None)).is_some());
+    }
 }

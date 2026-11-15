@@ -1885,7 +1885,7 @@ async fn a_hung_call_with_mail_waiting_is_interrupted_within_its_bound_and_the_f
     assert!(
         note.starts_with("Archon interrupted your turn")
             && note.contains("`Bash` running `ls && head -40 fetch.sh`")
-            && note.contains("Messages that waited for you are in your inbox"),
+            && note.contains("Messages that waited for you follow"),
         "{note}"
     );
     let calls = harness.fake.received();
@@ -1895,8 +1895,8 @@ async fn a_hung_call_with_mail_waiting_is_interrupted_within_its_bound_and_the_f
         .unwrap();
     let stopped = calls.iter().position(|c| c["cmd"] == "interrupt").unwrap();
     assert!(
-        stopped < told,
-        "only a turn Aether stopped is told it was cut off"
+        told < stopped,
+        "the note is queued before the fresh turn reads its inbox"
     );
     let decisions = harness.notifications(NotificationKind::Decision).await;
     assert!(

@@ -278,9 +278,10 @@ pub struct TurnActivity {
     /// The newest tool, message or turn event of the agent; `None` when
     /// none is in the page read, or the backend cannot tell.
     pub last_event_at: Option<Timestamp>,
-    pub open_call: Option<OpenToolCall>,
-    /// Whether `open_call` is known: false when the events read do not
-    /// reach back to the turn's start, so a call may be open beyond them.
+    /// Every call the turn has open, newest first: calls may run in parallel.
+    pub open_calls: Vec<OpenToolCall>,
+    /// Whether `open_calls` is complete: false when the events read do not
+    /// reach back to the turn's start, so more may be open beyond them.
     pub call_known: bool,
 }
 
@@ -429,7 +430,7 @@ pub trait AgentBackend: Send + Sync {
     async fn turn_activity(&self, agent: &AetherAgentId) -> Result<TurnActivity, ArchonError> {
         Ok(TurnActivity {
             last_event_at: None,
-            open_call: self.open_tool_call(agent).await?,
+            open_calls: self.open_tool_call(agent).await?.into_iter().collect(),
             call_known: true,
         })
     }

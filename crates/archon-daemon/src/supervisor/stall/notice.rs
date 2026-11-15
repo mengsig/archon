@@ -11,6 +11,9 @@ use super::{Hung, INTERRUPT_SPACING, MAX_NUDGES, NUDGE_GRACE, call_bound};
 const NUDGE_PREFIX: &str = "Continue: your turn has made no progress";
 /// How Archon's note to an interrupted orchestrator begins.
 const CUT_OFF_PREFIX: &str = "Archon interrupted your turn";
+/// What the orchestrator reads when an interrupt it was told of stopped nothing.
+pub(super) const WITHDRAWN_NOTE: &str = "Archon's interrupt of your turn did not go through, \
+    so no tool call was cut off by it: disregard its note about a cut-off call.";
 /// The longest command a note quotes.
 const COMMAND_QUOTE: usize = 300;
 
@@ -22,10 +25,7 @@ pub(super) enum Nudge {
 
 /// What the interrupt of a hung turn did.
 pub(super) enum Interrupted {
-    /// `told` is whether the orchestrator was told which call was cut off.
-    Stopped {
-        told: Result<(), ArchonError>,
-    },
+    Stopped,
     NoTurn,
     Failed(ArchonError),
 }
@@ -75,8 +75,9 @@ pub(super) fn cut_off_note(
     };
     let call = match call {
         Ok(Some(call)) => format!(
-            "The tool call cut off was `{}`{}, started {}; its outcome is unknown, so check \
-             whether it took effect, and run it again if it still matters.",
+            "The tool call cut off was `{}`{}, started {}, with any other call you had \
+             running; their outcome is unknown, so check whether each took effect, and run it \
+             again if it still matters.",
             call.name,
             quoted_command(call),
             call.requested_at.format("%H:%M:%SZ"),
@@ -91,7 +92,7 @@ pub(super) fn cut_off_note(
     };
     let note = format!(
         "{CUT_OFF_PREFIX}: it was silent for {minutes} minutes{waited}. {call} Messages that \
-         waited for you are in your inbox."
+         waited for you follow."
     );
     assert!(
         note.starts_with(CUT_OFF_PREFIX),
@@ -122,11 +123,13 @@ fn span_text(span: Duration) -> String {
     }
 }
 
-/// What the operator reads after archond tried to interrupt a hung turn.
+/// What the operator reads after archond tried to interrupt a hung turn;
+/// `note` is whether Archon's last note to the orchestrator was sent.
 pub(super) fn interrupt_text(
     hung: &Hung,
     call: &Result<Option<OpenToolCall>, ArchonError>,
     outcome: &Interrupted,
+    note: &Result<(), ArchonError>,
 ) -> String {
     let minutes = hung.silent.as_secs() / 60;
     assert!(minutes > 0, "an interrupt follows minutes of silence");
@@ -152,7 +155,7 @@ pub(super) fn interrupt_text(
     };
     let retry = INTERRUPT_SPACING.as_secs() / 60;
     let text = match outcome {
-        Interrupted::Stopped { .. } => format!(
+        Interrupted::Stopped => format!(
             "{head}, so Archon interrupted it, as Esc in its terminal would. Messages waiting \
              for it, yours included, are delivered in a fresh turn, which is told which call \
              was cut off. If it stays silent, run `archon orchestrator restart` to start a \
@@ -169,11 +172,15 @@ pub(super) fn interrupt_text(
              one."
         ),
     };
-    match outcome {
-        Interrupted::Stopped { told: Err(error) } => {
+    match (note, outcome) {
+        (Ok(()), _) => text,
+        (Err(error), Interrupted::Stopped) => {
             format!("{text} Archon could not tell it which call was cut off ({error}).")
         }
-        _ => text,
+        (Err(error), _) => format!(
+            "{text} Archon could not tell it that its note about a cut-off call is void \
+             ({error})."
+        ),
     }
 }
 

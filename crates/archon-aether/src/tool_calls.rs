@@ -40,7 +40,7 @@ pub(crate) async fn open(
     client: &AetherClient,
     agent: &AetherAgentId,
 ) -> Result<Option<OpenToolCall>, ArchonError> {
-    Ok(activity(client, agent).await?.open_call)
+    Ok(activity(client, agent).await?.open_calls.into_iter().next())
 }
 
 /// `agent`'s newest turn event and the call its turn left open, from one
@@ -64,11 +64,14 @@ fn open_in(
     agent: &AetherAgentId,
     newest_first: &[Value],
 ) -> Result<Option<OpenToolCall>, ArchonError> {
-    Ok(activity_in(agent, newest_first)?.open_call)
+    Ok(activity_in(agent, newest_first)?
+        .open_calls
+        .into_iter()
+        .next())
 }
 
 /// [`activity`] over `agent`'s events, newest first. Walking back from the
-/// newest, the first call with no outcome before its turn's start is open.
+/// newest to its turn's start, every call with no outcome is open.
 fn activity_in(agent: &AetherAgentId, newest_first: &[Value]) -> Result<TurnActivity, ArchonError> {
     let own: Vec<Event<'_>> = newest_first
         .iter()
@@ -86,16 +89,16 @@ fn activity_in(agent: &AetherAgentId, newest_first: &[Value]) -> Result<TurnActi
         return Ok(TurnActivity::default());
     };
     let last_event_at = newest.at;
-    let found = |open_call| TurnActivity {
-        last_event_at: Some(last_event_at),
-        open_call,
-        call_known: true,
-    };
+    let mut open_calls = Vec::new();
     let mut settled = BTreeSet::new();
     for event in &own {
         match event.type_name {
             "agent.started" | "agent.interrupted" | "agent.turn_completed" => {
-                return Ok(found(None));
+                return Ok(TurnActivity {
+                    last_event_at: Some(last_event_at),
+                    open_calls,
+                    call_known: true,
+                });
             }
             "tool.requested" => {
                 let call = event.field("call");
@@ -103,7 +106,7 @@ fn activity_in(agent: &AetherAgentId, newest_first: &[Value]) -> Result<TurnActi
                 if settled.contains(id) {
                     continue;
                 }
-                let call = OpenToolCall {
+                open_calls.push(OpenToolCall {
                     id: id.to_owned(),
                     name: text(call.get("name"), "tool.requested call.name")?.to_owned(),
                     command: command_of(call.get("input")),
@@ -111,8 +114,7 @@ fn activity_in(agent: &AetherAgentId, newest_first: &[Value]) -> Result<TurnActi
                     requested_at: event.at,
                     // Aether's clock may step back; nothing is newer than the call.
                     last_event_at: last_event_at.max(event.at),
-                };
-                return Ok(found(Some(call)));
+                });
             }
             "agent.message" | "agent.usage_updated" => {}
             // Every outcome names its call by id.
@@ -121,10 +123,17 @@ fn activity_in(agent: &AetherAgentId, newest_first: &[Value]) -> Result<TurnActi
             }
         }
     }
-    // The turn's start is beyond the page: a call may be open before it.
+    // The turn's start is beyond the page: more calls may be open before it.
+    assert!(
+        open_calls
+            .windows(2)
+            .all(|pair| pair[0].requested_at >= pair[1].requested_at),
+        "open calls are listed newest first"
+    );
     Ok(TurnActivity {
+        last_event_at: Some(last_event_at),
+        open_calls,
         call_known: false,
-        ..found(None)
     })
 }
 
@@ -333,7 +342,7 @@ mod tests {
             started,
         ];
         let activity = activity_in(&lead(), &events).unwrap();
-        assert_eq!(activity.open_call, None);
+        assert!(activity.open_calls.is_empty());
         assert!(activity.call_known, "the turn's start was read");
         let newest = activity.last_event_at.expect("a turn event was read");
         assert_eq!(newest.to_rfc3339(), "2026-11-01T12:31:00+00:00");
@@ -341,6 +350,32 @@ mod tests {
         assert!(!cut.call_known, "the open call may precede the page");
         assert_eq!(cut.last_event_at, activity.last_event_at);
         assert!(!activity_in(&lead(), &[]).unwrap().call_known);
+    }
+
+    #[test]
+    fn every_call_open_in_the_turn_is_listed() {
+        let build = json!({"id": "call_b", "name": "Bash",
+                           "input": {"command": "make", "timeout": 600_000}});
+        let events = [
+            requested(5, 25, "call_c", "ls"),
+            succeeded(4, 24, "call_a"),
+            event(
+                3,
+                22,
+                LEAD,
+                json!({"type": "tool.requested", "call": build}),
+            ),
+            requested(2, 21, "call_a", "pwd"),
+            event(1, 20, LEAD, json!({"type": "agent.started", "turn": 2})),
+        ];
+        let activity = activity_in(&lead(), &events).unwrap();
+        let ids: Vec<&str> = activity.open_calls.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(ids, ["call_c", "call_b"], "the older build still runs");
+        assert!(activity.call_known);
+        assert_eq!(
+            activity.open_calls[1].timeout,
+            Some(Duration::from_secs(600))
+        );
     }
 
     #[test]

@@ -68,31 +68,30 @@ fn the_orchestrator_is_told_which_call_was_cut_off() {
 #[test]
 fn the_interrupt_notice_says_why_what_archon_did_and_the_fallback() {
     let call = Ok(Some(bash("make ci")));
-    let stopped = || Interrupted::Stopped { told: Ok(()) };
-    let text = interrupt_text(&hung(4, true), &call, &stopped());
+    let sent = Ok(());
+    let text = interrupt_text(&hung(4, true), &call, &Interrupted::Stopped, &sent);
     assert!(text.contains("Operator mail waited"), "{text}");
     assert!(text.contains("past its bound of 2 min 30 s"), "{text}");
     assert!(text.contains("Archon interrupted it"), "{text}");
     assert!(text.contains("told which call was cut off"), "{text}");
     assert!(!text.contains("could not tell it"), "{text}");
-    let nudged = interrupt_text(&hung(32, false), &Ok(None), &stopped());
+    let nudged = interrupt_text(&hung(32, false), &Ok(None), &Interrupted::Stopped, &sent);
     assert!(
         nudged.contains("2 minutes after Archon's nudge"),
         "{nudged}"
     );
     assert!(nudged.contains("no tool call running"), "{nudged}");
-    let none = interrupt_text(&hung(4, true), &call, &Interrupted::NoTurn);
+    let none = interrupt_text(&hung(4, true), &call, &Interrupted::NoTurn, &sent);
     assert!(none.contains("no turn running") && none.contains("archon orchestrator restart"));
     let failed = Interrupted::Failed(ArchonError::Unavailable("aetherd gone".into()));
-    let text = interrupt_text(&hung(4, true), &call, &failed);
+    let unsent = Err(ArchonError::Unavailable("inbox closed".into()));
+    let text = interrupt_text(&hung(4, true), &call, &failed, &unsent);
     assert!(
         text.contains("could not interrupt it (") && text.contains("aetherd gone"),
         "{text}"
     );
     assert!(text.contains("tries again in 5 minutes"), "{text}");
-    let untold = Interrupted::Stopped {
-        told: Err(ArchonError::Unavailable("inbox closed".into())),
-    };
-    let text = interrupt_text(&hung(4, true), &call, &untold);
-    assert!(text.contains("could not tell it which call") && text.contains("inbox closed"));
+    assert!(text.contains("note about a cut-off call is void") && text.contains("inbox closed"));
+    let untold = interrupt_text(&hung(4, true), &call, &Interrupted::Stopped, &unsent);
+    assert!(untold.contains("could not tell it which call") && untold.contains("inbox closed"));
 }

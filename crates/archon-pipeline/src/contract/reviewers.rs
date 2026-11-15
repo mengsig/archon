@@ -80,6 +80,37 @@ pub fn governed_reviewer_rules(
     unplaced_rules(own, policy, (&effort, &sizing), governed)
 }
 
+/// The models [`governed_reviewer_rules`] names for the reviewers, so the
+/// lead's delegation policy bounds them alike; empty when it names none.
+pub fn reviewer_models(
+    named: Option<&[ModelChoice]>,
+    own: &ModelRef,
+    policy: &ModelPolicy,
+    (profile, catalog): (&ReviewConfig, &ModelCatalog),
+    governed: bool,
+) -> Vec<ModelRef> {
+    if let Some(choices) = named.filter(|choices| !choices.is_empty()) {
+        return choices.iter().map(|c| c.model.clone()).collect();
+    }
+    let costed;
+    let catalog = match governed {
+        true => {
+            costed = cost_reporting(catalog);
+            &costed
+        }
+        false => catalog,
+    };
+    if let Some((model, _)) = resolve_default(profile.default_tier, own, policy, profile, catalog) {
+        return vec![model];
+    }
+    let placed = unplaced_model(own, policy, governed).cloned();
+    assert!(
+        placed.as_ref().is_none_or(|m| policy.permits_model(m)),
+        "a placed reviewer is one the policy permits"
+    );
+    placed.into_iter().collect()
+}
+
 /// Why the reviewers owed cannot run under an item budget, `None` when they
 /// can. Checked before any work, so the run does not fail after its commit.
 pub fn governed_review_refusal(

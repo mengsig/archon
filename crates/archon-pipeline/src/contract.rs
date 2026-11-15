@@ -23,7 +23,8 @@ pub use checks::{FastCheck, check_rules};
 pub use initiative::initiative_rules;
 pub use lessons::lesson_rules;
 pub use reviewers::{
-    governed_review_refusal, governed_reviewer_rules, provider_reports_cost, reviewer_profile_rules,
+    governed_review_refusal, governed_reviewer_rules, provider_reports_cost, reviewer_models,
+    reviewer_profile_rules,
 };
 pub use storage::{artifact_rules, build_cache_rules};
 
@@ -166,6 +167,18 @@ pub fn delegation_rules(
          {DELEGATE_HAND_OFF}\
          {DELEGATE_CHILD_RULES}\
          {bounds}"
+    )
+}
+
+/// The rule for a lead whose workers Aether bounds by `policy`: every child
+/// but one with role `reviewer`, which the reviewer rule bounds instead.
+pub fn worker_rule(policy: &archon_core::delegation::WorkerPolicy) -> String {
+    assert!(!policy.workers.is_empty(), "a policy allows a worker");
+    format!(
+        "- Workers (every child but a reviewer): {}. Not your own model unless it is \
+         listed: Aether's `delegate` refuses a worker outside this, and the error names \
+         what is allowed.\n",
+        policy.describe()
     )
 }
 

@@ -19,5 +19,9 @@ Defaults stop at `strong`; ask for `frontier` only when the operator does.
   judge at low effort, can beat one balanced reviewer for far less.
 - Reviewer independence means independent discovery: another provider at the
   same tier counts as independent.
+- A delegating lead's workers run on its pipeline's worker default
+  (`get_item` shows it), never the lead's own model by default. Name
+  `<stage>.workers` choices only when the parts need another tier or effort;
+  a cheaper tier than the lead is the usual choice.
 - `model_evidence` groups attempts by stage, tier and effort as well as by
   model; prefer what it shows over these rules of thumb.

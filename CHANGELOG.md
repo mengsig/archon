@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Worker model policy: a stage lead no longer clones its own model for its
+  workers. `model_plan` takes `<stage>.workers` (up to four `{model|tier,
+  effort}` choices, within model policy, like `<stage>.review`), and a
+  pipeline declares its default in `[pipeline.workers]` (`tier`, `effort`,
+  `max_parallel`): `adaptive` and `review` give balanced-tier workers at
+  medium, at most 2 at once; `swarm` gives fast-tier ones. Archon sends it to
+  the lead's Aether agent as `config.delegation_policy`, with the reviewers
+  it owes bounded apart to the models its contract names (`reviewers`), so
+  an Aether that enforces it refuses a worker outside it; an older Aether
+  ignores the field. The stage contract states the worker rule, and
+  `get_item` (and `archon show`) shows each delegating stage's policy.
+  Items queued before the upgrade keep their plans and take the pipeline
+  default; spawn requests stored before it are resent unchanged.
+
 ## 1.5.1
 
 Released 2026-11-14.

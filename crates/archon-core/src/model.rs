@@ -370,6 +370,15 @@ pub fn reviewers_key(stage: &str) -> String {
     format!("{stage}{REVIEWERS_KEY_SUFFIX}")
 }
 
+/// Ends the `model_plan` and `model_reasons` key (`<stage>.workers`) naming the
+/// workers a stage lead may delegate to; stage ids hold no `.`.
+pub const WORKERS_KEY_SUFFIX: &str = ".workers";
+
+/// The key naming the workers `stage` may delegate to.
+pub fn workers_key(stage: &str) -> String {
+    format!("{stage}{WORKERS_KEY_SUFFIX}")
+}
+
 impl ModelPlan {
     /// The models the plan lets delegated reviewers run on; `None` leaves them free.
     pub fn reviewer_choices(&self) -> Option<&[ModelChoice]> {

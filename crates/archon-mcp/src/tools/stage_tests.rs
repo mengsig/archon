@@ -249,6 +249,7 @@ fn item_detail(stage: StageRun) -> ItemDetail {
     item.id = run.item.clone();
     ItemDetail {
         default_efforts: Default::default(),
+        worker_policies: Default::default(),
         steers: Vec::new(),
         waiting_on: None,
         waiting_reason: None,

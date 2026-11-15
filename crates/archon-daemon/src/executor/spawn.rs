@@ -12,9 +12,11 @@ use archon_core::autonomy::ToolsMode;
 use archon_core::catalog::{StageKind, WorkspaceMode};
 use archon_core::config::{BuildCache, Config};
 use archon_core::cost::ItemBudget;
+use archon_core::delegation::WorkerPolicy;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
 use archon_core::lesson::CONTRACT_LESSONS;
+use archon_core::model::Effort;
 use archon_core::policy::ModelPolicy;
 use archon_core::ports::{SpawnRequest, SpawnedAgent};
 use archon_core::queue::QueueItem;
@@ -640,7 +642,12 @@ impl Target<'_> {
 
     /// The stage contract, with its reviewers' models, its deadline `until`, the run's
     /// own sections and, when the agent can delegate, the rules and model policy for that.
-    fn instructions(&self, plan: &SpawnPlan, until: Timestamp) -> String {
+    fn instructions(
+        &self,
+        plan: &SpawnPlan,
+        until: Timestamp,
+        workers: Option<&WorkerPolicy>,
+    ) -> String {
         assert!(!plan.instructions.is_empty(), "every stage has a contract");
         // An unreadable policy refuses this spawn when it is issued (`claim`).
         let policy = RepoEnv::new(self.repo.cloned()).map(|env| env.policy(self.config));
@@ -666,7 +673,8 @@ impl Target<'_> {
             Some(self.experiments),
             self.config.models.effort_sizing,
         );
-        format!("{contract}{rules}")
+        let workers = workers.map(contract::worker_rule).unwrap_or_default();
+        format!("{contract}{rules}{workers}")
     }
 }
 
@@ -834,6 +842,7 @@ fn build_request(
         "a team run's agents work under its team directory"
     );
     let until = deadline(now, target.timeout_minutes(plan));
+    let delegation_policy = delegation_policy(target, plan);
     SpawnRequest {
         host_context: Default::default(),
         idempotency_key: id.as_str().to_owned(),
@@ -841,7 +850,7 @@ fn build_request(
         // Every reserved spawn is bound to the run's node before it is sent.
         name: naming::stage_agent_name(naming::Placement::UnderRunNode, plan, retry),
         objective: plan.prompt.clone(),
-        instructions: target.instructions(plan, until),
+        instructions: target.instructions(plan, until, delegation_policy.as_ref()),
         choice: plan.choice.clone(),
         workspace,
         repository: target.repo.map(|repo| repo.name.clone()),
@@ -857,7 +866,37 @@ fn build_request(
         parent: None,
         network: None,
         keep: plan.keep,
+        delegation_policy,
     }
+}
+
+/// The worker policy `plan`'s lead is sent: its workers, and the reviewers it
+/// owes bounded to the models its contract names. `None` for a leaf.
+fn delegation_policy(target: &Target<'_>, plan: &SpawnPlan) -> Option<WorkerPolicy> {
+    if !target.delegates(plan) {
+        return None;
+    }
+    let workers = plan.workers.clone()?;
+    let Some(named) = plan.reviewers.as_deref() else {
+        return Some(workers);
+    };
+    // An unreadable policy refuses this spawn when it is issued (`claim`).
+    let Ok(policy) = RepoEnv::new(target.repo.cloned()).map(|env| env.policy(target.config)) else {
+        return Some(workers);
+    };
+    let models = contract::reviewer_models(
+        Some(named),
+        &plan.choice.model,
+        &policy,
+        (&target.config.review, target.catalog),
+        target.governed,
+    );
+    assert!(
+        models.iter().all(|m| policy.permits_model(m)),
+        "reviewers stay within the model policy"
+    );
+    let effort = policy.max_effort.unwrap_or(Effort::Max);
+    Some(workers.with_reviewers(models, effort))
 }
 
 /// What ties the agent, and through Aether its children, to this stage run.

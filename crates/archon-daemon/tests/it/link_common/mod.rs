@@ -324,6 +324,7 @@ pub async fn spawning_stage(
         parent: node.map(agent_id),
         network: node.map(|_| NetworkPolicy::Allowed),
         keep: false,
+        delegation_policy: None,
     };
     let binding = if node.is_some() { "bound" } else { "pending" };
     let spawn = serde_json::json!({"request": request, "timeout_minutes": 30, "parent": binding});

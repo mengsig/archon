@@ -1985,6 +1985,11 @@ pub struct ItemDetail {
     /// The default effort of each plan key, to see which choices exceed it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub default_efforts: BTreeMap<String, Effort>,
+    /// What each delegating stage's lead may run workers on, by stage id:
+    /// its `<stage>.workers` plan key, else the pipeline's worker default.
+    /// Its reviewers' bound is added when the lead spawns.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub worker_policies: BTreeMap<String, crate::delegation::WorkerPolicy>,
     /// Every steer of the item, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub steers: Vec<crate::steer::SteerRecord>,

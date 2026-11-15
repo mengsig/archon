@@ -385,6 +385,7 @@ pub fn orchestrator_create_agent(
             },
             long_lived: true,
             leaf: false,
+            delegation_policy: None,
         }),
         approval: orchestrator_approval(config),
         run: None,

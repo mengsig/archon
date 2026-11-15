@@ -2708,6 +2708,96 @@ async fn adaptive_guarded_build_delegates_within_the_stated_policy_and_archond_s
     assert!(body.contains(&review), "{body}");
 }
 
+/// A delegating lead is sent its pipeline's worker default as Aether's
+/// delegation policy, its reviewers bounded to the model its contract names,
+/// and its contract and `get_item` say so.
+#[tokio::test]
+async fn an_adaptive_lead_is_sent_balanced_workers_and_its_reviewer_as_its_policy() {
+    use archon_core::delegation::WorkerChoice;
+    use archon_core::model_tier::Tier;
+    let mut config = Config::default();
+    config.models.allow = vec![MODEL.parse().unwrap(), REVIEW_MODEL.parse().unwrap()];
+    config.models.max_effort = Some(Effort::High);
+    let h = Harness::with_config(config).await;
+    seed_review_catalog(&h).await;
+    let item = adaptive_item(&h).await;
+    let build = h.backend.requests()[0].clone();
+    let policy = build
+        .delegation_policy
+        .expect("a delegating lead is bounded");
+    let balanced = WorkerChoice::of_tier(Tier::Balanced, Effort::Medium);
+    assert_eq!(policy.workers, [balanced]);
+    assert_eq!(
+        (policy.default_tier, policy.max_effort, policy.max_parallel),
+        (Some(Tier::Balanced), Some(Effort::Medium), Some(2))
+    );
+    assert_eq!(policy.reviewers.len(), 1, "{policy:?}");
+    let reviewer = &policy.reviewers[0];
+    assert_eq!(reviewer.effort, Effort::High, "up to the policy's cap");
+    let named = reviewer.model.as_ref().unwrap().to_string();
+    assert!(
+        build
+            .instructions
+            .contains(&format!("on {named} at tier balanced")),
+        "the contract names the reviewer the policy allows: {}",
+        build.instructions
+    );
+    let rule = "- Workers (every child but a reviewer): each worker on the balanced tier at \
+                effort medium, at most 2 at once.";
+    assert!(build.instructions.contains(rule), "{}", build.instructions);
+    let Reply::ItemDetail(detail) = h
+        .cli(Request::GetItem {
+            item: item.id.clone(),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("item detail expected");
+    };
+    let shown = &detail.worker_policies["build"];
+    assert_eq!(shown.workers, policy.workers);
+    assert!(shown.reviewers.is_empty(), "reviewers are bounded at spawn");
+}
+
+/// A plan's `<stage>.workers` replaces the pipeline default, and a pipeline
+/// that declares none sends its lead no policy: Aether's own rule stands.
+#[tokio::test]
+async fn a_planned_workers_key_replaces_the_default_and_no_default_sends_none() {
+    use archon_core::delegation::WorkerChoice;
+    let h = Harness::new().await;
+    add_origin(&h);
+    let low = choice(MODEL, Effort::Low);
+    let plan = archon_core::model::ModelPlan(
+        [
+            ("build".to_owned(), vec![choice(MODEL, Effort::Medium)]),
+            (archon_core::model::workers_key("build"), vec![low.clone()]),
+        ]
+        .into(),
+    );
+    h.enqueue_in("adaptive", "a planned change", plan)
+        .await
+        .unwrap();
+    h.dispatch().await;
+    let build = h.backend.requests()[0].clone();
+    let policy = build
+        .delegation_policy
+        .expect("a delegating lead is bounded");
+    assert_eq!(policy.workers, [WorkerChoice::from_plan(&low)]);
+    assert_eq!(policy.max_effort, Some(Effort::Low));
+    assert_eq!(policy.max_parallel, Some(2), "the pipeline's cap stays");
+
+    let h = Harness::new().await;
+    led_item(&h).await;
+    let lead = h.backend.requests()[0].clone();
+    assert!(!lead.leaf, "the lead delegates");
+    assert_eq!(lead.delegation_policy, None);
+    assert!(
+        !lead.instructions.contains("- Workers ("),
+        "{}",
+        lead.instructions
+    );
+}
+
 /// `[models] effort_sizing` reaches the lead's contract: its children and its
 /// reviewers are sized by the effort rubric, within the policy's cap.
 #[tokio::test]

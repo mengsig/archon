@@ -282,6 +282,10 @@ pub fn stage_create_agent(request: &SpawnRequest, network: NetworkPolicy) -> Cre
             names: request.hidden_tools.iter().cloned().collect(),
         },
     };
+    assert!(
+        !request.leaf || request.delegation_policy.is_none(),
+        "only an agent that may delegate is sent a worker policy"
+    );
     CreateAgent {
         role: request.role.clone(),
         name: Some(request.name.clone()),
@@ -306,6 +310,7 @@ pub fn stage_create_agent(request: &SpawnRequest, network: NetworkPolicy) -> Cre
             tools,
             long_lived: request.keep,
             leaf: request.leaf,
+            delegation_policy: request.delegation_policy.clone(),
         }),
         approval: Some(ApprovalPolicy::none()),
         run: request.attach_run.clone(),
@@ -358,6 +363,7 @@ pub fn run_node_create_agent(request: &RunNodeRequest) -> CreateAgent {
             },
             long_lived: false,
             leaf: false,
+            delegation_policy: None,
         }),
         approval: Some(ApprovalPolicy::none()),
         run: request.attach_run.clone(),
@@ -833,6 +839,7 @@ mod tests {
             parent: Some(node_id()),
             network: Some(NetworkPolicy::Denied),
             keep: false,
+            delegation_policy: None,
         }
     }
 
@@ -850,6 +857,36 @@ mod tests {
             labels: [("archon.item".to_owned(), "qi_1".to_owned())].into(),
             attach_run: None,
         }
+    }
+
+    #[test]
+    fn a_lead_s_worker_policy_rides_in_its_config_and_a_stored_request_sends_none() {
+        use archon_core::delegation::{WorkerChoice, WorkerPolicy};
+        use archon_core::model_tier::Tier;
+        let workers = vec![WorkerChoice::of_tier(Tier::Balanced, Effort::Medium)];
+        let policy = WorkerPolicy::new(workers, Some(Tier::Balanced), Some(2))
+            .unwrap()
+            .with_reviewers(vec!["codex/terra".parse().unwrap()], Effort::XHigh);
+        let lead = SpawnRequest {
+            leaf: false,
+            delegation_policy: Some(policy),
+            ..request()
+        };
+        let frame = serde_json::to_value(stage_create_agent(&lead, NetworkPolicy::Denied)).unwrap();
+        let sent = &frame["config"]["delegation_policy"];
+        assert_eq!(
+            sent["workers"][0],
+            serde_json::json!({"tier": "balanced", "effort": "medium"})
+        );
+        assert_eq!(sent["max_parallel"], 2);
+        assert_eq!(sent["reviewers"][0]["model"]["provider"], "codex");
+        // A request stored before the field existed loads without it and is resent as it was.
+        let mut stored = serde_json::to_value(request()).unwrap();
+        assert!(stored.get("delegation_policy").is_none());
+        stored.as_object_mut().unwrap().remove("delegation_policy");
+        let old: SpawnRequest = serde_json::from_value(stored).unwrap();
+        let frame = serde_json::to_value(stage_create_agent(&old, NetworkPolicy::Denied)).unwrap();
+        assert!(frame["config"].get("delegation_policy").is_none());
     }
 
     #[test]

@@ -109,6 +109,7 @@ fn full_create_agent() -> CreateAgent {
             },
             long_lived: false,
             leaf: true,
+            delegation_policy: None,
         }),
         approval: Some(ApprovalPolicy::none()),
         run: Some(run()),

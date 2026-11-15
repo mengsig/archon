@@ -291,6 +291,25 @@ effort, or missing or unrecognised effort. Without the key the
 lead is told to use a model the item's policy allows other than its own, or
 its own when the policy allows no other.
 
+A delegating lead's workers (every child but a reviewer) are bounded too.
+The pipeline declares their default, and an item's `model_plan` may replace
+it with up to four `{model|tier, effort}` choices under `<stage>.workers`
+(and say why in `model_reasons`, an effort above the default needing it):
+
+```toml
+[pipeline.workers]
+tier = "balanced"     # any model of this tier
+effort = "medium"     # the default and the cap
+max_parallel = 2      # optional, 1 to 8
+```
+
+Archon sends the result to the lead's Aether agent as its
+`config.delegation_policy`: `{workers: [{model|tier, effort}], default_tier,
+max_effort, max_parallel, reviewers: [{model, effort}]}`, where `reviewers`
+holds the models the contract names for the reviewers the stage owes, and a
+child with role `reviewer` is matched against those instead of `workers`.
+Aether's `delegate` refuses a child outside it.
+
 Such a pipeline takes its review level from the item, not from its
 manifest. An item's `review` knob chooses `none`, `standard` or `strict`,
 and the stage delegates that many independent reviewers:

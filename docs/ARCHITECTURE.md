@@ -2248,6 +2248,14 @@ row pools the models that served it (the tier an attempt recorded, else
 Aether's tier for its model now), so evidence survives a model replaced within
 its tier.
 
+**Workers.** Every stage takes the key `<stage>.workers` in `model_plan` and
+`model_reasons`: up to four `{model|tier, effort}` choices for the workers its
+lead delegates to, else the pipeline's `[pipeline.workers]` default. Archon
+sends it with the lead's `create_agent` as Aether's `config.delegation_policy`,
+adding the reviewer models the contract names under `reviewers`, so Aether's
+`delegate` refuses a worker outside it rather than letting the lead clone its
+own model. `get_item` shows each delegating stage's policy.
+
 **Reviewers.** A pipeline with a declared review (§8.2) takes the key
 `<stage>.review` in `model_plan` and `model_reasons`, with at most as many
 `{model, effort}` entries as the strict level has reviewers (taken in turn).

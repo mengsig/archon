@@ -435,6 +435,10 @@ pub struct AgentConfig {
     pub tools: ToolExposure,
     pub long_lived: bool,
     pub leaf: bool,
+    /// What the agent's workers may run on; Aether's `delegate` refuses a
+    /// child outside it. An aetherd that predates it ignores the field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delegation_policy: Option<archon_core::delegation::WorkerPolicy>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]

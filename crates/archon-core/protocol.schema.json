@@ -5779,6 +5779,13 @@
               "type": "null"
             }
           ]
+        },
+        "worker_policies": {
+          "additionalProperties": {
+            "$ref": "#/$defs/WorkerPolicy"
+          },
+          "description": "What each delegating stage's lead may run workers on, by stage id:\nits `<stage>.workers` plan key, else the pipeline's worker default.\nIts reviewers' bound is added when the lead spawns.",
+          "type": "object"
         }
       },
       "required": [
@@ -16052,6 +16059,94 @@
         "id",
         "name",
         "role"
+      ],
+      "type": "object"
+    },
+    "WorkerChoice": {
+      "additionalProperties": false,
+      "description": "One allowed worker: an exact `model`, or any model of `tier`, at `effort`\nor below. Exactly one of `model` and `tier` is set.",
+      "properties": {
+        "effort": {
+          "$ref": "#/$defs/Effort"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tier": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Tier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "effort"
+      ],
+      "type": "object"
+    },
+    "WorkerPolicy": {
+      "additionalProperties": false,
+      "description": "What a lead's workers may run on: Aether's delegation policy wire shape.",
+      "properties": {
+        "default_tier": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Tier"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The tier a worker takes when the lead names no model."
+        },
+        "max_effort": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Effort"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "No worker above this effort."
+        },
+        "max_parallel": {
+          "description": "At most this many workers run at once.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "reviewers": {
+          "description": "What a child with role `reviewer` must match instead of `workers`: the\nreviewer models the contract names, each up to its effort. Empty: a\nreviewer is bounded as any worker.",
+          "items": {
+            "$ref": "#/$defs/WorkerChoice"
+          },
+          "type": "array"
+        },
+        "workers": {
+          "description": "The allowed workers; a child must match one, at its effort or below.",
+          "items": {
+            "$ref": "#/$defs/WorkerChoice"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "workers"
       ],
       "type": "object"
     },

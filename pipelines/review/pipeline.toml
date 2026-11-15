@@ -11,6 +11,13 @@ requires_repo = true
 level = "standard"
 stage = "review"
 
+# What the lead's workers run on unless the item's plan names `<stage>.workers`;
+# Aether refuses a worker outside it. Reviewers follow the review contract.
+[pipeline.workers]
+tier = "balanced"
+effort = "medium"
+max_parallel = 2
+
 [nudges]
 tier = "balanced"
 independent_reviewers = true
@@ -22,4 +29,4 @@ kind = "work"
 prompt = "review.md"
 allow_delegation = true
 timeout_minutes = 90
-nudge = "The balanced tier at medium effort leads; the reviewers carry the depth. The lead chooses its reviewers' models and efforts within model policy."
+nudge = "The balanced tier at medium effort leads; the reviewers carry the depth. The lead chooses its reviewers' models and efforts within model policy; any other worker runs on the balanced tier at medium, at most 2 at once, unless `review.workers` names others."

@@ -179,6 +179,7 @@ pub fn item_detail(detail: &ItemDetail, names: &RepoNames, full: bool) -> String
         let _ = writeln!(out, "provider switch: {}", sanitize_line(switch));
     }
     plan_lines(&mut out, item);
+    worker_lines(&mut out, &detail.worker_policies);
     for run in &detail.runs {
         run_lines(&mut out, detail, run, full);
     }
@@ -215,6 +216,21 @@ fn plan_lines(out: &mut String, item: &QueueItem) {
             "plan {}: {}{reason}",
             sanitize_line(stage),
             picks.join(" + ")
+        );
+    }
+}
+
+/// `workers build: each worker on ...` per stage whose lead may delegate.
+fn worker_lines(
+    out: &mut String,
+    policies: &std::collections::BTreeMap<String, archon_core::delegation::WorkerPolicy>,
+) {
+    for (stage, policy) in policies {
+        let _ = writeln!(
+            out,
+            "workers {}: {}",
+            sanitize_line(stage),
+            sanitize_line(&policy.describe())
         );
     }
 }
@@ -707,6 +723,7 @@ mod tests {
         ship.structured = Some(serde_json::json!({"pr_url": "https://github.com/o/r/pull/12"}));
         ItemDetail {
             default_efforts: Default::default(),
+            worker_policies: Default::default(),
             steers: Vec::new(),
             waiting_on: None,
             waiting_reason: None,
@@ -1024,6 +1041,7 @@ mod tests {
         let gate = rejected_with_escapes(&run);
         let detail = ItemDetail {
             default_efforts: Default::default(),
+            worker_policies: Default::default(),
             steers: Vec::new(),
             waiting_on: None,
             waiting_reason: None,

@@ -1,6 +1,7 @@
 //! The worker policy a delegating stage lead runs under, sent to Aether as
 //! its `config.delegation_policy` so that `delegate` refuses a worker outside
-//! it. Reviewers are bounded apart, by the models the review contract names.
+//! it. Reviewers are exempt from `workers`, and bound instead to the models
+//! the review contract names (`exempt_models`).
 
 use std::fmt;
 
@@ -16,7 +17,7 @@ pub const MAX_PARALLEL_WORKERS: u32 = 8;
 /// Most worker choices one `<stage>.workers` plan key may list.
 pub const MAX_WORKER_CHOICES: usize = 4;
 
-/// The role of a child that `reviewers`, not `workers`, bounds.
+/// The role of a child that `exempt_models`, not `workers`, bounds.
 pub const REVIEWER_ROLE: &str = "reviewer";
 
 /// One allowed worker: an exact `model`, or any model of `tier`, at `effort`
@@ -76,11 +77,14 @@ pub struct WorkerPolicy {
     /// At most this many workers run at once.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_parallel: Option<u32>,
-    /// What a child with role `reviewer` must match instead of `workers`: the
-    /// reviewer models the contract names, each up to its effort. Empty: a
-    /// reviewer is bounded as any worker.
+    /// Child roles `workers`, `max_effort` and `max_parallel` do not bound:
+    /// `reviewer` when the lead owes reviewers. Empty: every child is a worker.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub reviewers: Vec<WorkerChoice>,
+    pub exempt_roles: Vec<String>,
+    /// The models an exempt child may run on whatever its tier: the reviewer
+    /// models the contract names. Aether holds any other to the lead's tier.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exempt_models: Vec<ModelRef>,
 }
 
 impl WorkerPolicy {
@@ -114,21 +118,21 @@ impl WorkerPolicy {
             default_tier,
             max_effort,
             max_parallel,
-            reviewers: Vec::new(),
+            exempt_roles: Vec::new(),
+            exempt_models: Vec::new(),
         })
     }
 
-    /// This policy with reviewers bounded to `models`, each at `effort` or below.
-    pub fn with_reviewers(mut self, models: Vec<ModelRef>, effort: Effort) -> Self {
-        assert!(self.reviewers.is_empty(), "reviewers are set once");
-        self.reviewers = models
-            .into_iter()
-            .map(|model| WorkerChoice {
-                model: Some(model),
-                tier: None,
-                effort,
-            })
-            .collect();
+    /// This policy with reviewers exempt from `workers` and bound to `models`;
+    /// the review contract and Archon's watchdog bound their effort.
+    pub fn with_reviewers(mut self, models: Vec<ModelRef>) -> Self {
+        assert!(self.exempt_roles.is_empty(), "reviewers are set once");
+        assert!(
+            models.iter().all(|m| !m.provider.is_empty()),
+            "reviewer models are provider-qualified"
+        );
+        self.exempt_roles = vec![REVIEWER_ROLE.to_owned()];
+        self.exempt_models = models;
         self
     }
 
@@ -161,7 +165,7 @@ mod tests {
         let policy = WorkerPolicy::new(workers, Some(Tier::Balanced), Some(2)).unwrap();
         assert_eq!(policy.max_effort, Some(Effort::Medium));
         assert!(
-            policy.reviewers.is_empty(),
+            policy.exempt_roles.is_empty() && policy.exempt_models.is_empty(),
             "bounded as workers until named"
         );
         assert_eq!(
@@ -180,7 +184,7 @@ mod tests {
         let reviewer: ModelRef = "claude-code/sonnet".parse().unwrap();
         let policy = WorkerPolicy::new(workers, Some(Tier::Fast), None)
             .unwrap()
-            .with_reviewers(vec![reviewer], Effort::XHigh);
+            .with_reviewers(vec![reviewer]);
         let wire = serde_json::to_value(&policy).unwrap();
         assert_eq!(
             wire,
@@ -191,9 +195,8 @@ mod tests {
                 ],
                 "default_tier": "fast",
                 "max_effort": "medium",
-                "reviewers": [
-                    {"model": {"provider": "claude-code", "model": "sonnet"}, "effort": "x_high"}
-                ]
+                "exempt_roles": ["reviewer"],
+                "exempt_models": [{"provider": "claude-code", "model": "sonnet"}]
             })
         );
         let back: WorkerPolicy = serde_json::from_value(wire).unwrap();

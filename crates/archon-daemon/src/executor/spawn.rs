@@ -16,7 +16,6 @@ use archon_core::delegation::WorkerPolicy;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
 use archon_core::lesson::CONTRACT_LESSONS;
-use archon_core::model::Effort;
 use archon_core::policy::ModelPolicy;
 use archon_core::ports::{SpawnRequest, SpawnedAgent};
 use archon_core::queue::QueueItem;
@@ -895,8 +894,7 @@ fn delegation_policy(target: &Target<'_>, plan: &SpawnPlan) -> Option<WorkerPoli
         models.iter().all(|m| policy.permits_model(m)),
         "reviewers stay within the model policy"
     );
-    let effort = policy.max_effort.unwrap_or(Effort::Max);
-    Some(workers.with_reviewers(models, effort))
+    Some(workers.with_reviewers(models))
 }
 
 /// What ties the agent, and through Aether its children, to this stage run.

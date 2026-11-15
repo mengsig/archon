@@ -11,7 +11,8 @@
   `max_parallel`): `adaptive` and `review` give balanced-tier workers at
   medium, at most 2 at once; `swarm` gives fast-tier ones. Archon sends it to
   the lead's Aether agent as `config.delegation_policy`, with the reviewers
-  it owes bounded apart to the models its contract names (`reviewers`), so
+  it owes exempt from the worker list but bound to the models its contract
+  names (`exempt_roles = ["reviewer"]`, `exempt_models`), so
   an Aether that enforces it refuses a worker outside it; an older Aether
   ignores the field. The stage contract states the worker rule, and
   `get_item` (and `archon show`) shows each delegating stage's policy.

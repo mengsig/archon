@@ -305,10 +305,11 @@ max_parallel = 2      # optional, 1 to 8
 
 Archon sends the result to the lead's Aether agent as its
 `config.delegation_policy`: `{workers: [{model|tier, effort}], default_tier,
-max_effort, max_parallel, reviewers: [{model, effort}]}`, where `reviewers`
-holds the models the contract names for the reviewers the stage owes, and a
-child with role `reviewer` is matched against those instead of `workers`.
-Aether's `delegate` refuses a child outside it.
+max_effort, max_parallel, exempt_roles, exempt_models}`. When the stage owes
+reviewers, `exempt_roles` is `["reviewer"]` and `exempt_models` the models
+the contract names for them: a child with that role is not held to
+`workers`, may run on those models, and on any other is held to the lead's
+tier. Aether's `delegate` refuses a child outside it.
 
 Such a pipeline takes its review level from the item, not from its
 manifest. An item's `review` knob chooses `none`, `standard` or `strict`,

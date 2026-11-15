@@ -16110,6 +16110,20 @@
           ],
           "description": "The tier a worker takes when the lead names no model."
         },
+        "exempt_models": {
+          "description": "The models an exempt child may run on whatever its tier: the reviewer\nmodels the contract names. Aether holds any other to the lead's tier.",
+          "items": {
+            "$ref": "#/$defs/ModelRef"
+          },
+          "type": "array"
+        },
+        "exempt_roles": {
+          "description": "Child roles `workers`, `max_effort` and `max_parallel` do not bound:\n`reviewer` when the lead owes reviewers. Empty: every child is a worker.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "max_effort": {
           "anyOf": [
             {
@@ -16129,13 +16143,6 @@
             "integer",
             "null"
           ]
-        },
-        "reviewers": {
-          "description": "What a child with role `reviewer` must match instead of `workers`: the\nreviewer models the contract names, each up to its effort. Empty: a\nreviewer is bounded as any worker.",
-          "items": {
-            "$ref": "#/$defs/WorkerChoice"
-          },
-          "type": "array"
         },
         "workers": {
           "description": "The allowed workers; a child must match one, at its effort or below.",

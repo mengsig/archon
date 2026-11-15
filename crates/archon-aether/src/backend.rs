@@ -866,7 +866,7 @@ mod tests {
         let workers = vec![WorkerChoice::of_tier(Tier::Balanced, Effort::Medium)];
         let policy = WorkerPolicy::new(workers, Some(Tier::Balanced), Some(2))
             .unwrap()
-            .with_reviewers(vec!["codex/terra".parse().unwrap()], Effort::XHigh);
+            .with_reviewers(vec!["codex/terra".parse().unwrap()]);
         let lead = SpawnRequest {
             leaf: false,
             delegation_policy: Some(policy),
@@ -879,7 +879,8 @@ mod tests {
             serde_json::json!({"tier": "balanced", "effort": "medium"})
         );
         assert_eq!(sent["max_parallel"], 2);
-        assert_eq!(sent["reviewers"][0]["model"]["provider"], "codex");
+        assert_eq!(sent["exempt_roles"], serde_json::json!(["reviewer"]));
+        assert_eq!(sent["exempt_models"][0]["provider"], "codex");
         // A request stored before the field existed loads without it and is resent as it was.
         let mut stored = serde_json::to_value(request()).unwrap();
         assert!(stored.get("delegation_policy").is_none());

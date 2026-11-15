@@ -2731,10 +2731,9 @@ async fn an_adaptive_lead_is_sent_balanced_workers_and_its_reviewer_as_its_polic
         (policy.default_tier, policy.max_effort, policy.max_parallel),
         (Some(Tier::Balanced), Some(Effort::Medium), Some(2))
     );
-    assert_eq!(policy.reviewers.len(), 1, "{policy:?}");
-    let reviewer = &policy.reviewers[0];
-    assert_eq!(reviewer.effort, Effort::High, "up to the policy's cap");
-    let named = reviewer.model.as_ref().unwrap().to_string();
+    assert_eq!(policy.exempt_roles, ["reviewer"]);
+    assert_eq!(policy.exempt_models.len(), 1, "{policy:?}");
+    let named = policy.exempt_models[0].to_string();
     assert!(
         build
             .instructions
@@ -2756,7 +2755,10 @@ async fn an_adaptive_lead_is_sent_balanced_workers_and_its_reviewer_as_its_polic
     };
     let shown = &detail.worker_policies["build"];
     assert_eq!(shown.workers, policy.workers);
-    assert!(shown.reviewers.is_empty(), "reviewers are bounded at spawn");
+    assert!(
+        shown.exempt_models.is_empty(),
+        "reviewers are bounded at spawn"
+    );
 }
 
 /// A plan's `<stage>.workers` replaces the pipeline default, and a pipeline

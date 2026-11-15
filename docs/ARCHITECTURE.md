@@ -2252,7 +2252,8 @@ its tier.
 `model_reasons`: up to four `{model|tier, effort}` choices for the workers its
 lead delegates to, else the pipeline's `[pipeline.workers]` default. Archon
 sends it with the lead's `create_agent` as Aether's `config.delegation_policy`,
-adding the reviewer models the contract names under `reviewers`, so Aether's
+exempting role `reviewer` and naming the reviewer models the contract names
+in `exempt_models`, so Aether's
 `delegate` refuses a worker outside it rather than letting the lead clone its
 own model. `get_item` shows each delegating stage's policy.
 

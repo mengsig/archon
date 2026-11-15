@@ -1532,6 +1532,7 @@ async fn an_operator_message_brings_the_quiet_news_and_a_current_mirror() {
 
     let second = commit(&repo, "second");
     let routine = TriggerEvent::ItemFinished {
+        acceptance: None,
         item,
         title: "bump a dependency".into(),
         state: "cancelled".into(),

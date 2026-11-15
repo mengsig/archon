@@ -58,6 +58,7 @@ fn the_same_key_and_request_returns_the_first_item() {
     assert_eq!(stored, first);
     // A retried enqueue builds a new id and timestamps but the same request.
     let retry = QueueItem {
+        intent: None,
         id: QueueItemId::new(),
         created_at: t(9),
         updated_at: t(9),
@@ -78,6 +79,7 @@ fn the_same_key_and_request_returns_the_first_item() {
 /// stage with another model.
 fn rerouted(first: &QueueItem) -> QueueItem {
     let mut retry = QueueItem {
+        intent: None,
         id: QueueItemId::new(),
         ..first.clone()
     };
@@ -132,6 +134,7 @@ fn a_fingerprint_of_the_filled_plan_still_matches_a_retry_filled_alike() {
     );
     assert_eq!(changed.unwrap(), 1);
     let retry = QueueItem {
+        intent: None,
         id: QueueItemId::new(),
         ..first.clone()
     };
@@ -150,6 +153,7 @@ fn thread() -> GithubThread {
 fn an_item_keeps_the_github_thread_that_asked_for_it() {
     let (mut store, repo, _items) = seeded(0);
     let first = QueueItem {
+        intent: None,
         origin: Some(thread()),
         stage_timeouts: Default::default(),
         fresh_retries: 0,
@@ -161,6 +165,7 @@ fn an_item_keeps_the_github_thread_that_asked_for_it() {
     store.insert_item(&first, Some("gh-1")).unwrap();
     assert_eq!(store.item(&first.id).unwrap().origin, Some(thread()));
     let retry = QueueItem {
+        intent: None,
         id: QueueItemId::new(),
         ..first.clone()
     };
@@ -170,6 +175,7 @@ fn an_item_keeps_the_github_thread_that_asked_for_it() {
     );
     // Without an origin the key is a different request.
     let unasked = QueueItem {
+        intent: None,
         id: QueueItemId::new(),
         origin: None,
         stage_timeouts: Default::default(),
@@ -188,34 +194,42 @@ fn request_variants(first: &QueueItem) -> Vec<QueueItem> {
     let base = first.clone();
     vec![
         QueueItem {
+            intent: None,
             stage_timeouts: [("implement".into(), 120)].into(),
             ..base.clone()
         },
         QueueItem {
+            intent: None,
             title: "other".into(),
             ..base.clone()
         },
         QueueItem {
+            intent: None,
             brief: "other".into(),
             ..base.clone()
         },
         QueueItem {
+            intent: None,
             priority: Priority::High,
             ..base.clone()
         },
         QueueItem {
+            intent: None,
             tags: vec![],
             ..base.clone()
         },
         QueueItem {
+            intent: None,
             budget_usd: Some(3.0),
             ..base.clone()
         },
         QueueItem {
+            intent: None,
             repo: None,
             ..base.clone()
         },
         QueueItem {
+            intent: None,
             origin: Some(thread()),
             stage_timeouts: Default::default(),
             fresh_retries: 0,
@@ -225,6 +239,7 @@ fn request_variants(first: &QueueItem) -> Vec<QueueItem> {
             ..base.clone()
         },
         QueueItem {
+            intent: None,
             pipeline: "ask".into(),
             ..base
         },
@@ -238,6 +253,7 @@ fn a_key_reused_for_another_request_is_invalid() {
     store.insert_item(&first, Some("enq-1")).unwrap();
     for variant in request_variants(&first) {
         let fresh = QueueItem {
+            intent: None,
             id: QueueItemId::new(),
             ..variant
         };
@@ -246,11 +262,13 @@ fn a_key_reused_for_another_request_is_invalid() {
     }
     // Without a key, or with another key, the same request is a new item.
     let fresh = QueueItem {
+        intent: None,
         id: QueueItemId::new(),
         ..first.clone()
     };
     store.insert_item(&fresh, None).unwrap();
     let other = QueueItem {
+        intent: None,
         id: QueueItemId::new(),
         ..first.clone()
     };
@@ -270,6 +288,7 @@ fn a_key_reused_for_another_request_is_invalid() {
 fn new_items_must_be_queued_in_a_known_repository() {
     let (mut store, repo, _items) = seeded(0);
     let running = QueueItem {
+        intent: None,
         state: QueueState::Dispatching,
         ..item(Some(&repo), "x")
     };
@@ -326,6 +345,7 @@ fn updates_that_close_a_cycle_are_refused() {
     let b = store
         .insert_item(
             &QueueItem {
+                intent: None,
                 dependencies: vec![a.id.clone()],
                 ..item(Some(&repo), "b")
             },
@@ -335,6 +355,7 @@ fn updates_that_close_a_cycle_are_refused() {
     let c = store
         .insert_item(
             &QueueItem {
+                intent: None,
                 dependencies: vec![b.id.clone()],
                 ..item(Some(&repo), "c")
             },
@@ -354,6 +375,7 @@ fn updates_that_close_a_cycle_are_refused() {
 
     // A diamond is not a cycle: d depends on b and c, both reach a.
     let d = QueueItem {
+        intent: None,
         dependencies: vec![b.id.clone(), c.id.clone()],
         ..item(Some(&repo), "d")
     };
@@ -440,6 +462,7 @@ fn the_snapshot_resolves_dependency_states() {
     settle(&mut store, &ok, &failed, &cancelled);
 
     let with = |deps: Vec<QueueItemId>, title: &str| QueueItem {
+        intent: None,
         dependencies: deps,
         ..item(Some(&repo), title)
     };
@@ -477,6 +500,7 @@ fn the_snapshot_resolves_dependency_states() {
 /// second, one live on a repository-less `ask` item.
 fn stage_fleet(store: &mut Store, items: &[QueueItem]) {
     let ask = QueueItem {
+        intent: None,
         pipeline: "ask".into(),
         ..item(None, "q")
     };
@@ -578,6 +602,7 @@ fn snapshot_candidates_come_highest_priority_then_oldest_first() {
         let it = store
             .insert_item(
                 &QueueItem {
+                    intent: None,
                     priority,
                     ..item(Some(&repo), title)
                 },
@@ -605,6 +630,7 @@ fn timeout_overrides_are_part_of_an_idempotent_request() {
     first.stage_timeouts.insert("implement".into(), 120);
     store.insert_item(&first, Some("timeout")).unwrap();
     let mut retry = QueueItem {
+        intent: None,
         id: QueueItemId::new(),
         ..first.clone()
     };

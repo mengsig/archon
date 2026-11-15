@@ -5,6 +5,8 @@
 *.db-shm
 /.archon/worktrees/
 /.archon/reports/
+/.archon/evidence/
+/.archon/intent/
 /.lavish/
 /bench/results/
 /bench/.work/
@@ -19,3 +21,5 @@ node_modules/
 *.swp
 *~
 .env
+
+/.archon/services/

@@ -160,6 +160,7 @@ async fn setup() -> (Harness, Gh, String) {
 
 fn request(title: &str, onto: Option<OntoTarget>, depends_on: &[&QueueItem]) -> EnqueueRequest {
     EnqueueRequest {
+        intent: None,
         onto,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),

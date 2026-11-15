@@ -540,6 +540,9 @@ pub enum AutonomyCommand {
         /// Expire after this many hours (1 to 720); default: until cleared.
         #[arg(long)]
         hours: Option<u32>,
+        /// Authorize recorded deviations and assumptions without waiting, until this directive expires or is cleared.
+        #[arg(long, value_parser = ["ask", "proceed"], default_value = "ask")]
+        clarifications: String,
     },
     /// Clear one directive by id, or every directive with --all.
     Clear {
@@ -1683,13 +1686,39 @@ mod tests {
     }
 
     #[test]
+    fn a_proceed_policy_belongs_to_an_expiring_directive() {
+        let Command::Autonomy(AutonomyArgs {
+            command:
+                Some(AutonomyCommand::Direct {
+                    clarifications,
+                    hours,
+                    ..
+                }),
+            ..
+        }) = parse(&[
+            "autonomy",
+            "direct",
+            "--clarifications",
+            "proceed",
+            "--hours",
+            "12",
+            "Going to sleep",
+        ])
+        else {
+            panic!("directive")
+        };
+        assert_eq!(clarifications, "proceed");
+        assert_eq!(hours, Some(12));
+    }
+
+    #[test]
     fn autonomy_commands_parse() {
         let Command::Autonomy(args) = parse(&["autonomy", "--repo", "api"]) else {
             panic!()
         };
         assert!(args.command.is_none() && args.repo.as_deref() == Some("api"));
         let Command::Autonomy(AutonomyArgs {
-            command: Some(AutonomyCommand::Direct { text, hours }),
+            command: Some(AutonomyCommand::Direct { text, hours, .. }),
             ..
         }) = parse(&[
             "autonomy",

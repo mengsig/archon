@@ -189,6 +189,16 @@ async fn restage(
     let mut revised = item.clone();
     revised.autonomy = after;
     let spec = augment(base, &after)?;
+    let spec = if item.intent.is_some()
+        || item
+            .model_plan
+            .0
+            .contains_key(archon_pipeline::acceptance::STAGE)
+    {
+        archon_pipeline::acceptance::augment(&spec)?
+    } else {
+        spec
+    };
     let spec = executor::steer::shaped(ctx, &revised, spec).await?;
     let mut plan = item.model_plan.clone();
     plan.0.retain(|key, _| spec.is_plan_key(key));

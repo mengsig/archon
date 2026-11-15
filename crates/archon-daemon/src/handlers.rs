@@ -10,6 +10,7 @@ mod cost;
 mod github_links;
 mod graph;
 mod initiatives;
+pub(crate) mod intent;
 mod item_views;
 mod items;
 pub(crate) use items::{check_plan, check_reasons, check_stage_timeouts};
@@ -198,6 +199,19 @@ async fn refuse_early(
     caller: Option<&AetherAgentId>,
     request: &Request,
 ) -> Result<(), ArchonError> {
+    if client == ClientKind::ArchonWeb
+        && matches!(
+            request,
+            Request::SetDirective {
+                clarifications: archon_core::autonomy::ClarificationPolicy::Proceed,
+                ..
+            }
+        )
+    {
+        return Err(ArchonError::Forbidden(
+            "An observer cannot authorize proceeding without approval".into(),
+        ));
+    }
     if client == ClientKind::ArchonWeb {
         let autonomy = match request {
             Request::UpdateItem { patch, .. } => patch.autonomy.as_ref(),
@@ -224,6 +238,15 @@ async fn refuse_early(
             "{} is reserved for the operator's archon CLI{shell}",
             command_name(request)
         )));
+    }
+    if matches!(
+        request,
+        Request::MessageOrchestrator {
+            kind: archon_core::agent_message::MessageKind::Question,
+            ..
+        }
+    ) {
+        return check_named_caller(caller, request);
     }
     // Recovery first: a change it held is then checked against the standby
     // a failed recovery may have entered meanwhile.
@@ -369,9 +392,12 @@ pub(crate) async fn route(
     request: Request,
 ) -> Result<Reply, ArchonError> {
     match request {
-        Request::MessageOrchestrator { text, kind, caller } => {
-            crate::agent_messages::send(ctx, caller.as_ref(), kind, text).await
-        }
+        Request::MessageOrchestrator {
+            text,
+            kind,
+            caller,
+            clarification,
+        } => crate::agent_messages::send(ctx, caller.as_ref(), kind, text, clarification).await,
         Request::PublishArtifact { path, name, caller } => {
             crate::artifacts::publish_for(ctx, caller.as_ref(), path, name).await
         }
@@ -407,8 +433,9 @@ pub(crate) async fn route(
         Request::Autonomy { repo } => autonomy::view(ctx, repo.as_ref()).await,
         Request::SetDirective {
             text,
+            clarifications,
             expires_in_hours,
-        } => autonomy::set_directive(ctx, client, &text, expires_in_hours).await,
+        } => autonomy::set_directive(ctx, client, &text, expires_in_hours, clarifications).await,
         Request::ClearDirective { directive } => {
             autonomy::clear_directive(ctx, directive.as_ref()).await
         }
@@ -553,6 +580,7 @@ pub(crate) async fn resolve_item(
 async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, ArchonError> {
     match request {
         Request::Enqueue(enqueue) => items::enqueue(ctx, enqueue).await,
+        Request::ApproveIntent(record) => Box::pin(intent::approve(ctx, record)).await,
         Request::ListItems(query) => items::list(ctx, &query).await,
         Request::GetItem { item } => items::get(ctx, &item).await,
         Request::GetStage(query) => stages::get(ctx, &query).await,

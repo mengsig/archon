@@ -43,6 +43,7 @@ async fn enqueue(h: &Harness, title: &str, parents: &[&QueueItem]) -> QueueItem 
 
 async fn enqueue_in(h: &Harness, repo: &str, title: &str, parents: &[&QueueItem]) -> QueueItem {
     let request = EnqueueRequest {
+        intent: None,
         onto: None,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(repo.into())),
@@ -180,6 +181,7 @@ async fn add_client(h: &Harness) {
 
 fn member(repo: &str) -> InitiativeMember {
     InitiativeMember {
+        intent: None,
         onto: None,
         repo: RepoRef(repo.into()),
         brief: format!("Change {repo} to account_id"),

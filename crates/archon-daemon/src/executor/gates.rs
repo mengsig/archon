@@ -52,14 +52,14 @@ pub(super) async fn open(
     let mut store = ctx.store.lock().await;
     let stages = store.stage_runs(&run.id)?;
     let page = pages::gate_page(&run, &stages, &wait);
-    let fresh = OperatorGate {
+    let mut fresh = OperatorGate {
         run: run.id.clone(),
         item: run.item.clone(),
         stage_id: wait.stage_id.clone(),
         attempt: wait.attempt,
         subject: wait.subject,
         summary: wait.summary,
-        page: page.map(|p| p.display().to_string()),
+        page: page.as_ref().map(|p| p.display().to_string()),
         location: None,
         report: None,
         question: None,
@@ -68,6 +68,17 @@ pub(super) async fn open(
         opened_at: archon_core::now(),
         decided_at: None,
     };
+    if fresh.subject == GateSubject::Proposal
+        && requires_intent(&store, &fresh)?
+        && store
+            .gate(&fresh.run, &fresh.stage_id, fresh.attempt)?
+            .is_none()
+    {
+        let original =
+            page.ok_or_else(|| ArchonError::Invalid("proposal needs a review page".into()))?;
+        let rendered = super::intent::prepare(ctx, &mut store, &run, &fresh, &stages, &original)?;
+        fresh.page = Some(rendered.display().to_string());
+    }
     let gate = store.open_gate(&fresh)?;
     assert!(gate.is_open(), "a driver never waits on a decided gate");
     let waiting = RunState::AwaitingOperator {
@@ -84,6 +95,12 @@ pub(super) async fn open(
         follow.gates.push(key_of(&gate));
     }
     Ok(follow)
+}
+
+fn requires_intent(store: &Store, gate: &OperatorGate) -> Result<bool, ArchonError> {
+    let item = store.item(&gate.item)?;
+    assert_eq!(item.id, gate.item);
+    Ok(item.intent.is_some() || item.model_plan.0.contains_key("intent-acceptance"))
 }
 
 /// An open gate needs asking until its question is recorded and still open;
@@ -255,7 +272,21 @@ pub(super) async fn decide(
         }
         gate.decision = Some(decision.clone());
         gate.decided_at = Some(archon_core::now().max(gate.opened_at));
-        store.update_gate(&gate)?;
+        if gate.subject == GateSubject::Proposal
+            && matches!(decision, GateDecision::Approve { .. })
+            && (requires_intent(&store, &gate)? || super::intent::has_pending(&store, &gate)?)
+        {
+            if gate.report.is_none() {
+                return Err(ArchonError::Invalid(
+                    "proposal ledger must be published before approval".into(),
+                ));
+            }
+            let saved = super::intent::pending(&store, &gate)?;
+            super::intent::verify_page(&saved)?;
+            store.approve_gate_intent(&gate, &saved.record)?;
+        } else {
+            store.update_gate(&gate)?;
+        }
         debug_assert!(!gate.is_open(), "a decision closes the gate");
         (
             gate.clone(),

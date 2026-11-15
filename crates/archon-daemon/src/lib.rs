@@ -7,6 +7,7 @@ mod build_cache;
 mod chat_answer;
 mod chat_merge;
 mod chat_ops;
+pub mod clarifications;
 mod command_notice;
 pub mod compose;
 pub mod context;

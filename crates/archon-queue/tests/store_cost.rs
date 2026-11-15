@@ -72,11 +72,13 @@ fn seeded() -> (Store, [QueueItem; 3]) {
     store.insert_repo(&alpha).unwrap();
     let a = store.insert_item(&item(Some(&alpha), "a"), None).unwrap();
     let b = QueueItem {
+        intent: None,
         pipeline: "ask".into(),
         ..item(Some(&alpha), "b")
     };
     let b = store.insert_item(&b, None).unwrap();
     let c = QueueItem {
+        intent: None,
         pipeline: "ask".into(),
         ..item(None, "c")
     };

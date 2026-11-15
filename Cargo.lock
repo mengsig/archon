@@ -180,6 +180,7 @@ dependencies = [
  "archon-queue",
  "archon-remote",
  "async-trait",
+ "base64",
  "chrono",
  "futures-util",
  "rusqlite",
@@ -199,7 +200,9 @@ name = "archon-lavish"
 version = "1.5.1"
 dependencies = [
  "archon-core",
+ "base64",
  "serde_json",
+ "sha2",
  "tempfile",
  "tokio",
 ]

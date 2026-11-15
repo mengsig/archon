@@ -281,6 +281,11 @@ async fn carry_out(
         Ok(checked) => checked,
         Err(refusal) => return refused(refusal),
     };
+    let acceptance = match super::super::acceptance::require_current(ctx, run).await {
+        Ok(text) => text,
+        Err(ArchonError::Invalid(why)) => return refused(why),
+        Err(error) => return Err(error),
+    };
     let commit = checked.commit.clone();
     match gate_step(ctx, claimed, &repo, &base, gate)? {
         GateStep::Pass(None) => {}
@@ -308,7 +313,13 @@ async fn carry_out(
         return into_existing(ctx, claimed, &repo, onto, checked).await;
     }
     // The operator's policy as it stands at delivery, as the checks applied it.
-    let body = archon_pipeline::pr_body(&plan.body, run.item.as_str(), repo.attribution);
+    let has_intent = ctx.store.lock().await.item(&run.item)?.intent.is_some();
+    let body = if has_intent {
+        risk::acceptance_body(&plan.body, &acceptance)
+    } else {
+        plan.body.clone()
+    };
+    let body = archon_pipeline::pr_body(&body, run.item.as_str(), repo.attribution);
     let request = remote::Request {
         branch: &run.branch,
         base: &base,

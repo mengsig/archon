@@ -137,7 +137,7 @@ async fn settle_verified(
         };
         return settle_locked(ctx, &mut table, id, outcome).await;
     }
-    let (stage, run, review, daemon_ships, planner, record_stage) = {
+    let (stage, run, review, daemon_ships, planner, record_stage, records_build) = {
         let table = ctx.runs.lock().await;
         let store = ctx.store.lock().await;
         let stage = store.stage_run(id)?;
@@ -158,7 +158,25 @@ async fn settle_verified(
             let after = spec.stage_index(&stage.stage_id)? > spec.stage_index(&record.id)?;
             after.then(|| record.id.clone())
         });
-        (stage, run, review, daemon_ships, planner, record_stage)
+        let records_build = driver.is_some_and(|d| {
+            archon_pipeline::autonomy::ships(d.spec())
+                && d.spec()
+                    .file
+                    .stages
+                    .iter()
+                    .rev()
+                    .find(|s| s.kind == archon_core::catalog::StageKind::Work)
+                    .is_some_and(|s| s.id == stage.stage_id)
+        });
+        (
+            stage,
+            run,
+            review,
+            daemon_ships,
+            planner,
+            record_stage,
+            records_build,
+        )
     };
     if review.reviewers > 0
         && let Some(capped) = super::review::capped_at_completion(ctx, &stage).await?
@@ -177,6 +195,17 @@ async fn settle_verified(
             ship::verify_standing_no_change(ctx, &run, record, &stage, outcome).await?
         }
         (false, None) => outcome,
+    };
+    let Some(outcome) = Box::pin(super::acceptance::verify(
+        ctx,
+        &run,
+        &stage,
+        records_build || review.records_ship,
+        outcome,
+    ))
+    .await?
+    else {
+        return Ok(FollowUp::default());
     };
     let outcome = super::refresh::verify_unreviewed(ctx, &run, review, outcome).await?;
     let (outcome, verified) = super::review::verify(ctx, &run, &stage, review, outcome).await?;
@@ -231,7 +260,7 @@ async fn settle_verified(
     }
     // Other verification failures are final stage outcomes, not infrastructure
     // failures from Aether: they must not enter the stage's retry path.
-    persist(ctx, &mut table, stage, run, &all, outcome).await
+    Box::pin(persist(ctx, &mut table, stage, run, &all, outcome)).await
 }
 
 /// Settle a completion of a stage whose review already failed the round
@@ -307,7 +336,8 @@ pub(super) async fn settle_locked(
     if let Some(follow) = infra_retry(ctx, table, &stage, &run, &all, &outcome, false).await? {
         return Ok(follow);
     }
-    persist(ctx, table, stage, run, &all, outcome).await
+    // Cancellation also polls settlement deep inside a request's follow-up chain.
+    Box::pin(persist(ctx, table, stage, run, &all, outcome)).await
 }
 
 /// A stage that failed with its workspace gone failed for that, whatever
@@ -1039,7 +1069,7 @@ async fn apply_decision(
             spawns.is_empty() && finish_state.is_none(),
             "a waiting run acts on nothing else"
         );
-        return gates::open(ctx, run, wait).await;
+        return open_gate(ctx, table, run, wait).await;
     }
     if let Some(state) = finish_state {
         assert!(spawns.is_empty(), "a finishing driver spawns nothing");
@@ -1109,6 +1139,32 @@ async fn queue_spawns(
         }
     }
     Ok(())
+}
+
+async fn open_gate(
+    ctx: &DaemonContext,
+    table: &mut RunTable,
+    run: PipelineRun,
+    wait: archon_pipeline::OperatorWait,
+) -> Result<FollowUp, ArchonError> {
+    let stage_id = wait.stage_id.clone();
+    let item = ctx.store.lock().await.item(&run.item)?;
+    let intent_gate = wait.subject == archon_core::run::GateSubject::Proposal
+        && (item.intent.is_some()
+            || item
+                .model_plan
+                .0
+                .contains_key(archon_pipeline::acceptance::STAGE));
+    match gates::open(ctx, run.clone(), wait).await {
+        Err(error) if intent_gate && !error.is_store() => {
+            let state = RunState::Failed {
+                stage_id,
+                error: format!("approved proposal cannot be frozen: {error}"),
+            };
+            finish::finish_run(ctx, table, run, state, false).await
+        }
+        result => result,
+    }
 }
 
 #[cfg(test)]

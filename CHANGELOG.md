@@ -4,6 +4,23 @@
 
 ### Added
 
+- Approved intent: immutable operator words, artifact hashes and a per-requirement
+  ledger travel with an item and its stages. Builds must account for every selected
+  requirement, with matching reference and built images for visual promises. An
+  independent vision acceptance stage judges the complete ledger; readiness is
+  pinned to the head, tree and intent version, separately from code review and CI.
+  Deviations ask with comparison pictures by default. Active operator directives
+  can authorize proceeding, with one end-of-run deviations and assumptions page.
+  Aether reference attachments are capability-gated, retaining image paths for
+  older daemons; existing items without an intent retain their behavior.
+- Stage clarification questions bypass message and escalation caps. Open questions
+  appear in item and queue views, answers reach live stages, and a configurable
+  timeout (30 minutes by default) records the fallback assumption. Revocable
+  operator directives permit proceeding without waiting. Requests with an open
+  direction can require a proposal before work starts.
+- Strict scenario gates reject skipped, blocked or missing required substeps even
+  when the scenario's overall result claims to pass.
+
 - Worker model policy: a stage lead no longer clones its own model for its
   workers. `model_plan` takes `<stage>.workers` (up to four `{model|tier,
   effort}` choices, within model policy, like `<stage>.review`), and a

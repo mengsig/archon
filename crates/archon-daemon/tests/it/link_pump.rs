@@ -386,6 +386,7 @@ async fn an_operator_chat_command_is_applied_once_through_the_pump() {
 
 fn item_finished(title: &str) -> TriggerEvent {
     TriggerEvent::ItemFinished {
+        acceptance: None,
         item: QueueItemId::new(),
         title: title.into(),
         state: "failed".into(),

@@ -22,6 +22,7 @@ async fn a_root_request_is_never_silently_sent_to_an_older_daemon() {
         assert_eq!(client.welcome().supports_repository_root(), supported);
         let created = client
             .create_agent(CreateAgent {
+                references: Vec::new(),
                 role: "worker".into(),
                 repository_root: Some("/checkout".into()),
                 ..Default::default()
@@ -51,6 +52,7 @@ async fn invalid_repository_roots_return_errors_without_sending_a_request() {
     ] {
         let error = client
             .create_agent(CreateAgent {
+                references: Vec::new(),
                 role: "worker".into(),
                 repository_root: Some(root.into()),
                 scope: Some(Scope {

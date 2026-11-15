@@ -37,6 +37,7 @@ async fn deliver_local(
     depends_on: Vec<archon_core::id::QueueItemId>,
 ) -> (QueueItem, String, String) {
     let request = EnqueueRequest {
+        intent: None,
         onto: None,
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some("direct".into()),

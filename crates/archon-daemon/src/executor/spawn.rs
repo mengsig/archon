@@ -353,11 +353,10 @@ pub(super) async fn reserve(
         return Ok(FollowUp::default());
     };
     let take = queue.len().min(slots as usize);
-    if queue
-        .iter()
-        .take(take)
-        .any(|plan| plan.reviewers.as_ref().is_some_and(Vec::is_empty))
-    {
+    if queue.iter().take(take).any(|plan| {
+        plan.stage_id == archon_pipeline::acceptance::STAGE
+            || plan.reviewers.as_ref().is_some_and(Vec::is_empty)
+    }) {
         learned::catalog(ctx).await?;
     }
     let plans: Vec<SpawnPlan> = queue.drain(..take).collect();
@@ -410,6 +409,15 @@ fn reserve_plans(
         if routed == crate::quota::Reserve::Wait {
             return Ok(Reserved::Waiting(plans));
         }
+    }
+    if let Err(error) = super::acceptance::select_model(ctx, store, &item, &run, &mut plans) {
+        if error.is_store() {
+            return Err(error);
+        }
+        return Ok(Reserved::Blocked(Exhausted {
+            stage: archon_pipeline::acceptance::STAGE.into(),
+            error: error.to_string(),
+        }));
     }
     let estimates = ctx.config.limits.count_estimated_cost;
     let budget = item_budget(ctx, store, &item, estimates)?;
@@ -488,6 +496,14 @@ fn reserve_each(
             item,
             repo,
             config: &ctx.config,
+            references: item.intent.is_some()
+                && ctx
+                    .aether
+                    .client()?
+                    .welcome()
+                    .features
+                    .iter()
+                    .any(|f| f == "references"),
             catalog: &catalog,
             governed: budget.is_some(),
             sections: &sections,
@@ -544,6 +560,7 @@ fn run_sections(
     let checks = contract::check_rules(&tiers.checks, fast);
     let cache = build_cache_section(ctx, &env, &item.id);
     let storage = contract::artifact_rules(&ctx.config.artifacts);
+    let intent = super::acceptance::section(store, run, item)?;
     Ok([
         onto,
         dependencies,
@@ -552,6 +569,8 @@ fn run_sections(
         checks,
         cache,
         storage,
+        intent,
+        crate::clarifications::stage_section(store, &item.id)?,
     ]
     .concat())
 }
@@ -617,6 +636,7 @@ struct Target<'a> {
     repo: Option<&'a Repo>,
     /// The global `[models]` policy, which the repository's narrows.
     config: &'a Config,
+    references: bool,
     catalog: &'a archon_core::model_tier::ModelCatalog,
     /// Whether a dollar budget bounds the item, so reviewers must report cost.
     governed: bool,
@@ -726,6 +746,7 @@ fn reserve_one(
     let nth = retry.as_ref().map(|r| r.nth);
     let workers = delegation_policy(target, plan);
     let mut request = build_request(target, plan, (&id, workers.as_ref()), budget, now, nth);
+    super::acceptance::attach(store, target.item, &mut request, target.references)?;
     let not_before = retry.as_ref().and_then(|r| r.not_before);
     if let Some(until) = not_before {
         // Held as it is reserved, so no sweep issues it early; it loses no working time.
@@ -850,6 +871,7 @@ fn build_request(
     );
     let until = deadline(now, target.timeout_minutes(plan));
     SpawnRequest {
+        references: Vec::new(),
         host_context: Default::default(),
         idempotency_key: id.as_str().to_owned(),
         role: format!("archon-stage:{}/{}", run.pipeline, plan.stage_id),
@@ -1012,6 +1034,14 @@ pub(super) fn reserve_replacement(
         item: &item,
         repo: repo.as_ref(),
         config: &ctx.config,
+        references: item.intent.is_some()
+            && ctx
+                .aether
+                .client()?
+                .welcome()
+                .features
+                .iter()
+                .any(|f| f == "references"),
         catalog: &store.model_catalog(),
         governed: false,
         sections: &sections,

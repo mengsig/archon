@@ -222,6 +222,7 @@ fn is_unshippable(path: &str) -> bool {
     path == PLAN_FILE
         || path.starts_with(REPORTS_DIR)
         || path.starts_with(EVIDENCE_DIR)
+        || path.starts_with(".archon/intent/")
         || path.split('/').any(|part| part == "__pycache__")
         || path.ends_with(".pyc")
         || path.ends_with(".pyo")
@@ -684,6 +685,7 @@ mod tests {
             ".archon/reports/proposal/index.html",
             ".archon/reports/change/diagram.svg",
             ".archon/evidence/after.png",
+            ".archon/intent/approved/1/reference.png",
             "pkg/__pycache__/m.cpython-312.pyc",
             "x.pyc",
             "src/y.pyo",

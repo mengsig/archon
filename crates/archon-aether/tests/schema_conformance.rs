@@ -86,6 +86,7 @@ fn variant_name(command: &Command) -> &'static str {
 
 fn full_create_agent() -> CreateAgent {
     CreateAgent {
+        references: Vec::new(),
         role: "archon-stage:direct/implement".into(),
         name: Some("implement · the thing".into()),
         objective: Some("do it".into()),
@@ -172,6 +173,7 @@ fn samples() -> Vec<Command> {
         Command::Ping,
         Command::CreateAgent(Box::new(full_create_agent())),
         Command::CreateAgent(Box::new(CreateAgent {
+            references: Vec::new(),
             role: "archon-orchestrator".into(),
             ..CreateAgent::default()
         })),

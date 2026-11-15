@@ -244,6 +244,7 @@ fn archon_daemon_gets_a_private_config_and_data_dir() {
 fn item(state: QueueState, repo: Option<RepoId>, minute: i64) -> QueueItem {
     let at = archon_core::now() + chrono::Duration::minutes(minute);
     QueueItem {
+        intent: None,
         onto: None,
         stage_timeouts: Default::default(),
         id: QueueItemId::new(),
@@ -296,6 +297,8 @@ fn succeeded(repo: &RepoId, branch: &str, minute: i64) -> ItemDetail {
         finished_at: Some(item.updated_at),
     };
     ItemDetail {
+        acceptance: Default::default(),
+        clarifications: Vec::new(),
         default_efforts: Default::default(),
         worker_policies: Default::default(),
         stage_notes: Default::default(),
@@ -747,6 +750,8 @@ fn result_branches_follow_completion_order_per_repo() {
     ]
     .into();
     let failed = ItemDetail {
+        acceptance: Default::default(),
+        clarifications: Vec::new(),
         default_efforts: Default::default(),
         worker_policies: Default::default(),
         stage_notes: Default::default(),

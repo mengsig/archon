@@ -75,7 +75,7 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
             "enqueue",
             json!({
                 "repo": "web", "pipeline": "refactor", "title": "Fix login redirect",
-                "brief": "Users land on /404 after login.", "priority": "high", "depends_on": [qi()],
+                "brief": "Users land on /404 after login.", "direction_open": true, "intent": {"id":"layout","version":1,"requirements":["R1"]}, "priority": "high", "depends_on": [qi()],
                 "tags": ["auth"], "model_plan": plan(), "model_reasons": {"implement": "Apply supplied fix"}, "budget_usd": 5.0, "stage_timeouts": {"implement": 90}, "idempotency_key": "fix-login-1",
                 "autonomy": {"review": "standard", "proposal": "lavish", "report": "with-pr", "merge": "manual", "tools": "guarded"},
                 "origin": {"repository": "acme/web", "number": 42}, "onto": {"pr": 100}
@@ -130,7 +130,7 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
         ),
         (
             "set_directive",
-            json!({"text": "merge docs fixes yourself", "expires_in_hours": 12}),
+            json!({"text": "merge docs fixes yourself", "expires_in_hours": 12, "clarifications":"ask"}),
         ),
         (
             "clear_directive",
@@ -151,6 +151,8 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
             json!({"request": RequestId::new().to_string()}),
         ),
     ];
+    samples.push(("approve_intent", json!({"record":{"id":"layout","version":1,"operator_words":"Keep the title","source":{"kind":"inbox","seq":1},"artifacts":[],"images":[],"requirements":[{"id":"R1","text":"Keep the title","kind":"wording","images":[],"owner":"web"}]}})));
+    samples.push(("message_orchestrator", json!({"text":"Which title?","kind":"question","clarification":{"fallback":"Keep the current title","proceed_directive":DirectiveId::new().to_string()}})));
     samples.extend(adaptive_samples());
     samples
 }
@@ -719,6 +721,7 @@ fn retries_default_to_the_old_worktree_and_amendments_alone_are_a_change() {
 
 pub(super) fn item(state: QueueState) -> QueueItem {
     QueueItem {
+        intent: None,
         onto: None,
         id: QueueItemId::new(),
         repo: None,
@@ -1068,6 +1071,7 @@ fn get_item_shows_recorded_reasons_next_to_choices_and_omits_missing_reasons() {
     item.model_plan = serde_json::from_value(plan()).unwrap();
     item.model_reasons = Some([("implement".into(), "Apply supplied fix".into())].into());
     let mut detail = ItemDetail {
+        acceptance: Default::default(),
         default_efforts: Default::default(),
         worker_policies: Default::default(),
         stage_notes: Default::default(),
@@ -1084,6 +1088,7 @@ fn get_item_shows_recorded_reasons_next_to_choices_and_omits_missing_reasons() {
         merges: Vec::new(),
         stage_warnings: Vec::new(),
         message_caps: Vec::new(),
+        clarifications: Vec::new(),
     };
     let text = render("get_item", &Reply::ItemDetail(Box::new(detail.clone())));
     assert!(
@@ -1130,6 +1135,7 @@ fn get_item_lists_the_steers_made_to_the_item() {
     use archon_core::steer::{SteerRecord, SteeredBy};
     let at = archon_core::now();
     let mut detail = ItemDetail {
+        acceptance: Default::default(),
         default_efforts: Default::default(),
         worker_policies: Default::default(),
         stage_notes: Default::default(),
@@ -1151,6 +1157,7 @@ fn get_item_lists_the_steers_made_to_the_item() {
         merges: Vec::new(),
         stage_warnings: Vec::new(),
         message_caps: Vec::new(),
+        clarifications: Vec::new(),
     };
     let text = render("get_item", &Reply::ItemDetail(Box::new(detail.clone())));
     let expected = format!(
@@ -1218,6 +1225,7 @@ fn list_queue_and_get_item_expose_stable_waiting_reasons_in_text_and_json() {
         (
             "get_item",
             Reply::ItemDetail(Box::new(ItemDetail {
+                acceptance: Default::default(),
                 default_efforts: Default::default(),
                 worker_policies: Default::default(),
                 stage_notes: Default::default(),
@@ -1234,6 +1242,7 @@ fn list_queue_and_get_item_expose_stable_waiting_reasons_in_text_and_json() {
                 merges: Vec::new(),
                 stage_warnings: Vec::new(),
                 message_caps: Vec::new(),
+                clarifications: Vec::new(),
             })),
         ),
     ];
@@ -1281,6 +1290,7 @@ fn dependency_titles_are_escaped_in_waiting_text() {
         (
             "get_item",
             Reply::ItemDetail(Box::new(ItemDetail {
+                acceptance: Default::default(),
                 default_efforts: Default::default(),
                 worker_policies: Default::default(),
                 stage_notes: Default::default(),
@@ -1297,6 +1307,7 @@ fn dependency_titles_are_escaped_in_waiting_text() {
                 merges: Vec::new(),
                 stage_warnings: Vec::new(),
                 message_caps: Vec::new(),
+                clarifications: Vec::new(),
             })),
         ),
     ];
@@ -1318,21 +1329,22 @@ fn shown_bytes(definition: &ToolDefinition) -> usize {
     shown.to_string().len()
 }
 
-/// Every orchestrator turn pays for the tool list: 1.0's 25 tools (30,071 bytes
-/// then) stay within 67% of that (62% before `idempotency_key`, 61% before model_plan tiers, 18,500 bytes before stage_timeouts), and all of
-/// them within 33 KiB (28 KiB before `promote` and `onto`, 30 KiB before `idempotency_key` and `request_status`,
-/// 32 KiB before `update_item`'s `title`).
+/// Keep bounded allocations for new intent/question fields and the ledger tool.
+/// Every orchestrator turn pays for these serialized schema bytes.
 #[test]
 fn the_tool_list_stays_within_its_budget() {
     const FROM_1_0: usize = 25;
-    const FROM_1_0_BUDGET_BYTES: usize = 20_000;
-    const BUDGET_BYTES: usize = 33 * 1024;
+    const INTENT_BINDING_BYTES: usize = 2 * 1024;
+    const INTENT_RECORD_BYTES: usize = 2 * 1024;
+    const FROM_1_0_BUDGET_BYTES: usize = 20_000 + INTENT_BINDING_BYTES;
+    const BUDGET_BYTES: usize = 33 * 1024 + INTENT_BINDING_BYTES + INTENT_RECORD_BYTES;
     let definitions = definitions();
     assert_eq!(definitions[FROM_1_0 - 1].name, "message_orchestrator");
     let carried: usize = definitions[..FROM_1_0].iter().map(shown_bytes).sum();
+    let all: usize = definitions.iter().map(shown_bytes).sum();
     assert!(
         carried <= FROM_1_0_BUDGET_BYTES,
-        "the tools of 1.0 grew to {carried} bytes"
+        "the tools of 1.0 grew to {carried} bytes; all tools: {all} bytes"
     );
     for definition in definitions
         .iter()
@@ -1344,7 +1356,6 @@ fn the_tool_list_stays_within_its_budget() {
             definition.name
         );
     }
-    let all: usize = definitions.iter().map(shown_bytes).sum();
     assert!(all <= BUDGET_BYTES, "the tool list grew to {all} bytes");
 }
 

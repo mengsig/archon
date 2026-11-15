@@ -30,6 +30,7 @@ async fn delivering() -> (Harness, FakeGh) {
 /// A `direct` item depending on `parents`, dispatched: its agent runs.
 async fn started(h: &Harness, parents: &[&QueueItem]) -> (QueueItem, PipelineRun) {
     let request = EnqueueRequest {
+        intent: None,
         onto: None,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),

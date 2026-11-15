@@ -316,6 +316,7 @@ async fn running_steer_refuses_max_before_requiring_a_reason() {
 
 async fn enqueue_reasoned(h: &Harness, plan: ModelPlan) -> archon_core::queue::QueueItem {
     let request = EnqueueRequest {
+        intent: None,
         onto: None,
         stage_timeouts: Default::default(),
         repo: Some(repo_ref()),
@@ -932,6 +933,7 @@ async fn an_item_asked_for_on_github_reports_back_to_its_thread() {
         serde_json::from_value(serde_json::json!({"repository": "Owner/Repo", "number": 12}))
             .unwrap();
     let request = EnqueueRequest {
+        intent: None,
         onto: None,
         stage_timeouts: Default::default(),
         repo: Some(repo_ref()),
@@ -962,7 +964,10 @@ async fn an_item_asked_for_on_github_reports_back_to_its_thread() {
     let news = triggers::held(&h.ctx).await.unwrap();
     let finished = news.iter().find_map(|event| match event {
         TriggerEvent::ItemFinished {
-            item: id, origin, ..
+            acceptance: None,
+            item: id,
+            origin,
+            ..
         } if *id == item.id => Some(origin.clone()),
         _ => None,
     });
@@ -1094,6 +1099,7 @@ async fn only_open_blocking_questions_for_live_stage_agents_derive_a_wait() {
 async fn mcp_enqueue_and_updates_refuse_invalid_queue_inputs() {
     let h = Harness::new().await;
     let base = EnqueueRequest {
+        intent: None,
         onto: None,
         stage_timeouts: Default::default(),
         repo: Some(repo_ref()),
@@ -1113,12 +1119,14 @@ async fn mcp_enqueue_and_updates_refuse_invalid_queue_inputs() {
     let mut invalid = Vec::new();
     for budget in [0.0, -1.0, f64::NAN, f64::INFINITY] {
         invalid.push(EnqueueRequest {
+            intent: None,
             budget_usd: Some(budget),
             ..base.clone()
         });
     }
     for brief in ["", " \n\t"] {
         invalid.push(EnqueueRequest {
+            intent: None,
             brief: brief.into(),
             ..base.clone()
         });
@@ -1131,12 +1139,14 @@ async fn mcp_enqueue_and_updates_refuse_invalid_queue_inputs() {
         "two\u{2029}lines",
     ] {
         invalid.push(EnqueueRequest {
+            intent: None,
             title: title.into(),
             ..base.clone()
         });
     }
     for tag in ["", "   "] {
         invalid.push(EnqueueRequest {
+            intent: None,
             tags: vec![tag.into()],
             ..base.clone()
         });
@@ -1148,6 +1158,7 @@ async fn mcp_enqueue_and_updates_refuse_invalid_queue_inputs() {
     assert_eq!(item_count(&h).await, 0);
     let Reply::Item(item) = h
         .cli(Request::Enqueue(EnqueueRequest {
+            intent: None,
             budget_usd: Some(0.001),
             ..base
         }))

@@ -27,6 +27,7 @@ fn advance_branch(h: &Harness, branch: &str, file: &str, content: &str) -> Strin
 
 pub(crate) async fn child(h: &Harness, parents: &[&QueueItem]) -> QueueItem {
     let req = EnqueueRequest {
+        intent: None,
         onto: None,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),

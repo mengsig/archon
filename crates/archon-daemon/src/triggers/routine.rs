@@ -100,6 +100,7 @@ mod tests {
 
     fn finished(item: &QueueItemId, title: &str, quiet: bool) -> Held {
         let event = TriggerEvent::ItemFinished {
+            acceptance: None,
             item: item.clone(),
             title: title.into(),
             state: "succeeded".into(),

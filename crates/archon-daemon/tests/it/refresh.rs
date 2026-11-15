@@ -43,6 +43,7 @@ async fn enqueue_in(
     review: Option<ReviewLevel>,
 ) -> QueueItem {
     let request = EnqueueRequest {
+        intent: None,
         onto: None,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),

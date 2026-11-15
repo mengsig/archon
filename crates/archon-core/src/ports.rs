@@ -53,6 +53,9 @@ pub enum CostBilling {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SpawnRequest {
+    /// Frozen attachment list; older daemons receive paths in the contract.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<crate::reference::Reference>,
     /// The stage run id: Aether dedupes a retried create under it.
     pub idempotency_key: String,
     /// Resolved before the first create; old requests keep full context.

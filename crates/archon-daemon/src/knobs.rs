@@ -227,6 +227,16 @@ pub(crate) fn item_specs(
 ) -> Result<(PipelineSpec, PipelineSpec), ArchonError> {
     let base = env.catalog()?.get(&item.pipeline)?.clone();
     let spec = augment(&base, &item.autonomy)?;
+    let spec = if item.intent.is_some()
+        || item
+            .model_plan
+            .0
+            .contains_key(archon_pipeline::acceptance::STAGE)
+    {
+        archon_pipeline::acceptance::augment(&spec)?
+    } else {
+        spec
+    };
     assert_eq!(
         base.name(),
         item.pipeline,

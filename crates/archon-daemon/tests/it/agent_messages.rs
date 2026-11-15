@@ -32,6 +32,7 @@ pub(crate) async fn send(
         &h.ctx,
         ClientKind::ArchonMcp,
         Request::MessageOrchestrator {
+            clarification: None,
             caller: stage.aether_agent.clone(),
             kind,
             text: text.into(),
@@ -90,7 +91,7 @@ pub(crate) async fn inbox(
 async fn records_attribution_and_receipt_without_settling_or_calling_aether() {
     let (h, stage) = running().await;
     let before = h.backend.requests().len();
-    let Reply::MessageReceipt { receipt } =
+    let Reply::MessageReceipt { receipt, .. } =
         send(&h, &stage, MessageKind::Escalation, "cross-item blocker")
             .await
             .unwrap()

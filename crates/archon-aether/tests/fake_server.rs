@@ -27,6 +27,7 @@ use serde_json::{Value, json};
 
 fn spawn_request() -> SpawnRequest {
     SpawnRequest {
+        references: Vec::new(),
         host_context: Default::default(),
         idempotency_key: "stg_01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
         role: "archon-stage:direct/implement".into(),
@@ -609,6 +610,7 @@ async fn only_a_kept_agent_is_created_long_lived() {
     let backend = backend(&fake, any_model()).await;
     backend.spawn(spawn_request()).await.unwrap();
     let kept = SpawnRequest {
+        references: Vec::new(),
         keep: true,
         ..spawn_request()
     };
@@ -1451,4 +1453,52 @@ async fn a_subscription_claude_code_stage_gets_no_hard_cap_on_notional_dollars()
     backend.prepare_spawn(&mut unknown, false).await.unwrap();
     assert_eq!(unknown.aether_cost_budget, Some(true), "enforced");
     assert_eq!(unknown.cost_billing, Some(CostBilling::Unknown));
+}
+
+#[tokio::test]
+async fn reference_wire_shape_is_frozen_across_retries_and_refused_after_capability_loss() {
+    let (_dir, fake) = fake_aether().await;
+    fake.set_features(vec!["references".into()]);
+    fake.set_default(
+        "create_agent",
+        Scripted::reply("agent", fake::agent(AGENT, Some(TASK))),
+    );
+    fake.set_default(
+        "get_task",
+        Scripted::reply(
+            "task",
+            fake::task(TASK, Some(AGENT), RUN, json!({"state":"assigned"})),
+        ),
+    );
+    let capable = backend(&fake, any_model()).await;
+    let mut request = spawn_request();
+    request.references = vec![archon_core::reference::Reference {
+        path: "/work/tree/reference.png".into(),
+        kind: archon_core::reference::ReferenceKind::Image,
+        label: Some("Approved layout".into()),
+    }];
+    let saved = serde_json::to_string(&request).unwrap();
+    capable.spawn(request.clone()).await.unwrap();
+    capable
+        .spawn(serde_json::from_str(&saved).unwrap())
+        .await
+        .unwrap();
+    let creates = fake.received_named("create_agent");
+    assert_eq!(creates.len(), 2);
+    assert_eq!(
+        creates[0]["references"],
+        json!([{"path":"/work/tree/reference.png","kind":"image","label":"Approved layout"}])
+    );
+    assert_eq!(creates[0]["references"], creates[1]["references"]);
+    fake.set_features(vec![]);
+    let older = backend(&fake, any_model()).await;
+    assert!(
+        older
+            .spawn(request)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("lacks references")
+    );
+    assert_eq!(fake.received_named("create_agent").len(), 2);
 }

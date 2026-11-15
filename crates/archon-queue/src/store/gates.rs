@@ -211,6 +211,102 @@ pub(super) fn update(conn: &mut Connection, gate: &OperatorGate) -> Result<(), A
     tx.commit().ctx("commit gate update")
 }
 
+pub(super) fn approve_intent(
+    conn: &mut Connection,
+    gate: &OperatorGate,
+    record: &archon_core::intent::ApprovedIntent,
+) -> Result<(), ArchonError> {
+    use archon_core::intent::{IntentBinding, IntentSource};
+    use archon_core::run::{GateDecision, GateSubject};
+    check_shape(gate)?;
+    if gate.subject != GateSubject::Proposal
+        || !matches!(gate.decision, Some(GateDecision::Approve { .. }))
+    {
+        return Err(ArchonError::Invalid(
+            "intent requires an approved proposal gate".into(),
+        ));
+    }
+    let source = IntentSource::Gate {
+        item: gate.item.to_string(),
+        gate: format!("{}:{}", gate.stage_id, gate.attempt),
+    };
+    if record.source != source {
+        return Err(ArchonError::Invalid(
+            "intent source does not match gate".into(),
+        ));
+    }
+    let tx = write_tx(conn)?;
+    let stored = find(&tx, &gate.run, &gate.stage_id, gate.attempt)?
+        .ok_or_else(|| ArchonError::NotFound("proposal gate".into()))?;
+    if !stored.is_open()
+        || stored.item != gate.item
+        || stored.opened_at != gate.opened_at
+        || stored.subject != gate.subject
+    {
+        return Err(ArchonError::InvalidTransition(
+            "proposal gate changed before approval".into(),
+        ));
+    }
+    let mut item = super::items::load(&tx, &gate.item)?;
+    if let Some(binding) = &item.intent {
+        let previous = super::intent::get(&tx, binding)?
+            .ok_or_else(|| ArchonError::NotFound("previous approved intent".into()))?;
+        check_preserved(&previous, binding, record)?;
+    }
+    super::intent::save(&tx, record)?;
+    item.intent = Some(Box::new(IntentBinding {
+        id: record.id.clone(),
+        version: record.version,
+        requirements: Vec::new(),
+    }));
+    super::items::write_columns(&tx, &item)?;
+    write(&tx, gate)?;
+    super::changes::record_gate(&tx, gate)?;
+    tx.commit().ctx("commit approved proposal intent")
+}
+
+fn check_preserved(
+    previous: &archon_core::intent::ApprovedIntent,
+    binding: &archon_core::intent::IntentBinding,
+    proposed: &archon_core::intent::ApprovedIntent,
+) -> Result<(), ArchonError> {
+    if !proposed.operator_words.contains(&previous.operator_words) {
+        return Err(ArchonError::Invalid(
+            "proposal must retain the previous operator words".into(),
+        ));
+    }
+    for requirement in previous.selected_requirements(binding)? {
+        if !proposed.requirements.contains(requirement) {
+            return Err(ArchonError::Invalid(format!(
+                "proposal must retain requirement {}",
+                requirement.id
+            )));
+        }
+        for id in &requirement.images {
+            let old = previous
+                .images
+                .iter()
+                .find(|image| &image.id == id)
+                .expect("validated image");
+            if !proposed.images.contains(old) {
+                return Err(ArchonError::Invalid(format!(
+                    "proposal must retain reference image {id}"
+                )));
+            }
+        }
+    }
+    if previous
+        .artifacts
+        .iter()
+        .any(|artifact| !proposed.artifacts.contains(artifact))
+    {
+        return Err(ArchonError::Invalid(
+            "proposal must retain approved artifacts".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Close the open gates of `run`, which is finishing in transaction `tx`,
 /// so no answer can act on a run that ended, and close their questions.
 /// Returns the feed answers that closed them.

@@ -316,6 +316,7 @@ pub async fn spawning_stage(
 /// The create a test stage was sent, under `node` when it is bound.
 fn spawn_request(stage: &StageRun, workspace: &Path, node: Option<&str>) -> SpawnRequest {
     SpawnRequest {
+        references: Vec::new(),
         host_context: Default::default(),
         idempotency_key: stage.id.to_string(),
         role: "archon-stage:direct/implement".into(),
@@ -468,6 +469,7 @@ fn queue_item(repo: &Repo) -> QueueItem {
     let mut plan = ModelPlan::default();
     plan.0.insert("implement".into(), vec![choice()]);
     QueueItem {
+        intent: None,
         onto: None,
         id: QueueItemId::new(),
         repo: Some(repo.id.clone()),

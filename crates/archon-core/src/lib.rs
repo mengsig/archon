@@ -9,6 +9,7 @@
 //! This crate has no I/O beyond reading configuration files; with the
 //! `testing` feature, `testing` holds helpers for the workspace's tests.
 
+pub mod acceptance;
 pub mod aether_ids;
 pub mod age;
 pub mod agent_message;
@@ -30,6 +31,7 @@ pub mod host_load;
 pub mod id;
 pub mod initiative;
 pub mod integration;
+pub mod intent;
 pub mod lesson;
 pub mod mcp_tools;
 pub mod merge;
@@ -50,6 +52,7 @@ pub mod push;
 pub mod quarantine;
 pub mod queue;
 pub mod quota;
+pub mod reference;
 pub mod remote;
 pub mod repo;
 pub mod risk;

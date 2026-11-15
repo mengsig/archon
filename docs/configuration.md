@@ -397,7 +397,8 @@ go past:
 max_delegation_depth = 2         # 1..=4
 max_stage_timeout_minutes = 1440 # 1..=43200
 refresh_stage_timeout_minutes = 30 # 1..=43200
-max_agent_messages = 20          # 1..=200
+max_agent_messages = 20          # 1..=200; questions are exempt
+clarification_timeout_minutes = 30 # 1..=43200
 initiative_members = 16          # 1..=64
 initiative_contract_bytes = 2048 # 1..=16384
 ```
@@ -414,8 +415,11 @@ initiative_contract_bytes = 2048 # 1..=16384
   (`refresh_item`, `archon queue refresh`) whose request names none, instead
   of the owner's or the pipeline's: a refresh only merges a fresh base, so it
   gets a short bound. Capped by `max_stage_timeout_minutes`.
-- `max_agent_messages`: the `message_orchestrator` calls one stage agent
-  may make in its lifetime, and the messages one run node's inbox may
+- `clarification_timeout_minutes`: how long a stage holds work dependent on an
+  unanswered question before recording its fallback and proceeding. An active
+  operator directive with `clarifications=proceed` records the choice at once.
+- `max_agent_messages`: the counted `message_orchestrator` calls one stage agent
+  may make in its lifetime (questions are uncapped), and the messages one run node's inbox may
   relay. Each message is an orchestrator turn. Past it an agent keeps 3
   escalations in reserve and one reply to each orchestrator message or
   steer note, and the orchestrator is told once that it reached the cap.

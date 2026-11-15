@@ -93,6 +93,7 @@ fn tier_plan() -> ModelPlanDraft {
 
 fn enqueue_request(pipeline: &str, title: &str) -> EnqueueRequest {
     EnqueueRequest {
+        intent: None,
         onto: None,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
@@ -113,6 +114,7 @@ fn enqueue_request(pipeline: &str, title: &str) -> EnqueueRequest {
 
 async fn enqueue(h: &Harness, pipeline: &str, title: &str, plan: ModelPlanDraft) -> QueueItem {
     let request = EnqueueRequest {
+        intent: None,
         model_plan: plan,
         ..enqueue_request(pipeline, title)
     };
@@ -264,6 +266,7 @@ async fn a_floor_no_weighted_provider_reaches_is_refused_not_lowered() {
     let h = harness(weighted(&[("codex", 1)])).await;
     h.repo_config("[models]\ndefault_provider_weight = 0\n");
     let request = EnqueueRequest {
+        intent: None,
         model_plan: tier_plan(),
         ..enqueue_request(PIPELINE, "frontier")
     };

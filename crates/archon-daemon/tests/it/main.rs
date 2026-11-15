@@ -8,6 +8,7 @@ mod carried_review;
 mod changes;
 mod chat_answer;
 mod chat_ops;
+mod clarifications;
 mod common;
 mod compose_teardown;
 mod crash_marker;
@@ -116,3 +117,5 @@ mod worktree_git_calls;
 mod worktree_identity;
 mod worktree_set_aside;
 mod worktree_submodules;
+
+mod intent_acceptance;

@@ -261,6 +261,7 @@ pub fn aether_request(input: &TrialInput<'_>, deadline: Timestamp) -> CreateAgen
     let task = &input.task.file;
     CreateAgent {
         role: "archon-bench".into(),
+        references: Vec::new(),
         name: Some(format!("bench:{}", input.key)),
         objective: Some(task.prompt.clone()),
         model: Some(input.settings.aether_model.clone()),

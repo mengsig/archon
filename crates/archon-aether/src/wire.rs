@@ -330,6 +330,8 @@ impl Welcome {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CreateAgent {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<archon_core::reference::Reference>,
     pub role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -361,6 +363,7 @@ pub struct CreateAgent {
 impl Default for CreateAgent {
     fn default() -> Self {
         Self {
+            references: Vec::new(),
             role: String::new(),
             name: None,
             objective: None,
@@ -746,6 +749,8 @@ fn known_tier<'de, D: serde::Deserializer<'de>>(de: D) -> Result<Option<Tier>, D
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 pub struct ModelCapabilities {
+    #[serde(default)]
+    pub vision: bool,
     /// Pricing is not proof of engine cost reporting; consult ProviderInfo.
     #[serde(default)]
     pub cost: Option<serde_json::Value>,

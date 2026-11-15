@@ -106,6 +106,7 @@ fn contributor_commit(h: &Harness, file: &str, text: &str) -> String {
 
 fn enqueue_request(title: &str, pipeline: &str, review: ReviewLevel) -> EnqueueRequest {
     EnqueueRequest {
+        intent: None,
         onto: None,
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(pipeline.into()),

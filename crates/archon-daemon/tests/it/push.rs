@@ -91,6 +91,7 @@ async fn open_gate(h: &Harness, title: &str) -> QueueItem {
     let Ok(Reply::Item(item)) = h.cli(Request::Enqueue(request)).await else {
         panic!("enqueue failed")
     };
+    let item = common::legacy_gate_item(h, item).await;
     h.dispatch().await;
     for stage in h.running().await {
         assert_eq!(stage.stage_id, "propose", "the knob put propose first");

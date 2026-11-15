@@ -413,6 +413,7 @@ async fn at_proposal_gate(h: &Harness, title: &str) -> QueueItem {
     let Reply::Item(item) = h.cli(Request::Enqueue(request)).await.expect("enqueued") else {
         panic!("enqueue replies with the item");
     };
+    let item = common::legacy_gate_item(h, item).await;
     h.dispatch().await;
     let page = h.run(&item.id).await.workspace;
     let page = page.join(".archon/reports/proposal/index.html");

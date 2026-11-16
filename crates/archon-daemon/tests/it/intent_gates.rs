@@ -250,6 +250,13 @@ async fn only_an_image_the_operator_attached_makes_an_inbox_ledger() {
     let mut ledger = record(&h);
     let written = ledger.requirements.clone();
     ledger.requirements.clear();
+    let context = ledger.images[0].clone();
+    ledger.images[0] = archon_core::intent::ReferenceImage {
+        viewport: None,
+        theme: None,
+        state: None,
+        ..context.clone()
+    };
     operator_said(&h, 7, &ledger.operator_words, &[]).await;
     let unattached = Some("is not an image the operator attached");
     approval(&h, &ledger, unattached).await;
@@ -263,6 +270,15 @@ async fn only_an_image_the_operator_attached_makes_an_inbox_ledger() {
     mislabelled.requirements = written;
     mislabelled.requirements[0].text = "Rewrite the login flow".into();
     approval(&h, &mislabelled, Some("\"R1\" is written by the caller")).await;
+    let mut invented = ledger.clone();
+    invented.images[0] = context;
+    let unproven = Some("\"mockup\" carries a viewport, theme or state");
+    approval(&h, &invented, unproven).await;
+    let other = "c".repeat(64);
+    operator_said(&h, 7, &ledger.operator_words, &[&digest, &other]).await;
+    let omitted = Some("attached 2 image(s) and the record lists 1");
+    approval(&h, &ledger, omitted).await;
+    operator_said(&h, 7, &ledger.operator_words, &[&digest]).await;
     approval(&h, &ledger, None).await;
     let stored = h.ctx.store.lock().await.approved_intent(&IntentBinding {
         id: ledger.id.clone(),
@@ -285,6 +301,11 @@ async fn an_inbox_artifact_is_refused_even_when_the_operator_names_it() {
     let h = Harness::new().await;
     let mut ledger = record(&h);
     ledger.requirements.clear();
+    (
+        ledger.images[0].viewport,
+        ledger.images[0].theme,
+        ledger.images[0].state,
+    ) = (None, None, None);
     ledger.id = "page".into();
     let page = b"<!doctype html><title>Approved</title>";
     let path = h.dir.path().join("design.html");

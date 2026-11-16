@@ -57,8 +57,10 @@
   `approve_intent` only for reference images the operator attached to an inbox
   message. Archond checks each image against the digests Aether recorded for that
   message and writes the ledger's requirements itself, one visual match per image.
-  Anything else is refused: a requirement the caller wrote, even beside an image,
-  a requirement list, a named file path or an artifact written in the message. A
+  The ledger must list every attached image once. Anything else is refused: a
+  requirement the caller wrote, even beside an image, a requirement list, a named
+  file path, an artifact written in the message, or a viewport, theme or state
+  set on an image. A
   written ledger becomes approved intent only when the operator approves it at a
   proposal gate. A binding is stored with its requirement ids spelled out, never
   an empty list. Exactly one stage finishes the build: the one holding the ship

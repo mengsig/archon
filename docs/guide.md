@@ -1532,9 +1532,11 @@ brief creates no ledger and needs no `requirement_results`. `approve_intent` fil
 an immutable requirement ledger against an authenticated operator inbox message.
 `operator_words` must be that message verbatim, and each reference image must be
 one the operator attached to it, which archond checks against the image digests
-Aether recorded for that message. An inbox approval accepts nothing else: a
-requirement list, a file path or an artifact written in the message is refused,
-so a written ledger becomes approved intent only through a gate. A new Lavish
+Aether recorded for that message. The ledger must list every image attached to
+the message, once each. An inbox approval accepts nothing else: a requirement
+list, a file path, an artifact written in the message, or a viewport, theme or
+state set on an image is refused, so a written ledger or such image context
+becomes approved intent only through a gate. A new Lavish
 proposal displays its ledger alongside the reference
 images and freezes it when approved. Enqueue and initiative members bind `{id,
 version, requirements}`. An empty requirement list selects the whole ledger, and

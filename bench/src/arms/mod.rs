@@ -320,7 +320,7 @@ pub fn archon_config_toml(settings: &ArmSettings) -> anyhow::Result<String> {
     // Write only the sections the harness configures.
     document.retain(|name, _| {
         matches!(
-            name.as_str(),
+            name,
             "aether" | "orchestrator" | "models" | "lavish" | "worktrees"
         )
     });

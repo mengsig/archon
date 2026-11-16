@@ -50,8 +50,10 @@ pub struct Viewport {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[schemars(transform = crate::protocol::schema::AlsoReads("behavior"))]
 pub enum RequirementKind {
     Visual,
+    #[serde(alias = "behavior")]
     Behaviour,
     Wording,
     Data,
@@ -361,6 +363,13 @@ mod tests {
     const BRIEF: &str = "Implement `retry_budget.py` according to `SPEC.md`. Preserve the \
                          documented API, handle every specified error and boundary case, and \
                          add focused tests.";
+
+    #[test]
+    fn behavior_alias_deserializes_and_serializes_canonically() {
+        let kind: RequirementKind = serde_json::from_str("\"behavior\"").unwrap();
+        assert_eq!(kind, RequirementKind::Behaviour);
+        assert_eq!(serde_json::to_string(&kind).unwrap(), "\"behaviour\"");
+    }
 
     #[test]
     fn prose_requirements_or_paths_without_an_attached_image_are_no_inbox_ledger() {

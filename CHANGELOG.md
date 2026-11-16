@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 1.6.1
+
+### Fixed
+
+- Validate proposal intent drafts before accepting stage results, returning invalid
+  kinds, requirement ids, image references, artifact paths and hashes to the stage
+  for bounded correction without discarding its proposal. Accept `behavior` as an
+  alias for `behaviour`, retaining `behaviour` in serialized ledgers.
+
 ## 1.6.0
 
 Released 2026-11-16.

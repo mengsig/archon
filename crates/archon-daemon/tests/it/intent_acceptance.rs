@@ -423,9 +423,141 @@ async fn proposal_approval_freezes_the_visible_ledger_and_delivers_it_to_build()
     );
 }
 
+fn proposal_draft(kind: &str) -> Value {
+    json!({"approved_intent":{"operator_words":"Keep ISO labels visible",
+        "artifacts":[],"images":[],"requirements":[{"id":"R1",
+        "text":"Keep ISO labels visible","kind":kind,"images":[],"owner":"demo"}]}})
+}
+
 #[tokio::test]
-async fn missing_proposal_ledger_fails_promptly_instead_of_waiting_forever() {
+async fn unknown_proposal_kind_is_returned_for_correction_before_the_gate() {
     let (h, _fake, item) = proposed_item().await;
+    let workspace = h.run(&item.id).await.workspace;
+    let page = workspace.join(".archon/reports/proposal/index.html");
+    let original = std::fs::read(&page).unwrap();
+    settle(&h, proposal_draft("unknown")).await;
+    assert!(matches!(
+        h.state(&item.id).await,
+        archon_core::queue::QueueState::Running { .. }
+    ));
+    let request = h.backend.requests().pop().unwrap();
+    for value in ["unknown", "visual", "behaviour", "wording", "data"] {
+        assert!(request.objective.contains(value), "{}", request.objective);
+    }
+    assert_eq!(h.run(&item.id).await.workspace, workspace);
+    assert_eq!(std::fs::read(page).unwrap(), original);
+    assert_eq!(h.running().await[0].stage_id, "propose");
+    assert!(
+        h.ctx
+            .store
+            .lock()
+            .await
+            .gates_for_item(&item.id)
+            .unwrap()
+            .is_empty()
+    );
+    settle(&h, proposal_draft("behavior")).await;
+    let run = h.run(&item.id).await;
+    assert!(
+        matches!(
+            run.state,
+            archon_core::run::RunState::AwaitingOperator { .. }
+        ),
+        "{:?}; stages: {:?}",
+        run.state,
+        h.stages(&item.id).await
+    );
+}
+
+async fn proposal_with_reference(h: &Harness, item: &QueueItem) -> Value {
+    let mut approved = record(h);
+    let path = h.run(&item.id).await.workspace.join("reference.png");
+    std::fs::copy(&approved.images[0].path, &path).unwrap();
+    approved.images[0].path = path.clone();
+    let mut other = approved.requirements[0].clone();
+    other.id = "R2".into();
+    approved.requirements.push(other);
+    approved
+        .artifacts
+        .push(archon_core::intent::IntentArtifact {
+            path,
+            sha256: approved.images[0].sha256.clone(),
+        });
+    assert_eq!(approved.requirements[0].images, ["mockup"]);
+    assert!(approved.artifacts[0].path.is_file());
+    json!({"approved_intent":approved})
+}
+
+async fn assert_proposal_correction(h: &Harness, item: &QueueItem, draft: Value, problem: &str) {
+    settle(h, draft).await;
+    assert!(matches!(
+        h.state(&item.id).await,
+        archon_core::queue::QueueState::Running { .. }
+    ));
+    let request = h.backend.requests().pop().unwrap();
+    assert!(request.objective.contains(problem), "{}", request.objective);
+    assert_eq!(h.running().await[0].stage_id, "propose");
+    assert!(
+        h.ctx
+            .store
+            .lock()
+            .await
+            .gates_for_item(&item.id)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn invalid_proposal_ids_references_paths_and_hashes_are_correctable() {
+    let cases = [
+        ("/requirements/0/id", json!("bad id"), "invalid requirement"),
+        ("/requirements/1/id", json!("R1"), "invalid requirement"),
+        (
+            "/requirements/0/images",
+            json!(["missing"]),
+            "invalid requirement",
+        ),
+        ("/requirements/0/images", json!([]), "invalid requirement"),
+        ("/images/0/id", json!("bad id"), "invalid reference image"),
+        ("/images/0/sha256", json!("bad"), "invalid reference image"),
+        (
+            "/artifacts/0/sha256",
+            json!("bad"),
+            "invalid intent artifact",
+        ),
+        (
+            "/artifacts/0/sha256",
+            json!("0".repeat(64)),
+            "sha256 mismatch",
+        ),
+        ("/images/0/sha256", json!("0".repeat(64)), "sha256 mismatch"),
+        (
+            "/artifacts/0/path",
+            json!("../outside.png"),
+            "inside the run's workspace",
+        ),
+        ("/artifacts/0/path", json!("missing.png"), "read"),
+    ];
+    for (pointer, value, problem) in cases {
+        let (h, _fake, item) = proposed_item().await;
+        let mut draft = proposal_with_reference(&h, &item).await;
+        *draft["approved_intent"].pointer_mut(pointer).unwrap() = value;
+        assert_proposal_correction(&h, &item, draft, problem).await;
+    }
+}
+
+#[tokio::test]
+async fn missing_proposal_ledger_gets_a_bounded_correction_retry() {
+    let (h, _fake, item) = proposed_item().await;
+    for _ in 0..archon_pipeline::swarm::MAX_CORRECTIONS {
+        settle(&h, json!({})).await;
+        assert!(matches!(
+            h.state(&item.id).await,
+            archon_core::queue::QueueState::Running { .. }
+        ));
+        assert_eq!(h.running().await[0].stage_id, "propose");
+    }
     settle(&h, json!({})).await;
     assert!(matches!(
         h.state(&item.id).await,

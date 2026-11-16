@@ -51,29 +51,27 @@
 ### Fixed
 
 - Approved intent no longer gates ordinary items. In the 1.6.0 release smoke the
-  orchestrator turned a plain brief into a six-requirement ledger, so a
-  one-model bench task failed for missing `requirement_results` and then for
-  lacking an independent vision model, leaving its file a stub. Now the
-  orchestrator files `approve_intent` only for operator-approved references or
-  requirement lists, and archond checks this. A reference image must be one the
-  operator attached to the quoted message or named there by its full path, and an
-  artifact one they named by path; a same-named file elsewhere is refused. Without
-  images, the requirements must be exactly the list the operator introduced with a
-  line ending `requirements:`, one per item, each quoted whole with its continuation
-  lines. A paraphrase, an excerpt or an incidental bullet of a plain brief is refused. A binding is stored
-  with its requirement ids spelled out, never an empty list. The stage that finishes
-  the build is shown the exact `requirement_results` it owes, one entry per id, and
-  the statuses it may use. A status of `pass`, `done` or `met` counts as
-  `implemented`. Any mistake in those results gets the one automatic repair
+  orchestrator turned a plain brief into a six-requirement ledger, so a one-model
+  bench task failed for missing `requirement_results` and then for lacking an
+  independent vision model, leaving its file a stub. Now the orchestrator files
+  `approve_intent` only for reference images the operator attached to an inbox
+  message, and archond checks each against the digests Aether recorded for that
+  message. Anything else is refused, including a requirement list, a named file
+  path or an artifact written in the message: a written ledger becomes approved
+  intent only when the operator approves it at a proposal gate. A binding is
+  stored with its requirement ids spelled out, never an empty list. The stage that
+  finishes the build is shown the exact `requirement_results` it owes, one entry
+  per id, and the statuses it may use. A status of `pass`, `done` or `met` counts
+  as `implemented`. Any mistake in those results gets the one automatic repair
   (`[review] auto_repair`) instead of failing the item, and the repair note quotes
-  the allowed values. Mistakes include an unknown status, empty evidence, a missing
-  or bad visual pair, or a built image that is not there. A blocked requirement
-  still fails. A validation-only pipeline's acceptance stage, which reports the
-  results itself, is shown the same shape and gets the same repair. When no permitted, connected model apart from every
-  builder can judge acceptance (a vision model only when approved reference images
-  exist), the strongest permitted one judges it. The readiness report and item
-  outcome say `acceptance: not independent`. `[review] independent_acceptance =
-  true` restores the refusal.
+  the allowed values. Mistakes include an unknown status, empty evidence, a
+  missing or bad visual pair, or a built image that is not there. A blocked
+  requirement still fails. A validation-only pipeline's acceptance stage, which
+  reports the results itself, is shown the same shape and gets the same repair.
+  When no permitted, connected model apart from every builder can judge acceptance
+  (a vision model only when approved reference images exist), the strongest
+  permitted one judges it. The readiness report and item outcome say `acceptance:
+  not independent`. `[review] independent_acceptance = true` restores the refusal.
 - Operator mail no longer waits for long behind a hung orchestrator turn.
   Archon used to nudge such a turn after 10 minutes and interrupt it 5
   minutes later, at most 3 times per orchestrator. Now, once your message

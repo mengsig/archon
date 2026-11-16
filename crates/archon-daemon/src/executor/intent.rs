@@ -187,29 +187,6 @@ pub(super) fn verify_page(saved: &Pending) -> Result<(), ArchonError> {
     Ok(())
 }
 
-pub(crate) fn extract_artifact(
-    source: &Path,
-    destination: &Path,
-    record: &mut ApprovedIntent,
-) -> Result<(), ArchonError> {
-    if !source
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| matches!(ext.to_ascii_lowercase().as_str(), "html" | "htm"))
-    {
-        return Ok(());
-    }
-    let html =
-        std::fs::read_to_string(source).map_err(|e| ArchonError::io("read approved HTML", e))?;
-    let parent = source
-        .parent()
-        .ok_or_else(|| ArchonError::Invalid("approved HTML has no directory".into()))?;
-    super::intent_images::extract(&html, destination, record)?;
-    super::intent_html::extract(&html, source, parent, destination, record)?;
-    record.validate()?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

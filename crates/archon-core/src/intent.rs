@@ -3,11 +3,7 @@
 use crate::error::ArchonError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
-use words::{normalized, requirement_list};
-
-mod words;
-pub use words::named_paths;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ApprovedIntent {
@@ -180,92 +176,41 @@ impl ApprovedIntent {
         Ok(())
     }
 
-    /// Ties an inbox record's inputs to the operator: each image is one they
-    /// attached to the quoted message or named by path, each artifact one they
-    /// named. `named` holds the files their [`named_paths`] resolve to, and the
-    /// record's paths are resolved the same way, so a same-named file elsewhere fails.
-    pub fn check_provenance(
-        &self,
-        attached: &[String],
-        named: &[PathBuf],
-    ) -> Result<(), ArchonError> {
+    /// An inbox message approves a ledger only through the images the operator
+    /// attached to it (`attached`, their digests); prose proves no ledger.
+    pub fn check_inbox_ledger(&self, attached: &[String]) -> Result<(), ArchonError> {
         assert!(
             matches!(self.source, IntentSource::Inbox { .. }),
             "only an inbox record is checked against the operator's message"
         );
         assert!(attached.iter().all(|digest| !digest.is_empty()));
-        assert!(
-            named.iter().all(|path| path.is_absolute()),
-            "named files are resolved"
-        );
-        let is_named = |path: &Path| named.iter().any(|file| file == path);
-        let sent = |i: &&ReferenceImage| attached.contains(&i.sha256) || is_named(&i.path);
-        if let Some(image) = self.images.iter().find(|i| !sent(i)) {
-            return Err(ArchonError::Invalid(format!(
-                "reference image {:?} ({}) is neither attached to the quoted operator message \
-                 nor named there by its full path; only images the operator sent are approved \
-                 references",
-                image.id,
-                image.path.display()
+        let refused = |detail: String| {
+            ArchonError::Invalid(format!(
+                "a plain brief creates no approved intent: {detail}. An inbox message approves \
+                 a ledger only through reference images the operator attached to it. A written \
+                 requirement list or a named file becomes a ledger only when the operator \
+                 approves that exact ledger through a gate (a proposal or report gate showing \
+                 it); otherwise enqueue the item without an intent"
+            ))
+        };
+        if self.images.is_empty() {
+            return Err(refused(
+                "the quoted operator message carries no attached reference image".into(),
+            ));
+        }
+        if let Some(image) = self.images.iter().find(|i| !attached.contains(&i.sha256)) {
+            return Err(refused(format!(
+                "reference image {:?} is not an image the operator attached to the quoted message",
+                image.id
             )));
         }
-        if let Some(artifact) = self.artifacts.iter().find(|a| !is_named(&a.path)) {
-            return Err(ArchonError::Invalid(format!(
-                "intent artifact {} is not named by its full path in the operator's words",
+        if let Some(artifact) = self.artifacts.first() {
+            return Err(refused(format!(
+                "artifact {} is not an attachment the operator sent",
                 artifact.path.display()
             )));
         }
         Ok(())
-    }
-
-    /// An inbox record is a ledger the operator approved only when it carries
-    /// their reference images or binds exactly the requirement list they wrote.
-    pub fn check_operator_ledger(&self) -> Result<(), ArchonError> {
-        assert!(
-            matches!(self.source, IntentSource::Inbox { .. }),
-            "only an inbox record needs proof of an operator-approved ledger"
-        );
-        assert!(
-            !self.requirements.is_empty(),
-            "a validated record has requirements"
-        );
-        if !self.images.is_empty() {
-            return Ok(());
-        }
-        let refused = |detail: String| {
-            ArchonError::Invalid(format!(
-                "a plain brief creates no approved intent: {detail}. File approve_intent only for \
-                 reference images the operator sent or the list they introduced with a \
-                 `Requirements:` line, binding every item quoted whole with its continuation \
-                 lines; otherwise enqueue the item without an intent"
-            ))
-        };
-        let mut listed = requirement_list(&self.operator_words).map_err(refused)?;
-        if listed.is_empty() {
-            return Err(refused(
-                "the operator's words introduce no requirement list and the record has no \
-                 reference images"
-                    .into(),
-            ));
-        }
-        for requirement in &self.requirements {
-            let at = listed
-                .iter()
-                .position(|line| *line == normalized(&requirement.text));
-            let Some(at) = at else {
-                return Err(refused(format!(
-                    "requirement {:?} is not one of the operator's listed items, quoted whole",
-                    requirement.id
-                )));
-            };
-            listed.swap_remove(at);
-        }
-        match listed.first() {
-            None => Ok(()),
-            Some(line) => Err(refused(format!(
-                "the operator's listed item {line:?} has no requirement"
-            ))),
-        }
     }
 
     /// `binding` with its selection spelled out, so no stored binding has an
@@ -359,89 +304,55 @@ mod tests {
                          add focused tests.";
 
     #[test]
-    fn a_plain_brief_paraphrased_or_excerpted_into_requirements_is_no_operator_ledger() {
-        let invented = inbox(
-            BRIEF,
-            &["Validate all arguments before any early return; ints only (no bool/float)."],
-        );
+    fn prose_requirements_or_paths_without_an_attached_image_are_no_inbox_ledger() {
+        let invented = inbox(BRIEF, &["Validate all arguments before any early return"]);
         let excerpt = inbox(BRIEF, &["add focused tests"]);
-        for record in [invented, excerpt] {
+        let listed = inbox(
+            "Requirements:\n- The header stays blue",
+            &["The header stays blue"],
+        );
+        let mut pathed = inbox(
+            "Match /srv/shots/mockup.png",
+            &["Match the approved layout"],
+        );
+        pathed.images.push(image(&"a".repeat(64)));
+        for record in [invented, excerpt, listed, pathed] {
             record.validate().unwrap();
-            let error = record.check_operator_ledger().unwrap_err().to_string();
+            let error = record.check_inbox_ledger(&[]).unwrap_err().to_string();
             assert!(
                 error.contains("a plain brief creates no approved intent"),
                 "{error}"
             );
-            assert!(error.contains("introduce no requirement list"), "{error}");
+            assert!(error.contains("through a gate"), "{error}");
         }
     }
 
     #[test]
-    fn a_requirement_list_binds_only_whole_listed_items_and_all_of_them() {
-        let words = "Approve these requirements:\n- The header stays  blue.\n- Add caching\n  only \
-                     if profiling shows it is needed";
-        let whole = "Add caching only if profiling shows it is needed.";
-        let listed = inbox(words, &["the header stays blue", whole]);
-        assert!(listed.check_operator_ledger().is_ok());
-        let partial = inbox(words, &["the header stays blue"]).check_operator_ledger();
-        let error = partial.unwrap_err().to_string();
-        assert!(error.contains("\"add caching only if profiling"), "{error}");
-        let truncated = inbox(words, &["the header stays blue", "Add caching"]);
-        let error = truncated.check_operator_ledger().unwrap_err().to_string();
-        assert!(
-            error.contains("\"R2\" is not one of the operator's listed items"),
-            "{error}"
-        );
-        let incidental = inbox(
-            "Investigate these options:\n- Add caching",
-            &["Add caching"],
-        );
-        let error = incidental.check_operator_ledger().unwrap_err().to_string();
-        assert!(error.contains("introduce no requirement list"), "{error}");
-    }
-
-    #[test]
-    fn only_images_the_operator_attached_or_named_by_path_and_named_artifacts_count() {
+    fn only_images_the_operator_attached_make_an_inbox_ledger() {
         let digest = "a".repeat(64);
         let mut pictured = inbox("Match this mockup", &["Match the approved layout"]);
         pictured.images.push(image(&digest));
-        pictured.images[0].path = "/srv/shots/mockup.png".into();
         assert!(
             pictured
-                .check_provenance(std::slice::from_ref(&digest), &[])
+                .check_inbox_ledger(std::slice::from_ref(&digest))
                 .is_ok()
         );
-        assert!(pictured.check_operator_ledger().is_ok());
         let error = pictured
-            .check_provenance(&["b".repeat(64)], &[])
-            .unwrap_err();
-        assert!(error.to_string().contains("neither attached"), "{error}");
-        let named = PathBuf::from("/srv/shots/mockup.png");
-        assert!(
-            pictured
-                .check_provenance(&[], std::slice::from_ref(&named))
-                .is_ok()
-        );
-        let elsewhere = PathBuf::from("/srv/other/mockup.png");
-        assert!(
-            pictured
-                .check_provenance(&[], std::slice::from_ref(&elsewhere))
-                .is_err()
-        );
-        let mut specified = inbox(BRIEF, &["add focused tests"]);
-        let spec = |path: &str| IntentArtifact {
-            path: path.into(),
-            sha256: digest.clone(),
-        };
-        specified.artifacts.push(spec("/srv/shots/mockup.png"));
-        assert!(specified.check_provenance(&[], &[named]).is_ok());
-        let error = specified
-            .check_provenance(&[], &[elsewhere])
+            .check_inbox_ledger(&["b".repeat(64)])
             .unwrap_err()
             .to_string();
         assert!(
-            error.contains("mockup.png is not named by its full path"),
+            error.contains("not an image the operator attached"),
             "{error}"
         );
+        pictured.artifacts.push(IntentArtifact {
+            path: "/srv/design/page.html".into(),
+            sha256: digest.clone(),
+        });
+        let error = pictured
+            .check_inbox_ledger(&[digest])
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("page.html is not an attachment"), "{error}");
     }
 }

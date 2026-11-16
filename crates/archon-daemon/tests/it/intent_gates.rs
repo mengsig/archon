@@ -245,66 +245,41 @@ async fn approval(h: &Harness, ledger: &ApprovedIntent, refusal: Option<&str>) {
 }
 
 #[tokio::test]
-async fn only_an_image_the_operator_attached_or_named_by_path_is_a_reference() {
+async fn only_an_image_the_operator_attached_makes_an_inbox_ledger() {
     let h = Harness::new().await;
     let mut ledger = record(&h);
-    let path = ledger.images[0].path.clone();
     operator_said(&h, 7, &ledger.operator_words, &[]).await;
-    approval(
-        &h,
-        &ledger,
-        Some("neither attached to the quoted operator message"),
-    )
-    .await;
-    let other = h.dir.path().join("other");
-    std::fs::create_dir_all(&other).unwrap();
-    std::fs::copy(&path, other.join("reference.png")).unwrap();
-    ledger.operator_words = format!(
-        "Keep ISO labels visible, as {}",
-        other.join("reference.png").display()
-    );
+    let unattached = Some("is not an image the operator attached");
+    approval(&h, &ledger, unattached).await;
+    let path = ledger.images[0].path.display().to_string();
+    ledger.operator_words = format!("Keep ISO labels visible, as `{path}`.");
     operator_said(&h, 7, &ledger.operator_words, &[]).await;
-    approval(&h, &ledger, Some("neither attached")).await;
-    ledger.operator_words = format!("Keep ISO labels visible, as `{}`.", path.display());
-    operator_said(&h, 7, &ledger.operator_words, &[]).await;
+    approval(&h, &ledger, unattached).await;
+    let digest = ledger.images[0].sha256.clone();
+    operator_said(&h, 7, &ledger.operator_words, &[&digest]).await;
     approval(&h, &ledger, None).await;
-    let mut attached = record(&h);
-    attached.id = "attached_layout".into();
-    operator_said(
-        &h,
-        7,
-        &attached.operator_words,
-        &[&attached.images[0].sha256],
-    )
-    .await;
-    approval(&h, &attached, None).await;
 }
 
 #[tokio::test]
-async fn an_artifact_is_one_the_operator_named_by_its_own_path() {
+async fn an_inbox_artifact_is_refused_even_when_the_operator_names_it() {
     let h = Harness::new().await;
     let mut ledger = record(&h);
     ledger.id = "page".into();
     let page = b"<!doctype html><title>Approved</title>";
-    for dir in ["approved", "unrelated"] {
-        std::fs::create_dir_all(h.dir.path().join(dir)).unwrap();
-        std::fs::write(h.dir.path().join(dir).join("design.html"), page).unwrap();
-    }
+    let path = h.dir.path().join("design.html");
+    std::fs::write(&path, page).unwrap();
     let digest = sha2::Sha256::digest(page)
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect::<String>();
     ledger.artifacts.push(archon_core::intent::IntentArtifact {
-        path: h.dir.path().join("unrelated/design.html"),
+        path: path.clone(),
         sha256: digest,
     });
-    let named = h.dir.path().join("approved/design.html");
-    ledger.operator_words = format!("Keep ISO labels visible per {}", named.display());
+    ledger.operator_words = format!("Keep ISO labels visible per {}", path.display());
     let image = ledger.images[0].sha256.clone();
     operator_said(&h, 7, &ledger.operator_words, &[&image]).await;
-    approval(&h, &ledger, Some("is not named by its full path")).await;
-    ledger.artifacts[0].path = named;
-    approval(&h, &ledger, None).await;
+    approval(&h, &ledger, Some("design.html is not an attachment")).await;
 }
 
 /// An inbox ledger without images whose requirements are `texts`.
@@ -320,26 +295,12 @@ fn listed(words: &str, texts: &[&str]) -> ApprovedIntent {
 }
 
 #[tokio::test]
-async fn only_the_whole_items_of_an_introduced_requirement_list_make_a_ledger() {
+async fn a_prose_requirements_list_creates_no_ledger() {
     let h = Harness::new().await;
-    let incidental = "Investigate these options:\n- Add caching";
-    operator_said(&h, 7, incidental, &[]).await;
-    let refusal = Some("introduce no requirement list");
-    approval(&h, &listed(incidental, &["Add caching"]), refusal).await;
-    let words = "Approve these requirements:\n- Add caching\n  only if profiling shows it is needed\n- Keep the API";
+    let words = "Approve these requirements:\n- Add caching\n- Keep the API";
     operator_said(&h, 7, words, &[]).await;
-    let truncated = listed(words, &["Add caching", "Keep the API"]);
-    approval(
-        &h,
-        &truncated,
-        Some("\"R1\" is not one of the operator's listed items"),
-    )
-    .await;
-    let whole = [
-        "Add caching only if profiling shows it is needed",
-        "Keep the API",
-    ];
-    approval(&h, &listed(words, &whole), None).await;
+    let whole = listed(words, &["Add caching", "Keep the API"]);
+    approval(&h, &whole, Some("carries no attached reference image")).await;
 }
 
 /// A change that spoils one requirement result.

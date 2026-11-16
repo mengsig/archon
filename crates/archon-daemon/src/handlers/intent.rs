@@ -35,6 +35,7 @@ pub(super) async fn approve(
         image.path = preserve(&destination, &image.path, &image.sha256)?;
     }
     record.validate()?;
+    record.check_operator_ledger()?;
     ctx.store.lock().await.save_approved_intent(&record)?;
     Ok(Reply::Ok)
 }

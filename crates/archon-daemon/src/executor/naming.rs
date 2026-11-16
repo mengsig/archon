@@ -129,6 +129,7 @@ mod tests {
             resume: None,
             reviewers: None,
             workers: None,
+            reports_requirements: false,
         }
     }
 

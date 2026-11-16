@@ -66,6 +66,42 @@ pub fn augment(spec: &PipelineSpec) -> Result<PipelineSpec, ArchonError> {
     Ok(out)
 }
 
+/// How the refusals of a build's `requirement_results` open, which the
+/// stage can answer with a corrected result; a blocked requirement is not one.
+const RESULTS_REFUSALS: &[&str] = &[
+    "approved intent: missing requirement_results",
+    "approved intent: invalid requirement_results",
+    "approved intent: requirement results have empty or duplicate ids",
+    "approved intent: every selected requirement needs exactly one result",
+];
+
+/// The refusal of a build's `requirement_results` that a failed stage's
+/// `error` reports, which one automatic repair may answer; `None` otherwise.
+pub fn results_refusal(error: &str) -> Option<&str> {
+    if !error.starts_with("stage `") {
+        return None;
+    }
+    error.lines().map(str::trim).find(|line| {
+        RESULTS_REFUSALS
+            .iter()
+            .any(|opening| line.starts_with(opening))
+    })
+}
+
+/// Whether stage `stage_id` of `spec` finishes the build, so an item bound to
+/// approved intent must report `requirement_results` in its result.
+pub fn reports_requirements(spec: &PipelineSpec, stage_id: &str) -> bool {
+    let last_work = crate::autonomy::ships(spec)
+        && spec
+            .file
+            .stages
+            .iter()
+            .rev()
+            .find(|s| s.kind == StageKind::Work)
+            .is_some_and(|s| s.id == stage_id);
+    last_work || spec.ship_record_stage().is_some_and(|s| s.id == stage_id)
+}
+
 pub fn build_results(
     intent: &ApprovedIntent,
     binding: &IntentBinding,
@@ -234,6 +270,25 @@ mod tests {
     use super::*;
     use archon_core::intent::{IntentSource, ReferenceImage, Viewport};
     use serde_json::json;
+
+    #[test]
+    fn only_a_stage_failure_over_its_requirement_results_is_repairable() {
+        let ArchonError::Invalid(missing) =
+            invalid("missing requirement_results: report every approved requirement")
+        else {
+            unreachable!()
+        };
+        let error = format!(
+            "stage `implement` failed: 1 of 1 agent(s) did not complete\n\n**`implement` #1: failed**\n\n{missing}\n"
+        );
+        assert_eq!(
+            results_refusal(&error),
+            Some("approved intent: missing requirement_results: report every approved requirement")
+        );
+        let blocked = error.replace("missing requirement_results", "R1 is blocked: no API key;");
+        assert_eq!(results_refusal(&blocked), None);
+        assert_eq!(results_refusal(&missing), None);
+    }
 
     fn fixture() -> (ApprovedIntent, IntentBinding) {
         let intent = ApprovedIntent {

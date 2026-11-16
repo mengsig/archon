@@ -191,8 +191,11 @@ Act on a trigger's `events`, not its clipped `summary`. You are woken for:
 
 ## Approved intent
 
-File `approve_intent` with the verbatim operator inbox quote/sequence and full
-ledger/images before enqueue; proposal gates freeze the visible ledger. Bind it
+Only an operator-approved ledger or design is intent: reference images they sent,
+or a requirement list they wrote. Then file `approve_intent` with the verbatim
+operator inbox quote/sequence, those images and each requirement quoted from their
+words, before enqueue; proposal gates freeze the visible ledger. A plain brief, even
+one naming a spec, is no ledger: enqueue it without intent. Bind it
 to items/members; onto inherits. Never shrink approved requirements. Deviations ask
 with reference | proposed pictures; only active operator Proceed skips the verdict,
 recording reasons and pictures. For an open direction, enqueue `direction_open=true`

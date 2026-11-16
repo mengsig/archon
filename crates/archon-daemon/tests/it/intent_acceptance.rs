@@ -14,6 +14,15 @@ use std::time::Duration;
 async fn fixture(references: bool) -> (Harness, FakeAether, QueueItem) {
     let mut config = archon_core::config::Config::default();
     config.review.auto_repair = false;
+    fixture_on(config, references, &[common::MODEL, common::REVIEW_MODEL]).await
+}
+
+/// A running ledger item under `config`, Aether listing `vision` models.
+pub(crate) async fn fixture_on(
+    mut config: archon_core::config::Config,
+    references: bool,
+    vision: &[&str],
+) -> (Harness, FakeAether, QueueItem) {
     config.worktrees.keep_on_success = true;
     let h = Harness::with_config(config).await;
     let fake = common::connect_aether_for_delegations(&h).await;
@@ -27,7 +36,7 @@ async fn fixture(references: bool) -> (Harness, FakeAether, QueueItem) {
             .replace(Some(std::sync::Arc::new(client)))
             .unwrap();
     }
-    let models: Vec<_> = [common::MODEL, common::REVIEW_MODEL].into_iter().map(|model| {
+    let models: Vec<_> = vision.iter().map(|model| {
         json!({"model":model.parse::<archon_core::model::ModelRef>().unwrap(),"configured":true,"tier":"strong","capabilities":{"vision":true}})
     }).collect();
     fake.set_default("list_models", Scripted::reply("models", json!(models)));
@@ -61,7 +70,7 @@ async fn fixture(references: bool) -> (Harness, FakeAether, QueueItem) {
     (h, fake, item)
 }
 
-fn record(h: &Harness) -> ApprovedIntent {
+pub(crate) fn record(h: &Harness) -> ApprovedIntent {
     let path = h.dir.path().join("reference.png");
     let bytes = STANDARD.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a7ioAAAAASUVORK5CYII=").unwrap();
     let bytes = match std::env::var_os("ARCHON_INTENT_EVIDENCE_DIR") {
@@ -76,8 +85,9 @@ fn record(h: &Harness) -> ApprovedIntent {
     serde_json::from_value(json!({"id":"approved_layout","version":1,"source":{"kind":"inbox","seq":7},"operator_words":"Keep ISO labels visible","artifacts":[],"images":[{"id":"mockup","path":path,"sha256":hash,"viewport":viewport(),"theme":"light","state":"loaded"}],"requirements":[{"id":"R1","text":"Keep ISO labels visible","kind":"visual","owner":"demo","images":["mockup"]}]})).unwrap()
 }
 
-async fn evidence(h: &Harness, item: &QueueItem, status: &str) -> Value {
-    let run = h.run(&item.id).await;
+pub(crate) async fn evidence(h: &Harness, item: &QueueItem, status: &str) -> Value {
+    let runs = h.ctx.store.lock().await.runs_for_item(&item.id).unwrap();
+    let run = runs.last().expect("the item has a run");
     std::fs::copy(
         h.dir.path().join("reference.png"),
         run.workspace.join("built.png"),
@@ -86,7 +96,7 @@ async fn evidence(h: &Harness, item: &QueueItem, status: &str) -> Value {
     json!({"requirement_results":[{"id":"R1","status":status,"evidence":"ISO labels shown; compared at the approved viewport","visual_pairs":[{"reference":"mockup","built":"built.png","viewport":viewport(),"theme":"light","state":"loaded"}]}]})
 }
 
-async fn settle(h: &Harness, data: Value) {
+pub(crate) async fn settle(h: &Harness, data: Value) {
     tokio::time::timeout(
         Duration::from_secs(5),
         h.settle_running(|_| StageOutcome::Completed {
@@ -117,12 +127,12 @@ async fn to_acceptance(h: &Harness, item: &QueueItem) {
     assert_ne!(stage.choice.model.to_string(), common::MODEL);
 }
 
-async fn judgment(h: &Harness, item: &QueueItem, verdict: &str) -> Value {
+pub(crate) async fn judgment(h: &Harness, item: &QueueItem, verdict: &str) -> Value {
     let run = h.run(&item.id).await;
     json!({"verdict":verdict,"acceptance":{"head":common::git(&run.workspace,&["rev-parse","HEAD"]),"tree":common::git(&run.workspace,&["rev-parse","HEAD^{tree}"]),"intent":item.intent,"requirements":[{"id":"R1","verdict":verdict,"reason":"Compared approved and built images; checked ISO labels"}]}})
 }
 
-async fn readiness(h: &Harness, item: &QueueItem) -> AcceptanceStatus {
+pub(crate) async fn readiness(h: &Harness, item: &QueueItem) -> AcceptanceStatus {
     let Reply::ItemDetail(detail) = h
         .cli(Request::GetItem {
             item: item.id.clone(),

@@ -50,6 +50,21 @@
 
 ### Fixed
 
+- Approved intent no longer gates ordinary items. In the 1.6.0 release smoke the
+  orchestrator turned a plain brief into a six-requirement ledger, so a
+  one-model bench task failed for missing `requirement_results` and then for
+  lacking an independent vision model, leaving its file a stub. Now the
+  orchestrator files `approve_intent` only for operator-approved references or
+  requirement lists, and archond refuses an inbox ledger without reference images
+  whose requirements are not quoted from the operator's words. A binding is stored
+  with its requirement ids spelled out, never an empty list. The stage that finishes
+  the build is shown the exact `requirement_results` it owes, one entry per id. A
+  refusal of those results gets the one automatic repair (`[review] auto_repair`)
+  instead of failing the item. When no permitted, connected model apart from every
+  builder can judge acceptance (a vision model only when approved reference images
+  exist), the strongest permitted one judges it. The readiness report and item
+  outcome say `acceptance: not independent`. `[review] independent_acceptance =
+  true` restores the refusal.
 - Operator mail no longer waits for long behind a hung orchestrator turn.
   Archon used to nudge such a turn after 10 minutes and interrupt it 5
   minutes later, at most 3 times per orchestrator. Now, once your message

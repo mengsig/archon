@@ -45,6 +45,8 @@ pub(super) enum Refused {
     Review,
     /// The delivery, for something the record stage can fix in its worktree.
     Delivery,
+    /// The build's `requirement_results` for its approved intent.
+    Requirements,
 }
 
 pub(super) struct Repair {
@@ -61,7 +63,7 @@ impl Repair {
         assert!(!refusal.trim().is_empty(), "a repair quotes its refusal");
         let review = match (self.refused, self.owes_review) {
             (Refused::Review, _) | (_, false) => "",
-            (Refused::Record, true) => {
+            (Refused::Record | Refused::Requirements, true) => {
                 " Archon counts only a review by an agent this run delegates, so delegate one \
                  reviewer over the whole change from the merge base as the branch holds it, copy \
                  its agent id exactly, and hand in its review object beside the record."
@@ -91,6 +93,15 @@ impl Repair {
                  under the repository's own git identity, never one you set. Then hand in a new \
                  ship record read after your last commit.{review}"
             ),
+            Refused::Requirements => format!(
+                "{NOTE_OPENING} The approved-intent gate refused your finished build: \
+                 {refusal}\n\nYour committed work stands: redo nothing that is done. Check each \
+                 approved requirement against the work, fix only a gap you find and commit it, \
+                 then hand in your result again with `requirement_results` in `structured`, one \
+                 entry per approved requirement, exactly as your contract's \"Requirement results \
+                 this stage owes\" section shows, beside the ship record your contract asks \
+                 for.{review}"
+            ),
         };
         let note = format!("{note}\n\n{CHECK_RULE}");
         assert!(
@@ -105,6 +116,7 @@ impl Repair {
         let (who, what) = match self.refused {
             Refused::Record | Refused::Review => ("review gate", "the record"),
             Refused::Delivery => ("delivery", "it"),
+            Refused::Requirements => ("approved-intent gate", "the requirement results"),
         };
         format!(
             "{who} refused {}: {}; retrying once to repair {what}",
@@ -134,6 +146,10 @@ fn refusal_of(state: &RunState) -> Option<(Refused, &str)> {
     };
     if stage_id == SHIP_STEP {
         return ship::repairable_refusal(error).then_some((Refused::Delivery, error.trim()));
+    }
+    let builds = stage_id != archon_pipeline::acceptance::STAGE;
+    if let Some(refusal) = archon_pipeline::acceptance::results_refusal(error).filter(|_| builds) {
+        return Some((Refused::Requirements, refusal));
     }
     let refusal = record_refusal(error)?;
     let refused = match refuses_ship_record(refusal) {
@@ -233,7 +249,13 @@ mod tests {
 
     #[test]
     fn every_repair_note_says_to_wait_for_its_checks() {
-        for refused in [Refused::Record, Refused::Review, Refused::Delivery] {
+        let kinds = [
+            Refused::Record,
+            Refused::Review,
+            Refused::Delivery,
+            Refused::Requirements,
+        ];
+        for refused in kinds {
             let repair = Repair {
                 item: QueueItemId::new(),
                 refusal: "the review on record is missing".into(),

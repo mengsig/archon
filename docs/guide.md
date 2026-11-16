@@ -1527,12 +1527,16 @@ cost and outcomes; Codex stages always record full. See the
 
 ### Approved intent and acceptance
 
-`approve_intent` files an immutable requirement ledger against an authenticated
-operator inbox message; `operator_words` must be that message verbatim. A new
-Lavish proposal displays its ledger alongside the reference images and freezes it
-when approved. Enqueue and initiative members bind `{id, version, requirements}`;
-an empty requirement list selects the whole ledger. Work onto an item's PR
-inherits its binding, as do retries and refreshes.
+Approved intent applies only to a ledger or design the operator approved. A plain
+brief creates no ledger and needs no `requirement_results`. `approve_intent` files
+an immutable requirement ledger against an authenticated operator inbox message.
+`operator_words` must be that message verbatim, and the record must carry the
+operator's reference images or quote every requirement from their words. Otherwise
+it is refused. A new Lavish proposal displays its ledger alongside the reference
+images and freezes it when approved. Enqueue and initiative members bind `{id,
+version, requirements}`. An empty requirement list selects the whole ledger, and
+archond stores the binding with every selected id spelled out. Work onto an item's
+PR inherits its binding, as do retries and refreshes.
 
 Every stage receives the words, selected requirements and preserved references.
 Aether daemons advertising `references` receive image attachments; older daemons
@@ -1541,11 +1545,17 @@ preserve embedded and local raster image references. Remote image URLs and
 unsupported image types fail explicitly; supply local PNG, JPEG, GIF or WebP
 references. Artifacts are hash checked again when consumed.
 
-Builds submit `requirement_results` for every selected requirement, with evidence
-and reference/built pairs for visual requirements. The `intent-acceptance` stage
-uses a separate vision model and prefers a different vendor. An unavailable
-independent model prevents delivery. Missing or blocked requirements, changed
-images, unexplained gaps and unapproved deviations cannot pass.
+The stage that finishes the build submits `requirement_results` for every selected
+requirement, with evidence and reference/built pairs for visual requirements. Its
+contract shows the exact shape, one entry per id. A missing or malformed result gets
+the one automatic repair (`[review] auto_repair`). The `intent-acceptance` stage
+runs on a model apart from every builder and prefers a different vendor. That model
+must be a vision model when approved reference images exist. If none is permitted
+and connected, the strongest permitted model judges instead. The readiness report
+and the item's outcome then say `acceptance: not independent`. Set `[review]
+independent_acceptance = true` to refuse such a run instead. Missing or blocked
+requirements, changed images, unexplained gaps and unapproved deviations cannot
+pass.
 
 Deviations show a comparison page and wait for approval by default. An active
 operator `--clarifications proceed` directive permits recorded deviations without

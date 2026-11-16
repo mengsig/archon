@@ -2032,6 +2032,7 @@ mod tests {
         let prompt = unwrapped(&prompt());
         for rule in [
             "verbatim operator inbox quote/sequence",
+            "A plain brief, even one naming a spec, is no ledger: enqueue it without intent",
             "Never shrink approved requirements",
             "head/tree/intent version",
             "a new head makes acceptance stale",

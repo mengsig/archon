@@ -27,6 +27,11 @@
           "format": "date-time",
           "type": "string"
         },
+        "independent": {
+          "default": true,
+          "description": "Whether a model apart from every builder judged it; `false` when none\nwas permitted and connected, so the record never claims independence.",
+          "type": "boolean"
+        },
         "model": {
           "$ref": "#/$defs/ModelRef"
         },

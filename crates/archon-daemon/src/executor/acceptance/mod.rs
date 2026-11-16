@@ -147,7 +147,7 @@ async fn verify_acceptance(
         ));
     }
     images::verify(&evidence.images)?;
-    spawn::check_independent(ctx, run, stage).await?;
+    let independent = spawn::check_judge(ctx, run, stage, !record.images.is_empty()).await?;
     deviations::require_authorized(&*ctx.store.lock().await, run, &evidence)?;
     let StageOutcome::Completed { structured, .. } = &mut outcome else {
         unreachable!()
@@ -178,6 +178,7 @@ async fn verify_acceptance(
     if let Some(warning) = warning {
         crate::feed::system(ctx, warning).await?;
     }
+    let judged = judged.map(|result| (result, independent));
     record_judgment(ctx, item, stage, (&head, &tree), published.location, judged).await?;
     Ok(Some(outcome))
 }
@@ -188,10 +189,10 @@ async fn record_judgment(
     stage: &StageRun,
     (head, tree): (&str, &str),
     page: String,
-    judged: Result<AcceptanceResult, ArchonError>,
+    judged: Result<(AcceptanceResult, bool), ArchonError>,
 ) -> Result<(), ArchonError> {
-    let result = match judged {
-        Ok(result) => result,
+    let (result, independent) = match judged {
+        Ok(judged) => judged,
         Err(error) => {
             records::failed(
                 &mut *ctx.store.lock().await,
@@ -214,6 +215,7 @@ async fn record_judgment(
         model: stage.choice.model.clone(),
         checked_at: archon_core::now(),
         page,
+        independent,
     };
     records::save(&mut *ctx.store.lock().await, &item.id, &accepted)?;
     assert_eq!(stage.kind, Some(StageKind::Test));

@@ -139,21 +139,34 @@ pub(super) async fn resolve_intent(
         Some(OntoTarget::Item(id)) => store.item(id)?.intent.map(|binding| *binding),
         _ => None,
     };
-    if requested.is_some() && inherited.is_some() && requested != inherited.as_ref() {
+    let requested = requested.map(|b| explicit(&store, b)).transpose()?;
+    let inherited = inherited.map(|b| explicit(&store, &b)).transpose()?;
+    if requested.is_some() && inherited.is_some() && requested != inherited {
         return Err(ArchonError::Invalid(
             "onto item has a different approved intent".into(),
         ));
     }
-    let binding = requested.cloned().or(inherited);
-    if let Some(binding) = &binding {
-        store.approved_intent(binding)?.ok_or_else(|| {
-            ArchonError::NotFound(format!(
-                "approved intent {} version {}",
-                binding.id, binding.version
-            ))
-        })?;
-    }
-    Ok(binding)
+    Ok(requested.or(inherited))
+}
+
+/// `binding` checked against its stored ledger, with its selection spelled out.
+fn explicit(
+    store: &archon_queue::Store,
+    binding: &archon_core::intent::IntentBinding,
+) -> Result<archon_core::intent::IntentBinding, ArchonError> {
+    let record = store.approved_intent(binding)?.ok_or_else(|| {
+        ArchonError::NotFound(format!(
+            "approved intent {} version {}",
+            binding.id, binding.version
+        ))
+    })?;
+    let explicit = record.explicit_binding(binding)?;
+    assert!(!explicit.requirements.is_empty());
+    assert_eq!(
+        (&explicit.id, explicit.version),
+        (&binding.id, binding.version)
+    );
+    Ok(explicit)
 }
 
 pub(super) async fn resolve_pull_request_intent(
@@ -171,25 +184,18 @@ pub(super) async fn resolve_pull_request_intent(
         kind: archon_core::protocol::GithubKind::PullRequest,
     };
     let store = ctx.store.lock().await;
-    let mut inherited = requested.cloned();
+    let mut inherited = requested.map(|b| explicit(&store, b)).transpose()?;
     for link in store.issue_items(&reference)? {
         let Some(binding) = store.item(&link.item)?.intent.map(|binding| *binding) else {
             continue;
         };
+        let binding = explicit(&store, &binding)?;
         if inherited.as_ref().is_some_and(|known| known != &binding) {
             return Err(ArchonError::Invalid(
                 "pull request has conflicting approved intents".into(),
             ));
         }
         inherited = Some(binding);
-    }
-    if let Some(binding) = &inherited {
-        store.approved_intent(binding)?.ok_or_else(|| {
-            ArchonError::NotFound(format!(
-                "approved intent {} version {}",
-                binding.id, binding.version
-            ))
-        })?;
     }
     Ok(inherited)
 }

@@ -86,7 +86,9 @@ and reference attachment support. The installer selects Aether `v1.4.0`
 when no `aether` is installed; it preserves an existing installation.
 Upgrade an older existing Aether with `aether update --version v1.4.0`
 and restart aetherd before using Archon 1.6.0.
-A confirmed `archon update` runs `aether update --yes --version v1.4.0`;
+A confirmed `archon update` pins Aether to `v1.4.0` only when the installed
+Aether is older. At 1.4.0 or later it runs `aether update --yes`, allowing
+future releases without forcing a downgrade;
 `--check`, `--requirements`, `--no-restart` and a declined question leave
 Aether as it is. Check the installed release with `aether --version`.
 The protocol compatibility probe is separate from the release requirement:
@@ -177,7 +179,7 @@ archon update --yes                  # install, update Aether, restart everythin
 archon update --yes --wait 600 --requeue
 ```
 
-An accepted restart does, in order: `aether update --yes --version v1.4.0`; the restart of
+An accepted restart does, in order: update Aether as described above; the restart of
 `archond` alone, at once (`archon daemon restart --keep-aether`): Aether and
 the stage agents running in it keep running, and the new archond takes up
 their stages as after any daemon restart; and `archon orchestrator

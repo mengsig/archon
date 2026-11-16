@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use super::runner::{Output, RunError, run_command};
 use super::setup::Steps;
 
-/// The Aether release whose listener mounts other daemons.
-pub(super) const NEEDED_AETHER: &str = "1.4.0";
+/// The minimum Aether release supported by this Archon release.
+pub(super) const NEEDED_AETHER: &str = crate::cmd::REQUIRED_AETHER_VERSION;
 /// The prefix Archon is served under on Aether's listener.
 pub(super) const PREFIX: &str = "/archon";
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);

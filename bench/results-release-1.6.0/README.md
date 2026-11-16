@@ -54,9 +54,20 @@ timeout was disabled or changed to get this result.
 ## Candidate and verification
 
 All six runs used the candidate application and harness built from
-`ce516b2b62e5ebbe99572e19b3f79006c308df4d`. The subsequent release report and
-image-guide correction are prose only; application code, dependencies,
-configuration and the bench harness are unchanged.
+`ce516b2b62e5ebbe99572e19b3f79006c308df4d`, followed by the prose-only report
+head `4b127acb`. Whole-range review then found that unconditionally pinning
+`aether update` to 1.4.0 could downgrade a newer installation on a future
+Archon update. The follow-up pins only an installed release below 1.4.0;
+at or above that minimum it runs Aether's normal update. Regression tests
+cover the minimum and newer patch, minor and multi-digit minor versions,
+including the real CLI's trailing protocol text.
+
+The follow-up changes only update/install behavior, its tests, the
+installer hint and docs. Daemon, executor, prompts, dependencies and the
+bench harness are unchanged. The orchestrator explicitly approved retaining
+this paired smoke for that isolated fix, with `git diff --stat 4b127acb..HEAD`
+in the ship record as scope proof. The final ship record supplies the fresh
+full-CI tree/result and delta-review verdict for the update fix.
 
 `CARGO_BUILD_JOBS=3 make ci` passed on that commit, tree
 `3f620e1b2dca05dbff02900b8ee816190f95e212`, inside the host CI slot,
@@ -70,9 +81,11 @@ for load5 to fall below 14 (start **13.79**). All cargo commands used the
 item's private cache; development/test debug symbols and incremental
 compilation were disabled to limit disk use.
 
-After the report and guide edit, the required documentation-link and
-release-notice checks are recorded with the final head in the ship record.
-The last full CI tree above is stated separately from that prose-only head.
+On `4b127acb`, `cargo test -p archon --test docs_links --test release_scripts
+--locked` passed all 8 tests inside the host slot. The new update regression
+also passed all 6 selected `yes_` integration tests. Full CI is required
+again for the update/install fix; its result is recorded separately from
+the smoke head's full check above.
 
 ## Reproduction and isolation
 
@@ -80,7 +93,7 @@ The fixed tasks, model identifiers, medium effort, $7 admission limit,
 serial execution and per-task deadlines are unchanged from the first gate.
 Both arms use the same candidate `archon-bench`, including the configuration
 compatibility fix that omits `limits.clarification_timeout_minutes` for
-v1.5.1. No benchmark or product code changed during this retry.
+v1.5.1. No benchmark or daemon code changed during the smoke comparison.
 
 Old: published Archon **1.5.1** and Aether **1.3.1** Linux musl binaries.
 New: candidate Archon **1.6.0** and published Aether **1.4.0** Linux musl.

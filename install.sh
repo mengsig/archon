@@ -238,7 +238,7 @@ aether_retry_command() {
 report_aether() {
     version=$("$1" --version 2>/dev/null | head -n 1) || version=""
     say "Aether: ${version:-unknown version} at $1."
-    say "Archon 1.6.0 requires Aether 1.4.0; upgrade an older installation with aether update --version $AETHER_VERSION."
+    say "This Archon release requires Aether ${AETHER_VERSION#v} or later; update an existing installation with aether update."
     "$INSTALL_DIR/archon" update --requirements >"$STAGING/requirements" 2>/dev/null || true
     "$1" schema >"$STAGING/aether-schema" 2>/dev/null || true
     need_min=$(number_after aether_protocol_min "$STAGING/requirements")

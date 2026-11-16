@@ -395,6 +395,37 @@ fn yes_updates_aether_and_restarts_nothing_when_archond_is_not_running() {
 }
 
 #[test]
+fn yes_never_pins_an_aether_at_or_above_the_required_release() {
+    for version in ["1.4.0", "1.4.1", "1.5.0", "1.10.0"] {
+        let installed = Installed::new();
+        publish(
+            &installed.releases(),
+            "v9.9.9",
+            &target(),
+            &archon_script("9.9.9"),
+            true,
+        );
+        let updating = aether_script(16, 17)
+            .replace("aether 0.9.0", &format!("aether {version} (protocol 26)"))
+            .replace(
+                "*) exit 64",
+                "update) [ \"$*\" = \"update --yes\" ] || exit 65; echo done ;;\n*) exit 64",
+            );
+        write_script(&installed.path("tools/aether"), &updating);
+        let out = installed.update(&["--yes"]);
+        let stdout = text(&out.stdout);
+        assert!(out.status.success(), "{version}: {out:?}");
+        assert_eq!(installed.version(), "archon 9.9.9");
+        assert!(
+            stdout.contains(&format!(
+                "Aether is aether {version} (protocol 26); `aether update` changed nothing."
+            )),
+            "{version}: {stdout}"
+        );
+    }
+}
+
+#[test]
 fn yes_with_json_prints_one_object_holding_the_install_and_the_restart() {
     let installed = Installed::new();
     publish(

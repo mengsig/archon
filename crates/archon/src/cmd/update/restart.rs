@@ -622,12 +622,15 @@ impl Steps for Live {
         let aether = find_program(Path::new(AETHER_PROGRAM))
             .context("no `aether` was found on PATH to update")?;
         let before = aether_version(&aether).await?;
-        let args = [
-            OsStr::new("update"),
-            OsStr::new("--yes"),
-            OsStr::new("--version"),
-            OsStr::new("v1.4.0"),
-        ];
+        let installed = aether_release(&before)?;
+        let minimum: Version = crate::cmd::REQUIRED_AETHER_VERSION
+            .parse()
+            .expect("the required Aether version is a release version");
+        let tag = minimum.tag();
+        let mut args = vec![OsStr::new("update"), OsStr::new("--yes")];
+        if installed < minimum {
+            args.extend([OsStr::new("--version"), OsStr::new(&tag)]);
+        }
         let ran = tools::run(&aether, &args, AETHER_UPDATE_TIMEOUT).await?;
         let after = aether_version(&aether).await?;
         let said = String::from_utf8_lossy(&ran.stdout);
@@ -825,6 +828,19 @@ fn created_by(info: &OrchestratorInfo) -> anyhow::Result<String> {
         "a recorded creator has a version"
     );
     Ok(fresh.created_by.clone())
+}
+
+fn aether_release(output: &str) -> anyhow::Result<Version> {
+    let mut words = output.split_whitespace();
+    anyhow::ensure!(
+        words.next() == Some("aether"),
+        "unexpected Aether version: {output}"
+    );
+    words
+        .next()
+        .context("Aether did not report a release version")?
+        .parse()
+        .with_context(|| format!("invalid Aether release version: {output}"))
 }
 
 async fn aether_version(aether: &Path) -> anyhow::Result<String> {

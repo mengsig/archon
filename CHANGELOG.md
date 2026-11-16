@@ -6,8 +6,9 @@
 
 Released 2026-11-16.
 
-Archon 1.6.0 requires **Aether 1.4.0**. The installer and confirmed
-updates select that release. Upgrade Aether and restart its daemon before
+Archon 1.6.0 requires **Aether 1.4.0**. The installer selects that release when Aether is absent; confirmed
+updates pin it only for an older installation and otherwise use Aether's
+normal update, without forcing a downgrade. Upgrade Aether and restart its daemon before
 using the new worker policy and reference attachments.
 
 ### Added

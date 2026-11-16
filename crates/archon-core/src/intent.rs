@@ -3,7 +3,11 @@
 use crate::error::ArchonError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use words::{normalized, requirement_list};
+
+mod words;
+pub use words::named_paths;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ApprovedIntent {
@@ -79,46 +83,6 @@ fn valid_id(id: &str) -> bool {
         && id
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
-}
-
-/// Case, whitespace and trailing punctuation do not change a quote.
-fn normalized(text: &str) -> String {
-    let joined = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    joined
-        .trim_end_matches(['.', ',', ';', ':', '!'])
-        .to_lowercase()
-}
-
-/// The operator's list items: lines led by `-`, `*`, `•`, `1.` or `1)`,
-/// marker removed and [`normalized`].
-fn listed_lines(words: &str) -> Vec<String> {
-    let item = |line: &str| -> Option<String> {
-        let line = line.trim_start();
-        let rest = match line.strip_prefix(['-', '*', '•']) {
-            Some(rest) => rest,
-            None => {
-                let digits = line.bytes().take_while(u8::is_ascii_digit).count();
-                let rest = line[digits..].strip_prefix(['.', ')'])?;
-                (digits > 0).then_some(rest)?
-            }
-        };
-        let text = normalized(rest.strip_prefix([' ', '\t'])?);
-        (!text.is_empty()).then_some(text)
-    };
-    words.lines().filter_map(item).collect()
-}
-
-/// Whether `words` name the file at `path`: a whole word that is its file
-/// name or ends in `/` and its file name.
-fn names_file(words: &str, path: &std::path::Path) -> bool {
-    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-        return false;
-    };
-    let suffix = format!("/{name}");
-    words
-        .split(|c: char| c.is_whitespace() || "`\"'()<>[],".contains(c))
-        .map(|word| word.trim_end_matches(['.', ':', ';', '!', '?']))
-        .any(|word| word == name || word.ends_with(&suffix))
 }
 
 fn valid_hash(hash: &str) -> bool {
@@ -217,25 +181,37 @@ impl ApprovedIntent {
     }
 
     /// Ties an inbox record's inputs to the operator: each image is one they
-    /// attached to the quoted message or named, each artifact one they named.
-    pub fn check_provenance(&self, attached: &[String]) -> Result<(), ArchonError> {
+    /// attached to the quoted message or named by path, each artifact one they
+    /// named. `named` holds the files their [`named_paths`] resolve to, and the
+    /// record's paths are resolved the same way, so a same-named file elsewhere fails.
+    pub fn check_provenance(
+        &self,
+        attached: &[String],
+        named: &[PathBuf],
+    ) -> Result<(), ArchonError> {
         assert!(
             matches!(self.source, IntentSource::Inbox { .. }),
             "only an inbox record is checked against the operator's message"
         );
         assert!(attached.iter().all(|digest| !digest.is_empty()));
-        let words = &self.operator_words;
-        let sent = |i: &&ReferenceImage| attached.contains(&i.sha256) || names_file(words, &i.path);
+        assert!(
+            named.iter().all(|path| path.is_absolute()),
+            "named files are resolved"
+        );
+        let is_named = |path: &Path| named.iter().any(|file| file == path);
+        let sent = |i: &&ReferenceImage| attached.contains(&i.sha256) || is_named(&i.path);
         if let Some(image) = self.images.iter().find(|i| !sent(i)) {
             return Err(ArchonError::Invalid(format!(
-                "reference image {:?} is neither attached to nor named in the quoted operator \
-                 message; only images the operator sent are approved references",
-                image.id
+                "reference image {:?} ({}) is neither attached to the quoted operator message \
+                 nor named there by its full path; only images the operator sent are approved \
+                 references",
+                image.id,
+                image.path.display()
             )));
         }
-        if let Some(artifact) = self.artifacts.iter().find(|a| !names_file(words, &a.path)) {
+        if let Some(artifact) = self.artifacts.iter().find(|a| !is_named(&a.path)) {
             return Err(ArchonError::Invalid(format!(
-                "intent artifact {} is not named in the operator's words",
+                "intent artifact {} is not named by its full path in the operator's words",
                 artifact.path.display()
             )));
         }
@@ -256,19 +232,19 @@ impl ApprovedIntent {
         if !self.images.is_empty() {
             return Ok(());
         }
-        let mut listed = listed_lines(&self.operator_words);
         let refused = |detail: String| {
             ArchonError::Invalid(format!(
                 "a plain brief creates no approved intent: {detail}. File approve_intent only for \
-                 reference images the operator attached or a requirement list they wrote (one \
-                 `-`, `*` or numbered line each), binding every listed line quoted whole; \
-                 otherwise enqueue the item without an intent"
+                 reference images the operator sent or the list they introduced with a \
+                 `Requirements:` line, binding every item quoted whole with its continuation \
+                 lines; otherwise enqueue the item without an intent"
             ))
         };
+        let mut listed = requirement_list(&self.operator_words).map_err(refused)?;
         if listed.is_empty() {
             return Err(refused(
-                "the operator's words hold no requirement list and the record has no reference \
-                 images"
+                "the operator's words introduce no requirement list and the record has no \
+                 reference images"
                     .into(),
             ));
         }
@@ -278,7 +254,7 @@ impl ApprovedIntent {
                 .position(|line| *line == normalized(&requirement.text));
             let Some(at) = at else {
                 return Err(refused(format!(
-                    "requirement {:?} is not one of the operator's listed lines",
+                    "requirement {:?} is not one of the operator's listed items, quoted whole",
                     requirement.id
                 )));
             };
@@ -287,7 +263,7 @@ impl ApprovedIntent {
         match listed.first() {
             None => Ok(()),
             Some(line) => Err(refused(format!(
-                "the operator's listed line {line:?} has no requirement"
+                "the operator's listed item {line:?} has no requirement"
             ))),
         }
     }
@@ -396,59 +372,76 @@ mod tests {
                 error.contains("a plain brief creates no approved intent"),
                 "{error}"
             );
-            assert!(error.contains("hold no requirement list"), "{error}");
+            assert!(error.contains("introduce no requirement list"), "{error}");
         }
     }
 
     #[test]
-    fn a_requirement_list_binds_only_whole_listed_lines_and_all_of_them() {
-        let words =
-            "Approve these requirements:\n- The header stays  blue.\n2) Errors name the file";
-        let listed = inbox(words, &["the header stays blue", "Errors name the file."]);
+    fn a_requirement_list_binds_only_whole_listed_items_and_all_of_them() {
+        let words = "Approve these requirements:\n- The header stays  blue.\n- Add caching\n  only \
+                     if profiling shows it is needed";
+        let whole = "Add caching only if profiling shows it is needed.";
+        let listed = inbox(words, &["the header stays blue", whole]);
         assert!(listed.check_operator_ledger().is_ok());
         let partial = inbox(words, &["the header stays blue"]).check_operator_ledger();
         let error = partial.unwrap_err().to_string();
+        assert!(error.contains("\"add caching only if profiling"), "{error}");
+        let truncated = inbox(words, &["the header stays blue", "Add caching"]);
+        let error = truncated.check_operator_ledger().unwrap_err().to_string();
         assert!(
-            error.contains("\"errors name the file\" has no requirement"),
+            error.contains("\"R2\" is not one of the operator's listed items"),
             "{error}"
         );
-        let excerpt = inbox(words, &["the header stays", "Errors name the file"]);
-        let error = excerpt.check_operator_ledger().unwrap_err().to_string();
-        assert!(
-            error.contains("\"R1\" is not one of the operator's listed lines"),
-            "{error}"
+        let incidental = inbox(
+            "Investigate these options:\n- Add caching",
+            &["Add caching"],
         );
+        let error = incidental.check_operator_ledger().unwrap_err().to_string();
+        assert!(error.contains("introduce no requirement list"), "{error}");
     }
 
     #[test]
-    fn only_images_the_operator_attached_and_artifacts_they_named_count() {
+    fn only_images_the_operator_attached_or_named_by_path_and_named_artifacts_count() {
         let digest = "a".repeat(64);
         let mut pictured = inbox("Match this mockup", &["Match the approved layout"]);
         pictured.images.push(image(&digest));
+        pictured.images[0].path = "/srv/shots/mockup.png".into();
         assert!(
             pictured
-                .check_provenance(std::slice::from_ref(&digest))
+                .check_provenance(std::slice::from_ref(&digest), &[])
                 .is_ok()
         );
         assert!(pictured.check_operator_ledger().is_ok());
-        let error = pictured.check_provenance(&["b".repeat(64)]).unwrap_err();
+        let error = pictured
+            .check_provenance(&["b".repeat(64)], &[])
+            .unwrap_err();
+        assert!(error.to_string().contains("neither attached"), "{error}");
+        let named = PathBuf::from("/srv/shots/mockup.png");
         assert!(
-            error.to_string().contains("neither attached to nor named"),
-            "{error}"
+            pictured
+                .check_provenance(&[], std::slice::from_ref(&named))
+                .is_ok()
         );
-        pictured.operator_words = "Match the layout in `~/shots/mockup.png`.".into();
-        assert!(pictured.check_provenance(&[]).is_ok());
-        pictured.operator_words = "Match the layout in old-mockup.png".into();
-        assert!(pictured.check_provenance(&[]).is_err());
+        let elsewhere = PathBuf::from("/srv/other/mockup.png");
+        assert!(
+            pictured
+                .check_provenance(&[], std::slice::from_ref(&elsewhere))
+                .is_err()
+        );
         let mut specified = inbox(BRIEF, &["add focused tests"]);
         let spec = |path: &str| IntentArtifact {
             path: path.into(),
             sha256: digest.clone(),
         };
-        specified.artifacts.push(spec("/work/SPEC.md"));
-        assert!(specified.check_provenance(&[]).is_ok());
-        specified.artifacts.push(spec("/work/design.html"));
-        let error = specified.check_provenance(&[]).unwrap_err().to_string();
-        assert!(error.contains("design.html is not named"), "{error}");
+        specified.artifacts.push(spec("/srv/shots/mockup.png"));
+        assert!(specified.check_provenance(&[], &[named]).is_ok());
+        let error = specified
+            .check_provenance(&[], &[elsewhere])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("mockup.png is not named by its full path"),
+            "{error}"
+        );
     }
 }

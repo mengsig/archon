@@ -1531,10 +1531,12 @@ Approved intent applies only to a ledger or design the operator approved. A plai
 brief creates no ledger and needs no `requirement_results`. `approve_intent` files
 an immutable requirement ledger against an authenticated operator inbox message.
 `operator_words` must be that message verbatim. Each reference image must be one
-the operator attached to that message or named in it, and each artifact one they
-named. A record without images must bind exactly the operator's own requirement
-list: one requirement per `-`, `*` or numbered line, every line quoted whole.
-Anything else is refused. A new Lavish proposal displays its ledger alongside the reference
+the operator attached to that message or named there by its full path (`/…` or
+`~/…`), and each artifact one they named by path. A record without images must
+bind exactly the list the operator introduced with a line ending `requirements:`
+(such as `Approve these requirements:`), one requirement per `-`, `*` or numbered
+item, every item quoted whole with its indented continuation lines. Anything else
+is refused. A new Lavish proposal displays its ledger alongside the reference
 images and freezes it when approved. Enqueue and initiative members bind `{id,
 version, requirements}`. An empty requirement list selects the whole ledger, and
 archond stores the binding with every selected id spelled out. Work onto an item's

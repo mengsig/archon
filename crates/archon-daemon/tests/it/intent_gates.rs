@@ -12,6 +12,7 @@ use archon_core::queue::{QueueItem, QueueState};
 use archon_core::run::StageState;
 use archon_queue::store::keys;
 use serde_json::json;
+use sha2::Digest;
 
 /// The release smoke's brief, as the operator sent it.
 const BRIEF: &str = "Implement `retry_budget.py` according to `SPEC.md`. Preserve the documented \
@@ -223,36 +224,122 @@ async fn an_empty_requirement_selection_is_stored_spelled_out() {
     assert_eq!(record(&h).requirements.len(), 1);
 }
 
-#[tokio::test]
-async fn only_an_image_the_operator_attached_makes_an_approved_reference() {
-    let h = Harness::new().await;
-    let ledger = record(&h);
+/// Whether ApproveIntent of `ledger`, quoting inbox message 7, is refused
+/// with an error containing `refusal`; `None` approves it.
+async fn approval(h: &Harness, ledger: &ApprovedIntent, refusal: Option<&str>) {
+    let approved = h.orchestrator(Request::ApproveIntent(ledger.clone())).await;
     let binding = IntentBinding {
         id: ledger.id.clone(),
         version: 1,
         requirements: vec![],
     };
+    let stored = h.ctx.store.lock().await.approved_intent(&binding).unwrap();
+    match refusal {
+        None => assert!(approved.is_ok() && stored.is_some(), "{approved:?}"),
+        Some(refusal) => {
+            let error = approved.unwrap_err().to_string();
+            assert!(error.contains(refusal), "{error}");
+            assert!(stored.is_none(), "a refused ledger stores nothing");
+        }
+    }
+}
+
+#[tokio::test]
+async fn only_an_image_the_operator_attached_or_named_by_path_is_a_reference() {
+    let h = Harness::new().await;
+    let mut ledger = record(&h);
+    let path = ledger.images[0].path.clone();
     operator_said(&h, 7, &ledger.operator_words, &[]).await;
-    let refused = h
-        .orchestrator(Request::ApproveIntent(ledger.clone()))
-        .await
-        .unwrap_err()
-        .to_string();
-    assert!(
-        refused.contains("neither attached to nor named"),
-        "{refused}"
+    approval(
+        &h,
+        &ledger,
+        Some("neither attached to the quoted operator message"),
+    )
+    .await;
+    let other = h.dir.path().join("other");
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::copy(&path, other.join("reference.png")).unwrap();
+    ledger.operator_words = format!(
+        "Keep ISO labels visible, as {}",
+        other.join("reference.png").display()
     );
-    let stored = h.ctx.store.lock().await.approved_intent(&binding).unwrap();
-    assert!(
-        stored.is_none(),
-        "an unrelated local image approves nothing"
-    );
-    operator_said(&h, 7, &ledger.operator_words, &[&ledger.images[0].sha256]).await;
-    h.orchestrator(Request::ApproveIntent(ledger))
-        .await
-        .unwrap();
-    let stored = h.ctx.store.lock().await.approved_intent(&binding).unwrap();
-    assert_eq!(stored.expect("approved").images.len(), 1);
+    operator_said(&h, 7, &ledger.operator_words, &[]).await;
+    approval(&h, &ledger, Some("neither attached")).await;
+    ledger.operator_words = format!("Keep ISO labels visible, as `{}`.", path.display());
+    operator_said(&h, 7, &ledger.operator_words, &[]).await;
+    approval(&h, &ledger, None).await;
+    let mut attached = record(&h);
+    attached.id = "attached_layout".into();
+    operator_said(
+        &h,
+        7,
+        &attached.operator_words,
+        &[&attached.images[0].sha256],
+    )
+    .await;
+    approval(&h, &attached, None).await;
+}
+
+#[tokio::test]
+async fn an_artifact_is_one_the_operator_named_by_its_own_path() {
+    let h = Harness::new().await;
+    let mut ledger = record(&h);
+    ledger.id = "page".into();
+    let page = b"<!doctype html><title>Approved</title>";
+    for dir in ["approved", "unrelated"] {
+        std::fs::create_dir_all(h.dir.path().join(dir)).unwrap();
+        std::fs::write(h.dir.path().join(dir).join("design.html"), page).unwrap();
+    }
+    let digest = sha2::Sha256::digest(page)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    ledger.artifacts.push(archon_core::intent::IntentArtifact {
+        path: h.dir.path().join("unrelated/design.html"),
+        sha256: digest,
+    });
+    let named = h.dir.path().join("approved/design.html");
+    ledger.operator_words = format!("Keep ISO labels visible per {}", named.display());
+    let image = ledger.images[0].sha256.clone();
+    operator_said(&h, 7, &ledger.operator_words, &[&image]).await;
+    approval(&h, &ledger, Some("is not named by its full path")).await;
+    ledger.artifacts[0].path = named;
+    approval(&h, &ledger, None).await;
+}
+
+/// An inbox ledger without images whose requirements are `texts`.
+fn listed(words: &str, texts: &[&str]) -> ApprovedIntent {
+    let requirements: Vec<_> = texts.iter().enumerate().map(|(i, text)| {
+        json!({"id":format!("R{}", i + 1),"images":[],"kind":"behaviour","owner":"operator","text":text})
+    }).collect();
+    serde_json::from_value(
+        json!({"id":"listed","version":1,"source":{"kind":"inbox","seq":7},
+        "operator_words":words,"artifacts":[],"images":[],"requirements":requirements}),
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn only_the_whole_items_of_an_introduced_requirement_list_make_a_ledger() {
+    let h = Harness::new().await;
+    let incidental = "Investigate these options:\n- Add caching";
+    operator_said(&h, 7, incidental, &[]).await;
+    let refusal = Some("introduce no requirement list");
+    approval(&h, &listed(incidental, &["Add caching"]), refusal).await;
+    let words = "Approve these requirements:\n- Add caching\n  only if profiling shows it is needed\n- Keep the API";
+    operator_said(&h, 7, words, &[]).await;
+    let truncated = listed(words, &["Add caching", "Keep the API"]);
+    approval(
+        &h,
+        &truncated,
+        Some("\"R1\" is not one of the operator's listed items"),
+    )
+    .await;
+    let whole = [
+        "Add caching only if profiling shows it is needed",
+        "Keep the API",
+    ];
+    approval(&h, &listed(words, &whole), None).await;
 }
 
 /// A change that spoils one requirement result.

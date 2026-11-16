@@ -35,7 +35,8 @@ pub(super) async fn approve(
         .ok_or_else(|| ArchonError::Unavailable("no orchestrator".into()))?;
     let message = verified_message(ctx, &agent, seq).await?;
     verify_quote(&record.operator_words, &message.text)?;
-    record.check_provenance(&message.images)?;
+    let named = resolve_inputs(&mut record)?;
+    record.check_provenance(&message.images, &named)?;
     let destination = ctx.paths.data_dir.join("approved-intent-artifacts");
     for index in 0..record.artifacts.len() {
         let artifact = record.artifacts[index].clone();
@@ -50,6 +51,35 @@ pub(super) async fn approve(
     record.check_operator_ledger()?;
     ctx.store.lock().await.save_approved_intent(&record)?;
     Ok(Reply::Ok)
+}
+
+/// Resolve the record's image and artifact paths to the files they are, and
+/// return the files the operator's written paths resolve to, for provenance.
+fn resolve_inputs(record: &mut ApprovedIntent) -> Result<Vec<PathBuf>, ArchonError> {
+    let resolve = |path: &Path| {
+        std::fs::canonicalize(path)
+            .map_err(|e| ArchonError::io(format!("resolve {}", path.display()), e))
+    };
+    for image in &mut record.images {
+        image.path = resolve(&image.path)?;
+    }
+    for artifact in &mut record.artifacts {
+        artifact.path = resolve(&artifact.path)?;
+    }
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let named: Vec<PathBuf> = archon_core::intent::named_paths(&record.operator_words)
+        .into_iter()
+        .filter_map(|word| match word.strip_prefix("~/") {
+            Some(rest) => home.as_ref().map(|home| home.join(rest)),
+            None => Some(PathBuf::from(word)),
+        })
+        // A word that resolves to no readable file names none; provenance then
+        // refuses any image or artifact it was meant to name.
+        .filter_map(|path| std::fs::canonicalize(path).ok())
+        .collect();
+    assert!(record.images.iter().all(|i| i.path.is_absolute()));
+    assert!(named.iter().all(|path| path.is_absolute()));
+    Ok(named)
 }
 
 async fn verified_message(

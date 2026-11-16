@@ -56,10 +56,11 @@
   lacking an independent vision model, leaving its file a stub. Now the
   orchestrator files `approve_intent` only for operator-approved references or
   requirement lists, and archond checks this. A reference image must be one the
-  operator attached to the quoted message or named in it, and an artifact one they
-  named. Without images, the requirements must be exactly the operator's own list,
-  one per `-`, `*` or numbered line, each quoted whole. A paraphrase or an excerpt of
-  a plain brief is refused. A binding is stored
+  operator attached to the quoted message or named there by its full path, and an
+  artifact one they named by path; a same-named file elsewhere is refused. Without
+  images, the requirements must be exactly the list the operator introduced with a
+  line ending `requirements:`, one per item, each quoted whole with its continuation
+  lines. A paraphrase, an excerpt or an incidental bullet of a plain brief is refused. A binding is stored
   with its requirement ids spelled out, never an empty list. The stage that finishes
   the build is shown the exact `requirement_results` it owes, one entry per id, and
   the statuses it may use. A status of `pass`, `done` or `met` counts as

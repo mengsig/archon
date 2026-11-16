@@ -68,7 +68,7 @@ fn approve_intent() -> ToolDefinition {
     define(
         "approve_intent",
         "Approve intent",
-        "Record a ledger the operator approved, quoted exactly from an authenticated inbox message: reference images they attached to it or named in it, or the requirement list they wrote (one requirement per `-`, `*` or numbered line, every line quoted whole). A plain brief is no ledger; enqueue it without an intent. Supply SHA-256 hashes of referenced files.",
+        "Record a ledger the operator approved, quoted exactly from an authenticated inbox message: reference images they attached to it or named in it by full path, or the list they introduced with a line ending `requirements:` (one requirement per list item, every item quoted whole with its continuation lines). A plain brief is no ledger; enqueue it without an intent. Supply SHA-256 hashes of referenced files.",
         object(
             json!({"record": {"type": "object", "properties": {
                 "id": {"type": "string"}, "version": {"type": "integer", "minimum": 1},

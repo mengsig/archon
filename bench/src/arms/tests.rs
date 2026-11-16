@@ -225,6 +225,14 @@ fn archon_config_pins_the_model_and_round_trips() {
     assert_eq!(parsed.models.max_effort, Some(Effort::High));
     assert_eq!(parsed.lavish.enabled, Toggle::Off);
     assert!(parsed.worktrees.keep_on_success);
+    assert!(
+        !text.contains("[limits]"),
+        "let each release use its defaults"
+    );
+    assert!(
+        !text.contains("clarification_timeout_minutes"),
+        "1.5.1 rejects this new default before it can start a trial"
+    );
 }
 
 #[test]

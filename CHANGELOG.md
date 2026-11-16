@@ -58,6 +58,10 @@ using the new worker policy and reference attachments.
 
 ### Fixed
 
+- The benchmark writes only configuration sections it overrides, so a
+  comparison with an older release does not fail at startup on a new,
+  unrelated default such as the clarification timeout.
+
 - Archive failed stage agents once a pipeline run moves past them (#415).
 - Preserve a spent provider’s exact quota reset time instead of truncating
   it to whole seconds (#416).

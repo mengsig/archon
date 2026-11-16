@@ -257,6 +257,12 @@ async fn only_an_image_the_operator_attached_makes_an_inbox_ledger() {
     approval(&h, &ledger, unattached).await;
     let digest = ledger.images[0].sha256.clone();
     operator_said(&h, 7, &ledger.operator_words, &[&digest]).await;
+    let mut padded = ledger.clone();
+    let written = json!({"id":"R2","images":[],"kind":"behaviour","owner":"operator","text":"Rewrite the login flow"});
+    padded
+        .requirements
+        .push(serde_json::from_value(written).unwrap());
+    approval(&h, &padded, Some("\"R2\" is written, not a visual match")).await;
     approval(&h, &ledger, None).await;
 }
 

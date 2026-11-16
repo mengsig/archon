@@ -68,7 +68,7 @@ fn approve_intent() -> ToolDefinition {
     define(
         "approve_intent",
         "Approve intent",
-        "Record the reference images the operator attached to an authenticated inbox message, as their ledger: operator_words is that message verbatim, and each image is the file Aether shows it `stored at`, with its SHA-256. Nothing else is accepted. A written requirement list or a named file becomes a ledger only when the operator approves it at a proposal gate, and a plain brief is no ledger: enqueue it without an intent.",
+        "Record the reference images the operator attached to an authenticated inbox message, as their ledger: operator_words is that message verbatim, and each image is the file Aether shows it `stored at`, with its SHA-256; each requirement is a visual match to one of those images. Nothing else is accepted. A written requirement list or a named file becomes a ledger only when the operator approves it at a proposal gate, and a plain brief is no ledger: enqueue it without an intent.",
         object(
             json!({"record": {"type": "object", "properties": {
                 "id": {"type": "string"}, "version": {"type": "integer", "minimum": 1},

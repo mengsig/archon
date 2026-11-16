@@ -55,12 +55,14 @@
   bench task failed for missing `requirement_results` and then for lacking an
   independent vision model, leaving its file a stub. Now the orchestrator files
   `approve_intent` only for reference images the operator attached to an inbox
-  message, and archond checks each against the digests Aether recorded for that
-  message. Anything else is refused, including a requirement list, a named file
-  path or an artifact written in the message: a written ledger becomes approved
-  intent only when the operator approves it at a proposal gate. A binding is
-  stored with its requirement ids spelled out, never an empty list. The stage that
-  finishes the build is shown the exact `requirement_results` it owes, one entry
+  message. Archond checks each image against the digests Aether recorded for that
+  message, and each requirement of such a ledger must be a visual match to one of
+  those images. Anything else is refused: a written requirement beside an image,
+  a requirement list, a named file path or an artifact written in the message. A
+  written ledger becomes approved intent only when the operator approves it at a
+  proposal gate. A binding is stored with its requirement ids spelled out, never
+  an empty list. Exactly one stage finishes the build: the one holding the ship
+  record, otherwise the last work stage. That stage is shown the exact `requirement_results` it owes, one entry
   per id, and the statuses it may use. A status of `pass`, `done` or `met` counts
   as `implemented`. Any mistake in those results gets the one automatic repair
   (`[review] auto_repair`) instead of failing the item, and the repair note quotes

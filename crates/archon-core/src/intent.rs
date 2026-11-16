@@ -189,8 +189,8 @@ impl ApprovedIntent {
                 "a plain brief creates no approved intent: {detail}. An inbox message approves \
                  a ledger only through reference images the operator attached to it. A written \
                  requirement list or a named file becomes a ledger only when the operator \
-                 approves that exact ledger through a gate (a proposal or report gate showing \
-                 it); otherwise enqueue the item without an intent"
+                 approves that exact ledger through a gate (the proposal gate showing it); \
+                 otherwise enqueue the item without an intent"
             ))
         };
         if self.images.is_empty() {
@@ -208,6 +208,17 @@ impl ApprovedIntent {
             return Err(refused(format!(
                 "artifact {} is not an attachment the operator sent",
                 artifact.path.display()
+            )));
+        }
+        // The images are the approval; a requirement beside them is a written one.
+        if let Some(written) = self
+            .requirements
+            .iter()
+            .find(|r| r.kind != RequirementKind::Visual)
+        {
+            return Err(refused(format!(
+                "requirement {:?} is written, not a visual match to an attached image",
+                written.id
             )));
         }
         Ok(())
@@ -332,11 +343,28 @@ mod tests {
         let digest = "a".repeat(64);
         let mut pictured = inbox("Match this mockup", &["Match the approved layout"]);
         pictured.images.push(image(&digest));
+        pictured.requirements[0].kind = RequirementKind::Visual;
+        pictured.requirements[0].images = vec!["mockup".into()];
+        pictured.validate().unwrap();
         assert!(
             pictured
                 .check_inbox_ledger(std::slice::from_ref(&digest))
                 .is_ok()
         );
+        let mut padded = pictured.clone();
+        padded.requirements.push(Requirement {
+            id: "R2".into(),
+            text: "Rewrite the login flow".into(),
+            kind: RequirementKind::Behaviour,
+            images: vec![],
+            owner: "operator".into(),
+        });
+        padded.validate().unwrap();
+        let error = padded
+            .check_inbox_ledger(std::slice::from_ref(&digest))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("\"R2\" is written"), "{error}");
         let error = pictured
             .check_inbox_ledger(&["b".repeat(64)])
             .unwrap_err()

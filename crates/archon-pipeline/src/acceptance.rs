@@ -83,17 +83,20 @@ pub fn results_refusal(error: &str) -> Option<&str> {
 }
 
 /// Whether stage `stage_id` of `spec` finishes the build, so an item bound to
-/// approved intent must report `requirement_results` in its result.
+/// approved intent must report `requirement_results` in its result. Exactly
+/// one stage does: the one holding the ship record, else the last work stage.
 pub fn reports_requirements(spec: &PipelineSpec, stage_id: &str) -> bool {
-    let last_work = crate::autonomy::ships(spec)
+    if let Some(record) = spec.ship_record_stage() {
+        return record.id == stage_id;
+    }
+    crate::autonomy::ships(spec)
         && spec
             .file
             .stages
             .iter()
             .rev()
             .find(|s| s.kind == StageKind::Work)
-            .is_some_and(|s| s.id == stage_id);
-    last_work || spec.ship_record_stage().is_some_and(|s| s.id == stage_id)
+            .is_some_and(|s| s.id == stage_id)
 }
 
 pub fn build_results(
@@ -419,6 +422,38 @@ mod tests {
         let stage =
             format!("stage `implement` failed: 1 of 1 agent(s) did not complete\n\n{error}");
         assert_eq!(results_refusal(&stage), Some(error.as_str()));
+    }
+
+    #[test]
+    fn exactly_the_stage_holding_the_ship_record_reports_requirements() {
+        let reporting = |spec: &PipelineSpec| -> Vec<String> {
+            let spec = augment(spec).unwrap();
+            let stages = spec.file.stages.iter();
+            stages
+                .filter(|s| reports_requirements(&spec, &s.id))
+                .map(|s| s.id.clone())
+                .collect()
+        };
+        let catalog = crate::Catalog::builtin();
+        assert_eq!(reporting(catalog.get("adaptive").unwrap()), ["build"]);
+        assert_eq!(reporting(catalog.get("refactor").unwrap()), ["refactor"]);
+        assert!(reporting(catalog.get("e2e-strict").unwrap()).is_empty());
+        let examples = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/examples");
+        let team = crate::catalog::load_dir(
+            &examples.join("pipelines/team-pr"),
+            archon_core::catalog::PipelineSource::User,
+        )
+        .unwrap();
+        let record = team.ship_record_stage().unwrap();
+        assert_eq!(
+            (record.id.as_str(), record.kind),
+            ("review", StageKind::Review)
+        );
+        assert_eq!(
+            reporting(&team),
+            ["review"],
+            "not its last work stage, plan"
+        );
     }
 
     #[test]

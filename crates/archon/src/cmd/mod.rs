@@ -27,6 +27,8 @@ mod settings;
 mod talk;
 mod update;
 
+const REQUIRED_AETHER_VERSION: &str = "1.4.0";
+
 use std::process::ExitCode;
 
 use crate::chat;

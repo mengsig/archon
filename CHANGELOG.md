@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 1.6.0
+
+Released 2026-11-16.
+
+Archon 1.6.0 requires **Aether 1.4.0**. The installer selects that release when Aether is absent; confirmed
+updates pin it only for an older installation and otherwise use Aether's
+normal update, without forcing a downgrade. Upgrade Aether and restart its daemon before
+using the new worker policy and reference attachments.
+
 ### Added
 
 - Approved intent: immutable operator words, artifact hashes and a per-requirement
@@ -50,7 +59,15 @@
 
 ### Fixed
 
-- Approved intent no longer gates ordinary items. In the 1.6.0 release smoke the
+- The benchmark writes only configuration sections it overrides, so a
+  comparison with an older release does not fail at startup on a new,
+  unrelated default such as the clarification timeout.
+
+- Archive failed stage agents once a pipeline run moves past them (#415).
+- Preserve a spent provider’s exact quota reset time instead of truncating
+  it to whole seconds (#416).
+
+- Approved intent no longer gates ordinary items (#423). In the 1.6.0 release smoke the
   orchestrator turned a plain brief into a six-requirement ledger, so a one-model
   bench task failed for missing `requirement_results` and then for lacking an
   independent vision model, leaving its file a stub. Now the orchestrator files
@@ -106,6 +123,23 @@
   starts again now has no terminal either. One that an `archon` command
   started still shares that command's terminal until Aether starts its
   daemon in a session of its own.
+
+### Known follow-ups
+
+- From #423: an `ask_operator` approval path for written ledgers, a structured
+  named-path reference field, and quoting image-only operator messages.
+
+- From #421: Aether daemon/engine session isolation, a conditional interrupt
+  tied to the last turn event, and documenting the `watchdog` trigger in the
+  orchestrator prompt. Session isolation is addressed by Aether 1.4.0 (#433 there).
+- From #422: index/prune clarification history without capping questions;
+  split long functions and avoid repeated case folding in image extraction;
+  match a pending deviation's named directive when a later Proceed resumes it.
+- From #422: independently discover required scenario steps, centralize
+  acceptance augmentation, document Proceed in `operator-authority.md`, and
+  tighten CLI/MCP escaping of verified pins. Remote/SVG references remain
+  unsupported. Live visual judgment, compaction reattachment and annotation
+  anchoring in the proposal iframe were not exercised by that change.
 
 ## 1.5.1
 

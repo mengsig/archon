@@ -559,3 +559,18 @@ async fn an_archond_that_waits_for_its_agents_is_asked_to_restart_anyway_soon() 
         assert_eq!(*fake.asked.borrow(), [asked], "{version}");
     }
 }
+
+#[test]
+fn aether_release_reads_the_version_before_protocol_details() {
+    assert_eq!(
+        aether_release("aether 1.4.1 (protocol 26)").unwrap().tag(),
+        "v1.4.1"
+    );
+    assert_eq!(
+        aether_release("aether 1.4.0-rc.1").unwrap().tag(),
+        "v1.4.0-rc.1"
+    );
+    for invalid in ["", "archon 1.4.0", "aether", "aether unknown", "aether 1.4"] {
+        assert!(aether_release(invalid).is_err(), "{invalid}");
+    }
+}

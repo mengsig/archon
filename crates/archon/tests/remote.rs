@@ -497,7 +497,7 @@ fn setup_stops_with_the_fix_for_an_old_aether_or_an_unready_tailscale() {
     let refused = wizard(&env, &tools, &["remote", "setup", "--yes"]);
     assert!(!refused.status.success());
     let errors = stderr(&refused);
-    assert!(errors.contains("needs Aether 1.3.0 or later"), "{errors}");
+    assert!(errors.contains("needs Aether 1.4.0 or later"), "{errors}");
     aether_stand_in(&tools, free_port());
     stand_ins(&tools, "Stopped");
     let stopped = wizard(&env, &tools, &["remote", "setup", "--yes"]);

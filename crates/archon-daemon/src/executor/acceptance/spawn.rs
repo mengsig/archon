@@ -42,8 +42,22 @@ pub(in crate::executor) fn section(
     Ok(text)
 }
 
+/// Whether `stage_id` is the acceptance stage of a run no stage recorded build
+/// evidence for, as in a validation-only pipeline: it reports the results itself.
+pub(in crate::executor) fn observes_requirements(
+    store: &Store,
+    run: &PipelineRun,
+    stage_id: &str,
+) -> Result<bool, ArchonError> {
+    if stage_id != STAGE {
+        return Ok(false);
+    }
+    let evidence = store.kv_get(&format!("intent_build:{}", run.id))?;
+    Ok(evidence.is_none())
+}
+
 /// Attach the approved references to a stage's request and, to the stage that
-/// finishes the build (`reports`), the exact `requirement_results` it owes.
+/// reports the requirement results (`reports`), the exact shape it owes.
 pub(in crate::executor) fn attach(
     store: &Store,
     item: &QueueItem,
@@ -292,8 +306,8 @@ pub(in crate::executor) fn results_owed(
         .collect();
     let shape = serde_json::to_string_pretty(&serde_json::json!({"requirement_results": entries}))?;
     let text = format!(
-        "\n## Requirement results this stage owes\n\nThis stage finishes the build of an approved \
-         intent. Archon refuses your result unless `complete_task`'s `structured` holds \
+        "\n## Requirement results this stage owes\n\nThis stage reports the requirement results \
+         of an approved intent. Archon refuses your result unless `complete_task`'s `structured` holds \
          `requirement_results` beside any other keys it asks for: exactly one entry per \
          requirement below, no more and no fewer. `status` is exactly one of `implemented`, \
          `deviation` (give the reason in `evidence`) or `blocked` (fails the build), never \

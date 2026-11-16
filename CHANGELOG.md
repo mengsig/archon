@@ -55,14 +55,20 @@
   one-model bench task failed for missing `requirement_results` and then for
   lacking an independent vision model, leaving its file a stub. Now the
   orchestrator files `approve_intent` only for operator-approved references or
-  requirement lists, and archond refuses an inbox ledger without reference images
-  whose requirements are not quoted from the operator's words. A binding is stored
+  requirement lists, and archond checks this. A reference image must be one the
+  operator attached to the quoted message or named in it, and an artifact one they
+  named. Without images, the requirements must be exactly the operator's own list,
+  one per `-`, `*` or numbered line, each quoted whole. A paraphrase or an excerpt of
+  a plain brief is refused. A binding is stored
   with its requirement ids spelled out, never an empty list. The stage that finishes
   the build is shown the exact `requirement_results` it owes, one entry per id, and
   the statuses it may use. A status of `pass`, `done` or `met` counts as
-  `implemented`. A refusal of those results, such as an unknown status, gets the
-  one automatic repair (`[review] auto_repair`), whose note quotes the allowed
-  values, instead of failing the item. When no permitted, connected model apart from every
+  `implemented`. Any mistake in those results gets the one automatic repair
+  (`[review] auto_repair`) instead of failing the item, and the repair note quotes
+  the allowed values. Mistakes include an unknown status, empty evidence, a missing
+  or bad visual pair, or a built image that is not there. A blocked requirement
+  still fails. A validation-only pipeline's acceptance stage, which reports the
+  results itself, is shown the same shape and gets the same repair. When no permitted, connected model apart from every
   builder can judge acceptance (a vision model only when approved reference images
   exist), the strongest permitted one judges it. The readiness report and item
   outcome say `acceptance: not independent`. `[review] independent_acceptance =

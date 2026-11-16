@@ -66,14 +66,9 @@ pub fn augment(spec: &PipelineSpec) -> Result<PipelineSpec, ArchonError> {
     Ok(out)
 }
 
-/// How the refusals of a build's `requirement_results` open, which the
-/// stage can answer with a corrected result; a blocked requirement is not one.
-const RESULTS_REFUSALS: &[&str] = &[
-    "approved intent: missing requirement_results",
-    "approved intent: invalid requirement_results",
-    "approved intent: requirement results have empty or duplicate ids",
-    "approved intent: every selected requirement needs exactly one result",
-];
+/// How every refusal of a result's `requirement_results` opens: a mistake
+/// the stage can answer with a corrected result. A blocked requirement is not.
+const RESULTS_REFUSED: &str = "approved intent: requirement_results refused: ";
 
 /// The refusal of a build's `requirement_results` that a failed stage's
 /// `error` reports, which one automatic repair may answer; `None` otherwise.
@@ -81,11 +76,10 @@ pub fn results_refusal(error: &str) -> Option<&str> {
     if !error.starts_with("stage `") {
         return None;
     }
-    error.lines().map(str::trim).find(|line| {
-        RESULTS_REFUSALS
-            .iter()
-            .any(|opening| line.starts_with(opening))
-    })
+    error
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with(RESULTS_REFUSED))
 }
 
 /// Whether stage `stage_id` of `spec` finishes the build, so an item bound to
@@ -110,22 +104,24 @@ pub fn build_results(
     let selected = intent.selected_requirements(binding)?;
     let value = structured
         .and_then(|s| s.get("requirement_results"))
-        .ok_or_else(|| invalid("missing requirement_results: report every approved requirement"))?;
+        .ok_or_else(|| results_refused("missing; report every approved requirement"))?;
     let results: Vec<RequirementResult> = serde_json::from_value(canonical_statuses(value))
         .map_err(|e| {
-            invalid(&format!(
-                "invalid requirement_results: {e}; `status` is exactly one of {STATUSES}"
+            results_refused(&format!(
+                "not a list of results: {e}; `status` is exactly one of {STATUSES}"
             ))
         })?;
     let indexed = indexed_results(&results)?;
-    exact_ids(
+    if !exact_ids(
         selected.iter().map(|r| r.id.as_str()),
         indexed.keys().copied(),
-    )?;
+    ) {
+        return Err(results_refused(EXACT_IDS));
+    }
     for requirement in &selected {
         let result = indexed[requirement.id.as_str()];
         if result.evidence.trim().is_empty() {
-            return Err(invalid(&format!(
+            return Err(results_refused(&format!(
                 "{} has no evidence or reason",
                 requirement.id
             )));
@@ -182,7 +178,7 @@ fn indexed_results(
     let mut indexed = BTreeMap::new();
     for result in results {
         if result.id.is_empty() || indexed.insert(result.id.as_str(), result).is_some() {
-            return Err(invalid("requirement results have empty or duplicate ids"));
+            return Err(results_refused("results have empty or duplicate ids"));
         }
     }
     assert_eq!(indexed.len(), results.len());
@@ -207,9 +203,9 @@ fn validate_pairs(
             .images
             .iter()
             .find(|image| image.id == pair.reference)
-            .ok_or_else(|| invalid(&format!("unknown reference {}", pair.reference)))?;
+            .ok_or_else(|| results_refused(&format!("unknown reference {}", pair.reference)))?;
         if !requirement.images.contains(&pair.reference) || !seen.insert(pair.reference.as_str()) {
-            return Err(invalid(
+            return Err(results_refused(
                 "visual pair references must belong to the requirement and be unique",
             ));
         }
@@ -219,7 +215,7 @@ fn validate_pairs(
             || pair.theme.trim().is_empty()
             || pair.state.trim().is_empty()
         {
-            return Err(invalid(
+            return Err(results_refused(
                 "visual pairs need a built image, viewport, theme and state",
             ));
         }
@@ -227,14 +223,14 @@ fn validate_pairs(
             || image.theme.as_ref().is_some_and(|t| t != &pair.theme)
             || image.state.as_ref().is_some_and(|s| s != &pair.state)
         {
-            return Err(invalid(&format!(
+            return Err(results_refused(&format!(
                 "{} reference and built viewport/theme/state differ",
                 result.id
             )));
         }
     }
     if requirement.kind == RequirementKind::Visual && seen.len() != requirement.images.len() {
-        return Err(invalid(&format!(
+        return Err(results_refused(&format!(
             "{} needs a reference | built pair for every reference",
             result.id
         )));
@@ -262,10 +258,12 @@ pub fn judge(
             "acceptance is not pinned to the current head, tree and intent version",
         ));
     }
-    exact_ids(
+    if !exact_ids(
         selected.iter().map(|r| r.id.as_str()),
         result.requirements.iter().map(|r| r.id.as_str()),
-    )?;
+    ) {
+        return Err(invalid(EXACT_IDS));
+    }
     if let Some(failed) = result
         .requirements
         .iter()
@@ -281,25 +279,30 @@ pub fn judge(
     Ok(result)
 }
 
+const EXACT_IDS: &str =
+    "every selected requirement needs exactly one result; omissions, duplicates and extra ids fail";
+
+/// Whether `actual` names each `expected` id exactly once and nothing else.
 fn exact_ids<'a>(
     expected: impl Iterator<Item = &'a str>,
     actual: impl Iterator<Item = &'a str>,
-) -> Result<(), ArchonError> {
+) -> bool {
     let expected: BTreeSet<_> = expected.collect();
     let actual: Vec<_> = actual.collect();
     let unique: BTreeSet<_> = actual.iter().copied().collect();
-    if unique != expected || unique.len() != actual.len() {
-        return Err(invalid(
-            "every selected requirement needs exactly one result; omissions, duplicates and extra ids fail",
-        ));
-    }
-    assert_eq!(expected.len(), actual.len());
-    assert_eq!(expected, unique);
-    Ok(())
+    let exact = unique == expected && unique.len() == actual.len();
+    assert!(!exact || expected.len() == actual.len());
+    assert!(unique.len() <= actual.len());
+    exact
 }
 
 fn invalid(message: &str) -> ArchonError {
     ArchonError::Invalid(format!("approved intent: {message}"))
+}
+
+/// A mistake in the stage's `requirement_results`, which a corrected result answers.
+pub fn results_refused(message: &str) -> ArchonError {
+    ArchonError::Invalid(format!("{RESULTS_REFUSED}{message}"))
 }
 
 #[cfg(test)]
@@ -308,23 +311,54 @@ mod tests {
     use archon_core::intent::{IntentSource, ReferenceImage, Viewport};
     use serde_json::json;
 
+    fn stage_failure(error: &str) -> String {
+        format!(
+            "stage `implement` failed: 1 of 1 agent(s) did not complete\n\n**`implement` #1: failed**\n\n{error}\n"
+        )
+    }
+
     #[test]
-    fn only_a_stage_failure_over_its_requirement_results_is_repairable() {
-        let ArchonError::Invalid(missing) =
-            invalid("missing requirement_results: report every approved requirement")
-        else {
-            unreachable!()
+    fn every_mistake_in_requirement_results_is_repairable_but_blocked_work_is_not() {
+        let (intent, binding) = fixture();
+        let edit = |change: &dyn Fn(&mut Value)| {
+            let mut value = implemented();
+            change(&mut value["requirement_results"]);
+            value
         };
-        let error = format!(
-            "stage `implement` failed: 1 of 1 agent(s) did not complete\n\n**`implement` #1: failed**\n\n{missing}\n"
-        );
-        assert_eq!(
-            results_refusal(&error),
-            Some("approved intent: missing requirement_results: report every approved requirement")
-        );
-        let blocked = error.replace("missing requirement_results", "R1 is blocked: no API key;");
-        assert_eq!(results_refusal(&blocked), None);
-        assert_eq!(results_refusal(&missing), None);
+        let mistakes = [
+            json!({}),
+            json!({"requirement_results": "all done"}),
+            json!({"requirement_results": []}),
+            edit(&|r| r[0]["evidence"] = json!(" ")),
+            edit(&|r| r[0]["visual_pairs"] = json!([])),
+            edit(&|r| r[0]["visual_pairs"][0]["reference"] = json!("other")),
+            edit(&|r| r[0]["visual_pairs"][0]["built"] = json!("")),
+            edit(&|r| r[0]["visual_pairs"][0]["theme"] = json!("dark")),
+            edit(&|r| r[0]["id"] = json!("")),
+            edit(&|r| r[0]["id"] = json!("R9")),
+        ];
+        for given in mistakes {
+            let Err(ArchonError::Invalid(error)) = build_results(&intent, &binding, Some(&given))
+            else {
+                panic!("{given} is refused")
+            };
+            assert!(error.starts_with(RESULTS_REFUSED), "{error}");
+            assert_eq!(
+                results_refusal(&stage_failure(&error)),
+                Some(error.as_str())
+            );
+            assert_eq!(
+                results_refusal(&error),
+                None,
+                "only a stage failure is repaired"
+            );
+        }
+        let blocked = edit(&|r| r[0]["status"] = json!("blocked"));
+        let error = build_results(&intent, &binding, Some(&blocked))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("R1 is blocked"), "{error}");
+        assert_eq!(results_refusal(&stage_failure(&error)), None);
     }
 
     fn fixture() -> (ApprovedIntent, IntentBinding) {

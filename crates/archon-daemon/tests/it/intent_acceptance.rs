@@ -25,7 +25,7 @@ pub(crate) async fn fixture_on(
 ) -> (Harness, FakeAether, QueueItem) {
     config.worktrees.keep_on_success = true;
     let h = Harness::with_config(config).await;
-    let fake = common::connect_aether_for_delegations(&h).await;
+    let fake = models_listed(&h, vision).await;
     if references {
         fake.set_features(vec!["references".into()]);
         let client = archon_aether::AetherClient::connect(&fake.endpoint())
@@ -36,10 +36,6 @@ pub(crate) async fn fixture_on(
             .replace(Some(std::sync::Arc::new(client)))
             .unwrap();
     }
-    let models: Vec<_> = vision.iter().map(|model| {
-        json!({"model":model.parse::<archon_core::model::ModelRef>().unwrap(),"configured":true,"tier":"strong","capabilities":{"vision":true}})
-    }).collect();
-    fake.set_default("list_models", Scripted::reply("models", json!(models)));
     let intent = record(&h);
     let binding = IntentBinding {
         id: intent.id.clone(),
@@ -68,6 +64,16 @@ pub(crate) async fn fixture_on(
     assert_eq!(h.running().await[0].stage_id, "implement");
     assert!(item.model_plan.0.contains_key("intent-acceptance"));
     (h, fake, item)
+}
+
+/// A connected fake Aether that lists each of `vision` as a vision model.
+pub(crate) async fn models_listed(h: &Harness, vision: &[&str]) -> FakeAether {
+    let fake = common::connect_aether_for_delegations(h).await;
+    let models: Vec<_> = vision.iter().map(|model| {
+        json!({"model":model.parse::<archon_core::model::ModelRef>().unwrap(),"configured":true,"tier":"strong","capabilities":{"vision":true}})
+    }).collect();
+    fake.set_default("list_models", Scripted::reply("models", json!(models)));
+    fake
 }
 
 pub(crate) fn record(h: &Harness) -> ApprovedIntent {
@@ -128,7 +134,8 @@ async fn to_acceptance(h: &Harness, item: &QueueItem) {
 }
 
 pub(crate) async fn judgment(h: &Harness, item: &QueueItem, verdict: &str) -> Value {
-    let run = h.run(&item.id).await;
+    let runs = h.ctx.store.lock().await.runs_for_item(&item.id).unwrap();
+    let run = runs.last().expect("the item has a run");
     json!({"verdict":verdict,"acceptance":{"head":common::git(&run.workspace,&["rev-parse","HEAD"]),"tree":common::git(&run.workspace,&["rev-parse","HEAD^{tree}"]),"intent":item.intent,"requirements":[{"id":"R1","verdict":verdict,"reason":"Compared approved and built images; checked ISO labels"}]}})
 }
 

@@ -47,6 +47,9 @@ pub(super) enum Refused {
     Delivery,
     /// The build's `requirement_results` for its approved intent.
     Requirements,
+    /// The `requirement_results` an acceptance stage with no build evidence
+    /// observed itself, as a validation-only pipeline's does.
+    Observations,
 }
 
 pub(super) struct Repair {
@@ -62,7 +65,7 @@ impl Repair {
         let refusal = &self.refusal;
         assert!(!refusal.trim().is_empty(), "a repair quotes its refusal");
         let review = match (self.refused, self.owes_review) {
-            (Refused::Review, _) | (_, false) => "",
+            (Refused::Review | Refused::Observations, _) | (_, false) => "",
             (Refused::Record | Refused::Requirements, true) => {
                 " Archon counts only a review by an agent this run delegates, so delegate one \
                  reviewer over the whole change from the merge base as the branch holds it, copy \
@@ -103,6 +106,15 @@ impl Repair {
                  for. Each `status` is exactly one of {statuses}.{review}",
                 statuses = archon_pipeline::acceptance::STATUSES
             ),
+            Refused::Observations => format!(
+                "{NOTE_OPENING} The approved-intent gate refused the requirement results the \
+                 acceptance stage observed: {refusal}\n\nChange no tracked file. Judge the \
+                 approved intent again and hand in `requirement_results` in `structured` beside \
+                 the acceptance judgment, one entry per approved requirement, exactly as the \
+                 contract's \"Requirement results this stage owes\" section shows. Each `status` \
+                 is exactly one of {statuses}.",
+                statuses = archon_pipeline::acceptance::STATUSES
+            ),
         };
         let note = format!("{note}\n\n{CHECK_RULE}");
         assert!(
@@ -118,6 +130,7 @@ impl Repair {
             Refused::Record | Refused::Review => ("review gate", "the record"),
             Refused::Delivery => ("delivery", "it"),
             Refused::Requirements => ("approved-intent gate", "the requirement results"),
+            Refused::Observations => ("approved-intent gate", "the observed requirement results"),
         };
         format!(
             "{who} refused {}: {}; retrying once to repair {what}",
@@ -148,9 +161,12 @@ fn refusal_of(state: &RunState) -> Option<(Refused, &str)> {
     if stage_id == SHIP_STEP {
         return ship::repairable_refusal(error).then_some((Refused::Delivery, error.trim()));
     }
-    let builds = stage_id != archon_pipeline::acceptance::STAGE;
-    if let Some(refusal) = archon_pipeline::acceptance::results_refusal(error).filter(|_| builds) {
-        return Some((Refused::Requirements, refusal));
+    if let Some(refusal) = archon_pipeline::acceptance::results_refusal(error) {
+        let refused = match stage_id == archon_pipeline::acceptance::STAGE {
+            true => Refused::Observations,
+            false => Refused::Requirements,
+        };
+        return Some((refused, refusal));
     }
     let refusal = record_refusal(error)?;
     let refused = match refuses_ship_record(refusal) {
@@ -255,6 +271,7 @@ mod tests {
             Refused::Review,
             Refused::Delivery,
             Refused::Requirements,
+            Refused::Observations,
         ];
         for refused in kinds {
             let repair = Repair {

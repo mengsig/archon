@@ -1530,9 +1530,11 @@ cost and outcomes; Codex stages always record full. See the
 Approved intent applies only to a ledger or design the operator approved. A plain
 brief creates no ledger and needs no `requirement_results`. `approve_intent` files
 an immutable requirement ledger against an authenticated operator inbox message.
-`operator_words` must be that message verbatim, and the record must carry the
-operator's reference images or quote every requirement from their words. Otherwise
-it is refused. A new Lavish proposal displays its ledger alongside the reference
+`operator_words` must be that message verbatim. Each reference image must be one
+the operator attached to that message or named in it, and each artifact one they
+named. A record without images must bind exactly the operator's own requirement
+list: one requirement per `-`, `*` or numbered line, every line quoted whole.
+Anything else is refused. A new Lavish proposal displays its ledger alongside the reference
 images and freezes it when approved. Enqueue and initiative members bind `{id,
 version, requirements}`. An empty requirement list selects the whole ledger, and
 archond stores the binding with every selected id spelled out. Work onto an item's
@@ -1549,8 +1551,11 @@ The stage that finishes the build submits `requirement_results` for every select
 requirement, with evidence and reference/built pairs for visual requirements. Its
 contract shows the exact shape, one entry per id. `status` is `implemented`,
 `deviation` or `blocked`; `pass`, `done` and `met` count as `implemented`. A missing
-or malformed result gets the one automatic repair (`[review] auto_repair`), whose
-note quotes the allowed values. The `intent-acceptance` stage
+or malformed result, empty evidence or a bad visual pair gets the one automatic
+repair (`[review] auto_repair`), whose note quotes the allowed values; a blocked
+requirement fails. With no build evidence on record, as in a validation-only
+pipeline, the `intent-acceptance` stage reports the results itself under the same
+contract and repair. The `intent-acceptance` stage
 runs on a model apart from every builder and prefers a different vendor. That model
 must be a vision model when approved reference images exist. If none is permitted
 and connected, the strongest permitted model judges instead. The readiness report

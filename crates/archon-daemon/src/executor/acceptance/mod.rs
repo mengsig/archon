@@ -7,7 +7,7 @@ mod spawn;
 
 pub(super) use deviations::{pending, resume_decisions};
 pub(crate) use records::{readiness, readiness_text, require_current};
-pub(super) use spawn::{attach, section, select_model};
+pub(super) use spawn::{attach, observes_requirements, section, select_model};
 
 use archon_core::acceptance::{AcceptanceRecord, AcceptanceResult, RequirementResult};
 use archon_core::catalog::StageKind;

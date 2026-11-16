@@ -396,10 +396,11 @@ fn proposal_approval_freezes_record_binding_and_decision_together() {
         gate: "propose:1".into(),
     };
     store.approve_gate_intent(&decision, &record).unwrap();
+    // The whole ledger is bound with its ids spelled out, never an empty list.
     let binding = IntentBinding {
         id: record.id.clone(),
         version: 1,
-        requirements: vec![],
+        requirements: vec!["R1".into()],
     };
     assert_eq!(
         store.item(&run.item).unwrap().intent.as_deref(),

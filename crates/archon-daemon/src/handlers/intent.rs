@@ -9,6 +9,17 @@ pub(crate) fn inbox_key(agent: &str, seq: u64) -> String {
     format!("intent_inbox:{agent}:{seq}")
 }
 
+/// The digests of the images the operator attached to that inbox message.
+pub(crate) fn inbox_images_key(agent: &str, seq: u64) -> String {
+    format!("intent_inbox_images:{agent}:{seq}")
+}
+
+/// A verified operator inbox message: its text and its images' digests.
+struct OperatorMessage {
+    text: String,
+    images: Vec<String>,
+}
+
 pub(super) async fn approve(
     ctx: &DaemonContext,
     mut record: ApprovedIntent,
@@ -22,8 +33,9 @@ pub(super) async fn approve(
     let agent = supervisor::current_orchestrator(ctx)
         .await?
         .ok_or_else(|| ArchonError::Unavailable("no orchestrator".into()))?;
-    let quote = verified_message(ctx, &agent, seq).await?;
-    verify_quote(&record.operator_words, &quote)?;
+    let message = verified_message(ctx, &agent, seq).await?;
+    verify_quote(&record.operator_words, &message.text)?;
+    record.check_provenance(&message.images)?;
     let destination = ctx.paths.data_dir.join("approved-intent-artifacts");
     for index in 0..record.artifacts.len() {
         let artifact = record.artifacts[index].clone();
@@ -44,10 +56,20 @@ async fn verified_message(
     ctx: &DaemonContext,
     agent: &archon_core::aether_ids::AetherAgentId,
     seq: u64,
-) -> Result<String, ArchonError> {
+) -> Result<OperatorMessage, ArchonError> {
     let key = inbox_key(&agent.to_string(), seq);
-    if let Some(text) = ctx.store.lock().await.kv_get(&key)? {
-        return Ok(text);
+    let (text, images) = {
+        let store = ctx.store.lock().await;
+        let images = store.kv_get(&inbox_images_key(&agent.to_string(), seq))?;
+        (store.kv_get(&key)?, images)
+    };
+    if let Some(text) = text {
+        let images = match images {
+            None => Vec::new(),
+            Some(raw) => serde_json::from_str(&raw)
+                .map_err(|e| ArchonError::Corrupt(format!("operator inbox {seq} images: {e}")))?,
+        };
+        return Ok(OperatorMessage { text, images });
     }
     let client = ctx.aether.client()?;
     let query = archon_aether::wire::EventQuery {
@@ -70,7 +92,10 @@ async fn verified_message(
                 && *delivered == seq
                 && message.channel.is_some()
             {
-                return Ok(message.text.clone());
+                return Ok(OperatorMessage {
+                    text: message.text.clone(),
+                    images: message.images.clone(),
+                });
             }
         }
         if page.len() < 5000 {

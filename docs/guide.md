@@ -1547,8 +1547,10 @@ references. Artifacts are hash checked again when consumed.
 
 The stage that finishes the build submits `requirement_results` for every selected
 requirement, with evidence and reference/built pairs for visual requirements. Its
-contract shows the exact shape, one entry per id. A missing or malformed result gets
-the one automatic repair (`[review] auto_repair`). The `intent-acceptance` stage
+contract shows the exact shape, one entry per id. `status` is `implemented`,
+`deviation` or `blocked`; `pass`, `done` and `met` count as `implemented`. A missing
+or malformed result gets the one automatic repair (`[review] auto_repair`), whose
+note quotes the allowed values. The `intent-acceptance` stage
 runs on a model apart from every builder and prefers a different vendor. That model
 must be a vision model when approved reference images exist. If none is permitted
 and connected, the strongest permitted model judges instead. The readiness report

@@ -100,7 +100,8 @@ impl Repair {
                  then hand in your result again with `requirement_results` in `structured`, one \
                  entry per approved requirement, exactly as your contract's \"Requirement results \
                  this stage owes\" section shows, beside the ship record your contract asks \
-                 for.{review}"
+                 for. Each `status` is exactly one of {statuses}.{review}",
+                statuses = archon_pipeline::acceptance::STATUSES
             ),
         };
         let note = format!("{note}\n\n{CHECK_RULE}");

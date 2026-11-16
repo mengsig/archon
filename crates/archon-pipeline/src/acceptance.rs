@@ -111,8 +111,12 @@ pub fn build_results(
     let value = structured
         .and_then(|s| s.get("requirement_results"))
         .ok_or_else(|| invalid("missing requirement_results: report every approved requirement"))?;
-    let results: Vec<RequirementResult> = serde_json::from_value(value.clone())
-        .map_err(|e| invalid(&format!("invalid requirement_results: {e}")))?;
+    let results: Vec<RequirementResult> = serde_json::from_value(canonical_statuses(value))
+        .map_err(|e| {
+            invalid(&format!(
+                "invalid requirement_results: {e}; `status` is exactly one of {STATUSES}"
+            ))
+        })?;
     let indexed = indexed_results(&results)?;
     exact_ids(
         selected.iter().map(|r| r.id.as_str()),
@@ -137,6 +141,39 @@ pub fn build_results(
     assert_eq!(results.len(), selected.len());
     assert!(results.iter().all(|r| !r.evidence.trim().is_empty()));
     Ok(results)
+}
+
+/// The status vocabulary, as refusals and repair notes quote it.
+pub const STATUSES: &str = "`implemented`, `deviation` or `blocked`";
+
+/// Words an agent plainly means as `implemented`; anything else unknown,
+/// such as `fail`, stays a refusal, since it may mean blocked or deviation.
+const IMPLEMENTED_SYNONYMS: &[&str] = &["pass", "passed", "done", "met", "complete", "completed"];
+
+/// `value` with each result's status in its canonical spelling: case and
+/// surrounding space ignored, and plain synonyms of `implemented` mapped.
+fn canonical_statuses(value: &Value) -> Value {
+    let Some(results) = value.as_array() else {
+        return value.clone();
+    };
+    let canonical: Vec<Value> = results
+        .iter()
+        .map(|result| {
+            let mut result = result.clone();
+            let status = result.get("status").and_then(Value::as_str);
+            let Some(word) = status.map(|s| s.trim().to_ascii_lowercase()) else {
+                return result;
+            };
+            let word = match IMPLEMENTED_SYNONYMS.contains(&word.as_str()) {
+                true => "implemented".to_owned(),
+                false => word,
+            };
+            result["status"] = Value::String(word);
+            result
+        })
+        .collect();
+    assert_eq!(canonical.len(), results.len());
+    Value::Array(canonical)
 }
 
 fn indexed_results(
@@ -327,6 +364,27 @@ mod tests {
     fn implemented() -> Value {
         json!({"requirement_results":[{"id":"R1","status":"implemented","evidence":"ISO labels visible",
             "visual_pairs":[{"reference":"mockup","built":".archon/evidence/built.png","viewport":{"width":1200,"height":800},"theme":"light","state":"loaded"}]}]})
+    }
+
+    #[test]
+    fn plain_synonyms_of_implemented_map_and_other_statuses_are_repairable() {
+        let (intent, binding) = fixture();
+        for word in ["pass", "Done", " met ", "IMPLEMENTED"] {
+            let mut given = implemented();
+            given["requirement_results"][0]["status"] = json!(word);
+            let results = build_results(&intent, &binding, Some(&given)).unwrap();
+            assert_eq!(results[0].status, RequirementStatus::Implemented, "{word}");
+        }
+        let mut failed = implemented();
+        failed["requirement_results"][0]["status"] = json!("fail");
+        let Err(ArchonError::Invalid(error)) = build_results(&intent, &binding, Some(&failed))
+        else {
+            panic!("an ambiguous status is refused")
+        };
+        assert!(error.contains(STATUSES), "{error}");
+        let stage =
+            format!("stage `implement` failed: 1 of 1 agent(s) did not complete\n\n{error}");
+        assert_eq!(results_refusal(&stage), Some(error.as_str()));
     }
 
     #[test]

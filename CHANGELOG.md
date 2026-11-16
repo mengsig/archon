@@ -58,9 +58,11 @@
   requirement lists, and archond refuses an inbox ledger without reference images
   whose requirements are not quoted from the operator's words. A binding is stored
   with its requirement ids spelled out, never an empty list. The stage that finishes
-  the build is shown the exact `requirement_results` it owes, one entry per id. A
-  refusal of those results gets the one automatic repair (`[review] auto_repair`)
-  instead of failing the item. When no permitted, connected model apart from every
+  the build is shown the exact `requirement_results` it owes, one entry per id, and
+  the statuses it may use. A status of `pass`, `done` or `met` counts as
+  `implemented`. A refusal of those results, such as an unknown status, gets the
+  one automatic repair (`[review] auto_repair`), whose note quotes the allowed
+  values, instead of failing the item. When no permitted, connected model apart from every
   builder can judge acceptance (a vision model only when approved reference images
   exist), the strongest permitted one judges it. The readiness report and item
   outcome say `acceptance: not independent`. `[review] independent_acceptance =

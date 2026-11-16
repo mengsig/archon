@@ -115,6 +115,9 @@ async fn a_ledger_build_without_requirement_results_gets_one_clear_repair() {
         repaired.brief
     );
     assert!(repaired.brief.contains("missing requirement_results"));
+    let vocabulary = "exactly one of `implemented`, `deviation` or `blocked`";
+    assert!(repaired.brief.contains(vocabulary), "{}", repaired.brief);
+    assert!(build.instructions.contains("never `pass` or `fail`"));
     assert!(
         repaired
             .brief

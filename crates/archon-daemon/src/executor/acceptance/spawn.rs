@@ -295,8 +295,9 @@ pub(in crate::executor) fn results_owed(
         "\n## Requirement results this stage owes\n\nThis stage finishes the build of an approved \
          intent. Archon refuses your result unless `complete_task`'s `structured` holds \
          `requirement_results` beside any other keys it asks for: exactly one entry per \
-         requirement below, no more and no fewer. `status` is `implemented`, `deviation` (give \
-         the reason in `evidence`) or `blocked` (fails the build). `evidence` is never empty. A \
+         requirement below, no more and no fewer. `status` is exactly one of `implemented`, \
+         `deviation` (give the reason in `evidence`) or `blocked` (fails the build), never \
+         `pass` or `fail`. `evidence` is never empty. A \
          visual requirement keeps one `visual_pairs` entry per reference image; every other \
          keeps `[]`.\n\n```json\n{shape}\n```\n"
     );

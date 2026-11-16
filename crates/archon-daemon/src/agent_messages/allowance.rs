@@ -133,6 +133,7 @@ pub(super) fn refuse(
         "message_orchestrator limit reached ({most} messages per agent, `[limits] max_agent_messages`): \
          the allowance of {agent}, the sender, is used up, so this message was refused. \
          Messages an agent sends for the agents it delegated to are charged to it, not to them. \
+         Clarification questions (`kind=question`) are always uncapped. \
          {reserve} Each send_message or steer note the orchestrator sends {agent} grants it one reply."
     );
     Ok(Refusal {

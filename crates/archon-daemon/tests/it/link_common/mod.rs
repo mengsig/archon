@@ -37,6 +37,8 @@ use tempfile::TempDir;
 use tokio::sync::{Mutex, Notify, broadcast};
 use tokio::task::JoinHandle;
 
+pub mod turn;
+
 pub const WAIT: Duration = Duration::from_secs(5);
 
 /// The daemon's worker policy with restarts quick enough for a test to see.
@@ -302,7 +304,19 @@ pub async fn spawning_stage(
     run.aether_run = Some(AetherRunId::parse(aether_run).expect("valid run id"));
     store.update_run(&run).unwrap();
     let stage = stage_run(&run.id, StageState::Spawning);
-    let request = SpawnRequest {
+    let request = spawn_request(&stage, &run.workspace, node);
+    let binding = if node.is_some() { "bound" } else { "pending" };
+    let spawn = serde_json::json!({"request": request, "timeout_minutes": 30, "parent": binding});
+    let key = format!("spawn_request:{}", stage.id);
+    store.kv_set(&key, &spawn.to_string()).unwrap();
+    store.upsert_stage_run(&stage).unwrap();
+    stage
+}
+
+/// The create a test stage was sent, under `node` when it is bound.
+fn spawn_request(stage: &StageRun, workspace: &Path, node: Option<&str>) -> SpawnRequest {
+    SpawnRequest {
+        references: Vec::new(),
         host_context: Default::default(),
         idempotency_key: stage.id.to_string(),
         role: "archon-stage:direct/implement".into(),
@@ -310,7 +324,7 @@ pub async fn spawning_stage(
         objective: "do it".into(),
         instructions: "contract".into(),
         choice: choice(),
-        workspace: run.workspace.clone(),
+        workspace: workspace.to_path_buf(),
         repository: Some("alpha".into()),
         repository_root: None,
         labels: Default::default(),
@@ -324,13 +338,25 @@ pub async fn spawning_stage(
         parent: node.map(agent_id),
         network: node.map(|_| NetworkPolicy::Allowed),
         keep: false,
-    };
-    let binding = if node.is_some() { "bound" } else { "pending" };
-    let spawn = serde_json::json!({"request": request, "timeout_minutes": 30, "parent": binding});
-    let key = format!("spawn_request:{}", stage.id);
-    store.kv_set(&key, &spawn.to_string()).unwrap();
-    store.upsert_stage_run(&stage).unwrap();
-    stage
+        delegation_policy: None,
+    }
+}
+
+/// Store the create running stage `stage` was sent, under its `policy`.
+pub async fn sent_policy(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    policy: archon_core::delegation::WorkerPolicy,
+) {
+    let mut store = ctx.store.lock().await;
+    let run = store.run(&stage.run).unwrap();
+    let mut request = spawn_request(stage, &run.workspace, None);
+    request.leaf = false;
+    request.delegation_policy = Some(policy);
+    let spawn = serde_json::json!({"request": request, "timeout_minutes": 30, "parent": "bound"});
+    store
+        .kv_set(&format!("spawn_request:{}", stage.id), &spawn.to_string())
+        .unwrap();
 }
 
 /// A queued item of the repository at `path`, registered unless it is.
@@ -443,6 +469,7 @@ fn queue_item(repo: &Repo) -> QueueItem {
     let mut plan = ModelPlan::default();
     plan.0.insert("implement".into(), vec![choice()]);
     QueueItem {
+        intent: None,
         onto: None,
         id: QueueItemId::new(),
         repo: Some(repo.id.clone()),

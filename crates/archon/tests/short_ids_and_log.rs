@@ -39,6 +39,7 @@ struct Fake {
 fn item(id: &str, title: &str) -> QueueItem {
     let now = archon_core::now();
     QueueItem {
+        intent: None,
         onto: None,
         id: QueueItemId::parse(id).unwrap(),
         repo: None,
@@ -146,7 +147,10 @@ impl Fake {
             }),
             Request::ResolveItem { prefix } => return self.resolve(prefix),
             Request::GetItem { item } => Reply::ItemDetail(Box::new(ItemDetail {
+                acceptance: Default::default(),
                 default_efforts: Default::default(),
+                worker_policies: Default::default(),
+                stage_notes: Default::default(),
                 steers: Vec::new(),
                 waiting_on: None,
                 waiting_reason: None,
@@ -160,6 +164,7 @@ impl Fake {
                 merges: Vec::new(),
                 stage_warnings: Vec::new(),
                 message_caps: Vec::new(),
+                clarifications: Vec::new(),
             })),
             Request::RepoList => Reply::Repos(vec![]),
             Request::ListQuestions { .. } => Reply::Questions(vec![]),

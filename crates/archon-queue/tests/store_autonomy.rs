@@ -352,3 +352,63 @@ fn a_decided_gate_does_not_leave_its_question_open() {
     );
     assert!(store.close_decided_questions(t(51)).unwrap().is_empty());
 }
+
+#[test]
+fn proposal_approval_freezes_record_binding_and_decision_together() {
+    use archon_core::intent::{
+        ApprovedIntent, IntentBinding, IntentSource, Requirement, RequirementKind,
+    };
+    let (mut store, _, items) = seeded(1);
+    let run = start(&mut store, &items[0].id);
+    let mut decision = gate(&run, 1);
+    store.open_gate(&decision).unwrap();
+    decision.decision = Some(GateDecision::Approve { note: None });
+    decision.decided_at = Some(t(30));
+    let mut record = ApprovedIntent {
+        id: run.id.to_string(),
+        version: 1,
+        operator_words: "Build the screen".into(),
+        source: IntentSource::Gate {
+            item: run.item.to_string(),
+            gate: "wrong".into(),
+        },
+        artifacts: vec![],
+        images: vec![],
+        requirements: vec![Requirement {
+            id: "R1".into(),
+            text: "Show title".into(),
+            kind: RequirementKind::Wording,
+            images: vec![],
+            owner: "ui".into(),
+        }],
+    };
+    assert!(store.approve_gate_intent(&decision, &record).is_err());
+    assert!(store.item(&run.item).unwrap().intent.is_none());
+    assert!(
+        store
+            .gate(&run.id, "propose", 1)
+            .unwrap()
+            .unwrap()
+            .is_open()
+    );
+    record.source = IntentSource::Gate {
+        item: run.item.to_string(),
+        gate: "propose:1".into(),
+    };
+    store.approve_gate_intent(&decision, &record).unwrap();
+    // The whole ledger is bound with its ids spelled out, never an empty list.
+    let binding = IntentBinding {
+        id: record.id.clone(),
+        version: 1,
+        requirements: vec!["R1".into()],
+    };
+    assert_eq!(
+        store.item(&run.item).unwrap().intent.as_deref(),
+        Some(&binding)
+    );
+    assert_eq!(store.approved_intent(&binding).unwrap(), Some(record));
+    assert_eq!(
+        store.gate(&run.id, "propose", 1).unwrap().unwrap().decision,
+        decision.decision
+    );
+}

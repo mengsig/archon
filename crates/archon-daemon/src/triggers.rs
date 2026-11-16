@@ -70,6 +70,8 @@ pub enum TriggerEvent {
         cap: archon_core::agent_message::MessageCap,
     },
     ItemFinished {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        acceptance: Option<Box<archon_core::acceptance::AcceptanceReadiness>>,
         item: QueueItemId,
         title: String,
         /// `QueueState::kind()`.
@@ -289,7 +291,10 @@ impl TriggerEvent {
             | Self::LavishFeedback { .. }
             | Self::MessageCapReached { .. }
             | Self::Budget { .. } => true,
-            Self::AgentMessage { message } => message.kind == MessageKind::Escalation,
+            Self::AgentMessage { message } => matches!(
+                message.kind,
+                MessageKind::Escalation | MessageKind::Question
+            ),
             Self::ItemFinished { .. }
             | Self::InitiativeFinished { .. }
             | Self::PolicyViolation { .. }
@@ -572,7 +577,7 @@ pub(crate) fn record_message(
     use archon_core::notify::{FeedEntry, Notification, NotificationKind};
     let at = archon_core::now();
     let kind = match message.kind {
-        MessageKind::Escalation => NotificationKind::Blocker,
+        MessageKind::Escalation | MessageKind::Question => NotificationKind::Blocker,
         MessageKind::Relay | MessageKind::Info => NotificationKind::Progress,
     };
     let entry = FeedEntry::Notification(Notification {
@@ -1037,6 +1042,7 @@ mod tests {
 
     fn success() -> TriggerEvent {
         TriggerEvent::ItemFinished {
+            acceptance: None,
             item: QueueItemId::new(),
             title: "a routine change".into(),
             state: "succeeded".into(),

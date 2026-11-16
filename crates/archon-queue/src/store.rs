@@ -46,6 +46,7 @@ mod run_reviews;
 pub use run_reviews::RunReview;
 mod runs;
 pub use runs::UnreadableRun;
+mod intent;
 mod schema;
 mod settings;
 mod snapshot;
@@ -470,7 +471,15 @@ impl Store {
     /// (`spawning` → `running` → terminal) and keep their identity and
     /// Aether ids once set.
     pub fn upsert_stage_run(&mut self, stage: &StageRun) -> Result<(), ArchonError> {
-        runs::upsert_stage(&mut self.conn, stage)
+        runs::upsert_stage(&mut self.conn, stage, &[])
+    }
+    /// `upsert_stage_run` and the `kv` `updates` in one transaction: both or neither.
+    pub fn upsert_stage_run_with_kv(
+        &mut self,
+        stage: &StageRun,
+        updates: &[(&str, &str)],
+    ) -> Result<(), ArchonError> {
+        runs::upsert_stage(&mut self.conn, stage, updates)
     }
     /// Delete `run`'s stage rows that do not decode; the `(id, raw data)` of
     /// each is returned and saved under `archive` for the operator.
@@ -841,11 +850,32 @@ impl Store {
         cost::report(&self.conn, range, by, estimates)
     }
 
+    pub fn approve_gate_intent(
+        &mut self,
+        gate: &archon_core::run::OperatorGate,
+        record: &archon_core::intent::ApprovedIntent,
+    ) -> Result<(), ArchonError> {
+        gates::approve_intent(&mut self.conn, gate, record)
+    }
+    pub fn save_approved_intent(
+        &mut self,
+        record: &archon_core::intent::ApprovedIntent,
+    ) -> Result<(), ArchonError> {
+        intent::save(&self.conn, record)
+    }
+    pub fn approved_intent(
+        &self,
+        binding: &archon_core::intent::IntentBinding,
+    ) -> Result<Option<archon_core::intent::ApprovedIntent>, ArchonError> {
+        intent::get(&self.conn, binding)
+    }
+
     // ----- kv ------------------------------------------------------------------
     pub fn kv_get(&self, key: &str) -> Result<Option<String>, ArchonError> {
         settings::kv_get(&self.conn, key)
     }
     pub fn kv_set(&mut self, key: &str, value: &str) -> Result<(), ArchonError> {
+        intent::check_public_key(key)?;
         settings::kv_set(&self.conn, key, value)
     }
     /// Every entry whose key starts with `prefix`, in key order.
@@ -854,7 +884,19 @@ impl Store {
     }
     /// Remove `key`; a missing key is fine.
     pub fn kv_delete(&mut self, key: &str) -> Result<(), ArchonError> {
+        intent::check_public_key(key)?;
         settings::kv_delete(&self.conn, key)
+    }
+    /// Write `set` and remove `delete` in one transaction: all or none.
+    pub fn kv_update(&mut self, set: &[(&str, &str)], delete: &[&str]) -> Result<(), ArchonError> {
+        for key in set
+            .iter()
+            .map(|(key, _)| *key)
+            .chain(delete.iter().copied())
+        {
+            intent::check_public_key(key)?;
+        }
+        settings::kv_update(&mut self.conn, set, delete)
     }
 
     // ----- tracked requests ------------------------------------------------

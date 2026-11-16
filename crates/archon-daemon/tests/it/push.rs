@@ -68,6 +68,7 @@ fn config(notify: impl FnOnce(&mut archon_core::push::NotifyConfig)) -> Config {
 /// Enqueue an item whose proposal gate opens, and wait until it is asked.
 async fn open_gate(h: &Harness, title: &str) -> QueueItem {
     let request = EnqueueRequest {
+        intent: None,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(PIPELINE.into()),
@@ -90,6 +91,7 @@ async fn open_gate(h: &Harness, title: &str) -> QueueItem {
     let Ok(Reply::Item(item)) = h.cli(Request::Enqueue(request)).await else {
         panic!("enqueue failed")
     };
+    let item = common::legacy_gate_item(h, item).await;
     h.dispatch().await;
     for stage in h.running().await {
         assert_eq!(stage.stage_id, "propose", "the knob put propose first");

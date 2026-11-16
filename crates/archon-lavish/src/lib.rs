@@ -4,6 +4,8 @@
 //! callers then fall back to plain file paths. Nothing here fails because
 //! Lavish is missing.
 
+pub mod intent;
+
 mod toon;
 
 use std::ffi::OsStr;

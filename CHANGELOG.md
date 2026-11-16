@@ -1,5 +1,146 @@
 # Changelog
 
+## Unreleased
+
+## 1.6.0
+
+Released 2026-11-16.
+
+Archon 1.6.0 requires **Aether 1.4.0**. The installer selects that release when Aether is absent; confirmed
+updates pin it only for an older installation and otherwise use Aether's
+normal update, without forcing a downgrade. Upgrade Aether and restart its daemon before
+using the new worker policy and reference attachments.
+
+### Added
+
+- Approved intent: immutable operator words, artifact hashes and a per-requirement
+  ledger travel with an item and its stages. Builds must account for every selected
+  requirement, with matching reference and built images for visual promises. An
+  independent vision acceptance stage judges the complete ledger; readiness is
+  pinned to the head, tree and intent version, separately from code review and CI.
+  Deviations ask with comparison pictures by default. Active operator directives
+  can authorize proceeding, with one end-of-run deviations and assumptions page.
+  Aether reference attachments are capability-gated, retaining image paths for
+  older daemons; existing items without an intent retain their behavior.
+- Stage clarification questions bypass message and escalation caps. Open questions
+  appear in item and queue views, answers reach live stages, and a configurable
+  timeout (30 minutes by default) records the fallback assumption. Revocable
+  operator directives permit proceeding without waiting. Requests with an open
+  direction can require a proposal before work starts.
+- Strict scenario gates reject skipped, blocked or missing required substeps even
+  when the scenario's overall result claims to pass.
+
+- Worker model policy: a stage lead no longer clones its own model for its
+  workers. `model_plan` takes `<stage>.workers` (up to four `{model|tier,
+  effort}` choices, within model policy, like `<stage>.review`), and a
+  pipeline declares its default in `[pipeline.workers]` (`tier`, `effort`,
+  `max_parallel`): `adaptive` and `review` give balanced-tier workers at
+  medium, at most 2 at once; `swarm` gives fast-tier ones. Archon sends it to
+  the lead's Aether agent as `config.delegation_policy`, with the reviewers
+  it owes exempt from the worker list but bound to the models its contract
+  names (`exempt_roles = ["reviewer"]`, `exempt_models`), so
+  an Aether that enforces it refuses a worker outside it; an older Aether
+  ignores the field. Archon's delegation watchdog cancels a reviewer on a
+  model outside `exempt_models`, so a lead cannot clone itself as a
+  reviewer either. The stage contract states the worker rule, and
+  `get_item` (and `archon show`) shows each delegating stage's policy.
+  The policy is narrowed to the model policy in force at each spawn
+  (effort capped at `max_effort`, a tier resolved to a permitted model under
+  an allow or deny list), so a worker it prescribes is never one the
+  watchdog would cancel. When no planned worker is permitted (an empty
+  catalog, a restrictive allow or deny list), the workers fail closed and
+  the review does not: the lead spawns with its reviewer exemptions and at
+  most one worker, at effort low, on the cheapest permitted catalog model
+  other than its own, or none: the delegation watchdog then cancels any
+  child of it but a reviewer. Archon records a stage note that `get_item`
+  shows.
+  Items queued before the upgrade keep their plans and take the pipeline
+  default; spawn requests stored before it are resent unchanged.
+
+### Fixed
+
+- The benchmark writes only configuration sections it overrides, so a
+  comparison with an older release does not fail at startup on a new,
+  unrelated default such as the clarification timeout.
+
+- Archive failed stage agents once a pipeline run moves past them (#415).
+- Preserve a spent provider’s exact quota reset time instead of truncating
+  it to whole seconds (#416).
+
+- Approved intent no longer gates ordinary items (#423). In the 1.6.0 release smoke the
+  orchestrator turned a plain brief into a six-requirement ledger, so a one-model
+  bench task failed for missing `requirement_results` and then for lacking an
+  independent vision model, leaving its file a stub. Now the orchestrator files
+  `approve_intent` only for reference images the operator attached to an inbox
+  message. Archond checks each image against the digests Aether recorded for that
+  message and writes the ledger's requirements itself, one visual match per image.
+  The ledger must list every attached image once. Anything else is refused: a
+  requirement the caller wrote, even beside an image, a requirement list, a named
+  file path, an artifact written in the message, or a viewport, theme or state
+  set on an image. A
+  written ledger becomes approved intent only when the operator approves it at a
+  proposal gate. A binding is stored with its requirement ids spelled out, never
+  an empty list. Exactly one stage finishes the build: the one holding the ship
+  record, otherwise the last work stage. That stage is shown the exact `requirement_results` it owes, one entry
+  per id, and the statuses it may use. A status of `pass`, `done` or `met` counts
+  as `implemented`. Any mistake in those results gets the one automatic repair
+  (`[review] auto_repair`) instead of failing the item, and the repair note quotes
+  the allowed values. Mistakes include an unknown status, empty evidence, a
+  missing or bad visual pair, or a built image that is not there. A blocked
+  requirement still fails. A validation-only pipeline's acceptance stage, which
+  reports the results itself, is shown the same shape and gets the same repair.
+  When no permitted, connected model apart from every builder can judge acceptance
+  (a vision model only when approved reference images exist), the strongest
+  permitted one judges it. The readiness report and item outcome say `acceptance:
+  not independent`. `[review] independent_acceptance = true` restores the refusal.
+- Operator mail no longer waits for long behind a hung orchestrator turn.
+  Archon used to nudge such a turn after 10 minutes and interrupt it 5
+  minutes later, at most 3 times per orchestrator. Now, once your message
+  has been unread for 3 minutes and the turn has made no progress for 3
+  minutes, Archon nudges the turn, and interrupts it, as Esc would, if it
+  makes no progress in the next 2 minutes. A foreground command still
+  running is first given 1 minute past the timeout it declared (at most 10
+  minutes) and any other open tool call 4 minutes, so a long command under
+  its own timeout is left alone. The fresh turn gets the waiting mail and a
+  note naming the tool calls that were open, so the orchestrator can check
+  and rerun them. The 3-interrupt cap is replaced by a limit of one
+  interrupt per 5 minutes, each after a nudge of its own, and the operator
+  is told each time one fires. Without mail, a turn silent for 30 minutes
+  is nudged as before, and is interrupted if it makes no progress within 2
+  minutes instead of 5.
+- The orchestrator stall watch keeps nothing in memory any more. Every 30
+  seconds it reads the turn from Aether's events, and its own last nudge
+  and interrupt from the store, so a restart of `archond` forgets neither
+  waiting mail nor a nudge already sent. Every tool event Aether records
+  counts as progress, every open tool call is considered rather than only
+  the newest, and Archon's own notes to the orchestrator are never taken
+  for operator mail.
+- A detached `archond` now leads its own session with no controlling
+  terminal, instead of only its own process group. Before, a program it
+  started that read the terminal was stopped by `SIGTTIN` and hung where
+  it stood. That is how oh-my-zsh's daily update prompt, run by an engine's
+  shell snapshot, hung an orchestrator tool call. An aetherd that archond
+  starts again now has no terminal either. One that an `archon` command
+  started still shares that command's terminal until Aether starts its
+  daemon in a session of its own.
+
+### Known follow-ups
+
+- From #423: an `ask_operator` approval path for written ledgers, a structured
+  named-path reference field, and quoting image-only operator messages.
+
+- From #421: Aether daemon/engine session isolation, a conditional interrupt
+  tied to the last turn event, and documenting the `watchdog` trigger in the
+  orchestrator prompt. Session isolation is addressed by Aether 1.4.0 (#433 there).
+- From #422: index/prune clarification history without capping questions;
+  split long functions and avoid repeated case folding in image extraction;
+  match a pending deviation's named directive when a later Proceed resumes it.
+- From #422: independently discover required scenario steps, centralize
+  acceptance augmentation, document Proceed in `operator-authority.md`, and
+  tighten CLI/MCP escaping of verified pins. Remote/SVG references remain
+  unsupported. Live visual judgment, compaction reattachment and annotation
+  anchoring in the proposal iframe were not exercised by that change.
+
 ## 1.5.1
 
 Released 2026-11-14.

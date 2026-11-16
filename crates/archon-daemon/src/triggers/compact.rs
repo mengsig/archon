@@ -362,6 +362,7 @@ mod tests {
 
     fn finished(item: &QueueItemId, state: &str) -> TriggerEvent {
         TriggerEvent::ItemFinished {
+            acceptance: None,
             item: item.clone(),
             title: "t".into(),
             state: state.into(),

@@ -261,6 +261,7 @@ pub fn aether_request(input: &TrialInput<'_>, deadline: Timestamp) -> CreateAgen
     let task = &input.task.file;
     CreateAgent {
         role: "archon-bench".into(),
+        references: Vec::new(),
         name: Some(format!("bench:{}", input.key)),
         objective: Some(task.prompt.clone()),
         model: Some(input.settings.aether_model.clone()),
@@ -283,6 +284,7 @@ pub fn aether_request(input: &TrialInput<'_>, deadline: Timestamp) -> CreateAgen
             },
             long_lived: false,
             leaf: true,
+            delegation_policy: None,
         }),
         approval: Some(ApprovalPolicy::none()),
         run: None,
@@ -313,7 +315,22 @@ pub fn archon_config_toml(settings: &ArmSettings) -> anyhow::Result<String> {
     config
         .validate()
         .context("the generated archon config is invalid")?;
-    toml::to_string(&config).context("serializing the archon config")
+    let mut document = toml::Table::try_from(&config)?;
+    // Unrelated new defaults can make an older release reject the config.
+    // Write only the sections the harness configures.
+    document.retain(|name, _| {
+        matches!(
+            name,
+            "aether" | "orchestrator" | "models" | "lavish" | "worktrees"
+        )
+    });
+    let text = toml::to_string(&document).context("serializing the archon config")?;
+    let parsed: Config = toml::from_str(&text).context("checking the generated archon config")?;
+    assert_eq!(
+        parsed, config,
+        "omitting defaults must preserve every override"
+    );
+    Ok(text)
 }
 
 /// `archon daemon run` in the foreground, owned by the bench, on the

@@ -31,6 +31,16 @@ pub(crate) fn item_hold(
     }
     let base = pipelines.get(&item.pipeline).ok()?;
     let spec = augment(base, &item.autonomy).ok()?;
+    let spec = if item.intent.is_some()
+        || item
+            .model_plan
+            .0
+            .contains_key(archon_pipeline::acceptance::STAGE)
+    {
+        archon_pipeline::acceptance::augment(&spec).ok()?
+    } else {
+        spec
+    };
     let policy = env.policy(&ctx.config);
     let route = ItemRoute::new(item).by(Some(&weights), Some(view))?;
     let hold = knobs::quota_hold(&item.model_plan, &spec, (catalog, &policy), route);

@@ -12,6 +12,7 @@ use archon_core::autonomy::ToolsMode;
 use archon_core::catalog::{StageKind, WorkspaceMode};
 use archon_core::config::{BuildCache, Config};
 use archon_core::cost::ItemBudget;
+use archon_core::delegation::Narrowed;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
 use archon_core::lesson::CONTRACT_LESSONS;
@@ -29,8 +30,8 @@ use serde::{Deserialize, Serialize};
 
 use super::resume::Takeover;
 use super::{
-    FollowUp, RunTable, dependencies, descendants, fast_check, finish, naming, resume, run_node,
-    settle, team,
+    FollowUp, RunTable, archive, dependencies, descendants, fast_check, finish, naming, resume,
+    run_node, settle, team,
 };
 use crate::context::DaemonContext;
 use crate::disk::{self, FullDisk};
@@ -352,11 +353,10 @@ pub(super) async fn reserve(
         return Ok(FollowUp::default());
     };
     let take = queue.len().min(slots as usize);
-    if queue
-        .iter()
-        .take(take)
-        .any(|plan| plan.reviewers.as_ref().is_some_and(Vec::is_empty))
-    {
+    if queue.iter().take(take).any(|plan| {
+        plan.stage_id == archon_pipeline::acceptance::STAGE
+            || plan.reviewers.as_ref().is_some_and(Vec::is_empty)
+    }) {
         learned::catalog(ctx).await?;
     }
     let plans: Vec<SpawnPlan> = queue.drain(..take).collect();
@@ -409,6 +409,15 @@ fn reserve_plans(
         if routed == crate::quota::Reserve::Wait {
             return Ok(Reserved::Waiting(plans));
         }
+    }
+    if let Err(error) = super::acceptance::select_model(ctx, store, &item, &run, &mut plans) {
+        if error.is_store() {
+            return Err(error);
+        }
+        return Ok(Reserved::Blocked(Exhausted {
+            stage: archon_pipeline::acceptance::STAGE.into(),
+            error: error.to_string(),
+        }));
     }
     let estimates = ctx.config.limits.count_estimated_cost;
     let budget = item_budget(ctx, store, &item, estimates)?;
@@ -487,6 +496,14 @@ fn reserve_each(
             item,
             repo,
             config: &ctx.config,
+            references: item.intent.is_some()
+                && ctx
+                    .aether
+                    .client()?
+                    .welcome()
+                    .features
+                    .iter()
+                    .any(|f| f == "references"),
             catalog: &catalog,
             governed: budget.is_some(),
             sections: &sections,
@@ -543,6 +560,7 @@ fn run_sections(
     let checks = contract::check_rules(&tiers.checks, fast);
     let cache = build_cache_section(ctx, &env, &item.id);
     let storage = contract::artifact_rules(&ctx.config.artifacts);
+    let intent = super::acceptance::section(store, run, item)?;
     Ok([
         onto,
         dependencies,
@@ -551,6 +569,8 @@ fn run_sections(
         checks,
         cache,
         storage,
+        intent,
+        crate::clarifications::stage_section(store, &item.id)?,
     ]
     .concat())
 }
@@ -616,6 +636,7 @@ struct Target<'a> {
     repo: Option<&'a Repo>,
     /// The global `[models]` policy, which the repository's narrows.
     config: &'a Config,
+    references: bool,
     catalog: &'a archon_core::model_tier::ModelCatalog,
     /// Whether a dollar budget bounds the item, so reviewers must report cost.
     governed: bool,
@@ -640,7 +661,12 @@ impl Target<'_> {
 
     /// The stage contract, with its reviewers' models, its deadline `until`, the run's
     /// own sections and, when the agent can delegate, the rules and model policy for that.
-    fn instructions(&self, plan: &SpawnPlan, until: Timestamp) -> String {
+    fn instructions(
+        &self,
+        plan: &SpawnPlan,
+        until: Timestamp,
+        workers: Option<&Narrowed>,
+    ) -> String {
         assert!(!plan.instructions.is_empty(), "every stage has a contract");
         // An unreadable policy refuses this spawn when it is issued (`claim`).
         let policy = RepoEnv::new(self.repo.cloned()).map(|env| env.policy(self.config));
@@ -666,7 +692,8 @@ impl Target<'_> {
             Some(self.experiments),
             self.config.models.effort_sizing,
         );
-        format!("{contract}{rules}")
+        let workers = workers.map(contract::worker_rule).unwrap_or_default();
+        format!("{contract}{rules}{workers}")
     }
 }
 
@@ -717,7 +744,11 @@ fn reserve_one(
 ) -> Result<StageRunId, ArchonError> {
     let id = StageRunId::new();
     let nth = retry.as_ref().map(|r| r.nth);
-    let mut request = build_request(target, plan, &id, budget, now, nth);
+    let workers = delegation_policy(target, plan);
+    let mut request = build_request(target, plan, (&id, workers.as_ref()), budget, now, nth);
+    let observes = super::acceptance::observes_requirements(store, target.run, &plan.stage_id)?;
+    let intent = (target.references, plan.reports_requirements || observes);
+    super::acceptance::attach(store, target.item, &mut request, intent)?;
     let not_before = retry.as_ref().and_then(|r| r.not_before);
     if let Some(until) = not_before {
         // Held as it is reserved, so no sweep issues it early; it loses no working time.
@@ -793,7 +824,14 @@ fn reserve_one(
         started_at: now,
         finished_at: None,
     };
-    store.upsert_stage_run(&stage)?;
+    let note = workers.and_then(|narrowed| narrowed.note);
+    match &note {
+        Some(note) => {
+            let key = super::stage_note::key(&id);
+            store.upsert_stage_run_with_kv(&stage, &[(key.as_str(), note.as_str())])?;
+        }
+        None => store.upsert_stage_run(&stage)?,
+    }
     Ok(id)
 }
 
@@ -816,7 +854,7 @@ fn slot_budget(budget: Option<f64>, plan: &SpawnPlan) -> Option<f64> {
 fn build_request(
     target: &Target<'_>,
     plan: &SpawnPlan,
-    id: &StageRunId,
+    (id, workers): (&StageRunId, Option<&Narrowed>),
     budget: Option<f64>,
     now: Timestamp,
     retry: Option<usize>,
@@ -835,13 +873,14 @@ fn build_request(
     );
     let until = deadline(now, target.timeout_minutes(plan));
     SpawnRequest {
+        references: Vec::new(),
         host_context: Default::default(),
         idempotency_key: id.as_str().to_owned(),
         role: format!("archon-stage:{}/{}", run.pipeline, plan.stage_id),
         // Every reserved spawn is bound to the run's node before it is sent.
         name: naming::stage_agent_name(naming::Placement::UnderRunNode, plan, retry),
         objective: plan.prompt.clone(),
-        instructions: target.instructions(plan, until),
+        instructions: target.instructions(plan, until, workers),
         choice: plan.choice.clone(),
         workspace,
         repository: target.repo.map(|repo| repo.name.clone()),
@@ -857,7 +896,58 @@ fn build_request(
         parent: None,
         network: None,
         keep: plan.keep,
+        delegation_policy: workers.map(|narrowed| narrowed.policy.clone()),
     }
+}
+
+/// The worker policy `plan`'s lead is sent: its workers within the model
+/// policy as it stands now, failing closed to the narrowest one when none is
+/// permitted, and the reviewers it owes bounded to the models its contract
+/// names. `None` for a leaf or a stage with no worker policy.
+fn delegation_policy(target: &Target<'_>, plan: &SpawnPlan) -> Option<Narrowed> {
+    if !target.delegates(plan) {
+        return None;
+    }
+    let planned = plan.workers.as_ref()?;
+    // An unreadable policy refuses this spawn when it is issued (`claim`);
+    // until then nothing is permitted, as the reviewer rule says too.
+    let policy = match RepoEnv::new(target.repo.cloned()).map(|env| env.policy(target.config)) {
+        Ok(policy) => policy,
+        Err(error) => {
+            let none = ModelPolicy {
+                allow: Some(Default::default()),
+                deny: Default::default(),
+                max_effort: Some(archon_core::model::Effort::Low),
+            };
+            let cause = format!("the repository's model policy cannot be read: {error}");
+            let lead = Some(&plan.choice.model);
+            return Some(planned.fallback(&none, (target.catalog, lead), &cause));
+        }
+    };
+    let mut narrowed = planned.within(&policy, target.catalog, Some(&plan.choice.model));
+    let Some(named) = plan.reviewers.as_deref() else {
+        return Some(narrowed);
+    };
+    let mut models = contract::reviewer_models(
+        Some(named),
+        &plan.choice.model,
+        &policy,
+        (&target.config.review, target.catalog),
+        target.governed,
+    );
+    // A planned reviewer the policy has since denied is exempt from nothing;
+    // the watchdog cancels a reviewer on it, as for any denied model.
+    models.retain(|model| policy.permits_model(model));
+    narrowed.policy = narrowed.policy.with_reviewers(models);
+    assert!(
+        narrowed
+            .policy
+            .workers
+            .iter()
+            .all(|w| w.model.as_ref().is_none_or(|m| policy.permits_model(m))),
+        "a lead is never sent a worker the policy denies"
+    );
+    Some(narrowed)
 }
 
 /// What ties the agent, and through Aether its children, to this stage run.
@@ -946,6 +1036,14 @@ pub(super) fn reserve_replacement(
         item: &item,
         repo: repo.as_ref(),
         config: &ctx.config,
+        references: item.intent.is_some()
+            && ctx
+                .aether
+                .client()?
+                .welcome()
+                .features
+                .iter()
+                .any(|f| f == "references"),
         catalog: &store.model_catalog(),
         governed: false,
         sections: &sections,
@@ -1519,14 +1617,18 @@ async fn spawned_ok(
     current.aether_agent = Some(spawned.agent);
     current.aether_task = Some(spawned.task.clone());
     current.state = StageState::Running;
-    store.upsert_stage_run(&current)?;
     let mut run = store.run(&stage.run)?;
     if run.state.is_terminal() {
+        // Its node's retirement owes the archives once every agent stopped.
+        store.upsert_stage_run(&current)?;
         return Ok(FollowUp {
             stop: vec![run.id],
             ..FollowUp::default()
         });
     }
+    // The caller holds the run table, as `save_spawned` needs.
+    let owed = archive::save_spawned(&mut store, &current)?;
+    archive::announce(ctx, &owed);
     if run.aether_run.is_none() {
         run.aether_run = Some(spawned.run);
         store.update_run(&run)?;

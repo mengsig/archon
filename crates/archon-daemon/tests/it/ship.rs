@@ -47,6 +47,7 @@ async fn enqueue(
     autonomy: AutonomyPatch,
 ) -> Result<QueueItem, ArchonError> {
     let request = EnqueueRequest {
+        intent: None,
         onto: None,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),

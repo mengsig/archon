@@ -24,6 +24,7 @@ pub mod memory_feedback;
 pub mod notifications;
 mod resumed;
 mod tool_calls;
+pub mod turn;
 pub mod wire;
 
 pub use backend::AetherBackend;

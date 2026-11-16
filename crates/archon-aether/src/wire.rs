@@ -176,6 +176,11 @@ pub enum Command {
     Restart {
         agent: AetherAgentId,
     },
+    /// Clear a finished agent out of Aether's live view; it stays in the store.
+    Archive {
+        target: ArchiveTarget,
+        archived: bool,
+    },
     Pause {
         agent: AetherAgentId,
         subtree: bool,
@@ -325,6 +330,8 @@ impl Welcome {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CreateAgent {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<archon_core::reference::Reference>,
     pub role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -356,6 +363,7 @@ pub struct CreateAgent {
 impl Default for CreateAgent {
     fn default() -> Self {
         Self {
+            references: Vec::new(),
             role: String::new(),
             name: None,
             objective: None,
@@ -430,6 +438,10 @@ pub struct AgentConfig {
     pub tools: ToolExposure,
     pub long_lived: bool,
     pub leaf: bool,
+    /// What the agent's workers may run on; Aether's `delegate` refuses a
+    /// child outside it. An aetherd that predates it ignores the field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delegation_policy: Option<archon_core::delegation::WorkerPolicy>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -454,6 +466,13 @@ impl ToolExposure {
             Self::Except { names } => !names.contains(name),
         }
     }
+}
+
+/// What an `archive` command marks; Archon only ever names one agent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArchiveTarget {
+    Agent(AetherAgentId),
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize)]
@@ -730,6 +749,8 @@ fn known_tier<'de, D: serde::Deserializer<'de>>(de: D) -> Result<Option<Tier>, D
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 pub struct ModelCapabilities {
+    #[serde(default)]
+    pub vision: bool,
     /// Pricing is not proof of engine cost reporting; consult ProviderInfo.
     #[serde(default)]
     pub cost: Option<serde_json::Value>,

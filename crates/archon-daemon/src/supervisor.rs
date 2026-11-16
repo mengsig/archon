@@ -53,7 +53,8 @@ pub use revival::{
     Backoff, REVIVAL_BACKOFF, REVIVALS_BEFORE_BLOCKER, pause_after, revive_when_due, turn_ended,
 };
 pub use stall::{
-    INTERRUPT_GRACE, MAIL_STALL_AFTER, MAX_INTERRUPTS, STALL_AFTER, STALL_CHECK_INTERVAL,
+    Due, FOREGROUND_CAP, INTERRUPT_SPACING, MAIL_SILENCE, Marks, NUDGE_GRACE, PAST_TIMEOUT,
+    STALL_AFTER, STALL_CHECK_INTERVAL, Silence, UNDECLARED_CALL_BOUND, call_bound, due,
     report_stall, watch_stalls,
 };
 
@@ -105,9 +106,6 @@ pub struct Supervisor {
     sweeps: Notify,
     mcp: Mutex<mcp::HealState>,
     mcp_check: Notify,
-    liveness: std::sync::Mutex<stall::Liveness>,
-    /// Wakes the stall watch when operator mail reaches a stalled turn.
-    stall_check: Notify,
 }
 
 impl Default for Supervisor {
@@ -120,8 +118,6 @@ impl Default for Supervisor {
             sweeps: Notify::new(),
             mcp: Mutex::new(mcp::HealState::default()),
             mcp_check: Notify::new(),
-            liveness: Default::default(),
-            stall_check: Notify::new(),
         }
     }
 }
@@ -130,19 +126,6 @@ impl Supervisor {
     /// Sees every change of the orchestrator's agent id.
     pub fn watch(&self) -> watch::Receiver<Option<AetherAgentId>> {
         self.current.subscribe()
-    }
-
-    /// Record an event of the current orchestrator for the stall check, and
-    /// check at once when it is operator mail to a turn already stalled.
-    pub fn saw_event(&self, agent: &AetherAgentId, kind: &archon_aether::events::EventKind) {
-        let due = self
-            .liveness
-            .lock()
-            .expect("liveness is never held across a panic")
-            .saw(agent, kind, archon_core::now());
-        if due {
-            self.stall_check.notify_one();
-        }
     }
 
     /// When a deferred revival of a stopped orchestrator will run.
@@ -359,6 +342,7 @@ pub fn orchestrator_create_agent(
     let also_hidden = (!delegation).then_some(DELEGATE_TOOL);
     let hidden = ORCHESTRATOR_HIDDEN_TOOLS.iter().copied().chain(also_hidden);
     CreateAgent {
+        references: Vec::new(),
         role: ORCHESTRATOR_ROLE.into(),
         name: Some(config.orchestrator.name.clone()),
         objective: None,
@@ -385,6 +369,7 @@ pub fn orchestrator_create_agent(
             },
             long_lived: true,
             leaf: false,
+            delegation_policy: None,
         }),
         approval: orchestrator_approval(config),
         run: None,
@@ -1549,8 +1534,7 @@ mod tests {
             "You are woken for:",
             "`item_finished`: a failure, a blocker, an item tagged `notify`, one with a GitHub \
              `origin` to answer, and a success unless the operator turned that off.",
-            "The daemon posts every outcome: add only what it lacks, such as what comes next; run \
-             no tool to verify it: the daemon did.",
+            "Relay code review, CI and approved-intent acceptance separately.",
             "A trigger states all `directives` once, then only `directive_changes`; if you hold \
              fewer than `directives_in_force`, read `autonomy_policy`.",
             "A mirror holds the registered repository's local base commit (HEAD when no base \
@@ -1894,8 +1878,7 @@ mod tests {
         unwrapped(&text)
     }
 
-    /// The daemon's gates check code, not use: a user-facing build is called
-    /// ready only after an item the orchestrator queued, never it, checked it (#396).
+    /// User-facing handoff still requires independent validation beyond code review.
     #[test]
     fn a_user_facing_build_is_handed_over_only_after_independent_validation() {
         let prompt = unwrapped(&prompt());
@@ -1903,8 +1886,7 @@ mod tests {
             "**Hand-off.** Before telling the operator a user-facing build is ready to try, \
              read `guide(topic=validation)` and queue the independent validation it names; \
              report only its outcome, never \"ready\" on a failure. Internal changes need none.",
-            "The daemon posts every outcome: add only what it lacks, such as what comes next; run \
-             no tool to verify it: the daemon did.",
+            "Relay code review, CI and approved-intent acceptance separately.",
         ] {
             assert!(prompt.contains(said), "missing {said:?}");
         }
@@ -2045,9 +2027,29 @@ mod tests {
         }
     }
 
+    #[test]
+    fn approved_intent_and_questions_keep_acceptance_explicit() {
+        let prompt = unwrapped(&prompt());
+        for rule in [
+            "verbatim operator inbox quote/sequence",
+            "A plain brief, even one naming a spec, is no ledger: enqueue it without intent",
+            "Never shrink approved requirements",
+            "head/tree/intent version",
+            "a new head makes acceptance stale",
+            "prioritize uncapped `question`s",
+            "`[clarification:<id>]`",
+            "default 30 minutes",
+            "`clarifications=proceed`",
+            "`direction_open=true`",
+        ] {
+            assert!(prompt.contains(rule), "missing {rule}");
+        }
+        assert!(!prompt.contains("run no tool to verify it: the daemon did"));
+    }
+
     /// The prompt is paid for on every turn; the tools describe themselves.
-    /// Above 13 KiB: half a KiB for the effort rubric, a quarter for the hand-off.
-    const BUDGET_BYTES: usize = 13 * 1024 + 768;
+    /// Includes 1 KiB for approved-intent and clarification guidance.
+    const BUDGET_BYTES: usize = 14 * 1024 + 768;
 
     #[test]
     fn builtin_prompt_stays_within_its_budget() {

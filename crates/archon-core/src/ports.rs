@@ -53,6 +53,9 @@ pub enum CostBilling {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SpawnRequest {
+    /// Frozen attachment list; older daemons receive paths in the contract.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<crate::reference::Reference>,
     /// The stage run id: Aether dedupes a retried create under it.
     pub idempotency_key: String,
     /// Resolved before the first create; old requests keep full context.
@@ -104,6 +107,11 @@ pub struct SpawnRequest {
     /// resume it by message instead of starting cold (§6.7).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub keep: bool,
+    /// What a delegating agent's workers may run on, sent as Aether's
+    /// `config.delegation_policy`. A request stored before it existed has
+    /// none, so its keyed retry sends the frame Aether first saw.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegation_policy: Option<crate::delegation::WorkerPolicy>,
 }
 
 /// A resumed attempt's outcome from its final message (§6.7): failed after
@@ -321,6 +329,11 @@ pub trait AgentBackend: Send + Sync {
     /// Aether no longer knows is `false`, not an error.
     async fn is_live(&self, agent: &AetherAgentId) -> Result<bool, ArchonError>;
 
+    /// Whether Aether holds `agent` in a state it names final (completed,
+    /// failed, cancelled or imported), or no longer knows it. Stricter than
+    /// `!is_live`: a state Archon does not know, or none, is `false`.
+    async fn is_stopped(&self, agent: &AetherAgentId) -> Result<bool, ArchonError>;
+
     /// Revive the failed `agent` in place, with its transcript and session;
     /// `Err` when Aether refuses, as it does for an agent that did not fail.
     async fn wake(&self, agent: &AetherAgentId) -> Result<(), ArchonError>;
@@ -332,6 +345,11 @@ pub trait AgentBackend: Send + Sync {
     /// Ask Aether to cancel an agent and its live descendants. Aether cancels
     /// cooperatively: `Ok` means accepted, not that any of them has ended.
     async fn cancel(&self, agent: &AetherAgentId, reason: &str) -> Result<(), ArchonError>;
+
+    /// Clear the finished `agent` out of Aether's live view; Aether keeps it
+    /// in its store. `NotFound` for an agent it does not know, `Invalid` or
+    /// `InvalidTransition` for a live one; archiving twice is `Ok`.
+    async fn archive(&self, agent: &AetherAgentId) -> Result<(), ArchonError>;
 
     /// Change a live agent in place; it keeps its transcript. Implementations
     /// re-check the model policy. Aether decides when a new model takes over.

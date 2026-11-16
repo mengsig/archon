@@ -168,6 +168,8 @@ pub fn check_contract(contract: &str, limits: &InitiativeLimits) -> Result<(), A
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct InitiativeMember {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent: Option<crate::intent::IntentBinding>,
     pub repo: RepoRef,
     pub brief: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -261,6 +263,7 @@ mod tests {
 
     fn member(after: &[usize]) -> InitiativeMember {
         InitiativeMember {
+            intent: None,
             onto: None,
             repo: RepoRef("api".into()),
             brief: "Add the endpoint.".into(),

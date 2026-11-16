@@ -119,6 +119,7 @@ async fn started_after(
     parents: &[&QueueItem],
 ) -> (QueueItem, PipelineRun) {
     let request = EnqueueRequest {
+        intent: None,
         onto: None,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
@@ -401,6 +402,7 @@ async fn a_changed_git_identity_stops_a_run_before_it_works() {
         &["config", "user.email", "changed@elsewhere.invalid"],
     );
     let request = EnqueueRequest {
+        intent: None,
         onto: None,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),

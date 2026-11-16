@@ -51,6 +51,7 @@ fn populate(store: &mut Store) -> (Vec<QueueItem>, archon_core::run::PipelineRun
         .insert_item(&item(Some(&repo), "a"), Some("k-a"))
         .unwrap();
     let b = QueueItem {
+        intent: None,
         dependencies: vec![a.id.clone()],
         ..item(Some(&repo), "b")
     };
@@ -146,10 +147,12 @@ fn everything_survives_a_reopen() {
         .unwrap();
     assert_eq!(next.seq, 3);
     let again = QueueItem {
+        intent: None,
         id: archon_core::id::QueueItemId::new(),
         ..items.last().unwrap().clone()
     };
     let again = QueueItem {
+        intent: None,
         state: QueueState::Queued,
         ..again
     };
@@ -401,6 +404,7 @@ fn racing_idempotent_enqueues_create_one_item() {
         .map(|_| {
             let (path, barrier) = (Arc::clone(&path), Arc::clone(&barrier));
             let attempt = QueueItem {
+                intent: None,
                 id: archon_core::id::QueueItemId::new(),
                 ..template.clone()
             };

@@ -7,8 +7,8 @@ use std::collections::BTreeSet;
 use archon_aether::github::{RepositoryConfig, WatcherConfig};
 use archon_aether::memory::MemoryQuery;
 use archon_aether::wire::{
-    AgentConfig, AgentPatch, AgentQuery, ApprovalPolicy, ClientFrame, Command, CreateAgent,
-    EventQuery, Hello, NetworkPolicy, Scope, ToolExposure,
+    AgentConfig, AgentPatch, AgentQuery, ApprovalPolicy, ArchiveTarget, ClientFrame, Command,
+    CreateAgent, EventQuery, Hello, NetworkPolicy, Scope, ToolExposure,
 };
 use archon_core::aether_ids::{AetherAgentId, AetherMemoryId, AetherRunId, AetherTaskId};
 use archon_core::model::Effort;
@@ -58,6 +58,7 @@ fn variant_name(command: &Command) -> &'static str {
         Command::Interrupt { .. } => "interrupt",
         Command::Wake { .. } => "wake",
         Command::Restart { .. } => "restart",
+        Command::Archive { .. } => "archive",
         Command::Pause { .. } => "pause",
         Command::Resume { .. } => "resume",
         Command::GetTask { .. } => "get_task",
@@ -85,6 +86,7 @@ fn variant_name(command: &Command) -> &'static str {
 
 fn full_create_agent() -> CreateAgent {
     CreateAgent {
+        references: Vec::new(),
         role: "archon-stage:direct/implement".into(),
         name: Some("implement · the thing".into()),
         objective: Some("do it".into()),
@@ -108,6 +110,7 @@ fn full_create_agent() -> CreateAgent {
             },
             long_lived: false,
             leaf: true,
+            delegation_policy: None,
         }),
         approval: Some(ApprovalPolicy::none()),
         run: Some(run()),
@@ -170,6 +173,7 @@ fn samples() -> Vec<Command> {
         Command::Ping,
         Command::CreateAgent(Box::new(full_create_agent())),
         Command::CreateAgent(Box::new(CreateAgent {
+            references: Vec::new(),
             role: "archon-orchestrator".into(),
             ..CreateAgent::default()
         })),
@@ -253,6 +257,10 @@ fn control_samples() -> Vec<Command> {
     vec![
         Command::Wake { agent: agent() },
         Command::Restart { agent: agent() },
+        Command::Archive {
+            target: ArchiveTarget::Agent(agent()),
+            archived: true,
+        },
         Command::Pause {
             agent: agent(),
             subtree: true,
@@ -446,7 +454,7 @@ fn every_command_archon_emits_matches_the_schema() {
     );
     assert_eq!(
         seen.len(),
-        29,
+        30,
         "every Command variant has a sample: {seen:?}"
     );
 }

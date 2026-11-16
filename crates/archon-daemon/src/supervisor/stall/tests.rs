@@ -1,329 +1,282 @@
+use chrono::TimeDelta;
+
+use super::notice::{Interrupted, cut_off_note, interrupt_text, nudge_text, stall_text};
 use super::*;
 
-fn at(secs: i64) -> Timestamp {
-    chrono::DateTime::from_timestamp(1_800_000_000 + secs, 0).unwrap()
+fn orch() -> AetherAgentId {
+    AetherAgentId::parse("agt_01M6BFQZRXYJK8CKVK10H85F7C").unwrap()
 }
 
-fn agent(id: &str) -> AetherAgentId {
-    AetherAgentId::parse(id).unwrap()
+/// `seconds` after the turn's last progress.
+fn at(seconds: i64) -> Timestamp {
+    let start: Timestamp = "2026-11-15T19:12:00Z".parse().unwrap();
+    start + TimeDelta::seconds(seconds)
 }
 
-const A: &str = "agt_01M5H1GBDP193XE44D522J0DN6";
-const B: &str = "agt_01M5H1SFJV2J2RNXYAH7HB6M6B";
-const STALL: i64 = STALL_AFTER.as_secs() as i64;
-
-fn started() -> EventKind {
-    EventKind::AgentStarted { turn: 241 }
-}
-
-fn ended() -> EventKind {
-    EventKind::AgentTurnCompleted {
-        turn: 241,
-        next: Some("ready".into()),
+fn call(started: i64, timeout_secs: Option<u64>) -> OpenCall {
+    OpenCall {
+        name: "Bash".into(),
+        command: Some("ls && head -40 fetch.sh".into()),
+        timeout: timeout_secs.map(Duration::from_secs),
+        requested_at: at(started),
     }
 }
 
-#[test]
-fn a_turn_that_goes_silent_is_reported_once() {
-    let mut live = Liveness::default();
-    live.saw(&agent(A), &started(), at(0));
-    assert_eq!(live.take_stall(at(STALL - 1)), None);
-    assert_eq!(live.take_stall(at(STALL)).unwrap().silent, STALL_AFTER);
-    assert_eq!(live.take_stall(at(STALL + 60)), None, "told once");
-}
-
-#[test]
-fn any_event_rearms_the_report() {
-    let mut live = Liveness::default();
-    live.saw(&agent(A), &started(), at(0));
-    assert!(live.take_stall(at(STALL)).is_some());
-    let message = EventKind::AgentMessage {
-        assistant: true,
-        text: "still here".into(),
-    };
-    live.saw(&agent(A), &message, at(STALL + 10));
-    assert_eq!(live.take_stall(at(STALL + 20)), None);
-    assert!(live.take_stall(at(2 * STALL + 10)).is_some());
-}
-
-#[test]
-fn a_turn_seen_only_by_its_messages_after_a_restart_is_watched() {
-    let mut live = Liveness::default();
-    let message = EventKind::AgentMessage {
-        assistant: true,
-        text: "pushing the tag".into(),
-    };
-    live.saw(&agent(A), &message, at(0));
-    assert!(live.take_stall(at(STALL)).is_some());
-}
-
-#[test]
-fn an_idle_orchestrator_is_not_stalled() {
-    let mut live = Liveness::default();
-    assert_eq!(live.take_stall(at(10 * STALL)), None, "nothing seen yet");
-    live.saw(&agent(A), &started(), at(0));
-    live.saw(&agent(A), &ended(), at(5));
-    assert_eq!(live.take_stall(at(10 * STALL)), None, "the turn ended");
-}
-
-#[test]
-fn a_replaced_orchestrator_starts_clean() {
-    let mut live = Liveness::default();
-    live.saw(&agent(A), &started(), at(0));
-    live.saw(&agent(B), &EventKind::AgentCompleted, at(10));
-    assert_eq!(live.take_stall(at(10 * STALL)), None);
-}
-
-#[test]
-fn mail_delivered_to_a_hung_turn_does_not_rearm_the_report() {
-    let mut live = Liveness::default();
-    live.saw(&agent(A), &started(), at(0));
-    let mail = EventKind::InboxDelivered {
-        seq: 7,
-        from_operator: false,
-        message: None,
-    };
-    live.saw(&agent(A), &mail, at(STALL - 10));
-    assert!(live.take_stall(at(STALL)).is_some());
-}
-
-#[test]
-fn nudges_are_bounded_per_agent() {
-    let mut live = Liveness::default();
-    let mut nudged = 0;
-    for round in 0..10 {
-        let base = round * (STALL + 100);
-        live.saw(&agent(A), &started(), at(base));
-        let stall = live.take_stall(at(base + STALL)).expect("stalls again");
-        nudged += i32::from(stall.nudge);
-    }
-    assert_eq!(nudged, i32::from(MAX_NUDGES));
-}
-
-#[test]
-fn a_turn_found_open_after_a_restart_is_watched_from_the_probe() {
-    let mut live = Liveness::default();
-    assert!(live.needs_probe(&agent(A)));
-    live.probed(&agent(A), true, at(0));
-    assert!(!live.needs_probe(&agent(A)));
-    assert!(live.take_stall(at(STALL - 1)).is_none());
-    assert!(live.take_stall(at(STALL)).is_some());
-}
-
-#[test]
-fn a_progress_event_before_the_probe_does_not_skip_it() {
-    let mut live = Liveness::default();
-    let usage = EventKind::Other {
-        type_name: "tool.result".into(),
-    };
-    live.saw(&agent(A), &usage, at(0));
-    assert!(live.needs_probe(&agent(A)));
-    live.probed(&agent(A), true, at(5));
-    assert!(live.take_stall(at(STALL)).is_some());
-}
-
-#[test]
-fn an_idle_orchestrator_found_by_the_probe_is_not_watched() {
-    let mut live = Liveness::default();
-    live.probed(&agent(A), false, at(0));
-    assert!(live.take_stall(at(10 * STALL)).is_none());
-}
-
-#[test]
-fn the_notice_says_what_happened_and_what_to_do() {
-    let hours = Duration::from_secs(3 * 3600);
-    let text = stall_text(hours, Nudge::Sent, true);
-    assert!(text.contains("180 minutes"), "{text}");
-    assert!(text.contains("archon orchestrator restart"), "{text}");
-    assert!(text.contains("sent it a nudge"), "{text}");
-    assert!(
-        text.contains("in 5 minutes, Archon interrupts the turn"),
-        "{text}"
-    );
-    let spent = stall_text(hours, Nudge::Spent, false);
-    assert!(spent.contains("sends no more"), "{spent}");
-    assert!(spent.contains("used its 3 interrupts"), "{spent}");
-    let failed = stall_text(
-        hours,
-        Nudge::Failed(ArchonError::Invalid("no".into())),
-        true,
-    );
-    assert!(failed.contains("could not nudge"), "{failed}");
-}
-
-#[test]
-fn the_interrupt_notice_says_what_was_silent_what_archon_did_and_the_fallback() {
-    let silent = Duration::from_secs(35 * 60);
-    let stopped = interrupt_text(silent, &Interrupted::Stopped);
-    assert!(stopped.contains("silent for 35 minutes"), "{stopped}");
-    assert!(stopped.contains("Archon interrupted it"), "{stopped}");
-    assert!(stopped.contains("archon orchestrator restart"), "{stopped}");
-    let none = interrupt_text(silent, &Interrupted::NoTurn);
-    assert!(none.contains("no turn running"), "{none}");
-    assert!(none.contains("archon orchestrator restart"), "{none}");
-    let failed = interrupt_text(
-        silent,
-        &Interrupted::Failed(ArchonError::Unavailable("aetherd gone".into())),
-    );
-    assert!(failed.contains("could not interrupt it"), "{failed}");
-    assert!(failed.contains("aetherd gone"), "{failed}");
-    assert!(failed.contains("archon orchestrator restart"), "{failed}");
-}
-
-const GRACE: i64 = INTERRUPT_GRACE.as_secs() as i64;
-const MAIL: i64 = MAIL_STALL_AFTER.as_secs() as i64;
-
-fn operator_mail(seq: u64) -> EventKind {
-    EventKind::InboxDelivered {
-        seq,
-        from_operator: true,
-        message: None,
+/// A turn silent since `at(0)`, with operator mail unread since `mail`.
+fn turn(mail: Option<i64>, open_calls: Vec<OpenCall>) -> OpenTurn {
+    OpenTurn {
+        last_progress: at(0),
+        open_calls,
+        oldest_unread_mail: mail.map(at),
     }
 }
 
-fn usage() -> EventKind {
-    EventKind::AgentUsageUpdated {
-        usage: Default::default(),
+fn marks(nudged: Option<i64>, interrupted: Option<i64>) -> Marks {
+    Marks {
+        agent: orch(),
+        nudged_at: nudged.map(at),
+        interrupted_at: interrupted.map(at),
     }
 }
 
+fn is_nudge(due: &Due, mail: bool) -> bool {
+    matches!(due, Due::Nudge(silence) if silence.mail == mail && silence.since == at(0))
+}
+
+fn is_interrupt(due: &Due, mail: bool) -> bool {
+    matches!(due, Due::Interrupt(silence) if silence.mail == mail && silence.since == at(0))
+}
+
 #[test]
-fn a_reported_stall_still_silent_after_the_grace_is_interrupted_once() {
-    let mut live = Liveness::default();
-    live.saw(&agent(A), &started(), at(0));
-    let stall = live.take_stall(at(STALL)).expect("stalled");
-    assert!(stall.nudge && stall.interrupt, "{stall:?}");
-    assert_eq!(live.take_interrupt(&agent(A), at(STALL + GRACE - 1)), None);
-    let hung = live.take_interrupt(&agent(A), at(STALL + GRACE)).unwrap();
-    assert_eq!(hung.agent, agent(A));
-    assert_eq!(hung.silent, STALL_AFTER + INTERRUPT_GRACE);
+fn mail_and_silence_must_both_be_three_minutes_old_before_the_nudge() {
+    let none = marks(None, None);
+    let old_mail = turn(Some(0), vec![]);
+    assert_eq!(due(&old_mail, &none, at(179)), Due::Nothing);
+    assert!(is_nudge(&due(&old_mail, &none, at(180)), true));
+
+    let fresh_mail = turn(Some(600), vec![]);
     assert_eq!(
-        live.take_interrupt(&agent(A), at(STALL + 10 * GRACE)),
-        None,
-        "one interrupt per silence"
+        due(&fresh_mail, &none, at(779)),
+        Due::Nothing,
+        "a long silence, but the mail is under three minutes old"
     );
-    assert_eq!(live.take_stall(at(3 * STALL)), None, "told once");
+    assert!(is_nudge(&due(&fresh_mail, &none, at(780)), true));
 }
 
 #[test]
-fn only_the_current_orchestrator_is_interrupted() {
-    let mut live = Liveness::default();
-    live.saw(&agent(A), &started(), at(0));
-    assert!(live.take_stall(at(STALL)).is_some());
-    assert_eq!(live.take_interrupt(&agent(B), at(STALL + GRACE)), None);
-    assert!(live.take_interrupt(&agent(A), at(STALL + GRACE)).is_some());
+fn the_interrupt_follows_two_more_silent_minutes_after_the_nudge() {
+    let hung = turn(Some(0), vec![]);
+    let nudged = marks(Some(180), None);
+    assert_eq!(
+        due(&hung, &nudged, at(299)),
+        Due::Nothing,
+        "in the grace: no second nudge, no interrupt yet"
+    );
+    assert!(is_interrupt(&due(&hung, &nudged, at(300)), true));
 }
 
 #[test]
-fn a_turn_that_progresses_in_the_grace_is_not_interrupted() {
-    let mut live = Liveness::default();
-    live.saw(&agent(A), &started(), at(0));
-    assert!(live.take_stall(at(STALL)).is_some());
-    live.saw(&agent(A), &usage(), at(STALL + GRACE - 1));
-    assert_eq!(live.take_interrupt(&agent(A), at(STALL + GRACE)), None);
-    assert_eq!(live.take_interrupt(&agent(A), at(STALL + 5 * GRACE)), None);
-}
-
-#[test]
-fn a_busy_turn_that_keeps_emitting_events_is_left_alone() {
-    let mut live = Liveness::default();
-    live.saw(&agent(A), &started(), at(0));
-    let result = EventKind::Other {
-        type_name: "tool.result".into(),
-    };
-    for minute in (0..=240).step_by(9) {
-        let now = at(minute * 60);
-        live.saw(&agent(A), &operator_mail(minute as u64), now);
-        let progress = if minute % 2 == 0 {
-            usage()
-        } else {
-            result.clone()
-        };
-        live.saw(&agent(A), &progress, now);
-        let later = now + chrono::TimeDelta::minutes(8);
-        assert_eq!(live.take_stall(later), None);
-        assert_eq!(live.take_interrupt(&agent(A), later), None);
+fn every_interrupt_follows_a_nudge_of_its_own_silence_however_many_came_before() {
+    let hung = turn(Some(0), vec![]);
+    for earlier_stalls in 0..6 {
+        // What an earlier silence left: its nudge, and its interrupt long ago.
+        let before = -3600 * (earlier_stalls + 1);
+        let stale = marks(Some(before), Some(before + 120));
+        assert!(
+            is_nudge(&due(&hung, &stale, at(900)), true),
+            "an old nudge is not this silence's: {earlier_stalls} earlier stalls"
+        );
+        let own = marks(Some(900), Some(before + 120));
+        assert!(is_interrupt(&due(&hung, &own, at(1020)), true));
     }
 }
 
 #[test]
-fn interrupts_are_bounded_per_agent() {
-    let mut live = Liveness::default();
-    let mut interrupted = 0;
-    for round in 0..10 {
-        let base = round * (STALL + GRACE + 100);
-        live.saw(&agent(A), &started(), at(base));
-        let stall = live.take_stall(at(base + STALL)).expect("stalls again");
-        assert_eq!(stall.interrupt, round < i64::from(MAX_INTERRUPTS));
-        let hung = live.take_interrupt(&agent(A), at(base + STALL + GRACE));
-        interrupted += i32::from(hung.is_some());
+fn interrupts_are_spaced_five_minutes_apart_with_no_lifetime_cap() {
+    let hung = turn(Some(0), vec![]);
+    let failed = marks(Some(180), Some(300));
+    assert_eq!(
+        due(&hung, &failed, at(599)),
+        Due::Nothing,
+        "the last interrupt was under five minutes ago"
+    );
+    assert!(
+        is_interrupt(&due(&hung, &failed, at(600)), true),
+        "tried again, under the nudge already sent in this silence"
+    );
+    for tried in 1..20 {
+        let again = marks(Some(180), Some(300 * tried));
+        let retry = at(300 * (tried + 1));
+        assert!(is_interrupt(&due(&hung, &again, retry), true), "{tried}");
     }
-    assert_eq!(interrupted, i32::from(MAX_INTERRUPTS));
-    live.saw(&agent(B), &started(), at(0));
+}
+
+#[test]
+fn a_foreground_call_within_its_declared_timeout_keeps_mail_waiting() {
+    let none = marks(None, None);
+    // 2026-11-15: a Bash call declaring two minutes that never came back.
+    let trivial = turn(Some(0), vec![call(0, Some(120))]);
+    assert_eq!(due(&trivial, &none, at(179)), Due::Nothing);
+    assert!(is_nudge(&due(&trivial, &none, at(180)), true));
+
+    let build = turn(Some(0), vec![call(0, Some(600))]);
+    for minute in [3, 5, 10] {
+        assert_eq!(
+            due(&build, &none, at(minute * 60)),
+            Due::Nothing,
+            "{minute} min"
+        );
+    }
+    assert!(is_nudge(&due(&build, &none, at(660)), true));
+
+    let undeclared = turn(Some(0), vec![call(0, None)]);
+    assert_eq!(due(&undeclared, &none, at(239)), Due::Nothing);
+    assert!(is_nudge(&due(&undeclared, &none, at(240)), true));
+}
+
+/// A call's bound runs from its own start: Aether ends a foreground call at
+/// its timeout, so later progress elsewhere in the turn buys it no more time.
+#[test]
+fn a_calls_bound_runs_from_its_start_however_late_the_turn_last_moved() {
+    let none = marks(None, None);
+    // A ten-minute call from nine minutes before the turn's last progress.
+    let late_progress = turn(Some(-600), vec![call(-540, Some(600))]);
+    assert_eq!(
+        due(&late_progress, &none, at(119)),
+        Due::Nothing,
+        "the call is not yet a minute past its timeout"
+    );
+    assert_eq!(
+        due(&late_progress, &none, at(179)),
+        Due::Nothing,
+        "the call is over, but the turn moved under three minutes ago"
+    );
     assert!(
-        live.take_stall(at(STALL)).unwrap().interrupt,
-        "a new generation"
+        is_nudge(&due(&late_progress, &none, at(180)), true),
+        "mail waits three minutes past the call's timeout, not eleven more"
     );
 }
 
 #[test]
-fn operator_mail_to_a_turn_silent_past_the_shorter_limit_is_due_at_once() {
-    let mut live = Liveness::default();
-    live.saw(&agent(A), &started(), at(0));
-    assert!(
-        !live.saw(&agent(A), &operator_mail(1), at(MAIL - 1)),
-        "too soon"
+fn the_longest_bound_among_parallel_calls_holds() {
+    let none = marks(None, None);
+    // The newer call declares nothing; the older one may run ten minutes.
+    let parallel = turn(Some(0), vec![call(0, None), call(-30, Some(600))]);
+    assert_eq!(
+        due(&parallel, &none, at(240)),
+        Due::Nothing,
+        "the newer call's four minutes are over, the older call's bound is not"
     );
-    assert!(live.take_stall(at(MAIL - 1)).is_none());
-    assert!(live.saw(&agent(A), &operator_mail(2), at(MAIL)));
-    let stall = live.take_stall(at(MAIL)).expect("the mail made it due");
-    assert_eq!(stall.silent, MAIL_STALL_AFTER);
-    assert!(stall.nudge);
+    assert_eq!(due(&parallel, &none, at(629)), Due::Nothing);
+    assert!(is_nudge(&due(&parallel, &none, at(630)), true));
+}
+
+#[test]
+fn unread_mail_keeps_its_bound_when_the_turn_moved_without_reading_it() {
+    // Mail came, the turn emitted a message at `at(0)` and then hung.
+    let moved_on = turn(Some(-600), vec![]);
     assert!(
-        !live.saw(&agent(A), &operator_mail(3), at(MAIL + 1)),
-        "reported"
+        is_nudge(&due(&moved_on, &marks(None, None), at(180)), true),
+        "three minutes of silence, not thirty"
     );
-    assert!(live.take_interrupt(&agent(A), at(MAIL + GRACE)).is_some());
 }
 
 #[test]
-fn operator_mail_earlier_in_the_silence_shortens_the_limit() {
-    let mut live = Liveness::default();
-    live.saw(&agent(A), &started(), at(0));
-    assert!(!live.saw(&agent(A), &operator_mail(1), at(60)));
-    assert!(live.take_stall(at(MAIL - 1)).is_none());
-    assert_eq!(live.take_stall(at(MAIL)).unwrap().silent, MAIL_STALL_AFTER);
+fn without_mail_a_stall_is_half_an_hour_then_nudged_then_interrupted() {
+    let silent = turn(None, vec![call(0, Some(120))]);
+    let none = marks(None, None);
+    assert_eq!(due(&silent, &none, at(29 * 60)), Due::Nothing);
+    assert!(is_nudge(&due(&silent, &none, at(30 * 60)), false));
+    let nudged = marks(Some(30 * 60), None);
+    assert_eq!(due(&silent, &nudged, at(31 * 60)), Due::Nothing);
+    assert!(is_interrupt(&due(&silent, &nudged, at(32 * 60)), false));
 }
 
 #[test]
-fn mail_that_is_not_the_operators_keeps_the_full_limit() {
-    let mut live = Liveness::default();
-    live.saw(&agent(A), &started(), at(0));
-    let trigger = EventKind::InboxDelivered {
-        seq: 1,
-        from_operator: false,
-        message: None,
-    };
-    assert!(!live.saw(&agent(A), &trigger, at(MAIL)));
-    assert!(live.take_stall(at(STALL - 1)).is_none());
-    assert!(live.take_stall(at(STALL)).is_some());
+fn a_call_is_bound_by_its_timeout_capped_as_aether_caps_it() {
+    assert_eq!(
+        call_bound(&call(0, Some(120))),
+        Duration::from_secs(180),
+        "its timeout and a minute"
+    );
+    assert_eq!(
+        call_bound(&call(0, Some(3600))),
+        FOREGROUND_CAP + PAST_TIMEOUT
+    );
+    assert_eq!(call_bound(&call(0, None)), UNDECLARED_CALL_BOUND);
 }
 
 #[test]
-fn operator_mail_to_an_idle_orchestrator_is_no_stall() {
-    let mut live = Liveness::default();
-    live.saw(&agent(A), &started(), at(0));
-    live.saw(&agent(A), &ended(), at(5));
-    assert!(!live.saw(&agent(A), &operator_mail(1), at(STALL)));
-    assert!(live.take_stall(at(2 * STALL)).is_none());
+fn marks_survive_the_store() {
+    let saved = marks(Some(180), Some(300));
+    let raw = serde_json::to_string(&saved).unwrap();
+    assert_eq!(serde_json::from_str::<Marks>(&raw).unwrap(), saved);
+    assert_eq!(Marks::none(&orch()), marks(None, None));
+}
+
+fn silence(seconds: u64, mail: bool) -> Silence {
+    Silence {
+        since: at(0),
+        length: Duration::from_secs(seconds),
+        mail,
+    }
 }
 
 #[test]
-fn progress_forgets_the_operator_mail() {
-    let mut live = Liveness::default();
-    live.saw(&agent(A), &started(), at(0));
-    live.saw(&agent(A), &operator_mail(1), at(60));
-    live.saw(&agent(A), &EventKind::InboxConsumed { up_to: 1 }, at(120));
-    assert!(live.take_stall(at(120 + MAIL)).is_none());
-    assert!(live.take_stall(at(120 + STALL)).is_some());
+fn the_cut_off_note_names_every_open_call_and_claims_no_more_than_it_knows() {
+    let mut other = call(-30, Some(600));
+    other.command = Some("make ci".into());
+    let note = cut_off_note(&silence(300, true), &[call(0, None), other]);
+    assert!(
+        note.starts_with("Archon is interrupting your turn: it made no progress for 5 minutes")
+            && note.contains("while the operator's mail waited")
+            && note.contains("`Bash` running `ls && head -40 fetch.sh`, started 19:12:00Z")
+            && note.contains("`Bash` running `make ci`, started 19:11:30Z")
+            && note.contains("Any of them without a result was cut off")
+            && note.ends_with("Messages that waited for you follow."),
+        "{note}"
+    );
+    let none_open = cut_off_note(&silence(1920, false), &[]);
+    assert!(
+        none_open.contains("No tool call was open") && !none_open.contains("mail"),
+        "{none_open}"
+    );
+    let many: Vec<OpenCall> = (0..8)
+        .map(|n| OpenCall {
+            command: Some(format!("step-{n}.sh")),
+            ..call(n, None)
+        })
+        .collect();
+    let all = cut_off_note(&silence(300, true), &many);
+    for n in 0..8 {
+        let one = format!("`Bash` running `step-{n}.sh`, started 19:12:0{n}Z");
+        assert!(all.contains(&one), "every open call is named: {all}");
+    }
+    assert!(!all.contains("more"), "none is only counted: {all}");
+}
+
+#[test]
+fn the_operator_is_told_what_was_done_and_what_to_do_when_it_fails() {
+    let mail = silence(300, true);
+    let stopped = interrupt_text(&mail, &[call(0, Some(120))], &Interrupted::Stopped);
+    assert!(
+        stopped.contains("Operator mail waited")
+            && stopped.contains("silent for 5 minutes, in a `Bash` call past its bound of 3 min")
+            && stopped.contains("Archon interrupted it"),
+        "{stopped}"
+    );
+    let stall = silence(1920, false);
+    let failed = Interrupted::Failed(ArchonError::Unavailable("no answer".into()));
+    let failed = interrupt_text(&stall, &[], &failed);
+    assert!(
+        failed.contains("silent for 32 minutes")
+            && failed.contains("could not interrupt it")
+            && failed.contains("tries again in 5 minutes")
+            && failed.contains("archon orchestrator restart"),
+        "{failed}"
+    );
+    let idle = interrupt_text(&stall, &[], &Interrupted::NoTurn);
+    assert!(idle.contains("no turn running"), "{idle}");
+    assert!(nudge_text(&mail).contains("operator's mail is waiting"));
+    assert!(stall_text(&stall).contains("in one turn for 32 minutes"));
 }

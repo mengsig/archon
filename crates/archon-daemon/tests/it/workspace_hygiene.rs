@@ -619,6 +619,7 @@ async fn a_stage_publishes_files_that_outlive_its_worktree_and_reach_dependents(
 
 async fn depends_on(h: &Harness, title: &str, after: &QueueItem) -> QueueItem {
     let request = EnqueueRequest {
+        intent: None,
         onto: None,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),

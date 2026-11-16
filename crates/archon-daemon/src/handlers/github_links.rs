@@ -142,6 +142,7 @@ pub(super) async fn import_issue(
     let issue = import::read_issue(ctx, &repo, &reference).await?;
     let title = import::title(&reference, &issue.cached.object.title);
     let request = EnqueueRequest {
+        intent: None,
         repo: Some(crate::resolve::repo_ref(&repo.id)),
         pipeline,
         brief: import::brief(&reference, &issue.cached.object.title, &issue.body),

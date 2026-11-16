@@ -1,7 +1,6 @@
 //! `archon daemon run|start|stop|status|restart|upgrade` and `archon mcp`.
 
 use std::io::Read as _;
-use std::os::unix::process::CommandExt as _;
 use std::path::Path;
 use std::process::{Child, ChildStderr, Command, ExitCode, Stdio};
 use std::sync::Arc;
@@ -92,6 +91,9 @@ async fn status(json: bool) -> anyhow::Result<ExitCode> {
 }
 
 async fn foreground(detached: bool) -> anyhow::Result<ExitCode> {
+    if detached {
+        leave_terminal_session()?;
+    }
     warn_if_mixed(detached);
     let mut config = Config::load_default()?;
     let instance = Instance::resolve()?;
@@ -152,6 +154,20 @@ pub(super) fn refuse_mixed_locations(command: &str) -> anyhow::Result<()> {
 
 /// Start `archon daemon run` in its own process group, appending to the startup log
 /// beside the socket, and wait until it listens; fail as soon as it exits first.
+/// Lead a new session with no controlling terminal, so nothing archond
+/// starts can read the operator's terminal: a background reader of
+/// `/dev/tty` is stopped by SIGTTIN, and SIGTERM does not end it.
+fn leave_terminal_session() -> anyhow::Result<()> {
+    let session = rustix::process::setsid().context("starting archond's own session")?;
+    assert_eq!(
+        session,
+        rustix::process::getpid(),
+        "archond leads its session"
+    );
+    assert_eq!(rustix::process::getpgrp(), session, "and its process group");
+    Ok(())
+}
+
 async fn detach(json: bool) -> anyhow::Result<ExitCode> {
     match detach_once(json).await {
         Ok(code) => Ok(code),
@@ -186,9 +202,8 @@ async fn detach_once(json: bool) -> anyhow::Result<ExitCode> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
-        // Its own process group: a Ctrl-C in the operator's terminal must
-        // not reach the daemon.
-        .process_group(0)
+        // Not its own process group: it starts its own session, which keeps
+        // a Ctrl-C in the operator's terminal from reaching it.
         .spawn()
         .context("starting archond")?;
     let pid = child.id();

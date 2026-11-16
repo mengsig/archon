@@ -102,6 +102,10 @@ pub async fn dispatch_once(ctx: &DaemonContext) -> Result<DispatchPlan, ArchonEr
         return Ok(DispatchPlan::default());
     }
     let mut first_error = None;
+    keep_error(
+        &mut first_error,
+        crate::clarifications::expire(ctx, archon_core::now()).await,
+    )?;
     disk_hold::check(ctx).await?;
     if crate::gc::before_dispatch(ctx).await? {
         disk_hold::check(ctx).await?;

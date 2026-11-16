@@ -29,6 +29,8 @@ use crate::mirror::{self, Reach};
 use crate::triggers::{self, TriggerEvent};
 use crate::{executor, feed};
 
+mod contract_reviewers;
+
 const CHILD_KEY_PREFIX: &str = "link_child_";
 const STAGE_AGENT_KEY_PREFIX: &str = "link_stage_agent_";
 /// Aether calls one pruning pass may make about the orchestrator's children.
@@ -107,7 +109,7 @@ pub(super) async fn agent_created(
     let most = ctx.config.limits.max_delegation_depth;
     let refusal = match depth_refusal(depth, most, item.is_none()) {
         Some(refusal) => Some(refusal),
-        None => violation(ctx, agent, model, item.as_ref()).await?,
+        None => violation(ctx, (agent, parent), model, item.as_ref()).await?,
     };
     match refusal {
         Some(refusal) => cancel_child(ctx, agent, model, item, &refusal).await,
@@ -231,34 +233,49 @@ fn depth_refusal(depth: u32, most: u32, helper: bool) -> Option<String> {
     ))
 }
 
-/// Why the child may not run: it breaks its model policy, or it is the
-/// orchestrator's helper (no `item`) placed inside a repository.
+/// Why the child may not run: it breaks its model policy or the reviewer
+/// models its lead was given, or it is the orchestrator's helper (no `item`)
+/// placed inside a repository.
 async fn violation(
     ctx: &DaemonContext,
-    agent: &AetherAgentId,
+    (agent, parent): (&AetherAgentId, &AetherAgentId),
     model: &ModelRef,
     item: Option<&QueueItemId>,
 ) -> Result<Option<String>, ArchonError> {
+    assert_ne!(agent, parent, "an agent is not its own parent");
     let Some(item) = item else {
         return helper_violation(ctx, agent, model).await;
     };
     let policy = item_policy(ctx, item).await?;
     let reviewers = ctx.store.lock().await.item(item)?.model_plan;
     let Some(named) = reviewers.reviewer_choices() else {
-        return policy_violation(ctx, agent, model, &policy).await;
+        if let Some(refusal) = policy_violation(ctx, agent, model, &policy).await? {
+            return Ok(Some(refusal));
+        }
+        let Some(held) = held_by_aether(ctx, agent).await? else {
+            return Ok(None);
+        };
+        if let Some(refusal) = contract_reviewers::violation(ctx, parent, model, &held).await? {
+            return Ok(Some(refusal));
+        }
+        return contract_reviewers::alone_violation(ctx, parent, &held).await;
     };
     let held = held_by_aether(ctx, agent).await?;
     let refusal = match &held {
         Some(held) => policy_refusal(&policy, model, held),
         None => model_refusal(&policy, model),
     };
-    Ok(match refusal {
-        Some(refusal) => Some(refusal.to_string()),
-        None => held.and_then(|held| {
-            let sizing = ctx.config.models.effort_sizing;
-            reviewer_refusal(named, model, &held, sizing)
-        }),
-    })
+    if let Some(refusal) = refusal {
+        return Ok(Some(refusal.to_string()));
+    }
+    let Some(held) = held else {
+        return Ok(None);
+    };
+    let sizing = ctx.config.models.effort_sizing;
+    if let Some(refusal) = reviewer_refusal(named, model, &held, sizing) {
+        return Ok(Some(refusal));
+    }
+    contract_reviewers::alone_violation(ctx, parent, &held).await
 }
 
 /// Why a child of an item with no reviewer plan breaks the model policy.

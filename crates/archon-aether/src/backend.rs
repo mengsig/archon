@@ -27,6 +27,10 @@ use crate::wire::{
 /// Everything else (`completed`, `failed`, `cancelled`, `imported`) is final.
 pub const LIVE_STATES: &[&str] = &["created", "ready", "running", "waiting", "blocked"];
 
+/// Aether agent states it names final: the agent can no longer act or take
+/// children. A state in neither list may still act.
+pub const STOPPED_STATES: &[&str] = &["completed", "failed", "cancelled", "imported"];
+
 #[derive(Debug)]
 pub struct AetherBackend {
     link: Arc<AetherLink>,
@@ -91,6 +95,12 @@ fn ended_why(agent: &Agent) -> String {
 
 pub fn agent_is_live(agent: &Agent) -> bool {
     LIVE_STATES.contains(&agent_state(agent).as_str())
+}
+
+/// Whether `agent` is in a state Aether names final; an unknown or missing
+/// state is not, so nothing that may still act counts as stopped.
+pub fn agent_is_stopped(agent: &Agent) -> bool {
+    STOPPED_STATES.contains(&agent_state(agent).as_str())
 }
 
 /// The pulse of `root` and the agents `beneath` it: whether any engine is
@@ -272,7 +282,12 @@ pub fn stage_create_agent(request: &SpawnRequest, network: NetworkPolicy) -> Cre
             names: request.hidden_tools.iter().cloned().collect(),
         },
     };
+    assert!(
+        !request.leaf || request.delegation_policy.is_none(),
+        "only an agent that may delegate is sent a worker policy"
+    );
     CreateAgent {
+        references: request.references.clone(),
         role: request.role.clone(),
         name: Some(request.name.clone()),
         objective: Some(request.objective.clone()),
@@ -296,6 +311,7 @@ pub fn stage_create_agent(request: &SpawnRequest, network: NetworkPolicy) -> Cre
             tools,
             long_lived: request.keep,
             leaf: request.leaf,
+            delegation_policy: request.delegation_policy.clone(),
         }),
         approval: Some(ApprovalPolicy::none()),
         run: request.attach_run.clone(),
@@ -323,6 +339,7 @@ pub fn run_node_create_agent(request: &RunNodeRequest) -> CreateAgent {
     );
     assert!(!request.name.trim().is_empty(), "a run node has a name");
     CreateAgent {
+        references: Vec::new(),
         role: request.role.clone(),
         name: Some(request.name.clone()),
         objective: None,
@@ -348,6 +365,7 @@ pub fn run_node_create_agent(request: &RunNodeRequest) -> CreateAgent {
             },
             long_lived: false,
             leaf: false,
+            delegation_policy: None,
         }),
         approval: Some(ApprovalPolicy::none()),
         run: request.attach_run.clone(),
@@ -491,6 +509,13 @@ impl AgentBackend for AetherBackend {
             None => client.daemon_defaults().await?.network_default,
         };
         require_host_context(&client, request.host_context)?;
+        if !request.references.is_empty()
+            && !client.welcome().features.iter().any(|f| f == "references")
+        {
+            return Err(ArchonError::Unavailable(
+                "Aether lacks references required by the frozen creation request".into(),
+            ));
+        }
         let agent = client
             .create_agent(stage_create_agent(&request, network))
             .await?;
@@ -583,12 +608,24 @@ impl AgentBackend for AetherBackend {
         }
     }
 
+    async fn is_stopped(&self, agent: &AetherAgentId) -> Result<bool, ArchonError> {
+        match self.link.client()?.get_agent(agent).await {
+            Ok(found) => Ok(agent_is_stopped(&found)),
+            Err(ArchonError::NotFound(_)) => Ok(true),
+            Err(error) => Err(error),
+        }
+    }
+
     async fn cancel(&self, agent: &AetherAgentId, reason: &str) -> Result<(), ArchonError> {
         self.link.client()?.cancel(agent, reason).await
     }
 
     async fn wake(&self, agent: &AetherAgentId) -> Result<(), ArchonError> {
         self.link.client()?.wake(agent).await.map(|_| ())
+    }
+
+    async fn archive(&self, agent: &AetherAgentId) -> Result<(), ArchonError> {
+        self.link.client()?.archive(agent).await
     }
 
     async fn engine_login(&self, provider: &str) -> Result<Option<String>, ArchonError> {
@@ -786,6 +823,7 @@ mod tests {
 
     fn request() -> SpawnRequest {
         SpawnRequest {
+            references: Vec::new(),
             host_context: Default::default(),
             idempotency_key: "stg_01".into(),
             role: "archon-stage:direct/implement".into(),
@@ -811,6 +849,7 @@ mod tests {
             parent: Some(node_id()),
             network: Some(NetworkPolicy::Denied),
             keep: false,
+            delegation_policy: None,
         }
     }
 
@@ -828,6 +867,38 @@ mod tests {
             labels: [("archon.item".to_owned(), "qi_1".to_owned())].into(),
             attach_run: None,
         }
+    }
+
+    #[test]
+    fn a_lead_s_worker_policy_rides_in_its_config_and_a_stored_request_sends_none() {
+        use archon_core::delegation::{WorkerChoice, WorkerPolicy};
+        use archon_core::model_tier::Tier;
+        let workers = vec![WorkerChoice::of_tier(Tier::Balanced, Effort::Medium)];
+        let policy = WorkerPolicy::new(workers, Some(Tier::Balanced), Some(2))
+            .unwrap()
+            .with_reviewers(vec!["codex/terra".parse().unwrap()]);
+        let lead = SpawnRequest {
+            references: Vec::new(),
+            leaf: false,
+            delegation_policy: Some(policy),
+            ..request()
+        };
+        let frame = serde_json::to_value(stage_create_agent(&lead, NetworkPolicy::Denied)).unwrap();
+        let sent = &frame["config"]["delegation_policy"];
+        assert_eq!(
+            sent["workers"][0],
+            serde_json::json!({"tier": "balanced", "effort": "medium"})
+        );
+        assert_eq!(sent["max_parallel"], 2);
+        assert_eq!(sent["exempt_roles"], serde_json::json!(["reviewer"]));
+        assert_eq!(sent["exempt_models"][0]["provider"], "codex");
+        // A request stored before the field existed loads without it and is resent as it was.
+        let mut stored = serde_json::to_value(request()).unwrap();
+        assert!(stored.get("delegation_policy").is_none());
+        stored.as_object_mut().unwrap().remove("delegation_policy");
+        let old: SpawnRequest = serde_json::from_value(stored).unwrap();
+        let frame = serde_json::to_value(stage_create_agent(&old, NetworkPolicy::Denied)).unwrap();
+        assert!(frame["config"].get("delegation_policy").is_none());
     }
 
     #[test]
@@ -922,6 +993,25 @@ mod tests {
         }
         agent.status = serde_json::json!({});
         assert_eq!(agent_state(&agent), "unknown");
+    }
+
+    #[test]
+    fn only_a_state_aether_names_final_is_stopped() {
+        let mut agent: Agent = serde_json::from_value(crate::fake::agent("agt_1", None)).unwrap();
+        for state in STOPPED_STATES {
+            agent.status = serde_json::json!({"state": state});
+            assert!(agent_is_stopped(&agent), "{state}");
+            assert!(!agent_is_live(&agent), "{state}");
+        }
+        for state in LIVE_STATES.iter().chain(&["bogus", ""]) {
+            agent.status = serde_json::json!({"state": state});
+            assert!(!agent_is_stopped(&agent), "{state}");
+        }
+        for status in [serde_json::json!({}), serde_json::json!({"state": 3})] {
+            agent.status = status;
+            assert!(!agent_is_stopped(&agent), "{}", agent.status);
+            assert!(!agent_is_live(&agent), "{}", agent.status);
+        }
     }
 
     fn held(id: &str, parent: Option<&str>, state: &str) -> Agent {

@@ -715,7 +715,8 @@ enum Found {
 /// replayed under its key first, so a node Aether created behind a lost
 /// reply is found and cancelled rather than leaked. Waiting and an
 /// unanswered call both leave the entry for the next sweep
-/// (`runs_to_retire`).
+/// (`runs_to_retire`). Retiring owes the archive of the run's ended agents
+/// (`archive::owe_finished`) and wakes the worker that makes it.
 pub(super) async fn retire(ctx: &DaemonContext, run: &PipelineRunId) -> Result<(), ArchonError> {
     let node = load_node(&*ctx.store.lock().await, run)?;
     if turn_still_ending(ctx, run, archon_core::now()).await? {
@@ -742,7 +743,9 @@ pub(super) async fn retire(ctx: &DaemonContext, run: &PipelineRunId) -> Result<(
             return Ok(());
         }
     }
-    ctx.store.lock().await.kv_delete(&node_key(run))
+    let owed = super::archive::owe_finished(&mut *ctx.store.lock().await, run, &node_key(run))?;
+    super::archive::announce(ctx, &owed);
+    Ok(())
 }
 
 /// Cancellation is cooperative. An unanswered lookup keeps the durable

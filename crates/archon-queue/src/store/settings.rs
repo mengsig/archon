@@ -134,6 +134,25 @@ pub(super) fn kv_delete(conn: &Connection, key: &str) -> Result<(), ArchonError>
     Ok(())
 }
 
+pub(super) fn kv_update(
+    conn: &mut Connection,
+    set: &[(&str, &str)],
+    delete: &[&str],
+) -> Result<(), ArchonError> {
+    assert!(
+        set.iter().all(|(key, _)| !delete.contains(key)),
+        "a key is either written or removed"
+    );
+    let tx = super::codec::write_tx(conn)?;
+    for (key, value) in set {
+        kv_set(&tx, key, value)?;
+    }
+    for key in delete {
+        kv_delete(&tx, key)?;
+    }
+    tx.commit().ctx("commit kv update")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,6 +174,24 @@ mod tests {
                 "{prefix:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_kv_update_that_fails_part_way_changes_nothing() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::store::schema::migrate(&mut conn).unwrap();
+        kv_set(&conn, "kept", "before").unwrap();
+        let refused = kv_update(&mut conn, &[("kept", "after"), ("new", "1")], &[" "]);
+        assert!(
+            matches!(refused, Err(ArchonError::Invalid(_))),
+            "{refused:?}"
+        );
+        assert_eq!(kv_get(&conn, "kept").unwrap().as_deref(), Some("before"));
+        assert_eq!(kv_get(&conn, "new").unwrap(), None, "rolled back");
+
+        kv_update(&mut conn, &[("new", "1")], &["kept"]).unwrap();
+        assert_eq!(kv_get(&conn, "kept").unwrap(), None);
+        assert_eq!(kv_get(&conn, "new").unwrap().as_deref(), Some("1"));
     }
 
     /// The query `kv_prefix` runs, planned against the migrated schema.

@@ -465,6 +465,17 @@ pub enum DirectiveSource {
     Orchestrator,
 }
 
+/// Explicit authorization carried by a revocable, expiring operator directive.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ClarificationPolicy {
+    #[default]
+    Ask,
+    Proceed,
+}
+
 /// A standing operator instruction ("fully autonomous today") that steers
 /// the orchestrator's knob choices within the ceiling; it never raises it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -472,6 +483,8 @@ pub struct Directive {
     pub id: DirectiveId,
     pub text: String,
     pub source: DirectiveSource,
+    #[serde(default)]
+    pub clarifications: ClarificationPolicy,
     pub set_at: Timestamp,
     pub expires_at: Option<Timestamp>,
 }
@@ -511,6 +524,7 @@ impl Directive {
             id: DirectiveId::new(),
             text: text.to_owned(),
             source,
+            clarifications: ClarificationPolicy::Ask,
             set_at: now,
             expires_at,
         })

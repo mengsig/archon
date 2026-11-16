@@ -417,6 +417,7 @@ fn an_entry_a_sweep_still_owes_keeps_its_item() {
         format!("steer_owed:{}", stage.id),
         format!("sibling_stop:{}", stage.id),
         format!("descendant_stop:{}", stage.id),
+        format!("archive:{}", stage.id),
         format!("build_release:{}", queued.id),
     ];
 

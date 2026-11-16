@@ -57,6 +57,9 @@ fn request_value(item: &QueueItem, asked: &Asked) -> serde_json::Value {
     if !item.stage_timeouts.is_empty() {
         value["stage_timeouts"] = serde_json::json!(item.stage_timeouts);
     }
+    if let Some(intent) = &item.intent {
+        value["intent"] = serde_json::json!(intent);
+    }
     if let Some(origin) = &item.origin {
         value["origin"] = serde_json::json!(origin);
     }
@@ -151,7 +154,7 @@ fn replace_deps(conn: &Connection, item: &QueueItem) -> Result<(), ArchonError> 
 }
 
 /// Rewrites every derived column from `item`, so columns and `data` agree.
-fn write_columns(conn: &Connection, item: &QueueItem) -> Result<(), ArchonError> {
+pub(super) fn write_columns(conn: &Connection, item: &QueueItem) -> Result<(), ArchonError> {
     let changed = conn
         .execute(
             "UPDATE items SET repo = ?2, pipeline = ?3, priority = ?4, state = ?5, tags = ?6,

@@ -311,6 +311,7 @@ mod tests {
             connected: true,
         };
         let item = QueueItem {
+            intent: None,
             onto: None,
             id: QueueItemId::new(),
             repo: None,

@@ -102,7 +102,7 @@ pub(crate) fn open_in(
 
 /// The shell command a call's input names: Claude's `command`, or Codex's
 /// `command` list or `cmd`.
-fn command_of(input: Option<&Value>) -> Option<String> {
+pub(crate) fn command_of(input: Option<&Value>) -> Option<String> {
     let input = input?;
     let raw = input.get("command").or_else(|| input.get("cmd"))?;
     let command = match raw {
@@ -117,7 +117,7 @@ fn command_of(input: Option<&Value>) -> Option<String> {
     (!command.trim().is_empty()).then_some(command)
 }
 
-fn text<'a>(value: Option<&'a Value>, what: &str) -> Result<&'a str, ArchonError> {
+pub(crate) fn text<'a>(value: Option<&'a Value>, what: &str) -> Result<&'a str, ArchonError> {
     value
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
@@ -125,16 +125,16 @@ fn text<'a>(value: Option<&'a Value>, what: &str) -> Result<&'a str, ArchonError
 }
 
 /// The parts of a raw event the walk reads.
-struct Event<'a> {
-    seq: u64,
-    at: Timestamp,
-    agent: Option<&'a str>,
-    type_name: &'a str,
-    kind: &'a Value,
+pub(crate) struct Event<'a> {
+    pub(crate) seq: u64,
+    pub(crate) at: Timestamp,
+    pub(crate) agent: Option<&'a str>,
+    pub(crate) type_name: &'a str,
+    pub(crate) kind: &'a Value,
 }
 
 impl<'a> Event<'a> {
-    fn of(raw: &'a Value) -> Result<Self, ArchonError> {
+    pub(crate) fn of(raw: &'a Value) -> Result<Self, ArchonError> {
         let bad = |what: &str| ArchonError::Protocol(format!("an event's {what} did not decode"));
         let seq = raw
             .get("seq")
@@ -159,7 +159,7 @@ impl<'a> Event<'a> {
         })
     }
 
-    fn field(&self, name: &str) -> &'a Value {
+    pub(crate) fn field(&self, name: &str) -> &'a Value {
         self.kind.get(name).unwrap_or(&Value::Null)
     }
 }

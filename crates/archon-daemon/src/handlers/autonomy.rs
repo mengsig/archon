@@ -70,6 +70,7 @@ pub(super) async fn set_directive(
     client: ClientKind,
     text: &str,
     expires_in_hours: Option<u32>,
+    clarifications: archon_core::autonomy::ClarificationPolicy,
 ) -> Result<Reply, ArchonError> {
     let source = match client {
         ClientKind::ArchonMcp => DirectiveSource::Orchestrator,
@@ -77,7 +78,13 @@ pub(super) async fn set_directive(
             DirectiveSource::Operator
         }
     };
-    let directive = Directive::new(text, source, expires_in_hours, archon_core::now())?;
+    if clarifications == archon_core::autonomy::ClarificationPolicy::Proceed
+        && source != DirectiveSource::Operator
+    {
+        return Err(ArchonError::Forbidden("Only an authenticated operator can authorize proceeding with recorded deviations and assumptions".into()));
+    }
+    let mut directive = Directive::new(text, source, expires_in_hours, archon_core::now())?;
+    directive.clarifications = clarifications;
     ctx.store.lock().await.insert_directive(&directive)?;
     let until = match directive.expires_at {
         Some(at) => format!(" until {}", at.format("%Y-%m-%d %H:%M UTC")),

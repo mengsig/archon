@@ -7,6 +7,7 @@ mod build_cache;
 mod chat_answer;
 mod chat_merge;
 mod chat_ops;
+pub mod clarifications;
 mod command_notice;
 pub mod compose;
 pub mod context;
@@ -458,6 +459,7 @@ fn spawn_workers(
     spawn_link_workers(workers, ctx, endpoint, starter);
     worker!("dispatcher", dispatcher::run);
     worker!("coordination", executor::coordination::run);
+    worker!("agent archiving", executor::archive::run);
     worker!(
         "mergeability waits",
         executor::coordination::watch_mergeability
@@ -481,7 +483,7 @@ fn spawn_workers(
     }
     assert_eq!(
         workers.len(),
-        21 + usize::from(auto_gc) + usize::from(verifies),
+        22 + usize::from(auto_gc) + usize::from(verifies),
         "every daemon worker is supervised"
     );
 }

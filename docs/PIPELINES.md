@@ -291,6 +291,48 @@ effort, or missing or unrecognised effort. Without the key the
 lead is told to use a model the item's policy allows other than its own, or
 its own when the policy allows no other.
 
+A delegating lead's workers (every child but a reviewer) are bounded too.
+The pipeline declares their default, and an item's `model_plan` may replace
+it with up to four `{model|tier, effort}` choices under `<stage>.workers`
+(and say why in `model_reasons`, an effort above the default needing it):
+
+```toml
+[pipeline.workers]
+tier = "balanced"     # any model of this tier
+effort = "medium"     # the default and the cap
+max_parallel = 2      # optional, 1 to 8
+```
+
+Archon sends the result to the lead's Aether agent as its
+`config.delegation_policy`: `{workers: [{model|tier, effort}], default_tier,
+max_effort, max_parallel, exempt_roles, exempt_models}`. When the stage owes
+reviewers, `exempt_roles` is `["reviewer"]` and `exempt_models` the models
+the contract names for them: a child with that role is not held to
+`workers`, may run on those models, and on any other is held to the lead's
+tier. Aether's `delegate` refuses a child outside it, and Archon's
+delegation watchdog cancels a reviewer on a model outside `exempt_models`,
+so a lead cannot pass a clone of its own model off as a reviewer. A named
+reviewer the model policy has since denied is left out of `exempt_models`.
+The policy sent is narrowed to the model policy in force at the spawn, and
+`get_item` shows it so: each effort is capped at `[models] max_effort`, a
+denied planned model is dropped, and a tier is kept whole only under an open
+policy with a catalog model of it; otherwise it becomes the permitted
+catalog model `resolve` picks at or below it, or is dropped when the catalog
+cannot place one. The contract's worker rule lists exactly what is sent.
+
+With no planned worker left (an empty catalog after a failed refresh, a
+restrictive allow or deny list, a lead the catalog does not rank), the
+workers fail closed and the review does not: the lead still spawns, with its
+reviewer exemptions, under the narrowest policy, which is one worker at a
+time (`max_parallel = 1`) at effort low on the cheapest permitted catalog
+model other than the lead's own. Aether reads an empty `workers` as its
+tier rule, not as "none", so with no such model the lead is sent
+`workers = []` capped the same way with `default_tier = "fast"`, told to
+work alone, and Archon's delegation watchdog cancels any child of it but a
+reviewer as it spawns. The lead's own model is never the fallback. Either way Archon records a stage note, shown by `get_item`:
+`no permitted worker model resolved (<cause>); the lead works alone` (or the
+one worker it may use). The stage is neither deferred nor failed.
+
 Such a pipeline takes its review level from the item, not from its
 manifest. An item's `review` knob chooses `none`, `standard` or `strict`,
 and the stage delegates that many independent reviewers:

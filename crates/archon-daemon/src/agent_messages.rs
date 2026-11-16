@@ -68,13 +68,19 @@ pub(crate) async fn send(
     caller: Option<&AetherAgentId>,
     kind: MessageKind,
     text: String,
+    options: Option<archon_core::agent_message::ClarificationOptions>,
 ) -> Result<Reply, ArchonError> {
-    check_text(&text)?;
+    if kind == MessageKind::Question {
+        archon_core::agent_message::check_question(&text)?;
+    } else {
+        check_text(&text)?;
+    }
     let agent = caller.ok_or_else(|| {
         ArchonError::Forbidden(
             "message_orchestrator requires Aether caller metadata (send_caller_meta = true)".into(),
         )
     })?;
+    let mut clarification = None;
     let receipt = {
         let mut store = ctx.store.lock().await;
         let Some(stage) = store.stage_run_by_agent(agent)? else {
@@ -86,23 +92,93 @@ pub(crate) async fn send(
                 "this stage has already settled".into(),
             ));
         }
-        let most = ctx.config.limits.max_agent_messages;
-        let (key, paid) = match allowance::charge(&store, agent, kind, most)? {
-            Charge::Paid { key, value } => (key, value),
-            Charge::Refused { reserve_left } => {
-                let refusal =
-                    allowance::refuse(&mut store, agent, Some(&stage), most, reserve_left)?;
-                drop(store);
-                return Err(refused(ctx, refusal));
+        if kind == MessageKind::Question {
+            let (receipt, record) = record_question(
+                &mut store,
+                agent,
+                &stage,
+                &text,
+                options,
+                ctx.config.limits.clarification_timeout_minutes,
+            )?;
+            clarification = Some(Box::new(record));
+            receipt
+        } else {
+            match record_counted(
+                &mut store,
+                agent,
+                &stage,
+                kind,
+                text,
+                ctx.config.limits.max_agent_messages,
+            ) {
+                Ok(receipt) => receipt,
+                Err(refusal) => {
+                    drop(store);
+                    return Err(refused(ctx, refusal));
+                }
             }
-        };
-        let message = stage_message(&store, agent, &stage, kind, text)?;
-        triggers::record_message(&mut store, message, &[(&key, &paid)])?
+        }
     };
     publish(ctx, &receipt);
     Ok(Reply::MessageReceipt {
         receipt: receipt.id,
+        clarification,
     })
+}
+
+fn record_question(
+    store: &mut Store,
+    agent: &AetherAgentId,
+    stage: &StageRun,
+    text: &str,
+    options: Option<archon_core::agent_message::ClarificationOptions>,
+    minutes: u32,
+) -> Result<(FeedItem, archon_core::agent_message::Clarification), ArchonError> {
+    assert_eq!(stage.aether_agent.as_ref(), Some(agent));
+    assert!(!stage.state.is_terminal());
+    let record = crate::clarifications::prepare(store, stage, text, options, minutes)?;
+    let key = crate::clarifications::key(&record.id);
+    let raw = serde_json::to_string(&record)?;
+    let message = stage_message(
+        store,
+        agent,
+        stage,
+        MessageKind::Question,
+        record.describe(),
+    )?;
+    let receipt = triggers::record_message(store, message, &[(&key, &raw)])?;
+    Ok((receipt, record))
+}
+
+fn record_counted(
+    store: &mut Store,
+    agent: &AetherAgentId,
+    stage: &StageRun,
+    kind: MessageKind,
+    text: String,
+    most: u32,
+) -> Result<FeedItem, Refusal> {
+    assert_ne!(
+        kind,
+        MessageKind::Question,
+        "questions never spend the allowance"
+    );
+    assert_eq!(stage.aether_agent.as_ref(), Some(agent));
+    let (key, paid) = match allowance::charge(store, agent, kind, most)? {
+        Charge::Paid { key, value } => (key, value),
+        Charge::Refused { reserve_left } => {
+            return Err(allowance::refuse(
+                store,
+                agent,
+                Some(stage),
+                most,
+                reserve_left,
+            )?);
+        }
+    };
+    let message = stage_message(store, agent, stage, kind, text)?;
+    Ok(triggers::record_message(store, message, &[(&key, &paid)])?)
 }
 
 /// `agent`'s message from `stage`, a relay credited to the operator only
@@ -239,6 +315,7 @@ fn grant_orchestrator_reply(
     if orchestrator.as_deref() != Some(id.as_str()) || !allowance::runs_live_stage(store, target)? {
         return Ok(());
     }
+    crate::clarifications::answer(store, target, &incoming.text)?;
     grant_reply(store, target, Some(seq))
 }
 
@@ -323,6 +400,7 @@ fn remember_operator(
     if incoming.sender != MessageSender::Operator || store.stage_run_by_agent(target)?.is_none() {
         return Ok(());
     }
+    crate::clarifications::answer(store, target, &incoming.text)?;
     let key = operator_key(target);
     let old: Option<OperatorMessage> = read(store, &key)?;
     if old.is_some_and(|m| seq <= m.seq) {

@@ -263,6 +263,8 @@ pub enum Request {
     MessageOrchestrator {
         text: String,
         #[serde(default)]
+        clarification: Option<crate::agent_message::ClarificationOptions>,
+        #[serde(default)]
         kind: crate::agent_message::MessageKind,
         /// Aether's out-of-band MCP caller identity, never a tool argument.
         caller: Option<AetherAgentId>,
@@ -316,6 +318,7 @@ pub enum Request {
     },
 
     Enqueue(EnqueueRequest),
+    ApproveIntent(crate::intent::ApprovedIntent),
     ListItems(ItemQuery),
     /// Like `ListItems`, each item with its live stage, spend and PR URL.
     ListItemSummaries(ItemQuery),
@@ -526,6 +529,8 @@ pub enum Request {
     /// choices and never raises the ceiling, so the MCP proxy may send it.
     SetDirective {
         text: String,
+        #[serde(default)]
+        clarifications: crate::autonomy::ClarificationPolicy,
         expires_in_hours: Option<u32>,
     },
     /// Clear one directive, or every directive when `None`.
@@ -831,6 +836,10 @@ impl Request {
             | Self::RemotePair { .. }
             | Self::RemoteRevoke { .. }
             | Self::Answer { .. } => OperatorChange,
+            Self::SetDirective {
+                clarifications: crate::autonomy::ClarificationPolicy::Proceed,
+                ..
+            } => OperatorChange,
             Self::RepoAdd(add) if add.auto_merge || add.github_watch => OperatorChange,
             Self::Pause(PauseTarget::Global { hard: true })
             | Self::Resume(PauseTarget::Global { hard: true }) => OperatorChange,
@@ -839,6 +848,7 @@ impl Request {
             | Self::Resume(_)
             | Self::MessageOrchestrator { .. }
             | Self::PublishArtifact { .. }
+            | Self::ApproveIntent(_)
             | Self::Enqueue(_)
             | Self::UpdateItem { .. }
             | Self::CancelItem { .. }
@@ -1023,6 +1033,8 @@ impl<T> Clearable<T> {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EnqueueRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent: Option<crate::intent::IntentBinding>,
     /// Required unless the pipeline has `requires_repo = false`.
     pub repo: Option<RepoRef>,
     /// `None` uses the repository's default pipeline.
@@ -1142,6 +1154,8 @@ pub enum Reply {
     },
     MessageReceipt {
         receipt: crate::id::FeedItemId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        clarification: Option<Box<crate::agent_message::Clarification>>,
     },
     Welcome(Welcome),
     Ok,
@@ -1546,6 +1560,9 @@ pub struct DaemonStatus {
     /// Agents of running stages at their `max_agent_messages` cap, first refused first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub message_caps: Vec<crate::agent_message::MessageCap>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Stage clarifications: open only in status, complete history in item detail.
+    pub clarifications: Vec<crate::agent_message::Clarification>,
     /// GitHub comments not yet seen posted, longest due first, at most
     /// [`MAX_OUTBOX_SHOWN`]; `github_outbox_pending` counts them all.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1971,6 +1988,8 @@ pub struct WaitingOn {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ItemDetail {
+    #[serde(default)]
+    pub acceptance: crate::acceptance::AcceptanceReadiness,
     pub item: QueueItem,
     pub runs: Vec<PipelineRun>,
     /// Stage runs of every run, oldest first.
@@ -1985,6 +2004,15 @@ pub struct ItemDetail {
     /// The default effort of each plan key, to see which choices exceed it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub default_efforts: BTreeMap<String, Effort>,
+    /// What each delegating stage's lead may run workers on, by stage id:
+    /// its `<stage>.workers` plan key, else the pipeline's worker default.
+    /// Its reviewers' bound is added when the lead spawns.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub worker_policies: BTreeMap<String, crate::delegation::WorkerPolicy>,
+    /// What Archon recorded on a stage run as it spawned, by stage run: such
+    /// as a lead the model policy left no permitted worker.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub stage_notes: BTreeMap<StageRunId, String>,
     /// Every steer of the item, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub steers: Vec<crate::steer::SteerRecord>,
@@ -2004,6 +2032,9 @@ pub struct ItemDetail {
     /// Agents of its running stages at their `max_agent_messages` cap.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub message_caps: Vec<crate::agent_message::MessageCap>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Stage clarifications: open only in status, complete history in item detail.
+    pub clarifications: Vec<crate::agent_message::Clarification>,
 }
 
 /// An agent a stage agent delegated to, itself or through another.
@@ -2483,6 +2514,7 @@ mod tests {
     #[test]
     fn item_summaries_carry_the_items_own_fields_at_the_top() {
         let item = QueueItem {
+            intent: None,
             onto: None,
             id: QueueItemId::new(),
             repo: None,

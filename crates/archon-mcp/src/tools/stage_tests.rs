@@ -248,7 +248,10 @@ fn item_detail(stage: StageRun) -> ItemDetail {
     });
     item.id = run.item.clone();
     ItemDetail {
+        acceptance: Default::default(),
         default_efforts: Default::default(),
+        worker_policies: Default::default(),
+        stage_notes: Default::default(),
         steers: Vec::new(),
         waiting_on: None,
         waiting_reason: None,
@@ -262,6 +265,7 @@ fn item_detail(stage: StageRun) -> ItemDetail {
         merges: Vec::new(),
         stage_warnings: Vec::new(),
         message_caps: Vec::new(),
+        clarifications: Vec::new(),
     }
 }
 

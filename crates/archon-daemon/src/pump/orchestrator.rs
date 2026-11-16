@@ -23,7 +23,6 @@ pub(super) async fn handle(ctx: &DaemonContext, event: &AetherEvent) -> Result<(
     if supervisor::current_orchestrator(ctx).await?.as_ref() != Some(agent) {
         return Ok(());
     }
-    ctx.supervisor.saw_event(agent, &event.kind);
     let handled = apply(ctx, agent, event).await;
     // After applying, so a woken reader finds what the event recorded, such
     // as the numbered question of an `ask_user`.
@@ -100,6 +99,27 @@ async fn operator_message(
     message: &InboxMessage,
 ) -> Result<(), ArchonError> {
     assert!(seq > 0, "inbox seqs start at 1");
+    if message.channel.is_some() {
+        let agent = event
+            .agent
+            .as_ref()
+            .expect("orchestrator event names its agent");
+        let key = crate::handlers::intent::inbox_key(&agent.to_string(), seq);
+        let mut store = ctx.store.lock().await;
+        if let Some(existing) = store.kv_get(&key)? {
+            if existing != message.text {
+                return Err(ArchonError::Corrupt(format!(
+                    "operator inbox sequence {seq} changed"
+                )));
+            }
+        } else {
+            store.kv_set(&key, &message.text)?;
+        }
+        if !message.images.is_empty() {
+            let key = crate::handlers::intent::inbox_images_key(&agent.to_string(), seq);
+            store.kv_set(&key, &serde_json::to_string(&message.images)?)?;
+        }
+    }
     // Marked seen first: a crash here drops the command, never repeats it.
     if !feed::first_sight(ctx, event.seq).await? {
         return Ok(());

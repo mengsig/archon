@@ -60,6 +60,7 @@ pub fn item(repo: Option<&Repo>, title: &str) -> QueueItem {
     let mut plan = ModelPlan::default();
     plan.0.insert("implement".into(), vec![choice()]);
     QueueItem {
+        intent: None,
         onto: None,
         id: QueueItemId::new(),
         repo: repo.map(|r| r.id.clone()),

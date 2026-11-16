@@ -81,6 +81,7 @@ pub(super) async fn status(ctx: &DaemonContext, query: StatusQuery) -> Result<Re
         recovery: ctx.recovery.progress(),
         integration,
         stage_warnings,
+        clarifications: crate::clarifications::records(&*ctx.read_store().await?, None, true)?,
         message_caps,
         github_outbox,
         github_outbox_pending,

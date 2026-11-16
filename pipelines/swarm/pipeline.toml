@@ -14,6 +14,12 @@ stage = "integrate"
 [pipeline.ship]
 stage = "integrate"
 
+# What the lead's workers run on unless the item's plan names `<stage>.workers`;
+# Aether refuses a worker outside it. Reviewers follow the review contract.
+[pipeline.workers]
+tier = "fast"
+effort = "medium"
+
 [nudges]
 tier = "balanced"
 independent_reviewers = true

@@ -121,6 +121,26 @@ pub fn item_detail(detail: &ItemDetail, names: &RepoNames, full: bool) -> String
     let item = &detail.item;
     let mut out = String::new();
     let _ = writeln!(out, "{}  {}", item.id, sanitize_line(&item.title));
+    if detail.item.intent.is_some() {
+        let _ = writeln!(
+            out,
+            "Acceptance: {:?} (separate from review and CI)",
+            detail.acceptance.status
+        );
+        if let Some(record) = &detail.acceptance.record {
+            let _ = writeln!(
+                out,
+                "  head {} · tree {} · intent {} v{}",
+                record.result.head,
+                record.result.tree,
+                record.result.intent.id,
+                record.result.intent.version
+            );
+        }
+    }
+    for question in &detail.clarifications {
+        let _ = writeln!(out, "{}", sanitize_line(&question.describe()));
+    }
     if let Some(wait) = &detail.waiting_on {
         let _ = writeln!(
             out,
@@ -179,6 +199,7 @@ pub fn item_detail(detail: &ItemDetail, names: &RepoNames, full: bool) -> String
         let _ = writeln!(out, "provider switch: {}", sanitize_line(switch));
     }
     plan_lines(&mut out, item);
+    worker_lines(&mut out, &detail.worker_policies);
     for run in &detail.runs {
         run_lines(&mut out, detail, run, full);
     }
@@ -215,6 +236,21 @@ fn plan_lines(out: &mut String, item: &QueueItem) {
             "plan {}: {}{reason}",
             sanitize_line(stage),
             picks.join(" + ")
+        );
+    }
+}
+
+/// `workers build: each worker on ...` per stage whose lead may delegate.
+fn worker_lines(
+    out: &mut String,
+    policies: &std::collections::BTreeMap<String, archon_core::delegation::WorkerPolicy>,
+) {
+    for (stage, policy) in policies {
+        let _ = writeln!(
+            out,
+            "workers {}: {}",
+            sanitize_line(stage),
+            sanitize_line(&policy.describe())
         );
     }
 }
@@ -280,6 +316,9 @@ fn run_lines(out: &mut String, detail: &ItemDetail, run: &PipelineRun, full: boo
         }
         for warning in detail.stage_warnings.iter().filter(|w| w.stage == stage.id) {
             let _ = writeln!(out, "    health: {}", sanitize_line(&warning.describe()));
+        }
+        if let Some(note) = detail.stage_notes.get(&stage.id) {
+            let _ = writeln!(out, "    note: {}", sanitize_line(note));
         }
         for cap in detail
             .message_caps
@@ -463,6 +502,7 @@ mod tests {
 
     fn queue_item(repo: Option<&RepoId>, title: &str, pipeline: &str) -> QueueItem {
         QueueItem {
+            intent: None,
             onto: None,
             id: QueueItemId::new(),
             repo: repo.cloned(),
@@ -706,7 +746,10 @@ mod tests {
         ship.aether_agent = None;
         ship.structured = Some(serde_json::json!({"pr_url": "https://github.com/o/r/pull/12"}));
         ItemDetail {
+            acceptance: Default::default(),
             default_efforts: Default::default(),
+            worker_policies: Default::default(),
+            stage_notes: Default::default(),
             steers: Vec::new(),
             waiting_on: None,
             waiting_reason: None,
@@ -720,6 +763,7 @@ mod tests {
             merges: Vec::new(),
             stage_warnings: Vec::new(),
             message_caps: Vec::new(),
+            clarifications: Vec::new(),
         }
     }
 
@@ -1023,7 +1067,10 @@ mod tests {
         stage.structured = Some(serde_json::json!({"pr_url": "https://x\x1b[2K\n/1"}));
         let gate = rejected_with_escapes(&run);
         let detail = ItemDetail {
+            acceptance: Default::default(),
             default_efforts: Default::default(),
+            worker_policies: Default::default(),
+            stage_notes: Default::default(),
             steers: Vec::new(),
             waiting_on: None,
             waiting_reason: None,
@@ -1037,6 +1084,7 @@ mod tests {
             merges: Vec::new(),
             stage_warnings: Vec::new(),
             message_caps: Vec::new(),
+            clarifications: Vec::new(),
         };
         let text = item_detail(&detail, &RepoNames::new(), true);
         assert_inert(&text);

@@ -147,7 +147,7 @@ protocol 17 and later alone do not imply support.
 
 ```json
 {"req":1,"cmd":"hello","protocol_version":24,"client_name":"archon",
- "client_version":"1.5.1","features":["history_expired"]}
+ "client_version":"1.6.0","features":["history_expired"]}
 ```
 
 The reply is `Welcome {protocol_version, daemon_version, instance_id,
@@ -1213,6 +1213,7 @@ answers without context remain readable and use their question id in the summary
   {"type": "policy_violation", "agent": "agt_…", "model": "…", "action": "cancelled"},
   {"type": "mirror", "repo": "api", "state": "stale", "detail": "…git's error…"},
   {"type": "directives_restated", "reason": "your context was compacted"},
+  {"type": "watchdog", "text": "…the stall watch's nudge, or what its interrupt cut off (§16)…"},
   {"type": "news_digest", "dropped": {"item_finished": 12, "item_blocked": 3},
    "note": "15 older or no longer actionable news events were left out. …"},
   {"type": "items_finished", "more": 4, "items": [
@@ -1226,7 +1227,9 @@ answers without context remain readable and use their question id in the summary
 ```
 
 A payload carries `directives` or `directive_changes`, never both, and
-neither when nothing changed (below).
+neither when nothing changed (below). A `watchdog` event is sent alone and
+at once, outside the batches above, with no directives: it must reach the
+inbox before the interrupt it announces.
 
 The top-level `summary` is a derived display label, at most 160 characters,
 with whitespace collapsed and Unicode control/format characters removed.
@@ -1314,7 +1317,17 @@ skips the coalescing window, so the orchestrator hears of it once per agent.
 `get_item` and `status` list the records of stages still running. The receipt is the feed entry id. The tool does no Aether
 I/O and does not settle the stage. Stage instructions and the receipt say
 to continue working: ending a turn would complete the stage, and sending
-a message is never a reason to wait or end it.
+a counted message is never a reason to wait or end it. Clarification questions
+(`kind=question`) bypass all count caps before allowance charging. The feed/outbox
+transaction also persists `clarification:<id>` in Store kv. `get_item` lists the
+full history; status lists open questions. A marked live inbox answer or steer
+note resolves its question. A dispatch maintenance pass records an unanswered
+question's fallback after `clarification_timeout_minutes` (default 30) and
+retries its idempotent delivery until the live stage receives it. Open questions
+are valid watchdog waits. Active, operator-owned directives with typed
+`clarifications=proceed` record assumptions immediately, also when set after
+a question was opened; clearing or expiration revokes future authorization.
+These assumptions are retained for subsequent stage prompts and the final review.
 
 The fleet pump parses message content and sender from `inbox.delivered`.
 An authenticated Aether `user` sender becomes `original_sender.actor =
@@ -2247,6 +2260,17 @@ only for long, well-specified, test-verifiable work. `model_evidence` groups by
 row pools the models that served it (the tier an attempt recorded, else
 Aether's tier for its model now), so evidence survives a model replaced within
 its tier.
+
+**Workers.** Every stage takes the key `<stage>.workers` in `model_plan` and
+`model_reasons`: up to four `{model|tier, effort}` choices for the workers its
+lead delegates to, else the pipeline's `[pipeline.workers]` default. Archon
+sends it with the lead's `create_agent` as Aether's `config.delegation_policy`,
+exempting role `reviewer` and naming the reviewer models the contract names
+in `exempt_models`, so Aether's
+`delegate` refuses a worker outside it rather than letting the lead clone its
+own model. The delegation watchdog (§7.4) holds a reviewer of a lead whose
+item names no `<stage>.review` to those `exempt_models`, cancelling one on
+any other model as it spawns. `get_item` shows each delegating stage's policy.
 
 **Reviewers.** A pipeline with a declared review (§8.2) takes the key
 `<stage>.review` in `model_plan` and `model_reasons`, with at most as many
@@ -3265,7 +3289,8 @@ infra_retries = 1
 min_free_gb = 10               # hold dispatch below this much free disk; 0 = off
 max_delegation_depth = 2       # delegations below a stage agent or the orchestrator; 1..=4
 max_stage_timeout_minutes = 1440  # longest per-stage timeout an item may ask for; 1..=43200
-max_agent_messages = 20        # message_orchestrator calls per agent, lifetime; 1..=200
+max_agent_messages = 20        # counted message_orchestrator calls per agent; questions exempt; 1..=200
+clarification_timeout_minutes = 30 # unanswered clarification fallback; 1..=43200
 initiative_members = 16        # 1..=64
 initiative_contract_bytes = 2048  # 1..=16384
 [limits.per_pipeline]          # name = max running stage agents
@@ -4945,7 +4970,7 @@ own gate reasons, and keeps only the validated totals. See
 | Aether restart kills native processes | `agent.failed` or an interrupted task. | Stage: infra retry (§6.3). Orchestrator: the supervisor path below. |
 | Orchestrator failed or cancelled | Orchestrator subscription, or `get_agent` at start. | `wake` in place. If refused, `restart` (new agent from checkpoint), store the new id, and write a `System` feed entry. The first revival of a streak runs at once; each later one waits 10s, 30s, 2m, 5m, then every 10m (`supervisor::REVIVAL_BACKOFF`). A turn that ends `ready` or `waiting` closes the streak. After 3 revivals in a row, post one `Blocker`; revival never stops for good, and `archon orchestrator restart` starts a fresh agent at once. Dispatch continues, because the queue does not depend on the orchestrator. |
 | Orchestrator restarted in Aether (`aether restart`) | `agent.restarted` on the orchestrator's subscription, or `restarted_as` at start and on reconnect. | Adopt the successor if its role is `archon-orchestrator`: store its id, close the failure streak, move the subscription to it, and write a `System` feed entry. Its held news follows (§5.4). A successor with another role is not adopted. A chain of restarts is followed to its newest orchestrator, and every agent left behind on the way is retired (next row). |
-| Orchestrator turn hung (a model request or tool call that never answers; mail queues unread behind it) | `supervisor::watch_stalls`, every 60 s: an open turn with no event of the orchestrator for 30 minutes, or 10 minutes once operator mail (chat, or a GitHub request with operator standing) was delivered in that silence, checked at once when such mail arrives. Delivered mail is not progress; any other event, a message, usage update or consumed inbox among them, rearms the watch, so a turn that keeps emitting is never stalled. | Send a nudge and a `Blocker` saying what was silent for how long. If the turn is still silent 5 minutes later, `interrupt` it, as Esc would, so Aether delivers the queued inbox in a fresh turn, and tell the operator; an `interrupt` that fails or finds no turn is a `Blocker` naming `archon orchestrator restart`. Each generation gets at most 3 nudges and 3 interrupts, counted since `archond` started. |
+| Orchestrator turn hung (a model request or tool call that never answers; mail queues unread behind it) | `supervisor::watch_stalls`, every 30 s. It keeps nothing in memory: each check reads the orchestrator's turn from Aether's events (`archon_aether::turn::read`, paging back until it has the turn's start and the newest `inbox.consumed`) and the last nudge and last interrupt from `kv.orchestrator_stall_marks`, and applies one rule, `supervisor::due`. So an `archond` that restarts mid-silence carries on where it was. Progress is any tool, message, usage, inbox-read or turn event of the orchestrator itself, tool events Archon's own stream lacks included; delivered mail and a child's events are not progress. Operator mail is an unread inbox item whose sender is the operator (chat, or a GitHub request with operator standing); Archon's own notes are sent as `archon` triggers, so they are never mail, and an operator message is mail whatever its text. A silence is due when operator mail has been unread for 3 minutes, the turn has made no progress for 3 minutes, and every open tool call (calls may run in parallel) is past its bound, counted from when it was requested: a foreground call's declared timeout, capped at the 10-minute foreground cap, plus 1 minute, and 4 minutes for a call that declares none. Without mail it is due after 30 minutes of no progress. A turn whose start lies beyond the 10,000 newest events read, as when children's events fill the pages, is not judged: a call may be open that was not seen. | Nudge the turn and store the time; a stall without mail also posts a `Blocker`. If the turn makes no progress in the 2 minutes after the nudge, read it once more, and leave it alone if it moved: no note, and no interrupt counted. Otherwise send it a note naming every open call, none left out, then `interrupt` it, as Esc would, so Aether delivers the note and the queued inbox in a fresh turn, and tell the operator; an `interrupt` that fails or finds no turn is a `Blocker` naming `archon orchestrator restart`, and is tried again 5 minutes later. A nudge counts only for the silence it was sent in, so every interrupt follows a nudge of its own. An orchestrator is interrupted at most once in 5 minutes, by the stored time, with no cap on how often. |
 | `archon` MCP server died in Aether (after a redeploy, say) | `mcp_servers` reports it `failed`: at every connect to Aether and every 60 s (`supervisor::MCP_CHECK_INTERVAL`). | `refresh` it, then restart the orchestrator so it gets the tools back. Both back off like revivals, and 3 failures in a row post one `Blocker` (below). |
 | Orchestrator replaced while its delegated children run | Any path above that puts a new agent in charge. | The children end. Aether's `cancel` takes an agent's live descendants along; a failure does not, and neither does Aether's `restart`. So every agent that stops being the orchestrator is written to `kv.orchestrator_retired`, with the sweep it is owed, before its successor is stored, and Archon sends `cancel` for it, which Aether applies to the subtree of an agent already stopped. An adoption retires every agent between the stored orchestrator and the adopted one, each with children of its own; a manual restart and a relink follow the same chain first, so they act on the agent in charge rather than on one Aether already replaced. A background task makes the owed sweeps from `archond`'s start on: at once when one becomes owed or Aether reconnects, then with the revival backoff while it fails. A sweep is done only when Aether answers its `cancel`, no longer knows the agent, or reports it ended. Its first failure and its later success are each a `System` entry. A sweep holds no lifecycle lock, so it never delays the orchestrator in charge, which is never swept. A record that cannot be read is reset with a `Blocker` that quotes it, rather than stopping the orchestrator. Records stay through the 7-day event retention, so a retired agent's late events and its children's spend are still Archon's, and are then pruned unless a sweep is still owed. The new agent does not know what was delegated. A `wake` in place keeps the children. |
 | archond's delivery of a run fails | `git push` or `gh` exits non-zero or times out, or a check of the run worktree does not hold (§8.7). | A check that does not hold, a remote branch with other commits, or several open pull requests fail the item as `stage ship: <what to change>`; missing access, a missing `origin` or a branch rule as `stage ship: BLOCKED: …`, which is a `Blocker`. Anything else is tried again by the sweep after 15 s, doubling, five times in all, then fails the item with the last error. A retry of the item delivers the same branch: nothing is forced, and the open pull request is reused. |
@@ -5040,6 +5065,7 @@ range over its prefix, so a pass costs what is still stored.
 | `report:<id>` | The report is settled and last changed more than 7 days ago (§14). An ended or disconnected report is kept while its HTML file exists. |
 | An entry of `orchestrator_retired` | The orchestrator was replaced more than 7 days ago and the sweep of what it left running is no longer owed (§16). |
 | `descendant_stop:<stage run>` | Not by this pass: the dispatcher deletes it once Aether has confirmed the stop (§6.3). |
+| `archive:<stage run>` | Not by this pass: the archive worker deletes it once Aether archived the stage agent's tree and its run's node retired. |
 | `steer_owed:<stage run>` | Not by this pass: the sweep deletes each step once Aether took it, and the rest when the stage run settled (§6.6). |
 | `orchestrator_gave_up`, `orchestrator_failures` | At once: the give-up rule that wrote them was replaced by the revival backoff, and nothing reads them. |
 
@@ -5071,7 +5097,7 @@ run shares, `authority_confirmation:` of a closed question). Outcomes and lesson
 stay for learning (store schema 18 dropped their keys to runs and items; a
 reshaped run's outcome keeps a `learning/reshaped/<run>` mark). An item
 stays while anything still names it: a live run or stage run, a run node not
-retired yet, a steer or agent stop still owed to a stage run, a build directory
+retired yet, a steer, agent stop or archive still owed to a stage run, a build directory
 release still owed, an open gate, an open
 question, an open merge request, an operator correction, a live initiative,
 a report record, a distillation whose lessons are not applied, a dependency,

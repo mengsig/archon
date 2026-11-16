@@ -167,6 +167,7 @@ async fn set_orchestrator(h: &Harness, agent: &str) {
 
 async fn enqueue(h: &Harness, title: &str, autonomy: AutonomyPatch) -> QueueItem {
     let request = EnqueueRequest {
+        intent: None,
         onto: None,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
@@ -184,7 +185,7 @@ async fn enqueue(h: &Harness, title: &str, autonomy: AutonomyPatch) -> QueueItem
         origin: None,
     };
     match h.cli(Request::Enqueue(request)).await.expect("enqueue") {
-        Reply::Item(item) => item,
+        Reply::Item(item) => common::legacy_gate_item(h, item).await,
         other => panic!("enqueue replied {other:?}"),
     }
 }

@@ -196,6 +196,7 @@ fn linked_status() -> archon_core::protocol::DaemonStatus {
         integration: vec![],
         stage_warnings: vec![],
         message_caps: Vec::new(),
+        clarifications: Vec::new(),
         github_outbox: Vec::new(),
         github_outbox_pending: 0,
     }
@@ -215,6 +216,7 @@ impl Canned {
     fn new() -> Self {
         let now = archon_core::now();
         let item = QueueItem {
+            intent: None,
             onto: None,
             id: QueueItemId::new(),
             repo: None,
@@ -291,7 +293,10 @@ impl Canned {
             Request::Say { .. } | Request::Answer { .. } => Reply::Ok,
             Request::ListQuestions { .. } => Reply::Questions(vec![self.question.clone()]),
             Request::GetItem { .. } => Reply::ItemDetail(Box::new(ItemDetail {
+                acceptance: Default::default(),
                 default_efforts: Default::default(),
+                worker_policies: Default::default(),
+                stage_notes: Default::default(),
                 steers: vec![SteerRecord {
                     at: self.item.created_at,
                     by: SteeredBy::Operator,
@@ -310,6 +315,7 @@ impl Canned {
                 merges: Vec::new(),
                 stage_warnings: Vec::new(),
                 message_caps: Vec::new(),
+                clarifications: Vec::new(),
             })),
             Request::CancelItem { .. } | Request::RetryItem { .. } | Request::SteerItem { .. } => {
                 Reply::Item(self.item.clone())

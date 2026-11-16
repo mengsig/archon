@@ -15,8 +15,17 @@ use crate::format;
 pub async fn run(args: AutonomyArgs, json: bool) -> anyhow::Result<ExitCode> {
     match args.command {
         None => show(args.repo, json).await?,
-        Some(AutonomyCommand::Direct { text, hours }) => {
-            direct(&text.join(" "), hours, json).await?
+        Some(AutonomyCommand::Direct {
+            text,
+            hours,
+            clarifications,
+        }) => {
+            let policy = match clarifications.as_str() {
+                "proceed" => archon_core::autonomy::ClarificationPolicy::Proceed,
+                "ask" => archon_core::autonomy::ClarificationPolicy::Ask,
+                _ => unreachable!("clap validates the clarification policy"),
+            };
+            direct(&text.join(" "), hours, policy, json).await?
         }
         Some(AutonomyCommand::Clear { directive, all }) => {
             let directive = match (directive, all) {
@@ -42,9 +51,15 @@ async fn show(repo: Option<String>, json: bool) -> anyhow::Result<()> {
     emit(json, || to_json(&view), &format::autonomy(&view))
 }
 
-async fn direct(text: &str, hours: Option<u32>, json: bool) -> anyhow::Result<()> {
+async fn direct(
+    text: &str,
+    hours: Option<u32>,
+    policy: archon_core::autonomy::ClarificationPolicy,
+    json: bool,
+) -> anyhow::Result<()> {
     let client = connect_or_start().await?;
     let request = Request::SetDirective {
+        clarifications: policy,
         text: text.to_owned(),
         expires_in_hours: hours,
     };
@@ -98,6 +113,7 @@ mod tests {
     #[test]
     fn a_directive_reply_says_the_ceiling_still_applies() {
         let directive = Directive {
+            clarifications: Default::default(),
             id: DirectiveId::new(),
             text: "auto-merge every succeeded item without asking".into(),
             source: archon_core::autonomy::DirectiveSource::Operator,

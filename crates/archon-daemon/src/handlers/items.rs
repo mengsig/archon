@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use archon_core::catalog::{StageKind, WorkspaceMode};
+use archon_core::delegation::WorkerPolicy;
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 use archon_core::initiative::InitiativeState;
@@ -30,11 +31,24 @@ use archon_core::autonomy::MergeMode;
 
 pub(super) async fn enqueue(
     ctx: &DaemonContext,
-    req: EnqueueRequest,
+    mut req: EnqueueRequest,
 ) -> Result<Reply, ArchonError> {
+    req.intent = resolve_intent(ctx, req.intent.as_ref(), req.onto.as_ref()).await?;
     let title = req.title.trim().to_owned();
     check_enqueue(&req.title, &req.brief, &req.tags, req.budget_usd)?;
-    let (env, resolved) = enqueue_context(ctx, &req).await?;
+    let (env, mut resolved) = enqueue_context(ctx, &req).await?;
+    let key = req
+        .idempotency_key
+        .as_deref()
+        .filter(|k| !k.trim().is_empty());
+    let target = (req.onto.as_ref(), !req.depends_on.is_empty());
+    let onto = enqueue_onto(ctx, &env, &resolved.spec, target, key).await?;
+    req.intent = resolve_pull_request_intent(ctx, req.intent.as_ref(), onto.as_ref()).await?;
+    if req.intent.is_some()
+        || resolved.autonomy.proposal == archon_core::autonomy::ProposalMode::Lavish
+    {
+        resolved.spec = archon_pipeline::acceptance::augment(&resolved.spec)?;
+    }
     let asked = Asked {
         autonomy: req.autonomy,
         model_plan: req.model_plan.clone(),
@@ -50,32 +64,10 @@ pub(super) async fn enqueue(
         held: routed_provider.as_deref(),
         ..unrouted
     };
-    let given = resolve_draft(
-        ctx,
-        (&env, route),
-        &resolved.spec,
-        req.model_plan,
-        req.model_reasons.as_ref(),
-    )
-    .await?;
-    check_stage_timeouts(ctx, &resolved.spec, &req.stage_timeouts)?;
-    let plan = filled_plan(ctx, route, &env, &resolved.base, &resolved.spec, given).await?;
-    check_plan(ctx, &env, &resolved.spec, &plan)?;
-    let budgeted = Budgeted {
-        budget_usd: req.budget_usd,
-        review: resolved.autonomy.review,
-        repo: env.repo.as_ref(),
-    };
-    check_budget_models(ctx, &env, &id, &resolved.spec, (&plan, &budgeted))?;
-    check_reasons(&resolved.spec, req.model_reasons.as_ref())?;
-    let key = req
-        .idempotency_key
-        .as_deref()
-        .filter(|k| !k.trim().is_empty());
-    let target = (req.onto.as_ref(), !req.depends_on.is_empty());
-    let onto = enqueue_onto(ctx, &env, &resolved.spec, target, key).await?;
+    let plan = enqueue_plan(ctx, &req, &env, &resolved, route).await?;
     let now = archon_core::now();
     let item = QueueItem {
+        intent: req.intent.clone().map(Box::new),
         onto: onto.map(Box::new),
         id,
         repo: env.repo.as_ref().map(|r| r.id.clone()),
@@ -107,6 +99,105 @@ pub(super) async fn enqueue(
     );
     ctx.dispatch.notify_one();
     Ok(item_reply(ctx, stored, req.budget_usd.is_some()).await)
+}
+
+async fn enqueue_plan(
+    ctx: &DaemonContext,
+    req: &EnqueueRequest,
+    env: &RepoEnv,
+    resolved: &knobs::Resolved,
+    route: ItemRoute<'_>,
+) -> Result<archon_core::model::ModelPlan, ArchonError> {
+    let given = resolve_draft(
+        ctx,
+        (env, route),
+        &resolved.spec,
+        req.model_plan.clone(),
+        req.model_reasons.as_ref(),
+    )
+    .await?;
+    check_stage_timeouts(ctx, &resolved.spec, &req.stage_timeouts)?;
+    let plan = filled_plan(ctx, route, env, &resolved.base, &resolved.spec, given).await?;
+    check_plan(ctx, env, &resolved.spec, &plan)?;
+    let budgeted = Budgeted {
+        budget_usd: req.budget_usd,
+        review: resolved.autonomy.review,
+        repo: env.repo.as_ref(),
+    };
+    check_budget_models(ctx, env, route.id, &resolved.spec, (&plan, &budgeted))?;
+    check_reasons(&resolved.spec, req.model_reasons.as_ref())?;
+    Ok(plan)
+}
+
+pub(super) async fn resolve_intent(
+    ctx: &DaemonContext,
+    requested: Option<&archon_core::intent::IntentBinding>,
+    onto: Option<&OntoTarget>,
+) -> Result<Option<archon_core::intent::IntentBinding>, ArchonError> {
+    let store = ctx.store.lock().await;
+    let inherited = match onto {
+        Some(OntoTarget::Item(id)) => store.item(id)?.intent.map(|binding| *binding),
+        _ => None,
+    };
+    let requested = requested.map(|b| explicit(&store, b)).transpose()?;
+    let inherited = inherited.map(|b| explicit(&store, &b)).transpose()?;
+    if requested.is_some() && inherited.is_some() && requested != inherited {
+        return Err(ArchonError::Invalid(
+            "onto item has a different approved intent".into(),
+        ));
+    }
+    Ok(requested.or(inherited))
+}
+
+/// `binding` checked against its stored ledger, with its selection spelled out.
+fn explicit(
+    store: &archon_queue::Store,
+    binding: &archon_core::intent::IntentBinding,
+) -> Result<archon_core::intent::IntentBinding, ArchonError> {
+    let record = store.approved_intent(binding)?.ok_or_else(|| {
+        ArchonError::NotFound(format!(
+            "approved intent {} version {}",
+            binding.id, binding.version
+        ))
+    })?;
+    let explicit = record.explicit_binding(binding)?;
+    assert!(!explicit.requirements.is_empty());
+    assert_eq!(
+        (&explicit.id, explicit.version),
+        (&binding.id, binding.version)
+    );
+    Ok(explicit)
+}
+
+pub(super) async fn resolve_pull_request_intent(
+    ctx: &DaemonContext,
+    requested: Option<&archon_core::intent::IntentBinding>,
+    onto: Option<&archon_core::pull_request::OntoPullRequest>,
+) -> Result<Option<archon_core::intent::IntentBinding>, ArchonError> {
+    let Some(onto) = onto else {
+        return Ok(requested.cloned());
+    };
+    let reference = archon_core::protocol::GithubRef {
+        host: onto.pr.host.clone(),
+        repo: onto.pr.repository.clone(),
+        number: onto.pr.number,
+        kind: archon_core::protocol::GithubKind::PullRequest,
+    };
+    let store = ctx.store.lock().await;
+    let mut inherited = requested.map(|b| explicit(&store, b)).transpose()?;
+    for link in store.issue_items(&reference)? {
+        let Some(binding) = store.item(&link.item)?.intent.map(|binding| *binding) else {
+            continue;
+        };
+        let binding = explicit(&store, &binding)?;
+        if inherited.as_ref().is_some_and(|known| known != &binding) {
+            return Err(ArchonError::Invalid(
+                "pull request has conflicting approved intents".into(),
+            ));
+        }
+        inherited = Some(binding);
+    }
+    Ok(inherited)
 }
 
 /// `Reply::Item`, or `ItemBudgetsOff` when the change set a budget that
@@ -310,10 +401,11 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
     mark_viewed(ctx, id).await?;
     let waiting = super::waiting::WaitingView::read(ctx).await?;
     let estimates = ctx.config.limits.count_estimated_cost;
-    let default_efforts = default_efforts(ctx, id).await?;
+    let (default_efforts, worker_policies) = plan_defaults(ctx, id).await?;
     let stage_warnings = crate::inbox_health::warnings(ctx, archon_core::now(), Some(id)).await?;
     let store = ctx.read_store().await?;
     let item = store.item(id)?;
+    let acceptance = executor::acceptance::readiness(ctx, &item).await?;
     let mut runs = store.runs_for_item(id)?;
     let mut stages = Vec::new();
     let mut delegations = BTreeMap::new();
@@ -343,8 +435,12 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
     let steers = executor::steer::records(&store, id)?;
     let switched_to = executor::steer::switched_to(&store, &item)?;
     let message_caps = crate::agent_messages::caps(&store, Some(id))?;
+    let stage_notes = executor::stage_note::read(&store, &stages)?;
     Ok(Reply::ItemDetail(Box::new(ItemDetail {
+        acceptance,
         default_efforts,
+        worker_policies,
+        stage_notes,
         switched_to,
         steers,
         waiting_reason,
@@ -357,29 +453,54 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
         delegations,
         merges,
         stage_warnings,
+        clarifications: crate::clarifications::records(&store, Some(id), false)?,
         message_caps,
     })))
 }
 
-/// The default effort of every key the item's plan names; empty when its
-/// pipeline can no longer be loaded, which the plan alone already shows.
-async fn default_efforts(
-    ctx: &DaemonContext,
-    id: &QueueItemId,
-) -> Result<BTreeMap<String, Effort>, ArchonError> {
-    let item = ctx.read_store().await?.item(id)?;
-    let spec = match item_pipeline(ctx, &item).await {
-        Ok((_, _, spec)) => spec,
+type PlanDefaults = (BTreeMap<String, Effort>, BTreeMap<String, WorkerPolicy>);
+
+/// The default effort of every key the item's plan names, and the worker
+/// policy of each stage whose lead may delegate, within the model policy in
+/// force; both empty when its pipeline can no longer be loaded, which the
+/// plan alone already shows.
+async fn plan_defaults(ctx: &DaemonContext, id: &QueueItemId) -> Result<PlanDefaults, ArchonError> {
+    let (item, catalog) = {
+        let store = ctx.read_store().await?;
+        (store.item(id)?, store.model_catalog())
+    };
+    let (env, spec) = match item_pipeline(ctx, &item).await {
+        Ok((env, _, spec)) => (env, spec),
         Err(error) if error.is_store() => return Err(error),
         Err(error) => {
-            tracing::warn!(%id, %error, "default efforts not shown: pipeline unavailable");
-            return Ok(BTreeMap::new());
+            tracing::warn!(%id, %error, "plan defaults not shown: pipeline unavailable");
+            return Ok(Default::default());
         }
     };
     let keys = item.model_plan.0.keys();
-    Ok(keys
+    let efforts = keys
         .filter_map(|key| Some((key.clone(), spec.default_effort(key)?)))
-        .collect())
+        .collect();
+    let yolo = item.autonomy.tools == archon_core::autonomy::ToolsMode::Yolo;
+    // As a spawn now would send it: narrowed to the model policy in force.
+    let models = env.policy(&ctx.config);
+    let delegating = spec
+        .file
+        .stages
+        .iter()
+        .filter(|stage| yolo || stage.allow_delegation || spec.holds_review(stage));
+    let policies = delegating
+        .filter_map(|stage| {
+            let planned = spec.worker_policy(stage, &item.model_plan)?;
+            let lead = item
+                .model_plan
+                .choices_for(&stage.id)
+                .and_then(|c| c.first());
+            let narrowed = planned.within(&models, &catalog, lead.map(|c| &c.model));
+            Some((stage.id.clone(), narrowed.policy))
+        })
+        .collect();
+    Ok((efforts, policies))
 }
 
 /// Priority, tags, budget and dependencies change any time before success;
@@ -1110,18 +1231,12 @@ pub(crate) fn check_reasons(
         return Ok(());
     };
     check_reason_lengths(reasons)?;
-    let reviewers = spec.reviewers_key();
-    let unknown = reasons
-        .keys()
-        .find(|id| spec.stage(id).is_none() && Some(*id) != reviewers.as_ref());
-    if let Some(extra) = unknown {
-        let mut ids: Vec<&str> = spec.file.stages.iter().map(|s| s.id.as_str()).collect();
-        ids.extend(reviewers.as_deref());
+    if let Some(extra) = reasons.keys().find(|key| !spec.is_plan_key(key)) {
         return Err(ArchonError::Invalid(format!(
             "model_reasons key {extra:?} is not a stage id: keys are the stage ids of pipeline \
-             {:?}, not the pipeline name; valid ids: {}",
+             {:?}, not the pipeline name; valid ids: {}, or `<stage>.workers`",
             spec.name(),
-            ids.join(", ")
+            spec.plan_keys()
         )));
     }
     Ok(())

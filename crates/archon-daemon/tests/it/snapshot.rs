@@ -416,6 +416,7 @@ async fn gc_collects_a_leftover_snapshot() {
 async fn a_repo_less_ask_works_in_scratch() {
     let h = Harness::new().await;
     let request = EnqueueRequest {
+        intent: None,
         onto: None,
         stage_timeouts: Default::default(),
         repo: None,

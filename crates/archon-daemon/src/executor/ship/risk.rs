@@ -77,7 +77,17 @@ pub(crate) async fn label(
     assert!(url.starts_with("https://"), "a pull request GitHub listed");
     assert!(!labelling.against.is_empty(), "the diff's base is named");
     let binary = &ctx.config.github.binary;
-    let shown = view(binary, repo, url).await;
+    let mut shown = view(binary, repo, url).await;
+    if let (Some(item), Ok(shown)) = (item, &mut shown) {
+        let item = ctx.store.lock().await.item(item)?;
+        if item.intent.is_some() {
+            let readiness = super::super::acceptance::readiness(ctx, &item).await?;
+            shown.body = acceptance_body(
+                &shown.body,
+                &super::super::acceptance::readiness_text(&readiness),
+            );
+        }
+    }
     let mut assessment = labelling.assessment.clone();
     if labelling.onto {
         let before = shown
@@ -326,6 +336,23 @@ async fn record(
     stored.risk = Some(level);
     stored.updated_at = archon_core::now();
     store.update_item(&stored)
+}
+
+pub(super) fn acceptance_body(body: &str, readiness: &str) -> String {
+    const START: &str = "<!-- archon:acceptance -->";
+    const END: &str = "<!-- /archon:acceptance -->";
+    let section = format!("{START}\n{readiness}\n{END}");
+    if let Some(start) = body.find(START)
+        && let Some(end) = body[start..].find(END)
+    {
+        return format!(
+            "{}{}{}",
+            &body[..start],
+            section,
+            &body[start + end + END.len()..]
+        );
+    }
+    format!("{body}\n\n{section}")
 }
 
 #[cfg(test)]

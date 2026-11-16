@@ -27,6 +27,7 @@ use serde_json::{Value, json};
 
 fn spawn_request() -> SpawnRequest {
     SpawnRequest {
+        references: Vec::new(),
         host_context: Default::default(),
         idempotency_key: "stg_01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
         role: "archon-stage:direct/implement".into(),
@@ -52,6 +53,7 @@ fn spawn_request() -> SpawnRequest {
         parent: Some(AetherAgentId::parse(NODE).unwrap()),
         network: Some(NetworkPolicy::Denied),
         keep: false,
+        delegation_policy: None,
     }
 }
 
@@ -454,6 +456,37 @@ async fn is_live_reads_the_agent_state_and_treats_unknown_as_dead() {
 }
 
 #[tokio::test]
+async fn is_stopped_takes_only_a_final_state_or_a_forgotten_agent() {
+    let (_dir, fake) = fake_aether().await;
+    let with_status = |status| {
+        let mut agent = fake::agent(NODE, None);
+        agent["status"] = status;
+        Scripted::reply("agent", agent)
+    };
+    fake.script("get_agent", with_status(json!({"state": "failed"})));
+    fake.script("get_agent", with_status(json!({"state": "running"})));
+    fake.script("get_agent", with_status(json!({"state": "bogus"})));
+    fake.script("get_agent", with_status(json!({})));
+    fake.script("get_agent", Scripted::refuse("not_found", "no such agent"));
+    fake.script("get_agent", Scripted::refuse("invalid_argument", "bad id"));
+    let backend = backend(&fake, any_model()).await;
+    let node = AetherAgentId::parse(NODE).unwrap();
+    assert!(
+        backend.is_stopped(&node).await.unwrap(),
+        "failed is stopped"
+    );
+    assert!(!backend.is_stopped(&node).await.unwrap(), "running is not");
+    assert!(!backend.is_stopped(&node).await.unwrap(), "bogus is not");
+    assert!(!backend.is_stopped(&node).await.unwrap(), "none is not");
+    assert!(
+        backend.is_stopped(&node).await.unwrap(),
+        "a forgotten agent is"
+    );
+    let error = backend.is_stopped(&node).await.unwrap_err();
+    assert!(!matches!(error, ArchonError::NotFound(_)), "{error}");
+}
+
+#[tokio::test]
 async fn update_agent_patches_only_what_the_update_names() {
     let (_dir, fake) = fake_aether().await;
     fake.set_default(
@@ -577,6 +610,7 @@ async fn only_a_kept_agent_is_created_long_lived() {
     let backend = backend(&fake, any_model()).await;
     backend.spawn(spawn_request()).await.unwrap();
     let kept = SpawnRequest {
+        references: Vec::new(),
         keep: true,
         ..spawn_request()
     };
@@ -984,6 +1018,46 @@ async fn list_models_reads_aethers_nested_model_ref() {
     assert!(listed[0].configured && listed[0].is_default);
 }
 
+/// `archive` names one agent and reads the `agents` it moved: that agent,
+/// or none when it was archived already; any other agent is a protocol error.
+#[tokio::test]
+async fn archive_reads_the_agents_it_moved() {
+    let (_dir, fake) = fake_aether().await;
+    let replies = [
+        Scripted::reply("agents", json!([fake::agent(AGENT, None)])),
+        Scripted::reply("agents", json!([])),
+        Scripted::reply("agents", json!([fake::agent(common::AGENT_2, None)])),
+        Scripted::reply("agent", fake::agent(AGENT, None)),
+        Scripted::refuse("invalid_transition", "agent is running"),
+        Scripted::refuse("not_found", "no agent"),
+    ];
+    for reply in replies {
+        fake.script("archive", reply);
+    }
+    let client = connect(&fake).await;
+    let agent = AetherAgentId::parse(AGENT).unwrap();
+    client.archive(&agent).await.expect("moved");
+    client.archive(&agent).await.expect("archived already");
+    let other = client.archive(&agent).await.unwrap_err();
+    assert!(
+        matches!(&other, ArchonError::Protocol(m) if m.contains("moved another agent")),
+        "{other:?}"
+    );
+    let kind = client.archive(&agent).await.unwrap_err();
+    assert!(matches!(kind, ArchonError::Protocol(_)), "{kind:?}");
+    let live = client.archive(&agent).await.unwrap_err();
+    assert!(
+        matches!(live, ArchonError::InvalidTransition(_)),
+        "{live:?}"
+    );
+    let gone = client.archive(&agent).await.unwrap_err();
+    assert!(matches!(gone, ArchonError::NotFound(_)), "{gone:?}");
+    let sent = fake.received_named("archive");
+    assert_eq!(sent.len(), 6);
+    assert_eq!(sent[0]["target"], json!({"agent": AGENT}));
+    assert_eq!(sent[0]["archived"], json!(true));
+}
+
 #[tokio::test]
 async fn restart_must_return_a_successor() {
     let (_dir, fake) = fake_aether().await;
@@ -1379,4 +1453,52 @@ async fn a_subscription_claude_code_stage_gets_no_hard_cap_on_notional_dollars()
     backend.prepare_spawn(&mut unknown, false).await.unwrap();
     assert_eq!(unknown.aether_cost_budget, Some(true), "enforced");
     assert_eq!(unknown.cost_billing, Some(CostBilling::Unknown));
+}
+
+#[tokio::test]
+async fn reference_wire_shape_is_frozen_across_retries_and_refused_after_capability_loss() {
+    let (_dir, fake) = fake_aether().await;
+    fake.set_features(vec!["references".into()]);
+    fake.set_default(
+        "create_agent",
+        Scripted::reply("agent", fake::agent(AGENT, Some(TASK))),
+    );
+    fake.set_default(
+        "get_task",
+        Scripted::reply(
+            "task",
+            fake::task(TASK, Some(AGENT), RUN, json!({"state":"assigned"})),
+        ),
+    );
+    let capable = backend(&fake, any_model()).await;
+    let mut request = spawn_request();
+    request.references = vec![archon_core::reference::Reference {
+        path: "/work/tree/reference.png".into(),
+        kind: archon_core::reference::ReferenceKind::Image,
+        label: Some("Approved layout".into()),
+    }];
+    let saved = serde_json::to_string(&request).unwrap();
+    capable.spawn(request.clone()).await.unwrap();
+    capable
+        .spawn(serde_json::from_str(&saved).unwrap())
+        .await
+        .unwrap();
+    let creates = fake.received_named("create_agent");
+    assert_eq!(creates.len(), 2);
+    assert_eq!(
+        creates[0]["references"],
+        json!([{"path":"/work/tree/reference.png","kind":"image","label":"Approved layout"}])
+    );
+    assert_eq!(creates[0]["references"], creates[1]["references"]);
+    fake.set_features(vec![]);
+    let older = backend(&fake, any_model()).await;
+    assert!(
+        older
+            .spawn(request)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("lacks references")
+    );
+    assert_eq!(fake.received_named("create_agent").len(), 2);
 }

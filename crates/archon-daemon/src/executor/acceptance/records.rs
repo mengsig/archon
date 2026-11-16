@@ -109,8 +109,16 @@ pub(crate) fn readiness_text(view: &AcceptanceReadiness) -> String {
             )
         })
         .unwrap_or_default();
+    let honesty = match &view.record {
+        Some(r) if !r.independent => format!(
+            "; acceptance: not independent (judged by builder model `{}`: no permitted, connected \
+             model apart from every builder could judge it)",
+            r.model
+        ),
+        _ => String::new(),
+    };
     format!(
-        "Approved-intent acceptance: {:?}{pin}. Code review and CI are separate checks.",
+        "Approved-intent acceptance: {:?}{pin}{honesty}. Code review and CI are separate checks.",
         view.status
     )
 }
@@ -145,12 +153,14 @@ pub(super) fn failed(
         .aether_agent
         .clone()
         .ok_or_else(|| ArchonError::Invalid("acceptance has no agent".into()))?;
+    let builders = super::spawn::builder_models(&store.stage_runs(&stage.run)?);
     let record = AcceptanceRecord {
         result,
         reviewer,
         model: stage.choice.model.clone(),
         checked_at: archon_core::now(),
         page: page.into(),
+        independent: !builders.contains(&stage.choice.model),
     };
     assert!(!record.result.requirements.is_empty());
     assert!(!reason.is_empty());
@@ -187,4 +197,50 @@ async fn branch_head(
     })
     .await
     .map_err(|e| ArchonError::Unavailable(format!("reading accepted branch: {e}")))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use archon_core::acceptance::{AcceptanceResult, AcceptanceVerdict, RequirementJudgment};
+    use archon_core::intent::IntentBinding;
+
+    fn passed(independent: bool) -> AcceptanceReadiness {
+        let record = AcceptanceRecord {
+            result: AcceptanceResult {
+                head: "a".repeat(40),
+                tree: "b".repeat(40),
+                intent: IntentBinding {
+                    id: "i".into(),
+                    version: 1,
+                    requirements: vec!["R1".into()],
+                },
+                requirements: vec![RequirementJudgment {
+                    id: "R1".into(),
+                    verdict: AcceptanceVerdict::Pass,
+                    reason: "compared".into(),
+                }],
+            },
+            reviewer: archon_core::aether_ids::AetherAgentId::parse("agt_judge").unwrap(),
+            model: "claude-code/builder".parse().unwrap(),
+            checked_at: archon_core::now(),
+            page: String::new(),
+            independent,
+        };
+        AcceptanceReadiness {
+            status: AcceptanceStatus::Passed,
+            record: Some(record),
+        }
+    }
+
+    #[test]
+    fn a_fallback_judgment_is_reported_not_independent_and_an_independent_one_is_not() {
+        let fallback = readiness_text(&passed(false));
+        assert!(
+            fallback.contains("acceptance: not independent"),
+            "{fallback}"
+        );
+        assert!(fallback.contains("`claude-code/builder`"), "{fallback}");
+        assert!(!readiness_text(&passed(true)).contains("not independent"));
+    }
 }

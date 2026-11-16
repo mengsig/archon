@@ -108,14 +108,24 @@ says so and the item's history keeps the failed run. A second refusal fails the
 item with both reasons. Coverage, verdict and identity rules are unchanged: a
 commit under a foreign identity is still refused at the next delivery, and a
 cancelled or steered run is never repaired.
+It also covers a build whose approved-intent `requirement_results` were
+missing or malformed: the repair note asks for the result again, in the shape
+the stage contract shows, without redoing committed work.
 Set it to `false` to retry such items by hand with `retry_item`.
+
+`independent_acceptance` (default `false`) controls approved-intent
+acceptance when no permitted, connected model apart from every builder can
+judge it. Approved reference images need a vision model. Off, the strongest
+permitted model judges it, and readiness says `acceptance: not independent`.
+On, the run is refused instead.
 
 ```toml
 [review]                       # reviewers with no explicit <stage>.review plan
 default_tier = "balanced"
 default_effort = "low"         # raised to medium, or high for a riskier change
 prefer_other_provider = true
-auto_repair = true             # one automatic retry when the review, ship record or a fixable delivery is refused
+auto_repair = true             # one automatic retry when the review, ship record, requirement results or a fixable delivery is refused
+independent_acceptance = false # true: refuse intent acceptance with no model apart from every builder
 
 [models]                       # optional: leave it out to allow every ready model
 allow = ["claude-code/claude-opus-5-5", "codex/gpt-6.1-terra"]

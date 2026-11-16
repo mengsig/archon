@@ -115,6 +115,10 @@ async fn operator_message(
         } else {
             store.kv_set(&key, &message.text)?;
         }
+        if !message.images.is_empty() {
+            let key = crate::handlers::intent::inbox_images_key(&agent.to_string(), seq);
+            store.kv_set(&key, &serde_json::to_string(&message.images)?)?;
+        }
     }
     // Marked seen first: a crash here drops the command, never repeats it.
     if !feed::first_sight(ctx, event.seq).await? {

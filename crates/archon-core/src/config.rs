@@ -142,6 +142,9 @@ pub struct ReviewConfig {
     /// Queue one retry of an item whose run failed only because the review
     /// or ship record it owes was refused.
     pub auto_repair: bool,
+    /// Refuse approved-intent acceptance unless a permitted, connected vision
+    /// model differs from every builder; off, the strongest one judges, labelled.
+    pub independent_acceptance: bool,
 }
 
 impl Default for ReviewConfig {
@@ -151,6 +154,7 @@ impl Default for ReviewConfig {
             default_effort: Effort::Low,
             prefer_other_provider: true,
             auto_repair: true,
+            independent_acceptance: false,
         }
     }
 }

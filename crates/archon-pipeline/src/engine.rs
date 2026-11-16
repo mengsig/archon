@@ -90,6 +90,9 @@ pub struct SpawnPlan {
     /// What the agent's workers may run on, should it delegate; `None` leaves
     /// them to Aether's rule for a lead without a policy.
     pub workers: Option<archon_core::delegation::WorkerPolicy>,
+    /// The stage finishes the build: an item bound to approved intent owes
+    /// `requirement_results` in its result ([`crate::acceptance::reports_requirements`]).
+    pub reports_requirements: bool,
 }
 
 /// A proposal the operator approved in an earlier run of the item, for the
@@ -1289,6 +1292,7 @@ impl RunDriver {
             .is_some_and(|duty| duty.reviewers > 0)
             .then(|| self.plan.reviewer_choices().unwrap_or_default().to_vec());
         let workers = self.spec.worker_policy(stage, &self.plan);
+        let reports_requirements = crate::acceptance::reports_requirements(&self.spec, &stage.id);
         fans.iter()
             .map(|&fan| {
                 assert!(fan < stage.fan_out, "slot {fan} outside fan_out");
@@ -1323,6 +1327,7 @@ impl RunDriver {
                     resume: resume.clone(),
                     reviewers: reviewers.clone(),
                     workers: workers.clone(),
+                    reports_requirements,
                 })
             })
             .collect()

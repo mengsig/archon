@@ -254,11 +254,12 @@ pub(super) fn approve_intent(
         check_preserved(&previous, binding, record)?;
     }
     super::intent::save(&tx, record)?;
-    item.intent = Some(Box::new(IntentBinding {
+    let whole = IntentBinding {
         id: record.id.clone(),
         version: record.version,
         requirements: Vec::new(),
-    }));
+    };
+    item.intent = Some(Box::new(record.explicit_binding(&whole)?));
     super::items::write_columns(&tx, &item)?;
     write(&tx, gate)?;
     super::changes::record_gate(&tx, gate)?;

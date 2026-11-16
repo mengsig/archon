@@ -371,6 +371,7 @@ fn image_digests(blocks: &[TextBlock]) -> Vec<String> {
         .iter()
         .filter(|b| b.block_type == "image_ref")
         .filter_map(|b| b.id.clone())
+        .filter(|id| !id.is_empty())
         .collect()
 }
 
@@ -488,6 +489,19 @@ mod tests {
             (pictured.text.as_str(), pictured.images),
             ("hi", vec![digest])
         );
+        let mut blank = message(serde_json::json!({"actor": "user"}));
+        blank["item"]["kind"]["content"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({"type": "image_ref", "id": "", "media_type": "image/png", "size_bytes": 3}));
+        let EventKind::InboxDelivered {
+            message: Some(blank),
+            ..
+        } = parse_event(event(blank)).unwrap().kind
+        else {
+            panic!("an operator message");
+        };
+        assert!(blank.images.is_empty(), "an empty image id names nothing");
         let peer = serde_json::json!({"actor": "agent", "id": "agt_2"});
         let from_agent = parse_event(event(message(peer))).unwrap();
         assert!(matches!(

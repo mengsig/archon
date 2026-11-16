@@ -22,9 +22,8 @@ struct OperatorMessage {
 
 pub(super) async fn approve(
     ctx: &DaemonContext,
-    mut record: ApprovedIntent,
+    record: ApprovedIntent,
 ) -> Result<Reply, ArchonError> {
-    record.validate()?;
     let IntentSource::Inbox { seq } = record.source else {
         return Err(ArchonError::Invalid(
             "approve_intent requires an inbox source".into(),
@@ -35,7 +34,8 @@ pub(super) async fn approve(
         .ok_or_else(|| ArchonError::Unavailable("no orchestrator".into()))?;
     let message = verified_message(ctx, &agent, seq).await?;
     verify_quote(&record.operator_words, &message.text)?;
-    record.check_inbox_ledger(&message.images)?;
+    let mut record = record.into_inbox_ledger(&message.images)?;
+    record.validate()?;
     let destination = ctx.paths.data_dir.join("approved-intent-artifacts");
     for image in &mut record.images {
         image.path = preserve(&destination, &image.path, &image.sha256)?;

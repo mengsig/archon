@@ -56,8 +56,8 @@
   independent vision model, leaving its file a stub. Now the orchestrator files
   `approve_intent` only for reference images the operator attached to an inbox
   message. Archond checks each image against the digests Aether recorded for that
-  message, and each requirement of such a ledger must be a visual match to one of
-  those images. Anything else is refused: a written requirement beside an image,
+  message and writes the ledger's requirements itself, one visual match per image.
+  Anything else is refused: a requirement the caller wrote, even beside an image,
   a requirement list, a named file path or an artifact written in the message. A
   written ledger becomes approved intent only when the operator approves it at a
   proposal gate. A binding is stored with its requirement ids spelled out, never

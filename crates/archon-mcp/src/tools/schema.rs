@@ -68,7 +68,7 @@ fn approve_intent() -> ToolDefinition {
     define(
         "approve_intent",
         "Approve intent",
-        "Record the reference images the operator attached to an authenticated inbox message, as their ledger: operator_words is that message verbatim, and each image is the file Aether shows it `stored at`, with its SHA-256; each requirement is a visual match to one of those images. Nothing else is accepted. A written requirement list or a named file becomes a ledger only when the operator approves it at a proposal gate, and a plain brief is no ledger: enqueue it without an intent.",
+        "Record the reference images the operator attached to an authenticated inbox message, as their ledger: operator_words is that message verbatim, and each image is the file Aether shows it `stored at`, with its SHA-256. Send `requirements: []`: Archon records one visual requirement per image, its id the image id. Nothing else is accepted. A written requirement list or a named file becomes a ledger only when the operator approves it at a proposal gate, and a plain brief is no ledger: enqueue it without an intent.",
         object(
             json!({"record": {"type": "object", "properties": {
                 "id": {"type": "string"}, "version": {"type": "integer", "minimum": 1},
@@ -76,7 +76,7 @@ fn approve_intent() -> ToolDefinition {
                 "source": {"type": "object", "properties": {"kind": {"enum": ["inbox"]}, "seq": {"type": "integer", "minimum": 1}}, "required": ["kind", "seq"]},
                 "artifacts": {"type": "array", "items": {"type": "object", "properties": {"path": {"type": "string"}, "sha256": {"type": "string"}}, "required": ["path", "sha256"]}},
                 "images": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"}, "path": {"type": "string"}, "sha256": {"type": "string"}, "viewport": {"type": ["object", "null"], "properties": {"width": {"type": "integer"}, "height": {"type": "integer"}}, "required": ["width", "height"]}, "theme": {"type": ["string", "null"]}, "state": {"type": ["string", "null"]}}, "required": ["id", "path", "sha256"]}},
-                "requirements": {"type": "array", "minItems": 1, "items": {"type": "object", "properties": {"id": {"type": "string"}, "text": {"type": "string"}, "kind": {"enum": ["visual", "behaviour", "wording", "data"]}, "images": {"type": "array", "items": {"type": "string"}}, "owner": {"type": "string"}}, "required": ["id", "text", "kind", "images", "owner"]}}
+                "requirements": {"type": "array", "description": "Always empty: Archon derives the requirements from the images.", "items": {"type": "object", "properties": {"id": {"type": "string"}, "text": {"type": "string"}, "kind": {"enum": ["visual", "behaviour", "wording", "data"]}, "images": {"type": "array", "items": {"type": "string"}}, "owner": {"type": "string"}}, "required": ["id", "text", "kind", "images", "owner"]}}
             }, "required": ["id", "version", "operator_words", "source", "artifacts", "images", "requirements"]}}),
             &["record"],
         ),

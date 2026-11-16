@@ -178,7 +178,8 @@ impl ApprovedIntent {
 
     /// An inbox message approves a ledger only through the images the operator
     /// attached to it (`attached`, their digests); prose proves no ledger.
-    pub fn check_inbox_ledger(&self, attached: &[String]) -> Result<(), ArchonError> {
+    /// Archond, not the caller, writes its requirements: one match per image.
+    pub fn into_inbox_ledger(mut self, attached: &[String]) -> Result<Self, ArchonError> {
         assert!(
             matches!(self.source, IntentSource::Inbox { .. }),
             "only an inbox record is checked against the operator's message"
@@ -187,10 +188,11 @@ impl ApprovedIntent {
         let refused = |detail: String| {
             ArchonError::Invalid(format!(
                 "a plain brief creates no approved intent: {detail}. An inbox message approves \
-                 a ledger only through reference images the operator attached to it. A written \
-                 requirement list or a named file becomes a ledger only when the operator \
-                 approves that exact ledger through a gate (the proposal gate showing it); \
-                 otherwise enqueue the item without an intent"
+                 a ledger only through reference images the operator attached to it, with \
+                 `requirements: []`: Archon records one visual requirement per image, its id \
+                 the image id. A written requirement list or a named file becomes a ledger \
+                 only when the operator approves that exact ledger through a gate (the \
+                 proposal gate showing it); otherwise enqueue the item without an intent"
             ))
         };
         if self.images.is_empty() {
@@ -210,18 +212,15 @@ impl ApprovedIntent {
                 artifact.path.display()
             )));
         }
-        // The images are the approval; a requirement beside them is a written one.
-        if let Some(written) = self
-            .requirements
-            .iter()
-            .find(|r| r.kind != RequirementKind::Visual)
-        {
+        if let Some(written) = self.requirements.first() {
             return Err(refused(format!(
-                "requirement {:?} is written, not a visual match to an attached image",
+                "requirement {:?} is written by the caller, not the operator",
                 written.id
             )));
         }
-        Ok(())
+        self.requirements = self.images.iter().map(image_match).collect();
+        assert_eq!(self.requirements.len(), self.images.len());
+        Ok(self)
     }
 
     /// `binding` with its selection spelled out, so no stored binding has an
@@ -270,6 +269,21 @@ impl ApprovedIntent {
             .iter()
             .filter(|r| selected.is_empty() || selected.contains(r.id.as_str()))
             .collect())
+    }
+}
+
+/// The one requirement an attached reference image approves: that the work
+/// matches it, in the context the image records.
+fn image_match(image: &ReferenceImage) -> Requirement {
+    Requirement {
+        id: image.id.clone(),
+        text: format!(
+            "Match the reference image {:?} the operator attached",
+            image.id
+        ),
+        kind: RequirementKind::Visual,
+        images: vec![image.id.clone()],
+        owner: "operator".into(),
     }
 }
 
@@ -329,7 +343,7 @@ mod tests {
         pathed.images.push(image(&"a".repeat(64)));
         for record in [invented, excerpt, listed, pathed] {
             record.validate().unwrap();
-            let error = record.check_inbox_ledger(&[]).unwrap_err().to_string();
+            let error = record.into_inbox_ledger(&[]).unwrap_err().to_string();
             assert!(
                 error.contains("a plain brief creates no approved intent"),
                 "{error}"
@@ -341,46 +355,63 @@ mod tests {
     #[test]
     fn only_images_the_operator_attached_make_an_inbox_ledger() {
         let digest = "a".repeat(64);
-        let mut pictured = inbox("Match this mockup", &["Match the approved layout"]);
+        let mut pictured = inbox("Match this mockup", &[]);
         pictured.images.push(image(&digest));
-        pictured.requirements[0].kind = RequirementKind::Visual;
-        pictured.requirements[0].images = vec!["mockup".into()];
-        pictured.validate().unwrap();
-        assert!(
-            pictured
-                .check_inbox_ledger(std::slice::from_ref(&digest))
-                .is_ok()
+        let ledger = pictured
+            .clone()
+            .into_inbox_ledger(std::slice::from_ref(&digest))
+            .unwrap();
+        ledger.validate().unwrap();
+        let only = &ledger.requirements;
+        assert_eq!(only.len(), 1);
+        assert_eq!(
+            (only[0].id.as_str(), &only[0].kind, &only[0].images),
+            (
+                "mockup",
+                &RequirementKind::Visual,
+                &vec!["mockup".to_owned()]
+            )
         );
-        let mut padded = pictured.clone();
-        padded.requirements.push(Requirement {
-            id: "R2".into(),
-            text: "Rewrite the login flow".into(),
-            kind: RequirementKind::Behaviour,
-            images: vec![],
-            owner: "operator".into(),
-        });
-        padded.validate().unwrap();
-        let error = padded
-            .check_inbox_ledger(std::slice::from_ref(&digest))
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains("\"R2\" is written"), "{error}");
         let error = pictured
-            .check_inbox_ledger(&["b".repeat(64)])
+            .clone()
+            .into_inbox_ledger(&["b".repeat(64)])
             .unwrap_err()
             .to_string();
         assert!(
             error.contains("not an image the operator attached"),
             "{error}"
         );
-        pictured.artifacts.push(IntentArtifact {
+        let mut artifact = pictured.clone();
+        artifact.artifacts.push(IntentArtifact {
             path: "/srv/design/page.html".into(),
             sha256: digest.clone(),
         });
-        let error = pictured
-            .check_inbox_ledger(&[digest])
+        let error = artifact
+            .into_inbox_ledger(std::slice::from_ref(&digest))
             .unwrap_err()
             .to_string();
         assert!(error.contains("page.html is not an attachment"), "{error}");
+    }
+
+    #[test]
+    fn a_caller_written_requirement_beside_an_attached_image_is_refused() {
+        let digest = "a".repeat(64);
+        let mut padded = inbox("Match this mockup", &["Rewrite the login flow"]);
+        padded.images.push(image(&digest));
+        let mislabelled = {
+            let mut record = padded.clone();
+            record.requirements[0].kind = RequirementKind::Visual;
+            record.requirements[0].images = vec!["mockup".into()];
+            record
+        };
+        for record in [padded, mislabelled] {
+            record.validate().unwrap();
+            let error = record
+                .into_inbox_ledger(std::slice::from_ref(&digest))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("\"R1\" is written by the caller"), "{error}");
+            assert!(error.contains("`requirements: []`"), "{error}");
+        }
     }
 }

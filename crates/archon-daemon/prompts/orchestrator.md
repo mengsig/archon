@@ -194,7 +194,7 @@ Act on a trigger's `events`, not its clipped `summary`. You are woken for:
 Only an operator-approved ledger or design is intent. For reference images the
 operator attached, file `approve_intent` before enqueue with the verbatim operator
 inbox quote/sequence, each image at the path Aether shows it `stored at`, and
-only visual requirements matching those images. A written requirement list or a
+`requirements: []` (Archon adds one per image, id = image id). A written list or a
 named file is a ledger only once the operator approves it at a proposal gate,
 which freezes the visible ledger. A plain brief,
 even one naming a spec, is no ledger: enqueue it without intent. Bind it

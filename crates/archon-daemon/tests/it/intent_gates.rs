@@ -248,6 +248,8 @@ async fn approval(h: &Harness, ledger: &ApprovedIntent, refusal: Option<&str>) {
 async fn only_an_image_the_operator_attached_makes_an_inbox_ledger() {
     let h = Harness::new().await;
     let mut ledger = record(&h);
+    let written = ledger.requirements.clone();
+    ledger.requirements.clear();
     operator_said(&h, 7, &ledger.operator_words, &[]).await;
     let unattached = Some("is not an image the operator attached");
     approval(&h, &ledger, unattached).await;
@@ -257,19 +259,32 @@ async fn only_an_image_the_operator_attached_makes_an_inbox_ledger() {
     approval(&h, &ledger, unattached).await;
     let digest = ledger.images[0].sha256.clone();
     operator_said(&h, 7, &ledger.operator_words, &[&digest]).await;
-    let mut padded = ledger.clone();
-    let written = json!({"id":"R2","images":[],"kind":"behaviour","owner":"operator","text":"Rewrite the login flow"});
-    padded
-        .requirements
-        .push(serde_json::from_value(written).unwrap());
-    approval(&h, &padded, Some("\"R2\" is written, not a visual match")).await;
+    let mut mislabelled = ledger.clone();
+    mislabelled.requirements = written;
+    mislabelled.requirements[0].text = "Rewrite the login flow".into();
+    approval(&h, &mislabelled, Some("\"R1\" is written by the caller")).await;
     approval(&h, &ledger, None).await;
+    let stored = h.ctx.store.lock().await.approved_intent(&IntentBinding {
+        id: ledger.id.clone(),
+        version: 1,
+        requirements: vec![],
+    });
+    let requirements = stored.unwrap().unwrap().requirements;
+    assert_eq!(requirements.len(), 1);
+    assert_eq!(
+        (
+            requirements[0].id.as_str(),
+            requirements[0].images.as_slice()
+        ),
+        ("mockup", ["mockup".to_owned()].as_slice())
+    );
 }
 
 #[tokio::test]
 async fn an_inbox_artifact_is_refused_even_when_the_operator_names_it() {
     let h = Harness::new().await;
     let mut ledger = record(&h);
+    ledger.requirements.clear();
     ledger.id = "page".into();
     let page = b"<!doctype html><title>Approved</title>";
     let path = h.dir.path().join("design.html");

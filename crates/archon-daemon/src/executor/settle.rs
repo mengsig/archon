@@ -159,14 +159,7 @@ async fn settle_verified(
             after.then(|| record.id.clone())
         });
         let records_build = driver.is_some_and(|d| {
-            archon_pipeline::autonomy::ships(d.spec())
-                && d.spec()
-                    .file
-                    .stages
-                    .iter()
-                    .rev()
-                    .find(|s| s.kind == archon_core::catalog::StageKind::Work)
-                    .is_some_and(|s| s.id == stage.stage_id)
+            archon_pipeline::acceptance::reports_requirements(d.spec(), &stage.stage_id)
         });
         (
             stage,
@@ -200,7 +193,7 @@ async fn settle_verified(
         ctx,
         &run,
         &stage,
-        records_build || review.records_ship,
+        records_build,
         outcome,
     ))
     .await?

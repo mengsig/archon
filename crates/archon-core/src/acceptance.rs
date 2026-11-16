@@ -64,6 +64,15 @@ pub struct AcceptanceRecord {
     pub model: crate::model::ModelRef,
     pub checked_at: crate::Timestamp,
     pub page: String,
+    /// Whether a model apart from every builder judged it; `false` when none
+    /// was permitted and connected, so the record never claims independence.
+    #[serde(default = "independent_by_default")]
+    pub independent: bool,
+}
+
+/// Records written before the flag existed were refused unless independent.
+fn independent_by_default() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -146,6 +155,7 @@ mod tests {
             model: "claude-code/reviewer".parse().unwrap(),
             checked_at: crate::now(),
             page: "acceptance/index.html".into(),
+            independent: true,
         };
         let current = |binding: Option<&IntentBinding>, head: &str, tree: &str| {
             AcceptanceReadiness::at_head(binding, Some(record.clone()), head, tree).status

@@ -119,3 +119,4 @@ mod worktree_set_aside;
 mod worktree_submodules;
 
 mod intent_acceptance;
+mod intent_gates;

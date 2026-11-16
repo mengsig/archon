@@ -746,7 +746,9 @@ fn reserve_one(
     let nth = retry.as_ref().map(|r| r.nth);
     let workers = delegation_policy(target, plan);
     let mut request = build_request(target, plan, (&id, workers.as_ref()), budget, now, nth);
-    super::acceptance::attach(store, target.item, &mut request, target.references)?;
+    let observes = super::acceptance::observes_requirements(store, target.run, &plan.stage_id)?;
+    let intent = (target.references, plan.reports_requirements || observes);
+    super::acceptance::attach(store, target.item, &mut request, intent)?;
     let not_before = retry.as_ref().and_then(|r| r.not_before);
     if let Some(until) = not_before {
         // Held as it is reserved, so no sweep issues it early; it loses no working time.

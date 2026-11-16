@@ -108,6 +108,8 @@ pub struct InboxMessage {
     pub device: Option<String>,
     pub sender: archon_core::agent_message::MessageSender,
     pub text: String,
+    /// The SHA-256 of each image Aether stored with the message, in order.
+    pub images: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default, Deserialize)]
@@ -153,6 +155,9 @@ struct TextBlock {
     block_type: String,
     #[serde(default)]
     text: Option<String>,
+    /// An `image_ref` block's digest of the stored image.
+    #[serde(default)]
+    id: Option<String>,
 }
 
 pub fn parse_event(value: Value) -> Result<AetherEvent, serde_json::Error> {
@@ -270,9 +275,10 @@ fn inbox_delivered(item: Value) -> Result<EventKind, serde_json::Error> {
             },
             _ => MessageSender::System,
         };
-        let text = text_of(serde_json::from_value(
-            item.kind.get("content").cloned().unwrap_or(Value::Null),
-        )?);
+        let blocks: Vec<TextBlock> =
+            serde_json::from_value(item.kind.get("content").cloned().unwrap_or(Value::Null))?;
+        let images = image_digests(&blocks);
+        let text = text_of(blocks);
         let from = &item.kind["from"];
         let verified = sender == MessageSender::Operator
             && is_operator_user(from)
@@ -282,6 +288,7 @@ fn inbox_delivered(item: Value) -> Result<EventKind, serde_json::Error> {
             device: device_of(from).filter(|_| verified),
             sender,
             text,
+            images,
         })
     } else {
         github_message(&item.kind)
@@ -353,7 +360,19 @@ fn github_message(kind: &Value) -> Option<InboxMessage> {
         channel,
         device: None,
         text,
+        images: Vec::new(),
     })
+}
+
+/// The digests Aether names a message's stored images by. Archon only
+/// compares them, so one it cannot match proves nothing and is harmless.
+fn image_digests(blocks: &[TextBlock]) -> Vec<String> {
+    blocks
+        .iter()
+        .filter(|b| b.block_type == "image_ref")
+        .filter_map(|b| b.id.clone())
+        .filter(|id| !id.is_empty())
+        .collect()
 }
 
 fn text_of(blocks: Vec<TextBlock>) -> String {
@@ -449,9 +468,40 @@ mod tests {
                     device: None,
                     sender: archon_core::agent_message::MessageSender::Operator,
                     text: "hi".into(),
+                    images: vec![],
                 }),
             }
         );
+        let digest = "ab".repeat(32);
+        let mut pictured = message(serde_json::json!({"actor": "user"}));
+        pictured["item"]["kind"]["content"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({"type": "image_ref", "id": digest, "media_type": "image/png", "size_bytes": 3}));
+        let EventKind::InboxDelivered {
+            message: Some(pictured),
+            ..
+        } = parse_event(event(pictured)).unwrap().kind
+        else {
+            panic!("an operator message");
+        };
+        assert_eq!(
+            (pictured.text.as_str(), pictured.images),
+            ("hi", vec![digest])
+        );
+        let mut blank = message(serde_json::json!({"actor": "user"}));
+        blank["item"]["kind"]["content"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({"type": "image_ref", "id": "", "media_type": "image/png", "size_bytes": 3}));
+        let EventKind::InboxDelivered {
+            message: Some(blank),
+            ..
+        } = parse_event(event(blank)).unwrap().kind
+        else {
+            panic!("an operator message");
+        };
+        assert!(blank.images.is_empty(), "an empty image id names nothing");
         let peer = serde_json::json!({"actor": "agent", "id": "agt_2"});
         let from_agent = parse_event(event(message(peer))).unwrap();
         assert!(matches!(

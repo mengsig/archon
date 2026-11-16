@@ -68,9 +68,16 @@ pub(super) fn prove(
                 )));
             }
             let built = super::super::pages::inside_workspace(workspace, &pair.built)
-                .map_err(ArchonError::Invalid)?;
+                .map_err(ArchonError::Invalid)
+                .and_then(|built| Ok((hash(&built)?, built)));
+            let (sha256, built) = built.map_err(|e| {
+                archon_pipeline::acceptance::results_refused(&format!(
+                    "{} built image {}: {e}",
+                    result.id, pair.built
+                ))
+            })?;
             proofs.push(ImageProof {
-                sha256: hash(&built)?,
+                sha256,
                 path: built,
             });
             proofs.push(ImageProof {

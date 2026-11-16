@@ -50,6 +50,32 @@
 
 ### Fixed
 
+- Approved intent no longer gates ordinary items. In the 1.6.0 release smoke the
+  orchestrator turned a plain brief into a six-requirement ledger, so a one-model
+  bench task failed for missing `requirement_results` and then for lacking an
+  independent vision model, leaving its file a stub. Now the orchestrator files
+  `approve_intent` only for reference images the operator attached to an inbox
+  message. Archond checks each image against the digests Aether recorded for that
+  message and writes the ledger's requirements itself, one visual match per image.
+  The ledger must list every attached image once. Anything else is refused: a
+  requirement the caller wrote, even beside an image, a requirement list, a named
+  file path, an artifact written in the message, or a viewport, theme or state
+  set on an image. A
+  written ledger becomes approved intent only when the operator approves it at a
+  proposal gate. A binding is stored with its requirement ids spelled out, never
+  an empty list. Exactly one stage finishes the build: the one holding the ship
+  record, otherwise the last work stage. That stage is shown the exact `requirement_results` it owes, one entry
+  per id, and the statuses it may use. A status of `pass`, `done` or `met` counts
+  as `implemented`. Any mistake in those results gets the one automatic repair
+  (`[review] auto_repair`) instead of failing the item, and the repair note quotes
+  the allowed values. Mistakes include an unknown status, empty evidence, a
+  missing or bad visual pair, or a built image that is not there. A blocked
+  requirement still fails. A validation-only pipeline's acceptance stage, which
+  reports the results itself, is shown the same shape and gets the same repair.
+  When no permitted, connected model apart from every builder can judge acceptance
+  (a vision model only when approved reference images exist), the strongest
+  permitted one judges it. The readiness report and item outcome say `acceptance:
+  not independent`. `[review] independent_acceptance = true` restores the refusal.
 - Operator mail no longer waits for long behind a hung orchestrator turn.
   Archon used to nudge such a turn after 10 minutes and interrupt it 5
   minutes later, at most 3 times per orchestrator. Now, once your message

@@ -40,7 +40,8 @@ pub const STARTER_CONFIG: &str = r#"# Archon's configuration. Every key is optio
 # default_tier = "balanced"
 # default_effort = "low"
 # prefer_other_provider = true
-# auto_repair = true   # one automatic retry when the review or ship record is refused
+# auto_repair = true   # one automatic retry when the review, ship record or requirement results are refused
+# independent_acceptance = false   # true: refuse intent acceptance with no vision model apart from every builder
 
 # [limits]
 # max_parallel_agents = 8   # running stage agents; 0 = unlimited

@@ -883,16 +883,14 @@ async fn a_connection_beyond_the_cap_is_answered_503_and_a_freed_slot_serves_aga
     tokio::time::sleep(Duration::from_millis(100)).await;
     let page = raw(listener.port, "GET", "/", &[("Host", host.as_str())], "").await;
     assert_eq!(page.status, 503, "{}", page.body);
-    assert_eq!(page.header("retry-after"), Some("2"));
     assert!(
         page.body.contains("Can\u{2019}t connect to Archon"),
         "{}",
         page.body
     );
     assert!(
-        page.body
-            .contains("http-equiv=\"refresh\" content=\"2; url=.\""),
-        "the page retries without script, at the app's root: {}",
+        page.body.contains("http-equiv=\"refresh\""),
+        "the page retries without script: {}",
         page.body
     );
     let csp = page.header("content-security-policy").unwrap_or_default();
@@ -946,4 +944,226 @@ async fn an_idle_keep_alive_connection_gives_its_slot_back() {
         .unwrap();
     let health = listener.request("GET", "/api/health", &[], "").await;
     assert_eq!(health.status, 200, "{}", health.body);
+}
+
+/// Mirrors of the listener's refusal limits and the busy page's backoff.
+const MAX_REFUSALS: usize = 64;
+const REFUSAL_HEAD_TIMEOUT: Duration = Duration::from_secs(2);
+const REFUSAL_LIFETIME: Duration = Duration::from_secs(4);
+const BUSY_BASES: [u64; 6] = [2, 4, 8, 16, 20, 20];
+
+/// A connection that keeps its slot by requesting again before the idle
+/// timeout; dropping it ends the task and frees the slot.
+struct Held(tokio::task::JoinHandle<()>);
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+async fn hold_slot(port: u16, host: String) -> Held {
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let head = format!("GET /api/health HTTP/1.1\r\nHost: {host}\r\n\r\n");
+    Held(tokio::spawn(async move {
+        let mut buf = [0u8; 4096];
+        loop {
+            stream.write_all(head.as_bytes()).await.unwrap();
+            let read = stream.read(&mut buf).await.unwrap();
+            assert!(read > 0, "the held connection stays open");
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }))
+}
+
+/// A one-slot listener whose only slot is held.
+async fn saturated() -> (Listener, Held) {
+    let config = RemoteConfig {
+        max_connections: 1,
+        ..RemoteConfig::default()
+    };
+    let listener = Listener::start_with(config, None).await;
+    let held = hold_slot(listener.port, listener.host()).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    (listener, held)
+}
+
+async fn open_idle(port: u16, count: usize) -> Vec<TcpStream> {
+    let mut streams = Vec::with_capacity(count);
+    for _ in 0..count {
+        streams.push(TcpStream::connect(("127.0.0.1", port)).await.unwrap());
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    streams
+}
+
+/// Everything the server sends until it closes, or `None` if it has not
+/// closed within `within`. A reset counts as closed.
+async fn read_until_closed(stream: &mut TcpStream, within: Duration) -> Option<Vec<u8>> {
+    let mut bytes = Vec::new();
+    match tokio::time::timeout(within, stream.read_to_end(&mut bytes)).await {
+        Ok(_) => Some(bytes),
+        Err(_) => None,
+    }
+}
+
+async fn status_of_new_connection(listener: &Listener) -> u16 {
+    let host = listener.host();
+    raw(listener.port, "GET", "/", &[("Host", host.as_str())], "")
+        .await
+        .status
+}
+
+#[tokio::test]
+async fn refusals_beyond_the_ceiling_are_dropped_unanswered() {
+    let (listener, _held) = saturated().await;
+    let _refusals = open_idle(listener.port, MAX_REFUSALS).await;
+    let mut extra = TcpStream::connect(("127.0.0.1", listener.port))
+        .await
+        .unwrap();
+    let head = format!("GET / HTTP/1.1\r\nHost: {}\r\n\r\n", listener.host());
+    let _ = extra.write_all(head.as_bytes()).await;
+    let bytes = read_until_closed(&mut extra, Duration::from_millis(1500))
+        .await
+        .expect("a connection past the ceiling is closed at once");
+    assert!(
+        bytes.is_empty(),
+        "dropped without a 503: {}",
+        String::from_utf8_lossy(&bytes)
+    );
+}
+
+#[tokio::test]
+async fn an_idle_refused_connection_is_closed_after_the_head_timeout() {
+    let (listener, _held) = saturated().await;
+    let mut idle = TcpStream::connect(("127.0.0.1", listener.port))
+        .await
+        .unwrap();
+    let started = tokio::time::Instant::now();
+    let closed = read_until_closed(&mut idle, REFUSAL_HEAD_TIMEOUT + Duration::from_secs(2)).await;
+    let elapsed = started.elapsed();
+    assert!(closed.is_some(), "the server closes an idle refusal");
+    assert!(
+        elapsed >= REFUSAL_HEAD_TIMEOUT - Duration::from_millis(500),
+        "not closed before its head timeout: {elapsed:?}"
+    );
+    assert!(elapsed < REFUSAL_LIFETIME, "closed in time: {elapsed:?}");
+}
+
+#[tokio::test]
+async fn a_refusal_that_stalls_after_its_head_is_closed_within_the_lifetime() {
+    let (listener, _held) = saturated().await;
+    let host = listener.host();
+    let mut unread = TcpStream::connect(("127.0.0.1", listener.port))
+        .await
+        .unwrap();
+    let promised = format!("POST / HTTP/1.1\r\nHost: {host}\r\nContent-Length: 100\r\n\r\n");
+    unread.write_all(promised.as_bytes()).await.unwrap();
+    let mut trickle = TcpStream::connect(("127.0.0.1", listener.port))
+        .await
+        .unwrap();
+    let started = tokio::time::Instant::now();
+    while started.elapsed() < REFUSAL_LIFETIME + Duration::from_millis(500) {
+        if trickle.write_all(b"X").await.is_err() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    let stalled = read_until_closed(&mut unread, Duration::from_millis(500)).await;
+    assert!(stalled.is_some(), "the unread refusal was closed");
+    let trickled = read_until_closed(&mut trickle, Duration::from_millis(500)).await;
+    assert!(trickled.is_some(), "the trickled refusal was closed");
+    assert_eq!(
+        status_of_new_connection(&listener).await,
+        503,
+        "the permits came back"
+    );
+}
+
+#[tokio::test]
+async fn refusals_recover_after_the_idle_ones_expire_and_a_freed_slot_serves() {
+    let (listener, held) = saturated().await;
+    let idle = open_idle(listener.port, MAX_REFUSALS).await;
+    tokio::time::sleep(REFUSAL_LIFETIME + Duration::from_millis(500)).await;
+    assert_eq!(
+        status_of_new_connection(&listener).await,
+        503,
+        "a refusal is answered again once the idle ones expired"
+    );
+    drop((idle, held));
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(status_of_new_connection(&listener).await, 200);
+}
+
+/// The wait and the next URL from a page that refreshes itself.
+fn refresh_of(page: &Response) -> Option<(u64, String)> {
+    let marker = "http-equiv=\"refresh\" content=\"";
+    let rest = &page.body[page.body.find(marker)? + marker.len()..];
+    let (wait, rest) = rest.split_once("; url=")?;
+    let url = rest.split_once('"')?.0;
+    Some((wait.parse().unwrap(), url.to_owned()))
+}
+
+async fn busy_page_at(listener: &Listener, path: &str) -> Response {
+    let host = listener.host();
+    let page = raw(listener.port, "GET", path, &[("Host", host.as_str())], "").await;
+    assert_eq!(page.status, 503, "{}", page.body);
+    page
+}
+
+#[tokio::test]
+async fn the_busy_page_backs_off_with_jitter_and_stops_at_its_cap() {
+    let (listener, held) = saturated().await;
+    let mut path = "/".to_owned();
+    for (attempt, base) in BUSY_BASES.iter().enumerate() {
+        let page = busy_page_at(&listener, &path).await;
+        let (wait, next) = refresh_of(&page).expect("the page still retries");
+        assert!(
+            (*base..=base + base / 2).contains(&wait),
+            "attempt {attempt}: {wait}s outside {base}s plus up to half"
+        );
+        assert_eq!(page.header("retry-after"), Some(wait.to_string().as_str()));
+        assert_eq!(next, format!("./?busy={}", attempt + 1));
+        path = format!("/{}", next.trim_start_matches("./"));
+    }
+    let last = busy_page_at(&listener, &path).await;
+    assert!(refresh_of(&last).is_none(), "{}", last.body);
+    assert!(!last.body.contains("http-equiv"), "{}", last.body);
+    assert!(
+        last.body.contains("<a href=\".\">Try again</a>"),
+        "{}",
+        last.body
+    );
+    let csp = last.header("content-security-policy").unwrap_or_default();
+    assert!(!csp.contains("unsafe-inline"), "{csp}");
+    drop(held);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(status_of_new_connection(&listener).await, 200);
+    let counted = listener.request("GET", "/?busy=6", &[], "").await;
+    assert_eq!(counted.status, 200, "the counter does not break the app");
+}
+
+#[tokio::test]
+async fn the_busy_counter_is_read_defensively_and_the_wait_is_jittered() {
+    let (listener, _held) = saturated().await;
+    for hostile in [
+        "/?busy=abc",
+        "/?busy=-1",
+        "/?busy=",
+        "/?x=1&busy=99999999999999",
+    ] {
+        let page = busy_page_at(&listener, hostile).await;
+        let next = refresh_of(&page).map(|(_, url)| url);
+        let capped = next.is_none();
+        let first = next.as_deref() == Some("./?busy=1");
+        assert!(first || capped, "{hostile}: {}", page.body);
+        assert!(!page.body.contains("abc"), "nothing user-given is echoed");
+    }
+    let mut waits = std::collections::BTreeSet::new();
+    for _ in 0..24 {
+        let page = busy_page_at(&listener, "/").await;
+        waits.insert(refresh_of(&page).unwrap().0);
+    }
+    assert!(waits.len() > 1, "the first wait is jittered: {waits:?}");
+    assert!(waits.iter().all(|w| (2..=3).contains(w)), "{waits:?}");
 }

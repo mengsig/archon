@@ -27,7 +27,10 @@ pub const HEAD_TIMEOUT: Duration = Duration::from_secs(3);
 /// that a newcomer is dropped unanswered.
 const MAX_REFUSALS: usize = 64;
 /// How long a refused connection gets to send the head it is answered for.
-const REFUSAL_HEAD_TIMEOUT: Duration = Duration::from_secs(2);
+pub const REFUSAL_HEAD_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long a refused connection lives in all, writing the answer included,
+/// so a client that never reads cannot hold a refusal permit.
+pub const REFUSAL_LIFETIME: Duration = Duration::from_secs(4);
 const MAX_HEAD_BYTES: usize = 32 * 1024;
 /// How long open HTTP connections get to finish once the listener closes.
 const DRAIN: Duration = Duration::from_secs(2);
@@ -129,7 +132,7 @@ fn refuse(
     tracing::debug!("every remote connection slot is taken; answering 503");
     connections.spawn(async move {
         let service = service_fn(|request: hyper::Request<hyper::body::Incoming>| {
-            let response = crate::http::busy(request.uri().path());
+            let response = crate::http::busy(request.uri());
             async move { Ok::<_, std::convert::Infallible>(response) }
         });
         let served = http1::Builder::new()
@@ -137,10 +140,13 @@ fn refuse(
             .header_read_timeout(REFUSAL_HEAD_TIMEOUT)
             .max_buf_size(MAX_HEAD_BYTES)
             .keep_alive(false)
-            .serve_connection(TokioIo::new(stream), service)
-            .await;
-        if let Err(error) = served {
-            tracing::debug!(%error, "a refused remote connection ended with an error");
+            .serve_connection(TokioIo::new(stream), service);
+        match tokio::time::timeout(REFUSAL_LIFETIME, served).await {
+            Ok(Err(error)) => {
+                tracing::debug!(%error, "a refused remote connection ended with an error");
+            }
+            Err(_) => tracing::debug!("a refused remote connection outlived its deadline"),
+            Ok(Ok(())) => {}
         }
         drop(permit);
     });

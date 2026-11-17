@@ -62,6 +62,7 @@ function graphViews(ctx, id, work, agents) {
   let costs = {};
   let resource = null;
   let active = 'details';
+  let polling = false;
   const draw = () => {
     if (!current) return;
     if (active === 'work') {
@@ -79,6 +80,13 @@ function graphViews(ctx, id, work, agents) {
     }
   };
   const load = () => loadGraphData(ctx, id, current, active);
+  // Delegated agents start inside a stage with no event to say so: poll them while the item runs.
+  const startQuery = () => {
+    resource?.destroy();
+    polling = active === 'agents' && Boolean(current) && !isTerminal(current.item);
+    resource = active === 'details' ? null : liveQuery(ctx, load, receive, { interval: polling ? MIN_POLL_MS : undefined });
+    draw();
+  };
   const receive = ({ data, error }) => {
     const notes = active === 'work' ? planError : agentError;
     notes.replaceChildren(...(error ? [errorNote(error, () => resource.refresh())] : []));
@@ -88,14 +96,16 @@ function graphViews(ctx, id, work, agents) {
     draw();
   };
   return {
-    update(detail) { current = detail; draw(); if (active !== 'details') resource?.refresh(); },
+    update(detail) {
+      current = detail;
+      // An item that finishes (or is retried) restarts the agents query with or without the poll.
+      if (active === 'agents' && polling === isTerminal(detail.item)) return startQuery();
+      draw();
+      if (active !== 'details') resource?.refresh();
+    },
     activate(name) {
       active = name;
-      resource?.destroy();
-      // Delegated agents start inside a stage with no event to say so: poll them while the item runs.
-      const interval = name === 'agents' && current && !isTerminal(current.item) ? MIN_POLL_MS : undefined;
-      resource = name === 'details' ? null : liveQuery(ctx, load, receive, { interval });
-      draw();
+      startQuery();
     },
     destroy() { resource?.destroy(); workGraphView.destroy(); agentGraphView.destroy(); },
   };

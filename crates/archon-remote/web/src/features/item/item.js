@@ -12,7 +12,7 @@ import { itemPanels } from './graphs.js';
 import { deliverySection } from './relationships.js';
 
 const BRIEF_CLAMP_CHARS = 360;
-const FOLLOW_DEBOUNCE_MS = 300;
+const FOLLOW_COALESCE_MS = 350;
 const POLL_RUNNING_MS = 15_000;
 const SHARED_LOADS = ['status', 'repos', 'summaries'];
 const REVIEW_LABEL = { strict: 'Strict', standard: 'Standard', none: 'None' };
@@ -98,9 +98,10 @@ function itemLoader(ctx, id, receive, reject) {
 function followItem(ctx, id, current, refresh) {
   if (typeof refresh !== 'function' || typeof current !== 'function') throw new TypeError('followItem needs the detail and its refresh');
   let timer = null;
+  // Coalesce without postponing, so a steady stream of events still reloads.
   const soon = () => {
-    clearTimeout(timer);
-    timer = setTimeout(() => current() && refresh(), FOLLOW_DEBOUNCE_MS);
+    if (timer !== null) return;
+    timer = setTimeout(() => { timer = null; if (current()) refresh(); }, FOLLOW_COALESCE_MS);
   };
   const offFeed = ctx.feed.subscribe((fresh) => fresh.some((entry) => namesItem(entry, id)) && soon());
   const offChanges = ctx.changes.subscribe((change) => change.item === id && soon());

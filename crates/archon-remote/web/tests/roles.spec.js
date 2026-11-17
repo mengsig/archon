@@ -87,6 +87,7 @@ for (const viewport of VIEWPORTS) {
       for (const [name, control] of Object.entries(operatorControls(page))) {
         await expect(control, `${name} on ${hash}`).toHaveCount(0);
       }
+      expect(await page.locator('main').innerText(), `a hidden control printed on ${hash}`).not.toMatch(/\bnull\b/);
     }
     await visit(page, fixture, '#/inbox', screens(fixture)[2][1]);
     await expect(page.getByText('Options: approve · reject')).toBeVisible();

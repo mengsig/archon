@@ -1,6 +1,6 @@
 // The queue: every item, filtered by state, repository, pipeline, priority
 // and search.
-import { h } from '../../ui/dom.js';
+import { h, append } from '../../ui/dom.js';
 import { icon } from '../../ui/icons.js';
 import { reconcile } from '../../ui/list.js';
 import { screenHeader, emptyState, errorNote, loadErrorNotes, skeletonRows } from '../../ui/components.js';
@@ -25,13 +25,14 @@ export function mountQueue(view, ctx) {
   const summary = h('p', { class: 'queue-summary', 'aria-label': 'Queue summary' });
   const fab = ctx.canOperate ? h('button', { class: 'fab', type: 'button', 'aria-label': 'New item', onclick: () => openNewItem(ctx) }, icon('plus', { size: 26 })) : null;
 
-  view.append(
+  // append() skips the observer's missing FAB; native append would print "null".
+  append(view, [
     screenHeader({ title: 'Queue' }), summary,
     h('div', { class: 'toolbar' },
       h('label', { class: 'search' }, icon('search', { size: 18 }), search),
       repoSelect),
     h('div', { class: 'toolbar toolbar-filters' }, pipelineSelect, prioritySelect),
-    chips, status, list, fab);
+    chips, status, list, fab]);
 
   const render = () => {
     const state = store.get();

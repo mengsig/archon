@@ -4,12 +4,19 @@
 
 ## 1.6.1
 
+Upcoming.
+
 ### Fixed
 
 - Validate proposal intent drafts before accepting stage results, returning invalid
   kinds, requirement ids, image references, artifact paths and hashes to the stage
   for bounded correction without discarding its proposal. Accept `behavior` as an
   alias for `behaviour`, retaining `behaviour` in serialized ledgers.
+- Intent stages with many approved images now stay within Aether's reference
+  limits (16 attachments, at most 8 images). Approved artifacts attach first;
+  remaining images keep their IDs, workspace paths and SHA-256 hashes in every
+  stage brief for workers and reviewers to open and pass on with the unchanged
+  ledger. Every approved image is still checked for changes before spawning.
 
 ## 1.6.0
 

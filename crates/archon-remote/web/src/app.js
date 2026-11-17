@@ -13,14 +13,16 @@ import { matchEchoes } from './features/chat/outbox.js';
 import { canOperate } from './core/role.js';
 import { coalesce } from './core/live-query.js';
 import { APP_VERSION } from './version.js';
+import { deviceGuard, sessionChecker } from './core/session-watch.js';
 
 const REFRESH_DEBOUNCE_MS = 350;
 const SESSION_CHECK_MS = 10_000;
 const RECENT_LIMIT = 200;
 const FEED_RETRY_MS = [2_000, 5_000, 15_000, 30_000];
 
-export function createApp({ session, onUnpaired }) {
+export function createApp({ session, onUnpaired, onDeviceChanged }) {
   if (!session?.device) throw new TypeError('the app starts with a paired session');
+  if (typeof onDeviceChanged !== 'function') throw new TypeError('the app reports a changed device');
   const store = createStore({
     session, connection: { state: 'connecting' }, summaries: null, questions: null, status: null,
     cost: null, repos: null, reports: null, feed: [], conversation: [], outbox: [], chatNotes: {}, errors: {},
@@ -32,7 +34,14 @@ export function createApp({ session, onUnpaired }) {
   const changes = createChanges({ request });
   const refresh = createLoaders(store, cmds);
   const scheduleRefresh = coalesce(() => refresh.many(['summaries', 'questions', 'status']), REFRESH_DEBOUNCE_MS);
-  const checkSession = sessionChecker(() => stop(), onUnpaired);
+  canOperate(session.device);
+  const guard = deviceGuard(session.device, () => {
+    stop();
+    onDeviceChanged();
+  });
+  const checkSession = sessionChecker({
+    readSession: api.session, guard, stop: () => stop(), onUnpaired, minGapMs: SESSION_CHECK_MS,
+  });
 
   followStreams({ store, feed, changes, refresh, scheduleRefresh });
 
@@ -43,6 +52,7 @@ export function createApp({ session, onUnpaired }) {
   const conversation = openConversation({ request, isOpen, store });
   transport = openTransport({ session, feed, changes, store, onReady: (welcomed) => {
     if (welcomed?.reply !== 'welcome' || !welcomed.data) throw new TypeError(`hello answered ${welcomed?.reply}`);
+    if (welcomed.data.device) guard(welcomed.data.device);
     welcome = welcomed.data;
     feedSync.start();
     changesSync.start();
@@ -65,7 +75,7 @@ export function createApp({ session, onUnpaired }) {
 
   return {
     store, cmds, feed, changes, refresh,
-    // Fixed at pairing: an observer's app shows no control that changes Archon.
+    // An app is built for one device and role; a change of either remounts it.
     canOperate: canOperate(session.device),
     resyncFeed: () => feedSync.run(),
     resyncConversation: () => conversation.run(),
@@ -122,7 +132,8 @@ function openTransport({ session, feed, changes, store, onReady }) {
   const setError = (name, err) => store.set({ errors: { ...store.get().errors, [name]: err } });
   return createTransport({
     url: `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${BASE}/ws`,
-    hello: { protocol_version: session.protocol_version, client: 'archon-web', client_version: APP_VERSION },
+    hello: { protocol_version: session.protocol_version, client: 'archon-web', client_version: APP_VERSION,
+      features: ['onto_edges', 'pause_changes'] },
     onFeed: (item) => feed.push(item),
     onChange: (change) => changes.push(change),
     onReady,
@@ -167,22 +178,6 @@ function streamSyncer({ name, sync, store, isOpen }) {
 function drivesRefresh(item) {
   const kind = item.entry?.entry;
   return kind !== 'operator' && kind !== 'orchestrator';
-}
-
-// A connection that keeps failing may mean the device was revoked while
-// the socket was down; the session endpoint says so without a socket.
-function sessionChecker(stop, onUnpaired) {
-  let lastCheck = 0;
-  return async () => {
-    if (Date.now() - lastCheck < SESSION_CHECK_MS) return;
-    lastCheck = Date.now();
-    // Unreachable is expected while offline; only a definite 401 unpairs.
-    const current = await api.session().catch(() => undefined);
-    if (current === null) {
-      stop();
-      onUnpaired('This device is no longer paired.');
-    }
-  };
 }
 
 function createLoaders(store, cmds) {

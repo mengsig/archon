@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { workGraph, agentGraph } from '../../src/features/item/graph-models.js';
+import { workGraph, agentGraph, liveAgentGraph } from '../../src/features/item/graph-models.js';
 
 const choice = { model: { provider: 'codex', model: 'gpt-6' }, effort: 'high' };
 const started_at = '2026-11-17T10:00:00Z';
@@ -252,4 +252,19 @@ test('invalid collections and model boundaries remain visible errors', () => {
   assert.throws(() => agentGraph(detail([stage('a')], { delegations: { a: split([delegated('child', '')]) } })), /agent.parent/);
   const frozen = { ...plan([summary('a')]), settings: [{ key: 'a', choices: {} }] };
   assert.throws(() => workGraph(detail(), [frozen]), /settings.choices/);
+});
+
+test('a reused agent keeps each attempt’s own charge; its lifetime spend is not shown on history', () => {
+  const records = [
+    stage('a1', { aether_agent: 'agt_reused', attempt: 1, cost_usd: 1.25 }),
+    stage('a2', { aether_agent: 'agt_reused', attempt: 2, cost_usd: 2.5 }),
+  ];
+  const graph = liveAgentGraph(detail(records), null, [{ agent: 'agt_reused', state: 'live', cost_usd: 99 }]);
+  const leads = graph.nodes.filter((entry) => entry.agentId === 'agt_reused');
+  assert.deepEqual(leads.map((entry) => entry.cost).sort(), [1.25, 2.5]);
+  for (const lead of leads) {
+    assert.equal(lead.state, 'live');
+    assert.doesNotMatch(lead.meta, /99|direct recorded spend/);
+  }
+  assert.throws(() => liveAgentGraph(detail(records), null, null), /states are a list/);
 });

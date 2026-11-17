@@ -53,6 +53,10 @@ async function boot({ code = null, notice = null, attempt = 0 } = {}) {
 function startPaired(session) {
   const app = createApp({
     session,
+    onDeviceChanged: () => {
+      stopRunning();
+      boot();
+    },
     onUnpaired: (notice) => {
       stopRunning();
       showPairing(root, { notice, onPaired: () => boot() });

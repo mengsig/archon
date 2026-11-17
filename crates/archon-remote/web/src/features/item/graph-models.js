@@ -216,3 +216,15 @@ export function agentGraph(detail, orchestrator = null) {
   }
   return checkedGraph(graph);
 }
+
+// The agent tree with each agent's live state laid over it. Costs stay the per-attempt
+// figures: an agent's recorded spend is lifetime, so it would misprice reused agents.
+export function liveAgentGraph(detail, orchestrator, states) {
+  if (!Array.isArray(states)) throw new TypeError('agent states are a list');
+  const graph = agentGraph(detail, orchestrator);
+  const byAgent = new Map(states.map((agent) => [agent.agent, agent.state]));
+  for (const node of graph.nodes) {
+    if (byAgent.has(node.agentId)) node.state = byAgent.get(node.agentId);
+  }
+  return graph;
+}

@@ -1,9 +1,9 @@
 import { h } from '../../ui/dom.js';
 import { errorNote, skeletonRows, emptyState } from '../../ui/components.js';
 import { createGraph } from '../../ui/graph/graph.js';
-import { workGraph, agentGraph } from './graph-models.js';
+import { workGraph, liveAgentGraph } from './graph-models.js';
 import { liveQuery, MIN_POLL_MS } from '../../core/live-query.js';
-import { usd, isTerminal } from '../../core/format.js';
+import { isTerminal } from '../../core/format.js';
 import { stagesTimeline } from './stages.js';
 import { openSheet } from '../../ui/sheet.js';
 import { renderMarkdown } from '../../ui/markdown.js';
@@ -59,7 +59,6 @@ function graphViews(ctx, id, work, agents) {
   let current = null;
   let plans = [];
   let states = [];
-  let costs = {};
   let resource = null;
   let active = 'details';
   let polling = false;
@@ -69,7 +68,7 @@ function graphViews(ctx, id, work, agents) {
       workGraphView.update(workGraph(current, plans));
       timeline.replaceChildren(stagesTimeline(current));
     }
-    if (active === 'agents') agentGraphView.update(liveAgentGraph(current, ctx.store.get().status?.orchestrator, states, costs));
+    if (active === 'agents') agentGraphView.update(liveAgentGraph(current, ctx.store.get().status?.orchestrator, states));
   };
   const load = () => loadGraphData(ctx, id, current, active);
   // Delegated agents start inside a stage with no event to say so: poll them while the item runs.
@@ -82,9 +81,9 @@ function graphViews(ctx, id, work, agents) {
   const receive = ({ data, error }) => {
     const notes = active === 'work' ? planError : agentError;
     notes.replaceChildren(...(error ? [errorNote(error, () => resource.refresh())] : []));
-    if (error && active === 'agents') { states = []; costs = {}; }
+    if (error && active === 'agents') states = [];
     if (data?.plans) plans = data.plans;
-    if (data?.states) { states = data.states; costs = data.costs; }
+    if (data?.states) states = data.states;
     draw();
   };
   return {
@@ -103,18 +102,6 @@ function graphViews(ctx, id, work, agents) {
   };
 }
 
-// The agent tree with each agent's live state and direct spend laid over it.
-function liveAgentGraph(detail, orchestrator, states, costs) {
-  if (!Array.isArray(states) || !costs || typeof costs !== 'object') throw new TypeError('agent states are a list and costs a map');
-  const graph = agentGraph(detail, orchestrator);
-  const byAgent = new Map(states.map((agent) => [agent.agent, agent.state]));
-  for (const node of graph.nodes) {
-    if (byAgent.has(node.agentId)) node.state = byAgent.get(node.agentId);
-    if (Number.isFinite(costs[node.agentId])) { node.cost = costs[node.agentId]; node.meta += ` · ${usd(node.cost)} direct recorded spend`; }
-  }
-  return graph;
-}
-
 async function loadGraphData(ctx, id, detail, active) {
   if (!detail) return {};
   if (detail.item.id !== id || !Array.isArray(detail.runs)) throw new TypeError('Graph detail must belong to the current item');
@@ -128,10 +115,7 @@ async function loadGraphData(ctx, id, detail, active) {
           || !['live', 'completed', 'stopped'].includes(entry.state)) throw new TypeError('Invalid or duplicate agent state');
       ids.add(entry.agent);
     }
-    const costs = result.cost_usd ?? {};
-    if (typeof costs !== 'object' || Array.isArray(costs)
-        || Object.values(costs).some((cost) => !Number.isFinite(cost) || cost < 0)) throw new TypeError('Invalid agent costs');
-    return { states: result.agents, costs };
+    return { states: result.agents };
   }
   return {};
 }

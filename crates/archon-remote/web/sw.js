@@ -27,6 +27,7 @@ const SHELL = [
   `${BASE}/src/core/pairing-code.js`,
   `${BASE}/src/core/role.js`,
   `${BASE}/src/core/router.js`,
+  `${BASE}/src/core/session-watch.js`,
   `${BASE}/src/core/store.js`,
   `${BASE}/src/core/theme.js`,
   `${BASE}/src/core/transport.js`,

@@ -11,6 +11,7 @@ mod github_links;
 mod graph;
 mod initiatives;
 pub(crate) mod intent;
+mod item_agents;
 mod item_views;
 mod items;
 pub(crate) use items::{check_plan, check_reasons, check_stage_timeouts};
@@ -673,6 +674,7 @@ async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, Ar
 /// The requests protocol 24 added, each served from its owner's file.
 async fn handle_protocol_24(ctx: &DaemonContext, request: Request) -> Result<Reply, ArchonError> {
     match request {
+        Request::ItemAgentStates { item } => item_agents::get(ctx, &item).await,
         Request::SubscribeChanges { after } => changes::subscribe(ctx, after).await,
         Request::ChangesPage { after, limit } => changes::page(ctx, after, limit).await,
         Request::ItemHistory { item, limit } => changes::item_history(ctx, &item, limit).await,

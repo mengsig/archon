@@ -11,7 +11,7 @@ body {
   margin: 0;
   min-height: 100dvh;
   font-family: var(--font);
-  font-size: 17px;
+  font-size: 15px;
   line-height: 1.45;
   letter-spacing: -0.01em;
   color: var(--text);
@@ -20,7 +20,6 @@ body {
   -moz-osx-font-smoothing: grayscale;
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior-y: none;
-  transition: background-color var(--t-med) ease, color var(--t-med) ease;
 }
 
 h1, h2, h3, p { margin: 0; }
@@ -61,10 +60,9 @@ img, svg { display: block; }
 .boot-mark {
   width: 36px;
   height: 36px;
-  border-radius: 50%;
-  border: 3px solid var(--separator);
-  border-top-color: var(--accent);
-  animation: spin 0.9s linear infinite;
+  border-radius: 10px;
+  background: var(--surface-pressed);
+  animation: pulse 1.4s ease-in-out infinite;
 }
 .boot-error {
   max-width: var(--column);
@@ -79,15 +77,13 @@ img, svg { display: block; }
 @keyframes rise-in { from { opacity: 0; transform: translateY(10px) scale(0.985); } to { opacity: 1; transform: none; } }
 @keyframes push-in { from { opacity: 0; transform: translateX(36px); } to { opacity: 1; transform: none; } }
 @keyframes pop-in { from { opacity: 0; transform: translateX(-28px); } to { opacity: 1; transform: none; } }
-@keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
 /* Reduced motion: every transition and animation settles at once. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
-    animation-duration: 0.001ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.001ms !important;
+    animation: none !important;
+    transition: none !important;
     scroll-behavior: auto !important;
   }
 }

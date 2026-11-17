@@ -28,3 +28,11 @@ test('only live notifications, questions and reports about the item name it', ()
   assert.equal(namesItem({ ...live({ entry: 'report', item: 'qi_A' }), replayed: true }, 'qi_A'), false);
   assert.throws(() => namesItem(live({ entry: 'report' }), ''), TypeError);
 });
+
+test('GitHub references become explicit safe links, never URL-shaped repository text', async () => {
+  const { githubRefUrl } = await import('../../src/core/format.js');
+  assert.equal(githubRefUrl({ host: 'github.com', repo: 'mengsig/archon', number: 427, kind: 'issue' }), 'https://github.com/mengsig/archon/issues/427');
+  assert.equal(githubRefUrl({ host: 'github.com', repo: 'mengsig/archon', number: 428, kind: 'pull_request' }), 'https://github.com/mengsig/archon/pull/428');
+  assert.equal(githubRefUrl({ host: 'javascript:alert(1)', repo: 'x/y', number: 1 }), null);
+  assert.equal(githubRefUrl({ host: 'github.com', repo: '../evil?x', number: 1 }), null);
+});

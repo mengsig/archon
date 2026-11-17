@@ -11,13 +11,16 @@ import { mountInbox } from './features/inbox/inbox.js';
 import { mountChat } from './features/chat/chat.js';
 import { mountOverview } from './features/overview/overview.js';
 import { mountSettings } from './features/settings/settings.js';
+import { mountGraph } from './features/graph/graph.js';
+import { APP_VERSION } from './version.js';
 
-const SCREENS = { queue: mountQueue, item: mountItem, inbox: mountInbox, chat: mountChat, overview: mountOverview, settings: mountSettings };
+const SCREENS = { queue: mountQueue, graph: mountGraph, item: mountItem, inbox: mountInbox, chat: mountChat, overview: mountOverview, settings: mountSettings };
 const TABS = [
+  { id: 'overview', label: 'Overview', icon: 'overview' },
   { id: 'queue', label: 'Queue', icon: 'queue' },
+  { id: 'graph', label: 'Graph', icon: 'graph' },
   { id: 'inbox', label: 'Inbox', icon: 'inbox' },
   { id: 'chat', label: 'Chat', icon: 'chat' },
-  { id: 'overview', label: 'Overview', icon: 'overview' },
 ];
 
 export function mountShell(root, app, { onForget }) {
@@ -64,14 +67,18 @@ function buildTabbar() {
   const buttons = new Map();
   const badge = h('span', { class: 'tab-badge', 'aria-hidden': 'true', hidden: true });
   const nav = h('nav', { class: 'tabbar', 'aria-label': 'Sections' },
-    h('span', { class: 'tabbar-brand', text: 'Archon' }),
+    h('a', { class: 'tabbar-brand', href: '#/overview', 'aria-label': 'Archon home' }, icon('mark', { size: 28 }), 'archon'),
+    h('span', { class: 'nav-eyebrow', text: 'Workspace' }),
     TABS.map((tab) => {
       const link = h('a', { class: 'tab', href: `#/${tab.id}`, dataset: { tab: tab.id } },
         h('span', { class: 'tab-icon' }, icon(tab.icon, { size: 24 }), tab.id === 'inbox' ? badge : null),
         h('span', { class: 'tab-label', text: tab.label }));
       buttons.set(tab.id, link);
       return link;
-    }));
+    }),
+    h('div', { class: 'nav-footer' },
+      h('a', { class: 'nav-settings', href: '#/settings' }, icon('settings', { size: 18 }), 'Settings'),
+      h('span', { class: 'nav-version', text: `Archon ${APP_VERSION}` })));
   return {
     nav,
     select(id) {

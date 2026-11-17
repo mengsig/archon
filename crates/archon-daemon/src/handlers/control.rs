@@ -293,7 +293,7 @@ fn link_status(ctx: &DaemonContext) -> AetherLinkStatus {
 
 /// The recorded orchestrator and its generation; `None` before it was
 /// ever created.
-async fn recorded_orchestrator(
+pub(super) async fn recorded_orchestrator(
     ctx: &DaemonContext,
 ) -> Result<Option<(AetherAgentId, u64)>, ArchonError> {
     let (agent, generation) = {

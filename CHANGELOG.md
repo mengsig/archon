@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 1.6.2
+
+### Changed
+
+- Refurbished the remote web app with a graphite light/dark workspace, a persistent
+  phone navigation bar and desktop rail, clearer queue cards, stronger type hierarchy,
+  purposeful motion and a new overview with decisions, activity and daily spend.
+- Added dependency, stack and initiative graphs, pipeline work graphs with attempts,
+  fan-out slots and gates, and agent trees with model, effort, lifecycle and cost.
+  Graphs support keyboard, touch pan/zoom and reduced motion without dependencies.
+- Added operator commands from Chat, stage-output inspection and merge history.
+  Existing pairing, observer permissions, confirmations and strict CSP remain intact.
+- Added a bounded read-only `item_agent_states` request for actual delegated-agent
+  lifecycle and direct ledger spend; unavailable backend reads fail explicitly.
+
 ## 1.6.1
 
 Released 2026-11-17.

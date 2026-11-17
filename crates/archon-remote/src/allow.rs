@@ -70,6 +70,7 @@ fn reads(request: &Request) -> bool {
             | R::ListItems(_)
             | R::ListItemSummaries(_)
             | R::GetItem { .. }
+            | R::ItemAgentStates { .. }
             | R::GetStage(_)
             | R::ResolveItem { .. }
             | R::ListPipelines { .. }
@@ -229,6 +230,7 @@ mod tests {
             serde_json::json!({"cmd": "repo_list"}),
             serde_json::json!({"cmd": "subscribe_feed", "after": null, "verbose": false}),
             serde_json::json!({"cmd": "item_history", "item": ITEM}),
+            serde_json::json!({"cmd": "item_agent_states", "item": ITEM}),
             serde_json::json!({"cmd": "changes_page", "after": 0}),
             serde_json::json!({"cmd": "model_policy", "repo": null}),
             serde_json::json!({"cmd": "get_initiative", "initiative": "ini_01M621D9ZBJPTMDTV26KKQNBE1"}),

@@ -1,6 +1,7 @@
 // Chat with the orchestrator: its conversation as archond serves it (the
 // same entries as Aether's focus view), and a composer that sends optimistically.
 import { h } from '../../ui/dom.js';
+import { openCommands } from '../commands/commands.js';
 import { icon } from '../../ui/icons.js';
 import { reconcile } from '../../ui/list.js';
 import { screenHeader, errorNote, loadErrorNotes, describeError } from '../../ui/components.js';
@@ -16,7 +17,8 @@ export function mountChat(view, ctx) {
   const transcript = h('ol', { class: 'transcript', role: 'log', 'aria-label': 'Conversation', 'aria-live': 'polite' });
   const status = h('div', { class: 'list-status' });
   const composer = buildComposer((text) => send(ctx, text));
-  view.append(screenHeader({ title: 'Chat' }), subtitle, status, transcript, composer.form);
+  const commands = h('button', { class: 'button button-plain button-small', type: 'button', onclick: () => openCommands(ctx) }, 'Commands');
+  view.append(screenHeader({ title: 'Chat', actions: [commands] }), subtitle, status, transcript, composer.form);
 
   const render = () => {
     const nearBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - NEAR_BOTTOM_PX;

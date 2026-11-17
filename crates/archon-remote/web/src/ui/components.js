@@ -7,12 +7,16 @@ export function chip(look, extraClass = '') {
 }
 
 export function screenHeader({ title, back = null, actions = [], subtitle = null }) {
+  const subtitles = { Queue: 'Every piece of work. A clear next step.', Overview: 'Your work, in motion. A clear view of what matters.', Inbox: 'A little attention goes a long way.', Chat: 'A direct line to your orchestrator.', Graph: 'See how everything connects.', Settings: 'Make this workspace yours.' };
+  const settings = title !== 'Settings' ? h('a', { class: 'icon-button mobile-settings', href: '#/settings', 'aria-label': 'Settings' }, icon('settings', { size: 20 })) : null;
+  subtitle ??= subtitles[title];
   const lead = back
     ? h('button', { class: 'nav-back', type: 'button', 'aria-label': back.label, onclick: back.onClick },
       icon('back', { size: 22 }), h('span', { text: back.text }))
     : null;
   return h('header', { class: ['screen-header', back ? 'has-back' : 'is-large'] },
-    h('div', { class: 'screen-header-bar' }, lead, h('div', { class: 'screen-header-actions' }, actions)),
+    h('div', { class: 'screen-header-bar' }, lead, h('div', { class: 'screen-header-actions' }, actions, settings)),
+    !back ? h('p', { class: 'screen-eyebrow', text: title === 'Overview' ? 'Your workspace' : 'Archon / workspace' }) : null,
     h('h1', { class: 'screen-title', text: title, tabindex: '-1' }),
     subtitle ? h('p', { class: 'screen-subtitle', text: subtitle }) : null);
 }

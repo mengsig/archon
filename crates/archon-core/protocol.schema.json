@@ -1673,6 +1673,23 @@
           "type": "object"
         },
         {
+          "description": "Current lifecycle of delegated descendants of this item's recorded stage agents.",
+          "properties": {
+            "cmd": {
+              "const": "item_agent_states",
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/QueueItemId"
+            }
+          },
+          "required": [
+            "cmd",
+            "item"
+          ],
+          "type": "object"
+        },
+        {
           "$ref": "#/$defs/StageQuery",
           "description": "The stage runs of an item's latest run, or one stage's full output.",
           "properties": {
@@ -6097,6 +6114,52 @@
           "type": "object"
         }
       ]
+    },
+    "ItemAgentState": {
+      "description": "A delegated agent's lifecycle as reported by the backend at read time.",
+      "enum": [
+        "live",
+        "completed",
+        "stopped"
+      ],
+      "type": "string"
+    },
+    "ItemAgentStates": {
+      "description": "Delegated lifecycle and recorded direct spend, including the current orchestrator.",
+      "properties": {
+        "agents": {
+          "items": {
+            "$ref": "#/$defs/ItemAgentStatus"
+          },
+          "type": "array"
+        },
+        "cost_usd": {
+          "additionalProperties": {
+            "format": "double",
+            "type": "number"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "agents"
+      ],
+      "type": "object"
+    },
+    "ItemAgentStatus": {
+      "properties": {
+        "agent": {
+          "$ref": "#/$defs/AetherAgentId"
+        },
+        "state": {
+          "$ref": "#/$defs/ItemAgentState"
+        }
+      },
+      "required": [
+        "agent",
+        "state"
+      ],
+      "type": "object"
     },
     "ItemDetail": {
       "properties": {
@@ -10715,6 +10778,22 @@
         {
           "properties": {
             "data": {
+              "$ref": "#/$defs/ItemAgentStates"
+            },
+            "reply": {
+              "const": "item_agent_states",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
               "$ref": "#/$defs/StageDetail"
             },
             "reply": {
@@ -12342,6 +12421,23 @@
           "properties": {
             "cmd": {
               "const": "get_item",
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/QueueItemId"
+            }
+          },
+          "required": [
+            "cmd",
+            "item"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Current lifecycle of delegated descendants of this item's recorded stage agents.",
+          "properties": {
+            "cmd": {
+              "const": "item_agent_states",
               "type": "string"
             },
             "item": {
@@ -16822,6 +16918,7 @@
     "changes",
     "task_graph",
     "run_plan",
+    "item_agent_states",
     "item_history",
     "item_filters",
     "github_links",

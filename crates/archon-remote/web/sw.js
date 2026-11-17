@@ -104,12 +104,14 @@ self.addEventListener('fetch', (event) => {
 });
 
 // The network wins so a new release shows at once; the cache is the
-// offline fallback, and a miss in both stays a visible network error.
+// fallback offline or while the host is busy (503), and a miss in both
+// stays visible: the busy page, or a network error.
 async function networkFirst(request, key) {
   const cache = await caches.open(CACHE);
   try {
     const response = await fetch(request, { cache: 'no-cache' });
     if (response.ok && response.type === 'basic') await cache.put(key, response.clone());
+    if (response.status === 503) return (await cache.match(key)) ?? response;
     return response;
   } catch (err) {
     const cached = await cache.match(key);

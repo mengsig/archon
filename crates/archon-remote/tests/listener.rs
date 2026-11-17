@@ -862,3 +862,88 @@ async fn an_ended_change_subscription_frees_its_slot() {
         "fresh ids, past the limit of 4"
     );
 }
+
+#[tokio::test]
+async fn a_connection_beyond_the_cap_is_answered_503_and_a_freed_slot_serves_again() {
+    let config = RemoteConfig {
+        max_connections: 2,
+        ..RemoteConfig::default()
+    };
+    let listener = Listener::start_with(config, None).await;
+    let host = listener.host();
+    let held = [
+        TcpStream::connect(("127.0.0.1", listener.port))
+            .await
+            .unwrap(),
+        TcpStream::connect(("127.0.0.1", listener.port))
+            .await
+            .unwrap(),
+    ];
+    // The accept loop takes both slots before it reads the next connection.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let page = raw(listener.port, "GET", "/", &[("Host", host.as_str())], "").await;
+    assert_eq!(page.status, 503, "{}", page.body);
+    assert_eq!(page.header("retry-after"), Some("2"));
+    assert!(
+        page.body.contains("Can\u{2019}t connect to Archon"),
+        "{}",
+        page.body
+    );
+    assert!(
+        page.body
+            .contains("http-equiv=\"refresh\" content=\"2; url=.\""),
+        "the page retries without script, at the app's root: {}",
+        page.body
+    );
+    let csp = page.header("content-security-policy").unwrap_or_default();
+    assert!(csp.contains("default-src 'none'"), "{csp}");
+    let api = raw(
+        listener.port,
+        "GET",
+        "/api/health",
+        &[("Host", host.as_str())],
+        "",
+    )
+    .await;
+    assert_eq!(api.status, 503, "{}", api.body);
+    assert!(api.body.contains("\"code\":\"busy\""), "{}", api.body);
+    drop(held);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let health = listener.request("GET", "/api/health", &[], "").await;
+    assert_eq!(
+        health.status, 200,
+        "a freed slot serves again: {}",
+        health.body
+    );
+}
+
+#[tokio::test]
+async fn an_idle_keep_alive_connection_gives_its_slot_back() {
+    let config = RemoteConfig {
+        max_connections: 1,
+        ..RemoteConfig::default()
+    };
+    let listener = Listener::start_with(config, None).await;
+    let mut idle = TcpStream::connect(("127.0.0.1", listener.port))
+        .await
+        .unwrap();
+    let head = format!(
+        "GET /api/health HTTP/1.1\r\nHost: {}\r\n\r\n",
+        listener.host()
+    );
+    idle.write_all(head.as_bytes()).await.unwrap();
+    let mut first = [0u8; 12];
+    idle.read_exact(&mut first).await.unwrap();
+    assert_eq!(
+        &first, b"HTTP/1.1 200",
+        "the kept-alive connection was served"
+    );
+    // Idle past the 3 s head timeout, the server closes it and frees the only slot.
+    let mut rest = Vec::new();
+    tokio::time::timeout(Duration::from_secs(5), idle.read_to_end(&mut rest))
+        .await
+        .expect("the server closes an idle keep-alive connection")
+        .unwrap();
+    let health = listener.request("GET", "/api/health", &[], "").await;
+    assert_eq!(health.status, 200, "{}", health.body);
+}

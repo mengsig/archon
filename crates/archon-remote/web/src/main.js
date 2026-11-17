@@ -37,8 +37,9 @@ async function boot({ code = null, notice = null, attempt = 0 } = {}) {
   try {
     session = await api.session();
   } catch (err) {
-    const unreachable = err instanceof api.ApiError && err.status === 0;
-    if (unreachable) renderRetrying(err, { code, notice, attempt });
+    // 0: refused, dropped or silent; 503: every connection slot is taken for now.
+    const retryable = err instanceof api.ApiError && (err.status === 0 || err.status === 503);
+    if (retryable) renderRetrying(err, { code, notice, attempt });
     else renderBootError(err);
     return;
   }
@@ -85,7 +86,8 @@ function renderRetrying(err, { code, notice, attempt }) {
     status.textContent = `${err.message} Check that Archon is running, then retry.`;
     return;
   }
-  let left = Math.max(1, Math.round(backoffDelay(attempt) / 1000));
+  // A busy host names its own wait; the backoff covers one that said nothing.
+  let left = Math.max(1, err.retryAfterSecs ?? Math.round(backoffDelay(attempt) / 1000));
   const tick = () => {
     status.textContent = `${err.message} Retrying in ${left} s.`;
     if (left-- <= 0) again();

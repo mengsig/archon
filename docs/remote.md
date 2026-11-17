@@ -188,7 +188,10 @@ answered by a `reply` frame with the same id, and `subscribe_feed` streams
 Limits: messages of at most 1 MiB, 16 requests in flight and 4 feed
 subscriptions per connection, and as many sessions in total as
 `max_connections`. archond pings every 25 seconds and closes a session
-silent for 75.
+silent for 75. A browser loads the app over up to six HTTP connections,
+which close after 3 idle seconds; beyond the cap archond answers `503` with
+`Retry-After: 2` (a page that reloads itself, or JSON `busy` under `/api`
+and `/ws`), and the app retries instead of failing silently.
 
 | Close code | Meaning |
 | --- | --- |

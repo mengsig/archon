@@ -148,6 +148,56 @@ async fn route(
     }
 }
 
+/// Seconds a refused browser is told to wait before it tries again.
+pub const BUSY_RETRY_SECS: u64 = 2;
+
+/// What the app shows when the navigation itself is refused: it reloads
+/// itself, since the CSP allows no script here and a refresh needs none. The
+/// refresh names `.`, the app's root: one to the same URL with a `#/route`
+/// fragment would only scroll to it.
+const BUSY_PAGE: &str = "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
+    <meta name=\"color-scheme\" content=\"light dark\">\
+    <meta http-equiv=\"refresh\" content=\"2; url=.\"><title>Archon</title></head>\
+    <body><h1>Can\u{2019}t connect to Archon</h1><p role=\"status\">Archon is busy: every \
+    connection is in use. Retrying in a few seconds.</p></body></html>";
+
+/// The answer to a request on a connection beyond `max_connections`: `503`
+/// with `Retry-After`, JSON for the API and the socket, a page otherwise.
+/// A module the page cannot load sends the app to its own retry screen.
+pub fn busy(path: &str) -> Response<Body> {
+    assert!(
+        path.starts_with('/'),
+        "request paths are absolute: {path:?}"
+    );
+    let api = path == "/ws" || path == "/api" || path.starts_with("/api/");
+    let mut response = if api {
+        let message = "Archon is busy: every connection is in use. Retrying shortly.";
+        let body = serde_json::json!({"error": {"code": "busy", "message": message}});
+        json(StatusCode::SERVICE_UNAVAILABLE, &body)
+    } else {
+        let mut page = Response::new(Full::new(Bytes::from_static(BUSY_PAGE.as_bytes())));
+        *page.status_mut() = StatusCode::SERVICE_UNAVAILABLE;
+        let headers = page.headers_mut();
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("text/html; charset=utf-8"),
+        );
+        headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        page
+    };
+    let headers = response.headers_mut();
+    headers.insert(header::RETRY_AFTER, HeaderValue::from(BUSY_RETRY_SECS));
+    headers.insert(header::CONNECTION, HeaderValue::from_static("close"));
+    secure(headers);
+    assert_eq!(
+        response.status(),
+        StatusCode::SERVICE_UNAVAILABLE,
+        "a refusal is a 503"
+    );
+    response
+}
+
 fn asset(path: &str, method: &Method, headers: &HeaderMap) -> Result<Response<Body>, HttpError> {
     let Some(asset) = crate::assets::find(path) else {
         return Err(HttpError::new(

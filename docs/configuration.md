@@ -588,7 +588,10 @@ only say where it binds once on. `address` is `host:port`; a non-loopback
 host is refused unless `allow_remote = true`, and the listener speaks plain
 HTTP either way, so publish it with `tailscale serve` or a TLS proxy.
 `max_connections` (1 to 1024) caps the HTTP connections and WebSocket
-sessions served at once. A change takes effect when archond restarts.
+sessions served at once. An idle keep-alive connection gives its slot back
+after 3 seconds, so a tab holds only its WebSocket once loaded. A connection
+beyond the cap is answered `503` with `Retry-After: 2`, and the app shows
+"Can't connect" while it retries. A change takes effect when archond restarts.
 
 ## Push notifications
 

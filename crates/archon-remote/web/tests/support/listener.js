@@ -14,11 +14,14 @@ async function remoteJson(archond, args) {
 
 // `mounted` puts a stand-in for Aether's `/archon` mount in front of archond,
 // and the fixture's baseURL is then the app's address behind it.
-export async function startListenerFixture({ archonBin, seed = true, mounted = false } = {}) {
+// `maxConnections` overrides the listener's connection cap.
+export async function startListenerFixture({ archonBin, seed = true, mounted = false, maxConnections = null } = {}) {
+  assert.ok(maxConnections === null || (Number.isInteger(maxConnections) && maxConnections > 0), 'a cap is a positive count');
   const mount = mounted ? await startMount() : null;
+  const cap = maxConnections === null ? '' : `max_connections = ${maxConnections}\n`;
   const config = mount
-    ? `${LISTENER_CONFIG}mounted_at = "${PREFIX}"\ntrusted_origins = ["${mount.origin}"]\n`
-    : LISTENER_CONFIG;
+    ? `${LISTENER_CONFIG}${cap}mounted_at = "${PREFIX}"\ntrusted_origins = ["${mount.origin}"]\n`
+    : `${LISTENER_CONFIG}${cap}`;
   const archond = await startArchond({ archonBin, config });
   try {
     const seeded = seed ? await seedDemo(archond) : null;

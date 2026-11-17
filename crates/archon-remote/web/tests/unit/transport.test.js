@@ -193,3 +193,30 @@ test('a request may ask for a longer answer deadline than the default', () => {
   assert.ok(h.timers.some((t) => !t.done && t.ms === 30_000));
   assert.throws(() => h.transport.request('status', {}, { timeoutMs: 0 }), RangeError);
 });
+
+test('a page shown again retries soon, jittered, but never cuts a disabled host\'s minute', () => {
+  let clock = 0;
+  const h = harness({ now: () => clock });
+  h.transport.start(); h.last().open(); h.last().welcome();
+  h.last().drop(); h.fire(backoffDelay(0, () => 0.5)); h.last().drop();
+  h.fire(backoffDelay(1, () => 0.5)); h.last().drop();
+  const long = backoffDelay(2, () => 0.5);
+  assert.equal(h.states.at(-1).retryInMs, long);
+  const soon = retryDelay(0, { random: () => 0.5 });
+  assert.ok(soon > 0 && soon < long, 'the wake wait is the shortest jittered one');
+  h.transport.reconnectSoon();
+  assert.equal(h.states.at(-1).retryInMs, soon, 'the banner names the new wait');
+  assert.equal(h.sockets.length, 3, 'no socket opens before the jittered wait');
+  h.transport.reconnectSoon();
+  assert.equal(h.timers.filter((t) => !t.done && t.ms === soon).length, 1, 'a sooner retry stands');
+  h.fire(soon);
+  assert.equal(h.sockets.length, 4);
+
+  const disabled = harness({ now: () => clock });
+  disabled.transport.start(); disabled.last().drop(CLOSE_DISABLED);
+  const minute = disabled.states.at(-1).retryInMs;
+  disabled.transport.reconnectSoon();
+  disabled.transport.reconnectNow();
+  assert.equal(disabled.sockets.length, 1, 'remote access off waits out its minute');
+  assert.equal(disabled.timers.filter((t) => !t.done).map((t) => t.ms).join(), String(minute));
+});

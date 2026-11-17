@@ -14,6 +14,7 @@ import { canOperate } from './core/role.js';
 import { coalesce } from './core/live-query.js';
 import { APP_VERSION } from './version.js';
 import { deviceGuard, sessionChecker } from './core/session-watch.js';
+import { sessionSignal } from './core/session-signal.js';
 import { retryDelay, STREAM_BACKOFF } from './core/backoff.js';
 
 const REFRESH_DEBOUNCE_MS = 350;
@@ -39,7 +40,7 @@ export function createApp({ session, onUnpaired, onDeviceChanged }) {
     stop();
     onDeviceChanged();
   });
-  const checkSession = sessionChecker({
+  const sessionCheck = sessionChecker({
     readSession: api.session, guard, stop: () => stop(), onUnpaired, minGapMs: SESSION_CHECK_MS,
   });
 
@@ -59,16 +60,23 @@ export function createApp({ session, onUnpaired, onDeviceChanged }) {
     conversation.run();
     refresh.many(['summaries', 'questions', 'status', 'repos', 'reports', 'cost']);
   } });
-  watchConnection({ store, stop: () => stop(), checkSession, onUnpaired });
+  watchConnection({ store, stop: () => stop(), checkSession: () => sessionCheck.check(), onUnpaired });
 
+  // A connected tab is re-paired or forgotten in another tab without its socket noticing.
+  const recheckSession = () => sessionCheck.check({ force: true });
+  let unlisten = null;
   const onVisible = () => {
     if (document.visibilityState !== 'visible') return;
-    transport.reconnectNow();
+    recheckSession();
+    transport.reconnectSoon();
     // One read now, which also takes the place of any burst refresh still waiting.
     if (transport.state === 'open') scheduleRefresh.flush();
   };
 
   function stop() {
+    sessionCheck.cancel();
+    unlisten?.();
+    unlisten = null;
     document.removeEventListener('visibilitychange', onVisible);
     if (transport.state !== 'stopped') transport.stop();
   }
@@ -80,6 +88,8 @@ export function createApp({ session, onUnpaired, onDeviceChanged }) {
     resyncFeed: () => feedSync.run(),
     resyncConversation: () => conversation.run(),
     start() {
+      if (unlisten) throw new Error('the app already started');
+      unlisten = sessionSignal().listen(recheckSession);
       document.addEventListener('visibilitychange', onVisible);
       transport.start();
     },

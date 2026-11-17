@@ -8,10 +8,10 @@ const operator = { id: 'dev_1', name: 'phone', role: 'operator' };
 function watch(readSession) {
   const events = [];
   const guard = deviceGuard(operator, () => events.push('remount'));
-  const check = sessionChecker({
+  const watcher = sessionChecker({
     readSession, guard, stop: () => events.push('stop'), onUnpaired: (note) => events.push(note), minGapMs: 0,
   });
-  return { check, events };
+  return { check: watcher.check, cancel: watcher.cancel, events };
 }
 
 test('a re-pair as an observer during a disconnect remounts, whether or not the id changed', async () => {
@@ -49,4 +49,34 @@ test('a welcome naming another role is a change too', () => {
   assert.equal(guard({ ...operator, role: 'observer' }), true);
   assert.deepEqual(events, ['remount']);
   assert.throws(() => deviceGuard(null, () => {}), /device the app was built for/);
+});
+
+test('a stopped app ignores a session read that answers late', async () => {
+  for (const answer of [null, { device: { ...operator, role: 'observer' } }]) {
+    let settle;
+    const { check, cancel, events } = watch(() => new Promise((resolve) => { settle = resolve; }));
+    const reading = check();
+    cancel();
+    settle(answer);
+    await reading;
+    await check();
+    assert.deepEqual(events, [], `a late ${answer ? 'change' : 'unpairing'} reaches no stopped app`);
+  }
+});
+
+test('a forced check skips the gap that throttles the connection watch', async () => {
+  let reads = 0;
+  let clock = 0;
+  const guard = deviceGuard(operator, () => {});
+  const { check } = sessionChecker({
+    readSession: async () => { reads += 1; return { device: operator }; },
+    guard, stop: () => {}, onUnpaired: () => {}, minGapMs: 10_000, now: () => clock,
+  });
+  await check();
+  clock = 5_000;
+  await check();
+  assert.equal(reads, 1, 'a second check inside the gap reads nothing');
+  await check({ force: true });
+  assert.equal(reads, 2, 'another tab\'s pairing or a shown page reads at once');
+  assert.throws(() => sessionChecker({ readSession: async () => null, guard, stop() {}, onUnpaired() {}, minGapMs: Number.NaN }), /minGapMs/);
 });

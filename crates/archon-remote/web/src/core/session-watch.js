@@ -13,22 +13,27 @@ export function deviceGuard(built, onChanged) {
   };
 }
 
-// A connection that keeps failing may mean the device was revoked or re-paired while
-// the socket was down; the session endpoint says so without a socket.
+// A connection that keeps failing, another tab's pairing or a page shown again may
+// mean the device changed; the session endpoint says so without a socket.
+// `force` skips the gap; `cancel` keeps a late answer from reaching a stopped app.
 export function sessionChecker({ readSession, guard, stop, onUnpaired, minGapMs, now = Date.now }) {
   if (typeof readSession !== 'function' || typeof guard !== 'function') throw new TypeError('the session check needs a reader and a guard');
   if (typeof stop !== 'function' || typeof onUnpaired !== 'function') throw new TypeError('the session check needs stop and onUnpaired');
+  if (!Number.isFinite(minGapMs) || minGapMs < 0) throw new RangeError(`minGapMs must be a wait, got ${minGapMs}`);
   let lastCheck = -Infinity;
-  return async () => {
-    if (now() - lastCheck < minGapMs) return;
+  let alive = true;
+  async function check({ force = false } = {}) {
+    if (!alive || (!force && now() - lastCheck < minGapMs)) return;
     lastCheck = now();
     // Unreachable is expected while offline; only a definite 401 unpairs.
     const current = await readSession().catch(() => undefined);
+    if (!alive) return;
     if (current === null) {
       stop();
       onUnpaired('This device is no longer paired.');
     } else if (current) {
       guard(current.device);
     }
-  };
+  }
+  return { check, cancel: () => { alive = false; } };
 }

@@ -27,18 +27,19 @@ class Transport {
   constructor({
     url, hello, protocol = 'archon', WebSocketImpl = globalThis.WebSocket,
     setTimer = globalThis.setTimeout.bind(globalThis), clearTimer = globalThis.clearTimeout.bind(globalThis),
-    random = Math.random, requestTimeoutMs = REQUEST_TIMEOUT_MS,
+    random = Math.random, now = Date.now, requestTimeoutMs = REQUEST_TIMEOUT_MS,
     onFeed = () => {}, onChange = () => {}, onState = () => {}, onReady = () => {}, onProtocolError = () => {},
   }) {
     if (typeof url !== 'string' || !/^wss?:\/\//.test(url)) throw new TypeError(`a WebSocket URL, got ${url}`);
     if (!hello || !Number.isInteger(hello.protocol_version)) throw new TypeError('hello needs an integer protocol_version');
     if (typeof WebSocketImpl !== 'function') throw new TypeError('no WebSocket implementation');
-    Object.assign(this, { url, hello, protocol, WebSocketImpl, setTimer, clearTimer, random, requestTimeoutMs });
+    Object.assign(this, { url, hello, protocol, WebSocketImpl, setTimer, clearTimer, random, now, requestTimeoutMs });
     this.on = { feed: onFeed, change: onChange, state: onState, ready: onReady, protocolError: onProtocolError };
     this.ws = null;
     this.nextReq = 1;
     this.attempt = 0;
     this.retryTimer = null;
+    this.retry = null;
     this.current = 'idle';
     this.stopped = false;
     this.closeReason = null;
@@ -64,11 +65,22 @@ class Transport {
     this.setState('stopped');
   }
 
-  // Skips the rest of a backoff wait, e.g. when the page becomes visible again.
+  // The operator's "Retry now": skips the rest of a backoff wait, never the host's
+  // own minute while remote access is off.
   reconnectNow() {
-    if (this.stopped || this.retryTimer === null) return;
+    if (this.stopped || this.retryTimer === null || this.current === 'disabled') return;
     this.clearTimer(this.retryTimer);
     this.connect();
+  }
+
+  // A page shown again retries soon, after the shortest jittered wait so tabs woken
+  // together spread out; a disabled host's minute, or a sooner retry, stands.
+  reconnectSoon() {
+    if (this.stopped || this.retryTimer === null || this.current !== 'waiting') return;
+    if (!this.retry) throw new Error('a waiting transport knows its retry');
+    const delay = retryDelay(0, { random: this.random });
+    if (this.now() + delay >= this.retry.dueAt) return;
+    this.scheduleRetry(delay, this.retry.info);
   }
 
   // `timeoutMs` lets a long poll outlast the default answer deadline.
@@ -92,6 +104,7 @@ class Transport {
   connect() {
     if (this.stopped) return;
     this.retryTimer = null;
+    this.retry = null;
     this.nextReq = 1;
     this.closeReason = null;
     this.setState('connecting', { attempt: this.attempt });
@@ -187,8 +200,17 @@ class Transport {
     }
     const delay = retryDelay(this.attempt, { random: this.random, minMs: code === CLOSE_DISABLED ? DISABLED_RETRY_MS : 0 });
     this.attempt += 1;
+    this.scheduleRetry(delay, { ...info, attempt: this.attempt, disabled: code === CLOSE_DISABLED });
+  }
+
+  scheduleRetry(delay, info) {
+    if (!(delay > 0)) throw new RangeError(`a retry waits, got ${delay} ms`);
+    if (this.stopped || this.ws) throw new Error('only a closed, running transport retries');
+    if (this.retryTimer !== null) this.clearTimer(this.retryTimer);
     this.retryTimer = this.setTimer(() => this.connect(), delay);
-    this.setState(code === CLOSE_DISABLED ? 'disabled' : 'waiting', { ...info, retryInMs: delay, attempt: this.attempt });
+    this.retry = { dueAt: this.now() + delay, info };
+    const { disabled, ...shown } = info;
+    this.setState(disabled ? 'disabled' : 'waiting', { ...shown, retryInMs: delay });
   }
 
   failPending(err) {

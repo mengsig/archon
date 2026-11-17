@@ -31,7 +31,7 @@ export function openNewItem(ctx) {
       segmented({ label: 'Priority', options: PRIORITIES, value: draft.priority, onChange: (v) => { draft.priority = v; } })),
     h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Review' }),
       segmented({ label: 'Review level', options: REVIEWS, value: draft.review, onChange: (v) => { draft.review = v; } })),
-    error, submit);
+    error, h('div', { class: 'sheet-actions' }, submit));
 
   let offRepos = () => {};
   const sheet = openSheet({ title: 'New item', content: form, size: 'tall', onClose: () => offRepos() });

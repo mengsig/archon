@@ -11,6 +11,7 @@ import * as api from './core/api.js';
 import { BASE } from './core/base.js';
 import { matchEchoes } from './features/chat/outbox.js';
 import { canOperate } from './core/role.js';
+import { coalesce } from './core/live-query.js';
 import { APP_VERSION } from './version.js';
 
 const REFRESH_DEBOUNCE_MS = 350;
@@ -53,7 +54,8 @@ export function createApp({ session, onUnpaired }) {
   const onVisible = () => {
     if (document.visibilityState !== 'visible') return;
     transport.reconnectNow();
-    if (transport.state === 'open') refresh.many(['summaries', 'questions', 'status']);
+    // One read now, which also takes the place of any burst refresh still waiting.
+    if (transport.state === 'open') scheduleRefresh.flush();
   };
 
   function stop() {
@@ -240,17 +242,6 @@ function compareSummaries(a, b) {
 
 // Runs `fn` once, `ms` after the first of a burst of calls. Unlike a debounce,
 // a steady stream of events cannot postpone it forever.
-function coalesce(fn, ms) {
-  let timer = null;
-  return () => {
-    if (timer !== null) return;
-    timer = setTimeout(() => {
-      timer = null;
-      fn();
-    }, ms);
-  };
-}
-
 // A pause change carries the whole new pause state; the status reload follows.
 function applyPause(store, change) {
   if (typeof change.global !== 'boolean' || !Array.isArray(change.repos) || !Array.isArray(change.pipelines)) {

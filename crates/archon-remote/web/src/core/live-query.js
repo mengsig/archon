@@ -34,9 +34,16 @@ export function liveQuery(ctx, read, receive, { interval = 15000 } = {}) {
   const offChanges = ctx.changes.subscribe(soon);
   const offConnection = ctx.store.watch((s) => s.connection.state, (state) => state === 'open' && soon());
   const visible = () => document.visibilityState === 'visible' && ctx.store.get().connection.state === 'open';
-  const onVisible = () => visible() && refresh();
+  const onPoll = () => visible() && refresh();
+  // A hidden tab's throttled timer may still hold a burst's read: run it now, once.
+  const onVisible = () => {
+    if (!visible()) return;
+    clearTimeout(timer);
+    timer = null;
+    refresh();
+  };
   document.addEventListener('visibilitychange', onVisible);
-  const poll = setInterval(onVisible, interval);
+  const poll = setInterval(onPoll, interval);
   refresh();
   return {
     refresh,
@@ -50,4 +57,23 @@ export function liveQuery(ctx, read, receive, { interval = 15000 } = {}) {
       document.removeEventListener('visibilitychange', onVisible);
     },
   };
+}
+
+// Calls `fn` once, `ms` after the first of a burst of calls; `flush` runs a
+// pending call at once, e.g. when a throttled background tab is shown again.
+export function coalesce(fn, ms) {
+  if (typeof fn !== 'function') throw new TypeError('coalesce needs a function');
+  if (!Number.isFinite(ms) || ms < 0) throw new RangeError(`coalesce needs a nonnegative delay, got ${ms}`);
+  let timer = null;
+  const run = () => {
+    clearTimeout(timer);
+    timer = null;
+    fn();
+  };
+  const schedule = () => {
+    if (timer === null) timer = setTimeout(run, ms);
+  };
+  schedule.flush = run;
+  schedule.pending = () => timer !== null;
+  return schedule;
 }

@@ -28,6 +28,13 @@
   no longer prints "null", and the item Work graph fits on desktop when it opens.
   Settings is marked as the current section, and a refused or dropped connection
   shows a "Can't connect" state that retries with a bounded backoff.
+- A tab now settles to its WebSocket alone: idle HTTP connections give their slot
+  back after 3 seconds, and a connection beyond `max_connections` gets a `503` with
+  `Retry-After` that the app shows as "Can't connect" while it retries. `task_graph`
+  draws an `onto` edge from a pull request's owner to items queued onto it. The Inbox
+  send button is visible in both themes, labels are at least 12 px, the New item
+  submit stays in view, phone chips wrap, metric values align, chat posts sit left,
+  a shown tab refreshes at once, and the graph panel lists the item's dependencies.
 
 ## 1.6.1
 

@@ -10,12 +10,13 @@ export function mountGraph(view, ctx) {
   const status = h('div', { role: 'status', class: 'graph-intro' });
   const errors = h('div');
   const detail = h('aside', { class: 'graph-detail', hidden: true, 'aria-label': 'Selected item' });
-  const graph = createGraph({ label: 'Item dependencies', onSelect: (node) => showItem(detail, node.item) });
+  let model = null;
+  const graph = createGraph({ label: 'Item dependencies', onSelect: (node) => showItem(detail, node.item, model) });
   const filters = { repo: '', initiative: '', query: '', history: 'recent' };
   let data = null;
   const redraw = () => {
     if (!data) return;
-    const model = taskModel(data, ctx.store.get().repos, filters);
+    model = taskModel(data, ctx.store.get().repos, filters);
     graph.update(model);
     status.replaceChildren(h('span', { text: `${model.nodes.length} items · ${model.edges.length} connections` }),
       h('span', { text: data.truncated ? '500-item limit: some items and connections omitted. Active work is prioritised; narrow filters to see more.' : 'Active work first · live from your workspace' }));
@@ -60,16 +61,46 @@ function graphFilters(ctx, filters, change) {
   };
 }
 
-function showItem(container, item) {
+// The selected item's facts and its visible connections, all from the graph already read.
+function showItem(container, item, model) {
   if (!item?.id || typeof item.title !== 'string') throw new TypeError('A selected graph node needs its item');
-  const url = githubRefUrl(item.pr);
+  if (!Array.isArray(model?.nodes) || !Array.isArray(model?.edges)) throw new TypeError('A selected item is shown with its graph');
   const look = stateLook({ state: { state: item.state } });
+  const open = h('a', { class: 'button button-primary', href: `#/item/${item.id}` }, 'Open item');
   container.hidden = false;
-  // replace() skips an absent pull request; replaceChildren would print it as "null".
   replace(container, h('h2', { text: item.title }), chip(look),
-    h('p', { text: item.state_detail || [item.pipeline, usd(item.spent_usd)].filter(Boolean).join(' · ') }),
-    h('a', { class: 'button button-primary', href: `#/item/${item.id}` }, 'Open item'),
-    url ? h('a', { class: 'link-button', href: url, target: '_blank', rel: 'noopener noreferrer' }, 'Open pull request') : null,
+    item.state_detail ? h('p', { text: item.state_detail }) : null,
+    itemFacts(item, look),
+    connections(item.id, model),
+    open,
     h('button', { class: 'link-button', type: 'button', onclick: () => { container.hidden = true; } }, 'Dismiss'));
-  container.querySelector('a').focus();
+  open.focus();
+}
+
+function itemFacts(item, look) {
+  const url = githubRefUrl(item.pr);
+  const fact = (term, value) => [h('dt', { text: term }), h('dd', {}, value)];
+  // replace() skips an absent pull request; replaceChildren would print it as "null".
+  return h('dl', { class: 'graph-detail-facts' },
+    fact('Item', h('code', { text: item.id })),
+    fact('Pipeline', item.pipeline || '—'),
+    fact('State', look.label),
+    item.stage ? fact('Stage', item.stage) : null,
+    fact('Spent', usd(item.spent_usd)),
+    url ? fact('Pull request', h('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, `${item.pr.repo}#${item.pr.number}`)) : null);
+}
+
+const EDGE_WORDS = { depends_on: 'depends on', stacked_on: 'stacked on', onto: 'onto pull request', initiative_after: 'initiative order' };
+
+// Prerequisites point at the item and dependents away from it, as the arrows do.
+function connections(id, model) {
+  const titles = new Map(model.nodes.map((node) => [node.id, node.title]));
+  const entry = (other, edge) => h('li', {},
+    h('a', { href: `#/item/${other}`, text: titles.get(other) ?? other }),
+    h('span', { class: 'graph-detail-kind', text: `${EDGE_WORDS[edge.kind] ?? edge.kind}${edge.satisfied === false ? ' · unsatisfied' : ''}` }));
+  const group = (title, entries) => (entries.length ? [h('h3', { text: title }), h('ul', {}, ...entries)] : []);
+  const prerequisites = model.edges.filter((edge) => edge.to === id).map((edge) => entry(edge.from, edge));
+  const dependents = model.edges.filter((edge) => edge.from === id).map((edge) => entry(edge.to, edge));
+  if (!prerequisites.length && !dependents.length) return h('p', { text: 'No dependencies among the items shown.' });
+  return h('div', { class: 'graph-detail-deps' }, ...group('Prerequisites', prerequisites), ...group('Dependents', dependents));
 }

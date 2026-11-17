@@ -3,7 +3,9 @@ import { h } from './dom.js';
 import { icon } from './icons.js';
 
 export function chip(look, extraClass = '') {
-  return h('span', { class: ['chip', `tone-${look.tone}`, look.live && 'is-live', extraClass] }, look.label);
+  // The label sits in its own span so a narrow row can truncate it with an ellipsis.
+  return h('span', { class: ['chip', `tone-${look.tone}`, look.live && 'is-live', extraClass], title: look.label },
+    h('span', { class: 'chip-text', text: look.label }));
 }
 
 export function screenHeader({ title, back = null, actions = [], subtitle = null }) {

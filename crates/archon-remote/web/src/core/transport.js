@@ -3,6 +3,8 @@
 import { backoffDelay, DISABLED_RETRY_MS } from './backoff.js';
 
 export const CLOSE_REVOKED = 4401;
+// How the daemon names a feed or change subscription it ended without closing.
+const ENDED_SUBSCRIPTION = /^(feed|change) subscription \d+ ended: /;
 export const CLOSE_DISABLED = 4403;
 const CLOSE_HELLO_FAILED = 4000;
 const CLOSE_RESUBSCRIBE = 4001;
@@ -153,11 +155,12 @@ class Transport {
   }
 
   // An id-0 error explains a close the daemon is about to make, except an
-  // internal one: a feed subscription ended, so reconnect and resubscribe.
+  // internal one or a subscription's end (a lag, say): reconnect and resubscribe.
   unaddressed(err) {
     this.closeReason = err?.message ?? 'the daemon closed the connection';
-    if (err?.code !== 'internal' || this.current !== 'open' || !this.ws) return;
-    this.on.protocolError(new DaemonError('internal', `${this.closeReason}; reconnecting`));
+    const ended = err?.code === 'internal' || ENDED_SUBSCRIPTION.test(this.closeReason);
+    if (!ended || this.current !== 'open' || !this.ws) return;
+    this.on.protocolError(new DaemonError(err?.code ?? 'internal', `${this.closeReason}; reconnecting`));
     this.restarting = true;
     this.ws.close(CLOSE_RESUBSCRIBE, 'resubscribe');
   }

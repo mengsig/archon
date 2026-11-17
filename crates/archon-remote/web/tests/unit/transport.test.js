@@ -145,6 +145,24 @@ test('an internal id-0 error reconnects to resubscribe, backing off while it rep
   assert.equal(errors.length, 2);
 });
 
+test('a change subscription ended by a lag reconnects to resubscribe', () => {
+  const errors = [];
+  const h = harness({ onProtocolError: (err) => errors.push(err) });
+  h.transport.start(); h.last().open(); h.last().welcome();
+  const lag = 'change subscription 2 ended: it fell 300 changes behind; resubscribe with after: 41';
+  h.last().reply(0, { Err: { code: 'unavailable', message: lag } });
+  assert.equal(h.sockets[0].closedWith, 4001, 'the socket is closed to resubscribe');
+  assert.equal(errors[0].code, 'unavailable');
+  assert.match(errors[0].message, /fell 300 changes behind.*; reconnecting$/);
+  assert.equal(h.states.at(-1).state, 'waiting');
+  h.fire(backoffDelay(0, () => 0.5));
+  h.last().open(); h.last().welcome();
+  assert.equal(h.states.at(-1).state, 'open');
+  h.last().reply(0, { Err: { code: 'unavailable', message: 'archond is stopping' } });
+  assert.equal(h.sockets[1].closedWith, null, 'a stop is explained, not acted on');
+  assert.equal(errors.length, 1);
+});
+
 test('a hello without an answer closes the socket and retries', () => {
   const h = harness();
   h.transport.start(); h.last().open();

@@ -58,6 +58,12 @@ dispatch or class tables, except to add optional fields.
   that client kind. A client at 23 is sent no features.
 - Feature strings: `changes`, `task_graph`, `run_plan`, `item_history`,
   `item_filters`, `github_links`, `github_import`, `device_roles`.
+- Client feature strings, which a client names in `hello.features` to be sent
+  variants added to protocol 24 after its first release: `onto_edges` (the
+  `onto` `TaskEdge` kind) and `pause_changes` (the `pause` `ChangeSubject`).
+  A client that names neither, as 1.6.1's do, is sent no `onto` edge and no
+  `pause` change; a page keeps its `last_seq`. Unknown names are ignored, and
+  a client reads an edge kind or subject it does not know as `other`.
 - Requests from the remote listener run with `ClientKind::ArchonWeb` standing,
   not `ArchonCli` (enforced in AR-R).
 - New `ErrorCode::history_expired {first_seq, last_seq}`, on the wire
@@ -78,7 +84,7 @@ dispatch or class tables, except to add optional fields.
 | `subscribe_changes` | `{after?: u64}` → `subscribed {id, last_seq}`, then frames `{"frame":"change","sub":id,"change":Change}` | Read |
 | `changes_page` | `{after: u64, limit?: u32 (1..=1000)}` → `changes {changes: Change[], last_seq}` | Read |
 | `Change` | `{seq: u64, at: Ts, subject: ChangeSubject}`. `seq` is gapless and written in the same transaction as the state it describes. The subject is flattened: `{"seq":7,"at":…,"subject":"item","item":"qi_…","state":"running"}`. | |
-| `ChangeSubject` (tag `subject`) | `item {item, state: QueueStateKind, stage?: string, waiting_reason?: WaitingReasonCode}` · `dependency {item, depends_on, added: bool}` · `run {run, item, state: RunStateKind}` · `stage {stage_run, run, item, stage_id, attempt, fan_index, state: StageStateKind, verdict?: Verdict}` · `gate {run, item, stage_id, decision?: GateDecision}` · `question {question, item?, open: bool}` · `initiative {initiative, state: InitiativeState}` · `link {item, host, repo, number, relation}` | |
+| `ChangeSubject` (tag `subject`) | `item {item, state: QueueStateKind, stage?: string, waiting_reason?: WaitingReasonCode}` · `dependency {item, depends_on, added: bool}` · `run {run, item, state: RunStateKind}` · `stage {stage_run, run, item, stage_id, attempt, fan_index, state: StageStateKind, verdict?: Verdict}` · `gate {run, item, stage_id, decision?: GateDecision}` · `question {question, item?, open: bool}` · `initiative {initiative, state: InitiativeState}` · `link {item, host, repo, number, relation}` · `pause {global, repos, pipelines}` (only with `pause_changes`) | |
 | `list_item_summaries` (extended) | with `with_as_of: true` in its query the reply is `item_summaries_at {summaries: ItemSummary[], as_of: u64}`, `as_of` read in the same database read transaction as the summaries. Without it the reply stays the bare `item_summaries` array protocol 23 reads. | Read |
 | `item_history` | `{item, limit?: u32 (1..=1000)}` → `item_history {item, transitions: [{seq, at, from?: QueueStateKind, to: QueueStateKind, reason?: string, by: "daemon"\|"cli"\|"web"\|"mcp"\|"github"}]}` | Read |
 
@@ -89,9 +95,9 @@ whichever keeps more. Older cursors get `history_expired`.
 
 | Item | Shape | Class |
 | --- | --- | --- |
-| `task_graph` | `{filter: {repos?: RepoId[], states?: QueueStateKind[], pipelines?: string[], min_priority?: Priority, initiative?: InitiativeId, component_of?: QueueItemId, include_terminal_since?: Ts}, limit?: u32 (1..=2000, default 500)}` → `task_graph {nodes: TaskNode[], edges: TaskEdge[], initiatives: [{id, title, state, atomic}], as_of: u64, truncated: bool}` | Read |
+| `task_graph` | `{filter: {repos?: RepoId[], states?: QueueStateKind[], pipelines?: string[], min_priority?: Priority, initiative?: InitiativeId, component_of?: QueueItemId, include_terminal_since?: Ts, ids?: QueueItemId[] (1..=2000)}, limit?: u32 (1..=2000, default 500)}` → `task_graph {nodes: TaskNode[], edges: TaskEdge[], initiatives: [{id, title, state, atomic}], as_of: u64, truncated: bool}` | Read |
 | `TaskNode` | `{id, repo?, title, pipeline, priority, state: QueueStateKind, state_detail?: string, stage?: string, waiting_reason?: WaitingReasonCode, spent_usd: f64, initiative?, tags: string[], created_at, updated_at, issue?: GithubRef, pr?: PrRef, agents_running: u32}` | |
-| `TaskEdge` | `{from: QueueItemId (prerequisite), to: QueueItemId (dependent), kind: "depends_on"\|"initiative_after"\|"stacked_on"\|"onto", satisfied: bool}` | |
+| `TaskEdge` | `{from: QueueItemId (prerequisite), to: QueueItemId (dependent), kind: "depends_on"\|"initiative_after"\|"stacked_on"\|"onto" (only with `onto_edges`), satisfied: bool}` | |
 | `run_plan` | `{run}` → `run_plan {run, pipeline, revision: string, stages: StageSummary[], edited: bool, settings?: StageSettings[], finished?: bool}`: the frozen pipeline with steer edits applied | Read |
 | `StageSettings` | `{key: string (a stage id or `<stage>.review`), choices: ModelChoice[], model: "tier"\|"exact", effort: "default"\|"override", timeout_minutes?: u32, timeout?: "default"\|"override"}` | |
 | `list_items` (extended) | adds `updated_since?: Ts`, `before?: Ts`, `text?: string (1..=200 chars, title and brief substring)`, also on `list_item_summaries`. Until `item_filters` is served, a query using them is refused with `unavailable`. | Read |

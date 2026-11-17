@@ -172,12 +172,17 @@ pub enum ChangeSubject {
         number: u64,
         relation: LinkRelation,
     },
-    /// The full pause state after a write that changed it.
+    /// The full pause state after a write that changed it. Sent only to a
+    /// client that declares `pause_changes` ([`super::compat`]).
     Pause {
         global: bool,
         repos: Vec<RepoId>,
         pipelines: Vec<String>,
     },
+    /// A subject a newer archond added, so one change never fails a page or
+    /// a stream. Only read, never sent.
+    #[serde(other)]
+    Other,
 }
 
 /// Who made an item transition.

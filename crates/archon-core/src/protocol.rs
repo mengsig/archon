@@ -78,6 +78,7 @@ pub const PROTOCOL_VERSION: u32 = 24;
 pub const MIN_WEB_PROTOCOL_VERSION: u32 = 23;
 
 pub mod changes;
+pub mod compat;
 pub mod github_links;
 pub mod graph;
 pub mod schema;
@@ -88,6 +89,7 @@ pub use changes::{
     Change, ChangeSubject, HistoryRange, ItemTransition, QueueStateKind, RunStateKind,
     StageStateKind, TransitionActor,
 };
+pub use compat::{ClientFeatures, client_feature};
 pub use github_links::{
     GithubKind, GithubLink, GithubObject, GithubObjectState, GithubOutboxPending, GithubRef,
     LinkRelation, ManualLinkRelation, PrRef,
@@ -297,7 +299,8 @@ pub enum Request {
         protocol_version: u32,
         client: ClientKind,
         client_version: String,
-        /// Features the client understands; archond reads none of them yet.
+        /// Features the client understands ([`compat::client_feature`]);
+        /// archond ignores names it does not know.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         features: Vec<String>,
     },

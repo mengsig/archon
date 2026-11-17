@@ -6,9 +6,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use archon_core::error::ArchonError;
+use archon_core::id::QueueItemId;
+use archon_core::protocol::graph::TaskEdgeKind;
 use archon_core::protocol::{
-    DeviceRole, MIN_WEB_PROTOCOL_VERSION, PROTOCOL_VERSION, Reply, Request, ServerFrame,
-    WelcomeDevice, feature,
+    Change, ChangeSubject, DeviceRole, MIN_WEB_PROTOCOL_VERSION, PROTOCOL_VERSION, QueueStateKind,
+    Reply, Request, ServerFrame, TaskEdge, TaskGraph, WelcomeDevice, client_feature, feature,
 };
 use archon_core::remote::{RemoteChange, RemoteConfig};
 use archon_remote::{Backend, ChangeSubscription, FeedSubscription, Remote};
@@ -40,7 +42,10 @@ impl Backend for FakeArchond {
         );
         let name = archon_remote::allow::command_name(&request);
         self.asked.lock().unwrap().push(name);
-        Ok(Reply::Ok)
+        match request {
+            Request::TaskGraph { .. } => Ok(Reply::TaskGraph(Box::new(onto_graph()))),
+            _ => Ok(Reply::Ok),
+        }
     }
 
     fn features(&self) -> Vec<&'static str> {
@@ -58,7 +63,8 @@ impl Backend for FakeArchond {
         let _ = frames.send(subscribed).await;
     }
 
-    /// Opens, then ends at once, as a lagging or refused stream does.
+    /// Opens, then ends at once, as a lagging or refused stream does; after
+    /// [`PAUSED_AFTER`] it first sends a pause change and an item change.
     async fn changes(&self, subscription: ChangeSubscription, frames: mpsc::Sender<ServerFrame>) {
         let subscribed = ServerFrame::Reply {
             id: subscription.request,
@@ -68,6 +74,62 @@ impl Backend for FakeArchond {
             }),
         };
         let _ = frames.send(subscribed).await;
+        if subscription.after != Some(PAUSED_AFTER) {
+            return;
+        }
+        for change in paused_then_item() {
+            let frame = ServerFrame::Change {
+                sub: subscription.id,
+                change,
+            };
+            let _ = frames.send(frame).await;
+        }
+    }
+}
+
+/// The cursor after which [`FakeArchond`] streams [`paused_then_item`].
+const PAUSED_AFTER: u64 = 41;
+
+fn paused_then_item() -> [Change; 2] {
+    let at = archon_core::now();
+    let pause = ChangeSubject::Pause {
+        global: true,
+        repos: Vec::new(),
+        pipelines: Vec::new(),
+    };
+    let item = ChangeSubject::Item {
+        item: QueueItemId::new(),
+        state: QueueStateKind::Queued,
+        stage: None,
+        waiting_reason: None,
+    };
+    [
+        Change {
+            seq: PAUSED_AFTER + 1,
+            at,
+            subject: pause,
+        },
+        Change {
+            seq: PAUSED_AFTER + 2,
+            at,
+            subject: item,
+        },
+    ]
+}
+
+fn onto_graph() -> TaskGraph {
+    let edge = |kind| TaskEdge {
+        from: QueueItemId::new(),
+        to: QueueItemId::new(),
+        kind,
+        satisfied: true,
+    };
+    TaskGraph {
+        nodes: Vec::new(),
+        edges: vec![edge(TaskEdgeKind::DependsOn), edge(TaskEdgeKind::Onto)],
+        initiatives: Vec::new(),
+        as_of: 1,
+        truncated: false,
     }
 }
 
@@ -173,8 +235,15 @@ impl Listener {
     }
 
     async fn socket(&self, cookie: &str) -> Socket {
+        self.socket_declaring(cookie, &[]).await
+    }
+
+    /// A welcomed socket whose hello declared `features`.
+    async fn socket_declaring(&self, cookie: &str, features: &[&str]) -> Socket {
         let mut socket = self.upgrade(cookie).await;
-        let welcome = exchange(&mut socket, hello(PROTOCOL_VERSION)).await;
+        let mut greeting = hello(PROTOCOL_VERSION);
+        greeting["features"] = serde_json::json!(features);
+        let welcome = exchange(&mut socket, greeting).await;
         assert_eq!(welcome["result"]["Ok"]["reply"], "welcome", "{welcome}");
         socket
     }
@@ -860,6 +929,52 @@ async fn an_ended_change_subscription_frees_its_slot() {
         ids,
         (1..=8).collect::<Vec<u64>>(),
         "fresh ids, past the limit of 4"
+    );
+}
+
+/// A web tab of the last release, which declares neither feature, is sent
+/// no pause change and no onto edge; this release's app is sent both.
+#[tokio::test]
+async fn a_session_sends_later_variants_only_to_a_hello_that_declares_them() {
+    let listener = Listener::start().await;
+    let cookie = listener.pair().await;
+    let mut old = listener.socket(&cookie).await;
+    let mut new = listener
+        .socket_declaring(&cookie, &client_feature::ALL)
+        .await;
+    let subscribe =
+        serde_json::json!({"req": 2, "cmd": "subscribe_changes", "after": PAUSED_AFTER});
+    let opened = exchange(&mut old, subscribe.clone()).await;
+    assert_eq!(opened["result"]["Ok"]["reply"], "subscribed", "{opened}");
+    let live = next_frame(&mut old).await;
+    assert_eq!(live["frame"], "change", "{live}");
+    assert_eq!(
+        (&live["change"]["seq"], &live["change"]["subject"]),
+        (&(PAUSED_AFTER + 2).into(), &"item".into()),
+        "the pause is skipped: {live}"
+    );
+    exchange(&mut new, subscribe).await;
+    let paused = next_frame(&mut new).await;
+    assert_eq!(paused["change"]["subject"], "pause", "{paused}");
+    let item = next_frame(&mut new).await;
+    assert_eq!(item["change"]["subject"], "item", "{item}");
+    let read = serde_json::json!({"req": 3, "cmd": "task_graph"});
+    let kinds = |reply: &serde_json::Value| -> Vec<String> {
+        let edges = reply["result"]["Ok"]["data"]["edges"]
+            .as_array()
+            .unwrap_or_else(|| panic!("edges: {reply}"));
+        edges
+            .iter()
+            .map(|e| e["kind"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(
+        kinds(&exchange(&mut old, read.clone()).await),
+        ["depends_on"]
+    );
+    assert_eq!(
+        kinds(&exchange(&mut new, read).await),
+        ["depends_on", "onto"]
     );
 }
 

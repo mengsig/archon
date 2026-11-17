@@ -969,7 +969,7 @@
           "type": "object"
         },
         {
-          "description": "The full pause state after a write that changed it.",
+          "description": "The full pause state after a write that changed it. Sent only to a\nclient that declares `pause_changes` ([`super::compat`]).",
           "properties": {
             "global": {
               "type": "boolean"
@@ -996,6 +996,19 @@
             "global",
             "repos",
             "pipelines"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A subject a newer archond added, so one change never fails a page or\na stream. Only read, never sent.",
+          "properties": {
+            "subject": {
+              "const": "other",
+              "type": "string"
+            }
+          },
+          "required": [
+            "subject"
           ],
           "type": "object"
         }
@@ -1509,7 +1522,7 @@
               "type": "string"
             },
             "features": {
-              "description": "Features the client understands; archond reads none of them yet.",
+              "description": "Features the client understands ([`compat::client_feature`]);\narchond ignores names it does not know.",
               "items": {
                 "type": "string"
               },
@@ -12270,7 +12283,7 @@
               "type": "string"
             },
             "features": {
-              "description": "Features the client understands; archond reads none of them yet.",
+              "description": "Features the client understands ([`compat::client_feature`]);\narchond ignores names it does not know.",
               "items": {
                 "type": "string"
               },
@@ -15732,7 +15745,12 @@
         },
         {
           "const": "onto",
-          "description": "`from` owns the pull request `to` was queued onto. Always satisfied:\nthe pull request exists already and nothing waits. Older clients draw\nkinds they do not know as \"other\", so the kind is additive.",
+          "description": "`from` owns the pull request `to` was queued onto. Always satisfied:\nthe pull request exists already and nothing waits. Sent only to a\nclient that declares `onto_edges` ([`super::compat`]).",
+          "type": "string"
+        },
+        {
+          "const": "other",
+          "description": "A kind a newer archond added, so one edge never fails a whole reply.\nOnly read, never sent.",
           "type": "string"
         }
       ]
@@ -15750,6 +15768,16 @@
             }
           ],
           "description": "Only the connected component holding this item."
+        },
+        "ids": {
+          "description": "Only these items, at most [`MAX_TASK_GRAPH_LIMIT`]: a client reads\nthe edges among a node set it merged from several graphs in one go.",
+          "items": {
+            "$ref": "#/$defs/QueueItemId"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
         },
         "include_terminal_since": {
           "description": "Terminal items are left out unless they changed at or after this.",

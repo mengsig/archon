@@ -454,9 +454,8 @@ async fn the_graph_gives_the_waiting_reasons_the_summaries_give() {
     assert_eq!(graph.as_of, as_of, "nothing was written since");
 }
 
-#[tokio::test]
-async fn the_graph_draws_an_onto_edge_from_the_pull_requests_owner() {
-    let h = harness().await;
+/// An item that delivered pull request 12 and one queued onto it.
+pub(crate) async fn owner_and_onto(h: &Harness) -> (QueueItem, QueueItem) {
     let owner = h.enqueue("owns the pull request").await;
     let queued = h.enqueue("queued onto it").await;
     let pr = PullRequestRef::from_url("https://github.com/o/r/pull/12").unwrap();
@@ -494,7 +493,14 @@ async fn the_graph_draws_an_onto_edge_from_the_pull_requests_owner() {
         created_at: archon_core::now(),
     };
     h.ctx.store.lock().await.link_github(&delivered).unwrap();
+    assert_ne!(owner.id, onto.id);
+    (owner, onto)
+}
 
+#[tokio::test]
+async fn the_graph_draws_an_onto_edge_from_the_pull_requests_owner() {
+    let h = harness().await;
+    let (owner, onto) = owner_and_onto(&h).await;
     let graph = graph(&h).await;
     let found: Vec<_> = graph
         .edges

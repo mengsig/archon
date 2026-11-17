@@ -44,14 +44,19 @@ impl Client {
         }
     }
 
-    /// Connect and complete the handshake as `kind`.
+    /// Connect and complete the handshake as `kind`, declaring no features.
     async fn hello(socket: &std::path::Path, kind: ClientKind) -> Self {
+        Self::declaring(socket, kind, &[]).await
+    }
+
+    /// Connect and complete the handshake as `kind` declaring `features`.
+    async fn declaring(socket: &std::path::Path, kind: ClientKind, features: &[&str]) -> Self {
         let mut client = Self::connect(socket).await;
         let hello = Request::Hello {
             protocol_version: PROTOCOL_VERSION,
             client: kind,
             client_version: "test".into(),
-            features: Vec::new(),
+            features: features.iter().map(|f| (*f).to_owned()).collect(),
         };
         let id = client.send(hello).await;
         match client.frame().await {
@@ -75,6 +80,27 @@ impl Client {
             .await
             .expect("send");
         id
+    }
+
+    /// The next frame as JSON, for decoding with an older release's types.
+    async fn raw_frame(&mut self) -> serde_json::Value {
+        tokio::time::timeout(WAIT, read_frame(&mut self.reader))
+            .await
+            .expect("a frame in time")
+            .expect("a well-formed frame")
+            .expect("connection open")
+    }
+
+    /// The `Ok` reply to `request` as JSON; no other frame may come first.
+    async fn raw_call(&mut self, request: Request) -> serde_json::Value {
+        let id = self.send(request).await;
+        let frame = self.raw_frame().await;
+        assert_eq!(
+            (&frame["frame"], &frame["id"]),
+            (&"reply".into(), &id.into()),
+            "{frame}"
+        );
+        frame["result"]["Ok"].clone()
     }
 
     /// The next frame, or `None` once the server closes the connection.
@@ -608,6 +634,138 @@ async fn a_socket_subscription_streams_committed_changes() {
         }
         other => panic!("expected the item's change, got {other:?}"),
     }
+    pump.abort();
+    serving.abort();
+}
+
+/// `TaskEdgeKind` and `ChangeSubject` as 1.6.1 shipped them: closed, with
+/// no `onto` and no `pause`. Variant fields are left out; serde ignores them.
+mod released {
+    use serde::Deserialize;
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    #[serde(rename_all = "snake_case")]
+    pub enum EdgeKind {
+        DependsOn,
+        InitiativeAfter,
+        StackedOn,
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub struct Edge {
+        pub kind: EdgeKind,
+    }
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    #[serde(tag = "subject", rename_all = "snake_case")]
+    pub enum Subject {
+        Item {},
+        Dependency {},
+        Run {},
+        Stage {},
+        Gate {},
+        Question {},
+        Initiative {},
+        Link {},
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub struct Change {
+        pub seq: u64,
+        #[serde(flatten)]
+        pub subject: Subject,
+    }
+}
+
+/// A client that declares neither `onto_edges` nor `pause_changes` (1.6.1's
+/// typed clients) decodes every graph, page and live change with its own
+/// closed enums, while a declaring client still gets both.
+#[tokio::test]
+async fn a_client_of_the_last_release_decodes_graphs_and_changes_with_its_types() {
+    use archon_core::protocol::graph::TaskEdgeKind;
+    use archon_core::protocol::{ChangeSubject, PauseTarget, TaskFilter, client_feature};
+    let h = Harness::new().await;
+    let socket = h.ctx.paths.socket.clone();
+    let (listener, _lock) = server::bind(&h.ctx).expect("bind");
+    let serving = tokio::spawn(server::serve(h.ctx.clone(), listener));
+    let pump = tokio::spawn(archon_daemon::handlers::changes::pump(h.ctx.clone()));
+    let (owner, onto) = crate::graph::owner_and_onto(&h).await;
+    let waiting = archon_core::queue::QueueItem {
+        id: archon_core::id::QueueItemId::new(),
+        dependencies: vec![owner.id.clone()],
+        ..owner.clone()
+    };
+    h.ctx
+        .store
+        .lock()
+        .await
+        .insert_item(&waiting, None)
+        .expect("insert");
+    let mut old = Client::hello(&socket, ClientKind::ArchonCli).await;
+    let mut new = Client::declaring(&socket, ClientKind::ArchonCli, &client_feature::ALL).await;
+    let opened = old
+        .raw_call(Request::SubscribeChanges { after: None })
+        .await;
+    assert_eq!(opened["reply"], "subscribed", "{opened}");
+    let pause = Request::Pause(PauseTarget::Global { hard: false });
+    let paused = new.call(pause, &mut Vec::new()).await;
+    assert!(paused.is_ok(), "{paused:?}");
+    let later = h.enqueue("after the pause").await;
+
+    // Live: the pause is skipped and the stream goes on to the next change.
+    let live = old.raw_frame().await;
+    assert_eq!(live["frame"], "change", "{live}");
+    let change: released::Change = serde_json::from_value(live["change"].clone()).unwrap();
+    assert_eq!(change.subject, released::Subject::Item {});
+    assert!(change.seq > opened["data"]["last_seq"].as_u64().unwrap());
+    assert_eq!(live["change"]["item"], serde_json::json!(later.id));
+
+    // Replayed: the page decodes, without the pause, and keeps its last_seq.
+    let page = Request::ChangesPage {
+        after: 0,
+        limit: None,
+    };
+    let replayed = old.raw_call(page.clone()).await;
+    let changes: Vec<released::Change> =
+        serde_json::from_value(replayed["data"]["changes"].clone()).unwrap();
+    let Ok(Reply::Changes {
+        changes: all,
+        last_seq,
+    }) = new.call(page, &mut Vec::new()).await
+    else {
+        panic!("a page");
+    };
+    assert!(
+        all.iter()
+            .any(|c| matches!(c.subject, ChangeSubject::Pause { global: true, .. }))
+    );
+    assert_eq!(changes.len() + 1, all.len(), "only the pause is left out");
+    assert_eq!(replayed["data"]["last_seq"], last_seq);
+
+    // The graph decodes, without the onto edge a declaring client draws.
+    let read = Request::TaskGraph {
+        filter: TaskFilter::default(),
+        limit: None,
+    };
+    let graph = old.raw_call(read.clone()).await;
+    let edges: Vec<released::Edge> =
+        serde_json::from_value(graph["data"]["edges"].clone()).unwrap();
+    let kinds: Vec<_> = edges.iter().map(|e| &e.kind).collect();
+    assert_eq!(kinds, [&released::EdgeKind::DependsOn]);
+    let Ok(Reply::TaskGraph(full)) = new.call(read, &mut Vec::new()).await else {
+        panic!("a graph");
+    };
+    let drawn: Vec<_> = full
+        .edges
+        .iter()
+        .filter(|e| e.kind == TaskEdgeKind::Onto)
+        .collect();
+    assert_eq!((&drawn[0].from, &drawn[0].to), (&owner.id, &onto.id));
+    assert_eq!(
+        edges.len() + 1,
+        full.edges.len(),
+        "only the onto edge is left out"
+    );
     pump.abort();
     serving.abort();
 }

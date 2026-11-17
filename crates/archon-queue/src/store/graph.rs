@@ -142,10 +142,19 @@ fn check_filter(conn: &Connection, filter: &TaskFilter) -> Result<(), ArchonErro
         ("repos", filter.repos.as_ref().map(Vec::len)),
         ("states", filter.states.as_ref().map(Vec::len)),
         ("pipelines", filter.pipelines.as_ref().map(Vec::len)),
+        ("ids", filter.ids.as_ref().map(Vec::len)),
     ];
     if let Some((name, _)) = lists.iter().find(|(_, len)| *len == Some(0)) {
         return Err(ArchonError::Invalid(format!(
             "filter `{name}` is empty and would match nothing; leave it out to match all"
+        )));
+    }
+    if let Some(ids) = &filter.ids
+        && ids.len() > MAX_TASK_GRAPH_LIMIT as usize
+    {
+        return Err(ArchonError::Invalid(format!(
+            "filter `ids` names {} items; a task graph holds at most {MAX_TASK_GRAPH_LIMIT}",
+            ids.len()
         )));
     }
     if let Some(item) = &filter.component_of
@@ -196,6 +205,9 @@ fn node_clauses(filter: &TaskFilter) -> (Vec<String>, Vec<Value>) {
     }
     if let Some(pipelines) = &filter.pipelines {
         any_of("pipeline", pipelines.clone());
+    }
+    if let Some(ids) = &filter.ids {
+        any_of("id", ids.iter().map(|id| id.as_str().to_owned()).collect());
     }
     if let Some(priority) = filter.min_priority {
         clauses.push("priority >= ?".to_owned());

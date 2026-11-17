@@ -316,6 +316,54 @@ fn every_filter_narrows_the_nodes() {
     assert_eq!(pick(&store, states), std::slice::from_ref(&a.id));
 }
 
+/// Two truncated graphs can each miss an edge whose ends fell into
+/// different ones; an `ids` read of the merged set holds it.
+#[test]
+fn an_ids_filter_reads_the_edges_among_a_held_node_set() {
+    let (mut store, repo, _) = seeded(0);
+    let older = insert_at(&mut store, &repo, "older", 10, &[]);
+    let between = insert_at(&mut store, &repo, "between", 11, &[]);
+    let dependent = insert_at(&mut store, &repo, "dependent", 12, &[&older]);
+    let run = start(&mut store, &older.id);
+    let done = QueueState::Succeeded {
+        run: run.id.clone(),
+        summary: "done".into(),
+    };
+    settle_run(&mut store, &run, done, t(50));
+    let epoch = Some(t(0));
+    let recent = TaskFilter {
+        include_terminal_since: epoch,
+        ..TaskFilter::default()
+    };
+    let truncated = store.task_graph(&recent, Some(1), true).unwrap();
+    assert!(truncated.truncated && truncated.edges.is_empty());
+    assert_eq!(ids(&truncated), [&older.id]);
+    let held = TaskFilter {
+        ids: Some(vec![older.id.clone(), dependent.id.clone()]),
+        include_terminal_since: epoch,
+        ..TaskFilter::default()
+    };
+    let exact = graph(&store, &held);
+    assert_eq!(ids(&exact), [&older.id, &dependent.id]);
+    assert!(!ids(&exact).contains(&&between.id));
+    assert_eq!(
+        edges(&exact),
+        [(&older.id, &dependent.id, TaskEdgeKind::DependsOn, true)]
+    );
+    let empty = TaskFilter {
+        ids: Some(Vec::new()),
+        ..TaskFilter::default()
+    };
+    let refused = store.task_graph(&empty, None, true).unwrap_err();
+    assert!(matches!(&refused, ArchonError::Invalid(m) if m.contains("ids")));
+    let many = TaskFilter {
+        ids: Some((0..2001).map(|_| QueueItemId::new()).collect()),
+        ..TaskFilter::default()
+    };
+    let refused = store.task_graph(&many, None, true).unwrap_err();
+    assert!(matches!(&refused, ArchonError::Invalid(m) if m.contains("at most 2000")));
+}
+
 #[test]
 fn a_bad_filter_or_limit_is_refused_and_a_limit_truncates() {
     let (store, _, items) = seeded(3);

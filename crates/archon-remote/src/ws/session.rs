@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use archon_core::error::ArchonError;
 use archon_core::protocol::{
-    ClientFrame, ErrorCode, ErrorReply, PROTOCOL_VERSION, Reply, Request, ServerFrame,
-    WelcomeDevice, negotiate,
+    ClientFeatures, ClientFrame, ErrorCode, ErrorReply, PROTOCOL_VERSION, Reply, Request,
+    ServerFrame, WelcomeDevice, negotiate,
 };
 use futures_util::{SinkExt as _, StreamExt as _};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -47,6 +47,8 @@ struct Session {
     shared: Arc<crate::Shared>,
     /// The paired device the session runs for; its role is fixed at pairing.
     device: WelcomeDevice,
+    /// The later variants the device's `hello` declared it decodes.
+    features: ClientFeatures,
     outbox: mpsc::Sender<ServerFrame>,
     in_flight: Arc<Semaphore>,
     tasks: JoinSet<()>,
@@ -74,13 +76,14 @@ pub async fn carry<S>(
         backend,
         shared,
         device,
+        features: ClientFeatures::default(),
         outbox,
         in_flight: Arc::new(Semaphore::new(MAX_IN_FLIGHT)),
         tasks: JoinSet::new(),
         subscriptions: 0,
         live_subscriptions: Arc::new(Semaphore::new(MAX_SUBSCRIPTIONS)),
     };
-    let ended = match greet(&mut socket, &mut registration, &session).await {
+    let ended = match greet(&mut socket, &mut registration, &mut session).await {
         Ok(()) => run(&mut socket, &mut session, &mut frames, &mut registration).await,
         Err(ended) => ended,
     };
@@ -118,7 +121,7 @@ where
 async fn greet<S>(
     socket: &mut WebSocketStream<S>,
     registration: &mut Registration,
-    session: &Session,
+    session: &mut Session,
 ) -> Result<(), Ended>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -138,7 +141,7 @@ where
         protocol_version,
         client,
         client_version,
-        ..
+        features: declared,
     } = frame.request
     else {
         return Err(Ended::Violation(CloseCode::Policy, "send hello first"));
@@ -160,6 +163,7 @@ where
     if welcome.protocol_version == PROTOCOL_VERSION {
         welcome.device = Some(session.device.clone());
     }
+    session.features = ClientFeatures::declared(&declared);
     let reply = ServerFrame::Reply {
         id: frame.id,
         result: Ok(Reply::Welcome(welcome)),
@@ -177,6 +181,7 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let mut ping = tokio::time::interval(PING_EVERY);
+    let features = session.features;
     let mut heard = tokio::time::Instant::now();
     loop {
         reap(&mut session.tasks);
@@ -185,7 +190,10 @@ where
         let step = tokio::select! {
             biased;
             _ = registration.closed.changed() => Err(closed(registration)),
-            Some(frame) = frames.recv() => unless_closed(registration, send(socket, &frame)).await,
+            Some(frame) = frames.recv() => match features.adapt(frame) {
+                Some(frame) => unless_closed(registration, send(socket, &frame)).await,
+                None => Ok(()),
+            },
             incoming = socket.next() => match incoming {
                 Some(Err(tokio_tungstenite::tungstenite::Error::Capacity(_))) => {
                     Err(Ended::Violation(CloseCode::Size, "message too large"))

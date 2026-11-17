@@ -59,6 +59,10 @@ pub struct TaskFilter {
     /// Terminal items are left out unless they changed at or after this.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub include_terminal_since: Option<Timestamp>,
+    /// Only these items, at most [`MAX_TASK_GRAPH_LIMIT`]: a client reads
+    /// the edges among a node set it merged from several graphs in one go.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ids: Option<Vec<QueueItemId>>,
 }
 
 /// One item in the graph: a subset of its summary.
@@ -109,9 +113,13 @@ pub enum TaskEdgeKind {
     InitiativeAfter,
     StackedOn,
     /// `from` owns the pull request `to` was queued onto. Always satisfied:
-    /// the pull request exists already and nothing waits. Older clients draw
-    /// kinds they do not know as "other", so the kind is additive.
+    /// the pull request exists already and nothing waits. Sent only to a
+    /// client that declares `onto_edges` ([`super::compat`]).
     Onto,
+    /// A kind a newer archond added, so one edge never fails a whole reply.
+    /// Only read, never sent.
+    #[serde(other)]
+    Other,
 }
 
 /// `from` is the prerequisite and `to` the item that waits for it; for an

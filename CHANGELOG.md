@@ -18,6 +18,11 @@
   lifecycle and direct ledger spend; unavailable backend reads fail explicitly.
 - The change stream now carries `pause` changes, so clients learn of a CLI
   `archon pause` or `archon resume` live.
+- Protocol 24 stays 24: a client names `onto_edges` and `pause_changes` in its
+  `hello` to be sent `onto` graph edges and `pause` changes, so a 1.6.1 client
+  (such as a running `archon mcp`) never meets a variant it cannot decode.
+  Unknown edge kinds and change subjects now read as `other`, and `task_graph`
+  takes an `ids` filter, which the web app uses to read a merged graph's edges.
 
 ### Fixed
 

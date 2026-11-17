@@ -35,7 +35,7 @@ export async function startDevServer({ socket, port = 0, host = '127.0.0.1', roo
     socket, root, requirePairing, protocolVersion,
     daemonVersion: status.data.daemon_version,
     devices: new Map(),
-    defaultDevice: { id: 'dev_browser', name: 'Dev browser', paired_at: new Date().toISOString() },
+    defaultDevice: { id: 'dev_browser', name: 'Dev browser', role: 'operator', paired_at: new Date().toISOString() },
   };
   const server = createServer((req, res) => {
     route(state, req, res).catch((err) => {

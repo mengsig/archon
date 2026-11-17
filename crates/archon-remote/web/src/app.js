@@ -19,6 +19,8 @@ import { retryDelay, STREAM_BACKOFF } from './core/backoff.js';
 
 const REFRESH_DEBOUNCE_MS = 350;
 const SESSION_CHECK_MS = 10_000;
+// An unanswered session read after a pairing signal retries at most this far apart.
+const SESSION_RETRY = Object.freeze({ baseMs: 500, capMs: SESSION_CHECK_MS });
 const RECENT_LIMIT = 200;
 
 export function createApp({ session, onUnpaired, onDeviceChanged }) {
@@ -26,7 +28,7 @@ export function createApp({ session, onUnpaired, onDeviceChanged }) {
   if (typeof onDeviceChanged !== 'function') throw new TypeError('the app reports a changed device');
   const store = createStore({
     session, connection: { state: 'connecting' }, summaries: null, questions: null, status: null,
-    cost: null, repos: null, reports: null, feed: [], conversation: [], outbox: [], chatNotes: {}, errors: {},
+    cost: null, repos: null, reports: null, feed: [], conversation: [], outbox: [], chatNotes: {}, errors: {}, sessionUnsure: false,
   });
   let transport = null;
   const request = (cmd, fields, options) => transport.request(cmd, fields, options);
@@ -42,6 +44,7 @@ export function createApp({ session, onUnpaired, onDeviceChanged }) {
   });
   const sessionCheck = sessionChecker({
     readSession: api.session, guard, stop: () => stop(), onUnpaired, minGapMs: SESSION_CHECK_MS,
+    onUnsure: (unsure) => store.set({ sessionUnsure: unsure }), limits: SESSION_RETRY,
   });
 
   followStreams({ store, feed, changes, refresh, scheduleRefresh });

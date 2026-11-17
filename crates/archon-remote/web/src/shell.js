@@ -51,6 +51,11 @@ export function mountShell(root, app, { onForget }) {
 
   const offs = [
     app.store.watch((s) => s.connection, (connection) => renderBanner(banner, connection, app)),
+    // A session the host has not confirmed since another tab's pairing keeps no live controls.
+    app.store.watch((s) => s.sessionUnsure, (unsure) => {
+      views.inert = unsure;
+      renderBanner(banner, app.store.get().connection, app);
+    }),
     app.store.watch((s) => s.questions, (questions) => tabbar.badge(openCount(questions))),
     app.store.watch((s) => s.errors.protocol, (err) => err && toast(describeError(err), { tone: 'red' })),
   ];
@@ -106,7 +111,7 @@ function renderBanner(banner, connection, app) {
   const { state, retryInMs, reason } = connection;
   banner.dataset.state = state;
   const message = {
-    open: '',
+    open: app.store.get().sessionUnsure ? 'Checking session…' : '',
     connecting: 'Connecting…',
     waiting: `Offline · retrying in ${Math.max(1, Math.round((retryInMs ?? 0) / 1000))} s`,
     disabled: 'Remote access is off on the host. Checking again in a minute.',

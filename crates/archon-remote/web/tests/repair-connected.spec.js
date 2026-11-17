@@ -5,6 +5,7 @@ import { startListenerFixture } from './support/listener.js';
 import { guardConsole } from './support/console-guard.js';
 
 const test = base.extend({
+  // One listener per test: each pairs twice, and claims are rate-limited (3 per 10 s).
   fixture: [async ({}, use) => {
     const fixture = await startListenerFixture();
     try {
@@ -12,7 +13,7 @@ const test = base.extend({
     } finally {
       await fixture.stop();
     }
-  }, { scope: 'worker', timeout: 120_000 }],
+  }, { scope: 'test', timeout: 120_000 }],
 });
 
 async function pair(page, fixture, args, name) {
@@ -23,7 +24,9 @@ async function pair(page, fixture, args, name) {
   await expect(page.getByRole('navigation', { name: 'Sections' })).toBeVisible();
 }
 
-test('a connected tab re-paired as an observer in another tab loses its operator controls', async ({ browser, fixture }) => {
+// Tab A is an operator with its socket up; tab B re-pairs the shared cookie as an observer.
+// `beforeRepair` runs on tab A just before, and the result is tab A's console problems.
+async function repairAsObserver(browser, fixture, beforeRepair = async () => {}) {
   const known = new Set((await fixture.devices()).map((device) => device.id));
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -40,6 +43,7 @@ test('a connected tab re-paired as an observer in another tab loses its operator
   await expect(newItem).toBeVisible();
   await expect(page.locator('.conn-banner')).toBeHidden();
 
+  await beforeRepair(page);
   // Tab B shares tab A's cookie jar: its observer pairing replaces the cookie while A's socket stays up.
   const { code } = await fixture.remote(['pair', '--observer']);
   await other.getByLabel('Pairing code').fill(code);
@@ -52,5 +56,24 @@ test('a connected tab re-paired as an observer in another tab loses its operator
   await expect(page.getByRole('navigation', { name: 'Sections' })).toBeVisible();
   await expect(page.locator('.conn-banner')).toBeHidden({ timeout: 15_000 });
   await context.close();
-  expect(problems, 'the page logged errors').toEqual([]);
+  return problems;
+}
+
+test('a connected tab re-paired as an observer in another tab loses its operator controls', async ({ browser, fixture }) => {
+  expect(await repairAsObserver(browser, fixture), 'the page logged errors').toEqual([]);
+});
+
+test('a connected tab whose first session read after the re-pair fails retries and remounts', async ({ browser, fixture }) => {
+  let refused = 0;
+  const problems = await repairAsObserver(browser, fixture, async (page) => {
+    await page.route('**/api/session', async (route) => {
+      if (refused > 0) return route.fallback();
+      refused += 1;
+      await route.fulfill({ status: 503, contentType: 'application/json', headers: { 'Retry-After': '1' },
+        body: JSON.stringify({ error: { code: 'busy', message: 'Every connection slot is taken.' } }) });
+    });
+  });
+  expect(refused, 'the first session read after the re-pair was refused').toBe(1);
+  const busy = (problem) => /status of 503/.test(problem) && /\/api\/session/.test(problem);
+  expect(problems.filter((problem) => !busy(problem)), 'the page logged errors').toEqual([]);
 });

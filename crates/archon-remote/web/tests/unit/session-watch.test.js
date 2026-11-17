@@ -80,3 +80,59 @@ test('a forced check skips the gap that throttles the connection watch', async (
   assert.equal(reads, 2, 'another tab\'s pairing or a shown page reads at once');
   assert.throws(() => sessionChecker({ readSession: async () => null, guard, stop() {}, onUnpaired() {}, minGapMs: Number.NaN }), /minGapMs/);
 });
+
+const QUICK = Object.freeze({ baseMs: 1, capMs: 4 });
+const settled = (ms = 40) => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+function flaky(answers, extra = {}) {
+  const events = [];
+  let reads = 0;
+  const guard = deviceGuard(operator, () => events.push('remount'));
+  const watcher = sessionChecker({
+    readSession: async () => {
+      const answer = answers[Math.min(reads, answers.length - 1)];
+      reads += 1;
+      if (answer instanceof Error) throw answer;
+      return answer;
+    },
+    guard, stop: () => events.push('stop'), onUnpaired: (note) => events.push(note),
+    onUnsure: (unsure) => events.push(unsure ? 'unsure' : 'sure'), minGapMs: 0, limits: QUICK, ...extra,
+  });
+  return { ...watcher, events, reads: () => reads };
+}
+
+test('a pairing signal whose first session read fails retries until the remount', async () => {
+  const busy = new Error('busy');
+  const { check, cancel, events, reads } = flaky([busy, busy, { device: { ...operator, role: 'observer' } }]);
+  await check({ force: true });
+  assert.deepEqual(events, [], 'one failed read is no answer');
+  await settled();
+  assert.equal(reads(), 3, 'the read retried until the host answered');
+  assert.deepEqual(events, ['remount']);
+  cancel();
+});
+
+test('cancel stops the retries of an unanswered session read', async () => {
+  const { check, cancel, events, reads } = flaky([new Error('offline')]);
+  await check({ force: true });
+  cancel();
+  const after = reads();
+  await settled();
+  assert.equal(reads(), after, 'a stopped app reads no session');
+  assert.deepEqual(events, []);
+});
+
+test('retries that never answer withhold operator controls until an answer comes', async () => {
+  const offline = new Error('offline');
+  const { check, cancel, events } = flaky([offline, offline, offline, { device: operator }], { unsureAfter: 2 });
+  await check({ force: true });
+  await settled();
+  assert.deepEqual(events, ['unsure', 'sure'], 'the same device and role restores the controls');
+  cancel();
+  const silent = flaky([offline], { unsureAfter: 0 });
+  await silent.check({ force: true });
+  await settled(10);
+  silent.cancel();
+  assert.deepEqual(silent.events, ['unsure']);
+  assert.ok(silent.reads() > 1, 'it keeps asking past the point it fails closed');
+});

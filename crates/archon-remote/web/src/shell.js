@@ -65,6 +65,8 @@ export function mountShell(root, app, { onForget }) {
 
 function buildTabbar() {
   const buttons = new Map();
+  // Settings sits in the sidebar's footer, not among the tabs; on a phone only its header icon leads there.
+  const settings = h('a', { class: 'nav-settings', href: '#/settings', dataset: { tab: 'settings' } }, icon('settings', { size: 18 }), 'Settings');
   const badge = h('span', { class: 'tab-badge', 'aria-hidden': 'true', hidden: true });
   const nav = h('nav', { class: 'tabbar', 'aria-label': 'Sections' },
     h('a', { class: 'tabbar-brand', href: '#/overview', 'aria-label': 'Archon home' }, icon('mark', { size: 28 }), 'archon'),
@@ -77,12 +79,13 @@ function buildTabbar() {
       return link;
     }),
     h('div', { class: 'nav-footer' },
-      h('a', { class: 'nav-settings', href: '#/settings' }, icon('settings', { size: 18 }), 'Settings'),
+      settings,
       h('span', { class: 'nav-version', text: `Archon ${APP_VERSION}` })));
   return {
     nav,
     select(id) {
-      for (const [tab, link] of buttons) {
+      if (id !== 'settings' && !buttons.has(id)) throw new RangeError(`no tab named ${id}`);
+      for (const [tab, link] of [...buttons, ['settings', settings]]) {
         if (tab === id) link.setAttribute('aria-current', 'page');
         else link.removeAttribute('aria-current');
       }

@@ -7,8 +7,8 @@ use std::time::Duration;
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 use archon_core::protocol::{
-    Change, ChangeSubject, ErrorCode, ErrorReply, ItemQuery, QueueStateKind, Reply, Request,
-    ServerFrame, TransitionActor,
+    Change, ChangeSubject, ErrorCode, ErrorReply, ItemQuery, PauseTarget, QueueStateKind, Reply,
+    Request, ServerFrame, TransitionActor,
 };
 use archon_core::queue::QueueItem;
 use archon_daemon::handlers::changes::{self, CHANGE_BUFFER, ChangeSubscription};
@@ -261,5 +261,23 @@ async fn history_pages_and_summaries_read_the_same_store() {
     assert!(
         matches!(refused, Err(ArchonError::Invalid(_))),
         "{refused:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_cli_pause_is_streamed_as_a_pause_change() {
+    let h = Harness::new().await;
+    let before = last_seq(&h).await;
+    h.cli(Request::Pause(PauseTarget::Global { hard: false }))
+        .await
+        .expect("pause");
+    let (changes, _) = page(&h, before, None).await.unwrap();
+    assert_eq!(changes.len(), 1, "{changes:?}");
+    assert!(
+        matches!(
+            &changes[0].subject,
+            ChangeSubject::Pause { global: true, .. }
+        ),
+        "{changes:?}"
     );
 }

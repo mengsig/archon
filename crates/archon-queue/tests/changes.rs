@@ -12,7 +12,7 @@ use archon_core::id::QueueItemId;
 use archon_core::protocol::{
     Change, ChangeSubject, ItemQuery, QueueStateKind, RunStateKind, TransitionActor,
 };
-use archon_core::queue::{QueueItem, QueueState};
+use archon_core::queue::{PauseState, QueueItem, QueueState};
 use archon_core::run::{StageState, Verdict};
 use archon_queue::Store;
 use archon_queue::store::{CHANGES_KEEP_DAYS, CHANGES_KEEP_ROWS};
@@ -421,6 +421,34 @@ fn a_change_committed_during_the_snapshot_is_not_lost_on_resync() {
     let late = as_of + 1;
     assert!(buffered.iter().any(|c| c.seq == late
         && matches!(&c.subject, ChangeSubject::Item { item, .. } if item == &a.id)));
+}
+
+#[test]
+fn a_pause_write_records_a_change_only_when_the_state_changes() {
+    let mut store = store();
+    let before = store.last_change_seq().unwrap();
+    let paused = PauseState {
+        global: true,
+        repos: Vec::new(),
+        pipelines: vec!["review".into()],
+    };
+    store.set_pause_state(&paused).unwrap();
+    let recorded = all_changes(&store, before);
+    assert_eq!(recorded.len(), 1, "{recorded:?}");
+    assert_eq!(
+        recorded[0].subject,
+        ChangeSubject::Pause {
+            global: true,
+            repos: Vec::new(),
+            pipelines: vec!["review".into()],
+        }
+    );
+    store.set_pause_state(&paused).unwrap();
+    assert_eq!(
+        all_changes(&store, before).len(),
+        1,
+        "same state: no change"
+    );
 }
 
 const CRASH_DB: &str = "ARCHON_TEST_CHANGES_CRASH_DB";

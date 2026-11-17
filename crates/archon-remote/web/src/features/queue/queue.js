@@ -23,7 +23,7 @@ export function mountQueue(view, ctx) {
   const list = h('ul', { class: 'item-list', 'aria-label': 'Items' });
   const status = h('div', { class: 'list-status' });
   const summary = h('p', { class: 'queue-summary', 'aria-label': 'Queue summary' });
-  const fab = h('button', { class: 'fab', type: 'button', 'aria-label': 'New item', onclick: () => openNewItem(ctx) }, icon('plus', { size: 26 }));
+  const fab = ctx.canOperate ? h('button', { class: 'fab', type: 'button', 'aria-label': 'New item', onclick: () => openNewItem(ctx) }, icon('plus', { size: 26 })) : null;
 
   view.append(
     screenHeader({ title: 'Queue' }), summary,

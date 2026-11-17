@@ -967,6 +967,37 @@
             "relation"
           ],
           "type": "object"
+        },
+        {
+          "description": "The full pause state after a write that changed it.",
+          "properties": {
+            "global": {
+              "type": "boolean"
+            },
+            "pipelines": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "repos": {
+              "items": {
+                "$ref": "#/$defs/RepoId"
+              },
+              "type": "array"
+            },
+            "subject": {
+              "const": "pause",
+              "type": "string"
+            }
+          },
+          "required": [
+            "subject",
+            "global",
+            "repos",
+            "pipelines"
+          ],
+          "type": "object"
         }
       ],
       "properties": {

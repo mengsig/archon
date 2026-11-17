@@ -9,6 +9,8 @@ const STATES = new Map([
   ['failed', 'danger'], ['error', 'danger'], ['cancelled', 'muted'],
 ]);
 const KINDS = new Set(['depends_on', 'stacked_on', 'initiative_after']);
+// A label is two 13px lines: the kind, then whether it is satisfied.
+const LABEL_PAIR_HEIGHT = 30;
 
 export function svgElement(tag, attributes = {}, text) {
   if (!TAGS.has(tag)) throw new TypeError(`Unsupported graph SVG element: ${tag}`);
@@ -91,16 +93,19 @@ export function paintEdges(element, graph) {
     if (from.width <= 0 || to.width <= 0) throw new Error('Rendered nodes must have positive widths');
     const vertical = graph.direction === 'vertical';
     const axis = vertical ? 'x' : 'y';
-    const shift = parallel[index];
+    const { shift, labelShift } = parallel[index];
     const shape = edgeGeometry({ ...from, [axis]: from[axis] + shift }, { ...to, [axis]: to[axis] + shift }, vertical);
+    // Edges sharing endpoints stack their labels in one column instead of drawing them over each other.
+    const labelAt = { x: shape.x, y: shape.y, [axis]: shape[axis] - shift };
+    labelAt.y += labelShift;
     const label = `${edge.kind}${edge.satisfied === undefined ? '' : edge.satisfied ? ' · satisfied' : ' · unsatisfied'}`;
     const group = svgElement('g', { class: 'graph-edge', role: 'img',
       'aria-label': `${from.title} → ${to.title}: ${label}`, 'data-kind': KINDS.has(edge.kind) ? edge.kind : 'other',
       'data-from': edge.from, 'data-to': edge.to, 'data-satisfied': edge.satisfied === undefined ? 'unknown' : String(edge.satisfied) });
     group.append(svgElement('title', {}, `${from.title} → ${to.title}: ${label}`),
       svgElement('path', { d: shape.path }), svgElement('polygon', { points: shape.arrow }),
-      svgElement('text', { x: shape.x, y: shape.y, class: 'graph-edge-label' }, clip(edge.kind, 22)),
-      svgElement('text', { x: shape.x, y: shape.y + 13, class: 'graph-edge-label graph-edge-status' },
+      svgElement('text', { x: labelAt.x, y: labelAt.y, class: 'graph-edge-label' }, clip(edge.kind, 22)),
+      svgElement('text', { x: labelAt.x, y: labelAt.y + 13, class: 'graph-edge-label graph-edge-status' },
         edge.satisfied === undefined ? '' : edge.satisfied ? 'Satisfied' : 'Unsatisfied'));
     fragment.append(group);
   }
@@ -122,17 +127,23 @@ function verticalEdge(from, to) {
     arrow: `${x2},${y2} ${x2 - 4},${y2 - 7} ${x2 + 4},${y2 - 7}`, x: outside + 15, y: (y1 + y2) / 2 };
 }
 
-function parallelOffsets(edges) {
+// Edges between the same two nodes: each path shifted apart, and each label
+// a line pair below the previous one.
+export function parallelOffsets(edges) {
   const groups = new Map();
   for (const [index, edge] of edges.entries()) {
     const key = JSON.stringify([edge.from, edge.to]);
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(index);
   }
-  const offsets = new Array(edges.length).fill(0);
+  const offsets = new Array(edges.length);
   for (const indices of groups.values()) {
     const step = Math.min(32, 56 / Math.max(1, indices.length - 1));
-    indices.forEach((index, position) => { offsets[index] = (position - (indices.length - 1) / 2) * step; });
+    const middle = (indices.length - 1) / 2;
+    indices.forEach((index, position) => {
+      offsets[index] = { shift: (position - middle) * step, labelShift: (position - middle) * LABEL_PAIR_HEIGHT };
+    });
   }
+  if (!offsets.every((offset) => Number.isFinite(offset?.shift) && Number.isFinite(offset.labelShift))) throw new Error('every edge gets finite offsets');
   return offsets;
 }

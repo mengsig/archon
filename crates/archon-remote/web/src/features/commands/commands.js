@@ -1,6 +1,7 @@
 import { h } from '../../ui/dom.js';
 import { openSheet } from '../../ui/sheet.js';
 import { field, describeError } from '../../ui/components.js';
+import { assertOperator } from '../../core/role.js';
 
 const COMMANDS = [
   ['/status', 'Workspace status'], ['/questions', 'Open questions'],
@@ -10,6 +11,7 @@ const COMMANDS = [
 ];
 
 export function openCommands(ctx, initial = '') {
+  assertOperator(ctx, 'Commands');
   const input = h('input', { class: 'input', type: 'text', value: initial, placeholder: '/status', autocomplete: 'off', maxlength: 4000 });
   const result = h('div', { class: 'command-result', role: 'status', 'aria-live': 'polite' });
   const output = h('ol', { class: 'command-output', 'aria-label': 'Command outcomes' });

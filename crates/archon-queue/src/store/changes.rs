@@ -15,7 +15,7 @@ use archon_core::protocol::{
     Change, ChangeSubject, HistoryRange, ItemTransition, QueueStateKind, RunStateKind,
     StageStateKind, TransitionActor,
 };
-use archon_core::queue::{QueueItem, QueueState};
+use archon_core::queue::{PauseState, QueueItem, QueueState};
 use archon_core::run::{OperatorGate, PipelineRun, RunState, StageRun};
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -63,6 +63,17 @@ pub(super) fn record(conn: &Connection, subject: &ChangeSubject) -> Result<u64, 
     let seq = to_u64(conn.last_insert_rowid(), "change seq")?;
     assert!(seq > 0, "AUTOINCREMENT seqs start at 1");
     Ok(seq)
+}
+
+/// The pause state after a write that changed it.
+pub(super) fn record_pause(conn: &Connection, pause: &PauseState) -> Result<(), ArchonError> {
+    let subject = ChangeSubject::Pause {
+        global: pause.global,
+        repos: pause.repos.clone(),
+        pipelines: pause.pipelines.clone(),
+    };
+    record(conn, &subject)?;
+    Ok(())
 }
 
 /// What a transition into `state` says about why, if anything.

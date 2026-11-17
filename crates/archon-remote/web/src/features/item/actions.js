@@ -1,5 +1,5 @@
 // What the operator can do to an item from here: cancel, retry, and pause
-// or resume its repository or pipeline.
+// or resume its repository or pipeline. An observer device gets none of it.
 import { h } from '../../ui/dom.js';
 import { openCommands } from '../commands/commands.js';
 import { icon } from '../../ui/icons.js';
@@ -11,6 +11,8 @@ import { isTerminal, stateKind } from '../../core/format.js';
 const RETRYABLE = ['failed', 'cancelled', 'blocked'];
 
 export function itemActions(ctx, detail, { reload, repoName }) {
+  if (typeof ctx.canOperate !== 'boolean') throw new TypeError('item actions need the device role');
+  if (!ctx.canOperate) return null;
   const item = detail.item;
   const pause = ctx.store.get().status?.pause ?? { repos: [], pipelines: [] };
   const buttons = [];

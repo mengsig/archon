@@ -1,4 +1,4 @@
-import { h } from '../../ui/dom.js';
+import { h, replace } from '../../ui/dom.js';
 import { screenHeader, errorNote, skeletonRows, emptyState, chip } from '../../ui/components.js';
 import { createGraph } from '../../ui/graph/graph.js';
 import { liveQuery } from '../../core/live-query.js';
@@ -65,8 +65,9 @@ function showItem(container, item) {
   const url = githubRefUrl(item.pr);
   const look = stateLook({ state: { state: item.state } });
   container.hidden = false;
-  container.replaceChildren(h('h2', { text: item.title }), chip(look),
-    h('p', { text: item.state_detail ?? `${item.pipeline} · ${usd(item.spent_usd)}` }),
+  // replace() skips an absent pull request; replaceChildren would print it as "null".
+  replace(container, h('h2', { text: item.title }), chip(look),
+    h('p', { text: item.state_detail || [item.pipeline, usd(item.spent_usd)].filter(Boolean).join(' · ') }),
     h('a', { class: 'button button-primary', href: `#/item/${item.id}` }, 'Open item'),
     url ? h('a', { class: 'link-button', href: url, target: '_blank', rel: 'noopener noreferrer' }, 'Open pull request') : null,
     h('button', { class: 'link-button', type: 'button', onclick: () => { container.hidden = true; } }, 'Dismiss'));

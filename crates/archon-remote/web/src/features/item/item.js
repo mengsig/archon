@@ -94,7 +94,7 @@ function itemLoader(ctx, id, receive, reject) {
 }
 
 // Stages settle and gates open without touching the item itself, so the
-// detail reloads on feed entries about it and, while it runs, on a timer.
+// detail reloads on feed entries and changes about it and, while it runs, on a timer.
 function followItem(ctx, id, current, refresh) {
   if (typeof refresh !== 'function' || typeof current !== 'function') throw new TypeError('followItem needs the detail and its refresh');
   let timer = null;
@@ -103,6 +103,7 @@ function followItem(ctx, id, current, refresh) {
     timer = setTimeout(() => current() && refresh(), FOLLOW_DEBOUNCE_MS);
   };
   const offFeed = ctx.feed.subscribe((fresh) => fresh.some((entry) => namesItem(entry, id)) && soon());
+  const offChanges = ctx.changes.subscribe((change) => change.item === id && soon());
   const offSummary = ctx.store.watch((s) => summaryOf(s, id)?.updated_at, (updated) => {
     if (current() && updated && updated !== current().item.updated_at) soon();
   });
@@ -111,7 +112,7 @@ function followItem(ctx, id, current, refresh) {
     const watching = document.visibilityState === 'visible' && ctx.store.get().connection.state === 'open';
     if (detail && watching && !isTerminal(detail.item)) refresh();
   }, POLL_RUNNING_MS);
-  return () => { clearTimeout(timer); clearInterval(poll); offFeed(); offSummary(); };
+  return () => { clearTimeout(timer); clearInterval(poll); offFeed(); offChanges(); offSummary(); };
 }
 
 // What the detail shows from the store, as values: a refreshed but equal
@@ -160,12 +161,12 @@ function renderDetail(ctx, detail, state, { reload, artifacts, panels }) {
     h('div', { class: 'item-hero' },
       chip(look, 'chip-large'),
       h('p', { class: 'item-hero-meta', text: [repoName ?? 'no repository', summary?.switched_to ?? item.pipeline, shortId(item.id)].join(' · ') })),
-    outcomeCallout(detail),
+    outcomeCallout(detail, ctx.canOperate),
     itemActions(ctx, detail, { reload, repoName }),
   ];
 }
 
-function outcomeCallout(detail) {
+function outcomeCallout(detail, canOperate) {
   const { item, waiting_on: waitingOn, waiting_reason: reason } = detail;
   const state = item.state;
   if (state.state === 'failed') return callout('red', 'Failed', state.error);
@@ -173,7 +174,7 @@ function outcomeCallout(detail) {
   if (state.state === 'cancelled') return callout('muted', 'Cancelled', state.reason ?? 'Cancelled by the operator.');
   if (state.state === 'blocked') return callout('amber', 'Blocked', state.reason);
   if (waitingOn) {
-    const inbox = waitingOn.question ? h('a', { class: 'link-button', href: '#/inbox' }, 'Answer in Inbox') : null;
+    const inbox = waitingOn.question ? h('a', { class: 'link-button', href: '#/inbox' }, canOperate ? 'Answer in Inbox' : 'View in Inbox') : null;
     return callout('amber', `Waiting on you · ${waitingOn.subject}`, waitingOn.prompt, inbox);
   }
   if (reason && !isTerminal(item)) return callout(waitsOnOperator({ ...item, waiting_reason: reason }) ? 'amber' : 'neutral', 'Waiting', reason.message);

@@ -4,6 +4,7 @@ import { h } from '../../ui/dom.js';
 import { openSheet } from '../../ui/sheet.js';
 import { toast } from '../../ui/toast.js';
 import { field, segmented, describeError, errorNote, loadErrorNotes } from '../../ui/components.js';
+import { assertOperator } from '../../core/role.js';
 
 const PRIORITIES = [
   { value: 'low', label: 'Low' }, { value: 'normal', label: 'Normal' },
@@ -15,6 +16,7 @@ const REVIEWS = [
 ];
 
 export function openNewItem(ctx) {
+  assertOperator(ctx, 'New item');
   const draft = { repo: '', pipeline: '', priority: 'normal', review: '', idempotencyKey: newKey() };
   const controls = buildControls();
   const repoStatus = h('div', { class: 'list-status' });

@@ -60,7 +60,7 @@ function pauseCard(ctx, status) {
       h('span', { class: 'hero-dot', 'aria-hidden': 'true' }),
       h('span', { class: 'hero-label', text: paused ? 'Paused' : status.disk?.held ? 'Dispatch held' : 'Running' })),
     h('p', { class: 'hero-text', text: paused ? 'Nothing new starts. Running agents finish their stages.' : status.disk?.held ? 'Dispatch is held: low disk space. Running agents can finish.' : `${status.queued_items} queued · ${status.running_agents} agent${status.running_agents === 1 ? '' : 's'} running` }),
-    toggle({
+    ctx.canOperate ? toggle({
       label: 'Pause new work', checked: paused,
       description: 'A soft pause: dispatch stops, nothing is killed.',
       onChange: async (on) => {
@@ -69,7 +69,7 @@ function pauseCard(ctx, status) {
         await ctx.refresh.one('status');
       },
       onError: (err) => toast(describeError(err), { tone: 'red' }),
-    }));
+    }) : null);
 }
 
 function healthCard(status) {

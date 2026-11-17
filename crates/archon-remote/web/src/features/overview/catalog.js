@@ -12,7 +12,7 @@ export function reposCard(ctx, repos, pause) {
       title: repo.name,
       text: [repo.ship === 'local' ? 'Ships locally' : 'Opens pull requests', repo.base_branch, repo.default_pipeline].filter(Boolean).join(' · '),
       paused,
-      onToggle: () => togglePause(ctx, { scope: 'repo', name: repo.id }, paused, repo.name),
+      onToggle: ctx.canOperate ? () => togglePause(ctx, { scope: 'repo', name: repo.id }, paused, repo.name) : null,
     });
   }));
 }

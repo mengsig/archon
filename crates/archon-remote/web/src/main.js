@@ -9,9 +9,15 @@ import { mountShell } from './shell.js';
 import { showPairing } from './features/pairing/pairing.js';
 import { h } from './ui/dom.js';
 import { errorNote } from './ui/components.js';
+import { backoffDelay } from './core/backoff.js';
 
 const root = document.getElementById('app');
+const MAX_AUTO_RETRIES = 8;
 let running = null;
+let retryTimer = null;
+
+// The modules loaded: boot-watch.js stands down, and this file reports what fails next.
+document.documentElement.dataset.booted = 'true';
 
 followSystemTheme();
 registerServiceWorker();
@@ -24,12 +30,16 @@ function takeLinkCode() {
   return code;
 }
 
-async function boot({ code = null, notice = null } = {}) {
+async function boot({ code = null, notice = null, attempt = 0 } = {}) {
+  if (!Number.isInteger(attempt) || attempt < 0) throw new RangeError(`boot attempt must be a count, got ${attempt}`);
+  clearInterval(retryTimer);
   let session;
   try {
     session = await api.session();
   } catch (err) {
-    renderBootError(err);
+    const unreachable = err instanceof api.ApiError && err.status === 0;
+    if (unreachable) renderRetrying(err, { code, notice, attempt });
+    else renderBootError(err);
     return;
   }
   if (!session) {
@@ -62,6 +72,26 @@ function stopRunning() {
   running.app.stop();
   running.unmount();
   running = null;
+}
+
+// The host refused, dropped or never answered: say so and retry on a capped backoff.
+function renderRetrying(err, { code, notice, attempt }) {
+  const status = h('p', { role: 'status' });
+  const again = () => boot({ code, notice, attempt: attempt + 1 });
+  root.replaceChildren(h('div', { class: 'boot-error' },
+    h('h1', { class: 'screen-title', text: 'Can’t connect to Archon' }), status,
+    h('button', { class: 'button button-primary', type: 'button', onclick: again }, 'Retry now')));
+  if (attempt >= MAX_AUTO_RETRIES) {
+    status.textContent = `${err.message} Check that Archon is running, then retry.`;
+    return;
+  }
+  let left = Math.max(1, Math.round(backoffDelay(attempt) / 1000));
+  const tick = () => {
+    status.textContent = `${err.message} Retrying in ${left} s.`;
+    if (left-- <= 0) again();
+  };
+  tick();
+  retryTimer = setInterval(tick, 1000);
 }
 
 function renderBootError(err) {

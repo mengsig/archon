@@ -2,8 +2,8 @@ import { h } from '../../ui/dom.js';
 import { errorNote, skeletonRows, emptyState } from '../../ui/components.js';
 import { createGraph } from '../../ui/graph/graph.js';
 import { workGraph, agentGraph } from './graph-models.js';
-import { liveQuery } from '../../core/live-query.js';
-import { usd } from '../../core/format.js';
+import { liveQuery, MIN_POLL_MS } from '../../core/live-query.js';
+import { usd, isTerminal } from '../../core/format.js';
 import { stagesTimeline } from './stages.js';
 import { openSheet } from '../../ui/sheet.js';
 import { renderMarkdown } from '../../ui/markdown.js';
@@ -92,7 +92,9 @@ function graphViews(ctx, id, work, agents) {
     activate(name) {
       active = name;
       resource?.destroy();
-      resource = name === 'details' ? null : liveQuery(ctx, load, receive);
+      // Delegated agents start inside a stage with no event to say so: poll them while the item runs.
+      const interval = name === 'agents' && current && !isTerminal(current.item) ? MIN_POLL_MS : undefined;
+      resource = name === 'details' ? null : liveQuery(ctx, load, receive, { interval });
       draw();
     },
     destroy() { resource?.destroy(); workGraphView.destroy(); agentGraphView.destroy(); },

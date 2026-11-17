@@ -136,7 +136,7 @@ mod tests {
         let subjects = definition(&schema, "Change")["oneOf"]
             .as_array()
             .expect("subjects");
-        assert_eq!(subjects.len(), 8, "one variant per ChangeSubject");
+        assert_eq!(subjects.len(), 9, "one variant per ChangeSubject");
     }
 
     /// A model is accepted as `provider/model` or as `{provider, model}`, so

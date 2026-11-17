@@ -2,6 +2,7 @@
 // reads, and the loaders that keep it fresh.
 import { createTransport } from './core/transport.js';
 import { createFeed } from './core/feed.js';
+import { createChanges } from './core/changes.js';
 import { createConversation } from './core/conversation.js';
 import { createStore } from './core/store.js';
 import { daemonCommands } from './core/daemon.js';
@@ -9,6 +10,7 @@ import { ACTIVE_STATES, stateKind, isTerminal, waitsOnOperator } from './core/fo
 import * as api from './core/api.js';
 import { BASE } from './core/base.js';
 import { matchEchoes } from './features/chat/outbox.js';
+import { canOperate } from './core/role.js';
 import { APP_VERSION } from './version.js';
 
 const REFRESH_DEBOUNCE_MS = 350;
@@ -26,8 +28,9 @@ export function createApp({ session, onUnpaired }) {
   const request = (cmd, fields, options) => transport.request(cmd, fields, options);
   const cmds = daemonCommands(request);
   const feed = createFeed({ request });
+  const changes = createChanges({ request });
   const refresh = createLoaders(store, cmds);
-  const scheduleRefresh = debounce(() => refresh.many(['summaries', 'questions', 'status']), REFRESH_DEBOUNCE_MS);
+  const scheduleRefresh = coalesce(() => refresh.many(['summaries', 'questions', 'status']), REFRESH_DEBOUNCE_MS);
   const checkSession = sessionChecker(() => stop(), onUnpaired);
 
   feed.subscribe((fresh, items) => {
@@ -35,9 +38,15 @@ export function createApp({ session, onUnpaired }) {
     if (fresh.some((item) => !item.replayed && drivesRefresh(item))) scheduleRefresh();
     if (fresh.some((item) => item.entry?.entry === 'report')) refresh.one('reports');
   });
+  changes.subscribe((change) => {
+    if (change.subject === 'pause') applyPause(store, change);
+    scheduleRefresh();
+  });
 
   const isOpen = () => transport.state === 'open';
-  const feedSync = feedSyncer({ feed, store, isOpen });
+  let welcome = null;
+  const feedSync = streamSyncer({ name: 'feed', sync: () => feed.sync(), store, isOpen });
+  const changesSync = streamSyncer({ name: 'changes', sync: () => changes.sync(welcome), store, isOpen });
   const conversation = createConversation({
     request, isOpen,
     onChange: (entries, fresh) => {
@@ -46,7 +55,13 @@ export function createApp({ session, onUnpaired }) {
     },
     onError: (err) => store.set({ errors: { ...store.get().errors, conversation: err } }),
   });
-  transport = openTransport({ session, feedSync, conversation, feed, store, refresh });
+  transport = openTransport({ session, feed, changes, store, onReady: (welcomed) => {
+    welcome = welcomed;
+    feedSync.start();
+    changesSync.start();
+    conversation.run();
+    refresh.many(['summaries', 'questions', 'status', 'repos', 'reports', 'cost']);
+  } });
   store.watch((s) => s.connection.state, (state) => {
     if (state === 'revoked') {
       stop();
@@ -68,7 +83,9 @@ export function createApp({ session, onUnpaired }) {
   }
 
   return {
-    store, cmds, feed, refresh,
+    store, cmds, feed, changes, refresh,
+    // Fixed at pairing: an observer's app shows no control that changes Archon.
+    canOperate: canOperate(session.device),
     resyncFeed: () => feedSync.run(),
     resyncConversation: () => conversation.run(),
     start() {
@@ -80,27 +97,25 @@ export function createApp({ session, onUnpaired }) {
   };
 }
 
-function openTransport({ session, feedSync, conversation, feed, store, refresh }) {
+function openTransport({ session, feed, changes, store, onReady }) {
   const setError = (name, err) => store.set({ errors: { ...store.get().errors, [name]: err } });
   return createTransport({
     url: `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${BASE}/ws`,
     hello: { protocol_version: session.protocol_version, client: 'archon-web', client_version: APP_VERSION },
     onFeed: (item) => feed.push(item),
-    onReady: () => {
-      feedSync.start();
-      conversation.run();
-      refresh.many(['summaries', 'questions', 'status', 'repos', 'reports', 'cost']);
-    },
+    onChange: (change) => changes.push(change),
+    onReady,
     onState: (state, info) => store.set({ connection: { state, ...info } }),
     onProtocolError: (err) => setError('protocol', err),
   });
 }
 
-// Feed setup that keeps trying while the socket is open: a failed history or
-// subscription would otherwise leave the app connected but no longer live.
-function feedSyncer({ feed, store, isOpen }) {
-  if (typeof feed?.sync !== 'function' || typeof isOpen !== 'function') throw new TypeError('feedSyncer needs the feed and the socket state');
-  const setError = (err) => store.set({ errors: { ...store.get().errors, feed: err } });
+// A stream's setup that keeps trying while the socket is open: a failed history
+// or subscription would otherwise leave the app connected but no longer live.
+function streamSyncer({ name, sync, store, isOpen }) {
+  if (typeof sync !== 'function' || typeof isOpen !== 'function') throw new TypeError('streamSyncer needs the sync and the socket state');
+  if (typeof name !== 'string' || !name) throw new TypeError('a stream names its error slot');
+  const setError = (err) => store.set({ errors: { ...store.get().errors, [name]: err } });
   let timer = null;
   let running = false;
   let failures = 0;
@@ -109,9 +124,9 @@ function feedSyncer({ feed, store, isOpen }) {
     clearTimeout(timer);
     timer = null;
     running = true;
-    feed.sync().then(() => {
+    sync().then(() => {
       failures = 0;
-      if (store.get().errors.feed) setError(null);
+      if (store.get().errors[name]) setError(null);
     }, (err) => {
       setError(err);
       const delay = FEED_RETRY_MS[Math.min(failures, FEED_RETRY_MS.length - 1)];
@@ -204,10 +219,25 @@ function compareSummaries(a, b) {
   return Date.parse(b.updated_at) - Date.parse(a.updated_at);
 }
 
-function debounce(fn, ms) {
+// Runs `fn` once, `ms` after the first of a burst of calls. Unlike a debounce,
+// a steady stream of events cannot postpone it forever.
+function coalesce(fn, ms) {
   let timer = null;
   return () => {
-    clearTimeout(timer);
-    timer = setTimeout(fn, ms);
+    if (timer !== null) return;
+    timer = setTimeout(() => {
+      timer = null;
+      fn();
+    }, ms);
   };
+}
+
+// A pause change carries the whole new pause state; the status reload follows.
+function applyPause(store, change) {
+  if (typeof change.global !== 'boolean' || !Array.isArray(change.repos) || !Array.isArray(change.pipelines)) {
+    throw new TypeError(`a pause change carries the pause state: ${JSON.stringify(change)}`);
+  }
+  const status = store.get().status;
+  if (!status) return;
+  store.set({ status: { ...status, pause: { global: change.global, repos: change.repos, pipelines: change.pipelines } } });
 }

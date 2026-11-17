@@ -37,7 +37,7 @@ export function activeWork(state) {
 export function quickActions(ctx) {
   return h('div', { class: 'quick-actions' },
     h('a', { class: 'button button-plain', href: '#/graph' }, 'Explore graph'),
-    h('button', { class: 'button button-primary', type: 'button', onclick: () => openNewItem(ctx) }, 'New item'));
+    ctx.canOperate ? h('button', { class: 'button button-primary', type: 'button', onclick: () => openNewItem(ctx) }, 'New item') : null);
 }
 
 export function dashboardInsights(ctx) {

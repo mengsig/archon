@@ -6,7 +6,7 @@ const ROUTES = [
   { name: 'inbox', pattern: /^#\/inbox$/, depth: 0, tab: 'inbox' },
   { name: 'chat', pattern: /^#\/chat$/, depth: 0, tab: 'chat' },
   { name: 'overview', pattern: /^#\/(?:overview)?$/, depth: 0, tab: 'overview' },
-  { name: 'settings', pattern: /^#\/settings$/, depth: 1, tab: 'overview' },
+  { name: 'settings', pattern: /^#\/settings$/, depth: 1, tab: 'settings' },
 ];
 
 export function parseRoute(hash) {

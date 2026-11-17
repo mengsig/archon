@@ -16,9 +16,11 @@ export function mountChat(view, ctx) {
   const subtitle = h('p', { class: 'chat-presence', role: 'status' });
   const transcript = h('ol', { class: 'transcript', role: 'log', 'aria-label': 'Conversation', 'aria-live': 'polite' });
   const status = h('div', { class: 'list-status' });
-  const composer = buildComposer((text) => send(ctx, text));
-  const commands = h('button', { class: 'button button-plain button-small', type: 'button', onclick: () => openCommands(ctx) }, 'Commands');
-  view.append(screenHeader({ title: 'Chat', actions: [commands] }), subtitle, status, transcript, composer.form);
+  // An observer reads the conversation; only an operator device writes to it.
+  const composer = ctx.canOperate ? buildComposer((text) => send(ctx, text)).form
+    : h('p', { class: 'section-foot', text: 'This device is an observer: it reads the conversation but cannot send to it.' });
+  const commands = ctx.canOperate ? [h('button', { class: 'button button-plain button-small', type: 'button', onclick: () => openCommands(ctx) }, 'Commands')] : [];
+  view.append(screenHeader({ title: 'Chat', actions: commands }), subtitle, status, transcript, composer);
 
   const render = () => {
     const nearBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - NEAR_BOTTOM_PX;
@@ -62,7 +64,8 @@ function renderTranscript(ctx, transcript) {
       return conversationEntry(row.entry, row.note);
     },
   });
-  if (rows.length === 0) transcript.replaceChildren(h('li', { class: 'transcript-empty', text: 'Say hello. The orchestrator reads every line you send here.' }));
+  const empty = ctx.canOperate ? 'Say hello. The orchestrator reads every line you send here.' : 'No conversation yet.';
+  if (rows.length === 0) transcript.replaceChildren(h('li', { class: 'transcript-empty', text: empty }));
 }
 
 function renderPresence(subtitle, state) {

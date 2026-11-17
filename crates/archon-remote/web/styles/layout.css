@@ -164,6 +164,7 @@
   .tab-badge { left: 10px; top: -6px; }
   .nav-footer { display: grid; gap: 18px; margin-top: auto; padding-inline: 12px; }
   .nav-settings { color: var(--text-2); display: flex; gap: 12px; align-items: center; min-height: 44px; font-size: 12px; }
+  .nav-settings[aria-current='page'] { color: var(--text); font-weight: 600; }
   .nav-version { font-size: 10px; color: var(--text-2); letter-spacing: .02em; }
   .fab { right: 40px; bottom: 32px; }
   .toasts { left: calc(50% + var(--sidebar) / 2); bottom: 32px; }

@@ -26,13 +26,13 @@ class Transport {
     url, hello, protocol = 'archon', WebSocketImpl = globalThis.WebSocket,
     setTimer = globalThis.setTimeout.bind(globalThis), clearTimer = globalThis.clearTimeout.bind(globalThis),
     random = Math.random, requestTimeoutMs = REQUEST_TIMEOUT_MS,
-    onFeed = () => {}, onState = () => {}, onReady = () => {}, onProtocolError = () => {},
+    onFeed = () => {}, onChange = () => {}, onState = () => {}, onReady = () => {}, onProtocolError = () => {},
   }) {
     if (typeof url !== 'string' || !/^wss?:\/\//.test(url)) throw new TypeError(`a WebSocket URL, got ${url}`);
     if (!hello || !Number.isInteger(hello.protocol_version)) throw new TypeError('hello needs an integer protocol_version');
     if (typeof WebSocketImpl !== 'function') throw new TypeError('no WebSocket implementation');
     Object.assign(this, { url, hello, protocol, WebSocketImpl, setTimer, clearTimer, random, requestTimeoutMs });
-    this.on = { feed: onFeed, state: onState, ready: onReady, protocolError: onProtocolError };
+    this.on = { feed: onFeed, change: onChange, state: onState, ready: onReady, protocolError: onProtocolError };
     this.ws = null;
     this.nextReq = 1;
     this.attempt = 0;
@@ -135,6 +135,10 @@ class Transport {
     }
     if (frame.frame === 'feed') {
       this.on.feed(frame.item, frame.sub);
+      return;
+    }
+    if (frame.frame === 'change') {
+      this.on.change(frame.change, frame.sub);
       return;
     }
     if (frame.frame !== 'reply' || !Number.isInteger(frame.id)) {

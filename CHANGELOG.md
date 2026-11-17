@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The change stream now carries `pause` changes, so clients learn of a CLI
+  `archon pause` or `archon resume` live.
+
 ## 1.6.2
 
 ### Changed

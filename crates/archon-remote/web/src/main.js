@@ -21,7 +21,17 @@ document.documentElement.dataset.booted = 'true';
 
 followSystemTheme();
 registerServiceWorker();
+dropBusyCounter();
 boot({ code: takeLinkCode() });
+
+// The busy page counts its retries in the query; a loaded app starts that count afresh.
+function dropBusyCounter() {
+  const query = new URLSearchParams(location.search);
+  if (!query.has('busy')) return;
+  query.delete('busy');
+  const rest = query.toString();
+  history.replaceState(null, '', `${location.pathname}${rest ? `?${rest}` : ''}${location.hash}`);
+}
 
 // The fragment never stays in the address bar or history once read.
 function takeLinkCode() {

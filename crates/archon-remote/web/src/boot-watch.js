@@ -24,19 +24,12 @@
   function showRetrying(delayMs) {
     const root = document.getElementById('app');
     if (!root) throw new Error('index.html has no #app');
-    const title = document.createElement('h1');
-    title.className = 'screen-title';
-    title.textContent = 'Can’t connect to Archon';
-    const text = document.createElement('p');
+    const element = (tag, props) => Object.assign(document.createElement(tag), props);
+    const text = element('p', {});
     text.setAttribute('role', 'status');
-    const retry = document.createElement('button');
-    retry.type = 'button';
-    retry.className = 'button button-primary';
-    retry.textContent = 'Retry now';
-    retry.addEventListener('click', () => location.reload());
-    const box = document.createElement('div');
-    box.className = 'boot-error';
-    box.append(title, text, retry);
+    const retry = element('button', { type: 'button', className: 'button button-primary', textContent: 'Retry now', onclick: () => location.reload() });
+    const box = element('div', { className: 'boot-error' });
+    box.append(element('h1', { className: 'screen-title', textContent: 'Can’t connect to Archon' }), text, retry);
     root.replaceChildren(box);
     if (delayMs === null) {
       text.textContent = 'The host keeps refusing the connection. Check that Archon is running, then retry.';

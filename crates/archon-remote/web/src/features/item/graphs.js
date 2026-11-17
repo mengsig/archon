@@ -69,15 +69,7 @@ function graphViews(ctx, id, work, agents) {
       workGraphView.update(workGraph(current, plans));
       timeline.replaceChildren(stagesTimeline(current));
     }
-    if (active === 'agents') {
-      const graph = agentGraph(current, ctx.store.get().status?.orchestrator);
-      const byAgent = new Map(states.map((agent) => [agent.agent, agent.state]));
-      for (const node of graph.nodes) {
-        if (byAgent.has(node.agentId)) node.state = byAgent.get(node.agentId);
-        if (Number.isFinite(costs[node.agentId])) { node.cost = costs[node.agentId]; node.meta += ` · ${usd(node.cost)} direct recorded spend`; }
-      }
-      agentGraphView.update(graph);
-    }
+    if (active === 'agents') agentGraphView.update(liveAgentGraph(current, ctx.store.get().status?.orchestrator, states, costs));
   };
   const load = () => loadGraphData(ctx, id, current, active);
   // Delegated agents start inside a stage with no event to say so: poll them while the item runs.
@@ -109,6 +101,18 @@ function graphViews(ctx, id, work, agents) {
     },
     destroy() { resource?.destroy(); workGraphView.destroy(); agentGraphView.destroy(); },
   };
+}
+
+// The agent tree with each agent's live state and direct spend laid over it.
+function liveAgentGraph(detail, orchestrator, states, costs) {
+  if (!Array.isArray(states) || !costs || typeof costs !== 'object') throw new TypeError('agent states are a list and costs a map');
+  const graph = agentGraph(detail, orchestrator);
+  const byAgent = new Map(states.map((agent) => [agent.agent, agent.state]));
+  for (const node of graph.nodes) {
+    if (byAgent.has(node.agentId)) node.state = byAgent.get(node.agentId);
+    if (Number.isFinite(costs[node.agentId])) { node.cost = costs[node.agentId]; node.meta += ` · ${usd(node.cost)} direct recorded spend`; }
+  }
+  return graph;
 }
 
 async function loadGraphData(ctx, id, detail, active) {

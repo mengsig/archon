@@ -451,6 +451,81 @@ fn a_pause_write_records_a_change_only_when_the_state_changes() {
     );
 }
 
+/// Removing a paused repository rewrites the pause state without it: one
+/// change with the full state; none when it was not paused or is refused.
+#[test]
+fn removing_a_paused_repository_records_one_full_pause_change() {
+    let (mut store, busy, _) = seeded(1);
+    let gone = repo("beta");
+    let idle = repo("gamma");
+    store.insert_repo(&gone).unwrap();
+    store.insert_repo(&idle).unwrap();
+    let paused = PauseState {
+        global: false,
+        repos: vec![busy.id.clone(), gone.id.clone()],
+        pipelines: vec!["review".into()],
+    };
+    store.set_pause_state(&paused).unwrap();
+    let before = store.last_change_seq().unwrap();
+    let refused = store.remove_repo(&busy.id);
+    assert!(
+        matches!(refused, Err(ArchonError::Invalid(_))),
+        "{refused:?}"
+    );
+    assert_eq!(store.pause_state().unwrap(), paused);
+    store.remove_repo(&idle.id).unwrap();
+    assert_eq!(
+        store.last_change_seq().unwrap(),
+        before,
+        "neither changed it"
+    );
+    store.remove_repo(&gone.id).unwrap();
+    let recorded = all_changes(&store, before);
+    assert_eq!(recorded.len(), 1, "{recorded:?}");
+    let left = ChangeSubject::Pause {
+        global: false,
+        repos: vec![busy.id.clone()],
+        pipelines: vec!["review".into()],
+    };
+    assert_eq!(recorded[0].subject, left);
+    assert_eq!(store.pause_state().unwrap().repos, [busy.id.clone()]);
+}
+
+/// A removal that fails after rewriting the pause state takes its change
+/// and the rewrite back with it.
+#[test]
+fn a_failed_repository_removal_rolls_its_pause_change_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = db_path(&dir);
+    let gone = repo("beta");
+    let paused = PauseState {
+        global: false,
+        repos: vec![gone.id.clone()],
+        pipelines: Vec::new(),
+    };
+    {
+        let mut store = Store::open(&path).unwrap();
+        store.insert_repo(&gone).unwrap();
+        store.set_pause_state(&paused).unwrap();
+    }
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute_batch(
+            "CREATE TRIGGER refuse_repo_delete BEFORE DELETE ON repos \
+             BEGIN SELECT RAISE(ABORT, 'refused by the test'); END;",
+        )
+        .unwrap();
+    let mut store = Store::open(&path).unwrap();
+    let before = store.last_change_seq().unwrap();
+    let failed = store.remove_repo(&gone.id).unwrap_err();
+    assert!(
+        failed.to_string().contains("refused by the test"),
+        "{failed}"
+    );
+    assert_eq!(store.last_change_seq().unwrap(), before);
+    assert_eq!(store.pause_state().unwrap(), paused);
+}
+
 const CRASH_DB: &str = "ARCHON_TEST_CHANGES_CRASH_DB";
 
 /// Run only by the crash test: writes changes and an item state in one

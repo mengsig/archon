@@ -14,7 +14,6 @@ use archon_core::protocol::graph::{
 use archon_core::protocol::{
     GithubRef, PrRef, QueueStateKind, TaskEdge, TaskFilter, TaskGraph, TaskNode, WaitingReasonCode,
 };
-use archon_core::pull_request::PullRequestRef;
 use archon_core::queue::{Priority, QueueState};
 use archon_core::run::PipelineRun;
 use rusqlite::types::Value;
@@ -23,14 +22,41 @@ use rusqlite::{Connection, OptionalExtension, Row, params_from_iter};
 use super::Store;
 use super::codec::{SqlContext, end_read_tx, from_json, priority_rank, read_tx, sql_limit, ts};
 
+/// `(owner, item)` for each item queued onto a pull request: the owner is the
+/// earliest item (then lowest id) with a delivered link to that pull request
+/// that is not itself queued onto it, or NULL. Onto URLs are stored canonical,
+/// `https://<host>/<repo>/pull/<n>`; the host match lets the link index help.
+macro_rules! onto_links {
+    () => {
+        "SELECT (SELECT l.item FROM github_links l
+                 WHERE l.host = substr(o.pr, 9, instr(substr(o.pr, 9), '/') - 1)
+                   AND 'https://' || l.host || '/' || l.repo || '/pull/' || l.number = o.pr
+                   AND l.kind = 'pull_request' AND l.relation = 'delivered' AND l.item <> o.id
+                   AND NOT EXISTS (
+                       SELECT 1 FROM items w
+                       WHERE w.id = l.item AND lower(json_extract(w.data, '$.onto.pr')) = o.pr)
+                 ORDER BY l.created_at, l.item LIMIT 1),
+                o.id
+         FROM (SELECT id, lower(json_extract(data, '$.onto.pr')) AS pr FROM items
+               WHERE json_type(data, '$.onto.pr') = 'text') o"
+    };
+}
+
 /// The connected component of `?1` over every edge kind, both directions.
-const COMPONENT_CTE: &str = "WITH RECURSIVE component (id) AS (
+const COMPONENT_CTE: &str = concat!(
+    "WITH RECURSIVE onto_link (owner, item) AS MATERIALIZED (",
+    onto_links!(),
+    "), component (id) AS (
          SELECT ?1
          UNION SELECT d.depends_on FROM item_deps d JOIN component c ON d.item = c.id
          UNION SELECT d.item FROM item_deps d JOIN component c ON d.depends_on = c.id
          UNION SELECT s.parent_item FROM stacks s JOIN component c ON s.item = c.id
          UNION SELECT s.item FROM stacks s JOIN component c ON s.parent_item = c.id
-     ) ";
+         UNION SELECT k.owner FROM onto_link k JOIN component c ON k.item = c.id
+               WHERE k.owner IS NOT NULL
+         UNION SELECT k.item FROM onto_link k JOIN component c ON k.owner = c.id
+     ) "
+);
 
 const TERMINAL: &str = "('succeeded', 'failed', 'cancelled')";
 
@@ -451,58 +477,38 @@ fn edges_between(
     Ok(edges)
 }
 
-/// Edges from the owner of a pull request to each node queued onto it. The
-/// owner is the earliest item (then lowest id) with a delivered link to the
-/// pull request that is not itself queued onto it.
+/// Edges from the owner of a pull request to each node queued onto it; see
+/// [`onto_links`] for who owns it.
 fn onto_edges(
     conn: &Connection,
     ids: &str,
     members: &HashSet<&str>,
 ) -> Result<Vec<TaskEdge>, ArchonError> {
-    let mut onto_items = conn
-        .prepare_cached(
-            "SELECT i.id, json_extract(i.data, '$.onto.pr')
-             FROM json_each(?1) n JOIN items i ON i.id = n.value
-             WHERE json_type(i.data, '$.onto.pr') = 'text'",
-        )
-        .ctx("read onto items")?;
-    let mut owner_of = conn
-        .prepare_cached(
-            "SELECT l.item FROM github_links l
-             WHERE l.host = ?1 AND l.repo = ?2 AND l.number = ?3
-               AND l.kind = 'pull_request' AND l.relation = 'delivered' AND l.item <> ?4
-               AND NOT EXISTS (
-                   SELECT 1 FROM items o
-                   WHERE o.id = l.item AND lower(json_extract(o.data, '$.onto.pr')) = ?5)
-             ORDER BY l.created_at, l.item LIMIT 1",
-        )
-        .ctx("read pull request owner")?;
-    let rows = onto_items
+    let mut stmt = conn
+        .prepare_cached(concat!(
+            "WITH onto_link (owner, item) AS (",
+            onto_links!(),
+            ") SELECT k.owner, k.item FROM json_each(?1) n JOIN onto_link k ON k.item = n.value
+               WHERE k.owner IS NOT NULL"
+        ))
+        .ctx("read onto edges")?;
+    let rows = stmt
         .query_map([ids], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })
-        .ctx("read onto items")?
+        .ctx("read onto edges")?
         .collect::<Result<Vec<_>, _>>()
-        .ctx("read onto item")?;
+        .ctx("read onto edge")?;
     let mut edges = Vec::new();
-    for (item, url) in rows {
+    for (owner, item) in rows {
         assert!(members.contains(item.as_str()), "onto items are nodes");
-        let pr = PullRequestRef::from_url(&url)
-            .ok_or_else(|| ArchonError::Corrupt(format!("item {item} onto {url:?}")))?;
-        let (host, repo) = (pr.host.to_lowercase(), pr.repository.to_lowercase());
-        let number = i64::try_from(pr.number).map_err(|_| {
-            ArchonError::Corrupt(format!("pull request number {} overflows", pr.number))
-        })?;
-        let owner: Option<String> = owner_of
-            .query_row(
-                rusqlite::params![host, repo, number, item, url.to_lowercase()],
-                |row| row.get(0),
-            )
-            .optional()
-            .ctx("read pull request owner")?;
-        let Some(owner) = owner.filter(|o| members.contains(o.as_str())) else {
+        assert_ne!(
+            owner, item,
+            "an item never owns the pull request it is onto"
+        );
+        if !members.contains(owner.as_str()) {
             continue;
-        };
+        }
         edges.push(TaskEdge {
             from: QueueItemId::parse(&owner)?,
             to: QueueItemId::parse(&item)?,

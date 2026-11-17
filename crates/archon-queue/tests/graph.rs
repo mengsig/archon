@@ -523,4 +523,29 @@ fn an_onto_edge_runs_from_the_pull_requests_owner_to_each_item_queued_onto_it() 
     let without_owner = graph(&store, &filter);
     assert_eq!(without_owner.nodes.len(), 3, "the owner is filtered out");
     assert!(without_owner.edges.is_empty(), "no onto edge without owner");
+
+    for root in [&owner.id, &second.id] {
+        let component = TaskFilter {
+            component_of: Some(root.clone()),
+            ..TaskFilter::default()
+        };
+        let joined = graph(&store, &component);
+        let mut ids: Vec<_> = joined.nodes.iter().map(|n| &n.id).collect();
+        ids.sort();
+        let mut want = vec![&owner.id, &first.id, &second.id];
+        want.sort();
+        assert_eq!(ids, want, "onto edges join the component from {root}");
+        assert_eq!(
+            edges(&joined),
+            expected,
+            "the component keeps its onto edges"
+        );
+    }
+    let apart = TaskFilter {
+        component_of: Some(other.id.clone()),
+        ..TaskFilter::default()
+    };
+    let alone = graph(&store, &apart);
+    assert_eq!(alone.nodes.len(), 1, "an unrelated item stays alone");
+    assert_eq!(alone.nodes[0].id, other.id);
 }

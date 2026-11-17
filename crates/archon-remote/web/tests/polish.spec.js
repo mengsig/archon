@@ -3,6 +3,7 @@ import { test as base, expect } from '@playwright/test';
 import { startDevFixture } from './support/fixture.js';
 import { openApp } from './flows.js';
 import { standInConversation } from './support/conversation.js';
+import { pipelineFixture, standInGraphs } from './support/graph-fixture.js';
 import { guardConsole } from './support/console-guard.js';
 
 // The 9–10 px labels were raised to 12 px; 11 px stays the floor for secondary text.
@@ -65,14 +66,27 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
       test.use({ viewport, colorScheme: theme });
 
       test('icon-only buttons, the send answer button first, meet AA contrast', async ({ page, fixture }) => {
+        const audit = async (where) => {
+          const controls = await iconButtonContrast(page);
+          for (const control of controls) {
+            expect(control.glyph, `${where}: ${control.label} glyph`).toBeGreaterThanOrEqual(4.5);
+            if (control.filled) expect(control.edge, `${where}: ${control.label} against its card`).toBeGreaterThanOrEqual(3);
+          }
+          return controls.map((control) => control.label);
+        };
         await openApp(page, fixture, '#/inbox');
         await expect(page.getByRole('button', { name: 'Send answer' }).first()).toBeVisible();
-        const controls = await iconButtonContrast(page);
-        expect(controls.filter((c) => c.label === 'Send answer').length).toBeGreaterThan(0);
-        for (const control of controls) {
-          expect(control.glyph, `${control.label} glyph`).toBeGreaterThanOrEqual(4.5);
-          if (control.filled) expect(control.edge, `${control.label} against its card`).toBeGreaterThanOrEqual(3);
-        }
+        expect(await audit('inbox')).toContain('Send answer');
+        await openApp(page, fixture, '#/graph');
+        await expect(page.locator('.graph-node').first()).toBeVisible();
+        await audit('graph');
+        await openApp(page, fixture, '#/chat');
+        await expect(page.locator('main h1').first()).toBeVisible();
+        await audit('chat');
+        await openApp(page, fixture, '#/queue');
+        await page.getByRole('button', { name: 'New item' }).click();
+        await expect(page.getByRole('dialog', { name: 'New item' })).toBeVisible();
+        expect(await audit('new item sheet')).toContain('Close');
       });
 
       test('raised labels stay at least 12 px and no text drops under 11 px', async ({ page, fixture }) => {
@@ -151,6 +165,11 @@ test.describe('desktop sheets and graph detail', () => {
 
   test('the selected graph item shows its id, pipeline, state and dependencies', async ({ page, fixture }) => {
     const { first } = fixture.seeded;
+    const base = (await fixture.archond.request({ cmd: 'get_item', item: first.id })).data;
+    const data = pipelineFixture(base);
+    data.graph = (await fixture.archond.request({ cmd: 'task_graph', filter: {}, limit: 500 })).data;
+    data.graph.nodes.find((node) => node.id === first.id).pr = { host: 'github.com', repo: 'o/r', number: 9, kind: 'pull_request' };
+    await standInGraphs(page, data);
     await openApp(page, fixture, '#/graph');
     await page.locator(`.graph-node[data-node-id="${first.id}"]`).click();
     const panel = page.getByRole('complementary', { name: 'Selected item' });
@@ -159,5 +178,6 @@ test.describe('desktop sheets and graph detail', () => {
     for (const fact of ['Item', 'Pipeline', 'State']) await expect(panel.getByText(fact, { exact: true })).toBeVisible();
     await expect(panel.getByRole('heading', { name: 'Dependents' })).toBeVisible();
     await expect(panel.getByRole('link', { name: /Pair devices with a one-time code/ })).toBeVisible();
+    await expect(panel.getByRole('link', { name: 'o/r#9', exact: true })).toHaveAttribute('href', 'https://github.com/o/r/pull/9');
   });
 });

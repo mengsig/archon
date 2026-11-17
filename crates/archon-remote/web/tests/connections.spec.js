@@ -63,13 +63,17 @@ test('a browser beyond the cap is told it cannot connect, then gets in', async (
     await expect.poll(() => serverConnections(fixture.listeningPort)).toBeGreaterThanOrEqual(CAP);
     const response = await page.goto(`${fixture.baseURL}/#/overview`);
     expect(response.status()).toBe(503);
-    expect(response.headers()['retry-after']).toBe('2');
+    // The first wait is 2 s plus up to half again of jitter, and the refresh waits as long.
+    const wait = response.headers()['retry-after'];
+    expect(['2', '3']).toContain(wait);
+    await expect(page.locator('meta[http-equiv="refresh"]')).toHaveAttribute('content', `${wait}; url=./?busy=1`);
     await expect(page.getByRole('heading', { name: CANT_CONNECT })).toBeVisible();
   } finally {
     for (const socket of held) socket.destroy();
   }
-  // The busy page reloads itself, and with slots free the app boots.
+  // The busy page reloads itself, and with slots free the app boots without the retry count.
   await expect(page.getByRole('navigation', { name: 'Sections' })).toBeVisible({ timeout: 15_000 });
+  expect(new URL(page.url()).searchParams.has('busy'), page.url()).toBe(false);
   await context.close();
 });
 

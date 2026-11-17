@@ -41,7 +41,8 @@ the entire graph. Cycle and missing-endpoint diagnostics stay visible.
 An item's Work view combines frozen `run_plan` stages with actual attempts,
 fan-out slots and gates. Agents preserves the recorded delegation tree and
 uses the bounded read-only `item_agent_states` request for live/completed/stopped
-states and direct ledger costs (including the current orchestrator). Backend
+states (including the current orchestrator). Each node keeps the cost of its own
+attempt: an agent's lifetime spend there would repeat on every attempt. Backend
 failures remain visible; unavailable states are never inferred from a parent's
 state. Selecting a stage opens its recorded output for that exact run/attempt/slot.
 Overview's spend chart has an equivalent daily table, and relationships link

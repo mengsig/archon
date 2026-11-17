@@ -25,11 +25,14 @@ use super::codec::{SqlContext, end_read_tx, from_json, priority_rank, read_tx, s
 /// `(owner, item)` for each item queued onto a pull request: the owner is the
 /// earliest item (then lowest id) with a delivered link to that pull request
 /// that is not itself queued onto it, or NULL. Onto URLs are stored canonical,
-/// `https://<host>/<repo>/pull/<n>`; the host match lets the link index help.
+/// `https://<host>/<owner>/<name>/pull/<n>`: `h` is the slash after the host
+/// and `p` the end of `/pull/`, so host, repo and number use the link index.
 macro_rules! onto_links {
     () => {
         "SELECT (SELECT l.item FROM github_links l
-                 WHERE l.host = substr(o.pr, 9, instr(substr(o.pr, 9), '/') - 1)
+                 WHERE l.host = substr(o.pr, 9, o.h - 1)
+                   AND l.repo = substr(o.pr, o.h + 9, o.p - o.h - 14)
+                   AND l.number = CAST(substr(o.pr, o.p + 1) AS INTEGER)
                    AND 'https://' || l.host || '/' || l.repo || '/pull/' || l.number = o.pr
                    AND l.kind = 'pull_request' AND l.relation = 'delivered' AND l.item <> o.id
                    AND NOT EXISTS (
@@ -37,8 +40,10 @@ macro_rules! onto_links {
                        WHERE w.id = l.item AND lower(json_extract(w.data, '$.onto.pr')) = o.pr)
                  ORDER BY l.created_at, l.item LIMIT 1),
                 o.id
-         FROM (SELECT id, lower(json_extract(data, '$.onto.pr')) AS pr FROM items
-               WHERE json_type(data, '$.onto.pr') = 'text') o"
+         FROM (SELECT id, pr, instr(substr(pr, 9), '/') AS h,
+                      length(rtrim(pr, '0123456789')) AS p
+               FROM (SELECT id, lower(json_extract(data, '$.onto.pr')) AS pr FROM items
+                     WHERE json_type(data, '$.onto.pr') = 'text')) o"
     };
 }
 

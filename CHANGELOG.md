@@ -4,7 +4,9 @@
 
 ## 1.6.1
 
-Upcoming.
+Released 2026-11-17.
+
+Archon 1.6.1 requires **Aether 1.4.0**; the Aether pin is unchanged.
 
 ### Fixed
 
@@ -17,6 +19,10 @@ Upcoming.
   remaining images keep their IDs, workspace paths and SHA-256 hashes in every
   stage brief for workers and reviewers to open and pass on with the unchanged
   ledger. Every approved image is still checked for changes before spawning.
+
+### Documentation
+
+- Record the Luna post-release comparison of Archon 1.5.1 against 1.5.0 (#426).
 
 ## 1.6.0
 

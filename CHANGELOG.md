@@ -16,19 +16,22 @@
   Existing pairing, observer permissions, confirmations and strict CSP remain intact.
 - Added a bounded read-only `item_agent_states` request for actual delegated-agent
   lifecycle and direct ledger spend; unavailable backend reads fail explicitly.
-- The change stream now carries `pause` changes, so clients learn of a CLI
-  `archon pause` or `archon resume` live.
-- Protocol 24 stays 24: a client names `onto_edges` and `pause_changes` in its
-  `hello` to be sent `onto` graph edges and `pause` changes, so a 1.6.1 client
-  (such as a running `archon mcp`) never meets a variant it cannot decode.
-  Unknown edge kinds and change subjects now read as `other`, and `task_graph`
-  takes an `ids` filter, which the web app uses to read a merged graph's edges.
+- Protocol 24 stays 24: a client names `onto_edges` in its `hello` to be sent
+  `onto` graph edges, so a 1.6.1 client (such as a running `archon mcp`) never
+  meets an edge kind it cannot decode. Unknown edge kinds read as `other`, which
+  the schema admits too. The change stream and `changes_page` are unchanged from
+  1.6.1 for every client. `task_graph` takes an `ids` filter, which the web app
+  uses to read a merged graph's edges.
 
 ### Fixed
 
 - The web app shows an observer device no control that changes Archon on any
-  screen; the listener still refuses a forced change. Overview follows a CLI pause
-  or resume live, and agent trees and new items refresh from the change stream.
+  screen; the listener still refuses a forced change. Overview and the item page
+  read the pause state every 5 seconds while shown, so a CLI pause or resume shows
+  without a reload, and agent trees and new items refresh from the change stream.
+- Every automatic retry in the web app (boot, busy host, reconnect, stream and
+  conversation recovery) waits a capped, jittered backoff, and never less than
+  a busy host's `Retry-After`, so tabs that failed together do not return together.
 - Graph edge labels that share endpoints no longer overlap, the selected-item panel
   no longer prints "null", and the item Work graph fits on desktop when it opens.
   Settings is marked as the current section, and a refused or dropped connection

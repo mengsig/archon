@@ -14,11 +14,11 @@ import { canOperate } from './core/role.js';
 import { coalesce } from './core/live-query.js';
 import { APP_VERSION } from './version.js';
 import { deviceGuard, sessionChecker } from './core/session-watch.js';
+import { retryDelay, STREAM_BACKOFF } from './core/backoff.js';
 
 const REFRESH_DEBOUNCE_MS = 350;
 const SESSION_CHECK_MS = 10_000;
 const RECENT_LIMIT = 200;
-const FEED_RETRY_MS = [2_000, 5_000, 15_000, 30_000];
 
 export function createApp({ session, onUnpaired, onDeviceChanged }) {
   if (!session?.device) throw new TypeError('the app starts with a paired session');
@@ -96,10 +96,7 @@ function followStreams({ store, feed, changes, refresh, scheduleRefresh }) {
     if (fresh.some((item) => !item.replayed && drivesRefresh(item))) scheduleRefresh();
     if (fresh.some((item) => item.entry?.entry === 'report')) refresh.one('reports');
   });
-  changes.subscribe((change) => {
-    if (change.subject === 'pause') applyPause(store, change);
-    scheduleRefresh();
-  });
+  changes.subscribe(() => scheduleRefresh());
 }
 
 function watchConnection({ store, stop, checkSession, onUnpaired }) {
@@ -133,7 +130,7 @@ function openTransport({ session, feed, changes, store, onReady }) {
   return createTransport({
     url: `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${BASE}/ws`,
     hello: { protocol_version: session.protocol_version, client: 'archon-web', client_version: APP_VERSION,
-      features: ['onto_edges', 'pause_changes'] },
+      features: ['onto_edges'] },
     onFeed: (item) => feed.push(item),
     onChange: (change) => changes.push(change),
     onReady,
@@ -161,7 +158,7 @@ function streamSyncer({ name, sync, store, isOpen }) {
       if (store.get().errors[name]) setError(null);
     }, (err) => {
       setError(err);
-      const delay = FEED_RETRY_MS[Math.min(failures, FEED_RETRY_MS.length - 1)];
+      const delay = retryDelay(failures, { limits: STREAM_BACKOFF });
       failures += 1;
       if (isOpen()) timer = setTimeout(run, delay);
     }).finally(() => { running = false; });
@@ -233,16 +230,4 @@ function compareSummaries(a, b) {
     if (byPriority !== 0) return byPriority;
   }
   return Date.parse(b.updated_at) - Date.parse(a.updated_at);
-}
-
-// Runs `fn` once, `ms` after the first of a burst of calls. Unlike a debounce,
-// a steady stream of events cannot postpone it forever.
-// A pause change carries the whole new pause state; the status reload follows.
-function applyPause(store, change) {
-  if (typeof change.global !== 'boolean' || !Array.isArray(change.repos) || !Array.isArray(change.pipelines)) {
-    throw new TypeError(`a pause change carries the pause state: ${JSON.stringify(change)}`);
-  }
-  const status = store.get().status;
-  if (!status) return;
-  store.set({ status: { ...status, pause: { global: change.global, repos: change.repos, pipelines: change.pipelines } } });
 }

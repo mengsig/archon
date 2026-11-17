@@ -9,10 +9,12 @@ import { mountShell } from './shell.js';
 import { showPairing } from './features/pairing/pairing.js';
 import { h } from './ui/dom.js';
 import { errorNote } from './ui/components.js';
-import { backoffDelay } from './core/backoff.js';
+import { retryDelay } from './core/backoff.js';
 
 const root = document.getElementById('app');
 const MAX_AUTO_RETRIES = 8;
+// The first retry waits 1–2 s, later ones at most 30 s.
+const BOOT_BACKOFF = Object.freeze({ baseMs: 2000, capMs: 30_000 });
 let running = null;
 let retryTimer = null;
 
@@ -42,7 +44,7 @@ function takeLinkCode() {
 
 async function boot({ code = null, notice = null, attempt = 0 } = {}) {
   if (!Number.isInteger(attempt) || attempt < 0) throw new RangeError(`boot attempt must be a count, got ${attempt}`);
-  clearInterval(retryTimer);
+  clearTimeout(retryTimer);
   let session;
   try {
     session = await api.session();
@@ -100,14 +102,17 @@ function renderRetrying(err, { code, notice, attempt }) {
     status.textContent = `${err.message} Check that Archon is running, then retry.`;
     return;
   }
-  // A busy host names its own wait; the backoff covers one that said nothing.
-  let left = Math.max(1, err.retryAfterSecs ?? Math.round(backoffDelay(attempt) / 1000));
+  // A busy host's own wait is the least; the jitter keeps refused tabs apart.
+  const namedMs = Number.isFinite(err.retryAfterSecs) && err.retryAfterSecs > 0 ? err.retryAfterSecs * 1000 : 0;
+  const due = Date.now() + retryDelay(attempt, { minMs: namedMs, limits: BOOT_BACKOFF });
+  // Counts down whole seconds and retries at the jittered moment itself.
   const tick = () => {
-    status.textContent = `${err.message} Retrying in ${left} s.`;
-    if (left-- <= 0) again();
+    const leftMs = due - Date.now();
+    if (leftMs <= 0) return again();
+    status.textContent = `${err.message} Retrying in ${Math.ceil(leftMs / 1000)} s.`;
+    retryTimer = setTimeout(tick, leftMs % 1000 || 1000);
   };
   tick();
-  retryTimer = setInterval(tick, 1000);
 }
 
 function renderBootError(err) {

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createTransport, DaemonError, CLOSE_REVOKED, CLOSE_DISABLED } from '../../src/core/transport.js';
-import { backoffDelay, DISABLED_RETRY_MS } from '../../src/core/backoff.js';
+import { backoffDelay, retryDelay, DISABLED_RETRY_MS } from '../../src/core/backoff.js';
 
 // A scripted WebSocket and clock: tests open, answer and close sockets by hand.
 function harness(extra = {}) {
@@ -116,7 +116,10 @@ test('4401 stops for good and 4403 retries slowly', async () => {
   const disabled = harness();
   disabled.transport.start(); disabled.last().drop(CLOSE_DISABLED);
   assert.equal(disabled.transport.state, 'disabled');
-  disabled.fire(DISABLED_RETRY_MS);
+  const slow = disabled.states.at(-1).retryInMs;
+  assert.equal(slow, retryDelay(0, { minMs: DISABLED_RETRY_MS, random: () => 0.5 }));
+  assert.ok(slow > DISABLED_RETRY_MS, 'a disabled listener is retried past its minute, jittered');
+  disabled.fire(slow);
   assert.equal(disabled.sockets.length, 2);
 });
 

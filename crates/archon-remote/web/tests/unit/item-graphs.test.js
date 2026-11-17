@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { workGraph, agentGraph, liveAgentGraph } from '../../src/features/item/graph-models.js';
+import { itemPanels } from '../../src/features/item/graphs.js';
+import { createStore } from '../../src/core/store.js';
+import { domHarness } from '../support/graph-dom.js';
 
 const choice = { model: { provider: 'codex', model: 'gpt-6' }, effort: 'high' };
 const started_at = '2026-11-17T10:00:00Z';
@@ -267,4 +270,43 @@ test('a reused agent keeps each attempt’s own charge; its lifetime spend is no
     assert.doesNotMatch(lead.meta, /99|direct recorded spend/);
   }
   assert.throws(() => liveAgentGraph(detail(records), null, null), /states are a list/);
+});
+
+// The Agents tab as the item page mounts it: its loader reads item_agent_states,
+// whose cost_usd is lifetime spend, and its overlay lays only the state over the tree.
+test('the Agents view keeps a reused agent’s per-attempt costs over a lifetime cost_usd', async () => {
+  const harness = domHarness();
+  Object.assign(document, { visibilityState: 'visible', addEventListener() {}, removeEventListener() {} });
+  const stream = () => ({ subscribe: () => () => {} });
+  const asked = [];
+  const ctx = {
+    store: createStore({ connection: { state: 'open' }, status: null }), feed: stream(), changes: stream(),
+    cmds: { itemAgentStates: async (item) => {
+      asked.push(item);
+      return { agents: [{ agent: 'agt_reused', state: 'live' }], cost_usd: { agt_reused: 99 } };
+    } },
+  };
+  const records = [
+    stage('a1', { aether_agent: 'agt_reused', attempt: 1, cost_usd: 1.25 }),
+    stage('a2', { aether_agent: 'agt_reused', attempt: 2, cost_usd: 2.5 }),
+  ];
+  const panels = itemPanels(ctx, 'qi_1');
+  panels.update(detail(records, { item: { id: 'qi_1', state: { state: 'running' } } }));
+  const agentsTab = panels.element.query('button').find((button) => button.dataset.tab === 'agents');
+  agentsTab.dispatch('click');
+  await new Promise((resolve) => setImmediate(resolve));
+  harness.resize();
+  harness.flush();
+  assert.deepEqual(asked, ['qi_1'], 'the tab read the agent states once');
+  const agentsPanel = panels.element.query('div').find((panel) => panel.attrs.get('id') === 'item-agents');
+  const cards = agentsPanel.query('g').filter((g) => g.className === 'graph-node');
+  const reused = cards.filter((card) => /agt_reused/.test(card.getAttribute('aria-label')));
+  assert.equal(reused.length, 2, 'one card per attempt of the reused agent');
+  const costs = reused.map((card) => card.query('text').find((t) => t.className === 'graph-node-cost').textContent);
+  assert.deepEqual(costs.sort(), ['$1.25', '$2.50']);
+  for (const card of reused) {
+    assert.match(card.getAttribute('aria-label'), /live/);
+    assert.doesNotMatch(card.getAttribute('aria-label'), /99/);
+  }
+  panels.destroy();
 });

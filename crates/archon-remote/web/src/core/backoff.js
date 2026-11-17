@@ -10,3 +10,18 @@ export function backoffDelay(attempt, random = Math.random, { baseMs, capMs } = 
   const ceiling = Math.min(capMs, baseMs * 2 ** Math.min(attempt, 30));
   return Math.round(ceiling / 2 + (r * ceiling) / 2);
 }
+
+// The stream and conversation recoveries: 2–4 s first, at most 30 s.
+export const STREAM_BACKOFF = Object.freeze({ baseMs: 4000, capMs: 30_000 });
+
+// The wait before automatic retry `attempt`: the backoff above, never sooner than
+// `minMs` (a host's Retry-After) and spread past it by up to half again, capped.
+export function retryDelay(attempt, { minMs = 0, random = Math.random, limits = BACKOFF } = {}) {
+  if (!Number.isFinite(minMs) || minMs < 0) throw new RangeError(`minMs must be a non-negative wait, got ${minMs}`);
+  const r = random();
+  const backoff = backoffDelay(attempt, () => r, limits);
+  const named = minMs + (r * Math.min(minMs, limits.capMs)) / 2;
+  const delay = Math.round(Math.max(backoff, named));
+  if (delay < minMs) throw new RangeError(`a ${delay} ms wait is shorter than the ${minMs} ms the host asked for`);
+  return delay;
+}

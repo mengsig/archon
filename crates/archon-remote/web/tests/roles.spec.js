@@ -117,16 +117,17 @@ for (const viewport of VIEWPORTS) {
   });
 }
 
-test('the CLI pause and resume reach the open overview live', async ({ browser, fixture }) => {
+// No change announces a pause: the shown Overview reads status every 5 s.
+test('the CLI pause and resume reach the open overview within the 5 s status poll', async ({ browser, fixture }) => {
   const { page, close } = await pairedPage(browser, fixture, 'operator', VIEWPORTS[0]);
   await visit(page, fixture, '#/overview', (p) => p.locator('.hero-label'));
   const toggle = page.getByRole('switch', { name: 'Pause new work' });
   await expect(toggle).not.toBeChecked();
   await fixture.archond.run(['pause']);
-  await expect(page.locator('.hero-label')).toHaveText('Paused', { timeout: 3_000 });
+  await expect(page.locator('.hero-label')).toHaveText('Paused', { timeout: 6_500 });
   await expect(toggle).toBeChecked();
   await fixture.archond.run(['resume']);
-  await expect(page.locator('.hero-label')).not.toHaveText('Paused', { timeout: 3_000 });
+  await expect(page.locator('.hero-label')).not.toHaveText('Paused', { timeout: 6_500 });
   await expect(toggle).not.toBeChecked();
   await close();
 });

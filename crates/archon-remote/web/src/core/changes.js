@@ -1,5 +1,5 @@
 // The change stream: archond's committed state changes (items, runs, stages,
-// questions, pause), live only. Each reconnect reloads every view anyway.
+// questions, links), live only. Each reconnect reloads every view anyway.
 export const CHANGES_FEATURE = 'changes';
 
 export function createChanges({ request }) {

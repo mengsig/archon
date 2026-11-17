@@ -1,6 +1,6 @@
 // The daemon protocol over one WebSocket: hello first, replies matched to
 // requests by req id, feed pushes forwarded, reconnects with backoff.
-import { backoffDelay, DISABLED_RETRY_MS } from './backoff.js';
+import { retryDelay, DISABLED_RETRY_MS } from './backoff.js';
 
 export const CLOSE_REVOKED = 4401;
 // How the daemon names a feed or change subscription it ended without closing.
@@ -185,7 +185,7 @@ class Transport {
       this.setState('revoked', info);
       return;
     }
-    const delay = code === CLOSE_DISABLED ? DISABLED_RETRY_MS : backoffDelay(this.attempt, this.random);
+    const delay = retryDelay(this.attempt, { random: this.random, minMs: code === CLOSE_DISABLED ? DISABLED_RETRY_MS : 0 });
     this.attempt += 1;
     this.retryTimer = this.setTimer(() => this.connect(), delay);
     this.setState(code === CLOSE_DISABLED ? 'disabled' : 'waiting', { ...info, retryInMs: delay, attempt: this.attempt });

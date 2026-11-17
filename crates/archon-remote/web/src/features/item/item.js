@@ -10,6 +10,7 @@ import { artifactsSection } from './artifacts.js';
 import { itemActions } from './actions.js';
 import { itemPanels } from './graphs.js';
 import { deliverySection } from './relationships.js';
+import { pollStatus } from '../../core/live-query.js';
 
 const BRIEF_CLAMP_CHARS = 360;
 const FOLLOW_COALESCE_MS = 350;
@@ -60,8 +61,10 @@ export function mountItem(view, ctx) {
   const unfollow = followItem(ctx, id, () => detail, () => loader.reload(true));
   const offReports = ctx.store.watch((s) => shownFromStore(s, id, detail),
     (shown) => detail && !loader.failed && !sameValues(shown, drawn) && render());
+  // The repository and pipeline pause actions follow a CLI pause too.
+  const stopPoll = pollStatus(ctx);
   loader.reload();
-  return () => { loader.destroy(); unfollow(); offReports(); panels.destroy(); };
+  return () => { loader.destroy(); unfollow(); offReports(); stopPoll(); panels.destroy(); };
 }
 
 function itemLoader(ctx, id, receive, reject) {

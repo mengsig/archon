@@ -87,7 +87,7 @@ test('a busy session check shows the retry screen with the host’s wait', async
     : route.continue()));
   await page.goto(`${fixture.baseURL}/#/overview`);
   await expect(page.getByRole('heading', { name: CANT_CONNECT })).toBeVisible();
-  await expect(page.getByRole('status').filter({ hasText: 'Archon is busy' })).toContainText(/Retrying in [12] s/);
+  await expect(page.getByRole('status').filter({ hasText: 'Archon is busy' })).toContainText(/Retrying in [23] s/);
   await expect(page.getByRole('navigation', { name: 'Sections' })).toBeVisible({ timeout: 10_000 });
   await context.close();
 });

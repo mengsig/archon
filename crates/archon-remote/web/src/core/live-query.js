@@ -77,3 +77,14 @@ export function coalesce(fn, ms) {
   schedule.pending = () => timer !== null;
   return schedule;
 }
+
+// No change announces a pause or resume, so a screen that shows the pause state
+// reads status once per `interval` while the tab is shown and connected.
+export function pollStatus(ctx, { interval = MIN_POLL_MS } = {}) {
+  if (typeof ctx?.refresh?.one !== 'function' || typeof ctx?.store?.get !== 'function') throw new TypeError('pollStatus needs the status loader and the store');
+  if (!Number.isFinite(interval) || interval < MIN_POLL_MS) throw new RangeError(`poll interval must be at least ${MIN_POLL_MS} ms`);
+  const poll = setInterval(() => {
+    if (document.visibilityState === 'visible' && ctx.store.get().connection.state === 'open') ctx.refresh.one('status');
+  }, interval);
+  return () => clearInterval(poll);
+}

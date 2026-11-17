@@ -6,6 +6,7 @@ import { toast } from '../../ui/toast.js';
 import { usd, dateTime } from '../../core/format.js';
 import { reposCard, pipelinesCard } from './catalog.js';
 import { dashboardMetrics, activeWork, quickActions, dashboardInsights } from './dashboard.js';
+import { pollStatus } from '../../core/live-query.js';
 
 export function mountOverview(view, ctx) {
   const body = h('div', { class: 'overview' }, skeletonRows(4));
@@ -50,7 +51,8 @@ export function mountOverview(view, ctx) {
   const off = ctx.store.watch((s) => [s.status, s.cost, s.repos, s.summaries, s.errors.status, s.errors.cost, s.errors.repos], render);
   ctx.refresh.many(['status', 'cost', 'repos']);
   loadPipelines();
-  return () => { alive = false; off(); insights.destroy(); };
+  const stopPoll = pollStatus(ctx);
+  return () => { alive = false; off(); stopPoll(); insights.destroy(); };
 }
 
 function pauseCard(ctx, status) {

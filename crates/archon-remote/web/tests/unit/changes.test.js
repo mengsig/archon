@@ -23,10 +23,10 @@ test('pushed changes reach every listener until it unsubscribes', () => {
   const changes = createChanges({ request: async () => ({}) });
   const seen = [];
   const off = changes.subscribe((change) => seen.push(change.subject));
-  changes.push({ seq: 1, subject: 'pause', global: true, repos: [], pipelines: [] });
+  changes.push({ seq: 1, subject: 'run', run: 'pr_1', item: 'qi_1', state: 'running' });
   off();
   changes.push({ seq: 2, subject: 'item' });
-  assert.deepEqual(seen, ['pause']);
+  assert.deepEqual(seen, ['run']);
   assert.throws(() => changes.push({ subject: 'item' }), /seq and a subject/);
 });
 
@@ -43,8 +43,8 @@ test('the transport hands change frames to onChange', () => {
     setTimer: () => ({}), clearTimer: () => {}, onChange: (change, sub) => received.push([change.subject, sub]),
   });
   transport.start();
-  sockets[0].onmessage({ data: JSON.stringify({ frame: 'change', sub: 2, change: { seq: 9, subject: 'pause', global: false, repos: [], pipelines: [] } }) });
-  assert.deepEqual(received, [['pause', 2]]);
+  sockets[0].onmessage({ data: JSON.stringify({ frame: 'change', sub: 2, change: { seq: 9, subject: 'question', question: 'q_1', open: true } }) });
+  assert.deepEqual(received, [['question', 2]]);
 });
 
 test('edges that share endpoints shift apart and stack their labels a full label apart', () => {

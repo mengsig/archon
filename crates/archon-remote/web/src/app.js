@@ -19,7 +19,7 @@ import { retryDelay, STREAM_BACKOFF } from './core/backoff.js';
 
 const REFRESH_DEBOUNCE_MS = 350;
 const SESSION_CHECK_MS = 10_000;
-// An unanswered session read after a pairing signal retries at most this far apart.
+// An unanswered session read retries at most this far apart.
 const SESSION_RETRY = Object.freeze({ baseMs: 500, capMs: SESSION_CHECK_MS });
 const RECENT_LIMIT = 200;
 
@@ -65,12 +65,10 @@ export function createApp({ session, onUnpaired, onDeviceChanged }) {
   } });
   watchConnection({ store, stop: () => stop(), checkSession: () => sessionCheck.check(), onUnpaired });
 
-  // A connected tab is re-paired or forgotten in another tab without its socket noticing.
-  const recheckSession = () => sessionCheck.check({ force: true });
   let unlisten = null;
   const onVisible = () => {
     if (document.visibilityState !== 'visible') return;
-    recheckSession();
+    sessionCheck.recheck();
     transport.reconnectSoon();
     // One read now, which also takes the place of any burst refresh still waiting.
     if (transport.state === 'open') scheduleRefresh.flush();
@@ -92,7 +90,8 @@ export function createApp({ session, onUnpaired, onDeviceChanged }) {
     resyncConversation: () => conversation.run(),
     start() {
       if (unlisten) throw new Error('the app already started');
-      unlisten = sessionSignal().listen(recheckSession);
+      // A connected tab is re-paired or forgotten in another tab without its socket noticing.
+      unlisten = sessionSignal().listen(() => sessionCheck.signal());
       document.addEventListener('visibilitychange', onVisible);
       transport.start();
     },

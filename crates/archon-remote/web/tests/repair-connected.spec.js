@@ -91,7 +91,8 @@ test('a connected tab that cannot confirm its session withholds even an open she
       return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { code: 'busy' } }) });
     });
     return async () => {
-      await expect(page.locator('.conn-banner')).toContainText('Checking session…', { timeout: 15_000 });
+      await expect.poll(() => refused, { message: 'the session reads kept being refused', timeout: 30_000 }).toBeGreaterThan(3);
+      await expect(page.locator('.conn-banner')).toContainText('Checking session…');
       await expect(page.locator('#overlay')).toHaveJSProperty('inert', true);
       await expect(page.locator('#views')).toHaveJSProperty('inert', true);
       await page.unroute('**/api/session');
@@ -99,6 +100,28 @@ test('a connected tab that cannot confirm its session withholds even an open she
       await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
     };
   });
-  expect(refused, 'the session reads kept being refused').toBeGreaterThan(3);
   expect(problems.filter((problem) => !busy(problem)), 'the page logged errors').toEqual([]);
+});
+
+test('a connected tab shows no operator action once another tab pairs, before any session answer', async ({ browser, fixture }) => {
+  const held = [];
+  let released = false;
+  const problems = await repairAsObserver(browser, fixture, async (page) => {
+    // Tab A's session reads hang until released: the host tells it nothing.
+    await page.route('**/api/session', (route) => (released ? route.fallback() : held.push(route)));
+    return async () => {
+      await expect(page.locator('#views')).toHaveJSProperty('inert', true);
+      await expect(page.locator('#overlay')).toHaveJSProperty('inert', true);
+      await expect(page.locator('.conn-banner')).toContainText('Checking session…');
+      expect(held.length, 'the session read is still unanswered').toBeGreaterThan(0);
+      // The button is still drawn; a real click on it reaches nothing.
+      const newItem = await page.getByRole('button', { name: 'New item', exact: true }).boundingBox();
+      expect(newItem, 'New item is still on the page').not.toBeNull();
+      await page.mouse.click(newItem.x + newItem.width / 2, newItem.y + newItem.height / 2);
+      await expect(page.locator('.sheet'), 'a click on New item opens nothing').toHaveCount(0);
+      released = true;
+      await Promise.all(held.map((route) => route.fallback()));
+    };
+  });
+  expect(problems, 'the page logged errors').toEqual([]);
 });

@@ -52,7 +52,7 @@ export function mountShell(root, app, { onForget }) {
 
   const offs = [
     app.store.watch((s) => s.connection, (connection) => renderBanner(banner, connection, app)),
-    // A session the host has not confirmed since another tab's pairing keeps no live controls.
+    // Another tab's pairing, or a session the host keeps failing to confirm, leaves no live control.
     app.store.watch((s) => s.sessionUnsure, (unsure) => {
       views.inert = unsure;
       overlay.inert = unsure;

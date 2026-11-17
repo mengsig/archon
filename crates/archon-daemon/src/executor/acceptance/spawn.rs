@@ -2,6 +2,7 @@ use crate::context::DaemonContext;
 use crate::resolve::RepoEnv;
 use archon_core::catalog::StageKind;
 use archon_core::error::ArchonError;
+use archon_core::intent::ApprovedIntent;
 use archon_core::model::ModelRef;
 use archon_core::ports::SpawnRequest;
 use archon_core::queue::QueueItem;
@@ -74,31 +75,73 @@ pub(in crate::executor) fn attach(
     }
     let record = materialize(&request.workspace, record)?;
     if !supports {
-        request.instructions.push_str("\nAether lacks references support: images are listed by path above. Open them, and explicitly pass these paths and the unchanged ledger to every worker and reviewer.\n");
+        request
+            .instructions
+            .push_str("\nAether lacks references support: images are listed by path above. ");
+        request.instructions.push_str(PATH_REFERENCES);
         return Ok(());
     }
-    for artifact in record.artifacts {
-        request.references.push(Reference {
-            path: artifact.path,
+    attach_references(&record, request)?;
+    assert!(request.references.iter().all(|r| r.path.is_file()));
+    assert!(request.references.iter().all(|r| r.label.is_some()));
+    Ok(())
+}
+
+// Aether v1.4.0 aether-core/src/reference.rs: MAX_REFERENCES and MAX_REFERENCE_IMAGES.
+const MAX_REFERENCES: usize = 16;
+const MAX_REFERENCE_IMAGES: usize = 8;
+const PATH_REFERENCES: &str = "Open them, and explicitly pass these paths and the unchanged ledger to every worker and reviewer.\n";
+
+fn attach_references(
+    record: &ApprovedIntent,
+    request: &mut SpawnRequest,
+) -> Result<(), ArchonError> {
+    let files = record
+        .artifacts
+        .len()
+        .min(MAX_REFERENCES.saturating_sub(request.references.len()));
+    request
+        .references
+        .extend(record.artifacts[..files].iter().map(|artifact| Reference {
+            path: artifact.path.clone(),
             kind: ReferenceKind::File,
             label: Some("Approved artifact".into()),
-        });
-    }
-    for image in record.images {
+        }));
+    let existing_images = request
+        .references
+        .iter()
+        .filter(|r| r.kind == ReferenceKind::Image)
+        .count();
+    let images = record
+        .images
+        .len()
+        .min(MAX_REFERENCES.saturating_sub(request.references.len()))
+        .min(MAX_REFERENCE_IMAGES.saturating_sub(existing_images));
+    for (index, image) in record.images.iter().enumerate() {
         if super::images::hash(&image.path)? != image.sha256 {
             return Err(ArchonError::Invalid(format!(
                 "approved image {} changed",
                 image.id
             )));
         }
-        request.references.push(Reference {
-            path: image.path,
-            kind: ReferenceKind::Image,
-            label: Some(image.id),
-        });
+        if index < images {
+            request.references.push(Reference {
+                path: image.path.clone(),
+                kind: ReferenceKind::Image,
+                label: Some(image.id.clone()),
+            });
+        }
     }
-    assert!(request.references.iter().all(|r| r.path.is_file()));
-    assert!(request.references.iter().all(|r| r.label.is_some()));
+    if files < record.artifacts.len() || images < record.images.len() {
+        request.instructions.push_str(&format!(
+            "\nAether reference limits reached: remaining approved artifacts and images are listed by path below. {}\nApproved artifacts (path only): {}\nReference images (path only): {}\n",
+            PATH_REFERENCES,
+            serde_json::to_string_pretty(&record.artifacts[files..])?,
+            serde_json::to_string_pretty(&record.images[images..])?,
+        ));
+    }
+    assert!(request.references.len() <= MAX_REFERENCES);
+    assert!(existing_images + images <= MAX_REFERENCE_IMAGES);
     Ok(())
 }
 
@@ -254,8 +297,12 @@ pub(super) async fn check_judge(
 
 const RULES: &str = r#"
 Keep the complete selected ledger in every worker and reviewer brief. Never shrink
-acceptance to match what you built. Pass references explicitly and set
-inherit_references=true when delegating on an Aether that supports references.
+acceptance to match what you built. Set inherit_references=true when delegating on
+an Aether that supports references, and pass all path-only references in text.
+Inherited references count toward Aether's limits: 16 total, including at most 8
+images. Do not reattach inherited references; list any additional references that
+do not fit by path. Require every worker and reviewer to open all listed images
+and pass these paths and the unchanged ledger to their own delegates.
 Otherwise pass all image paths in text and require children to open them.
 
 The stage that finishes the build returns `requirement_results`, one entry per

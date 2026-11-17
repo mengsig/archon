@@ -14278,7 +14278,8 @@
         "visual",
         "behaviour",
         "wording",
-        "data"
+        "data",
+        "behavior"
       ],
       "type": "string"
     },

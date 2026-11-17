@@ -120,3 +120,4 @@ mod worktree_submodules;
 
 mod intent_acceptance;
 mod intent_gates;
+mod intent_references;

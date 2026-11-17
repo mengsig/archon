@@ -488,7 +488,10 @@ fn removing_a_paused_repository_records_one_full_pause_change() {
         pipelines: vec!["review".into()],
     };
     assert_eq!(recorded[0].subject, left);
-    assert_eq!(store.pause_state().unwrap().repos, [busy.id.clone()]);
+    assert_eq!(
+        store.pause_state().unwrap().repos,
+        std::slice::from_ref(&busy.id)
+    );
 }
 
 /// A removal that fails after rewriting the pause state takes its change

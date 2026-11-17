@@ -1152,8 +1152,11 @@ async fn an_idle_refused_connection_is_closed_after_the_head_timeout() {
     assert!(elapsed < REFUSAL_LIFETIME, "closed in time: {elapsed:?}");
 }
 
+/// A refusal whose body never comes, and one whose head never ends, both
+/// close and give their permits back. The lifetime itself, for an answer the
+/// client never reads, is pinned by the listener's own unit test.
 #[tokio::test]
-async fn a_refusal_that_stalls_after_its_head_is_closed_within_the_lifetime() {
+async fn a_stalled_or_trickled_refusal_is_closed_and_gives_its_permit_back() {
     let (listener, _held) = saturated().await;
     let host = listener.host();
     let mut unread = TcpStream::connect(("127.0.0.1", listener.port))

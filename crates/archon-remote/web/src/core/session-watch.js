@@ -34,7 +34,7 @@ export function sessionChecker({ readSession, guard, stop, onUnpaired, onUnsure 
     onUnsure(value);
   }
   function scheduleRetry(round) {
-    if (!alive || round !== retry.round) return;
+    if (retry.timer !== null) throw new Error('a session retry is already waiting');
     if (retry.attempt >= unsureAfter) markUnsure(true);
     const delay = retryDelay(retry.attempt, { limits });
     retry.attempt += 1;
@@ -58,7 +58,8 @@ export function sessionChecker({ readSession, guard, stop, onUnpaired, onUnsure 
   async function read(round, retrying) {
     // Unreachable, busy or timed out is no answer; only a definite 401 unpairs.
     const current = await readSession().catch(() => undefined);
-    if (!alive) return;
+    // A read begun before a newer signal may carry the session that signal replaced.
+    if (!alive || round !== retry.round) return;
     if (current === undefined) {
       if (retrying) scheduleRetry(round);
       return;

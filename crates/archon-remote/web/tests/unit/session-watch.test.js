@@ -136,3 +136,27 @@ test('retries that never answer withhold operator controls until an answer comes
   assert.deepEqual(silent.events, ['unsure']);
   assert.ok(silent.reads() > 1, 'it keeps asking past the point it fails closed');
 });
+
+test('a read begun before a newer pairing signal cannot answer for it', async () => {
+  const events = [];
+  const pending = [];
+  const guard = deviceGuard(operator, () => events.push('remount'));
+  const { check, cancel } = sessionChecker({
+    readSession: () => new Promise((resolve, reject) => { pending.push({ resolve, reject }); }),
+    guard, stop: () => events.push('stop'), onUnpaired: (note) => events.push(note),
+    onUnsure: (unsure) => events.push(unsure ? 'unsure' : 'sure'), minGapMs: 0, limits: QUICK, unsureAfter: 0,
+  });
+  const before = check({ force: true });
+  const after = check({ force: true });
+  pending[1].reject(new Error('busy'));
+  await after;
+  pending[0].resolve({ device: operator });
+  await before;
+  assert.deepEqual(events, ['unsure'], 'the old operator answer neither confirms nor stops the retry');
+  await settled(10);
+  assert.ok(pending.length > 2, 'the newer signal keeps retrying');
+  pending.at(-1).resolve({ device: { ...operator, role: 'observer' } });
+  await settled(0);
+  assert.deepEqual(events, ['unsure', 'sure', 'remount']);
+  cancel();
+});

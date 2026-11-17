@@ -28,7 +28,8 @@ export function mountShell(root, app, { onForget }) {
   const views = h('main', { class: 'views', id: 'views' });
   const tabbar = buildTabbar();
   const shell = h('div', { class: 'shell', id: 'shell' }, banner, views, tabbar.nav);
-  root.replaceChildren(shell, h('div', { id: 'overlay', class: 'overlay' }), h('div', { id: 'toasts', class: 'toasts', 'aria-live': 'polite' }));
+  const overlay = h('div', { id: 'overlay', class: 'overlay' });
+  root.replaceChildren(shell, overlay, h('div', { id: 'toasts', class: 'toasts', 'aria-live': 'polite' }));
 
   const scrollMemory = new Map();
   let current = null;
@@ -54,6 +55,7 @@ export function mountShell(root, app, { onForget }) {
     // A session the host has not confirmed since another tab's pairing keeps no live controls.
     app.store.watch((s) => s.sessionUnsure, (unsure) => {
       views.inert = unsure;
+      overlay.inert = unsure;
       renderBanner(banner, app.store.get().connection, app);
     }),
     app.store.watch((s) => s.questions, (questions) => tabbar.badge(openCount(questions))),

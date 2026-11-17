@@ -101,7 +101,10 @@ impl schemars::transform::Transform for ReadsUnknownAs {
                 listed.into_iter().chain(v.get("const").cloned())
             })
             .collect();
-        assert!(!named.is_empty(), "{fallback} falls back from named variants");
+        assert!(
+            !named.is_empty(),
+            "{fallback} falls back from named variants"
+        );
         let description = variants[at]["description"].clone();
         variants[at] = json!({
             "type": "string",
@@ -334,7 +337,10 @@ mod tests {
     fn branch_admits(branch: &Value, value: &Value) -> bool {
         let known = ["type", "enum", "const", "not", "description"];
         let keys = branch.as_object().expect("a branch is an object").keys();
-        assert!(keys.clone().all(|k| known.contains(&k.as_str())), "{branch}");
+        assert!(
+            keys.clone().all(|k| known.contains(&k.as_str())),
+            "{branch}"
+        );
         let listed = |e: &Value| e.as_array().is_some_and(|names| names.contains(value));
         value.is_string()
             && branch.get("type").is_none_or(|t| t == "string")

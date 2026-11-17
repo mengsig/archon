@@ -730,7 +730,11 @@ async fn a_client_of_the_last_release_decodes_graphs_and_changes_with_its_types(
     let replayed = old.raw_call(page.clone()).await;
     let changes: Vec<released::Change> =
         serde_json::from_value(replayed["data"]["changes"].clone()).unwrap();
-    assert_eq!(replayed, new.raw_call(page).await, "one page for every client");
+    assert_eq!(
+        replayed,
+        new.raw_call(page).await,
+        "one page for every client"
+    );
     let seqs: Vec<u64> = changes.iter().map(|c| c.seq).collect();
     assert_eq!(seqs, (1..=before + 1).collect::<Vec<_>>(), "gapless");
     assert_eq!(replayed["data"]["last_seq"], before + 1);

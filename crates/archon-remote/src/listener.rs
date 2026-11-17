@@ -221,12 +221,22 @@ mod tests {
         tokio::time::timeout(bound, answer_refusal(server, permit))
             .await
             .expect("a never-read refusal is closed by its lifetime");
-        assert_eq!(started.elapsed(), REFUSAL_LIFETIME, "closed at the deadline");
-        assert!(REFUSAL_LIFETIME > REFUSAL_HEAD_TIMEOUT, "the head was not what ended it");
+        assert_eq!(
+            started.elapsed(),
+            REFUSAL_LIFETIME,
+            "closed at the deadline"
+        );
+        assert!(
+            REFUSAL_LIFETIME > REFUSAL_HEAD_TIMEOUT,
+            "the head was not what ended it"
+        );
         assert_eq!(refusals.available_permits(), 1, "the permit came back");
         let mut written = Vec::new();
         client.read_to_end(&mut written).await.unwrap();
         assert!(written.starts_with(b"HTTP/1.1 503"), "{written:?}");
-        assert!(written.len() <= 64, "only what the pipe held: the write was pending");
+        assert!(
+            written.len() <= 64,
+            "only what the pipe held: the write was pending"
+        );
     }
 }

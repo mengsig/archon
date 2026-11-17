@@ -8,6 +8,8 @@ import { renderMarkdown, clampedMarkdown } from '../../ui/markdown.js';
 import { stagesTimeline } from './stages.js';
 import { artifactsSection } from './artifacts.js';
 import { itemActions } from './actions.js';
+import { itemPanels } from './graphs.js';
+import { deliverySection } from './relationships.js';
 
 const BRIEF_CLAMP_CHARS = 360;
 const FOLLOW_DEBOUNCE_MS = 300;
@@ -30,37 +32,13 @@ export function mountItem(view, ctx) {
   }
   const content = h('div', { class: 'item-detail' }, skeletonRows(5));
   view.append(screenHeader({ title: 'Item', back }), content);
-  let alive = true;
+  const panels = itemPanels(ctx, id);
   let detail = null;
+  let drawn = null;
   let artifacts = null;
   let artifactsAt = null;
-  let drawn = null;
-
-  let loads = 0;
-  let failed = false;
-  // Only the newest of overlapping loads is shown; a quiet one that finds
-  // nothing new keeps the page as the operator left it.
-  const load = async (quiet) => {
-    const ticket = ++loads;
-    try {
-      const fresh = await ctx.cmds.item(id);
-      if (!alive || ticket !== loads) return;
-      const unchanged = quiet && !failed && detail && JSON.stringify(fresh) === JSON.stringify(detail);
-      detail = fresh;
-      failed = false;
-      if (!unchanged) render();
-    } catch (err) {
-      if (!alive || ticket !== loads) return;
-      failed = true;
-      content.replaceChildren(err.code === 'not_found'
-        ? emptyState({ title: 'Item not found', text: 'It may have been removed from the queue.', iconName: 'queue' })
-        : errorNote(err, reload));
-    }
-  };
-  const reload = () => load(false);
   const render = () => {
     const state = ctx.store.get();
-    // Listed again once a stage has finished since, as it may have published files.
     const finished = detail.stages.filter((s) => s.state?.state !== 'running' && s.state?.state !== 'spawning').length;
     if (artifactsAt !== finished) {
       artifacts = artifactsSection(ctx, id);
@@ -68,14 +46,48 @@ export function mountItem(view, ctx) {
     }
     drawn = shownFromStore(state, id, detail);
     view.querySelector('.screen-title').textContent = detail.item.title;
-    content.replaceChildren(...renderDetail(ctx, detail, state, { reload, artifacts }).filter(Boolean));
+    panels.update(detail);
+    content.replaceChildren(...renderDetail(ctx, detail, state, { reload: loader.reload, artifacts, panels }).filter(Boolean));
   };
-  const unfollow = followItem(ctx, id, () => detail, () => load(true));
-  // A failed reload keeps its error and retry in view until a load succeeds;
-  // values the page already shows (the detail just arrived) do not redraw it.
-  const offReports = ctx.store.watch((s) => shownFromStore(s, id, detail), (shown) => detail && !failed && !sameValues(shown, drawn) && render());
-  reload();
-  return () => { alive = false; unfollow(); offReports(); };
+  const loader = itemLoader(ctx, id, (fresh) => { detail = fresh; render(); }, (err) => {
+    content.replaceChildren(err.code === 'not_found'
+      ? emptyState({ title: 'Item not found', text: 'It may have been removed from the queue.', iconName: 'queue' })
+      : errorNote(err, () => loader.reload()));
+  });
+  const unfollow = followItem(ctx, id, () => detail, () => loader.reload(true));
+  const offReports = ctx.store.watch((s) => shownFromStore(s, id, detail),
+    (shown) => detail && !loader.failed && !sameValues(shown, drawn) && render());
+  loader.reload();
+  return () => { loader.destroy(); unfollow(); offReports(); panels.destroy(); };
+}
+
+function itemLoader(ctx, id, receive, reject) {
+  if (!id || typeof receive !== 'function' || typeof reject !== 'function') throw new TypeError('An item loader needs its item and receivers');
+  let alive = true;
+  let ticket = 0;
+  let previous = null;
+  let failed = false;
+  return {
+    async reload(quiet = false) {
+      const current = ++ticket;
+      try {
+        const data = await ctx.cmds.item(id);
+        if (!alive || current !== ticket) return;
+        if (data.item.id !== id || !Array.isArray(data.stages)) throw new TypeError('Item detail does not match its request');
+        const signature = JSON.stringify(data);
+        const unchanged = quiet && !failed && signature === previous;
+        previous = signature;
+        failed = false;
+        if (!unchanged) receive(data);
+      } catch (error) {
+        if (!alive || current !== ticket) return;
+        failed = true;
+        reject(error);
+      }
+    },
+    destroy() { alive = false; },
+    get failed() { return failed; },
+  };
 }
 
 // Stages settle and gates open without touching the item itself, so the
@@ -126,11 +138,20 @@ function summaryOf(state, id) {
   return state.summaries?.find((s) => s.id === id) ?? null;
 }
 
-function renderDetail(ctx, detail, state, { reload, artifacts }) {
+function renderDetail(ctx, detail, state, { reload, artifacts, panels }) {
   const item = detail.item;
   const summary = summaryOf(state, item.id);
   const repoName = state.repos?.find((r) => r.id === item.repo)?.name ?? null;
   const look = stateLook({ ...item, waiting_on: detail.waiting_on, waiting_reason: detail.waiting_reason });
+  panels.details.replaceChildren(...[
+    section('Details', detailsCard(detail, summary)),
+    section('Brief', briefCard(item.brief)),
+    section('Stages', stagesTimeline(detail)),
+    gatesSection(detail),
+    deliverySection(detail),
+    section('Artifacts', artifacts),
+    reportsSection(ctx, state, item.id)
+  ].filter(Boolean));
   return [
     ...loadErrorNotes(state.errors, SHARED_LOADS, ctx.refresh.one),
     h('div', { class: 'item-hero' },
@@ -138,12 +159,7 @@ function renderDetail(ctx, detail, state, { reload, artifacts }) {
       h('p', { class: 'item-hero-meta', text: [repoName ?? 'no repository', summary?.switched_to ?? item.pipeline, shortId(item.id)].join(' · ') })),
     outcomeCallout(detail),
     itemActions(ctx, detail, { reload, repoName }),
-    section('Details', detailsCard(detail, summary)),
-    section('Brief', briefCard(item.brief)),
-    section('Stages', stagesTimeline(detail)),
-    gatesSection(detail),
-    section('Artifacts', artifacts),
-    reportsSection(ctx, state, item.id),
+    panels.element,
   ];
 }
 

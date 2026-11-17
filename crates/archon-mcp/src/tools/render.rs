@@ -86,32 +86,8 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
         Reply::Artifacts(listing) => artifacts::listing(listing),
         Reply::ArtifactPage(page) => artifacts::page(page),
         Reply::RequestStatus(status) => tracked::status(status),
-        Reply::Questions(_)
-        | Reply::Lessons(_)
-        | Reply::LessonsWhy(_)
-        | Reply::LessonStats(_)
-        | Reply::Feedback(_)
-        | Reply::LearningWhy(_)
-        | Reply::Reports(_)
-        | Reply::Welcome(_)
-        | Reply::Subscribed { .. }
-        | Reply::Feed(_)
-        | Reply::Conversation(_)
-        | Reply::Orchestrator(_)
-        | Reply::GithubWatcher(_)
-        | Reply::UpgradeStarted { .. }
-        | Reply::Versions(_)
-        | Reply::Remote(_)
-        | Reply::RemotePairing(_)
-        | Reply::ItemSummariesAt { .. }
-        | Reply::Changes { .. }
-        | Reply::ItemHistory { .. }
-        | Reply::TaskGraph(_)
-        | Reply::RunPlan(_)
-        | Reply::ItemLinks { .. }
-        | Reply::IssueItems { .. }
-        | Reply::GithubObjects { .. }
-        | Reply::Gc(_) => serde_json::to_string(reply)
+        // Replies without a prose view retain their complete wire representation.
+        _ => serde_json::to_string(reply)
             .unwrap_or_else(|e| format!("(reply could not be encoded: {e})")),
     }
 }

@@ -1,6 +1,8 @@
 // Line icons drawn as SVG paths on a 24-unit grid, stroked in currentColor.
 const SVG = 'http://www.w3.org/2000/svg';
 const PATHS = {
+  graph: ['M4 4h5v5H4z', 'M15 15h5v5h-5z', 'M4 15h5v5H4z', 'M6.5 9v6', 'M9 6.5h8.5V15'],
+  mark: ['M12 2l10 10-10 10L2 12z', 'M12 8l4 4-4 4-4-4z'],
   queue: ['M4 6h16', 'M4 12h16', 'M4 18h10'],
   inbox: ['M3 13l3-8h12l3 8', 'M3 13v6h18v-6', 'M3 13h5l1 3h6l1-3h5'],
   chat: ['M4 5h16v11H9l-5 4z'],

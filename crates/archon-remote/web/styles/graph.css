@@ -1,0 +1,57 @@
+.graph {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--separator);
+  border-radius: 22px;
+  background: var(--surface, #1b1c20);
+  color: var(--text, #eeeeef);
+}
+.graph-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--separator);
+}
+.graph-toolbar button {
+  min-width: 44px;
+  min-height: 44px;
+  border: 1px solid var(--separator);
+  border-radius: 9px;
+  background: var(--surface-2, #25272d);
+  color: var(--text, #eeeeef);
+  font: inherit;
+  cursor: pointer;
+}
+.graph-zoom { min-width: 48px; text-align: center; color: var(--text-2, #b3b5bf); font-size: 11px; }
+.graph-viewport { display: block; width: 100%; height: clamp(320px, 58vh, 640px); touch-action: none; user-select: none; cursor: grab; }
+.graph-viewport:active { cursor: grabbing; }
+.graph-viewport:focus-visible, .graph-toolbar button:focus-visible { outline: 2px solid var(--accent, #a8b5ff); outline-offset: -3px; }
+.graph-node { cursor: pointer; outline: none; }
+.graph-node-card { fill: var(--surface-2, #25272d); stroke: var(--separator); stroke-width: 1; }
+.graph-node:hover .graph-node-card, .graph-node:focus .graph-node-card { stroke: var(--accent, #a8b5ff); stroke-width: 2; }
+.graph-node text { pointer-events: none; font-family: inherit; }
+.graph-node-title { fill: var(--text, #eeeeef); font-size: 13px; font-weight: 600; }
+.graph-node-subtitle, .graph-node-meta, .graph-node-state { fill: var(--text-2, #b3b5bf); font-size: 11px; }
+.graph-state-dot { fill: var(--text-2, #b3b5bf); pointer-events: none; }
+.graph-node[data-state="active"] .graph-state-dot { fill: var(--accent, #a8b5ff); }
+.graph-node[data-state="success"] .graph-state-dot { fill: var(--green, #80c99a); }
+.graph-node[data-state="warning"] .graph-state-dot { fill: var(--amber, #e2bc72); }
+.graph-node[data-state="danger"] .graph-state-dot { fill: var(--red, #f18e91); }
+.graph-edge { pointer-events: none; }
+.graph-edge path { fill: none; stroke: var(--text-2, #b3b5bf); stroke-width: 1.3; }
+.graph-edge polygon { fill: var(--text-2, #b3b5bf); }
+.graph-edge[data-kind="stacked_on"] path { stroke-dasharray: 5 4; }
+.graph-edge[data-kind="initiative_after"] path { stroke-dasharray: 2 4; }
+.graph-edge[data-satisfied="false"] path { stroke: var(--amber, #e2bc72); }
+.graph-edge[data-satisfied="false"] polygon { fill: var(--amber, #e2bc72); }
+.graph-edge-label { fill: var(--text-2, #b3b5bf); font-size: 10px; text-anchor: middle; paint-order: stroke; stroke: var(--surface, #1b1c20); stroke-width: 4; stroke-linejoin: round; }
+.graph-help, .graph-empty { margin: 0; padding: 10px 12px; color: var(--text-2, #b3b5bf); font-size: 11px; }
+.graph-empty { position: absolute; top: 48%; left: 0; right: 0; text-align: center; pointer-events: none; }
+.graph-warnings { padding: 10px 12px; color: var(--amber, #e2bc72); font-size: 11px; border-top: 1px solid var(--separator); overflow-wrap: anywhere; }
+.graph-warnings summary { cursor: pointer; }
+.graph-warnings ul { margin: 8px 0 0; padding-left: 18px; }
+.graph [hidden] { display: none; }
+
+.graph-node-cost { fill: var(--text); font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }

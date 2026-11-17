@@ -1,17 +1,17 @@
 // Caches the app shell so Archon opens without a network. Never caches
 // the API or the live socket: those are always fresh or fail visibly.
-const CACHE = 'archon-shell-v3';
+const CACHE = 'archon-shell-v4';
 // CacheStorage is shared by the whole origin, so only caches with this prefix are ours.
 const CACHE_PREFIX = 'archon-shell-';
 // The worker sits at the app's root, "" or the mount prefix.
 const BASE = new URL('.', self.location.href).pathname.replace(/\/$/, '');
 const SHELL = [
   `${BASE}/`,
-  `${BASE}/manifest.webmanifest`,
-  `${BASE}/icons/icon.svg`,
+  `${BASE}/icons/apple-touch-icon.png`,
   `${BASE}/icons/icon-192.png`,
   `${BASE}/icons/icon-512.png`,
-  `${BASE}/icons/apple-touch-icon.png`,
+  `${BASE}/icons/icon.svg`,
+  `${BASE}/manifest.webmanifest`,
   `${BASE}/src/app.js`,
   `${BASE}/src/core/api.js`,
   `${BASE}/src/core/backoff.js`,
@@ -21,6 +21,7 @@ const SHELL = [
   `${BASE}/src/core/device-name.js`,
   `${BASE}/src/core/feed.js`,
   `${BASE}/src/core/format.js`,
+  `${BASE}/src/core/live-query.js`,
   `${BASE}/src/core/pairing-code.js`,
   `${BASE}/src/core/router.js`,
   `${BASE}/src/core/store.js`,
@@ -29,15 +30,23 @@ const SHELL = [
   `${BASE}/src/features/chat/chat.js`,
   `${BASE}/src/features/chat/entries.js`,
   `${BASE}/src/features/chat/outbox.js`,
+  `${BASE}/src/features/commands/commands.js`,
+  `${BASE}/src/features/graph/graph.js`,
+  `${BASE}/src/features/graph/model.js`,
   `${BASE}/src/features/inbox/inbox.js`,
   `${BASE}/src/features/inbox/question-card.js`,
   `${BASE}/src/features/item/actions.js`,
   `${BASE}/src/features/item/artifacts.js`,
+  `${BASE}/src/features/item/graph-models.js`,
+  `${BASE}/src/features/item/graphs.js`,
   `${BASE}/src/features/item/item.js`,
+  `${BASE}/src/features/item/relationships.js`,
   `${BASE}/src/features/item/stages.js`,
   `${BASE}/src/features/new-item/new-item.js`,
   `${BASE}/src/features/overview/catalog.js`,
+  `${BASE}/src/features/overview/dashboard.js`,
   `${BASE}/src/features/overview/overview.js`,
+  `${BASE}/src/features/overview/spend.js`,
   `${BASE}/src/features/pairing/pairing.js`,
   `${BASE}/src/features/queue/item-row.js`,
   `${BASE}/src/features/queue/queue.js`,
@@ -47,6 +56,12 @@ const SHELL = [
   `${BASE}/src/ui/components.js`,
   `${BASE}/src/ui/dom.js`,
   `${BASE}/src/ui/entities.js`,
+  `${BASE}/src/ui/graph/camera.js`,
+  `${BASE}/src/ui/graph/controller.js`,
+  `${BASE}/src/ui/graph/graph.js`,
+  `${BASE}/src/ui/graph/interactions.js`,
+  `${BASE}/src/ui/graph/layout.js`,
+  `${BASE}/src/ui/graph/render.js`,
   `${BASE}/src/ui/icons.js`,
   `${BASE}/src/ui/list.js`,
   `${BASE}/src/ui/markdown-parse.js`,
@@ -57,6 +72,8 @@ const SHELL = [
   `${BASE}/src/version.js`,
   `${BASE}/styles/base.css`,
   `${BASE}/styles/components.css`,
+  `${BASE}/styles/graph.css`,
+  `${BASE}/styles/layout.css`,
   `${BASE}/styles/screens.css`,
   `${BASE}/styles/tokens.css`,
 ];

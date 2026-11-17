@@ -23,3 +23,17 @@ test('malformed frames close the socket', () => {
   assert.ok(translate(JSON.stringify({ cmd: 'status' })).close);
   assert.ok(translate(Buffer.from('{}'), true).close);
 });
+
+test('graph reads preserve the production request shapes through the dev bridge', () => {
+  for (const command of [
+    { cmd: 'task_graph', filter: {}, limit: 500 },
+    { cmd: 'run_plan', run: 'run_fixture' },
+    { cmd: 'item_agent_states', item: 'qi_fixture' },
+    { cmd: 'item_links', item: 'qi_fixture' },
+    { cmd: 'operator_command', text: '/status' },
+  ]) {
+    const frame = { req: 9, ...command };
+    assert.deepEqual(translate(JSON.stringify(frame)).forward, frame);
+    assert.equal(translate(JSON.stringify(frame)).refuse, undefined);
+  }
+});

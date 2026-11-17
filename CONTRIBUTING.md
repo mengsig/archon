@@ -58,10 +58,10 @@ runs the same checks without one. Without `flock` (util-linux) it runs
 without a slot and says so. GitHub CI runs one job per runner and is
 unaffected.
 
-Archon's phone app is served by archond and has no browser tests in this
-repository: `crates/archon-remote/tests/listener.rs` and
-`crates/archon/tests/remote.rs` cover the listener, pairing and `archon
-remote setup` against stand-ins.
+Archon's phone app is served by archond. Its unit and Playwright tests live
+in `crates/archon-remote/web`; see its [README](crates/archon-remote/web/README.md)
+for browser checks and screenshot generation. `crates/archon-remote/tests/listener.rs`
+and `crates/archon/tests/remote.rs` also cover pairing and listener authority.
 
 ### CI on the release branch
 

@@ -8,6 +8,7 @@ export const ALLOWED_COMMANDS = new Set([
   'resolve_item', 'list_pipelines', 'list_questions', 'conversation', 'feed_history', 'subscribe_feed', 'list_reports',
   'orchestrator_status', 'cost_report', 'list_artifacts', 'read_artifact', 'item_diff', 'settings',
   'autonomy', 'enqueue', 'cancel_item', 'retry_item', 'pause', 'resume', 'answer', 'say',
+  'item_agent_states', 'task_graph', 'run_plan', 'item_links', 'operator_command',
 ]);
 const MAX_FRAME_BYTES = 1 << 20;
 

@@ -4,6 +4,10 @@
 
 ## 1.6.2
 
+Released 2026-11-18.
+
+Archon 1.6.2 requires **Aether 1.4.0**; the Aether pin is unchanged.
+
 ### Changed
 
 - Refurbished the remote web app with a graphite light/dark workspace, a persistent
@@ -29,8 +33,8 @@
   screen; the listener still refuses a forced change. Overview and the item page
   read the pause state every 5 seconds while shown, so a CLI pause or resume shows
   without a reload, and agent trees and new items refresh from the change stream.
-- Every automatic retry in the web app (boot, busy host, reconnect, stream and
-  conversation recovery) waits a capped, jittered backoff, and never less than
+- Scheduled retries in the web app (boot, busy host, reconnect, stream and
+  conversation recovery) wait a capped, jittered backoff, and never less than
   a busy host's `Retry-After`, so tabs that failed together do not return together.
 - Graph edge labels that share endpoints no longer overlap, the selected-item panel
   no longer prints "null", and the item Work graph fits on desktop when it opens.

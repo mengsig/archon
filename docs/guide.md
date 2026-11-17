@@ -835,7 +835,7 @@ with `/`.
 ### Images
 
 The orchestrator sees the images you send it when aetherd speaks protocol 19
-or later. Archon 1.6.1 requires Aether 1.4.0, which supports image paste
+or later. Archon 1.6.2 requires Aether 1.4.0, which supports image paste
 and reference attachments. An older aetherd without image support refuses
 a message with images and says so.
 In `archon chat`:

@@ -101,7 +101,7 @@ async function claim(state, req, res) {
     return sendJson(res, 403, { error: { code: 'invalid_code', message: 'that pairing code is not valid' } });
   }
   const token = randomBytes(24).toString('hex');
-  const device = { id: `dev_${token.slice(0, 12)}`, name, paired_at: new Date().toISOString() };
+  const device = { id: `dev_${token.slice(0, 12)}`, name, role: 'operator', paired_at: new Date().toISOString() };
   state.devices.set(token, device);
   res.setHeader('Set-Cookie', `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict`);
   return sendJson(res, 200, { device });

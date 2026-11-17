@@ -99,7 +99,7 @@ test('initial fitting preserves phone readability and explicit fitting shows the
   const viewport = { width: 360, height: 480 };
   const initial = fitCamera(bounds, viewport, true);
   const fit = fitCamera(bounds, viewport);
-  assert.equal(initial.scale, READABLE_SCALE);
+  assert.equal(initial.scale, 1, 'a graph past the readable fit starts at 100%');
   assert.equal(initial.x, 0);
   assert.ok(fit.scale < initial.scale);
   assert.ok(bounds.width * fit.scale <= viewport.width);

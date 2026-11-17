@@ -39,6 +39,7 @@ mod integration_branch;
 mod integration_github;
 mod integration_promote;
 mod integration_verify;
+mod item_agents;
 mod item_autonomy;
 mod item_views;
 mod lanes;

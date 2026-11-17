@@ -58,12 +58,14 @@ impl Conn {
         let Request::Hello {
             protocol_version,
             client,
+            features,
             ..
         } = hello.request
         else {
             panic!("expected hello first, got {:?}", hello.request);
         };
         assert_eq!(protocol_version, PROTOCOL_VERSION);
+        assert_eq!(features, archon_core::protocol::client_feature::ALL);
         assert_eq!(client, ClientKind::ArchonCli);
         self.reply(1, Ok(Reply::Welcome(welcome()))).await;
     }

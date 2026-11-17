@@ -7,6 +7,7 @@ import { themePreference, setThemePreference } from '../../core/theme.js';
 import { dateTime } from '../../core/format.js';
 import * as api from '../../core/api.js';
 import { APP_VERSION } from '../../version.js';
+import { sessionSignal } from '../../core/session-signal.js';
 
 export function mountSettings(view, ctx) {
   const session = ctx.store.get().session;
@@ -44,6 +45,7 @@ async function forgetDevice(ctx, button) {
   button.disabled = true;
   try {
     await api.forget();
+    sessionSignal().announce('forgotten');
     ctx.onForget();
   } catch (err) {
     toast(describeError(err), { tone: 'red' });

@@ -1,8 +1,10 @@
 // The daemon protocol over one WebSocket: hello first, replies matched to
 // requests by req id, feed pushes forwarded, reconnects with backoff.
-import { backoffDelay, DISABLED_RETRY_MS } from './backoff.js';
+import { retryDelay, DISABLED_RETRY_MS } from './backoff.js';
 
 export const CLOSE_REVOKED = 4401;
+// How the daemon names a feed or change subscription it ended without closing.
+const ENDED_SUBSCRIPTION = /^(feed|change) subscription \d+ ended: /;
 export const CLOSE_DISABLED = 4403;
 const CLOSE_HELLO_FAILED = 4000;
 const CLOSE_RESUBSCRIBE = 4001;
@@ -25,18 +27,19 @@ class Transport {
   constructor({
     url, hello, protocol = 'archon', WebSocketImpl = globalThis.WebSocket,
     setTimer = globalThis.setTimeout.bind(globalThis), clearTimer = globalThis.clearTimeout.bind(globalThis),
-    random = Math.random, requestTimeoutMs = REQUEST_TIMEOUT_MS,
-    onFeed = () => {}, onState = () => {}, onReady = () => {}, onProtocolError = () => {},
+    random = Math.random, now = Date.now, requestTimeoutMs = REQUEST_TIMEOUT_MS,
+    onFeed = () => {}, onChange = () => {}, onState = () => {}, onReady = () => {}, onProtocolError = () => {},
   }) {
     if (typeof url !== 'string' || !/^wss?:\/\//.test(url)) throw new TypeError(`a WebSocket URL, got ${url}`);
     if (!hello || !Number.isInteger(hello.protocol_version)) throw new TypeError('hello needs an integer protocol_version');
     if (typeof WebSocketImpl !== 'function') throw new TypeError('no WebSocket implementation');
-    Object.assign(this, { url, hello, protocol, WebSocketImpl, setTimer, clearTimer, random, requestTimeoutMs });
-    this.on = { feed: onFeed, state: onState, ready: onReady, protocolError: onProtocolError };
+    Object.assign(this, { url, hello, protocol, WebSocketImpl, setTimer, clearTimer, random, now, requestTimeoutMs });
+    this.on = { feed: onFeed, change: onChange, state: onState, ready: onReady, protocolError: onProtocolError };
     this.ws = null;
     this.nextReq = 1;
     this.attempt = 0;
     this.retryTimer = null;
+    this.retry = null;
     this.current = 'idle';
     this.stopped = false;
     this.closeReason = null;
@@ -62,11 +65,22 @@ class Transport {
     this.setState('stopped');
   }
 
-  // Skips the rest of a backoff wait, e.g. when the page becomes visible again.
+  // The operator's "Retry now": skips the rest of a backoff wait, never the host's
+  // own minute while remote access is off.
   reconnectNow() {
-    if (this.stopped || this.retryTimer === null) return;
+    if (this.stopped || this.retryTimer === null || this.current === 'disabled') return;
     this.clearTimer(this.retryTimer);
     this.connect();
+  }
+
+  // A page shown again retries soon, after the shortest jittered wait so tabs woken
+  // together spread out; a disabled host's minute, or a sooner retry, stands.
+  reconnectSoon() {
+    if (this.stopped || this.retryTimer === null || this.current !== 'waiting') return;
+    if (!this.retry) throw new Error('a waiting transport knows its retry');
+    const delay = retryDelay(0, { random: this.random });
+    if (this.now() + delay >= this.retry.dueAt) return;
+    this.scheduleRetry(delay, this.retry.info);
   }
 
   // `timeoutMs` lets a long poll outlast the default answer deadline.
@@ -90,6 +104,7 @@ class Transport {
   connect() {
     if (this.stopped) return;
     this.retryTimer = null;
+    this.retry = null;
     this.nextReq = 1;
     this.closeReason = null;
     this.setState('connecting', { attempt: this.attempt });
@@ -137,6 +152,10 @@ class Transport {
       this.on.feed(frame.item, frame.sub);
       return;
     }
+    if (frame.frame === 'change') {
+      this.on.change(frame.change, frame.sub);
+      return;
+    }
     if (frame.frame !== 'reply' || !Number.isInteger(frame.id)) {
       this.on.protocolError(new Error(`unexpected frame: ${String(text).slice(0, 80)}`));
       return;
@@ -149,11 +168,12 @@ class Transport {
   }
 
   // An id-0 error explains a close the daemon is about to make, except an
-  // internal one: a feed subscription ended, so reconnect and resubscribe.
+  // internal one or a subscription's end (a lag, say): reconnect and resubscribe.
   unaddressed(err) {
     this.closeReason = err?.message ?? 'the daemon closed the connection';
-    if (err?.code !== 'internal' || this.current !== 'open' || !this.ws) return;
-    this.on.protocolError(new DaemonError('internal', `${this.closeReason}; reconnecting`));
+    const ended = err?.code === 'internal' || ENDED_SUBSCRIPTION.test(this.closeReason);
+    if (!ended || this.current !== 'open' || !this.ws) return;
+    this.on.protocolError(new DaemonError(err?.code ?? 'internal', `${this.closeReason}; reconnecting`));
     this.restarting = true;
     this.ws.close(CLOSE_RESUBSCRIBE, 'resubscribe');
   }
@@ -178,10 +198,19 @@ class Transport {
       this.setState('revoked', info);
       return;
     }
-    const delay = code === CLOSE_DISABLED ? DISABLED_RETRY_MS : backoffDelay(this.attempt, this.random);
+    const delay = retryDelay(this.attempt, { random: this.random, minMs: code === CLOSE_DISABLED ? DISABLED_RETRY_MS : 0 });
     this.attempt += 1;
+    this.scheduleRetry(delay, { ...info, attempt: this.attempt, disabled: code === CLOSE_DISABLED });
+  }
+
+  scheduleRetry(delay, info) {
+    if (!(delay > 0)) throw new RangeError(`a retry waits, got ${delay} ms`);
+    if (this.stopped || this.ws) throw new Error('only a closed, running transport retries');
+    if (this.retryTimer !== null) this.clearTimer(this.retryTimer);
     this.retryTimer = this.setTimer(() => this.connect(), delay);
-    this.setState(code === CLOSE_DISABLED ? 'disabled' : 'waiting', { ...info, retryInMs: delay, attempt: this.attempt });
+    this.retry = { dueAt: this.now() + delay, info };
+    const { disabled, ...shown } = info;
+    this.setState(disabled ? 'disabled' : 'waiting', { ...shown, retryInMs: delay });
   }
 
   failPending(err) {

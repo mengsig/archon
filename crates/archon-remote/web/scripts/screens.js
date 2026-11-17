@@ -12,11 +12,14 @@ const OUT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '
 const fixture = await startListenerFixture();
 const browser = await chromium.launch();
 try {
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true });
-  const page = await context.newPage();
-  const problems = guardConsole(page);
-  await captureScreens(page, fixture, OUT);
-  if (problems.length) throw new Error(`the page logged errors:\n${problems.join('\n')}`);
+  for (const [name, width, height] of [['phone', 390, 844], ['desktop', 1280, 800]]) {
+    const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 2, hasTouch: name === 'phone' });
+    const page = await context.newPage();
+    const problems = guardConsole(page);
+    await captureScreens(page, fixture, name === 'phone' ? OUT : resolve(OUT, name));
+    if (problems.length) throw new Error(`the page logged errors:\n${problems.join('\n')}`);
+    await context.close();
+  }
   console.log(`wrote screens to ${OUT}`);
 } finally {
   await browser.close();

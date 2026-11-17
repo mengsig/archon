@@ -1,11 +1,12 @@
 // Hash routes, so any path the server answers with index.html works.
 const ROUTES = [
-  { name: 'queue', pattern: /^#\/(?:queue)?$/, depth: 0, tab: 'queue' },
+  { name: 'queue', pattern: /^#\/queue$/, depth: 0, tab: 'queue' },
+  { name: 'graph', pattern: /^#\/graph$/, depth: 0, tab: 'graph' },
   { name: 'item', pattern: /^#\/item\/([A-Za-z0-9_]{1,64})$/, depth: 1, tab: 'queue' },
   { name: 'inbox', pattern: /^#\/inbox$/, depth: 0, tab: 'inbox' },
   { name: 'chat', pattern: /^#\/chat$/, depth: 0, tab: 'chat' },
-  { name: 'overview', pattern: /^#\/overview$/, depth: 0, tab: 'overview' },
-  { name: 'settings', pattern: /^#\/settings$/, depth: 1, tab: 'overview' },
+  { name: 'overview', pattern: /^#\/(?:overview)?$/, depth: 0, tab: 'overview' },
+  { name: 'settings', pattern: /^#\/settings$/, depth: 1, tab: 'settings' },
 ];
 
 export function parseRoute(hash) {
@@ -14,7 +15,7 @@ export function parseRoute(hash) {
     const match = route.pattern.exec(value);
     if (match) return { name: route.name, depth: route.depth, tab: route.tab, param: match[1] ?? null };
   }
-  return { name: 'queue', depth: 0, tab: 'queue', param: null };
+  return { name: 'overview', depth: 0, tab: 'overview', param: null };
 }
 
 // How a view enters: pushed deeper, popped back, or swapped between tabs.

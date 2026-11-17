@@ -3,6 +3,7 @@ import { test as base, expect } from '@playwright/test';
 import { FLOWS, openApp, ensureRepo } from './flows.js';
 import { enqueue, notify, askOperator } from './support/seed.js';
 import { startDevFixture } from './support/fixture.js';
+import { startDevServer } from '../dev/server.js';
 import { guardConsole } from './support/console-guard.js';
 import { conversationStandIn } from './support/conversation.js';
 
@@ -37,6 +38,21 @@ test('reconnects and resubscribes after the socket drops', async ({ page, fixtur
   await enqueue(fixture.archond, { repo: 'archon', title, brief: 'Shows up once the app is back.' });
   await expect(page.getByRole('link', { name: new RegExp(`^${title}`) })).toBeVisible({ timeout: 20_000 });
   await expect(page.locator('.conn-banner')).not.toHaveClass(/is-shown/);
+});
+
+// `npm run dev` without --require-pairing serves every browser as an operator.
+test('the default dev session keeps the operator controls', async ({ page, fixture }) => {
+  const dev = await startDevServer({ socket: fixture.archond.socket });
+  try {
+    const session = await (await page.request.get(`${dev.url}/api/session`)).json();
+    expect(session.device.role).toBe('operator');
+    await page.goto(`${dev.url}/#/overview`);
+    await expect(page.getByRole('switch', { name: 'Pause new work' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'New item', exact: true })).toBeVisible();
+    await expect(page.getByRole('form', { name: 'Pair this device' })).toHaveCount(0);
+  } finally {
+    await dev.close();
+  }
 });
 
 // Refuses the commands `refuse` names while it returns true for them.

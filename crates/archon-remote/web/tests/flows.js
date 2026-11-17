@@ -46,7 +46,7 @@ export async function pair(page, fixture) {
   expect(new URL(page.url()).hash).toBe('');
   await expect(page.getByLabel('Pairing code')).toHaveValue(formatPairingCode(code));
   await pairWithForm(page, fixture, 'Playwright phone');
-  await expect(page.getByRole('heading', { name: 'Queue', level: 1 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Overview', level: 1 })).toBeVisible();
   await page.getByRole('navigation', { name: 'Sections' }).getByRole('link', { name: 'Overview' }).click();
   await page.getByRole('link', { name: 'Settings' }).click();
   await expect(page.getByText('Playwright phone')).toBeVisible();
@@ -192,7 +192,8 @@ export async function globalPauseResume(page, fixture) {
   await expect(page.locator('.hero-label')).toHaveText('Paused');
   expect((await fixture.archond.request({ cmd: 'status' })).data.pause.global).toBe(true);
   await toggle.click();
-  await expect(page.locator('.hero-label')).toHaveText('Running');
+  const resumed = (await fixture.archond.request({ cmd: 'status' })).data;
+  await expect(page.locator('.hero-label')).toHaveText(resumed.disk?.held ? 'Dispatch held' : 'Running');
   expect((await fixture.archond.request({ cmd: 'status' })).data.pause.global).toBe(false);
 }
 

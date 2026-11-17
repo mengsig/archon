@@ -45,6 +45,6 @@ export function html(node) {
 
 export function installDom() {
   globalThis.Node = Node;
-  globalThis.document = { createElement: (tag) => new Element(tag), createTextNode: (data) => new Text(data) };
+  globalThis.document = { createElement: (tag) => new Element(tag), createElementNS: (_ns, tag) => new Element(tag), createTextNode: (data) => new Text(data) };
 }
 export { Element };

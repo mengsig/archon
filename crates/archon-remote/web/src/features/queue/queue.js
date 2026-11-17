@@ -1,10 +1,10 @@
 // The queue: every item, filtered by state, repository, pipeline, priority
 // and search.
-import { h } from '../../ui/dom.js';
+import { h, append } from '../../ui/dom.js';
 import { icon } from '../../ui/icons.js';
 import { reconcile } from '../../ui/list.js';
 import { screenHeader, emptyState, errorNote, loadErrorNotes, skeletonRows } from '../../ui/components.js';
-import { FILTERS, PRIORITIES, priorityLabel } from '../../core/format.js';
+import { FILTERS, PRIORITIES, priorityLabel, isTerminal, waitsOnOperator } from '../../core/format.js';
 import { itemRow, rowSignature, repoNames } from './item-row.js';
 import { openNewItem } from '../new-item/new-item.js';
 
@@ -22,17 +22,25 @@ export function mountQueue(view, ctx) {
   const search = h('input', { class: 'search-input', type: 'search', placeholder: 'Search', 'aria-label': 'Search items', value: viewState.query, enterkeyhint: 'search' });
   const list = h('ul', { class: 'item-list', 'aria-label': 'Items' });
   const status = h('div', { class: 'list-status' });
-  const fab = h('button', { class: 'fab', type: 'button', 'aria-label': 'New item', onclick: () => openNewItem(ctx) }, icon('plus', { size: 26 }));
+  const summary = h('p', { class: 'queue-summary', 'aria-label': 'Queue summary' });
+  const fab = ctx.canOperate ? h('button', { class: 'fab', type: 'button', 'aria-label': 'New item', onclick: () => openNewItem(ctx) }, icon('plus', { size: 26 })) : null;
 
-  view.append(
-    screenHeader({ title: 'Queue' }),
+  // append() skips the observer's missing FAB; native append would print "null".
+  append(view, [
+    screenHeader({ title: 'Queue' }), summary,
     h('div', { class: 'toolbar' },
       h('label', { class: 'search' }, icon('search', { size: 18 }), search),
       repoSelect),
     h('div', { class: 'toolbar toolbar-filters' }, pipelineSelect, prioritySelect),
-    chips, status, list, fab);
+    chips, status, list, fab]);
 
-  const render = () => renderQueue({ state: store.get(), chips, selects, list, status, ctx });
+  const render = () => {
+    const state = store.get();
+    const items = state.summaries ?? [];
+    summary.replaceChildren(...[[items.filter((s) => !isTerminal(s)).length, 'active'], [items.filter(waitsOnOperator).length, 'need you'], [items.filter(isTerminal).length, 'finished']]
+      .map(([count, label]) => h('span', {}, h('strong', { text: String(count) }), label)));
+    renderQueue({ state, chips, selects, list, status, ctx });
+  };
   const off = store.watch((s) => [s.summaries, s.repos, s.errors.summaries, s.errors.repos], render);
   search.addEventListener('input', () => { viewState.query = search.value; render(); });
   for (const [key, select] of Object.entries(selects)) {

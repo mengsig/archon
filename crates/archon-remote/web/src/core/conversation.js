@@ -1,11 +1,12 @@
 // The orchestrator's conversation as archond serves it: the newest page, then
 // a long poll from the last seen seq. One loop runs while the socket is open;
 // failures back off, and a poll that returns at once never spins hot.
+import { retryDelay, STREAM_BACKOFF } from './backoff.js';
+
 export const PAGE_LIMIT = 200;
 export const KEEP = 600;
 // The daemon holds a waiting poll for about 20 s; answer deadlines stay above it.
 export const POLL_TIMEOUT_MS = 30_000;
-export const RETRY_MS = [2_000, 5_000, 15_000, 30_000];
 export const MIN_IDLE_POLL_MS = 1_000;
 
 // archond prefixes a phone line with this label before the orchestrator reads it.
@@ -38,7 +39,7 @@ function checkPage(reply) {
 }
 
 export function createConversation({
-  request, isOpen, onChange = () => {}, onError = () => {}, keep = KEEP, retryMs = RETRY_MS,
+  request, isOpen, onChange = () => {}, onError = () => {}, keep = KEEP, random = Math.random,
   setTimer = globalThis.setTimeout.bind(globalThis), clearTimer = globalThis.clearTimeout.bind(globalThis), now = Date.now,
 }) {
   if (typeof request !== 'function' || typeof isOpen !== 'function') throw new TypeError('the conversation needs a request function and the socket state');
@@ -98,7 +99,7 @@ export function createConversation({
         if (!isOpen()) return;
         failing = true;
         onError(err);
-        await pause(retryMs[Math.min(failures, retryMs.length - 1)]);
+        await pause(retryDelay(failures, { random, limits: STREAM_BACKOFF }));
         failures += 1;
       }
     }

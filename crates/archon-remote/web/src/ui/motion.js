@@ -3,7 +3,7 @@ const REDUCED = '(prefers-reduced-motion: reduce)';
 const FALLBACK_MS = 450;
 
 export function reducedMotion() {
-  return matchMedia(REDUCED).matches;
+  return typeof matchMedia === 'undefined' || matchMedia(REDUCED).matches;
 }
 
 // Resolves when el's transition or animation ends, or after a fallback delay.
@@ -25,17 +25,30 @@ export function settled(el, ms = FALLBACK_MS) {
   });
 }
 
-// Fold an element's height to zero and fade it, then remove it.
+// Fade an element out without animating layout.
 export async function collapseOut(el) {
   if (!el.isConnected) return;
-  el.style.height = `${el.getBoundingClientRect().height}px`;
-  el.getBoundingClientRect();
   el.classList.add('is-leaving');
-  el.style.height = '0px';
   await settled(el);
   el.remove();
 }
 
 export function nextFrame() {
   return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+}
+
+export function animateMove(element, from, to, duration = 280) {
+  if (!element || typeof element.animate !== 'function' || reducedMotion()) return;
+  if (!Array.isArray(from) || !Array.isArray(to) || ![...from, ...to, duration].every(Number.isFinite)) throw new TypeError('Motion needs finite coordinates and duration');
+  if (from.length !== 2 || to.length !== 2 || duration < 0) throw new RangeError('Motion needs two-dimensional positions');
+  const animation = element.animate([
+    { transform: `translate(${from[0]}px, ${from[1]}px)` },
+    { transform: `translate(${to[0]}px, ${to[1]}px)` },
+  ], { duration, easing: 'cubic-bezier(.22,1,.36,1)' });
+  const media = matchMedia(REDUCED);
+  const stop = () => { if (media.matches) animation.cancel(); };
+  const cleanup = () => media.removeEventListener('change', stop);
+  media.addEventListener('change', stop);
+  animation.addEventListener('finish', cleanup, { once: true });
+  animation.addEventListener('cancel', cleanup, { once: true });
 }

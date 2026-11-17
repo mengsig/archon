@@ -1,6 +1,8 @@
 //! The TCP accept loop: plain HTTP/1.1 on loopback, at most
 //! `max_connections` connections served at once, heads read within
-//! [`HEAD_TIMEOUT`]. TLS is the job of `tailscale serve` or a proxy.
+//! [`HEAD_TIMEOUT`]. A connection beyond the cap is answered `503` with
+//! `Retry-After`, so the app can say it is retrying, and then closed. TLS is
+//! the job of `tailscale serve` or a proxy.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -10,13 +12,26 @@ use archon_core::error::ArchonError;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioIo, TokioTimer};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{Semaphore, watch};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
 use tokio::task::JoinHandle;
 
 use crate::Shared;
 
-pub const HEAD_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a head may take, and so how long an idle keep-alive connection
+/// holds its slot: hyper restarts this timer for each next request's head.
+/// A browser opens up to six connections per host to load the app's files;
+/// they close this long after the burst, leaving each tab its WebSocket.
+pub const HEAD_TIMEOUT: Duration = Duration::from_secs(3);
+/// Connections answered `503` at once while every slot is taken; beyond
+/// that a newcomer is dropped unanswered.
+const MAX_REFUSALS: usize = 64;
+/// How long a refused connection gets to send the head it is answered for.
+pub const REFUSAL_HEAD_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long a refused connection lives in all, writing the answer included,
+/// so a client that never reads cannot hold a refusal permit.
+pub const REFUSAL_LIFETIME: Duration = Duration::from_secs(4);
 const MAX_HEAD_BYTES: usize = 32 * 1024;
 /// How long open HTTP connections get to finish once the listener closes.
 const DRAIN: Duration = Duration::from_secs(2);
@@ -69,6 +84,7 @@ async fn accept_loop(
     mut stopped: watch::Receiver<bool>,
 ) {
     let slots = Arc::new(Semaphore::new(shared.config.max_connections as usize));
+    let refusals = Arc::new(Semaphore::new(MAX_REFUSALS));
     let mut connections = tokio::task::JoinSet::new();
     loop {
         let accepted = tokio::select! {
@@ -84,9 +100,8 @@ async fn accept_loop(
                 continue;
             }
         };
-        // Full: the newcomer is dropped, and the browser retries.
         let Ok(slot) = slots.clone().try_acquire_owned() else {
-            tracing::debug!("every remote connection slot is taken; dropping a connection");
+            refuse(&refusals, &mut connections, stream);
             continue;
         };
         let (shared, stopped) = (shared.clone(), stopped.clone());
@@ -102,6 +117,47 @@ async fn accept_loop(
     {
         connections.shutdown().await;
     }
+}
+
+/// Every slot is taken: answer the newcomer's one request `503`, unless
+/// [`MAX_REFUSALS`] are already being answered, then drop it.
+fn refuse(
+    refusals: &Arc<Semaphore>,
+    connections: &mut tokio::task::JoinSet<()>,
+    stream: TcpStream,
+) {
+    let Ok(permit) = refusals.clone().try_acquire_owned() else {
+        tracing::debug!("every remote connection slot is taken; dropping a connection");
+        return;
+    };
+    tracing::debug!("every remote connection slot is taken; answering 503");
+    connections.spawn(answer_refusal(stream, permit));
+}
+
+/// Answer one refused connection's request `503` and close it within
+/// [`REFUSAL_LIFETIME`], however slowly it reads; then give `permit` back.
+async fn answer_refusal<I>(io: I, permit: OwnedSemaphorePermit)
+where
+    I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let service = service_fn(|request: hyper::Request<hyper::body::Incoming>| {
+        let response = crate::http::busy(request.uri());
+        async move { Ok::<_, std::convert::Infallible>(response) }
+    });
+    let served = http1::Builder::new()
+        .timer(TokioTimer::new())
+        .header_read_timeout(REFUSAL_HEAD_TIMEOUT)
+        .max_buf_size(MAX_HEAD_BYTES)
+        .keep_alive(false)
+        .serve_connection(TokioIo::new(io), service);
+    match tokio::time::timeout(REFUSAL_LIFETIME, served).await {
+        Ok(Err(error)) => {
+            tracing::debug!(%error, "a refused remote connection ended with an error");
+        }
+        Err(_) => tracing::debug!("a refused remote connection outlived its deadline"),
+        Ok(Ok(())) => {}
+    }
+    drop(permit);
 }
 
 async fn drain(connections: &mut tokio::task::JoinSet<()>) {
@@ -137,5 +193,50 @@ async fn serve(
     };
     if let Err(error) = served {
         tracing::debug!(%error, "a remote connection ended with an error");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    use super::*;
+
+    /// A refusal's answer outlasts both buffers of a 64-byte pipe the client
+    /// never reads, so the write is still pending when the head timeout has
+    /// long passed: only the outer lifetime can end it.
+    #[tokio::test(start_paused = true)]
+    async fn a_refusal_whose_answer_is_never_read_is_closed_at_its_lifetime() {
+        let (server, mut client) = tokio::io::duplex(64);
+        client
+            .write_all(b"GET / HTTP/1.1\r\nHost: archon.test\r\n\r\n")
+            .await
+            .unwrap();
+        let refusals = Arc::new(Semaphore::new(1));
+        let permit = refusals.clone().try_acquire_owned().unwrap();
+        let started = tokio::time::Instant::now();
+        let bound = Duration::from_secs(6);
+        tokio::time::timeout(bound, answer_refusal(server, permit))
+            .await
+            .expect("a never-read refusal is closed by its lifetime");
+        assert_eq!(
+            started.elapsed(),
+            REFUSAL_LIFETIME,
+            "closed at the deadline"
+        );
+        assert!(
+            REFUSAL_LIFETIME > REFUSAL_HEAD_TIMEOUT,
+            "the head was not what ended it"
+        );
+        assert_eq!(refusals.available_permits(), 1, "the permit came back");
+        let mut written = Vec::new();
+        client.read_to_end(&mut written).await.unwrap();
+        assert!(written.starts_with(b"HTTP/1.1 503"), "{written:?}");
+        assert!(
+            written.len() <= 64,
+            "only what the pipe held: the write was pending"
+        );
     }
 }

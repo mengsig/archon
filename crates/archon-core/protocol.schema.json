@@ -1478,7 +1478,7 @@
               "type": "string"
             },
             "features": {
-              "description": "Features the client understands; archond reads none of them yet.",
+              "description": "Features the client understands ([`compat::client_feature`]);\narchond ignores names it does not know.",
               "items": {
                 "type": "string"
               },
@@ -1660,6 +1660,23 @@
           "properties": {
             "cmd": {
               "const": "get_item",
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/QueueItemId"
+            }
+          },
+          "required": [
+            "cmd",
+            "item"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Current lifecycle of delegated descendants of this item's recorded stage agents.",
+          "properties": {
+            "cmd": {
+              "const": "item_agent_states",
               "type": "string"
             },
             "item": {
@@ -6097,6 +6114,52 @@
           "type": "object"
         }
       ]
+    },
+    "ItemAgentState": {
+      "description": "A delegated agent's lifecycle as reported by the backend at read time.",
+      "enum": [
+        "live",
+        "completed",
+        "stopped"
+      ],
+      "type": "string"
+    },
+    "ItemAgentStates": {
+      "description": "Delegated lifecycle and recorded direct spend, including the current orchestrator.",
+      "properties": {
+        "agents": {
+          "items": {
+            "$ref": "#/$defs/ItemAgentStatus"
+          },
+          "type": "array"
+        },
+        "cost_usd": {
+          "additionalProperties": {
+            "format": "double",
+            "type": "number"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "agents"
+      ],
+      "type": "object"
+    },
+    "ItemAgentStatus": {
+      "properties": {
+        "agent": {
+          "$ref": "#/$defs/AetherAgentId"
+        },
+        "state": {
+          "$ref": "#/$defs/ItemAgentState"
+        }
+      },
+      "required": [
+        "agent",
+        "state"
+      ],
+      "type": "object"
     },
     "ItemDetail": {
       "properties": {
@@ -10715,6 +10778,22 @@
         {
           "properties": {
             "data": {
+              "$ref": "#/$defs/ItemAgentStates"
+            },
+            "reply": {
+              "const": "item_agent_states",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
               "$ref": "#/$defs/StageDetail"
             },
             "reply": {
@@ -12160,7 +12239,7 @@
               "type": "string"
             },
             "features": {
-              "description": "Features the client understands; archond reads none of them yet.",
+              "description": "Features the client understands ([`compat::client_feature`]);\narchond ignores names it does not know.",
               "items": {
                 "type": "string"
               },
@@ -12342,6 +12421,23 @@
           "properties": {
             "cmd": {
               "const": "get_item",
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/QueueItemId"
+            }
+          },
+          "required": [
+            "cmd",
+            "item"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Current lifecycle of delegated descendants of this item's recorded stage agents.",
+          "properties": {
+            "cmd": {
+              "const": "item_agent_states",
               "type": "string"
             },
             "item": {
@@ -15570,7 +15666,7 @@
       "type": "object"
     },
     "TaskEdge": {
-      "description": "`from` is the prerequisite and `to` the item that waits for it.",
+      "description": "`from` is the prerequisite and `to` the item that waits for it; for an\n`onto` edge, `from` is the item that owns the pull request and `to` the\nitem queued onto it, with `satisfied` always true.",
       "properties": {
         "from": {
           "$ref": "#/$defs/QueueItemId"
@@ -15594,12 +15690,33 @@
       "type": "object"
     },
     "TaskEdgeKind": {
-      "enum": [
-        "depends_on",
-        "initiative_after",
-        "stacked_on"
-      ],
-      "type": "string"
+      "oneOf": [
+        {
+          "enum": [
+            "depends_on",
+            "initiative_after",
+            "stacked_on"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "onto",
+          "description": "`from` owns the pull request `to` was queued onto. Always satisfied:\nthe pull request exists already and nothing waits. Sent only to a\nclient that declares `onto_edges` ([`super::compat`]).",
+          "type": "string"
+        },
+        {
+          "description": "Any kind this release does not name, one a newer archond added, so\none edge never fails a whole reply. Only read, never sent.",
+          "not": {
+            "enum": [
+              "depends_on",
+              "initiative_after",
+              "stacked_on",
+              "onto"
+            ]
+          },
+          "type": "string"
+        }
+      ]
     },
     "TaskFilter": {
       "description": "Which items a `task_graph` holds; an absent field does not filter.",
@@ -15614,6 +15731,16 @@
             }
           ],
           "description": "Only the connected component holding this item."
+        },
+        "ids": {
+          "description": "Only these items, at most [`MAX_TASK_GRAPH_LIMIT`]: a client reads\nthe edges among a node set it merged from several graphs in one go.",
+          "items": {
+            "$ref": "#/$defs/QueueItemId"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
         },
         "include_terminal_since": {
           "description": "Terminal items are left out unless they changed at or after this.",
@@ -16822,6 +16949,7 @@
     "changes",
     "task_graph",
     "run_plan",
+    "item_agent_states",
     "item_history",
     "item_filters",
     "github_links",

@@ -9,9 +9,12 @@ export class ApiError extends Error {
   }
 }
 
+// A host that accepts a connection and never answers must not stall a page.
+export const API_TIMEOUT_MS = 10_000;
+
 async function call(method, path, body) {
   if (!path.startsWith('/api/')) throw new Error(`not an API path: ${path}`);
-  const init = { method, credentials: 'same-origin', cache: 'no-store', headers: {} };
+  const init = { method, credentials: 'same-origin', cache: 'no-store', headers: {}, signal: AbortSignal.timeout(API_TIMEOUT_MS) };
   if (body !== undefined) {
     init.headers['Content-Type'] = 'application/json';
     init.body = JSON.stringify(body);
@@ -20,6 +23,7 @@ async function call(method, path, body) {
   try {
     response = await fetch(BASE + path, init);
   } catch (err) {
+    if (err?.name === 'TimeoutError') throw new ApiError('timeout', `The host did not answer in ${API_TIMEOUT_MS / 1000} s.`, 0, null, { cause: err });
     throw new ApiError('network', 'The host cannot be reached.', 0, null, { cause: err });
   }
   const payload = await response.json().catch(() => null);

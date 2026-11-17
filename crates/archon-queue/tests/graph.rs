@@ -316,6 +316,54 @@ fn every_filter_narrows_the_nodes() {
     assert_eq!(pick(&store, states), std::slice::from_ref(&a.id));
 }
 
+/// Two truncated graphs can each miss an edge whose ends fell into
+/// different ones; an `ids` read of the merged set holds it.
+#[test]
+fn an_ids_filter_reads_the_edges_among_a_held_node_set() {
+    let (mut store, repo, _) = seeded(0);
+    let older = insert_at(&mut store, &repo, "older", 10, &[]);
+    let between = insert_at(&mut store, &repo, "between", 11, &[]);
+    let dependent = insert_at(&mut store, &repo, "dependent", 12, &[&older]);
+    let run = start(&mut store, &older.id);
+    let done = QueueState::Succeeded {
+        run: run.id.clone(),
+        summary: "done".into(),
+    };
+    settle_run(&mut store, &run, done, t(50));
+    let epoch = Some(t(0));
+    let recent = TaskFilter {
+        include_terminal_since: epoch,
+        ..TaskFilter::default()
+    };
+    let truncated = store.task_graph(&recent, Some(1), true).unwrap();
+    assert!(truncated.truncated && truncated.edges.is_empty());
+    assert_eq!(ids(&truncated), [&older.id]);
+    let held = TaskFilter {
+        ids: Some(vec![older.id.clone(), dependent.id.clone()]),
+        include_terminal_since: epoch,
+        ..TaskFilter::default()
+    };
+    let exact = graph(&store, &held);
+    assert_eq!(ids(&exact), [&older.id, &dependent.id]);
+    assert!(!ids(&exact).contains(&&between.id));
+    assert_eq!(
+        edges(&exact),
+        [(&older.id, &dependent.id, TaskEdgeKind::DependsOn, true)]
+    );
+    let empty = TaskFilter {
+        ids: Some(Vec::new()),
+        ..TaskFilter::default()
+    };
+    let refused = store.task_graph(&empty, None, true).unwrap_err();
+    assert!(matches!(&refused, ArchonError::Invalid(m) if m.contains("ids")));
+    let many = TaskFilter {
+        ids: Some((0..2001).map(|_| QueueItemId::new()).collect()),
+        ..TaskFilter::default()
+    };
+    let refused = store.task_graph(&many, None, true).unwrap_err();
+    assert!(matches!(&refused, ArchonError::Invalid(m) if m.contains("at most 2000")));
+}
+
 #[test]
 fn a_bad_filter_or_limit_is_refused_and_a_limit_truncates() {
     let (store, _, items) = seeded(3);
@@ -452,4 +500,107 @@ fn as_of_is_the_change_seq_the_graph_was_read_at_under_concurrent_writes() {
     let last = graph(&writer, &TaskFilter::default());
     assert_eq!(last.nodes.len(), WRITES);
     assert_eq!(last.as_of, writer.last_change_seq().unwrap());
+}
+
+fn onto_pr(url: &str) -> Box<archon_core::pull_request::OntoPullRequest> {
+    let pr = archon_core::pull_request::PullRequestRef::from_url(url).unwrap();
+    Box::new(archon_core::pull_request::OntoPullRequest {
+        target: archon_core::pull_request::OntoTarget::Pr(pr.number),
+        pr,
+        node_id: None,
+        head_repository: "o/r".into(),
+        head_ref: "feature".into(),
+        base_ref: "main".into(),
+        head_sha: "a".repeat(40),
+        review_only: false,
+    })
+}
+
+fn deliver(store: &mut Store, item: &QueueItem, at: i64) {
+    let link = GithubLink {
+        item: item.id.clone(),
+        reference: GithubRef {
+            host: "github.com".into(),
+            repo: "o/r".into(),
+            number: 9,
+            kind: GithubKind::PullRequest,
+        },
+        relation: LinkRelation::Delivered,
+        source: LinkSource::Ship,
+        created_at: t(at),
+    };
+    store.link_github(&link).unwrap();
+}
+
+#[test]
+fn an_onto_edge_runs_from_the_pull_requests_owner_to_each_item_queued_onto_it() {
+    let (mut store, repo, _) = seeded(0);
+    let mut owned = item(Some(&repo), "owner");
+    owned.pipeline = "review".into();
+    owned.created_at = t(10);
+    owned.updated_at = t(10);
+    let owner = store.insert_item(&owned, None).unwrap();
+    let mut first = item(Some(&repo), "onto one");
+    let mut second = item(Some(&repo), "onto two");
+    for (n, queued) in [&mut first, &mut second].into_iter().enumerate() {
+        queued.onto = Some(onto_pr("https://GitHub.com/O/R/pull/9"));
+        queued.created_at = t(11 + n as i64);
+        queued.updated_at = queued.created_at;
+    }
+    let first = store.insert_item(&first, None).unwrap();
+    let second = store.insert_item(&second, None).unwrap();
+    let other = insert_at(&mut store, &repo, "unrelated", 13, &[]);
+    deliver(&mut store, &owner, 20);
+    deliver(&mut store, &first, 15);
+    deliver(&mut store, &second, 16);
+
+    let all = graph(&store, &TaskFilter::default());
+    let found = edges(&all);
+    let mut expected = vec![
+        (&owner.id, &first.id, TaskEdgeKind::Onto, true),
+        (&owner.id, &second.id, TaskEdgeKind::Onto, true),
+    ];
+    expected.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
+    assert_eq!(found, expected, "onto items never own the pull request");
+    assert!(found.iter().all(|e| e.1 != &other.id && e.0 != &other.id));
+
+    let filter = TaskFilter {
+        pipelines: Some(vec!["direct".into()]),
+        ..TaskFilter::default()
+    };
+    let without_owner = graph(&store, &filter);
+    assert_eq!(without_owner.nodes.len(), 3, "the owner is filtered out");
+    assert!(without_owner.edges.is_empty(), "no onto edge without owner");
+
+    for root in [&owner.id, &second.id] {
+        let component = TaskFilter {
+            component_of: Some(root.clone()),
+            ..TaskFilter::default()
+        };
+        let joined = graph(&store, &component);
+        let mut ids: Vec<_> = joined.nodes.iter().map(|n| &n.id).collect();
+        ids.sort();
+        let mut want = vec![&owner.id, &first.id, &second.id];
+        want.sort();
+        assert_eq!(ids, want, "onto edges join the component from {root}");
+        assert_eq!(
+            edges(&joined),
+            expected,
+            "the component keeps its onto edges"
+        );
+        let undeclared = TaskFilter {
+            without_onto: true,
+            ..component
+        };
+        let unjoined = graph(&store, &undeclared);
+        let ids: Vec<_> = unjoined.nodes.iter().map(|n| &n.id).collect();
+        assert_eq!(ids, vec![root], "without onto links {root} stands alone");
+    }
+    let apart = TaskFilter {
+        component_of: Some(other.id.clone()),
+        ..TaskFilter::default()
+    };
+    let alone = graph(&store, &apart);
+    assert_eq!(alone.nodes.len(), 1, "an unrelated item stays alone");
+    assert_eq!(alone.nodes[0].id, other.id);
 }

@@ -13,7 +13,8 @@ use std::time::Duration;
 use archon_client::framing::{encode_frame, read_frame};
 use archon_core::error::ArchonError;
 use archon_core::protocol::{
-    ClientFrame, ClientKind, ErrorCode, ErrorReply, Reply, Request, ServerFrame, negotiate,
+    ClientFeatures, ClientFrame, ClientKind, ErrorCode, ErrorReply, Reply, Request, ServerFrame,
+    negotiate,
 };
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
@@ -331,7 +332,7 @@ async fn session(
     outbox: Outbox,
     stop: &watch::Sender<bool>,
 ) -> Result<(), ArchonError> {
-    let Some(client) = handshake(reader, &outbox).await? else {
+    let Some((client, features)) = handshake(reader, &outbox).await? else {
         return Ok(());
     };
     let mut subscriptions = 0u64;
@@ -366,8 +367,13 @@ async fn session(
             request => {
                 let (ctx, outbox) = (ctx.clone(), outbox.clone());
                 tokio::spawn(async move {
+                    let request = features.adapt_request(request);
                     let result = handlers::handle(&ctx, client, request).await;
-                    send(&outbox, reply(frame.id, result)).await
+                    send(
+                        &outbox,
+                        reply(frame.id, result.map(|r| features.adapt_reply(r))),
+                    )
+                    .await
                 });
             }
         }
@@ -402,11 +408,12 @@ async fn shutdown(
 /// The first frame must be `hello` at a version archond accepts from that
 /// client (`negotiate`); anything else gets an id-0 error and the
 /// connection is closed. A refused version is answered under the hello's
-/// own id, which a 1.4.x updater reads as a new archond.
+/// own id, which a 1.4.x updater reads as a new archond. Yields the client
+/// and the later variants it declared it decodes.
 async fn handshake(
     reader: &mut BufReader<OwnedReadHalf>,
     outbox: &Outbox,
-) -> Result<Option<ClientKind>, ArchonError> {
+) -> Result<Option<(ClientKind, ClientFeatures)>, ArchonError> {
     let Some(Some(frame)) = read_client_frame(reader, outbox).await? else {
         return Ok(None);
     };
@@ -414,7 +421,7 @@ async fn handshake(
         protocol_version,
         client,
         client_version,
-        ..
+        features: declared,
     } = frame.request
     else {
         refuse(
@@ -442,8 +449,8 @@ async fn handshake(
         }
     };
     send(outbox, reply(frame.id, Ok(Reply::Welcome(welcome)))).await;
-    tracing::debug!(?client, %client_version, "client connected");
-    Ok(Some(client))
+    tracing::debug!(?client, %client_version, ?declared, "client connected");
+    Ok(Some((client, ClientFeatures::declared(&declared))))
 }
 
 async fn refuse(outbox: &Outbox, code: ErrorCode, message: String) {

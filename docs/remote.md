@@ -188,7 +188,12 @@ answered by a `reply` frame with the same id, and `subscribe_feed` streams
 Limits: messages of at most 1 MiB, 16 requests in flight and 4 feed
 subscriptions per connection, and as many sessions in total as
 `max_connections`. archond pings every 25 seconds and closes a session
-silent for 75.
+silent for 75. A browser loads the app over up to six HTTP connections,
+which close after 3 idle seconds; beyond the cap archond answers `503`. Under
+`/api` and `/ws` that is JSON `busy` with `Retry-After: 2`; any other path
+gets a page that reloads itself after a jittered wait, named in its
+`Retry-After`, that grows from 2 to at most 30 seconds and stops after 6
+reloads. Either way the app retries instead of failing silently.
 
 | Close code | Meaning |
 | --- | --- |
@@ -209,7 +214,7 @@ operator sends both columns:
 
 | Reads | Changes (operators only) |
 | --- | --- |
-| `status`, `repo_list`, `list_items`, `list_item_summaries`, `get_item`, `get_stage`, `resolve_item`, `list_pipelines`, `model_policy`, `get_initiative`, `list_questions`, `feed_history`, `subscribe_feed`, `list_reports`, `orchestrator_status`, `cost_report`, `list_artifacts`, `read_artifact`, `item_diff`, `settings`, `autonomy`, `subscribe_changes`, `changes_page`, `item_history`, `task_graph`, `run_plan`, `item_links`, `issue_items`, `list_github_objects` | `enqueue`, `steer_item`, `update_item`, `cancel_item`, `retry_item`, `pause`, `resume`, `answer`, `say`, `operator_command`, `merge_item`, `set_directive`, `clear_directive`, `set_settings`, `reset_settings`, `repo_add`, `repo_update`, `configure_github_watcher`, `link_issue`, `unlink_issue`, `import_issue` |
+| `status`, `repo_list`, `list_items`, `list_item_summaries`, `get_item`, `get_stage`, `resolve_item`, `list_pipelines`, `model_policy`, `get_initiative`, `list_questions`, `feed_history`, `subscribe_feed`, `list_reports`, `orchestrator_status`, `cost_report`, `list_artifacts`, `read_artifact`, `item_diff`, `settings`, `autonomy`, `subscribe_changes`, `changes_page`, `item_history`, `task_graph`, `item_agent_states`, `run_plan`, `item_links`, `issue_items`, `list_github_objects` | `enqueue`, `steer_item`, `update_item`, `cancel_item`, `retry_item`, `pause`, `resume`, `answer`, `say`, `operator_command`, `merge_item`, `set_directive`, `clear_directive`, `set_settings`, `reset_settings`, `repo_add`, `repo_update`, `configure_github_watcher`, `link_issue`, `unlink_issue`, `import_issue` |
 
 An operator device's request runs with the operator CLI's standing, so it
 may set `merge=auto` or `tools=yolo` within the autonomy ceiling, pause or

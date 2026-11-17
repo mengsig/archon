@@ -27,6 +27,7 @@ function harness(outcomes, extra = {}) {
     setTimer: (fn, ms) => { const t = { fn, ms, done: false }; timers.push(t); return t; },
     clearTimer: (t) => { if (t) t.done = true; },
     now: () => 0,
+    random: () => 0,
     ...extra,
   });
   const fire = async (ms) => {
@@ -86,13 +87,13 @@ test('errors back off and never spin hot, and a success clears the error', async
   assert.equal(h.calls.length, 1);
   assert.equal(h.errors[0], unavailable);
   assert.equal(h.pending().length, 1);
-  assert.equal(h.pending()[0].ms, 2_000);
+  assert.equal(h.pending()[0].ms, 2_000, 'the lowest draw of the first 2–4 s wait');
   await flush();
   assert.equal(h.calls.length, 1, 'nothing is requested while backing off');
   await h.fire(2_000);
   assert.equal(h.calls.length, 2);
-  assert.equal(h.pending()[0].ms, 5_000, 'the second failure waits longer');
-  await h.fire(5_000);
+  assert.equal(h.pending()[0].ms, 4_000, 'the second failure waits longer');
+  await h.fire(4_000);
   assert.equal(h.errors.at(-1), null, 'the error clears once a page arrives');
   assert.equal(h.conversation.cursor, 1);
 });
@@ -149,4 +150,15 @@ test('the relay mark is stripped only as an exact prefix', () => {
 test('the conversation needs a request function and the socket state', () => {
   assert.throws(() => createConversation({ isOpen: () => true }), TypeError);
   assert.throws(() => createConversation({ request: () => {} }), TypeError);
+});
+
+test('the conversation retry is jittered by its random source', async () => {
+  const waits = [];
+  for (const r of [0, 0.5]) {
+    const h = harness([new Error('boom')], { random: () => r });
+    h.conversation.run();
+    await flush();
+    waits.push(h.pending()[0].ms);
+  }
+  assert.deepEqual(waits, [2_000, 3_000], 'two tabs that failed together retry apart');
 });

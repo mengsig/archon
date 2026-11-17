@@ -159,3 +159,10 @@ export function namesItem(feedItem, itemId) {
   if (!entry || feedItem.replayed) return false;
   return ITEM_ENTRIES.has(entry.entry) && entry.item === itemId;
 }
+
+export function githubRefUrl(reference) {
+  if (!reference || !/^[a-z0-9.-]+(?::\d+)?$/i.test(reference.host ?? '')) return null;
+  if (!/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i.test(reference.repo ?? '') || !Number.isSafeInteger(reference.number) || reference.number < 1) return null;
+  const kind = reference.kind === 'issue' ? 'issues' : 'pull';
+  return `https://${reference.host}/${reference.repo}/${kind}/${reference.number}`;
+}

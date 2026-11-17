@@ -47,7 +47,10 @@ export function mountItem(view, ctx) {
     drawn = shownFromStore(state, id, detail);
     view.querySelector('.screen-title').textContent = detail.item.title;
     panels.update(detail);
-    content.replaceChildren(...renderDetail(ctx, detail, state, { reload: loader.reload, artifacts, panels }).filter(Boolean));
+    const heading = renderDetail(ctx, detail, state, { reload: loader.reload, artifacts, panels }).filter(Boolean);
+    for (const child of [...content.children]) if (child !== panels.element) child.remove();
+    content.prepend(...heading);
+    if (!panels.element.isConnected) content.append(panels.element);
   };
   const loader = itemLoader(ctx, id, (fresh) => { detail = fresh; render(); }, (err) => {
     content.replaceChildren(err.code === 'not_found'
@@ -159,7 +162,6 @@ function renderDetail(ctx, detail, state, { reload, artifacts, panels }) {
       h('p', { class: 'item-hero-meta', text: [repoName ?? 'no repository', summary?.switched_to ?? item.pipeline, shortId(item.id)].join(' · ') })),
     outcomeCallout(detail),
     itemActions(ctx, detail, { reload, repoName }),
-    panels.element,
   ];
 }
 

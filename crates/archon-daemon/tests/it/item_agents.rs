@@ -74,7 +74,7 @@ async fn never_queries_another_item_and_rejects_missing_items() {
     let states = read(&h, &first.id).await.unwrap();
     assert_eq!(states.agents.len(), 1);
     assert_eq!(states.agents[0].agent, own);
-    assert_eq!(h.backend.descendant_checks(), [root.clone()]);
+    assert_eq!(h.backend.descendant_checks(), std::slice::from_ref(&root));
     assert!(matches!(
         read(&h, &QueueItemId::new()).await,
         Err(ArchonError::NotFound(_))

@@ -29,8 +29,10 @@ remain direct controls. Chat's Commands sheet exposes the host's operator
 commands, including its existing confirmations and observer-role refusals.
 
 Graph displays `task_graph` dependencies, stack edges and initiatives, with
-repository, initiative and text filters. The result cap (500 items) is stated
-when reached. Edges point from prerequisite to dependent; kinds and satisfaction
+repository, initiative, text and history filters. Active work takes priority
+within the 500-item cap, followed by work finished in the last seven days.
+Choose Active only or All history to change that window. When the cap is
+reached, the view states that items and connections were omitted. Edges point from prerequisite to dependent; kinds and satisfaction
 are labelled as well as styled. Phone layouts flow vertically. Drag/pinch or
 use the zoom controls; Tab reaches nodes, Enter opens details, arrows pan and
 `+`, `-`, `0` zoom or fit. The default camera preserves readable text; Fit shows

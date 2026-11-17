@@ -99,7 +99,9 @@ export function paintEdges(element, graph) {
       'data-from': edge.from, 'data-to': edge.to, 'data-satisfied': edge.satisfied === undefined ? 'unknown' : String(edge.satisfied) });
     group.append(svgElement('title', {}, `${from.title} → ${to.title}: ${label}`),
       svgElement('path', { d: shape.path }), svgElement('polygon', { points: shape.arrow }),
-      svgElement('text', { x: shape.x, y: shape.y, class: 'graph-edge-label' }, clip(edge.kind, 22)));
+      svgElement('text', { x: shape.x, y: shape.y, class: 'graph-edge-label' }, clip(edge.kind, 22)),
+      svgElement('text', { x: shape.x, y: shape.y + 13, class: 'graph-edge-label graph-edge-status' },
+        edge.satisfied === undefined ? '' : edge.satisfied ? 'Satisfied' : 'Unsatisfied'));
     fragment.append(group);
   }
   element.replaceChildren(fragment);
@@ -129,7 +131,7 @@ function parallelOffsets(edges) {
   }
   const offsets = new Array(edges.length).fill(0);
   for (const indices of groups.values()) {
-    const step = Math.min(18, 56 / Math.max(1, indices.length - 1));
+    const step = Math.min(32, 56 / Math.max(1, indices.length - 1));
     indices.forEach((index, position) => { offsets[index] = (position - (indices.length - 1) / 2) * step; });
   }
   return offsets;

@@ -41,7 +41,7 @@ export function openSheet({ title, content, onClose = () => {}, size = 'auto' })
       await settled(panel);
       layer.remove();
       setShellInert(root.childElementCount > 0);
-      if (opener instanceof HTMLElement && opener.isConnected) opener.focus({ preventScroll: true });
+      if (opener instanceof Element && opener.isConnected && typeof opener.focus === 'function') opener.focus({ preventScroll: true });
       onClose();
     })();
     return closing;

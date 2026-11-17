@@ -7,7 +7,7 @@
 ### Changed
 
 - Refurbished the remote web app with a graphite light/dark workspace, a persistent
-  phone navigation bar and desktop rail, clearer queue cards, larger typography,
+  phone navigation bar and desktop rail, clearer queue cards, stronger type hierarchy,
   purposeful motion and a new overview with decisions, activity and daily spend.
 - Added dependency, stack and initiative graphs, pipeline work graphs with attempts,
   fan-out slots and gates, and agent trees with model, effort, lifecycle and cost.

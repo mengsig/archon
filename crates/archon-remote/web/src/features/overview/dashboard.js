@@ -4,6 +4,7 @@ import { liveQuery } from '../../core/live-query.js';
 import { usd, isTerminal, githubRefUrl } from '../../core/format.js';
 import { itemRow, repoNames } from '../queue/item-row.js';
 import { openNewItem } from '../new-item/new-item.js';
+import { readTaskGraph } from '../graph/data.js';
 import { spendChart } from './spend.js';
 
 function panel(title, link = null) {
@@ -50,7 +51,7 @@ export function dashboardInsights(ctx) {
   const cost = liveQuery(ctx, () => ctx.cmds.costReport('day'), ({ data, error }) => {
     chart.replaceChildren(error ? errorNote(error, () => cost.refresh()) : spendChart(data));
   });
-  const graph = liveQuery(ctx, () => ctx.cmds.taskGraph({ include_terminal_since: '1970-01-01T00:00:00Z' }), ({ data, error }) => {
+  const graph = liveQuery(ctx, () => readTaskGraph(ctx.cmds), ({ data, error }) => {
     links.replaceChildren(...(error ? [errorNote(error, () => graph.refresh())] : workspaceLinks(data, ctx.store.get().repos)));
   });
   return { spend, relationships, destroy() { cost.destroy(); graph.destroy(); } };
@@ -72,6 +73,6 @@ function workspaceLinks(data, repos) {
       h('strong', { text: node.title }), h('small', { text: `Pull request #${node.pr.number} · ${names.get(node.repo) ?? 'Repository'} ↗` })));
   }
   if (!links.length) links.push(emptyState({ title: 'Work is taking shape', text: 'Initiatives and pull requests appear here as your work progresses.' }));
-  if (data.truncated) links.push(h('p', { class: 'section-foot', text: 'Showing relationships from the first 500 items.' }));
+  if (data.truncated) links.push(h('p', { class: 'section-foot', text: 'Active work is prioritised within 500 items; some relationships are omitted.' }));
   return links;
 }

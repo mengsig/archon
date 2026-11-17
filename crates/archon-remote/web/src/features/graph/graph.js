@@ -4,31 +4,31 @@ import { createGraph } from '../../ui/graph/graph.js';
 import { liveQuery } from '../../core/live-query.js';
 import { stateLook, usd, githubRefUrl } from '../../core/format.js';
 import { taskModel } from './model.js';
+import { readTaskGraph } from './data.js';
 
 export function mountGraph(view, ctx) {
   const status = h('div', { role: 'status', class: 'graph-intro' });
   const errors = h('div');
   const detail = h('aside', { class: 'graph-detail', hidden: true, 'aria-label': 'Selected item' });
   const graph = createGraph({ label: 'Item dependencies', onSelect: (node) => showItem(detail, node.item) });
-  const filters = { repo: '', initiative: '', query: '' };
+  const filters = { repo: '', initiative: '', query: '', history: 'recent' };
   let data = null;
   const redraw = () => {
     if (!data) return;
     const model = taskModel(data, ctx.store.get().repos, filters);
     graph.update(model);
     status.replaceChildren(h('span', { text: `${model.nodes.length} items · ${model.edges.length} connections` }),
-      h('span', { text: data.truncated ? 'Showing the first 500 items. Filter by repository to see more.' : 'Live from your workspace' }));
+      h('span', { text: data.truncated ? '500-item limit: some items and connections omitted. Active work is prioritised; narrow filters to see more.' : 'Active work first · live from your workspace' }));
     if (!model.nodes.length) status.append(emptyState({ title: 'No connected work to show', text: 'Queue an item or clear your filters.' }));
   };
-  const controls = graphFilters(ctx, filters, () => { detail.hidden = true; resource.refresh(); redraw(); });
+  const controls = graphFilters(ctx, filters, (reload) => { detail.hidden = true; if (reload) resource.refresh(); redraw(); });
   view.append(screenHeader({ title: 'Graph' }), controls.element, status, errors,
     h('div', { class: 'graph-workspace' }, graph.element, detail),
     h('p', { class: 'section-foot', text: 'Arrows point from prerequisite to dependent. Drag to pan, pinch to zoom, or use the graph controls. Filters show only connections between visible items.' }));
-  const resource = liveQuery(ctx, () => ctx.cmds.taskGraph({
-    include_terminal_since: '1970-01-01T00:00:00Z',
+  const resource = liveQuery(ctx, () => readTaskGraph(ctx.cmds, {
     ...(filters.repo ? { repos: [filters.repo] } : {}),
     ...(filters.initiative ? { initiative: filters.initiative } : {}),
-  }), (result) => {
+  }, filters.history), (result) => {
     errors.replaceChildren(...(result.error ? [errorNote(result.error, () => resource.refresh())] : []));
     if (result.data) { data = result.data; controls.initiatives(data.initiatives ?? []); redraw(); }
   });
@@ -41,9 +41,12 @@ function graphFilters(ctx, filters, change) {
   const repo = h('select', { class: 'select-chip', 'aria-label': 'Graph repository' });
   const initiative = h('select', { class: 'select-chip', 'aria-label': 'Graph initiative' });
   const search = h('input', { class: 'search-input', type: 'search', placeholder: 'Find an item', 'aria-label': 'Search graph' });
-  search.addEventListener('input', () => { filters.query = search.value; change(); });
-  for (const [key, control] of [['repo', repo], ['initiative', initiative]]) {
-    control.addEventListener('change', () => { filters[key] = control.value; change(); });
+  search.addEventListener('input', () => { filters.query = search.value; change(false); });
+  const history = h('select', { class: 'select-chip', 'aria-label': 'Graph history' },
+    [['active', 'Active only'], ['recent', 'Active + last 7 days'], ['all', 'All history · active first']].map(([value, text]) => h('option', { value, text })));
+  history.value = filters.history;
+  for (const [key, control] of [['repo', repo], ['initiative', initiative], ['history', history]]) {
+    control.addEventListener('change', () => { filters[key] = control.value; change(true); });
   }
   const options = (select, values, chosen, label) => {
     select.replaceChildren(h('option', { value: '', text: label }), ...values.map(([value, text]) => h('option', { value, text })));
@@ -51,7 +54,7 @@ function graphFilters(ctx, filters, change) {
   };
   options(initiative, [], '', 'All initiatives');
   return {
-    element: h('div', { class: 'graph-filters' }, h('label', { class: 'search' }, search), repo, initiative),
+    element: h('div', { class: 'graph-filters' }, h('label', { class: 'search' }, search), repo, initiative, history),
     repos: () => options(repo, (ctx.store.get().repos ?? []).map((r) => [r.id, r.name]), filters.repo, 'All repositories'),
     initiatives: (values) => options(initiative, values.map((i) => [i.id, i.title]), filters.initiative, 'All initiatives'),
   };

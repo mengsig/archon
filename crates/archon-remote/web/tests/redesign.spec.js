@@ -86,6 +86,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
         await openApp(page, fixture, '#/graph');
         const edge = page.locator('.graph-edge[data-kind="stacked_on"]');
         await expect(edge).toHaveAttribute('data-satisfied', 'false');
+        await expect(edge.locator('.graph-edge-status')).toHaveText('Unsatisfied');
         const initiative = page.locator('.graph-edge[data-kind="initiative_after"]');
         await expect(initiative).toHaveCount(1);
         expect(await edge.locator('path').getAttribute('d')).not.toBe(await initiative.locator('path').getAttribute('d'));
@@ -94,7 +95,32 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
         first.state = 'succeeded';
         await notify(fixture.archond, 'progress', 'Prerequisite completed.', first.id);
         await expect(edge).toHaveAttribute('data-satisfied', 'true');
+        await expect(edge.locator('.graph-edge-status')).toHaveText('Satisfied');
         await expect(page.locator(`.graph-node[data-node-id="${first.id}"]`)).toHaveAttribute('aria-label', /succeeded/);
+      });
+
+      test('live item updates preserve graph focus and an active pan', async ({ page, fixture }) => {
+        const base = (await fixture.archond.request({ cmd: 'get_item', item: fixture.seeded.first.id })).data;
+        const data = pipelineFixture(base);
+        await standInGraphs(page, data);
+        await openApp(page, fixture, `#/item/${base.item.id}`);
+        await page.getByRole('tab', { name: 'Work', exact: true }).click();
+        const node = page.locator('#item-work .graph-node[aria-label^="build · Attempt"]');
+        await node.focus();
+        data.detail.stages[1].cost_usd = 1.75;
+        await notify(fixture.archond, 'progress', 'Stage usage updated.', base.item.id);
+        await expect(node).toHaveAttribute('aria-label', /\$1.75/);
+        await expect(node).toBeFocused();
+        const box = await node.boundingBox();
+        await page.mouse.move(box.x + 40, box.y + 40);
+        await page.mouse.down();
+        await page.mouse.move(box.x + 60, box.y + 40);
+        expect(await node.evaluate((el) => el.hasPointerCapture(1))).toBe(true);
+        data.detail.stages[1].cost_usd = 2;
+        await notify(fixture.archond, 'progress', 'Stage usage updated again.', base.item.id);
+        await expect(node).toHaveAttribute('aria-label', /\$2.00/);
+        expect(await node.evaluate((el) => el.hasPointerCapture(1))).toBe(true);
+        await page.mouse.up();
       });
 
       test('work and agent graphs show attempts, slots, gates, model, cost and live descendants', async ({ page, fixture }) => {
@@ -112,6 +138,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
         await expect(page.getByRole('dialog', { name: 'build', exact: true })).toContainText('Verified stage output');
         expect(data.requests.find((request) => request.cmd === 'get_stage').run).toBe(data.plan.run);
         await page.getByRole('button', { name: 'Close', exact: true }).click();
+        await expect(stage).toBeFocused();
         await page.getByRole('tab', { name: 'Agents', exact: true }).click();
         const child = page.locator('#item-agents .graph-node[aria-label^="agt_reviewer ·"]');
         await expect(child).toHaveAttribute('aria-label', /fable-5.2 · high/);

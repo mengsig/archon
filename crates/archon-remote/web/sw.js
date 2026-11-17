@@ -31,6 +31,7 @@ const SHELL = [
   `${BASE}/src/features/chat/entries.js`,
   `${BASE}/src/features/chat/outbox.js`,
   `${BASE}/src/features/commands/commands.js`,
+  `${BASE}/src/features/graph/data.js`,
   `${BASE}/src/features/graph/graph.js`,
   `${BASE}/src/features/graph/model.js`,
   `${BASE}/src/features/inbox/inbox.js`,

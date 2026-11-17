@@ -64,3 +64,35 @@ test('a 500-node graph retains readable nodes and pans without rebuilding them',
   } finally { await context.close(); await fixture.stop(); }
   expect(problems).toEqual([]);
 });
+
+test('current work stays visible beyond 500 finished items, including on overview', async ({ browser }) => {
+  const fixture = await startListenerFixture({ seed: false });
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await context.newPage();
+  const problems = guardConsole(page);
+  try {
+    await page.routeWebSocket(/\/ws$/, (ws) => {
+      const server = ws.connectToServer();
+      ws.onMessage((message) => {
+        const frame = JSON.parse(message);
+        if (frame.cmd !== 'task_graph') return server.send(message);
+        const finished = Array.from({ length: 501 }, (_, i) => ({ id: `qi_old${i}`, title: `Finished ${i}`, state: 'succeeded', pipeline: 'direct', spent_usd: 1 }));
+        const current = { id: 'qi_current', title: 'Current work', state: 'running', pipeline: 'direct', spent_usd: 2,
+          pr: { host: 'github.com', repo: 'mengsig/archon', number: 901 } };
+        const all = frame.filter?.include_terminal_since ? [...finished, current] : [current];
+        ws.send(JSON.stringify({ frame: 'reply', id: frame.req, result: { Ok: { reply: 'task_graph', data: {
+          nodes: all.slice(0, frame.limit), edges: [], initiatives: [], truncated: all.length > frame.limit,
+        } } } }));
+      });
+    });
+    await openApp(page, fixture, '#/graph');
+    await expect(page.locator('.graph-node[data-node-id="qi_current"]')).toHaveCount(1);
+    await expect(page.locator('.graph-intro')).toContainText('some items and connections omitted');
+    await page.getByRole('combobox', { name: 'Graph history' }).selectOption('active');
+    await expect(page.locator('.graph-node')).toHaveCount(1);
+    await expect(page.locator('.graph-node')).toHaveAttribute('aria-label', /Current work/);
+    await page.goto(`${fixture.baseURL}/#/overview`);
+    await expect(page.getByRole('link', { name: /Current work Pull request/ })).toBeVisible();
+  } finally { await context.close(); await fixture.stop(); }
+  expect(problems).toEqual([]);
+});

@@ -22,14 +22,62 @@ use rusqlite::{Connection, OptionalExtension, Row, params_from_iter};
 use super::Store;
 use super::codec::{SqlContext, end_read_tx, from_json, priority_rank, read_tx, sql_limit, ts};
 
-/// The connected component of `?1` over every edge kind, both directions.
-const COMPONENT_CTE: &str = "WITH RECURSIVE component (id) AS (
+/// `(owner, item)` for each item queued onto a pull request: the owner is the
+/// earliest item (then lowest id) with a delivered link to that pull request
+/// that is not itself queued onto it, or NULL. Onto URLs are stored canonical,
+/// `https://<host>/<owner>/<name>/pull/<n>`: `h` is the slash after the host
+/// and `p` the end of `/pull/`, so host, repo and number use the link index.
+macro_rules! onto_links {
+    () => {
+        "SELECT (SELECT l.item FROM github_links l
+                 WHERE l.host = substr(o.pr, 9, o.h - 1)
+                   AND l.repo = substr(o.pr, o.h + 9, o.p - o.h - 14)
+                   AND l.number = CAST(substr(o.pr, o.p + 1) AS INTEGER)
+                   AND 'https://' || l.host || '/' || l.repo || '/pull/' || l.number = o.pr
+                   AND l.kind = 'pull_request' AND l.relation = 'delivered' AND l.item <> o.id
+                   AND NOT EXISTS (
+                       SELECT 1 FROM items w
+                       WHERE w.id = l.item AND lower(json_extract(w.data, '$.onto.pr')) = o.pr)
+                 ORDER BY l.created_at, l.item LIMIT 1),
+                o.id
+         FROM (SELECT id, pr, instr(substr(pr, 9), '/') AS h,
+                      length(rtrim(pr, '0123456789')) AS p
+               FROM (SELECT id, lower(json_extract(data, '$.onto.pr')) AS pr FROM items
+                     WHERE json_type(data, '$.onto.pr') = 'text')) o"
+    };
+}
+
+/// The component's root and its dependency and stack steps, both directions.
+macro_rules! component_steps {
+    () => {
+        "
          SELECT ?1
          UNION SELECT d.depends_on FROM item_deps d JOIN component c ON d.item = c.id
          UNION SELECT d.item FROM item_deps d JOIN component c ON d.depends_on = c.id
          UNION SELECT s.parent_item FROM stacks s JOIN component c ON s.item = c.id
-         UNION SELECT s.item FROM stacks s JOIN component c ON s.parent_item = c.id
-     ) ";
+         UNION SELECT s.item FROM stacks s JOIN component c ON s.parent_item = c.id"
+    };
+}
+
+/// The connected component of `?1` over every edge kind, both directions.
+const COMPONENT_CTE: &str = concat!(
+    "WITH RECURSIVE onto_link (owner, item) AS MATERIALIZED (",
+    onto_links!(),
+    "), component (id) AS (",
+    component_steps!(),
+    "
+         UNION SELECT k.owner FROM onto_link k JOIN component c ON k.item = c.id
+               WHERE k.owner IS NOT NULL
+         UNION SELECT k.item FROM onto_link k JOIN component c ON k.owner = c.id
+     ) "
+);
+
+/// [`COMPONENT_CTE`] without onto links, for a client that never sees them.
+const COMPONENT_WITHOUT_ONTO_CTE: &str = concat!(
+    "WITH RECURSIVE component (id) AS (",
+    component_steps!(),
+    ") "
+);
 
 const TERMINAL: &str = "('succeeded', 'failed', 'cancelled')";
 
@@ -110,10 +158,19 @@ fn check_filter(conn: &Connection, filter: &TaskFilter) -> Result<(), ArchonErro
         ("repos", filter.repos.as_ref().map(Vec::len)),
         ("states", filter.states.as_ref().map(Vec::len)),
         ("pipelines", filter.pipelines.as_ref().map(Vec::len)),
+        ("ids", filter.ids.as_ref().map(Vec::len)),
     ];
     if let Some((name, _)) = lists.iter().find(|(_, len)| *len == Some(0)) {
         return Err(ArchonError::Invalid(format!(
             "filter `{name}` is empty and would match nothing; leave it out to match all"
+        )));
+    }
+    if let Some(ids) = &filter.ids
+        && ids.len() > MAX_TASK_GRAPH_LIMIT as usize
+    {
+        return Err(ArchonError::Invalid(format!(
+            "filter `ids` names {} items; a task graph holds at most {MAX_TASK_GRAPH_LIMIT}",
+            ids.len()
         )));
     }
     if let Some(item) = &filter.component_of
@@ -165,6 +222,9 @@ fn node_clauses(filter: &TaskFilter) -> (Vec<String>, Vec<Value>) {
     if let Some(pipelines) = &filter.pipelines {
         any_of("pipeline", pipelines.clone());
     }
+    if let Some(ids) = &filter.ids {
+        any_of("id", ids.iter().map(|id| id.as_str().to_owned()).collect());
+    }
     if let Some(priority) = filter.min_priority {
         clauses.push("priority >= ?".to_owned());
         args.push(Value::Integer(priority_rank(priority)));
@@ -199,7 +259,11 @@ fn select_nodes(
     let cte = match &filter.component_of {
         Some(root) => {
             args.push(Value::Text(root.as_str().to_owned()));
-            COMPONENT_CTE
+            if filter.without_onto {
+                COMPONENT_WITHOUT_ONTO_CTE
+            } else {
+                COMPONENT_CTE
+            }
         }
         None => "",
     };
@@ -441,7 +505,54 @@ fn edges_between(
             satisfied,
         });
     }
+    edges.extend(onto_edges(conn, ids, members)?);
     edges.sort_by(|a, b| (&a.from, &a.to, a.kind).cmp(&(&b.from, &b.to, b.kind)));
+    assert!(
+        edges.windows(2).all(|w| w[0] != w[1]),
+        "no edge is listed twice"
+    );
+    Ok(edges)
+}
+
+/// Edges from the owner of a pull request to each node queued onto it; see
+/// [`onto_links`] for who owns it.
+fn onto_edges(
+    conn: &Connection,
+    ids: &str,
+    members: &HashSet<&str>,
+) -> Result<Vec<TaskEdge>, ArchonError> {
+    let mut stmt = conn
+        .prepare_cached(concat!(
+            "WITH onto_link (owner, item) AS (",
+            onto_links!(),
+            ") SELECT k.owner, k.item FROM json_each(?1) n JOIN onto_link k ON k.item = n.value
+               WHERE k.owner IS NOT NULL"
+        ))
+        .ctx("read onto edges")?;
+    let rows = stmt
+        .query_map([ids], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .ctx("read onto edges")?
+        .collect::<Result<Vec<_>, _>>()
+        .ctx("read onto edge")?;
+    let mut edges = Vec::new();
+    for (owner, item) in rows {
+        assert!(members.contains(item.as_str()), "onto items are nodes");
+        assert_ne!(
+            owner, item,
+            "an item never owns the pull request it is onto"
+        );
+        if !members.contains(owner.as_str()) {
+            continue;
+        }
+        edges.push(TaskEdge {
+            from: QueueItemId::parse(&owner)?,
+            to: QueueItemId::parse(&item)?,
+            kind: TaskEdgeKind::Onto,
+            satisfied: true,
+        });
+    }
     Ok(edges)
 }
 

@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+## 1.6.2
+
+### Changed
+
+- Refurbished the remote web app with a graphite light/dark workspace, a persistent
+  phone navigation bar and desktop rail, clearer queue cards, stronger type hierarchy,
+  purposeful motion and a new overview with decisions, activity and daily spend.
+- Added dependency, stack and initiative graphs, pipeline work graphs with attempts,
+  fan-out slots and gates, and agent trees with model, effort, lifecycle and cost.
+  Graphs support keyboard, touch pan/zoom and reduced motion without dependencies.
+- Added operator commands from Chat, stage-output inspection and merge history.
+  Existing pairing, observer permissions, confirmations and strict CSP remain intact.
+- Added a bounded read-only `item_agent_states` request for actual delegated-agent
+  lifecycle and direct ledger spend; unavailable backend reads fail explicitly.
+- Protocol 24 stays 24: a client names `onto_edges` in its `hello` to be sent
+  `onto` graph edges, so a 1.6.1 client (such as a running `archon mcp`) never
+  meets an edge kind it cannot decode. Unknown edge kinds read as `other`, which
+  the schema admits too. The change stream and `changes_page` are unchanged from
+  1.6.1 for every client. `task_graph` takes an `ids` filter, which the web app
+  uses to read a merged graph's edges.
+
+### Fixed
+
+- The web app shows an observer device no control that changes Archon on any
+  screen; the listener still refuses a forced change. Overview and the item page
+  read the pause state every 5 seconds while shown, so a CLI pause or resume shows
+  without a reload, and agent trees and new items refresh from the change stream.
+- Every automatic retry in the web app (boot, busy host, reconnect, stream and
+  conversation recovery) waits a capped, jittered backoff, and never less than
+  a busy host's `Retry-After`, so tabs that failed together do not return together.
+- Graph edge labels that share endpoints no longer overlap, the selected-item panel
+  no longer prints "null", and the item Work graph fits on desktop when it opens.
+  Settings is marked as the current section, and a refused or dropped connection
+  shows a "Can't connect" state that retries with a bounded backoff.
+- A tab now settles to its WebSocket alone: idle HTTP connections give their slot
+  back after 3 seconds, and a connection beyond `max_connections` gets a `503` with
+  `Retry-After` that the app shows as "Can't connect" while it retries. `task_graph`
+  draws an `onto` edge from a pull request's owner to items queued onto it. The Inbox
+  send button is visible in both themes, labels are at least 12 px, the New item
+  submit stays in view, phone chips wrap, metric values align, chat posts sit left,
+  a shown tab refreshes at once, and the graph panel lists the item's dependencies.
+
 ## 1.6.1
 
 Released 2026-11-17.

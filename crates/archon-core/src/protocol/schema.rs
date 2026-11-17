@@ -78,6 +78,42 @@ impl schemars::transform::Transform for AlsoReads {
     }
 }
 
+/// A string enum whose `#[serde(other)]` variant reads every tag it does not
+/// name; schemars sees only that variant's own name, so this widens it.
+pub(crate) struct ReadsUnknownAs(pub &'static str);
+
+impl schemars::transform::Transform for ReadsUnknownAs {
+    fn transform(&mut self, schema: &mut schemars::Schema) {
+        let fallback = self.0;
+        let Some(Value::Array(variants)) = schema.get_mut("oneOf") else {
+            panic!("{fallback} is the fallback of a string enum with documented variants");
+        };
+        let at = variants
+            .iter()
+            .position(|v| v["const"] == fallback)
+            .unwrap_or_else(|| panic!("no `{fallback}` variant in {variants:?}"));
+        let named: Vec<Value> = variants
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != at)
+            .flat_map(|(_, v)| {
+                let listed = v["enum"].as_array().cloned().unwrap_or_default();
+                listed.into_iter().chain(v.get("const").cloned())
+            })
+            .collect();
+        assert!(
+            !named.is_empty(),
+            "{fallback} falls back from named variants"
+        );
+        let description = variants[at]["description"].clone();
+        variants[at] = json!({
+            "type": "string",
+            "not": {"enum": named},
+            "description": description,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -133,10 +169,23 @@ mod tests {
         ] {
             definition(&schema, name);
         }
-        let subjects = definition(&schema, "Change")["oneOf"]
+        let subjects: Vec<&str> = definition(&schema, "Change")["oneOf"]
             .as_array()
-            .expect("subjects");
-        assert_eq!(subjects.len(), 8, "one variant per ChangeSubject");
+            .expect("subjects")
+            .iter()
+            .filter_map(|variant| variant["properties"]["subject"]["const"].as_str())
+            .collect();
+        let expected = [
+            "item",
+            "dependency",
+            "run",
+            "stage",
+            "gate",
+            "question",
+            "initiative",
+            "link",
+        ];
+        assert_eq!(subjects, expected, "one variant per ChangeSubject");
     }
 
     /// A model is accepted as `provider/model` or as `{provider, model}`, so
@@ -274,5 +323,48 @@ mod tests {
             assert!(text.contains(&format!("\"const\": \"{cmd}\"")), "{cmd}");
         }
         assert!(text.contains("\"const\": \"change\""), "the change frame");
+    }
+
+    /// Whether `value` is valid against a string enum's definition, with
+    /// `oneOf` meaning exactly one branch: the shapes these enums take.
+    fn string_enum_admits(def: &Value, value: &Value) -> bool {
+        let Some(branches) = def["oneOf"].as_array() else {
+            return branch_admits(def, value);
+        };
+        branches.iter().filter(|b| branch_admits(b, value)).count() == 1
+    }
+
+    fn branch_admits(branch: &Value, value: &Value) -> bool {
+        let known = ["type", "enum", "const", "not", "description"];
+        let keys = branch.as_object().expect("a branch is an object").keys();
+        assert!(
+            keys.clone().all(|k| known.contains(&k.as_str())),
+            "{branch}"
+        );
+        let listed = |e: &Value| e.as_array().is_some_and(|names| names.contains(value));
+        value.is_string()
+            && branch.get("type").is_none_or(|t| t == "string")
+            && branch.get("enum").is_none_or(listed)
+            && branch.get("const").is_none_or(|c| c == value)
+            && branch.get("not").is_none_or(|n| !branch_admits(n, value))
+    }
+
+    /// An edge kind a newer archond adds decodes as `other`, so the schema
+    /// admits it as well; every named kind matches exactly one branch.
+    #[test]
+    fn the_schema_admits_the_edge_kinds_serde_reads_as_other() {
+        let schema = schema();
+        let kinds = definition(&schema, "TaskEdgeKind");
+        for tag in ["some_later_kind", "other", "later"] {
+            let kind: super::super::graph::TaskEdgeKind =
+                serde_json::from_value(json!(tag)).expect("an unknown kind decodes");
+            assert_eq!(kind, super::super::graph::TaskEdgeKind::Other);
+            assert!(string_enum_admits(kinds, &json!(tag)), "{tag}: {kinds}");
+        }
+        for tag in ["depends_on", "initiative_after", "stacked_on", "onto"] {
+            assert!(string_enum_admits(kinds, &json!(tag)), "{tag}: {kinds}");
+        }
+        assert!(!string_enum_admits(kinds, &json!(3)), "a kind is a string");
+        assert!(serde_json::from_value::<super::super::graph::TaskEdgeKind>(json!(3)).is_err());
     }
 }

@@ -6,9 +6,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use archon_core::error::ArchonError;
+use archon_core::id::QueueItemId;
+use archon_core::protocol::graph::TaskEdgeKind;
 use archon_core::protocol::{
-    DeviceRole, MIN_WEB_PROTOCOL_VERSION, PROTOCOL_VERSION, Reply, Request, ServerFrame,
-    WelcomeDevice, feature,
+    Change, ChangeSubject, DeviceRole, MIN_WEB_PROTOCOL_VERSION, PROTOCOL_VERSION, QueueStateKind,
+    Reply, Request, ServerFrame, TaskEdge, TaskGraph, WelcomeDevice, client_feature, feature,
 };
 use archon_core::remote::{RemoteChange, RemoteConfig};
 use archon_remote::{Backend, ChangeSubscription, FeedSubscription, Remote};
@@ -40,7 +42,10 @@ impl Backend for FakeArchond {
         );
         let name = archon_remote::allow::command_name(&request);
         self.asked.lock().unwrap().push(name);
-        Ok(Reply::Ok)
+        match request {
+            Request::TaskGraph { .. } => Ok(Reply::TaskGraph(Box::new(onto_graph()))),
+            _ => Ok(Reply::Ok),
+        }
     }
 
     fn features(&self) -> Vec<&'static str> {
@@ -58,7 +63,8 @@ impl Backend for FakeArchond {
         let _ = frames.send(subscribed).await;
     }
 
-    /// Opens, then ends at once, as a lagging or refused stream does.
+    /// Opens, then ends at once, as a lagging or refused stream does; after
+    /// [`STREAMED_AFTER`] it first sends [`two_changes`].
     async fn changes(&self, subscription: ChangeSubscription, frames: mpsc::Sender<ServerFrame>) {
         let subscribed = ServerFrame::Reply {
             id: subscription.request,
@@ -68,6 +74,50 @@ impl Backend for FakeArchond {
             }),
         };
         let _ = frames.send(subscribed).await;
+        if subscription.after != Some(STREAMED_AFTER) {
+            return;
+        }
+        for change in two_changes() {
+            let frame = ServerFrame::Change {
+                sub: subscription.id,
+                change,
+            };
+            let _ = frames.send(frame).await;
+        }
+    }
+}
+
+/// The cursor after which [`FakeArchond`] streams [`two_changes`].
+const STREAMED_AFTER: u64 = 41;
+
+fn two_changes() -> [Change; 2] {
+    let at = archon_core::now();
+    let item = |seq| Change {
+        seq,
+        at,
+        subject: ChangeSubject::Item {
+            item: QueueItemId::new(),
+            state: QueueStateKind::Queued,
+            stage: None,
+            waiting_reason: None,
+        },
+    };
+    [item(STREAMED_AFTER + 1), item(STREAMED_AFTER + 2)]
+}
+
+fn onto_graph() -> TaskGraph {
+    let edge = |kind| TaskEdge {
+        from: QueueItemId::new(),
+        to: QueueItemId::new(),
+        kind,
+        satisfied: true,
+    };
+    TaskGraph {
+        nodes: Vec::new(),
+        edges: vec![edge(TaskEdgeKind::DependsOn), edge(TaskEdgeKind::Onto)],
+        initiatives: Vec::new(),
+        as_of: 1,
+        truncated: false,
     }
 }
 
@@ -173,8 +223,15 @@ impl Listener {
     }
 
     async fn socket(&self, cookie: &str) -> Socket {
+        self.socket_declaring(cookie, &[]).await
+    }
+
+    /// A welcomed socket whose hello declared `features`.
+    async fn socket_declaring(&self, cookie: &str, features: &[&str]) -> Socket {
         let mut socket = self.upgrade(cookie).await;
-        let welcome = exchange(&mut socket, hello(PROTOCOL_VERSION)).await;
+        let mut greeting = hello(PROTOCOL_VERSION);
+        greeting["features"] = serde_json::json!(features);
+        let welcome = exchange(&mut socket, greeting).await;
         assert_eq!(welcome["result"]["Ok"]["reply"], "welcome", "{welcome}");
         socket
     }
@@ -861,4 +918,357 @@ async fn an_ended_change_subscription_frees_its_slot() {
         (1..=8).collect::<Vec<u64>>(),
         "fresh ids, past the limit of 4"
     );
+}
+
+/// A web tab of the last release, which declares no feature, is sent no
+/// onto edge; this release's app is sent it. Both get the same changes.
+#[tokio::test]
+async fn a_session_sends_later_variants_only_to_a_hello_that_declares_them() {
+    let listener = Listener::start().await;
+    let cookie = listener.pair().await;
+    let mut old = listener.socket(&cookie).await;
+    let mut new = listener
+        .socket_declaring(&cookie, &client_feature::ALL)
+        .await;
+    let subscribe =
+        serde_json::json!({"req": 2, "cmd": "subscribe_changes", "after": STREAMED_AFTER});
+    let opened = exchange(&mut old, subscribe.clone()).await;
+    assert_eq!(opened["result"]["Ok"]["reply"], "subscribed", "{opened}");
+    exchange(&mut new, subscribe).await;
+    for seq in [STREAMED_AFTER + 1, STREAMED_AFTER + 2] {
+        let (was, now) = (next_frame(&mut old).await, next_frame(&mut new).await);
+        assert_eq!(was["frame"], "change", "{was}");
+        assert_eq!(was["change"]["seq"], seq, "gapless: {was}");
+        assert_eq!(
+            (&was["change"]["seq"], &was["change"]["subject"]),
+            (&now["change"]["seq"], &now["change"]["subject"]),
+            "one stream for every client"
+        );
+    }
+    let read = serde_json::json!({"req": 3, "cmd": "task_graph"});
+    let kinds = |reply: &serde_json::Value| -> Vec<String> {
+        let edges = reply["result"]["Ok"]["data"]["edges"]
+            .as_array()
+            .unwrap_or_else(|| panic!("edges: {reply}"));
+        edges
+            .iter()
+            .map(|e| e["kind"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(
+        kinds(&exchange(&mut old, read.clone()).await),
+        ["depends_on"]
+    );
+    assert_eq!(
+        kinds(&exchange(&mut new, read).await),
+        ["depends_on", "onto"]
+    );
+}
+
+#[tokio::test]
+async fn a_connection_beyond_the_cap_is_answered_503_and_a_freed_slot_serves_again() {
+    let config = RemoteConfig {
+        max_connections: 2,
+        ..RemoteConfig::default()
+    };
+    let listener = Listener::start_with(config, None).await;
+    let host = listener.host();
+    let held = [
+        TcpStream::connect(("127.0.0.1", listener.port))
+            .await
+            .unwrap(),
+        TcpStream::connect(("127.0.0.1", listener.port))
+            .await
+            .unwrap(),
+    ];
+    // The accept loop takes both slots before it reads the next connection.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let page = raw(listener.port, "GET", "/", &[("Host", host.as_str())], "").await;
+    assert_eq!(page.status, 503, "{}", page.body);
+    assert!(
+        page.body.contains("Can\u{2019}t connect to Archon"),
+        "{}",
+        page.body
+    );
+    assert!(
+        page.body.contains("http-equiv=\"refresh\""),
+        "the page retries without script: {}",
+        page.body
+    );
+    let csp = page.header("content-security-policy").unwrap_or_default();
+    assert!(csp.contains("default-src 'none'"), "{csp}");
+    let api = raw(
+        listener.port,
+        "GET",
+        "/api/health",
+        &[("Host", host.as_str())],
+        "",
+    )
+    .await;
+    assert_eq!(api.status, 503, "{}", api.body);
+    assert!(api.body.contains("\"code\":\"busy\""), "{}", api.body);
+    drop(held);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let health = listener.request("GET", "/api/health", &[], "").await;
+    assert_eq!(
+        health.status, 200,
+        "a freed slot serves again: {}",
+        health.body
+    );
+}
+
+#[tokio::test]
+async fn an_idle_keep_alive_connection_gives_its_slot_back() {
+    let config = RemoteConfig {
+        max_connections: 1,
+        ..RemoteConfig::default()
+    };
+    let listener = Listener::start_with(config, None).await;
+    let mut idle = TcpStream::connect(("127.0.0.1", listener.port))
+        .await
+        .unwrap();
+    let head = format!(
+        "GET /api/health HTTP/1.1\r\nHost: {}\r\n\r\n",
+        listener.host()
+    );
+    idle.write_all(head.as_bytes()).await.unwrap();
+    let mut first = [0u8; 12];
+    idle.read_exact(&mut first).await.unwrap();
+    assert_eq!(
+        &first, b"HTTP/1.1 200",
+        "the kept-alive connection was served"
+    );
+    // Idle past the 3 s head timeout, the server closes it and frees the only slot.
+    let mut rest = Vec::new();
+    tokio::time::timeout(Duration::from_secs(5), idle.read_to_end(&mut rest))
+        .await
+        .expect("the server closes an idle keep-alive connection")
+        .unwrap();
+    let health = listener.request("GET", "/api/health", &[], "").await;
+    assert_eq!(health.status, 200, "{}", health.body);
+}
+
+/// Mirrors of the listener's refusal limits and the busy page's backoff.
+const MAX_REFUSALS: usize = 64;
+const REFUSAL_HEAD_TIMEOUT: Duration = Duration::from_secs(2);
+const REFUSAL_LIFETIME: Duration = Duration::from_secs(4);
+const BUSY_BASES: [u64; 6] = [2, 4, 8, 16, 20, 20];
+
+/// A connection that keeps its slot by requesting again before the idle
+/// timeout; dropping it ends the task and frees the slot.
+struct Held(tokio::task::JoinHandle<()>);
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+async fn hold_slot(port: u16, host: String) -> Held {
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let head = format!("GET /api/health HTTP/1.1\r\nHost: {host}\r\n\r\n");
+    Held(tokio::spawn(async move {
+        let mut buf = [0u8; 4096];
+        loop {
+            stream.write_all(head.as_bytes()).await.unwrap();
+            let read = stream.read(&mut buf).await.unwrap();
+            assert!(read > 0, "the held connection stays open");
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }))
+}
+
+/// A one-slot listener whose only slot is held.
+async fn saturated() -> (Listener, Held) {
+    let config = RemoteConfig {
+        max_connections: 1,
+        ..RemoteConfig::default()
+    };
+    let listener = Listener::start_with(config, None).await;
+    let held = hold_slot(listener.port, listener.host()).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    (listener, held)
+}
+
+async fn open_idle(port: u16, count: usize) -> Vec<TcpStream> {
+    let mut streams = Vec::with_capacity(count);
+    for _ in 0..count {
+        streams.push(TcpStream::connect(("127.0.0.1", port)).await.unwrap());
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    streams
+}
+
+/// Everything the server sends until it closes, or `None` if it has not
+/// closed within `within`. A reset counts as closed.
+async fn read_until_closed(stream: &mut TcpStream, within: Duration) -> Option<Vec<u8>> {
+    let mut bytes = Vec::new();
+    match tokio::time::timeout(within, stream.read_to_end(&mut bytes)).await {
+        Ok(_) => Some(bytes),
+        Err(_) => None,
+    }
+}
+
+async fn status_of_new_connection(listener: &Listener) -> u16 {
+    let host = listener.host();
+    raw(listener.port, "GET", "/", &[("Host", host.as_str())], "")
+        .await
+        .status
+}
+
+#[tokio::test]
+async fn refusals_beyond_the_ceiling_are_dropped_unanswered() {
+    let (listener, _held) = saturated().await;
+    let _refusals = open_idle(listener.port, MAX_REFUSALS).await;
+    let mut extra = TcpStream::connect(("127.0.0.1", listener.port))
+        .await
+        .unwrap();
+    let head = format!("GET / HTTP/1.1\r\nHost: {}\r\n\r\n", listener.host());
+    let _ = extra.write_all(head.as_bytes()).await;
+    let bytes = read_until_closed(&mut extra, Duration::from_millis(1500))
+        .await
+        .expect("a connection past the ceiling is closed at once");
+    assert!(
+        bytes.is_empty(),
+        "dropped without a 503: {}",
+        String::from_utf8_lossy(&bytes)
+    );
+}
+
+#[tokio::test]
+async fn an_idle_refused_connection_is_closed_after_the_head_timeout() {
+    let (listener, _held) = saturated().await;
+    let mut idle = TcpStream::connect(("127.0.0.1", listener.port))
+        .await
+        .unwrap();
+    let started = tokio::time::Instant::now();
+    let closed = read_until_closed(&mut idle, REFUSAL_HEAD_TIMEOUT + Duration::from_secs(2)).await;
+    let elapsed = started.elapsed();
+    assert!(closed.is_some(), "the server closes an idle refusal");
+    assert!(
+        elapsed >= REFUSAL_HEAD_TIMEOUT - Duration::from_millis(500),
+        "not closed before its head timeout: {elapsed:?}"
+    );
+    assert!(elapsed < REFUSAL_LIFETIME, "closed in time: {elapsed:?}");
+}
+
+/// A refusal whose body never comes, and one whose head never ends, both
+/// close and give their permits back. The lifetime itself, for an answer the
+/// client never reads, is pinned by the listener's own unit test.
+#[tokio::test]
+async fn a_stalled_or_trickled_refusal_is_closed_and_gives_its_permit_back() {
+    let (listener, _held) = saturated().await;
+    let host = listener.host();
+    let mut unread = TcpStream::connect(("127.0.0.1", listener.port))
+        .await
+        .unwrap();
+    let promised = format!("POST / HTTP/1.1\r\nHost: {host}\r\nContent-Length: 100\r\n\r\n");
+    unread.write_all(promised.as_bytes()).await.unwrap();
+    let mut trickle = TcpStream::connect(("127.0.0.1", listener.port))
+        .await
+        .unwrap();
+    let started = tokio::time::Instant::now();
+    while started.elapsed() < REFUSAL_LIFETIME + Duration::from_millis(500) {
+        if trickle.write_all(b"X").await.is_err() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    let stalled = read_until_closed(&mut unread, Duration::from_millis(500)).await;
+    assert!(stalled.is_some(), "the unread refusal was closed");
+    let trickled = read_until_closed(&mut trickle, Duration::from_millis(500)).await;
+    assert!(trickled.is_some(), "the trickled refusal was closed");
+    assert_eq!(
+        status_of_new_connection(&listener).await,
+        503,
+        "the permits came back"
+    );
+}
+
+#[tokio::test]
+async fn refusals_recover_after_the_idle_ones_expire_and_a_freed_slot_serves() {
+    let (listener, held) = saturated().await;
+    let idle = open_idle(listener.port, MAX_REFUSALS).await;
+    tokio::time::sleep(REFUSAL_LIFETIME + Duration::from_millis(500)).await;
+    assert_eq!(
+        status_of_new_connection(&listener).await,
+        503,
+        "a refusal is answered again once the idle ones expired"
+    );
+    drop((idle, held));
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(status_of_new_connection(&listener).await, 200);
+}
+
+/// The wait and the next URL from a page that refreshes itself.
+fn refresh_of(page: &Response) -> Option<(u64, String)> {
+    let marker = "http-equiv=\"refresh\" content=\"";
+    let rest = &page.body[page.body.find(marker)? + marker.len()..];
+    let (wait, rest) = rest.split_once("; url=")?;
+    let url = rest.split_once('"')?.0;
+    Some((wait.parse().unwrap(), url.to_owned()))
+}
+
+async fn busy_page_at(listener: &Listener, path: &str) -> Response {
+    let host = listener.host();
+    let page = raw(listener.port, "GET", path, &[("Host", host.as_str())], "").await;
+    assert_eq!(page.status, 503, "{}", page.body);
+    page
+}
+
+#[tokio::test]
+async fn the_busy_page_backs_off_with_jitter_and_stops_at_its_cap() {
+    let (listener, held) = saturated().await;
+    let mut path = "/".to_owned();
+    for (attempt, base) in BUSY_BASES.iter().enumerate() {
+        let page = busy_page_at(&listener, &path).await;
+        let (wait, next) = refresh_of(&page).expect("the page still retries");
+        assert!(
+            (*base..=base + base / 2).contains(&wait),
+            "attempt {attempt}: {wait}s outside {base}s plus up to half"
+        );
+        assert_eq!(page.header("retry-after"), Some(wait.to_string().as_str()));
+        assert_eq!(next, format!("./?busy={}", attempt + 1));
+        path = format!("/{}", next.trim_start_matches("./"));
+    }
+    let last = busy_page_at(&listener, &path).await;
+    assert!(refresh_of(&last).is_none(), "{}", last.body);
+    assert!(!last.body.contains("http-equiv"), "{}", last.body);
+    assert!(
+        last.body.contains("<a href=\".\">Try again</a>"),
+        "{}",
+        last.body
+    );
+    let csp = last.header("content-security-policy").unwrap_or_default();
+    assert!(!csp.contains("unsafe-inline"), "{csp}");
+    drop(held);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(status_of_new_connection(&listener).await, 200);
+    let counted = listener.request("GET", "/?busy=6", &[], "").await;
+    assert_eq!(counted.status, 200, "the counter does not break the app");
+}
+
+#[tokio::test]
+async fn the_busy_counter_is_read_defensively_and_the_wait_is_jittered() {
+    let (listener, _held) = saturated().await;
+    for hostile in [
+        "/?busy=abc",
+        "/?busy=-1",
+        "/?busy=",
+        "/?x=1&busy=99999999999999",
+    ] {
+        let page = busy_page_at(&listener, hostile).await;
+        let next = refresh_of(&page).map(|(_, url)| url);
+        let capped = next.is_none();
+        let first = next.as_deref() == Some("./?busy=1");
+        assert!(first || capped, "{hostile}: {}", page.body);
+        assert!(!page.body.contains("abc"), "nothing user-given is echoed");
+    }
+    let mut waits = std::collections::BTreeSet::new();
+    for _ in 0..24 {
+        let page = busy_page_at(&listener, "/").await;
+        waits.insert(refresh_of(&page).unwrap().0);
+    }
+    assert!(waits.len() > 1, "the first wait is jittered: {waits:?}");
+    assert!(waits.iter().all(|w| (2..=3).contains(w)), "{waits:?}");
 }

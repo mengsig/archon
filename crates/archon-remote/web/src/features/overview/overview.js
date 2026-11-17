@@ -1,19 +1,22 @@
 // Overview: daemon and orchestrator health, agents against caps, spend
 // against budgets, the global pause, repositories and pipelines.
 import { h } from '../../ui/dom.js';
-import { icon } from '../../ui/icons.js';
 import { screenHeader, section, card, row, chip, toggle, errorNote, skeletonRows, describeError } from '../../ui/components.js';
 import { toast } from '../../ui/toast.js';
 import { usd, dateTime } from '../../core/format.js';
 import { reposCard, pipelinesCard } from './catalog.js';
+import { dashboardMetrics, activeWork, quickActions, dashboardInsights } from './dashboard.js';
+import { pollStatus } from '../../core/live-query.js';
 
 export function mountOverview(view, ctx) {
-  const settings = h('a', { class: 'icon-button', href: '#/settings', 'aria-label': 'Settings' }, icon('settings', { size: 22 }));
   const body = h('div', { class: 'overview' }, skeletonRows(4));
   const pipelines = { data: null, error: null };
-  view.append(screenHeader({ title: 'Overview', actions: [settings] }), body);
+  const insights = dashboardInsights(ctx);
+  let alive = true;
+  view.append(screenHeader({ title: 'Overview' }), body);
 
   const render = () => {
+    if (!alive) return;
     const state = ctx.store.get();
     if (!state.status) {
       body.replaceChildren(state.errors.status ? errorNote(state.errors.status, () => ctx.refresh.one('status')) : skeletonRows(4));
@@ -22,7 +25,11 @@ export function mountOverview(view, ctx) {
     // A failed refresh stays in view above the last status it replaced.
     const stale = state.errors.status ? [errorNote(state.errors.status, () => ctx.refresh.one('status'))] : [];
     body.replaceChildren(...stale,
+      quickActions(ctx),
       pauseCard(ctx, state.status),
+      dashboardMetrics(state.status),
+      insights.spend, activeWork(state),
+      insights.relationships,
       section('Health', healthCard(state.status)),
       section('Agents', agentsCard(state.status)),
       section('Spend', spendCard(state.status, state.cost, state.repos),
@@ -41,20 +48,21 @@ export function mountOverview(view, ctx) {
     }
     render();
   };
-  const off = ctx.store.watch((s) => [s.status, s.cost, s.repos, s.errors.status, s.errors.cost, s.errors.repos], render);
+  const off = ctx.store.watch((s) => [s.status, s.cost, s.repos, s.summaries, s.errors.status, s.errors.cost, s.errors.repos], render);
   ctx.refresh.many(['status', 'cost', 'repos']);
   loadPipelines();
-  return off;
+  const stopPoll = pollStatus(ctx);
+  return () => { alive = false; off(); stopPoll(); insights.destroy(); };
 }
 
 function pauseCard(ctx, status) {
   const paused = status.pause.global;
-  return h('div', { class: ['hero-card', paused ? 'is-paused' : 'is-running'] },
+  return h('div', { class: ['hero-card', paused || status.disk?.held ? 'is-paused' : 'is-running'] },
     h('div', { class: 'hero-state' },
       h('span', { class: 'hero-dot', 'aria-hidden': 'true' }),
-      h('span', { class: 'hero-label', text: paused ? 'Paused' : 'Running' })),
-    h('p', { class: 'hero-text', text: paused ? 'Nothing new starts. Running agents finish their stages.' : `${status.queued_items} queued · ${status.running_agents} agent${status.running_agents === 1 ? '' : 's'} running` }),
-    toggle({
+      h('span', { class: 'hero-label', text: paused ? 'Paused' : status.disk?.held ? 'Dispatch held' : 'Running' })),
+    h('p', { class: 'hero-text', text: paused ? 'Nothing new starts. Running agents finish their stages.' : status.disk?.held ? 'Dispatch is held: low disk space. Running agents can finish.' : `${status.queued_items} queued · ${status.running_agents} agent${status.running_agents === 1 ? '' : 's'} running` }),
+    ctx.canOperate ? toggle({
       label: 'Pause new work', checked: paused,
       description: 'A soft pause: dispatch stops, nothing is killed.',
       onChange: async (on) => {
@@ -63,7 +71,7 @@ function pauseCard(ctx, status) {
         await ctx.refresh.one('status');
       },
       onError: (err) => toast(describeError(err), { tone: 'red' }),
-    }));
+    }) : null);
 }
 
 function healthCard(status) {

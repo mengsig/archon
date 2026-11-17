@@ -1,3 +1,5 @@
+import { reducedMotion, animateMove } from './motion.js';
+
 // Keyed list rendering: unchanged rows keep their nodes, new rows animate in.
 export function reconcile(container, items, { key, signature, render }) {
   if (!(container instanceof Element)) throw new TypeError('reconcile needs a container element');
@@ -6,6 +8,7 @@ export function reconcile(container, items, { key, signature, render }) {
     if (child.dataset.key) existing.set(child.dataset.key, child);
     else child.remove();
   }
+  const positions = reducedMotion() ? new Map() : new Map([...existing].map(([key, node]) => [key, node.getBoundingClientRect()]));
   const firstRender = existing.size === 0;
   const seen = new Set();
   let cursor = container.firstElementChild;
@@ -27,6 +30,11 @@ export function reconcile(container, items, { key, signature, render }) {
     if (node !== cursor) container.insertBefore(node, cursor);
     else cursor = cursor.nextElementSibling;
   }
-  // A row already animating out removes itself when it is done.
+  // Removed rows settle immediately; retained rows move using one batched layout read.
   for (const [k, node] of existing) if (!seen.has(k) && !node.classList.contains('is-leaving')) node.remove();
+  const moved = [...container.children].filter((node) => positions.has(node.dataset.key))
+    .map((node) => ({ node, before: positions.get(node.dataset.key), after: node.getBoundingClientRect() }));
+  for (const { node, before, after } of moved) {
+    if (before.x !== after.x || before.y !== after.y) animateMove(node, [before.x - after.x, before.y - after.y], [0, 0]);
+  }
 }

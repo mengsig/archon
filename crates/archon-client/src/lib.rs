@@ -20,6 +20,7 @@ use archon_core::error::ArchonError;
 use archon_core::notify::FeedItem;
 use archon_core::protocol::{
     ClientKind, ErrorCode, ErrorReply, PROTOCOL_VERSION, Reply, Request, RequestClass, Welcome,
+    client_feature,
 };
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
@@ -259,12 +260,13 @@ async fn open(socket: &Path) -> Result<UnixStream, ArchonError> {
 }
 
 async fn handshake(shared: &Shared, kind: ClientKind) -> Result<Welcome, ArchonError> {
-    // archond's own clients ship in its binary: they speak exactly its version.
+    // archond's own clients ship in its binary: they speak exactly its version
+    // and decode every variant it knows.
     let hello = Request::Hello {
         protocol_version: PROTOCOL_VERSION,
         client: kind,
         client_version: env!("CARGO_PKG_VERSION").to_owned(),
-        features: Vec::new(),
+        features: client_feature::ALL.map(str::to_owned).to_vec(),
     };
     match shared.call(hello, None, HELLO_TIMEOUT).await? {
         Ok(Reply::Welcome(welcome)) if welcome.protocol_version == PROTOCOL_VERSION => Ok(welcome),

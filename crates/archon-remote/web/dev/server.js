@@ -35,7 +35,7 @@ export async function startDevServer({ socket, port = 0, host = '127.0.0.1', roo
     socket, root, requirePairing, protocolVersion,
     daemonVersion: status.data.daemon_version,
     devices: new Map(),
-    defaultDevice: { id: 'dev_browser', name: 'Dev browser', paired_at: new Date().toISOString() },
+    defaultDevice: { id: 'dev_browser', name: 'Dev browser', role: 'operator', paired_at: new Date().toISOString() },
   };
   const server = createServer((req, res) => {
     route(state, req, res).catch((err) => {
@@ -101,7 +101,7 @@ async function claim(state, req, res) {
     return sendJson(res, 403, { error: { code: 'invalid_code', message: 'that pairing code is not valid' } });
   }
   const token = randomBytes(24).toString('hex');
-  const device = { id: `dev_${token.slice(0, 12)}`, name, paired_at: new Date().toISOString() };
+  const device = { id: `dev_${token.slice(0, 12)}`, name, role: 'operator', paired_at: new Date().toISOString() };
   state.devices.set(token, device);
   res.setHeader('Set-Cookie', `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict`);
   return sendJson(res, 200, { device });

@@ -78,6 +78,7 @@ pub const PROTOCOL_VERSION: u32 = 24;
 pub const MIN_WEB_PROTOCOL_VERSION: u32 = 23;
 
 pub mod changes;
+pub mod compat;
 pub mod github_links;
 pub mod graph;
 pub mod schema;
@@ -88,12 +89,14 @@ pub use changes::{
     Change, ChangeSubject, HistoryRange, ItemTransition, QueueStateKind, RunStateKind,
     StageStateKind, TransitionActor,
 };
+pub use compat::{ClientFeatures, client_feature};
 pub use github_links::{
     GithubKind, GithubLink, GithubObject, GithubObjectState, GithubOutboxPending, GithubRef,
     LinkRelation, ManualLinkRelation, PrRef,
 };
 pub use graph::{
-    ModelSource, RunPlan, SettingSource, StageSettings, TaskEdge, TaskFilter, TaskGraph, TaskNode,
+    ItemAgentState, ItemAgentStates, ItemAgentStatus, ModelSource, RunPlan, SettingSource,
+    StageSettings, TaskEdge, TaskFilter, TaskGraph, TaskNode,
 };
 
 /// The feature strings `welcome` may advertise. A feature is advertised only
@@ -102,16 +105,18 @@ pub mod feature {
     pub const CHANGES: &str = "changes";
     pub const TASK_GRAPH: &str = "task_graph";
     pub const RUN_PLAN: &str = "run_plan";
+    pub const ITEM_AGENT_STATES: &str = "item_agent_states";
     pub const ITEM_HISTORY: &str = "item_history";
     pub const ITEM_FILTERS: &str = "item_filters";
     pub const GITHUB_LINKS: &str = "github_links";
     pub const GITHUB_IMPORT: &str = "github_import";
     pub const DEVICE_ROLES: &str = "device_roles";
     /// Every feature protocol 24 defines.
-    pub const ALL: [&str; 8] = [
+    pub const ALL: [&str; 9] = [
         CHANGES,
         TASK_GRAPH,
         RUN_PLAN,
+        ITEM_AGENT_STATES,
         ITEM_HISTORY,
         ITEM_FILTERS,
         GITHUB_LINKS,
@@ -294,7 +299,8 @@ pub enum Request {
         protocol_version: u32,
         client: ClientKind,
         client_version: String,
-        /// Features the client understands; archond reads none of them yet.
+        /// Features the client understands ([`compat::client_feature`]);
+        /// archond ignores names it does not know.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         features: Vec<String>,
     },
@@ -323,6 +329,10 @@ pub enum Request {
     /// Like `ListItems`, each item with its live stage, spend and PR URL.
     ListItemSummaries(ItemQuery),
     GetItem {
+        item: QueueItemId,
+    },
+    /// Current lifecycle of delegated descendants of this item's recorded stage agents.
+    ItemAgentStates {
         item: QueueItemId,
     },
     /// The stage runs of an item's latest run, or one stage's full output.
@@ -779,6 +789,7 @@ impl Request {
             | Self::ListItems(_)
             | Self::ListItemSummaries(_)
             | Self::GetItem { .. }
+            | Self::ItemAgentStates { .. }
             | Self::GetStage(_)
             | Self::ResolveItem { .. }
             | Self::ListPipelines { .. }
@@ -1174,6 +1185,7 @@ pub enum Reply {
         as_of: u64,
     },
     ItemDetail(Box<ItemDetail>),
+    ItemAgentStates(ItemAgentStates),
     StageDetail(Box<StageDetail>),
     Catalog(CatalogListing),
     ModelPolicy(ModelPolicy),

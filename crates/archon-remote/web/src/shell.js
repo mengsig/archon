@@ -11,13 +11,16 @@ import { mountInbox } from './features/inbox/inbox.js';
 import { mountChat } from './features/chat/chat.js';
 import { mountOverview } from './features/overview/overview.js';
 import { mountSettings } from './features/settings/settings.js';
+import { mountGraph } from './features/graph/graph.js';
+import { APP_VERSION } from './version.js';
 
-const SCREENS = { queue: mountQueue, item: mountItem, inbox: mountInbox, chat: mountChat, overview: mountOverview, settings: mountSettings };
+const SCREENS = { queue: mountQueue, graph: mountGraph, item: mountItem, inbox: mountInbox, chat: mountChat, overview: mountOverview, settings: mountSettings };
 const TABS = [
+  { id: 'overview', label: 'Overview', icon: 'overview' },
   { id: 'queue', label: 'Queue', icon: 'queue' },
+  { id: 'graph', label: 'Graph', icon: 'graph' },
   { id: 'inbox', label: 'Inbox', icon: 'inbox' },
   { id: 'chat', label: 'Chat', icon: 'chat' },
-  { id: 'overview', label: 'Overview', icon: 'overview' },
 ];
 
 export function mountShell(root, app, { onForget }) {
@@ -25,7 +28,8 @@ export function mountShell(root, app, { onForget }) {
   const views = h('main', { class: 'views', id: 'views' });
   const tabbar = buildTabbar();
   const shell = h('div', { class: 'shell', id: 'shell' }, banner, views, tabbar.nav);
-  root.replaceChildren(shell, h('div', { id: 'overlay', class: 'overlay' }), h('div', { id: 'toasts', class: 'toasts', 'aria-live': 'polite' }));
+  const overlay = h('div', { id: 'overlay', class: 'overlay' });
+  root.replaceChildren(shell, overlay, h('div', { id: 'toasts', class: 'toasts', 'aria-live': 'polite' }));
 
   const scrollMemory = new Map();
   let current = null;
@@ -48,6 +52,12 @@ export function mountShell(root, app, { onForget }) {
 
   const offs = [
     app.store.watch((s) => s.connection, (connection) => renderBanner(banner, connection, app)),
+    // Another tab's pairing, or a session the host keeps failing to confirm, leaves no live control.
+    app.store.watch((s) => s.sessionUnsure, (unsure) => {
+      views.inert = unsure;
+      overlay.inert = unsure;
+      renderBanner(banner, app.store.get().connection, app);
+    }),
     app.store.watch((s) => s.questions, (questions) => tabbar.badge(openCount(questions))),
     app.store.watch((s) => s.errors.protocol, (err) => err && toast(describeError(err), { tone: 'red' })),
   ];
@@ -62,20 +72,27 @@ export function mountShell(root, app, { onForget }) {
 
 function buildTabbar() {
   const buttons = new Map();
+  // Settings sits in the sidebar's footer, not among the tabs; on a phone only its header icon leads there.
+  const settings = h('a', { class: 'nav-settings', href: '#/settings', dataset: { tab: 'settings' } }, icon('settings', { size: 18 }), 'Settings');
   const badge = h('span', { class: 'tab-badge', 'aria-hidden': 'true', hidden: true });
   const nav = h('nav', { class: 'tabbar', 'aria-label': 'Sections' },
-    h('span', { class: 'tabbar-brand', text: 'Archon' }),
+    h('a', { class: 'tabbar-brand', href: '#/overview', 'aria-label': 'Archon home' }, icon('mark', { size: 28 }), 'archon'),
+    h('span', { class: 'nav-eyebrow', text: 'Workspace' }),
     TABS.map((tab) => {
       const link = h('a', { class: 'tab', href: `#/${tab.id}`, dataset: { tab: tab.id } },
         h('span', { class: 'tab-icon' }, icon(tab.icon, { size: 24 }), tab.id === 'inbox' ? badge : null),
         h('span', { class: 'tab-label', text: tab.label }));
       buttons.set(tab.id, link);
       return link;
-    }));
+    }),
+    h('div', { class: 'nav-footer' },
+      settings,
+      h('span', { class: 'nav-version', text: `Archon ${APP_VERSION}` })));
   return {
     nav,
     select(id) {
-      for (const [tab, link] of buttons) {
+      if (id !== 'settings' && !buttons.has(id)) throw new RangeError(`no tab named ${id}`);
+      for (const [tab, link] of [...buttons, ['settings', settings]]) {
         if (tab === id) link.setAttribute('aria-current', 'page');
         else link.removeAttribute('aria-current');
       }
@@ -96,7 +113,7 @@ function renderBanner(banner, connection, app) {
   const { state, retryInMs, reason } = connection;
   banner.dataset.state = state;
   const message = {
-    open: '',
+    open: app.store.get().sessionUnsure ? 'Checking session…' : '',
     connecting: 'Connecting…',
     waiting: `Offline · retrying in ${Math.max(1, Math.round((retryInMs ?? 0) / 1000))} s`,
     disabled: 'Remote access is off on the host. Checking again in a minute.',

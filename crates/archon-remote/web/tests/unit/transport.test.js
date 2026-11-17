@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createTransport, DaemonError, CLOSE_REVOKED, CLOSE_DISABLED } from '../../src/core/transport.js';
-import { backoffDelay, DISABLED_RETRY_MS } from '../../src/core/backoff.js';
+import { backoffDelay, retryDelay, DISABLED_RETRY_MS } from '../../src/core/backoff.js';
 
 // A scripted WebSocket and clock: tests open, answer and close sockets by hand.
 function harness(extra = {}) {
@@ -116,7 +116,10 @@ test('4401 stops for good and 4403 retries slowly', async () => {
   const disabled = harness();
   disabled.transport.start(); disabled.last().drop(CLOSE_DISABLED);
   assert.equal(disabled.transport.state, 'disabled');
-  disabled.fire(DISABLED_RETRY_MS);
+  const slow = disabled.states.at(-1).retryInMs;
+  assert.equal(slow, retryDelay(0, { minMs: DISABLED_RETRY_MS, random: () => 0.5 }));
+  assert.ok(slow > DISABLED_RETRY_MS, 'a disabled listener is retried past its minute, jittered');
+  disabled.fire(slow);
   assert.equal(disabled.sockets.length, 2);
 });
 
@@ -145,6 +148,24 @@ test('an internal id-0 error reconnects to resubscribe, backing off while it rep
   assert.equal(errors.length, 2);
 });
 
+test('a change subscription ended by a lag reconnects to resubscribe', () => {
+  const errors = [];
+  const h = harness({ onProtocolError: (err) => errors.push(err) });
+  h.transport.start(); h.last().open(); h.last().welcome();
+  const lag = 'change subscription 2 ended: it fell 300 changes behind; resubscribe with after: 41';
+  h.last().reply(0, { Err: { code: 'unavailable', message: lag } });
+  assert.equal(h.sockets[0].closedWith, 4001, 'the socket is closed to resubscribe');
+  assert.equal(errors[0].code, 'unavailable');
+  assert.match(errors[0].message, /fell 300 changes behind.*; reconnecting$/);
+  assert.equal(h.states.at(-1).state, 'waiting');
+  h.fire(backoffDelay(0, () => 0.5));
+  h.last().open(); h.last().welcome();
+  assert.equal(h.states.at(-1).state, 'open');
+  h.last().reply(0, { Err: { code: 'unavailable', message: 'archond is stopping' } });
+  assert.equal(h.sockets[1].closedWith, null, 'a stop is explained, not acted on');
+  assert.equal(errors.length, 1);
+});
+
 test('a hello without an answer closes the socket and retries', () => {
   const h = harness();
   h.transport.start(); h.last().open();
@@ -171,4 +192,31 @@ test('a request may ask for a longer answer deadline than the default', () => {
   h.transport.request('conversation', { wait: true }, { timeoutMs: 30_000 }).catch(() => {});
   assert.ok(h.timers.some((t) => !t.done && t.ms === 30_000));
   assert.throws(() => h.transport.request('status', {}, { timeoutMs: 0 }), RangeError);
+});
+
+test('a page shown again retries soon, jittered, but never cuts a disabled host\'s minute', () => {
+  let clock = 0;
+  const h = harness({ now: () => clock });
+  h.transport.start(); h.last().open(); h.last().welcome();
+  h.last().drop(); h.fire(backoffDelay(0, () => 0.5)); h.last().drop();
+  h.fire(backoffDelay(1, () => 0.5)); h.last().drop();
+  const long = backoffDelay(2, () => 0.5);
+  assert.equal(h.states.at(-1).retryInMs, long);
+  const soon = retryDelay(0, { random: () => 0.5 });
+  assert.ok(soon > 0 && soon < long, 'the wake wait is the shortest jittered one');
+  h.transport.reconnectSoon();
+  assert.equal(h.states.at(-1).retryInMs, soon, 'the banner names the new wait');
+  assert.equal(h.sockets.length, 3, 'no socket opens before the jittered wait');
+  h.transport.reconnectSoon();
+  assert.equal(h.timers.filter((t) => !t.done && t.ms === soon).length, 1, 'a sooner retry stands');
+  h.fire(soon);
+  assert.equal(h.sockets.length, 4);
+
+  const disabled = harness({ now: () => clock });
+  disabled.transport.start(); disabled.last().drop(CLOSE_DISABLED);
+  const minute = disabled.states.at(-1).retryInMs;
+  disabled.transport.reconnectSoon();
+  disabled.transport.reconnectNow();
+  assert.equal(disabled.sockets.length, 1, 'remote access off waits out its minute');
+  assert.equal(disabled.timers.filter((t) => !t.done).map((t) => t.ms).join(), String(minute));
 });

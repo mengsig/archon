@@ -12,6 +12,29 @@ use crate::initiative::InitiativeState;
 use crate::model::ModelChoice;
 use crate::queue::Priority;
 
+/// A delegated agent's lifecycle as reported by the backend at read time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ItemAgentState {
+    Live,
+    Completed,
+    Stopped,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ItemAgentStatus {
+    pub agent: crate::aether_ids::AetherAgentId,
+    pub state: ItemAgentState,
+}
+
+/// Delegated lifecycle and recorded direct spend, including the current orchestrator.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ItemAgentStates {
+    pub agents: Vec<ItemAgentStatus>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub cost_usd: std::collections::BTreeMap<crate::aether_ids::AetherAgentId, f64>,
+}
+
 /// Nodes a `task_graph` returns unless asked otherwise.
 pub const TASK_GRAPH_LIMIT: u32 = 500;
 /// The most nodes one `task_graph` may ask for.
@@ -36,6 +59,15 @@ pub struct TaskFilter {
     /// Terminal items are left out unless they changed at or after this.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub include_terminal_since: Option<Timestamp>,
+    /// Only these items, at most [`MAX_TASK_GRAPH_LIMIT`]: a client reads
+    /// the edges among a node set it merged from several graphs in one go.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ids: Option<Vec<QueueItemId>>,
+    /// Never on the wire: set for a client that does not decode `onto` edges
+    /// ([`super::compat`]), so `component_of` does not follow them either.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub without_onto: bool,
 }
 
 /// One item in the graph: a subset of its summary.
@@ -81,13 +113,24 @@ pub struct TaskNode {
     schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
+#[schemars(transform = super::schema::ReadsUnknownAs("other"))]
 pub enum TaskEdgeKind {
     DependsOn,
     InitiativeAfter,
     StackedOn,
+    /// `from` owns the pull request `to` was queued onto. Always satisfied:
+    /// the pull request exists already and nothing waits. Sent only to a
+    /// client that declares `onto_edges` ([`super::compat`]).
+    Onto,
+    /// Any kind this release does not name, one a newer archond added, so
+    /// one edge never fails a whole reply. Only read, never sent.
+    #[serde(other)]
+    Other,
 }
 
-/// `from` is the prerequisite and `to` the item that waits for it.
+/// `from` is the prerequisite and `to` the item that waits for it; for an
+/// `onto` edge, `from` is the item that owns the pull request and `to` the
+/// item queued onto it, with `satisfied` always true.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TaskEdge {
     pub from: QueueItemId,
@@ -182,6 +225,49 @@ pub struct StageSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn item_agent_states_is_an_additive_read_request() {
+        let item = QueueItemId::new();
+        let request = super::super::Request::ItemAgentStates { item: item.clone() };
+        let wire = serde_json::json!({"cmd": "item_agent_states", "item": item});
+        assert_eq!(serde_json::to_value(&request).unwrap(), wire);
+        assert_eq!(
+            serde_json::from_value::<super::super::Request>(wire).unwrap(),
+            request
+        );
+        assert!(request.is_read_only());
+        assert!(!request.is_operator_only());
+    }
+
+    #[test]
+    fn item_agent_states_reply_preserves_all_lifecycles() {
+        let agents = [
+            ItemAgentState::Live,
+            ItemAgentState::Completed,
+            ItemAgentState::Stopped,
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, state)| ItemAgentStatus {
+            agent: crate::aether_ids::AetherAgentId::parse(&format!("agt_{index}")).unwrap(),
+            state,
+        })
+        .collect();
+        let reply = super::super::Reply::ItemAgentStates(ItemAgentStates {
+            agents,
+            cost_usd: Default::default(),
+        });
+        let wire = serde_json::to_value(&reply).unwrap();
+        assert_eq!(wire["reply"], "item_agent_states");
+        assert_eq!(wire["data"]["agents"][0]["state"], "live");
+        assert_eq!(wire["data"]["agents"][1]["state"], "completed");
+        assert_eq!(wire["data"]["agents"][2]["state"], "stopped");
+        assert_eq!(
+            serde_json::from_value::<super::super::Reply>(wire).unwrap(),
+            reply
+        );
+    }
 
     /// An empty filter is an empty object, the shape every reader accepts.
     #[test]

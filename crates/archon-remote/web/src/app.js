@@ -2,6 +2,7 @@
 // reads, and the loaders that keep it fresh.
 import { createTransport } from './core/transport.js';
 import { createFeed } from './core/feed.js';
+import { createChanges } from './core/changes.js';
 import { createConversation } from './core/conversation.js';
 import { createStore } from './core/store.js';
 import { daemonCommands } from './core/daemon.js';
@@ -9,69 +10,88 @@ import { ACTIVE_STATES, stateKind, isTerminal, waitsOnOperator } from './core/fo
 import * as api from './core/api.js';
 import { BASE } from './core/base.js';
 import { matchEchoes } from './features/chat/outbox.js';
+import { canOperate } from './core/role.js';
+import { coalesce } from './core/live-query.js';
 import { APP_VERSION } from './version.js';
+import { deviceGuard, sessionChecker } from './core/session-watch.js';
+import { sessionSignal } from './core/session-signal.js';
+import { retryDelay, STREAM_BACKOFF } from './core/backoff.js';
 
 const REFRESH_DEBOUNCE_MS = 350;
 const SESSION_CHECK_MS = 10_000;
+// An unanswered session read retries at most this far apart.
+const SESSION_RETRY = Object.freeze({ baseMs: 500, capMs: SESSION_CHECK_MS });
 const RECENT_LIMIT = 200;
-const FEED_RETRY_MS = [2_000, 5_000, 15_000, 30_000];
 
-export function createApp({ session, onUnpaired }) {
+export function createApp({ session, onUnpaired, onDeviceChanged }) {
   if (!session?.device) throw new TypeError('the app starts with a paired session');
+  if (typeof onDeviceChanged !== 'function') throw new TypeError('the app reports a changed device');
   const store = createStore({
     session, connection: { state: 'connecting' }, summaries: null, questions: null, status: null,
-    cost: null, repos: null, reports: null, feed: [], conversation: [], outbox: [], chatNotes: {}, errors: {},
+    cost: null, repos: null, reports: null, feed: [], conversation: [], outbox: [], chatNotes: {}, errors: {}, sessionUnsure: false,
   });
   let transport = null;
   const request = (cmd, fields, options) => transport.request(cmd, fields, options);
   const cmds = daemonCommands(request);
   const feed = createFeed({ request });
+  const changes = createChanges({ request });
   const refresh = createLoaders(store, cmds);
-  const scheduleRefresh = debounce(() => refresh.many(['summaries', 'questions', 'status']), REFRESH_DEBOUNCE_MS);
-  const checkSession = sessionChecker(() => stop(), onUnpaired);
-
-  feed.subscribe((fresh, items) => {
-    store.set({ feed: items });
-    if (fresh.some((item) => !item.replayed && drivesRefresh(item))) scheduleRefresh();
-    if (fresh.some((item) => item.entry?.entry === 'report')) refresh.one('reports');
+  const scheduleRefresh = coalesce(() => refresh.many(['summaries', 'questions', 'status']), REFRESH_DEBOUNCE_MS);
+  canOperate(session.device);
+  const guard = deviceGuard(session.device, () => {
+    stop();
+    onDeviceChanged();
   });
+  const sessionCheck = sessionChecker({
+    readSession: api.session, guard, stop: () => stop(), onUnpaired, minGapMs: SESSION_CHECK_MS,
+    onUnsure: (unsure) => store.set({ sessionUnsure: unsure }), limits: SESSION_RETRY,
+  });
+
+  followStreams({ store, feed, changes, refresh, scheduleRefresh });
 
   const isOpen = () => transport.state === 'open';
-  const feedSync = feedSyncer({ feed, store, isOpen });
-  const conversation = createConversation({
-    request, isOpen,
-    onChange: (entries, fresh) => {
-      store.set({ conversation: entries });
-      matchEchoes(store, fresh);
-    },
-    onError: (err) => store.set({ errors: { ...store.get().errors, conversation: err } }),
-  });
-  transport = openTransport({ session, feedSync, conversation, feed, store, refresh });
-  store.watch((s) => s.connection.state, (state) => {
-    if (state === 'revoked') {
-      stop();
-      onUnpaired('This device was unpaired on the host.');
-    } else if (state === 'waiting') {
-      checkSession();
-    }
-  });
+  let welcome = null;
+  const feedSync = streamSyncer({ name: 'feed', sync: () => feed.sync(), store, isOpen });
+  const changesSync = streamSyncer({ name: 'changes', sync: () => changes.sync(welcome), store, isOpen });
+  const conversation = openConversation({ request, isOpen, store });
+  transport = openTransport({ session, feed, changes, store, onReady: (welcomed) => {
+    if (welcomed?.reply !== 'welcome' || !welcomed.data) throw new TypeError(`hello answered ${welcomed?.reply}`);
+    if (welcomed.data.device) guard(welcomed.data.device);
+    welcome = welcomed.data;
+    feedSync.start();
+    changesSync.start();
+    conversation.run();
+    refresh.many(['summaries', 'questions', 'status', 'repos', 'reports', 'cost']);
+  } });
+  watchConnection({ store, stop: () => stop(), checkSession: () => sessionCheck.check(), onUnpaired });
 
+  let unlisten = null;
   const onVisible = () => {
     if (document.visibilityState !== 'visible') return;
-    transport.reconnectNow();
-    if (transport.state === 'open') refresh.many(['summaries', 'questions', 'status']);
+    sessionCheck.recheck();
+    transport.reconnectSoon();
+    // One read now, which also takes the place of any burst refresh still waiting.
+    if (transport.state === 'open') scheduleRefresh.flush();
   };
 
   function stop() {
+    sessionCheck.cancel();
+    unlisten?.();
+    unlisten = null;
     document.removeEventListener('visibilitychange', onVisible);
     if (transport.state !== 'stopped') transport.stop();
   }
 
   return {
-    store, cmds, feed, refresh,
+    store, cmds, feed, changes, refresh,
+    // An app is built for one device and role; a change of either remounts it.
+    canOperate: canOperate(session.device),
     resyncFeed: () => feedSync.run(),
     resyncConversation: () => conversation.run(),
     start() {
+      if (unlisten) throw new Error('the app already started');
+      // A connected tab is re-paired or forgotten in another tab without its socket noticing.
+      unlisten = sessionSignal().listen(() => sessionCheck.signal());
       document.addEventListener('visibilitychange', onVisible);
       transport.start();
     },
@@ -80,27 +100,63 @@ export function createApp({ session, onUnpaired }) {
   };
 }
 
-function openTransport({ session, feedSync, conversation, feed, store, refresh }) {
+// Feed entries and committed changes patch the store or reload what they touch.
+function followStreams({ store, feed, changes, refresh, scheduleRefresh }) {
+  if (typeof scheduleRefresh !== 'function' || typeof refresh?.one !== 'function') throw new TypeError('the streams need the loaders');
+  feed.subscribe((fresh, items) => {
+    store.set({ feed: items });
+    if (fresh.some((item) => !item.replayed && drivesRefresh(item))) scheduleRefresh();
+    if (fresh.some((item) => item.entry?.entry === 'report')) refresh.one('reports');
+  });
+  changes.subscribe(() => scheduleRefresh());
+}
+
+function watchConnection({ store, stop, checkSession, onUnpaired }) {
+  if (typeof stop !== 'function' || typeof checkSession !== 'function') throw new TypeError('the connection watch needs stop and the session check');
+  if (typeof onUnpaired !== 'function') throw new TypeError('the connection watch reports an unpairing');
+  store.watch((s) => s.connection.state, (state) => {
+    if (state === 'revoked') {
+      stop();
+      onUnpaired('This device was unpaired on the host.');
+    } else if (state === 'waiting') {
+      checkSession();
+    }
+  });
+}
+
+// The conversation's entries land in the store, matched against the outbox.
+function openConversation({ request, isOpen, store }) {
+  if (typeof request !== 'function' || typeof isOpen !== 'function') throw new TypeError('the conversation needs requests and the socket state');
+  return createConversation({
+    request, isOpen,
+    onChange: (entries, fresh) => {
+      store.set({ conversation: entries });
+      matchEchoes(store, fresh);
+    },
+    onError: (err) => store.set({ errors: { ...store.get().errors, conversation: err } }),
+  });
+}
+
+function openTransport({ session, feed, changes, store, onReady }) {
   const setError = (name, err) => store.set({ errors: { ...store.get().errors, [name]: err } });
   return createTransport({
     url: `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${BASE}/ws`,
-    hello: { protocol_version: session.protocol_version, client: 'archon-web', client_version: APP_VERSION },
+    hello: { protocol_version: session.protocol_version, client: 'archon-web', client_version: APP_VERSION,
+      features: ['onto_edges'] },
     onFeed: (item) => feed.push(item),
-    onReady: () => {
-      feedSync.start();
-      conversation.run();
-      refresh.many(['summaries', 'questions', 'status', 'repos', 'reports', 'cost']);
-    },
+    onChange: (change) => changes.push(change),
+    onReady,
     onState: (state, info) => store.set({ connection: { state, ...info } }),
     onProtocolError: (err) => setError('protocol', err),
   });
 }
 
-// Feed setup that keeps trying while the socket is open: a failed history or
-// subscription would otherwise leave the app connected but no longer live.
-function feedSyncer({ feed, store, isOpen }) {
-  if (typeof feed?.sync !== 'function' || typeof isOpen !== 'function') throw new TypeError('feedSyncer needs the feed and the socket state');
-  const setError = (err) => store.set({ errors: { ...store.get().errors, feed: err } });
+// A stream's setup that keeps trying while the socket is open: a failed history
+// or subscription would otherwise leave the app connected but no longer live.
+function streamSyncer({ name, sync, store, isOpen }) {
+  if (typeof sync !== 'function' || typeof isOpen !== 'function') throw new TypeError('streamSyncer needs the sync and the socket state');
+  if (typeof name !== 'string' || !name) throw new TypeError('a stream names its error slot');
+  const setError = (err) => store.set({ errors: { ...store.get().errors, [name]: err } });
   let timer = null;
   let running = false;
   let failures = 0;
@@ -109,12 +165,12 @@ function feedSyncer({ feed, store, isOpen }) {
     clearTimeout(timer);
     timer = null;
     running = true;
-    feed.sync().then(() => {
+    sync().then(() => {
       failures = 0;
-      if (store.get().errors.feed) setError(null);
+      if (store.get().errors[name]) setError(null);
     }, (err) => {
       setError(err);
-      const delay = FEED_RETRY_MS[Math.min(failures, FEED_RETRY_MS.length - 1)];
+      const delay = retryDelay(failures, { limits: STREAM_BACKOFF });
       failures += 1;
       if (isOpen()) timer = setTimeout(run, delay);
     }).finally(() => { running = false; });
@@ -131,22 +187,6 @@ function feedSyncer({ feed, store, isOpen }) {
 function drivesRefresh(item) {
   const kind = item.entry?.entry;
   return kind !== 'operator' && kind !== 'orchestrator';
-}
-
-// A connection that keeps failing may mean the device was revoked while
-// the socket was down; the session endpoint says so without a socket.
-function sessionChecker(stop, onUnpaired) {
-  let lastCheck = 0;
-  return async () => {
-    if (Date.now() - lastCheck < SESSION_CHECK_MS) return;
-    lastCheck = Date.now();
-    // Unreachable is expected while offline; only a definite 401 unpairs.
-    const current = await api.session().catch(() => undefined);
-    if (current === null) {
-      stop();
-      onUnpaired('This device is no longer paired.');
-    }
-  };
 }
 
 function createLoaders(store, cmds) {
@@ -202,12 +242,4 @@ function compareSummaries(a, b) {
     if (byPriority !== 0) return byPriority;
   }
   return Date.parse(b.updated_at) - Date.parse(a.updated_at);
-}
-
-function debounce(fn, ms) {
-  let timer = null;
-  return () => {
-    clearTimeout(timer);
-    timer = setTimeout(fn, ms);
-  };
 }

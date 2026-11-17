@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { expect } from '@playwright/test';
 import { openApp } from './flows.js';
 import { notify } from './support/seed.js';
-import { standInConversation } from './support/conversation.js';
+import { pipelineFixture, standInGraphs } from './support/graph-fixture.js';
 
 const THEMES = ['light', 'dark'];
 
@@ -23,13 +23,20 @@ export async function captureScreens(page, fixture, outDir) {
 
   await page.goto(`${fixture.baseURL}/`);
   await shoot('pairing', () => expect(page.getByRole('form', { name: 'Pair this device' })).toBeVisible());
-  await standInConversation(page, CHAT_ENTRIES);
+  const base = (await fixture.archond.request({ cmd: 'get_item', item: fixture.seeded.first.id })).data;
+  await standInGraphs(page, pipelineFixture(base), CHAT_ENTRIES);
   await openApp(page, fixture);
   await seedConversation(fixture);
 
   await shoot('queue', () => expect(page.locator('.item-row').first()).toBeVisible());
-  await page.locator('.item-row').first().click();
+  await page.goto(`${fixture.baseURL}/#/item/${fixture.seeded.first.id}`);
   await shoot('item', () => expect(page.getByRole('heading', { name: 'Stages' })).toBeVisible());
+  await page.getByRole('tab', { name: 'Work', exact: true }).click();
+  await shoot('work', () => expect(page.locator('#item-work .graph-node')).toHaveCount(10));
+  await page.getByRole('tab', { name: 'Agents', exact: true }).click();
+  await shoot('agents', () => expect(page.locator('#item-agents .graph-node')).toHaveCount(7));
+  await page.goto(`${fixture.baseURL}/#/graph`);
+  await shoot('graph', () => expect(page.locator('.graph-node').first()).toBeVisible());
   await page.goto(`${fixture.baseURL}/#/inbox`);
   await shoot('inbox', () => expect(page.locator('.question-card').first()).toBeVisible());
   await page.goto(`${fixture.baseURL}/#/chat`);
@@ -37,6 +44,9 @@ export async function captureScreens(page, fixture, outDir) {
     await expect(page.locator('.bubble-row').first()).toBeVisible();
     await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
   });
+  await page.getByRole('button', { name: 'Commands', exact: true }).click();
+  await shoot('commands', () => expect(page.getByRole('dialog', { name: 'Operator commands' })).toBeVisible());
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
   await page.goto(`${fixture.baseURL}/#/overview`);
   await shoot('overview', () => expect(page.locator('.hero-card')).toBeVisible());
   await page.goto(`${fixture.baseURL}/#/settings`);

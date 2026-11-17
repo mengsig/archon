@@ -58,6 +58,11 @@ dispatch or class tables, except to add optional fields.
   that client kind. A client at 23 is sent no features.
 - Feature strings: `changes`, `task_graph`, `run_plan`, `item_history`,
   `item_filters`, `github_links`, `github_import`, `device_roles`.
+- Client feature strings, which a client names in `hello.features` to be sent
+  variants added to protocol 24 after its first release: `onto_edges` (the
+  `onto` `TaskEdge` kind). A client that does not name it, as 1.6.1's do, is
+  sent no `onto` edge. Unknown names are ignored, and a client reads an edge
+  kind it does not know as `other`. Changes are never filtered per client.
 - Requests from the remote listener run with `ClientKind::ArchonWeb` standing,
   not `ArchonCli` (enforced in AR-R).
 - New `ErrorCode::history_expired {first_seq, last_seq}`, on the wire
@@ -89,9 +94,9 @@ whichever keeps more. Older cursors get `history_expired`.
 
 | Item | Shape | Class |
 | --- | --- | --- |
-| `task_graph` | `{filter: {repos?: RepoId[], states?: QueueStateKind[], pipelines?: string[], min_priority?: Priority, initiative?: InitiativeId, component_of?: QueueItemId, include_terminal_since?: Ts}, limit?: u32 (1..=2000, default 500)}` → `task_graph {nodes: TaskNode[], edges: TaskEdge[], initiatives: [{id, title, state, atomic}], as_of: u64, truncated: bool}` | Read |
+| `task_graph` | `{filter: {repos?: RepoId[], states?: QueueStateKind[], pipelines?: string[], min_priority?: Priority, initiative?: InitiativeId, component_of?: QueueItemId, include_terminal_since?: Ts, ids?: QueueItemId[] (1..=2000)}, limit?: u32 (1..=2000, default 500)}` → `task_graph {nodes: TaskNode[], edges: TaskEdge[], initiatives: [{id, title, state, atomic}], as_of: u64, truncated: bool}` | Read |
 | `TaskNode` | `{id, repo?, title, pipeline, priority, state: QueueStateKind, state_detail?: string, stage?: string, waiting_reason?: WaitingReasonCode, spent_usd: f64, initiative?, tags: string[], created_at, updated_at, issue?: GithubRef, pr?: PrRef, agents_running: u32}` | |
-| `TaskEdge` | `{from: QueueItemId (prerequisite), to: QueueItemId (dependent), kind: "depends_on"\|"initiative_after"\|"stacked_on", satisfied: bool}` | |
+| `TaskEdge` | `{from: QueueItemId (prerequisite), to: QueueItemId (dependent), kind: "depends_on"\|"initiative_after"\|"stacked_on"\|"onto" (only with `onto_edges`), satisfied: bool}` | |
 | `run_plan` | `{run}` → `run_plan {run, pipeline, revision: string, stages: StageSummary[], edited: bool, settings?: StageSettings[], finished?: bool}`: the frozen pipeline with steer edits applied | Read |
 | `StageSettings` | `{key: string (a stage id or `<stage>.review`), choices: ModelChoice[], model: "tier"\|"exact", effort: "default"\|"override", timeout_minutes?: u32, timeout?: "default"\|"override"}` | |
 | `list_items` (extended) | adds `updated_since?: Ts`, `before?: Ts`, `text?: string (1..=200 chars, title and brief substring)`, also on `list_item_summaries`. Until `item_filters` is served, a query using them is refused with `unavailable`. | Read |

@@ -4,6 +4,7 @@ import { h } from '../../ui/dom.js';
 import { openSheet } from '../../ui/sheet.js';
 import { toast } from '../../ui/toast.js';
 import { field, segmented, describeError, errorNote, loadErrorNotes } from '../../ui/components.js';
+import { assertOperator } from '../../core/role.js';
 
 const PRIORITIES = [
   { value: 'low', label: 'Low' }, { value: 'normal', label: 'Normal' },
@@ -15,6 +16,7 @@ const REVIEWS = [
 ];
 
 export function openNewItem(ctx) {
+  assertOperator(ctx, 'New item');
   const draft = { repo: '', pipeline: '', priority: 'normal', review: '', idempotencyKey: newKey() };
   const controls = buildControls();
   const repoStatus = h('div', { class: 'list-status' });
@@ -29,7 +31,7 @@ export function openNewItem(ctx) {
       segmented({ label: 'Priority', options: PRIORITIES, value: draft.priority, onChange: (v) => { draft.priority = v; } })),
     h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Review' }),
       segmented({ label: 'Review level', options: REVIEWS, value: draft.review, onChange: (v) => { draft.review = v; } })),
-    error, submit);
+    error, h('div', { class: 'sheet-actions' }, submit));
 
   let offRepos = () => {};
   const sheet = openSheet({ title: 'New item', content: form, size: 'tall', onClose: () => offRepos() });

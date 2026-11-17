@@ -1,5 +1,6 @@
 // Pairing: the one-time code from the host and a name for this device.
 import * as api from '../../core/api.js';
+import { sessionSignal } from '../../core/session-signal.js';
 import { BASE } from '../../core/base.js';
 import { formatPairingCode, normalizePairingCode, pairingCodeProblem } from '../../core/pairing-code.js';
 import { suggestDeviceName, deviceNameProblem, MAX_DEVICE_NAME } from '../../core/device-name.js';
@@ -74,6 +75,7 @@ async function claim({ codeInput, nameInput, error, submit, onPaired }) {
   error.textContent = '';
   try {
     await api.claim(normalizePairingCode(codeInput.value), nameInput.value.trim());
+    sessionSignal().announce('paired');
     onPaired();
   } catch (err) {
     error.textContent = claimMessage(err);

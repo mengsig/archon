@@ -20,6 +20,7 @@ use crate::executor::{frozen, plan_view};
 pub(super) const FEATURES: &[&str] = &[
     feature::TASK_GRAPH,
     feature::RUN_PLAN,
+    feature::ITEM_AGENT_STATES,
     feature::ITEM_FILTERS,
 ];
 

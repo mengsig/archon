@@ -33,43 +33,22 @@ export function createApp({ session, onUnpaired }) {
   const scheduleRefresh = coalesce(() => refresh.many(['summaries', 'questions', 'status']), REFRESH_DEBOUNCE_MS);
   const checkSession = sessionChecker(() => stop(), onUnpaired);
 
-  feed.subscribe((fresh, items) => {
-    store.set({ feed: items });
-    if (fresh.some((item) => !item.replayed && drivesRefresh(item))) scheduleRefresh();
-    if (fresh.some((item) => item.entry?.entry === 'report')) refresh.one('reports');
-  });
-  changes.subscribe((change) => {
-    if (change.subject === 'pause') applyPause(store, change);
-    scheduleRefresh();
-  });
+  followStreams({ store, feed, changes, refresh, scheduleRefresh });
 
   const isOpen = () => transport.state === 'open';
   let welcome = null;
   const feedSync = streamSyncer({ name: 'feed', sync: () => feed.sync(), store, isOpen });
   const changesSync = streamSyncer({ name: 'changes', sync: () => changes.sync(welcome), store, isOpen });
-  const conversation = createConversation({
-    request, isOpen,
-    onChange: (entries, fresh) => {
-      store.set({ conversation: entries });
-      matchEchoes(store, fresh);
-    },
-    onError: (err) => store.set({ errors: { ...store.get().errors, conversation: err } }),
-  });
+  const conversation = openConversation({ request, isOpen, store });
   transport = openTransport({ session, feed, changes, store, onReady: (welcomed) => {
-    welcome = welcomed;
+    if (welcomed?.reply !== 'welcome' || !welcomed.data) throw new TypeError(`hello answered ${welcomed?.reply}`);
+    welcome = welcomed.data;
     feedSync.start();
     changesSync.start();
     conversation.run();
     refresh.many(['summaries', 'questions', 'status', 'repos', 'reports', 'cost']);
   } });
-  store.watch((s) => s.connection.state, (state) => {
-    if (state === 'revoked') {
-      stop();
-      onUnpaired('This device was unpaired on the host.');
-    } else if (state === 'waiting') {
-      checkSession();
-    }
-  });
+  watchConnection({ store, stop: () => stop(), checkSession, onUnpaired });
 
   const onVisible = () => {
     if (document.visibilityState !== 'visible') return;
@@ -95,6 +74,46 @@ export function createApp({ session, onUnpaired }) {
     stop,
     get transport() { return transport; },
   };
+}
+
+// Feed entries and committed changes patch the store or reload what they touch.
+function followStreams({ store, feed, changes, refresh, scheduleRefresh }) {
+  if (typeof scheduleRefresh !== 'function' || typeof refresh?.one !== 'function') throw new TypeError('the streams need the loaders');
+  feed.subscribe((fresh, items) => {
+    store.set({ feed: items });
+    if (fresh.some((item) => !item.replayed && drivesRefresh(item))) scheduleRefresh();
+    if (fresh.some((item) => item.entry?.entry === 'report')) refresh.one('reports');
+  });
+  changes.subscribe((change) => {
+    if (change.subject === 'pause') applyPause(store, change);
+    scheduleRefresh();
+  });
+}
+
+function watchConnection({ store, stop, checkSession, onUnpaired }) {
+  if (typeof stop !== 'function' || typeof checkSession !== 'function') throw new TypeError('the connection watch needs stop and the session check');
+  if (typeof onUnpaired !== 'function') throw new TypeError('the connection watch reports an unpairing');
+  store.watch((s) => s.connection.state, (state) => {
+    if (state === 'revoked') {
+      stop();
+      onUnpaired('This device was unpaired on the host.');
+    } else if (state === 'waiting') {
+      checkSession();
+    }
+  });
+}
+
+// The conversation's entries land in the store, matched against the outbox.
+function openConversation({ request, isOpen, store }) {
+  if (typeof request !== 'function' || typeof isOpen !== 'function') throw new TypeError('the conversation needs requests and the socket state');
+  return createConversation({
+    request, isOpen,
+    onChange: (entries, fresh) => {
+      store.set({ conversation: entries });
+      matchEchoes(store, fresh);
+    },
+    onError: (err) => store.set({ errors: { ...store.get().errors, conversation: err } }),
+  });
 }
 
 function openTransport({ session, feed, changes, store, onReady }) {

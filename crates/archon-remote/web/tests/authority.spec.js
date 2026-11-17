@@ -1,5 +1,5 @@
 // A phone paired as an operator does from the app what the operator does
-// from the TUI; one paired as an observer is told why it cannot.
+// from the TUI; one paired as an observer is refused, with the reason.
 import { test as base, expect } from '@playwright/test';
 import { startListenerFixture } from './support/listener.js';
 import { askOperator } from './support/seed.js';
@@ -73,14 +73,37 @@ test('operator: sets and clears a directive and answers a question from the app'
   await expect(transcript.getByText(/Not sent/)).toHaveCount(0);
 });
 
-test('observer: a change from the app is refused with the reason', async ({ browser, fixture }) => {
+// The app shows an observer no control, so force a change over its own
+// WebSocket session: the daemon must still refuse it with the reason.
+async function forceRequest(page, protocolVersion, request) {
+  return page.evaluate(({ protocolVersion, request }) => new Promise((resolve, reject) => {
+    const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`, 'archon');
+    const frames = [];
+    const timer = setTimeout(() => reject(new Error(`no reply within 10 s: ${frames.join(' | ')}`)), 10_000);
+    socket.onclose = ({ code, reason }) => reject(new Error(`closed ${code} ${reason}: ${frames.join(' | ')}`));
+    socket.onopen = () => socket.send(JSON.stringify({ req: 1, cmd: 'hello', protocol_version: protocolVersion, client: 'archon-web', client_version: '1.0.0' }));
+    socket.onmessage = ({ data }) => {
+      const frame = JSON.parse(data);
+      frames.push(String(data).slice(0, 200));
+      if (frame.frame !== 'reply') return;
+      if (frame.id === 1) return socket.send(JSON.stringify({ req: 2, ...request }));
+      clearTimeout(timer);
+      socket.close();
+      resolve(frame.result);
+    };
+  }), { protocolVersion, request });
+}
+
+test('observer: no change control shows, and a forced change is refused with the reason', async ({ browser, fixture }) => {
   const context = await browser.newContext();
   const page = await context.newPage();
   const problems = guardConsole(page);
   try {
     await pairAs(page, fixture, 'observer');
-    const line = await send(page, '/archon apply {"cmd":"set_directive","text":"observer says","expires_in_hours":null}');
-    await expect(line).toContainText('Not sent: say changes Archon. This is an observer device: it can only read. Pair it as an operator to act from it.');
+    await expect(page.getByText('This device is an observer: it reads the conversation but cannot send to it.')).toBeVisible();
+    await expect(page.getByRole('textbox', { name: 'Message' })).toHaveCount(0);
+    const result = await forceRequest(page, fixture.archond.protocolVersion, { cmd: 'set_directive', text: 'observer says', expires_in_hours: null });
+    expect(JSON.stringify(result.Err)).toContain('set_directive changes Archon. This is an observer device: it can only read.');
     expect(await directives(fixture)).toEqual([]);
   } finally {
     await context.close();

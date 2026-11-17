@@ -123,6 +123,43 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
         await page.mouse.up();
       });
 
+      test('the work graph fits every node on its first render', async ({ page, fixture }) => {
+        test.skip(viewport.width < 1280, 'a phone keeps the readable scale and pans instead');
+        const base = (await fixture.archond.request({ cmd: 'get_item', item: fixture.seeded.first.id })).data;
+        await standInGraphs(page, pipelineFixture(base));
+        await openApp(page, fixture, `#/item/${base.item.id}`);
+        await page.getByRole('tab', { name: 'Work', exact: true }).click();
+        await expect(page.locator('#item-work .graph-node')).toHaveCount(10);
+        await expect.poll(() => page.locator('#item-work').evaluate((work) => {
+          const view = work.querySelector('.graph-viewport').getBoundingClientRect();
+          return [...work.querySelectorAll('.graph-node')].filter((node) => {
+            const box = node.getBoundingClientRect();
+            return box.left < view.left - 1 || box.right > view.right + 1 || box.top < view.top - 1 || box.bottom > view.bottom + 1;
+          }).length;
+        }), 'nodes outside the viewport').toBe(0);
+      });
+
+      test('labels of edges that share endpoints do not overlap', async ({ page, fixture }) => {
+        const base = (await fixture.archond.request({ cmd: 'get_item', item: fixture.seeded.first.id })).data;
+        const data = pipelineFixture(base);
+        data.graph = (await fixture.archond.request({ cmd: 'task_graph', filter: { include_terminal_since: '1970-01-01T00:00:00Z' }, limit: 500 })).data;
+        const [first, second] = data.graph.nodes;
+        data.graph.edges = [{ from: first.id, to: second.id, kind: 'depends_on', satisfied: false },
+          { from: first.id, to: second.id, kind: 'stacked_on', satisfied: false }];
+        await standInGraphs(page, data);
+        await openApp(page, fixture, '#/graph');
+        const edges = page.locator('.graph-edge');
+        await expect(edges).toHaveCount(2);
+        // Each edge's kind and status rows form one block; the two blocks must not meet.
+        const [a, b] = await edges.evaluateAll((groups) => groups.map((group) => {
+          const boxes = [...group.querySelectorAll('.graph-edge-label')].map((text) => text.getBoundingClientRect());
+          return { left: Math.min(...boxes.map((box) => box.left)), right: Math.max(...boxes.map((box) => box.right)),
+            top: Math.min(...boxes.map((box) => box.top)), bottom: Math.max(...boxes.map((box) => box.bottom)) };
+        }));
+        const overlap = a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+        expect(overlap, `labels at ${JSON.stringify([a, b])}`).toBe(false);
+      });
+
       test('work and agent graphs show attempts, slots, gates, model, cost and live descendants', async ({ page, fixture }) => {
         const base = (await fixture.archond.request({ cmd: 'get_item', item: fixture.seeded.first.id })).data;
         const data = pipelineFixture(base);

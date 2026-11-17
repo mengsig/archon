@@ -1,5 +1,7 @@
 const MIN_SCALE = 0.001;
 const MAX_SCALE = 3;
+// The first fit zooms out this far at most, so text stays legible on a phone.
+export const READABLE_SCALE = 0.5;
 
 function positiveSize(size) {
   if (!size || !Number.isFinite(size.width) || !Number.isFinite(size.height)) {
@@ -19,7 +21,7 @@ export function fitCamera(bounds, viewport, readable = false) {
   positiveSize(bounds);
   positiveSize(viewport);
   const fit = Math.min(viewport.width / bounds.width, viewport.height / bounds.height, 1);
-  const scale = Math.max(readable ? 1 : MIN_SCALE, fit);
+  const scale = Math.max(readable ? READABLE_SCALE : MIN_SCALE, fit);
   return { scale, x: Math.max(0, (viewport.width - bounds.width * scale) / 2),
     y: Math.max(0, (viewport.height - bounds.height * scale) / 2) };
 }

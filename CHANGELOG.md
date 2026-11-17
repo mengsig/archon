@@ -2,9 +2,6 @@
 
 ## Unreleased
 
-- The change stream now carries `pause` changes, so clients learn of a CLI
-  `archon pause` or `archon resume` live.
-
 ## 1.6.2
 
 ### Changed
@@ -19,6 +16,18 @@
   Existing pairing, observer permissions, confirmations and strict CSP remain intact.
 - Added a bounded read-only `item_agent_states` request for actual delegated-agent
   lifecycle and direct ledger spend; unavailable backend reads fail explicitly.
+- The change stream now carries `pause` changes, so clients learn of a CLI
+  `archon pause` or `archon resume` live.
+
+### Fixed
+
+- The web app shows an observer device no control that changes Archon on any
+  screen; the listener still refuses a forced change. Overview follows a CLI pause
+  or resume live, and agent trees and new items refresh from the change stream.
+- Graph edge labels that share endpoints no longer overlap, the selected-item panel
+  no longer prints "null", and the item Work graph fits on desktop when it opens.
+  Settings is marked as the current section, and a refused or dropped connection
+  shows a "Can't connect" state that retries with a bounded backoff.
 
 ## 1.6.1
 

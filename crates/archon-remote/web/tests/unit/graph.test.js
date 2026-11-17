@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { installDom, Element } from '../support/dom-shim.js';
 import { layoutGraph, CARD_WIDTH, CARD_HEIGHT } from '../../src/ui/graph/layout.js';
-import { fitCamera, zoomCamera, panCamera, revealNode } from '../../src/ui/graph/camera.js';
+import { fitCamera, zoomCamera, panCamera, revealNode, READABLE_SCALE } from '../../src/ui/graph/camera.js';
 import { createGraph } from '../../src/ui/graph/graph.js';
 
 const node = (id, extra = {}) => ({ id, title: `Task ${id}`, subtitle: 'Work item', state: 'running', ...extra });
@@ -99,11 +99,20 @@ test('initial fitting preserves phone readability and explicit fitting shows the
   const viewport = { width: 360, height: 480 };
   const initial = fitCamera(bounds, viewport, true);
   const fit = fitCamera(bounds, viewport);
-  assert.equal(initial.scale, 1);
+  assert.equal(initial.scale, READABLE_SCALE);
   assert.equal(initial.x, 0);
   assert.ok(fit.scale < initial.scale);
   assert.ok(bounds.width * fit.scale <= viewport.width);
   assert.ok(bounds.height * fit.scale <= viewport.height);
+});
+
+test('initial fitting shows a desktop work graph whole once it fits a readable scale', () => {
+  const bounds = { width: 1648, height: 432 };
+  const viewport = { width: 990, height: 464 };
+  const initial = fitCamera(bounds, viewport, true);
+  assert.ok(initial.scale >= READABLE_SCALE && initial.scale < 1, `scale ${initial.scale}`);
+  assert.ok(bounds.width * initial.scale <= viewport.width);
+  assert.ok(bounds.height * initial.scale + initial.y <= viewport.height);
 });
 
 test('zoom preserves the world point under its anchor and clamps extreme factors', () => {

@@ -4,7 +4,7 @@
 //! `features`.
 
 use super::graph::TaskEdgeKind;
-use super::{Reply, ServerFrame};
+use super::{Reply, Request, ServerFrame};
 
 /// The `hello` feature strings a client declares to receive later variants.
 pub mod client_feature {
@@ -45,6 +45,18 @@ impl ClientFeatures {
                 id,
                 result: Ok(self.adapt_reply(reply)),
             },
+            other => other,
+        }
+    }
+
+    /// `request` as this client means it: a client that never sees `onto`
+    /// edges gets a component joined without them too.
+    pub fn adapt_request(self, request: Request) -> Request {
+        match request {
+            Request::TaskGraph { mut filter, limit } if !self.onto_edges => {
+                filter.without_onto = true;
+                Request::TaskGraph { filter, limit }
+            }
             other => other,
         }
     }

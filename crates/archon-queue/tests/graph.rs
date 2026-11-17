@@ -588,6 +588,13 @@ fn an_onto_edge_runs_from_the_pull_requests_owner_to_each_item_queued_onto_it() 
             expected,
             "the component keeps its onto edges"
         );
+        let undeclared = TaskFilter {
+            without_onto: true,
+            ..component
+        };
+        let unjoined = graph(&store, &undeclared);
+        let ids: Vec<_> = unjoined.nodes.iter().map(|n| &n.id).collect();
+        assert_eq!(ids, vec![root], "without onto links {root} stands alone");
     }
     let apart = TaskFilter {
         component_of: Some(other.id.clone()),

@@ -299,6 +299,7 @@ fn dispatch(session: &mut Session, id: u64, request: Request) -> Result<(), Ende
     };
     let (backend, outbox) = (session.backend.clone(), session.outbox.clone());
     let device = session.device.clone();
+    let request = session.features.adapt_request(request);
     session.tasks.spawn(async move {
         let result = backend.handle(&device, request).await;
         let frame = ServerFrame::Reply {

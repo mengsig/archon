@@ -367,6 +367,7 @@ async fn session(
             request => {
                 let (ctx, outbox) = (ctx.clone(), outbox.clone());
                 tokio::spawn(async move {
+                    let request = features.adapt_request(request);
                     let result = handlers::handle(&ctx, client, request).await;
                     send(
                         &outbox,

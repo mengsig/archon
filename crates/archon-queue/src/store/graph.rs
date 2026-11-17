@@ -47,20 +47,36 @@ macro_rules! onto_links {
     };
 }
 
-/// The connected component of `?1` over every edge kind, both directions.
-const COMPONENT_CTE: &str = concat!(
-    "WITH RECURSIVE onto_link (owner, item) AS MATERIALIZED (",
-    onto_links!(),
-    "), component (id) AS (
+/// The component's root and its dependency and stack steps, both directions.
+macro_rules! component_steps {
+    () => {
+        "
          SELECT ?1
          UNION SELECT d.depends_on FROM item_deps d JOIN component c ON d.item = c.id
          UNION SELECT d.item FROM item_deps d JOIN component c ON d.depends_on = c.id
          UNION SELECT s.parent_item FROM stacks s JOIN component c ON s.item = c.id
-         UNION SELECT s.item FROM stacks s JOIN component c ON s.parent_item = c.id
+         UNION SELECT s.item FROM stacks s JOIN component c ON s.parent_item = c.id"
+    };
+}
+
+/// The connected component of `?1` over every edge kind, both directions.
+const COMPONENT_CTE: &str = concat!(
+    "WITH RECURSIVE onto_link (owner, item) AS MATERIALIZED (",
+    onto_links!(),
+    "), component (id) AS (",
+    component_steps!(),
+    "
          UNION SELECT k.owner FROM onto_link k JOIN component c ON k.item = c.id
                WHERE k.owner IS NOT NULL
          UNION SELECT k.item FROM onto_link k JOIN component c ON k.owner = c.id
      ) "
+);
+
+/// [`COMPONENT_CTE`] without onto links, for a client that never sees them.
+const COMPONENT_WITHOUT_ONTO_CTE: &str = concat!(
+    "WITH RECURSIVE component (id) AS (",
+    component_steps!(),
+    ") "
 );
 
 const TERMINAL: &str = "('succeeded', 'failed', 'cancelled')";
@@ -243,7 +259,11 @@ fn select_nodes(
     let cte = match &filter.component_of {
         Some(root) => {
             args.push(Value::Text(root.as_str().to_owned()));
-            COMPONENT_CTE
+            if filter.without_onto {
+                COMPONENT_WITHOUT_ONTO_CTE
+            } else {
+                COMPONENT_CTE
+            }
         }
         None => "",
     };

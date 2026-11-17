@@ -590,8 +590,10 @@ HTTP either way, so publish it with `tailscale serve` or a TLS proxy.
 `max_connections` (1 to 1024) caps the HTTP connections and WebSocket
 sessions served at once. An idle keep-alive connection gives its slot back
 after 3 seconds, so a tab holds only its WebSocket once loaded. A connection
-beyond the cap is answered `503` with `Retry-After: 2`, and the app shows
-"Can't connect" while it retries. A change takes effect when archond restarts.
+beyond the cap is answered `503`: under `/api` and `/ws` with
+`Retry-After: 2`, and the app shows "Can't connect" while it retries; a page
+load with a busy page whose `Retry-After` grows from 2 to at most 30 seconds,
+jittered, before it reloads itself. A change takes effect when archond restarts.
 
 ## Push notifications
 

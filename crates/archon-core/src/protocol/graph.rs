@@ -63,6 +63,11 @@ pub struct TaskFilter {
     /// the edges among a node set it merged from several graphs in one go.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ids: Option<Vec<QueueItemId>>,
+    /// Never on the wire: set for a client that does not decode `onto` edges
+    /// ([`super::compat`]), so `component_of` does not follow them either.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub without_onto: bool,
 }
 
 /// One item in the graph: a subset of its summary.

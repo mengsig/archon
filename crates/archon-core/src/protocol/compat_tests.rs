@@ -131,3 +131,35 @@ fn a_hello_declares_each_feature_by_name_and_unknown_names_are_ignored() {
     assert_eq!(kept.edges.len(), 2);
     assert_eq!(ClientFeatures::declared(&[]), ClientFeatures::default());
 }
+
+/// An undeclared client's component is joined without the onto links it
+/// never sees; other requests and declared clients pass unchanged.
+#[test]
+fn an_undeclared_client_asks_for_a_component_without_onto_links() {
+    let component = Request::TaskGraph {
+        filter: crate::protocol::TaskFilter {
+            component_of: Some(QueueItemId::new()),
+            ..Default::default()
+        },
+        limit: None,
+    };
+    let Request::TaskGraph { filter, .. } =
+        ClientFeatures::default().adapt_request(component.clone())
+    else {
+        panic!("a graph request stays a graph request");
+    };
+    assert!(filter.without_onto, "the old client's component skips onto");
+    assert_eq!(
+        ClientFeatures::all().adapt_request(component.clone()),
+        component
+    );
+    assert_eq!(
+        ClientFeatures::default().adapt_request(Request::Shutdown),
+        Request::Shutdown
+    );
+    let wire = serde_json::to_value(&filter).unwrap();
+    assert!(
+        wire.get("without_onto").is_none(),
+        "the flag never reaches the wire"
+    );
+}

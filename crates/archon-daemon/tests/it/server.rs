@@ -763,6 +763,29 @@ async fn a_client_of_the_last_release_decodes_graphs_and_changes_with_its_types(
         full.edges.len(),
         "only the onto edge is left out"
     );
+
+    // Its component of the onto item is joined only by edges it can see.
+    let component = Request::TaskGraph {
+        filter: TaskFilter {
+            component_of: Some(onto.id.clone()),
+            ..TaskFilter::default()
+        },
+        limit: None,
+    };
+    let alone = old.raw_call(component.clone()).await;
+    let ids: Vec<_> = alone["data"]["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .map(|n| n["id"].clone())
+        .collect();
+    assert_eq!(ids, [serde_json::json!(onto.id)], "{alone}");
+    let joined = new.raw_call(component).await;
+    assert_eq!(
+        joined["data"]["nodes"].as_array().expect("nodes").len(),
+        3,
+        "{joined}"
+    );
     pump.abort();
     serving.abort();
 }

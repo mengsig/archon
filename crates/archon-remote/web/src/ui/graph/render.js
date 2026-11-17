@@ -8,7 +8,7 @@ const STATES = new Map([
   ['blocked', 'warning'], ['waiting', 'warning'], ['pending', 'warning'],
   ['failed', 'danger'], ['error', 'danger'], ['cancelled', 'muted'],
 ]);
-const KINDS = new Set(['depends_on', 'stacked_on', 'initiative_after']);
+const KINDS = new Set(['depends_on', 'stacked_on', 'onto', 'initiative_after']);
 // A label is two 13px lines: the kind, then whether it is satisfied.
 const LABEL_PAIR_HEIGHT = 30;
 

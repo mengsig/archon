@@ -266,6 +266,21 @@ test('renderer uses plain text, accessible nodes and native labelled controls', 
   graph.destroy();
 });
 
+test('an onto edge keeps its own kind and label while an unknown kind falls back to other', () => {
+  const harness = domHarness();
+  const graph = createGraph({ label: 'Tasks', onSelect: () => {} });
+  graph.update({ nodes: [node('a'), node('b'), node('c')],
+    edges: [edge('a', 'b', { kind: 'onto', satisfied: true }), edge('b', 'c', { kind: 'future_kind' })] });
+  harness.resize();
+  harness.flush();
+  const [onto, future] = graph.element.query('g').filter((item) => item.className === 'graph-edge');
+  assert.equal(onto.getAttribute('data-kind'), 'onto');
+  assert.equal(onto.query('text')[0].textContent, 'onto');
+  assert.match(onto.getAttribute('aria-label'), /onto · satisfied/);
+  assert.equal(future.getAttribute('data-kind'), 'other');
+  graph.destroy();
+});
+
 test('live updates preserve focused node elements, source data and the camera', () => {
   const harness = domHarness();
   const selected = [];

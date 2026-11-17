@@ -15697,7 +15697,7 @@
       "type": "object"
     },
     "TaskEdge": {
-      "description": "`from` is the prerequisite and `to` the item that waits for it.",
+      "description": "`from` is the prerequisite and `to` the item that waits for it; for an\n`onto` edge, `from` is the item that owns the pull request and `to` the\nitem queued onto it, with `satisfied` always true.",
       "properties": {
         "from": {
           "$ref": "#/$defs/QueueItemId"
@@ -15721,12 +15721,21 @@
       "type": "object"
     },
     "TaskEdgeKind": {
-      "enum": [
-        "depends_on",
-        "initiative_after",
-        "stacked_on"
-      ],
-      "type": "string"
+      "oneOf": [
+        {
+          "enum": [
+            "depends_on",
+            "initiative_after",
+            "stacked_on"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "onto",
+          "description": "`from` owns the pull request `to` was queued onto. Always satisfied:\nthe pull request exists already and nothing waits. Older clients draw\nkinds they do not know as \"other\", so the kind is additive.",
+          "type": "string"
+        }
+      ]
     },
     "TaskFilter": {
       "description": "Which items a `task_graph` holds; an absent field does not filter.",

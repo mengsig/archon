@@ -453,3 +453,74 @@ fn as_of_is_the_change_seq_the_graph_was_read_at_under_concurrent_writes() {
     assert_eq!(last.nodes.len(), WRITES);
     assert_eq!(last.as_of, writer.last_change_seq().unwrap());
 }
+
+fn onto_pr(url: &str) -> Box<archon_core::pull_request::OntoPullRequest> {
+    let pr = archon_core::pull_request::PullRequestRef::from_url(url).unwrap();
+    Box::new(archon_core::pull_request::OntoPullRequest {
+        target: archon_core::pull_request::OntoTarget::Pr(pr.number),
+        pr,
+        node_id: None,
+        head_repository: "o/r".into(),
+        head_ref: "feature".into(),
+        base_ref: "main".into(),
+        head_sha: "a".repeat(40),
+        review_only: false,
+    })
+}
+
+fn deliver(store: &mut Store, item: &QueueItem, at: i64) {
+    let link = GithubLink {
+        item: item.id.clone(),
+        reference: GithubRef {
+            host: "github.com".into(),
+            repo: "o/r".into(),
+            number: 9,
+            kind: GithubKind::PullRequest,
+        },
+        relation: LinkRelation::Delivered,
+        source: LinkSource::Ship,
+        created_at: t(at),
+    };
+    store.link_github(&link).unwrap();
+}
+
+#[test]
+fn an_onto_edge_runs_from_the_pull_requests_owner_to_each_item_queued_onto_it() {
+    let (mut store, repo, _) = seeded(0);
+    let mut owned = item(Some(&repo), "owner");
+    owned.pipeline = "review".into();
+    owned.created_at = t(10);
+    owned.updated_at = t(10);
+    let owner = store.insert_item(&owned, None).unwrap();
+    let mut first = item(Some(&repo), "onto one");
+    let mut second = item(Some(&repo), "onto two");
+    for (n, queued) in [&mut first, &mut second].into_iter().enumerate() {
+        queued.onto = Some(onto_pr("https://GitHub.com/O/R/pull/9"));
+        queued.created_at = t(11 + n as i64);
+        queued.updated_at = queued.created_at;
+    }
+    let first = store.insert_item(&first, None).unwrap();
+    let second = store.insert_item(&second, None).unwrap();
+    let other = insert_at(&mut store, &repo, "unrelated", 13, &[]);
+    deliver(&mut store, &owner, 20);
+    deliver(&mut store, &first, 15);
+    deliver(&mut store, &second, 16);
+
+    let all = graph(&store, &TaskFilter::default());
+    let found = edges(&all);
+    let mut expected = vec![
+        (&owner.id, &first.id, TaskEdgeKind::Onto, true),
+        (&owner.id, &second.id, TaskEdgeKind::Onto, true),
+    ];
+    expected.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
+    assert_eq!(found, expected, "onto items never own the pull request");
+    assert!(found.iter().all(|e| e.1 != &other.id && e.0 != &other.id));
+
+    let filter = TaskFilter {
+        pipelines: Some(vec!["direct".into()]),
+        ..TaskFilter::default()
+    };
+    let without_owner = graph(&store, &filter);
+    assert_eq!(without_owner.nodes.len(), 3, "the owner is filtered out");
+    assert!(without_owner.edges.is_empty(), "no onto edge without owner");
+}

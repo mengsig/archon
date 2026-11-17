@@ -108,9 +108,15 @@ pub enum TaskEdgeKind {
     DependsOn,
     InitiativeAfter,
     StackedOn,
+    /// `from` owns the pull request `to` was queued onto. Always satisfied:
+    /// the pull request exists already and nothing waits. Older clients draw
+    /// kinds they do not know as "other", so the kind is additive.
+    Onto,
 }
 
-/// `from` is the prerequisite and `to` the item that waits for it.
+/// `from` is the prerequisite and `to` the item that waits for it; for an
+/// `onto` edge, `from` is the item that owns the pull request and `to` the
+/// item queued onto it, with `satisfied` always true.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TaskEdge {
     pub from: QueueItemId,

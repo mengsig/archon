@@ -305,7 +305,8 @@ None calls a model. Each is specified in CONTRACTS.md §1.
   This is also the item transition history: `item_history{item}`.
 - *DAG:* `task_graph{filter}` returns nodes (item summary subset, status,
   stage, waiting reason, cost, links) and typed edges (`depends_on`,
-  `initiative_after`, `stacked_on`), plus `as_of` change seq.
+  `initiative_after`, `stacked_on`, `onto`: from the item that owns a pull
+  request to an item queued onto it), plus `as_of` change seq.
 - *Pipelines:* `run_plan{run}` returns the frozen, steer-edited stage list of
   a run with each stage's resolved models, effort and time limit, so steered
   runs render as they actually executed. A finished run's plan is the one

@@ -42,11 +42,11 @@
 .graph-edge { pointer-events: none; }
 .graph-edge path { fill: none; stroke: var(--text-2, #b3b5bf); stroke-width: 1.3; }
 .graph-edge polygon { fill: var(--text-2, #b3b5bf); }
-.graph-edge[data-kind="stacked_on"] path { stroke-dasharray: 5 4; }
+.graph-edge:is([data-kind="stacked_on"], [data-kind="onto"]) path { stroke-dasharray: 5 4; }
 .graph-edge[data-kind="initiative_after"] path { stroke-dasharray: 2 4; }
 .graph-edge[data-satisfied="false"] path { stroke: var(--amber, #e2bc72); }
 .graph-edge[data-satisfied="false"] polygon { fill: var(--amber, #e2bc72); }
-.graph-edge-label { fill: var(--text-2, #b3b5bf); font-size: 10px; text-anchor: middle; paint-order: stroke; stroke: var(--surface, #1b1c20); stroke-width: 4; stroke-linejoin: round; }
+.graph-edge-label { fill: var(--text-2, #b3b5bf); font-size: 12px; text-anchor: middle; paint-order: stroke; stroke: var(--surface, #1b1c20); stroke-width: 4; stroke-linejoin: round; }
 .graph-help, .graph-empty { margin: 0; padding: 10px 12px; color: var(--text-2, #b3b5bf); font-size: 11px; }
 .graph-empty { position: absolute; top: 48%; left: 0; right: 0; text-align: center; pointer-events: none; }
 .graph-warnings { padding: 10px 12px; color: var(--amber, #e2bc72); font-size: 11px; border-top: 1px solid var(--separator); overflow-wrap: anywhere; }

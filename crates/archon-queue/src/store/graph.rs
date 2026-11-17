@@ -14,6 +14,7 @@ use archon_core::protocol::graph::{
 use archon_core::protocol::{
     GithubRef, PrRef, QueueStateKind, TaskEdge, TaskFilter, TaskGraph, TaskNode, WaitingReasonCode,
 };
+use archon_core::pull_request::PullRequestRef;
 use archon_core::queue::{Priority, QueueState};
 use archon_core::run::PipelineRun;
 use rusqlite::types::Value;
@@ -441,7 +442,74 @@ fn edges_between(
             satisfied,
         });
     }
+    edges.extend(onto_edges(conn, ids, members)?);
     edges.sort_by(|a, b| (&a.from, &a.to, a.kind).cmp(&(&b.from, &b.to, b.kind)));
+    assert!(
+        edges.windows(2).all(|w| w[0] != w[1]),
+        "no edge is listed twice"
+    );
+    Ok(edges)
+}
+
+/// Edges from the owner of a pull request to each node queued onto it. The
+/// owner is the earliest item (then lowest id) with a delivered link to the
+/// pull request that is not itself queued onto it.
+fn onto_edges(
+    conn: &Connection,
+    ids: &str,
+    members: &HashSet<&str>,
+) -> Result<Vec<TaskEdge>, ArchonError> {
+    let mut onto_items = conn
+        .prepare_cached(
+            "SELECT i.id, json_extract(i.data, '$.onto.pr')
+             FROM json_each(?1) n JOIN items i ON i.id = n.value
+             WHERE json_type(i.data, '$.onto.pr') = 'text'",
+        )
+        .ctx("read onto items")?;
+    let mut owner_of = conn
+        .prepare_cached(
+            "SELECT l.item FROM github_links l
+             WHERE l.host = ?1 AND l.repo = ?2 AND l.number = ?3
+               AND l.kind = 'pull_request' AND l.relation = 'delivered' AND l.item <> ?4
+               AND NOT EXISTS (
+                   SELECT 1 FROM items o
+                   WHERE o.id = l.item AND lower(json_extract(o.data, '$.onto.pr')) = ?5)
+             ORDER BY l.created_at, l.item LIMIT 1",
+        )
+        .ctx("read pull request owner")?;
+    let rows = onto_items
+        .query_map([ids], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .ctx("read onto items")?
+        .collect::<Result<Vec<_>, _>>()
+        .ctx("read onto item")?;
+    let mut edges = Vec::new();
+    for (item, url) in rows {
+        assert!(members.contains(item.as_str()), "onto items are nodes");
+        let pr = PullRequestRef::from_url(&url)
+            .ok_or_else(|| ArchonError::Corrupt(format!("item {item} onto {url:?}")))?;
+        let (host, repo) = (pr.host.to_lowercase(), pr.repository.to_lowercase());
+        let number = i64::try_from(pr.number).map_err(|_| {
+            ArchonError::Corrupt(format!("pull request number {} overflows", pr.number))
+        })?;
+        let owner: Option<String> = owner_of
+            .query_row(
+                rusqlite::params![host, repo, number, item, url.to_lowercase()],
+                |row| row.get(0),
+            )
+            .optional()
+            .ctx("read pull request owner")?;
+        let Some(owner) = owner.filter(|o| members.contains(o.as_str())) else {
+            continue;
+        };
+        edges.push(TaskEdge {
+            from: QueueItemId::parse(&owner)?,
+            to: QueueItemId::parse(&item)?,
+            kind: TaskEdgeKind::Onto,
+            satisfied: true,
+        });
+    }
     Ok(edges)
 }
 

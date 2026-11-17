@@ -8,10 +8,13 @@ use archon_core::autonomy::{AutonomyPatch, ProposalMode};
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId};
 use archon_core::model::Effort;
+use archon_core::protocol::github_links::LinkSource;
+use archon_core::protocol::graph::TaskEdgeKind;
 use archon_core::protocol::{
-    EnqueueRequest, ItemQuery, ModelSource, Reply, RepoRef, Request, RunPlan, SettingSource,
-    TaskFilter, TaskGraph, WaitingReasonCode,
+    EnqueueRequest, GithubKind, GithubLink, GithubRef, ItemQuery, LinkRelation, ModelSource, Reply,
+    RepoRef, Request, RunPlan, SettingSource, TaskFilter, TaskGraph, WaitingReasonCode,
 };
+use archon_core::pull_request::{OntoPullRequest, OntoTarget, PullRequestRef};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::steer::{InsertStage, Steer};
 use common::{Harness, PIPELINE, REPO_NAME, completed, plan, verdict};
@@ -449,6 +452,58 @@ async fn the_graph_gives_the_waiting_reasons_the_summaries_give() {
     assert_eq!(from_graph, summary_codes(&h).await);
     let as_of = h.ctx.store.lock().await.last_change_seq().expect("seq");
     assert_eq!(graph.as_of, as_of, "nothing was written since");
+}
+
+#[tokio::test]
+async fn the_graph_draws_an_onto_edge_from_the_pull_requests_owner() {
+    let h = harness().await;
+    let owner = h.enqueue("owns the pull request").await;
+    let queued = h.enqueue("queued onto it").await;
+    let pr = PullRequestRef::from_url("https://github.com/o/r/pull/12").unwrap();
+    let onto = QueueItem {
+        id: QueueItemId::new(),
+        onto: Some(Box::new(OntoPullRequest {
+            target: OntoTarget::Pr(pr.number),
+            pr,
+            node_id: None,
+            head_repository: "o/r".into(),
+            head_ref: "feature".into(),
+            base_ref: "main".into(),
+            head_sha: "a".repeat(40),
+            review_only: false,
+        })),
+        ..queued.clone()
+    };
+    let onto = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .insert_item(&onto, None)
+        .expect("insert onto item");
+    let delivered = GithubLink {
+        item: owner.id.clone(),
+        reference: GithubRef {
+            host: "github.com".into(),
+            repo: "o/r".into(),
+            number: 12,
+            kind: GithubKind::PullRequest,
+        },
+        relation: LinkRelation::Delivered,
+        source: LinkSource::Ship,
+        created_at: archon_core::now(),
+    };
+    h.ctx.store.lock().await.link_github(&delivered).unwrap();
+
+    let graph = graph(&h).await;
+    let found: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|e| e.kind == TaskEdgeKind::Onto)
+        .collect();
+    assert_eq!(found.len(), 1, "one onto edge: {:?}", graph.edges);
+    assert_eq!((&found[0].from, &found[0].to), (&owner.id, &onto.id));
+    assert!(found[0].satisfied, "an onto edge never waits");
 }
 
 #[tokio::test]

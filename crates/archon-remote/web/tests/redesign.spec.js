@@ -109,7 +109,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
         await node.focus();
         data.detail.stages[1].cost_usd = 1.75;
         await notify(fixture.archond, 'progress', 'Stage usage updated.', base.item.id);
-        await expect(node).toHaveAttribute('aria-label', /\$1.75/);
+        await expect(node.locator('.graph-node-cost')).toHaveText('$1.75');
         await expect(node).toBeFocused();
         const box = await node.boundingBox();
         await page.mouse.move(box.x + 40, box.y + 40);
@@ -118,7 +118,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
         expect(await node.evaluate((el) => el.hasPointerCapture(1))).toBe(true);
         data.detail.stages[1].cost_usd = 2;
         await notify(fixture.archond, 'progress', 'Stage usage updated again.', base.item.id);
-        await expect(node).toHaveAttribute('aria-label', /\$2.00/);
+        await expect(node.locator('.graph-node-cost')).toHaveText('$2.00');
         expect(await node.evaluate((el) => el.hasPointerCapture(1))).toBe(true);
         await page.mouse.up();
       });

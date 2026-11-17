@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 1.6.1
+
+Upcoming.
+
+### Fixed
+
+- Intent stages with many approved images now stay within Aether's reference
+  limits (16 attachments, at most 8 images). Approved artifacts attach first;
+  remaining images keep their IDs, workspace paths and SHA-256 hashes in every
+  stage brief for workers and reviewers to open and pass on with the unchanged
+  ledger. Every approved image is still checked for changes before spawning.
+
 ## 1.6.0
 
 Released 2026-11-16.

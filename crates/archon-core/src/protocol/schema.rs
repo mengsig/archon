@@ -133,10 +133,25 @@ mod tests {
         ] {
             definition(&schema, name);
         }
-        let subjects = definition(&schema, "Change")["oneOf"]
+        let subjects: Vec<&str> = definition(&schema, "Change")["oneOf"]
             .as_array()
-            .expect("subjects");
-        assert_eq!(subjects.len(), 9, "one variant per ChangeSubject");
+            .expect("subjects")
+            .iter()
+            .filter_map(|variant| variant["properties"]["subject"]["const"].as_str())
+            .collect();
+        let expected = [
+            "item",
+            "dependency",
+            "run",
+            "stage",
+            "gate",
+            "question",
+            "initiative",
+            "link",
+            "pause",
+            "other",
+        ];
+        assert_eq!(subjects, expected, "one variant per ChangeSubject");
     }
 
     /// A model is accepted as `provider/model` or as `{provider, model}`, so

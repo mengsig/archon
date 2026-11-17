@@ -108,6 +108,7 @@ pub struct TaskNode {
     schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
+#[schemars(transform = super::schema::ReadsUnknownAs("other"))]
 pub enum TaskEdgeKind {
     DependsOn,
     InitiativeAfter,
@@ -116,8 +117,8 @@ pub enum TaskEdgeKind {
     /// the pull request exists already and nothing waits. Sent only to a
     /// client that declares `onto_edges` ([`super::compat`]).
     Onto,
-    /// A kind a newer archond added, so one edge never fails a whole reply.
-    /// Only read, never sent.
+    /// Any kind this release does not name, one a newer archond added, so
+    /// one edge never fails a whole reply. Only read, never sent.
     #[serde(other)]
     Other,
 }

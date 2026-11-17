@@ -60,10 +60,9 @@ dispatch or class tables, except to add optional fields.
   `item_filters`, `github_links`, `github_import`, `device_roles`.
 - Client feature strings, which a client names in `hello.features` to be sent
   variants added to protocol 24 after its first release: `onto_edges` (the
-  `onto` `TaskEdge` kind) and `pause_changes` (the `pause` `ChangeSubject`).
-  A client that names neither, as 1.6.1's do, is sent no `onto` edge and no
-  `pause` change; a page keeps its `last_seq`. Unknown names are ignored, and
-  a client reads an edge kind or subject it does not know as `other`.
+  `onto` `TaskEdge` kind). A client that does not name it, as 1.6.1's do, is
+  sent no `onto` edge. Unknown names are ignored, and a client reads an edge
+  kind it does not know as `other`. Changes are never filtered per client.
 - Requests from the remote listener run with `ClientKind::ArchonWeb` standing,
   not `ArchonCli` (enforced in AR-R).
 - New `ErrorCode::history_expired {first_seq, last_seq}`, on the wire
@@ -84,7 +83,7 @@ dispatch or class tables, except to add optional fields.
 | `subscribe_changes` | `{after?: u64}` → `subscribed {id, last_seq}`, then frames `{"frame":"change","sub":id,"change":Change}` | Read |
 | `changes_page` | `{after: u64, limit?: u32 (1..=1000)}` → `changes {changes: Change[], last_seq}` | Read |
 | `Change` | `{seq: u64, at: Ts, subject: ChangeSubject}`. `seq` is gapless and written in the same transaction as the state it describes. The subject is flattened: `{"seq":7,"at":…,"subject":"item","item":"qi_…","state":"running"}`. | |
-| `ChangeSubject` (tag `subject`) | `item {item, state: QueueStateKind, stage?: string, waiting_reason?: WaitingReasonCode}` · `dependency {item, depends_on, added: bool}` · `run {run, item, state: RunStateKind}` · `stage {stage_run, run, item, stage_id, attempt, fan_index, state: StageStateKind, verdict?: Verdict}` · `gate {run, item, stage_id, decision?: GateDecision}` · `question {question, item?, open: bool}` · `initiative {initiative, state: InitiativeState}` · `link {item, host, repo, number, relation}` · `pause {global, repos, pipelines}` (only with `pause_changes`) | |
+| `ChangeSubject` (tag `subject`) | `item {item, state: QueueStateKind, stage?: string, waiting_reason?: WaitingReasonCode}` · `dependency {item, depends_on, added: bool}` · `run {run, item, state: RunStateKind}` · `stage {stage_run, run, item, stage_id, attempt, fan_index, state: StageStateKind, verdict?: Verdict}` · `gate {run, item, stage_id, decision?: GateDecision}` · `question {question, item?, open: bool}` · `initiative {initiative, state: InitiativeState}` · `link {item, host, repo, number, relation}` | |
 | `list_item_summaries` (extended) | with `with_as_of: true` in its query the reply is `item_summaries_at {summaries: ItemSummary[], as_of: u64}`, `as_of` read in the same database read transaction as the summaries. Without it the reply stays the bare `item_summaries` array protocol 23 reads. | Read |
 | `item_history` | `{item, limit?: u32 (1..=1000)}` → `item_history {item, transitions: [{seq, at, from?: QueueStateKind, to: QueueStateKind, reason?: string, by: "daemon"\|"cli"\|"web"\|"mcp"\|"github"}]}` | Read |
 

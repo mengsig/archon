@@ -229,15 +229,11 @@ pub(crate) async fn send(outbox: &Outbox, frame: ServerFrame) -> bool {
 async fn change_frames(
     ctx: Arc<DaemonContext>,
     sub: handlers::changes::ChangeSubscription,
-    features: ClientFeatures,
     outbox: Outbox,
 ) {
     let (frames, mut queued) = mpsc::channel::<ServerFrame>(OUTBOX_FRAMES);
     let forward = async move {
         while let Some(frame) = queued.recv().await {
-            let Some(frame) = features.adapt(frame) else {
-                continue;
-            };
             if !send(&outbox, frame).await {
                 return;
             }
@@ -365,7 +361,7 @@ async fn session(
                     request: frame.id,
                     after,
                 };
-                feeds.spawn(change_frames(ctx.clone(), sub, features, outbox.clone()));
+                feeds.spawn(change_frames(ctx.clone(), sub, outbox.clone()));
             }
             Request::Shutdown => return shutdown(ctx, client, frame.id, &outbox, stop).await,
             request => {

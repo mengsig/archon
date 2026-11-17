@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use super::WaitingReasonCode;
 use crate::Timestamp;
-use crate::id::{InitiativeId, PipelineRunId, QuestionId, QueueItemId, RepoId, StageRunId};
+use crate::id::{InitiativeId, PipelineRunId, QuestionId, QueueItemId, StageRunId};
 use crate::initiative::InitiativeState;
 use crate::protocol::github_links::LinkRelation;
 use crate::queue::QueueState;
@@ -172,17 +172,6 @@ pub enum ChangeSubject {
         number: u64,
         relation: LinkRelation,
     },
-    /// The full pause state after a write that changed it. Sent only to a
-    /// client that declares `pause_changes` ([`super::compat`]).
-    Pause {
-        global: bool,
-        repos: Vec<RepoId>,
-        pipelines: Vec<String>,
-    },
-    /// A subject a newer archond added, so one change never fails a page or
-    /// a stream. Only read, never sent.
-    #[serde(other)]
-    Other,
 }
 
 /// Who made an item transition.
@@ -270,26 +259,6 @@ mod tests {
         assert_eq!(wire["item"], item.as_str());
         assert_eq!(wire["state"], "running");
         assert!(wire.get("stage").is_none(), "{wire}");
-        let back: Change = serde_json::from_value(wire).unwrap();
-        assert_eq!(back, change);
-    }
-
-    #[test]
-    fn a_pause_change_carries_the_full_pause_state() {
-        let change = Change {
-            seq: 8,
-            at: chrono::DateTime::from_timestamp(0, 0).unwrap(),
-            subject: ChangeSubject::Pause {
-                global: true,
-                repos: Vec::new(),
-                pipelines: vec!["review".into()],
-            },
-        };
-        let wire = serde_json::to_value(&change).unwrap();
-        assert_eq!(wire["subject"], "pause");
-        assert_eq!(wire["global"], true);
-        assert_eq!(wire["repos"], serde_json::json!([]));
-        assert_eq!(wire["pipelines"], serde_json::json!(["review"]));
         let back: Change = serde_json::from_value(wire).unwrap();
         assert_eq!(back, change);
     }

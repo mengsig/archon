@@ -4,7 +4,6 @@ use archon_core::error::ArchonError;
 use archon_core::queue::PauseState;
 use rusqlite::{Connection, OptionalExtension, params};
 
-use super::changes;
 use super::codec::{SqlContext, from_json, to_json, write_tx};
 use super::repos;
 
@@ -51,11 +50,7 @@ pub(super) fn set_pause(conn: &mut Connection, pause: &PauseState) -> Result<(),
             return Err(ArchonError::NotFound(format!("repository {repo}")));
         }
     }
-    let changed = self::pause(&tx)? != *pause;
     write_pause(&tx, pause)?;
-    if changed {
-        changes::record_pause(&tx, pause)?;
-    }
     tx.commit().ctx("commit pause state")
 }
 

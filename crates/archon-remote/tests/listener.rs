@@ -64,7 +64,7 @@ impl Backend for FakeArchond {
     }
 
     /// Opens, then ends at once, as a lagging or refused stream does; after
-    /// [`PAUSED_AFTER`] it first sends a pause change and an item change.
+    /// [`STREAMED_AFTER`] it first sends [`two_changes`].
     async fn changes(&self, subscription: ChangeSubscription, frames: mpsc::Sender<ServerFrame>) {
         let subscribed = ServerFrame::Reply {
             id: subscription.request,
@@ -74,10 +74,10 @@ impl Backend for FakeArchond {
             }),
         };
         let _ = frames.send(subscribed).await;
-        if subscription.after != Some(PAUSED_AFTER) {
+        if subscription.after != Some(STREAMED_AFTER) {
             return;
         }
-        for change in paused_then_item() {
+        for change in two_changes() {
             let frame = ServerFrame::Change {
                 sub: subscription.id,
                 change,
@@ -87,34 +87,22 @@ impl Backend for FakeArchond {
     }
 }
 
-/// The cursor after which [`FakeArchond`] streams [`paused_then_item`].
-const PAUSED_AFTER: u64 = 41;
+/// The cursor after which [`FakeArchond`] streams [`two_changes`].
+const STREAMED_AFTER: u64 = 41;
 
-fn paused_then_item() -> [Change; 2] {
+fn two_changes() -> [Change; 2] {
     let at = archon_core::now();
-    let pause = ChangeSubject::Pause {
-        global: true,
-        repos: Vec::new(),
-        pipelines: Vec::new(),
-    };
-    let item = ChangeSubject::Item {
-        item: QueueItemId::new(),
-        state: QueueStateKind::Queued,
-        stage: None,
-        waiting_reason: None,
-    };
-    [
-        Change {
-            seq: PAUSED_AFTER + 1,
-            at,
-            subject: pause,
+    let item = |seq| Change {
+        seq,
+        at,
+        subject: ChangeSubject::Item {
+            item: QueueItemId::new(),
+            state: QueueStateKind::Queued,
+            stage: None,
+            waiting_reason: None,
         },
-        Change {
-            seq: PAUSED_AFTER + 2,
-            at,
-            subject: item,
-        },
-    ]
+    };
+    [item(STREAMED_AFTER + 1), item(STREAMED_AFTER + 2)]
 }
 
 fn onto_graph() -> TaskGraph {
@@ -932,8 +920,8 @@ async fn an_ended_change_subscription_frees_its_slot() {
     );
 }
 
-/// A web tab of the last release, which declares neither feature, is sent
-/// no pause change and no onto edge; this release's app is sent both.
+/// A web tab of the last release, which declares no feature, is sent no
+/// onto edge; this release's app is sent it. Both get the same changes.
 #[tokio::test]
 async fn a_session_sends_later_variants_only_to_a_hello_that_declares_them() {
     let listener = Listener::start().await;
@@ -943,21 +931,20 @@ async fn a_session_sends_later_variants_only_to_a_hello_that_declares_them() {
         .socket_declaring(&cookie, &client_feature::ALL)
         .await;
     let subscribe =
-        serde_json::json!({"req": 2, "cmd": "subscribe_changes", "after": PAUSED_AFTER});
+        serde_json::json!({"req": 2, "cmd": "subscribe_changes", "after": STREAMED_AFTER});
     let opened = exchange(&mut old, subscribe.clone()).await;
     assert_eq!(opened["result"]["Ok"]["reply"], "subscribed", "{opened}");
-    let live = next_frame(&mut old).await;
-    assert_eq!(live["frame"], "change", "{live}");
-    assert_eq!(
-        (&live["change"]["seq"], &live["change"]["subject"]),
-        (&(PAUSED_AFTER + 2).into(), &"item".into()),
-        "the pause is skipped: {live}"
-    );
     exchange(&mut new, subscribe).await;
-    let paused = next_frame(&mut new).await;
-    assert_eq!(paused["change"]["subject"], "pause", "{paused}");
-    let item = next_frame(&mut new).await;
-    assert_eq!(item["change"]["subject"], "item", "{item}");
+    for seq in [STREAMED_AFTER + 1, STREAMED_AFTER + 2] {
+        let (was, now) = (next_frame(&mut old).await, next_frame(&mut new).await);
+        assert_eq!(was["frame"], "change", "{was}");
+        assert_eq!(was["change"]["seq"], seq, "gapless: {was}");
+        assert_eq!(
+            (&was["change"]["seq"], &was["change"]["subject"]),
+            (&now["change"]["seq"], &now["change"]["subject"]),
+            "one stream for every client"
+        );
+    }
     let read = serde_json::json!({"req": 3, "cmd": "task_graph"});
     let kinds = |reply: &serde_json::Value| -> Vec<String> {
         let edges = reply["result"]["Ok"]["data"]["edges"]

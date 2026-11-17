@@ -967,50 +967,6 @@
             "relation"
           ],
           "type": "object"
-        },
-        {
-          "description": "The full pause state after a write that changed it. Sent only to a\nclient that declares `pause_changes` ([`super::compat`]).",
-          "properties": {
-            "global": {
-              "type": "boolean"
-            },
-            "pipelines": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "repos": {
-              "items": {
-                "$ref": "#/$defs/RepoId"
-              },
-              "type": "array"
-            },
-            "subject": {
-              "const": "pause",
-              "type": "string"
-            }
-          },
-          "required": [
-            "subject",
-            "global",
-            "repos",
-            "pipelines"
-          ],
-          "type": "object"
-        },
-        {
-          "description": "A subject a newer archond added, so one change never fails a page or\na stream. Only read, never sent.",
-          "properties": {
-            "subject": {
-              "const": "other",
-              "type": "string"
-            }
-          },
-          "required": [
-            "subject"
-          ],
-          "type": "object"
         }
       ],
       "properties": {
@@ -15749,8 +15705,15 @@
           "type": "string"
         },
         {
-          "const": "other",
-          "description": "A kind a newer archond added, so one edge never fails a whole reply.\nOnly read, never sent.",
+          "description": "Any kind this release does not name, one a newer archond added, so\none edge never fails a whole reply. Only read, never sent.",
+          "not": {
+            "enum": [
+              "depends_on",
+              "initiative_after",
+              "stacked_on",
+              "onto"
+            ]
+          },
           "type": "string"
         }
       ]

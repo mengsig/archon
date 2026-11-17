@@ -190,10 +190,9 @@ where
         let step = tokio::select! {
             biased;
             _ = registration.closed.changed() => Err(closed(registration)),
-            Some(frame) = frames.recv() => match features.adapt(frame) {
-                Some(frame) => unless_closed(registration, send(socket, &frame)).await,
-                None => Ok(()),
-            },
+            Some(frame) = frames.recv() => {
+                unless_closed(registration, send(socket, &features.adapt(frame))).await
+            }
             incoming = socket.next() => match incoming {
                 Some(Err(tokio_tungstenite::tungstenite::Error::Capacity(_))) => {
                     Err(Ended::Violation(CloseCode::Size, "message too large"))

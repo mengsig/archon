@@ -7,7 +7,6 @@ use archon_core::queue::PauseState;
 use archon_core::repo::Repo;
 use rusqlite::{Connection, OptionalExtension, params};
 
-use super::changes;
 use super::codec::{SqlContext, from_json, to_json, ts, write_tx};
 use super::settings;
 
@@ -183,9 +182,7 @@ pub(super) fn remove(conn: &mut Connection, id: &RepoId) -> Result<(), ArchonErr
     let pause = settings::pause(&tx)?;
     if pause.repos.contains(id) {
         let repos = pause.repos.iter().filter(|r| *r != id).cloned().collect();
-        let pause = PauseState { repos, ..pause };
-        settings::write_pause(&tx, &pause)?;
-        changes::record_pause(&tx, &pause)?;
+        settings::write_pause(&tx, &PauseState { repos, ..pause })?;
     }
     tx.execute("DELETE FROM repos WHERE id = ?1", [id.as_str()])
         .ctx("delete repository")?;

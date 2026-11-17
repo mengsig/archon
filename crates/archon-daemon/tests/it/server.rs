@@ -677,13 +677,14 @@ mod released {
     }
 }
 
-/// A client that declares neither `onto_edges` nor `pause_changes` (1.6.1's
-/// typed clients) decodes every graph, page and live change with its own
-/// closed enums, while a declaring client still gets both.
+/// A client that does not declare `onto_edges` (1.6.1's typed clients)
+/// decodes every graph, page and live change with its own closed enums. Its
+/// changes are the very bytes a declaring client gets, and a pause, which the
+/// change stream never carried, still records none.
 #[tokio::test]
 async fn a_client_of_the_last_release_decodes_graphs_and_changes_with_its_types() {
     use archon_core::protocol::graph::TaskEdgeKind;
-    use archon_core::protocol::{ChangeSubject, PauseTarget, TaskFilter, client_feature};
+    use archon_core::protocol::{PauseTarget, TaskFilter, client_feature};
     let h = Harness::new().await;
     let socket = h.ctx.paths.socket.clone();
     let (listener, _lock) = server::bind(&h.ctx).expect("bind");
@@ -707,20 +708,21 @@ async fn a_client_of_the_last_release_decodes_graphs_and_changes_with_its_types(
         .raw_call(Request::SubscribeChanges { after: None })
         .await;
     assert_eq!(opened["reply"], "subscribed", "{opened}");
+    let before = opened["data"]["last_seq"].as_u64().expect("a cursor");
     let pause = Request::Pause(PauseTarget::Global { hard: false });
     let paused = new.call(pause, &mut Vec::new()).await;
     assert!(paused.is_ok(), "{paused:?}");
     let later = h.enqueue("after the pause").await;
 
-    // Live: the pause is skipped and the stream goes on to the next change.
+    // Live: the next change is the enqueue, right after the cursor.
     let live = old.raw_frame().await;
     assert_eq!(live["frame"], "change", "{live}");
     let change: released::Change = serde_json::from_value(live["change"].clone()).unwrap();
     assert_eq!(change.subject, released::Subject::Item {});
-    assert!(change.seq > opened["data"]["last_seq"].as_u64().unwrap());
+    assert_eq!(change.seq, before + 1, "the pause recorded no change");
     assert_eq!(live["change"]["item"], serde_json::json!(later.id));
 
-    // Replayed: the page decodes, without the pause, and keeps its last_seq.
+    // Replayed: both clients read the same page, which the old types decode.
     let page = Request::ChangesPage {
         after: 0,
         limit: None,
@@ -728,19 +730,10 @@ async fn a_client_of_the_last_release_decodes_graphs_and_changes_with_its_types(
     let replayed = old.raw_call(page.clone()).await;
     let changes: Vec<released::Change> =
         serde_json::from_value(replayed["data"]["changes"].clone()).unwrap();
-    let Ok(Reply::Changes {
-        changes: all,
-        last_seq,
-    }) = new.call(page, &mut Vec::new()).await
-    else {
-        panic!("a page");
-    };
-    assert!(
-        all.iter()
-            .any(|c| matches!(c.subject, ChangeSubject::Pause { global: true, .. }))
-    );
-    assert_eq!(changes.len() + 1, all.len(), "only the pause is left out");
-    assert_eq!(replayed["data"]["last_seq"], last_seq);
+    assert_eq!(replayed, new.raw_call(page).await, "one page for every client");
+    let seqs: Vec<u64> = changes.iter().map(|c| c.seq).collect();
+    assert_eq!(seqs, (1..=before + 1).collect::<Vec<_>>(), "gapless");
+    assert_eq!(replayed["data"]["last_seq"], before + 1);
 
     // The graph decodes, without the onto edge a declaring client draws.
     let read = Request::TaskGraph {

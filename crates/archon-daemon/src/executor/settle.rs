@@ -178,6 +178,9 @@ async fn settle_verified(
     }
     // Leave the stage live until verification is persisted. If interrupted,
     // reconnect reconciliation reads the task outcome and verifies it again.
+    let outcome = super::intent::verify(ctx, &run, &stage, outcome).await?;
+    let proposal_refused = matches!(&outcome, StageOutcome::Failed { error, .. }
+        if super::intent::is_refusal(error));
     let outcome = ship::verify(ctx, &run, &stage, daemon_ships, outcome).await?;
     let outcome = match (review.records_ship, &record_stage) {
         (true, _) => {
@@ -205,8 +208,9 @@ async fn settle_verified(
     let planned = planner.is_some();
     let was_completed = matches!(outcome, StageOutcome::Completed { .. });
     let (outcome, assigned) = swarm::verify(ctx, &run, &stage, planner, outcome).await?;
-    // Only the swarm check turns a completed planner into a refusal.
-    let refused = planned && was_completed && matches!(outcome, StageOutcome::Failed { .. });
+    // Refused plans and proposal drafts return through the bounded correction path.
+    let refused = proposal_refused
+        || (planned && was_completed && matches!(outcome, StageOutcome::Failed { .. }));
     let mut table = ctx.runs.lock().await;
     let (stage, run, all) = {
         let mut store = ctx.store.lock().await;
@@ -509,7 +513,7 @@ const DEADLINE_PASSED: &str = "stage deadline passed";
 enum RetryKind {
     Infra,
     DiskFull,
-    /// A planner whose plan Archon refused, sent back with the problems.
+    /// A refused plan or proposal draft, sent back with the problems.
     Refused,
     /// An agent Aether stopped at its stage deadline, woken once to report.
     Timeout,
@@ -540,7 +544,9 @@ impl RetryKind {
     fn of_replaced(stage: &StageRun, planner: bool) -> Self {
         match &stage.state {
             StageState::Failed { error }
-                if planner && !stage.infrastructure_failure && swarm::is_refusal(error) =>
+                if !stage.infrastructure_failure
+                    && ((planner && swarm::is_refusal(error))
+                        || super::intent::is_refusal(error)) =>
             {
                 Self::Refused
             }
@@ -565,8 +571,8 @@ impl RetryKind {
 /// Re-spawn the slot of a live run with its original plan
 /// (`RunDriver::respawn`): `limits.infra_retries` times for infrastructure
 /// failures, and for a failure on a full disk, which holds dispatch until
-/// space is free. A planner whose plan Archon `refused` is sent back the
-/// same way, `MAX_CORRECTIONS` times. The failure never reaches the driver, so the slot keeps
+/// space is free. Refused plans and proposal drafts return the same way,
+/// `MAX_CORRECTIONS` times. The failure never reaches the driver, so the slot keeps
 /// its capacity. The first infrastructure replacement of a slot wakes the failed
 /// agent in place, and only a refused wake spawns a fresh agent, the cold retry.
 async fn infra_retry(
@@ -747,7 +753,7 @@ fn retry_text(
         (RetryKind::Infra, true) => ("an infrastructure failure", " in the same agent"),
         (RetryKind::Infra, false) => ("an infrastructure failure", ""),
         (RetryKind::DiskFull, _) => ("a full disk", " once disk space is free"),
-        (RetryKind::Refused, _) => ("a refused swarm plan", ""),
+        (RetryKind::Refused, _) => ("a refused stage result", ""),
         (RetryKind::Timeout, _) => (
             "its deadline",
             " in the same agent, which has a few minutes to commit and report",
@@ -860,6 +866,14 @@ async fn replace(
     if driver.spec().assigned_by(&plan.stage_id).is_some() {
         let cap = planner_cap(ctx, run).await?;
         swarm::brief(&mut plan, driver.spec(), cap, refusal);
+    }
+    if let Some((error, correction)) = refusal.filter(|(error, _)| super::intent::is_refusal(error))
+    {
+        plan.prompt.push_str(&format!(
+            "\n\nYour proposal result was refused (correction {correction} of {}): {error}\n\
+             Keep the completed proposal and images; fix the draft or files named above.",
+            archon_pipeline::swarm::MAX_CORRECTIONS,
+        ));
     }
     let mut store = ctx.store.lock().await;
     // Owed before the replacement exists, so it never starts beside them.

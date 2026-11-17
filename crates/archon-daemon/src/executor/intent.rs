@@ -1,11 +1,11 @@
-//! Freeze the ledger displayed with a proposal before its gate opens.
+//! Validate proposal results and freeze the ledger displayed before their gate opens.
 use super::pages;
 use crate::context::DaemonContext;
 use archon_core::error::ArchonError;
 use archon_core::intent::{
     ApprovedIntent, IntentArtifact, IntentSource, ReferenceImage, Requirement,
 };
-use archon_core::run::{OperatorGate, PipelineRun, StageRun};
+use archon_core::run::{OperatorGate, PipelineRun, StageOutcome, StageRun, StageState};
 use archon_queue::Store;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -52,36 +52,23 @@ pub(super) fn prepare(
     stages: &[StageRun],
     original: &Path,
 ) -> Result<PathBuf, ArchonError> {
+    assert_eq!(gate.run, run.id, "freeze the gate's own run");
+    assert_eq!(gate.item, run.item, "freeze the gate's own item");
     if store.kv_get(&key(gate))?.is_some() {
         let saved = pending(store, gate)?;
         verify_page(&saved)?;
         return Ok(saved.page);
     }
-    let mut record = make_record(run, gate, stages)?;
-    let original_html =
-        std::fs::read_to_string(original).map_err(|e| ArchonError::io("read proposal page", e))?;
-    let destination = ctx.paths.data_dir.join("approved-intent-artifacts");
-    super::intent_images::extract(&original_html, &destination, &mut record)?;
-    super::intent_html::extract(
-        &original_html,
-        original,
-        &run.workspace,
-        &destination,
-        &mut record,
-    )?;
-    record.validate()?;
-    preserve_files(ctx, &run.workspace, &mut record)?;
-    let original_hash = Sha256::digest(original_html.as_bytes())
+    let stage = stages
         .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    let preserved = crate::handlers::intent::preserve(&destination, original, &original_hash)?;
-    if !record.artifacts.iter().any(|a| a.sha256 == original_hash) {
-        record.artifacts.push(IntentArtifact {
-            path: preserved,
-            sha256: original_hash,
-        });
-    }
+        .find(|s| {
+            s.stage_id == gate.stage_id
+                && s.attempt == gate.attempt
+                && s.state == StageState::Completed
+        })
+        .ok_or_else(|| ArchonError::NotFound("proposal stage".into()))?;
+    let mut record = prepare_record(ctx, run, stage, original)?;
+    let destination = ctx.paths.data_dir.join("approved-intent-artifacts");
     let page = render_page(original, &record, gate.attempt)?;
     let bytes =
         std::fs::read(&page).map_err(|e| ArchonError::io("read proposal ledger page", e))?;
@@ -104,15 +91,12 @@ pub(super) fn prepare(
     Ok(page)
 }
 
-fn make_record(
-    run: &PipelineRun,
-    gate: &OperatorGate,
-    stages: &[StageRun],
-) -> Result<ApprovedIntent, ArchonError> {
-    let draft = stages
-        .iter()
-        .find(|s| s.stage_id == gate.stage_id && s.attempt == gate.attempt)
-        .and_then(|s| s.structured.as_ref())
+fn make_record(run: &PipelineRun, stage: &StageRun) -> Result<ApprovedIntent, ArchonError> {
+    assert_eq!(stage.run, run.id, "the proposal belongs to this run");
+    assert!(stage.attempt > 0, "proposal attempts are positive");
+    let draft = stage
+        .structured
+        .as_ref()
         .and_then(|s| s.get("approved_intent"))
         .ok_or_else(|| {
             ArchonError::Invalid("proposal must supply structured.approved_intent".into())
@@ -121,17 +105,108 @@ fn make_record(
         .map_err(|e| ArchonError::Invalid(format!("proposal intent draft: {e}")))?;
     let record = ApprovedIntent {
         id: run.id.to_string(),
-        version: gate.attempt,
+        version: stage.attempt,
         operator_words: draft.operator_words,
         source: IntentSource::Gate {
-            item: gate.item.to_string(),
-            gate: format!("{}:{}", gate.stage_id, gate.attempt),
+            item: run.item.to_string(),
+            gate: format!("{}:{}", stage.stage_id, stage.attempt),
         },
         artifacts: draft.artifacts,
         images: draft.images,
         requirements: draft.requirements,
     };
     Ok(record)
+}
+
+fn prepare_record(
+    ctx: &DaemonContext,
+    run: &PipelineRun,
+    stage: &StageRun,
+    original: &Path,
+) -> Result<ApprovedIntent, ArchonError> {
+    let mut record = make_record(run, stage)?;
+    let html =
+        std::fs::read_to_string(original).map_err(|e| ArchonError::io("read proposal page", e))?;
+    let destination = ctx.paths.data_dir.join("approved-intent-artifacts");
+    super::intent_images::extract(&html, &destination, &mut record)?;
+    super::intent_html::extract(&html, original, &run.workspace, &destination, &mut record)?;
+    record.validate()?;
+    preserve_files(ctx, &run.workspace, &mut record)?;
+    let hash = Sha256::digest(html.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let preserved = crate::handlers::intent::preserve(&destination, original, &hash)?;
+    if !record.artifacts.iter().any(|a| a.sha256 == hash) {
+        record.artifacts.push(IntentArtifact {
+            path: preserved,
+            sha256: hash,
+        });
+    }
+    assert!(
+        !record.requirements.is_empty(),
+        "a validated ledger has requirements"
+    );
+    assert!(record.artifacts.iter().all(|a| a.path.is_absolute()));
+    Ok(record)
+}
+
+const REFUSAL: &str = "proposal intent draft refused: ";
+
+pub(super) fn is_refusal(error: &str) -> bool {
+    error.starts_with(REFUSAL)
+}
+
+pub(super) async fn verify(
+    ctx: &DaemonContext,
+    run: &PipelineRun,
+    stage: &StageRun,
+    outcome: StageOutcome,
+) -> Result<StageOutcome, ArchonError> {
+    assert_eq!(stage.run, run.id, "verify the proposal in its own run");
+    assert!(
+        run.workspace.is_absolute(),
+        "proposal paths use an absolute workspace"
+    );
+    let StageOutcome::Completed { structured, .. } = &outcome else {
+        return Ok(outcome);
+    };
+    let proposal = {
+        let table = ctx.runs.lock().await;
+        table
+            .drivers
+            .get(&run.id)
+            .is_some_and(|d| d.gates().proposal.as_deref() == Some(&stage.stage_id))
+    };
+    if !proposal {
+        return Ok(outcome);
+    }
+    let item = ctx.store.lock().await.item(&run.item)?;
+    if item.intent.is_none() && !item.model_plan.0.contains_key("intent-acceptance") {
+        return Ok(outcome);
+    }
+    let mut completed = stage.clone();
+    completed.structured = structured.clone();
+    let page = pages::listed_pages(run, &completed)
+        .into_iter()
+        .find_map(Result::ok)
+        .unwrap_or_else(|| {
+            run.workspace.join(pages::conventional_page(
+                archon_core::run::GateSubject::Proposal,
+            ))
+        });
+    match prepare_record(ctx, run, &completed, &page) {
+        Ok(_) => Ok(outcome),
+        Err(error) if error.is_store() => Err(error),
+        Err(error) => Ok(StageOutcome::Failed {
+            error: format!(
+                "{REFUSAL}{error}. Correct structured.approved_intent and its files \
+                in the existing worktree, then resubmit the proposal result. \
+                Allowed requirement kinds: visual, behaviour, wording, data (behavior is also accepted)."
+            ),
+            infra: false,
+        }),
+    }
 }
 
 fn preserve_files(

@@ -20,6 +20,8 @@ Take the first that fits:
    Queue clear changes at once, in one message; read code only to split
    them or judge risk, not to fix or test them. Never change a repository,
    build, run apps or drive journeys, yourself or through a child.
+   Long multi-step work, such as a report page or statistics, is an item
+   too, never your own turn.
 
 A mirror holds the registered repository's local base commit (HEAD when no
 base is configured), without uncommitted work. Refresh is asynchronous: check
@@ -149,7 +151,7 @@ Act on a trigger's `events`, not its clipped `summary`. You are woken for:
   `[clarification:<id>]` marker. The stage holds dependent work for an answer or
   its recorded timeout (default 30 minutes), then records a fallback. Active operator
   `clarifications=proceed` means no wait. Show assumptions on the final review page.
-  Other messages do not wait.
+  Other messages do not wait; an `info` comes with your next turn.
 - `gate_opened`: a proposal or report gate waits for the operator. Restate
   it so they can act: item, summary, number and how to answer, from `reply`.
   Do not decide it.

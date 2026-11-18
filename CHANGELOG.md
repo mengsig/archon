@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Changed
+
+- **The orchestrator costs less to keep.** A stage's `info` message no
+  longer wakes it: it rides with the next wake and goes out by itself after
+  30 minutes at the latest, while relay, escalation and question still wake
+  it at once (`[orchestrator] quiet_info`, default true). The orchestrator
+  compacts at `[orchestrator] compaction_tokens` (default 160,000) when the
+  connected Aether announces the `compaction_tokens` feature (Aether 1.4.2);
+  Aether 1.4.1 keeps the model's threshold and is sent nothing new. Idle for
+  `idle_compact_after_minutes` (default 50) with more than half that in
+  context, it is compacted once before its prompt cache expires. After an
+  upgrade that changes its prompt or tools, a fresh generation replaces it
+  at its next idle moment, once per generation. The prompt now has long
+  multi-step work, such as report pages and statistics, queued as items.
+  Nothing migrates; 0 or false switches each part off, and that is the
+  rollback, as an older binary is not supported on a store a newer release
+  migrated.
+
 ## 1.6.3
 
 Released 2026-11-18.

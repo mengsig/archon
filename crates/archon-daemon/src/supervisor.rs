@@ -3,6 +3,7 @@
 
 mod authority;
 mod callers;
+mod economy;
 mod lineage;
 mod mcp;
 mod origin;
@@ -22,7 +23,7 @@ use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::attachment::ImageAttachment;
 use archon_core::autonomy::{AutonomyPolicy, ToolsMode};
-use archon_core::config::{AetherMode, Config, HostContext};
+use archon_core::config::{AetherMode, Config, HostContext, OrchestratorConfig};
 use archon_core::error::ArchonError;
 use archon_core::id::{FeedItemId, StoreId};
 use archon_core::model::ModelChoice;
@@ -40,6 +41,9 @@ use lineage::newest_incarnation;
 use retired::{Sweep, cancel_orphans};
 
 pub(crate) use authority::{authorize, saw_call};
+pub use economy::{
+    ECONOMY_CHECK_INTERVAL, Economy, economize, idle_compaction_due, refresh_due, watch_economy,
+};
 pub use mcp::{
     HEALS_BEFORE_BLOCKER, MCP_CHECK_INTERVAL, check_mcp, check_mcp_soon, heal_status, mcp_status,
     owe_orchestrator_restart, watch_mcp,
@@ -370,6 +374,7 @@ pub fn orchestrator_create_agent(
             long_lived: true,
             leaf: false,
             delegation_policy: None,
+            compaction_tokens: None,
         }),
         approval: orchestrator_approval(config),
         run: None,
@@ -585,19 +590,27 @@ pub async fn current_orchestrator(
 pub async fn restart_orchestrator(ctx: &DaemonContext) -> Result<AetherAgentId, ArchonError> {
     let _serial = ctx.supervisor.serial.lock().await;
     let client = ctx.aether.client()?;
+    let why = "was restarted by the operator";
+    replace_orchestrator(ctx, &client, "restarted by the operator", why).await
+}
+
+/// Cancel the orchestrator and start a fresh generation, briefed and handed
+/// the held news as any new generation is; the caller holds `serial`.
+async fn replace_orchestrator(
+    ctx: &DaemonContext,
+    client: &AetherClient,
+    reason: &str,
+    why: &str,
+) -> Result<AetherAgentId, ArchonError> {
+    assert!(!reason.trim().is_empty(), "a cancel says why");
+    assert!(!why.trim().is_empty(), "the operator is told why");
     if let Some(stored) = current_orchestrator(ctx).await? {
-        cancel_newest(ctx, &client, &stored, "restarted by the operator").await?;
+        cancel_newest(ctx, client, &stored, reason).await?;
     }
     revival::reset(ctx).await?;
     let _switch = switching(ctx).await;
-    let id = replace_generation(ctx, &client).await?;
-    announce_revival(
-        ctx,
-        &id,
-        Revival::Recreated,
-        "was restarted by the operator",
-    )
-    .await?;
+    let id = replace_generation(ctx, client).await?;
+    announce_revival(ctx, &id, Revival::Recreated, why).await?;
     Ok(id)
 }
 
@@ -1174,9 +1187,22 @@ async fn create_orchestrator(
         tracing::warn!("Aether lacks host_context; orchestrator creation falls back to full");
     }
     drop(store);
+    let served = client.serves_compaction_tokens();
+    config.compaction_tokens = compaction_threshold(&ctx.config.orchestrator, served);
     let agent = client.create_agent(request).await?;
     callers::record_delegation(ctx, &agent).await?;
     Ok(agent)
+}
+
+/// The orchestrator's compaction threshold to send: the configured one, and
+/// only to an aetherd that applies it (an older one would ignore it).
+fn compaction_threshold(config: &OrchestratorConfig, served: bool) -> Option<u32> {
+    let tokens = config.compaction_tokens;
+    assert!(
+        tokens == 0 || tokens >= archon_core::config::MIN_COMPACTION_TOKENS,
+        "the config was validated"
+    );
+    (served && tokens > 0).then_some(tokens)
 }
 
 /// Post a supervisor `Blocker` unless the same one is already standing.
@@ -1535,6 +1561,9 @@ mod tests {
             "`item_finished`: a failure, a blocker, an item tagged `notify`, one with a GitHub \
              `origin` to answer, and a success unless the operator turned that off.",
             "Relay code review, CI and approved-intent acceptance separately.",
+            "Other messages do not wait; an `info` comes with your next turn.",
+            "Long multi-step work, such as a report page or statistics, is an item too, never \
+             your own turn.",
             "A trigger states all `directives` once, then only `directive_changes`; if you hold \
              fewer than `directives_in_force`, read `autonomy_policy`.",
             "A mirror holds the registered repository's local base commit (HEAD when no base \

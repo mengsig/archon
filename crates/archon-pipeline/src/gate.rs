@@ -336,13 +336,7 @@ fn or_dash(text: &str) -> &str {
     if text.is_empty() { "-" } else { text }
 }
 
-/// At most `max` characters, cut on a char boundary with a visible marker.
-pub(crate) fn clip(text: &str, max: usize) -> String {
-    match text.char_indices().nth(max) {
-        None => text.to_owned(),
-        Some((cut, _)) => format!("{}\n\n[… truncated by Archon]", &text[..cut]),
-    }
-}
+pub(crate) use archon_core::run::clip;
 
 #[cfg(test)]
 mod tests {

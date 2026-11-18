@@ -45,7 +45,8 @@
   words judged its own work. The records of the attempt that ended the run are
   read before any prefix on the run's error, slot by slot as the driver reads
   them (the newest stage run of each slot, lowest slot first): the stage run
-  the run failed in the words of first, then the lowest slot's `BLOCKED:` or
+  the run failed in the words of first (whole, or clipped as the driver clips
+  a long error), then the lowest slot's `BLOCKED:` or
   `ESCALATE:` failure, on which the driver stops a run (by its own prefix, not
   the run's, unless it is flagged), then a recorded timeout, infrastructure
   flag or cost stop. So the budget guards' blockers are `budget` only when

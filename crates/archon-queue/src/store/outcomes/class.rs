@@ -53,15 +53,19 @@ pub(in crate::store) fn failure_class(
 }
 
 /// The stage run of the `ending` attempt whose own failure the run failed in
-/// the words of: the one that ended it, whatever its siblings recorded. Of
-/// slots that failed in the same words, the driver read the lowest first.
+/// the words of, whole or as the driver clips them: the one that ended it,
+/// whatever its siblings recorded. The driver read the lowest slot first.
 fn ended_by<'a>(error: &str, ending: &[&'a StageRun]) -> Option<&'a StageRun> {
     let quoted = error.trim();
     if quoted.is_empty() {
         return None;
     }
-    let said =
-        |s: &StageRun| matches!(&s.state, StageState::Failed { error } if error.trim() == quoted);
+    let said = |s: &StageRun| match &s.state {
+        StageState::Failed { error } => {
+            error.trim() == quoted || StageOutcome::run_stop_error(error) == quoted
+        }
+        _ => false,
+    };
     ending.iter().copied().find(|s| said(s))
 }
 

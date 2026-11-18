@@ -857,6 +857,29 @@ impl StageOutcome {
         let error = error.trim_start();
         error.starts_with(Self::BLOCKED_PREFIX) || error.starts_with(Self::ESCALATE_PREFIX)
     }
+
+    /// The error of the run that a stage's blocker or escalation `error`
+    /// ends: trimmed, and clipped to what a run's error carries.
+    pub fn run_stop_error(error: &str) -> String {
+        let stop = clip(error.trim(), MAX_RUN_ERROR_CHARS);
+        assert!(stop.chars().count() <= MAX_RUN_ERROR_CHARS + CLIP_MARKER.chars().count());
+        assert!(!stop.starts_with(char::is_whitespace), "trimmed");
+        stop
+    }
+}
+
+/// Errors carried into `RunState::Failed` are capped; the full feedback
+/// stays in the stage runs.
+pub const MAX_RUN_ERROR_CHARS: usize = 8_000;
+
+const CLIP_MARKER: &str = "\n\n[… truncated by Archon]";
+
+/// At most `max` characters, cut on a char boundary with a visible marker.
+pub fn clip(text: &str, max: usize) -> String {
+    match text.char_indices().nth(max) {
+        None => text.to_owned(),
+        Some((cut, _)) => format!("{}{CLIP_MARKER}", &text[..cut]),
+    }
 }
 
 /// What follows Aether's stop reason `cost budget of ${limit}: {cost} spent`

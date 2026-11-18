@@ -770,6 +770,28 @@ fn slots_that_failed_in_the_same_words_are_read_lowest_first() {
     );
 }
 
+/// A long blocker reaches the run clipped. The slot it was clipped from ended
+/// the run, not a sibling that failed in the clipped words themselves.
+#[test]
+fn a_clipped_blocker_is_read_from_the_slot_it_was_clipped_from() {
+    let kept = format!("BLOCKED: {}", "x".repeat(7_991));
+    let long = format!("{kept} more details");
+    let clipped = format!("{kept}\n\n[… truncated by Archon]");
+    assert_eq!(StageOutcome::run_stop_error(&long), clipped);
+    let ended = |flagged: [bool; 2]| {
+        failed_with("test", &clipped, |run| {
+            vec![
+                slot(run, 0, &long, flagged[0]),
+                slot(run, 1, &clipped, flagged[1]),
+            ]
+        })
+    };
+    let backend = ended([true, false]);
+    assert_eq!(backend.failure, Some(FailureClass::Infrastructure));
+    assert!(!backend.is_scored(), "the flag on the slot the driver read");
+    assert_eq!(ended([false, true]).failure, Some(FailureClass::Blocked));
+}
+
 /// A spawn the daemon gave up on left no agent. An agent that fails its task
 /// in the daemon's words judged its own work.
 #[test]

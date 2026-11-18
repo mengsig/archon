@@ -5766,11 +5766,12 @@ can make segment cost allocation approximate; the run's ledger total remains cur
 **Failure class.** A failed run's class is read from structure, never from its
 error's words. The records come first: the newest stage run of each slot of
 the failing stage's last attempt, lowest slot first, as the driver reads
-them. When the run failed in the very words of one of them, that stage run
+them. When the run failed in the very words of one of them, whole or as the
+driver clips a long error (`StageOutcome::run_stop_error`), that stage run
 ended it and its own record is read first, whatever a sibling slot recorded;
-of slots that failed in the same words it is the lowest. Failing that (the
-driver clips a long error), it is the lowest slot that failed with an
-`ESCALATE:` or `BLOCKED:` prefix, the one the driver stops a run on. Then
+of slots that failed in the same words it is the lowest. Failing that, it is
+the lowest slot that failed with an `ESCALATE:` or `BLOCKED:` prefix, the one
+the driver stops a run on. Then
 every slot's record is read, in this order:
 - the stage run that ended the run, when it failed its own task with an
   `ESCALATE:` or `BLOCKED:` prefix, gives `escalated` or `blocked` by its own

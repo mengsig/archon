@@ -14,6 +14,8 @@ use archon_queue::Store;
 use archon_queue::store::MAX_ETAG_BYTES;
 use serde::{Deserialize, Serialize};
 
+use super::watch_read::Activity;
+
 /// `kv`: one watch per registered repository, keyed by its id.
 pub const KEY_PREFIX: &str = "github_repo_watch:";
 
@@ -104,11 +106,14 @@ pub(crate) struct PullMark {
     /// Requested reviewers: logins, and teams as `team:<slug>`.
     #[serde(default)]
     pub reviewers: BTreeSet<String>,
-    /// The newest comment and review ids seen: one at or below is not news.
+    /// The newest comment id seen: comments are made with their ids, so one
+    /// at or below is not news.
     #[serde(default)]
     pub comment_id: u64,
+    /// The newest review submission seen. A review gets its id when started
+    /// and is submitted later, so reviews are told by submission instead.
     #[serde(default)]
-    pub review_id: u64,
+    pub reviewed: Reviewed,
     /// `updated_at` was over [`SETTLE`] older than the read; until then the
     /// next read checks the pull request's comments and reviews again.
     #[serde(default)]
@@ -119,8 +124,8 @@ pub(crate) struct PullMark {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WatchedChange {
     pub number: u64,
-    /// `new_pull_request`, `reopened`, `new_head`, `review_requested`,
-    /// `new_comment` or `new_review`.
+    /// `new_pull_request`, `new_head`, `review_requested`, `new_comment` or
+    /// `new_review`.
     pub change: String,
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -232,14 +237,14 @@ impl Pull {
         all
     }
 
-    /// The mark of this pull request read at `read_at`, with the ids seen.
+    /// The mark of this pull request read at `read_at`, with what was seen.
     fn mark(&self, read_at: Timestamp, seen: Seen) -> PullMark {
         PullMark {
             head: self.head.clone(),
             updated_at: self.updated_at,
             reviewers: self.reviewers(),
             comment_id: seen.comment_id,
-            review_id: seen.review_id,
+            reviewed: seen.reviewed,
             settled: self.updated_at + SETTLE < read_at,
         }
     }
@@ -300,11 +305,50 @@ pub(crate) struct FollowUp {
     pub mark: PullMark,
 }
 
-/// The newest comment and review ids a read saw of one pull request.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// The newest comment id and review submission a read saw of one pull request.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Seen {
     pub comment_id: u64,
-    pub review_id: u64,
+    pub reviewed: Reviewed,
+}
+
+/// The newest review submission seen, and the reviews submitted in that
+/// second: GitHub dates to the second, so more may share it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Reviewed {
+    #[serde(default)]
+    pub at: Option<Timestamp>,
+    #[serde(default)]
+    pub ids: BTreeSet<u64>,
+}
+
+impl Reviewed {
+    /// Whether `reviews` hold a submission not seen yet, and what is seen
+    /// after them. With none seen before, only one at or after `since` (the
+    /// mark's `updated_at`) is news: the older ones were there at the baseline.
+    pub(crate) fn after(&self, since: Timestamp, reviews: &[Activity]) -> (bool, Reviewed) {
+        let submitted: Vec<(Timestamp, u64)> = reviews
+            .iter()
+            .filter_map(|r| r.at.map(|at| (at, r.id)))
+            .collect();
+        let unseen = |&(at, id): &(Timestamp, u64)| match self.at {
+            None => at >= since,
+            Some(seen) => at > seen || (at == seen && !self.ids.contains(&id)),
+        };
+        let news = submitted.iter().any(unseen);
+        let newest = submitted.iter().map(|s| s.0).max().max(self.at);
+        let mut ids: BTreeSet<u64> = submitted
+            .iter()
+            .filter(|s| Some(s.0) == newest)
+            .map(|s| s.1)
+            .collect();
+        if newest == self.at {
+            ids.extend(&self.ids);
+        }
+        assert!(newest >= self.at, "the newest submission only moves on");
+        assert!(newest.is_some() || ids.is_empty(), "ids of a seen second");
+        (news, Reviewed { at: newest, ids })
+    }
 }
 
 /// What a list told at once, and what it needs read further.
@@ -324,12 +368,13 @@ pub(crate) fn diff(record: &WatchRecord, pulls: &[Pull]) -> Diffed {
     let mut diffed = Diffed::default();
     for (index, pull) in pulls.iter().enumerate() {
         let Some(mark) = before.get(&pull.number) else {
-            let change = if pull.number > record.max_number {
-                "new_pull_request"
-            } else {
-                "reopened"
-            };
-            diffed.changes.push(pull.told(change, Vec::new()));
+            // An older number without a mark (reopened, or past the cap) is
+            // marked quietly: with nothing to compare, nothing in it is news.
+            if pull.number > record.max_number {
+                diffed
+                    .changes
+                    .push(pull.told("new_pull_request", Vec::new()));
+            }
             continue;
         };
         if mark.head != pull.head {
@@ -385,10 +430,18 @@ pub(crate) fn merged_marks(
             _ => {
                 let carried = old.map_or_else(Seen::default, |old| Seen {
                     comment_id: old.comment_id,
-                    review_id: old.review_id,
+                    reviewed: old.reviewed.clone(),
                 });
-                let seen = followed.seen.get(&pull.number).copied().unwrap_or(carried);
+                let seen = followed
+                    .seen
+                    .get(&pull.number)
+                    .cloned()
+                    .unwrap_or(carried.clone());
                 assert!(seen.comment_id >= carried.comment_id, "ids only grow");
+                assert!(
+                    seen.reviewed.at >= carried.reviewed.at,
+                    "submissions only move on"
+                );
                 pull.mark(read_at, seen)
             }
         };
@@ -469,6 +522,7 @@ mod tests {
 
     const T0: &str = "2026-11-01T00:00:00Z";
     const T1: &str = "2026-11-02T00:00:00Z";
+    const T2: &str = "2026-11-03T00:00:00Z";
 
     #[test]
     fn each_kind_of_change_is_told_once_and_an_edit_only_asks_further() {
@@ -517,11 +571,40 @@ mod tests {
     }
 
     #[test]
-    fn an_unmarked_old_number_is_reopened_not_new() {
+    fn an_unmarked_old_number_is_marked_quietly() {
         let mut record = baseline(&[pull(9, "a", T0, &[])]);
         record.pulls = Some(BTreeMap::new());
-        let diffed = diff(&record, &[pull(3, "c", T1, &[])]);
-        assert_eq!(diffed.changes[0].change, "reopened");
+        let diffed = diff(&record, &[pull(3, "c", T1, &[]), pull(10, "d", T1, &[])]);
+        let told: Vec<u64> = diffed.changes.iter().map(|c| c.number).collect();
+        assert_eq!(told, [10], "only the new number is news");
+        assert!(diffed.follow_ups.is_empty());
+    }
+
+    fn review(id: u64, at: Option<&str>) -> Activity {
+        Activity {
+            id,
+            at: at.map(|at| at.parse().unwrap()),
+        }
+    }
+
+    #[test]
+    fn a_review_is_told_by_its_submission_not_its_id() {
+        let since: Timestamp = T0.parse().unwrap();
+        let none = Reviewed::default();
+        let (news, seen) = none.after(since, &[review(10, None), review(11, Some(T1))]);
+        assert!(news, "#11 was submitted after the mark");
+        assert_eq!(
+            (seen.at, seen.ids.clone()),
+            (Some(T1.parse().unwrap()), BTreeSet::from([11]))
+        );
+        let (news, later) = seen.after(since, &[review(10, Some(T2)), review(11, Some(T1))]);
+        assert!(news, "a review started before #11 and submitted after it");
+        let (news, same) = later.after(since, &[review(10, Some(T2)), review(12, Some(T2))]);
+        assert!(news, "another review in the same second");
+        let (news, _) = same.after(since, &[review(10, Some(T2)), review(12, Some(T2))]);
+        assert!(!news, "each submission is told once");
+        let (news, _) = none.after(since, &[review(3, Some("2026-10-01T00:00:00Z"))]);
+        assert!(!news, "one submitted before the baseline's mark");
     }
 
     #[test]
@@ -560,7 +643,10 @@ mod tests {
                 1,
                 Seen {
                     comment_id: 9,
-                    review_id: 4,
+                    reviewed: Reviewed {
+                        at: Some(T1.parse().unwrap()),
+                        ids: BTreeSet::from([4]),
+                    },
                 },
             )]),
             ..Followed::default()
@@ -575,8 +661,8 @@ mod tests {
         ));
         let mark = &record.pulls.as_ref().unwrap()[&1];
         assert_eq!(
-            (mark.comment_id, mark.review_id, mark.settled),
-            (9, 4, true)
+            (mark.comment_id, mark.reviewed.ids.len(), mark.settled),
+            (9, 1, true)
         );
         let carried = merged_marks(record.pulls.as_ref(), &pulls, true, &none(), later);
         assert_eq!(

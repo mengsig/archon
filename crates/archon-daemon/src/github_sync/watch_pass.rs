@@ -290,6 +290,9 @@ async fn walk(asker: &mut Asker<'_>, pass: &mut Pass) -> Result<Option<Walked>, 
     }))
 }
 
+/// Pages of one pull request's reviews a check reads at most: the newest.
+const MAX_REVIEW_PAGES: u32 = 10;
+
 /// What `pulls` tells against `due`'s marks, with a comment and review check
 /// for each pull request that moved with nothing else to show.
 async fn follow_up(asker: &mut Asker<'_>, pass: &mut Pass, pulls: &[Pull]) -> Told {
@@ -301,26 +304,24 @@ async fn follow_up(asker: &mut Asker<'_>, pass: &mut Pass, pulls: &[Pull]) -> To
     for follow in diffed.follow_ups {
         let pull = &pulls[follow.index];
         let mark = &follow.mark;
-        let Some(comments) = newest(asker, pass, Feed::Comments, pull.number, mark).await else {
+        let Some((commented, comment_id)) = comments(asker, pass, pull.number, mark).await else {
             told.followed.kept.insert(pull.number);
             continue;
         };
-        let mut seen = Seen {
-            comment_id: comments.max_id.max(mark.comment_id),
-            review_id: mark.review_id,
+        let Some(read) = reviews(asker, pass, pull.number).await else {
+            told.followed.kept.insert(pull.number);
+            continue;
         };
-        if comments.news {
+        let (reviewed, seen) = mark.reviewed.after(mark.updated_at, &read);
+        if commented {
             told.changes.push(pull.told("new_comment", Vec::new()));
-        } else {
-            let Some(reviews) = newest(asker, pass, Feed::Reviews, pull.number, mark).await else {
-                told.followed.kept.insert(pull.number);
-                continue;
-            };
-            seen.review_id = reviews.max_id.max(mark.review_id);
-            if reviews.news {
-                told.changes.push(pull.told("new_review", Vec::new()));
-            }
+        } else if reviewed {
+            told.changes.push(pull.told("new_review", Vec::new()));
         }
+        let seen = Seen {
+            comment_id,
+            reviewed: seen,
+        };
         told.followed.seen.insert(pull.number, seen);
     }
     assert!(
@@ -336,43 +337,67 @@ enum Feed {
     Reviews,
 }
 
-/// What a feed holds beyond a mark.
-struct Newest {
-    /// A comment or review made at or after the mark, with an id above it.
-    news: bool,
-    max_id: u64,
-}
-
-/// Read `feed`'s first page of #`number`, and its last when there are more:
-/// ids only grow, so the newest are there. `None` when either went unread.
-async fn newest(
+/// Whether #`number` has a comment newer than `mark`, and the newest comment
+/// id seen. Comments get their ids when made, so the first page and, when
+/// there are more, the last, which holds the newest, tell. `None` when unread.
+async fn comments(
     asker: &mut Asker<'_>,
     pass: &mut Pass,
-    feed: Feed,
     number: u64,
     mark: &PullMark,
-) -> Option<Newest> {
-    let repository = &asker.due.repository;
+) -> Option<(bool, u64)> {
     // `since` filters by update; a second's overlap keeps the boundary in.
     let since = mark.updated_at - chrono::TimeDelta::seconds(1);
-    let endpoint = |page| match feed {
-        Feed::Comments => watch_read::comments_endpoint(repository, number, since, page),
-        Feed::Reviews => watch_read::reviews_endpoint(repository, number, page),
-    };
-    let (mut items, last) = read_feed(asker, pass, &endpoint(1), feed).await?;
+    let repository = asker.due.repository.clone();
+    let endpoint = |page| watch_read::comments_endpoint(&repository, number, since, page);
+    let (mut items, last) = read_feed(asker, pass, &endpoint(1), Feed::Comments).await?;
     if let Some(last) = last {
-        items.extend(read_feed(asker, pass, &endpoint(last), feed).await?.0);
+        items.extend(
+            read_feed(asker, pass, &endpoint(last), Feed::Comments)
+                .await?
+                .0,
+        );
     }
-    let known = match feed {
-        Feed::Comments => mark.comment_id,
-        Feed::Reviews => mark.review_id,
-    };
+    let known = mark.comment_id;
     let news = items
         .iter()
         .any(|a| a.id > known && a.at.is_some_and(|at| at >= mark.updated_at));
-    let max_id = items.iter().map(|a| a.id).max().unwrap_or(0);
-    assert!(!news || max_id > known, "news has a new id");
-    Some(Newest { news, max_id })
+    let newest = items.iter().map(|a| a.id).max().unwrap_or(0).max(known);
+    assert!(!news || newest > known, "a new comment has a new id");
+    Some((news, newest))
+}
+
+/// #`number`'s reviews: every page, or the newest [`MAX_REVIEW_PAGES`]. A
+/// review started long ago may be submitted now, so no page is skipped
+/// below that bound. `None` when a page went unread.
+async fn reviews(
+    asker: &mut Asker<'_>,
+    pass: &mut Pass,
+    number: u64,
+) -> Option<Vec<watch_read::Activity>> {
+    let repository = asker.due.repository.clone();
+    let endpoint = |page| watch_read::reviews_endpoint(&repository, number, page);
+    let (mut items, last) = read_feed(asker, pass, &endpoint(1), Feed::Reviews).await?;
+    let last = last.unwrap_or(1);
+    let first = match last {
+        last if last <= MAX_REVIEW_PAGES => 2,
+        last => {
+            items.clear();
+            last - (MAX_REVIEW_PAGES - 1)
+        }
+    };
+    for page in first..=last {
+        items.extend(
+            read_feed(asker, pass, &endpoint(page), Feed::Reviews)
+                .await?
+                .0,
+        );
+    }
+    assert!(
+        items.len() <= PAGE * MAX_REVIEW_PAGES as usize,
+        "bounded review pages"
+    );
+    Some(items)
 }
 
 /// One page of `feed` and the last page its `Link` names; `None` when it

@@ -706,3 +706,49 @@ async fn a_read_is_discarded_when_the_origin_moves_meanwhile() {
     let last = github.calls().pop().unwrap();
     assert!(last.contains("repos/o/s/pulls"), "{last}");
 }
+
+/// A review gets its id when started: one seen pending and submitted later,
+/// after a newer review was told, is still told when it is submitted.
+#[tokio::test]
+async fn a_pending_review_is_told_when_it_is_submitted() {
+    let github = Github::new();
+    let h = watched(&github).await;
+    let started = serde_json::json!([
+        {"id": 10, "submitted_at": null},
+        {"id": 11, "submitted_at": T1},
+    ]);
+    github.serve_named("reviews-1", started, "");
+    github.serve_list(serde_json::json!([pull_at(1, "a", T1)]), "W/\"r1\"");
+    assert_eq!(pass(&h).await.watch.triggers, 1, "#11 was submitted");
+    let submitted = serde_json::json!([
+        {"id": 10, "submitted_at": T2},
+        {"id": 11, "submitted_at": T1},
+    ]);
+    github.serve_named("reviews-1", submitted, "");
+    github.serve_list(serde_json::json!([pull_at(1, "a", T2)]), "W/\"r2\"");
+    assert_eq!(pass(&h).await.watch.triggers, 1, "#10 is submitted now");
+    assert_eq!(told(&h).await, [(1, "new_review".to_owned(), vec![])]);
+    assert_eq!(watch_events(&h).await.len(), 2);
+}
+
+/// A pull request closed and reopened unchanged is no news.
+#[tokio::test]
+async fn a_reopened_pull_request_alone_is_no_news() {
+    let github = Github::new();
+    github.serve_list(serde_json::json!([pull(2, "b"), pull(1, "a")]), "W/\"o1\"");
+    let h = harness(&github).await;
+    h.orchestrator(watch_repo(REPO_NAME)).await.unwrap();
+    pass(&h).await;
+    github.serve_list(serde_json::json!([pull_at(2, "b", T0)]), "W/\"o2\"");
+    assert_eq!(pass(&h).await.watch.triggers, 0, "a closing is no news");
+    assert_eq!(listed(&h).await[0].tracked_pull_requests, Some(1));
+    let reopened = serde_json::json!([pull_at(1, "a", T1), pull(2, "b")]);
+    github.serve_list(reopened, "W/\"o3\"");
+    let read = pass(&h).await;
+    assert_eq!(
+        (read.watch.requested, read.watch.triggers),
+        (1, 0),
+        "{read:?}"
+    );
+    assert!(watch_events(&h).await.is_empty());
+}

@@ -703,6 +703,46 @@
       ],
       "type": "object"
     },
+    "CatalogCheck": {
+      "description": "The result worth surfacing alongside a stored model plan.",
+      "oneOf": [
+        {
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "status": {
+              "const": "deferred",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "status": {
+              "const": "warnings",
+              "type": "string"
+            },
+            "warnings": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "status",
+            "warnings"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "CatalogListing": {
       "properties": {
         "pipelines": {
@@ -6600,6 +6640,16 @@
             "null"
           ]
         },
+        "catalog_check": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogCheck"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "created_at": {
           "format": "date-time",
           "type": "string"
@@ -9700,7 +9750,7 @@
         },
         {
           "const": "migrated",
-          "description": "Moved by the daemon off a model that can no longer run it. No writer sets it yet.",
+          "description": "Moved by the daemon off a model that can no longer run it.",
           "type": "string"
         },
         {
@@ -10145,6 +10195,16 @@
             "null"
           ]
         },
+        "catalog_check": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogCheck"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "created_at": {
           "format": "date-time",
           "type": "string"
@@ -10365,7 +10425,7 @@
           "type": "object"
         },
         {
-          "description": "A dependency failed or was cancelled; needs an operator decision.",
+          "description": "A failed dependency or an invalid model pin needs an operator decision.",
           "properties": {
             "reason": {
               "type": "string"
@@ -16652,6 +16712,11 @@
         {
           "const": "provider_quota",
           "description": "Every provider that meets one of its stages' floors is out of quota.",
+          "type": "string"
+        },
+        {
+          "const": "model_catalog_unavailable",
+          "description": "A model or the model catalog is unavailable.",
           "type": "string"
         }
       ]

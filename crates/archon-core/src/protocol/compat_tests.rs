@@ -124,7 +124,7 @@ fn a_hello_declares_each_feature_by_name_and_unknown_names_are_ignored() {
         ClientFeatures::all()
     );
     let onto = ClientFeatures::declared(&names(&["onto_edges", "later_feature"]));
-    assert_eq!(onto, ClientFeatures::all());
+    assert_ne!(onto, ClientFeatures::all());
     let Reply::TaskGraph(kept) = onto.adapt_reply(graph()) else {
         panic!("a graph stays a graph");
     };
@@ -162,4 +162,22 @@ fn an_undeclared_client_asks_for_a_component_without_onto_links() {
         wire.get("without_onto").is_none(),
         "the flag never reaches the wire"
     );
+}
+
+#[test]
+fn catalog_outages_reach_older_clients_with_a_known_reason_code() {
+    let change = Change {
+        seq: 7,
+        at: at(),
+        subject: ChangeSubject::Item {
+            item: QueueItemId::new(),
+            state: crate::protocol::QueueStateKind::Queued,
+            stage: None,
+            waiting_reason: Some(WaitingReasonCode::ModelCatalogUnavailable),
+        },
+    };
+    let frame = ServerFrame::Change { sub: 1, change };
+    let old = serde_json::to_value(ClientFeatures::default().adapt(frame.clone())).unwrap();
+    assert!(old.to_string().contains("aether_disconnected"));
+    assert_eq!(ClientFeatures::all().adapt(frame.clone()), frame);
 }

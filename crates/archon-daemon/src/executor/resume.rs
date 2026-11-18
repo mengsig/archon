@@ -13,7 +13,7 @@ use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, StageRunId};
 use archon_core::ports::{AgentUpdate, SpawnRequest};
-use archon_core::run::{StageOutcome, StageRun, StageState};
+use archon_core::run::{RecordRepair, StageOutcome, StageRun, StageState};
 use archon_pipeline::contract::SHIP_RECORD_JSON;
 use archon_pipeline::{ShipRecord, SpawnPlan};
 use archon_queue::Store;
@@ -390,13 +390,13 @@ async fn recorded(
     else {
         return Ok(Some(outcome));
     };
-    let states_fail = archon_core::run::Verdict::states_fail(summary, structured.as_ref());
+    // A stated failure settles as sent, on its merits: the reply is read
+    // before any record is asked for or put beside an earlier summary.
+    if StageOutcome::states_failure(summary, structured.as_ref()) {
+        return Ok(Some(outcome));
+    }
     if let Some(first) = &kept.asked_record {
         assert!(!first.trim().is_empty(), "a final message has a summary");
-        // A record reply that states a fail is settled as sent, on its merits.
-        if states_fail {
-            return Ok(Some(outcome));
-        }
         let structured = structured.clone();
         let summary = first.clone();
         return Ok(Some(StageOutcome::Completed {
@@ -407,11 +407,9 @@ async fn recorded(
     let Err(why) = ShipRecord::read(structured.as_ref()) else {
         return Ok(Some(outcome));
     };
-    // A stated fail is settled on its merits, not asked for a record.
-    if states_fail {
-        return Ok(Some(outcome));
-    }
-    if !records_ship(ctx, stage).await || is_record_repair(ctx, stage).await? {
+    // The repair turn's broken record fails the run: it is not asked again.
+    let repair_spent = stage.record_repair == Some(RecordRepair::Spent);
+    if repair_spent || !records_ship(ctx, stage).await {
         return Ok(Some(outcome));
     }
     let why = if structured.is_none() {
@@ -429,19 +427,6 @@ async fn records_ship(ctx: &DaemonContext, stage: &StageRun) -> bool {
     let table = ctx.runs.lock().await;
     let driver = table.drivers.get(&stage.run);
     driver.is_some_and(|driver| driver.records_ship(&stage.stage_id))
-}
-
-/// Whether `stage` is its run's one repair turn for a broken record, which
-/// settles as it stands: its agent is not asked for the record again.
-async fn is_record_repair(ctx: &DaemonContext, stage: &StageRun) -> Result<bool, ArchonError> {
-    let runs = ctx.store.lock().await.stage_runs(&stage.run)?;
-    assert!(
-        runs.iter().any(|run| run.id == stage.id),
-        "a stage run is among its run's"
-    );
-    let table = ctx.runs.lock().await;
-    let driver = table.drivers.get(&stage.run);
-    Ok(driver.is_some_and(|driver| driver.is_record_repair(&runs, stage)))
 }
 
 /// Ask `agent` once, keyed by the stage run, for the ship record its final

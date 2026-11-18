@@ -2,7 +2,7 @@
 //! gate pass, and if not, what feedback goes back to the looped-to stage.
 
 use archon_core::catalog::{Gate, StageKind};
-use archon_core::run::{StageRun, StageState, Verdict};
+use archon_core::run::{StageOutcome, StageRun, StageState, Verdict};
 
 use crate::review::Evidence;
 use crate::ship::ShipRecord;
@@ -52,9 +52,10 @@ pub(crate) enum GroupResult {
 }
 
 /// Evaluate a stage group whose every slot is terminal. `members` holds the
-/// latest stage run per slot, by fan index; `owed` as for `recorded`. A
-/// broken record that is not a stated fail is judged before the gate and
-/// scenarios, which read that record, so it gets its repair turn first.
+/// latest stage run per slot, by fan index; `owed` as for `recorded`. The
+/// order is fixed: a stated failure fails on its merits, whatever its gate
+/// or record; then a broken record is `Unrecorded`, before the gate and
+/// scenarios that would read it; then the gate, scenarios and record.
 pub(crate) fn evaluate(
     stage: &StageSpec,
     attempt: u32,
@@ -140,9 +141,9 @@ fn recorded(stage: &StageSpec, attempt: u32, members: &[&StageRun], owed: Owed) 
     assert_eq!(member.state, StageState::Completed, "it passed its gate");
     let summary = joined_summary(stage, members);
     let structured = member.structured.as_ref();
-    // A stated fail is refused on its merits, whatever its gate or record.
-    if states_fail(member) {
-        let headline = "its agent stated a fail verdict".to_owned();
+    // A stated failure is refused on its merits, whatever its gate or record.
+    if states_failure(member) {
+        let headline = "its agent stated a failure".to_owned();
         let report = format!(
             "**Stage `{}` attempt {attempt}: {headline}**\n\n{summary}\n",
             stage.id
@@ -191,10 +192,11 @@ fn repairable(stage: &StageSpec, members: &[&StageRun], owed: Owed) -> bool {
     member.state == StageState::Completed && broken_record(member.structured.as_ref(), owed)
 }
 
-/// Whether `member` stated a fail anywhere, even beside a pass elsewhere.
-fn states_fail(member: &StageRun) -> bool {
+/// Whether `member` stated its failure anywhere, even beside a pass
+/// elsewhere: in the reply as its agent sent it, or its persisted verdict.
+fn states_failure(member: &StageRun) -> bool {
     let summary = member.summary.as_deref().unwrap_or_default();
-    let stated = Verdict::states_fail(summary, member.structured.as_ref());
+    let stated = StageOutcome::states_failure(summary, member.structured.as_ref());
     stated || member.verdict == Some(Verdict::Fail)
 }
 

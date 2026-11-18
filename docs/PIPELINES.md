@@ -440,13 +440,14 @@ and nothing ships. A record that is broken rather than refused gets one
 repair turn first. Broken means a result without `structured`, or a pass that
 names no reviewer. The stage is entered once more with the refusal quoted.
 The reviewers it then names are checked as above, so they must be agents it
-delegated itself. A second broken record fails the run, with no fix loop.
-A broken record is judged before the stage's gate, unless it states a fail
-verdict, which is refused on its merits. A fail stated in the summary's last
-`VERDICT:` line or in `structured` counts even when the other says pass, and
-a record stage without a gate that states a fail ships nothing, nor is a
-kept agent's reply that states one asked for its record. A repair
-attempt woken onto a new stage run is still the repair. At `none` the contract tells the agent to delegate no
+delegated itself. The repair attempt is marked as one on its stage run: a
+second broken record fails the run, with no fix loop, and a kept agent is
+not asked for its record again. A stated failure always wins over the
+record: a fail verdict in `structured` or in the summary's last `VERDICT:`
+line, or a summary that opens with `ESCALATE:` or `BLOCKED:`, fails the
+stage as sent, with or without a gate, gets no repair turn and ships
+nothing. A run started before repair turns existed keeps the fix loop it
+took. At `none` the contract tells the agent to delegate no
 reviewer and record no review.
 
 A pass is not taken on the agent's word. As the stage ends, Archon lists

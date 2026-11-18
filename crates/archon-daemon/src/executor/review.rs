@@ -1073,6 +1073,7 @@ mod tests {
             },
             model_segments: Vec::new(),
             infrastructure_failure: false,
+            record_repair: None,
             host_context: Default::default(),
             aether_agent: Some(agent(agent_id)),
             aether_task: None,

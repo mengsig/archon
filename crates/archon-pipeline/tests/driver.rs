@@ -12,7 +12,7 @@ use archon_core::autonomy::{Autonomy, ReviewLevel};
 use archon_core::catalog::{Gate, StageKind, Tier, WorkspaceMode};
 use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
 use archon_core::model::{Effort, ModelChoice, ModelPlan, reviewers_key};
-use archon_core::run::{RunState, StageRun, StageState};
+use archon_core::run::{RecordRepair, RunState, StageRun, StageState};
 use archon_pipeline::autonomy::augment;
 use archon_pipeline::review::Reviewer;
 use archon_pipeline::team::{MergeOutcome, worker_branch};
@@ -2116,91 +2116,105 @@ fn an_ungated_stated_fail_without_structured_gets_no_repair_turn() {
     assert_eq!(failed(&done).0, "implement");
 }
 
-/// A run persisted before repair turns existed took its fix loop after a
-/// broken record; replay keeps that decision and its workers' attempts.
-#[test]
-fn a_run_from_before_repair_turns_replays_its_fix_loop() {
+/// The swarm of a release before repair turns, up to its integrator.
+fn swarm_before_repairs() -> Sim {
     let mut sim = swarm_sim();
+    sim.before_repairs = true;
+    sim.stages.iter_mut().for_each(|s| s.record_repair = None);
     assign_tasks(&mut sim, &["api", "cli"]);
     sim.settle("plan", 0, Agent::Done("api, cli"));
     sim.settle("build", 0, Agent::Done("api built"));
     sim.settle("build", 1, Agent::Done("cli built"));
     sim.merge(MergeOutcome::Merged);
-    let repair = sim.settle("integrate", 0, Agent::Done("Integrated."));
-    assert_eq!(spawned(&repair), slots(&[("integrate", 2, 0)]));
-    // What the earlier release persisted instead: the loop back to build.
-    sim.stages
-        .retain(|s| !(s.stage_id == "integrate" && s.attempt == 2));
-    sim.pending.clear();
-    let integrated = sim.stages.iter().find(|s| s.stage_id == "integrate");
-    let ended = integrated.and_then(|s| s.finished_at).expect("it ended");
-    let builds: Vec<StageRun> = (sim.stages.iter())
-        .filter(|s| s.stage_id == "build" && s.attempt == 1)
-        .cloned()
-        .collect();
-    for (n, build) in builds.into_iter().enumerate() {
-        sim.stages.push(StageRun {
-            id: StageRunId::new(),
-            attempt: 2,
-            state: StageState::Running,
-            summary: None,
-            structured: None,
-            verdict: None,
-            started_at: ended + std::time::Duration::from_secs(1 + n as u64),
-            finished_at: None,
-            ..build
-        });
+    sim
+}
+
+/// Stage runs persisted before repair turns existed carry no marker: the
+/// integrator that named no review looped back to its workers then, and
+/// every replay of those rows, `settle`'s resume included, decides the same.
+#[test]
+fn a_run_from_before_repair_turns_replays_its_fix_loop() {
+    let mut sim = swarm_before_repairs();
+    let back = sim.settle("integrate", 0, Agent::Done("Integrated."));
+    assert_eq!(spawned(&back), slots(&[("build", 2, 0), ("build", 2, 1)]));
+    assert!(sim.stages.iter().all(|s| s.record_repair.is_none()));
+    for worker in spawn_plans(&back) {
+        assert!(
+            !worker.prompt.contains("Archon record repair"),
+            "{}",
+            worker.prompt
+        );
     }
-    let driver = sim.resumed_driver();
-    let replayed = sim.resume_fresh();
-    assert!(spawned(&replayed).is_empty(), "{replayed:#?}");
-    let integrate = sim
-        .stages
-        .iter()
-        .find(|s| s.stage_id == "integrate")
-        .unwrap();
-    let mut repaired = integrate.clone();
-    repaired.attempt = 2;
-    assert!(
-        !driver.is_record_repair(&sim.stages, &repaired),
-        "no repair turn was taken"
+}
+
+/// An attempt started after the upgrade carries the marker, so its broken
+/// record gets the repair turn though an earlier one of its run got none.
+#[test]
+fn an_attempt_started_after_the_upgrade_gets_its_repair_turn() {
+    let mut sim = swarm_before_repairs();
+    sim.settle("integrate", 0, Agent::Done("Integrated."));
+    sim.before_repairs = false;
+    sim.settle("build", 0, Agent::Done("api rebuilt"));
+    sim.settle("build", 1, Agent::Done("cli rebuilt"));
+    sim.merge(MergeOutcome::Merged);
+    let repair = sim.settle("integrate", 0, Agent::Done("Integrated again."));
+    assert_eq!(spawned(&repair), slots(&[("integrate", 3, 0)]));
+    let done = sim.settle("integrate", 0, Agent::Done("And again."));
+    assert!(spawned(&done).is_empty(), "one repair turn: {done:#?}");
+    assert_eq!(failed(&done).0, "integrate");
+}
+
+/// The repair attempt carries the persisted marker that its turn is spent,
+/// and so does every later attempt of its stage.
+#[test]
+fn a_record_repair_attempt_carries_its_marker() {
+    let mut sim = sim("direct");
+    sim.writes_record = false;
+    sim.start();
+    let repair = sim.settle("implement", 0, Agent::Done("Fixed it."));
+    assert_eq!(spawn_plans(&repair)[0].record_repair, RecordRepair::Spent);
+    let marks: Vec<Option<RecordRepair>> = sim.stages.iter().map(|s| s.record_repair).collect();
+    assert_eq!(
+        marks,
+        [Some(RecordRepair::Open), Some(RecordRepair::Spent)],
+        "{:#?}",
+        sim.stages
     );
+    // A repair attempt replaced after an infrastructure failure stays one.
+    let again = sim.infra_respawn("implement", 0);
+    assert_eq!(again.record_repair, RecordRepair::Spent);
 }
 
-/// The daemon tells a record repair turn from any other attempt.
+/// The decision is keyed on the marker alone: the same broken record gets
+/// a repair turn where its row says one is open, and fails where spent.
 #[test]
-fn a_record_repair_attempt_is_known_as_one() {
+fn a_broken_record_is_decided_by_its_persisted_marker() {
     let mut sim = sim("direct");
     sim.writes_record = false;
     sim.start();
-    let repair = sim.settle("implement", 0, Agent::Done("Fixed it."));
-    assert_eq!(spawned(&repair), slots(&[("implement", 2, 0)]));
-    let driver = sim.resumed_driver();
-    let attempts: Vec<&StageRun> = sim.stages.iter().collect();
-    let [first, second] = attempts[..] else {
-        panic!("{attempts:#?}")
-    };
-    assert!(!driver.is_record_repair(&sim.stages, first));
-    assert!(driver.is_record_repair(&sim.stages, second));
+    sim.stages[0].record_repair = Some(RecordRepair::Spent);
+    let done = sim.settle("implement", 0, Agent::Done("Fixed it."));
+    assert!(spawned(&done).is_empty(), "no repair turn: {done:#?}");
+    assert_eq!(failed(&done).0, "implement");
 }
 
-/// A repair attempt woken onto a new row, after a deadline or an
-/// infrastructure failure, is still known as the repair.
+/// A summary that opens as an escalation states its failure: its broken
+/// record gets no repair turn, and a valid record beside it does not ship.
 #[test]
-fn a_replacement_row_of_a_record_repair_is_known_as_one() {
-    let mut sim = sim("direct");
-    sim.writes_record = false;
-    sim.start();
-    let repair = sim.settle("implement", 0, Agent::Done("Fixed it."));
-    assert_eq!(spawned(&repair), slots(&[("implement", 2, 0)]));
-    let mut woken = sim.stages[1].clone();
-    woken.id = StageRunId::new();
-    woken.started_at += std::time::Duration::from_secs(60);
-    sim.stages[1].state = StageState::TimedOut;
-    sim.stages[1].finished_at = Some(woken.started_at);
-    sim.stages.push(woken.clone());
-    let driver = sim.resumed_driver();
-    assert!(driver.is_record_repair(&sim.stages, &woken), "{woken:#?}");
+fn a_completed_escalation_gets_no_repair_turn_and_does_not_ship() {
+    for writes_record in [false, true] {
+        let mut sim = sim("direct");
+        sim.writes_record = writes_record;
+        sim.start();
+        let summary = "ESCALATE: this needs a schema migration first";
+        let done = sim.settle("implement", 0, Agent::Done(summary));
+        assert!(spawned(&done).is_empty(), "no repair turn: {done:#?}");
+        assert!(ship_plans(&done).is_empty(), "nothing ships");
+        let (stage, error) = failed(&done);
+        assert_eq!(stage, "implement");
+        assert!(error.contains("stated a failure"), "{error}");
+        assert!(error.contains(summary), "its words are kept: {error}");
+    }
 }
 
 /// An ungated record stage whose agent states a fail beside a valid record
@@ -2214,7 +2228,7 @@ fn an_ungated_stated_fail_with_a_valid_record_does_not_ship() {
     assert!(spawned(&done).is_empty(), "no repair turn: {done:#?}");
     let (stage, error) = failed(&done);
     assert_eq!(stage, "implement");
-    assert!(error.contains("stated a fail verdict"), "{error}");
+    assert!(error.contains("stated a failure"), "{error}");
 }
 
 /// A summary that states a fail disputes a structured pass; the broken

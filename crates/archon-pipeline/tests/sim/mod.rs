@@ -72,6 +72,9 @@ pub struct Sim {
     /// Whether the record stage's agent writes the ship record its contract
     /// asks for; a test of a missing record turns it off.
     pub writes_record: bool,
+    /// Stage runs are persisted as a release before record repair turns
+    /// did: with no marker of one.
+    pub before_repairs: bool,
     /// Persisted steered aborts, oldest first.
     pub aborts: Vec<(String, u32, Then)>,
     /// The approved proposal the run started past, as the daemon persists it.
@@ -126,6 +129,7 @@ impl Sim {
             shipped: None,
             open_ship: None,
             writes_record: true,
+            before_repairs: false,
             aborts: Vec::new(),
             approved_proposal: None,
             clock,
@@ -576,6 +580,7 @@ impl Sim {
             fan_index: plan.fan_index,
             model_segments: Vec::new(),
             infrastructure_failure: false,
+            record_repair: (!self.before_repairs).then_some(plan.record_repair),
             host_context: Default::default(),
             choice: plan.choice.clone(),
             aether_agent: None,

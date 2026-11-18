@@ -14,7 +14,7 @@ use archon_core::model::{Effort, ModelPlan};
 use archon_core::ports::{DescendantState, resumed_reply_outcome};
 use archon_core::protocol::Request;
 use archon_core::queue::{QueueItem, QueueState};
-use archon_core::run::{PipelineRun, StageOutcome, StageRun, StageState};
+use archon_core::run::{PipelineRun, RecordRepair, StageOutcome, StageRun, StageState};
 use archon_core::steer::Steer;
 use archon_daemon::executor;
 use common::delivery::{FakeGh, add_origin, change, origin_of, pushed, shipped_by};
@@ -518,6 +518,15 @@ async fn a_resumed_agent_asked_for_its_record_in_vain_fails_its_stage() {
     assert_eq!(agent(&repair), agent(&fix), "the kept agent repairs");
     let told = h.backend.resumed_with(&repair);
     assert!(told.contains("Archon record repair"), "{told}");
+    // The repair attempt's row carries the persisted marker of a spent turn.
+    let rows = h.stages(&item.id).await;
+    let mark = |id| {
+        rows.iter()
+            .find(|s| s.id == id)
+            .and_then(|s| s.record_repair)
+    };
+    assert_eq!(mark(fix.id.clone()), Some(RecordRepair::Open));
+    assert_eq!(mark(repair.id.clone()), Some(RecordRepair::Spent));
     // Its repair reply without the record fails the run: it is not asked again.
     let before = h.backend.messages().len();
     h.backend

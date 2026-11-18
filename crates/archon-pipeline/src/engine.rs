@@ -12,7 +12,8 @@ use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, StageRunId};
 use archon_core::model::{ModelChoice, ModelPlan};
 use archon_core::run::{
-    GateDecision, GateSubject, PipelineRun, RunState, StageOutcome, StageRun, StageState,
+    GateDecision, GateSubject, PipelineRun, RecordRepair, RunState, StageOutcome, StageRun,
+    StageState,
 };
 use archon_core::steer::Then;
 use serde::{Deserialize, Serialize};
@@ -20,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use crate::autonomy::{self, OperatorGates};
 use crate::gate::{self, GroupResult};
 use crate::ship::{self, BodyAdditions, SHIP_STEP, ShipOutcome, ShipPlan, ShipRecord};
-use crate::spec::{Owed, PipelineSpec, ReviewDuty, StageSpec};
+use crate::spec::{PipelineSpec, ReviewDuty, StageSpec};
 use crate::team::{self, MergeOutcome, MergePlan, RoleBranch, TeamSlot};
 use crate::{contract, review, risk, sections, template};
 
@@ -93,6 +94,9 @@ pub struct SpawnPlan {
     /// The stage finishes the build: an item bound to approved intent owes
     /// `requirement_results` in its result ([`crate::acceptance::reports_requirements`]).
     pub reports_requirements: bool,
+    /// Whether the stage's one record repair turn is still to give, which
+    /// the daemon persists on the attempt's stage run.
+    pub record_repair: RecordRepair,
 }
 
 /// A proposal the operator approved in an earlier run of the item, for the
@@ -180,8 +184,6 @@ struct Counters {
     loops: Vec<u32>,
     /// Operator revisions requested at each gate stage.
     revisions: Vec<u32>,
-    /// Record repairs given to each stage: at most one per run.
-    repairs: Vec<u32>,
 }
 
 /// A stage group in the replay plus the template context it runs with.
@@ -196,6 +198,8 @@ struct Position {
     entered: BTreeSet<(usize, u32)>,
     /// Gate stages the operator approved, with the operator's note.
     approved: BTreeMap<String, Option<String>>,
+    /// Stages given their record repair turn: at most one each per run.
+    repaired: BTreeSet<usize>,
     /// What the record stage's latest pass left for the delivery.
     record: Option<Recorded>,
     /// Why the record stage's latest pass left nothing to deliver.
@@ -226,6 +230,7 @@ impl Position {
             previous: BTreeMap::new(),
             entered: BTreeSet::new(),
             approved: BTreeMap::new(),
+            repaired: BTreeSet::new(),
             record: None,
             no_change: None,
         };
@@ -526,34 +531,6 @@ impl RunDriver {
     }
 
     /// Whether stage `stage_id` hands in the ship record archond delivers.
-    /// Whether `stage` is the repair turn of a broken record: the previous
-    /// attempt of its stage handed one in, and `stage` is what ran next.
-    pub fn is_record_repair(&self, runs: &[StageRun], stage: &StageRun) -> bool {
-        assert!(stage.attempt >= 1, "attempts are 1-based");
-        let Some(spec) = self.spec.stage(&stage.stage_id) else {
-            return false;
-        };
-        let owed = self.spec.owed(spec);
-        if stage.attempt == 1 || owed == Owed::default() {
-            return false;
-        }
-        let slots = latest_per_slot(runs);
-        let group: Option<Vec<&StageRun>> = group_at(&slots, spec, stage.attempt - 1)
-            .into_iter()
-            .collect();
-        let Some(members) = group.filter(|g| g.iter().all(|m| m.state.is_terminal())) else {
-            return false;
-        };
-        let judged = gate::evaluate(spec, stage.attempt - 1, &members, owed);
-        // By slot, not row: a wake or deadline replacement keeps the attempt.
-        let same_slot = |next: &StageRun| {
-            (next.stage_id.as_str(), next.attempt, next.fan_index)
-                == (stage.stage_id.as_str(), stage.attempt, stage.fan_index)
-        };
-        matches!(judged, GroupResult::Unrecorded { .. })
-            && next_started(runs, &members).is_some_and(same_slot)
-    }
-
     pub fn records_ship(&self, stage_id: &str) -> bool {
         let records = self.spec.ship_record_stage();
         records.is_some_and(|stage| stage.id == stage_id)
@@ -923,7 +900,6 @@ impl RunDriver {
             entries: vec![0_u32; stages.len()],
             loops: vec![0_u32; stages.len()],
             revisions: vec![0_u32; stages.len()],
-            repairs: vec![0_u32; stages.len()],
         };
         let approved = self.approved_proposal.as_ref();
         let mut at = Position::first(&mut counts.entries, approved);
@@ -957,7 +933,7 @@ impl RunDriver {
             if !missing.is_empty() || members.iter().any(|m| !m.state.is_terminal()) {
                 return Replay::Await { at, missing };
             }
-            if let Some(replay) = self.decide_group(&mut at, &mut counts, &members, runs) {
+            if let Some(replay) = self.decide_group(&mut at, &mut counts, &members) {
                 return replay;
             }
         }
@@ -971,25 +947,27 @@ impl RunDriver {
         at: &mut Position,
         counts: &mut Counters,
         members: &[&StageRun],
-        runs: &[StageRun],
     ) -> Option<Replay> {
         let stage = &self.spec.file.stages[at.stage];
         let owed = self.spec.owed(stage);
         let (headline, report) = match gate::evaluate(stage, at.attempt, members, owed) {
             GroupResult::Fail { headline, report } => (headline, report),
-            // The repair turn was spent: a second broken record fails the
-            // run, as no fix loop can hand in the record either.
-            GroupResult::Unrecorded { headline, report } if counts.repairs[at.stage] > 0 => {
-                return Some(self.stop_failed(at.stage, "", &headline, &report));
-            }
-            GroupResult::Unrecorded { report, .. } if repair_fits(runs, members) => {
-                counts.repairs[at.stage] += 1;
-                let feedback = sections::record_repair(stage, at.attempt, owed, &report);
-                at.enter(at.stage, &mut counts.entries, feedback);
-                return None;
-            }
-            // A run persisted before repair turns existed took its fix loop.
-            GroupResult::Unrecorded { headline, report } => (headline, report),
+            // Keyed on the marker its stage run was created with, so a
+            // replay decides a persisted broken record as it was decided.
+            GroupResult::Unrecorded { headline, report } => match members[0].record_repair {
+                Some(RecordRepair::Open) => {
+                    at.repaired.insert(at.stage);
+                    let feedback = sections::record_repair(stage, at.attempt, owed, &report);
+                    at.enter(at.stage, &mut counts.entries, feedback);
+                    return None;
+                }
+                // A second broken record: no fix loop can hand it in either.
+                Some(RecordRepair::Spent) => {
+                    return Some(self.stop_failed(at.stage, "", &headline, &report));
+                }
+                // From before repair turns: it failed its stage, as then.
+                None => (headline, report),
+            },
             GroupResult::Defect { headline, report } => {
                 return Some(self.stop_failed(at.stage, "", &headline, &report));
             }
@@ -1338,6 +1316,10 @@ impl RunDriver {
             .then(|| self.plan.reviewer_choices().unwrap_or_default().to_vec());
         let workers = self.spec.worker_policy(stage, &self.plan);
         let reports_requirements = crate::acceptance::reports_requirements(&self.spec, &stage.id);
+        let record_repair = match at.repaired.contains(&at.stage) {
+            true => RecordRepair::Spent,
+            false => RecordRepair::Open,
+        };
         fans.iter()
             .map(|&fan| {
                 assert!(fan < stage.fan_out, "slot {fan} outside fan_out");
@@ -1373,6 +1355,7 @@ impl RunDriver {
                     reviewers: reviewers.clone(),
                     workers: workers.clone(),
                     reports_requirements,
+                    record_repair,
                 })
             })
             .collect()
@@ -1490,6 +1473,7 @@ impl RunDriver {
             previous: BTreeMap::new(),
             entered: BTreeSet::new(),
             approved: BTreeMap::new(),
+            repaired: BTreeSet::new(),
             record: None,
             no_change: None,
         };
@@ -1608,30 +1592,6 @@ fn latest_per_slot(runs: &[StageRun]) -> BTreeMap<SlotKey<'_>, &StageRun> {
         }
     }
     slots
-}
-
-/// The first stage run started after the one-agent group `members` ended,
-/// other than its own; `None` for a larger group or before one starts.
-fn next_started<'a>(runs: &'a [StageRun], members: &[&StageRun]) -> Option<&'a StageRun> {
-    let [member] = members else {
-        return None;
-    };
-    let ended = member.finished_at.unwrap_or(member.started_at);
-    assert!(ended >= member.started_at, "a run ends after it starts");
-    let later = runs
-        .iter()
-        .filter(|r| r.id != member.id && r.started_at >= ended);
-    later.min_by_key(|r| (r.started_at, &r.id))
-}
-
-/// Whether persisted history leaves the repair turn to a broken record:
-/// nothing ran after it yet, or the next run is its own stage's next attempt.
-fn repair_fits(runs: &[StageRun], members: &[&StageRun]) -> bool {
-    assert!(!members.is_empty(), "a group has a member");
-    let next = next_started(runs, members);
-    next.is_none_or(|next| {
-        next.stage_id == members[0].stage_id && next.attempt > members[0].attempt
-    })
 }
 
 /// The latest stage run of each slot of `stage` at `attempt`.

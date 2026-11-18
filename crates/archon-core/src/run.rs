@@ -825,6 +825,13 @@ impl StageOutcome {
         let error = error.trim_start();
         error.starts_with(Self::BLOCKED_PREFIX) || error.starts_with(Self::ESCALATE_PREFIX)
     }
+
+    /// Whether a completed result states its own failure: a fail verdict
+    /// ([`Verdict::states_fail`]), or a summary opening as a `fail_task`
+    /// error that [ends its run](Self::ends_run) would.
+    pub fn states_failure(summary: &str, structured: Option<&serde_json::Value>) -> bool {
+        Self::ends_run(summary) || Verdict::states_fail(summary, structured)
+    }
 }
 
 impl StageState {
@@ -855,6 +862,10 @@ pub struct StageRun {
     pub infrastructure_failure: bool,
     #[serde(default)]
     pub host_context: crate::config::HostContext,
+    /// How the attempt stands to its stage's one record repair turn; `None`
+    /// on a stage run from before Archon gave one, which is replayed as then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record_repair: Option<RecordRepair>,
     /// Aether identifiers, present once Aether acknowledged creation.
     pub aether_agent: Option<AetherAgentId>,
     pub aether_task: Option<AetherTaskId>,
@@ -865,6 +876,18 @@ pub struct StageRun {
     pub cost_usd: f64,
     pub started_at: Timestamp,
     pub finished_at: Option<Timestamp>,
+}
+
+/// Whether a stage's one record repair turn is still to give when an attempt
+/// of it completes with a broken delivery record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RecordRepair {
+    /// A broken record of this attempt gets the repair turn.
+    Open,
+    /// The attempt is the repair turn or follows it: a broken record of it
+    /// fails the run, and its agent is not asked for the record again.
+    Spent,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -2008,6 +2031,7 @@ mod tests {
             fan_index: 0,
             model_segments: Vec::new(),
             infrastructure_failure: false,
+            record_repair: None,
             host_context: Default::default(),
             choice: ModelChoice {
                 model: "claude-code/opus".parse().unwrap(),

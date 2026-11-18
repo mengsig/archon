@@ -38,12 +38,13 @@ fn read_review_quota(h: &Harness, remaining: u64) {
     });
 }
 
-/// A running stage whose lead delegated a reviewer Aether holds for quota.
+/// A running stage whose lead delegated a reviewer Aether holds for quota:
+/// the stage started last.
 async fn held_reviewer(h: &Harness) -> (StageRun, AetherAgentId, AetherAgentId) {
     assert!(common::REVIEW_MODEL.starts_with(REVIEW_PROVIDER));
     h.enqueue("review on a spent quota").await;
     h.dispatch().await;
-    let stage = h.running().await.remove(0);
+    let stage = h.running().await.pop().expect("a running stage");
     let lead = stage.aether_agent.clone().expect("a lead");
     let reviewer = h.backend.delegate(&lead, common::REVIEW_MODEL);
     let held = TreePulse {
@@ -71,9 +72,34 @@ async fn backdate_wait(h: &Harness, stage: &StageRun, reviewer: &AetherAgentId, 
 
 /// One quota sweep, as the daemon's own timer runs it.
 async fn sweep(h: &Harness) {
-    quota_wait::sweep_running(&h.ctx)
+    quota_wait::sweep_running(&h.ctx, archon_core::now())
         .await
         .expect("a quota sweep");
+}
+
+/// Other running stages, started before the one with the reviewer, whose
+/// every read hangs for `delay`.
+async fn slow_stages(h: &Harness, count: usize, delay: Duration) {
+    for n in 0..count {
+        h.enqueue(&format!("unrelated {n}")).await;
+    }
+    h.dispatch().await;
+    let others = h.running().await;
+    assert_eq!(others.len(), count, "{count} unrelated stages run");
+    for other in others.iter().filter_map(|s| s.aether_agent.as_ref()) {
+        h.backend.slow_reads(other, delay);
+    }
+}
+
+/// Advance the paused clock a second at a time until `done`, at most
+/// `limit`; how long it took.
+async fn advance_until(limit: Duration, mut done: impl AsyncFnMut() -> bool) -> Duration {
+    let started = tokio::time::Instant::now();
+    while !done().await {
+        assert!(started.elapsed() < limit, "not within {limit:?}");
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    started.elapsed()
 }
 
 fn told(h: &Harness, lead: &AetherAgentId) -> Vec<String> {
@@ -206,8 +232,8 @@ async fn a_reviewer_that_resumes_before_its_cancel_is_not_stopped() {
         "a working reviewer is kept"
     );
     assert!(told(&h, &lead).is_empty(), "its lead is told nothing");
-    // The last read is the reviewer's own status, not its whole tree.
-    assert_eq!(h.backend.quota_reads(), vec![reviewer.clone()]);
+    // One read a sweep, and one more right before the cancel it then skips.
+    assert_eq!(h.backend.quota_reads(), vec![reviewer.clone(); 3]);
     let key = format!("quota_wait:{}:{reviewer}", stage.id);
     let left = h.ctx.store.lock().await.kv_get(&key).unwrap();
     assert_eq!(left, None, "its wait is forgotten");
@@ -232,6 +258,24 @@ async fn a_refused_cancel_tells_the_lead_nothing() {
     assert_eq!(left, None, "its wait is forgotten");
 }
 
+/// A cancel Aether accepts comes first, with the hint as its reason; the
+/// lead's message follows it and repeats the same words.
+#[tokio::test]
+async fn the_cancel_carries_the_hint_and_comes_before_the_message() {
+    let h = Harness::new().await;
+    let (stage, lead, reviewer) = held_reviewer(&h).await;
+    sweep(&h).await;
+    backdate_wait(&h, &stage, &reviewer, TimeDelta::minutes(3)).await;
+    // The message is refused: the cancel was sent all the same, before it.
+    let refusal = archon_core::error::ArchonError::Invalid("lead has ended".into());
+    h.backend.fail_next_message(refusal);
+    sweep(&h).await;
+    assert_eq!(h.backend.cancelled(), vec![reviewer.clone()]);
+    let reasons = h.backend.cancel_reasons();
+    assert!(reasons[0].1.contains("Re-plan the review"), "{reasons:?}");
+    assert!(told(&h, &lead).is_empty(), "the message was refused");
+}
+
 /// The sweep keeps its own 30-second timer: with no dispatch pass at all, a
 /// blocked reviewer is stopped within minutes of the paused clock.
 #[tokio::test(start_paused = true)]
@@ -249,30 +293,61 @@ async fn the_quota_timer_stops_a_reviewer_without_any_dispatch() {
     watcher.abort();
 }
 
-/// Stages whose reads hang do not hold back another stage's due reviewer:
-/// each stage's check has its own limit, and all run at once.
+/// Every stage is checked at once: stages checked before a due reviewer's,
+/// whose reads hang, do not hold its cancel back by their time limits.
 #[tokio::test(start_paused = true)]
 async fn slow_unrelated_stages_do_not_delay_a_due_reviewer() {
     let h = Harness::new().await;
-    let (stage, lead, reviewer) = held_reviewer(&h).await;
-    for n in 0..3 {
-        h.enqueue(&format!("unrelated {n}")).await;
-    }
-    h.dispatch().await;
-    let others: Vec<AetherAgentId> = (h.running().await.into_iter())
-        .filter_map(|s| s.aether_agent)
-        .filter(|agent| *agent != lead)
-        .collect();
-    assert_eq!(others.len(), 3, "three unrelated stages run");
-    for other in &others {
-        h.backend.slow_pulse(other, Duration::from_secs(100));
-    }
+    slow_stages(&h, 4, Duration::from_secs(3600)).await;
+    let (stage, _, reviewer) = held_reviewer(&h).await;
     let _aether = common::connect_aether_for_delegations(&h).await;
     let watcher = tokio::spawn(quota_wait::watch(h.ctx.clone()));
-    let first = quota_wait::SWEEP_INTERVAL + quota_wait::STAGE_LIMIT;
-    tokio::time::sleep(first + Duration::from_secs(1)).await;
+    let seen = || async {
+        !h.ctx
+            .store
+            .lock()
+            .await
+            .kv_prefix("quota_wait:")
+            .unwrap()
+            .is_empty()
+    };
+    advance_until(quota_wait::SWEEP_INTERVAL, seen).await;
     backdate_wait(&h, &stage, &reviewer, TimeDelta::minutes(3)).await;
-    tokio::time::sleep(first).await;
-    assert_eq!(h.backend.cancelled(), vec![reviewer.clone()]);
+    // The next sweep starts once the slow stages' requests were cut off.
+    let next_sweep = quota_wait::SWEEP_INTERVAL.max(quota_wait::REQUEST_LIMIT);
+    let stopped = || async { h.backend.cancelled() == vec![reviewer.clone()] };
+    let took = advance_until(next_sweep + Duration::from_secs(2), stopped).await;
+    assert!(took <= next_sweep + Duration::from_secs(1), "{took:?}");
+    watcher.abort();
+}
+
+/// With every read of its stage slow, though within the request limit, and
+/// other stages not answering at all, a blocked reviewer is still cancelled
+/// within five minutes and one sweep period of first being seen blocked.
+#[tokio::test(start_paused = true)]
+async fn a_blocked_reviewer_is_cancelled_in_time_though_every_read_is_slow() {
+    let h = Harness::new().await;
+    slow_stages(&h, 3, Duration::from_secs(3600)).await;
+    let (_, lead, reviewer) = held_reviewer(&h).await;
+    let slow = quota_wait::REQUEST_LIMIT - Duration::from_secs(1);
+    h.backend.slow_reads(&lead, slow);
+    h.backend.slow_reads(&reviewer, slow);
+    let _aether = common::connect_aether_for_delegations(&h).await;
+    let watcher = tokio::spawn(quota_wait::watch(h.ctx.clone()));
+    let seen = || async {
+        !h.ctx
+            .store
+            .lock()
+            .await
+            .kv_prefix("quota_wait:")
+            .unwrap()
+            .is_empty()
+    };
+    advance_until(Duration::from_secs(60), seen).await;
+    let bound = Duration::from_secs(5 * 60) + quota_wait::SWEEP_INTERVAL;
+    let stopped = || async { h.backend.cancelled() == vec![reviewer.clone()] };
+    let took = advance_until(bound, stopped).await;
+    assert!(took >= Duration::from_secs(60), "not at once: {took:?}");
+    assert_eq!(told(&h, &lead).len(), 1, "its lead is told once");
     watcher.abort();
 }

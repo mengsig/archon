@@ -1480,15 +1480,20 @@ in a new worktree off the base branch (§13).
   lead is told to delegate the review on another allowed provider or fail
   its task. The check runs every 30 seconds on its own worker
   (`executor::quota_wait::watch`), apart from dispatch. It checks every
-  running stage at once, each for at most 15 seconds, so a slow stage is
-  read again next time and never delays another stage's reviewer. It reads the
-  reviewer's own block again with one `get_agent` just before the cancel,
-  which carries that hint as its reason; the lead is messaged once the
-  cancel is accepted. So the cancel comes within 5 minutes of the block. Known limitation: Aether has no conditional cancel, so a
+  running stage at once and waits at most 10 seconds for each answer from
+  Aether; an unanswered read keeps the wait as recorded and is asked again
+  next time. So no stage delays another's check, and the cancel comes
+  within 5 minutes of the block first being seen. The reviewer's own block
+  is read again with one `get_agent` right before the cancel, which carries
+  that hint as its reason; the lead is messaged once the cancel is
+  accepted. Known limitation: Aether has no conditional cancel, so a
   reviewer whose quota returns within the one round trip between that read
-  and the cancel is still cancelled, and its lead re-plans the review. When any agent of a running stage's tree gets a new child, every
-  live agent beneath the lead with a deadline below the stored one is raised
-  to it, under the stage's steering lock, so no extension is lowered.
+  and the cancel is still cancelled, and its lead re-plans the review.
+  When any agent of a running stage's tree gets a new child, every live
+  agent beneath the lead with a deadline below the stored one is raised to
+  it. The read and the raise run under the stage's steering lock, as every
+  deadline move does, so they are one compare-and-raise that lowers no
+  extension.
   A later deadline a steer stored is kept,
   and sent to Aether again if the steer landed while the move was in flight.
   An agent `blocked` for inspection is moved on in the same way only while
@@ -2821,9 +2826,18 @@ worktree they abbreviate; elsewhere they stay the full SHA-1 id. The gate checks
 review: a pass without one fails the run at that stage, so no delivery is
 ever asked for without it. A result without `structured`, or a pass that
 names no reviewer, first gets one repair turn: the stage is entered again
-with the refusal quoted, and a second broken record fails the run without
-a fix loop. A broken record that states no fail is judged before the gate
-and scenarios; a stated fail is refused on its merits. Stages after the record stage cannot commit
+with the refusal quoted. Every stage run carries a persisted
+`record_repair` marker. `open` means a broken record of that attempt gets
+the turn. The repair attempt and each later attempt of its stage are
+`spent`: a broken record of one fails the run without a fix loop, and its
+kept agent is not asked for the record again. A stage run from before the
+marker has none, and its broken record fails its stage as it did then, so
+a replay keeps the decision already taken. A stated failure is judged
+first and on its merits: a fail verdict in `structured` or the summary's
+last `VERDICT:` line, or a summary that opens with `ESCALATE:` or
+`BLOCKED:`, fails the stage as its agent sent it, with no repair turn. A
+broken record that states none is judged before the gate and scenarios.
+Stages after the record stage cannot commit
 (§8.2), so what they verified is that tree.
 
 When the last stage passes, the driver emits `Ship(ShipPlan)`: the record,

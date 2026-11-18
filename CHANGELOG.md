@@ -5,40 +5,49 @@
 ### Changed
 
 - A completed stage whose delivery record is broken gets one repair turn
-  before the run fails. A record is broken when it has no `structured`, or
-  when it names no reviewer although a review is owed. The stage is entered
-  again with the refusal quoted, and a kept agent is resumed in place.
-  Reviewers are still checked against the agents the lead delegated itself,
-  so a repair cannot name one that never reviewed. A second broken record
-  fails the run, with no fix loop. A stated fail verdict or too few reviewers
-  gets no repair turn, whatever the stage's gate. A fail stated in the summary
-  or in `structured` counts even when the other says pass, and a record stage
-  without a gate that states a fail does not ship. A repair attempt woken onto
-  a new stage run is still the repair. A broken record that states
-  no fail gets its repair turn before the stage's gate and scenario checks
-  read it. A kept agent's repair reply is not asked for its record again. A
-  run already past a broken record when it upgrades keeps the fix loop it
-  took.
+  before the run fails. A record is broken when the result has no
+  `structured`, or names no reviewer although a review is owed. The stage is
+  entered again with the refusal quoted, and a kept agent is resumed in
+  place. Reviewers are still checked against the agents the lead delegated
+  itself, so a repair cannot name one that never reviewed.
+  - One turn, marked. Each stage run now carries a persisted `record_repair`
+    marker, `open` or `spent`. The repair attempt and every later attempt of
+    its stage are `spent`: a broken record of one fails the run, with no fix
+    loop, and its kept agent is not asked for the record again.
+  - A stated failure always wins. A fail verdict in `structured` or in the
+    summary's last `VERDICT:` line, or a summary that opens with `ESCALATE:`
+    or `BLOCKED:`, fails the stage with the reply as its agent sent it,
+    whatever the stage's gate and even beside a valid record. It gets no
+    repair turn and no record request, and nothing of it ships.
+  - A record refused on its merits, such as one with too few reviewers, gets
+    no repair turn. A broken one is repaired before the stage's gate and
+    scenario checks read it.
+  - Stage runs created before this release carry no marker and are decided
+    as they were: a broken record fails its stage and takes its fix loop.
 - The stage contract states that Aether refuses a delegation with more than
   16 `references`.
 
 ### Fixed
 
 - A child delegated after a stage's deadline was extended gets the extended
-  deadline. Before, a child created from the lead's row before the move landed
-  kept the old deadline and stopped early, as did any agent it delegated in
-  turn. A nested child is raised on its own creation too, and a raise never
-  lowers an extension made at the same time.
-- A reviewer that Aether blocks as exhausted on a quota or usage limit is cancelled
-  after 3 minutes, and its lead is told to delegate the review on another
-  allowed provider or to fail the task so the orchestrator re-plans. Before,
-  it waited until the stage deadline, and a held stage's deadline kept moving.
-  A quota restored within the 3 minutes stops nothing, and the block is read
-  again, with one `get_agent`, just before the cancel. The check runs on its
-  own 30-second timer, apart from dispatch, and checks every stage at once,
-  each for at most 15 seconds, so the cancel comes within 5 minutes. Known limitation: a reviewer whose quota returns in the one Aether
-  round trip before the cancel is still cancelled, as Aether has no
-  conditional cancel.
+  deadline, and so does a nested child. Before, a child created from the
+  lead's row before the move landed kept the old deadline and stopped early,
+  as did any agent it delegated in turn. The raise is one compare-and-raise
+  under the stage's steering lock, so it never lowers an extension made at
+  the same time.
+- A reviewer that Aether blocks as exhausted on a quota or usage limit is
+  cancelled after 3 minutes, and its lead is told to delegate the review on
+  another allowed provider or to fail the task so the orchestrator re-plans.
+  Before, it waited until the stage deadline, and a held stage's deadline
+  kept moving. The check runs on its own 30-second timer, apart from
+  dispatch. It checks every stage at once and waits at most 10 seconds for
+  each answer from Aether, so the cancel comes within 5 minutes of the block
+  first being seen. A quota restored within the 3 minutes stops nothing: the
+  block is read again, with one `get_agent`, right before the cancel. The
+  cancel carries the hint as its reason, and the lead is messaged after it.
+  Known limitation: a reviewer whose quota returns in the one Aether round
+  trip before the cancel is still cancelled, as Aether has no conditional
+  cancel.
 
 ## 1.6.3
 

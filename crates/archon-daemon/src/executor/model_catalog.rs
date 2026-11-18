@@ -16,18 +16,11 @@ pub(crate) fn repair_item(
     let policy = env.policy(&ctx.config);
     let max_tier = env.max_default_tier(&ctx.config);
     let tiers = crate::knobs::TierScope::new(&ctx.config, &policy, catalog);
-    let needs_defaults = item
-        .model_plan
-        .0
-        .values()
-        .flatten()
-        .any(|choice| catalog.check(&choice.model).is_err());
-    if !needs_defaults {
+    if !item.model_plan.needs_catalog_repair(&item.id, catalog) {
         let mut repaired = item.clone();
         repaired
             .model_plan
             .repair_catalog(&item.id, catalog, archon_core::now())?;
-        policy.check_plan(&repaired.model_plan)?;
         return Ok(repaired);
     }
     let learned = if catalog.not_ready_reason().is_none() {
@@ -50,7 +43,6 @@ pub(crate) fn repair_item(
         archon_core::now(),
         |key, slot, choice, _| selection.choose(key, slot, choice),
     )?;
-    policy.check_plan(&repaired.model_plan)?;
     assert_eq!(repaired.id, item.id);
     Ok(repaired)
 }
@@ -78,7 +70,9 @@ impl Replacement<'_> {
             return Ok((resolved.resolved >= floor).then_some((model, Some(resolved))));
         }
         let catalog = self.tiers.catalog;
-        let successor = catalog.successor(&choice.model);
+        let successor = catalog
+            .successor(&choice.model)
+            .or_else(|| catalog.superseded_by(&choice.model));
         let learned = self
             .learned
             .choices_for(key)

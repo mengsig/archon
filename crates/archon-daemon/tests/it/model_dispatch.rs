@@ -173,6 +173,9 @@ async fn a_removed_tier_resolution_moves_within_the_requested_tier() {
     let item = store.item(&id).unwrap();
     let choice = &item.model_plan.0["implement"][0];
     assert_eq!(choice.model.to_string(), "p/new");
+    let origin = item.model_plan.origin(&id, "implement", 0).model;
+    assert_eq!(origin.source, PlanSource::Migrated);
+    assert!(origin.note.as_deref().unwrap().contains("p/old"));
     assert_eq!(choice.effort, Effort::High);
     assert_eq!(choice.tier.as_ref().unwrap().requested, Tier::Strong);
     assert_eq!(store.runs_for_item(&id).unwrap().len(), 1);

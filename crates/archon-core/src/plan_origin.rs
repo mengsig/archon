@@ -574,6 +574,20 @@ impl PlannedPlan {
         self.model_plan.0.get(key).map(Vec::as_slice)
     }
 
+    pub fn needs_catalog_repair(
+        &self,
+        item: &QueueItemId,
+        catalog: &crate::model_tier::ModelCatalog,
+    ) -> bool {
+        let origins = self.origins(item);
+        self.model_plan.0.iter().any(|(key, choices)| {
+            choices.iter().zip(&origins[key]).any(|(choice, origin)| {
+                catalog.check(&choice.model).is_err()
+                    || (origin.model.is_movable() && catalog.superseded_by(&choice.model).is_some())
+            })
+        })
+    }
+
     /// Check every choice, allowing the caller to replace unavailable daemon choices.
     pub fn repair_catalog_with(
         &mut self,
@@ -590,12 +604,27 @@ impl PlannedPlan {
         if let Some(reason) = catalog.not_ready_reason() {
             return Err(ArchonError::Unavailable(reason.to_owned()));
         }
+        if !self.needs_catalog_repair(item, catalog) {
+            self.canonicalize_aliases(catalog);
+            self.record_catalog(catalog);
+            return Ok(());
+        }
         let mut writer = PlanWriter::editing(self, item, at);
         for (key, choices) in &mut writer.plan.0 {
             let slots = writer.entries.get_mut(key).expect("an origin per entry");
             assert_eq!(choices.len(), slots.len(), "origins fit the plan");
             for (slot, (choice, origin)) in choices.iter_mut().zip(slots).enumerate() {
-                let model = match catalog.check(&choice.model) {
+                let listed = catalog.check(&choice.model).and_then(|model| {
+                    if origin.model.is_movable()
+                        && let Some(next) = catalog.superseded_by(&model)
+                    {
+                        return Err(ArchonError::Invalid(format!(
+                            "{model} is superseded by {next}"
+                        )));
+                    }
+                    Ok(model)
+                });
+                let model = match listed {
                     Ok(model) => model,
                     Err(error) if origin.model.is_movable() => {
                         let Some((model, tier)) = replacement(key, slot, choice, origin)? else {
@@ -622,7 +651,7 @@ impl PlannedPlan {
             writer.finish()
         };
         repaired.record_catalog(catalog);
-        assert_eq!(repaired.fault(item), None, "repaired origins fit the plan");
+        debug_assert_eq!(repaired.origins(item).len(), self.model_plan.0.len());
         *self = repaired;
         Ok(())
     }
@@ -895,7 +924,11 @@ impl PlanWriter {
                 };
                 debug_assert_eq!(tier.requested, asked.requested, "the tier asked for");
                 let daemons = (PlanSource::Tier, Authority::Daemon);
-                if model != choice.model || (origin.model.source, origin.model.by) != daemons {
+                let migrated = origin.model.source == PlanSource::Migrated
+                    && origin.model.by == Authority::Daemon;
+                if model != choice.model
+                    || (!migrated && (origin.model.source, origin.model.by) != daemons)
+                {
                     let note = note.map(str::to_owned);
                     origin.model = FieldOrigin::chosen(daemons.0, daemons.1, at, note);
                 }

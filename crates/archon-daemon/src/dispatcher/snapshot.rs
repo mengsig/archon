@@ -54,7 +54,7 @@ pub(super) async fn build(
     for spawn in &snapshot.pending_spawns {
         envs.read_late(ctx, on, spawn.repo.as_ref(), false).await?;
     }
-    let items = holdable(ctx, on, &snapshot.pending_spawns).await?;
+    let items = holdable(ctx, on, &snapshot).await?;
     model_holds(ctx, on, table, &mut snapshot, catalog, &items, &envs).await?;
     quota_holds(ctx, table, &mut snapshot, &envs, catalog, &items)?;
     snapshot.repo_caps = envs.repo_caps();
@@ -121,28 +121,22 @@ impl ModelReads<'_> {
     }
 
     fn queued(&self, candidate: &QueuedCandidate) -> Result<Option<ModelHold>, ArchonError> {
-        let Some(item) = self.items.get(&candidate.item) else {
-            return Ok(None);
-        };
         if let Some(reason) = self.catalog.not_ready_reason() {
             return Ok(Some(ModelHold {
                 reason: reason.to_owned(),
                 kind: ModelHoldKind::CatalogUnavailable,
             }));
         }
+        let Some(item) = self.items.get(&candidate.item) else {
+            return Ok(None);
+        };
         if let Some(reason) = invalid_pin(item, self.catalog) {
             return Ok(Some(ModelHold {
                 reason,
                 kind: ModelHoldKind::InvalidPin,
             }));
         }
-        if item
-            .model_plan
-            .0
-            .values()
-            .flatten()
-            .all(|choice| self.catalog.check(&choice.model).is_ok())
-        {
+        if !item.model_plan.needs_catalog_repair(&item.id, self.catalog) {
             return Ok(None);
         }
         let Some(env) = self.env(item.repo.as_ref()) else {
@@ -151,6 +145,7 @@ impl ModelReads<'_> {
         let Ok((_, spec)) = crate::knobs::item_specs(env, item) else {
             return Ok(None);
         };
+        let spec = crate::executor::steer::shaped_in(self.store, item, spec)?;
         hold_error(
             item,
             self.catalog,
@@ -235,10 +230,10 @@ pub(crate) fn invalid_pin(item: &QueueItem, catalog: &ModelCatalog) -> Option<St
         let slots = &origins[key];
         assert_eq!(choices.len(), slots.len(), "an origin per choice");
         for (choice, origin) in choices.iter().zip(slots) {
-            if !origin.model.is_movable() {
-                if let Err(error) = catalog.check(&choice.model) {
-                    return Some(format!("{key}: {error}"));
-                }
+            if !origin.model.is_movable()
+                && let Err(error) = catalog.check(&choice.model)
+            {
+                return Some(format!("{key}: {error}"));
             }
         }
     }
@@ -304,19 +299,25 @@ fn quota_holds(
 async fn holdable(
     ctx: &DaemonContext,
     on: ReadOn,
-    spawns: &[PendingSpawn],
+    snapshot: &DispatchSnapshot,
 ) -> Result<BTreeMap<QueueItemId, QueueItem>, ArchonError> {
     let store = ctx.read_on(on).await?;
     let query = ItemQuery {
         states: vec!["queued".into()],
+        limit: Some(snapshot.queued.len().max(1)),
         ..ItemQuery::default()
     };
     let mut items = store.items(&query)?;
-    for spawn in spawns {
+    for spawn in &snapshot.pending_spawns {
         items.push(store.item(&spawn.item)?);
     }
     let by_id: BTreeMap<_, _> = items.into_iter().map(|i| (i.id.clone(), i)).collect();
-    debug_assert!(spawns.iter().all(|s| by_id.contains_key(&s.item)));
+    debug_assert!(
+        snapshot
+            .pending_spawns
+            .iter()
+            .all(|s| by_id.contains_key(&s.item))
+    );
     Ok(by_id)
 }
 

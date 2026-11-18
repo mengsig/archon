@@ -144,7 +144,15 @@ impl WaitingView {
                     .as_ref()
                     .map(|hold| hold.reason.as_str())
                     .expect("model hold has a reason");
-                (format!("Dispatch held: {reason}"), "archon doctor".into())
+                let action = if reason.contains("configure a provider") {
+                    "configure a provider in Aether"
+                } else {
+                    "start or reconnect Aether"
+                };
+                (
+                    format!("Model catalog unavailable: {reason}"),
+                    action.into(),
+                )
             }
             Code::AetherDisconnected => (
                 "Dispatch held: Aether disconnected".into(),

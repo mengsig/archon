@@ -52,11 +52,7 @@ pub(super) async fn start_item(
     id: &QueueItemId,
 ) -> Result<FollowUp, ArchonError> {
     let catalog = crate::learned::catalog(ctx).await?;
-    let preview = ctx.read_store().await?.item(id)?;
-    let env = RepoEnv::load(ctx, preview.repo.as_ref()).await?;
-    let (_, spec) = knobs::item_specs(&env, &preview)?;
-    let spec = super::steer::shaped(ctx, &preview, spec).await?;
-    let Some(item) = claim_item(ctx, id, &catalog, &env, &spec).await? else {
+    let Some(item) = claim_item(ctx, id).await? else {
         return Ok(FollowUp::default());
     };
     if let Some(reason) = super::refresh::nothing_to_merge(ctx, &item).await? {
@@ -64,9 +60,12 @@ pub(super) async fn start_item(
     }
     let run_id = PipelineRunId::new();
     let subject = format!("starting item {}", item.id);
-    let preparing = super::coordination::guarded(&subject, prepare(ctx, &item, run_id.clone()));
+    let preparing =
+        super::coordination::guarded(&subject, prepare(ctx, &item, run_id.clone(), &catalog));
     let prepared = match preparing.await {
-        Ok(prepared) => prepared,
+        Ok(Some(prepared)) => prepared,
+        Ok(None) => return Ok(FollowUp::default()),
+        Err(error) if error.is_store() => return Err(error),
         Err(error) => {
             frozen::discard(&ctx.paths.data_dir, &run_id);
             return fail_unstarted(ctx, &item.id, &error.to_string()).await;
@@ -82,48 +81,10 @@ pub(super) async fn start_item(
 async fn claim_item(
     ctx: &DaemonContext,
     id: &QueueItemId,
-    catalog: &archon_core::model_tier::ModelCatalog,
-    env: &RepoEnv,
-    spec: &PipelineSpec,
 ) -> Result<Option<QueueItem>, ArchonError> {
     let _table = ctx.runs.lock().await;
     let mut store = ctx.store.lock().await;
-    let mut item = store.item(id)?;
-    if item.state == QueueState::Dispatching
-        && store
-            .runs_for_item(id)?
-            .iter()
-            .any(|run| !run.state.is_terminal())
-    {
-        return Ok(None);
-    }
-    if matches!(item.state, QueueState::Queued | QueueState::Dispatching) {
-        let repaired =
-            match super::model_catalog::repair_item(ctx, &store, &item, catalog, env, spec) {
-                Ok(repaired) => repaired,
-                Err(error) if error.is_store() => return Err(error),
-                Err(error) => {
-                    tracing::info!(item = %id, %error, "item waits for a usable model catalog");
-                    if item.state == QueueState::Dispatching {
-                        store.release_dispatching(id, archon_core::now())?;
-                    }
-                    if let Some(reason) = crate::dispatcher::invalid_pin(&item, catalog) {
-                        let reason = format!("{reason}; re-plan this item and retry");
-                        store.transition_item(
-                            id,
-                            QueueState::model_pin_block(&reason),
-                            archon_core::now(),
-                        )?;
-                    }
-                    return Ok(None);
-                }
-            };
-        if repaired.model_plan != item.model_plan {
-            item = repaired;
-            item.updated_at = archon_core::now().max(item.updated_at);
-            store.update_item(&item)?;
-        }
-    }
+    let item = store.item(id)?;
     let owner = store.stack_fix(id)?.map(|t| t.owner);
     let collecting =
         ctx.collecting.contains(id) || owner.as_ref().is_some_and(|id| ctx.collecting.contains(id));
@@ -133,7 +94,13 @@ async fn claim_item(
             let item = store.transition_item(id, QueueState::Dispatching, archon_core::now())?;
             Ok(Some(item))
         }
-        QueueState::Dispatching => Ok(Some(item)),
+        QueueState::Dispatching => {
+            let live = store
+                .runs_for_item(id)?
+                .iter()
+                .any(|r| !r.state.is_terminal());
+            Ok((!live).then_some(item))
+        }
         _ => Ok(None),
     }
 }
@@ -166,13 +133,59 @@ pub(crate) fn held_by_stack(
     }))
 }
 
+async fn repair_claimed(
+    ctx: &DaemonContext,
+    id: &QueueItemId,
+    catalog: &archon_core::model_tier::ModelCatalog,
+    env: &RepoEnv,
+    spec: &PipelineSpec,
+) -> Result<Option<QueueItem>, ArchonError> {
+    let _table = ctx.runs.lock().await;
+    let mut store = ctx.store.lock().await;
+    let item = store.item(id)?;
+    if item.state != QueueState::Dispatching {
+        return Ok(None);
+    }
+    match super::model_catalog::repair_item(ctx, &store, &item, catalog, env, spec) {
+        Ok(mut repaired) => {
+            if repaired.model_plan != item.model_plan {
+                repaired.updated_at = archon_core::now().max(item.updated_at);
+                store.update_item(&repaired)?;
+            }
+            Ok(Some(repaired))
+        }
+        Err(error @ ArchonError::Policy(_))
+            if item
+                .model_plan
+                .0
+                .values()
+                .flatten()
+                .all(|choice| catalog.check(&choice.model).is_ok()) =>
+        {
+            Err(error)
+        }
+        Err(error) if error.is_store() => Err(error),
+        Err(error) => {
+            tracing::info!(item = %id, %error, "item waits for a usable model");
+            store.release_dispatching(id, archon_core::now())?;
+            if let Some(reason) = crate::dispatcher::invalid_pin(&item, catalog) {
+                let blocked =
+                    QueueState::model_pin_block(&format!("{reason}; re-plan this item and retry"));
+                store.transition_item(id, blocked, archon_core::now())?;
+            }
+            Ok(None)
+        }
+    }
+}
+
 /// Everything that can fail before the run exists. Slow parts (git) run
 /// without any lock. The run uses a snapshot of its pipeline.
 async fn prepare(
     ctx: &DaemonContext,
     item: &QueueItem,
     run_id: PipelineRunId,
-) -> Result<Prepared, ArchonError> {
+    catalog: &archon_core::model_tier::ModelCatalog,
+) -> Result<Option<Prepared>, ArchonError> {
     assert_eq!(item.state, QueueState::Dispatching, "prepare follows claim");
     let env = RepoEnv::load(ctx, item.repo.as_ref()).await?;
     let (base, current) = knobs::item_specs(&env, item)?;
@@ -186,7 +199,10 @@ async fn prepare(
         policy.ceiling,
     )?;
     knobs::check_ceiling(&policy, &env, &base, checked)?;
-    let item = &tiers_at_dispatch(ctx, &env, item, &current).await?;
+    let Some(item) = repair_claimed(ctx, &item.id, catalog, &env, &current).await? else {
+        return Ok(None);
+    };
+    let item = &tiers_at_dispatch(ctx, &env, &item, &current, catalog).await?;
     let item = &without_retired_ship(item, &current);
     let spec = Arc::new(frozen::freeze(&ctx.paths.data_dir, &run_id, &current).await?);
     crate::learned::freeze_context(ctx, &run_id, item, &spec).await?;
@@ -212,7 +228,7 @@ async fn prepare(
         assemble(item, &env, spec, run_id, workspace, (experiments, approved))
     });
     match assembled {
-        Ok(prepared) => Ok(prepared),
+        Ok(prepared) => Ok(Some(prepared)),
         Err(error) => {
             abandon_worktree(ctx, added).await?;
             Err(error)
@@ -222,13 +238,13 @@ async fn prepare(
 
 /// `item` with each tiered choice resolved again from Aether's catalog as it
 /// is now, for `spec`'s floors and routed to the provider the item holds, and
-/// stored so a recovered run keeps it. With no catalog read yet, the last
-/// resolution stands.
+/// stored so a recovered run keeps it.
 async fn tiers_at_dispatch(
     ctx: &DaemonContext,
     env: &RepoEnv,
     item: &QueueItem,
     spec: &PipelineSpec,
+    catalog: &archon_core::model_tier::ModelCatalog,
 ) -> Result<QueueItem, ArchonError> {
     let tiered = item
         .model_plan
@@ -236,11 +252,10 @@ async fn tiers_at_dispatch(
         .values()
         .flatten()
         .any(|c| c.tier.is_some());
-    let catalog = match tiered {
-        true => crate::learned::catalog(ctx).await?,
-        false => return Ok(item.clone()),
-    };
-    if catalog.is_empty() {
+    if let Some(reason) = catalog.not_ready_reason() {
+        return Err(ArchonError::Unavailable(reason.to_owned()));
+    }
+    if !tiered {
         return Ok(item.clone());
     }
     let policy = env.policy(&ctx.config);
@@ -250,13 +265,13 @@ async fn tiers_at_dispatch(
     let mut store = ctx.store.lock().await;
     let mut stored = store.item(&item.id)?;
     let (plan_before, held_before) = (stored.model_plan.clone(), stored.routed_provider.clone());
-    let held = knobs::item_provider(routing, &catalog, &policy, ItemRoute::new(&stored));
+    let held = knobs::item_provider(routing, catalog, &policy, ItemRoute::new(&stored));
     let route = ItemRoute {
         id: &item.id,
         held: held.as_deref(),
     };
-    let tiers = knobs::TierScope::new(&ctx.config, &policy, &catalog)
-        .routed(route.by(routing.0, routing.1));
+    let tiers =
+        knobs::TierScope::new(&ctx.config, &policy, catalog).routed(route.by(routing.0, routing.1));
     let resolve = |key: &str, asked: &archon_core::model_tier::TierChoice| {
         let floor = spec.tier_floor(key, asked.requested);
         let provider = asked.provider.as_deref();

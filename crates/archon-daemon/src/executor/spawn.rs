@@ -354,12 +354,6 @@ pub(super) async fn reserve(
         return Ok(FollowUp::default());
     };
     let take = queue.len().min(slots as usize);
-    if queue.iter().take(take).any(|plan| {
-        plan.stage_id == archon_pipeline::acceptance::STAGE
-            || plan.reviewers.as_ref().is_some_and(Vec::is_empty)
-    }) {
-        learned::catalog(ctx).await?;
-    }
     let plans: Vec<SpawnPlan> = queue.drain(..take).collect();
     if queue.is_empty() {
         table.pending.remove(run);

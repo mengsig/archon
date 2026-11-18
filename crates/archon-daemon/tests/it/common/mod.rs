@@ -801,9 +801,9 @@ struct FakeState {
     cancel_reasons: Vec<(AetherAgentId, String)>,
     /// Every agent whose own quota block was read, in order.
     quota_reads: Vec<AetherAgentId>,
-    /// Agents whose pulse, quota block and descendants are each read only
-    /// after this long.
-    slow_reads: BTreeMap<AetherAgentId, std::time::Duration>,
+    /// Agents about or to which every request (pulse, quota block,
+    /// descendants, cancel, message) is answered only after this long.
+    slow_answers: BTreeMap<AetherAgentId, std::time::Duration>,
     /// Every accepted `update_agent`, in order.
     updates: Vec<(AetherAgentId, AgentUpdate)>,
     update_failures: VecDeque<ArchonError>,
@@ -1010,10 +1010,10 @@ impl FakeBackend {
         self.state().cancel_reasons.clone()
     }
 
-    /// Every read of `agent`'s pulse, quota block or descendants answers
-    /// only after `delay`.
-    pub fn slow_reads(&self, agent: &AetherAgentId, delay: std::time::Duration) {
-        self.state().slow_reads.insert(agent.clone(), delay);
+    /// Every request about or to `agent` (its pulse, quota block or
+    /// descendants, its cancel, a message to it) answers only after `delay`.
+    pub fn slow_answers(&self, agent: &AetherAgentId, delay: std::time::Duration) {
+        self.state().slow_answers.insert(agent.clone(), delay);
     }
 
     pub fn quota_reads(&self) -> Vec<AetherAgentId> {
@@ -1577,6 +1577,10 @@ impl AgentBackend for FakeBackend {
     }
 
     async fn cancel(&self, agent: &AetherAgentId, reason: &str) -> Result<(), ArchonError> {
+        let delay = self.state().slow_answers.get(agent).copied();
+        if let Some(delay) = delay {
+            tokio::time::sleep(delay).await;
+        }
         let mut state = self.state();
         state
             .cancel_reasons
@@ -1667,9 +1671,10 @@ impl AgentBackend for FakeBackend {
     }
 
     async fn descendants(&self, agent: &AetherAgentId) -> Result<Vec<Descendant>, ArchonError> {
-        let delay = self.state().slow_reads.get(agent).copied();
+        let delay = self.state().slow_answers.get(agent).copied();
         if let Some(delay) = delay {
-            tokio::time::sleep(delay).await;
+            // Two requests, as Aether answers them: the agent, then its run's.
+            tokio::time::sleep(delay * 2).await;
         }
         let hold = {
             let mut state = self.state();
@@ -1708,7 +1713,7 @@ impl AgentBackend for FakeBackend {
     }
 
     async fn pulse(&self, agent: &AetherAgentId) -> Result<Option<TreePulse>, ArchonError> {
-        let delay = self.state().slow_reads.get(agent).copied();
+        let delay = self.state().slow_answers.get(agent).copied();
         if let Some(delay) = delay {
             tokio::time::sleep(delay).await;
         }
@@ -1816,6 +1821,10 @@ impl AgentBackend for FakeBackend {
     ) -> Result<(), ArchonError> {
         // A real call leaves the task, so deliveries to one stage interleave.
         tokio::task::yield_now().await;
+        let delay = self.state().slow_answers.get(to).copied();
+        if let Some(delay) = delay {
+            tokio::time::sleep(delay).await;
+        }
         let mut state = self.state();
         state.message_calls.push(idempotency_key.to_owned());
         if let Some(error) = state.message_failures.pop_front() {

@@ -484,6 +484,53 @@ async fn a_record_reply_that_states_a_fail_is_not_reviewed() {
     );
 }
 
+/// A fail stated after the record block is part of the reply as sent: the
+/// record before it does not hide it, and the review does not start on it.
+#[tokio::test]
+async fn a_fail_stated_after_the_record_is_not_reviewed() {
+    let h = harness().await;
+    let (item, _) = implemented(&h, "fails after its record").await;
+    let fix = sent_back(&h).await;
+    let reviewed = reviews(&h, &item.id).await;
+    let run = h.ctx.store.lock().await.run(&fix.run).expect("run");
+    let record = change(&run.workspace);
+    let reply = format!("Here is the record.\n```json\n{record}\n```\nVERDICT: FAIL");
+    h.backend
+        .answer(&agent(&fix), resumed_reply_outcome(&reply));
+    let ended = executor::turn_ended(&h.ctx, &agent(&fix)).await;
+    ended.expect("turn end");
+    h.dispatch().await;
+    assert_eq!(reviews(&h, &item.id).await, reviewed, "no review of a fail");
+    let stages = h.stages(&item.id).await;
+    let done = stages.iter().find(|s| s.id == fix.id).expect("the fix");
+    let summary = done.summary.as_deref().unwrap_or_default();
+    assert!(summary.ends_with("VERDICT: FAIL"), "as sent: {summary}");
+    assert_eq!(done.structured.as_ref(), Some(&record), "beside its record");
+}
+
+/// A stage run started by an archond from before repair turns has no marker.
+/// Its outcome is recorded now, so it is marked then and gets its repair turn.
+#[tokio::test]
+async fn a_stage_run_started_before_the_upgrade_gets_its_repair_turn() {
+    let h = harness().await;
+    let item = h.enqueue_in(REVIEWED, "in flight", plan()).await;
+    let item = item.expect("enqueue");
+    h.dispatch().await;
+    let mut first = running(&h, "implement").await;
+    first.record_repair = None;
+    let saved = h.ctx.store.lock().await.upsert_stage_run(&first);
+    saved.expect("the row as the older archond wrote it");
+    h.settle_running(|_| common::completed("Built it.")).await;
+    h.dispatch().await;
+    let repair = running(&h, "implement").await;
+    assert_eq!(repair.run, first.run, "the same run");
+    assert_eq!(repair.record_repair, Some(RecordRepair::Spent));
+    let rows = h.stages(&item.id).await;
+    let broken = rows.iter().find(|s| s.id == first.id).expect("the build");
+    assert_eq!(broken.state, StageState::Completed);
+    assert_eq!(broken.record_repair, Some(RecordRepair::Open));
+}
+
 /// A kept agent that states a fail without its record is not asked for one.
 #[tokio::test]
 async fn a_resumed_reply_that_states_a_fail_is_not_asked_for_its_record() {

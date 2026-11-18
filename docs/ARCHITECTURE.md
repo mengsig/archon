@@ -1480,10 +1480,13 @@ in a new worktree off the base branch (§13).
   lead is told to delegate the review on another allowed provider or fail
   its task. The check runs every 30 seconds on its own worker
   (`executor::quota_wait::watch`), apart from dispatch. It checks every
-  running stage at once and waits at most 10 seconds for each answer from
-  Aether; an unanswered read keeps the wait as recorded and is asked again
-  next time. So no stage delays another's check, and the cancel comes
-  within 5 minutes of the block first being seen. The reviewer's own block
+  running stage at once and waits at most 4 seconds for each request to
+  Aether (8 for the listing of a stage's agents, which is two); an
+  unanswered read keeps the wait as recorded and is asked again next time.
+  The slowest check is six requests, 24 seconds, so it ends before the next
+  is due: no stage delays another's check, and the cancel comes within 5
+  minutes of the block first being seen. A wait recorded ahead of the
+  clock counts from now and is saved so. The reviewer's own block
   is read again with one `get_agent` right before the cancel, which carries
   that hint as its reason; the lead is messaged once the cancel is
   accepted. Known limitation: Aether has no conditional cancel, so a
@@ -2830,13 +2833,21 @@ with the refusal quoted. Every stage run carries a persisted
 `record_repair` marker. `open` means a broken record of that attempt gets
 the turn. The repair attempt and each later attempt of its stage are
 `spent`: a broken record of one fails the run without a fix loop, and its
-kept agent is not asked for the record again. A stage run from before the
-marker has none, and its broken record fails its stage as it did then, so
-a replay keeps the decision already taken. A stated failure is judged
-first and on its merits: a fail verdict in `structured` or the summary's
-last `VERDICT:` line, or a summary that opens with `ESCALATE:` or
-`BLOCKED:`, fails the stage as its agent sent it, with no repair turn. A
-broken record that states none is judged before the gate and scenarios.
+kept agent is not asked for the record again. The marker is set when the
+attempt starts, or when its outcome is recorded if an older archond
+started it. An outcome recorded before the marker has none and is
+evaluated in the order of that time (gate, scenarios, record, no stated
+failure read), so a replay keeps the decision already taken. In a stage
+that owes a record, a stated failure is judged first and on its merits: a
+fail verdict in `structured` or the summary's last `VERDICT:` line, or a
+summary that opens with `ESCALATE:` or `BLOCKED:`, fails the stage as its
+agent sent it, with no repair turn. A broken record that states none is
+judged before the gate and scenarios. archond records both kinds of reply
+as sent (`settle::settle_as_sent`), after the review-round cap and before
+its own checks of the result, so no check rewrites what the gate must
+read; the repaired reply is verified in full. A stage that owes no record
+is judged as before. A run failed on a second broken record may still get
+the item's one automatic retry (`[review] auto_repair`).
 Stages after the record stage cannot commit
 (§8.2), so what they verified is that tree.
 

@@ -55,7 +55,9 @@ pub(crate) enum GroupResult {
 /// latest stage run per slot, by fan index; `owed` as for `recorded`. The
 /// order is fixed: a stated failure fails on its merits, whatever its gate
 /// or record; then a broken record is `Unrecorded`, before the gate and
-/// scenarios that would read it; then the gate, scenarios and record.
+/// scenarios that would read it; then the gate, scenarios and record. An
+/// outcome from before repair turns keeps the order that decided it then:
+/// gate, scenarios, record, with no stated failure read.
 pub(crate) fn evaluate(
     stage: &StageSpec,
     attempt: u32,
@@ -68,6 +70,7 @@ pub(crate) fn evaluate(
         "only finished groups are evaluated"
     );
     if owed != Owed::default()
+        && members.iter().all(|m| decided_since_repairs(m))
         && repairable(stage, members, owed)
         && let unrecorded @ GroupResult::Unrecorded { .. } = recorded(stage, attempt, members, owed)
     {
@@ -142,7 +145,7 @@ fn recorded(stage: &StageSpec, attempt: u32, members: &[&StageRun], owed: Owed) 
     let summary = joined_summary(stage, members);
     let structured = member.structured.as_ref();
     // A stated failure is refused on its merits, whatever its gate or record.
-    if states_failure(member) {
+    if decided_since_repairs(member) && states_failure(member) {
         let headline = "its agent stated a failure".to_owned();
         let report = format!(
             "**Stage `{}` attempt {attempt}: {headline}**\n\n{summary}\n",
@@ -190,6 +193,26 @@ fn repairable(stage: &StageSpec, members: &[&StageRun], owed: Owed) -> bool {
     };
     assert_eq!(stage.fan_out, 1, "one agent holds a record");
     member.state == StageState::Completed && broken_record(member.structured.as_ref(), owed)
+}
+
+/// Whether `member`'s outcome was recorded since stages have repair turns:
+/// one from before is replayed by the rules that decided it then.
+fn decided_since_repairs(member: &StageRun) -> bool {
+    assert!(member.state.is_terminal(), "only an outcome is decided");
+    member.record_repair.is_some()
+}
+
+/// Whether the gate decides a completed reply as its agent sent it, unverified:
+/// its stage owes a record, and it states a failure or its record is broken.
+pub(crate) fn decided_as_sent(
+    owed: Owed,
+    summary: &str,
+    structured: Option<&serde_json::Value>,
+) -> bool {
+    if owed == Owed::default() {
+        return false;
+    }
+    StageOutcome::states_failure(summary, structured) || broken_record(structured, owed)
 }
 
 /// Whether `member` stated its failure anywhere, even beside a pass

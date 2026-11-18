@@ -87,7 +87,7 @@ async fn slow_stages(h: &Harness, count: usize, delay: Duration) {
     let others = h.running().await;
     assert_eq!(others.len(), count, "{count} unrelated stages run");
     for other in others.iter().filter_map(|s| s.aether_agent.as_ref()) {
-        h.backend.slow_reads(other, delay);
+        h.backend.slow_answers(other, delay);
     }
 }
 
@@ -276,6 +276,58 @@ async fn the_cancel_carries_the_hint_and_comes_before_the_message() {
     assert!(told(&h, &lead).is_empty(), "the message was refused");
 }
 
+/// A wait saved ahead of the clock, as a wall clock stepped back across a
+/// restart leaves it, counts from the sweep that finds it and is saved so:
+/// the reviewer is stopped three minutes later, not when the clock catches up.
+#[tokio::test]
+async fn a_wait_recorded_ahead_of_the_clock_counts_from_now() {
+    let h = Harness::new().await;
+    let (stage, _, reviewer) = held_reviewer(&h).await;
+    let now = archon_core::now();
+    quota_wait::sweep_running(&h.ctx, now).await.unwrap();
+    backdate_wait(&h, &stage, &reviewer, -TimeDelta::minutes(20)).await;
+    quota_wait::sweep_running(&h.ctx, now).await.unwrap();
+    let key = format!("quota_wait:{}:{reviewer}", stage.id);
+    let saved = h.ctx.store.lock().await.kv_get(&key).unwrap();
+    assert_eq!(saved, Some(now.to_rfc3339()), "the wait is saved from now");
+    let due = now + TimeDelta::minutes(3);
+    quota_wait::sweep_running(&h.ctx, due).await.unwrap();
+    assert_eq!(h.backend.cancelled(), vec![reviewer.clone()]);
+}
+
+/// A due stage slow in every request of its check, each within the request
+/// limit, does not push back the next sweep: another stage's reviewer is
+/// still read every period.
+#[tokio::test(start_paused = true)]
+async fn a_stage_slow_in_every_request_does_not_push_back_the_next_sweep() {
+    let h = Harness::new().await;
+    let (_, _, fast) = held_reviewer(&h).await;
+    let (slow_stage, slow_lead, slow) = held_reviewer(&h).await;
+    let _aether = common::connect_aether_for_delegations(&h).await;
+    let watcher = tokio::spawn(quota_wait::watch(h.ctx.clone()));
+    let reads = || {
+        h.backend
+            .quota_reads()
+            .iter()
+            .filter(|r| **r == fast)
+            .count()
+    };
+    advance_until(quota_wait::SWEEP_INTERVAL, || async { reads() == 1 }).await;
+    // From the next sweep on, the other stage is due and answers slowly.
+    backdate_wait(&h, &slow_stage, &slow, TimeDelta::minutes(3)).await;
+    let delay = quota_wait::REQUEST_LIMIT - Duration::from_secs(1);
+    h.backend.slow_answers(&slow_lead, delay);
+    h.backend.slow_answers(&slow, delay);
+    let period = quota_wait::SWEEP_INTERVAL;
+    for sweep in 2..=4 {
+        let took = advance_until(period, || async { reads() == sweep }).await;
+        assert_eq!(took, period, "sweep {sweep} starts a period on");
+    }
+    assert_eq!(h.backend.cancelled(), vec![slow.clone()]);
+    assert_eq!(told(&h, &slow_lead).len(), 1, "its lead is told once");
+    watcher.abort();
+}
+
 /// The sweep keeps its own 30-second timer: with no dispatch pass at all, a
 /// blocked reviewer is stopped within minutes of the paused clock.
 #[tokio::test(start_paused = true)]
@@ -330,8 +382,8 @@ async fn a_blocked_reviewer_is_cancelled_in_time_though_every_read_is_slow() {
     slow_stages(&h, 3, Duration::from_secs(3600)).await;
     let (_, lead, reviewer) = held_reviewer(&h).await;
     let slow = quota_wait::REQUEST_LIMIT - Duration::from_secs(1);
-    h.backend.slow_reads(&lead, slow);
-    h.backend.slow_reads(&reviewer, slow);
+    h.backend.slow_answers(&lead, slow);
+    h.backend.slow_answers(&reviewer, slow);
     let _aether = common::connect_aether_for_delegations(&h).await;
     let watcher = tokio::spawn(quota_wait::watch(h.ctx.clone()));
     let seen = || async {
@@ -348,6 +400,8 @@ async fn a_blocked_reviewer_is_cancelled_in_time_though_every_read_is_slow() {
     let stopped = || async { h.backend.cancelled() == vec![reviewer.clone()] };
     let took = advance_until(bound, stopped).await;
     assert!(took >= Duration::from_secs(60), "not at once: {took:?}");
-    assert_eq!(told(&h, &lead).len(), 1, "its lead is told once");
+    // The message follows the cancel, as slow as every other answer.
+    let is_told = || async { told(&h, &lead).len() == 1 };
+    advance_until(quota_wait::REQUEST_LIMIT, is_told).await;
     watcher.abort();
 }

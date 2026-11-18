@@ -442,12 +442,15 @@ names no reviewer. The stage is entered once more with the refusal quoted.
 The reviewers it then names are checked as above, so they must be agents it
 delegated itself. The repair attempt is marked as one on its stage run: a
 second broken record fails the run, with no fix loop, and a kept agent is
-not asked for its record again. A stated failure always wins over the
-record: a fail verdict in `structured` or in the summary's last `VERDICT:`
-line, or a summary that opens with `ESCALATE:` or `BLOCKED:`, fails the
-stage as sent, with or without a gate, gets no repair turn and ships
-nothing. A run started before repair turns existed keeps the fix loop it
-took. At `none` the contract tells the agent to delegate no
+not asked for its record again. Where `[review] auto_repair` is on, the
+item's one automatic retry may still follow that failed run. In a stage that
+owes a record, a stated failure always wins over it: a fail verdict in
+`structured` or in the summary's last `VERDICT:` line, or a summary that
+opens with `ESCALATE:` or `BLOCKED:`, fails the stage as sent, with or
+without a gate, gets no repair turn and ships nothing. Text after the record
+block of a resumed agent's reply counts as part of its summary. A stage
+whose outcome was recorded before repair turns existed keeps the decision
+taken then. At `none` the contract tells the agent to delegate no
 reviewer and record no review.
 
 A pass is not taken on the agent's word. As the stage ends, Archon lists

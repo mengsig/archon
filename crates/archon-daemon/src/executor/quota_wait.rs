@@ -6,9 +6,9 @@
 //!
 //! The sweep keeps its own timer, apart from the dispatcher's. Every stage
 //! is checked at once and every Aether request is cut off at
-//! [`REQUEST_LIMIT`], so a sweep ends within a few requests however slow any
-//! stage answers, and a reviewer is cancelled within five minutes of the
-//! sweep that first saw it blocked.
+//! [`REQUEST_LIMIT`], so the slowest check ends before the next sweep is
+//! due: no stage pushes another's check back, and a reviewer is cancelled
+//! within five minutes of the sweep that first saw it blocked.
 //!
 //! Aether has no conditional cancel. The block is read again right before
 //! the cancel, which leaves one round trip in which a reviewer whose quota
@@ -34,12 +34,16 @@ use crate::context::DaemonContext;
 /// How long a reviewer may wait on a spent quota before it is stopped.
 const FAIL_AFTER: TimeDelta = TimeDelta::minutes(3);
 
-/// The wait between the starts of two sweeps, unless one runs longer.
+/// The wait between the starts of two sweeps; the slowest one ends within it.
 pub const SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 
 /// The longest a sweep waits for one answer from Aether. A slower one counts
 /// as unanswered and is asked again next sweep.
-pub const REQUEST_LIMIT: Duration = Duration::from_secs(10);
+pub const REQUEST_LIMIT: Duration = Duration::from_secs(4);
+
+/// Requests Aether answers to list a lead's descendants: the lead, then the
+/// agents of its run (`AetherBackend::descendants`).
+const LISTING_REQUESTS: u32 = 2;
 
 /// `kv` key prefix of when a reviewer was first seen waiting, per stage run.
 const WAIT_PREFIX: &str = "quota_wait:";
@@ -94,15 +98,19 @@ pub async fn sweep_running(ctx: &DaemonContext, now: Timestamp) -> Result<(), Ar
     checked.into_iter().collect()
 }
 
-/// `request` to Aether, cut off at [`REQUEST_LIMIT`] as one left unanswered.
+/// A `call` of `requests` Aether requests in a row, cut off at
+/// [`REQUEST_LIMIT`] for each of them as one left unanswered.
 async fn bounded<T>(
-    request: impl Future<Output = Result<T, ArchonError>>,
+    requests: u32,
+    call: impl Future<Output = Result<T, ArchonError>>,
 ) -> Result<T, ArchonError> {
-    match tokio::time::timeout(REQUEST_LIMIT, request).await {
+    assert!(requests >= 1, "a call asks Aether something");
+    let limit = REQUEST_LIMIT * requests;
+    match tokio::time::timeout(limit, call).await {
         Ok(answer) => answer,
         Err(_) => Err(ArchonError::Unavailable(format!(
             "no answer within {}s",
-            REQUEST_LIMIT.as_secs()
+            limit.as_secs()
         ))),
     }
 }
@@ -148,12 +156,12 @@ async fn read_reviewers(
     ctx: &DaemonContext,
     lead: &AetherAgentId,
 ) -> Result<Vec<(Descendant, Block)>, ArchonError> {
-    let beneath = bounded(ctx.backend.descendants(lead)).await?;
+    let beneath = bounded(LISTING_REQUESTS, ctx.backend.descendants(lead)).await?;
     let live = (beneath.into_iter())
         .filter(|agent| agent.state == DescendantState::Live && agent.role == "reviewer");
     let reads = live.map(|reviewer| async move {
         assert_ne!(reviewer.agent, *lead, "a lead is not its own reviewer");
-        let block = match bounded(ctx.backend.quota_blocked(&reviewer.agent)).await {
+        let block = match bounded(1, ctx.backend.quota_blocked(&reviewer.agent)).await {
             Ok(Some(true)) => Block::Blocked,
             // One Aether no longer knows has ended: it does not wait.
             Ok(Some(false) | None) => Block::Free,
@@ -185,23 +193,29 @@ async fn note_waits(
     for (reviewer, block) in reviewers {
         let key = format!("{prefix}{}", reviewer.agent);
         let recorded = seen.remove(&key);
-        let since = match (block, recorded) {
+        let recorded = match (block, recorded) {
             (Block::Unread, _) => continue,
             (Block::Free, Some(_)) => {
                 store.kv_delete(&key)?;
                 continue;
             }
             (Block::Free, None) => continue,
-            (Block::Blocked, Some(raw)) => raw
-                .parse::<Timestamp>()
-                .map_err(|e| ArchonError::Corrupt(format!("kv {key}: {e}")))?,
-            (Block::Blocked, None) => {
+            (Block::Blocked, Some(raw)) => Some(
+                raw.parse::<Timestamp>()
+                    .map_err(|e| ArchonError::Corrupt(format!("kv {key}: {e}")))?,
+            ),
+            (Block::Blocked, None) => None,
+        };
+        // A new wait counts from this sweep, and is saved so; so is one that a
+        // wall clock, stepped back since an earlier run saved it, left ahead.
+        let since = match recorded.filter(|since| *since <= now) {
+            Some(since) => since,
+            None => {
                 store.kv_set(&key, &now.to_rfc3339())?;
                 now
             }
         };
-        // A wall clock stepped back since an earlier run recorded the wait.
-        noted.push((reviewer, since.min(now)));
+        noted.push((reviewer, since));
     }
     // What is left names reviewers that are no longer live.
     if !seen.is_empty() {
@@ -245,7 +259,7 @@ async fn stop(
     assert_eq!(reviewer.role, "reviewer", "only a reviewer is stopped");
     let key = format!("{WAIT_PREFIX}{}:{}", stage.id, reviewer.agent);
     // Read again right before the cancel: see the module's known limit.
-    match bounded(ctx.backend.quota_blocked(&reviewer.agent)).await {
+    match bounded(1, ctx.backend.quota_blocked(&reviewer.agent)).await {
         Ok(Some(true)) => {}
         Ok(Some(false) | None) => return ctx.store.lock().await.kv_delete(&key),
         Err(error) if error.is_store() => return Err(error),
@@ -255,7 +269,7 @@ async fn stop(
         }
     }
     let text = replan_hint(reviewer, resets_at);
-    match bounded(ctx.backend.cancel(&reviewer.agent, &text)).await {
+    match bounded(1, ctx.backend.cancel(&reviewer.agent, &text)).await {
         Ok(()) => {
             tracing::info!(stage = %stage.id, reviewer = %reviewer.agent, "reviewer waiting on a spent quota stopped");
             tell_lead(ctx, stage, lead, &reviewer.agent, &text).await?;
@@ -287,7 +301,7 @@ async fn tell_lead(
         "the hint says what to do"
     );
     let key = format!("{}:quota-wait:{reviewer}", stage.id);
-    match bounded(ctx.backend.send_message(lead, text, &key)).await {
+    match bounded(1, ctx.backend.send_message(lead, text, &key)).await {
         Ok(()) => Ok(()),
         Err(error) if error.is_store() => Err(error),
         Err(error) => {
@@ -325,21 +339,28 @@ mod tests {
     use super::*;
 
     /// Aether requests a stage's check makes in a row up to its cancel: the
-    /// lead's descendants, each reviewer's block, that block again, the cancel.
-    const REQUESTS_TO_CANCEL: u32 = 4;
+    /// listing of the lead's descendants, each reviewer's block, that block
+    /// again, the cancel.
+    const REQUESTS_TO_CANCEL: u32 = LISTING_REQUESTS + 3;
+
+    /// The slowest check, its message to the lead included, ends before the
+    /// next sweep is due: sweeps start a period apart however slow a stage
+    /// answers, so no stage pushes back the next check of another.
+    #[test]
+    fn the_slowest_sweep_ends_within_its_period() {
+        assert!(REQUEST_LIMIT <= Duration::from_secs(20));
+        let slowest_sweep = REQUEST_LIMIT * (REQUESTS_TO_CANCEL + 1);
+        assert!(slowest_sweep < SWEEP_INTERVAL, "{slowest_sweep:?}");
+    }
 
     /// The first sweep starting [`FAIL_AFTER`] after a wait was seen stops
-    /// it. Sweeps start a period apart, or as far as the slowest sweep runs,
-    /// its message to the lead included; so a blocked reviewer ends within
+    /// it, and sweeps start a period apart; so a blocked reviewer ends within
     /// five minutes however slow Aether answers within [`REQUEST_LIMIT`].
     #[test]
     fn a_blocked_reviewer_is_stopped_within_five_minutes() {
-        assert!(REQUEST_LIMIT <= Duration::from_secs(20));
         let to_cancel = REQUEST_LIMIT * REQUESTS_TO_CANCEL;
-        let slowest_sweep = to_cancel + REQUEST_LIMIT;
-        let between_sweeps = SWEEP_INTERVAL.max(slowest_sweep);
         let wait = FAIL_AFTER.to_std().expect("positive");
-        let worst = wait + between_sweeps + to_cancel;
+        let worst = wait + SWEEP_INTERVAL + to_cancel;
         assert!(worst <= Duration::from_secs(5 * 60), "{worst:?}");
     }
 }

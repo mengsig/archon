@@ -14,16 +14,28 @@
     marker, `open` or `spent`. The repair attempt and every later attempt of
     its stage are `spent`: a broken record of one fails the run, with no fix
     loop, and its kept agent is not asked for the record again.
-  - A stated failure always wins. A fail verdict in `structured` or in the
+  - A stated failure always wins in a stage that owes a delivery record (a
+    review or the ship record). A fail verdict in `structured` or in the
     summary's last `VERDICT:` line, or a summary that opens with `ESCALATE:`
     or `BLOCKED:`, fails the stage with the reply as its agent sent it,
     whatever the stage's gate and even beside a valid record. It gets no
-    repair turn and no record request, and nothing of it ships.
+    repair turn and no record request, and nothing of it ships. A resumed
+    agent's text after its record block is kept, so a failure stated there
+    counts too. A stage that owes no record is judged as before.
+  - Such a reply, and one with a broken record, is recorded as sent before
+    archond checks anything else in it: its requirement results, ship record
+    and reviewers are verified on the repaired reply instead. Only the cap
+    on review rounds is still applied first.
   - A record refused on its merits, such as one with too few reviewers, gets
     no repair turn. A broken one is repaired before the stage's gate and
     scenario checks read it.
-  - Stage runs created before this release carry no marker and are decided
-    as they were: a broken record fails its stage and takes its fix loop.
+  - A stage run whose outcome was recorded before this release carries no
+    marker and replays as it was decided then: gate, scenarios, then the
+    record, with no repair turn. A stage run still going at the upgrade is
+    marked when its outcome is recorded, and gets its repair turn.
+  - A run that fails on a second broken record is a failed run like any
+    other: with `[review] auto_repair` on, the item's one automatic retry
+    may still follow it.
 - The stage contract states that Aether refuses a delegation with more than
   16 `references`.
 
@@ -40,9 +52,11 @@
   another allowed provider or to fail the task so the orchestrator re-plans.
   Before, it waited until the stage deadline, and a held stage's deadline
   kept moving. The check runs on its own 30-second timer, apart from
-  dispatch. It checks every stage at once and waits at most 10 seconds for
-  each answer from Aether, so the cancel comes within 5 minutes of the block
-  first being seen. A quota restored within the 3 minutes stops nothing: the
+  dispatch. It checks every stage at once and waits at most 4 seconds for
+  each request to Aether, so a whole check ends within its 30 seconds, the
+  next one starts on time, and the cancel comes within 5 minutes of the
+  block first being seen. A wait recorded ahead of the clock, as after the
+  clock is set back, counts from now and is saved so. A quota restored within the 3 minutes stops nothing: the
   block is read again, with one `get_agent`, right before the cancel. The
   cancel carries the hint as its reason, and the lead is messaged after it.
   Known limitation: a reviewer whose quota returns in the one Aether round

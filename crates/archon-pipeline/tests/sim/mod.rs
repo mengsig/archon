@@ -10,7 +10,9 @@ use std::sync::Arc;
 use archon_core::Timestamp;
 use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
 use archon_core::model::ModelPlan;
-use archon_core::run::{GateDecision, PipelineRun, RunState, StageRun, StageState, Verdict};
+use archon_core::run::{
+    GateDecision, PipelineRun, RecordRepair, RunState, StageRun, StageState, Verdict,
+};
 use archon_core::steer::Then;
 use archon_pipeline::autonomy::OperatorGates;
 use archon_pipeline::spec::PipelineSpec;
@@ -180,6 +182,11 @@ impl Sim {
         let index = self.live_index(stage, fan);
         let at = self.tick();
         apply_agent(&mut self.stages[index], &agent, at);
+        // The daemon marks an outcome it records, on a run from before too.
+        if !self.before_repairs {
+            let marker = &mut self.stages[index].record_repair;
+            marker.get_or_insert(RecordRepair::Open);
+        }
         let records = self.spec.ship_record_stage().is_some_and(|s| s.id == stage);
         if records && self.writes_record {
             write_ship_record(&mut self.stages[index]);

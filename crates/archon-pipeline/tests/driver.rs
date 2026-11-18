@@ -2164,6 +2164,112 @@ fn an_attempt_started_after_the_upgrade_gets_its_repair_turn() {
     assert_eq!(failed(&done).0, "integrate");
 }
 
+/// A stage run started before the upgrade and settled after it has no
+/// earlier decision to keep: the daemon marks its outcome as it records it,
+/// so its broken record gets the repair turn.
+#[test]
+fn a_stage_run_in_flight_at_the_upgrade_gets_its_repair_turn() {
+    let mut sim = swarm_before_repairs();
+    let live = sim.stages.last().expect("the integrator runs");
+    assert_eq!(
+        (live.stage_id.as_str(), live.record_repair),
+        ("integrate", None)
+    );
+    sim.before_repairs = false;
+    let repair = sim.settle("integrate", 0, Agent::Done("Integrated."));
+    assert_eq!(
+        spawned(&repair),
+        slots(&[("integrate", 2, 0)]),
+        "{repair:#?}"
+    );
+    let prompt = &spawn_plans(&repair)[0].prompt;
+    assert!(prompt.contains("Archon record repair"), "{prompt}");
+    assert_eq!(spawn_plans(&repair)[0].record_repair, RecordRepair::Spent);
+}
+
+/// build → prove, a strict scenario test stage that also hands in the ship
+/// record and loops back to `build` when it fails.
+fn strict_record_sim() -> Sim {
+    let toml = r#"
+        [pipeline]
+        name = "proved"
+        description = "build, then prove and ship"
+        version = 1
+        workspace = "worktree"
+        requires_repo = true
+        [pipeline.ship]
+        stage = "prove"
+        [[stage]]
+        id = "build"
+        kind = "work"
+        prompt = "build.md"
+        [[stage]]
+        id = "prove"
+        kind = "test"
+        prompt = "prove.md"
+        gate = "all_pass"
+        scenarios = "strict"
+        on_fail = { goto = "build", max_loops = 1 }
+    "#;
+    let spec = Arc::new(support::spec_from(toml, &[]));
+    let plan = support::plan_for(&spec, &["claude-code/opus"]);
+    Sim::new(spec, plan)
+}
+
+/// An outcome from before repair turns keeps the order that decided it: a
+/// strict stage that passed with no `structured` was a scenario defect, which
+/// ended the run, and its replay neither repairs it nor takes `on_fail`.
+#[test]
+fn a_strict_stage_from_before_repair_turns_replays_its_defect() {
+    let mut sim = strict_record_sim();
+    sim.before_repairs = true;
+    sim.writes_record = false;
+    sim.start();
+    sim.settle("build", 0, Agent::Done("Built."));
+    let done = sim.settle(
+        "prove",
+        0,
+        Agent::SummaryVerdict("All good.\nVERDICT: PASS"),
+    );
+    assert!(sim.stages.iter().all(|s| s.record_repair.is_none()));
+    assert!(
+        spawned(&done).is_empty(),
+        "a defect ends the run: {done:#?}"
+    );
+    let (stage, error) = failed(&done);
+    assert_eq!(stage, "prove");
+    assert!(!error.contains("ship refused"), "{error}");
+}
+
+/// The same reply recorded now is a broken record first: it gets its repair
+/// turn before the scenarios that could not be read from it.
+#[test]
+fn a_strict_stage_without_structured_gets_its_repair_turn() {
+    let mut sim = strict_record_sim();
+    sim.writes_record = false;
+    sim.start();
+    sim.settle("build", 0, Agent::Done("Built."));
+    let repair = sim.settle(
+        "prove",
+        0,
+        Agent::SummaryVerdict("All good.\nVERDICT: PASS"),
+    );
+    assert_eq!(spawned(&repair), slots(&[("prove", 2, 0)]), "{repair:#?}");
+}
+
+/// A stated fail beside a valid record passed an ungated record stage before
+/// repair turns; replay of that outcome keeps the pass it was given.
+#[test]
+fn an_ungated_stated_fail_from_before_repair_turns_replays_its_pass() {
+    let mut sim = sim("direct");
+    sim.before_repairs = true;
+    sim.start();
+    let summary = "Could not finish.\nVERDICT: FAIL";
+    let done = sim.settle("implement", 0, Agent::SummaryVerdict(summary));
+    assert!(sim.stages.iter().all(|s| s.record_repair.is_none()));
+    assert!(finish_state(&done).is_none_or(|state| !matches!(state, RunState::Failed { .. })));
+}
+
 /// The repair attempt carries the persisted marker that its turn is spent,
 /// and so does every later attempt of its stage.
 #[test]

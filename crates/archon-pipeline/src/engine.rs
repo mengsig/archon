@@ -536,6 +536,20 @@ impl RunDriver {
         records.is_some_and(|stage| stage.id == stage_id)
     }
 
+    /// Whether stage `stage_id` owes a record and its reply states a failure
+    /// or breaks that record: the gate then decides the reply as sent.
+    pub fn decides_as_sent(
+        &self,
+        stage_id: &str,
+        summary: &str,
+        structured: Option<&serde_json::Value>,
+    ) -> bool {
+        let Some(stage) = self.spec.stage(stage_id) else {
+            return false;
+        };
+        gate::decided_as_sent(self.spec.owed(stage), summary, structured)
+    }
+
     /// How many independent reviewers stage `stage_id` owes this run as the
     /// review its pipeline declares; `0` when it holds none.
     pub fn reviewers_owed(&self, stage_id: &str) -> u32 {

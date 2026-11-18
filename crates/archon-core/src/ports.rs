@@ -143,10 +143,11 @@ pub fn resumed_reply_outcome(reply: &str) -> StageOutcome {
     }
 }
 
-/// The summary of `reply` and the object of its last fenced `json` block: a
-/// resumed agent's task is settled, so its message carries `structured`.
+/// The object of `reply`'s last fenced `json` block and, as its summary, all
+/// the agent said around it, after it too; a bare block is its own summary.
 fn handed_in(reply: &str) -> (String, Option<serde_json::Value>) {
     const OPEN: &str = "```json";
+    const CLOSE: &str = "```";
     assert_eq!(reply, reply.trim(), "the reply comes trimmed");
     for (at, _) in reply.rmatch_indices(OPEN) {
         // A stream reads one value and leaves the closing fence unread.
@@ -155,9 +156,17 @@ fn handed_in(reply: &str) -> (String, Option<serde_json::Value>) {
         let Some(Ok(data @ serde_json::Value::Object(_))) = values.next() else {
             continue;
         };
-        let said = reply[..at].trim();
-        let summary = if said.is_empty() { reply } else { said };
-        return (summary.to_owned(), Some(data));
+        let after = block[values.byte_offset()..].trim_start();
+        let after = after.strip_prefix(CLOSE).unwrap_or(after).trim();
+        let said = [reply[..at].trim(), after];
+        let said: Vec<&str> = said.into_iter().filter(|part| !part.is_empty()).collect();
+        let summary = if said.is_empty() {
+            reply.to_owned()
+        } else {
+            said.join("\n\n")
+        };
+        assert!(!summary.is_empty(), "a reply has a summary");
+        return (summary, Some(data));
     }
     (reply.to_owned(), None)
 }
@@ -510,7 +519,7 @@ mod tests {
         else {
             panic!("a reply with a record completes");
         };
-        assert_eq!(summary, "Fixed the null check.");
+        assert_eq!(summary, "Fixed the null check.\n\nThat is all.");
         assert_eq!(structured, Some(record), "fences inside a string are text");
 
         for plain in [
@@ -529,6 +538,33 @@ mod tests {
         }
         let only = resumed_reply_outcome("```json\n{\"a\": 1}\n```");
         assert!(matches!(only, StageOutcome::Completed { ref summary, .. } if !summary.is_empty()));
+    }
+
+    /// A failure stated after the record is part of the reply as sent: the
+    /// summary keeps it, so no record beside it hides the stated fail.
+    #[test]
+    fn a_resumed_reply_keeps_a_failure_stated_after_its_record() {
+        use super::resumed_reply_outcome;
+        use crate::run::StageOutcome;
+        let record = serde_json::json!({"commit": "c0ffee"});
+        for reply in [
+            format!("Here is the record.\n```json\n{record}\n```\nVERDICT: FAIL"),
+            format!("```json\n{record}\n```\nVERDICT: FAIL"),
+        ] {
+            let StageOutcome::Completed {
+                summary,
+                structured,
+            } = resumed_reply_outcome(&reply)
+            else {
+                panic!("{reply} completes");
+            };
+            assert_eq!(structured.as_ref(), Some(&record));
+            assert!(summary.ends_with("VERDICT: FAIL"), "{summary}");
+            assert!(
+                StageOutcome::states_failure(&summary, structured.as_ref()),
+                "{summary}"
+            );
+        }
     }
 
     #[test]

@@ -40,7 +40,8 @@ pub async fn flush_quiet(ctx: &DaemonContext) -> Result<(), ArchonError> {
 async fn mark_flush(ctx: &DaemonContext) -> Result<Option<u64>, ArchonError> {
     let mut store = ctx.store.lock().await;
     let mut outbox = read_outbox(&store)?;
-    // Keying takes every pending event, so they leave in one batch after the one in flight.
+    // Keying takes the pending events in one batch after the one in flight; the rest
+    // of a backlog too large for one batch keeps `flush`, and follows the message.
     let ahead = u64::from(outbox.in_flight.is_some()) + u64::from(!outbox.pending.is_empty());
     if ahead == 0 {
         return Ok(None);

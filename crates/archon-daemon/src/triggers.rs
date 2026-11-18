@@ -7,6 +7,7 @@
 pub(crate) mod briefing;
 mod compact;
 mod directives;
+mod fit;
 mod flush;
 mod routine;
 mod summary;
@@ -784,9 +785,10 @@ async fn wait_until_due(ctx: &DaemonContext) -> Result<(), ArchonError> {
     }
 }
 
-/// Move every pending event into one keyed batch, compacted when it is
-/// due; a no-op while only quiet news waits. A batch already keyed is never
-/// touched.
+/// Move the pending events into one keyed batch, compacted when it is due; a
+/// no-op while only quiet news waits. A batch already keyed is never touched.
+/// News too large for one batch ([`fit::MAX_BATCH_BYTES`]) stays pending past
+/// the oldest that fits, in order, and is keyed next on the same terms.
 async fn key_pending(ctx: &DaemonContext) -> Result<(), ArchonError> {
     let store_id = supervisor::store_id(ctx).await?;
     let generation = supervisor::generation(ctx).await?;
@@ -799,9 +801,16 @@ async fn key_pending(ctx: &DaemonContext) -> Result<(), ArchonError> {
     if !outbox.is_due(archon_core::now()) {
         return Ok(());
     }
-    let held = std::mem::take(&mut outbox.pending);
-    let collapse = std::mem::take(&mut outbox.collapse);
-    outbox.flush = false;
+    let before = outbox.pending.len();
+    let fits = fit::fitting(&outbox.pending, fit::MAX_BATCH_BYTES)?;
+    let later = outbox.pending.split_off(fits);
+    let held = std::mem::replace(&mut outbox.pending, later);
+    assert_eq!(held.len() + outbox.pending.len(), before, "none is lost");
+    let collapse = outbox.collapse;
+    if outbox.pending.is_empty() {
+        outbox.collapse = false;
+        outbox.flush = false;
+    }
     let events = batch_events(&mut store, held, collapse)?;
     if events.is_empty() {
         // Every outcome held was superseded since: nothing is left to tell.

@@ -365,9 +365,13 @@ never edits it implicitly.**
     difference of a stored walk is in its one trigger. News compaction keeps
     that trigger whole, however old or crowded, and a walk's news joins its
     repository's watch news still held, so held watch news stays one bounded
-    event per repository however long delivery waits. Its `rest` names at
-    most 10,000 numbers, the earliest held; past that it is `truncated`, with
-    a note to list the repository's open pull requests. The first completed walk,
+    event per repository however long delivery waits. Its `rest` and the
+    reviewers of its 20 full changes name at most 10,000 numbers and logins
+    together, the earliest held; past that it is `truncated`, with a note to
+    list the repository's open pull requests. A trigger batch is keyed from
+    at most 1 MiB of held events (Aether refuses a payload over 2 MiB, and a
+    refused batch is dropped), so a larger backlog goes out in several
+    batches, in order. The first completed walk,
     and the first after the record's format changed, is stored silently. A
     stored record of the current format that no write would make is refused
     as corrupt where it is read, by the pass and the tool; removing the

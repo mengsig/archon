@@ -1159,7 +1159,8 @@ Aether's successor or waking the agent in place keeps its context, so
 neither forces compaction. Compaction:
 
 - always keeps every `operator_answer`, `agent_message`, `message_cap_reached`, `chat_answer`,
-  `chat_merge_refused` and `merge_finished`,
+  `chat_merge_refused`, `merge_finished` and `github_watch` (its walk stored
+  the baseline, so no later walk tells its news again),
   every `lavish_feedback` whose report is still `open` in Lavish, every
   `gate_opened` whose question is still open, and every current
   `item_finished` with an `origin`, whose GitHub thread awaits the outcome;
@@ -1183,6 +1184,14 @@ News held behind a stuck batch is also compacted by the same rules when a
 push takes it past 40 events, so the outbox stays bounded however long the
 batch in flight is retried. A later compaction folds that digest's counts
 into its own, so one batch never carries two digests.
+
+Aether refuses a trigger whose payload encodes to more than 2 MiB, and a
+batch it refuses is dropped with a `System` note. So a batch is keyed from at
+most 1 MiB of held events, the oldest that fit, the other half being room for
+its directives and wrapping. Held news larger than that stays pending in
+order and is keyed in the batches after it, on the same terms (compacted for
+a new generation, quiet news with a flush). An event over 1 MiB by itself
+goes alone.
 
 An `operator_answer` includes the stored question context, with `question_text`
 clipped to 512 characters (including an ellipsis). Its summary starts with

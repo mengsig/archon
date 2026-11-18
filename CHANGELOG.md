@@ -17,7 +17,10 @@
   told by the next walk, so news can be an interval late but is not lost
   (`docs/vnext/ARCHITECTURE.md` §f lists the accepted limits). A trigger
   tells 20 changes in full and names every other by kind and number; a
-  change names every difference of its pull request (`also`). A
+  change names every difference of its pull request (`also`). Watch news is
+  kept through news compaction and folded into one event per repository
+  while it is held, which names at most 10,000 pull request numbers and
+  reviewers and says `truncated` past that. A
   restarted archond asks no watch in its first five minutes, and
   `repo_watches` marks a watch `truncated` when its list fills the 1,000
   newest open pull requests a walk reads. Only a
@@ -27,6 +30,14 @@
   set or remove a watch; removing the repository drops it, whoever removes
   it. The orchestrator prompt
   now forbids polling GitHub from a schedule.
+
+### Fixed
+
+- A trigger larger than Aether takes is no longer lost. Aether refuses a
+  trigger payload over 2 MiB and archond dropped the refused batch with a
+  note, so a long enough backlog of held news went undelivered. A batch is
+  now keyed from at most 1 MiB of held events, and the rest goes out in the
+  batches after it, in order.
 
 ## 1.6.3
 

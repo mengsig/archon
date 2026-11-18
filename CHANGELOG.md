@@ -18,8 +18,8 @@
   (`docs/vnext/ARCHITECTURE.md` §f lists the accepted limits). A trigger
   tells 20 changes in full and names every other by kind and number. A
   restarted archond asks no watch in its first five minutes, and
-  `repo_watches` marks a watch `truncated` when the repository has more than
-  the 1,000 newest open pull requests a walk reads. Only a
+  `repo_watches` marks a watch `truncated` when its list fills the 1,000
+  newest open pull requests a walk reads. Only a
   registered repository with a github.com `origin` can be watched, so a watch
   inherits the registration's trust and reads nothing the sync of linked
   issues could not; `watch_repo` never registers one. GitHub requests cannot

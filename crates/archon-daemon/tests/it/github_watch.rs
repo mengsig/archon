@@ -947,8 +947,8 @@ async fn a_walk_of_304s_moves_the_clock_a_new_pull_request_is_told_against() {
     );
 }
 
-/// Every pull request moves between a cut walk and its resumption: the rows counted
-/// are kept, so the walk completes, and the next reads their page afresh and tells the rest.
+/// Every pull request moves between a cut walk and its resumption. The counts read are
+/// kept, so the walk completes and tells the head it lists; the next walk counts again.
 #[tokio::test]
 async fn a_resumed_walk_gets_further_though_what_it_counted_moved_again() {
     let github = Github::new();
@@ -966,8 +966,10 @@ async fn a_resumed_walk_gets_further_though_what_it_counted_moved_again() {
         "the list, then #1 to #12: {cut:?}"
     );
 
-    github.serve_count("comments-1", 1);
-    github.serve_list(pulls((1..=14).rev(), T2), "W/\"g3\"");
+    github.serve_count("comments-2", 1);
+    let mut pushed = pulls((1..=14).rev(), T2);
+    pushed[13]["head"]["sha"] = "b".into();
+    github.serve_list(pushed, "W/\"g3\"");
     tokio::time::advance(Duration::from_secs(5 * 60)).await;
     let resumed = busy(sync.pass(&h.ctx)).await.unwrap();
     assert_eq!(
@@ -975,9 +977,16 @@ async fn a_resumed_walk_gets_further_though_what_it_counted_moved_again() {
         (5, 0),
         "the list, then #13 and #14 only: {resumed:?}"
     );
-    assert!(watch_events(&h).await.is_empty(), "#1 was counted before");
+    assert_eq!(
+        told(&h).await,
+        [(1, "new_head".to_owned(), vec![])],
+        "the head this walk listed is told by it; #2 was counted before its comment"
+    );
 
     let before = github.calls().len();
+    let mut back = pulls((1..=14).rev(), T2);
+    back[13] = pull_at(1, "a", T3);
+    github.serve_list(back, "W/\"g4\"");
     tokio::time::advance(Duration::from_secs(5 * 60)).await;
     let next = busy(sync.pass(&h.ctx)).await.unwrap();
     assert_eq!(
@@ -988,7 +997,14 @@ async fn a_resumed_walk_gets_further_though_what_it_counted_moved_again() {
     let list = &github.calls()[before];
     assert!(list.ends_with(&format!("{LIST}1")), "{list}");
     assert!(!list.contains("If-None-Match"), "asked afresh: {list}");
-    assert_eq!(told(&h).await, [(1, "new_comment".to_owned(), vec![])]);
+    assert_eq!(
+        told(&h).await,
+        [
+            (1, "new_head".to_owned(), vec![]),
+            (2, "new_comment".to_owned(), vec![])
+        ],
+        "#1 was pushed back to its first head, and #2 is counted again"
+    );
     tokio::time::advance(Duration::from_secs(5 * 60)).await;
     let quiet = busy(sync.pass(&h.ctx)).await.unwrap();
     assert_eq!((quiet.watch.requested, quiet.watch.unchanged), (1, 1));
@@ -1067,4 +1083,65 @@ async fn a_malformed_stored_watch_is_refused_until_it_is_removed() {
     h.orchestrator(remove).await.unwrap();
     assert_eq!(watches(&h).await, 0);
     assert_eq!(pass(&h).await.requested, 0);
+}
+
+/// A list GitHub sends is a changed walk even when it is empty and unmarked as
+/// before: only 304s make an unchanged one, and no ETag is sent that was not given.
+#[tokio::test]
+async fn an_empty_list_sent_again_is_not_a_walk_of_304s() {
+    let github = Github::new();
+    github.serve_list(serde_json::json!([]), "");
+    let h = harness(&github).await;
+    h.orchestrator(watch_repo(REPO_NAME)).await.unwrap();
+    let first = pass(&h).await;
+    assert_eq!((first.watch.requested, first.watch.changed), (1, 1));
+    assert_eq!(listed(&h).await[0].tracked_pull_requests, Some(0));
+    let again = pass(&h).await;
+    assert_eq!(
+        (
+            again.watch.requested,
+            again.watch.changed,
+            again.watch.unchanged,
+            again.watch.triggers
+        ),
+        (1, 1, 0, 0),
+        "{again:?}"
+    );
+    let last = github.calls().pop().unwrap();
+    assert!(!last.contains("If-None-Match"), "{last}");
+    assert_eq!(stored(&h).await["walks"], 2);
+}
+
+/// A stored walk count with no room for one more fails each walk that would count
+/// past it: nothing is written or overflows, and the watch still waits its interval.
+#[tokio::test]
+async fn a_stored_walk_count_with_no_room_left_fails_the_walk() {
+    let github = Github::new();
+    let h = watched(&github).await;
+    {
+        let mut store = h.ctx.store.lock().await;
+        let (key, raw) = store.kv_prefix(KEY_PREFIX).unwrap().remove(0);
+        let mut record: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        record["walks"] = u64::MAX.into();
+        store.kv_set(&key, &record.to_string()).unwrap();
+    }
+    let before = stored(&h).await;
+    let calls = github.calls().len();
+    let mut sync = settled_sync().await;
+    let quiet = sync.pass(&h.ctx).await.unwrap_err();
+    assert!(quiet.to_string().contains("walk count"), "{quiet}");
+    let waiting = sync.pass(&h.ctx).await.unwrap();
+    assert_eq!(
+        waiting.watch.requested, 0,
+        "asked a moment ago: {waiting:?}"
+    );
+    assert_eq!(github.calls().len(), calls + 1, "the one conditional GET");
+    github.serve_list(
+        serde_json::json!([opened(2, "b"), pull(1, "a")]),
+        "W/\"x2\"",
+    );
+    let changed = settled_sync().await.pass(&h.ctx).await.unwrap_err();
+    assert!(changed.to_string().contains("walk count"), "{changed}");
+    assert_eq!(stored(&h).await, before, "neither walk was written");
+    assert!(watch_events(&h).await.is_empty());
 }

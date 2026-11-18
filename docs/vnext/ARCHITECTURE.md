@@ -366,11 +366,14 @@ never edits it implicitly.**
     watch clears it.
   - *Budget.* Watches take at most half of a pass's 50 `GET`s. A walk the
     budget or a backoff cuts short stores nothing; it goes first five
-    minutes later, and the sync keeps in memory what it had counted. A row
-    counted before the cut is kept even if its pull request moved again, so
-    every resumption gets further: the walk stores that row as counted and
-    drops its page's ETag, and the next walk reads the page unconditionally
-    and tells what moved since. A restarted archond has forgotten when each
+    minutes later, and the sync keeps in memory what it had counted. Counts
+    read before the cut are kept even if their pull request moved again, so
+    every resumption gets further: the walk stores and tells the head and
+    reviewers it listed, with those counts marked to be read again, and
+    drops the page's ETag, so the next walk is sent the page, counts the
+    pull request again and tells a comment or review made since. A stored
+    walk count with no room for one more fails the walk as corrupt rather
+    than overflowing. A restarted archond has forgotten when each
     watch was asked, so it asks none in its first five minutes.
   - *Page shifts.* A pull request missing from one completed walk keeps its
     row, and is closed only when the next completed walk (one of 304s too)
@@ -395,7 +398,8 @@ never edits it implicitly.**
     conditional `GET`. A comment deleted and another made between two walks
     cancel out, and a review the login itself began counts when started.
     Open pull requests past the newest 1,000 (10 pages) are not watched, and
-    `repo_watches` marks such a watch `truncated`. A cut walk goes before the
+    `repo_watches` marks a watch whose list fills those pages `truncated`
+    (at exactly 1,000 none is left out). A cut walk goes before the
     other due watches, so it can delay them by the passes it needs: one for
     about every 12 pull requests it has left to count, and for as long as a
     repository keeps more than that moving every five minutes.

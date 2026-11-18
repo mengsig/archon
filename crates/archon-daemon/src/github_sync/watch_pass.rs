@@ -112,16 +112,21 @@ impl GithubSync {
                 break;
             }
             let resumed = self.take_resume(&due);
-            let walked = walk_one(ctx, &due, resumed, pass).await?;
-            let resume = walked.resume.map(|rows| Resume {
+            let mut walked = walk_one(ctx, &due, resumed, pass).await;
+            let cut = walked
+                .as_mut()
+                .ok()
+                .and_then(|outcome| outcome.resume.take());
+            let resume = cut.map(|rows| Resume {
                 generation: due.record.generation.clone(),
                 repository: due.repository.clone(),
                 rows,
             });
+            // Asked, even by a walk that failed: it waits its interval like any other.
             let at = Instant::now();
             self.watch_asked
                 .insert(due.id.clone(), Asked { at, resume });
-            if let Some(wait) = walked.backoff {
+            if let Some(wait) = walked?.backoff {
                 self.paused_until = Some(Instant::now() + wait);
                 pass.backoff = Some(wait);
                 break;
@@ -307,7 +312,7 @@ async fn walk_one(
     match walked {
         Ok(Walked::Unchanged(started_at)) => {
             pass.watch.unchanged += 1;
-            let walked = watch::after_unchanged_walk(&due.record, started_at);
+            let walked = watch::after_unchanged_walk(&due.record, started_at)?;
             record_walk(ctx, due, walked, Vec::new()).await?;
         }
         Ok(Walked::Cut(rows)) => {
@@ -315,7 +320,7 @@ async fn walk_one(
             outcome.resume = Some(rows);
         }
         Ok(Walked::Whole(walk)) => {
-            let (walked, changes) = watch::after_walk(&due.record, walk);
+            let (walked, changes) = watch::after_walk(&due.record, walk)?;
             if record_walk(ctx, due, walked, changes).await? {
                 pass.watch.triggers += 1;
             }
@@ -357,14 +362,14 @@ async fn walk(
     let (mut fresh, mut stale) = (BTreeMap::new(), BTreeSet::new());
     for (number, pull) in listed.fresh {
         let row = rows.remove(&number).expect("counted above");
-        if !row.is_of(&pull) {
+        if row.recount {
             stale.insert(number);
         }
         fresh.insert(number, (pull, row));
     }
     let mut pages = listed.pages;
-    // A row counted before its pull request moved again is stored as counted:
-    // its page loses its ETag, so the next walk reads it and tells the rest.
+    // A row whose counts are older than its pull request is counted again by the
+    // next walk: its page loses its ETag, so that walk is sent the page.
     for page in &mut pages {
         if page.numbers.iter().any(|number| stale.contains(number)) {
             page.etag = None;
@@ -443,8 +448,8 @@ fn keep_latest(fresh: &mut BTreeMap<u64, Pull>, pull: Pull) {
     }
 }
 
-/// A row for each of `fresh`: the stored counts if it has not moved, else a cut walk's
-/// row (kept though it moved again, to get further), else counted now. `false` when cut.
+/// A row for each of `fresh` as listed now: with the stored counts if it has not moved, else
+/// a cut walk's (to recount if it moved again), else counted now. `false` when cut short.
 async fn count_rows(
     asker: &mut Asker<'_>,
     pass: &mut Pass,
@@ -459,7 +464,10 @@ async fn count_rows(
         let current = stored.get(number).filter(|row| row.is_of(pull));
         let row = match (current, resumed.get(number)) {
             (Some(row), _) => pull.row(row.counts()),
-            (None, Some(row)) => row.clone(),
+            (None, Some(row)) => Row {
+                recount: !row.is_of(pull),
+                ..pull.row(row.counts())
+            },
             (None, None) => match counts(asker, pass, *number).await? {
                 Some(counts) => pull.row(counts),
                 None => {
@@ -518,7 +526,7 @@ async fn record_walk(
     mut walked: WatchRecord,
     changes: Vec<WatchedChange>,
 ) -> Result<bool, ArchonError> {
-    assert_eq!(walked.walks, due.record.walks + 1, "one more walk");
+    assert!(walked.walks > due.record.walks, "one more walk");
     if !origin_unmoved(due).await {
         tracing::info!(repository = %due.repository, "origin moved during a watch walk; discarded");
         return Ok(false);

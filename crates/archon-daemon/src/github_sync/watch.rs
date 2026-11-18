@@ -98,7 +98,18 @@ impl WatchRecord {
             .then_some(row)
     }
 
-    /// The list went on past the pages a walk follows: the oldest are not watched.
+    /// The walk count after one more; a stored count with no room left is corrupt.
+    fn next_walk(&self) -> Result<u64, ArchonError> {
+        self.walks.checked_add(1).ok_or_else(|| {
+            let repository = &self.repository;
+            ArchonError::Corrupt(format!(
+                "repository watch of {repository}: its walk count is exhausted"
+            ))
+        })
+    }
+
+    /// The list filled every page a walk follows: pull requests older than
+    /// those, if there are any, are not watched.
     pub(crate) fn is_truncated(&self) -> bool {
         self.pages.len() >= MAX_PAGES as usize && self.pages.last().is_some_and(PageMark::is_full)
     }
@@ -142,12 +153,16 @@ pub(crate) struct Row {
     /// kept through that one, as a page shift can hide a pull request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub missed: Option<u64>,
+    /// Its counts were read before it last moved (a cut walk's): the next walk
+    /// counts it again, and its page is stored without an ETag so that it does.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub recount: bool,
 }
 
 impl Row {
-    /// Whether this row was counted when `pull` looked as it does now.
+    /// Whether this row's counts were read when `pull` looked as it does now.
     pub(crate) fn is_of(&self, pull: &Pull) -> bool {
-        self.head == pull.head && self.updated_at == pull.updated_at
+        !self.recount && self.head == pull.head && self.updated_at == pull.updated_at
     }
 
     pub(crate) fn counts(&self) -> Counts {
@@ -236,8 +251,19 @@ fn check(record: &WatchRecord) -> Result<(), String> {
     Ok(())
 }
 
-/// Each page but the last is full, its ETag bounded, and each number has a row.
+/// Each page but the last is full, its ETag bounded, and each number has a row;
+/// a row no page lists is a missed one, which bounds the rows a walk can leave.
 fn check_pages(record: &WatchRecord) -> Result<(), String> {
+    let listed: BTreeSet<u64> = record
+        .pages
+        .iter()
+        .flat_map(|p| &p.numbers)
+        .copied()
+        .collect();
+    let unlisted = |(number, row): (&u64, &Row)| row.missed.is_none() && !listed.contains(number);
+    if let Some((number, _)) = record.pulls.iter().find(|row| unlisted(*row)) {
+        return Err(format!("#{number} is on no page, yet not missed"));
+    }
     let last = record.pages.len().saturating_sub(1);
     for (index, page) in record.pages.iter().enumerate() {
         let short = index < last && !page.is_full();
@@ -352,6 +378,7 @@ impl Pull {
             comments: counts.comments,
             reviews: counts.reviews,
             missed: None,
+            recount: false,
         }
     }
 
@@ -416,9 +443,12 @@ pub(crate) struct Walk {
 
 /// `record` after `walk`, and what the walk tells: at most one change per
 /// pull request, and nothing on the first walk.
-pub(crate) fn after_walk(record: &WatchRecord, walk: Walk) -> (WatchRecord, Vec<WatchedChange>) {
+pub(crate) fn after_walk(
+    record: &WatchRecord,
+    walk: Walk,
+) -> Result<(WatchRecord, Vec<WatchedChange>), ArchonError> {
     assert!(walk.pages.len() <= MAX_PAGES as usize, "a bounded walk");
-    let walks = record.walks + 1;
+    let walks = record.next_walk()?;
     let mut changes = Vec::new();
     let mut pulls = BTreeMap::new();
     for (number, (pull, row)) in &walk.fresh {
@@ -459,23 +489,26 @@ pub(crate) fn after_walk(record: &WatchRecord, walk: Walk) -> (WatchRecord, Vec<
         pulls,
         ..record.clone()
     };
-    (walked, changes)
+    Ok((walked, changes))
 }
 
 /// `record` after a walk of 304s begun at `started_at`: a completed walk that
 /// moves the pass time only. A row the walk before missed is now missed twice.
-pub(crate) fn after_unchanged_walk(record: &WatchRecord, started_at: Timestamp) -> WatchRecord {
+pub(crate) fn after_unchanged_walk(
+    record: &WatchRecord,
+    started_at: Timestamp,
+) -> Result<WatchRecord, ArchonError> {
     assert!(record.walks > 0, "only a walked list answers 304");
     assert!(!record.pages.is_empty(), "a 304 is of a stored page");
-    WatchRecord {
+    Ok(WatchRecord {
         walked_at: Some(started_at),
-        walks: record.walks + 1,
+        walks: record.next_walk()?,
         ..record.clone()
-    }
+    })
 }
 
 /// What `row` tells against `stored`, the row known when the last completed
-/// walk began at `previous`. A cut walk's `row` may be older than `pull`.
+/// walk began at `previous`.
 fn change(
     stored: Option<&Row>,
     pull: &Pull,
@@ -584,7 +617,7 @@ mod tests {
 
     fn first_walk(pulls: Vec<(Pull, Row)>) -> WatchRecord {
         let record = WatchRecord::new(5, "o/r".into());
-        let (walked, changes) = after_walk(&record, walk(T0, pulls));
+        let (walked, changes) = after_walk(&record, walk(T0, pulls)).unwrap();
         assert!(changes.is_empty(), "the first walk tells nothing");
         walked
     }
@@ -608,7 +641,7 @@ mod tests {
             counted(pull(6, "f", T1, &[]), 2, 1),
             counted(created(pull(8, "h", T1, &[]), T1), 0, 0),
         ];
-        let (walked, changes) = after_walk(&record, walk(T1, next.clone()));
+        let (walked, changes) = after_walk(&record, walk(T1, next.clone())).unwrap();
         assert_eq!(
             told(&changes),
             [
@@ -622,7 +655,7 @@ mod tests {
         );
         assert_eq!(changes[1].reviewers, ["team:core"]);
         assert_eq!(walked.walked_at, Some(T1.parse().unwrap()));
-        let (_, again) = after_walk(&walked, walk(T2, next));
+        let (_, again) = after_walk(&walked, walk(T2, next)).unwrap();
         assert!(again.is_empty(), "the same set again is no news");
     }
 
@@ -636,7 +669,7 @@ mod tests {
         };
         let one = || vec![counted(pull(1, "a", T0, &[]), 0, 0)];
         let record = first_walk(both());
-        let (hidden, changes) = after_walk(&record, walk(T1, one()));
+        let (hidden, changes) = after_walk(&record, walk(T1, one())).unwrap();
         assert!(changes.is_empty());
         assert_eq!(
             hidden.pulls[&2].missed,
@@ -644,13 +677,13 @@ mod tests {
             "the second walk missed #2"
         );
         assert!(hidden.known(2).is_some(), "missed once, #2 keeps its row");
-        let (back, changes) = after_walk(&hidden, walk(T2, both()));
+        let (back, changes) = after_walk(&hidden, walk(T2, both())).unwrap();
         assert!(changes.is_empty(), "a page shift alone is no news");
         assert_eq!(back.pulls[&2].missed, None);
 
-        let (gone, _) = after_walk(&hidden, walk(T2, one()));
+        let (gone, _) = after_walk(&hidden, walk(T2, one())).unwrap();
         assert!(!gone.pulls.contains_key(&2), "missed twice, it is closed");
-        let (_, changes) = after_walk(&gone, walk(T2, both()));
+        let (_, changes) = after_walk(&gone, walk(T2, both())).unwrap();
         assert_eq!(told(&changes), [(2, "seen_pull_request")]);
     }
 
@@ -664,8 +697,8 @@ mod tests {
         ];
         let record = first_walk(both.clone());
         let one = vec![counted(pull(1, "a", T0, &[]), 0, 0)];
-        let (hidden, _) = after_walk(&record, walk(T1, one));
-        let quiet = after_unchanged_walk(&hidden, T2.parse().unwrap());
+        let (hidden, _) = after_walk(&record, walk(T1, one)).unwrap();
+        let quiet = after_unchanged_walk(&hidden, T2.parse().unwrap()).unwrap();
         assert_eq!(
             (quiet.walks, quiet.walked_at),
             (3, Some(T2.parse().unwrap()))
@@ -676,7 +709,7 @@ mod tests {
 
         let mut next = both;
         next.push(counted(created(pull(3, "c", T2, &[]), T1), 0, 0));
-        let (after, changes) = after_walk(&quiet, walk(T2, next));
+        let (after, changes) = after_walk(&quiet, walk(T2, next)).unwrap();
         assert_eq!(
             told(&changes),
             [(2, "seen_pull_request"), (3, "seen_pull_request")],
@@ -688,9 +721,9 @@ mod tests {
     #[test]
     fn news_of_a_hidden_pull_request_is_told_by_the_next_walk() {
         let record = first_walk(vec![counted(pull(2, "b", T0, &[]), 0, 0)]);
-        let (hidden, _) = after_walk(&record, walk(T1, Vec::new()));
+        let (hidden, _) = after_walk(&record, walk(T1, Vec::new())).unwrap();
         let commented = vec![counted(pull(2, "b", T2, &[]), 1, 0)];
-        let (_, changes) = after_walk(&hidden, walk(T2, commented));
+        let (_, changes) = after_walk(&hidden, walk(T2, commented)).unwrap();
         assert_eq!(told(&changes), [(2, "new_comment")]);
     }
 
@@ -701,13 +734,13 @@ mod tests {
             counted(created(pull(7, "c", T2, &[]), T0), 0, 0),
             counted(created(pull(8, "d", T2, &[]), T1), 0, 0),
         ];
-        let (walked, changes) = after_walk(&record, walk(T2, next.clone()));
+        let (walked, changes) = after_walk(&record, walk(T2, next.clone())).unwrap();
         assert_eq!(
             told(&changes),
             [(7, "seen_pull_request"), (8, "new_pull_request")],
             "#7 was made at the last walk's start, not after it"
         );
-        let (_, again) = after_walk(&walked, walk(T2, next));
+        let (_, again) = after_walk(&walked, walk(T2, next)).unwrap();
         assert!(again.is_empty(), "each is told once");
     }
 
@@ -723,9 +756,18 @@ mod tests {
             numbers: vec![1],
         };
         next.pages.push(unsent);
-        let (walked, changes) = after_walk(&record, next);
+        let (walked, changes) = after_walk(&record, next).unwrap();
         assert_eq!(told(&changes), [(2, "new_comment")]);
         assert_eq!(walked.pulls[&1], record.pulls[&1], "#1 is as stored");
+        assert!(!walked.pulls[&1].is_of(&pull(1, "a", T1, &[])), "it moved");
+        let again = Row {
+            recount: true,
+            ..record.pulls[&1].clone()
+        };
+        assert!(
+            !again.is_of(&pull(1, "a", T0, &[])),
+            "counted before it moved"
+        );
         assert_eq!(walked.pages.len(), 2);
     }
 
@@ -780,7 +822,28 @@ mod tests {
             numbers: vec![1],
         });
         assert!(check(&short).is_err(), "a page after one not full");
+        let mut unlisted = record.clone();
+        unlisted.pulls.insert(9, record.pulls[&1].clone());
+        assert!(
+            check(&unlisted).is_err(),
+            "#9 is on no page, yet not missed"
+        );
         assert_eq!(check(&record), Ok(()));
+    }
+
+    /// A stored walk count with no room for one more is refused by the walk
+    /// that would count past it, not overflowed.
+    #[test]
+    fn a_walk_count_with_no_room_left_fails_the_walk() {
+        let mut record = first_walk(vec![counted(pull(1, "a", T0, &[]), 0, 0)]);
+        record.walks = u64::MAX - 1;
+        let (last, _) = after_walk(&record, walk(T1, Vec::new())).unwrap();
+        assert_eq!(last.walks, u64::MAX);
+        assert_eq!(check(&last), Ok(()), "the last count is stored");
+        let refused = after_walk(&last, walk(T2, Vec::new())).unwrap_err();
+        assert!(refused.to_string().contains("walk count"), "{refused}");
+        let quiet = after_unchanged_walk(&last, T2.parse().unwrap());
+        assert!(matches!(quiet, Err(ArchonError::Corrupt(_))), "{quiet:?}");
     }
 
     #[test]

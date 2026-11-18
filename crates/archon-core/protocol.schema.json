@@ -11998,7 +11998,7 @@
           ]
         },
         "truncated": {
-          "description": "The repository has more open pull requests than a walk reads (1,000):\nonly the newest are watched.",
+          "description": "The list filled the 1,000 pull requests a walk reads: older ones, if\nthere are any, are not watched.",
           "type": "boolean"
         }
       },

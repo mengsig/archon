@@ -252,8 +252,8 @@ pub struct RepoWatchView {
     /// Pull requests the watch keeps a row of; absent before the first walk.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tracked_pull_requests: Option<u32>,
-    /// The repository has more open pull requests than a walk reads (1,000):
-    /// only the newest are watched.
+    /// The list filled the 1,000 pull requests a walk reads: older ones, if
+    /// there are any, are not watched.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub truncated: bool,
 }

@@ -112,7 +112,7 @@ pub(crate) async fn get(
         200 => Ok(Got::Changed {
             etag: response
                 .header("etag")
-                .filter(|e| e.len() <= MAX_ETAG_BYTES)
+                .filter(|e| !e.is_empty() && e.len() <= MAX_ETAG_BYTES)
                 .map(str::to_owned),
             last_page: response.header("link").and_then(last_page),
             date,

@@ -322,6 +322,19 @@ async fn an_outage_defers_an_explicit_pin_but_cannot_resolve_a_tier() {
         .await
         .unwrap_err();
     assert!(refused.to_string().contains("tier"), "{refused}");
+    h.dispatch().await;
+    assert!(h.stages(&item.id).await.is_empty());
+    h.set_learning_models(vec!["codex/gpt-6-astra".parse().unwrap()])
+        .await;
+    h.dispatch().await;
+    assert!(h.state(&item.id).await.is_model_pin_block());
+    assert_eq!(
+        h.item(&item.id).await.model_plan.0["implement"][0]
+            .model
+            .to_string(),
+        FAST
+    );
+    assert!(h.stages(&item.id).await.is_empty());
 }
 
 #[tokio::test]

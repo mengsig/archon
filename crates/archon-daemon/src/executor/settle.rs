@@ -42,7 +42,18 @@ pub(super) async fn settle(
         None
     };
     match settle_verified(ctx, id, outcome).await {
-        Err(error) if super::gh::is_failure(&error) => hold_for_retry(ctx, id, error).await,
+        Err(error) if super::gh::is_failure(&error) => {
+            hold_for_retry(
+                ctx,
+                id,
+                "verifying the completed stage against GitHub",
+                error,
+            )
+            .await
+        }
+        Err(error @ ArchonError::Unavailable(_)) => {
+            hold_for_retry(ctx, id, "settling the stage", error).await
+        }
         Err(error) => Err(error),
         Ok(follow) => {
             let cleared = super::coordination::clear_stage(ctx, &id.to_string()).await?;
@@ -86,6 +97,7 @@ async fn claim_verification(
 async fn hold_for_retry(
     ctx: &DaemonContext,
     id: &StageRunId,
+    operation: &str,
     error: ArchonError,
 ) -> Result<FollowUp, ArchonError> {
     let item = {
@@ -97,8 +109,8 @@ async fn hold_for_retry(
         let mut table = ctx.runs.lock().await;
         schedule_retry(&mut table, id)
     };
-    tracing::warn!(stage = %id, %item, %error, failures, "verifying a completed stage failed on GitHub; retrying");
-    let what = format!("Item {item}: verifying the completed stage {id} against GitHub");
+    tracing::warn!(stage = %id, %item, %error, failures, operation, "stage settlement will retry");
+    let what = format!("Item {item}: {operation} ({id})");
     let subject = format!("stage:{id}");
     super::coordination::isolate(ctx, &subject, Some(&item), &what, Err(error)).await?;
     Ok(FollowUp::default())
@@ -248,7 +260,8 @@ async fn settle_verified(
         (current_stage, current_run, all)
     };
     if refused
-        && let Some(follow) = infra_retry(ctx, &table, &stage, &run, &all, &outcome, true).await?
+        && let Some(follow) =
+            infra_retry(ctx, &mut table, &stage, &run, &all, &outcome, true).await?
     {
         return Ok(follow);
     }
@@ -577,7 +590,7 @@ impl RetryKind {
 /// agent in place, and only a refused wake spawns a fresh agent, the cold retry.
 async fn infra_retry(
     ctx: &DaemonContext,
-    table: &RunTable,
+    table: &mut RunTable,
     stage: &StageRun,
     run: &PipelineRun,
     all: &[StageRun],
@@ -628,7 +641,7 @@ pub(super) async fn deadline_stopped(
     if outcome == StageOutcome::TimedOut {
         let woken = respawn(
             ctx,
-            &table,
+            &mut table,
             (&stage, &run, &all),
             &outcome,
             DEADLINE_PASSED,
@@ -647,7 +660,7 @@ pub(super) async fn deadline_stopped(
 /// A run that took a deadline wake is the slot's last: what ends it is final.
 async fn respawn(
     ctx: &DaemonContext,
-    table: &RunTable,
+    table: &mut RunTable,
     (stage, run, all): (&StageRun, &PipelineRun, &[StageRun]),
     outcome: &StageOutcome,
     error: &str,
@@ -845,7 +858,7 @@ async fn disk_nearly_full(ctx: &DaemonContext) -> bool {
 /// persist the failure; `None` when the driver or the budget allows none.
 async fn replace(
     ctx: &DaemonContext,
-    table: &RunTable,
+    table: &mut RunTable,
     run: &PipelineRun,
     all: &[StageRun],
     failed: &StageRun,
@@ -875,39 +888,21 @@ async fn replace(
             archon_pipeline::swarm::MAX_CORRECTIONS,
         ));
     }
+    let spec = driver.spec().clone();
     let catalog = crate::learned::catalog(ctx).await?;
     let mut store = ctx.store.lock().await;
-    if crate::learned::cached_catalog(ctx, &store)?.as_ref() != Some(&catalog) {
-        return Err(ArchonError::Unavailable(
-            "model catalog changed before retry".into(),
-        ));
+    let plan =
+        super::model_catalog::retry_plan(ctx, &mut store, table, run, plan, &catalog, &spec)?;
+    if retry.extension.is_some() && plan.choice.model != failed.choice.model {
+        return Ok(None);
     }
-    let item = store.item(&run.item)?;
-    let repo = item
-        .repo
-        .as_ref()
-        .map(|id| store.repo(&crate::resolve::repo_ref(id)))
-        .transpose()?;
-    let env = RepoEnv::new(repo)?;
-    let (mut repaired, plans) = super::model_catalog::repair_pending(
-        ctx,
-        &store,
-        &item,
-        std::slice::from_ref(&plan),
-        &catalog,
-        &env,
-        driver.spec(),
-    )?;
-    if repaired.model_plan != item.model_plan {
-        repaired.updated_at = archon_core::now().max(item.updated_at);
-        store.update_item(&repaired)?;
+    let mut retry = retry;
+    if plan.choice.model != failed.choice.model {
+        retry.wake = None;
     }
-    let [plan] = plans.as_slice() else {
-        unreachable!("one retry plan")
-    };
     // Owed before the replacement exists, so it never starts beside them.
     descendants::owe(&mut store, failed, retry.wake.is_some())?;
-    let Some(id) = spawn::reserve_replacement(ctx, &mut store, failed, plan, retry)? else {
+    let Some(id) = spawn::reserve_replacement(ctx, &mut store, failed, &plan, retry)? else {
         return Ok(None);
     };
     // Replacement first: a crash in between leaves a superseded live

@@ -368,14 +368,7 @@ pub(super) async fn reserve(
         (reserved, before, after)
     };
     if before != after {
-        if let Some(driver) = table.drivers.get_mut(run) {
-            driver.follow_models(&before, &after);
-        }
-        if let Some(pending) = table.pending.get_mut(run) {
-            for plan in pending {
-                super::model_catalog::repair_stage(plan, &before, &after);
-            }
-        }
+        super::model_catalog::follow_models(table, run, &before, &after);
     }
     match reserved {
         Reserved::Spawned(ids) => Ok(FollowUp {

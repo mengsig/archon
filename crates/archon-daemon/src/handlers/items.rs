@@ -768,6 +768,10 @@ pub(super) async fn retry(
     retry: Retry,
     by: Authority,
 ) -> Result<Reply, ArchonError> {
+    let kept_catalog = match retry.model_plan {
+        None => Some(learned::request_catalog(ctx).await?),
+        Some(_) => None,
+    };
     let current = ctx.store.lock().await.item(id)?;
     let replaces_plan = retry.model_plan.is_some();
     let (env, base, spec) = item_pipeline(ctx, &current).await?;
@@ -785,8 +789,10 @@ pub(super) async fn retry(
             resolve_draft(ctx, (&env, route), &spec, (draft, reasons), by).await?
         }
         None => {
-            let catalog = learned::request_catalog(ctx).await?;
-            let kept_plan = kept_plan.checked_request_catalog(&catalog)?;
+            let catalog = kept_catalog
+                .as_ref()
+                .expect("read before loading the kept plan");
+            let kept_plan = kept_plan.checked_request_catalog(catalog)?;
             let mut writer = PlanWriter::new(id, archon_core::now());
             writer.carry(&kept_plan, id, |_| Some(usize::MAX));
             writer

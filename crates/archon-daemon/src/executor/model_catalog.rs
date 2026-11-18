@@ -121,6 +121,75 @@ pub(crate) fn repair_pending(
     Ok((repaired, pending))
 }
 
+pub(super) fn retry_plan(
+    ctx: &crate::context::DaemonContext,
+    store: &mut archon_queue::Store,
+    table: &mut super::RunTable,
+    run: &archon_core::run::PipelineRun,
+    plan: SpawnPlan,
+    catalog: &ModelCatalog,
+    spec: &archon_pipeline::PipelineSpec,
+) -> Result<SpawnPlan, ArchonError> {
+    if crate::learned::cached_catalog(ctx, store)?.as_ref() != Some(catalog) {
+        return Err(ArchonError::Unavailable(
+            "model catalog changed before retry".into(),
+        ));
+    }
+    let item = store.item(&run.item)?;
+    let repo = item
+        .repo
+        .as_ref()
+        .map(|id| store.repo(&crate::resolve::repo_ref(id)))
+        .transpose()?;
+    let env = crate::resolve::RepoEnv::new(repo)?;
+    let (mut repaired, mut plans) = repair_pending(
+        ctx,
+        store,
+        &item,
+        std::slice::from_ref(&plan),
+        catalog,
+        &env,
+        spec,
+    )
+    .map_err(|error| {
+        if error.is_store() {
+            error
+        } else {
+            ArchonError::Unavailable(format!(
+                "stage replacement waits for a usable model: {error}"
+            ))
+        }
+    })?;
+    if repaired.model_plan != item.model_plan {
+        repaired.updated_at = archon_core::now().max(item.updated_at);
+        store.update_item(&repaired)?;
+        follow_models(
+            table,
+            &run.id,
+            item.model_plan.plan(),
+            repaired.model_plan.plan(),
+        );
+    }
+    assert_eq!(plans.len(), 1, "one retry plan");
+    Ok(plans.pop().expect("checked above"))
+}
+
+pub(super) fn follow_models(
+    table: &mut super::RunTable,
+    run: &archon_core::id::PipelineRunId,
+    before: &ModelPlan,
+    after: &ModelPlan,
+) {
+    if let Some(driver) = table.drivers.get_mut(run) {
+        driver.follow_models(before, after);
+    }
+    if let Some(pending) = table.pending.get_mut(run) {
+        for plan in pending {
+            repair_stage(plan, before, after);
+        }
+    }
+}
+
 pub(super) fn repair_stage(plan: &mut SpawnPlan, before: &ModelPlan, after: &ModelPlan) {
     if let (Some(old), Some(new)) = (
         before.choices_for(&plan.stage_id),

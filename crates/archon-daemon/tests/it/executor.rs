@@ -669,6 +669,26 @@ async fn model_denied_after_enqueue_is_refused_at_spawn() {
 }
 
 #[tokio::test]
+async fn an_infrastructure_retry_waits_for_a_catalog_before_reserving_its_attempt() {
+    let h = Harness::new().await;
+    let item = h.enqueue("retry after catalog recovery").await;
+    h.dispatch().await;
+    let link = h.ctx.aether.client().unwrap();
+    h.ctx.aether.replace(None).unwrap();
+    let infra = || StageOutcome::Failed {
+        error: "engine died".into(),
+        infra: true,
+    };
+    h.settle_running(|_| infra()).await;
+    assert_eq!(h.stages(&item.id).await.len(), 1);
+    assert_eq!(h.backend.requests().len(), 1);
+    h.ctx.aether.replace(Some(link)).unwrap();
+    h.settle_running(|_| infra()).await;
+    assert_eq!(h.stages(&item.id).await.len(), 2);
+    assert_eq!(h.backend.requests().len(), 2);
+}
+
+#[tokio::test]
 async fn infra_failure_respawns_the_slot_once() {
     let h = Harness::new().await;
     let item = h.enqueue("flaky engine").await;

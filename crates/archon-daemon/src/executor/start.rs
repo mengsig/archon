@@ -55,9 +55,6 @@ pub(super) async fn start_item(
     let Some(item) = claim_item(ctx, id).await? else {
         return Ok(FollowUp::default());
     };
-    if let Some(reason) = super::refresh::nothing_to_merge(ctx, &item).await? {
-        return finish_unstarted(ctx, &item.id, reason).await;
-    }
     let run_id = PipelineRunId::new();
     let subject = format!("starting item {}", item.id);
     let preparing =
@@ -206,6 +203,10 @@ async fn prepare(
     let Some(item) = repair_claimed(ctx, &item.id, catalog, &env, &current).await? else {
         return Ok(None);
     };
+    if let Some(reason) = super::refresh::nothing_to_merge(ctx, &item).await? {
+        finish_unstarted(ctx, &item.id, reason).await?;
+        return Ok(None);
+    }
     let item = &tiers_at_dispatch(ctx, &env, &item, &current, catalog).await?;
     let item = &without_retired_ship(item, &current);
     let spec = Arc::new(frozen::freeze(&ctx.paths.data_dir, &run_id, &current).await?);
@@ -997,13 +998,13 @@ async fn finish_unstarted(
     ctx: &DaemonContext,
     id: &QueueItemId,
     reason: String,
-) -> Result<FollowUp, ArchonError> {
+) -> Result<(), ArchonError> {
     assert!(!reason.is_empty(), "a finish says why");
     let _table = ctx.runs.lock().await;
     let item = {
         let mut store = ctx.store.lock().await;
         if store.item(id)?.state != QueueState::Dispatching {
-            return Ok(FollowUp::default());
+            return Ok(());
         }
         let done = QueueState::Cancelled {
             reason: Some(reason.clone()),
@@ -1013,7 +1014,8 @@ async fn finish_unstarted(
     assert!(item.state.is_terminal(), "finished before it started");
     tracing::info!(item = %id, %reason, "item finished before it started");
     finish::announce(ctx, &item, None, false, None).await?;
-    Ok(FollowUp::poke())
+    ctx.dispatch.notify_one();
+    Ok(())
 }
 
 /// `dispatching → failed` before any run exists, with a `Blocker`.

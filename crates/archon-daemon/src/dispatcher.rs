@@ -80,7 +80,9 @@ async fn catalog_for_view(
     if store.catalog_generation() == Some(ctx.aether.generation()?) && catalog.is_empty() {
         return Ok(catalog);
     }
-    Ok(ModelCatalog::unavailable("waiting for a fresh catalog read".to_owned()))
+    Ok(ModelCatalog::unavailable(
+        "waiting for a fresh catalog read".to_owned(),
+    ))
 }
 
 /// Remembers the budget hold last announced, so each is posted once.

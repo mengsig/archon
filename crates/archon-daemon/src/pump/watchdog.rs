@@ -80,6 +80,7 @@ pub(super) async fn agent_created(
     let Some(parent) = &event.parent else {
         return Ok(());
     };
+    assert_eq!(event.agent.as_ref(), Some(agent), "the event's own agent");
     assert_ne!(parent, agent, "an agent is not its own parent");
     let node_run = executor::node_run(&*ctx.store.lock().await, parent)?;
     if let Some(run) = node_run {
@@ -89,17 +90,18 @@ pub(super) async fn agent_created(
     let Some(item) = parent_item(ctx, parent).await? else {
         return Ok(());
     };
-    let delegated = {
+    let belongs_to_run = {
         let mut store = ctx.store.lock().await;
         let run = store.agent_run(parent)?;
         if let Some(run) = &run {
             store.link_agent_run(agent, run)?;
-            // Its stage's cost includes it, with the effort Aether holds.
+        }
+        if run.is_some() || item.is_none() {
             store.record_delegated(agent, parent, model, None)?;
         }
         run.is_some()
     };
-    if delegated {
+    if belongs_to_run {
         record_effort(ctx, agent, parent, model).await?;
         executor::lift_new_child(ctx, agent, parent).await?;
     }
@@ -245,7 +247,13 @@ async fn violation(
 ) -> Result<Option<String>, ArchonError> {
     assert_ne!(agent, parent, "an agent is not its own parent");
     let Some(item) = item else {
-        return helper_violation(ctx, agent, model).await;
+        let held = held_by_aether(ctx, agent).await?;
+        let refusal = helper_violation(ctx, model, held.as_ref()).await?;
+        if let Some(ChildEffort::Known(effort)) = held.as_ref().map(child_effort) {
+            let mut store = ctx.store.lock().await;
+            store.record_delegated(agent, parent, model, Some(effort))?;
+        }
+        return Ok(refusal);
     };
     let policy = item_policy(ctx, item).await?;
     let reviewers = ctx.store.lock().await.item(item)?.model_plan;
@@ -396,14 +404,13 @@ async fn item_policy(ctx: &DaemonContext, item: &QueueItemId) -> Result<ModelPol
 /// or worktree, or it breaks the policy as the repositories it reads narrow it.
 async fn helper_violation(
     ctx: &DaemonContext,
-    agent: &AetherAgentId,
     model: &ModelRef,
+    held: Option<&Value>,
 ) -> Result<Option<String>, ArchonError> {
-    let held = held_by_aether(ctx, agent).await?;
-    let roots = held.as_ref().map(scope_roots).unwrap_or_default();
+    let roots = held.map(scope_roots).unwrap_or_default();
     let reach = mirror_reach(ctx, roots.clone()).await?;
     let policy = mirror::helper_policy(ctx, &reach).await?;
-    let refusal = match &held {
+    let refusal = match held {
         Some(held) => policy_refusal(&policy, model, held),
         None => model_refusal(&policy, model),
     };

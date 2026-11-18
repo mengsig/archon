@@ -1,5 +1,5 @@
-//! The agents a stage agent delegated to, at any depth: who created each, on which
-//! model and effort. A stage's cost is its agent's spend plus theirs, split by these rows.
+//! Agents delegated to at any depth and their parent, model and effort.
+//! These rows connect each delegate's spend to its stage or orchestrator.
 
 use std::str::FromStr;
 

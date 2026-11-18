@@ -67,6 +67,13 @@
   trip before the cancel is still cancelled, as Aether has no conditional
   cancel.
 
+### Fixed
+
+- Cost reports attribute recorded delegates to the stage they worked for and
+  use each delegate's model and effort. The CLI and MCP report lead and
+  delegated spend separately, and can group by effort. Archon now records
+  delegation links for the orchestrator's helpers too.
+
 ## 1.6.3
 
 Released 2026-11-18.

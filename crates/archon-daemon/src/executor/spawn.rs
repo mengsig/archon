@@ -1529,11 +1529,12 @@ async fn disk_full(
     }
     table.spawn_errors.remove(&stage.id);
     let message = format!(
-        "create_agent failed on a full disk {failures} times ({error}). Archon's own disk \
+        "{} {failures} times ({error}). Archon's own disk \
          had room each time it retried, so the full disk is likely Aether's: free space \
-         there, then retry the item"
+         there, then retry the item",
+        StageOutcome::DISK_FULL_SPAWN
     );
-    fail_stage_and_run(ctx, table, stage, message).await
+    fail_stage_and_run(ctx, table, stage, message, true).await
 }
 
 /// A refused spawn fails the stage; the driver decides what that means.
@@ -1561,17 +1562,18 @@ async fn policy_refusal(
 ) -> Result<FollowUp, ArchonError> {
     assert!(matches!(error, ArchonError::Policy(_)));
     let message = format!("stage {} refused at spawn: {error}", stage.stage_id);
-    fail_stage_and_run(ctx, table, stage, message).await
+    fail_stage_and_run(ctx, table, stage, message, false).await
 }
 
 /// Fail a spawning stage and its run with a `Blocker`, as only the operator
-/// can resolve why its agent cannot be created. A run already finished is
-/// stopped instead, which retires it once no stage is left.
+/// can resolve why its agent cannot be created; `infra` marks the machine,
+/// not the model, as the cause. A finished run is stopped instead.
 async fn fail_stage_and_run(
     ctx: &DaemonContext,
     table: &mut RunTable,
     stage: &StageRun,
     message: String,
+    infra: bool,
 ) -> Result<FollowUp, ArchonError> {
     assert!(!message.trim().is_empty(), "a failed stage says why");
     let run = {
@@ -1583,6 +1585,7 @@ async fn fail_stage_and_run(
         failed.state = StageState::Failed {
             error: message.clone(),
         };
+        failed.infrastructure_failure = infra;
         failed.finished_at = Some(archon_core::now());
         store.upsert_stage_run(&failed)?;
         store.run(&stage.run)?

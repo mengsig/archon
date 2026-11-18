@@ -235,6 +235,10 @@ pub struct Outcome {
     /// handed in whole by a caller.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure_source: Option<ClassSource>,
+    /// The pull request a review stage of the run reviewed, when its item
+    /// targets one and pushes nothing; frozen here so pruning keeps it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_pr: Option<String>,
     /// Appended as they happen, also after the run finished.
     #[serde(default)]
     pub corrections: Vec<Correction>,
@@ -365,6 +369,7 @@ mod tests {
             result: OutcomeResult::Succeeded,
             failure: None,
             failure_source: None,
+            review_pr: None,
             corrections: Vec::new(),
             feedback: Vec::new(),
             context: None,

@@ -21,19 +21,28 @@
   `budget` when the item's budget guard or Aether's cost cap stopped it, and
   `review` when a review-holding stage did not pass. Before, a review FAIL whose
   error named "aether", "timeout" or "budget" was left unscored, so review pass
-  rates of different repositories could not be compared. Migration V24
-  recomputes stored rows whose runs are kept and logs, per class, the old and
-  new counts and the rows left on the 1.6.3 class. Runs already pruned keep
-  their old class, marked `legacy_163`. For one release the old class stays in
-  `failure_class_163`.
+  rates of different repositories could not be compared. Only the prefixes
+  Archon writes itself are still read: `BLOCKED:`, `ESCALATE:`, the budget
+  guards' own blockers, Aether's cost stop and the daemon's full-disk stop.
+  A review is read as the gate reads it, so a nested `review` that failed or
+  that Archon refused is a `review` failure. Migration V24 recomputes stored
+  rows whose runs are kept and logs, per class, the old and new counts and the
+  rows left on the 1.6.3 class. Runs already pruned keep their old class, marked
+  `legacy_163`, as do runs whose records it cannot read. For one release the
+  old class stays in `failure_class_163`.
+- When `create_agent` keeps failing on Aether's full disk, the stage is now
+  marked an infrastructure failure, as it was classed before.
 - The pipeline lines of `archon model-evidence` count only the runs that
   finished in the report's range, so a pipeline with no run in it has no line.
   Runs a stage ended with `BLOCKED:` or `ESCALATE:` are no longer losses: they
   are counted in `blocked=` and `escalated=`, and routing already read them
   that way. Pipelines that review existing pull requests add
   `prs_passed=<passed>/<reviewed>` and `median_rounds_to_pass`, which count each
-  pull request once, however many heads were reviewed. `archon lessons stats`
-  scores BLOCKED and ESCALATED runs the same way.
+  pull request once, however many heads were reviewed. Each outcome now keeps
+  the pull request it reviewed, so pruning the item does not lose it. V24 fills
+  it in for outcomes whose item is still stored. Outcomes whose item was already
+  pruned have no pull request and are left out of these two counts.
+  `archon lessons stats` scores BLOCKED and ESCALATED runs the same way.
 
 ## 1.6.3
 

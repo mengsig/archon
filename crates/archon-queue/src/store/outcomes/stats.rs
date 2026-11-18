@@ -48,8 +48,7 @@ impl Store {
     }
 }
 
-/// A stored outcome and, when its item reviews an existing pull request,
-/// that pull request's URL.
+/// A stored outcome and the pull request it reviewed, if any.
 type Reviewed = (Outcome, Option<String>);
 
 impl Store {
@@ -85,9 +84,7 @@ impl Store {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT o.data, CASE WHEN json_extract(i.data, '$.onto.review_only')
-                                 THEN json_extract(i.data, '$.onto.pr') END
-                 FROM outcomes o LEFT JOIN items i ON i.id = o.item
+                "SELECT o.data FROM outcomes o
                  WHERE (?1 IS NULL OR o.repo = ?1) AND (?2 IS NULL OR o.pipeline = ?2)
                    AND (?3 IS NULL OR date(o.finished_at, 'localtime') BETWEEN ?3 AND ?4)
                  ORDER BY o.finished_at, o.run",
@@ -101,13 +98,14 @@ impl Store {
                     range.map(|r| r.since.to_string()),
                     range.map(|r| r.until.to_string()),
                 ],
-                |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
+                |r| r.get::<_, String>(0),
             )
             .ctx("query pipeline outcomes")?;
         let mut values = Vec::new();
         for row in rows {
-            let (data, pr) = row.ctx("read pipeline outcome")?;
+            let data = row.ctx("read pipeline outcome")?;
             let outcome = self.settled_outcome(from_json(&data, "outcome")?)?;
+            let pr = outcome.review_pr.clone();
             values.push((outcome, pr));
         }
         assert!(

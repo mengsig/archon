@@ -5762,17 +5762,30 @@ segments retain cost without being labeled failures. Late corrections to estimat
 can make segment cost allocation approximate; the run's ledger total remains current.
 
 **Failure class.** A failed run's class is read from structure, never from its
-error's words. The budget guard's own stage id (`budget`) gives `budget`; a
-stage's `ESCALATE:` or `BLOCKED:` prefix gives `escalated` or `blocked`. Otherwise
-the last stage run of each slot of the failing stage's last attempt decides: a
-timeout gives `timeout`; `infrastructure_failure` gives `infrastructure`; Aether's
-cost-cap stop gives `budget`. A review-kind stage, or one whose result holds a
-`review`, gives `review` unless every slot passed. A test stage gives
-`verification` and a ship stage `ship`. A daemon `ship` step with no stage run
-also gives `ship`. Anything else is `other`. Stage runs from before Archon kept
-their stage's kind are read by stage id. Each class records its source
-(`structure`, `recomputed` by migration V24, or `legacy_163` for a run pruned
-before V24, which keeps its 1.6.3 class).
+error's words. The only text read is what Archon writes on purpose. The budget
+guards' blockers (`BLOCKED: the item's budget is used up`, `BLOCKED: cannot
+enforce the item's dollar budget`) give `budget`, whichever stage reported them.
+A stage's `ESCALATE:` or `BLOCKED:` prefix gives `escalated` or `blocked`.
+Otherwise the last stage run of each slot of the failing stage's last attempt
+decides:
+- a timeout gives `timeout`;
+- Aether's cost-cap stop gives `budget`, even though Aether also marks that
+  agent failed;
+- `infrastructure_failure`, or the daemon's full-disk spawn stop, gives
+  `infrastructure`;
+- a review-kind stage, or one whose result holds a `review`, gives `review`
+  unless every slot passed. A slot passes as the gate reads it: by its verdict,
+  by its nested `review.verdict`, and only if Archon did not refuse that review;
+- a test stage gives `verification`, and a ship stage `ship`;
+- a daemon `ship` step with no stage run also gives `ship`;
+- anything else is `other`.
+
+Stage runs from before Archon kept their stage's kind are read by stage id.
+Each class records its source: `structure`, `recomputed` by migration V24, or
+`legacy_163`. A run is `legacy_163` when it was pruned before V24, or when V24
+could not read its records, and it keeps its 1.6.3 class. An outcome also keeps
+the pull request it reviewed, `review_pr`, so pruning the item does not lose the
+report's pull request counts.
 
 **Attribution.** Structured operator feedback is explicit:
 `correction {"item":"qi_…","stage":"implement","cause":"quality","reason":"…"}`.

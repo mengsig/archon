@@ -811,6 +811,10 @@ impl StageOutcome {
     /// What Aether's error says of an agent it stopped at its cost budget.
     pub const COST_BUDGET_STOP: &'static str = "cost budget of $";
 
+    /// How the daemon's error opens when Aether's disk stayed full through
+    /// every spawn retry: an infrastructure stop, also on 1.6.3 records.
+    pub const DISK_FULL_SPAWN: &'static str = "create_agent failed on a full disk";
+
     pub fn is_operator_blocker(&self) -> bool {
         matches!(self, Self::Failed { error, .. } if error.trim_start().starts_with(Self::BLOCKED_PREFIX))
     }

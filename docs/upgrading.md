@@ -22,10 +22,15 @@ in one write transaction. V24 adds `outcomes.class_source` and
 `outcomes.failure_class_163`. It then recomputes the failure class of every
 stored failed run from that run's stage records (the timed-out,
 infrastructure, budget and review rules of the [changelog](../CHANGELOG.md)),
-and keeps the old class in `failure_class_163` for one release. A run whose
-stage records were pruned keeps its old class, marked `legacy_163`. archond
-logs, per class, the old count, the new count and the rows left on the 1.6.3
-class.
+and keeps the old class in `failure_class_163` for one release. Only the
+class columns and fields change. A run whose stage records were pruned keeps
+its old class, marked `legacy_163`. So does a run whose records V24 cannot
+read: it logs the run and leaves an unreadable outcome record as it was.
+archond logs, per class, the old count, the new count and the rows left on the
+1.6.3 class. V24 also stores, in each outcome of a review that is still stored,
+the pull request it reviewed. Outcomes whose item was already pruned have no
+pull request, so the model evidence report leaves them out of its pull request
+counts.
 
 **Downgrading the binary is not supported after V24 has run.** The schema
 check of an older archond refuses a newer store ("store schema version 24 is

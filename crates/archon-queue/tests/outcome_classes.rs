@@ -106,15 +106,78 @@ fn deadlines_backends_and_cost_caps_are_read_from_the_stage_that_ended_the_run()
     assert_eq!(capped.failure, Some(FailureClass::Budget));
     let guard = failed_with(
         BUDGET_STAGE,
-        "BLOCKED: the item's budget is used up",
+        "BLOCKED: the item's budget is used up: $1.00 spent of its $1.00 cap ($0.00 over)",
+        |_| Vec::new(),
+    );
+    assert_eq!(guard.failure, Some(FailureClass::Budget), "the usage guard");
+    let spent = failed_with(
+        "implement",
+        "BLOCKED: the item's budget is used up: $1.00 spent of its $1.00 cap ($0.00 over)",
         |_| Vec::new(),
     );
     assert_eq!(
-        guard.failure,
+        spent.failure,
         Some(FailureClass::Budget),
-        "the budget guard's own stage id"
+        "spent before dispatch"
     );
-    for class in [timed_out, infra, capped, guard].map(|o| o.failure.unwrap()) {
+    let unpriced = failed_with(
+        BUDGET_STAGE,
+        "BLOCKED: cannot enforce the item's dollar budget: Aether reported usage",
+        |_| Vec::new(),
+    );
+    assert_eq!(unpriced.failure, Some(FailureClass::Budget));
+    let named = failed_with(BUDGET_STAGE, "BLOCKED: needs a token", |_| Vec::new());
+    assert_eq!(
+        named.failure,
+        Some(FailureClass::Blocked),
+        "a stage named budget is no budget stop"
+    );
+    let failed_agent = failed_with("implement", "stage failed", |run| {
+        let error = "agent stopped: cost budget of $2.00 reached".into();
+        let mut stage = settled(
+            run,
+            "implement",
+            StageKind::Work,
+            StageState::Failed { error },
+        );
+        stage.infrastructure_failure = true;
+        vec![stage]
+    });
+    assert_eq!(
+        failed_agent.failure,
+        Some(FailureClass::Budget),
+        "Aether's cost stop also marks the agent failed"
+    );
+    let disk = failed_with(
+        "implement",
+        "create_agent failed on a full disk 5 times (x)",
+        |run| {
+            let error = "create_agent failed on a full disk 5 times (x)".into();
+            vec![settled(
+                run,
+                "implement",
+                StageKind::Work,
+                StageState::Failed { error },
+            )]
+        },
+    );
+    assert_eq!(
+        disk.failure,
+        Some(FailureClass::Infrastructure),
+        "a 1.6.3 disk stop"
+    );
+    for class in [
+        timed_out,
+        infra,
+        capped,
+        guard,
+        spent,
+        unpriced,
+        failed_agent,
+        disk,
+    ]
+    .map(|o| o.failure.unwrap())
+    {
         assert!(archon_core::outcome::UNSCORED_FAILURES.contains(&class));
     }
 }
@@ -153,6 +216,67 @@ fn words_alone_never_make_a_class_and_a_retried_slot_ends_with_its_last_try() {
         passed.failure,
         Some(FailureClass::Other),
         "a passed review failed nothing"
+    );
+}
+
+#[test]
+fn a_nested_review_is_read_as_the_gate_reads_it() {
+    let claimed = |review: serde_json::Value| {
+        move |run: &PipelineRun| {
+            let mut work = settled(run, "implement", StageKind::Work, StageState::Completed);
+            work.verdict = Some(Verdict::Pass);
+            work.structured = Some(serde_json::json!({ "review": review.clone() }));
+            vec![work]
+        }
+    };
+    let failed = failed_with(
+        "implement",
+        "gate",
+        claimed(serde_json::json!({"verdict": "FAIL"})),
+    );
+    assert_eq!(
+        failed.failure,
+        Some(FailureClass::Review),
+        "the nested verdict failed"
+    );
+    let refused = serde_json::json!({"verdict": "pass", "unverified": "no reviewer ran"});
+    let refused = failed_with("implement", "gate", claimed(refused));
+    assert_eq!(
+        refused.failure,
+        Some(FailureClass::Review),
+        "Archon refused the pass"
+    );
+    let passed = failed_with(
+        "implement",
+        "later",
+        claimed(serde_json::json!({"verdict": "pass"})),
+    );
+    assert_eq!(
+        passed.failure,
+        Some(FailureClass::Other),
+        "a passed review failed nothing"
+    );
+    let legacy = failed_with("code-review", "later", |run| {
+        let mut review = settled(run, "code-review", StageKind::Review, StageState::Completed);
+        review.kind = None;
+        review.verdict = Some(Verdict::Pass);
+        vec![review]
+    });
+    assert_eq!(
+        legacy.failure,
+        Some(FailureClass::Other),
+        "a kindless review that passed"
+    );
+    let legacy_fail = failed_with("code-review", "x", |run| {
+        let mut review = review_fail(run);
+        review.stage_id = "code-review".into();
+        review.kind = None;
+        vec![review]
+    });
+    assert_eq!(
+        legacy_fail.failure,
+        Some(FailureClass::Review),
+        "a kindless review that failed"
     );
 }
 

@@ -294,8 +294,262 @@ fn reclassify_counts_add_up_and_v24_runs_on_an_empty_store() {
     assert_eq!(counts.recomputed, 1);
     assert_eq!(
         counts.before,
-        BTreeMap::from([("review", 1), ("timeout", 1)])
+        BTreeMap::from([("review".into(), 1), ("timeout".into(), 1)])
     );
-    assert_eq!(counts.after, BTreeMap::from([("review", 2)]));
-    assert_eq!(counts.legacy, BTreeMap::from([("review", 1)]));
+    assert_eq!(counts.after, BTreeMap::from([("review".into(), 2)]));
+    assert_eq!(counts.legacy, BTreeMap::from([("review".into(), 1)]));
+}
+
+/// The class columns of a row, read without decoding its record.
+fn columns(
+    conn: &Connection,
+    run: &PipelineRun,
+) -> (Option<String>, Option<String>, Option<String>) {
+    conn.query_row(
+        "SELECT failure_class, class_source, failure_class_163 FROM outcomes WHERE run = ?1",
+        [run.id.as_str()],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )
+    .unwrap()
+}
+
+fn failed_stage(run: &PipelineRun, kind: StageKind, error: &str, infra: bool) -> StageRun {
+    let error = error.into();
+    let mut failed = stage(run, &run_stage(run), kind, StageState::Failed { error });
+    failed.infrastructure_failure = infra;
+    failed
+}
+
+fn run_stage(run: &PipelineRun) -> String {
+    match &run.state {
+        RunState::Failed { stage_id, .. } => stage_id.clone(),
+        _ => unreachable!("only a failed run is classed"),
+    }
+}
+
+fn failed_run(stage_id: &str, error: &str) -> PipelineRun {
+    let state = RunState::Failed {
+        stage_id: stage_id.into(),
+        error: error.into(),
+    };
+    run(&QueueItemId::new(), state)
+}
+
+#[test]
+fn v24_reads_daemon_stops_and_nested_reviews() {
+    let mut conn = v23_store();
+    let nested = failed_run("implement", "stage `implement` failed its gate");
+    let mut work = stage(&nested, "implement", StageKind::Work, StageState::Completed);
+    work.verdict = Some(Verdict::Pass);
+    work.structured = Some(serde_json::json!({"review": {"verdict": "FAIL"}}));
+    seed(
+        &conn,
+        &nested,
+        &[work.clone()],
+        Some(FailureClass::Other),
+        false,
+    );
+    let refused = failed_run("implement", "stage `implement` failed its gate");
+    work.run = refused.id.clone();
+    work.id = StageRunId::new();
+    work.structured =
+        Some(serde_json::json!({"review": {"verdict": "pass", "unverified": "no reviewer ran"}}));
+    seed(&conn, &refused, &[work], Some(FailureClass::Other), false);
+    let spent = failed_run(
+        "implement",
+        "BLOCKED: the item's budget is used up: $1.00 spent of its $1.00 cap ($0.00 over)",
+    );
+    seed(&conn, &spent, &[], Some(FailureClass::Blocked), false);
+    let capped = failed_run("implement", "agent failed");
+    let stop = failed_stage(
+        &capped,
+        StageKind::Work,
+        "agent stopped at its cost budget of $2.00",
+        true,
+    );
+    seed(
+        &conn,
+        &capped,
+        &[stop],
+        Some(FailureClass::Infrastructure),
+        false,
+    );
+    let disk = failed_run(
+        "review",
+        "create_agent failed on a full disk 5 times (ENOSPC)",
+    );
+    let full = failed_stage(
+        &disk,
+        StageKind::Review,
+        "create_agent failed on a full disk 5 times (ENOSPC)",
+        false,
+    );
+    seed(
+        &conn,
+        &disk,
+        &[full],
+        Some(FailureClass::Infrastructure),
+        false,
+    );
+
+    assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+
+    let class = |run: &PipelineRun| columns(&conn, run).0;
+    assert_eq!(
+        class(&nested),
+        some("review"),
+        "the gate read a failed nested review"
+    );
+    assert_eq!(
+        class(&refused),
+        some("review"),
+        "Archon refused the claimed review"
+    );
+    assert_eq!(
+        class(&spent),
+        some("budget"),
+        "the cap ran out before dispatch"
+    );
+    assert_eq!(
+        class(&capped),
+        some("budget"),
+        "Aether's cost stop outranks its failure flag"
+    );
+    assert_eq!(
+        class(&disk),
+        some("infrastructure"),
+        "Aether's disk stayed full"
+    );
+}
+
+#[test]
+fn v24_keeps_the_old_class_of_rows_it_cannot_read_and_opens() {
+    let mut conn = v23_store();
+    let failed_review = |run: &PipelineRun| {
+        let mut verdict = stage(run, "review", StageKind::Review, StageState::Completed);
+        verdict.verdict = Some(Verdict::Fail);
+        verdict
+    };
+    let torn = failed_run("review", "x");
+    seed(
+        &conn,
+        &torn,
+        &[failed_review(&torn)],
+        Some(FailureClass::Other),
+        false,
+    );
+    conn.execute(
+        "UPDATE stage_runs SET data = '{\"torn\": true}' WHERE run = ?1",
+        [torn.id.as_str()],
+    )
+    .unwrap();
+    let odd = failed_run("review", "x");
+    seed(
+        &conn,
+        &odd,
+        &[failed_review(&odd)],
+        Some(FailureClass::Budget),
+        false,
+    );
+    conn.execute(
+        "UPDATE outcomes SET data = json_set(data, '$.finished_at', 'not a time') WHERE run = ?1",
+        [odd.id.as_str()],
+    )
+    .unwrap();
+    let garbage = failed_run("review", "x");
+    seed(
+        &conn,
+        &garbage,
+        &[failed_review(&garbage)],
+        Some(FailureClass::Budget),
+        false,
+    );
+    conn.execute(
+        "UPDATE outcomes SET data = 'not json' WHERE run = ?1",
+        [garbage.id.as_str()],
+    )
+    .unwrap();
+
+    assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+
+    assert_eq!(
+        columns(&conn, &torn),
+        (some("other"), some("legacy_163"), some("other")),
+        "a lost ending slot could hide what stopped the run"
+    );
+    assert_eq!(
+        columns(&conn, &odd),
+        (some("review"), some("recomputed"), some("budget"))
+    );
+    let odd_record: String = conn
+        .query_row(
+            "SELECT json_extract(data, '$.failure') FROM outcomes WHERE run = ?1",
+            [odd.id.as_str()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(odd_record, "review");
+    assert_eq!(columns(&conn, &garbage).1, some("recomputed"));
+    let kept: String = conn
+        .query_row(
+            "SELECT data FROM outcomes WHERE run = ?1",
+            [garbage.id.as_str()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(kept, "not json", "an unreadable record is left as it was");
+}
+
+#[test]
+fn v24_freezes_the_reviewed_pull_request_into_its_outcome() {
+    let mut conn = v23_store();
+    let pr = "https://github.com/o/r/pull/7";
+    let reviewed = failed_run("review", "x");
+    let review = stage(
+        &reviewed,
+        "review",
+        StageKind::Review,
+        StageState::Completed,
+    );
+    seed(
+        &conn,
+        &reviewed,
+        &[review],
+        Some(FailureClass::Review),
+        false,
+    );
+    let read = failed_run("read", "x");
+    let analysis = stage(&read, "read", StageKind::Work, StageState::Completed);
+    seed(&conn, &read, &[analysis], Some(FailureClass::Other), false);
+    let target = serde_json::json!({"onto": {"review_only": true, "pr": pr}}).to_string();
+    for run in [&reviewed, &read] {
+        conn.execute(
+            "UPDATE items SET data = ?2 WHERE id = ?1",
+            [run.item.as_str(), &target],
+        )
+        .unwrap();
+    }
+
+    assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+
+    let frozen = |run: &PipelineRun| -> Option<String> {
+        let data: String = conn
+            .query_row(
+                "SELECT data FROM outcomes WHERE run = ?1",
+                [run.id.as_str()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        serde_json::from_str::<Outcome>(&data).unwrap().review_pr
+    };
+    assert_eq!(
+        frozen(&reviewed),
+        some(pr),
+        "the record itself names the pull request"
+    );
+    assert_eq!(
+        frozen(&read),
+        None,
+        "a pipeline that reviewed nothing reviewed no pull request"
+    );
 }

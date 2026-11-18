@@ -6,6 +6,7 @@ use archon_core::error::ArchonError;
 use archon_core::outcome::{
     ClassSource, DiffStat, FailureClass, Outcome, OutcomeResult, OutcomeStage,
 };
+use archon_core::queue::QueueItem;
 use archon_core::run::{PipelineRun, RunState, StageRun, Verdict};
 use rusqlite::OptionalExtension;
 use std::collections::{BTreeMap, BTreeSet};
@@ -36,6 +37,7 @@ impl Store {
         assert!(run.state.is_terminal());
         assert_eq!(item.id, run.item);
         let observations = stage_observations(self, &stages, estimates)?;
+        let review_pr = reviewed_pr(&item, &stages);
         let total = self
             .spend_for_run(&run.id, estimates)?
             .max(run.cost_usd)
@@ -56,6 +58,7 @@ impl Store {
             result,
             failure,
             failure_source: failure.map(|_| ClassSource::Structure),
+            review_pr,
             corrections: historical_corrections(self, run)?,
             feedback: Vec::new(),
             context: None,
@@ -148,6 +151,14 @@ fn result(
         )),
         _ => Err(ArchonError::Invalid("a live run has no outcome".into())),
     }
+}
+
+/// The pull request the run reviewed: its item's target when the item pushes
+/// nothing and a stage of the run held a review.
+fn reviewed_pr(item: &QueueItem, stages: &[StageRun]) -> Option<String> {
+    let onto = item.onto.as_ref().filter(|onto| onto.review_only)?;
+    let reviewed = stages.iter().any(super::class::holds_review);
+    reviewed.then(|| onto.pr.url())
 }
 
 fn reported_diff(stages: &[StageRun]) -> Option<DiffStat> {

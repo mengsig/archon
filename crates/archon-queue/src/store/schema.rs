@@ -779,11 +779,26 @@ CREATE INDEX lesson_trials_by_run ON lesson_trials (run);
 
 /// Version 24 (1.6.4 A2): a failed run's class comes from its stage records.
 /// [`RECLASSIFY_VERSION`] recomputes stored rows after this SQL; the class 1.6.3
-/// gave a row stays in `failure_class_163` for one release.
+/// gave a row stays in `failure_class_163` for one release. A reviewed pull
+/// request is frozen into its outcome while the item is still stored.
 const V24: &str = r#"
 ALTER TABLE outcomes ADD COLUMN class_source TEXT
     CHECK (class_source IN ('structure', 'recomputed', 'legacy_163'));
 ALTER TABLE outcomes ADD COLUMN failure_class_163 TEXT;
+WITH reviewed(run, pr) AS (
+    SELECT o.run, json_extract(i.data, '$.onto.pr')
+    FROM outcomes o JOIN items i ON i.id = o.item
+    WHERE json_valid(i.data) AND json_valid(o.data)
+      AND CASE WHEN json_valid(i.data) THEN json_extract(i.data, '$.onto.review_only') END
+      AND EXISTS (
+          SELECT 1 FROM stage_runs s
+          WHERE s.run = o.run AND json_valid(s.data)
+            AND CASE WHEN json_valid(s.data)
+                THEN json_extract(s.data, '$.kind') = 'review'
+                  OR json_type(s.data, '$.structured.review') = 'object' END)
+)
+UPDATE outcomes SET data = json_set(data, '$.review_pr', reviewed.pr)
+FROM reviewed WHERE reviewed.run = outcomes.run AND reviewed.pr IS NOT NULL;
 "#;
 
 /// The migration after whose SQL stored failure classes are recomputed.

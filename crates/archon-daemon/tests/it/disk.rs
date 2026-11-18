@@ -263,7 +263,17 @@ async fn create_agent_on_a_disk_archon_cannot_see_fails_the_stage_after_five_tri
         "{:?}",
         stage.state
     );
+    assert!(
+        stage.infrastructure_failure,
+        "the machine failed, not the model"
+    );
     assert!(matches!(h.state(&item.id).await, QueueState::Failed { .. }));
+    let outcome = h.ctx.store.lock().await.outcome(&stage.run).unwrap();
+    let failure = outcome.expect("captured at finish").failure;
+    assert_eq!(
+        failure,
+        Some(archon_core::outcome::FailureClass::Infrastructure)
+    );
     let blockers = h.notices(NotificationKind::Blocker).await;
     assert_eq!(blockers.len(), 2, "{blockers:?}");
     assert!(blockers[1].contains("Aether's"), "{}", blockers[1]);

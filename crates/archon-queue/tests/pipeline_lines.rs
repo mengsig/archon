@@ -2,10 +2,11 @@
 //! run a stage handed on (BLOCKED, ESCALATE) is no loss.
 mod common;
 use archon_core::Timestamp;
+use archon_core::catalog::StageKind;
 use archon_core::cost::DayRange;
 use archon_core::pull_request::{OntoPullRequest, OntoTarget, PullRequestRef};
 use archon_core::queue::{QueueItem, QueueState};
-use archon_core::run::{PipelineRun, RunState};
+use archon_core::run::{PipelineRun, RunState, StageState};
 use archon_queue::Store;
 use common::*;
 
@@ -50,6 +51,15 @@ fn finish(store: &mut Store, item: &QueueItem, state: RunState, at: Timestamp) {
         Err(_) => store.insert_item(item, None).unwrap().id,
     };
     let run = start(store, &id);
+    let mut ran = stage(&run, 0);
+    ran.stage_id = "review".into();
+    ran.kind = Some(match item.pipeline.as_str() {
+        "review" => StageKind::Review,
+        _ => StageKind::Work,
+    });
+    ran.state = StageState::Completed;
+    ran.finished_at = Some(at);
+    store.upsert_stage_run(&ran).unwrap();
     let next = match &state {
         RunState::Succeeded { summary } => QueueState::Succeeded {
             run: run.id.clone(),
@@ -156,13 +166,13 @@ fn blocked_and_escalated_runs_are_no_loss_and_have_their_own_columns() {
 fn a_pull_request_reviewed_at_five_heads_counts_once() {
     let mut store = store();
     let at = t(DAY);
-    let many = reviewing(42);
-    for _ in 0..4 {
-        finish(&mut store, &many, failed("the review failed"), at);
+    let first = reviewing(42);
+    finish(&mut store, &first, failed("the review failed"), at);
+    for _ in 0..3 {
+        finish(&mut store, &reviewing(42), failed("the review failed"), at);
     }
-    finish(&mut store, &many, passed(), at);
-    let once = reviewing(7);
-    finish(&mut store, &once, passed(), at);
+    finish(&mut store, &reviewing(42), passed(), at);
+    finish(&mut store, &reviewing(7), passed(), at);
     finish(&mut store, &reviewing(9), failed("the review failed"), at);
     let lines = store.pipeline_lines(None, None, &range(at)).unwrap();
     let prs = lines[0].review_prs.as_ref().expect("a review pipeline");
@@ -176,4 +186,27 @@ fn a_pull_request_reviewed_at_five_heads_counts_once() {
         .pipeline_lines(None, Some("direct"), &range(at))
         .unwrap();
     assert!(build.is_empty());
+
+    let pruned = store
+        .prune_history(t(DAY * 400), 100, |_, _| false)
+        .unwrap();
+    assert!(pruned.total() > 0, "{pruned:?}");
+    assert!(store.item(&first.id).is_err(), "the item is pruned");
+    let kept = store.pipeline_lines(None, None, &range(at)).unwrap();
+    assert_eq!(
+        kept[0].review_prs, lines[0].review_prs,
+        "pruning keeps the evidence"
+    );
+}
+
+#[test]
+fn a_pipeline_that_reviews_nothing_reviews_no_pull_request() {
+    let mut store = store();
+    let at = t(DAY);
+    let mut read = reviewing(5);
+    read.pipeline = "read".into();
+    finish(&mut store, &read, passed(), at);
+    let lines = store.pipeline_lines(None, None, &range(at)).unwrap();
+    assert_eq!((lines[0].pipeline.as_str(), lines[0].runs), ("read", 1));
+    assert_eq!(lines[0].review_prs, None, "its target alone is no review");
 }

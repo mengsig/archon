@@ -23,17 +23,19 @@
   `review` pipeline's lead, which fails through `fail_task` (stage runs now
   record `only_reviews`). A recorded stage kind always wins over the stage id:
   a 1.6.3 work stage's failure is a `review` failure only when its result
-  carries a review or archond's review tally (`review_rounds:<stage run>`)
-  holds a reviewer's fail, and a kindless 1.4.x stage with `review` in its id
-  only when it holds a pass or fail verdict. Before, a review FAIL whose
+  carries a review whose verdict reads pass or fail, or archond's review tally
+  (`review_rounds:<stage run>`) holds a reviewer's fail, and a kindless 1.4.x
+  stage with `review` in its id only when it holds a pass or fail verdict. Before, a review FAIL whose
   error named "aether", "timeout" or "budget" was left unscored, so review pass
   rates of different repositories could not be compared. Only the prefixes
   Archon writes itself are still read: `BLOCKED:`, `ESCALATE:`, the budget
   guards' own blockers, Aether's cost stop (only in Aether's own grammar,
-  `cost budget of $<limit>: <cost> spent`, where the cost is `$<amount>`,
-  `≥ $<amount> (<gap>)` or `not reported`, with one of Aether's own gap labels,
-  and each amount as Aether formats it: a limit with no trailing zero, a spend
-  with exactly four decimals, so `$9 spent` and `$5.00` are none of its;
+  `cost budget of $<limit>: <cost> spent`, where the cost is `$<amount>` or
+  `≥ $<amount> (<gap>)` with one of Aether's own gap labels, and each amount
+  is one Aether's formatters write for a stop: a positive limit with no
+  trailing zero, and a spend with exactly four decimals that has reached the
+  limit, so `$9 spent`, `$5.00`, `$5: $4.9999 spent` and `not reported` are
+  none of its;
   alone or inside Aether's whole budget message, matched exactly: nothing may
   precede it, and nothing may follow but Archon's own whole notional-cost
   label. Anything else, such as a task's words that open with the phrase, is
@@ -54,8 +56,10 @@
   read, runs recovery failed, runs whose ending stage left no record, and kept
   runs missing any stage run their outcome observed; none of these is
   recomputed, and their lesson uses are not rescored. A row SQLite holds as
-  something other than text, one that does not decode, and a review tally that
-  names no reviewer are records it cannot read: V24 logs the run and goes on. For one release the old class stays in
+  something other than text, one that does not decode, and a review tally in
+  any shape archond does not store (each fail names its reviewer's agent id,
+  the commit that reviewer read and its findings) are records it cannot read:
+  V24 logs the run and goes on. For one release the old class stays in
   `failure_class_163`.
 - When `create_agent` keeps failing on Aether's full disk, the stage is now
   marked an infrastructure failure, as it was classed before. So is a stage
@@ -73,8 +77,9 @@
   as reviewed only when a reviewer's verdict is on record for the run: a review
   stage's pass or fail, the verdict of the review a stage's result carries
   (unless Archon refused it), or a reviewer's fail in archond's review tally.
-  The carried verdict is read on one line, as the gate reads it, and a tally
-  counts only fails that name their reviewer. A review-only target or assignment alone is no review, so a level-`none`
+  The carried verdict is read as the gate reads it, as one line of at most 400
+  characters, and a tally counts only in the shape archond stores it. A
+  review-only target or assignment alone is no review, so a level-`none`
   read that records none reviews no pull request. Each outcome now keeps
   the pull request it reviewed, so pruning the item does not lose it. V24 fills
   it in for outcomes whose item is still stored. Outcomes whose item was already

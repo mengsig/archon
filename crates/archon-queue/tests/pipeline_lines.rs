@@ -325,11 +325,20 @@ fn a_verdict_the_gate_took_across_a_line_break_reviewed_its_pull_request() {
     let outcome = store.outcome(&run.id).unwrap().unwrap();
     assert!(outcome.review_pr.is_some(), "{outcome:?}");
     finish_saying(&mut store, &reviewing(32), passed(), at, Some("not sure"));
+    // The gate reads a verdict's first 400 characters: these say pass.
+    let capped = reviewing(33);
+    let long_pass = format!("PASS{}x", "-".repeat(396));
+    finish_saying(&mut store, &capped, passed(), at, Some(&long_pass));
+    let run = &store.runs_for_item(&capped.id).unwrap()[0];
+    let outcome = store.outcome(&run.id).unwrap().unwrap();
+    assert!(outcome.review_pr.is_some(), "{outcome:?}");
+    let overlong = format!("PASS{}x", "-".repeat(395));
+    finish_saying(&mut store, &reviewing(34), passed(), at, Some(&overlong));
     let lines = store.pipeline_lines(None, None, &range(at)).unwrap();
-    let prs = lines[0].review_prs.as_ref().expect("one was reviewed");
+    let prs = lines[0].review_prs.as_ref().expect("two were reviewed");
     assert_eq!(
         (prs.reviewed, prs.passed),
-        (1, 1),
+        (2, 2),
         "an unread word is no verdict"
     );
 }

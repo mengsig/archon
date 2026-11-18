@@ -5777,21 +5777,26 @@ decides:
   agent failed. Aether gives no structured signal for it, so its text is
   matched exactly: `cost budget of $<limit>: <cost> spent`, alone or inside
   Aether's whole budget message up to "Details are in the exhaustion.failed
-  event.", followed by nothing or Archon's whole notional-cost label. The
-  amounts are the ones Aether's formatters write: a limit with at most six
-  decimals and no trailing zero (`$5`, `$2.5`), a spend with exactly four
-  (`$5.0100`, or `≥ $5.0100 (<gap>)`), or `not reported`, alone or with the
-  gap label Aether gives it. Any other text, `$9 spent` or `$5.00` included,
-  is no budget stop and falls to the rules below;
+  event.", with the count of live descendants a whole number, followed by
+  nothing or Archon's whole notional-cost label. The amounts are the ones
+  Aether's formatters write for a stop: a positive limit exactly as
+  `format_usd` spells it (at most six decimals and no trailing zero, `$5` or
+  `$2.5`; an amount below that precision in its shortest form), and a spend
+  with exactly four decimals (`$5.0100`, or `≥ $5.0100 (<gap>)` with one of
+  Aether's gap labels) that has reached the limit, as Aether stops an agent at
+  `spend >= limit`: its four decimals may round it down by half a unit, and
+  no further. Any other text is no budget stop and falls to the rules below:
+  `$9 spent`, `$5.00`, `$0.0000009` (which Aether writes `$0.000001`),
+  `$5: $4.9999 spent` and `not reported` among them;
 - `infrastructure_failure` gives `infrastructure`. So does a spawn the daemon
   gave up on: the stage run has no agent and its error opens `create_agent
   failed on a full disk` or `create_agent kept failing: `. archond flags both
   itself; the words are read only for 1.6.3 records, and never on a stage run
   that has an agent;
 - a review-kind stage, a review-only run's lead (`only_reviews`), one whose
-  result holds a `review`, or one whose review tally (kv
-  `review_rounds:<stage run>`, kept by archond as reviewers settle) holds a
-  reviewer's fail, gives `review` unless every slot passed. A slot passes as the gate reads it: by its verdict,
+  result holds a `review` whose verdict reads pass or fail, or one whose review
+  tally (kv `review_rounds:<stage run>`, kept by archond as reviewers settle)
+  holds a reviewer's fail, gives `review` unless every slot passed. A slot passes as the gate reads it: by its verdict,
   by its nested `review.verdict`, and only if Archon did not refuse that review.
   A gate failure that names the declared review as not on record (the gate's own
   headline) also gives `review`;
@@ -5806,8 +5811,9 @@ rows left do not say what stopped it.
 A recorded stage kind always wins over the stage id. Only a stage run from
 before Archon kept kinds (1.4.x) is read by its id, as a test or ship stage, and
 as a review only when it also holds a pass or fail verdict. A 1.6.3 work stage,
-which kept no `only_reviews`, is a review failure only by its carried `review`
-or its tally. Each class records its source: `structure`, `recomputed` by
+which kept no `only_reviews`, is a review failure only by the pass or fail of
+its carried `review` or by its tally: a carried `review` that states neither
+leaves it a work stage. Each class records its source: `structure`, `recomputed` by
 migration V24, or `legacy_163`. A run is `legacy_163`, keeps its 1.6.3 class and
 has no lesson use rescored when it was pruned before V24, when V24 could not
 read its records, when its outcome observed more runs of a stage than are still
@@ -5821,8 +5827,11 @@ goes on, and never stops the migration for one. An outcome also keeps the pull r
 It is kept only when a reviewer's verdict is on record for the run: a review
 stage's pass or fail, the pass or fail of the `review` a stage's result carries
 (unless Archon refused it), or a reviewer's fail in the tally. The carried
-verdict is read on one line, as the gate reads it, and a tally counts only the
-fails that name their reviewer; one that is no archond tally is unreadable. A
+verdict is read as the gate reads it: as one line, and no more than its first
+400 characters. A tally counts only in the shape archond stores: each fail
+names its reviewer's Aether agent id, the commit that reviewer read (7 to 64
+lowercase hexadecimal digits) and its findings (`titles` before they were
+described). A tally in any other shape is unreadable, so no reviewer's fail. A
 review-only target or assignment alone is no review.
 
 **Attribution.** Structured operator feedback is explicit:

@@ -122,38 +122,115 @@ fn v24_freezes_a_pull_request_only_on_a_recorded_reviewer_verdict() {
     );
 }
 
-/// The gate reads a carried verdict on one line; archond's tally names the
-/// reviewer of each fail, so one that names none is no reviewer's verdict.
+/// A review-only run that succeeded on a lead carrying `verdict`.
+fn carried_run(conn: &Connection, verdict: &str) -> PipelineRun {
+    let run = succeeded_run();
+    let mut lead = stage(&run, "review", StageKind::Work, StageState::Completed);
+    lead.verdict = Some(Verdict::Pass);
+    lead.structured = Some(serde_json::json!({"review": {"verdict": verdict}}));
+    seed(conn, &run, &[lead], None, false);
+    run
+}
+
+/// A 1.6.3 review lead that failed its task, classed `other`, under `tally`.
+fn tallied_run(conn: &Connection, tally: &str) -> PipelineRun {
+    let run = failed_run("review", "the review found blocking issues");
+    let lead = failed_lead(&run);
+    let key = archon_core::run::review_tally_key(&lead.id);
+    conn.execute(
+        "INSERT INTO kv (key, value) VALUES (?1, ?2)",
+        [key, tally.to_owned()],
+    )
+    .unwrap();
+    seed(conn, &run, &[lead], Some(FailureClass::Other), false);
+    run
+}
+
+/// The gate reads a carried verdict as one line of at most 400 characters;
+/// archond's tally names the reviewer, head and findings of each fail, so a
+/// tally in another shape is no reviewer's verdict.
 #[test]
 fn v24_reads_a_carried_verdict_as_the_gate_does_and_a_tally_by_its_reviewers() {
     let mut conn = v23_store();
-    let spaced = succeeded_run();
-    let mut lead = stage(&spaced, "review", StageKind::Work, StageState::Completed);
-    lead.verdict = Some(Verdict::Pass);
-    lead.structured = Some(serde_json::json!({"review": {"verdict": "PASS\n"}}));
-    seed(&conn, &spaced, &[lead], None, false);
-    let unnamed = failed_run("review", "the review found blocking issues");
-    let lead = failed_lead(&unnamed);
-    conn.execute(
-        "INSERT INTO kv (key, value) VALUES (?1, ?2)",
-        [
-            archon_core::run::review_tally_key(&lead.id),
-            r#"{"fails":[null]}"#.to_owned(),
-        ],
-    )
-    .unwrap();
-    seed(&conn, &unnamed, &[lead], Some(FailureClass::Other), false);
-    target(&conn, &[&spaced, &unnamed], review_only());
+    let spaced = carried_run(&conn, "PASS\n");
+    let capped = carried_run(&conn, &format!("PASS{}x", "-".repeat(396)));
+    let overlong = carried_run(&conn, &format!("PASS{}x", "-".repeat(395)));
+    let unstorable = [
+        r#"{"fails":[null]}"#,
+        r#"{"fails":[{"agent":"not an agent"}]}"#,
+        r#"{"fails":[{"agent":"agt_r","head":"abc1234"}]}"#,
+        r#"{"fails":[{"agent":"not an agent","head":"abc1234","findings":["a bug"]}]}"#,
+        r#"{"fails":[{"agent":"agt_r","head":"the head","findings":["a bug"]}]}"#,
+        r#"{"fails":[],"other_fails":[["agt_r","HEAD"]]}"#,
+    ]
+    .map(|tally| tallied_run(&conn, tally));
+    let stored = tallied_run(
+        &conn,
+        r#"{"fails":[{"agent":"agt_r","head":"abc1234","titles":[]}],"told":true}"#,
+    );
+    let mut every = vec![&spaced, &capped, &overlong, &stored];
+    every.extend(&unstorable);
+    target(&conn, &every, review_only());
 
     assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
 
     assert_eq!(frozen(&conn, &spaced), some(PR), "a pass on its own line");
-    assert_eq!(frozen(&conn, &unnamed), None, "a fail with no reviewer");
     assert_eq!(
-        columns(&conn, &unnamed),
-        (some("other"), some("legacy_163"), some("other")),
-        "a tally archond did not write keeps the run's class"
+        frozen(&conn, &capped),
+        some(PR),
+        "the gate reads the first 400 characters, which say pass"
     );
+    assert_eq!(
+        frozen(&conn, &overlong),
+        None,
+        "its first 400 characters name no verdict"
+    );
+    for run in &unstorable {
+        assert_eq!(frozen(&conn, run), None, "no reviewer's fail is stored");
+        assert_eq!(
+            columns(&conn, run),
+            (some("other"), some("legacy_163"), some("other")),
+            "a tally archond did not write keeps the run's class"
+        );
+    }
+    assert_eq!(frozen(&conn, &stored), some(PR), "a fail as 1.3 stored it");
+    assert_eq!(
+        columns(&conn, &stored),
+        (some("review"), some("recomputed"), some("other"))
+    );
+}
+
+/// A recorded work kind stands unless a reviewer's verdict is on record: a
+/// carried review that states none makes no review of the stage.
+#[test]
+fn v24_keeps_a_work_stage_whose_carried_review_states_no_verdict() {
+    let mut conn = v23_store();
+    let judged = |review: serde_json::Value| {
+        let run = failed_run("review-input", "the input was malformed");
+        let mut work = stage(&run, "review-input", StageKind::Work, StageState::Completed);
+        assert!(work.only_reviews.is_none(), "a 1.6.3 record");
+        work.verdict = Some(Verdict::Fail);
+        work.structured = Some(serde_json::json!({ "review": review }));
+        seed(&conn, &run, &[work], Some(FailureClass::Review), false);
+        run
+    };
+    let empty = judged(serde_json::json!({}));
+    let unstated = judged(serde_json::json!({"verdict": "blocked"}));
+    let stated = judged(serde_json::json!({"verdict": "fail"}));
+    target(&conn, &[&empty, &unstated, &stated], review_only());
+
+    assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+
+    for run in [&empty, &unstated] {
+        assert_eq!(
+            columns(&conn, run),
+            (some("other"), some("recomputed"), some("review")),
+            "a work stage with no reviewer verdict stays work"
+        );
+        assert_eq!(frozen(&conn, run), None);
+    }
+    assert_eq!(class(&conn, &stated), some("review"), "a carried fail");
+    assert_eq!(frozen(&conn, &stated), some(PR));
 }
 
 #[test]

@@ -10,7 +10,7 @@ use archon_core::id::StageRunId;
 use archon_core::outcome::FailureClass;
 use archon_core::run::{
     REVIEW_NOT_ON_RECORD, SHIP_STEP, StageOutcome, StageRun, StageState, TalliedFails,
-    UNRESUMABLE_RUN, Verdict, review_tally_key,
+    UNRESUMABLE_RUN, Verdict, review_field, review_tally_key,
 };
 use rusqlite::{Connection, OptionalExtension};
 
@@ -159,9 +159,9 @@ fn judged_class(
 }
 
 /// Whether the stage ran a review, by what it recorded: a review kind, a
-/// review-only run's lead, a result carrying the review the gate reads, or a
-/// reviewer's failing verdict in its tally. A recorded kind always wins over
-/// the id: only a kindless (1.4.x) stage is read by it, and only with a verdict.
+/// review-only run's lead, a result carrying a review whose verdict reads pass
+/// or fail, or a reviewer's failing verdict in its tally. A recorded kind always
+/// wins over the id: only a kindless (1.4.x) stage is read by it, and only with a verdict.
 pub(in crate::store) fn holds_review(
     stage: &StageRun,
     failed_reviews: &BTreeSet<StageRunId>,
@@ -169,7 +169,7 @@ pub(in crate::store) fn holds_review(
     assert!(!stage.stage_id.is_empty(), "a stage run names its stage");
     let recorded = stage.kind == Some(StageKind::Review)
         || stage.only_reviews == Some(true)
-        || nested_review(stage).is_some_and(|r| r.is_object())
+        || nested_verdict(stage).is_some()
         || failed_reviews.contains(&stage.id);
     recorded || kindless_review(stage)
 }
@@ -238,12 +238,12 @@ fn nested_review(stage: &StageRun) -> Option<&serde_json::Value> {
     stage.structured.as_ref()?.get("review")
 }
 
-/// The verdict the review a stage's result carries states, on one line as
-/// the gate reads it.
+/// The verdict the review a stage's result carries states, as the gate reads
+/// it: one line, and no more of it than the gate reads of a field.
 fn nested_word(stage: &StageRun) -> Option<String> {
     let review = nested_review(stage).filter(|r| r.is_object())?;
     let verdict = review.get("verdict").and_then(serde_json::Value::as_str)?;
-    Some(verdict.split_whitespace().collect::<Vec<_>>().join(" "))
+    Some(review_field(verdict))
 }
 
 /// The pass or fail the review a stage's result carries says, if it says one.

@@ -32,15 +32,16 @@ recomputes nothing, rescores none of its lesson uses and leaves an unreadable
 outcome record as it was. A record it cannot read never stops the migration:
 that covers a run, stage run, observed-stage or review-tally row SQLite holds
 as something other than text, one that does not decode, a stage run naming no
-stage or attempt 0, and a tally that names no reviewer.
+stage or attempt 0, and a tally in any shape archond does not store (each fail
+names its reviewer's agent id, the commit that reviewer read and its findings).
 archond logs, per class, the old count, the new count and the rows left on the
 1.6.3 class. When a recomputed class changes whether a run is scored, V24
 rescores the run's lesson uses and holdout trials and recounts the lessons it
 used, so lesson confidence and holdout lift follow the new classes. V24 also
 stores, in each outcome whose item is still stored and whose run holds a
-recorded reviewer verdict (a review stage's pass or fail, the review a stage's
-result carries, or a reviewer's fail in archond's review tally), the pull
-request it reviewed. Outcomes whose item was already pruned have no
+recorded reviewer verdict (a review stage's pass or fail, the pass or fail of
+the review a stage's result carries, read as the gate reads it, or a
+reviewer's fail in archond's review tally), the pull request it reviewed. Outcomes whose item was already pruned have no
 pull request, so the model evidence report leaves them out of its pull request
 counts.
 

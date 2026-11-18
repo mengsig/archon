@@ -860,12 +860,14 @@ impl StageOutcome {
 }
 
 /// What follows Aether's stop reason `cost budget of ${limit}: {cost} spent`
-/// at the start of `text`; `None` when `text` does not open with one.
+/// at the start of `text`; `None` when `text` does not open with one Aether
+/// can write: it stops an agent only once the spend has reached the limit.
 fn cost_stop_tail(text: &str) -> Option<&str> {
     let rest = text.strip_prefix(StageOutcome::COST_BUDGET_STOP)?;
     let (limit, rest) = rest.split_once(": ")?;
     let (cost, tail) = rest.split_once(" spent")?;
-    (is_aether_limit(limit) && is_aether_cost(cost)).then_some(tail)
+    let spend = aether_spend(cost)?;
+    (is_aether_limit(limit) && reaches(spend, limit)).then_some(tail)
 }
 
 /// Whether `rest` is all of Aether's budget message after the reason:
@@ -882,42 +884,36 @@ fn is_budget_message_rest(rest: &str) -> bool {
         return false;
     };
     let digits = counted.bytes().take_while(u8::is_ascii_digit).count();
+    let (count, said) = counted.split_at(digits);
     let ending =
         " descendant(s) were live at the stop. Details are in the exhaustion.failed event.";
-    digits > 0 && &counted[digits..] == ending
+    // Aether counts the descendants in a `u64`.
+    is_whole_number(count) && count.parse::<u64>().is_ok() && said == ending
 }
 
-/// The gaps Aether names only beside a floor (`CostGap::label` of `Unpriced`
-/// and `Unknown`): with nothing priced it says a bare `not reported`.
-const FLOOR_ONLY_COST_GAPS: [&str; 2] = ["some unpriced", "some cost unknown"];
-
-/// The gaps Aether names beside a floor and after `not reported` alike.
-const NAMED_COST_GAPS: [&str; 3] = [
+/// The labels Aether gives a cost gap (`CostGap::label`), each in the
+/// parentheses after a spend that is a floor.
+const AETHER_COST_GAPS: [&str; 5] = [
+    "some unpriced",
+    "some cost unknown",
     "usage not fully reported",
     "interrupted run, cost unknown",
     "multiple cost gaps",
 ];
 
-/// Whether `cost` is a cost as Aether's `cost_line` says one: `$1.2345`, a
-/// floor `≥ $1.2345 (some unpriced)`, or `not reported`, perhaps with its gap.
-fn is_aether_cost(cost: &str) -> bool {
-    if let Some(rest) = cost.strip_prefix("not reported") {
-        let named = |gap: &str| cost_gap(gap).is_some_and(|gap| NAMED_COST_GAPS.contains(&gap));
-        return rest.is_empty() || rest.strip_prefix(' ').is_some_and(named);
-    }
-    if let Some(dollars) = cost.strip_prefix('$') {
-        return is_aether_spend(dollars);
-    }
-    let Some((dollars, gap)) = cost.strip_prefix("≥ $").and_then(|r| r.split_once(' ')) else {
-        return false;
+/// The dollars of `cost` when it is a spend as Aether's `cost_line` says one
+/// in a stop: `$1.2345`, or a floor `≥ $1.2345 (some unpriced)`. A stop has
+/// reached a positive limit, so its spend is never `not reported`.
+fn aether_spend(cost: &str) -> Option<&str> {
+    let dollars = match cost.strip_prefix("≥ $") {
+        None => cost.strip_prefix('$')?,
+        Some(floor) => {
+            let (dollars, gap) = floor.split_once(' ')?;
+            let label = gap.strip_prefix('(')?.strip_suffix(')')?;
+            AETHER_COST_GAPS.contains(&label).then_some(dollars)?
+        }
     };
-    let said = |gap: &str| FLOOR_ONLY_COST_GAPS.contains(&gap) || NAMED_COST_GAPS.contains(&gap);
-    is_aether_spend(dollars) && cost_gap(gap).is_some_and(said)
-}
-
-/// The label in a parenthesised cost gap such as `(some unpriced)`.
-fn cost_gap(text: &str) -> Option<&str> {
-    text.strip_prefix('(')?.strip_suffix(')')
+    is_aether_spend(dollars).then_some(dollars)
 }
 
 /// Digits as a formatter writes a whole number: no sign, no leading zero.
@@ -926,25 +922,81 @@ fn is_whole_number(text: &str) -> bool {
     digits && (text == "0" || !text.starts_with('0'))
 }
 
-/// Dollars spent as Aether writes them (`{:.4}`): always four decimals.
+/// Whether `text` is dollars exactly as Aether writes a spend (`{:.4}`): a
+/// plain decimal of four places, with no sign or exponent, that Rust writes
+/// back unchanged for the amount it names.
 fn is_aether_spend(text: &str) -> bool {
     let Some((whole, fraction)) = text.split_once('.') else {
         return false;
     };
     let four = fraction.len() == 4 && fraction.bytes().all(|b| b.is_ascii_digit());
-    is_whole_number(whole) && four
+    let written = |spent: f64| format!("{spent:.4}") == text;
+    is_whole_number(whole) && four && text.parse::<f64>().is_ok_and(written)
 }
 
-/// A budget as Aether's `format_usd` writes it: at most six decimals with the
-/// trailing zeros trimmed, or every digit of an amount below that precision.
+/// Aether's `format_usd` for a budget, which it keeps positive and finite:
+/// six decimals with the zeros trimmed, or the shortest exact form of an
+/// amount below that precision.
+fn aether_format_usd(amount: f64) -> String {
+    assert!(
+        amount.is_finite() && amount > 0.0,
+        "Aether refuses any other budget"
+    );
+    let fixed = format!("{amount:.6}");
+    let trimmed = fixed.trim_end_matches('0').trim_end_matches('.');
+    assert!(!trimmed.is_empty(), "formatting {amount} left nothing");
+    if trimmed == "0" {
+        return amount.to_string();
+    }
+    trimmed.to_owned()
+}
+
+/// Whether `text` is a budget exactly as Aether writes one: a plain decimal
+/// that [`aether_format_usd`] writes back unchanged for the amount it names.
 fn is_aether_limit(text: &str) -> bool {
-    let Some((whole, fraction)) = text.split_once('.') else {
-        return is_whole_number(text);
-    };
-    let digits = !fraction.is_empty() && fraction.bytes().all(|b| b.is_ascii_digit());
-    let trimmed = !fraction.ends_with('0');
-    let below_precision = whole == "0" && fraction.starts_with("000000");
-    is_whole_number(whole) && digits && trimmed && (fraction.len() <= 6 || below_precision)
+    let (whole, fraction) = text.split_once('.').unwrap_or((text, "0"));
+    let plain = is_whole_number(whole)
+        && !fraction.is_empty()
+        && fraction.bytes().all(|b| b.is_ascii_digit());
+    if !plain {
+        return false;
+    }
+    let budget = text
+        .parse::<f64>()
+        .ok()
+        .filter(|b| b.is_finite() && *b > 0.0);
+    budget.is_some_and(|budget| aether_format_usd(budget) == text)
+}
+
+/// Whether a spend Aether writes as `spend` (four decimals) can have reached
+/// the budget it writes as `limit` (six): Aether stops at `spend >= limit`
+/// and rounds each as it writes it, so the two may differ by half a unit of
+/// each last place, 50.5 millionths, and by no more.
+fn reaches(spend: &str, limit: &str) -> bool {
+    let (spent, capped) = (whole_dollars(spend), whole_dollars(limit));
+    if spent != capped {
+        // A fraction, even with that half unit, never carries into the dollars.
+        return spent > capped;
+    }
+    millionths(limit) <= millionths(spend) + 50
+}
+
+/// The whole dollars of the plain decimal `text`, ordered as numbers are:
+/// by how many digits they have, then digit by digit.
+fn whole_dollars(text: &str) -> (usize, &str) {
+    let digits = text.split_once('.').map_or(text, |(whole, _)| whole);
+    assert!(is_whole_number(digits), "{text} is no amount Aether writes");
+    (digits.len(), digits)
+}
+
+/// The first six decimals of the plain decimal `text`, as millionths.
+fn millionths(text: &str) -> u32 {
+    let fraction = text.split_once('.').map_or("", |(_, fraction)| fraction);
+    assert!(fraction.bytes().all(|b| b.is_ascii_digit()), "{text}");
+    let digits = fraction.bytes().chain(std::iter::repeat(b'0')).take(6);
+    let read = digits.fold(0, |sum, digit| sum * 10 + u32::from(digit - b'0'));
+    assert!(read < 1_000_000, "six digits");
+    read
 }
 
 impl StageState {
@@ -1079,31 +1131,84 @@ pub fn review_tally_key(stage: &StageRunId) -> String {
     format!("review_rounds:{stage}")
 }
 
-/// The failing verdicts in a stored review tally, as much of it as the outcome
-/// store reads: the fails with a blocking finding, and the rest as (agent, head).
+/// The most of a field of `structured.review` that Archon reads: a verdict,
+/// a reviewer's model or a skip reason is one line of a summary.
+pub const MAX_REVIEW_FIELD_CHARS: usize = 400;
+
+/// `text` as one trimmed line of at most [`MAX_REVIEW_FIELD_CHARS`]
+/// characters: how the gate and the outcome store read a review's field.
+pub fn review_field(text: &str) -> String {
+    let joined = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let line: String = joined.chars().take(MAX_REVIEW_FIELD_CHARS).collect();
+    assert!(!line.contains('\n'), "one line");
+    assert!(line.chars().count() <= MAX_REVIEW_FIELD_CHARS);
+    line
+}
+
+/// A stored review tally, read for the failing verdicts it holds: the fails
+/// with a blocking finding, and the rest as (agent, head). Every field decodes
+/// only as archond stores it, so a tally of any other shape is corrupt.
 #[derive(Debug, Deserialize)]
+#[expect(
+    dead_code,
+    reason = "a field nothing reads still holds the tally to its shape"
+)]
 pub struct TalliedFails {
     fails: Vec<TalliedFail>,
     #[serde(default)]
-    other_fails: Vec<(String, String)>,
+    read: Vec<String>,
+    #[serde(default)]
+    earlier: Option<Vec<String>>,
+    #[serde(default)]
+    other_fails: Vec<(AetherAgentId, ReadCommit)>,
+    #[serde(default)]
+    every_fail_kept: bool,
+    #[serde(default)]
+    reread: Vec<String>,
 }
 
+/// One failing verdict as archond keeps it, in either shape it has written:
+/// its reviewer, the head that reviewer read, and its blocking findings or,
+/// before they were described, their titles.
 #[derive(Debug, Deserialize)]
-struct TalliedFail {
-    agent: String,
+#[serde(untagged, deny_unknown_fields)]
+#[expect(dead_code, reason = "decoding each field is the check")]
+enum TalliedFail {
+    Described {
+        agent: AetherAgentId,
+        head: ReadCommit,
+        findings: Vec<String>,
+    },
+    Titled {
+        agent: AetherAgentId,
+        head: ReadCommit,
+        titles: Vec<String>,
+    },
+}
+
+/// The commit a reviewer read, as archond takes one from a verdict: 7 to 64
+/// lowercase hexadecimal digits.
+#[derive(Debug, Deserialize)]
+#[serde(try_from = "String")]
+#[expect(dead_code, reason = "decoding it is the check")]
+struct ReadCommit(String);
+
+impl TryFrom<String> for ReadCommit {
+    type Error = String;
+
+    fn try_from(head: String) -> Result<Self, Self::Error> {
+        let hex = head.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+        if (7..=64).contains(&head.len()) && hex {
+            return Ok(Self(head));
+        }
+        Err(format!("{head:?} is no commit a reviewer read"))
+    }
 }
 
 impl TalliedFails {
-    /// How many failing verdicts the tally holds that name their reviewer.
+    /// How many failing verdicts the tally holds: archond keeps one a reviewer.
     pub fn reviewers(&self) -> usize {
-        let blocking = self.fails.iter().map(|fail| fail.agent.as_str());
-        let other = self.other_fails.iter().map(|(agent, _)| agent.as_str());
-        let named = blocking
-            .chain(other)
-            .filter(|agent| !agent.trim().is_empty());
-        let count = named.count();
-        assert!(count <= self.fails.len() + self.other_fails.len());
-        count
+        self.fails.len() + self.other_fails.len()
     }
 }
 
@@ -2204,27 +2309,50 @@ mod tests {
         }
     }
 
-    /// Aether writes a limit with `format_usd` (six decimals, zeros trimmed)
-    /// and a spend with `{:.4}`; a bare `not reported` names no quiet gap.
+    /// Aether writes a limit with `format_usd` (six decimals, zeros trimmed, or
+    /// the shortest exact form below that) and a spend with `{:.4}`.
     #[test]
     fn a_cost_stop_holds_only_amounts_aether_can_write() {
         let stop = |limit: &str, cost: &str| format!("cost budget of ${limit}: {cost} spent");
-        for limit in ["0", "5", "120", "0.3", "2.5", "0.000001", "0.0000004"] {
-            let said = stop(limit, "$9.0000");
+        for limit in [
+            "5",
+            "120",
+            "0.3",
+            "2.5",
+            "0.000001",
+            "0.0000004",
+            "0.0000001",
+        ] {
+            let said = stop(limit, "$120.0000");
             assert!(StageOutcome::is_cost_budget_stop(&said), "{said}");
         }
-        for limit in ["5.00", "2.50", "05", "00", "5.0", "1.0000001", "0.0000010"] {
-            let said = stop(limit, "$9.0000");
+        // Aether refuses a zero budget, and writes each of the others another way.
+        let unwritten = [
+            "0",
+            "0.0",
+            "5.00",
+            "2.50",
+            "05",
+            "00",
+            "5.0",
+            "1.0000001",
+            "0.0000010",
+            "0.0000009",
+            "0.0000006",
+            "0.00000010",
+        ];
+        for limit in unwritten {
+            let said = stop(limit, "$120.0000");
             assert!(!StageOutcome::is_cost_budget_stop(&said), "{said}");
         }
         for cost in [
-            "$0.0100",
+            "$5.0000",
             "$12.3456",
-            "≥ $1.0000 (some unpriced)",
-            "≥ $1.0000 (some cost unknown)",
-            "≥ $1.0000 (multiple cost gaps)",
-            "not reported",
-            "not reported (usage not fully reported)",
+            "≥ $5.0000 (some unpriced)",
+            "≥ $9.0000 (some cost unknown)",
+            "≥ $9.0000 (usage not fully reported)",
+            "≥ $9.0000 (interrupted run, cost unknown)",
+            "≥ $9.0000 (multiple cost gaps)",
         ] {
             let said = stop("5", cost);
             assert!(StageOutcome::is_cost_budget_stop(&said), "{said}");
@@ -2236,14 +2364,210 @@ mod tests {
             "$5.01000",
             "$05.0100",
             "$.0100",
-            "≥ $1 (some unpriced)",
-            "≥ $1.00 (some unpriced)",
-            "not reported (some unpriced)",
-            "not reported (some cost unknown)",
+            // No amount is written so: a number that large keeps no such decimals.
+            "$70368744177664.0001",
+            "$9007199254740993.0000",
+            "≥ $9 (some unpriced)",
+            "≥ $9.00 (some unpriced)",
+            "≥ $9.0000 (for the smoke tests)",
+            "≥ $9.0000(some unpriced)",
+            "≥$9.0000 (some unpriced)",
+            "≥ $9.0000",
+            "$9.0000 (some unpriced)",
         ] {
             let said = stop("5", cost);
             assert!(!StageOutcome::is_cost_budget_stop(&said), "{said}");
         }
+    }
+
+    /// Aether stops an agent at `spend >= limit`, and its budget is positive,
+    /// so a stop never says less was spent, nor that no cost was reported.
+    #[test]
+    fn a_cost_stop_says_a_spend_that_reached_its_limit() {
+        let stop = |limit: &str, cost: &str| format!("cost budget of ${limit}: {cost} spent");
+        let reached = [
+            ("5", "$5.0000"),
+            ("5", "$10.0000"),
+            ("9.5", "$10.0000"),
+            // Four decimals round a spend down by up to half a unit.
+            ("5.00005", "$5.0000"),
+            ("4.99995", "$4.9999"),
+            ("0.03125", "$0.0312"),
+            ("0.0000001", "$0.0000"),
+            ("0.000001", "$0.0000"),
+            ("0.00005", "$0.0000"),
+        ];
+        for (limit, cost) in reached {
+            let said = stop(limit, cost);
+            assert!(StageOutcome::is_cost_budget_stop(&said), "{said}");
+        }
+        let short = [
+            ("5", "$4.9999"),
+            ("5", "$0.0100"),
+            ("10", "$9.0000"),
+            ("5.00006", "$5.0000"),
+            ("0.000051", "$0.0000"),
+            ("5", "≥ $1.0000 (some unpriced)"),
+            ("0.5", "not reported"),
+            ("0.5", "not reported (usage not fully reported)"),
+            ("0.5", "not reported (some unpriced)"),
+        ];
+        for (limit, cost) in short {
+            let said = stop(limit, cost);
+            assert!(!StageOutcome::is_cost_budget_stop(&said), "{said}");
+        }
+    }
+
+    /// Every stop Aether's own formatters write for a spend at or over a
+    /// budget is read as one, and none for a spend clearly short of it.
+    #[test]
+    fn every_cost_stop_aether_formats_is_read() {
+        let limits = [
+            0.000_000_1,
+            0.000_000_4,
+            0.000_001,
+            0.031_25,
+            0.1 + 0.2,
+            0.5,
+            1.0,
+            1.005,
+            2.5,
+            4.999_95,
+            5.000_05,
+            9.999_999_49,
+            10.0,
+            99.999_96,
+            120.0,
+            1234.5678,
+            1_000_000.000_001,
+        ];
+        let over = [0.0, 1e-7, 0.000_04, 0.000_05, 0.0001, 0.37, 1000.0];
+        for limit in limits {
+            for extra in over {
+                let cost: f64 = limit + extra;
+                assert!(cost >= limit, "Aether stops at the limit");
+                let said = format!(
+                    "cost budget of ${}: ${cost:.4} spent",
+                    aether_format_usd(limit)
+                );
+                assert!(StageOutcome::is_cost_budget_stop(&said), "{said}");
+                let floor = format!(
+                    "cost budget of ${}: ≥ ${cost:.4} (multiple cost gaps) spent",
+                    aether_format_usd(limit)
+                );
+                assert!(StageOutcome::is_cost_budget_stop(&floor), "{floor}");
+            }
+            if limit < 0.001 {
+                continue;
+            }
+            let short = format!(
+                "cost budget of ${}: ${:.4} spent",
+                aether_format_usd(limit),
+                limit - 0.001
+            );
+            assert!(!StageOutcome::is_cost_budget_stop(&short), "{short}");
+        }
+    }
+
+    #[test]
+    fn a_budget_message_counts_its_descendants_as_aether_does() {
+        let message = |count: &str| {
+            format!(
+                "Stopped by its budget (cost budget of $2: $2.0100 spent); no new subtree \
+                 cancellation was requested, {count} descendant(s) were live at the stop. \
+                 Details are in the exhaustion.failed event."
+            )
+        };
+        for count in ["0", "3", "18446744073709551615"] {
+            let said = message(count);
+            assert!(StageOutcome::is_cost_budget_stop(&said), "{said}");
+        }
+        for count in [
+            "",
+            "03",
+            "007",
+            "-1",
+            "+3",
+            "3.0",
+            "18446744073709551616",
+            "many",
+        ] {
+            let said = message(count);
+            assert!(!StageOutcome::is_cost_budget_stop(&said), "{said}");
+        }
+    }
+
+    #[test]
+    fn a_review_field_is_one_line_of_at_most_its_cap() {
+        assert_eq!(review_field("  PASS\n"), "PASS");
+        assert_eq!(review_field("not\n\tpassed  yet"), "not passed yet");
+        let long = format!("PASS{}x", "-".repeat(MAX_REVIEW_FIELD_CHARS - 4));
+        let read = review_field(&long);
+        assert_eq!(read.chars().count(), MAX_REVIEW_FIELD_CHARS);
+        assert_eq!(Verdict::of_phrase(&read), Some(Verdict::Pass));
+        assert_eq!(Verdict::of_phrase(&long), None, "the whole text names none");
+    }
+
+    #[test]
+    fn a_review_tally_decodes_only_in_the_shape_archond_stores() {
+        let read = |tally: &str| serde_json::from_str::<TalliedFails>(tally);
+        let fail = r#"{"agent":"agt_r","head":"abc1234","findings":["a bug"]}"#;
+        let stored = [
+            (r#"{"fails":[]}"#.to_owned(), 0),
+            (format!(r#"{{"fails":[{fail}]}}"#), 1),
+            (format!(r#"{{"fails":[{fail}],"told":true}}"#), 1),
+            (
+                r#"{"fails":[{"agent":"agt_r","head":"abc1234","titles":[]}]}"#.to_owned(),
+                1,
+            ),
+            (
+                format!(
+                    r#"{{"fails":[{fail}],"read":["agt_r","agt_s"],"earlier":["agt_q"],
+                    "other_fails":[["agt_s","{}"]],"every_fail_kept":true,"reread":[]}}"#,
+                    "f".repeat(64)
+                ),
+                2,
+            ),
+        ];
+        for (tally, reviewers) in stored {
+            let read = read(&tally).unwrap_or_else(|e| panic!("{tally}: {e}"));
+            assert_eq!(read.reviewers(), reviewers, "{tally}");
+        }
+        for unstorable in [
+            r#"{}"#,
+            r#"{"fails":[null]}"#,
+            r#"{"fails":[{"agent":"not an agent"}]}"#,
+            r#"{"fails":[{"agent":"agt_r"}]}"#,
+            r#"{"fails":[{"agent":"agt_r","head":"abc1234"}]}"#,
+            r#"{"fails":[{"agent":"agt_r","findings":["a bug"]}]}"#,
+            r#"{"fails":[{"agent":"not an agent","head":"abc1234","findings":["a bug"]}]}"#,
+            r#"{"fails":[{"agent":" ","head":"abc1234","findings":["a bug"]}]}"#,
+            r#"{"fails":[{"agent":"agt_r","head":"","findings":["a bug"]}]}"#,
+            r#"{"fails":[{"agent":"agt_r","head":"abc123","findings":["a bug"]}]}"#,
+            r#"{"fails":[{"agent":"agt_r","head":"ABC1234","findings":["a bug"]}]}"#,
+            r#"{"fails":[{"agent":"agt_r","head":"the head","findings":["a bug"]}]}"#,
+            r#"{"fails":[{"agent":"agt_r","head":"abc1234","findings":"a bug"}]}"#,
+            r#"{"fails":[{"agent":"agt_r","head":"abc1234","findings":[7]}]}"#,
+            r#"{"fails":[{"agent":"agt_r","head":"abc1234","findings":[],"titles":[]}]}"#,
+            r#"{"fails":[{"agent":"agt_r","head":"abc1234","findings":[],"pass":true}]}"#,
+            r#"{"fails":[{"agent":"agt_r","head":"abc1234","findings":null,"titles":[]}]}"#,
+            r#"{"fails":[["agt_r","abc1234",[]]]}"#,
+            r#"{"fails":[],"other_fails":[["not an agent","abc1234"]]}"#,
+            r#"{"fails":[],"other_fails":[["agt_r","abc1234","more"]]}"#,
+            r#"{"fails":[],"other_fails":[["agt_r","HEAD"]]}"#,
+            r#"{"fails":[],"other_fails":[["agt_r"]]}"#,
+            r#"{"fails":[],"read":"agt_r"}"#,
+            r#"{"fails":[],"every_fail_kept":"yes"}"#,
+        ] {
+            assert!(read(unstorable).is_err(), "{unstorable}");
+        }
+        assert!(
+            read(&format!(
+                r#"{{"fails":[{{"agent":"agt_r","head":"{}","findings":[]}}]}}"#,
+                "a".repeat(65)
+            ))
+            .is_err()
+        );
     }
 
     fn stage(state: StageState, structured: Option<serde_json::Value>) -> StageRun {

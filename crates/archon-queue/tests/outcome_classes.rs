@@ -304,6 +304,19 @@ fn a_nested_review_is_read_as_the_gate_reads_it() {
         Some(FailureClass::Other),
         "the gate reads a verdict on one line"
     );
+    // The gate reads 400 characters of a verdict, so a longer one says what
+    // those say: here a fail, though the whole text names no verdict.
+    let long_fail = format!("FAIL{}x", "-".repeat(396));
+    let capped = failed_with(
+        "implement",
+        "gate",
+        claimed(serde_json::json!({"verdict": long_fail})),
+    );
+    assert_eq!(
+        capped.failure,
+        Some(FailureClass::Review),
+        "the gate reads no more of a verdict than its cap"
+    );
     let skip = serde_json::json!({"verdict": "skipped", "reason": "docs only"});
     let refused_skip = failed_with(
         "implement",
@@ -374,6 +387,17 @@ fn a_task_that_quotes_a_cost_budget_is_no_budget_stop() {
         "cost budget of $5.00: $5.0100 spent",
         "cost budget of $5: ≥ $9 (some unpriced) spent",
         "cost budget of $5: not reported (some unpriced) spent",
+        // Amounts Aether never writes in a stop: a limit it spells another way
+        // or refuses, and a spend that is short of the limit or not reported.
+        "cost budget of $0.0000009: $0.0100 spent",
+        "cost budget of $0: $0.0100 spent",
+        "cost budget of $5: $4.9999 spent",
+        "cost budget of $5: $0.0100 spent",
+        "cost budget of $0.5: not reported spent",
+        "cost budget of $0.5: not reported (usage not fully reported) spent",
+        "Stopped by its budget (cost budget of $5: $5.0100 spent); no new subtree cancellation \
+         was requested, 007 descendant(s) were live at the stop. Details are in the \
+         exhaustion.failed event.",
         "Stopped by its budget (cost budget of $5: $5.0100 spent); no new subtree cancellation \
          was requested by the release plan",
         "Stopped by its budget (cost budget of $5: $5.0100 spent); its live subtree was cancelled \
@@ -404,9 +428,10 @@ fn aethers_cost_stop_is_read_in_each_shape_it_takes() {
     let label = StageOutcome::NOTIONAL_COST_LABEL;
     for stop in [
         "cost budget of $1: ≥ $1.0200 (some unpriced) spent".to_owned(),
-        "cost budget of $0.5: not reported spent".to_owned(),
-        "cost budget of $0.5: not reported (usage not fully reported) spent".to_owned(),
         "cost budget of $0.5: ≥ $0.6000 (interrupted run, cost unknown) spent".to_owned(),
+        "cost budget of $0.000001: $0.0100 spent".to_owned(),
+        "cost budget of $0.0000001: $0.0000 spent".to_owned(),
+        "cost budget of $5.00005: $5.0000 spent".to_owned(),
         message.to_owned(),
         format!("{message}{label}"),
         format!("cost budget of $2: $2.0100 spent{label}"),
@@ -511,6 +536,36 @@ fn a_recorded_work_kind_wins_over_a_stage_id_that_says_review() {
     );
 }
 
+/// A recorded work kind stands unless a reviewer's verdict is on record: a
+/// carried review that states none is no such record.
+#[test]
+fn a_carried_review_with_no_verdict_makes_no_review_of_a_work_stage() {
+    let judged = |review: serde_json::Value| {
+        failed_in("review", "review-input", "x", move |run| {
+            let state = StageState::Completed;
+            let mut work = settled(run, "review-input", StageKind::Work, state);
+            assert!(work.only_reviews.is_none(), "a 1.6.3 record");
+            work.verdict = Some(Verdict::Fail);
+            work.structured = Some(serde_json::json!({ "review": review.clone() }));
+            vec![work]
+        })
+    };
+    for unstated in [
+        serde_json::json!({}),
+        serde_json::json!({"verdict": ""}),
+        serde_json::json!({"verdict": "blocked"}),
+        serde_json::json!({"verdict": 7}),
+        serde_json::json!({"reviewers": [{"agent": "agt_r"}]}),
+        serde_json::json!("fail"),
+    ] {
+        let outcome = judged(unstated.clone());
+        assert_eq!(outcome.failure, Some(FailureClass::Other), "{unstated}");
+        assert!(outcome.is_scored(), "the work stage judged its own work");
+    }
+    let stated = judged(serde_json::json!({"verdict": "fail"}));
+    assert_eq!(stated.failure, Some(FailureClass::Review));
+}
+
 #[test]
 fn a_stage_prefix_still_names_an_escalation_or_a_blocker() {
     let escalated = failed_with("implement", "ESCALATE: needs adaptive", |run| {
@@ -605,9 +660,10 @@ fn a_run_recovery_could_not_resume_is_an_infrastructure_failure() {
     assert_eq!(rowless.failure, Some(FailureClass::Infrastructure));
 }
 
-/// Only a tally that names the reviewer of each fail is a reviewer's verdict.
+/// Only a tally archond can have stored holds a reviewer's verdict: each fail
+/// names its reviewer's agent, the commit it read and its findings.
 #[test]
-fn a_tally_that_names_no_reviewer_is_no_review() {
+fn a_tally_archond_cannot_have_stored_is_no_review() {
     let lead_with = |tally: serde_json::Value| {
         let mut store = store();
         let item = store.insert_item(&item(None, "classed"), None).unwrap();
@@ -626,13 +682,36 @@ fn a_tally_that_names_no_reviewer_is_no_review() {
         let captured = store.capture_outcome(&store.run(&run.id).unwrap(), None, true);
         captured.map(|()| store.outcome(&run.id).unwrap().unwrap().failure)
     };
-    let unnamed = lead_with(serde_json::json!({"fails": [null]}));
-    assert!(
-        matches!(unnamed, Err(archon_core::error::ArchonError::Corrupt(_))),
-        "{unnamed:?}"
+    for unstorable in [
+        serde_json::json!({"fails": [null]}),
+        serde_json::json!({"fails": [{"agent": " "}]}),
+        serde_json::json!({"fails": [{"agent": "not an agent"}]}),
+        serde_json::json!({"fails": [{"agent": "agt_r"}]}),
+        serde_json::json!({"fails": [{"agent": "agt_r", "head": "abc1234"}]}),
+        serde_json::json!({"fails": [{"agent": "agt_r", "findings": ["a bug"]}]}),
+        serde_json::json!({"fails": [
+            {"agent": "not an agent", "head": "abc1234", "findings": ["a bug"]}
+        ]}),
+        serde_json::json!({"fails": [
+            {"agent": "agt_r", "head": "the head", "findings": ["a bug"]}
+        ]}),
+        serde_json::json!({"fails": [], "other_fails": [["not an agent", "abc1234"]]}),
+        serde_json::json!({"fails": [], "other_fails": [["agt_r", ""]]}),
+    ] {
+        let read = lead_with(unstorable.clone());
+        assert!(
+            matches!(read, Err(archon_core::error::ArchonError::Corrupt(_))),
+            "{unstorable}: {read:?}"
+        );
+    }
+    let titled = serde_json::json!({
+        "fails": [{"agent": "agt_r", "head": "abc1234", "titles": []}], "told": false
+    });
+    assert_eq!(
+        lead_with(titled).unwrap(),
+        Some(FailureClass::Review),
+        "a fail as 1.3 stored it"
     );
-    let blank = lead_with(serde_json::json!({"fails": [{"agent": " "}]}));
-    assert_eq!(blank.unwrap(), Some(FailureClass::Other));
     let empty = lead_with(serde_json::json!({"fails": []}));
     assert_eq!(empty.unwrap(), Some(FailureClass::Other));
     let other = lead_with(serde_json::json!({"fails": [], "other_fails": [["agt_r", "abc1234"]]}));

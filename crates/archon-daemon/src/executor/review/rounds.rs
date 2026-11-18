@@ -587,8 +587,11 @@ mod tests {
     fn a_stored_tally_lists_each_fail_where_the_outcome_store_reads_it() {
         let tally = Tally {
             fails: vec![fail("aaaaaaa1", &["a"])],
+            read: vec!["agt_a".into(), "agt_b".into()],
+            earlier: Some(vec!["agt_z".into()]),
             other_fails: vec![("agt_b".into(), "bbbbbbb1".into())],
-            ..Tally::default()
+            every_fail_kept: true,
+            reread: vec!["agt_b".into()],
         };
         let stored = serde_json::to_string(&tally).unwrap();
         let read: archon_core::run::TalliedFails = serde_json::from_str(&stored).unwrap();
@@ -603,5 +606,7 @@ mod tests {
         let old = r#"{"fails":[{"agent":"agt_a","head":"aaaaaaa1","titles":["t"]}]}"#;
         let tally: Tally = serde_json::from_str(old).unwrap();
         assert_eq!(tally.fails[0].findings, ["t"]);
+        let read: archon_core::run::TalliedFails = serde_json::from_str(old).unwrap();
+        assert_eq!(read.reviewers(), 1, "the outcome store reads it too");
     }
 }

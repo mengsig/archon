@@ -1529,11 +1529,11 @@ async fn disk_full(
     }
     table.spawn_errors.remove(&stage.id);
     let message = format!(
-        "{} {failures} times ({error}). Archon's own disk \
+        "create_agent failed on a full disk {failures} times ({error}). Archon's own disk \
          had room each time it retried, so the full disk is likely Aether's: free space \
-         there, then retry the item",
-        StageOutcome::DISK_FULL_SPAWN
+         there, then retry the item"
     );
+    assert!(message.starts_with(StageOutcome::DISK_FULL_SPAWN));
     fail_stage_and_run(ctx, table, stage, message, true).await
 }
 

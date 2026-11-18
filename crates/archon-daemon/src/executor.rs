@@ -489,12 +489,11 @@ pub(crate) async fn check_item_budget(
             return Ok(());
         };
         let error = if unaccounted_usage {
-            format!(
-                "{}: Aether reported usage without complete dollar cost or a usable \
-                 subscription estimate; configure model pricing in Aether or choose a \
-                 cost-reporting model",
-                archon_core::cost::BUDGET_UNENFORCEABLE
-            )
+            let error = "BLOCKED: cannot enforce the item's dollar budget: Aether reported usage \
+             without complete dollar cost or a usable subscription estimate; configure \
+             model pricing in Aether or choose a cost-reporting model";
+            assert!(error.starts_with(archon_core::cost::BUDGET_UNENFORCEABLE));
+            error.to_owned()
         } else if budget.left() <= 0.0 {
             budget.used_up(&run.item)
         } else {

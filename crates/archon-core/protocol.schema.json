@@ -3675,13 +3675,14 @@
             "pipeline",
             "model",
             "item",
-            "stage"
+            "stage",
+            "effort"
           ],
           "type": "string"
         },
         {
           "const": "provider",
-          "description": "The provider of the model a stage ran, as provider weights route it.",
+          "description": "The provider of each spending agent's recorded model.",
           "type": "string"
         }
       ]
@@ -3737,6 +3738,16 @@
           },
           "type": "array"
         },
+        "split": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CostSplit"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "total": {
           "$ref": "#/$defs/CostAmounts"
         }
@@ -3768,10 +3779,20 @@
           "type": "number"
         },
         "key": {
-          "description": "The day, repository name, pipeline, `provider/model`, item id or\nstage id. `None` gathers spend with no such owner: the\norchestrator's, and agents outside a stage for model and stage.",
+          "description": "The grouping key, including an explicit orchestrator bucket where applicable.\n`None` gathers spend without a key in this grouping.",
           "type": [
             "string",
             "null"
+          ]
+        },
+        "split": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CostSplit"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "unclassified_cost_usd": {
@@ -3785,6 +3806,24 @@
         "counted_usd",
         "cost_usd",
         "estimated_cost_usd"
+      ],
+      "type": "object"
+    },
+    "CostSplit": {
+      "description": "Budget-counted spend from stage leads and the orchestrator, and from\nrecorded delegates. The rest of `counted_usd` lacks attribution.",
+      "properties": {
+        "delegated_usd": {
+          "format": "double",
+          "type": "number"
+        },
+        "lead_usd": {
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "lead_usd",
+        "delegated_usd"
       ],
       "type": "object"
     },

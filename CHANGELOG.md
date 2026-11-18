@@ -39,6 +39,13 @@ Downgrading the binary is not supported once a store migration of the release
 has run, because an older schema refuses a newer store. See
 [docs/upgrading.md](docs/upgrading.md#plan-origins).
 
+### Fixed
+
+- Cost reports attribute recorded delegates to the stage they worked for and
+  use each delegate's model and effort. The CLI and MCP report lead and
+  delegated spend separately, and can group by effort. Archon now records
+  delegation links for the orchestrator's helpers too.
+
 ## 1.6.3
 
 Released 2026-11-18.

@@ -1,7 +1,8 @@
 //! `cost_report`: its arguments and its text.
 
 use archon_core::cost::{
-    CostAmounts, CostGroup, CostQuery, CostReport, CostRow, DEFAULT_DAYS, DayBound, DayRange,
+    CostAmounts, CostGroup, CostQuery, CostReport, CostRow, CostSplit, DEFAULT_DAYS, DayBound,
+    DayRange,
 };
 use serde_json::json;
 
@@ -18,14 +19,19 @@ fn query(arguments: Value) -> Result<CostQuery, String> {
 #[test]
 fn cost_report_maps_dates_days_and_the_grouping() {
     assert_eq!(query(json!({})).unwrap(), CostQuery::default());
-    let query = query(json!({"since": "2026-09-01", "until": "2w", "by": "stage"})).unwrap();
+    let query = query(json!({"since": "2026-09-01", "until": "2w", "by": "effort"})).unwrap();
     assert_eq!(query.since, Some(DayBound::parse("2026-09-01").unwrap()));
     assert_eq!(query.until, Some(DayBound::Days(14)));
-    assert_eq!(query.by, CostGroup::Stage);
+    assert_eq!(query.by, CostGroup::Effort);
+    let schema = &definition("cost_report").unwrap().input_schema;
     assert!(
-        definition("cost_report")
+        schema["properties"]["by"]["enum"]
+            .as_array()
             .unwrap()
-            .input_schema
+            .contains(&json!("effort"))
+    );
+    assert!(
+        schema
             .to_string()
             .contains(&format!("Default: {DEFAULT_DAYS}d")),
         "the schema names the default"
@@ -63,6 +69,7 @@ fn report(rows: Vec<CostRow>) -> CostReport {
         by: CostGroup::Repo,
         estimates_counted: true,
         total: amounts(2.5, 1.0),
+        split: None,
         rows,
     }
 }
@@ -73,22 +80,29 @@ fn rendered_cost_report_lists_each_group_then_the_total() {
         CostRow {
             key: Some("web".into()),
             amounts: amounts(2.5, 0.0),
+            split: Some(CostSplit {
+                lead_usd: 1.5,
+                delegated_usd: 1.0,
+            }),
         },
         CostRow {
             key: None,
             amounts: amounts(0.0, 1.0),
+            split: Some(CostSplit::default()),
         },
     ];
-    let text = render("cost_report", &Reply::CostReport(Box::new(report(rows))));
+    let mut with_split = report(rows);
+    with_split.split = with_split.rows[0].split;
+    let text = render("cost_report", &Reply::CostReport(Box::new(with_split)));
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(
         lines,
         [
             "Spend from 2026-09-23 to 2026-09-29 by repo, as the budgets count it (reported cost \
              plus API-equivalent estimates):",
-            "- web: $2.50 (billed $2.50, list-price/API estimate $0.00, unclassified $0.00)",
-            "- (no repo): $1.00 (billed $0.00, list-price/API estimate $1.00, unclassified $0.00)",
-            "Total: $3.50 (billed $2.50, list-price/API estimate $1.00, unclassified $0.00).",
+            "- web: $2.50 (billed $2.50, list-price/API estimate $0.00, unclassified $0.00, lead $1.50, delegated $1.00)",
+            "- (no repo): $1.00 (billed $0.00, list-price/API estimate $1.00, unclassified $0.00, lead $0.00, delegated $0.00)",
+            "Total: $3.50 (billed $2.50, list-price/API estimate $1.00, unclassified $0.00, lead $1.50, delegated $1.00).",
         ]
     );
     let empty = render("cost_report", &Reply::CostReport(Box::new(report(vec![]))));
@@ -147,7 +161,11 @@ fn rendered_list_prices_and_unknown_amounts_are_not_billed() {
         estimated_cost_usd: 2.0,
         unclassified_cost_usd: 1.0,
     };
-    let mut report = report(vec![CostRow { key: None, amounts }]);
+    let mut report = report(vec![CostRow {
+        key: None,
+        amounts,
+        split: None,
+    }]);
     report.total = amounts;
     report.estimates_counted = false;
     let text = render("cost_report", &Reply::CostReport(Box::new(report)));

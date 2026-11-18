@@ -1055,14 +1055,9 @@ fn check_frozen_head(item: &QueueItem, text: Option<&str>) -> Result<(), ArchonE
 fn other_commit<'a>(text: &'a str, head: &str) -> Option<&'a str> {
     text.split(|c: char| !c.is_ascii_alphanumeric())
         .find(|token| {
-            let hex =
-                (7..=64).contains(&token.len()) && token.bytes().all(|b| b.is_ascii_hexdigit());
-            let mixed = token.bytes().any(|b| b.is_ascii_digit())
-                && token.bytes().any(|b| b.is_ascii_alphabetic());
-            hex && mixed
-                && !head
-                    .to_ascii_lowercase()
-                    .starts_with(&token.to_ascii_lowercase())
+            let full =
+                matches!(token.len(), 40 | 64) && token.bytes().all(|b| b.is_ascii_hexdigit());
+            full && !head.eq_ignore_ascii_case(token)
         })
 }
 

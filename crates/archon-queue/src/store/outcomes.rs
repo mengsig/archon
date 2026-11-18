@@ -435,6 +435,22 @@ impl Store {
         let mut learned = self.learned();
         learned.catalog = catalog;
         learned.catalog_at = Some(archon_core::now());
+        learned.catalog_generation = None;
+    }
+
+    pub fn set_catalog_generation(&self, generation: u64) {
+        self.learned().catalog_generation = Some(generation);
+    }
+
+    pub fn catalog_generation(&self) -> Option<u64> {
+        self.learned().catalog_generation
+    }
+
+    pub fn invalidate_model_catalog(&self, reason: String) {
+        let mut learned = self.learned();
+        learned.catalog = ModelCatalog::unavailable(reason);
+        learned.catalog_at = None;
+        learned.catalog_generation = None;
     }
 
     /// The connected models, sorted; empty before the first refresh.

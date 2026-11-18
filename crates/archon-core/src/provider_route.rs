@@ -117,6 +117,9 @@ impl ModelCatalog {
     pub fn best_tiers(&self, requested: Tier, policy: &ModelPolicy) -> BTreeMap<&str, Tier> {
         let mut best = BTreeMap::new();
         for m in self.models() {
+            if self.is_retired(&m.model) || self.superseded_by(&m.model).is_some() {
+                continue;
+            }
             let Some(tier) = m.tier.filter(|t| *t <= requested) else {
                 continue;
             };

@@ -868,6 +868,11 @@ impl AetherClient {
         self.typed(Command::ListModels, "models").await
     }
 
+    pub async fn list_retired_models(&self) -> Result<Vec<crate::wire::RetiredModel>, ArchonError> {
+        self.typed(Command::ListRetiredModels, "retired_models")
+            .await
+    }
+
     /// Each enabled provider's login state, as `aether auth --json` prints it.
     pub async fn auth_status(&self) -> Result<Vec<crate::auth::AuthInfo>, ArchonError> {
         self.typed(Command::AuthStatus, "auth").await
@@ -1124,10 +1129,10 @@ mod tests {
         let text = "client protocol 17 is not served: this daemon speaks 25 to 26";
         assert_eq!(
             incompatible_message(text),
-            "Archon speaks Aether protocol 17..24; the daemon serves 25..26"
+            "Archon speaks Aether protocol 17..26; the daemon serves 25..26"
         );
         let odd = incompatible_message("go away");
-        assert!(odd.starts_with("Archon speaks Aether protocol 17..24"));
+        assert!(odd.starts_with("Archon speaks Aether protocol 17..26"));
         assert!(odd.ends_with("go away"));
     }
 

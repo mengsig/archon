@@ -12,6 +12,7 @@ use crate::client::AetherClient;
 #[derive(Debug, Default)]
 pub struct AetherLink {
     current: RwLock<Slot>,
+    catalog_refresh: tokio::sync::Mutex<()>,
 }
 
 #[derive(Debug, Default)]
@@ -19,6 +20,7 @@ struct Slot {
     client: Option<Arc<AetherClient>>,
     /// Why the link is down, as callers are told; `None` says only that.
     down: Option<String>,
+    generation: u64,
 }
 
 impl AetherLink {
@@ -52,7 +54,11 @@ impl AetherLink {
 
     /// Install a fresh connection (`Some`) or mark the link down (`None`).
     pub fn replace(&self, client: Option<Arc<AetherClient>>) -> Result<(), ArchonError> {
-        self.set(Slot { client, down: None })
+        self.set(Slot {
+            client,
+            down: None,
+            generation: 0,
+        })
     }
 
     /// Mark the link down and say why, with what brings it back.
@@ -62,14 +68,27 @@ impl AetherLink {
         self.set(Slot {
             client: None,
             down: Some(why),
+            generation: 0,
         })
     }
 
-    fn set(&self, slot: Slot) -> Result<(), ArchonError> {
+    pub async fn lock_catalog(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.catalog_refresh.lock().await
+    }
+
+    pub fn generation(&self) -> Result<u64, ArchonError> {
+        self.current
+            .read()
+            .map(|slot| slot.generation)
+            .map_err(|_| ArchonError::Unavailable("aether link lock poisoned".into()))
+    }
+
+    fn set(&self, mut slot: Slot) -> Result<(), ArchonError> {
         let mut guard = self
             .current
             .write()
             .map_err(|_| ArchonError::Unavailable("aether link lock poisoned".into()))?;
+        slot.generation = guard.generation.wrapping_add(1);
         *guard = slot;
         Ok(())
     }

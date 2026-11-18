@@ -116,9 +116,19 @@ pub struct CatalogModel {
 }
 
 /// The connected models in Aether's order, each listed once.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelCatalog {
     models: Vec<CatalogModel>,
+    aliases: BTreeMap<ModelRef, ModelRef>,
+    retired: BTreeMap<ModelRef, Option<ModelRef>>,
+    superseded: BTreeMap<ModelRef, ModelRef>,
+    unavailable: Option<String>,
+}
+
+impl Default for ModelCatalog {
+    fn default() -> Self {
+        Self::unavailable("model catalog has not been read")
+    }
 }
 
 impl ModelCatalog {
@@ -128,7 +138,113 @@ impl ModelCatalog {
             .into_iter()
             .filter(|m| seen.insert(m.model.clone()))
             .collect();
-        Self { models }
+        Self {
+            models,
+            aliases: BTreeMap::new(),
+            retired: BTreeMap::new(),
+            superseded: BTreeMap::new(),
+            unavailable: None,
+        }
+    }
+
+    pub fn unavailable(reason: impl Into<String>) -> Self {
+        let mut catalog = Self::new(Vec::new());
+        catalog.unavailable = Some(reason.into());
+        catalog
+    }
+
+    pub fn unavailable_reason(&self) -> Option<&str> {
+        self.unavailable.as_deref()
+    }
+
+    pub fn not_ready_reason(&self) -> Option<&str> {
+        self.unavailable_reason().or_else(|| {
+            self.is_empty()
+                .then_some("no configured model; configure a provider in Aether")
+        })
+    }
+
+    pub fn add_alias(&mut self, alias: ModelRef, canonical: ModelRef) {
+        self.aliases.insert(alias, canonical);
+    }
+
+    pub fn add_retired(&mut self, model: ModelRef, successor: Option<ModelRef>) {
+        self.retired.insert(model, successor);
+    }
+
+    pub fn add_superseded(&mut self, model: ModelRef, successor: ModelRef) {
+        self.superseded.insert(model, successor);
+    }
+
+    pub fn is_retired(&self, model: &ModelRef) -> bool {
+        self.retired.contains_key(model)
+    }
+
+    pub fn successor(&self, model: &ModelRef) -> Option<&ModelRef> {
+        self.retired.get(model).and_then(Option::as_ref)
+    }
+
+    pub fn superseded_by(&self, model: &ModelRef) -> Option<&ModelRef> {
+        self.superseded
+            .get(model)
+            .or_else(|| self.aliases.get(model).and_then(|m| self.superseded.get(m)))
+    }
+
+    pub fn check(&self, model: &ModelRef) -> Result<ModelRef, ArchonError> {
+        if let Some(reason) = self.not_ready_reason() {
+            return Err(ArchonError::Unavailable(reason.to_owned()));
+        }
+        let canonical = self.aliases.get(model).unwrap_or(model);
+        if let Some(successor) = self
+            .retired
+            .get(model)
+            .or_else(|| self.retired.get(canonical))
+        {
+            let hint = successor
+                .as_ref()
+                .map(|m| format!("; successor: {m}"))
+                .unwrap_or_default();
+            return Err(ArchonError::Invalid(format!(
+                "model {model} is retired{hint}"
+            )));
+        }
+        if self.models.iter().any(|entry| &entry.model == model) {
+            return Ok(model.clone());
+        }
+        if self.models.iter().any(|entry| &entry.model == canonical) {
+            return Ok(canonical.clone());
+        }
+        let hint = self.nearest(model);
+        Err(ArchonError::Invalid(format!(
+            "model {model} is not connected; nearest: {hint}"
+        )))
+    }
+
+    fn nearest(&self, model: &ModelRef) -> String {
+        let same_provider = self
+            .models
+            .iter()
+            .any(|entry| entry.model.provider == model.provider && !self.is_retired(&entry.model));
+        let mut candidates: Vec<_> = self
+            .models
+            .iter()
+            .filter(|entry| {
+                (!same_provider || entry.model.provider == model.provider)
+                    && !self.retired.contains_key(&entry.model)
+            })
+            .collect();
+        candidates.sort_by_key(|entry| {
+            (
+                edit_distance(&entry.model.model, &model.model),
+                &entry.model,
+            )
+        });
+        candidates
+            .iter()
+            .take(3)
+            .map(|entry| entry.model.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     pub fn is_empty(&self) -> bool {
@@ -159,7 +275,9 @@ impl ModelCatalog {
         policy: &ModelPolicy,
     ) -> Result<(ModelRef, TierChoice), ArchonError> {
         let usable = |m: &&CatalogModel| {
-            m.tier.is_some_and(|t| t <= requested)
+            !self.retired.contains_key(&m.model)
+                && self.superseded_by(&m.model).is_none()
+                && m.tier.is_some_and(|t| t <= requested)
                 && provider.is_none_or(|p| m.model.provider == p)
                 && policy.permits_model(&m.model)
         };
@@ -203,11 +321,11 @@ impl ModelCatalog {
         policy: &ModelPolicy,
     ) -> ArchonError {
         let mut tiers: BTreeMap<&str, BTreeSet<Tier>> = BTreeMap::new();
-        for m in self
-            .models
-            .iter()
-            .filter(|m| policy.permits_model(&m.model))
-        {
+        for m in self.models.iter().filter(|m| {
+            !self.retired.contains_key(&m.model)
+                && self.superseded_by(&m.model).is_none()
+                && policy.permits_model(&m.model)
+        }) {
             if let Some(tier) = m.tier {
                 tiers.entry(&m.model.provider).or_default().insert(tier);
             }
@@ -229,6 +347,22 @@ impl ModelCatalog {
              {available}"
         ))
     }
+}
+
+fn edit_distance(a: &str, b: &str) -> usize {
+    let mut previous: Vec<usize> = (0..=b.chars().count()).collect();
+    for (i, left) in a.chars().enumerate() {
+        let mut current = vec![i + 1];
+        for (j, right) in b.chars().enumerate() {
+            current.push(
+                (current[j] + 1)
+                    .min(previous[j + 1] + 1)
+                    .min(previous[j] + usize::from(left != right)),
+            );
+        }
+        previous = current;
+    }
+    previous[b.chars().count()]
 }
 
 #[cfg(test)]
@@ -257,6 +391,108 @@ mod tests {
 
     fn open() -> ModelPolicy {
         ModelPolicy::default()
+    }
+
+    #[test]
+    fn catalog_checks_aliases_retirement_and_unknown_models() {
+        let mut catalog = ModelCatalog::new(vec![entry("p/new", Some(Tier::Strong))]);
+        catalog.add_alias("p/alias".parse().unwrap(), "p/new".parse().unwrap());
+        catalog.add_retired("p/old".parse().unwrap(), Some("p/new".parse().unwrap()));
+        assert_eq!(
+            catalog
+                .check(&"p/alias".parse().unwrap())
+                .unwrap()
+                .to_string(),
+            "p/new"
+        );
+        assert!(
+            catalog
+                .check(&"p/old".parse().unwrap())
+                .unwrap_err()
+                .to_string()
+                .contains("p/new")
+        );
+        assert_eq!(
+            catalog
+                .successor(&"p/old".parse().unwrap())
+                .unwrap()
+                .to_string(),
+            "p/new"
+        );
+        assert!(
+            catalog
+                .check(&"p/ne".parse().unwrap())
+                .unwrap_err()
+                .to_string()
+                .contains("p/new")
+        );
+        assert!(ModelCatalog::default().unavailable_reason().is_some());
+        assert!(ModelCatalog::new(vec![]).unavailable_reason().is_none());
+    }
+
+    #[test]
+    fn retirement_precedes_conflicting_aliases_and_nearest_uses_three_ids() {
+        let mut catalog = ModelCatalog::new(vec![
+            entry("p/old", Some(Tier::Strong)),
+            entry("p/new", Some(Tier::Fast)),
+            entry("p/newer", Some(Tier::Fast)),
+            entry("p/newest", Some(Tier::Fast)),
+            entry("p/other", Some(Tier::Fast)),
+        ]);
+        catalog.add_alias("p/old".parse().unwrap(), "p/new".parse().unwrap());
+        catalog.add_retired("p/old".parse().unwrap(), Some("p/new".parse().unwrap()));
+        assert!(
+            catalog
+                .check(&"p/old".parse().unwrap())
+                .unwrap_err()
+                .to_string()
+                .contains("retired")
+        );
+        assert_eq!(
+            catalog
+                .resolve(Tier::Strong, None, None, &open())
+                .unwrap()
+                .1
+                .resolved,
+            Tier::Fast
+        );
+        let error = catalog
+            .check(&"q/new".parse().unwrap())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("p/new") && error.contains("p/newer") && error.contains("p/newest"),
+            "{error}"
+        );
+        assert!(!error.contains("p/other"), "{error}");
+        let empty = ModelCatalog::new(vec![]);
+        assert!(empty.not_ready_reason().is_some());
+        assert!(matches!(
+            empty.check(&"p/new".parse().unwrap()),
+            Err(ArchonError::Unavailable(_))
+        ));
+    }
+
+    #[test]
+    fn superseded_models_are_valid_but_excluded_from_tiers() {
+        let mut catalog = ModelCatalog::new(vec![
+            entry("p/old", Some(Tier::Strong)),
+            entry("p/new", Some(Tier::Fast)),
+        ]);
+        catalog.add_superseded("p/old".parse().unwrap(), "p/new".parse().unwrap());
+        assert!(catalog.check(&"p/old".parse().unwrap()).is_ok());
+        assert_eq!(
+            catalog
+                .resolve(Tier::Strong, None, None, &open())
+                .unwrap()
+                .0
+                .to_string(),
+            "p/new"
+        );
+        assert_eq!(
+            catalog.best_tiers(Tier::Strong, &open()).get("p"),
+            Some(&Tier::Fast)
+        );
     }
 
     #[test]

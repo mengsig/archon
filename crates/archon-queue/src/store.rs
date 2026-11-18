@@ -155,6 +155,7 @@ struct Learned {
     /// Aether's connected models with their tiers, refreshed while stale.
     catalog: archon_core::model_tier::ModelCatalog,
     catalog_at: Option<archon_core::Timestamp>,
+    catalog_generation: Option<u64>,
 }
 
 #[derive(Debug)]

@@ -1018,6 +1018,37 @@ async fn list_models_reads_aethers_nested_model_ref() {
     assert!(listed[0].configured && listed[0].is_default);
 }
 
+#[tokio::test]
+async fn catalog_metadata_and_legacy_models_decode() {
+    let (_dir, fake) = fake_aether().await;
+    fake.script(
+        "list_models",
+        Scripted::reply(
+            "models",
+            json!([
+                {"model": "codex/gpt-6.1-sol", "configured": true, "superseded_by": "gpt-6.2-sol"},
+                {"model": "codex/gpt-6.2-sol", "configured": true}
+            ]),
+        ),
+    );
+    fake.script(
+        "list_retired_models",
+        Scripted::reply(
+            "retired_models",
+            json!([
+                {"model": "codex/gpt-6-sol", "successor": "codex/gpt-6.2-sol"}
+            ]),
+        ),
+    );
+    let client = connect(&fake).await;
+    let models = client.list_models().await.unwrap();
+    assert_eq!(models[0].superseded_by.as_ref().unwrap(), "gpt-6.2-sol");
+    assert!(models[1].superseded_by.is_none());
+    let retired = client.list_retired_models().await.unwrap();
+    assert_eq!(retired[0].model.to_string(), "codex/gpt-6-sol");
+    assert_eq!(retired[0].successor.as_ref().unwrap(), "codex/gpt-6.2-sol");
+}
+
 /// `archive` names one agent and reads the `agents` it moved: that agent,
 /// or none when it was archived already; any other agent is a protocol error.
 #[tokio::test]

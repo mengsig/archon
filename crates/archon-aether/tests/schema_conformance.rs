@@ -66,6 +66,7 @@ fn variant_name(command: &Command) -> &'static str {
         Command::Unsubscribe { .. } => "unsubscribe",
         Command::GetEvents { .. } => "get_events",
         Command::ListModels => "list_models",
+        Command::ListRetiredModels => "list_retired_models",
         Command::AuthStatus => "auth_status",
         Command::Providers => "providers",
         Command::McpServers { .. } => "mcp_servers",

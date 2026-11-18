@@ -357,6 +357,41 @@ async fn a_refresh_whose_successor_stopped_before_its_briefing_is_finished_next_
     );
 }
 
+/// Aether restarted the idle orchestrator into a running successor after
+/// the refresh rechecked it: the successor's turn is not cancelled.
+#[tokio::test]
+async fn a_refresh_never_cancels_a_successor_started_after_its_idle_check() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    let agents = agent_table(&harness);
+    create(&harness, &agents, ORCH).await;
+    as_if_created_by_an_older_build(&harness).await;
+    set_state(&agents, ORCH, "waiting");
+    let idle = agents.lock().unwrap()[ORCH].clone();
+    // The first look and the recheck under the switch guard see it idle.
+    for _ in 0..2 {
+        let seen = Scripted::reply("agent", idle.clone());
+        harness.fake.script("get_agent", seen);
+    }
+    {
+        let mut table = agents.lock().unwrap();
+        table.get_mut(ORCH).unwrap()["restarted_as"] = json!(ORCH_2);
+        table.insert(ORCH_2.into(), orchestrator(ORCH_2, "running"));
+    }
+
+    let now = archon_core::now();
+    supervisor::economize(&harness.ctx, now)
+        .await
+        .expect_err("the agent checked is no longer the one in charge");
+    let cancels = harness.fake.received_named("cancel");
+    assert!(
+        cancels.is_empty(),
+        "a running turn was cut off: {cancels:?}"
+    );
+    let creates = harness.fake.received_named("create_agent");
+    assert_eq!(creates.len(), 1, "no fresh generation was started");
+}
+
 /// The recheck under the switch guard saw a turn start: neither rule acts
 /// on the stale first answer.
 #[tokio::test]

@@ -194,9 +194,9 @@ async fn refresh_if_upgraded(
         return Ok(Refresh::NotDue);
     }
     let _switch = super::switching(ctx).await;
-    if !still_idle(ctx, client, now).await? {
+    let Some(checked) = still_idle(ctx, client, now).await? else {
         return Ok(Refresh::Busy);
-    }
+    };
     let tries = tried
         .filter(|tried| tried.generation == generation)
         .map_or(1, |tried| tried.tries + 1);
@@ -212,27 +212,28 @@ async fn refresh_if_upgraded(
     }
     let reason = "refreshed: an upgrade changed its prompt or tools";
     let why = "is a fresh generation, as an upgrade changed its prompt or tools";
-    let id = super::replace_orchestrator(ctx, client, reason, why).await?;
+    let id = super::replace_orchestrator(ctx, client, reason, why, Some(&checked)).await?;
     tracing::info!(%id, old_generation = generation, tries, "orchestrator refreshed after an upgrade");
     Ok(Refresh::Done)
 }
 
 /// Read again under the switch guard, where no Archon trigger can be on its
-/// way: the orchestrator is still idle and no news is due to wake it.
+/// way: the orchestrator, not restarted into a successor, is still idle and
+/// no news is due to wake it. Returns the agent so checked.
 async fn still_idle(
     ctx: &DaemonContext,
     client: &AetherClient,
     now: Timestamp,
-) -> Result<bool, ArchonError> {
+) -> Result<Option<AetherAgentId>, ArchonError> {
     let Some(id) = super::current_orchestrator(ctx).await? else {
-        return Ok(false);
+        return Ok(None);
     };
     if crate::triggers::delivering(&*ctx.store.lock().await, now)? {
-        return Ok(false);
+        return Ok(None);
     }
-    let agent = client.get_agent(&id).await?;
-    assert_eq!(agent.id, id, "Aether answers for the agent asked");
-    Ok(is_idle(&agent, now))
+    let agent = super::newest_incarnation(client, &id).await?.newest;
+    let idle = agent.id == id && is_idle(&agent, now);
+    Ok(idle.then_some(id))
 }
 
 /// Whether an orchestrator in `agent`'s state is due an idle compaction at

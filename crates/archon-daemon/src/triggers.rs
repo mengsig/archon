@@ -402,6 +402,10 @@ struct Outbox {
     /// The orchestrator is starting a turn anyway: quiet news goes out now.
     #[serde(default)]
     flush: bool,
+    /// How many events at the front of `pending` a flush waits for; all of
+    /// them once compaction mixed them with later news.
+    #[serde(default)]
+    flush_left: usize,
 }
 
 impl Outbox {
@@ -435,6 +439,9 @@ struct Batch {
     events: Vec<TriggerEvent>,
     #[serde(flatten)]
     directives: DirectiveNews,
+    /// It carries news a flush waits for.
+    #[serde(default)]
+    flushed: bool,
 }
 
 /// Wakes the delivery task; the news itself waits in the outbox.
@@ -673,6 +680,10 @@ fn compact_pending(store: &mut Store, outbox: &mut Outbox) -> Result<(), ArchonE
     let facts = Facts::gather(store, &held)?;
     outbox.pending = compact::compact(held, &facts, archon_core::now());
     let after = outbox.pending.len();
+    if outbox.flush_left > 0 {
+        // Flushed news may now sit anywhere in it, a digest at the front too.
+        outbox.flush_left = after;
+    }
     assert!(
         after > 0 && after <= before,
         "compaction keeps at least a digest and never grows the news"
@@ -782,6 +793,12 @@ async fn key_pending(ctx: &DaemonContext) -> Result<(), ArchonError> {
     }
     let mut held = std::mem::take(&mut outbox.pending);
     let rest = split_past_bytes(&mut held, BATCH_MAX_BYTES)?;
+    let flushed = outbox.flush_left > 0;
+    outbox.flush_left = outbox.flush_left.saturating_sub(held.len());
+    assert!(
+        outbox.flush_left <= rest.len(),
+        "what a flush waits for is held"
+    );
     let collapse = std::mem::take(&mut outbox.collapse);
     // What did not fit goes out next, to the generation this batch reaches.
     outbox.flush = !rest.is_empty();
@@ -801,6 +818,7 @@ async fn key_pending(ctx: &DaemonContext) -> Result<(), ArchonError> {
         key,
         events,
         directives,
+        flushed,
     });
     write_outbox(&mut store, &outbox)
 }
@@ -809,37 +827,15 @@ async fn key_pending(ctx: &DaemonContext) -> Result<(), ArchonError> {
 /// keeping at least one event: one too large alone is refused and noted.
 fn split_past_bytes(held: &mut Vec<Held>, budget: usize) -> Result<Vec<Held>, ArchonError> {
     assert!(!held.is_empty(), "only held news is split");
-    let at = first_batch_len(held, budget)?;
-    Ok(held.split_off(at))
-}
-
-/// How many events of `held` the next batch takes: those within the first
-/// `budget` encoded bytes, and always the first.
-fn first_batch_len(held: &[Held], budget: usize) -> Result<usize, ArchonError> {
-    assert!(!held.is_empty(), "only held news is split");
     assert!(budget > 0, "a batch has room");
     let mut bytes = 0;
     for (at, news) in held.iter().enumerate() {
         bytes += serde_json::to_string(&news.event)?.len();
         if at > 0 && bytes > budget {
-            return Ok(at);
+            return Ok(held.split_off(at));
         }
     }
-    Ok(held.len())
-}
-
-/// How many batches `held` leaves in when keyed one after another. Splits
-/// depend only on the news before them, so news pushed later never adds one.
-fn batch_count(held: &[Held]) -> Result<u64, ArchonError> {
-    let mut rest = held;
-    let mut count = 0;
-    while !rest.is_empty() {
-        let taken = first_batch_len(rest, BATCH_MAX_BYTES)?;
-        assert!(taken > 0 && taken <= rest.len(), "each batch takes news");
-        rest = &rest[taken..];
-        count += 1;
-    }
-    Ok(count)
+    Ok(Vec::new())
 }
 
 /// `held` as a batch: its quiet item outcomes as one short list behind the
@@ -975,6 +971,11 @@ fn read_outbox(store: &Store) -> Result<Outbox, ArchonError> {
         keyed.is_none_or(|batch| !batch.events.is_empty() && !batch.key.is_empty()),
         "only a keyed, non-empty batch is ever in flight"
     );
+    if outbox.flush_left > outbox.pending.len() {
+        return Err(ArchonError::Corrupt(format!(
+            "kv {OUTBOX_KEY}: a flush waits for more news than is held"
+        )));
+    }
     Ok(outbox)
 }
 

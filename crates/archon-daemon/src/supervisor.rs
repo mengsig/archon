@@ -593,22 +593,24 @@ pub async fn restart_orchestrator(ctx: &DaemonContext) -> Result<AetherAgentId, 
     let client = ctx.aether.client()?;
     let why = "was restarted by the operator";
     let _switch = switching(ctx).await;
-    replace_orchestrator(ctx, &client, "restarted by the operator", why).await
+    replace_orchestrator(ctx, &client, "restarted by the operator", why, None).await
 }
 
 /// Cancel the orchestrator and start a fresh generation, briefed and handed
 /// the held news as any new generation is; the caller holds `serial` and
-/// the [`switching`] guard, so no trigger is submitted meanwhile.
+/// the [`switching`] guard, so no trigger is submitted meanwhile. With
+/// `checked`, only that agent is cancelled, never a successor found since.
 async fn replace_orchestrator(
     ctx: &DaemonContext,
     client: &AetherClient,
     reason: &str,
     why: &str,
+    checked: Option<&AetherAgentId>,
 ) -> Result<AetherAgentId, ArchonError> {
     assert!(!reason.trim().is_empty(), "a cancel says why");
     assert!(!why.trim().is_empty(), "the operator is told why");
     if let Some(stored) = current_orchestrator(ctx).await? {
-        cancel_newest(ctx, client, &stored, reason).await?;
+        cancel_newest(ctx, client, &stored, reason, checked).await?;
     }
     revival::reset(ctx).await?;
     let id = replace_generation(ctx, client).await?;
@@ -637,7 +639,7 @@ pub(crate) async fn relink_orchestrator(
     };
     let why = "lost Archon's tools when the archon MCP server failed";
     let reason = "restarted to get Archon's tools back";
-    let Some(old) = cancel_newest(ctx, &client, &stored, reason).await? else {
+    let Some(old) = cancel_newest(ctx, &client, &stored, reason, None).await? else {
         // Aether forgot it: there is no checkpoint to restart from.
         let _switch = switching(ctx).await;
         let id = replace_generation(ctx, &client).await?;
@@ -654,11 +656,13 @@ pub(crate) async fn relink_orchestrator(
 
 /// Cancel the orchestrator `stored` leads to, with all it runs, and record its
 /// restart chain. Returns that agent; `None` if Aether forgot `stored`.
+/// `Unavailable`, cancelling nothing, when it is not the `checked` agent.
 async fn cancel_newest(
     ctx: &DaemonContext,
     client: &AetherClient,
     stored: &AetherAgentId,
     reason: &str,
+    checked: Option<&AetherAgentId>,
 ) -> Result<Option<AetherAgentId>, ArchonError> {
     assert!(!reason.trim().is_empty(), "a cancel says why");
     let lineage = match newest_incarnation(client, stored).await {
@@ -667,6 +671,11 @@ async fn cancel_newest(
         Err(e) => return Err(e),
     };
     let newest = lineage.newest.id;
+    if checked.is_some_and(|checked| *checked != newest) {
+        return Err(ArchonError::Unavailable(format!(
+            "orchestrator {stored} was restarted as {newest} since it was checked; it is left running"
+        )));
+    }
     if !lineage.retired.is_empty() {
         // Each was restarted into the next: what it left running still runs.
         retired::retire(ctx, &lineage.retired, Sweep::Owed).await?;

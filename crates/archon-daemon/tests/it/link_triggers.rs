@@ -343,6 +343,58 @@ async fn a_flush_waits_for_every_batch_a_large_backlog_splits_into() {
     );
 }
 
+/// News pushed while a flush waits compacts what it waits for behind a
+/// digest, moving it into a later batch: the flush still waits for it.
+#[tokio::test]
+async fn a_flush_waits_for_its_news_after_a_concurrent_compaction_moves_it() {
+    let harness = harness().await;
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    harness.set_kv(keys::ORCHESTRATOR_GENERATION, "1").await;
+    triggers::collapse_for_new_orchestrator(&harness.ctx)
+        .await
+        .unwrap();
+    live_orchestrator(&harness);
+    harness.fake.set_default("trigger", Scripted::ok());
+    // The batch after the digest is acknowledged only on a retry.
+    harness.fake.script("trigger", Scripted::ok());
+    harness
+        .fake
+        .script("trigger", Scripted::refuse("internal", "busy"));
+    let answer = TriggerEvent::ChatAnswer {
+        number: None,
+        applied: true,
+        text: "a".repeat(1536 * 1024),
+    };
+    triggers::push_quiet(&harness.ctx, answer).await.unwrap();
+    let ctx = harness.ctx.clone();
+    let flush = tokio::spawn(async move { triggers::flush_quiet(&ctx).await });
+    harness
+        .eventually("the flush marked the answer", || async {
+            triggers::due(&harness.ctx).await.unwrap()
+        })
+        .await;
+    for n in 0..triggers::MAX_PENDING {
+        let filler = blocked(&format!("filler {n}"));
+        triggers::push_quiet(&harness.ctx, filler).await.unwrap();
+    }
+    let delivery = tokio::spawn(triggers::deliver_loop(harness.ctx.clone()));
+
+    tokio::time::timeout(WAIT, flush)
+        .await
+        .expect("the flush ends")
+        .unwrap()
+        .unwrap();
+    let held = triggers::held(&harness.ctx).await.unwrap();
+    let sent = harness.fake.received_named("trigger");
+    delivery.abort();
+    let answered = held
+        .iter()
+        .any(|event| matches!(event, TriggerEvent::ChatAnswer { .. }));
+    assert!(!answered, "the flush returned with the answer still held");
+    let told: Vec<&str> = sent.iter().flat_map(|trigger| types(trigger)).collect();
+    assert!(told.contains(&"chat_answer"), "{told:?}");
+}
+
 #[tokio::test]
 async fn delivery_creates_the_orchestrator_when_none_exists() {
     let harness = harness().await;

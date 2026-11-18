@@ -279,7 +279,8 @@ fn classify(held: &[Held], facts: &Facts, now: Timestamp) -> Vec<Relevance> {
 /// asked for on GitHub is pinned then, as its thread awaits the outcome. An
 /// `item_blocked` stays current while the item is still blocked. An earlier
 /// digest is folded into the new one. A `mirror` change is rare and says what
-/// the orchestrator reads is stale, so it is always kept.
+/// the orchestrator reads is stale, so it is always kept. A `github_watch` is
+/// kept too: its walk stored the baseline, so no later walk tells it again.
 fn relevance_of(
     event: &TriggerEvent,
     facts: &Facts,
@@ -294,7 +295,8 @@ fn relevance_of(
         | TriggerEvent::ChatCommand { .. }
         | TriggerEvent::ChatMergeRefused { .. }
         | TriggerEvent::MergeFinished { .. }
-        | TriggerEvent::Mirror { .. } => Relevance::Pinned,
+        | TriggerEvent::Mirror { .. }
+        | TriggerEvent::GithubWatch { .. } => Relevance::Pinned,
         TriggerEvent::GateOpened { question, .. } => {
             match facts.open_gate_questions.contains(question) {
                 true => Relevance::Pinned,
@@ -471,6 +473,30 @@ mod tests {
         assert_eq!(
             scopes,
             ["4", "5", "6", "7", "8", "9", "10", "11", "12", "13"]
+        );
+    }
+
+    #[test]
+    fn watched_repository_news_survives_compaction_however_old_or_crowded() {
+        let now = archon_core::now();
+        let long_ago = now - TimeDelta::hours(3);
+        let watch = TriggerEvent::GithubWatch {
+            repo: "ccso".into(),
+            repository: "owner/ccso".into(),
+            changes: vec![],
+            rest: BTreeMap::from([("new_pr".to_owned(), vec![7])]),
+            operator: false,
+            trust: "news only".into(),
+        };
+        let mut held: Vec<Held> = (0..MAX_BATCH_EVENTS).map(|_| at(answer(), now)).collect();
+        held.insert(0, at(watch.clone(), long_ago));
+        held.push(at(budget("daily"), now));
+        let events = compacted(held, &Facts::default(), now);
+        assert_eq!(dropped(&events), BTreeMap::from([("budget".to_owned(), 1)]));
+        assert_eq!(
+            events.iter().filter(|e| **e == watch).count(),
+            1,
+            "the watch's details are delivered, not counted"
         );
     }
 

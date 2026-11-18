@@ -362,7 +362,8 @@ never edits it implicitly.**
     whole and no later walk would tell them. The trigger tells the first 20
     in full (title, author, URL) and names every other one in `rest`, change
     kind → pull request numbers, a number under each of its kinds, so each
-    difference of a stored walk is in its one trigger. The first completed walk,
+    difference of a stored walk is in its one trigger. News compaction keeps
+    that trigger whole, however old or crowded. The first completed walk,
     and the first after the record's format changed, is stored silently. A
     stored record of the current format that no write would make is refused
     as corrupt where it is read, by the pass and the tool; removing the

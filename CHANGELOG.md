@@ -20,8 +20,9 @@
 
 - A child delegated after a stage's deadline was extended gets the extended
   deadline. Before, a child created from the lead's row before the move landed
-  kept the old deadline and stopped early.
-- A reviewer that Aether blocks on a provider with a spent quota is cancelled
+  kept the old deadline and stopped early, as did any agent it delegated in
+  turn before Archon handled it.
+- A reviewer that Aether blocks as exhausted on a quota or usage limit is cancelled
   after 3 minutes, and its lead is told to delegate the review on another
   allowed provider or to fail the task so the orchestrator re-plans. Before,
   it waited until the stage deadline, and a held stage's deadline kept moving.

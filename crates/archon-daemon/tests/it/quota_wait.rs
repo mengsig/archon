@@ -93,6 +93,7 @@ async fn a_reviewer_waiting_on_a_spent_quota_fails_within_five_minutes() {
     assert!(told[0].contains(reviewer.as_str()), "{}", told[0]);
     assert!(told[0].contains("Re-plan the review"), "{}", told[0]);
     assert!(told[0].contains("fail_task"), "{}", told[0]);
+    assert!(told[0].contains("resets at"), "{}", told[0]);
     let key = format!("quota_wait:{}:{reviewer}", stage.id);
     let left = h.ctx.store.lock().await.kv_get(&key).unwrap();
     assert_eq!(left, None, "a stopped reviewer's wait is forgotten");
@@ -105,12 +106,25 @@ async fn a_quota_restored_before_the_limit_stops_nothing() {
     read_review_quota(&h, 0);
     h.dispatch().await;
     backdate_wait(&h, &stage, &reviewer, TimeDelta::minutes(2)).await;
+    // Aether runs the reviewer again once its quota is back.
+    let working = TreePulse {
+        running: true,
+        ..TreePulse::default()
+    };
+    h.backend.set_pulse(&reviewer, working);
     read_review_quota(&h, 40);
     h.dispatch().await;
     let key = format!("quota_wait:{}:{reviewer}", stage.id);
     let left = h.ctx.store.lock().await.kv_get(&key).unwrap();
     assert_eq!(left, None, "a restored quota clears the wait");
-    // Spent again later: the wait starts over, so nothing is stopped yet.
+    // Blocked again later: the wait starts over, so nothing is stopped yet.
+    let blocked = TreePulse {
+        held: true,
+        held_for_cause: true,
+        quota_blocked: true,
+        ..TreePulse::default()
+    };
+    h.backend.set_pulse(&reviewer, blocked);
     read_review_quota(&h, 0);
     h.dispatch().await;
     assert!(h.backend.cancelled().is_empty());
@@ -143,4 +157,20 @@ async fn a_reviewer_held_for_another_cause_is_not_stopped() {
     }
     assert!(h.backend.cancelled().is_empty());
     assert!(told(&h, &lead).is_empty());
+}
+
+/// Aether's block is enough: a reading that shows the provider with quota
+/// left, or none at all, does not keep a blocked reviewer waiting.
+#[tokio::test]
+async fn a_quota_blocked_reviewer_fails_without_a_matching_reading() {
+    let h = Harness::new().await;
+    let (stage, lead, reviewer) = held_reviewer(&h).await;
+    h.dispatch().await;
+    backdate_wait(&h, &stage, &reviewer, TimeDelta::minutes(3)).await;
+    read_review_quota(&h, 40);
+    h.dispatch().await;
+    assert_eq!(h.backend.cancelled(), vec![reviewer.clone()]);
+    let told = told(&h, &lead);
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert!(told[0].contains("names no reset"), "{}", told[0]);
 }

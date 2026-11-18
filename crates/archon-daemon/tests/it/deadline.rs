@@ -281,6 +281,31 @@ async fn a_child_created_after_an_extension_gets_the_new_deadline() {
     assert_eq!(raised, [Some(later)], "the child gets the stage's deadline");
 }
 
+/// A child that delegated before its creation was handled passed the old
+/// deadline on; handling the child raises the grandchild too.
+#[tokio::test]
+async fn a_grandchild_delegated_before_its_parent_was_handled_gets_the_new_deadline() {
+    let h = Harness::new().await;
+    let _aether = common::connect_aether_for_delegations(&h).await;
+    let (stage, old, later) = extended(&h).await;
+    let lead = stage.aether_agent.clone().expect("a lead");
+    let child = h.backend.delegate(&lead, common::REVIEW_MODEL);
+    h.backend.limit_delegated(&child, old);
+    let grandchild = h.backend.delegate(&child, common::REVIEW_MODEL);
+    h.backend.limit_delegated(&grandchild, old);
+    pump::handle_fleet_event(&h.ctx, &child_created(&stage, &child))
+        .await
+        .expect("handled");
+    let updates = h.backend.updates();
+    for agent in [&child, &grandchild] {
+        let raised: Vec<_> = (updates.iter())
+            .filter(|(to, _)| to == agent)
+            .map(|(_, update)| update.deadline)
+            .collect();
+        assert_eq!(raised, [Some(later)], "{agent} gets the stage's deadline");
+    }
+}
+
 #[tokio::test]
 async fn a_child_created_with_the_stage_deadline_or_none_is_left_alone() {
     let h = Harness::new().await;

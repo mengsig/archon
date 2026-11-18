@@ -2,20 +2,25 @@
 //! as the lead's row stands when the child is created. A stage deadline
 //! moved by a steer or a hold reaches the agents already live beneath the
 //! lead; one created from the lead's row before the move landed would keep
-//! the old deadline and stop early. So each new child of a running stage's
-//! lead is raised to the stage's stored deadline when Aether holds it lower.
+//! the old deadline and stop early, as would any agent it delegated before
+//! the event came. So when a running stage's lead gets a new child, every
+//! live agent beneath the lead is raised to the stage's stored deadline when
+//! Aether holds it lower.
 
+use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
-use archon_core::ports::{AgentUpdate, DescendantState};
+use archon_core::id::StageRunId;
+use archon_core::ports::{AgentUpdate, Descendant, DescendantState};
 use archon_core::run::StageState;
 
 use super::{resume, spawn};
 use crate::context::DaemonContext;
 
-/// Raise `child`, just delegated by `parent`, to the deadline stored for the
-/// running stage `parent` leads, when Aether holds the child's lower. `Err`
-/// only while Aether does not answer, so the event is handled again.
+/// Raise `child`, just delegated by `parent`, and every other live agent
+/// beneath `parent`, to the deadline stored for the running stage `parent`
+/// leads, where Aether holds it lower. `Err` only while Aether does not
+/// answer or the store fails, so the event is handled again.
 pub(crate) async fn lift_new_child(
     ctx: &DaemonContext,
     child: &AetherAgentId,
@@ -40,28 +45,44 @@ pub(crate) async fn lift_new_child(
         return Ok(());
     };
     let beneath = ctx.backend.descendants(parent).await?;
-    let held = beneath.iter().find(|d| d.agent == *child);
-    let Some(held) = held.filter(|d| d.state == DescendantState::Live) else {
-        return Ok(());
-    };
-    // A child with no deadline of its own, or a later one, keeps it.
-    if held.deadline.is_none_or(|own| own >= stored) {
+    let is_live = |d: &&Descendant| d.state == DescendantState::Live;
+    if !beneath.iter().filter(is_live).any(|d| d.agent == *child) {
         return Ok(());
     }
-    // Every Archon deadline move stores first under this lock, and an agent
-    // cannot move another's deadline, so nothing raises the child meanwhile.
+    // The child may have delegated before this event came: every live agent
+    // of the stage below its deadline is raised. One with none keeps none.
+    let lagging: Vec<&Descendant> = (beneath.iter().filter(is_live))
+        .filter(|d| d.deadline.is_some_and(|own| own < stored))
+        .collect();
+    for agent in lagging {
+        assert!(agent.agent != *parent, "the lead is not beneath itself");
+        raise(ctx, &stage.id, &agent.agent, stored).await?;
+    }
+    Ok(())
+}
+
+/// Move the live `agent` of `stage` up to `stored`. `Err` only while Aether
+/// does not answer or the store fails, so the event is handled again.
+async fn raise(
+    ctx: &DaemonContext,
+    stage: &StageRunId,
+    agent: &AetherAgentId,
+    stored: Timestamp,
+) -> Result<(), ArchonError> {
+    // Every Archon deadline move stores first under the steering lock, and an
+    // agent cannot move another's deadline, so nothing raises it meanwhile.
     let update = AgentUpdate {
         deadline: Some(stored),
         ..AgentUpdate::default()
     };
-    match ctx.backend.update_agent(child, update).await {
+    match ctx.backend.update_agent(agent, update).await {
         Ok(()) => {
-            tracing::info!(stage = %stage.id, %child, deadline = %stored, "new child raised to its stage's deadline");
+            tracing::info!(%stage, %agent, deadline = %stored, "late child raised to its stage's deadline");
             Ok(())
         }
         Err(error) if resume::unanswered(&error) || error.is_store() => Err(error),
         Err(refusal) => {
-            tracing::warn!(%child, %refusal, "new child's deadline not raised; it has most likely ended");
+            tracing::warn!(%agent, %refusal, "late child's deadline not raised; it has most likely ended");
             Ok(())
         }
     }

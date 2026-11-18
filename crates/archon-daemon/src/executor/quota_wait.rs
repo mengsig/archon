@@ -1,4 +1,4 @@
-//! A reviewer delegated on a provider whose quota is spent is held by Aether
+//! A reviewer delegated on a provider whose quota is spent is blocked by Aether
 //! until the quota resets, and a held stage has its deadline moved, so the
 //! review could wait for hours. Once such a reviewer has waited
 //! [`FAIL_AFTER`], the sweep tells its lead to re-plan the review and
@@ -35,16 +35,11 @@ pub(super) async fn sweep(
     running: &[StageRun],
     now: Timestamp,
 ) -> Result<(), ArchonError> {
-    if !running.is_empty()
-        && let Err(error) = crate::quota::refresh(ctx).await
-    {
-        tracing::warn!(%error, "provider quota refresh failed; using the last reading");
-    }
-    let spent = crate::quota::spent(ctx).unwrap_or_default();
-    // With no quota spent nothing waits, so every recorded wait is forgotten.
-    let watched = if spent.is_empty() { &[][..] } else { running };
-    forget_unwatched(ctx, watched).await?;
-    for stage in watched {
+    forget_unwatched(ctx, running).await?;
+    // Only the hint's reset time comes from the last reading; Aether's own
+    // block says the reviewer waits on quota.
+    let resets = crate::quota::spent(ctx).unwrap_or_default();
+    for stage in running {
         assert_eq!(
             stage.state,
             StageState::Running,
@@ -53,7 +48,7 @@ pub(super) async fn sweep(
         let Some(lead) = &stage.aether_agent else {
             continue;
         };
-        let waiting = match waiting_reviewers(ctx, lead, &spent).await {
+        let waiting = match waiting_reviewers(ctx, lead, &resets).await {
             Ok(waiting) => waiting,
             Err(error) if error.is_store() => return Err(error),
             Err(error) => {
@@ -70,40 +65,47 @@ pub(super) async fn sweep(
     Ok(())
 }
 
-/// The live reviewers beneath `lead` on a provider of `spent` that Aether
-/// itself blocks on a spent quota. Each is judged by its own block, so no
-/// other hold stops one. An Aether that names no block class stops none.
+/// The live reviewers beneath `lead` that Aether itself blocks on a spent
+/// quota or usage limit, each with its provider's reset from `resets`. Each
+/// is judged by its own block, so no other hold stops one. An Aether that
+/// names no block class stops none.
 async fn waiting_reviewers(
     ctx: &DaemonContext,
     lead: &AetherAgentId,
-    spent: &BTreeMap<String, Option<Timestamp>>,
+    resets: &BTreeMap<String, Option<Timestamp>>,
 ) -> Result<Vec<Waiting>, ArchonError> {
-    assert!(!spent.is_empty(), "only a spent quota is waited on");
+    let tree = ctx.backend.pulse(lead).await?;
+    if !tree.is_some_and(|pulse| pulse.held_for_cause) {
+        return Ok(Vec::new());
+    }
     let beneath = ctx.backend.descendants(lead).await?;
     let mut waiting = Vec::new();
     for reviewer in beneath {
         if reviewer.state != DescendantState::Live || reviewer.role != "reviewer" {
             continue;
         }
-        let Some(resets_at) = spent.get(&reviewer.model.provider).copied() else {
-            continue;
-        };
         let pulse = ctx.backend.pulse(&reviewer.agent).await?;
         if !pulse.is_some_and(|pulse| pulse.quota_blocked) {
             continue;
         }
         assert_ne!(reviewer.agent, *lead, "a lead is not its own reviewer");
+        let resets_at = resets.get(&reviewer.model.provider).copied().flatten();
         waiting.push(Waiting {
             reviewer,
             resets_at,
         });
     }
+    debug_assert!(
+        waiting
+            .iter()
+            .all(|w| w.reviewer.state == DescendantState::Live)
+    );
     Ok(waiting)
 }
 
 /// Record when each of `waiting` was first seen waiting on `stage`, and
-/// forget every other reviewer of it: a quota restored in time clears its
-/// wait. Each reviewer with the time its wait began.
+/// forget every other reviewer of it: one Aether unblocked in time, as its
+/// quota was restored, has its wait cleared. Each reviewer with the time its wait began.
 async fn note_waits(
     ctx: &DaemonContext,
     stage: &StageRun,

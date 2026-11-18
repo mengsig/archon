@@ -228,3 +228,77 @@ async fn an_unanswered_deadline_warning_is_sent_again() {
         .filter(|(_, t)| t.contains("stage deadline"));
     assert_eq!(warned.count(), 1);
 }
+
+/// Aether's `agent.created` for `child`, delegated by `stage`'s lead.
+fn child_created(stage: &StageRun, child: &archon_core::aether_ids::AetherAgentId) -> AetherEvent {
+    AetherEvent {
+        seq: 2,
+        at: archon_core::now(),
+        agent: Some(child.clone()),
+        task: None,
+        parent: stage.aether_agent.clone(),
+        run: None,
+        kind: EventKind::AgentCreated {
+            model: common::REVIEW_MODEL.parse().expect("model"),
+            name: "reviewer".into(),
+        },
+    }
+}
+
+/// Run one item to its first stage and extend its deadline, as a steer does:
+/// the stage, the deadline it had and the one it has now.
+async fn extended(h: &Harness) -> (StageRun, Timestamp, Timestamp) {
+    h.enqueue("needs more time").await;
+    h.dispatch().await;
+    let stage = h.running().await.remove(0);
+    let old = common::stored_deadline(h, &stage)
+        .await
+        .expect("a deadline");
+    let later = old + chrono::Duration::hours(2);
+    common::set_deadline(h, &stage, later).await;
+    (stage, old, later)
+}
+
+#[tokio::test]
+async fn a_child_created_after_an_extension_gets_the_new_deadline() {
+    let h = Harness::new().await;
+    let _aether = common::connect_aether_for_delegations(&h).await;
+    let (stage, old, later) = extended(&h).await;
+    let lead = stage.aether_agent.clone().expect("a lead");
+    let child = h.backend.delegate(&lead, common::REVIEW_MODEL);
+    // Aether copied the lead's row as it stood before the move landed.
+    h.backend.limit_delegated(&child, old);
+    pump::handle_fleet_event(&h.ctx, &child_created(&stage, &child))
+        .await
+        .expect("handled");
+    let raised: Vec<_> = h
+        .backend
+        .updates()
+        .into_iter()
+        .filter(|(agent, _)| *agent == child)
+        .map(|(_, update)| update.deadline)
+        .collect();
+    assert_eq!(raised, [Some(later)], "the child gets the stage's deadline");
+}
+
+#[tokio::test]
+async fn a_child_created_with_the_stage_deadline_or_none_is_left_alone() {
+    let h = Harness::new().await;
+    let _aether = common::connect_aether_for_delegations(&h).await;
+    let (stage, _, later) = extended(&h).await;
+    let lead = stage.aether_agent.clone().expect("a lead");
+    let current = h.backend.delegate(&lead, common::REVIEW_MODEL);
+    h.backend.limit_delegated(&current, later);
+    let unlimited = h.backend.delegate(&lead, common::REVIEW_MODEL);
+    for child in [&current, &unlimited] {
+        pump::handle_fleet_event(&h.ctx, &child_created(&stage, child))
+            .await
+            .expect("handled");
+    }
+    let touched = h
+        .backend
+        .updates()
+        .into_iter()
+        .filter(|(agent, _)| *agent == current || *agent == unlimited);
+    assert_eq!(touched.count(), 0, "no child's deadline is changed");
+}

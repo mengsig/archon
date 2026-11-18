@@ -101,6 +101,7 @@ pub(super) async fn agent_created(
     };
     if delegated {
         record_effort(ctx, agent, parent, model).await?;
+        executor::lift_new_child(ctx, agent, parent).await?;
     }
     if already_checked(ctx, agent).await? {
         return Ok(());

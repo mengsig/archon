@@ -538,6 +538,7 @@ async fn verified_github_merge_refuses_unsent_items_and_merges_the_pinned_head()
     let fake = FakeAether::start(&h.dir.path().join("merge-authority.sock"))
         .await
         .unwrap();
+    common::catalog::answer(&fake, &common::catalog::default_models());
     let status = json!({"revision": 1, "repositories": [], "config": {
         "enabled": true, "mention_regex": "m", "label_regex": "l", "poll_interval_secs": 120,
         "repositories": [{"repository": "o/r", "enabled": true, "agent": ORCHESTRATOR,

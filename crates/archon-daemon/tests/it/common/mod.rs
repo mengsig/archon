@@ -1672,7 +1672,8 @@ impl AgentBackend for FakeBackend {
         if let Some(error) = state.pulse_failures.pop_front() {
             return Err(error);
         }
-        if !state.knows(agent) {
+        let delegated = state.delegated.iter().any(|d| d.agent == *agent);
+        if !state.knows(agent) && !delegated {
             return Ok(None);
         }
         Ok(Some(state.pulses.get(agent).copied().unwrap_or_default()))

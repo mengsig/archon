@@ -49,6 +49,7 @@ async fn held_reviewer(h: &Harness) -> (StageRun, AetherAgentId, AetherAgentId) 
         ..TreePulse::default()
     };
     h.backend.set_pulse(&lead, held);
+    h.backend.set_pulse(&reviewer, held);
     (stage, lead, reviewer)
 }
 
@@ -115,12 +116,30 @@ async fn a_quota_restored_before_the_limit_stops_nothing() {
 #[tokio::test]
 async fn a_reviewer_is_not_stopped_while_aether_names_no_cause_for_a_hold() {
     let h = Harness::new().await;
-    let (stage, lead, reviewer) = held_reviewer(&h).await;
-    h.backend.set_pulse(&lead, TreePulse::default());
+    let (stage, _lead, reviewer) = held_reviewer(&h).await;
+    h.backend.set_pulse(&reviewer, TreePulse::default());
     read_review_quota(&h, 0);
     h.dispatch().await;
     let key = format!("quota_wait:{}:{reviewer}", stage.id);
     let mark = h.ctx.store.lock().await.kv_get(&key).unwrap();
     assert_eq!(mark, None, "a reviewer that is not held does not wait");
     assert!(h.backend.cancelled().is_empty());
+}
+
+#[tokio::test]
+async fn a_working_reviewer_is_not_stopped_for_a_hold_elsewhere_in_the_tree() {
+    let h = Harness::new().await;
+    let (stage, lead, reviewer) = held_reviewer(&h).await;
+    let working = TreePulse {
+        running: true,
+        ..TreePulse::default()
+    };
+    h.backend.set_pulse(&reviewer, working);
+    read_review_quota(&h, 0);
+    h.dispatch().await;
+    let key = format!("quota_wait:{}:{reviewer}", stage.id);
+    let mark = h.ctx.store.lock().await.kv_get(&key).unwrap();
+    assert_eq!(mark, None, "a working reviewer does not wait");
+    assert!(h.backend.cancelled().is_empty());
+    assert!(told(&h, &lead).is_empty());
 }

@@ -70,32 +70,35 @@ pub(super) async fn sweep(
     Ok(())
 }
 
-/// The live reviewers beneath `lead` on a provider of `spent`, while Aether
-/// names a lasting cause for a hold in its tree. Every Aether field it reads
-/// is optional: an Aether that reports none of them stops nothing.
+/// The live reviewers beneath `lead` on a provider of `spent` that Aether
+/// holds for a named cause with nothing of theirs running. Each is judged by
+/// its own pulse, so a hold elsewhere in the lead's tree stops no working
+/// reviewer. Every Aether field it reads is optional: none reported, none stop.
 async fn waiting_reviewers(
     ctx: &DaemonContext,
     lead: &AetherAgentId,
     spent: &BTreeMap<String, Option<Timestamp>>,
 ) -> Result<Vec<Waiting>, ArchonError> {
     assert!(!spent.is_empty(), "only a spent quota is waited on");
-    let pulse = ctx.backend.pulse(lead).await?;
-    if !pulse.is_some_and(|pulse| pulse.held_for_cause) {
-        return Ok(Vec::new());
-    }
     let beneath = ctx.backend.descendants(lead).await?;
-    let waiting: Vec<Waiting> = beneath
-        .into_iter()
-        .filter(|d| d.state == DescendantState::Live && d.role == "reviewer")
-        .filter_map(|reviewer| {
-            let resets_at = *spent.get(&reviewer.model.provider)?;
-            Some(Waiting {
-                reviewer,
-                resets_at,
-            })
-        })
-        .collect();
-    debug_assert!(waiting.iter().all(|w| w.reviewer.agent != *lead));
+    let mut waiting = Vec::new();
+    for reviewer in beneath {
+        if reviewer.state != DescendantState::Live || reviewer.role != "reviewer" {
+            continue;
+        }
+        let Some(resets_at) = spent.get(&reviewer.model.provider).copied() else {
+            continue;
+        };
+        let pulse = ctx.backend.pulse(&reviewer.agent).await?;
+        if !pulse.is_some_and(|pulse| pulse.held_for_cause && !pulse.running) {
+            continue;
+        }
+        assert_ne!(reviewer.agent, *lead, "a lead is not its own reviewer");
+        waiting.push(Waiting {
+            reviewer,
+            resets_at,
+        });
+    }
     Ok(waiting)
 }
 

@@ -48,6 +48,8 @@ pub(crate) async fn lift_new_child(
     if held.deadline.is_none_or(|own| own >= stored) {
         return Ok(());
     }
+    // Every Archon deadline move stores first under this lock, and an agent
+    // cannot move another's deadline, so nothing raises the child meanwhile.
     let update = AgentUpdate {
         deadline: Some(stored),
         ..AgentUpdate::default()

@@ -1,10 +1,17 @@
 //! Held watch news folded by repository (A18). Watch news is pinned through
 //! compaction, so a walk's news joins its repository's news still held: one bounded event each.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::watch::{MAX_CHANGES, WatchedChange, by_kind};
 use crate::triggers::TriggerEvent;
+
+/// Pull request numbers, counted once under each kind, a repository's held watch news names in `rest`.
+pub(crate) const MAX_HELD_NUMBERS: usize = 10_000;
+
+/// A watch trigger's `note` when its `rest` was cut.
+pub(crate) const TRUNCATED_NOTE: &str = "More pull requests changed than this trigger names: \
+    list the repository's open pull requests for the rest.";
 
 /// Every kind of difference, the most telling first.
 const KINDS: [&str; 6] = [
@@ -43,6 +50,8 @@ pub(crate) fn fold(held: &mut TriggerEvent, newer: TriggerEvent) {
     let TriggerEvent::GithubWatch {
         changes,
         rest,
+        truncated,
+        note,
         operator,
         ..
     } = held
@@ -51,7 +60,8 @@ pub(crate) fn fold(held: &mut TriggerEvent, newer: TriggerEvent) {
     };
     let TriggerEvent::GithubWatch {
         changes: newer_changes,
-        rest: newer_rest,
+        rest: mut newer_rest,
+        truncated: newer_truncated,
         operator: newer_operator,
         ..
     } = newer
@@ -70,12 +80,16 @@ pub(crate) fn fold(held: &mut TriggerEvent, newer: TriggerEvent) {
         }
     }
     let mut named = std::mem::take(rest);
-    add_named(&mut named, newer_rest);
     for change in &mut told {
         absorb_named(change, &mut named);
+        absorb_named(change, &mut newer_rest);
     }
+    // The held numbers first, then the oldest news: a cut keeps the earliest.
     let past = told.split_off(told.len().min(MAX_CHANGES));
-    add_named(&mut named, by_kind(&past));
+    let cut_past = add_named(&mut named, by_kind(&past));
+    let cut_newer = add_named(&mut named, newer_rest);
+    *truncated = *truncated || newer_truncated || cut_past || cut_newer;
+    *note = truncated.then(|| TRUNCATED_NOTE.to_owned());
     assert!(
         told.len() <= MAX_CHANGES,
         "at most the first are told in full"
@@ -135,14 +149,43 @@ fn rank(kind: &str) -> usize {
         .unwrap_or(KINDS.len())
 }
 
-/// `more` added to `named`, each kind's numbers sorted and once.
-fn add_named(named: &mut BTreeMap<String, Vec<u64>>, more: BTreeMap<String, Vec<u64>>) {
+/// `named` cut to [`MAX_HELD_NUMBERS`], keeping the earliest kinds' numbers;
+/// whether any was left out.
+pub(crate) fn capped(rest: BTreeMap<String, Vec<u64>>) -> (BTreeMap<String, Vec<u64>>, bool) {
+    let mut named = BTreeMap::new();
+    let cut = add_named(&mut named, rest);
+    (named, cut)
+}
+
+/// `more` added to `named`, each kind's numbers sorted and once, while it names
+/// fewer than [`MAX_HELD_NUMBERS`]; whether any was left out.
+fn add_named(named: &mut BTreeMap<String, Vec<u64>>, more: BTreeMap<String, Vec<u64>>) -> bool {
+    let mut total: usize = named.values().map(Vec::len).sum();
+    let mut cut = false;
     for (kind, numbers) in more {
         let listed = named.entry(kind).or_default();
-        listed.extend(numbers);
-        listed.sort_unstable();
-        listed.dedup();
+        let mut known: BTreeSet<u64> = listed.iter().copied().collect();
+        for number in numbers {
+            if known.contains(&number) {
+                continue;
+            }
+            if total >= MAX_HELD_NUMBERS {
+                cut = true;
+                continue;
+            }
+            known.insert(number);
+            total += 1;
+        }
+        *listed = known.into_iter().collect();
     }
+    named.retain(|_, numbers| !numbers.is_empty());
+    assert_eq!(
+        named.values().map(Vec::len).sum::<usize>(),
+        total,
+        "counted as kept"
+    );
+    assert!(!cut || total >= MAX_HELD_NUMBERS, "a cut only at the cap");
+    cut
 }
 
 #[cfg(test)]
@@ -170,6 +213,8 @@ mod tests {
                 .iter()
                 .map(|(k, n)| ((*k).to_owned(), n.to_vec()))
                 .collect(),
+            truncated: false,
+            note: None,
             operator: false,
             trust: "news only".into(),
         }
@@ -225,5 +270,34 @@ mod tests {
         assert_eq!(changes.len(), MAX_CHANGES);
         assert_eq!(rest["new_pull_request"], [30]);
         assert_eq!(rest["new_review"], [40, 50]);
+    }
+
+    #[test]
+    fn held_rest_is_cut_at_its_cap_keeping_the_earliest_and_says_so() {
+        let earliest: Vec<u64> = (1..=MAX_HELD_NUMBERS as u64 - 1).collect();
+        let mut held = news(vec![], &[("new_comment", &earliest)]);
+        let later = [MAX_HELD_NUMBERS as u64 + 5, MAX_HELD_NUMBERS as u64 + 6];
+        fold(&mut held, news(vec![], &[("new_review", &later)]));
+        let TriggerEvent::GithubWatch {
+            rest,
+            truncated,
+            note,
+            ..
+        } = &held
+        else {
+            panic!("watch news");
+        };
+        assert!(*truncated, "a cut is told");
+        assert_eq!(note.as_deref(), Some(TRUNCATED_NOTE));
+        assert_eq!(rest["new_comment"], earliest, "the earliest are kept");
+        assert_eq!(rest["new_review"], [later[0]]);
+        let total: usize = rest.values().map(Vec::len).sum();
+        assert_eq!(total, MAX_HELD_NUMBERS);
+
+        fold(&mut held, news(vec![change(3, &["new_head"])], &[]));
+        let TriggerEvent::GithubWatch { truncated, .. } = &held else {
+            panic!("watch news");
+        };
+        assert!(*truncated, "a held cut stays told");
     }
 }

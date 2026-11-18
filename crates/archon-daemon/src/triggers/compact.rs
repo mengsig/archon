@@ -485,6 +485,8 @@ mod tests {
             repository: "owner/ccso".into(),
             changes: vec![],
             rest: BTreeMap::from([("new_pr".to_owned(), vec![7])]),
+            truncated: false,
+            note: None,
             operator: false,
             trust: "news only".into(),
         };

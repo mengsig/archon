@@ -365,7 +365,9 @@ never edits it implicitly.**
     difference of a stored walk is in its one trigger. News compaction keeps
     that trigger whole, however old or crowded, and a walk's news joins its
     repository's watch news still held, so held watch news stays one bounded
-    event per repository however long delivery waits. The first completed walk,
+    event per repository however long delivery waits. Its `rest` names at
+    most 10,000 numbers, the earliest held; past that it is `truncated`, with
+    a note to list the repository's open pull requests. The first completed walk,
     and the first after the record's format changed, is stored silently. A
     stored record of the current format that no write would make is refused
     as corrupt where it is read, by the pass and the tool; removing the

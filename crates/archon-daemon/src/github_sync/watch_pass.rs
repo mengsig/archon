@@ -593,7 +593,7 @@ async fn origin_unmoved(due: &Due) -> bool {
 fn watch_event(due: &Due, mut changes: Vec<WatchedChange>) -> TriggerEvent {
     assert!(!changes.is_empty(), "only news raises a trigger");
     let told = changes.len().min(watch::MAX_CHANGES);
-    let rest = watch::by_kind(&changes[told..]);
+    let (rest, truncated) = super::watch_fold::capped(watch::by_kind(&changes[told..]));
     changes.truncate(told);
     assert_eq!(changes.len(), told, "the first are told in full");
     TriggerEvent::GithubWatch {
@@ -601,6 +601,8 @@ fn watch_event(due: &Due, mut changes: Vec<WatchedChange>) -> TriggerEvent {
         repository: due.repository.clone(),
         changes,
         rest,
+        truncated,
+        note: truncated.then(|| super::watch_fold::TRUNCATED_NOTE.to_owned()),
         operator: false,
         trust: watch::WATCH_TRUST.to_owned(),
     }

@@ -227,6 +227,12 @@ pub enum TriggerEvent {
         /// The changes past those told in `changes`: each kind's pull request numbers.
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         rest: BTreeMap<String, Vec<u64>>,
+        /// Whether `rest` was cut at its cap: more pull requests changed than it names.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        truncated: bool,
+        /// What to do about a cut `rest`, when `truncated`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
         operator: bool,
         trust: String,
     },

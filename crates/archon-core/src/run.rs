@@ -862,8 +862,9 @@ fn cost_stop_tail(text: &str) -> Option<&str> {
     shaped.then_some(tail)
 }
 
-/// Whether `rest` goes on as Aether's budget message does after the reason:
-/// `); {subtree}, {n} descendant(s) were live at the stop.`
+/// Whether `rest` is the rest of Aether's budget message after the reason,
+/// `); {subtree}, {n} descendant(s) were live at the stop. Details are in the
+/// exhaustion.failed event.`, perhaps with Archon's notional label after it.
 fn is_budget_message_rest(rest: &str) -> bool {
     let Some(rest) = rest.strip_prefix("); ") else {
         return false;
@@ -875,7 +876,12 @@ fn is_budget_message_rest(rest: &str) -> bool {
         return false;
     };
     let digits = counted.bytes().take_while(u8::is_ascii_digit).count();
-    digits > 0 && counted[digits..].starts_with(" descendant(s) were live at the stop.")
+    let ending =
+        " descendant(s) were live at the stop. Details are in the exhaustion.failed event.";
+    let Some(after) = counted[digits..].strip_prefix(ending) else {
+        return false;
+    };
+    digits > 0 && (after.is_empty() || after.starts_with(StageOutcome::NOTIONAL_COST_NOTE))
 }
 
 /// The labels Aether gives a cost gap (`CostGap::label`), each in the

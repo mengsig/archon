@@ -146,7 +146,8 @@ fn deadlines_backends_and_cost_caps_are_read_from_the_stage_that_ended_the_run()
     );
     let failed_agent = failed_with("implement", "stage failed", |run| {
         let error = "Stopped by its budget (cost budget of $2.00: $2.01 spent); its live \
-                     subtree was cancelled with it, 0 descendant(s) were live at the stop."
+                     subtree was cancelled with it, 0 descendant(s) were live at the stop. Details are \
+                     in the exhaustion.failed event."
             .into();
         let mut stage = settled(
             run,
@@ -328,6 +329,11 @@ fn a_task_that_quotes_a_cost_budget_is_no_budget_stop() {
          was requested by the release plan",
         "Stopped by its budget (cost budget of $5: $5.0100 spent); its live subtree was cancelled \
          with it, many descendant(s) were live at the stop.",
+        "Stopped by its budget (cost budget of $5: $5.0100 spent); no new subtree cancellation \
+         was requested, 0 descendant(s) were live at the stop. This sentence describes a \
+         fictional example from the review.",
+        "Stopped by its budget (cost budget of $5: $5.0100 spent); no new subtree cancellation \
+         was requested, 0 descendant(s) were live at the stop.",
     ] {
         quoted_budget(quoted);
     }
@@ -341,7 +347,11 @@ fn aethers_cost_stop_is_read_in_each_shape_it_takes() {
         "cost budget of $0.5: not reported (usage not fully reported) spent",
         "cost budget of $0.5: ≥ $0.6000 (interrupted run, cost unknown) spent",
         "Stopped by its budget (cost budget of $3: $3.0001 spent); no new subtree cancellation \
-         was requested, 0 descendant(s) were live at the stop.",
+         was requested, 0 descendant(s) were live at the stop. Details are in the \
+         exhaustion.failed event.",
+        "Stopped by its budget (cost budget of $3: $3.0001 spent); no new subtree cancellation \
+         was requested, 2 descendant(s) were live at the stop. Details are in the \
+         exhaustion.failed event. (notional cost: Claude Code reports list-price dollars)",
         "cost budget of $2: $2.0100 spent (notional cost: Claude Code reports list-price dollars)",
     ] {
         let capped = failed_with("implement", "stage failed", |run| {

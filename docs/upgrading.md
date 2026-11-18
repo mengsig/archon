@@ -15,17 +15,15 @@ Aether's normal update, without pinning it to an older release. Keep a backup be
 adds persistent requirement and clarification records. Existing queue items
 without intent keep their previous behavior.
 
-From 1.6.4 a running orchestrator whose prompt or tools changed in the
-upgrade is replaced by a fresh generation at its next idle moment, with the
-same hand-off as `archon orchestrator restart`, so `archon status` stops
-showing "prompt outdated" without a manual restart; while the refresh waits
-or fails, it shows "upgrade refresh delayed" and why. Stage `info` messages
-no longer wake it, and its context is compacted earlier
-([configuration](configuration.md)). None of this migrates the store. Going
-back to an older binary is not supported once a release's store migration
-has run, as an older archond refuses a newer store; undo these behaviours
-with their switches instead: `quiet_info = false`, `compaction_tokens = 0`,
-`idle_compact_after_minutes = 0` and `refresh_on_upgrade = false` under
+From 1.6.4 stage `info` messages no longer wake the orchestrator, and its
+context is compacted earlier ([configuration](configuration.md)). A running
+orchestrator whose prompt changed in the upgrade is not replaced by itself:
+`archon status` says "prompt outdated since upgrade; run `archon
+orchestrator restart`" until you restart it. None of this migrates the
+store. Going back to an older binary is not supported once a release's store
+migration has run, as an older archond refuses a newer store; undo these
+behaviours with their switches instead: `quiet_info = false`,
+`compaction_tokens = 0` and `idle_compact_after_minutes = 0` under
 `[orchestrator]`. A compaction threshold already sent stays with the running
 generation until `archon orchestrator restart`.
 

@@ -1083,3 +1083,45 @@ async fn nothing_is_restated_when_no_directive_is_in_force() {
     assert_eq!(payload["directives_in_force"], 0);
     delivery.abort();
 }
+
+/// Aether refuses to create the orchestrator an answer is held for: that says
+/// nothing of the answer, which is no refused payload. It stays held and
+/// reaches the orchestrator once one starts.
+#[tokio::test]
+async fn an_answer_outlives_an_orchestrator_creation_aether_refuses() {
+    let harness = harness().await;
+    let fake = &harness.fake;
+    let refused = Scripted::refuse("invalid_argument", "no such model");
+    fake.set_default("create_agent", refused);
+    live_orchestrator(&harness);
+    fake.set_default("trigger", Scripted::ok());
+    let delivery = tokio::spawn(triggers::deliver_loop(harness.ctx.clone()));
+    let answer = TriggerEvent::OperatorAnswer {
+        question: QuestionId::new(),
+        number: None,
+        question_text: String::new(),
+        options: vec![],
+        item: None,
+        asked_at: None,
+        text: "ship it".into(),
+    };
+    triggers::push(&harness.ctx, answer.clone()).await.unwrap();
+    fake.wait_for("create_agent", 1, WAIT).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let held = triggers::held(&harness.ctx).await.unwrap();
+    assert_eq!(held, vec![answer], "the answer was dropped");
+
+    let mut created = fake::agent(ORCH, None);
+    created["status"] = json!({"state": "ready"});
+    fake.set_default("create_agent", Scripted::reply("agent", created));
+    harness
+        .eventually("the answer reaches the orchestrator", || async {
+            let answered = |event: &Value| event["text"] == "ship it";
+            fake.received_named("trigger").iter().any(|trigger| {
+                let events = trigger["payload"]["events"].as_array();
+                trigger["agent"] == ORCH && events.is_some_and(|events| events.iter().any(answered))
+            })
+        })
+        .await;
+    delivery.abort();
+}

@@ -15,21 +15,19 @@
   Aether 1.4.1 keeps the model's threshold and is sent nothing new. The
   threshold applies to generations created from then on. Idle for
   `idle_compact_after_minutes` (default 50) with more than half that in
-  context, it is compacted once before its prompt cache expires. After an
-  upgrade that changes its prompt or tools, a fresh generation replaces it
-  at its next quiet idle moment, retried every ten minutes while it fails
-  and announced in the feed after three failures
-  (`[orchestrator] refresh_on_upgrade`, default true). Until then `archon
-  status` shows `upgrade refresh delayed` with the reason in place of
-  `prompt outdated`, also while no successor could be started. News held
-  for the orchestrator is kept, not dropped, while Aether refuses to create
-  it. The prompt now has long
-  multi-step work, such as report pages and statistics, queued as items.
-  Nothing migrates. The rollback is the switches: `quiet_info = false`,
-  `compaction_tokens = 0`, `idle_compact_after_minutes = 0` and
-  `refresh_on_upgrade = false`; a threshold already sent stays with that
-  generation until `archon orchestrator restart`. An older binary is not
-  supported on a store a newer release migrated.
+  context, it is compacted once before its prompt cache expires, never
+  beside a turn that a message or a trigger starts. A generation whose
+  prompt an upgrade outdated is not replaced by itself: `archon status`,
+  `archon doctor` and `queue_status` now end its line with "prompt outdated
+  since upgrade" and the command to run, `archon orchestrator restart`
+  ("prompt outdated" and the command after an edited instructions file).
+  News held for the orchestrator is kept, not dropped, while Aether refuses
+  to create it. The prompt now has long multi-step work, such as report
+  pages and statistics, queued as items. Nothing migrates. The rollback is the switches: `quiet_info =
+  false`, `compaction_tokens = 0` and `idle_compact_after_minutes = 0`; a
+  threshold already sent stays with that generation until `archon
+  orchestrator restart`. An older binary is not supported on a store a
+  newer release migrated.
 
 ## 1.6.3
 

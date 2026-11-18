@@ -49,11 +49,6 @@ pub(super) fn record_lessons(store: &mut Store, generation: u64) -> Result<bool,
     Ok(true)
 }
 
-/// The generation whose creation was last recorded; `None` before any was.
-pub(super) fn recorded_generation(store: &Store) -> Result<Option<u64>, ArchonError> {
-    Ok(read(store)?.map(|origin| origin.generation))
-}
-
 /// Record what Aether created generation `generation` with: `settings`, the
 /// model and effort of the successful request, and `prompt`, the
 /// part of `sent` before the lessons, unless `created` (the agent's
@@ -124,7 +119,6 @@ pub(super) fn freshness(
         tools_outdated: tools_fingerprint() != origin.tools,
         new_lessons: u32::try_from(new_lessons).expect("at most ORCHESTRATOR_LESSONS"),
         settings_drift,
-        refresh_delayed: None,
     }))
 }
 

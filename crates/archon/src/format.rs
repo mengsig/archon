@@ -140,17 +140,10 @@ pub fn status(status: &DaemonStatus, names: &RepoNames, verbose: bool) -> String
 /// Aether, the orchestrator and what archond depends on, one line each.
 fn link_lines(out: &mut String, status: &DaemonStatus, verbose: bool) {
     let _ = writeln!(out, "aether: {}", aether_link(&status.aether));
-    let orchestrator = match (&status.orchestrator, &status.orchestrator_refresh_delayed) {
-        (Some(info), None) => orchestrator_line(info),
-        (Some(info), Some(reason)) => {
-            format!(
-                "{}; upgrade refresh delayed: {reason}",
-                orchestrator_line(info)
-            )
-        }
-        (None, Some(reason)) => format!("not running; upgrade refresh delayed: {reason}"),
-        (None, None) => "not running".to_owned(),
-    };
+    let orchestrator = status
+        .orchestrator
+        .as_ref()
+        .map_or_else(|| "not running".to_owned(), orchestrator_line);
     let _ = writeln!(out, "orchestrator: {orchestrator}");
     if let Some(mcp) = &status.mcp {
         let _ = writeln!(out, "mcp: {}", mcp_line(mcp, archon_core::now()));
@@ -979,7 +972,6 @@ pub(crate) mod tests {
             started_at: archon_core::now(),
             aether,
             orchestrator: None,
-            orchestrator_refresh_delayed: None,
             caps: Caps::default(),
             pause: PauseState::default(),
             running_agents: 0,
@@ -1015,20 +1007,6 @@ pub(crate) mod tests {
             github_outbox: Vec::new(),
             github_outbox_pending: 0,
         }
-    }
-
-    #[test]
-    fn status_says_why_no_orchestrator_runs_while_an_upgrade_refresh_is_unfinished() {
-        let mut up = status_with(AetherLinkStatus::Disconnected {
-            error: "x".into(),
-            retry_at: None,
-        });
-        let plain = status(&up, &RepoNames::new(), false);
-        assert!(plain.contains("orchestrator: not running\n"), "{plain}");
-        up.orchestrator_refresh_delayed = Some("the fresh generation has not started".into());
-        let delayed = status(&up, &RepoNames::new(), false);
-        let line = "orchestrator: not running; upgrade refresh delayed: the fresh generation has not started\n";
-        assert!(delayed.contains(line), "{delayed}");
     }
 
     #[test]
@@ -1078,30 +1056,9 @@ pub(crate) mod tests {
         let text = status(&up, &RepoNames::new(), false);
         assert!(
             text.contains(
-                "restarted 6 times; generation 7, created by 1.2.3; prompt outdated; \
-                 tools outdated; 1 new lesson\n"
+                "restarted 6 times; generation 7, created by 1.2.3; tools outdated; 1 new \
+                 lesson; prompt outdated since upgrade; run `archon orchestrator restart`\n"
             ),
-            "{text}"
-        );
-    }
-
-    #[test]
-    fn status_says_why_a_refresh_waits_when_the_orchestrator_s_creation_is_unrecorded() {
-        let mut up = status_with(AetherLinkStatus::Disconnected {
-            error: "x".into(),
-            retry_at: None,
-        });
-        up.orchestrator = Some(
-            serde_json::from_value(serde_json::json!({
-                "agent": "agt_0001", "model": "claude-code/opus", "effort": "high",
-                "status": "ready", "restarts": 0, "generation": 2,
-            }))
-            .unwrap(),
-        );
-        up.orchestrator_refresh_delayed = Some("it waits until idle".into());
-        let text = status(&up, &RepoNames::new(), false);
-        assert!(
-            text.contains("one it tracks; upgrade refresh delayed: it waits until idle\n"),
             "{text}"
         );
     }

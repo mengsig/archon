@@ -53,10 +53,15 @@ fn freshness_verdict(info: &OrchestratorInfo) -> Check {
     if !stale {
         return check("orchestrator", Level::Ok, line);
     }
+    // An outdated prompt's line already ends with the restart to run.
+    let fix = "`archon orchestrator restart`";
+    if line.ends_with(fix) {
+        return check("orchestrator", Level::Warn, line);
+    }
     check(
         "orchestrator",
         Level::Warn,
-        format!("{line}; `archon orchestrator restart` starts a current one"),
+        format!("{line}; {fix} starts a current one"),
     )
 }
 
@@ -82,7 +87,6 @@ mod tests {
             tools_outdated: false,
             new_lessons,
             settings_drift: None,
-            refresh_delayed: None,
         }
     }
 
@@ -94,9 +98,9 @@ mod tests {
         let stale = freshness_verdict(&info(Some(fresh(Some(true), 3))));
         assert_eq!(stale.level, Level::Warn);
         assert!(
-            stale
-                .detail
-                .starts_with("generation 7, created by 1.2.3; prompt outdated; 3 new lessons"),
+            stale.detail.starts_with(
+                "generation 7, created by 1.2.3; 3 new lessons; prompt outdated since upgrade"
+            ),
             "{}",
             stale.detail
         );

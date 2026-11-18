@@ -188,38 +188,6 @@ fn orchestrator_that_stops_after(harness: &Harness, polls: usize) {
     );
 }
 
-/// A refresh after an upgrade had begun on this orchestrator: its checkpoint
-/// holds the outdated instructions, so getting the tools back starts the
-/// fresh generation the refresh owes instead of restarting it.
-#[tokio::test]
-async fn a_relink_during_an_unfinished_refresh_starts_the_fresh_generation() {
-    let harness = Harness::new().await;
-    harness.connect().await;
-    running_orchestrator(&harness).await;
-    harness.set_kv(keys::ORCHESTRATOR_GENERATION, "1").await;
-    harness.set_kv("orchestrator_refresh_unfinished", "1").await;
-    install_server(&harness, failed("Broken pipe"), ready());
-    let fresh = Scripted::reply("agent", orchestrator(ORCH_3, "ready"));
-    harness.fake.script("create_agent", fresh);
-
-    supervisor::check_mcp(&harness.ctx, archon_core::now())
-        .await
-        .unwrap();
-
-    let restarts = harness.fake.received_named("restart");
-    assert!(
-        restarts.is_empty(),
-        "the outdated checkpoint was restarted: {restarts:?}"
-    );
-    assert_eq!(harness.fake.received_named("create_agent").len(), 1);
-    assert_eq!(
-        harness.kv(keys::ORCHESTRATOR_AGENT).await.as_deref(),
-        Some(ORCH_3)
-    );
-    let unfinished = harness.kv("orchestrator_refresh_unfinished").await;
-    assert!(unfinished.is_none(), "adoption ended the refresh");
-}
-
 /// Aether ends a running turn cooperatively and restarts only a stopped
 /// agent: asked too early it refuses, which must not cost the conversation.
 #[tokio::test]

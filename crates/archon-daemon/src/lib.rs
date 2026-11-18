@@ -493,7 +493,7 @@ fn spawn_workers(
     }
     assert_eq!(
         workers.len(),
-        22 + usize::from(auto_gc) + usize::from(verifies),
+        23 + usize::from(auto_gc) + usize::from(verifies),
         "every daemon worker is supervised"
     );
 }

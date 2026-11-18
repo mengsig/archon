@@ -180,6 +180,10 @@ pub struct WatchedChange {
     /// `new_pull_request`, `seen_pull_request` (first seen, though made before the
     /// last walk), `new_head`, `review_requested`, `new_comment` or `new_review`.
     pub change: String,
+    /// Every other difference the walk found in this pull request, of the kinds
+    /// after `change`: a walk stores no difference it does not name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub also: Vec<String>,
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub author: Option<String>,
@@ -187,6 +191,30 @@ pub struct WatchedChange {
     /// The newly requested reviewers, for `review_requested`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reviewers: Vec<String>,
+}
+
+impl WatchedChange {
+    /// Every kind of difference this change names, the most telling first.
+    pub(crate) fn kinds(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.change.as_str()).chain(self.also.iter().map(String::as_str))
+    }
+}
+
+/// `changes` by kind, for a trigger that does not tell them in full: each
+/// pull request's number under every kind of difference it has.
+pub(crate) fn by_kind(changes: &[WatchedChange]) -> BTreeMap<String, Vec<u64>> {
+    let mut named = BTreeMap::<String, Vec<u64>>::new();
+    for change in changes {
+        assert!(change.number > 0, "a pull request");
+        for kind in change.kinds() {
+            named
+                .entry(kind.to_owned())
+                .or_default()
+                .push(change.number);
+        }
+    }
+    assert_eq!(named.is_empty(), changes.is_empty(), "each is named");
+    named
 }
 
 pub(crate) fn key(repo: &RepoId) -> String {
@@ -382,16 +410,18 @@ impl Pull {
         }
     }
 
-    /// The trigger's line for this pull request.
-    fn told(&self, change: &str, reviewers: Vec<String>) -> WatchedChange {
-        WatchedChange {
+    /// The trigger's line for this pull request: `kinds` is every difference, in order.
+    fn told(&self, kinds: &[&str], reviewers: Vec<String>) -> Option<WatchedChange> {
+        let (change, also) = kinds.split_first()?;
+        Some(WatchedChange {
             number: self.number,
-            change: change.to_owned(),
+            change: (*change).to_owned(),
+            also: also.iter().map(|kind| (*kind).to_owned()).collect(),
             title: clipped_title(&self.title),
             author: self.user.clone(),
             url: self.html_url.clone(),
             reviewers,
-        }
+        })
     }
 }
 
@@ -507,8 +537,8 @@ pub(crate) fn after_unchanged_walk(
     })
 }
 
-/// What `row` tells against `stored`, the row known when the last completed
-/// walk began at `previous`.
+/// What `row` tells against `stored`, the row known when the last completed walk
+/// began at `previous`: every difference, as the walk stores `row` whole.
 fn change(
     stored: Option<&Row>,
     pull: &Pull,
@@ -522,23 +552,24 @@ fn change(
             true => "new_pull_request",
             false => "seen_pull_request",
         };
-        return Some(pull.told(kind, Vec::new()));
+        return pull.told(&[kind], Vec::new());
     };
-    if stored.head != row.head {
-        return Some(pull.told("new_head", Vec::new()));
-    }
     let added: Vec<String> = row
         .reviewers
         .difference(&stored.reviewers)
         .cloned()
         .collect();
-    if !added.is_empty() {
-        return Some(pull.told("review_requested", added));
-    }
-    if row.comments > stored.comments {
-        return Some(pull.told("new_comment", Vec::new()));
-    }
-    (row.reviews > stored.reviews).then(|| pull.told("new_review", Vec::new()))
+    let differences = [
+        ("new_head", stored.head != row.head),
+        ("review_requested", !added.is_empty()),
+        ("new_comment", row.comments > stored.comments),
+        ("new_review", row.reviews > stored.reviews),
+    ];
+    let kinds: Vec<&str> = differences
+        .iter()
+        .filter_map(|(kind, differs)| differs.then_some(*kind))
+        .collect();
+    pull.told(&kinds, added)
 }
 
 /// `title` on one line, without control or format characters, clipped.
@@ -657,6 +688,48 @@ mod tests {
         assert_eq!(walked.walked_at, Some(T1.parse().unwrap()));
         let (_, again) = after_walk(&walked, walk(T2, next)).unwrap();
         assert!(again.is_empty(), "the same set again is no news");
+    }
+
+    /// A walk stores a row whole, so it names every difference the row has:
+    /// none is left for a later walk, which would find nothing to tell.
+    #[test]
+    fn every_difference_of_a_pull_request_is_named() {
+        let record = first_walk(vec![
+            counted(pull(1, "a", T0, &[]), 0, 0),
+            counted(pull(2, "b", T0, &[]), 2, 1),
+            counted(pull(3, "c", T0, &[]), 0, 0),
+        ]);
+        let next = vec![
+            counted(pull(1, "a2", T1, &["y"]), 1, 1),
+            counted(pull(2, "b", T1, &[]), 3, 2),
+            counted(pull(3, "c", T1, &[]), 0, 1),
+        ];
+        let (walked, changes) = after_walk(&record, walk(T1, next.clone())).unwrap();
+        assert_eq!(
+            told(&changes),
+            [(1, "new_head"), (2, "new_comment"), (3, "new_review")]
+        );
+        assert_eq!(
+            changes[0].also,
+            ["review_requested", "new_comment", "new_review"],
+            "the push to #1 hides none of its other news"
+        );
+        assert_eq!(changes[0].reviewers, ["y"]);
+        assert_eq!(changes[1].also, ["new_review"]);
+        assert!(changes[2].also.is_empty(), "one difference only");
+        assert_eq!(walked.pulls[&1].counts(), next[0].1.counts());
+        let wire = serde_json::to_value(&changes).unwrap();
+        assert_eq!(wire[1]["also"], serde_json::json!(["new_review"]));
+        assert!(wire[2].get("also").is_none(), "absent when empty: {wire}");
+
+        let named = by_kind(&changes);
+        assert_eq!(named["new_head"], [1]);
+        assert_eq!(named["review_requested"], [1]);
+        assert_eq!(named["new_comment"], [1, 2]);
+        assert_eq!(named["new_review"], [1, 2, 3]);
+        assert_eq!(named.len(), 4, "{named:?}");
+        let (_, again) = after_walk(&walked, walk(T2, next)).unwrap();
+        assert!(again.is_empty(), "each difference was told by its walk");
     }
 
     #[test]

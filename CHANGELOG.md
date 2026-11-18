@@ -16,7 +16,8 @@
   and resumes five minutes later, and a pull request a page shift hides is
   told by the next walk, so news can be an interval late but is not lost
   (`docs/vnext/ARCHITECTURE.md` §f lists the accepted limits). A trigger
-  tells 20 changes in full and names every other by kind and number. A
+  tells 20 changes in full and names every other by kind and number; a
+  change names every difference of its pull request (`also`). A
   restarted archond asks no watch in its first five minutes, and
   `repo_watches` marks a watch `truncated` when its list fills the 1,000
   newest open pull requests a walk reads. Only a

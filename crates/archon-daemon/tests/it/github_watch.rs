@@ -362,6 +362,16 @@ async fn told(h: &Harness) -> Vec<(u64, String, Vec<String>)> {
         .collect()
 }
 
+/// The last trigger's changes that name more than one difference: (number, also).
+async fn also(h: &Harness) -> Vec<(u64, Vec<String>)> {
+    let events = watch_events(h).await;
+    let Some(TriggerEvent::GithubWatch { changes, .. }) = events.last() else {
+        return Vec::new();
+    };
+    let more = changes.iter().filter(|c| !c.also.is_empty());
+    more.map(|c| (c.number, c.also.clone())).collect()
+}
+
 async fn listed(h: &Harness) -> Vec<archon_core::protocol::github_links::RepoWatchView> {
     let Reply::RepoWatches(listed) = h.cli(Request::RepoWatches).await.unwrap() else {
         panic!("repo_watches replies with the watches");
@@ -543,6 +553,40 @@ async fn only_a_new_comment_or_review_makes_activity_news() {
     assert_eq!(told(&h).await, [(1, "new_review".to_owned(), vec![])]);
     assert_eq!(watch_events(&h).await.len(), 2);
     github.assert_only_reads();
+}
+
+/// A push, a review request and a comment between two walks are one change
+/// naming all three: the walk stores the counts, so no later walk would tell them.
+#[tokio::test]
+async fn a_push_and_a_comment_at_once_are_both_named() {
+    let github = Github::new();
+    let h = watched(&github).await;
+    let mut pushed = pull_at(1, "b", T1);
+    pushed["requested_reviewers"] = serde_json::json!([{"login": "octo"}]);
+    github.serve_count("comments-1", 1);
+    github.serve_list(serde_json::json!([pushed]), "W/\"l2\"");
+    assert_eq!(pass(&h).await.watch.triggers, 1);
+    assert_eq!(
+        told(&h).await,
+        [(1, "new_head".to_owned(), vec!["octo".to_owned()])]
+    );
+    let others = ["review_requested".to_owned(), "new_comment".to_owned()];
+    assert_eq!(also(&h).await, [(1, others.to_vec())]);
+    let wire = serde_json::to_value(watch_events(&h).await.last().unwrap()).unwrap();
+    assert_eq!(
+        wire["changes"][0]["also"],
+        serde_json::json!(["review_requested", "new_comment"]),
+        "{wire}"
+    );
+    assert_eq!(stored(&h).await["pulls"]["1"]["comments"], 1);
+
+    let quiet = pass(&h).await;
+    assert_eq!(
+        (quiet.watch.requested, quiet.watch.unchanged),
+        (1, 1),
+        "{quiet:?}"
+    );
+    assert_eq!(watch_events(&h).await.len(), 1, "told once, in full");
 }
 
 #[tokio::test]
@@ -947,8 +991,8 @@ async fn a_walk_of_304s_moves_the_clock_a_new_pull_request_is_told_against() {
     );
 }
 
-/// Every pull request moves between a cut walk and its resumption. The counts read are
-/// kept, so the walk completes and tells the head it lists; the next walk counts again.
+/// Every pull request moves between a cut walk and its resumption. The counts read are kept, so
+/// the walk completes and tells the head it lists with the comment it counted; the next counts again.
 #[tokio::test]
 async fn a_resumed_walk_gets_further_though_what_it_counted_moved_again() {
     let github = Github::new();
@@ -956,6 +1000,7 @@ async fn a_resumed_walk_gets_further_though_what_it_counted_moved_again() {
     let h = harness(&github).await;
     h.orchestrator(watch_repo(REPO_NAME)).await.unwrap();
     walk_whole(&h).await;
+    github.serve_count("comments-1", 1);
     github.serve_list(pulls((1..=14).rev(), T1), "W/\"g2\"");
     let mut sync = settled_sync().await;
     tokio::time::pause();
@@ -982,6 +1027,11 @@ async fn a_resumed_walk_gets_further_though_what_it_counted_moved_again() {
         [(1, "new_head".to_owned(), vec![])],
         "the head this walk listed is told by it; #2 was counted before its comment"
     );
+    assert_eq!(
+        also(&h).await,
+        [(1, vec!["new_comment".to_owned()])],
+        "the comment the cut walk counted is told with the head, not stored untold"
+    );
 
     let before = github.calls().len();
     let mut back = pulls((1..=14).rev(), T2);
@@ -1005,6 +1055,7 @@ async fn a_resumed_walk_gets_further_though_what_it_counted_moved_again() {
         ],
         "#1 was pushed back to its first head, and #2 is counted again"
     );
+    assert!(also(&h).await.is_empty(), "#1's comment was told before");
     tokio::time::advance(Duration::from_secs(5 * 60)).await;
     let quiet = busy(sync.pass(&h.ctx)).await.unwrap();
     assert_eq!((quiet.watch.requested, quiet.watch.unchanged), (1, 1));

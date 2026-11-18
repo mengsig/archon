@@ -356,10 +356,13 @@ never edits it implicitly.**
   - *Diff.* A completed walk is compared with the stored snapshot and raises
     at most one `github_watch` trigger (`operator: false`) naming the
     differences: `new_pull_request`, `seen_pull_request`, `new_head`,
-    `review_requested`, `new_comment` or `new_review`, one per pull request.
-    The trigger tells the first 20 in full (title, author, URL) and names
-    every other one in `rest`, change kind → pull request numbers, so each
-    change of a stored walk is in its one trigger. The first completed walk,
+    `review_requested`, `new_comment` or `new_review`. A pull request has
+    one change: its `change` is the first of those that applies and its
+    `also` names every other one that does, since the walk stores the row
+    whole and no later walk would tell them. The trigger tells the first 20
+    in full (title, author, URL) and names every other one in `rest`, change
+    kind → pull request numbers, a number under each of its kinds, so each
+    difference of a stored walk is in its one trigger. The first completed walk,
     and the first after the record's format changed, is stored silently. A
     stored record of the current format that no write would make is refused
     as corrupt where it is read, by the pass and the tool; removing the
@@ -368,8 +371,9 @@ never edits it implicitly.**
     budget or a backoff cuts short stores nothing; it goes first five
     minutes later, and the sync keeps in memory what it had counted. Counts
     read before the cut are kept even if their pull request moved again, so
-    every resumption gets further: the walk stores and tells the head and
-    reviewers it listed, with those counts marked to be read again, and
+    every resumption gets further: the walk stores the head and reviewers
+    it listed with those counts, tells every difference of that row, marks
+    the counts to be read again, and
     drops the page's ETag, so the next walk is sent the page, counts the
     pull request again and tells a comment or review made since. A stored
     walk count with no room for one more fails the walk as corrupt rather

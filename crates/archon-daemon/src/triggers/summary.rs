@@ -154,9 +154,10 @@ fn label(event: &TriggerEvent) -> String {
             rest,
             ..
         } => {
-            let count = changes.len() + rest.values().map(Vec::len).sum::<usize>();
+            let rest: std::collections::BTreeSet<u64> = rest.values().flatten().copied().collect();
+            let count = changes.len() + rest.len();
             format!(
-                "github watch: {repository}, {count} pull request change(s), no operator standing"
+                "github watch: {repository}, {count} pull request(s) changed, no operator standing"
             )
         }
     }

@@ -593,10 +593,8 @@ async fn origin_unmoved(due: &Due) -> bool {
 fn watch_event(due: &Due, mut changes: Vec<WatchedChange>) -> TriggerEvent {
     assert!(!changes.is_empty(), "only news raises a trigger");
     let told = changes.len().min(watch::MAX_CHANGES);
-    let mut rest = BTreeMap::<String, Vec<u64>>::new();
-    for change in changes.drain(told..) {
-        rest.entry(change.change).or_default().push(change.number);
-    }
+    let rest = watch::by_kind(&changes[told..]);
+    changes.truncate(told);
     assert_eq!(changes.len(), told, "the first are told in full");
     TriggerEvent::GithubWatch {
         repo: due.repo.name.clone(),

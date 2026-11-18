@@ -28,17 +28,35 @@ pub(crate) fn list_endpoint(repository: &str, page: u32) -> String {
     )
 }
 
-/// The conversation comments on #`number` updated since `since`.
-pub(crate) fn comments_endpoint(repository: &str, number: u64, since: Timestamp) -> String {
-    assert!(number > 0, "a pull request number");
+/// Page `page` of the conversation comments on #`number` updated since
+/// `since`, oldest first.
+pub(crate) fn comments_endpoint(
+    repository: &str,
+    number: u64,
+    since: Timestamp,
+    page: u32,
+) -> String {
+    assert!(number > 0 && page > 0, "a pull request and a page");
     let since = since.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    format!("repos/{repository}/issues/{number}/comments?since={since}&per_page={PAGE}")
+    let endpoint =
+        format!("repos/{repository}/issues/{number}/comments?since={since}&per_page={PAGE}");
+    paged(endpoint, page)
 }
 
-/// The first page of #`number`'s reviews, oldest first.
-pub(crate) fn reviews_endpoint(repository: &str, number: u64) -> String {
-    assert!(number > 0, "a pull request number");
-    format!("repos/{repository}/pulls/{number}/reviews?per_page={PAGE}")
+/// Page `page` of #`number`'s reviews, oldest first.
+pub(crate) fn reviews_endpoint(repository: &str, number: u64, page: u32) -> String {
+    assert!(number > 0 && page > 0, "a pull request and a page");
+    paged(
+        format!("repos/{repository}/pulls/{number}/reviews?per_page={PAGE}"),
+        page,
+    )
+}
+
+fn paged(endpoint: String, page: u32) -> String {
+    match page {
+        1 => endpoint,
+        page => format!("{endpoint}&page={page}"),
+    }
 }
 
 /// The `gh api` arguments that `GET` `endpoint`, conditional on `etag`.
@@ -62,7 +80,14 @@ pub(crate) fn get_args(endpoint: &str, etag: Option<&str>) -> Vec<String> {
 /// What one `GET` found.
 #[derive(Debug)]
 pub(crate) enum Got {
-    Changed { etag: Option<String>, body: String },
+    Changed {
+        etag: Option<String>,
+        body: String,
+        /// The last page its `Link` header names, when there are more.
+        last_page: Option<u32>,
+        /// GitHub's clock when it answered, from the `Date` header.
+        date: Option<Timestamp>,
+    },
     NotModified,
 }
 
@@ -97,6 +122,11 @@ pub(crate) async fn get(
                 .header("etag")
                 .filter(|e| e.len() <= MAX_ETAG_BYTES)
                 .map(str::to_owned),
+            last_page: response.header("link").and_then(last_page),
+            date: response
+                .header("date")
+                .and_then(|d| chrono::DateTime::parse_from_rfc2822(d).ok())
+                .map(|d| d.with_timezone(&chrono::Utc)),
             body: response.body,
         }),
         304 => Ok(Got::NotModified),
@@ -108,27 +138,58 @@ pub(crate) async fn get(
     Ok(Answer { got, backoff })
 }
 
+/// The page a `Link` header's `rel="last"` names.
+fn last_page(link: &str) -> Option<u32> {
+    let last = link.split(',').find(|part| part.contains("rel=\"last\""))?;
+    let url = last
+        .split(';')
+        .next()?
+        .trim()
+        .trim_start_matches('<')
+        .trim_end_matches('>');
+    let query = url.split_once('?')?.1;
+    let page = query
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("page="))?;
+    page.parse().ok().filter(|page| *page > 1)
+}
+
+/// A comment or review: its id, and when it was made (`None` for a pending review).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Activity {
+    pub id: u64,
+    pub at: Option<Timestamp>,
+}
+
 #[derive(Debug, Deserialize)]
 struct Dated {
+    id: u64,
     #[serde(default)]
     created_at: Option<Timestamp>,
     #[serde(default)]
     submitted_at: Option<Timestamp>,
 }
 
-/// Whether a page of comments or reviews holds one made after `since`. A
-/// full page counts as news: the newest may be on a later page.
-pub(crate) fn has_newer(body: &str, since: Timestamp, what: &str) -> Result<bool, ArchonError> {
+/// One page of comments (`created_at`) or reviews (`submitted_at`).
+pub(crate) fn activity(body: &str, what: &str) -> Result<Vec<Activity>, ArchonError> {
     let items: Vec<Dated> = serde_json::from_str(body)
         .map_err(|e| ArchonError::Protocol(format!("GitHub's {what} did not parse: {e}")))?;
-    if items.len() >= PAGE {
-        return Ok(true);
+    if items.len() > PAGE || items.iter().any(|i| i.id == 0) {
+        return Err(ArchonError::Protocol(format!(
+            "GitHub's {what} were over a page or had an id of 0"
+        )));
     }
-    let newer = items
+    let at = |i: &Dated| match what {
+        "reviews" => i.submitted_at,
+        _ => i.created_at,
+    };
+    Ok(items
         .iter()
-        .filter_map(|i| i.submitted_at.or(i.created_at))
-        .any(|at| at > since);
-    Ok(newer)
+        .map(|i| Activity {
+            id: i.id,
+            at: at(i),
+        })
+        .collect())
 }
 
 #[cfg(test)]
@@ -148,7 +209,7 @@ mod tests {
             "{args}"
         );
         let since: Timestamp = "2026-11-01T00:00:00Z".parse().unwrap();
-        let comments = get_args(&comments_endpoint("o/r", 7, since), None).join(" ");
+        let comments = get_args(&comments_endpoint("o/r", 7, since, 1), None).join(" ");
         assert!(!comments.contains("If-None-Match"));
         assert!(
             comments.ends_with("issues/7/comments?since=2026-11-01T00:00:00Z&per_page=100"),
@@ -157,22 +218,26 @@ mod tests {
     }
 
     #[test]
-    fn only_a_comment_or_review_after_the_mark_is_news() {
-        let since: Timestamp = "2026-11-01T00:00:00Z".parse().unwrap();
-        let old = r#"[{"created_at":"2026-10-01T00:00:00Z","updated_at":"2026-11-02T00:00:00Z"}]"#;
-        assert!(
-            !has_newer(old, since, "comments").unwrap(),
-            "an edited old comment"
+    fn a_link_header_names_the_last_page() {
+        let link = "<https://api.github.com/repositories/1/issues/7/comments?per_page=100&page=2>; \
+                    rel=\"next\", <https://api.github.com/repositories/1/issues/7/comments?per_page=100&page=4>; rel=\"last\"";
+        assert_eq!(last_page(link), Some(4));
+        assert_eq!(last_page("<https://x/y?page=2>; rel=\"next\""), None);
+        assert_eq!(
+            reviews_endpoint("o/r", 7, 4),
+            "repos/o/r/pulls/7/reviews?per_page=100&page=4"
         );
-        let new = r#"[{"created_at":"2026-11-02T00:00:00Z"}]"#;
-        assert!(has_newer(new, since, "comments").unwrap());
-        let pending = r#"[{"submitted_at":null}]"#;
-        assert!(
-            !has_newer(pending, since, "reviews").unwrap(),
-            "a pending review"
-        );
-        let reviewed = r#"[{"submitted_at":"2026-11-03T00:00:00Z"}]"#;
-        assert!(has_newer(reviewed, since, "reviews").unwrap());
-        assert!(has_newer("{}", since, "reviews").is_err());
+    }
+
+    #[test]
+    fn comments_and_reviews_read_with_their_own_dates() {
+        let comments =
+            r#"[{"id":3,"created_at":"2026-10-01T00:00:00Z","updated_at":"2026-11-02T00:00:00Z"}]"#;
+        let read = activity(comments, "comments").unwrap();
+        assert_eq!(read[0].at, Some("2026-10-01T00:00:00Z".parse().unwrap()));
+        let pending = r#"[{"id":4,"submitted_at":null}]"#;
+        assert_eq!(activity(pending, "reviews").unwrap()[0].at, None);
+        assert!(activity("{}", "reviews").is_err());
+        assert!(activity(r#"[{"id":0}]"#, "reviews").is_err());
     }
 }

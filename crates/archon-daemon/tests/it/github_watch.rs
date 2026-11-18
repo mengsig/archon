@@ -4,7 +4,7 @@
 //! when the list changed.
 
 use crate::common;
-use crate::github_sync::{Github, busy, harness, reference};
+use crate::github_sync::{Github, busy, git, harness, reference};
 
 use std::time::Duration;
 
@@ -438,7 +438,7 @@ async fn only_a_new_comment_or_review_makes_activity_news() {
     assert!(
         calls
             .iter()
-            .any(|c| c.ends_with("issues/1/comments?since=2026-11-01T00:00:00Z&per_page=100")),
+            .any(|c| c.ends_with("issues/1/comments?since=2026-10-31T23:59:59Z&per_page=100")),
         "{calls:?}"
     );
     assert!(
@@ -453,12 +453,20 @@ async fn only_a_new_comment_or_review_makes_activity_news() {
         "the edit is marked: one 304"
     );
 
-    github.serve_named("comments-1", serde_json::json!([{"created_at": T2}]), "");
+    github.serve_named(
+        "comments-1",
+        serde_json::json!([{"id": 7, "created_at": T2}]),
+        "",
+    );
     github.serve_list(serde_json::json!([pull_at(1, "a", T2)]), "W/\"l3\"");
     assert_eq!(pass(&h).await.watch.triggers, 1);
     assert_eq!(told(&h).await, [(1, "new_comment".to_owned(), vec![])]);
 
-    github.serve_named("reviews-1", serde_json::json!([{"submitted_at": T3}]), "");
+    github.serve_named(
+        "reviews-1",
+        serde_json::json!([{"id": 8, "submitted_at": T3}]),
+        "",
+    );
     github.serve_list(serde_json::json!([pull_at(1, "a", T3)]), "W/\"l4\"");
     assert_eq!(pass(&h).await.watch.triggers, 1);
     assert_eq!(told(&h).await, [(1, "new_review".to_owned(), vec![])]);
@@ -503,11 +511,13 @@ async fn more_than_a_page_of_pull_requests_is_watched() {
 
     github.serve_list(pulls((106..=205).rev(), T1), "W/\"p2\"");
     github.serve_named("pulls-2", pulls((6..=105).rev(), T0), "");
+    // Page 2 ends at the watermark's second, so page 3 is read too.
+    github.serve_named("pulls-3", pulls((1..=5).rev(), T0), "");
     let before = github.calls().len();
     let grown = pass(&h).await;
     assert_eq!(
         (grown.watch.requested, grown.watch.triggers),
-        (2, 1),
+        (3, 1),
         "{grown:?}"
     );
     assert!(github.calls()[before + 1].ends_with(&format!("{LIST}2")));
@@ -531,8 +541,8 @@ async fn more_than_a_page_of_pull_requests_is_watched() {
     let one = pass(&h).await;
     assert_eq!(
         (one.watch.requested, one.watch.triggers),
-        (1, 1),
-        "page 1 ends at the watermark"
+        (2, 1),
+        "page 1 ends tied with the watermark, page 2 before it"
     );
     github.assert_only_reads();
 }
@@ -566,4 +576,133 @@ async fn follow_ups_past_the_budget_wait_for_the_next_pass() {
     let settled = pass(&h).await;
     assert_eq!((settled.requested, settled.watch.unchanged), (1, 1));
     assert!(watch_events(&h).await.is_empty(), "edits only, no news");
+}
+
+/// Old comments and reviews filling a page are no news: the last page,
+/// where the newest ids are, is read, and only a later one is told.
+#[tokio::test]
+async fn full_pages_of_old_comments_and_reviews_are_no_news() {
+    let github = Github::new();
+    let h = watched(&github).await;
+    let old = |ids: std::ops::RangeInclusive<u64>, field: &str| -> serde_json::Value {
+        let made = "2026-10-01T00:00:00Z";
+        ids.map(|id| serde_json::json!({"id": id, field: made, "updated_at": T1}))
+            .collect()
+    };
+    github.serve_named("comments-1", old(1..=100, "created_at"), "");
+    github.serve_named("comments-1-p2", old(101..=101, "created_at"), "");
+    std::fs::write(github.path("link-comments-1"), "2").unwrap();
+    github.serve_named("reviews-1", old(201..=300, "submitted_at"), "");
+    github.serve_named("reviews-1-p2", old(301..=301, "submitted_at"), "");
+    std::fs::write(github.path("link-reviews-1"), "2").unwrap();
+    github.serve_list(serde_json::json!([pull_at(1, "a", T1)]), "W/\"l2\"");
+    let edited = pass(&h).await;
+    assert_eq!(
+        (edited.watch.requested, edited.watch.triggers),
+        (5, 0),
+        "{edited:?}"
+    );
+    let calls = github.calls();
+    assert!(
+        calls
+            .iter()
+            .any(|c| c.ends_with("pulls/1/reviews?per_page=100&page=2")),
+        "{calls:?}"
+    );
+
+    let newest = serde_json::json!([{"id": 302, "submitted_at": T2}]);
+    github.serve_named("reviews-1-p2", newest, "");
+    github.serve_list(serde_json::json!([pull_at(1, "a", T2)]), "W/\"l3\"");
+    assert_eq!(pass(&h).await.watch.triggers, 1);
+    assert_eq!(told(&h).await, [(1, "new_review".to_owned(), vec![])]);
+}
+
+/// GitHub dates to the second: a comment in the same second as the mark
+/// leaves `updated_at` as it was, so a mark that recent is checked again.
+#[tokio::test]
+async fn a_comment_in_the_marked_second_is_still_told() {
+    let github = Github::new();
+    let fresh = archon_core::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    github.serve_list(serde_json::json!([pull_at(1, "a", &fresh)]), "W/\"s1\"");
+    let h = harness(&github).await;
+    h.orchestrator(watch_repo(REPO_NAME)).await.unwrap();
+    pass(&h).await;
+    let comment = serde_json::json!([{"id": 5, "created_at": fresh}]);
+    github.serve_named("comments-1", comment, "");
+    let before = github.calls().len();
+    let recheck = pass(&h).await;
+    let list = &github.calls()[before];
+    assert!(
+        !list.contains("If-None-Match"),
+        "an unsettled mark keeps no ETag: {list}"
+    );
+    assert_eq!(recheck.watch.triggers, 1, "{recheck:?}");
+    assert_eq!(told(&h).await, [(1, "new_comment".to_owned(), vec![])]);
+    let again = pass(&h).await;
+    assert_eq!(again.watch.triggers, 0, "a comment is told once: {again:?}");
+}
+
+/// More than a page sharing the watermark's second: the next page is read.
+#[tokio::test]
+async fn pull_requests_tied_with_the_watermark_are_read_past_the_first_page() {
+    let github = Github::new();
+    github.serve_list(pulls((6..=105).rev(), T0), "W/\"t1\"");
+    github.serve_named("pulls-2", pulls((1..=5).rev(), T0), "");
+    let h = harness(&github).await;
+    h.orchestrator(watch_repo(REPO_NAME)).await.unwrap();
+    assert_eq!(pass(&h).await.watch.requested, 2);
+    github.serve_list(pulls((6..=105).rev(), T0), "W/\"t2\"");
+    github.serve_named(
+        "pulls-2",
+        pulls((1..=6).rev().map(|n| if n == 6 { 106 } else { n }), T0),
+        "",
+    );
+    let tied = pass(&h).await;
+    assert_eq!(
+        (tied.watch.requested, tied.watch.triggers),
+        (2, 1),
+        "{tied:?}"
+    );
+    assert_eq!(
+        told(&h).await,
+        [(106, "new_pull_request".to_owned(), vec![])]
+    );
+}
+
+/// A checkout re-pointed at another repository during a read: the read of
+/// the old one is discarded, and the next pass baselines the new one.
+#[tokio::test]
+async fn a_read_is_discarded_when_the_origin_moves_meanwhile() {
+    let github = Github::new();
+    let h = watched(&github).await;
+    github.serve_list(serde_json::json!([pull(2, "b"), pull(1, "a")]), "W/\"l2\"");
+    let hold = github.path("hold-pulls-1");
+    std::fs::write(&hold, "").unwrap();
+    let mut sync = GithubSync::new(MIN_INTERVAL);
+    let driver = async {
+        while !github.path("started-pulls-1").exists() {
+            tokio::task::yield_now().await;
+        }
+        let moved = ["remote", "set-url", "origin", "https://github.com/o/s.git"];
+        git(&h.repo, &moved);
+        std::fs::remove_file(&hold).unwrap();
+    };
+    let (read, ()) = busy(async { tokio::join!(sync.pass(&h.ctx), driver) }).await;
+    assert_eq!(read.unwrap().watch.triggers, 0);
+    assert!(
+        watch_events(&h).await.is_empty(),
+        "no news of the old repository"
+    );
+    assert_eq!(listed(&h).await[0].tracked_pull_requests, Some(1));
+    let rebased = pass(&h).await;
+    assert_eq!(
+        (rebased.watch.changed, rebased.watch.triggers),
+        (1, 0),
+        "{rebased:?}"
+    );
+    let after = listed(&h).await;
+    assert_eq!(after[0].repository.as_deref(), Some("o/s"));
+    assert_eq!(after[0].tracked_pull_requests, Some(2), "a new baseline");
+    let last = github.calls().pop().unwrap();
+    assert!(last.contains("repos/o/s/pulls"), "{last}");
 }

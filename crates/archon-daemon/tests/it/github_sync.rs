@@ -27,7 +27,8 @@ use common::{Harness, REPO_NAME};
 /// and `etag-N` beside it: a 304 when `If-None-Match` sends the current ETag,
 /// a 404 for a number it has no file for. Page P of the open pull requests
 /// reads as `pulls-P`, #N's comments as `comments-N` and its reviews as
-/// `reviews-N`, which list none without a file. Any other call is a
+/// `reviews-N` (page P > 1 as `…-pP`), which list none without a file;
+/// `link-<name>` makes its 200 name that page as the last. Any other call is a
 /// violation. While `hold-N` exists a read of N marks `started-N` and waits;
 /// while `retry-after` exists a 200 asks for that many seconds' backoff.
 /// `gh pr view <url> --json reviewDecision,statusCheckRollup` answers from
@@ -59,9 +60,12 @@ done
 case "$endpoint" in
   *"/pulls?state=open&sort=updated&direction=desc&per_page=100&page="*)
     number=pulls-${endpoint##*page=} ;;
-  *"/comments?since="*"&per_page=100") n=${endpoint%%/comments*}; number=comments-${n##*/} ;;
-  *"/reviews?per_page=100") n=${endpoint%%/reviews*}; number=reviews-${n##*/} ;;
+  *"/comments?since="*) n=${endpoint%%/comments*}; number=comments-${n##*/} ;;
+  *"/reviews?per_page=100"*) n=${endpoint%%/reviews*}; number=reviews-${n##*/} ;;
   *) number=${endpoint##*/} ;;
+esac
+case "$number" in comments-*|reviews-*)
+  case "$endpoint" in *"&page="*) number=$number-p${endpoint##*&page=} ;; esac ;;
 esac
 if [ -f "$dir/hold-$number" ]; then
   : > "$dir/started-$number"
@@ -82,6 +86,7 @@ if [ ! -f "$dir/issue-$number.json" ]; then
 fi
 printf 'HTTP/2.0 200 OK\r\nEtag: %s\r\nX-Ratelimit-Remaining: 4999\r\n' "$current"
 [ -f "$dir/retry-after" ] && printf 'Retry-After: %s\r\n' "$(cat "$dir/retry-after")"
+[ -f "$dir/link-$number" ] && printf 'Link: <https://api.github.com/x?per_page=100&page=%s>; rel="last"\r\n' "$(cat "$dir/link-$number")"
 printf '\r\n'
 cat "$dir/issue-$number.json"
 "#;
@@ -227,7 +232,7 @@ pub(crate) async fn harness(github: &Github) -> Harness {
     h
 }
 
-fn git(repo: &Path, args: &[&str]) {
+pub(crate) fn git(repo: &Path, args: &[&str]) {
     let status = std::process::Command::new("git")
         .arg("-C")
         .arg(repo)

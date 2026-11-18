@@ -26,6 +26,10 @@ pub(crate) const MAX_CHANGES: usize = 20;
 /// Pull requests a watch keeps a mark of; the least recently updated go first.
 pub(crate) const MAX_MARKS: usize = 1_000;
 
+/// A mark of an `updated_at` this close to its read is checked again: GitHub
+/// dates to the second, so activity later in that second leaves no trace.
+pub(crate) const SETTLE: chrono::TimeDelta = chrono::TimeDelta::seconds(2);
+
 /// Characters of a pull request's title a trigger carries.
 const MAX_TITLE_CHARS: usize = 200;
 
@@ -100,6 +104,15 @@ pub(crate) struct PullMark {
     /// Requested reviewers: logins, and teams as `team:<slug>`.
     #[serde(default)]
     pub reviewers: BTreeSet<String>,
+    /// The newest comment and review ids seen: one at or below is not news.
+    #[serde(default)]
+    pub comment_id: u64,
+    #[serde(default)]
+    pub review_id: u64,
+    /// `updated_at` was over [`SETTLE`] older than the read; until then the
+    /// next read checks the pull request's comments and reviews again.
+    #[serde(default)]
+    pub settled: bool,
 }
 
 /// One change a trigger reports.
@@ -219,11 +232,15 @@ impl Pull {
         all
     }
 
-    fn mark(&self) -> PullMark {
+    /// The mark of this pull request read at `read_at`, with the ids seen.
+    fn mark(&self, read_at: Timestamp, seen: Seen) -> PullMark {
         PullMark {
             head: self.head.clone(),
             updated_at: self.updated_at,
             reviewers: self.reviewers(),
+            comment_id: seen.comment_id,
+            review_id: seen.review_id,
+            settled: self.updated_at + SETTLE < read_at,
         }
     }
 
@@ -274,12 +291,20 @@ pub(crate) fn parse_pulls(repository: &str, body: &str) -> Result<Vec<Pull>, Arc
     Ok(pulls)
 }
 
-/// A pull request whose `updated_at` moved with nothing else a mark shows:
-/// a comment or review since `since` is news, a label or edit is not.
+/// A pull request whose `updated_at` moved with nothing else a mark shows,
+/// or whose mark is not settled: a comment or review newer than `mark` is
+/// news, a label or edit is not.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FollowUp {
     pub index: usize,
-    pub since: Timestamp,
+    pub mark: PullMark,
+}
+
+/// The newest comment and review ids a read saw of one pull request.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Seen {
+    pub comment_id: u64,
+    pub review_id: u64,
 }
 
 /// What a list told at once, and what it needs read further.
@@ -318,9 +343,9 @@ pub(crate) fn diff(record: &WatchRecord, pulls: &[Pull]) -> Diffed {
             .collect();
         if !added.is_empty() {
             diffed.changes.push(pull.told("review_requested", added));
-        } else if pull.updated_at > mark.updated_at {
-            let since = mark.updated_at;
-            diffed.follow_ups.push(FollowUp { index, since });
+        } else if pull.updated_at > mark.updated_at || !mark.settled {
+            let mark = mark.clone();
+            diffed.follow_ups.push(FollowUp { index, mark });
         }
     }
     assert!(
@@ -330,14 +355,24 @@ pub(crate) fn diff(record: &WatchRecord, pulls: &[Pull]) -> Diffed {
     diffed
 }
 
-/// The marks after `pulls` was read: a read of the `whole` list replaces
-/// them, a partial one adds to them. A pull request in `kept`, whose follow-up
-/// was not read, keeps its old mark, so the next read asks again.
+/// What one read adds to the marks.
+#[derive(Debug, Default)]
+pub(crate) struct Followed {
+    /// Pull requests whose follow-up went unread: they keep their old marks,
+    /// so the next read asks again.
+    pub kept: BTreeSet<u64>,
+    /// The ids each read follow-up saw.
+    pub seen: BTreeMap<u64, Seen>,
+}
+
+/// The marks after `pulls` was read at `read_at`: a read of the `whole` list
+/// replaces them, a partial one adds to them.
 pub(crate) fn merged_marks(
     before: Option<&BTreeMap<u64, PullMark>>,
     pulls: &[Pull],
     whole: bool,
-    kept: &BTreeSet<u64>,
+    followed: &Followed,
+    read_at: Timestamp,
 ) -> BTreeMap<u64, PullMark> {
     let mut marks = match before {
         Some(before) if !whole => before.clone(),
@@ -346,8 +381,16 @@ pub(crate) fn merged_marks(
     for pull in pulls {
         let old = before.and_then(|b| b.get(&pull.number));
         let mark = match old {
-            Some(old) if kept.contains(&pull.number) => old.clone(),
-            _ => pull.mark(),
+            Some(old) if followed.kept.contains(&pull.number) => old.clone(),
+            _ => {
+                let carried = old.map_or_else(Seen::default, |old| Seen {
+                    comment_id: old.comment_id,
+                    review_id: old.review_id,
+                });
+                let seen = followed.seen.get(&pull.number).copied().unwrap_or(carried);
+                assert!(seen.comment_id >= carried.comment_id, "ids only grow");
+                pull.mark(read_at, seen)
+            }
         };
         marks.insert(pull.number, mark);
     }
@@ -406,9 +449,22 @@ mod tests {
 
     fn baseline(pulls: &[Pull]) -> WatchRecord {
         let mut record = WatchRecord::new(5, "o/r".into());
-        record.pulls = Some(merged_marks(None, pulls, true, &BTreeSet::new()));
+        record.pulls = Some(merged_marks(None, pulls, true, &none(), now()));
         record.max_number = pulls.iter().map(|p| p.number).max().unwrap_or(0);
         record
+    }
+
+    use archon_core::now;
+
+    fn none() -> Followed {
+        Followed::default()
+    }
+
+    fn kept(number: u64) -> Followed {
+        Followed {
+            kept: BTreeSet::from([number]),
+            ..Followed::default()
+        }
     }
 
     const T0: &str = "2026-11-01T00:00:00Z";
@@ -453,7 +509,8 @@ mod tests {
             record.pulls.as_ref(),
             &after,
             true,
-            &BTreeSet::new(),
+            &none(),
+            now(),
         ));
         let again = diff(&record, &after);
         assert!(again.changes.is_empty() && again.follow_ups.is_empty());
@@ -473,16 +530,60 @@ mod tests {
             None,
             &[pull(1, "a", T0, &[]), pull(2, "b", T0, &[])],
             true,
-            &BTreeSet::new(),
+            &none(),
+            now(),
         );
         let read = [pull(2, "b2", T1, &[])];
-        let partial = merged_marks(Some(&before), &read, false, &BTreeSet::new());
+        let partial = merged_marks(Some(&before), &read, false, &none(), now());
         assert_eq!(partial.keys().copied().collect::<Vec<_>>(), [1, 2]);
         assert_eq!(partial[&2].head, "b2");
-        let whole = merged_marks(Some(&before), &read, true, &BTreeSet::new());
+        let whole = merged_marks(Some(&before), &read, true, &none(), now());
         assert_eq!(whole.keys().copied().collect::<Vec<_>>(), [2]);
-        let kept = merged_marks(Some(&before), &read, true, &BTreeSet::from([2]));
+        let kept = merged_marks(Some(&before), &read, true, &kept(2), now());
         assert_eq!(kept[&2].head, "b", "an unread follow-up keeps its mark");
+    }
+
+    #[test]
+    fn a_mark_read_within_the_settling_second_is_checked_again_and_keeps_its_ids() {
+        let fresh = now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        let pulls = [pull(1, "a", &fresh, &[])];
+        let mut record = baseline(&pulls);
+        assert!(!record.pulls.as_ref().unwrap()[&1].settled);
+        let diffed = diff(&record, &pulls);
+        assert_eq!(
+            diffed.follow_ups.len(),
+            1,
+            "an unsettled mark is asked again"
+        );
+        let seen = Followed {
+            seen: BTreeMap::from([(
+                1,
+                Seen {
+                    comment_id: 9,
+                    review_id: 4,
+                },
+            )]),
+            ..Followed::default()
+        };
+        let later = now() + SETTLE + SETTLE;
+        record.pulls = Some(merged_marks(
+            record.pulls.as_ref(),
+            &pulls,
+            true,
+            &seen,
+            later,
+        ));
+        let mark = &record.pulls.as_ref().unwrap()[&1];
+        assert_eq!(
+            (mark.comment_id, mark.review_id, mark.settled),
+            (9, 4, true)
+        );
+        let carried = merged_marks(record.pulls.as_ref(), &pulls, true, &none(), later);
+        assert_eq!(
+            carried[&1].comment_id, 9,
+            "ids carry over a read without follow-up"
+        );
+        assert!(diff(&record, &pulls).follow_ups.is_empty());
     }
 
     #[test]
@@ -493,7 +594,7 @@ mod tests {
                 pull(n, "a", updated, &[])
             })
             .collect();
-        let marks = merged_marks(None, &pulls, true, &BTreeSet::new());
+        let marks = merged_marks(None, &pulls, true, &none(), now());
         assert_eq!(marks.len(), MAX_MARKS);
         assert!(!marks.contains_key(&1) && marks.contains_key(&4));
     }

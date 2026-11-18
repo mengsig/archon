@@ -2257,6 +2257,69 @@ fn a_strict_stage_without_structured_gets_its_repair_turn() {
     assert_eq!(spawned(&repair), slots(&[("prove", 2, 0)]), "{repair:#?}");
 }
 
+/// A work stage that holds the ship record and loops back to `build` on a fail.
+fn looping_record_sim() -> Sim {
+    let toml = r#"
+        [pipeline]
+        name = "packed"
+        description = "build, then pack and ship"
+        version = 1
+        workspace = "worktree"
+        requires_repo = true
+        [pipeline.ship]
+        stage = "pack"
+        [[stage]]
+        id = "build"
+        kind = "work"
+        prompt = "build.md"
+        [[stage]]
+        id = "pack"
+        kind = "work"
+        prompt = "pack.md"
+        on_fail = { goto = "build", max_loops = 1 }
+    "#;
+    let spec = Arc::new(support::spec_from(toml, &[]));
+    let plan = support::plan_for(&spec, &["claude-code/opus"]);
+    let mut sim = Sim::new(spec, plan);
+    sim.writes_record = false;
+    sim
+}
+
+/// A repair attempt whose `structured` still holds no valid ship record has
+/// used its turn: the run fails, and the stage's fix loop is not taken.
+#[test]
+fn a_repair_without_a_valid_ship_record_fails_the_run_without_a_fix_loop() {
+    let mut sim = looping_record_sim();
+    sim.start();
+    sim.settle("build", 0, Agent::Done("Built."));
+    let repair = sim.settle("pack", 0, Agent::Done("Packed."));
+    assert_eq!(spawned(&repair), slots(&[("pack", 2, 0)]), "{repair:#?}");
+    let empty = Agent::DoneStructured("Packed again.", serde_json::json!({}));
+    let done = sim.settle("pack", 0, empty);
+    assert!(spawned(&done).is_empty(), "no fix loop: {done:#?}");
+    let (stage, error) = failed(&done);
+    assert_eq!(stage, "pack");
+    assert!(error.contains("ship record"), "{error}");
+    assert!(!error.contains("fix loop"), "{error}");
+}
+
+/// The same record on a first attempt is refused on its merits, not broken:
+/// it gets no repair turn and takes the stage's fix loop, as before.
+#[test]
+fn a_first_invalid_ship_record_takes_the_fix_loop() {
+    let mut sim = looping_record_sim();
+    sim.start();
+    sim.settle("build", 0, Agent::Done("Built."));
+    let empty = Agent::DoneStructured("Packed.", serde_json::json!({}));
+    let looped = sim.settle("pack", 0, empty);
+    assert_eq!(spawned(&looped), slots(&[("build", 2, 0)]), "{looped:#?}");
+    assert!(
+        sim.stages
+            .iter()
+            .all(|s| s.record_repair == Some(RecordRepair::Open))
+    );
+}
+
 /// A stated fail beside a valid record passed an ungated record stage before
 /// repair turns; replay of that outcome keeps the pass it was given.
 #[test]

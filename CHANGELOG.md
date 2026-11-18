@@ -13,19 +13,22 @@
   - One turn, marked. Each stage run now carries a persisted `record_repair`
     marker, `open` or `spent`. The repair attempt and every later attempt of
     its stage are `spent`: a broken record of one fails the run, with no fix
-    loop, and its kept agent is not asked for the record again.
+    loop, and its kept agent is not asked for the record again. So does a
+    `spent` attempt whose `structured` still holds no valid ship record.
   - A stated failure always wins in a stage that owes a delivery record (a
     review or the ship record). A fail verdict in `structured` or in the
     summary's last `VERDICT:` line, or a summary that opens with `ESCALATE:`
     or `BLOCKED:`, fails the stage with the reply as its agent sent it,
     whatever the stage's gate and even beside a valid record. It gets no
-    repair turn and no record request, and nothing of it ships. A resumed
-    agent's text after its record block is kept, so a failure stated there
-    counts too. A stage that owes no record is judged as before.
-  - Such a reply, and one with a broken record, is recorded as sent before
-    archond checks anything else in it: its requirement results, ship record
-    and reviewers are verified on the repaired reply instead. Only the cap
-    on review rounds is still applied first.
+    repair turn and no record request, and nothing of it ships. When a
+    resumed agent writes more after its record block, its whole reply is its
+    summary, so a failure stated there counts and an indented or fenced
+    example does not. A stage that owes no record is judged as before.
+  - Such a reply, and one with no `structured` at all, is recorded as sent
+    before archond checks anything else in it: the gate passes neither, and
+    the repaired reply is verified in full. Only the cap on review rounds is
+    still applied first. A reply with `structured` is verified as before,
+    whatever its record lacks.
   - A record refused on its merits, such as one with too few reviewers, gets
     no repair turn. A broken one is repaired before the stage's gate and
     scenario checks read it.
@@ -52,10 +55,11 @@
   another allowed provider or to fail the task so the orchestrator re-plans.
   Before, it waited until the stage deadline, and a held stage's deadline
   kept moving. The check runs on its own 30-second timer, apart from
-  dispatch. It checks every stage at once and waits at most 4 seconds for
-  each request to Aether, so a whole check ends within its 30 seconds, the
-  next one starts on time, and the cancel comes within 5 minutes of the
-  block first being seen. A wait recorded ahead of the clock, as after the
+  dispatch. Every 30 seconds it starts a check of each running stage and
+  waits for none, so a slow stage delays no other; a stage whose last check
+  still runs is passed over. A check waits at most 10 seconds for each
+  request to Aether, and the cancel comes within 5 minutes of the block
+  first being seen. A wait recorded ahead of the clock, as after the
   clock is set back, counts from now and is saved so. A quota restored within the 3 minutes stops nothing: the
   block is read again, with one `get_agent`, right before the cancel. The
   cancel carries the hint as its reason, and the lead is messaged after it.

@@ -313,7 +313,7 @@ async fn assign_roles(
 }
 
 /// Whether the gate decides `stage`'s completed `outcome` as its agent sent
-/// it: a stated failure, or a broken record, of a stage that owes a record.
+/// it: a stated failure, or no `structured`, of a stage that owes a record.
 fn decided_as_sent(
     driver: &archon_pipeline::RunDriver,
     stage: &StageRun,

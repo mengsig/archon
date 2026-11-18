@@ -297,7 +297,7 @@ async fn a_wait_recorded_ahead_of_the_clock_counts_from_now() {
 
 /// A due stage slow in every request of its check, each within the request
 /// limit, does not push back the next sweep: another stage's reviewer is
-/// still read every period.
+/// still read every period, and the slow check is not started a second time.
 #[tokio::test(start_paused = true)]
 async fn a_stage_slow_in_every_request_does_not_push_back_the_next_sweep() {
     let h = Harness::new().await;
@@ -313,6 +313,11 @@ async fn a_stage_slow_in_every_request_does_not_push_back_the_next_sweep() {
             .count()
     };
     advance_until(quota_wait::SWEEP_INTERVAL, || async { reads() == 1 }).await;
+    let listings = || {
+        let listed = h.backend.descendant_checks();
+        listed.iter().filter(|lead| **lead == slow_lead).count()
+    };
+    let listed_before = listings();
     // From the next sweep on, the other stage is due and answers slowly.
     backdate_wait(&h, &slow_stage, &slow, TimeDelta::minutes(3)).await;
     let delay = quota_wait::REQUEST_LIMIT - Duration::from_secs(1);
@@ -325,6 +330,9 @@ async fn a_stage_slow_in_every_request_does_not_push_back_the_next_sweep() {
     }
     assert_eq!(h.backend.cancelled(), vec![slow.clone()]);
     assert_eq!(told(&h, &slow_lead).len(), 1, "its lead is told once");
+    // Its check outlasted a period: the sweep due meanwhile passed it over.
+    assert!(delay * 6 > period && delay * 6 < period * 2, "{delay:?}");
+    assert_eq!(listings(), listed_before + 1, "one check, not two at once");
     watcher.abort();
 }
 
@@ -365,8 +373,8 @@ async fn slow_unrelated_stages_do_not_delay_a_due_reviewer() {
     };
     advance_until(quota_wait::SWEEP_INTERVAL, seen).await;
     backdate_wait(&h, &stage, &reviewer, TimeDelta::minutes(3)).await;
-    // The next sweep starts once the slow stages' requests were cut off.
-    let next_sweep = quota_wait::SWEEP_INTERVAL.max(quota_wait::REQUEST_LIMIT);
+    // The next sweep starts a period on, whatever the slow stages' checks do.
+    let next_sweep = quota_wait::SWEEP_INTERVAL;
     let stopped = || async { h.backend.cancelled() == vec![reviewer.clone()] };
     let took = advance_until(next_sweep + Duration::from_secs(2), stopped).await;
     assert!(took <= next_sweep + Duration::from_secs(1), "{took:?}");
@@ -378,10 +386,22 @@ async fn slow_unrelated_stages_do_not_delay_a_due_reviewer() {
 /// within five minutes and one sweep period of first being seen blocked.
 #[tokio::test(start_paused = true)]
 async fn a_blocked_reviewer_is_cancelled_in_time_though_every_read_is_slow() {
+    cancelled_in_time(quota_wait::REQUEST_LIMIT - Duration::from_secs(1)).await;
+}
+
+/// An Aether that takes five seconds over every answer is slow, not silent:
+/// its answers are read, and the blocked reviewer is cancelled in time.
+#[tokio::test(start_paused = true)]
+async fn a_blocked_reviewer_is_cancelled_in_time_when_every_answer_takes_five_seconds() {
+    cancelled_in_time(Duration::from_secs(5)).await;
+}
+
+/// A reviewer whose stage answers every request after `slow`, beside stages
+/// that never answer, is cancelled within five minutes and a sweep period.
+async fn cancelled_in_time(slow: Duration) {
     let h = Harness::new().await;
     slow_stages(&h, 3, Duration::from_secs(3600)).await;
     let (_, lead, reviewer) = held_reviewer(&h).await;
-    let slow = quota_wait::REQUEST_LIMIT - Duration::from_secs(1);
     h.backend.slow_answers(&lead, slow);
     h.backend.slow_answers(&reviewer, slow);
     let _aether = common::connect_aether_for_delegations(&h).await;

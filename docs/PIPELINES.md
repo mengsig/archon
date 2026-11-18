@@ -441,14 +441,15 @@ repair turn first. Broken means a result without `structured`, or a pass that
 names no reviewer. The stage is entered once more with the refusal quoted.
 The reviewers it then names are checked as above, so they must be agents it
 delegated itself. The repair attempt is marked as one on its stage run: a
-second broken record fails the run, with no fix loop, and a kept agent is
-not asked for its record again. Where `[review] auto_repair` is on, the
+second broken record fails the run, with no fix loop, as does an invalid
+ship record on that attempt, and a kept agent is not asked for its record
+again. Where `[review] auto_repair` is on, the
 item's one automatic retry may still follow that failed run. In a stage that
 owes a record, a stated failure always wins over it: a fail verdict in
 `structured` or in the summary's last `VERDICT:` line, or a summary that
 opens with `ESCALATE:` or `BLOCKED:`, fails the stage as sent, with or
-without a gate, gets no repair turn and ships nothing. Text after the record
-block of a resumed agent's reply counts as part of its summary. A stage
+without a gate, gets no repair turn and ships nothing. When a resumed agent
+writes more after its record block, its whole reply is its summary. A stage
 whose outcome was recorded before repair turns existed keeps the decision
 taken then. At `none` the contract tells the agent to delegate no
 reviewer and record no review.

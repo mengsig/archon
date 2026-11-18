@@ -143,8 +143,8 @@ pub fn resumed_reply_outcome(reply: &str) -> StageOutcome {
     }
 }
 
-/// The object of `reply`'s last fenced `json` block and, as its summary, all
-/// the agent said around it, after it too; a bare block is its own summary.
+/// The object of `reply`'s last fenced `json` block, and its summary: what
+/// comes before the block, or the whole reply when that is all or more follows.
 fn handed_in(reply: &str) -> (String, Option<serde_json::Value>) {
     const OPEN: &str = "```json";
     const CLOSE: &str = "```";
@@ -156,17 +156,16 @@ fn handed_in(reply: &str) -> (String, Option<serde_json::Value>) {
         let Some(Ok(data @ serde_json::Value::Object(_))) = values.next() else {
             continue;
         };
-        let after = block[values.byte_offset()..].trim_start();
-        let after = after.strip_prefix(CLOSE).unwrap_or(after).trim();
-        let said = [reply[..at].trim(), after];
-        let said: Vec<&str> = said.into_iter().filter(|part| !part.is_empty()).collect();
-        let summary = if said.is_empty() {
-            reply.to_owned()
-        } else {
-            said.join("\n\n")
-        };
+        // Without its closing fence the block runs to the reply's end.
+        let rest = &block[values.byte_offset()..];
+        let after = rest.split_once(CLOSE).map_or("", |(_, after)| after);
+        let said = reply[..at].trim();
+        // Text after the record is read where it stands in the reply's
+        // Markdown: cut out, an indented example would turn into a verdict.
+        let whole = said.is_empty() || !after.trim().is_empty();
+        let summary = if whole { reply } else { said };
         assert!(!summary.is_empty(), "a reply has a summary");
-        return (summary, Some(data));
+        return (summary.to_owned(), Some(data));
     }
     (reply.to_owned(), None)
 }
@@ -519,8 +518,19 @@ mod tests {
         else {
             panic!("a reply with a record completes");
         };
-        assert_eq!(summary, "Fixed the null check.\n\nThat is all.");
-        assert_eq!(structured, Some(record), "fences inside a string are text");
+        assert_eq!(summary, reply, "more follows the record: kept as sent");
+        assert_eq!(
+            structured,
+            Some(record.clone()),
+            "fences in a string are text"
+        );
+        let reply = format!("Fixed the null check.\n\n```json\n{record}\n```");
+        let outcome = resumed_reply_outcome(&reply);
+        assert!(
+            matches!(&outcome, StageOutcome::Completed { summary, structured }
+                if summary == "Fixed the null check." && structured.as_ref() == Some(&record)),
+            "{outcome:?}"
+        );
 
         for plain in [
             "Fixed it.",
@@ -565,6 +575,20 @@ mod tests {
                 "{summary}"
             );
         }
+        // An indented line is code in the reply as sent, and stays an example.
+        let quoted = format!("Done.\n```json\n{record}\n```\n\n    VERDICT: FAIL");
+        let StageOutcome::Completed {
+            summary,
+            structured,
+        } = resumed_reply_outcome(&quoted)
+        else {
+            panic!("{quoted} completes");
+        };
+        assert_eq!(structured.as_ref(), Some(&record));
+        assert!(
+            !StageOutcome::states_failure(&summary, structured.as_ref()),
+            "{summary}"
+        );
     }
 
     #[test]

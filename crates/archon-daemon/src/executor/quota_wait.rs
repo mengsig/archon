@@ -4,11 +4,11 @@
 //! [`FAIL_AFTER`], the sweep cancels it with a hint telling its lead to
 //! re-plan the review.
 //!
-//! The sweep keeps its own timer, apart from the dispatcher's. Every stage
-//! is checked at once and every Aether request is cut off at
-//! [`REQUEST_LIMIT`], so the slowest check ends before the next sweep is
-//! due: no stage pushes another's check back, and a reviewer is cancelled
-//! within five minutes of the sweep that first saw it blocked.
+//! The sweep keeps its own timer, apart from the dispatcher's. Each sweep
+//! starts a check of every running stage and waits for none, so no stage
+//! pushes another's check back; a stage whose last check still runs is
+//! passed over. Every Aether request is cut off at [`REQUEST_LIMIT`], and
+//! a reviewer is cancelled within five minutes of first being seen blocked.
 //!
 //! Aether has no conditional cancel. The block is read again right before
 //! the cancel, which leaves one round trip in which a reviewer whose quota
@@ -22,10 +22,12 @@ use std::time::Duration;
 use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
+use archon_core::id::StageRunId;
 use archon_core::ports::{Descendant, DescendantState};
 use archon_core::run::{StageRun, StageState};
 use chrono::TimeDelta;
 use futures_util::future::join_all;
+use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 
 use super::resume;
@@ -34,12 +36,12 @@ use crate::context::DaemonContext;
 /// How long a reviewer may wait on a spent quota before it is stopped.
 const FAIL_AFTER: TimeDelta = TimeDelta::minutes(3);
 
-/// The wait between the starts of two sweeps; the slowest one ends within it.
+/// The wait between the starts of two sweeps, however long their checks run.
 pub const SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 
-/// The longest a sweep waits for one answer from Aether. A slower one counts
-/// as unanswered and is asked again next sweep.
-pub const REQUEST_LIMIT: Duration = Duration::from_secs(4);
+/// The longest a check waits for one answer from Aether. A slower one counts
+/// as unanswered and is asked again by the stage's next check.
+pub const REQUEST_LIMIT: Duration = Duration::from_secs(10);
 
 /// Requests Aether answers to list a lead's descendants: the lead, then the
 /// agents of its run (`AetherBackend::descendants`).
@@ -57,6 +59,9 @@ enum Block {
     Unread,
 }
 
+/// The checks of stages that sweeps started and that have not been reaped.
+type Checks = BTreeMap<StageRunId, JoinHandle<Result<(), ArchonError>>>;
+
 /// Sweep every [`SWEEP_INTERVAL`] while Aether is connected and start-up
 /// recovery is done; `Err` only when the store fails.
 pub async fn watch(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
@@ -65,23 +70,36 @@ pub async fn watch(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
     let (wall, started) = (archon_core::now(), tokio::time::Instant::now());
     let mut timer = tokio::time::interval(SWEEP_INTERVAL);
     timer.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    let mut checks = Checks::new();
     loop {
         timer.tick().await;
+        reap(&mut checks).await?;
         if !ctx.aether.is_connected() || !ctx.recovery.is_recovered() {
             continue;
         }
         let uptime = TimeDelta::from_std(started.elapsed()).expect("an uptime fits");
-        match sweep_running(&ctx, wall + uptime).await {
-            Ok(()) => {}
-            Err(error) if error.is_store() => return Err(error),
-            Err(error) => tracing::error!(%error, "quota wait sweep failed"),
-        }
+        start_checks(&ctx, &mut checks, wall + uptime).await?;
     }
 }
 
-/// One sweep at `now` over every running stage, all at once, as [`watch`]
-/// runs it: no stage's check waits for another's.
-pub async fn sweep_running(ctx: &DaemonContext, now: Timestamp) -> Result<(), ArchonError> {
+/// One sweep at `now` over every running stage with each check awaited:
+/// what [`watch`] starts every period, there without waiting for it.
+pub async fn sweep_running(ctx: &Arc<DaemonContext>, now: Timestamp) -> Result<(), ArchonError> {
+    let mut checks = Checks::new();
+    start_checks(ctx, &mut checks, now).await?;
+    let started = checks.len();
+    let checked = join_all(checks.into_values().map(joined)).await;
+    assert_eq!(checked.len(), started, "one result a check");
+    checked.into_iter().collect()
+}
+
+/// Start, at `now`, the check of every running stage that has none in
+/// `checks`: a check still running is its stage's check for this sweep too.
+async fn start_checks(
+    ctx: &Arc<DaemonContext>,
+    checks: &mut Checks,
+    now: Timestamp,
+) -> Result<(), ArchonError> {
     let live = ctx.store.lock().await.live_stage_runs()?;
     let running: Vec<StageRun> = (live.into_iter())
         .filter(|stage| stage.state == StageState::Running)
@@ -89,13 +107,43 @@ pub async fn sweep_running(ctx: &DaemonContext, now: Timestamp) -> Result<(), Ar
     forget_unwatched(ctx, &running).await?;
     // Only the hint's reset time comes from the last reading; Aether's own
     // block says the reviewer waits on quota.
-    let resets = crate::quota::spent(ctx).unwrap_or_default();
-    let checks = running
-        .iter()
-        .map(|stage| sweep_stage(ctx, stage, &resets, now));
-    let checked = join_all(checks).await;
-    assert_eq!(checked.len(), running.len(), "one check a stage");
-    checked.into_iter().collect()
+    let resets = Arc::new(crate::quota::spent(ctx).unwrap_or_default());
+    for stage in running {
+        if checks.contains_key(&stage.id) {
+            continue;
+        }
+        let (ctx, resets, id) = (ctx.clone(), resets.clone(), stage.id.clone());
+        let check = async move { sweep_stage(&ctx, &stage, &resets, now).await };
+        let replaced = checks.insert(id, tokio::spawn(check));
+        assert!(replaced.is_none(), "one check a stage at a time");
+    }
+    Ok(())
+}
+
+/// Take the checks that ended out of `checks`; `Err` when one's store failed.
+async fn reap(checks: &mut Checks) -> Result<(), ArchonError> {
+    let ended: Vec<StageRunId> = (checks.iter())
+        .filter(|(_, check)| check.is_finished())
+        .map(|(stage, _)| stage.clone())
+        .collect();
+    for stage in ended {
+        let check = checks.remove(&stage).expect("listed just above");
+        joined(check).await?;
+    }
+    Ok(())
+}
+
+/// What a started check came to: a panic in it is its sweep's panic.
+async fn joined(check: JoinHandle<Result<(), ArchonError>>) -> Result<(), ArchonError> {
+    match check.await {
+        Ok(checked) => checked,
+        Err(stopped) if stopped.is_panic() => std::panic::resume_unwind(stopped.into_panic()),
+        // Nothing aborts a check: only the runtime shutting down ends one.
+        Err(stopped) => {
+            tracing::info!(%stopped, "quota wait check ended with the runtime");
+            Ok(())
+        }
+    }
 }
 
 /// A `call` of `requests` Aether requests in a row, cut off at
@@ -343,24 +391,24 @@ mod tests {
     /// again, the cancel.
     const REQUESTS_TO_CANCEL: u32 = LISTING_REQUESTS + 3;
 
-    /// The slowest check, its message to the lead included, ends before the
-    /// next sweep is due: sweeps start a period apart however slow a stage
-    /// answers, so no stage pushes back the next check of another.
+    /// A check that stops no reviewer lists and reads, and ends within one
+    /// period: a sweep passes over a stage's still-running check at most once
+    /// before the check that finds its reviewer due.
     #[test]
-    fn the_slowest_sweep_ends_within_its_period() {
+    fn a_check_that_stops_nothing_ends_within_a_period() {
         assert!(REQUEST_LIMIT <= Duration::from_secs(20));
-        let slowest_sweep = REQUEST_LIMIT * (REQUESTS_TO_CANCEL + 1);
-        assert!(slowest_sweep < SWEEP_INTERVAL, "{slowest_sweep:?}");
+        let reads = REQUEST_LIMIT * (LISTING_REQUESTS + 1);
+        assert!(reads <= SWEEP_INTERVAL, "{reads:?}");
     }
 
-    /// The first sweep starting [`FAIL_AFTER`] after a wait was seen stops
-    /// it, and sweeps start a period apart; so a blocked reviewer ends within
-    /// five minutes however slow Aether answers within [`REQUEST_LIMIT`].
+    /// A wait is due at the first sweep [`FAIL_AFTER`] after it was seen, or
+    /// the one after when that sweep passed its stage over; the check then
+    /// cancels within its requests. That is within five minutes.
     #[test]
     fn a_blocked_reviewer_is_stopped_within_five_minutes() {
         let to_cancel = REQUEST_LIMIT * REQUESTS_TO_CANCEL;
         let wait = FAIL_AFTER.to_std().expect("positive");
-        let worst = wait + SWEEP_INTERVAL + to_cancel;
+        let worst = wait + SWEEP_INTERVAL * 2 + to_cancel;
         assert!(worst <= Duration::from_secs(5 * 60), "{worst:?}");
     }
 }

@@ -469,6 +469,18 @@ async fn a_resumed_agent_asked_for_its_record_in_vain_fails_its_stage() {
     let ended = executor::turn_ended(&h.ctx, &agent(&fix)).await;
     ended.expect("turn end");
     h.dispatch().await;
+    // The broken record gets one repair turn, which the kept agent takes.
+    let repair = running(&h, "implement").await;
+    assert_ne!(repair.id, fix.id, "a new attempt");
+    assert_eq!(agent(&repair), agent(&fix), "the kept agent repairs");
+    let told = h.backend.resumed_with(&repair);
+    assert!(told.contains("Archon record repair"), "{told}");
+    ends_without_its_record(&h, &repair, "added the test").await;
+    h.backend
+        .answer(&agent(&repair), resumed_reply_outcome("Committed again."));
+    let ended = executor::turn_ended(&h.ctx, &agent(&repair)).await;
+    ended.expect("turn end");
+    h.dispatch().await;
     let state = h.state(&item.id).await;
     let QueueState::Failed { error, .. } = &state else {
         panic!("{state:?}");

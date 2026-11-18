@@ -744,6 +744,32 @@ fn the_runs_prefix_never_outranks_the_stage_run_that_stopped_it() {
     );
 }
 
+/// Slots that failed in the same words are read as the driver read them,
+/// lowest first: the flag on the slot that ended the run stands.
+#[test]
+fn slots_that_failed_in_the_same_words_are_read_lowest_first() {
+    const WORDS: &str = "BLOCKED: needs access";
+    let ended = |error: &'static str, flagged: [bool; 2]| {
+        failed_with("test", error, move |run| {
+            vec![
+                slot(run, 0, WORDS, flagged[0]),
+                slot(run, 1, WORDS, flagged[1]),
+            ]
+        })
+    };
+    let backend = ended(WORDS, [true, false]);
+    assert_eq!(backend.failure, Some(FailureClass::Infrastructure));
+    assert!(!backend.is_scored(), "the backend failed the slot it read");
+    let agent = ended(WORDS, [false, true]);
+    assert_eq!(agent.failure, Some(FailureClass::Blocked));
+    let clipped = ended("BLOCKED: needs\n\n[… truncated by Archon]", [true, false]);
+    assert_eq!(
+        clipped.failure,
+        Some(FailureClass::Infrastructure),
+        "a clipped error is the lowest stopping slot's"
+    );
+}
+
 /// A spawn the daemon gave up on left no agent. An agent that fails its task
 /// in the daemon's words judged its own work.
 #[test]

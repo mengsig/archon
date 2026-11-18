@@ -164,6 +164,62 @@ fn v24_keeps_a_run_whose_stage_row_the_store_would_not_write() {
     assert_eq!(columns(&conn, &whole).1, some("recomputed"));
 }
 
+/// Each column the store writes beside a record repeats it. A row holding
+/// another value there, or one SQLite cannot read, is not the row it wrote.
+#[test]
+fn v24_keeps_a_run_whose_columns_are_not_its_records() {
+    let edits = [
+        ("stage_runs", "fan_index = X'FF'"),
+        ("stage_runs", "fan_index = 7"),
+        ("stage_runs", "stage_id = 'other'"),
+        ("stage_runs", "state = X'FF'"),
+        ("stage_runs", "state = 'failed'"),
+        ("stage_runs", "terminal = 0"),
+        ("stage_runs", "started_at = X'FF'"),
+        (
+            "stage_runs",
+            "started_at = '2020-01-01T00:00:00.000000000Z'",
+        ),
+        ("stage_runs", "aether_agent = X'FF'"),
+        (
+            "stage_runs",
+            "aether_agent = 'agt_01JB000000000000000000000R'",
+        ),
+        ("stage_runs", "data = json_set(data, '$.fan_index', 3)"),
+        (
+            "stage_runs",
+            "data = json_set(data, '$.started_at', '+12345-06-01T00:00:00Z')",
+        ),
+        (
+            "runs",
+            "data = json_set(data, '$.started_at', '-0044-03-15T00:00:00Z')",
+        ),
+        ("runs", "pipeline = X'FF'"),
+        ("runs", "pipeline = 'other'"),
+        ("runs", "terminal = 0"),
+        ("runs", "started_at = X'FF'"),
+        ("runs", "started_at = '2020-01-01T00:00:00.000000000Z'"),
+    ];
+    let mut conn = v23_store();
+    let mut edited = Vec::new();
+    for (table, column) in edits {
+        let (run, _) = budget_run(&conn);
+        let key = if table == "runs" { "id" } else { "run" };
+        let sql = format!("UPDATE {table} SET {column} WHERE {key} = ?1");
+        assert_eq!(conn.execute(&sql, [run.id.as_str()]).unwrap(), 1, "{sql}");
+        edited.push((run, format!("{table}: {column}")));
+    }
+    let (whole, _) = budget_run(&conn);
+
+    assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+
+    assert_eq!(edited.len(), edits.len());
+    for (run, edit) in &edited {
+        assert_kept(&conn, run, edit);
+    }
+    assert_eq!(columns(&conn, &whole).1, some("recomputed"));
+}
+
 /// 1.6.3's schema lets an outcome's key be empty: no run can be read for it.
 #[test]
 fn v24_keeps_a_failed_outcome_under_an_empty_run_key() {

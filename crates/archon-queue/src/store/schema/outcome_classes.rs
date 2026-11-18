@@ -95,7 +95,13 @@ fn outcome(run: &PipelineRun, failure: Option<FailureClass>) -> Outcome {
     .unwrap()
 }
 
-/// Seeds `run` (unless pruned), its stages and the outcome 1.6.3 recorded.
+/// A time as the store writes it into a column.
+fn stored_time(at: &archon_core::Timestamp) -> String {
+    at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
+}
+
+/// Seeds `run` (unless pruned), its stages and the outcome 1.6.3 recorded,
+/// each row's columns as the store writes them.
 pub(super) fn seed(
     conn: &Connection,
     run: &PipelineRun,
@@ -113,12 +119,14 @@ pub(super) fn seed(
         .unwrap();
         conn.execute(
             "INSERT INTO runs (id, item, pipeline, terminal, started_at, data)
-             VALUES (?1, ?2, ?3, 1, 'a', ?4)",
-            [
+             VALUES (?1, ?2, ?3, ?5, ?6, ?4)",
+            rusqlite::params![
                 run.id.as_str(),
                 item,
                 &run.pipeline,
                 &serde_json::to_string(run).unwrap(),
+                run.state.is_terminal(),
+                stored_time(&run.started_at)
             ],
         )
         .unwrap();
@@ -127,14 +135,17 @@ pub(super) fn seed(
         conn.execute(
             "INSERT INTO stage_runs (id, run, stage_id, attempt, fan_index, state, terminal,
                                      started_at, data)
-             VALUES (?1, ?2, ?3, ?5, ?6, 'done', 1, 'b', ?4)",
+             VALUES (?1, ?2, ?3, ?5, ?6, ?7, ?8, ?9, ?4)",
             rusqlite::params![
                 s.id.as_str(),
                 run.id.as_str(),
                 &s.stage_id,
                 &serde_json::to_string(s).unwrap(),
                 s.attempt,
-                s.fan_index
+                s.fan_index,
+                serde_json::to_value(&s.state).unwrap()["state"].as_str(),
+                s.state.is_terminal(),
+                stored_time(&s.started_at)
             ],
         )
         .unwrap();

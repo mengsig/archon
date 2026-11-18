@@ -33,7 +33,9 @@ outcome record as it was. A record it cannot read never stops the migration:
 that covers a run, stage run, observed-stage or review-tally row SQLite holds
 as something other than text, one that does not decode, a stage run naming no
 stage or attempt 0, a stage run the store would not write (settled with no
-finish time, or under another id or attempt than its row's columns), an
+finish time), a run or stage run whose row holds, in a column that repeats its
+record (id, stage, attempt, slot, state, start, item, pipeline, whether it
+ended) or in its agent claim, another value than the record's, an
 observed stage with no attempts, and a tally in any shape archond does not store (an object
 in which each fail names its reviewer's Aether agent id, `agt_` and a ULID, the
 commit that reviewer read and its findings).

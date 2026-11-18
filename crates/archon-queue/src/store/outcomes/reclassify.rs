@@ -7,10 +7,11 @@ use archon_core::error::ArchonError;
 use archon_core::id::PipelineRunId;
 use archon_core::outcome::{ClassSource, FailureClass, UNSCORED_FAILURES};
 use archon_core::run::{PipelineRun, RunState, StageRun, UNRESUMABLE_RUN};
-use rusqlite::types::ValueRef;
+use rusqlite::types::{Value, ValueRef};
 use rusqlite::{Connection, OptionalExtension, params};
 
-use super::super::codec::{SqlContext, from_json, text_column};
+use super::super::codec::{SqlContext, from_json, stored_value, text_column};
+use super::super::runs::{RUN_MIRROR, STAGE_MIRROR, check_stage_shape, run_mirror, stage_mirror};
 use super::class::{classed_without_its_stage, failed_reviews, failure_class, review_on_record};
 
 /// Per class, how many failed outcomes held it before and after the
@@ -306,19 +307,21 @@ fn reviewed(conn: &Connection, run: &str) -> Result<bool, ArchonError> {
     Ok(stages.iter().any(|s| review_on_record(s, &failed)))
 }
 
-/// The run and every one of its stage runs, refusing an undecodable row or
-/// one that holds another run: a lost slot could hide the stop that ended it.
+/// The run and every one of its stage runs, refusing an undecodable row and
+/// one whose columns are not its record's: either could hide what ended the run.
 fn readable_run(
     conn: &Connection,
     run: &PipelineRunId,
 ) -> Result<(PipelineRun, Vec<StageRun>), ArchonError> {
-    let data = conn
-        .query_row("SELECT data FROM runs WHERE id = ?1", [run.as_str()], |r| {
-            text_column(r, 0)
+    let sql = format!("SELECT data, {RUN_MIRROR} FROM runs WHERE id = ?1");
+    let row = conn
+        .query_row(&sql, [run.as_str()], |r| {
+            Ok((text_column(r, 0)?, columns_from(r, 1)?))
         })
         .optional()
         .ctx("read a migrated outcome's run")?;
-    let data = data.ok_or_else(|| ArchonError::NotFound(format!("pipeline run {run}")))?;
+    let (data, columns) =
+        row.ok_or_else(|| ArchonError::NotFound(format!("pipeline run {run}")))?;
     let data = data.ok_or_else(|| ArchonError::Corrupt(format!("run row {run} holds no text")))?;
     let stored: PipelineRun = from_json(&data, "pipeline run")?;
     if &stored.id != run {
@@ -327,40 +330,41 @@ fn readable_run(
             stored.id
         )));
     }
+    if columns != run_mirror(&stored) {
+        let what = format!("the columns of run row {run} are not its record's");
+        return Err(ArchonError::Corrupt(what));
+    }
     Ok((stored, readable_stages(conn, run)?))
 }
 
-/// Every stage run of `run` in the order they started. A row that is not
-/// text, does not decode, is no stage run the store would write, or names
-/// another id or attempt than its columns is corrupt.
+/// Every column of `row` from `first` on, as SQLite holds it.
+fn columns_from(row: &rusqlite::Row<'_>, first: usize) -> rusqlite::Result<Vec<Value>> {
+    let count = row.as_ref().column_count();
+    assert!(first <= count, "the first column is one the query selects");
+    (first..count)
+        .map(|index| stored_value(row, index))
+        .collect()
+}
+
+/// Every stage run of `run`, in no order. A row that is not text, does not
+/// decode or is not [`stored_as_written`] is corrupt.
 fn readable_stages(conn: &Connection, run: &PipelineRunId) -> Result<Vec<StageRun>, ArchonError> {
+    let sql = format!("SELECT data, aether_agent, {STAGE_MIRROR} FROM stage_runs WHERE run = ?1");
     let mut stmt = conn
-        .prepare_cached(
-            "SELECT id, attempt, data FROM stage_runs WHERE run = ?1
-             ORDER BY started_at, attempt, fan_index, id",
-        )
+        .prepare_cached(&sql)
         .ctx("prepare a migrated outcome's stage runs")?;
-    let attempt = |r: &rusqlite::Row<'_>| -> rusqlite::Result<Option<i64>> {
-        match r.get_ref(1)? {
-            ValueRef::Integer(attempt) => Ok(Some(attempt)),
-            _ => Ok(None),
-        }
-    };
     let rows = stmt
         .query_map([run.as_str()], |r| {
-            Ok((text_column(r, 0)?, attempt(r)?, text_column(r, 2)?))
+            Ok((text_column(r, 0)?, columns_from(r, 1)?))
         })
         .ctx("query a migrated outcome's stage runs")?
         .collect::<rusqlite::Result<Vec<_>>>()
         .ctx("read a migrated outcome's stage runs")?;
     let mut stages = Vec::with_capacity(rows.len());
-    for (id, attempt, data) in rows {
+    for (data, columns) in rows {
         let unreadable = || ArchonError::Corrupt(format!("a stage row of {run} holds no text"));
         let stage: StageRun = from_json(&data.ok_or_else(unreadable)?, "stage run")?;
-        let keyed = id.as_deref() == Some(stage.id.as_str());
-        let counted = attempt == Some(i64::from(stage.attempt));
-        let shaped = super::super::runs::check_stage_shape(&stage).is_ok();
-        if !keyed || !counted || !shaped || &stage.run != run || stage.stage_id.is_empty() {
+        if !stored_as_written(&stage, run, &columns) {
             return Err(ArchonError::Corrupt(format!(
                 "stage row {} is no stage run of {run}",
                 stage.id
@@ -370,6 +374,22 @@ fn readable_stages(conn: &Connection, run: &PipelineRunId) -> Result<Vec<StageRu
     }
     assert!(stages.iter().all(|s| s.attempt > 0 && &s.run == run));
     Ok(stages)
+}
+
+/// Whether `stage` is a stage run of `run` the store would write, in a row
+/// whose `columns` (its agent claim, then the mirror) are what it writes.
+fn stored_as_written(stage: &StageRun, run: &PipelineRunId, columns: &[Value]) -> bool {
+    let Some((claim, mirror)) = columns.split_first() else {
+        return false;
+    };
+    let agent = stage.aether_agent.as_ref().map(|agent| agent.as_str());
+    let claimed = match claim {
+        Value::Null => true,
+        Value::Text(holder) => agent == Some(holder.as_str()),
+        _ => false,
+    };
+    let shaped = check_stage_shape(stage).is_ok() && !stage.stage_id.is_empty();
+    claimed && shaped && &stage.run == run && mirror == stage_mirror(stage)
 }
 
 /// Write the new class into the row's columns and, when its record is JSON,

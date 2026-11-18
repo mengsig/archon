@@ -1,7 +1,7 @@
 //! A failed run's failure class, read from the records the run left (its
 //! settled stages and the stage it failed under), never from its error's words.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use archon_core::catalog::StageKind;
 use archon_core::cost::{BUDGET_UNENFORCEABLE, BUDGET_USED_UP};
@@ -18,9 +18,10 @@ use super::super::codec::{SqlContext, from_json, text_column};
 
 /// Why the run that failed under `stage_id` with `error` failed. The records
 /// of the attempt that ended it come first: the stage run the run failed in the
-/// words of, then a stage's own blocker or escalation, then how a stage was
-/// stopped. Only then is `error` read, and only for the prefixes the daemon
-/// writes on purpose. `failed_reviews` is [`failed_reviews`] of `stages`.
+/// words of, then the blocker or escalation the driver stops a run on, then
+/// how a stage was stopped. Only then is `error` read, and only for the
+/// prefixes the daemon writes on purpose. `failed_reviews` is
+/// [`failed_reviews`] of `stages`, which may come in any order.
 pub(in crate::store) fn failure_class(
     stage_id: &str,
     error: &str,
@@ -34,7 +35,7 @@ pub(in crate::store) fn failure_class(
     let ending = ending_attempt(stage_id, stages);
     let recorded = ended_by(error, &ending)
         .and_then(own_stop)
-        .or_else(|| ending.iter().find_map(|s| said_stop(s)))
+        .or_else(|| driver_stop(&ending).and_then(own_stop))
         .or_else(|| stopped_class(&ending));
     if let Some(class) = recorded.or_else(|| daemon_prefixed_class(error)) {
         return class;
@@ -52,7 +53,8 @@ pub(in crate::store) fn failure_class(
 }
 
 /// The stage run of the `ending` attempt whose own failure the run failed in
-/// the words of: the one that ended it, whatever its siblings recorded.
+/// the words of: the one that ended it, whatever its siblings recorded. Of
+/// slots that failed in the same words, the driver read the lowest first.
 fn ended_by<'a>(error: &str, ending: &[&'a StageRun]) -> Option<&'a StageRun> {
     let quoted = error.trim();
     if quoted.is_empty() {
@@ -61,6 +63,16 @@ fn ended_by<'a>(error: &str, ending: &[&'a StageRun]) -> Option<&'a StageRun> {
     let said =
         |s: &StageRun| matches!(&s.state, StageState::Failed { error } if error.trim() == quoted);
     ending.iter().copied().find(|s| said(s))
+}
+
+/// The stage run the driver stops a run on, whose long error it clips: the
+/// lowest slot that failed with a blocker or an escalation, flagged or not.
+fn driver_stop<'a>(ending: &[&'a StageRun]) -> Option<&'a StageRun> {
+    let stops = |s: &StageRun| match &s.state {
+        StageState::Failed { error } => StageOutcome::ends_run(error),
+        _ => false,
+    };
+    ending.iter().copied().find(|s| stops(s))
 }
 
 /// The class the stage run's own record gives a stop of its making: the
@@ -116,20 +128,29 @@ fn gate_refused_review(error: &str) -> bool {
     prefix.starts_with("stage `") && prefix.contains("` failed") && prefix.ends_with(": ")
 }
 
-/// The last stage run of each slot of the stage's last attempt: what ended
-/// the run. An infrastructure retry replaces a slot within its attempt.
+/// The newest stage run of each slot of the stage's last attempt, lowest slot
+/// first, as the driver reads the group: a retry replaces a slot in its attempt.
 fn ending_attempt<'a>(stage_id: &str, stages: &'a [StageRun]) -> Vec<&'a StageRun> {
     let of_stage = || stages.iter().filter(|s| s.stage_id == stage_id);
     let Some(last) = of_stage().map(|s| s.attempt).max() else {
         return Vec::new();
     };
-    let mut slots = BTreeSet::new();
-    let ending: Vec<&StageRun> = of_stage()
-        .rev()
-        .filter(|s| s.attempt == last && slots.insert(s.fan_index))
-        .collect();
+    let mut slots: BTreeMap<_, &StageRun> = BTreeMap::new();
+    for stage in of_stage().filter(|s| s.attempt == last) {
+        let newer = slots
+            .get(&stage.fan_index)
+            .is_none_or(|seen| (stage.started_at, &stage.id) > (seen.started_at, &seen.id));
+        if newer {
+            slots.insert(stage.fan_index, stage);
+        }
+    }
+    let ending: Vec<&StageRun> = slots.into_values().collect();
     assert!(!ending.is_empty(), "the last attempt has a stage run");
     assert!(ending.iter().all(|s| s.attempt == last));
+    assert!(
+        ending.is_sorted_by_key(|s| s.fan_index),
+        "lowest slot first"
+    );
     ending
 }
 

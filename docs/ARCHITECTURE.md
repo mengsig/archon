@@ -5764,15 +5764,19 @@ segments retain cost without being labeled failures. Late corrections to estimat
 can make segment cost allocation approximate; the run's ledger total remains current.
 
 **Failure class.** A failed run's class is read from structure, never from its
-error's words. The records come first: the last stage run of each slot of the
-failing stage's last attempt. When the run failed in the very words of one of
-them, that stage run ended it and its own record is read first, whatever a
-sibling slot recorded. Then every slot's is, in this order:
-- a stage run that failed its own task with an `ESCALATE:` or `BLOCKED:` prefix
-  gives `escalated` or `blocked` by its own prefix, whatever the run's error
-  opens with or shares with the daemon's words. A failure flagged
-  `infrastructure_failure` is the backend's, in the backend's words, so it is
-  read by its flag below;
+error's words. The records come first: the newest stage run of each slot of
+the failing stage's last attempt, lowest slot first, as the driver reads
+them. When the run failed in the very words of one of them, that stage run
+ended it and its own record is read first, whatever a sibling slot recorded;
+of slots that failed in the same words it is the lowest. Failing that (the
+driver clips a long error), it is the lowest slot that failed with an
+`ESCALATE:` or `BLOCKED:` prefix, the one the driver stops a run on. Then
+every slot's record is read, in this order:
+- the stage run that ended the run, when it failed its own task with an
+  `ESCALATE:` or `BLOCKED:` prefix, gives `escalated` or `blocked` by its own
+  prefix, whatever the run's error opens with or shares with the daemon's
+  words. A failure flagged `infrastructure_failure` is the backend's, in the
+  backend's words, so it is read by its flag below;
 - a timeout gives `timeout`;
 - Aether's cost-cap stop gives `budget`, even though Aether also marks that
   agent failed. Aether gives no structured signal for it, so its text is
@@ -5836,7 +5840,11 @@ record V24 cannot read is any row of the run, its stage runs, its observed
 stages or its review tallies that SQLite holds as something other than text,
 that does not decode, that names no stage or attempt 0, or that observed a stage
 with no attempts; so is a stage run the store would not write (settled with no
-finish time, or under another id or attempt than its row's columns). V24 logs
+finish time), and a run or stage run whose row holds, in any column that
+repeats its record (a stage run's id, stage, attempt, slot, state and start,
+a run's item, pipeline and start, and whether either has ended), another
+value than the record or one SQLite cannot read, or an agent claim that is
+not the record's agent. V24 logs
 the run and goes on, and never stops the migration for one, nor for an outcome
 filed under an empty run key, which keeps its class. Nor for a lesson: one V24
 cannot recount (its row, its use or its epoch is unreadable, or it holds what

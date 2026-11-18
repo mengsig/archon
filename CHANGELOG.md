@@ -43,9 +43,11 @@
   way) and the spawns the daemon gave up on. Those are `infrastructure` only on
   a stage run that has no agent: an agent that fails its task in the daemon's
   words judged its own work. The records of the attempt that ended the run are
-  read before any prefix on the run's error: the stage run the run failed in
-  the words of first, then a stage run's own `BLOCKED:` or `ESCALATE:` failure
-  (by its own prefix, not the run's), then a recorded timeout, infrastructure
+  read before any prefix on the run's error, slot by slot as the driver reads
+  them (the newest stage run of each slot, lowest slot first): the stage run
+  the run failed in the words of first, then the lowest slot's `BLOCKED:` or
+  `ESCALATE:` failure, on which the driver stops a run (by its own prefix, not
+  the run's, unless it is flagged), then a recorded timeout, infrastructure
   flag or cost stop. So the budget guards' blockers are `budget` only when
   the daemon wrote them and no stage run of that attempt recorded a stop; a
   stage that fails its own task in those words is `blocked`, a failure
@@ -69,8 +71,10 @@
   any shape archond does not store (an object in which each fail names its
   reviewer's Aether agent id, the commit that reviewer read and its findings)
   are records it cannot read, as are an observed stage with no attempts and a
-  stage run the store would not write (settled with no finish time, or under
-  another id or attempt than its row's columns): V24 logs the run and goes on.
+  stage run the store would not write (settled with no finish time) and a run
+  or stage run whose row holds, in a column that repeats its record (id,
+  stage, attempt, slot, state, start, item, pipeline, whether it ended) or in
+  its agent claim, another value than the record's: V24 logs the run and goes on.
   An outcome filed under an empty run key keeps its class too. A lesson it cannot recount (an unreadable row,
   use or epoch) keeps its stored counts and never stops it either. For one release the old class stays in
   `failure_class_163`.

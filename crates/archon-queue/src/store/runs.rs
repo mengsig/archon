@@ -7,6 +7,7 @@ use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
 use archon_core::protocol::RunPlan;
 use archon_core::queue::QueueState;
 use archon_core::run::{PipelineRun, StageRun, StageState};
+use rusqlite::types::Value;
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::FinishedRun;
@@ -101,6 +102,19 @@ fn check_run_shape(run: &PipelineRun) -> Result<(), ArchonError> {
     Ok(())
 }
 
+/// The columns of a run's row that repeat its record.
+pub(super) const RUN_MIRROR: &str = "item, pipeline, terminal, started_at";
+
+/// What [`RUN_MIRROR`] holds in the row [`write_run`] writes for `run`.
+pub(super) fn run_mirror(run: &PipelineRun) -> [Value; 4] {
+    [
+        Value::Text(run.item.as_str().to_owned()),
+        Value::Text(run.pipeline.clone()),
+        Value::Integer(i64::from(run.state.is_terminal())),
+        Value::Text(ts(&run.started_at)),
+    ]
+}
+
 fn write_run(conn: &Connection, run: &PipelineRun, insert: bool) -> Result<(), ArchonError> {
     let sql = if insert {
         "INSERT INTO runs (id, item, pipeline, terminal, started_at, data)
@@ -109,17 +123,12 @@ fn write_run(conn: &Connection, run: &PipelineRun, insert: bool) -> Result<(), A
         "UPDATE runs SET item = ?2, pipeline = ?3, terminal = ?4, started_at = ?5, data = ?6
          WHERE id = ?1"
     };
+    let [item, pipeline, terminal, started_at] = run_mirror(run);
+    let data = to_json(run, "pipeline run")?;
     let changed = conn
         .execute(
             sql,
-            params![
-                run.id.as_str(),
-                run.item.as_str(),
-                run.pipeline,
-                run.state.is_terminal(),
-                ts(&run.started_at),
-                to_json(run, "pipeline run")?,
-            ],
+            params![run.id.as_str(), item, pipeline, terminal, started_at, data],
         )
         .ctx("write run")?;
     assert_eq!(changed, 1, "write of run {} touched {changed} rows", run.id);
@@ -473,12 +482,39 @@ fn load_stage(conn: &Connection, id: &StageRunId) -> Result<Option<StageRun>, Ar
 
 /// `holds_agent` says whether this row takes the unique `aether_agent`
 /// column; `data` names the stage run's agent either way.
+/// The columns of a stage run's row that repeat its record; `aether_agent`
+/// is a claim, not a copy.
+pub(super) const STAGE_MIRROR: &str =
+    "id, stage_id, attempt, fan_index, state, terminal, started_at";
+
+/// What [`STAGE_MIRROR`] holds in the row [`write_stage`] writes for `stage`.
+pub(super) fn stage_mirror(stage: &StageRun) -> [Value; 7] {
+    [
+        Value::Text(stage.id.as_str().to_owned()),
+        Value::Text(stage.stage_id.clone()),
+        Value::Integer(i64::from(stage.attempt)),
+        Value::Integer(i64::from(stage.fan_index)),
+        Value::Text(stage_kind(&stage.state).to_owned()),
+        Value::Integer(i64::from(stage.state.is_terminal())),
+        Value::Text(ts(&stage.started_at)),
+    ]
+}
+
 fn write_stage(conn: &Connection, stage: &StageRun, holds_agent: bool) -> Result<(), ArchonError> {
     assert!(
         !holds_agent || stage.aether_agent.is_some(),
         "only a stage run with an agent can hold one"
     );
     let agent = stage.aether_agent.as_ref().filter(|_| holds_agent);
+    let [
+        id,
+        stage_id,
+        attempt,
+        fan_index,
+        state,
+        terminal,
+        started_at,
+    ] = stage_mirror(stage);
     conn.execute(
         "INSERT INTO stage_runs (id, run, stage_id, attempt, fan_index, aether_agent, state,
                                  terminal, started_at, data)
@@ -486,15 +522,15 @@ fn write_stage(conn: &Connection, stage: &StageRun, holds_agent: bool) -> Result
          ON CONFLICT (id) DO UPDATE SET aether_agent = excluded.aether_agent,
              state = excluded.state, terminal = excluded.terminal, data = excluded.data",
         params![
-            stage.id.as_str(),
+            id,
             stage.run.as_str(),
-            stage.stage_id,
-            stage.attempt,
-            stage.fan_index,
+            stage_id,
+            attempt,
+            fan_index,
             agent.map(AetherAgentId::as_str),
-            stage_kind(&stage.state),
-            stage.state.is_terminal(),
-            ts(&stage.started_at),
+            state,
+            terminal,
+            started_at,
             to_json(stage, "stage run")?,
         ],
     )

@@ -1432,7 +1432,9 @@ in a new worktree off the base branch (§13).
   - A transport error (`Protocol`, `Io`) or Aether's `internal` code: a
     failure inside the link or inside Aether, not a verdict on the request.
     It is re-issued the same way, and after 5 failures in a row the stage
-    run is `failed` with the last error.
+    run is `failed` with the last error (`create_agent kept failing: …`) as
+    an infrastructure failure: no agent ran, so the slot gets
+    `limits.infra_retries` and the run is not a scored loss.
   - A failure on a full disk (its text says `database or disk is full`,
     `No space left on device` or `ENOSPC`, whatever the code): the stage
     run stays `spawning`, and the disk hold (§7.3) engages. It is re-issued
@@ -5764,7 +5766,9 @@ can make segment cost allocation approximate; the run's ledger total remains cur
 **Failure class.** A failed run's class is read from structure, never from its
 error's words. The only text read is what Archon writes on purpose. The budget
 guards' blockers (`BLOCKED: the item's budget is used up`, `BLOCKED: cannot
-enforce the item's dollar budget`) give `budget`, whichever stage reported them.
+enforce the item's dollar budget`) give `budget`, whichever stage the daemon
+stopped the run under. A stage that fails its own task in those words is
+`blocked`: the daemon's stop fails the run and no stage run.
 A stage's `ESCALATE:` or `BLOCKED:` prefix gives `escalated` or `blocked`.
 Otherwise the last stage run of each slot of the failing stage's last attempt
 decides:
@@ -5773,10 +5777,17 @@ decides:
   agent failed. Aether gives no structured signal for it, so its text is
   matched exactly: `cost budget of $<limit>: <cost> spent`, alone or inside
   Aether's whole budget message up to "Details are in the exhaustion.failed
-  event.", followed by nothing or Archon's whole notional-cost label. Any
-  other text is no budget stop and falls to the rules below;
-- `infrastructure_failure`, or the daemon's full-disk spawn stop, gives
-  `infrastructure`;
+  event.", followed by nothing or Archon's whole notional-cost label. The
+  amounts are the ones Aether's formatters write: a limit with at most six
+  decimals and no trailing zero (`$5`, `$2.5`), a spend with exactly four
+  (`$5.0100`, or `≥ $5.0100 (<gap>)`), or `not reported`, alone or with the
+  gap label Aether gives it. Any other text, `$9 spent` or `$5.00` included,
+  is no budget stop and falls to the rules below;
+- `infrastructure_failure` gives `infrastructure`. So does a spawn the daemon
+  gave up on: the stage run has no agent and its error opens `create_agent
+  failed on a full disk` or `create_agent kept failing: `. archond flags both
+  itself; the words are read only for 1.6.3 records, and never on a stage run
+  that has an agent;
 - a review-kind stage, a review-only run's lead (`only_reviews`), one whose
   result holds a `review`, or one whose review tally (kv
   `review_rounds:<stage run>`, kept by archond as reviewers settle) holds a
@@ -5788,6 +5799,10 @@ decides:
 - a daemon `ship` step with no stage run also gives `ship`;
 - anything else is `other`.
 
+A run recovery could not resume (`cannot resume the run: `) is `infrastructure`:
+recovery removes the stage rows it cannot read before it fails the run, so the
+rows left do not say what stopped it.
+
 A recorded stage kind always wins over the stage id. Only a stage run from
 before Archon kept kinds (1.4.x) is read by its id, as a test or ship stage, and
 as a review only when it also holds a pass or fail verdict. A 1.6.3 work stage,
@@ -5796,13 +5811,19 @@ or its tally. Each class records its source: `structure`, `recomputed` by
 migration V24, or `legacy_163`. A run is `legacy_163`, keeps its 1.6.3 class and
 has no lesson use rescored when it was pruned before V24, when V24 could not
 read its records, when its outcome observed more runs of a stage than are still
-stored, or when the stage that ended it left no record (the `ship` step and
-prefixed stops excepted). An outcome also keeps the pull request it reviewed,
+stored, when recovery failed it (`cannot resume the run: `), or when the stage
+that ended it left no record (the `ship` step and prefixed stops excepted). A
+record V24 cannot read is any row of the run, its stage runs, its observed
+stages or its review tallies that SQLite holds as something other than text,
+that does not decode, or that names no stage or attempt 0: V24 logs the run and
+goes on, and never stops the migration for one. An outcome also keeps the pull request it reviewed,
 `review_pr`, so pruning the item does not lose the report's pull request counts.
 It is kept only when a reviewer's verdict is on record for the run: a review
 stage's pass or fail, the pass or fail of the `review` a stage's result carries
-(unless Archon refused it), or a reviewer's fail in the tally. A review-only
-target or assignment alone is no review.
+(unless Archon refused it), or a reviewer's fail in the tally. The carried
+verdict is read on one line, as the gate reads it, and a tally counts only the
+fails that name their reviewer; one that is no archond tally is unreadable. A
+review-only target or assignment alone is no review.
 
 **Attribution.** Structured operator feedback is explicit:
 `correction {"item":"qi_…","stage":"implement","cause":"quality","reason":"…"}`.

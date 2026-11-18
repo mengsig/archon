@@ -9,12 +9,12 @@ use archon_core::error::ArchonError;
 use archon_core::id::StageRunId;
 use archon_core::outcome::FailureClass;
 use archon_core::run::{
-    REVIEW_NOT_ON_RECORD, REVIEW_TALLY_FAILS, SHIP_STEP, StageOutcome, StageRun, StageState,
-    Verdict, review_tally_key,
+    REVIEW_NOT_ON_RECORD, SHIP_STEP, StageOutcome, StageRun, StageState, TalliedFails,
+    UNRESUMABLE_RUN, Verdict, review_tally_key,
 };
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
-use super::super::codec::from_json;
+use super::super::codec::{SqlContext, from_json, text_column};
 
 /// Why the run that failed under `stage_id` with `error` failed. Only the
 /// prefixes a stage or the daemon writes on purpose are read from `error`;
@@ -25,10 +25,13 @@ pub(in crate::store) fn failure_class(
     stages: &[StageRun],
     failed_reviews: &BTreeSet<StageRunId>,
 ) -> FailureClass {
-    if let Some(class) = prefixed_class(error) {
+    let ending = ending_attempt(stage_id, stages);
+    if let Some(class) = prefixed_class(error, &ending) {
         return class;
     }
-    let ending = ending_attempt(stage_id, stages);
+    if error.starts_with(UNRESUMABLE_RUN) {
+        return FailureClass::Infrastructure;
+    }
     if ending.is_empty() {
         return match stage_id {
             SHIP_STEP => FailureClass::Ship,
@@ -45,8 +48,14 @@ pub(in crate::store) fn failure_class(
 }
 
 /// The class a stop names by the prefix its writer puts on it on purpose.
-fn prefixed_class(error: &str) -> Option<FailureClass> {
-    if error.starts_with(BUDGET_USED_UP) || error.starts_with(BUDGET_UNENFORCEABLE) {
+/// The daemon's budget stop fails the run itself: a stage of the `ending`
+/// attempt that ended the run in those words blocked or escalated instead.
+fn prefixed_class(error: &str, ending: &[&StageRun]) -> Option<FailureClass> {
+    let budget = error.starts_with(BUDGET_USED_UP) || error.starts_with(BUDGET_UNENFORCEABLE);
+    let said_by_a_stage = ending
+        .iter()
+        .any(|s| matches!(&s.state, StageState::Failed { error } if StageOutcome::ends_run(error)));
+    if budget && !said_by_a_stage {
         return Some(FailureClass::Budget);
     }
     if error.starts_with(StageOutcome::ESCALATE_PREFIX) {
@@ -59,7 +68,7 @@ fn prefixed_class(error: &str) -> Option<FailureClass> {
 /// Whether a run that failed under `stage_id` with `error` can be classed
 /// without a record of that stage: the ship step, or a stop its prefix names.
 pub(in crate::store) fn classed_without_its_stage(stage_id: &str, error: &str) -> bool {
-    stage_id == SHIP_STEP || prefixed_class(error).is_some()
+    stage_id == SHIP_STEP || prefixed_class(error, &[]).is_some()
 }
 
 /// Whether the gate failed the stage because the review its pipeline
@@ -106,9 +115,24 @@ fn stopped_class(ending: &[&StageRun]) -> Option<FailureClass> {
     if failed_with(StageOutcome::is_cost_budget_stop) {
         return Some(FailureClass::Budget);
     }
-    let infra = ending.iter().any(|s| s.infrastructure_failure);
-    let disk_full = |error: &str| error.starts_with(StageOutcome::DISK_FULL_SPAWN);
-    (infra || failed_with(disk_full)).then_some(FailureClass::Infrastructure)
+    let infra = ending
+        .iter()
+        .any(|s| s.infrastructure_failure || never_spawned(s));
+    infra.then_some(FailureClass::Infrastructure)
+}
+
+/// A stage run from before the daemon flagged its own spawn failures (1.6.3):
+/// it has no agent, so the error is the daemon's, and opens as the daemon
+/// opens the spawn it gave up on.
+fn never_spawned(stage: &StageRun) -> bool {
+    let StageState::Failed { error } = &stage.state else {
+        return false;
+    };
+    let gave_up = [
+        StageOutcome::DISK_FULL_SPAWN,
+        StageOutcome::SPAWN_KEPT_FAILING,
+    ];
+    stage.aether_agent.is_none() && gave_up.iter().any(|opening| error.starts_with(opening))
 }
 
 /// What the stage that ended the run was for. A review that passed did not
@@ -181,15 +205,11 @@ pub(in crate::store) fn failed_reviews(
     let mut failed = BTreeSet::new();
     for stage in stages {
         let key = review_tally_key(&stage.id);
-        let Some(raw) = super::super::settings::kv_get(conn, &key)? else {
+        let Some(raw) = stored_tally(conn, &key)? else {
             continue;
         };
-        let tally: serde_json::Value = from_json(&raw, "review tally")?;
-        let listed = |list: &&str| {
-            let fails = tally.get(*list).and_then(serde_json::Value::as_array);
-            fails.is_some_and(|fails| !fails.is_empty())
-        };
-        if REVIEW_TALLY_FAILS.iter().any(listed) {
+        let tally: TalliedFails = from_json(&raw, "review tally")?;
+        if tally.reviewers() > 0 {
             failed.insert(stage.id.clone());
         }
     }
@@ -198,15 +218,37 @@ pub(in crate::store) fn failed_reviews(
     Ok(failed)
 }
 
+/// The tally stored under `key`, if any; one that is not text is corrupt.
+fn stored_tally(conn: &Connection, key: &str) -> Result<Option<String>, ArchonError> {
+    assert!(key.starts_with("review_rounds:"), "a review tally's key");
+    let stored = conn
+        .query_row("SELECT value FROM kv WHERE key = ?1", [key], |row| {
+            text_column(row, 0)
+        })
+        .optional()
+        .ctx("read a review tally")?;
+    match stored {
+        None => Ok(None),
+        Some(Some(raw)) => Ok(Some(raw)),
+        Some(None) => Err(ArchonError::Corrupt(format!("{key} holds no text"))),
+    }
+}
+
 fn nested_review(stage: &StageRun) -> Option<&serde_json::Value> {
     stage.structured.as_ref()?.get("review")
 }
 
-/// The pass or fail the review a stage's result carries says, if it says one.
-fn nested_verdict(stage: &StageRun) -> Option<Verdict> {
+/// The verdict the review a stage's result carries states, on one line as
+/// the gate reads it.
+fn nested_word(stage: &StageRun) -> Option<String> {
     let review = nested_review(stage).filter(|r| r.is_object())?;
     let verdict = review.get("verdict").and_then(serde_json::Value::as_str)?;
-    Verdict::of_phrase(verdict)
+    Some(verdict.split_whitespace().collect::<Vec<_>>().join(" "))
+}
+
+/// The pass or fail the review a stage's result carries says, if it says one.
+fn nested_verdict(stage: &StageRun) -> Option<Verdict> {
+    Verdict::of_phrase(&nested_word(stage)?)
 }
 
 /// Whether the stage passed as the gate reads it: its own verdict, and the
@@ -215,11 +257,10 @@ fn passed(stage: &StageRun) -> bool {
     if stage.state != StageState::Completed || stage.verdict != Some(Verdict::Pass) {
         return false;
     }
-    let Some(review) = nested_review(stage).filter(|r| r.is_object()) else {
+    if nested_review(stage).is_none_or(|r| !r.is_object()) {
         return true;
-    };
-    let verdict = review.get("verdict").and_then(serde_json::Value::as_str);
-    let skipped = verdict.is_some_and(|v| v.trim().eq_ignore_ascii_case("skipped"));
+    }
+    let skipped = nested_word(stage).is_some_and(|v| v.eq_ignore_ascii_case("skipped"));
     let review_passed = skipped || nested_verdict(stage) == Some(Verdict::Pass);
     review_passed && !stage.review_refused()
 }

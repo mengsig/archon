@@ -25,9 +25,14 @@ infrastructure, budget and review rules of the [changelog](../CHANGELOG.md)),
 and keeps the old class in `failure_class_163` for one release. Only the
 class columns and fields change. A run whose stage records were pruned keeps
 its old class, marked `legacy_163`. So does a run whose records V24 cannot
-read, whose ending stage left no record, or whose outcome observed more runs
-of a stage than are still stored: it logs the run, recomputes nothing, rescores
-none of its lesson uses and leaves an unreadable outcome record as it was.
+read, whose ending stage left no record, which recovery failed ("cannot resume
+the run: …", after dropping the stage rows it could not read), or whose outcome
+observed more runs of a stage than are still stored: it logs the run,
+recomputes nothing, rescores none of its lesson uses and leaves an unreadable
+outcome record as it was. A record it cannot read never stops the migration:
+that covers a run, stage run, observed-stage or review-tally row SQLite holds
+as something other than text, one that does not decode, a stage run naming no
+stage or attempt 0, and a tally that names no reviewer.
 archond logs, per class, the old count, the new count and the rows left on the
 1.6.3 class. When a recomputed class changes whether a run is scored, V24
 rescores the run's lesson uses and holdout trials and recounts the lessons it

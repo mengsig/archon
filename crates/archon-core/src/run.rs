@@ -831,6 +831,10 @@ impl StageOutcome {
     /// every spawn retry: an infrastructure stop, also on 1.6.3 records.
     pub const DISK_FULL_SPAWN: &'static str = "create_agent failed on a full disk";
 
+    /// How the daemon's error opens when Aether or the way to it failed
+    /// through every spawn retry: an infrastructure stop, also on 1.6.3 records.
+    pub const SPAWN_KEPT_FAILING: &'static str = "create_agent kept failing: ";
+
     /// Whether `error` is exactly Aether's cost-budget stop: its bare reason or
     /// its whole budget message, with nothing after but Archon's notional label.
     pub fn is_cost_budget_stop(error: &str) -> bool {
@@ -861,7 +865,7 @@ fn cost_stop_tail(text: &str) -> Option<&str> {
     let rest = text.strip_prefix(StageOutcome::COST_BUDGET_STOP)?;
     let (limit, rest) = rest.split_once(": ")?;
     let (cost, tail) = rest.split_once(" spent")?;
-    (is_dollars(limit) && is_aether_cost(cost)).then_some(tail)
+    (is_aether_limit(limit) && is_aether_cost(cost)).then_some(tail)
 }
 
 /// Whether `rest` is all of Aether's budget message after the reason:
@@ -883,42 +887,64 @@ fn is_budget_message_rest(rest: &str) -> bool {
     digits > 0 && &counted[digits..] == ending
 }
 
-/// The labels Aether gives a cost gap (`CostGap::label`), each in the
-/// parentheses after an incomplete cost.
-const AETHER_COST_GAPS: [&str; 5] = [
-    "some unpriced",
-    "some cost unknown",
+/// The gaps Aether names only beside a floor (`CostGap::label` of `Unpriced`
+/// and `Unknown`): with nothing priced it says a bare `not reported`.
+const FLOOR_ONLY_COST_GAPS: [&str; 2] = ["some unpriced", "some cost unknown"];
+
+/// The gaps Aether names beside a floor and after `not reported` alike.
+const NAMED_COST_GAPS: [&str; 3] = [
     "usage not fully reported",
     "interrupted run, cost unknown",
     "multiple cost gaps",
 ];
 
-/// Whether `cost` is a cost as Aether says one: `$1.2345`, a floor
-/// `≥ $1.2345 (some unpriced)`, or `not reported`, perhaps with its gap.
+/// Whether `cost` is a cost as Aether's `cost_line` says one: `$1.2345`, a
+/// floor `≥ $1.2345 (some unpriced)`, or `not reported`, perhaps with its gap.
 fn is_aether_cost(cost: &str) -> bool {
     if let Some(rest) = cost.strip_prefix("not reported") {
-        return rest.is_empty() || rest.strip_prefix(' ').is_some_and(is_cost_gap);
+        let named = |gap: &str| cost_gap(gap).is_some_and(|gap| NAMED_COST_GAPS.contains(&gap));
+        return rest.is_empty() || rest.strip_prefix(' ').is_some_and(named);
     }
     if let Some(dollars) = cost.strip_prefix('$') {
-        return is_dollars(dollars);
+        return is_aether_spend(dollars);
     }
     let Some((dollars, gap)) = cost.strip_prefix("≥ $").and_then(|r| r.split_once(' ')) else {
         return false;
     };
-    is_dollars(dollars) && is_cost_gap(gap)
+    let said = |gap: &str| FLOOR_ONLY_COST_GAPS.contains(&gap) || NAMED_COST_GAPS.contains(&gap);
+    is_aether_spend(dollars) && cost_gap(gap).is_some_and(said)
 }
 
-/// A plain decimal amount: digits, perhaps with a fraction.
-fn is_dollars(text: &str) -> bool {
-    let (whole, fraction) = text.split_once('.').unwrap_or((text, "0"));
-    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
-    digits(whole) && digits(fraction)
+/// The label in a parenthesised cost gap such as `(some unpriced)`.
+fn cost_gap(text: &str) -> Option<&str> {
+    text.strip_prefix('(')?.strip_suffix(')')
 }
 
-/// One of Aether's cost gap labels in parentheses, such as `(some unpriced)`.
-fn is_cost_gap(text: &str) -> bool {
-    let label = text.strip_prefix('(').and_then(|t| t.strip_suffix(')'));
-    label.is_some_and(|label| AETHER_COST_GAPS.contains(&label))
+/// Digits as a formatter writes a whole number: no sign, no leading zero.
+fn is_whole_number(text: &str) -> bool {
+    let digits = !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit());
+    digits && (text == "0" || !text.starts_with('0'))
+}
+
+/// Dollars spent as Aether writes them (`{:.4}`): always four decimals.
+fn is_aether_spend(text: &str) -> bool {
+    let Some((whole, fraction)) = text.split_once('.') else {
+        return false;
+    };
+    let four = fraction.len() == 4 && fraction.bytes().all(|b| b.is_ascii_digit());
+    is_whole_number(whole) && four
+}
+
+/// A budget as Aether's `format_usd` writes it: at most six decimals with the
+/// trailing zeros trimmed, or every digit of an amount below that precision.
+fn is_aether_limit(text: &str) -> bool {
+    let Some((whole, fraction)) = text.split_once('.') else {
+        return is_whole_number(text);
+    };
+    let digits = !fraction.is_empty() && fraction.bytes().all(|b| b.is_ascii_digit());
+    let trimmed = !fraction.ends_with('0');
+    let below_precision = whole == "0" && fraction.starts_with("000000");
+    is_whole_number(whole) && digits && trimmed && (fraction.len() <= 6 || below_precision)
 }
 
 impl StageState {
@@ -1053,8 +1079,37 @@ pub fn review_tally_key(stage: &StageRunId) -> String {
     format!("review_rounds:{stage}")
 }
 
-/// The tally's lists of reviewer fails: those with a blocking finding, and the rest.
-pub const REVIEW_TALLY_FAILS: [&str; 2] = ["fails", "other_fails"];
+/// The failing verdicts in a stored review tally, as much of it as the outcome
+/// store reads: the fails with a blocking finding, and the rest as (agent, head).
+#[derive(Debug, Deserialize)]
+pub struct TalliedFails {
+    fails: Vec<TalliedFail>,
+    #[serde(default)]
+    other_fails: Vec<(String, String)>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TalliedFail {
+    agent: String,
+}
+
+impl TalliedFails {
+    /// How many failing verdicts the tally holds that name their reviewer.
+    pub fn reviewers(&self) -> usize {
+        let blocking = self.fails.iter().map(|fail| fail.agent.as_str());
+        let other = self.other_fails.iter().map(|(agent, _)| agent.as_str());
+        let named = blocking
+            .chain(other)
+            .filter(|agent| !agent.trim().is_empty());
+        let count = named.count();
+        assert!(count <= self.fails.len() + self.other_fails.len());
+        count
+    }
+}
+
+/// How the error of a run that recovery could not resume opens: its stage
+/// rows may be gone, so the store stopped it and no stage record explains it.
+pub const UNRESUMABLE_RUN: &str = "cannot resume the run: ";
 
 /// The stage id a run stopped by its item's dollar budget fails under; no
 /// stage of that id runs.
@@ -2146,6 +2201,48 @@ mod tests {
         for limit in ["1e3", "+5", "inf", "NaN", ".5", "5.", "", "5 or so"] {
             let odd = format!("cost budget of ${limit}: $9.0000 spent");
             assert!(!StageOutcome::is_cost_budget_stop(&odd), "{odd}");
+        }
+    }
+
+    /// Aether writes a limit with `format_usd` (six decimals, zeros trimmed)
+    /// and a spend with `{:.4}`; a bare `not reported` names no quiet gap.
+    #[test]
+    fn a_cost_stop_holds_only_amounts_aether_can_write() {
+        let stop = |limit: &str, cost: &str| format!("cost budget of ${limit}: {cost} spent");
+        for limit in ["0", "5", "120", "0.3", "2.5", "0.000001", "0.0000004"] {
+            let said = stop(limit, "$9.0000");
+            assert!(StageOutcome::is_cost_budget_stop(&said), "{said}");
+        }
+        for limit in ["5.00", "2.50", "05", "00", "5.0", "1.0000001", "0.0000010"] {
+            let said = stop(limit, "$9.0000");
+            assert!(!StageOutcome::is_cost_budget_stop(&said), "{said}");
+        }
+        for cost in [
+            "$0.0100",
+            "$12.3456",
+            "≥ $1.0000 (some unpriced)",
+            "≥ $1.0000 (some cost unknown)",
+            "≥ $1.0000 (multiple cost gaps)",
+            "not reported",
+            "not reported (usage not fully reported)",
+        ] {
+            let said = stop("5", cost);
+            assert!(StageOutcome::is_cost_budget_stop(&said), "{said}");
+        }
+        for cost in [
+            "$9",
+            "$5.01",
+            "$5.010",
+            "$5.01000",
+            "$05.0100",
+            "$.0100",
+            "≥ $1 (some unpriced)",
+            "≥ $1.00 (some unpriced)",
+            "not reported (some unpriced)",
+            "not reported (some cost unknown)",
+        ] {
+            let said = stop("5", cost);
+            assert!(!StageOutcome::is_cost_budget_stop(&said), "{said}");
         }
     }
 

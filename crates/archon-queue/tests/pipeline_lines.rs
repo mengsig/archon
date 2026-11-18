@@ -54,6 +54,18 @@ fn finish(store: &mut Store, item: &QueueItem, state: RunState, at: Timestamp) {
 
 /// Like [`finish`]; `judged` says whether a reviewer's verdict is recorded.
 fn finish_with(store: &mut Store, item: &QueueItem, state: RunState, at: Timestamp, judged: bool) {
+    finish_saying(store, item, state, at, judged.then_some("pass"));
+}
+
+/// Like [`finish`]; `verdict` is the word the recorded review states, if any.
+fn finish_saying(
+    store: &mut Store,
+    item: &QueueItem,
+    state: RunState,
+    at: Timestamp,
+    verdict: Option<&str>,
+) {
+    let judged = verdict.is_some();
     let id = match store.item(&item.id) {
         Ok(stored) => {
             store
@@ -64,7 +76,7 @@ fn finish_with(store: &mut Store, item: &QueueItem, state: RunState, at: Timesta
         Err(_) => store.insert_item(item, None).unwrap().id,
     };
     let run = start(store, &id);
-    let lead = lead(item, &run, &state, at, judged);
+    let lead = lead(item, &run, &state, at, verdict);
     store.upsert_stage_run(&lead).unwrap();
     if judged && matches!(state, RunState::Failed { .. }) {
         let tally = serde_json::json!({
@@ -104,7 +116,7 @@ fn lead(
     run: &PipelineRun,
     state: &RunState,
     at: Timestamp,
-    judged: bool,
+    verdict: Option<&str>,
 ) -> StageRun {
     let mut ran = stage(run, 0);
     ran.stage_id = "review".into();
@@ -118,7 +130,7 @@ fn lead(
     };
     if ran.state == StageState::Completed {
         ran.verdict = Some(Verdict::Pass);
-        ran.structured = judged.then(|| serde_json::json!({"review": {"verdict": "pass"}}));
+        ran.structured = verdict.map(|said| serde_json::json!({"review": {"verdict": said}}));
     }
     ran.finished_at = Some(at);
     ran
@@ -299,4 +311,25 @@ fn being_assigned_a_review_is_no_reviewed_pull_request() {
     let lines = store.pipeline_lines(None, None, &range(at)).unwrap();
     assert_eq!((lines[0].runs, lines[0].scored), (2, 2));
     assert_eq!(lines[0].review_prs, None);
+}
+
+/// The gate reads a nested verdict on one line, so a pass it took with a
+/// line break after it reviewed the pull request.
+#[test]
+fn a_verdict_the_gate_took_across_a_line_break_reviewed_its_pull_request() {
+    let mut store = store();
+    let at = t(DAY);
+    let spaced = reviewing(31);
+    finish_saying(&mut store, &spaced, passed(), at, Some("PASS\n"));
+    let run = &store.runs_for_item(&spaced.id).unwrap()[0];
+    let outcome = store.outcome(&run.id).unwrap().unwrap();
+    assert!(outcome.review_pr.is_some(), "{outcome:?}");
+    finish_saying(&mut store, &reviewing(32), passed(), at, Some("not sure"));
+    let lines = store.pipeline_lines(None, None, &range(at)).unwrap();
+    let prs = lines[0].review_prs.as_ref().expect("one was reviewed");
+    assert_eq!(
+        (prs.reviewed, prs.passed),
+        (1, 1),
+        "an unread word is no verdict"
+    );
 }

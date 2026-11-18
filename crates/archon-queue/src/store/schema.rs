@@ -997,6 +997,8 @@ mod merge_upgrade;
 #[cfg(test)]
 mod outcome_classes;
 #[cfg(test)]
+mod outcome_kept;
+#[cfg(test)]
 mod outcome_reviews;
 #[cfg(test)]
 mod pr_identity;

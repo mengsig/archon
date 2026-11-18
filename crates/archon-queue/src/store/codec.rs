@@ -30,6 +30,20 @@ pub(super) fn store_error(what: &str, error: &rusqlite::Error) -> ArchonError {
     }
 }
 
+/// Column `index` of `row` as text; `None` when SQLite holds anything else
+/// there (a column's declared type binds no value), or bytes that are no UTF-8.
+pub(super) fn text_column(
+    row: &rusqlite::Row<'_>,
+    index: usize,
+) -> rusqlite::Result<Option<String>> {
+    match row.get_ref(index)? {
+        rusqlite::types::ValueRef::Text(bytes) => {
+            Ok(std::str::from_utf8(bytes).ok().map(str::to_owned))
+        }
+        _ => Ok(None),
+    }
+}
+
 /// A write transaction that takes the write lock up front, so two
 /// connections never deadlock upgrading a read lock (busy_timeout then
 /// covers the wait).

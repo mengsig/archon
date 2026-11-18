@@ -1466,17 +1466,18 @@ async fn record(
             disk_full(ctx, table, stage, error).await
         }
         ArchonError::Protocol(_) | ArchonError::Io { .. } => {
-            retry_or_refuse(ctx, table, stage, error).await
+            retry_or_fail(ctx, table, stage, error).await
         }
-        error if wire::is_internal(&error) => retry_or_refuse(ctx, table, stage, error).await,
+        error if wire::is_internal(&error) => retry_or_fail(ctx, table, stage, error).await,
         ArchonError::Policy(_) => policy_refusal(ctx, table, stage, error).await,
         other => refuse(ctx, table, stage, format!("cannot create agent: {other}")).await,
     }
 }
 
 /// A transport failure, or a failure inside Aether (`internal`): retried
-/// under the same key up to [`MAX_TRANSPORT_ERRORS`] times, then refused.
-async fn retry_or_refuse(
+/// under the same key up to [`MAX_TRANSPORT_ERRORS`] times, then the stage
+/// fails on infrastructure.
+async fn retry_or_fail(
     ctx: &DaemonContext,
     table: &mut RunTable,
     stage: &StageRun,
@@ -1491,13 +1492,11 @@ async fn retry_or_refuse(
         return Ok(FollowUp::default());
     }
     table.spawn_errors.remove(&stage.id);
-    refuse(
-        ctx,
-        table,
-        stage,
-        format!("create_agent kept failing: {error}"),
-    )
-    .await
+    let error = format!("{}{error}", StageOutcome::SPAWN_KEPT_FAILING);
+    tracing::warn!(stage = %stage.id, %error, "stage spawn gave up");
+    // Aether or the way to it failed, not the model: the slot's retries are infrastructure's.
+    let outcome = StageOutcome::Failed { error, infra: true };
+    settle::settle_locked(ctx, table, &stage.id, outcome).await
 }
 
 /// `create_agent` failed on a full disk: dispatch holds until space is

@@ -378,8 +378,9 @@ fn quarantine_run(ctx: &DaemonContext, run: &PipelineRun, error: &ArchonError) {
 
 fn unresumable_message(run: &PipelineRun, error: &ArchonError) -> String {
     format!(
-        "cannot resume the run: {error}. `archon queue retry {item}` runs it again once \
+        "{}{error}. `archon queue retry {item}` runs it again once \
          fixed; `archon queue cancel {item}` gives it up",
+        archon_core::run::UNRESUMABLE_RUN,
         item = run.item
     )
 }

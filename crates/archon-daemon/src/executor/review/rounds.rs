@@ -585,15 +585,17 @@ mod tests {
 
     #[test]
     fn a_stored_tally_lists_each_fail_where_the_outcome_store_reads_it() {
-        let [blocking, other] = archon_core::run::REVIEW_TALLY_FAILS;
         let tally = Tally {
             fails: vec![fail("aaaaaaa1", &["a"])],
             other_fails: vec![("agt_b".into(), "bbbbbbb1".into())],
             ..Tally::default()
         };
-        let stored = serde_json::to_value(&tally).unwrap();
-        assert_eq!(stored[blocking].as_array().map(Vec::len), Some(1));
-        assert_eq!(stored[other].as_array().map(Vec::len), Some(1));
+        let stored = serde_json::to_string(&tally).unwrap();
+        let read: archon_core::run::TalliedFails = serde_json::from_str(&stored).unwrap();
+        assert_eq!(read.reviewers(), 2, "{stored}");
+        let none = serde_json::to_string(&Tally::default()).unwrap();
+        let read: archon_core::run::TalliedFails = serde_json::from_str(&none).unwrap();
+        assert_eq!(read.reviewers(), 0, "a tally lists no pass: {none}");
     }
 
     #[test]

@@ -562,7 +562,7 @@ async fn low_disk_during_a_quiet_disk_full_hold_is_announced_once() {
 }
 
 #[tokio::test]
-async fn an_internal_aether_error_is_retried_under_the_same_key_then_refused() {
+async fn an_internal_aether_error_is_retried_under_the_same_key_then_fails_as_infrastructure() {
     let h = Harness::new().await;
     for _ in 0..4 {
         h.backend
@@ -578,15 +578,21 @@ async fn an_internal_aether_error_is_retried_under_the_same_key_then_refused() {
         h.backend
             .fail_next(ArchonError::Aether("internal: lock poisoned".into()));
     }
-    let refused = h.enqueue("aether keeps failing").await;
+    let gave_up = h.enqueue("aether keeps failing").await;
     for _ in 0..5 {
         h.dispatch().await;
     }
-    let stage = h.stages(&refused.id).await.remove(0);
+    let stage = h.stages(&gave_up.id).await.remove(0);
+    let opening = StageOutcome::SPAWN_KEPT_FAILING;
     assert!(
-        matches!(&stage.state, StageState::Failed { error } if error.contains("kept failing")),
+        matches!(&stage.state, StageState::Failed { error } if error.starts_with(opening)),
         "{:?}",
         stage.state
+    );
+    assert!(stage.aether_agent.is_none(), "no agent was created");
+    assert!(
+        stage.infrastructure_failure,
+        "Aether failed, not the model: the outcome store reads this flag"
     );
 }
 

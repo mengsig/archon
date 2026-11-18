@@ -1,5 +1,6 @@
 //! V24 recomputes each stored failed outcome's class from its stage records.
-//! Its reviewed pull requests are in `outcome_reviews`.
+//! Its reviewed pull requests are in `outcome_reviews`, the rows it cannot
+//! trust in `outcome_kept`.
 
 use super::*;
 use archon_core::catalog::StageKind;
@@ -179,7 +180,7 @@ pub(super) fn some(text: &str) -> Option<String> {
 }
 
 /// Records that the outcome of `run` observed `attempts` stage runs of `stage_id`.
-fn observe(conn: &Connection, run: &PipelineRun, stage_id: &str, attempts: u32) {
+pub(super) fn observe(conn: &Connection, run: &PipelineRun, stage_id: &str, attempts: u32) {
     conn.execute(
         "INSERT INTO outcome_stages (run, ordinal, stage_id, model, effort, cost_usd, wall_secs,
                                      attempts, passed)
@@ -414,7 +415,7 @@ fn v24_reads_daemon_stops_and_nested_reviews() {
     let stop = failed_stage(
         &capped,
         StageKind::Work,
-        "cost budget of $2.00: $2.01 spent",
+        "cost budget of $2: $2.0100 spent",
         true,
     );
     seed(
@@ -611,7 +612,7 @@ fn v24_keeps_the_old_class_of_runs_whose_rows_hold_another_run() {
     );
 }
 
-fn lesson(conn: &Connection, uses: u32) -> archon_core::id::LessonId {
+pub(super) fn lesson(conn: &Connection, uses: u32) -> archon_core::id::LessonId {
     let lesson: archon_core::lesson::Lesson = serde_json::from_value(serde_json::json!({
         "id": archon_core::id::LessonId::new(), "scope": {"repo": null, "pipeline": null},
         "kind": "pitfall", "text": "mind the gap", "state": "active", "uses": uses, "wins": 0,
@@ -632,7 +633,7 @@ fn lesson(conn: &Connection, uses: u32) -> archon_core::id::LessonId {
     lesson.id
 }
 
-fn use_and_trial(
+pub(super) fn use_and_trial(
     conn: &Connection,
     lesson: &archon_core::id::LessonId,
     run: &PipelineRun,
@@ -746,7 +747,7 @@ fn v24_keeps_the_old_class_of_a_run_whose_ending_stage_left_no_record() {
 }
 
 /// The `won` of the lesson use of `run`, and the uses its lesson counts.
-fn lesson_score(conn: &Connection, run: &PipelineRun) -> (Option<bool>, u32) {
+pub(super) fn lesson_score(conn: &Connection, run: &PipelineRun) -> (Option<bool>, u32) {
     conn.query_row(
         "SELECT u.won, l.uses FROM lesson_uses u JOIN lessons l ON l.id = u.lesson
          WHERE u.run = ?1",

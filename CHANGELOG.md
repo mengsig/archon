@@ -32,11 +32,18 @@
   guards' own blockers, Aether's cost stop (only in Aether's own grammar,
   `cost budget of $<limit>: <cost> spent`, where the cost is `$<amount>`,
   `≥ $<amount> (<gap>)` or `not reported`, with one of Aether's own gap labels,
+  and each amount as Aether formats it: a limit with no trailing zero, a spend
+  with exactly four decimals, so `$9 spent` and `$5.00` are none of its;
   alone or inside Aether's whole budget message, matched exactly: nothing may
   precede it, and nothing may follow but Archon's own whole notional-cost
   label. Anything else, such as a task's words that open with the phrase, is
   no budget stop and stays scored; the notional-cost label reads it the same
-  way) and the daemon's full-disk stop.
+  way) and the spawns the daemon gave up on. Those are `infrastructure` only on
+  a stage run that has no agent: an agent that fails its task in the daemon's
+  words judged its own work. The budget guards' blockers are `budget` only when
+  the daemon wrote them; a stage that fails its own task in those words is
+  `blocked`. A run recovery could not resume ("cannot resume the run: ") is
+  `infrastructure`, as recovery drops the stage rows it cannot read first.
   A review is read as the gate reads it. A nested `review` that failed, one
   Archon refused, or one the gate found missing (such as a skip the pipeline
   does not allow) is a `review` failure. Migration V24 recomputes stored
@@ -44,12 +51,18 @@
   rows left on the 1.6.3 class. It also rescores the lesson uses and holdout
   trials of those runs, and recounts the lessons they used. Runs already pruned
   keep their old class, marked `legacy_163`, as do runs whose records it cannot
-  read, runs whose ending stage left no record, and kept runs missing any
-  stage run their outcome observed; none of these is recomputed, and their
-  lesson uses are not rescored. For one release the old class stays in
+  read, runs recovery failed, runs whose ending stage left no record, and kept
+  runs missing any stage run their outcome observed; none of these is
+  recomputed, and their lesson uses are not rescored. A row SQLite holds as
+  something other than text, one that does not decode, and a review tally that
+  names no reviewer are records it cannot read: V24 logs the run and goes on. For one release the old class stays in
   `failure_class_163`.
 - When `create_agent` keeps failing on Aether's full disk, the stage is now
-  marked an infrastructure failure, as it was classed before.
+  marked an infrastructure failure, as it was classed before. So is a stage
+  whose `create_agent` kept failing on a transport or internal Aether error
+  ("create_agent kept failing: …"): no agent ran, so the run is no longer a
+  scored loss, and the slot gets `limits.infra_retries` like any other
+  infrastructure failure.
 - The pipeline lines of `archon model-evidence` count only the runs that
   finished in the report's range, so a pipeline with no run in it has no line.
   Runs a stage ended with `BLOCKED:` or `ESCALATE:` are no longer losses: they
@@ -60,7 +73,8 @@
   as reviewed only when a reviewer's verdict is on record for the run: a review
   stage's pass or fail, the verdict of the review a stage's result carries
   (unless Archon refused it), or a reviewer's fail in archond's review tally.
-  A review-only target or assignment alone is no review, so a level-`none`
+  The carried verdict is read on one line, as the gate reads it, and a tally
+  counts only fails that name their reviewer. A review-only target or assignment alone is no review, so a level-`none`
   read that records none reviews no pull request. Each outcome now keeps
   the pull request it reviewed, so pruning the item does not lose it. V24 fills
   it in for outcomes whose item is still stored. Outcomes whose item was already

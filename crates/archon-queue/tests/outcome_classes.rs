@@ -130,7 +130,7 @@ fn deadlines_backends_and_cost_caps_are_read_from_the_stage_that_ended_the_run()
     });
     assert_eq!(infra.failure, Some(FailureClass::Infrastructure));
     let capped = failed_with("implement", "stage failed", |run| {
-        let error = "cost budget of $2.00: $2.01 spent".into();
+        let error = "cost budget of $2: $2.0100 spent".into();
         vec![settled(
             run,
             "implement",
@@ -168,7 +168,7 @@ fn deadlines_backends_and_cost_caps_are_read_from_the_stage_that_ended_the_run()
         "a stage named budget is no budget stop"
     );
     let failed_agent = failed_with("implement", "stage failed", |run| {
-        let error = "Stopped by its budget (cost budget of $2.00: $2.01 spent); its live \
+        let error = "Stopped by its budget (cost budget of $2: $2.0100 spent); its live \
                      subtree was cancelled with it, 0 descendant(s) were live at the stop. Details are \
                      in the exhaustion.failed event."
             .into();
@@ -294,6 +294,16 @@ fn a_nested_review_is_read_as_the_gate_reads_it() {
         Some(FailureClass::Other),
         "a passed review failed nothing"
     );
+    let spaced = failed_with(
+        "implement",
+        "later",
+        claimed(serde_json::json!({"verdict": "PASS\n"})),
+    );
+    assert_eq!(
+        spaced.failure,
+        Some(FailureClass::Other),
+        "the gate reads a verdict on one line"
+    );
     let skip = serde_json::json!({"verdict": "skipped", "reason": "docs only"});
     let refused_skip = failed_with(
         "implement",
@@ -359,6 +369,11 @@ fn a_task_that_quotes_a_cost_budget_is_no_budget_stop() {
         "Stopped by its budget (cost budget of $5: $5.0100 spent); this is my own explanation",
         "cost budget of $5: ≥ $9.0000 (for the smoke tests) spent",
         "cost budget of $5: not reported (by anyone) spent",
+        "cost budget of $5: $9 spent",
+        "cost budget of $2: $2.01 spent",
+        "cost budget of $5.00: $5.0100 spent",
+        "cost budget of $5: ≥ $9 (some unpriced) spent",
+        "cost budget of $5: not reported (some unpriced) spent",
         "Stopped by its budget (cost budget of $5: $5.0100 spent); no new subtree cancellation \
          was requested by the release plan",
         "Stopped by its budget (cost budget of $5: $5.0100 spent); its live subtree was cancelled \
@@ -513,4 +528,113 @@ fn a_stage_prefix_still_names_an_escalation_or_a_blocker() {
         vec![review_fail(run)]
     });
     assert_eq!(blocked.failure, Some(FailureClass::Blocked));
+}
+
+/// The daemon's budget stop fails the run itself, under a stage it did not
+/// let run; a stage that ends its own task in those words blocked.
+#[test]
+fn a_stage_that_blocks_in_the_budget_stops_words_is_blocked() {
+    let said = "BLOCKED: the item's budget is used up in the customer sandbox";
+    let own = failed_with("implement", said, |run| {
+        let error = said.into();
+        let mut stage = settled(
+            run,
+            "implement",
+            StageKind::Work,
+            StageState::Failed { error },
+        );
+        stage.aether_agent = Some(agent(7));
+        vec![stage]
+    });
+    assert_eq!(own.failure, Some(FailureClass::Blocked));
+    let stop = "BLOCKED: the item's budget is used up: $1.00 spent of its $1.00 cap ($0.00 over)";
+    let before_a_retry = failed_with("review", stop, |run| vec![review_fail(run)]);
+    assert_eq!(
+        before_a_retry.failure,
+        Some(FailureClass::Budget),
+        "the daemon stopped the next attempt; the last one did not say so"
+    );
+}
+
+/// A spawn the daemon gave up on left no agent. An agent that fails its task
+/// in the daemon's words judged its own work.
+#[test]
+fn a_spawn_failure_is_the_daemons_only_where_no_agent_ran() {
+    for gave_up in [
+        "create_agent failed on a full disk 5 times (No space left on device)",
+        "create_agent kept failing: aether: internal: storage temporarily unavailable",
+    ] {
+        let spawn = |attached: bool| {
+            failed_with("implement", "stage `implement` failed", move |run| {
+                let error = gave_up.into();
+                let mut stage = settled(
+                    run,
+                    "implement",
+                    StageKind::Work,
+                    StageState::Failed { error },
+                );
+                stage.aether_agent = attached.then(|| agent(7));
+                vec![stage]
+            })
+        };
+        let unspawned = spawn(false);
+        assert_eq!(
+            unspawned.failure,
+            Some(FailureClass::Infrastructure),
+            "{gave_up}"
+        );
+        assert!(!unspawned.is_scored(), "no agent judged the work");
+        let quoted = spawn(true);
+        assert_eq!(quoted.failure, Some(FailureClass::Other), "{gave_up}");
+        assert!(quoted.is_scored(), "the agent failed its own task");
+    }
+}
+
+/// Recovery fails a run it cannot resume after dropping the stage rows it
+/// could not read, so the rows that remain do not say what stopped it.
+#[test]
+fn a_run_recovery_could_not_resume_is_an_infrastructure_failure() {
+    let error = format!(
+        "{}corrupt: decode stage run. `archon queue retry qi_x` runs it again once fixed",
+        archon_core::run::UNRESUMABLE_RUN
+    );
+    let dropped = failed_with("review", &error, |run| vec![review_fail(run)]);
+    assert_eq!(dropped.failure, Some(FailureClass::Infrastructure));
+    assert!(!dropped.is_scored(), "no reviewer failed the work");
+    let rowless = failed_with("review", &error, |_| Vec::new());
+    assert_eq!(rowless.failure, Some(FailureClass::Infrastructure));
+}
+
+/// Only a tally that names the reviewer of each fail is a reviewer's verdict.
+#[test]
+fn a_tally_that_names_no_reviewer_is_no_review() {
+    let lead_with = |tally: serde_json::Value| {
+        let mut store = store();
+        let item = store.insert_item(&item(None, "classed"), None).unwrap();
+        let run = start(&mut store, &item.id);
+        let error = MISLEADING.into();
+        let lead = settled(
+            &run,
+            "review",
+            StageKind::Work,
+            StageState::Failed { error },
+        );
+        store.upsert_stage_run(&lead).unwrap();
+        let key = review_tally_key(&lead.id);
+        store.kv_set(&key, &tally.to_string()).unwrap();
+        fail(&mut store, &run, "review", MISLEADING);
+        let captured = store.capture_outcome(&store.run(&run.id).unwrap(), None, true);
+        captured.map(|()| store.outcome(&run.id).unwrap().unwrap().failure)
+    };
+    let unnamed = lead_with(serde_json::json!({"fails": [null]}));
+    assert!(
+        matches!(unnamed, Err(archon_core::error::ArchonError::Corrupt(_))),
+        "{unnamed:?}"
+    );
+    let blank = lead_with(serde_json::json!({"fails": [{"agent": " "}]}));
+    assert_eq!(blank.unwrap(), Some(FailureClass::Other));
+    let empty = lead_with(serde_json::json!({"fails": []}));
+    assert_eq!(empty.unwrap(), Some(FailureClass::Other));
+    let other = lead_with(serde_json::json!({"fails": [], "other_fails": [["agt_r", "abc1234"]]}));
+    assert_eq!(other.unwrap(), Some(FailureClass::Review));
 }

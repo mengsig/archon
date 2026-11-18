@@ -51,7 +51,7 @@ mod tests {
 
     #[test]
     fn only_a_cost_stop_is_labelled_and_aethers_words_stay_first() {
-        let stop = "cost budget of $1.50: $1.52 spent";
+        let stop = "cost budget of $1.5: $1.5200 spent";
         let text = labelled(stop);
         assert!(
             text.starts_with(stop) && text.contains("notional cost"),

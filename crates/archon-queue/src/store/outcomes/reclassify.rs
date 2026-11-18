@@ -6,10 +6,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use archon_core::error::ArchonError;
 use archon_core::id::PipelineRunId;
 use archon_core::outcome::{ClassSource, FailureClass, UNSCORED_FAILURES};
-use archon_core::run::{PipelineRun, RunState, StageRun};
+use archon_core::run::{PipelineRun, RunState, StageRun, UNRESUMABLE_RUN};
+use rusqlite::types::ValueRef;
 use rusqlite::{Connection, OptionalExtension, params};
 
-use super::super::codec::{SqlContext, from_json};
+use super::super::codec::{SqlContext, from_json, text_column};
 use super::class::{classed_without_its_stage, failed_reviews, failure_class, review_on_record};
 
 /// Per class, how many failed outcomes held it before and after the
@@ -53,14 +54,7 @@ impl Reclassified {
 /// stored and readable, keeping the old class beside it; any other row keeps
 /// its old class. Only the class fields change: no record is decoded whole.
 pub(in crate::store) fn reclassify(conn: &Connection) -> Result<Reclassified, ArchonError> {
-    let mut stmt = conn
-        .prepare("SELECT run, COALESCE(failure_class, '') FROM outcomes WHERE result = 'failed' ORDER BY run")
-        .ctx("prepare the failed outcomes")?;
-    let rows = stmt
-        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
-        .ctx("query the failed outcomes")?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .ctx("read the failed outcomes")?;
+    let rows = failed_outcomes(conn)?;
     let mut counts = Reclassified::default();
     let mut rescored = Vec::new();
     for (run, old) in rows {
@@ -100,6 +94,37 @@ pub(in crate::store) fn reclassify(conn: &Connection) -> Result<Reclassified, Ar
     Ok(counts)
 }
 
+/// Each failed outcome's run and stored class (`""` for none). A row whose
+/// run or class is not text cannot be rewritten by its key: it keeps all it holds.
+fn failed_outcomes(conn: &Connection) -> Result<Vec<(String, String)>, ArchonError> {
+    let mut stmt = conn
+        .prepare("SELECT run, failure_class FROM outcomes WHERE result = 'failed' ORDER BY run")
+        .ctx("prepare the failed outcomes")?;
+    let class = |r: &rusqlite::Row<'_>| match r.get_ref(1)? {
+        ValueRef::Null => Ok(Some(String::new())),
+        _ => text_column(r, 1),
+    };
+    let rows = stmt
+        .query_map([], |r| Ok((text_column(r, 0)?, class(r)?)))
+        .ctx("query the failed outcomes")?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .ctx("read the failed outcomes")?;
+    let stored = rows.len();
+    let readable: Vec<(String, String)> = rows
+        .into_iter()
+        .filter_map(|(run, class)| Some((run?, class?)))
+        .collect();
+    assert!(readable.len() <= stored, "no row is read twice");
+    if readable.len() < stored {
+        let skipped = stored - readable.len();
+        tracing::warn!(
+            skipped,
+            "failed outcomes whose run or class is not text are left as they are"
+        );
+    }
+    Ok(readable)
+}
+
 /// The run's class from its stage records; `None` when any of them is gone
 /// or cannot be read, so the row keeps its old class.
 fn recomputed(conn: &Connection, run: &str) -> Result<Option<FailureClass>, ArchonError> {
@@ -121,7 +146,17 @@ fn recomputed(conn: &Connection, run: &str) -> Result<Option<FailureClass>, Arch
         return Ok(None);
     };
     assert!(stages.iter().all(|s| s.run == id));
-    if let Some(stage) = missing_stage_rows(conn, run, &stages)? {
+    if error.starts_with(UNRESUMABLE_RUN) {
+        tracing::warn!(
+            run,
+            "recovery failed the run and may have dropped its stage rows; it keeps its 1.6.3 class"
+        );
+        return Ok(None);
+    }
+    let Some(missing) = kept(run, missing_stage_rows(conn, run, &stages))? else {
+        return Ok(None);
+    };
+    if let Some(stage) = missing {
         tracing::warn!(
             run,
             stage = stage.as_str(),
@@ -153,19 +188,31 @@ fn missing_stage_rows(
 ) -> Result<Option<String>, ArchonError> {
     let mut stored: BTreeMap<&str, i64> = BTreeMap::new();
     for stage in stages {
-        assert!(stage.attempt > 0, "a stage run has an attempt");
         *stored.entry(&stage.stage_id).or_default() += 1 + stage.model_segments.len() as i64;
     }
     let mut stmt = conn
-        .prepare_cached(
-            "SELECT stage_id, SUM(attempts) FROM outcome_stages WHERE run = ?1 GROUP BY stage_id",
-        )
+        .prepare_cached("SELECT stage_id, attempts FROM outcome_stages WHERE run = ?1")
         .ctx("prepare the observed stage runs")?;
-    let observed = stmt
-        .query_map([run], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+    let count = |r: &rusqlite::Row<'_>| -> rusqlite::Result<Option<i64>> {
+        match r.get_ref(1)? {
+            ValueRef::Integer(count) => Ok(Some(count)),
+            _ => Ok(None),
+        }
+    };
+    let rows = stmt
+        .query_map([run], |r| Ok((text_column(r, 0)?, count(r)?)))
         .ctx("query the observed stage runs")?
         .collect::<rusqlite::Result<Vec<_>>>()
         .ctx("read the observed stage runs")?;
+    let mut observed: BTreeMap<String, i64> = BTreeMap::new();
+    for row in rows {
+        let (Some(stage), Some(count)) = row else {
+            let what = format!("an observed stage of run {run} holds no stage id or count");
+            return Err(ArchonError::Corrupt(what));
+        };
+        let seen = observed.entry(stage).or_default();
+        *seen = seen.saturating_add(count);
+    }
     let missing = observed
         .into_iter()
         .find(|(stage, seen)| *seen > stored.get(stage.as_str()).copied().unwrap_or(0));
@@ -210,14 +257,19 @@ pub(in crate::store) fn freeze_review_prs(conn: &Connection) -> Result<u64, Arch
              ORDER BY o.run",
         )
         .ctx("prepare the review-only outcomes")?;
-    let targets = stmt
-        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+    let rows = stmt
+        .query_map([], |r| Ok((text_column(r, 0)?, text_column(r, 1)?)))
         .ctx("query the review-only outcomes")?
         .collect::<rusqlite::Result<Vec<_>>>()
         .ctx("read the review-only outcomes")?;
+    // A target whose run or pull request is not readable text names none.
+    let targets: Vec<(String, String)> = rows
+        .into_iter()
+        .filter_map(|(run, pr)| Some((run?, pr?)))
+        .filter(|(_, pr)| !pr.trim().is_empty())
+        .collect();
     let mut frozen = 0;
     for (run, pr) in &targets {
-        assert!(!pr.is_empty(), "a target names its pull request");
         if !reviewed(conn, run)? {
             continue;
         }
@@ -259,13 +311,14 @@ fn readable_run(
     conn: &Connection,
     run: &PipelineRunId,
 ) -> Result<(PipelineRun, Vec<StageRun>), ArchonError> {
-    let data: Option<String> = conn
+    let data = conn
         .query_row("SELECT data FROM runs WHERE id = ?1", [run.as_str()], |r| {
-            r.get(0)
+            text_column(r, 0)
         })
         .optional()
         .ctx("read a migrated outcome's run")?;
     let data = data.ok_or_else(|| ArchonError::NotFound(format!("pipeline run {run}")))?;
+    let data = data.ok_or_else(|| ArchonError::Corrupt(format!("run row {run} holds no text")))?;
     let stored: PipelineRun = from_json(&data, "pipeline run")?;
     if &stored.id != run {
         return Err(ArchonError::Corrupt(format!(
@@ -273,14 +326,36 @@ fn readable_run(
             stored.id
         )));
     }
-    let stages = super::super::runs::stages_of_strict(conn, run)?;
-    if let Some(other) = stages.iter().find(|s| &s.run != run) {
-        return Err(ArchonError::Corrupt(format!(
-            "a stage row of {run} holds run {}",
-            other.run
-        )));
+    Ok((stored, readable_stages(conn, run)?))
+}
+
+/// Every stage run of `run` in the order they started. A row that is not
+/// text, does not decode, or is no stage run of `run` is corrupt.
+fn readable_stages(conn: &Connection, run: &PipelineRunId) -> Result<Vec<StageRun>, ArchonError> {
+    let mut stmt = conn
+        .prepare_cached(
+            "SELECT data FROM stage_runs WHERE run = ?1
+             ORDER BY started_at, attempt, fan_index, id",
+        )
+        .ctx("prepare a migrated outcome's stage runs")?;
+    let rows = stmt
+        .query_map([run.as_str()], |r| text_column(r, 0))
+        .ctx("query a migrated outcome's stage runs")?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .ctx("read a migrated outcome's stage runs")?;
+    let mut stages = Vec::with_capacity(rows.len());
+    for data in rows {
+        let unreadable = || ArchonError::Corrupt(format!("a stage row of {run} holds no text"));
+        let stage: StageRun = from_json(&data.ok_or_else(unreadable)?, "stage run")?;
+        if &stage.run != run || stage.attempt == 0 || stage.stage_id.is_empty() {
+            return Err(ArchonError::Corrupt(format!(
+                "stage row {} is no stage run of {run}",
+                stage.id
+            )));
+        }
+        stages.push(stage);
     }
-    Ok((stored, stages))
+    Ok(stages)
 }
 
 /// Write the new class into the row's columns and, when its record is JSON,

@@ -1478,8 +1478,9 @@ in a new worktree off the base branch (§13).
   never times it out while held. A reviewer Aether itself blocks as
   `exhausted` (quota or usage limit) is cancelled after 3 minutes, and its
   lead is told to delegate the review on another allowed provider or fail
-  its task. When a running stage's lead gets a new child, every live agent
-  beneath the lead with a deadline below the stored one is raised to it.
+  its task. When any agent of a running stage's tree gets a new child, every
+  live agent beneath the lead with a deadline below the stored one is raised
+  to it, under the stage's steering lock, so no extension is lowered.
   A later deadline a steer stored is kept,
   and sent to Aether again if the steer landed while the move was in flight.
   An agent `blocked` for inspection is moved on in the same way only while

@@ -21,7 +21,8 @@
 - A child delegated after a stage's deadline was extended gets the extended
   deadline. Before, a child created from the lead's row before the move landed
   kept the old deadline and stopped early, as did any agent it delegated in
-  turn before Archon handled it.
+  turn. A nested child is raised on its own creation too, and a raise never
+  lowers an extension made at the same time.
 - A reviewer that Aether blocks as exhausted on a quota or usage limit is cancelled
   after 3 minutes, and its lead is told to delegate the review on another
   allowed provider or to fail the task so the orchestrator re-plans. Before,

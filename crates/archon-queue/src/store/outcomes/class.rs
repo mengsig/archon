@@ -16,23 +16,24 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use super::super::codec::{SqlContext, from_json};
 
-/// Why the run that failed under `stage_id` with `error` failed. Only the
-/// prefixes a stage or the daemon writes on purpose are read from `error`.
+/// The bundled pipeline that reviews an existing pull request, and its lead:
+/// how a lead recorded before Archon kept `only_reviews` (1.6.3) is known.
+const LEGACY_REVIEW_PIPELINE: &str = "review";
+const LEGACY_REVIEW_LEAD: &str = "review";
+
+/// Why the run of `pipeline` that failed under `stage_id` with `error`
+/// failed. Only the prefixes a stage or the daemon writes on purpose are read
+/// from `error`.
 pub(in crate::store) fn failure_class(
+    pipeline: &str,
     stage_id: &str,
     error: &str,
     stages: &[StageRun],
 ) -> FailureClass {
+    if let Some(class) = prefixed_class(error) {
+        return class;
+    }
     let ending = ending_attempt(stage_id, stages);
-    if error.starts_with(BUDGET_USED_UP) || error.starts_with(BUDGET_UNENFORCEABLE) {
-        return FailureClass::Budget;
-    }
-    if error.starts_with(StageOutcome::ESCALATE_PREFIX) {
-        return FailureClass::Escalated;
-    }
-    if error.starts_with(StageOutcome::BLOCKED_PREFIX) {
-        return FailureClass::Blocked;
-    }
     if ending.is_empty() {
         return match stage_id {
             SHIP_STEP => FailureClass::Ship,
@@ -45,7 +46,25 @@ pub(in crate::store) fn failure_class(
     if gate_refused_review(error) {
         return FailureClass::Review;
     }
-    judged_class(stage_id, &ending)
+    judged_class(pipeline, stage_id, &ending)
+}
+
+/// The class a stop names by the prefix its writer puts on it on purpose.
+fn prefixed_class(error: &str) -> Option<FailureClass> {
+    if error.starts_with(BUDGET_USED_UP) || error.starts_with(BUDGET_UNENFORCEABLE) {
+        return Some(FailureClass::Budget);
+    }
+    if error.starts_with(StageOutcome::ESCALATE_PREFIX) {
+        return Some(FailureClass::Escalated);
+    }
+    let blocked = error.starts_with(StageOutcome::BLOCKED_PREFIX);
+    blocked.then_some(FailureClass::Blocked)
+}
+
+/// Whether a run that failed under `stage_id` with `error` can be classed
+/// without a record of that stage: the ship step, or a stop its prefix names.
+fn classed_without_its_stage(stage_id: &str, error: &str) -> bool {
+    stage_id == SHIP_STEP || prefixed_class(error).is_some()
 }
 
 /// Whether the gate failed the stage because the review its pipeline
@@ -99,12 +118,12 @@ fn stopped_class(ending: &[&StageRun]) -> Option<FailureClass> {
 
 /// What the stage that ended the run was for. A review that passed did not
 /// fail the run, so it is not counted as a review failure.
-fn judged_class(stage_id: &str, ending: &[&StageRun]) -> FailureClass {
+fn judged_class(pipeline: &str, stage_id: &str, ending: &[&StageRun]) -> FailureClass {
     assert!(!ending.is_empty());
     assert!(ending.iter().all(|s| s.stage_id == stage_id));
     let all_passed = ending.iter().all(|s| passed(s));
     let kind = ending.iter().find_map(|s| s.kind);
-    let reviews = ending.iter().any(|s| holds_review(s));
+    let reviews = ending.iter().any(|s| holds_review(pipeline, s));
     if reviews && !all_passed {
         return FailureClass::Review;
     }
@@ -116,14 +135,25 @@ fn judged_class(stage_id: &str, ending: &[&StageRun]) -> FailureClass {
     }
 }
 
-/// Whether the stage ran a review: a review stage, a review-only run's lead,
-/// or a stage whose result carries the review the gate reads. A record from
-/// before Archon kept the lead (1.6.3) is read by its id.
-pub(in crate::store) fn holds_review(stage: &StageRun) -> bool {
+/// Whether the stage of a run of `pipeline` ran a review: a review stage, a
+/// review-only run's lead, or a stage whose result carries the review the gate
+/// reads. Older records name it: a 1.6.3 lead by the bundled review pipeline's
+/// lead id, a 1.4.x stage, which kept no kind, by its id.
+pub(in crate::store) fn holds_review(pipeline: &str, stage: &StageRun) -> bool {
+    assert!(!stage.stage_id.is_empty(), "a stage run names its stage");
     let recorded = stage.kind == Some(StageKind::Review)
         || stage.only_reviews == Some(true)
         || nested_review(stage).is_some_and(|r| r.is_object());
-    recorded || (stage.only_reviews.is_none() && stage.stage_id.contains("review"))
+    if recorded || stage.only_reviews.is_some() {
+        return recorded;
+    }
+    match stage.kind {
+        None => stage.stage_id.contains("review"),
+        Some(StageKind::Work) => {
+            pipeline == LEGACY_REVIEW_PIPELINE && stage.stage_id == LEGACY_REVIEW_LEAD
+        }
+        Some(_) => false,
+    }
 }
 
 fn nested_review(stage: &StageRun) -> Option<&serde_json::Value> {
@@ -274,7 +304,21 @@ fn recomputed(conn: &Connection, run: &str) -> Result<Option<FailureClass>, Arch
         return Ok(None);
     };
     assert!(stages.iter().all(|s| s.run == id));
-    Ok(Some(failure_class(stage_id, error, &stages)))
+    let recorded = stages.iter().any(|s| &s.stage_id == stage_id);
+    if !recorded && !classed_without_its_stage(stage_id, error) {
+        tracing::warn!(
+            run,
+            stage = stage_id.as_str(),
+            "the stage that ended the run left no record; it keeps its 1.6.3 class"
+        );
+        return Ok(None);
+    }
+    Ok(Some(failure_class(
+        &stored.pipeline,
+        stage_id,
+        error,
+        &stages,
+    )))
 }
 
 /// The run and every one of its stage runs, refusing an undecodable row or

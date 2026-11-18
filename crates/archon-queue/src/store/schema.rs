@@ -791,6 +791,8 @@ WITH reviewed(run, pr) AS (
     WHERE json_valid(i.data) AND json_valid(o.data)
       AND CASE WHEN json_valid(i.data) THEN json_extract(i.data, '$.onto.review_only') END
       AND CASE WHEN json_valid(i.data) THEN json_type(i.data, '$.onto.pr') END = 'text'
+      AND CASE WHEN json_valid(i.data)
+          THEN COALESCE(json_extract(i.data, '$.autonomy.review'), 'standard') <> 'none' END
       AND EXISTS (
           SELECT 1 FROM stage_runs s
           WHERE s.run = o.run AND json_valid(s.data)
@@ -799,7 +801,11 @@ WITH reviewed(run, pr) AS (
                   OR json_type(s.data, '$.only_reviews') = 'true'
                   OR json_type(s.data, '$.structured.review') = 'object'
                   OR (json_type(s.data, '$.only_reviews') IS NULL
-                      AND instr(s.stage_id, 'review') > 0) END)
+                      AND json_type(s.data, '$.kind') IS NULL
+                      AND instr(s.stage_id, 'review') > 0)
+                  OR (json_type(s.data, '$.only_reviews') IS NULL
+                      AND json_extract(s.data, '$.kind') = 'work'
+                      AND o.pipeline = 'review' AND s.stage_id = 'review') END)
 )
 UPDATE outcomes SET data = json_set(data, '$.review_pr', reviewed.pr)
 FROM reviewed WHERE reviewed.run = outcomes.run AND reviewed.pr IS NOT NULL;

@@ -16,8 +16,20 @@ fn failed_with(
     error: &str,
     stages: impl Fn(&PipelineRun) -> Vec<StageRun>,
 ) -> Outcome {
+    failed_in(&item(None, "classed").pipeline, stage_id, error, stages)
+}
+
+/// The outcome of a run of `pipeline` that failed under `stage_id`.
+fn failed_in(
+    pipeline: &str,
+    stage_id: &str,
+    error: &str,
+    stages: impl Fn(&PipelineRun) -> Vec<StageRun>,
+) -> Outcome {
     let mut store = store();
-    let item = store.insert_item(&item(None, "classed"), None).unwrap();
+    let mut classed = item(None, "classed");
+    classed.pipeline = pipeline.into();
+    let item = store.insert_item(&classed, None).unwrap();
     let run = start(&mut store, &item.id);
     for stage in stages(&run) {
         store.upsert_stage_run(&stage).unwrap();
@@ -306,6 +318,10 @@ fn a_task_that_quotes_a_cost_budget_is_no_budget_stop() {
         "the change exceeds the cost budget of $2.00 stated in the PR",
         "cost budget of $5 is too small for this job",
         "cost budget of $5: the plan needs $9 spent on reviewers alone",
+        "cost budget of $5: the plan needs $9 spent",
+        "cost budget of $5: we have insufficient test time and the remaining day is spent",
+        "cost budget of $5: ≥ $9 of my time spent",
+        "Stopped by its budget (cost budget of $5: $5.0100 spent); this is my own explanation",
     ] {
         quoted_budget(quoted);
     }
@@ -315,7 +331,10 @@ fn a_task_that_quotes_a_cost_budget_is_no_budget_stop() {
 fn aethers_cost_stop_is_read_in_each_shape_it_takes() {
     for stop in [
         "cost budget of $1: ≥ $1.0200 (some unpriced) spent",
-        "cost budget of $0.5: unknown spent",
+        "cost budget of $0.5: not reported spent",
+        "cost budget of $0.5: not reported (usage not fully reported) spent",
+        "Stopped by its budget (cost budget of $3: $3.0001 spent); no new subtree cancellation \
+         was requested, 0 descendant(s) were live at the stop.",
         "cost budget of $2: $2.0100 spent (notional cost: Claude Code reports list-price dollars)",
     ] {
         let capped = failed_with("implement", "stage failed", |run| {
@@ -360,14 +379,15 @@ fn quoted_budget(quoted: &'static str) {
 
 #[test]
 fn a_review_only_lead_that_fails_its_task_is_a_review_failure() {
-    let lead = |only_reviews: Option<bool>, stage_id: &'static str| {
-        failed_with(stage_id, MISLEADING, move |run| {
+    let lead_in = |pipeline: &str, only_reviews: Option<bool>, stage_id: &'static str| {
+        failed_in(pipeline, stage_id, MISLEADING, move |run| {
             let error = MISLEADING.into();
             let mut lead = settled(run, stage_id, StageKind::Work, StageState::Failed { error });
             lead.only_reviews = only_reviews;
             vec![lead]
         })
     };
+    let lead = |only_reviews, stage_id| lead_in("review", only_reviews, stage_id);
     let review = lead(Some(true), "review");
     assert_eq!(review.failure, Some(FailureClass::Review));
     assert_eq!(review.failure_source, Some(ClassSource::Structure));
@@ -385,6 +405,14 @@ fn a_review_only_lead_that_fails_its_task_is_a_review_failure() {
         Some(FailureClass::Review),
         "a 1.6.3 record is read by its id"
     );
+    for (pipeline, stage_id) in [("direct", "review"), ("review", "review-input")] {
+        let unrelated = lead_in(pipeline, None, stage_id);
+        assert_eq!(
+            unrelated.failure,
+            Some(FailureClass::Other),
+            "only the bundled review pipeline's lead: {pipeline} / {stage_id}"
+        );
+    }
 }
 
 #[test]

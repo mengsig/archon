@@ -25,6 +25,12 @@ fn range(at: Timestamp) -> DayRange {
 }
 
 fn reviewing(pr: u64) -> QueueItem {
+    reviewing_at(pr, 'a')
+}
+
+/// A review-only item of pull request `pr` frozen at a head of `head` digits.
+fn reviewing_at(pr: u64, head: char) -> QueueItem {
+    assert!(head.is_ascii_hexdigit(), "a head is hex");
     let mut item = item(None, &format!("review #{pr}"));
     item.pipeline = "review".into();
     item.onto = Some(Box::new(OntoPullRequest {
@@ -34,7 +40,7 @@ fn reviewing(pr: u64) -> QueueItem {
         head_repository: "o/r".into(),
         head_ref: "feature".into(),
         base_ref: "main".into(),
-        head_sha: "a".repeat(40),
+        head_sha: head.to_string().repeat(40),
         review_only: true,
     }));
     item
@@ -178,12 +184,13 @@ fn blocked_and_escalated_runs_are_no_loss_and_have_their_own_columns() {
 fn a_pull_request_reviewed_at_five_heads_counts_once() {
     let mut store = store();
     let at = t(DAY);
-    let first = reviewing(42);
+    let first = reviewing_at(42, '1');
     finish(&mut store, &first, failed("the review failed"), at);
-    for _ in 0..3 {
-        finish(&mut store, &reviewing(42), failed("the review failed"), at);
+    for head in ['2', '3', '4'] {
+        let retry = reviewing_at(42, head);
+        finish(&mut store, &retry, failed("the review failed"), at);
     }
-    finish(&mut store, &reviewing(42), passed(), at);
+    finish(&mut store, &reviewing_at(42, '5'), passed(), at);
     finish(&mut store, &reviewing(7), passed(), at);
     finish(&mut store, &reviewing(9), failed("the review failed"), at);
     let failed_round = store.outcome(&store.runs_for_item(&first.id).unwrap()[0].id);
@@ -228,4 +235,22 @@ fn a_pipeline_that_reviews_nothing_reviews_no_pull_request() {
     let lines = store.pipeline_lines(None, None, &range(at)).unwrap();
     assert_eq!((lines[0].pipeline.as_str(), lines[0].runs), ("read", 1));
     assert_eq!(lines[0].review_prs, None, "its target alone is no review");
+}
+
+#[test]
+fn a_review_level_of_none_reviews_no_pull_request() {
+    let mut store = store();
+    let at = t(DAY);
+    let mut unreviewed = reviewing(11);
+    unreviewed.autonomy.review = archon_core::autonomy::ReviewLevel::None;
+    finish(&mut store, &unreviewed, passed(), at);
+    finish(&mut store, &reviewing(12), passed(), at);
+    let lines = store.pipeline_lines(None, None, &range(at)).unwrap();
+    assert_eq!(lines[0].runs, 2, "{lines:?}");
+    let prs = lines[0].review_prs.as_ref().expect("one was reviewed");
+    assert_eq!(
+        (prs.reviewed, prs.passed),
+        (1, 1),
+        "level none records no review, so it passes no pull request"
+    );
 }

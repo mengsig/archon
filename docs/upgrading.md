@@ -25,7 +25,7 @@ infrastructure, budget and review rules of the [changelog](../CHANGELOG.md)),
 and keeps the old class in `failure_class_163` for one release. Only the
 class columns and fields change. A run whose stage records were pruned keeps
 its old class, marked `legacy_163`. So does a run whose records V24 cannot
-read: it logs the run and leaves an unreadable outcome record as it was.
+read, or whose ending stage left no record: it logs the run and leaves an unreadable outcome record as it was.
 archond logs, per class, the old count, the new count and the rows left on the
 1.6.3 class. When a recomputed class changes whether a run is scored, V24
 rescores the run's lesson uses and holdout trials and recounts the lessons it

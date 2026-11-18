@@ -2,6 +2,7 @@
 
 use super::super::Store;
 use super::super::codec::SqlContext;
+use archon_core::autonomy::ReviewLevel;
 use archon_core::error::ArchonError;
 use archon_core::outcome::{
     ClassSource, DiffStat, FailureClass, Outcome, OutcomeResult, OutcomeStage,
@@ -33,11 +34,11 @@ impl Store {
             .finished_at
             .ok_or_else(|| ArchonError::Invalid("outcome requires a finished run".into()))?;
         let stages = self.stage_runs(&run.id)?;
-        let (result, failure) = result(&run.state, &stages)?;
+        let (result, failure) = result(&run.pipeline, &run.state, &stages)?;
         assert!(run.state.is_terminal());
         assert_eq!(item.id, run.item);
         let observations = stage_observations(self, &stages, estimates)?;
-        let review_pr = reviewed_pr(&item, &stages);
+        let review_pr = reviewed_pr(&item, run, &stages);
         let total = self
             .spend_for_run(&run.id, estimates)?
             .max(run.cost_usd)
@@ -139,6 +140,7 @@ fn elapsed(start: archon_core::Timestamp, end: archon_core::Timestamp) -> Result
 }
 
 fn result(
+    pipeline: &str,
     state: &RunState,
     stages: &[StageRun],
 ) -> Result<(OutcomeResult, Option<FailureClass>), ArchonError> {
@@ -147,18 +149,25 @@ fn result(
         RunState::Cancelled { .. } => Ok((OutcomeResult::Cancelled, None)),
         RunState::Failed { stage_id, error } => Ok((
             OutcomeResult::Failed,
-            Some(super::class::failure_class(stage_id, error, stages)),
+            Some(super::class::failure_class(
+                pipeline, stage_id, error, stages,
+            )),
         )),
         _ => Err(ArchonError::Invalid("a live run has no outcome".into())),
     }
 }
 
 /// The pull request the run reviewed: its item's target when the item pushes
-/// nothing and a stage of the run held a review.
-fn reviewed_pr(item: &QueueItem, stages: &[StageRun]) -> Option<String> {
+/// nothing, asks for a review (level `none` records none) and a stage of the
+/// run held one.
+fn reviewed_pr(item: &QueueItem, run: &PipelineRun, stages: &[StageRun]) -> Option<String> {
+    assert_eq!(item.id, run.item, "the run is the item's");
     let onto = item.onto.as_ref().filter(|onto| onto.review_only)?;
-    let reviewed = stages.iter().any(super::class::holds_review);
-    reviewed.then(|| onto.pr.url())
+    if item.autonomy.review == ReviewLevel::None {
+        return None;
+    }
+    let held = |stage: &StageRun| super::class::holds_review(&run.pipeline, stage);
+    stages.iter().any(held).then(|| onto.pr.url())
 }
 
 fn reported_diff(stages: &[StageRun]) -> Option<DiffStat> {

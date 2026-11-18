@@ -100,14 +100,19 @@ fn seed(
     if !pruned {
         conn.execute(
             "INSERT INTO items (id, pipeline, priority, state, tags, created_at, updated_at, data)
-             VALUES (?1, 'review', 1, 'failed', '[]', 'a', 'a', '{}')",
-            [item],
+             VALUES (?1, ?2, 1, 'failed', '[]', 'a', 'a', '{}')",
+            [item, &run.pipeline],
         )
         .unwrap();
         conn.execute(
             "INSERT INTO runs (id, item, pipeline, terminal, started_at, data)
-             VALUES (?1, ?2, 'review', 1, 'a', ?3)",
-            [run.id.as_str(), item, &serde_json::to_string(run).unwrap()],
+             VALUES (?1, ?2, ?3, 1, 'a', ?4)",
+            [
+                run.id.as_str(),
+                item,
+                &run.pipeline,
+                &serde_json::to_string(run).unwrap(),
+            ],
         )
         .unwrap();
     }
@@ -129,13 +134,14 @@ fn seed(
     conn.execute(
         "INSERT INTO outcomes (run, item, repo, pipeline, size, result, failure_class, corrected,
                               merged, cost_usd, finished_at, updated_at, data)
-         VALUES (?1, ?2, NULL, 'review', NULL, ?3, ?4, 0, NULL, 0.5, 'f', 'u', ?5)",
+         VALUES (?1, ?2, NULL, ?6, NULL, ?3, ?4, 0, NULL, 0.5, 'f', 'u', ?5)",
         rusqlite::params![
             run.id.as_str(),
             item,
             o.result.as_str(),
             old.map(FailureClass::as_str),
-            serde_json::to_string(&o).unwrap()
+            serde_json::to_string(&o).unwrap(),
+            &run.pipeline
         ],
     )
     .unwrap();
@@ -777,4 +783,76 @@ fn v24_skips_a_pull_request_target_it_cannot_read() {
         .unwrap();
     let outcome: Outcome = serde_json::from_str(&data).expect("the outcome stays readable");
     assert_eq!(outcome.review_pr, None);
+}
+
+#[test]
+fn v24_keeps_the_old_class_of_a_run_whose_ending_stage_left_no_record() {
+    let mut conn = v23_store();
+    let lost = failed_run("review", "stage `review` failed: aether budget");
+    let earlier = stage(&lost, "plan", StageKind::Work, StageState::Completed);
+    seed(&conn, &lost, &[earlier], Some(FailureClass::Budget), false);
+    let shipped = failed_run(archon_core::run::SHIP_STEP, "the push was refused");
+    seed(&conn, &shipped, &[], Some(FailureClass::Other), false);
+
+    assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+
+    assert_eq!(
+        columns(&conn, &lost),
+        (some("budget"), some("legacy_163"), some("budget")),
+        "a lost record of the stage that ended it could hide its stop"
+    );
+    assert_eq!(
+        columns(&conn, &shipped),
+        (some("ship"), some("recomputed"), some("other")),
+        "the ship step runs no stage"
+    );
+}
+
+#[test]
+fn v24_reads_a_163_lead_only_in_the_bundled_review_pipeline() {
+    let mut conn = v23_store();
+    let pr = "https://github.com/o/r/pull/7";
+    let mut other = failed_run("review-input", "the input was malformed");
+    other.pipeline = "read".into();
+    let input = failed_stage(&other, StageKind::Work, "the input was malformed", false);
+    seed(&conn, &other, &[input], Some(FailureClass::Other), false);
+    let mut named = failed_run("review", "the input was malformed");
+    named.pipeline = "read".into();
+    let work = failed_stage(&named, StageKind::Work, "the input was malformed", false);
+    seed(&conn, &named, &[work], Some(FailureClass::Other), false);
+    let target = serde_json::json!({"onto": {"review_only": true, "pr": pr}}).to_string();
+    let unasked = failed_run("review", "the review found blocking issues");
+    let lead = failed_stage(&unasked, StageKind::Work, "blocking issues", false);
+    seed(&conn, &unasked, &[lead], Some(FailureClass::Other), false);
+    let none = serde_json::json!({
+        "onto": {"review_only": true, "pr": pr}, "autonomy": {"review": "none"}
+    });
+    for (run, data) in [
+        (&other, &target),
+        (&named, &target),
+        (&unasked, &none.to_string()),
+    ] {
+        conn.execute(
+            "UPDATE items SET data = ?2 WHERE id = ?1",
+            [run.item.as_str(), data],
+        )
+        .unwrap();
+    }
+
+    assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+
+    let review_pr = |run: &PipelineRun| -> Option<String> {
+        conn.query_row(
+            "SELECT json_extract(data, '$.review_pr') FROM outcomes WHERE run = ?1",
+            [run.id.as_str()],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    for run in [&other, &named] {
+        assert_eq!(columns(&conn, run).0, some("other"), "{}", run_stage(run));
+        assert_eq!(review_pr(run), None, "{} reviewed nothing", run_stage(run));
+    }
+    assert_eq!(columns(&conn, &unasked).0, some("review"));
+    assert_eq!(review_pr(&unasked), None, "level none records no review");
 }

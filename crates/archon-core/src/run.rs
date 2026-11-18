@@ -814,6 +814,13 @@ impl StageOutcome {
     /// How Aether's budget message opens around the stop reason it names.
     pub const BUDGET_STOP_MESSAGE: &'static str = "Stopped by its budget (";
 
+    /// What Aether's budget message says of the stopped agent's subtree, right
+    /// after the stop reason it wraps.
+    pub const BUDGET_STOP_SUBTREE: [&'static str; 2] = [
+        "its live subtree was cancelled with it",
+        "no new subtree cancellation was requested",
+    ];
+
     /// How Archon's label opens after a cost stop whose dollars may be notional.
     pub const NOTIONAL_COST_NOTE: &'static str = " (notional cost: ";
 
@@ -826,7 +833,12 @@ impl StageOutcome {
     pub fn is_cost_budget_stop(error: &str) -> bool {
         let error = error.trim_start();
         match error.strip_prefix(Self::BUDGET_STOP_MESSAGE) {
-            Some(wrapped) => cost_stop_tail(wrapped).is_some_and(|tail| tail.starts_with(");")),
+            Some(wrapped) => cost_stop_tail(wrapped).is_some_and(|tail| {
+                Self::BUDGET_STOP_SUBTREE.iter().any(|subtree| {
+                    tail.strip_prefix("); ")
+                        .is_some_and(|t| t.starts_with(subtree))
+                })
+            }),
             None => cost_stop_tail(error)
                 .is_some_and(|tail| tail.is_empty() || tail.starts_with(Self::NOTIONAL_COST_NOTE)),
         }
@@ -851,8 +863,39 @@ fn cost_stop_tail(text: &str) -> Option<&str> {
     let (limit, rest) = rest.split_once(": ")?;
     let limit: f64 = limit.parse().ok()?;
     let (cost, tail) = rest.split_once(" spent")?;
-    let shaped = limit.is_finite() && limit >= 0.0 && !cost.trim().is_empty();
+    let shaped = limit.is_finite() && limit >= 0.0 && is_aether_cost(cost);
     shaped.then_some(tail)
+}
+
+/// Whether `cost` is a cost as Aether says one: `$1.2345`, a floor
+/// `≥ $1.2345 (some unpriced)`, or `not reported`, perhaps with its gap.
+fn is_aether_cost(cost: &str) -> bool {
+    if let Some(rest) = cost.strip_prefix("not reported") {
+        return rest.is_empty() || rest.strip_prefix(' ').is_some_and(is_cost_gap);
+    }
+    if let Some(dollars) = cost.strip_prefix('$') {
+        return is_dollars(dollars);
+    }
+    let Some((dollars, gap)) = cost.strip_prefix("≥ $").and_then(|r| r.split_once(' ')) else {
+        return false;
+    };
+    is_dollars(dollars) && is_cost_gap(gap)
+}
+
+/// A plain decimal amount: digits, perhaps with a fraction.
+fn is_dollars(text: &str) -> bool {
+    let (whole, fraction) = text.split_once('.').unwrap_or((text, "0"));
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    digits(whole) && digits(fraction)
+}
+
+/// Aether's label for a cost gap in parentheses, such as `(some unpriced)`.
+fn is_cost_gap(text: &str) -> bool {
+    let Some(label) = text.strip_prefix('(').and_then(|t| t.strip_suffix(')')) else {
+        return false;
+    };
+    let worded = |c: char| c.is_ascii_lowercase() || matches!(c, ' ' | '-' | ',');
+    !label.trim().is_empty() && label.chars().all(worded)
 }
 
 impl StageState {

@@ -5773,8 +5773,8 @@ decides:
   agent failed;
 - `infrastructure_failure`, or the daemon's full-disk spawn stop, gives
   `infrastructure`;
-- a review-kind stage, or one whose result holds a `review`, gives `review`
-  unless every slot passed. A slot passes as the gate reads it: by its verdict,
+- a review-kind stage, a review-only run's lead (`only_reviews`), or one whose
+  result holds a `review`, gives `review` unless every slot passed. A slot passes as the gate reads it: by its verdict,
   by its nested `review.verdict`, and only if Archon did not refuse that review.
   A gate failure that names the declared review as not on record (the gate's own
   headline) also gives `review`;
@@ -5783,11 +5783,13 @@ decides:
 - anything else is `other`.
 
 Stage runs from before Archon kept their stage's kind are read by stage id.
-Each class records its source: `structure`, `recomputed` by migration V24, or
-`legacy_163`. A run is `legacy_163` when it was pruned before V24, or when V24
-could not read its records, and it keeps its 1.6.3 class. An outcome also keeps
+A 1.6.3 stage run, which kept no `only_reviews`, is a review-only lead only as
+the `review` stage of the `review` pipeline. Each class records its source: `structure`, `recomputed` by migration V24, or
+`legacy_163`. A run is `legacy_163` when it was pruned before V24, when V24
+could not read its records, or when the stage that ended it left no record (the
+`ship` step and prefixed stops excepted), and it keeps its 1.6.3 class. An outcome also keeps
 the pull request it reviewed, `review_pr`, so pruning the item does not lose the
-report's pull request counts.
+report's pull request counts; a run at review level `none` reviewed none.
 
 **Attribution.** Structured operator feedback is explicit:
 `correction {"item":"qi_…","stage":"implement","cause":"quality","reason":"…"}`.

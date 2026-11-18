@@ -2048,8 +2048,9 @@ mod tests {
     }
 
     /// The prompt is paid for on every turn; the tools describe themselves.
-    /// Includes 1 KiB for approved-intent and clarification guidance.
-    const BUDGET_BYTES: usize = 14 * 1024 + 768;
+    /// Includes 1 KiB for approved-intent and clarification guidance, and
+    /// 64 bytes for the rule against polling GitHub from a schedule.
+    const BUDGET_BYTES: usize = 14 * 1024 + 768 + 64;
 
     #[test]
     fn builtin_prompt_stays_within_its_budget() {

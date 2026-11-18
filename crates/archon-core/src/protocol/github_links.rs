@@ -228,3 +228,28 @@ mod tests {
         assert!(serde_json::from_str::<ManualLinkRelation>("\"origin\"").is_err());
     }
 }
+
+/// The shortest interval a repository watch is read at (ARCHITECTURE §f).
+pub const MIN_WATCH_MINUTES: u32 = 5;
+/// The longest: once a day.
+pub const MAX_WATCH_MINUTES: u32 = 1_440;
+/// The most repositories watched at once; each costs a request per interval.
+pub const MAX_REPO_WATCHES: usize = 20;
+
+/// A registered repository whose open pull requests the GitHub sync watches.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RepoWatchView {
+    /// The registered repository's name.
+    pub repo: String,
+    /// Its GitHub `origin`, `owner/name`, as last resolved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<String>,
+    pub interval_minutes: u32,
+    pub since: Timestamp,
+    /// When GitHub last answered, 200 or 304.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_at: Option<Timestamp>,
+    /// Open pull requests at the last 200; absent before the first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_pull_requests: Option<u32>,
+}

@@ -138,6 +138,11 @@ fn action_request(tool: &str, args: &mut Args) -> Result<Request, ToolError> {
         "set_directive" => set_directive(args)?,
         "clear_directive" => clear_directive(args)?,
         "github_reply" => github_reply(args)?,
+        "watch_repo" => Request::WatchRepo {
+            repo: RepoRef(args.required_text("repo")?),
+            interval_minutes: args.optional("interval_minutes")?,
+            remove: args.optional("remove")?.unwrap_or(false),
+        },
         "enqueue_initiative" => initiatives::enqueue_initiative(args)?,
         "update_initiative" => initiatives::update_initiative(args)?,
         "steer_item" => steer::steer_item(args)?,

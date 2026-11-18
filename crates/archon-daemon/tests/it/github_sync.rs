@@ -24,7 +24,7 @@ use archon_daemon::github_sync::{GithubSync, MIN_INTERVAL};
 use common::{Harness, REPO_NAME};
 
 /// Answers `gh api --method GET … repos/o/r/issues/N` from `issue-N.json`
-/// and `etag-N` beside it: a 304 when `If-None-Match` sends the current ETag,
+/// and `etag-N` beside it, and the open pull request list from `issue-pulls.json`: a 304 when `If-None-Match` sends the current ETag,
 /// a 404 for a number it has no file for. Any other call is a violation.
 /// While `hold-N` exists a read of #N marks `started-N` and waits.
 /// `gh pr view <url> --json reviewDecision,statusCheckRollup` answers from
@@ -54,6 +54,7 @@ for arg in "$@"; do
 done
 [ "$method" = GET ] || violate "method '$method'"
 number=${endpoint##*/}
+case "$number" in "pulls?state=open&per_page=100") number=pulls ;; esac
 if [ -f "$dir/hold-$number" ]; then
   : > "$dir/started-$number"
   while [ -f "$dir/hold-$number" ]; do sleep 0.02; done
@@ -73,12 +74,12 @@ cat "$dir/issue-$number.json"
 "#;
 
 /// The stub's directory: its issues, ETags and the calls it saw.
-struct Github {
+pub(crate) struct Github {
     dir: tempfile::TempDir,
 }
 
 impl Github {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let gh = dir.path().join("gh");
         std::fs::write(&gh, STUB_GH).unwrap();
@@ -86,7 +87,7 @@ impl Github {
         Self { dir }
     }
 
-    fn binary(&self) -> PathBuf {
+    pub(crate) fn binary(&self) -> PathBuf {
         self.dir.path().join("gh")
     }
 
@@ -136,14 +137,21 @@ impl Github {
         views.lines().map(str::to_owned).collect()
     }
 
+    /// GitHub now lists `pulls` (the pulls API's JSON) as the open pull requests, at `etag`.
+    pub(crate) fn serve_list(&self, pulls: serde_json::Value, etag: &str) {
+        let at = self.dir.path();
+        std::fs::write(at.join("issue-pulls.json"), pulls.to_string()).unwrap();
+        std::fs::write(at.join("etag-pulls"), etag).unwrap();
+    }
+
     /// The `gh api` calls, in order.
-    fn calls(&self) -> Vec<String> {
+    pub(crate) fn calls(&self) -> Vec<String> {
         let calls = std::fs::read_to_string(self.dir.path().join("gh-calls")).unwrap_or_default();
         calls.lines().map(str::to_owned).collect()
     }
 
     /// Every call was a `GET`, and the stub saw no other kind.
-    fn assert_only_reads(&self) {
+    pub(crate) fn assert_only_reads(&self) {
         let violations = self.dir.path().join("gh-violations");
         assert!(
             !violations.exists(),
@@ -173,7 +181,7 @@ fn pr_json(number: u64, merged: bool) -> serde_json::Value {
     })
 }
 
-fn reference(number: u64, kind: GithubKind) -> GithubRef {
+pub(crate) fn reference(number: u64, kind: GithubKind) -> GithubRef {
     GithubRef {
         host: "github.com".into(),
         repo: "o/r".into(),
@@ -183,7 +191,7 @@ fn reference(number: u64, kind: GithubKind) -> GithubRef {
 }
 
 /// A harness on the stub `gh`, whose repository's `origin` is github.com/o/r.
-async fn harness(github: &Github) -> Harness {
+pub(crate) async fn harness(github: &Github) -> Harness {
     let mut config = Config::default();
     config.review.auto_repair = false;
     config.github.binary = github.binary();

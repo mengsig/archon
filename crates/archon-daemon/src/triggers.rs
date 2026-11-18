@@ -216,6 +216,20 @@ pub enum TriggerEvent {
     DirectivesRestated {
         reason: String,
     },
+    /// A watched repository's open pull requests changed (A18). News only:
+    /// `operator` is always false, and `trust` says why.
+    GithubWatch {
+        /// The registered repository.
+        repo: String,
+        /// Its GitHub `owner/name`.
+        repository: String,
+        changes: Vec<crate::github_sync::watch::WatchedChange>,
+        /// Changes left out of `changes`.
+        #[serde(default, skip_serializing_if = "is_zero")]
+        more: u32,
+        operator: bool,
+        trust: String,
+    },
 }
 
 /// One finished member of an `initiative_finished` event.
@@ -272,6 +286,7 @@ impl TriggerEvent {
             Self::Mirror { .. } => "mirror",
             Self::DirectivesRestated { .. } => "directives_restated",
             Self::PrChecks { .. } => "pr_checks",
+            Self::GithubWatch { .. } => "github_watch",
         }
     }
 
@@ -302,6 +317,7 @@ impl TriggerEvent {
             | Self::ItemsFinished { .. }
             | Self::Mirror { .. }
             | Self::PrChecks { .. }
+            | Self::GithubWatch { .. }
             | Self::DirectivesRestated { .. } => false,
         }
     }

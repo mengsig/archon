@@ -3487,6 +3487,48 @@
             "ref"
           ],
           "type": "object"
+        },
+        {
+          "description": "Watch, re-time or (`remove`) stop watching a registered repository's\nopen pull requests; replies with every watch. Never registers one, and\nGitHub-borne operator authority cannot reach it.",
+          "properties": {
+            "cmd": {
+              "const": "watch_repo",
+              "type": "string"
+            },
+            "interval_minutes": {
+              "description": "At least [`github_links::MIN_WATCH_MINUTES`]; the sync's default when left out.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "remove": {
+              "type": "boolean"
+            },
+            "repo": {
+              "$ref": "#/$defs/RepoRef"
+            }
+          },
+          "required": [
+            "cmd",
+            "repo"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Every repository watch.",
+          "properties": {
+            "cmd": {
+              "const": "repo_watches",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
         }
       ],
       "properties": {
@@ -11641,6 +11683,25 @@
             "data"
           ],
           "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "items": {
+                "$ref": "#/$defs/RepoWatchView"
+              },
+              "type": "array"
+            },
+            "reply": {
+              "const": "repo_watches",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -11894,6 +11955,54 @@
           ]
         }
       },
+      "type": "object"
+    },
+    "RepoWatchView": {
+      "description": "A registered repository whose open pull requests the GitHub sync watches.",
+      "properties": {
+        "interval_minutes": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "open_pull_requests": {
+          "description": "Open pull requests at the last 200; absent before the first.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "read_at": {
+          "description": "When GitHub last answered, 200 or 304.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repo": {
+          "description": "The registered repository's name.",
+          "type": "string"
+        },
+        "repository": {
+          "description": "Its GitHub `origin`, `owner/name`, as last resolved.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "since": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "interval_minutes",
+        "since"
+      ],
       "type": "object"
     },
     "ReportId": {
@@ -14247,6 +14356,48 @@
           "required": [
             "cmd",
             "ref"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Watch, re-time or (`remove`) stop watching a registered repository's\nopen pull requests; replies with every watch. Never registers one, and\nGitHub-borne operator authority cannot reach it.",
+          "properties": {
+            "cmd": {
+              "const": "watch_repo",
+              "type": "string"
+            },
+            "interval_minutes": {
+              "description": "At least [`github_links::MIN_WATCH_MINUTES`]; the sync's default when left out.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "remove": {
+              "type": "boolean"
+            },
+            "repo": {
+              "$ref": "#/$defs/RepoRef"
+            }
+          },
+          "required": [
+            "cmd",
+            "repo"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Every repository watch.",
+          "properties": {
+            "cmd": {
+              "const": "repo_watches",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
           ],
           "type": "object"
         }

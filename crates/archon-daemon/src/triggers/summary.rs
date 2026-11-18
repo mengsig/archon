@@ -148,6 +148,17 @@ fn label(event: &TriggerEvent) -> String {
         TriggerEvent::PrChecks {
             item, url, state, ..
         } => format!("pull request checks {state}: {url} ({item})"),
+        TriggerEvent::GithubWatch {
+            repository,
+            changes,
+            more,
+            ..
+        } => {
+            let count = changes.len() as u64 + u64::from(*more);
+            format!(
+                "github watch: {repository}, {count} pull request change(s), no operator standing"
+            )
+        }
     }
 }
 

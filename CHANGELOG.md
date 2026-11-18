@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- Repository watches: the orchestrator's `watch_repo` tool has the GitHub sync
+  watch a registered repository's open pull requests, with one conditional
+  `GET` per interval (at least 5 minutes) and no model cost while nothing
+  changes. A new pull request, head, review request or activity raises one
+  `github_watch` trigger, which is news with no operator standing. Only a
+  registered repository with a github.com `origin` can be watched; GitHub
+  requests cannot set a watch, and removing the repository drops it. The
+  orchestrator prompt now forbids polling GitHub from a schedule.
+
 ## 1.6.3
 
 Released 2026-11-18.

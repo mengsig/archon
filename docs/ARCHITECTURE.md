@@ -3678,6 +3678,7 @@ can reach the socket (§5.5).
 | `autonomy_policy` | `{repo?}` | `Autonomy` |
 | `set_directive` | `{text, expires_in_hours?}` | `SetDirective` |
 | `clear_directive` | `{directive?, all?}` | `ClearDirective` |
+| `watch_repo` | `{repo, interval_minutes?, remove?}` | `WatchRepo` (a registered repository with a github.com `origin` only; the GitHub sync reads its open pull requests with one conditional `GET` per interval, at least 5 minutes, within the pass's request budget, and raises a `github_watch` trigger, `operator: false`, only on a new pull request, head, review request or activity; refused through GitHub-borne authority; removing the repository drops it) |
 | `github_reply` | `{repository, number, body}` | `GithubReply` (Archon's watched repositories only; see `docs/github-watcher.md`) |
 | `record_lesson` | `{kind: routing\|practice\|pitfall\|pipeline, text, repo?, pipeline?, item?}` | `RecordLesson` (§19; active at once, advice only) |
 | `request_merge` | `{item, reason?}` | `RequestMerge` (the orchestrator only, for the operator's own request; archond asks the operator to confirm unless `grant_merge` covers it; §18.6) |

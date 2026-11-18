@@ -759,6 +759,19 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         priority: Option<Priority>,
     },
+    /// Watch, re-time or (`remove`) stop watching a registered repository's
+    /// open pull requests; replies with every watch. Never registers one, and
+    /// GitHub-borne operator authority cannot reach it.
+    WatchRepo {
+        repo: RepoRef,
+        /// At least [`github_links::MIN_WATCH_MINUTES`]; the sync's default when left out.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        interval_minutes: Option<u32>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        remove: bool,
+    },
+    /// Every repository watch.
+    RepoWatches,
 }
 
 /// Who may make a request and whether it changes Archon.
@@ -821,7 +834,8 @@ impl Request {
             | Self::RunPlan { .. }
             | Self::ItemLinks { .. }
             | Self::IssueItems { .. }
-            | Self::ListGithubObjects { .. } => Read,
+            | Self::ListGithubObjects { .. }
+            | Self::RepoWatches => Read,
             Self::CheckUpdates | Self::RemoteStatus => OperatorRead,
             Self::OperatorCommand { .. }
             | Self::UndoAuthority { .. }
@@ -885,7 +899,8 @@ impl Request {
             | Self::RequestMerge { .. }
             | Self::LinkIssue { .. }
             | Self::UnlinkIssue { .. }
-            | Self::ImportIssue { .. } => Change,
+            | Self::ImportIssue { .. }
+            | Self::WatchRepo { .. } => Change,
         }
     }
 
@@ -1256,6 +1271,7 @@ pub enum Reply {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         synced_at: Option<Timestamp>,
     },
+    RepoWatches(Vec<github_links::RepoWatchView>),
 }
 
 /// What one gc pass did (ARCHITECTURE §13.2). Paths are real paths.

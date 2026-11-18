@@ -146,6 +146,10 @@ async fn repair_claimed(
     if item.state != QueueState::Dispatching {
         return Ok(None);
     }
+    if crate::learned::cached_catalog(ctx, &store)?.as_ref() != Some(catalog) {
+        store.release_dispatching(id, archon_core::now())?;
+        return Ok(None);
+    }
     match super::model_catalog::repair_item(ctx, &store, &item, catalog, env, spec) {
         Ok(mut repaired) => {
             if repaired.model_plan != item.model_plan {
@@ -213,7 +217,7 @@ async fn prepare(
             item.pipeline
         )));
     }
-    env.policy(&ctx.config).check_plan(&item.model_plan)?;
+    env.resolved_policy(ctx).check_plan(&item.model_plan)?;
     let team = spec.file.stages.iter().any(|s| s.kind == StageKind::Team);
     let workspace = workspace(ctx, &env, item, header.workspace, team).await?;
     let added = workspace.added.clone();
@@ -258,7 +262,7 @@ async fn tiers_at_dispatch(
     if !tiered {
         return Ok(item.clone());
     }
-    let policy = env.policy(&ctx.config);
+    let policy = env.resolved_policy(ctx);
     let weights = env.provider_weights(&ctx.config);
     let quota = crate::quota::current(ctx, weights.as_ref()).await;
     let routing = (weights.as_ref(), quota.as_ref());

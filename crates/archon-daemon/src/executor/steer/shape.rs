@@ -166,7 +166,7 @@ pub(crate) fn reshape(
     let autonomy = within_ceiling(ctx, env, &reshaped, &removed, item.autonomy, knobs)?;
     let what = noting_review(what, item.autonomy.review, autonomy.review);
     let repo = env.repo.as_ref().map(|repo| &repo.id);
-    let policy = env.policy(&ctx.config);
+    let policy = env.resolved_policy(ctx);
     let learning = Learning {
         store,
         repo,

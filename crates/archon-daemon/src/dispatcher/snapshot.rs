@@ -145,7 +145,11 @@ impl ModelReads<'_> {
         let Ok((_, spec)) = crate::knobs::item_specs(env, item) else {
             return Ok(None);
         };
-        let spec = crate::executor::steer::shaped_in(self.store, item, spec)?;
+        let spec = match crate::executor::steer::shaped_in(self.store, item, spec) {
+            Ok(spec) => spec,
+            Err(error) if error.is_store() => return Err(error),
+            Err(_) => return Ok(None),
+        };
         hold_error(
             item,
             self.catalog,

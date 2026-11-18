@@ -309,7 +309,9 @@ async fn block_invalid_models(
         let item = {
             let mut store = ctx.store.lock().await;
             let item = store.item(&candidate.item)?;
-            if item.state != QueueState::Queued {
+            if item.state != QueueState::Queued
+                || crate::learned::cached_catalog(ctx, &store)?.as_ref() != Some(catalog)
+            {
                 continue;
             }
             let Some(reason) = snapshot::invalid_pin(&item, catalog) else {

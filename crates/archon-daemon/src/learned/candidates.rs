@@ -26,14 +26,22 @@ fn catalog_result(result: Result<ModelCatalog, ArchonError>) -> Result<ModelCata
     }
 }
 
+pub(crate) fn cached_catalog(
+    ctx: &DaemonContext,
+    store: &archon_queue::Store,
+) -> Result<Option<ModelCatalog>, ArchonError> {
+    if ctx.aether.is_connected() && store.catalog_generation() == Some(ctx.aether.generation()?) {
+        return Ok(store.fresh_model_catalog());
+    }
+    Ok(None)
+}
+
 async fn read(ctx: &DaemonContext, force: bool) -> Result<ModelCatalog, ArchonError> {
     let _guard = ctx.aether.lock_catalog().await;
     let generation = ctx.aether.generation()?;
     if !force && ctx.aether.is_connected() {
         let store = ctx.store.lock().await;
-        if store.catalog_generation() == Some(generation)
-            && let Some(catalog) = store.fresh_model_catalog()
-        {
+        if let Some(catalog) = cached_catalog(ctx, &store)? {
             return Ok(catalog);
         }
     }
@@ -43,6 +51,7 @@ async fn read(ctx: &DaemonContext, force: bool) -> Result<ModelCatalog, ArchonEr
 async fn read_and_cache(ctx: &DaemonContext, generation: u64) -> Result<ModelCatalog, ArchonError> {
     let result = read_catalog(ctx, generation).await;
     if let Err(error) = &result {
+        ctx.aether.clear_aliases(generation);
         ctx.store
             .lock()
             .await
@@ -78,6 +87,7 @@ async fn read_catalog(ctx: &DaemonContext, generation: u64) -> Result<ModelCatal
     }
     store.kv_set("acceptance_vision_models", &serde_json::to_string(&vision)?)?;
     let recovered = store.model_catalog().is_empty() && !catalog.is_empty();
+    ctx.aether.install_aliases(generation, catalog.aliases())?;
     store.record_model_catalog(catalog.clone(), archon_core::now(), Some(generation));
     drop(store);
     if recovered {

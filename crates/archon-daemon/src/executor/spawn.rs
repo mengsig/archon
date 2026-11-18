@@ -403,6 +403,11 @@ fn reserve_plans(
     mut plans: Vec<SpawnPlan>,
     catalog: &archon_core::model_tier::ModelCatalog,
 ) -> Result<Reserved, ArchonError> {
+    if crate::learned::cached_catalog(ctx, store)?.as_ref() != Some(catalog)
+        || catalog.not_ready_reason().is_some()
+    {
+        return Ok(Reserved::Waiting(plans));
+    }
     let run = store.run(run_id)?;
     if run.state.is_terminal() || plans.is_empty() {
         return Ok(Reserved::Spawned(Vec::new()));
@@ -503,7 +508,7 @@ fn review_refusal(
     repo: Option<&Repo>,
     plans: &[SpawnPlan],
 ) -> Option<String> {
-    let policy = RepoEnv::new(repo.cloned()).ok()?.policy(&ctx.config);
+    let policy = RepoEnv::new(repo.cloned()).ok()?.resolved_policy(ctx);
     let catalog = store.model_catalog();
     plans.iter().find_map(|plan| {
         let named = plan.reviewers.as_deref()?;
@@ -720,7 +725,8 @@ impl Target<'_> {
     ) -> String {
         assert!(!plan.instructions.is_empty(), "every stage has a contract");
         // An unreadable policy refuses this spawn when it is issued (`claim`).
-        let policy = RepoEnv::new(self.repo.cloned()).map(|env| env.policy(self.config));
+        let policy = RepoEnv::new(self.repo.cloned())
+            .map(|env| env.policy_in(self.config, &self.catalog.aliases()));
         let reviewers = reviewer_rules(plan, &policy, self);
         let minutes = self.timeout_minutes(plan);
         let deadline = contract::deadline_rule(plan.kind, plan.workspace, minutes, until);
@@ -962,7 +968,9 @@ fn delegation_policy(target: &Target<'_>, plan: &SpawnPlan) -> Option<Narrowed> 
     let planned = plan.workers.as_ref()?;
     // An unreadable policy refuses this spawn when it is issued (`claim`);
     // until then nothing is permitted, as the reviewer rule says too.
-    let policy = match RepoEnv::new(target.repo.cloned()).map(|env| env.policy(target.config)) {
+    let policy = match RepoEnv::new(target.repo.cloned())
+        .map(|env| env.policy_in(target.config, &target.catalog.aliases()))
+    {
         Ok(policy) => policy,
         Err(error) => {
             let none = ModelPolicy {
@@ -1359,7 +1367,7 @@ async fn check_frozen_request(
         store.item(&run.item)?.repo
     };
     let env = RepoEnv::load(ctx, repo.as_ref()).await?;
-    let policy = env.policy(&ctx.config);
+    let policy = env.resolved_policy(ctx);
     let models = std::iter::once(&request.choice.model).chain(
         request.delegation_policy.iter().flat_map(|bounds| {
             bounds
@@ -1509,7 +1517,7 @@ async fn claim(ctx: &DaemonContext, id: &StageRunId) -> Result<Claimed, ArchonEr
     });
     let allowed = RepoEnv::new(repo)
         .map_err(|e| ArchonError::Policy(format!("repository model policy unreadable: {e}")))
-        .and_then(|env| env.policy(&ctx.config).check(&spawn.request.choice));
+        .and_then(|env| env.resolved_policy(ctx).check(&spawn.request.choice));
     table.in_flight.insert(id.clone());
     Ok(Claimed::Issue(Box::new(Claim {
         stage,

@@ -41,7 +41,7 @@ pub(crate) fn item_hold(
     } else {
         spec
     };
-    let policy = env.policy(&ctx.config);
+    let policy = env.resolved_policy(ctx);
     let route = ItemRoute::new(item).by(Some(&weights), Some(view))?;
     // Read as dispatch will resolve it, so the hold is for the run it starts.
     let when = archon_core::plan_origin::TierMove::Dispatch;
@@ -74,7 +74,7 @@ pub(crate) fn spawn_hold(
     if plans.is_empty() || catalog.is_empty() || !view.any_exhausted() {
         return None;
     }
-    let policy = env.policy(&ctx.config);
+    let policy = env.resolved_policy(ctx);
     let read = (catalog, view);
     super::reroute::first_hold(item, (spec, plans), (&weights, &policy), read)
 }

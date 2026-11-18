@@ -3,9 +3,11 @@
 //! asks for the current client and gets `Unavailable` while disconnected,
 //! never a stale connection.
 
+use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
 use archon_core::error::ArchonError;
+use archon_core::model::ModelRef;
 
 use crate::client::AetherClient;
 
@@ -21,6 +23,8 @@ struct Slot {
     /// Why the link is down, as callers are told; `None` says only that.
     down: Option<String>,
     generation: u64,
+    /// Catalog aliases read on this connection; dropped with it.
+    aliases: Arc<BTreeMap<ModelRef, ModelRef>>,
 }
 
 impl AetherLink {
@@ -58,6 +62,7 @@ impl AetherLink {
             client,
             down: None,
             generation: 0,
+            aliases: Arc::default(),
         })
     }
 
@@ -69,6 +74,7 @@ impl AetherLink {
             client: None,
             down: Some(why),
             generation: 0,
+            aliases: Arc::default(),
         })
     }
 
@@ -81,6 +87,48 @@ impl AetherLink {
             .read()
             .map(|slot| slot.generation)
             .map_err(|_| ArchonError::Unavailable("aether link lock poisoned".into()))
+    }
+
+    /// The aliases of the current connection; empty until a catalog read.
+    pub fn aliases(&self) -> Arc<BTreeMap<ModelRef, ModelRef>> {
+        self.current
+            .read()
+            .map(|slot| Arc::clone(&slot.aliases))
+            .unwrap_or_default()
+    }
+
+    /// Keep a catalog read's aliases only if the connection it was read on
+    /// is still the installed one.
+    pub fn install_aliases(
+        &self,
+        generation: u64,
+        aliases: BTreeMap<ModelRef, ModelRef>,
+    ) -> Result<(), ArchonError> {
+        let mut guard = self
+            .current
+            .write()
+            .map_err(|_| ArchonError::Unavailable("aether link lock poisoned".into()))?;
+        if guard.client.is_none() {
+            return Err(ArchonError::Unavailable(
+                "aether link is disconnected".into(),
+            ));
+        }
+        if guard.generation != generation {
+            return Err(ArchonError::Unavailable(
+                "aether connection changed during the catalog read".into(),
+            ));
+        }
+        guard.aliases = Arc::new(aliases);
+        Ok(())
+    }
+
+    /// Forget the aliases after a failed catalog read on `generation`.
+    pub fn clear_aliases(&self, generation: u64) {
+        if let Ok(mut guard) = self.current.write()
+            && guard.generation == generation
+        {
+            guard.aliases = Arc::default();
+        }
     }
 
     fn set(&self, mut slot: Slot) -> Result<(), ArchonError> {
@@ -116,5 +164,13 @@ mod tests {
         link.replace(None).unwrap();
         let error = link.client().unwrap_err();
         assert!(error.to_string().contains("not connected"), "{error}");
+    }
+
+    #[test]
+    fn aliases_are_refused_while_disconnected() {
+        let link = AetherLink::new();
+        let generation = link.generation().unwrap();
+        assert!(link.install_aliases(generation, BTreeMap::new()).is_err());
+        assert!(link.aliases().is_empty());
     }
 }

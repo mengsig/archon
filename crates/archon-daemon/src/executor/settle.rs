@@ -875,10 +875,39 @@ async fn replace(
             archon_pipeline::swarm::MAX_CORRECTIONS,
         ));
     }
+    let catalog = crate::learned::catalog(ctx).await?;
     let mut store = ctx.store.lock().await;
+    if crate::learned::cached_catalog(ctx, &store)?.as_ref() != Some(&catalog) {
+        return Err(ArchonError::Unavailable(
+            "model catalog changed before retry".into(),
+        ));
+    }
+    let item = store.item(&run.item)?;
+    let repo = item
+        .repo
+        .as_ref()
+        .map(|id| store.repo(&crate::resolve::repo_ref(id)))
+        .transpose()?;
+    let env = RepoEnv::new(repo)?;
+    let (mut repaired, plans) = super::model_catalog::repair_pending(
+        ctx,
+        &store,
+        &item,
+        std::slice::from_ref(&plan),
+        &catalog,
+        &env,
+        driver.spec(),
+    )?;
+    if repaired.model_plan != item.model_plan {
+        repaired.updated_at = archon_core::now().max(item.updated_at);
+        store.update_item(&repaired)?;
+    }
+    let [plan] = plans.as_slice() else {
+        unreachable!("one retry plan")
+    };
     // Owed before the replacement exists, so it never starts beside them.
     descendants::owe(&mut store, failed, retry.wake.is_some())?;
-    let Some(id) = spawn::reserve_replacement(ctx, &mut store, failed, &plan, retry)? else {
+    let Some(id) = spawn::reserve_replacement(ctx, &mut store, failed, plan, retry)? else {
         return Ok(None);
     };
     // Replacement first: a crash in between leaves a superseded live

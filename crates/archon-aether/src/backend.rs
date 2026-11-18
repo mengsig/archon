@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use archon_core::aether_ids::{AetherAgentId, AetherTaskId};
 use archon_core::error::ArchonError;
-use archon_core::model::Effort;
 use archon_core::model::ModelRef;
+use archon_core::model::{Effort, ModelChoice};
 use archon_core::policy::ModelPolicy;
 use archon_core::ports::{
     AgentBackend, AgentUpdate, CostBilling, CreatedNode, Descendant, DescendantState, OpenToolCall,
@@ -42,6 +42,17 @@ pub struct AetherBackend {
 impl AetherBackend {
     pub fn new(link: Arc<AetherLink>, policy: ModelPolicy) -> Self {
         Self { link, policy }
+    }
+
+    /// Check a choice on canonical IDs when the link holds catalog aliases;
+    /// without them the configured policy applies unchanged.
+    fn check_choice(&self, choice: &ModelChoice) -> Result<(), ArchonError> {
+        let aliases = self.link.aliases();
+        let mut resolved = choice.clone();
+        if let Some(canonical) = aliases.get(&choice.model) {
+            resolved.model = canonical.clone();
+        }
+        self.policy.canonicalized(&aliases).check(&resolved)
     }
 }
 
@@ -497,7 +508,7 @@ fn agent_patch(update: AgentUpdate) -> AgentPatch {
 #[async_trait]
 impl AgentBackend for AetherBackend {
     async fn spawn(&self, mut request: SpawnRequest) -> Result<SpawnedAgent, ArchonError> {
-        self.policy.check(&request.choice)?;
+        self.check_choice(&request.choice)?;
         if request.cost_budget_usd.is_some() && request.aether_cost_budget.is_none() {
             self.prepare_spawn(&mut request, true).await?;
         }
@@ -550,7 +561,7 @@ impl AgentBackend for AetherBackend {
         if request.cost_budget_usd.is_none() {
             return Ok(());
         }
-        self.policy.check(&request.choice)?;
+        self.check_choice(&request.choice)?;
         let (hard_cap, billing) = match request.aether_cost_budget {
             Some(stored) => (stored, request.cost_billing),
             None => {
@@ -641,7 +652,7 @@ impl AgentBackend for AetherBackend {
     ) -> Result<(), ArchonError> {
         assert!(!update.is_empty(), "an update changes something");
         if let Some(choice) = &update.choice {
-            self.policy.check(choice)?;
+            self.check_choice(choice)?;
         }
         let patch = agent_patch(update);
         self.link.client()?.update_agent(agent, patch).await?;
@@ -656,7 +667,7 @@ impl AgentBackend for AetherBackend {
     ) -> Result<(), ArchonError> {
         assert!(!update.is_empty(), "an update changes something");
         if let Some(choice) = &update.choice {
-            self.policy.check(choice)?;
+            self.check_choice(choice)?;
         }
         let patch = agent_patch(update);
         let client = self.link.client()?;
@@ -678,7 +689,7 @@ impl AgentBackend for AetherBackend {
             "a subtree update raises a deadline or a budget"
         );
         if let Some(choice) = &update.choice {
-            self.policy.check(choice)?;
+            self.check_choice(choice)?;
         }
         let patch = agent_patch(update);
         self.link.client()?.update_subtree(agent, patch).await?;

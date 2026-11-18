@@ -170,6 +170,18 @@ impl ModelCatalog {
         }
     }
 
+    /// Aliases that resolve: not retired, and never shadowing a listed model.
+    pub fn aliases(&self) -> BTreeMap<ModelRef, ModelRef> {
+        let listed: BTreeSet<&ModelRef> = self.models.iter().map(|m| &m.model).collect();
+        self.aliases
+            .iter()
+            .filter(|(alias, canonical)| {
+                !self.is_retired(alias) && !listed.contains(alias) && alias != canonical
+            })
+            .map(|(alias, canonical)| (alias.clone(), canonical.clone()))
+            .collect()
+    }
+
     /// Resolve only a known alias, without rejecting historical model IDs.
     pub fn canonical_alias<'a>(&'a self, model: &'a ModelRef) -> &'a ModelRef {
         if self.is_retired(model) {
@@ -213,7 +225,7 @@ impl ModelCatalog {
             let hint = successor
                 .as_ref()
                 .map(|m| format!("; successor: {m}"))
-                .unwrap_or_default();
+                .unwrap_or_else(|| format!("; nearest: {}", self.nearest(model)));
             return Err(ArchonError::Invalid(format!(
                 "model {model} is retired{hint}"
             )));
@@ -436,6 +448,23 @@ mod tests {
         );
         assert!(ModelCatalog::default().unavailable_reason().is_some());
         assert!(ModelCatalog::new(vec![]).unavailable_reason().is_none());
+    }
+
+    #[test]
+    fn exported_aliases_exclude_retired_and_listed_ids() {
+        let model = |id: &str| CatalogModel {
+            model: id.parse().unwrap(),
+            tier: None,
+            is_default: false,
+        };
+        let mut catalog = ModelCatalog::new(vec![model("p/new")]);
+        catalog.add_alias("p/old".parse().unwrap(), "p/new".parse().unwrap());
+        catalog.add_alias("p/gone".parse().unwrap(), "p/new".parse().unwrap());
+        catalog.add_retired("p/gone".parse().unwrap(), None);
+        catalog.add_alias("p/new".parse().unwrap(), "p/old".parse().unwrap());
+        let aliases = catalog.aliases();
+        assert_eq!(aliases.len(), 1);
+        assert_eq!(aliases[&"p/old".parse().unwrap()], "p/new".parse().unwrap());
     }
 
     #[test]

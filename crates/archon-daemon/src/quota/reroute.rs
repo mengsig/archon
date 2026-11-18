@@ -274,7 +274,7 @@ fn routing(
         }
     };
     let weights = env.provider_weights(&ctx.config)?;
-    Some((weights, env.policy(&ctx.config)))
+    Some((weights, env.resolved_policy(ctx)))
 }
 
 /// The first of `plans` of `item` in `spec` that waits for quota, routed as

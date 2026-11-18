@@ -2,7 +2,7 @@
 //! decides whether the choice is allowed. Enforced by the daemon at enqueue,
 //! at spawn and by the fleet watchdog (ARCHITECTURE §7.4).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -53,6 +53,22 @@ impl ModelPolicy {
         };
         debug_assert!(self.deny.is_subset(&narrowed.deny));
         narrowed
+    }
+
+    /// The same policy with every listed alias replaced by its canonical ID,
+    /// so allow and deny compare against catalog-resolved choices.
+    pub fn canonicalized(&self, aliases: &BTreeMap<ModelRef, ModelRef>) -> Self {
+        let canon = |model: &ModelRef| aliases.get(model).unwrap_or(model).clone();
+        let canonical = Self {
+            allow: self
+                .allow
+                .as_ref()
+                .map(|set| set.iter().map(canon).collect()),
+            deny: self.deny.iter().map(canon).collect(),
+            max_effort: self.max_effort,
+        };
+        debug_assert!(canonical.deny.len() <= self.deny.len());
+        canonical
     }
 
     pub fn permits_model(&self, model: &ModelRef) -> bool {
@@ -177,6 +193,27 @@ mod tests {
         assert!(policy.check_pending_model(&requested).is_ok());
         requested.model = catalog.check(&requested.model).unwrap();
         assert!(policy.check(&requested).is_err());
+    }
+
+    #[test]
+    fn a_configured_alias_deny_blocks_the_canonical_id() {
+        let aliases = BTreeMap::from([(m("p/old"), m("p/new"))]);
+        let policy = ModelPolicy::from_lists(&[], &[m("p/old")], None).canonicalized(&aliases);
+        assert!(!policy.permits_model(&m("p/new")));
+        assert!(policy.permits_model(&m("p/other")));
+        assert!(policy.deny.contains(&m("p/new")));
+    }
+
+    #[test]
+    fn allowlists_naming_an_alias_and_its_canonical_id_intersect() {
+        let aliases = BTreeMap::from([(m("p/old"), m("p/new"))]);
+        let global = ModelPolicy::from_lists(&[m("p/old")], &[], None).canonicalized(&aliases);
+        let repo =
+            ModelPolicy::from_lists(&[m("p/new"), m("p/x")], &[], None).canonicalized(&aliases);
+        let effective = global.narrowed_by(&repo);
+        assert!(effective.permits_model(&m("p/new")));
+        assert!(!effective.permits_model(&m("p/x")));
+        assert_eq!(effective.allow.as_ref().map(BTreeSet::len), Some(1));
     }
 
     #[test]

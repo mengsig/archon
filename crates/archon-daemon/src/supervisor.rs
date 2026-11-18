@@ -1074,7 +1074,12 @@ async fn create_generation(
         effort: config.orchestrator.effort,
         tier: None,
     };
-    if let Err(refusal) = config.models.policy().check(&choice) {
+    if let Err(refusal) = config
+        .models
+        .policy()
+        .canonicalized(&catalog.aliases())
+        .check(&choice)
+    {
         blocker_once(ctx, &format!("Archon will not start the orchestrator: {refusal}. Change [orchestrator] model or [models] in the config.")).await?;
         return Err(refusal);
     }

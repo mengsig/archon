@@ -13,7 +13,7 @@ pub(crate) fn repair_item(
     env: &crate::resolve::RepoEnv,
     spec: &archon_pipeline::PipelineSpec,
 ) -> Result<QueueItem, ArchonError> {
-    let policy = env.policy(&ctx.config);
+    let policy = env.resolved_policy(ctx);
     let max_tier = env.max_default_tier(&ctx.config);
     let tiers = crate::knobs::TierScope::new(&ctx.config, &policy, catalog);
     if !item.model_plan.needs_catalog_repair(&item.id, catalog) {
@@ -154,10 +154,10 @@ pub(super) fn repair_stage(plan: &mut SpawnPlan, before: &ModelPlan, after: &Mod
     {
         for model in &mut policy.exempt_models {
             let mut matches = old.iter().zip(new).filter(|(was, _)| &was.model == model);
-            if let Some((_, now)) = matches.next() {
-                if matches.all(|(_, other)| other.model == now.model) {
-                    *model = now.model.clone();
-                }
+            if let Some((_, now)) = matches.next()
+                && matches.all(|(_, other)| other.model == now.model)
+            {
+                *model = now.model.clone();
             }
         }
     }

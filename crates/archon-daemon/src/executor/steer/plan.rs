@@ -354,7 +354,7 @@ fn retune(
         return Err(no_stage(&blueprint.spec, at.target));
     }
     if let Some(effort) = steer.effort {
-        asked.env.policy(&ctx.config).check_effort(effort)?;
+        asked.env.resolved_policy(ctx).check_effort(effort)?;
     }
     if let (Some(effort), Some(default)) = (steer.effort, blueprint.spec.default_effort(at.target))
     {
@@ -380,7 +380,7 @@ fn retune(
         item.model_plan.record_catalog(catalog);
     }
     item.model_plan
-        .check_request_policy(&asked.env.policy(&ctx.config))?;
+        .check_request_policy(&asked.env.resolved_policy(ctx))?;
     for stage in at.live().filter(|stage| stage.stage_id == at.target) {
         let choice = retuned(stage.current_choice(), steer);
         if &choice != stage.current_choice() {

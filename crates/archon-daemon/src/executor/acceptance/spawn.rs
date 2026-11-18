@@ -166,7 +166,7 @@ pub(in crate::executor) fn select_model(
         .as_ref()
         .map(|id| store.repo(&crate::resolve::repo_ref(id)))
         .transpose()?;
-    let policy = RepoEnv::new(repo)?.policy(&ctx.config);
+    let policy = RepoEnv::new(repo)?.resolved_policy(ctx);
     let vision = vision_models(store)?;
     let catalog = store.model_catalog();
     let permitted: Vec<_> = catalog

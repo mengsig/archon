@@ -237,7 +237,7 @@ fn refresh_owner(
     knobs::check_ceiling(&env.autonomy(ctx), env, &base, item.autonomy)?;
     crate::handlers::check_reasons(&spec, asked.model_reasons.as_ref())?;
     crate::handlers::check_stage_timeouts(ctx, &spec, &asked.stage_timeouts)?;
-    let policy = env.policy(&ctx.config);
+    let policy = env.resolved_policy(ctx);
     let weights = env.provider_weights(&ctx.config);
     let quota = crate::quota::view(ctx);
     let route = knobs::ItemRoute::new(owner).by(weights.as_ref(), quota.as_ref());

@@ -240,7 +240,7 @@ async fn update_choice(
             store.item(&store.run(&stage.run)?.item)?
         };
         let env = crate::resolve::RepoEnv::load(ctx, item.repo.as_ref()).await?;
-        env.policy(&ctx.config).check(choice)?;
+        env.resolved_policy(ctx).check(choice)?;
     }
     let delivery = &delivery;
     let patch = delivery.patch();

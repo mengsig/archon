@@ -457,7 +457,7 @@ pub(super) async fn model_policy(
     repo: Option<&RepoRef>,
 ) -> Result<Reply, ArchonError> {
     let env = repo_env(ctx, repo).await?;
-    Ok(Reply::ModelPolicy(env.policy(&ctx.config)))
+    Ok(Reply::ModelPolicy(env.resolved_policy(ctx)))
 }
 
 async fn repo_env(ctx: &DaemonContext, repo: Option<&RepoRef>) -> Result<RepoEnv, ArchonError> {

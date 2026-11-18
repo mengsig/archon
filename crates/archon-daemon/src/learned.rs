@@ -1,6 +1,6 @@
 //! Token-free routing, bounded lesson contracts and background distillation.
 mod candidates;
-pub(crate) use candidates::{catalog, request_catalog};
+pub(crate) use candidates::{cached_catalog, catalog, request_catalog};
 mod distill;
 mod routing;
 mod routing_context;

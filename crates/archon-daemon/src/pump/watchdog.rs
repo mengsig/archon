@@ -376,12 +376,15 @@ async fn item_policy(ctx: &DaemonContext, item: &QueueItemId) -> Result<ModelPol
             None => None,
         }
     };
-    let global = ctx.config.models.policy();
+    let aliases = ctx.aether.aliases();
+    let global = ctx.config.models.policy().canonicalized(&aliases);
     let Some(repo) = repo else {
         return Ok(global);
     };
     match RepoConfig::load(&repo.path) {
-        Ok(config) => Ok(global.narrowed_by(&config.models.policy_overlay())),
+        Ok(config) => {
+            Ok(global.narrowed_by(&config.models.policy_overlay().canonicalized(&aliases)))
+        }
         // The dispatcher refuses such a repo's new work; keep watching
         // without its narrowing rather than stop watching.
         Err(error) => {

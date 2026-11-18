@@ -170,21 +170,6 @@ use archon_core::protocol::{
 };
 use archon_core::queue::{Caps, QueueState};
 
-async fn connected_harness() -> (Harness, archon_aether::fake::FakeAether) {
-    let h = Harness::new().await;
-    let fake = archon_aether::fake::FakeAether::start(&h.dir.path().join("aether.sock"))
-        .await
-        .unwrap();
-    let client = archon_aether::AetherClient::connect(&fake.endpoint())
-        .await
-        .unwrap();
-    h.ctx
-        .aether
-        .replace(Some(std::sync::Arc::new(client)))
-        .unwrap();
-    (h, fake)
-}
-
 async fn reason(h: &Harness, id: &QueueItemId, code: Code) -> WaitingReason {
     let Reply::ItemDetail(detail) = h.cli(Request::GetItem { item: id.clone() }).await.unwrap()
     else {
@@ -230,7 +215,7 @@ async fn reason(h: &Harness, id: &QueueItemId, code: Code) -> WaitingReason {
 
 #[tokio::test]
 async fn next_in_line_and_empty_status_are_derived_without_dispatching() {
-    let (h, _fake) = connected_harness().await;
+    let h = Harness::new().await;
     let Reply::Status(status) = h.cli(Request::Status(Default::default())).await.unwrap() else {
         panic!("status")
     };
@@ -246,7 +231,7 @@ async fn next_in_line_and_empty_status_are_derived_without_dispatching() {
 
 #[tokio::test]
 async fn pause_reasons_refresh_at_read_time_in_all_views() {
-    let (h, _fake) = connected_harness().await;
+    let h = Harness::new().await;
     let item = h.enqueue("paused").await;
     for (target, code, action) in [
         (
@@ -279,7 +264,7 @@ async fn pause_reasons_refresh_at_read_time_in_all_views() {
 
 #[tokio::test]
 async fn budget_reasons_use_dispatch_spend_and_precedence() {
-    let (h, _fake) = connected_harness().await;
+    let h = Harness::new().await;
     let active = h.enqueue("active").await;
     h.dispatch().await;
     let stage = h.running().await.remove(0);
@@ -309,7 +294,7 @@ async fn budget_reasons_use_dispatch_spend_and_precedence() {
 
 #[tokio::test]
 async fn reached_budgets_hold_nothing_while_budgets_are_off() {
-    let (h, _fake) = connected_harness().await;
+    let h = Harness::new().await;
     let active = h.enqueue("active").await;
     h.dispatch().await;
     let stage = h.running().await.remove(0);
@@ -331,7 +316,7 @@ async fn reached_budgets_hold_nothing_while_budgets_are_off() {
 
 #[tokio::test]
 async fn capacity_reason_includes_live_agents_and_repo_file_overrides() {
-    let (h, _fake) = connected_harness().await;
+    let h = Harness::new().await;
     h.enqueue("active").await;
     h.dispatch().await;
     let item = h.enqueue("capacity hold").await;
@@ -365,7 +350,7 @@ async fn capacity_reason_includes_live_agents_and_repo_file_overrides() {
 
 #[tokio::test]
 async fn low_disk_reason_uses_dispatcher_hold_without_a_disk_check() {
-    let (h, _fake) = connected_harness().await;
+    let h = Harness::new().await;
     let item = h.enqueue("disk hold").await;
     h.ctx.disk.update(
         archon_daemon::disk::DiskReading {
@@ -385,7 +370,7 @@ async fn low_disk_reason_uses_dispatcher_hold_without_a_disk_check() {
 
 #[tokio::test]
 async fn dependency_names_and_failure_precedence_survive_blocking() {
-    let (h, _fake) = connected_harness().await;
+    let h = Harness::new().await;
     let dep = h.enqueue("required migration").await;
     let failed = h.enqueue("required schema").await;
     let item = h.enqueue("dependent").await;
@@ -426,7 +411,7 @@ async fn dependency_names_and_failure_precedence_survive_blocking() {
 
 #[tokio::test]
 async fn never_fitting_team_names_its_cap_and_suggests_a_working_next_action() {
-    let (h, _fake) = connected_harness().await;
+    let h = Harness::new().await;
     let pipeline = "first-team";
     h.add_pipeline(
         pipeline,
@@ -947,7 +932,7 @@ fn waiting_ids(reply: &Reply) -> (Vec<QueueItemId>, u32, Option<u32>) {
 
 #[tokio::test]
 async fn status_pages_its_waiting_items_with_a_next_offset() {
-    let (h, _fake) = connected_harness().await;
+    let h = Harness::new().await;
     let mut queued = Vec::new();
     for title in ["first", "second", "third"] {
         queued.push(h.enqueue(title).await.id);

@@ -481,7 +481,7 @@ async fn plan_defaults(ctx: &DaemonContext, id: &QueueItemId) -> Result<PlanDefa
         .collect();
     let yolo = item.autonomy.tools == archon_core::autonomy::ToolsMode::Yolo;
     // As a spawn now would send it: narrowed to the model policy in force.
-    let models = env.policy(&ctx.config);
+    let models = env.resolved_policy(ctx);
     let delegating = spec
         .file
         .stages
@@ -1113,7 +1113,7 @@ pub(crate) async fn routed_provider(
     };
     let catalog = learned::catalog(ctx).await?;
     let quota = crate::quota::current(ctx, Some(&weights)).await;
-    let policy = env.policy(&ctx.config);
+    let policy = env.resolved_policy(ctx);
     Ok(knobs::item_provider(
         (Some(&weights), quota.as_ref()),
         &catalog,
@@ -1150,12 +1150,20 @@ pub(super) async fn resolve_tiers(
     draft: ModelPlanDraft,
 ) -> Result<ModelPlan, ArchonError> {
     let catalog = learned::request_catalog(ctx).await?;
-    let policy = env.policy(&ctx.config);
+    let policy = env.resolved_policy(ctx);
     let weights = env.provider_weights(&ctx.config);
     let quota = crate::quota::current(ctx, weights.as_ref()).await;
     let route = item.by(weights.as_ref(), quota.as_ref());
     let tiers = knobs::TierScope::new(&ctx.config, &policy, &catalog).routed(route);
-    knobs::resolve_tiers(spec, draft, tiers)
+    let plan = knobs::resolve_tiers(spec, draft, tiers)?;
+    if catalog.not_ready_reason().is_some() {
+        for choice in plan.0.values().flatten() {
+            policy.check_pending_model(choice)?;
+        }
+    } else {
+        policy.check_plan(&plan)?;
+    }
+    Ok(plan)
 }
 
 /// `plan` with what it leaves out filled for `env`'s repository and routed
@@ -1169,7 +1177,7 @@ pub(super) async fn filled_plan(
     mut writer: PlanWriter,
 ) -> Result<PlannedPlan, ArchonError> {
     let id = item.id;
-    let policy = env.policy(&ctx.config);
+    let policy = env.resolved_policy(ctx);
     let catalog = learned::catalog(ctx).await?;
     let weights = env.provider_weights(&ctx.config);
     let quota = crate::quota::current(ctx, weights.as_ref()).await;
@@ -1217,7 +1225,7 @@ pub(crate) fn check_plan(
         }
     }
     spec.check_plan_keys(plan)?;
-    plan.check_request_policy(&env.policy(&ctx.config))
+    plan.check_request_policy(&env.resolved_policy(ctx))
 }
 
 /// Each stage timeout names a stage of `spec` and stays within

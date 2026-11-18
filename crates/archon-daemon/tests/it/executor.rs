@@ -1714,7 +1714,6 @@ fn assert_worktree_removed(h: &Harness, tree: &std::path::Path) {
     let listed = git(&h.repo, &["worktree", "list", "--porcelain"]);
     let name = tree.file_name().unwrap().to_str().unwrap();
     assert!(!listed.contains(name), "git still lists it: {listed}");
-
 }
 
 /// Edit the test pipeline after enqueue: its new `docs` stage is in no

@@ -42,8 +42,8 @@ fn balanced(keys: &[&str]) -> ModelPlanDraft {
     serde_json::from_value(plan.into()).unwrap()
 }
 
-async fn enqueue(h: &Harness, pipeline: &str, plan: ModelPlanDraft, list: &str) -> QueueItem {
-    let request = EnqueueRequest {
+fn request(pipeline: &str, plan: ModelPlanDraft, list: &str) -> EnqueueRequest {
+    EnqueueRequest {
         intent: None,
         onto: None,
         stage_timeouts: Default::default(),
@@ -60,7 +60,11 @@ async fn enqueue(h: &Harness, pipeline: &str, plan: ModelPlanDraft, list: &str) 
         idempotency_key: None,
         autonomy: AutonomyPatch::parse_list(list).expect("knobs"),
         origin: None,
-    };
+    }
+}
+
+async fn enqueue(h: &Harness, pipeline: &str, plan: ModelPlanDraft, list: &str) -> QueueItem {
+    let request = request(pipeline, plan, list);
     match h.cli(Request::Enqueue(request)).await {
         Ok(Reply::Item(item)) => item,
         other => panic!("enqueue replied {other:?}"),
@@ -318,4 +322,51 @@ async fn an_outage_defers_an_explicit_pin_but_cannot_resolve_a_tier() {
         .await
         .unwrap_err();
     assert!(refused.to_string().contains("tier"), "{refused}");
+}
+
+#[tokio::test]
+async fn enqueue_refuses_an_unknown_model_and_names_the_nearest_listed_id() {
+    let h = Harness::new().await;
+    let unknown = "codex/gpt-6.1-astra";
+    h.set_learning_models(vec!["codex/gpt-6-astra".parse().unwrap()])
+        .await;
+    let plan =
+        serde_json::from_value(serde_json::json!({"implement": [{"model": unknown}]})).unwrap();
+    let error = h
+        .cli(Request::Enqueue(request("direct", plan, "review=none")))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains(unknown), "{error}");
+    assert!(error.contains("nearest: codex/gpt-6-astra"), "{error}");
+    assert!(h.backend.requests().is_empty());
+}
+
+#[tokio::test]
+async fn a_policy_denying_an_alias_refuses_the_canonical_pin() {
+    use archon_aether::fake::Scripted;
+    use serde_json::json;
+    let h = Harness::new().await;
+    let canonical = "claude-code/claude-opus-5-5";
+    h.catalog_server.set_default(
+        "list_models",
+        Scripted::reply(
+            "models",
+            json!([
+                {"model": canonical, "configured": true, "aliases": ["opus"]}
+            ]),
+        ),
+    );
+    h.repo_config("[models]\ndeny = [\"claude-code/opus\"]\n");
+    let plan = serde_json::from_value(json!({"implement": [{"model": canonical}]})).unwrap();
+    let error = h
+        .cli(Request::Enqueue(request("direct", plan, "review=none")))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains(canonical) && error.contains("not allowed"),
+        "{error}"
+    );
+    assert!(h.backend.requests().is_empty());
 }

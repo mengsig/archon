@@ -299,7 +299,7 @@ async fn changed_item(
         what.push("updated stage timeouts for future spawns".to_owned());
     }
     if let Some(effort) = steer.effort {
-        asked.env.policy(&ctx.config).check_effort(effort)?;
+        asked.env.resolved_policy(ctx).check_effort(effort)?;
     }
     what.extend(retune(steer, stages, (&mut item, asked.by))?);
     if let Some(catalog) = asked.catalog {

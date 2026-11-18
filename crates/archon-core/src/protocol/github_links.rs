@@ -246,10 +246,10 @@ pub struct RepoWatchView {
     pub repository: Option<String>,
     pub interval_minutes: u32,
     pub since: Timestamp,
-    /// When GitHub last sent the list (a 200; a 304 changes nothing).
+    /// When the last walk that GitHub sent a page of began (a 304 changes nothing).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fetched_at: Option<Timestamp>,
-    /// Pull requests the watch keeps a mark of; absent before the baseline.
+    /// Pull requests the watch keeps a row of; absent before the first walk.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tracked_pull_requests: Option<u32>,
 }

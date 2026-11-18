@@ -78,8 +78,8 @@ pub struct GithubSync {
     interval: Duration,
     asked: HashMap<Key, Instant>,
     paused_until: Option<Instant>,
-    /// When each repository watch was last asked about.
-    watch_asked: HashMap<RepoId, Instant>,
+    /// When each repository watch was last asked about, and a cut walk's progress.
+    watch_asked: HashMap<RepoId, watch_pass::Asked>,
     /// The registered repositories whose `origin` the last pass could not read.
     unreadable: Vec<String>,
 }

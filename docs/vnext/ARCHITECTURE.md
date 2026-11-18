@@ -341,6 +341,43 @@ never edits it implicitly.**
   per interval (default 5 min, minimum 60 s), and backs off on rate-limit
   headers. It never writes to GitHub. PR observation for linked items is no
   longer cut off at 14 days; it stops once the PR is merged or closed.
+- **Repository watches (A18):** `watch_repo` has the same sync watch the open
+  pull requests of a registered repository with a github.com `origin`, as
+  that registration's login, at least 5 minutes apart. A watch is news only
+  and eventually consistent.
+  - *Walk.* Each pass lists the open pull requests newest first, 100 a page
+    and at most 10 pages, each page a `GET` conditional on its own ETag, and
+    builds a snapshot: number → head, `updated_at`, requested reviewers,
+    comment count and review count. A pull request that is new, or whose
+    `updated_at` moved, costs two more `GET`s for its counts. A page that
+    answers 304 keeps its stored rows; a walk of 304s writes nothing.
+  - *Diff.* A completed walk is compared with the stored snapshot and raises
+    at most one `github_watch` trigger (`operator: false`) naming the
+    differences: `new_pull_request`, `seen_pull_request`, `new_head`,
+    `review_requested`, `new_comment` or `new_review`, one per pull request.
+    The first completed walk, and the first after the record's format
+    changed, is stored silently.
+  - *Budget.* Watches take at most half of a pass's 50 `GET`s. A walk the
+    budget or a backoff cuts short stores nothing; it goes first five
+    minutes later, and the sync keeps in memory what it had counted.
+  - *Page shifts.* A pull request missing from one stored walk keeps its row
+    and is dropped only when the next stored walk misses it too. One seen for
+    the first time is `new_pull_request` when it was created after the
+    previous stored walk began and `seen_pull_request` otherwise, told once
+    either way. So a shift can delay news by an interval, or tell a pull
+    request once as seen, and never loses news across two completed walks.
+  - *Accepted limits.* A `GET` in flight when a watch or registration is
+    removed finishes, and its result is discarded under the store lock. An
+    `origin` changed between the walk's last look at it and the write is
+    stored under the old name, and the next pass starts over. GitHub dates
+    to the second, so activity later in the second its counts were read in is
+    told with the pull request's next change. A page shift delays news by one
+    interval. A list of exactly k × 100 pull requests costs one more
+    conditional `GET`. A comment deleted and another made between two walks
+    cancel out, a review the login itself began counts when started, and open
+    pull requests past the first 1,000 are not watched. A walk completes only
+    when a pass can count what moved since the last one tried: about 12 pull
+    requests every five minutes.
 - **Import (D2):** `import_issue{ref}` (operator change) creates an item
   whose brief is the issue body marked as untrusted. Its idempotency key is
   derived as `github:<host>/<owner>/<repo>#<number>`. A second import returns the

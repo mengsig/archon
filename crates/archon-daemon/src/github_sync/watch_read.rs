@@ -1,6 +1,5 @@
-//! The `GET`s a repository watch sends: pages of the open pull requests,
-//! newest update first, and one pull request's comments or reviews. Each is
-//! a read-only `gh api` call as the registered repository's login.
+//! The `GET`s a repository watch sends: pages of the open pull requests, and
+//! one pull request's comment or review count. Each is a read-only `gh api` call.
 
 use std::time::Duration;
 
@@ -8,54 +7,40 @@ use archon_core::Timestamp;
 use archon_core::error::ArchonError;
 use archon_core::repo::{GH_HOST, Repo};
 use archon_queue::store::MAX_ETAG_BYTES;
-use serde::Deserialize;
 
 use super::fetch::{self, Response};
 use crate::executor::gh;
 
-/// Items one page lists.
+/// Pull requests one page lists.
 pub(crate) const PAGE: usize = 100;
 
-/// Pages of the list one read follows at most: past these, the least
-/// recently updated pull requests are not watched.
+/// Pages of the list one walk follows at most: past these, the oldest pull
+/// requests are not watched.
 pub(crate) const MAX_PAGES: u32 = 10;
 
-/// Page `page` of `repository`'s open pull requests, newest update first.
+/// Page `page` of `repository`'s open pull requests, newest first: an order
+/// only an opening or a closing shifts.
 pub(crate) fn list_endpoint(repository: &str, page: u32) -> String {
     assert!((1..=MAX_PAGES).contains(&page), "a bounded page: {page}");
     format!(
-        "repos/{repository}/pulls?state=open&sort=updated&direction=desc&per_page={PAGE}&page={page}"
+        "repos/{repository}/pulls?state=open&sort=created&direction=desc&per_page={PAGE}&page={page}"
     )
 }
 
-/// Page `page` of the conversation comments on #`number` updated since
-/// `since`, oldest first.
-pub(crate) fn comments_endpoint(
-    repository: &str,
-    number: u64,
-    since: Timestamp,
-    page: u32,
-) -> String {
-    assert!(number > 0 && page > 0, "a pull request and a page");
-    let since = since.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    let endpoint =
-        format!("repos/{repository}/issues/{number}/comments?since={since}&per_page={PAGE}");
-    paged(endpoint, page)
+/// What a pull request's count is of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Counted {
+    Comments,
+    Reviews,
 }
 
-/// Page `page` of #`number`'s reviews, oldest first.
-pub(crate) fn reviews_endpoint(repository: &str, number: u64, page: u32) -> String {
-    assert!(number > 0 && page > 0, "a pull request and a page");
-    paged(
-        format!("repos/{repository}/pulls/{number}/reviews?per_page={PAGE}"),
-        page,
-    )
-}
-
-fn paged(endpoint: String, page: u32) -> String {
-    match page {
-        1 => endpoint,
-        page => format!("{endpoint}&page={page}"),
+/// #`number`'s comments or reviews one to a page, so the last page GitHub
+/// names is their count. A review the login began counts before it is submitted.
+pub(crate) fn count_endpoint(repository: &str, number: u64, counted: Counted) -> String {
+    assert!(number > 0, "a pull request");
+    match counted {
+        Counted::Comments => format!("repos/{repository}/issues/{number}/comments?per_page=1"),
+        Counted::Reviews => format!("repos/{repository}/pulls/{number}/reviews?per_page=1"),
     }
 }
 
@@ -158,42 +143,18 @@ fn last_page(link: &str) -> Option<u32> {
     page.parse().ok().filter(|page| *page > 1)
 }
 
-/// A comment or review: its id, and when it was made (`None` for a pending review).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Activity {
-    pub id: u64,
-    pub at: Option<Timestamp>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Dated {
-    id: u64,
-    #[serde(default)]
-    created_at: Option<Timestamp>,
-    #[serde(default)]
-    submitted_at: Option<Timestamp>,
-}
-
-/// One page of comments (`created_at`) or reviews (`submitted_at`).
-pub(crate) fn activity(body: &str, what: &str) -> Result<Vec<Activity>, ArchonError> {
-    let items: Vec<Dated> = serde_json::from_str(body)
-        .map_err(|e| ArchonError::Protocol(format!("GitHub's {what} did not parse: {e}")))?;
-    if items.len() > PAGE || items.iter().any(|i| i.id == 0) {
-        return Err(ArchonError::Protocol(format!(
-            "GitHub's {what} were over a page or had an id of 0"
-        )));
+/// The count a `per_page=1` answer tells: the last page it names, or the one
+/// page's own length when it names none.
+pub(crate) fn count(body: &str, last_page: Option<u32>) -> Result<u64, ArchonError> {
+    let items: Vec<serde::de::IgnoredAny> = serde_json::from_str(body)
+        .map_err(|e| ArchonError::Protocol(format!("GitHub's count did not parse: {e}")))?;
+    match (items.len(), last_page) {
+        (0 | 1, None) => Ok(items.len() as u64),
+        (1, Some(last)) => Ok(u64::from(last)),
+        (length, last) => Err(ArchonError::Protocol(format!(
+            "GitHub's count had {length} items on a page of one, the last page {last:?}"
+        ))),
     }
-    let at = |i: &Dated| match what {
-        "reviews" => i.submitted_at,
-        _ => i.created_at,
-    };
-    Ok(items
-        .iter()
-        .map(|i| Activity {
-            id: i.id,
-            at: at(i),
-        })
-        .collect())
 }
 
 #[cfg(test)]
@@ -209,39 +170,36 @@ mod tests {
         );
         assert!(args.contains("If-None-Match: W/\"l1\""), "{args}");
         assert!(
-            args.ends_with("pulls?state=open&sort=updated&direction=desc&per_page=100&page=1"),
+            args.ends_with("pulls?state=open&sort=created&direction=desc&per_page=100&page=1"),
             "{args}"
         );
-        let since: Timestamp = "2026-11-01T00:00:00Z".parse().unwrap();
-        let comments = get_args(&comments_endpoint("o/r", 7, since, 1), None).join(" ");
+        let comments = get_args(&count_endpoint("o/r", 7, Counted::Comments), None).join(" ");
         assert!(!comments.contains("If-None-Match"));
         assert!(
-            comments.ends_with("issues/7/comments?since=2026-11-01T00:00:00Z&per_page=100"),
+            comments.ends_with("repos/o/r/issues/7/comments?per_page=1"),
             "{comments}"
+        );
+        assert_eq!(
+            count_endpoint("o/r", 7, Counted::Reviews),
+            "repos/o/r/pulls/7/reviews?per_page=1"
         );
     }
 
     #[test]
     fn a_link_header_names_the_last_page() {
-        let link = "<https://api.github.com/repositories/1/issues/7/comments?per_page=100&page=2>; \
-                    rel=\"next\", <https://api.github.com/repositories/1/issues/7/comments?per_page=100&page=4>; rel=\"last\"";
+        let link = "<https://api.github.com/repositories/1/issues/7/comments?per_page=1&page=2>; \
+                    rel=\"next\", <https://api.github.com/repositories/1/issues/7/comments?per_page=1&page=4>; rel=\"last\"";
         assert_eq!(last_page(link), Some(4));
         assert_eq!(last_page("<https://x/y?page=2>; rel=\"next\""), None);
-        assert_eq!(
-            reviews_endpoint("o/r", 7, 4),
-            "repos/o/r/pulls/7/reviews?per_page=100&page=4"
-        );
     }
 
     #[test]
-    fn comments_and_reviews_read_with_their_own_dates() {
-        let comments =
-            r#"[{"id":3,"created_at":"2026-10-01T00:00:00Z","updated_at":"2026-11-02T00:00:00Z"}]"#;
-        let read = activity(comments, "comments").unwrap();
-        assert_eq!(read[0].at, Some("2026-10-01T00:00:00Z".parse().unwrap()));
-        let pending = r#"[{"id":4,"submitted_at":null}]"#;
-        assert_eq!(activity(pending, "reviews").unwrap()[0].at, None);
-        assert!(activity("{}", "reviews").is_err());
-        assert!(activity(r#"[{"id":0}]"#, "reviews").is_err());
+    fn a_count_is_the_last_page_or_the_one_pages_length() {
+        assert_eq!(count("[]", None).unwrap(), 0);
+        assert_eq!(count(r#"[{"id":3}]"#, None).unwrap(), 1);
+        assert_eq!(count(r#"[{"id":3}]"#, Some(41)).unwrap(), 41);
+        assert!(count("[]", Some(3)).is_err(), "a last page of nothing");
+        assert!(count(r#"[{"id":3},{"id":4}]"#, None).is_err());
+        assert!(count("{}", None).is_err());
     }
 }

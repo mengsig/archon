@@ -76,10 +76,10 @@ pub(super) async fn list(ctx: &DaemonContext) -> Result<Reply, ArchonError> {
             repository: registry.by_id.get(&id).map(|(name, _)| name.clone()),
             interval_minutes: record.interval_minutes,
             since: record.since,
-            fetched_at: record.fetched_at,
+            fetched_at: record.walked_at,
             tracked_pull_requests: record
-                .pulls
-                .map(|p| u32::try_from(p.len()).unwrap_or(u32::MAX)),
+                .walked_at
+                .map(|_| u32::try_from(record.pulls.len()).unwrap_or(u32::MAX)),
         });
     }
     assert!(

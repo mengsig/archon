@@ -11961,7 +11961,7 @@
       "description": "A registered repository whose open pull requests the GitHub sync watches.",
       "properties": {
         "fetched_at": {
-          "description": "When GitHub last sent the list (a 200; a 304 changes nothing).",
+          "description": "When the last walk that GitHub sent a page of began (a 304 changes nothing).",
           "format": "date-time",
           "type": [
             "string",
@@ -11989,7 +11989,7 @@
           "type": "string"
         },
         "tracked_pull_requests": {
-          "description": "Pull requests the watch keeps a mark of; absent before the baseline.",
+          "description": "Pull requests the watch keeps a row of; absent before the first walk.",
           "format": "uint32",
           "minimum": 0,
           "type": [

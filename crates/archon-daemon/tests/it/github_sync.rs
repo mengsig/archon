@@ -26,8 +26,8 @@ use common::{Harness, REPO_NAME};
 /// Answers `gh api --method GET … repos/o/r/issues/N` from `issue-N.json`
 /// and `etag-N` beside it: a 304 when `If-None-Match` sends the current ETag,
 /// a 404 for a number it has no file for. Page P of the open pull requests
-/// reads as `pulls-P`, #N's comments as `comments-N` and its reviews as
-/// `reviews-N` (page P > 1 as `…-pP`), which list none without a file;
+/// reads as `pulls-P`, and #N's comments and reviews, one to a page, as
+/// `comments-N` and `reviews-N`, which list none without a file;
 /// `link-<name>` makes its 200 name that page as the last. Any other call is a
 /// violation. While `hold-N` exists a read of N marks `started-N` and waits;
 /// while `retry-after` exists a 200 asks for that many seconds' backoff.
@@ -58,14 +58,11 @@ for arg in "$@"; do
 done
 [ "$method" = GET ] || violate "method '$method'"
 case "$endpoint" in
-  *"/pulls?state=open&sort=updated&direction=desc&per_page=100&page="*)
+  *"/pulls?state=open&sort=created&direction=desc&per_page=100&page="*)
     number=pulls-${endpoint##*page=} ;;
-  *"/comments?since="*) n=${endpoint%%/comments*}; number=comments-${n##*/} ;;
-  *"/reviews?per_page=100"*) n=${endpoint%%/reviews*}; number=reviews-${n##*/} ;;
+  *"/comments?per_page=1") n=${endpoint%%/comments*}; number=comments-${n##*/} ;;
+  *"/reviews?per_page=1") n=${endpoint%%/reviews*}; number=reviews-${n##*/} ;;
   *) number=${endpoint##*/} ;;
-esac
-case "$number" in comments-*|reviews-*)
-  case "$endpoint" in *"&page="*) number=$number-p${endpoint##*&page=} ;; esac ;;
 esac
 if [ -f "$dir/hold-$number" ]; then
   : > "$dir/started-$number"
@@ -86,7 +83,7 @@ if [ ! -f "$dir/issue-$number.json" ]; then
 fi
 printf 'HTTP/2.0 200 OK\r\nEtag: %s\r\nX-Ratelimit-Remaining: 4999\r\n' "$current"
 [ -f "$dir/retry-after" ] && printf 'Retry-After: %s\r\n' "$(cat "$dir/retry-after")"
-[ -f "$dir/link-$number" ] && printf 'Link: <https://api.github.com/x?per_page=100&page=%s>; rel="last"\r\n' "$(cat "$dir/link-$number")"
+[ -f "$dir/link-$number" ] && printf 'Link: <https://api.github.com/x?per_page=1&page=%s>; rel="last"\r\n' "$(cat "$dir/link-$number")"
 printf '\r\n'
 cat "$dir/issue-$number.json"
 "#;
@@ -160,8 +157,23 @@ impl Github {
         self.serve_named("pulls-1", pulls, etag);
     }
 
-    /// GitHub now answers the stub's file `name` (`pulls-2`, `comments-7`,
-    /// `reviews-7`) with `json`, at `etag`.
+    /// GitHub now counts `count` items of the stub's file `name`
+    /// (`comments-7`, `reviews-7`): one to a page, the last page named past one.
+    pub(crate) fn serve_count(&self, name: &str, count: u64) {
+        let page = match count {
+            0 => serde_json::json!([]),
+            _ => serde_json::json!([{"id": count}]),
+        };
+        self.serve_named(name, page, "");
+        let link = self.path(&format!("link-{name}"));
+        if count > 1 {
+            std::fs::write(link, count.to_string()).unwrap();
+        } else if link.exists() {
+            std::fs::remove_file(link).unwrap();
+        }
+    }
+
+    /// GitHub now answers the stub's file `name` (`pulls-2`) with `json`, at `etag`.
     pub(crate) fn serve_named(&self, name: &str, json: serde_json::Value, etag: &str) {
         let at = self.dir.path();
         std::fs::write(at.join(format!("issue-{name}.json")), json.to_string()).unwrap();

@@ -1,12 +1,7 @@
-//! The repository watches' share of a sync pass. Each page of the list is a
-//! `GET` conditional on its own ETag, so an unchanged list costs one per page
-//! (one for up to 100 pull requests); GitHub's order by update is not exact
-//! enough to stop early. A comment or review check is asked only for a pull
-//! request that moved with nothing else to show, or whose last mark was too
-//! recent to trust. Every `GET` counts against [`MAX_WATCH_REQUESTS`]
-//! and the pass's [`MAX_REQUESTS_PER_PASS`].
+//! The repository watches' share of a sync pass: each due watch's list is
+//! walked whole, a conditional `GET` a page, and stored only when completed.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::time::Duration;
 
 use archon_core::Timestamp;
@@ -18,8 +13,8 @@ use archon_core::repo::Repo;
 use archon_queue::Store;
 use tokio::time::Instant;
 
-use super::watch::{self, Followed, PageMark, Pull, PullMark, Seen, WatchRecord, WatchedChange};
-use super::watch_read::{self, Got, MAX_PAGES, PAGE};
+use super::watch::{self, Counts, PageMark, Pull, Row, Walk, WatchRecord, WatchedChange};
+use super::watch_read::{self, Counted, Got, MAX_PAGES};
 use super::{GithubSync, MAX_REQUESTS_PER_PASS, Pass, Registry};
 use crate::context::DaemonContext;
 use crate::triggers::{self, TriggerEvent};
@@ -27,25 +22,44 @@ use crate::triggers::{self, TriggerEvent};
 /// Most watch `GET`s in one pass: the linked objects keep the rest.
 pub(super) const MAX_WATCH_REQUESTS: usize = MAX_REQUESTS_PER_PASS / 2;
 
+/// The soonest a walk cut short is taken up again.
+const FLOOR: Duration = Duration::from_secs(MIN_WATCH_MINUTES as u64 * 60);
+
 /// What the watches did in one pass.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct WatchPass {
-    /// `GET`s sent (pages and follow-ups), also counted in [`Pass::requested`].
+    /// `GET`s sent (pages and counts), also counted in [`Pass::requested`].
     pub requested: usize,
-    /// Watches whose list GitHub sent (a 200), unchanged (a 304), or failed.
+    /// Watches whose list GitHub sent (a 200), unchanged (all 304s), or failed.
     pub changed: usize,
     pub unchanged: usize,
     pub failed: usize,
-    /// Triggers raised: changed lists with news in them.
+    /// Triggers raised: completed walks with news in them.
     pub triggers: usize,
     /// Watches of a registered repository with no readable GitHub `origin`.
     pub no_origin: usize,
     /// Watches dropped because their repository is no longer registered.
     pub dropped: usize,
-    /// Reads cut short by the budget or a failed follow-up: asked again.
+    /// Walks cut short by the budget or a backoff: nothing stored, resumed first.
     pub incomplete: usize,
-    /// Reads stopped because the watch or registration changed meanwhile.
+    /// Walks stopped because the watch or registration changed meanwhile.
     pub revoked: usize,
+}
+
+/// What the sync remembers of a watch between passes; never stored.
+#[derive(Debug)]
+pub(super) struct Asked {
+    at: Instant,
+    /// The last walk was cut short: what it had counted, for its resumption.
+    resume: Option<Resume>,
+}
+
+/// The rows a cut walk counted, of one setup of the watch and one `origin`.
+#[derive(Debug)]
+struct Resume {
+    generation: String,
+    repository: String,
+    rows: BTreeMap<u64, Row>,
 }
 
 /// A due watch and the registration it reads as.
@@ -59,45 +73,33 @@ struct Due {
     repo: Repo,
 }
 
-/// A changed list: what was read, and whether all of what was needed.
-struct Walked {
-    /// Each page asked, in order, with the ETag it was answered with.
+/// The list as one walk read it, before its pull requests are counted.
+struct Listed {
+    started_at: Timestamp,
     pages: Vec<PageMark>,
-    /// The pull requests of the pages that changed.
-    pulls: Vec<Pull>,
-    /// No page was left unread for want of budget.
-    complete: bool,
-    /// GitHub's clock at the first page, which marks are settled against.
-    read_at: Timestamp,
-    /// Every pull request listed, when every page was asked.
-    listed: Option<BTreeSet<u64>>,
+    /// The pull requests of the pages GitHub sent, each once.
+    fresh: BTreeMap<u64, Pull>,
 }
 
-/// What a scan of the list's pages found.
-enum Scan {
-    /// Every page asked was a 304, and none was left unasked.
+/// How far a walk of the list's pages got.
+enum Listing {
+    /// Every page was a 304: the stored snapshot stands.
     Unchanged,
-    /// The budget ran out before any page changed.
+    /// The budget or a backoff left a page unasked.
     Cut,
-    Changed(Walked),
+    Changed(Listed),
 }
 
-/// How one watch's read went, for the pass.
+/// How one watch's walk went, for the pass.
+#[derive(Default)]
 struct Outcome {
     backoff: Option<Duration>,
-    /// Pages or follow-ups were left unread: the watch is asked first next pass.
-    cut: bool,
-}
-
-/// What the read of a changed list adds to the record.
-#[derive(Default)]
-struct Told {
-    changes: Vec<WatchedChange>,
-    followed: Followed,
+    /// Set when the walk was cut short: the rows it had counted.
+    resume: Option<BTreeMap<u64, Row>>,
 }
 
 impl GithubSync {
-    /// Read each due watch once, least recently asked first, counted in `pass`.
+    /// Walk each due watch once, cut walks first, counted in `pass`.
     pub(super) async fn read_watches(
         &mut self,
         ctx: &DaemonContext,
@@ -109,15 +111,17 @@ impl GithubSync {
             if !within_budget(pass) {
                 break;
             }
-            if !fits(pass, &due.record) {
-                continue;
-            }
-            self.watch_asked.insert(due.id.clone(), Instant::now());
-            let read = read_one(ctx, &due, pass).await?;
-            if read.cut {
-                self.watch_asked.remove(&due.id);
-            }
-            if let Some(wait) = read.backoff {
+            let resumed = self.take_resume(&due);
+            let walked = walk_one(ctx, &due, resumed, pass).await?;
+            let resume = walked.resume.map(|rows| Resume {
+                generation: due.record.generation.clone(),
+                repository: due.repository.clone(),
+                rows,
+            });
+            let at = Instant::now();
+            self.watch_asked
+                .insert(due.id.clone(), Asked { at, resume });
+            if let Some(wait) = walked.backoff {
                 self.paused_until = Some(Instant::now() + wait);
                 pass.backoff = Some(wait);
                 break;
@@ -134,7 +138,24 @@ impl GithubSync {
         Ok(())
     }
 
-    /// The watches due now; drops those whose repository is gone.
+    /// The rows `due`'s last walk counted before it was cut, if it is the same watch.
+    fn take_resume(&mut self, due: &Due) -> BTreeMap<u64, Row> {
+        let resume = self
+            .watch_asked
+            .get_mut(&due.id)
+            .and_then(|asked| asked.resume.take());
+        match resume {
+            Some(resume)
+                if resume.generation == due.record.generation
+                    && resume.repository == due.repository =>
+            {
+                resume.rows
+            }
+            _ => BTreeMap::new(),
+        }
+    }
+
+    /// The watches due now, cut walks first; drops those whose repository is gone.
     async fn due_watches(
         &mut self,
         ctx: &DaemonContext,
@@ -157,10 +178,7 @@ impl GithubSync {
                 pass.watch.no_origin += 1;
                 continue;
             };
-            let minutes = record.interval_minutes.max(MIN_WATCH_MINUTES);
-            let every = Duration::from_secs(u64::from(minutes) * 60);
-            let asked = self.watch_asked.get(&id).copied();
-            if asked.is_some_and(|at| now.duration_since(at) < every) {
+            if !self.is_due(&id, &record, now) {
                 continue;
             }
             let stored = record.repository.clone();
@@ -172,25 +190,34 @@ impl GithubSync {
                 repo: repo.clone(),
             });
         }
-        due.sort_by_key(|d| self.watch_asked.get(&d.id).copied());
+        due.sort_by_key(|d| {
+            let asked = self.watch_asked.get(&d.id);
+            let cut = asked.is_some_and(|a| a.resume.is_some());
+            (!cut, asked.map(|a| a.at))
+        });
         assert!(due.len() <= live.len(), "each watch due at most once");
         Ok(due)
+    }
+
+    /// Whether `record`'s interval passed since it was asked; a cut walk waits
+    /// only the floor.
+    fn is_due(&self, id: &RepoId, record: &WatchRecord, now: Instant) -> bool {
+        let Some(asked) = self.watch_asked.get(id) else {
+            return true;
+        };
+        let minutes = record.interval_minutes.max(MIN_WATCH_MINUTES);
+        let every = match asked.resume {
+            Some(_) => FLOOR,
+            None => Duration::from_secs(u64::from(minutes) * 60),
+        };
+        assert!(every >= FLOOR, "never sooner than the floor");
+        now.duration_since(asked.at) >= every
     }
 }
 
 /// Whether the pass may send one more watch `GET`.
 fn within_budget(pass: &Pass) -> bool {
     pass.watch.requested < MAX_WATCH_REQUESTS && pass.requested < MAX_REQUESTS_PER_PASS
-}
-
-/// Whether the pass has room for every page `record` last read, so an
-/// unchanged list is never cut short; one without waits, first, for the next.
-fn fits(pass: &Pass, record: &WatchRecord) -> bool {
-    let left = MAX_WATCH_REQUESTS
-        .saturating_sub(pass.watch.requested)
-        .min(MAX_REQUESTS_PER_PASS.saturating_sub(pass.requested));
-    assert!(record.pages.len() <= MAX_PAGES as usize, "a mark per page");
-    record.pages.len().max(1) <= left
 }
 
 /// Forget `id`'s watch if its repository is still unregistered under the
@@ -205,9 +232,8 @@ async fn drop_unregistered(ctx: &DaemonContext, id: &RepoId) -> Result<bool, Arc
     Ok(true)
 }
 
-/// Sends a due watch's `GET`s within the pass's budget, and stops at the
-/// first backoff GitHub asks for.
-/// Before each, the watch and registration it reads under are checked again.
+/// Sends a due watch's `GET`s within the pass's budget, until the first
+/// backoff. Before each, the watch and its registration are checked again.
 struct Asker<'a> {
     ctx: &'a DaemonContext,
     due: &'a Due,
@@ -255,280 +281,217 @@ impl Asker<'_> {
     }
 }
 
-/// Read `due`'s list and what it needs.
-async fn read_one(ctx: &DaemonContext, due: &Due, pass: &mut Pass) -> Result<Outcome, ArchonError> {
+/// Walk `due`'s list, count what changed, and store the walk if it completed.
+async fn walk_one(
+    ctx: &DaemonContext,
+    due: &Due,
+    resumed: BTreeMap<u64, Row>,
+    pass: &mut Pass,
+) -> Result<Outcome, ArchonError> {
     let mut asker = Asker {
         ctx,
         due,
         backoff: None,
         revoked: false,
     };
-    let scanned = walk(&mut asker, pass).await;
+    let walked = walk(&mut asker, resumed, pass).await;
     let mut outcome = Outcome {
-        backoff: None,
-        cut: false,
+        backoff: asker.backoff,
+        resume: None,
     };
     if asker.revoked {
-        tracing::info!(repository = %due.repository, "watch or registration changed during a read; stopped");
+        tracing::info!(repository = %due.repository, "watch or registration changed during a walk; stopped");
         pass.watch.revoked += 1;
-        outcome.backoff = asker.backoff;
         return Ok(outcome);
     }
-    let walked = match scanned {
-        Ok(Scan::Changed(walked)) => walked,
-        Ok(Scan::Unchanged) => {
-            pass.watch.unchanged += 1;
-            outcome.backoff = asker.backoff;
-            return Ok(outcome);
-        }
-        Ok(Scan::Cut) => {
+    match walked {
+        Ok(Walked::Unchanged) => pass.watch.unchanged += 1,
+        Ok(Walked::Cut(rows)) => {
             pass.watch.incomplete += 1;
-            outcome.backoff = asker.backoff;
-            outcome.cut = true;
-            return Ok(outcome);
+            outcome.resume = Some(rows);
+        }
+        Ok(Walked::Whole(walk)) => {
+            if record_walk(ctx, due, walk).await? {
+                pass.watch.triggers += 1;
+            }
         }
         Err(error) => {
-            tracing::debug!(%error, repository = %due.repository, "repository watch read failed");
+            tracing::debug!(%error, repository = %due.repository, "repository watch walk failed");
             pass.watch.failed += 1;
-            outcome.backoff = asker.backoff;
-            return Ok(outcome);
         }
-    };
-    pass.watch.changed += 1;
-    let told = match &due.record.pulls {
-        Some(_) => follow_up(&mut asker, pass, &walked.pulls).await,
-        None => Told::default(),
-    };
-    outcome.backoff = asker.backoff;
-    if asker.revoked {
-        pass.watch.revoked += 1;
-        return Ok(outcome);
-    }
-    outcome.cut = !walked.complete || !told.followed.kept.is_empty();
-    if outcome.cut {
-        pass.watch.incomplete += 1;
-    }
-    if record_list(ctx, due, walked, told).await? {
-        pass.watch.triggers += 1;
     }
     Ok(outcome)
 }
 
-/// Every page of the list, each conditional on its last ETag; a full page
-/// asks the next, as a 304 cannot say one was added. Ends short of a full
-/// page, or at the cap. One `GET` a page: one for up to 100 pull requests.
-async fn walk(asker: &mut Asker<'_>, pass: &mut Pass) -> Result<Scan, ArchonError> {
+/// How a walk ended.
+enum Walked {
+    Unchanged,
+    /// Cut short, with the rows counted so far, this walk's and `resumed`.
+    Cut(BTreeMap<u64, Row>),
+    Whole(Walk),
+}
+
+/// The list's pages, then the counts of each pull request that moved.
+async fn walk(
+    asker: &mut Asker<'_>,
+    resumed: BTreeMap<u64, Row>,
+    pass: &mut Pass,
+) -> Result<Walked, ArchonError> {
+    let listed = match list(asker, pass).await? {
+        Listing::Unchanged => return Ok(Walked::Unchanged),
+        Listing::Cut => return Ok(Walked::Cut(resumed)),
+        Listing::Changed(listed) => listed,
+    };
+    pass.watch.changed += 1;
+    let (mut rows, complete) = count_rows(asker, pass, &listed.fresh, resumed).await?;
+    if !complete {
+        return Ok(Walked::Cut(rows));
+    }
+    assert_eq!(rows.len(), listed.fresh.len(), "a row each");
+    let mut fresh = BTreeMap::new();
+    for (number, pull) in listed.fresh {
+        let row = rows.remove(&number).expect("counted above");
+        fresh.insert(number, (pull, row));
+    }
+    Ok(Walked::Whole(Walk {
+        started_at: listed.started_at,
+        pages: listed.pages,
+        fresh,
+    }))
+}
+
+/// Every page of the list, each conditional on its stored ETag; a full page
+/// asks the next, as a 304 cannot say one was added behind it.
+async fn list(asker: &mut Asker<'_>, pass: &mut Pass) -> Result<Listing, ArchonError> {
     let due = asker.due;
-    let (mut pages, mut pulls) = (Vec::new(), Vec::<Pull>::new());
-    let (mut read_at, mut changed, mut complete) = (None, false, true);
+    let (mut pages, mut fresh) = (Vec::new(), BTreeMap::<u64, Pull>::new());
+    let mut started_at = None;
     for page in 1..=MAX_PAGES {
         let stored = due.record.pages.get(page as usize - 1);
         let etag = stored.and_then(|p| p.etag.as_deref());
         let endpoint = watch_read::list_endpoint(&due.repository, page);
-        let (mark, date) = match asker.get(pass, &endpoint, etag).await {
-            None => {
-                complete = false;
-                break;
-            }
-            Some(Err(error)) => return Err(error),
-            Some(Ok(Got::NotModified { date })) => {
+        let Some(got) = asker.get(pass, &endpoint, etag).await else {
+            return Ok(Listing::Cut);
+        };
+        let (mark, date) = match got? {
+            Got::NotModified { date } => {
                 let mark = stored.cloned().expect("only a page read before is a 304");
                 (mark, date)
             }
-            Some(Ok(Got::Changed {
+            Got::Changed {
                 etag, body, date, ..
-            })) => {
+            } => {
                 let read = watch::parse_pulls(&due.repository, &body)?;
-                let full = read.len() >= PAGE;
                 let numbers = read.iter().map(|p| p.number).collect();
-                let seen: HashSet<u64> = pulls.iter().map(|p| p.number).collect();
-                pulls.extend(read.into_iter().filter(|p| !seen.contains(&p.number)));
-                changed = true;
-                let mark = PageMark {
-                    etag,
-                    full,
-                    numbers,
-                };
-                (mark, date)
+                for pull in read {
+                    keep_latest(&mut fresh, pull);
+                }
+                (PageMark { etag, numbers }, date)
             }
         };
-        read_at = read_at.or(Some(date.unwrap_or_else(archon_core::now)));
-        let full = mark.full;
+        started_at = started_at.or(Some(date.unwrap_or_else(archon_core::now)));
+        let full = mark.is_full();
         pages.push(mark);
         if !full {
             break;
         }
     }
-    assert!(pulls.len() <= PAGE * MAX_PAGES as usize, "bounded pages");
-    let read_at = match read_at {
-        Some(read_at) if changed => read_at,
-        _ if complete => return Ok(Scan::Unchanged),
-        _ => return Ok(Scan::Cut),
-    };
-    assert!(!pages.is_empty(), "a changed list has a page");
-    let listed = complete.then(|| {
-        pages
-            .iter()
-            .flat_map(|p| p.numbers.iter().copied())
-            .collect()
-    });
-    Ok(Scan::Changed(Walked {
+    assert!(!pages.is_empty(), "a walk not cut asked a page");
+    if fresh.is_empty() && pages == due.record.pages {
+        return Ok(Listing::Unchanged);
+    }
+    let started_at = started_at.expect("a page was answered");
+    Ok(Listing::Changed(Listed {
+        started_at,
         pages,
-        pulls,
-        complete,
-        read_at,
-        listed,
+        fresh,
     }))
 }
 
-/// Pages of one pull request's reviews a check reads at most: the newest.
-const MAX_REVIEW_PAGES: u32 = 10;
-
-/// What `pulls` tells against `due`'s marks, with a comment and review check
-/// for each pull request that moved with nothing else to show.
-async fn follow_up(asker: &mut Asker<'_>, pass: &mut Pass, pulls: &[Pull]) -> Told {
-    let diffed = watch::diff(&asker.due.record, pulls);
-    let mut told = Told {
-        changes: diffed.changes,
-        followed: Followed::default(),
-    };
-    for follow in diffed.follow_ups {
-        let pull = &pulls[follow.index];
-        let mark = &follow.mark;
-        let Some((commented, comment_id)) = comments(asker, pass, pull.number, mark).await else {
-            told.followed.kept.insert(pull.number);
-            continue;
-        };
-        let Some(read) = reviews(asker, pass, pull.number).await else {
-            told.followed.kept.insert(pull.number);
-            continue;
-        };
-        let (reviewed, seen) = mark.reviewed.after(mark, &read);
-        if commented {
-            told.changes.push(pull.told("new_comment", Vec::new()));
-        } else if reviewed {
-            told.changes.push(pull.told("new_review", Vec::new()));
-        }
-        let seen = Seen {
-            comment_id,
-            reviewed: seen,
-        };
-        told.followed.seen.insert(pull.number, seen);
+/// A pull request a shift put on two pages is kept as last updated.
+fn keep_latest(fresh: &mut BTreeMap<u64, Pull>, pull: Pull) {
+    let stale = fresh
+        .get(&pull.number)
+        .is_some_and(|seen| seen.updated_at > pull.updated_at);
+    if !stale {
+        fresh.insert(pull.number, pull);
     }
-    assert!(
-        told.changes.len() <= pulls.len(),
-        "one change per pull request"
-    );
-    told
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Feed {
-    Comments,
-    Reviews,
+/// A row for each of `fresh`: counted before (stored, or `resumed` from a cut
+/// walk) when it has not moved since, else counted now. `false` when cut short.
+async fn count_rows(
+    asker: &mut Asker<'_>,
+    pass: &mut Pass,
+    fresh: &BTreeMap<u64, Pull>,
+    mut resumed: BTreeMap<u64, Row>,
+) -> Result<(BTreeMap<u64, Row>, bool), ArchonError> {
+    let due = asker.due;
+    let stored = &due.record.pulls;
+    resumed.retain(|number, _| fresh.contains_key(number));
+    let mut rows = BTreeMap::new();
+    for (number, pull) in fresh {
+        let known = [stored.get(number), resumed.get(number)]
+            .into_iter()
+            .flatten()
+            .find(|row| row.is_of(pull));
+        let counts = match known {
+            Some(row) => row.counts(),
+            None => match counts(asker, pass, *number).await? {
+                Some(counts) => counts,
+                None => {
+                    resumed.extend(rows);
+                    return Ok((resumed, false));
+                }
+            },
+        };
+        rows.insert(*number, pull.row(counts));
+    }
+    assert_eq!(rows.len(), fresh.len(), "a row each");
+    Ok((rows, true))
 }
 
-/// Whether #`number` has a comment newer than `mark`, and the newest comment
-/// id seen. Comments get their ids when made, so the first page and, when
-/// there are more, the last, which holds the newest, tell. `None` when unread.
-async fn comments(
+/// #`number`'s comment and review counts; `None` when a `GET` was not allowed.
+async fn counts(
     asker: &mut Asker<'_>,
     pass: &mut Pass,
     number: u64,
-    mark: &PullMark,
-) -> Option<(bool, u64)> {
-    // `since` filters by update; a second's overlap keeps the boundary in.
-    let since = mark.updated_at - chrono::TimeDelta::seconds(1);
-    let repository = asker.due.repository.clone();
-    let endpoint = |page| watch_read::comments_endpoint(&repository, number, since, page);
-    let (mut items, last) = read_feed(asker, pass, &endpoint(1), Feed::Comments).await?;
-    if let Some(last) = last {
-        items.extend(
-            read_feed(asker, pass, &endpoint(last), Feed::Comments)
-                .await?
-                .0,
-        );
-    }
-    let known = mark.comment_id;
-    let news = items
-        .iter()
-        .any(|a| a.id > known && a.at.is_some_and(|at| mark.is_after(at)));
-    let newest = items.iter().map(|a| a.id).max().unwrap_or(0).max(known);
-    assert!(!news || newest > known, "a new comment has a new id");
-    Some((news, newest))
+) -> Result<Option<Counts>, ArchonError> {
+    let Some(comments) = count(asker, pass, number, Counted::Comments).await? else {
+        return Ok(None);
+    };
+    let Some(reviews) = count(asker, pass, number, Counted::Reviews).await? else {
+        return Ok(None);
+    };
+    Ok(Some(Counts { comments, reviews }))
 }
 
-/// #`number`'s reviews: every page, or the newest [`MAX_REVIEW_PAGES`]. A
-/// review started long ago may be submitted now, so no page is skipped
-/// below that bound. `None` when a page went unread.
-async fn reviews(
+async fn count(
     asker: &mut Asker<'_>,
     pass: &mut Pass,
     number: u64,
-) -> Option<Vec<watch_read::Activity>> {
-    let repository = asker.due.repository.clone();
-    let endpoint = |page| watch_read::reviews_endpoint(&repository, number, page);
-    let (mut items, last) = read_feed(asker, pass, &endpoint(1), Feed::Reviews).await?;
-    let last = last.unwrap_or(1);
-    let first = match last {
-        last if last <= MAX_REVIEW_PAGES => 2,
-        last => {
-            items.clear();
-            last - (MAX_REVIEW_PAGES - 1)
-        }
+    counted: Counted,
+) -> Result<Option<u64>, ArchonError> {
+    let endpoint = watch_read::count_endpoint(&asker.due.repository, number, counted);
+    let Some(got) = asker.get(pass, &endpoint, None).await else {
+        return Ok(None);
     };
-    for page in first..=last {
-        items.extend(
-            read_feed(asker, pass, &endpoint(page), Feed::Reviews)
-                .await?
-                .0,
-        );
-    }
-    assert!(
-        items.len() <= PAGE * MAX_REVIEW_PAGES as usize,
-        "bounded review pages"
-    );
-    Some(items)
-}
-
-/// One page of `feed` and the last page its `Link` names; `None` when it
-/// went unread, for want of budget or by a failure.
-async fn read_feed(
-    asker: &mut Asker<'_>,
-    pass: &mut Pass,
-    endpoint: &str,
-    feed: Feed,
-) -> Option<(Vec<watch_read::Activity>, Option<u32>)> {
-    let what = match feed {
-        Feed::Comments => "comments",
-        Feed::Reviews => "reviews",
-    };
-    let failed = match asker.get(pass, endpoint, None).await? {
-        Ok(Got::Changed {
+    match got? {
+        Got::Changed {
             body, last_page, ..
-        }) => match watch_read::activity(&body, what) {
-            Ok(items) => return Some((items, last_page)),
-            Err(error) => error,
-        },
-        Ok(Got::NotModified { .. }) => return Some((Vec::new(), None)),
-        Err(error) => error,
-    };
-    tracing::debug!(error = %failed, endpoint, "repository watch follow-up failed");
-    None
+        } => watch_read::count(&body, last_page).map(Some),
+        Got::NotModified { .. } => Err(ArchonError::Protocol(format!(
+            "GitHub answered 304 to the unconditional {endpoint}"
+        ))),
+    }
 }
 
-/// Save a changed list and hold the news it carries, under one store lock.
-/// A watch removed, set up again or re-pointed during the read, or whose
-/// checkout's `origin` moved meanwhile, is not written back, and an
-/// incomplete baseline is not saved. Whether a trigger was raised.
-async fn record_list(
-    ctx: &DaemonContext,
-    due: &Due,
-    walked: Walked,
-    told: Told,
-) -> Result<bool, ArchonError> {
+/// Save a completed walk and hold the news it carries, under one store lock.
+/// A watch removed, set up again or re-pointed during the walk, or whose
+/// checkout's `origin` moved meanwhile, is not written back. Whether a trigger was raised.
+async fn record_walk(ctx: &DaemonContext, due: &Due, walk: Walk) -> Result<bool, ArchonError> {
     if !origin_unmoved(due).await {
-        tracing::info!(repository = %due.repository, "origin moved during a watch read; discarded");
+        tracing::info!(repository = %due.repository, "origin moved during a watch walk; discarded");
         return Ok(false);
     }
     let mut store = ctx.store.lock().await;
@@ -538,25 +501,16 @@ async fn record_list(
     let Some(current) = watch::get(&store, &due.id)? else {
         unreachable!("a current watch is stored");
     };
-    let baseline = due.record.pulls.is_none();
-    if baseline && !walked.complete {
-        return Ok(false);
-    }
-    let complete = walked.complete && told.followed.kept.is_empty();
-    let raised = !told.changes.is_empty();
+    assert_eq!(current.generation, due.record.generation, "the same watch");
+    let (mut walked, changes) = watch::after_walk(&due.record, walk);
+    walked.interval_minutes = current.interval_minutes;
+    let raised = !changes.is_empty();
     if raised {
-        // Held before the marks are saved: a crash between repeats the news
+        // Held before the snapshot is saved: a crash between repeats the news
         // rather than losing it.
-        triggers::hold(&mut store, watch_event(due, told.changes))?;
+        triggers::hold(&mut store, watch_event(due, changes))?;
     }
-    let record = updated(
-        current.rebased(&due.repository),
-        &due.record,
-        &walked,
-        &told.followed,
-        complete,
-    );
-    watch::put(&mut store, &due.id, &record)?;
+    watch::put(&mut store, &due.id, &walked)?;
     drop(store);
     if raised {
         triggers::wake(ctx);
@@ -577,52 +531,7 @@ fn still_current(store: &Store, due: &Due) -> Result<bool, ArchonError> {
     Ok(registered.is_some_and(|r| r.path == due.repo.path && r.gh_user == due.repo.gh_user))
 }
 
-/// `current` after `walked` was read against `read` (the record the pass
-/// compared with). An incomplete read, or one with a mark not yet settled,
-/// keeps no ETag, so the next asks again.
-fn updated(
-    mut current: WatchRecord,
-    read: &WatchRecord,
-    walked: &Walked,
-    followed: &Followed,
-    complete: bool,
-) -> WatchRecord {
-    assert_eq!(current.generation, read.generation, "the same watch");
-    let highest = walked.pulls.iter().map(|p| p.number).max().unwrap_or(0);
-    let marks = watch::merged_marks(
-        read.pulls.as_ref(),
-        &walked.pulls,
-        walked.listed.as_ref(),
-        followed,
-        walked.read_at,
-    );
-    let settled = walked
-        .pulls
-        .iter()
-        .all(|p| marks.get(&p.number).is_none_or(|m| m.settled));
-    current.pages = if complete && settled {
-        walked.pages.clone()
-    } else {
-        Vec::new()
-    };
-    if read.pulls.is_none() {
-        current.baseline_at = Some(walked.read_at);
-    }
-    current.max_number = current.max_number.max(highest);
-    current.fetched_at = Some(archon_core::now());
-    current.pulls = Some(marks);
-    assert!(
-        (complete && settled) || current.pages.is_empty(),
-        "an incomplete or unsettled read is asked again"
-    );
-    assert!(
-        current.baseline_at >= read.baseline_at,
-        "the baseline clock never moves back"
-    );
-    current
-}
-
-/// Whether `due`'s checkout still names the `origin` its read was of. An
+/// Whether `due`'s checkout still names the `origin` its walk was of. An
 /// unreadable one counts as moved: the next pass resolves it again.
 async fn origin_unmoved(due: &Due) -> bool {
     let path = due.repo.path.clone();
@@ -633,11 +542,11 @@ async fn origin_unmoved(due: &Due) -> bool {
             .and_then(GithubRepo::from_remote_url)
             .is_some_and(|github| github.as_str() == due.repository),
         Ok(Err(error)) => {
-            tracing::debug!(%error, repository = %due.repository, "origin unreadable after a watch read");
+            tracing::debug!(%error, repository = %due.repository, "origin unreadable after a watch walk");
             false
         }
         Err(error) => {
-            tracing::debug!(%error, "origin read after a watch read did not finish");
+            tracing::debug!(%error, "origin read after a watch walk did not finish");
             false
         }
     }
@@ -655,79 +564,5 @@ fn watch_event(due: &Due, mut changes: Vec<WatchedChange>) -> TriggerEvent {
         more: u32::try_from(more).unwrap_or(u32::MAX),
         operator: false,
         trust: watch::WATCH_TRUST.to_owned(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn walked(numbers: &[u64], complete: bool, read_at: &str) -> Walked {
-        let pulls: Vec<serde_json::Value> = numbers
-            .iter()
-            .map(|n| serde_json::json!({"number": n, "head": {"sha": "a"}, "updated_at": "2026-11-02T00:00:00Z"}))
-            .collect();
-        let body = serde_json::Value::from(pulls).to_string();
-        Walked {
-            pages: vec![PageMark {
-                etag: Some(format!("W/\"{read_at}\"")),
-                full: false,
-                numbers: numbers.to_vec(),
-            }],
-            pulls: watch::parse_pulls("o/r", &body).unwrap(),
-            complete,
-            read_at: read_at.parse().unwrap(),
-            listed: complete.then(|| numbers.iter().copied().collect()),
-        }
-    }
-
-    #[test]
-    fn the_baseline_clock_stays_and_only_a_whole_settled_read_keeps_etags() {
-        let none = Followed::default();
-        let read = WatchRecord::new(5, "o/r".into());
-        let baseline = walked(&[3], true, "2026-11-10T00:00:00Z");
-        let based = updated(read.clone(), &read, &baseline, &none, true);
-        assert_eq!(based.baseline_at, Some(baseline.read_at));
-        assert_eq!(
-            based.pages, baseline.pages,
-            "a settled whole read is conditional next"
-        );
-        let cut = updated(
-            based.clone(),
-            &based,
-            &walked(&[9], false, "2026-11-12T00:00:00Z"),
-            &none,
-            false,
-        );
-        assert!(cut.pages.is_empty(), "every page is asked afresh");
-        let whole = walked(&[9], true, "2026-11-13T00:00:00Z");
-        let next = updated(cut.clone(), &cut, &whole, &none, true);
-        assert_eq!(
-            next.baseline_at, based.baseline_at,
-            "the cutoff never moves"
-        );
-        assert_eq!(next.max_number, 9);
-        let marks = next.pulls.unwrap();
-        assert!(marks[&9].listed && !marks[&3].listed, "#3 left the list");
-    }
-
-    #[test]
-    fn a_watch_whose_pages_do_not_fit_the_pass_waits_for_the_next() {
-        let mut record = WatchRecord::new(5, "o/r".into());
-        let page = PageMark {
-            etag: Some("W/\"p\"".into()),
-            full: true,
-            numbers: Vec::new(),
-        };
-        record.pages = vec![page; MAX_PAGES as usize];
-        let mut pass = Pass::default();
-        assert!(fits(&pass, &record));
-        pass.watch.requested = MAX_WATCH_REQUESTS - MAX_PAGES as usize + 1;
-        pass.requested = pass.watch.requested;
-        assert!(!fits(&pass, &record), "ten pages, nine left");
-        assert!(
-            fits(&pass, &WatchRecord::new(5, "o/r".into())),
-            "a first read takes one"
-        );
     }
 }

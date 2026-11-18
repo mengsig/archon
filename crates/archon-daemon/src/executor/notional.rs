@@ -10,8 +10,6 @@ use archon_queue::Store;
 
 use super::spawn;
 
-const COST_BUDGET_STOP: &str = StageOutcome::COST_BUDGET_STOP;
-
 /// `outcome`, its failure labelled notional cost when Aether stopped stage
 /// `id` at a dollar cap whose billing is unknown.
 pub(super) fn label(
@@ -22,7 +20,7 @@ pub(super) fn label(
     let StageOutcome::Failed { error, infra } = outcome else {
         return Ok(outcome);
     };
-    if !error.contains(COST_BUDGET_STOP) {
+    if !StageOutcome::is_cost_budget_stop(&error) {
         return Ok(StageOutcome::Failed { error, infra });
     }
     let billing = match spawn::load_spawn(store, id) {
@@ -39,11 +37,12 @@ pub(super) fn label(
 
 fn labelled(error: &str) -> String {
     assert!(
-        error.contains(COST_BUDGET_STOP),
+        StageOutcome::is_cost_budget_stop(error),
         "only a cost stop is labelled"
     );
+    let note = StageOutcome::NOTIONAL_COST_NOTE;
     let text = format!(
-        "{error} (notional cost: Claude Code reports list-price dollars whether or not its \
+        "{error}{note}Claude Code reports list-price dollars whether or not its \
          login bills them, and Aether showed no fresh subscription usage window with headroom for it, so the \
          budget was enforced; under a subscription, raise or unset the item's budget)"
     );
@@ -62,6 +61,15 @@ mod tests {
         assert!(
             text.starts_with(stop) && text.contains("notional cost"),
             "{text}"
+        );
+        assert!(
+            StageOutcome::is_cost_budget_stop(&text),
+            "a labelled stop is still one"
+        );
+        let quoted = "cost budget of $5 is too small for this job";
+        assert!(
+            !StageOutcome::is_cost_budget_stop(quoted),
+            "a task's own words are no stop to label"
         );
     }
 

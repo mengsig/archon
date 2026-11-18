@@ -375,7 +375,7 @@ fn v24_reads_daemon_stops_and_nested_reviews() {
         Some(FailureClass::Infrastructure),
         false,
     );
-    let quoted = "the change exceeds the cost budget of $2.00 stated in the PR";
+    let quoted = "cost budget of $5 is too small for this job";
     let quoting = failed_run("implement", quoted);
     let words = failed_stage(&quoting, StageKind::Work, quoted, false);
     seed(&conn, &quoting, &[words], Some(FailureClass::Budget), false);

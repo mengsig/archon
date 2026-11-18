@@ -302,7 +302,36 @@ fn a_nested_review_is_read_as_the_gate_reads_it() {
 
 #[test]
 fn a_task_that_quotes_a_cost_budget_is_no_budget_stop() {
-    let quoted = "the change exceeds the cost budget of $2.00 stated in the PR";
+    for quoted in [
+        "the change exceeds the cost budget of $2.00 stated in the PR",
+        "cost budget of $5 is too small for this job",
+        "cost budget of $5: the plan needs $9 spent on reviewers alone",
+    ] {
+        quoted_budget(quoted);
+    }
+}
+
+#[test]
+fn aethers_cost_stop_is_read_in_each_shape_it_takes() {
+    for stop in [
+        "cost budget of $1: ≥ $1.0200 (some unpriced) spent",
+        "cost budget of $0.5: unknown spent",
+        "cost budget of $2: $2.0100 spent (notional cost: Claude Code reports list-price dollars)",
+    ] {
+        let capped = failed_with("implement", "stage failed", |run| {
+            let error = stop.into();
+            vec![settled(
+                run,
+                "implement",
+                StageKind::Work,
+                StageState::Failed { error },
+            )]
+        });
+        assert_eq!(capped.failure, Some(FailureClass::Budget), "{stop}");
+    }
+}
+
+fn quoted_budget(quoted: &'static str) {
     let review = failed_with("review", quoted, |run| {
         let mut lead = settled(
             run,
@@ -315,7 +344,7 @@ fn a_task_that_quotes_a_cost_budget_is_no_budget_stop() {
         lead.only_reviews = Some(true);
         vec![lead]
     });
-    assert_eq!(review.failure, Some(FailureClass::Review));
+    assert_eq!(review.failure, Some(FailureClass::Review), "{quoted}");
     let work = failed_with("implement", quoted, |run| {
         let error = quoted.into();
         vec![settled(
@@ -325,7 +354,7 @@ fn a_task_that_quotes_a_cost_budget_is_no_budget_stop() {
             StageState::Failed { error },
         )]
     });
-    assert_eq!(work.failure, Some(FailureClass::Other));
+    assert_eq!(work.failure, Some(FailureClass::Other), "{quoted}");
     assert!(work.is_scored(), "the task judged its own work");
 }
 

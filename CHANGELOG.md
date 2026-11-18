@@ -25,8 +25,9 @@
   error named "aether", "timeout" or "budget" was left unscored, so review pass
   rates of different repositories could not be compared. Only the prefixes
   Archon writes itself are still read: `BLOCKED:`, `ESCALATE:`, the budget
-  guards' own blockers, Aether's cost stop (only as Aether words it, not quoted
-  in a task's own failure) and the daemon's full-disk stop.
+  guards' own blockers, Aether's cost stop (only in Aether's own grammar,
+  `cost budget of $<limit>: <cost> spent`, never a task's words that open
+  with the phrase; the notional-cost label reads it the same way) and the daemon's full-disk stop.
   A review is read as the gate reads it. A nested `review` that failed, one
   Archon refused, or one the gate found missing (such as a skip the pipeline
   does not allow) is a `review` failure. Migration V24 recomputes stored

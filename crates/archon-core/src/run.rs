@@ -814,18 +814,22 @@ impl StageOutcome {
     /// How Aether's budget message opens around the stop reason it names.
     pub const BUDGET_STOP_MESSAGE: &'static str = "Stopped by its budget (";
 
+    /// How Archon's label opens after a cost stop whose dollars may be notional.
+    pub const NOTIONAL_COST_NOTE: &'static str = " (notional cost: ";
+
     /// How the daemon's error opens when Aether's disk stayed full through
     /// every spawn retry: an infrastructure stop, also on 1.6.3 records.
     pub const DISK_FULL_SPAWN: &'static str = "create_agent failed on a full disk";
 
-    /// Whether `error` is Aether's own cost-budget stop: its reason as the
-    /// error, or its budget message around it. Text quoting it elsewhere is not.
+    /// Whether `error` is Aether's own cost-budget stop, in its grammar: the
+    /// bare reason (perhaps labelled notional), or its budget message around it.
     pub fn is_cost_budget_stop(error: &str) -> bool {
         let error = error.trim_start();
-        error.starts_with(Self::COST_BUDGET_STOP)
-            || error
-                .strip_prefix(Self::BUDGET_STOP_MESSAGE)
-                .is_some_and(|reason| reason.starts_with(Self::COST_BUDGET_STOP))
+        match error.strip_prefix(Self::BUDGET_STOP_MESSAGE) {
+            Some(wrapped) => cost_stop_tail(wrapped).is_some_and(|tail| tail.starts_with(");")),
+            None => cost_stop_tail(error)
+                .is_some_and(|tail| tail.is_empty() || tail.starts_with(Self::NOTIONAL_COST_NOTE)),
+        }
     }
 
     pub fn is_operator_blocker(&self) -> bool {
@@ -838,6 +842,17 @@ impl StageOutcome {
         let error = error.trim_start();
         error.starts_with(Self::BLOCKED_PREFIX) || error.starts_with(Self::ESCALATE_PREFIX)
     }
+}
+
+/// What follows Aether's stop reason `cost budget of ${limit}: {cost} spent`
+/// at the start of `text`; `None` when `text` does not open with one.
+fn cost_stop_tail(text: &str) -> Option<&str> {
+    let rest = text.strip_prefix(StageOutcome::COST_BUDGET_STOP)?;
+    let (limit, rest) = rest.split_once(": ")?;
+    let limit: f64 = limit.parse().ok()?;
+    let (cost, tail) = rest.split_once(" spent")?;
+    let shaped = limit.is_finite() && limit >= 0.0 && !cost.trim().is_empty();
+    shaped.then_some(tail)
 }
 
 impl StageState {

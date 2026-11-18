@@ -596,6 +596,39 @@ async fn an_internal_aether_error_is_retried_under_the_same_key_then_fails_as_in
     );
 }
 
+/// The spawn that kept failing is Aether's failure wherever it is told: the
+/// workspace going meanwhile changes the words, never the flag the outcome reads.
+#[tokio::test]
+async fn a_spawn_that_kept_failing_stays_infrastructure_when_its_workspace_went() {
+    let h = Harness::new().await;
+    for _ in 0..5 {
+        h.backend
+            .fail_next(ArchonError::Aether("internal: lock poisoned".into()));
+    }
+    let item = h.enqueue("aether fails and the worktree goes").await;
+    h.dispatch().await;
+    let tree = h.run(&item.id).await.workspace;
+    std::fs::remove_dir_all(&tree).unwrap();
+    for _ in 0..5 {
+        h.dispatch().await;
+    }
+
+    let stages = h.stages(&item.id).await;
+    let [stage] = &stages[..] else {
+        panic!("no retry in a missing workspace: {stages:?}");
+    };
+    let StageState::Failed { error } = &stage.state else {
+        panic!("the spawn gave up: {:?}", stage.state);
+    };
+    assert!(error.starts_with("workspace missing:"), "{error}");
+    assert!(error.contains(StageOutcome::SPAWN_KEPT_FAILING), "{error}");
+    assert!(stage.aether_agent.is_none(), "no agent was created");
+    assert!(
+        stage.infrastructure_failure,
+        "Aether failed, not the model, whatever became of the workspace"
+    );
+}
+
 #[tokio::test]
 async fn standby_serves_reads_and_refuses_the_rest_naming_the_full_disk() {
     let h = Harness::new().await;

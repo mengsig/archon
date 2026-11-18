@@ -179,6 +179,35 @@ fn v24_goes_on_when_the_lesson_clusters_cannot_be_recomputed() {
     }
 }
 
+/// A lesson row whose record names another lesson would be written over that
+/// one: the clusters stay as they were, and every stored lesson with them.
+#[test]
+fn v24_never_writes_a_lesson_over_the_one_its_record_names() {
+    let mut conn = v23_store();
+    let losing = lesson(&conn, 0);
+    let runs: Vec<PipelineRun> = (0..5).map(|_| budget_run(&conn)).collect();
+    for run in &runs {
+        use_and_trial(&conn, &losing, run, None);
+    }
+    // The misnamed lesson and its twin share a text, so consolidation writes both.
+    let (misnamed, _twin, other) = (lesson(&conn, 0), lesson(&conn, 0), lesson(&conn, 0));
+    let mut unrelated = lesson_json(&conn, &other);
+    unrelated["text"] = serde_json::json!("squash merges need a linear history");
+    set_lesson_data(&conn, &other, &unrelated.to_string());
+    let mut names_other = lesson_json(&conn, &misnamed);
+    names_other["id"] = serde_json::json!(other.as_str());
+    set_lesson_data(&conn, &misnamed, &names_other.to_string());
+
+    assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+
+    assert_eq!(lesson_json(&conn, &other), unrelated, "it is not replaced");
+    assert_eq!(lesson_json(&conn, &misnamed), names_other);
+    assert_eq!(standing(&conn, &losing), (5, "retracted".to_owned()));
+    for run in &runs {
+        assert_eq!(columns(&conn, run).1, some("recomputed"));
+    }
+}
+
 #[test]
 fn v24_goes_on_over_records_sqlite_holds_as_blobs() {
     let mut conn = v23_store();

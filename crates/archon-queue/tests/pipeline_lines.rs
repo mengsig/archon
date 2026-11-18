@@ -342,3 +342,27 @@ fn a_verdict_the_gate_took_across_a_line_break_reviewed_its_pull_request() {
         "an unread word is no verdict"
     );
 }
+
+/// An outcome recorded again under no repository keeps the one its row was
+/// filed under: that repository's reports still read it.
+#[test]
+fn an_outcome_recorded_again_under_no_repository_is_still_reported() {
+    let mut store = store();
+    let alpha = repo("alpha");
+    store.insert_repo(&alpha).unwrap();
+    let now = t(DAY * 10);
+    finish(&mut store, &item(Some(&alpha), "moved"), passed(), now);
+    let mut recorded = store.outcomes(Some(&alpha.id)).unwrap().remove(0);
+    assert_eq!(recorded.repo.as_ref(), Some(&alpha.id));
+    recorded.repo = None;
+    store.record_outcome(&recorded).unwrap();
+    let stored = store.outcome(&recorded.run).unwrap().unwrap();
+    assert_eq!(stored.repo, None, "the record is the one written last");
+
+    let lines = store
+        .pipeline_lines(Some(&alpha.id), None, &range(now))
+        .unwrap();
+    assert_eq!(lines.iter().map(|l| l.runs).sum::<u64>(), 1, "{lines:?}");
+    let stats = store.learning_stats(Some(&alpha.id)).unwrap();
+    assert_eq!(stats.outcomes, 1);
+}

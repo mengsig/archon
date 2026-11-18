@@ -677,6 +677,73 @@ fn a_stages_own_stop_is_read_from_the_stage_run_that_said_it() {
     assert!(!backend.is_scored());
 }
 
+/// One slot of a fan-out stage that failed in `error`, flagged or not.
+fn slot(run: &PipelineRun, fan_index: u32, error: &str, infra: bool) -> StageRun {
+    let error = error.into();
+    let state = StageState::Failed { error };
+    let mut stage = settled(run, "test", StageKind::Test, state);
+    stage.fan_index = fan_index;
+    stage.infrastructure_failure = infra;
+    stage
+}
+
+/// The slot the run failed in the words of ended it: a sibling's cost stop,
+/// read in its words, never outranks the flag the records put on that slot.
+#[test]
+fn the_slot_that_ended_the_run_outranks_a_siblings_cost_stop() {
+    const CAPPED: &str = "cost budget of $5: $5.0000 spent";
+    const DISK: &str = "create_agent failed on a full disk 5 times (No space left on device)";
+    let ended_in = |words: &'static str| {
+        failed_with("test", words, |run| {
+            vec![slot(run, 0, CAPPED, true), slot(run, 1, DISK, true)]
+        })
+    };
+    let disk = ended_in(DISK);
+    assert_eq!(disk.failure, Some(FailureClass::Infrastructure));
+    let capped = ended_in(CAPPED);
+    assert_eq!(capped.failure, Some(FailureClass::Budget), "its own stop");
+    let unquoted = ended_in("stage `test` failed: 2 of 2 agent(s) did not complete");
+    assert_eq!(
+        unquoted.failure,
+        Some(FailureClass::Infrastructure),
+        "a flag outranks words read in a sibling"
+    );
+    assert!(!disk.is_scored() && !capped.is_scored() && !unquoted.is_scored());
+}
+
+/// The run's own prefix never outranks the record of the stage run that
+/// stopped it: its blocker stands, and a flagged slot stays the backend's.
+#[test]
+fn the_runs_prefix_never_outranks_the_stage_run_that_stopped_it() {
+    let escalated = "ESCALATE: switch pipelines";
+    let blocked = failed_with("test", escalated, |run| {
+        vec![slot(run, 0, "BLOCKED: no push access", false)]
+    });
+    assert_eq!(blocked.failure, Some(FailureClass::Blocked));
+    let backend = failed_with("test", "ESCALATE: backend gone", |run| {
+        vec![
+            slot(run, 0, "ESCALATE: backend gone", true),
+            slot(run, 1, "BLOCKED: needs access", false),
+        ]
+    });
+    assert_eq!(
+        backend.failure,
+        Some(FailureClass::Infrastructure),
+        "the run ended in a flagged slot's words"
+    );
+    let own = failed_with("test", "BLOCKED: needs access", |run| {
+        vec![
+            slot(run, 0, "ESCALATE: split the work", false),
+            slot(run, 1, "BLOCKED: needs access", false),
+        ]
+    });
+    assert_eq!(
+        own.failure,
+        Some(FailureClass::Blocked),
+        "the slot it quotes"
+    );
+}
+
 /// A spawn the daemon gave up on left no agent. An agent that fails its task
 /// in the daemon's words judged its own work.
 #[test]

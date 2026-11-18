@@ -127,12 +127,14 @@ pub(super) fn seed(
         conn.execute(
             "INSERT INTO stage_runs (id, run, stage_id, attempt, fan_index, state, terminal,
                                      started_at, data)
-             VALUES (?1, ?2, ?3, 1, 0, 'done', 1, 'b', ?4)",
-            [
+             VALUES (?1, ?2, ?3, ?5, ?6, 'done', 1, 'b', ?4)",
+            rusqlite::params![
                 s.id.as_str(),
                 run.id.as_str(),
                 &s.stage_id,
                 &serde_json::to_string(s).unwrap(),
+                s.attempt,
+                s.fan_index
             ],
         )
         .unwrap();

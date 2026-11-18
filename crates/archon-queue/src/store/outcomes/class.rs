@@ -17,10 +17,10 @@ use rusqlite::{Connection, OptionalExtension};
 use super::super::codec::{SqlContext, from_json, text_column};
 
 /// Why the run that failed under `stage_id` with `error` failed. The records
-/// of the attempt that ended it come first: a stage's own blocker or
-/// escalation, then how a stage was stopped. Only then is `error` read, and
-/// only for the prefixes the daemon writes on purpose. `failed_reviews` is
-/// [`failed_reviews`] of `stages`.
+/// of the attempt that ended it come first: the stage run the run failed in the
+/// words of, then a stage's own blocker or escalation, then how a stage was
+/// stopped. Only then is `error` read, and only for the prefixes the daemon
+/// writes on purpose. `failed_reviews` is [`failed_reviews`] of `stages`.
 pub(in crate::store) fn failure_class(
     stage_id: &str,
     error: &str,
@@ -32,7 +32,10 @@ pub(in crate::store) fn failure_class(
         return FailureClass::Infrastructure;
     }
     let ending = ending_attempt(stage_id, stages);
-    let recorded = said_by_a_stage(error, &ending).or_else(|| stopped_class(&ending));
+    let recorded = ended_by(error, &ending)
+        .and_then(own_stop)
+        .or_else(|| ending.iter().find_map(|s| said_stop(s)))
+        .or_else(|| stopped_class(&ending));
     if let Some(class) = recorded.or_else(|| daemon_prefixed_class(error)) {
         return class;
     }
@@ -48,22 +51,34 @@ pub(in crate::store) fn failure_class(
     judged_class(stage_id, &ending, failed_reviews)
 }
 
-/// The class of the stop a stage of the `ending` attempt named in failing its
-/// own task: it blocked or escalated, whatever its words share with the
-/// daemon's. A failure flagged infrastructure is the backend's, in its words.
-fn said_by_a_stage(error: &str, ending: &[&StageRun]) -> Option<FailureClass> {
-    let said = ending.iter().find_map(|s| match &s.state {
-        StageState::Failed { error }
-            if !s.infrastructure_failure && StageOutcome::ends_run(error) =>
-        {
-            Some(error.trim_start())
+/// The stage run of the `ending` attempt whose own failure the run failed in
+/// the words of: the one that ended it, whatever its siblings recorded.
+fn ended_by<'a>(error: &str, ending: &[&'a StageRun]) -> Option<&'a StageRun> {
+    let quoted = error.trim();
+    if quoted.is_empty() {
+        return None;
+    }
+    let said =
+        |s: &StageRun| matches!(&s.state, StageState::Failed { error } if error.trim() == quoted);
+    ending.iter().copied().find(|s| said(s))
+}
+
+/// The class the stage run's own record gives a stop of its making: the
+/// blocker or escalation it named, else how it was stopped.
+fn own_stop(stage: &StageRun) -> Option<FailureClass> {
+    said_stop(stage).or_else(|| stop_of(stage))
+}
+
+/// The class of the stop the stage run named in failing its own task: it
+/// blocked or escalated, whatever its words share with the daemon's. A
+/// failure flagged infrastructure is the backend's, in its words.
+fn said_stop(stage: &StageRun) -> Option<FailureClass> {
+    match &stage.state {
+        StageState::Failed { error } if !stage.infrastructure_failure => {
+            ends_run_class(error.trim_start())
         }
         _ => None,
-    })?;
-    // The run fails in the words of the stage that stopped it, if it has them.
-    let class = ends_run_class(error).or_else(|| ends_run_class(said));
-    assert!(class.is_some(), "{said} blocks or escalates");
-    class
+    }
 }
 
 /// The class the daemon names by the prefix it puts on a run's `error` on
@@ -118,25 +133,34 @@ fn ending_attempt<'a>(stage_id: &str, stages: &'a [StageRun]) -> Vec<&'a StageRu
     ending
 }
 
-/// A deadline, a cost cap or the agent backend stopped the stage before it
-/// judged the work; none for a stage that left no record. The daemon flags
-/// every failed agent, so Aether's cost stop is read before that flag.
+/// A deadline, the agent backend or a cost cap stopped a stage of the `ending`
+/// attempt before it judged the work; none for a stage that left no record.
+/// A slot the records flag outranks the cost stop read in a sibling's words.
 fn stopped_class(ending: &[&StageRun]) -> Option<FailureClass> {
-    let failed_with = |stop: fn(&str) -> bool| {
-        ending
-            .iter()
-            .any(|s| matches!(&s.state, StageState::Failed { error } if stop(error)))
-    };
-    if ending.iter().any(|s| s.state == StageState::TimedOut) {
-        return Some(FailureClass::Timeout);
+    let stops: Vec<FailureClass> = ending.iter().filter_map(|s| stop_of(s)).collect();
+    assert!(stops.len() <= ending.len(), "a stage run stops once");
+    let by_rank = [
+        FailureClass::Timeout,
+        FailureClass::Infrastructure,
+        FailureClass::Budget,
+    ];
+    by_rank.into_iter().find(|class| stops.contains(class))
+}
+
+/// How the stage run was stopped before it judged the work, by its own
+/// record. The daemon flags every failed agent, so Aether's cost stop, which
+/// has no other mark, is read in the stopped run before that flag.
+fn stop_of(stage: &StageRun) -> Option<FailureClass> {
+    match &stage.state {
+        StageState::TimedOut => Some(FailureClass::Timeout),
+        StageState::Failed { error } if StageOutcome::is_cost_budget_stop(error) => {
+            Some(FailureClass::Budget)
+        }
+        _ => {
+            let infra = stage.infrastructure_failure || never_spawned(stage);
+            infra.then_some(FailureClass::Infrastructure)
+        }
     }
-    if failed_with(StageOutcome::is_cost_budget_stop) {
-        return Some(FailureClass::Budget);
-    }
-    let infra = ending
-        .iter()
-        .any(|s| s.infrastructure_failure || never_spawned(s));
-    infra.then_some(FailureClass::Infrastructure)
 }
 
 /// A stage run from before the daemon flagged its own spawn failures (1.6.3):

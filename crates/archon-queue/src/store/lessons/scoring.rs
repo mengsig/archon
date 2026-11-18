@@ -172,18 +172,24 @@ fn check_writable(lesson: &Lesson) -> Result<(), ArchonError> {
     Err(ArchonError::Corrupt(what))
 }
 
-/// Refuses a store holding a lesson that consolidation could not write back.
+/// Refuses a store holding a lesson that consolidation could not write back,
+/// or one whose record names another lesson: writing it would replace that one.
 fn check_every_lesson_writable(conn: &Connection) -> Result<(), ArchonError> {
     let mut stmt = conn
-        .prepare("SELECT data FROM lessons")
+        .prepare("SELECT id, data FROM lessons")
         .ctx("prepare the stored lessons")?;
     let rows = stmt
-        .query_map([], |r| text_column(r, 0))
+        .query_map([], |r| Ok((text_column(r, 0)?, text_column(r, 1)?)))
         .ctx("query the stored lessons")?;
     for row in rows {
         let unreadable = || ArchonError::Corrupt("a lesson row holds no text".into());
-        let data = row.ctx("read a stored lesson")?.ok_or_else(unreadable)?;
-        check_writable(&from_json(&data, "lesson")?)?;
+        let (id, data) = row.ctx("read a stored lesson")?;
+        let lesson: Lesson = from_json(&data.ok_or_else(unreadable)?, "lesson")?;
+        if id.as_deref() != Some(lesson.id.as_str()) {
+            let what = format!("a lesson row holds lesson {}, not its own", lesson.id);
+            return Err(ArchonError::Corrupt(what));
+        }
+        check_writable(&lesson)?;
     }
     Ok(())
 }

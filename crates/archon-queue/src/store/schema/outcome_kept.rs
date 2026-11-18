@@ -131,6 +131,69 @@ fn v24_keeps_a_run_holding_a_non_positive_attempt() {
     assert_eq!(columns(&conn, &whole).1, some("recomputed"));
 }
 
+/// A row that decodes, but that the store would never write, explains no
+/// class: a settled stage that never finished, or one its columns count otherwise.
+#[test]
+fn v24_keeps_a_run_whose_stage_row_the_store_would_not_write() {
+    let mut conn = v23_store();
+    let (unfinished, stage) = budget_run(&conn);
+    conn.execute(
+        "UPDATE stage_runs SET data = json_remove(data, '$.finished_at') WHERE id = ?1",
+        [stage.id.as_str()],
+    )
+    .unwrap();
+    let (uncounted, stage) = budget_run(&conn);
+    conn.execute(
+        "UPDATE stage_runs SET attempt = 0 WHERE id = ?1",
+        [stage.id.as_str()],
+    )
+    .unwrap();
+    let (miscounted, stage) = budget_run(&conn);
+    conn.execute(
+        "UPDATE stage_runs SET attempt = 'one' WHERE id = ?1",
+        [stage.id.as_str()],
+    )
+    .unwrap();
+    let (whole, _) = budget_run(&conn);
+
+    assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+
+    assert_kept(&conn, &unfinished, "a settled stage with no finish time");
+    assert_kept(&conn, &uncounted, "a stage row counted as attempt 0");
+    assert_kept(&conn, &miscounted, "a stage row whose attempt is text");
+    assert_eq!(columns(&conn, &whole).1, some("recomputed"));
+}
+
+/// 1.6.3's schema lets an outcome's key be empty: no run can be read for it.
+#[test]
+fn v24_keeps_a_failed_outcome_under_an_empty_run_key() {
+    let mut conn = v23_store();
+    let (whole, _) = budget_run(&conn);
+    conn.execute(
+        "INSERT INTO outcomes (run, item, repo, pipeline, size, result, failure_class, corrected,
+                               merged, cost_usd, finished_at, updated_at, data)
+         SELECT '', item, repo, pipeline, size, result, failure_class, corrected, merged,
+                cost_usd, finished_at, updated_at, data FROM outcomes WHERE run = ?1",
+        [whole.id.as_str()],
+    )
+    .unwrap();
+
+    assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+
+    let unkeyed: (Option<String>, Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT failure_class, class_source, failure_class_163 FROM outcomes WHERE run = ''",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        unkeyed,
+        (some("budget"), some("legacy_163"), some("budget"))
+    );
+    assert_eq!(columns(&conn, &whole).1, some("recomputed"));
+}
+
 #[test]
 fn v24_leaves_a_failed_outcome_whose_class_is_no_text() {
     let mut conn = v23_store();

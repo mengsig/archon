@@ -340,6 +340,7 @@ pub(super) async fn settle_locked(
 /// A stage that failed with its workspace gone failed for that, whatever
 /// its engine made of the missing directory, and no retry in it can pass;
 /// the engine's own error follows. Other outcomes are returned as they are.
+/// A spawn that reached no agent failed in the daemon's words: its flag stands.
 fn blame_missing_workspace(
     store: &archon_queue::Store,
     stage: &StageRun,
@@ -347,7 +348,7 @@ fn blame_missing_workspace(
     outcome: StageOutcome,
 ) -> Result<StageOutcome, ArchonError> {
     assert_eq!(stage.run, run.id, "the stage belongs to the run");
-    let StageOutcome::Failed { error, .. } = &outcome else {
+    let StageOutcome::Failed { error, infra } = &outcome else {
         return Ok(outcome);
     };
     // A team slot works in its own worktree; a stage without a stored request, in the run's.
@@ -365,10 +366,8 @@ fn blame_missing_workspace(
         spawn::WORKSPACE_MISSING,
         workspace.display()
     );
-    Ok(StageOutcome::Failed {
-        error,
-        infra: false,
-    })
+    let infra = *infra && stage.aether_agent.is_none();
+    Ok(StageOutcome::Failed { error, infra })
 }
 
 /// Record a final outcome and apply the driver's resulting decision.
@@ -587,6 +586,9 @@ async fn infra_retry(
     let StageOutcome::Failed { error, infra } = outcome else {
         return Ok(None);
     };
+    if error.starts_with(spawn::WORKSPACE_MISSING) {
+        return Ok(None);
+    }
     let kind = match refused {
         true => Some(RetryKind::Refused),
         false => RetryKind::of_failure(ctx, error, *infra).await,

@@ -32,7 +32,9 @@ recomputes nothing, rescores none of its lesson uses and leaves an unreadable
 outcome record as it was. A record it cannot read never stops the migration:
 that covers a run, stage run, observed-stage or review-tally row SQLite holds
 as something other than text, one that does not decode, a stage run naming no
-stage or attempt 0, an observed stage with no attempts, and a tally in any shape archond does not store (an object
+stage or attempt 0, a stage run the store would not write (settled with no
+finish time, or under another id or attempt than its row's columns), an
+observed stage with no attempts, and a tally in any shape archond does not store (an object
 in which each fail names its reviewer's Aether agent id, `agt_` and a ULID, the
 commit that reviewer read and its findings).
 archond logs, per class, the old count, the new count and the rows left on the
@@ -41,7 +43,8 @@ rescores the run's lesson uses and holdout trials and recounts the lessons it
 used, so lesson confidence and holdout lift follow the new classes. A lesson
 V24 cannot recount (its row, its use or its epoch is unreadable, or it holds
 what no lesson holds) keeps its stored counts, and the lesson clusters stay as
-they were when any stored lesson is unfit to write back: neither stops the
+they were when any stored lesson is unfit to write back or holds the record of
+another lesson: neither stops the
 migration, and archond logs each. V24 also
 stores, in each outcome whose item is still stored and whose run holds a
 recorded reviewer verdict (a review stage's pass or fail, the pass or fail of

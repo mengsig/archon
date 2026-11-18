@@ -43,12 +43,17 @@
   way) and the spawns the daemon gave up on. Those are `infrastructure` only on
   a stage run that has no agent: an agent that fails its task in the daemon's
   words judged its own work. The records of the attempt that ended the run are
-  read before any prefix on the run's error: a stage run's own `BLOCKED:` or
-  `ESCALATE:` failure first, then a recorded timeout, cost stop or
-  infrastructure flag. So the budget guards' blockers are `budget` only when
+  read before any prefix on the run's error: the stage run the run failed in
+  the words of first, then a stage run's own `BLOCKED:` or `ESCALATE:` failure
+  (by its own prefix, not the run's), then a recorded timeout, infrastructure
+  flag or cost stop. So the budget guards' blockers are `budget` only when
   the daemon wrote them and no stage run of that attempt recorded a stop; a
-  stage that fails its own task in those words is `blocked`, and a failure
-  flagged infrastructure stays `infrastructure` whatever its words. A run recovery could not resume ("cannot resume the run: ") is
+  stage that fails its own task in those words is `blocked`, a failure
+  flagged infrastructure stays `infrastructure` whatever its words, and a
+  flagged slot outranks the cost stop read in a sibling slot's words. A spawn
+  that kept failing keeps its infrastructure flag when its workspace went
+  meanwhile, and a report of one repository no longer stops on an outcome
+  recorded again under another. A run recovery could not resume ("cannot resume the run: ") is
   `infrastructure`, as recovery drops the stage rows it cannot read first.
   A review is read as the gate reads it. A nested `review` that failed, one
   Archon refused, or one the gate found missing (such as a skip the pipeline
@@ -63,8 +68,10 @@
   something other than text, one that does not decode, and a review tally in
   any shape archond does not store (an object in which each fail names its
   reviewer's Aether agent id, the commit that reviewer read and its findings)
-  are records it cannot read, as is an observed stage with no attempts:
-  V24 logs the run and goes on. A lesson it cannot recount (an unreadable row,
+  are records it cannot read, as are an observed stage with no attempts and a
+  stage run the store would not write (settled with no finish time, or under
+  another id or attempt than its row's columns): V24 logs the run and goes on.
+  An outcome filed under an empty run key keeps its class too. A lesson it cannot recount (an unreadable row,
   use or epoch) keeps its stored counts and never stops it either. For one release the old class stays in
   `failure_class_163`.
 - When `create_agent` keeps failing on Aether's full disk, the stage is now

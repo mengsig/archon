@@ -108,11 +108,7 @@ impl Store {
             let pr = outcome.review_pr.clone();
             values.push((outcome, pr));
         }
-        assert!(
-            values
-                .iter()
-                .all(|(o, _)| repo.is_none_or(|r| o.repo.as_ref() == Some(r)))
-        );
+        // A re-recorded outcome may name another repository than its row: the row filters.
         Ok(values)
     }
 }

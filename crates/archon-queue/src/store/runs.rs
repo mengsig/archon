@@ -397,7 +397,9 @@ fn stage_kind(state: &StageState) -> &'static str {
     }
 }
 
-fn check_stage_shape(stage: &StageRun) -> Result<(), ArchonError> {
+/// Whether `stage` is a stage run the store writes; V24 keeps the class of a
+/// run holding one that is not.
+pub(super) fn check_stage_shape(stage: &StageRun) -> Result<(), ArchonError> {
     if stage.attempt == 0 {
         return Err(ArchonError::Invalid(format!(
             "stage run {} has attempt 0",

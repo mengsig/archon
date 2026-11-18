@@ -331,24 +331,36 @@ fn readable_run(
 }
 
 /// Every stage run of `run` in the order they started. A row that is not
-/// text, does not decode, or is no stage run of `run` is corrupt.
+/// text, does not decode, is no stage run the store would write, or names
+/// another id or attempt than its columns is corrupt.
 fn readable_stages(conn: &Connection, run: &PipelineRunId) -> Result<Vec<StageRun>, ArchonError> {
     let mut stmt = conn
         .prepare_cached(
-            "SELECT data FROM stage_runs WHERE run = ?1
+            "SELECT id, attempt, data FROM stage_runs WHERE run = ?1
              ORDER BY started_at, attempt, fan_index, id",
         )
         .ctx("prepare a migrated outcome's stage runs")?;
+    let attempt = |r: &rusqlite::Row<'_>| -> rusqlite::Result<Option<i64>> {
+        match r.get_ref(1)? {
+            ValueRef::Integer(attempt) => Ok(Some(attempt)),
+            _ => Ok(None),
+        }
+    };
     let rows = stmt
-        .query_map([run.as_str()], |r| text_column(r, 0))
+        .query_map([run.as_str()], |r| {
+            Ok((text_column(r, 0)?, attempt(r)?, text_column(r, 2)?))
+        })
         .ctx("query a migrated outcome's stage runs")?
         .collect::<rusqlite::Result<Vec<_>>>()
         .ctx("read a migrated outcome's stage runs")?;
     let mut stages = Vec::with_capacity(rows.len());
-    for data in rows {
+    for (id, attempt, data) in rows {
         let unreadable = || ArchonError::Corrupt(format!("a stage row of {run} holds no text"));
         let stage: StageRun = from_json(&data.ok_or_else(unreadable)?, "stage run")?;
-        if &stage.run != run || stage.attempt == 0 || stage.stage_id.is_empty() {
+        let keyed = id.as_deref() == Some(stage.id.as_str());
+        let counted = attempt == Some(i64::from(stage.attempt));
+        let shaped = super::super::runs::check_stage_shape(&stage).is_ok();
+        if !keyed || !counted || !shaped || &stage.run != run || stage.stage_id.is_empty() {
             return Err(ArchonError::Corrupt(format!(
                 "stage row {} is no stage run of {run}",
                 stage.id
@@ -356,6 +368,7 @@ fn readable_stages(conn: &Connection, run: &PipelineRunId) -> Result<Vec<StageRu
         }
         stages.push(stage);
     }
+    assert!(stages.iter().all(|s| s.attempt > 0 && &s.run == run));
     Ok(stages)
 }
 
@@ -368,7 +381,7 @@ fn save(
     source: ClassSource,
     old: &str,
 ) -> Result<(), ArchonError> {
-    assert!(!run.is_empty(), "an outcome row names its run");
+    assert_ne!(source, ClassSource::Structure, "V24 recomputes or keeps");
     let changed = conn
         .execute(
             "UPDATE outcomes SET failure_class = NULLIF(?2, ''), class_source = ?3,

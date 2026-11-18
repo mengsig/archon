@@ -124,8 +124,8 @@ pub async fn economize(ctx: &DaemonContext, now: Timestamp) -> Result<Economy, A
     }
 }
 
-/// Whether a refresh of the stored generation is under way: it may have
-/// stopped that generation's agent before it could start the successor.
+/// Whether a refresh is under way: adoption ends it, so the agent still
+/// stored is the outdated one it may have stopped before starting a successor.
 pub(super) async fn refresh_owed_by(ctx: &DaemonContext) -> Result<bool, ArchonError> {
     let generation = super::generation(ctx).await?;
     let Some(unfinished) = read_kv::<u64>(ctx, REFRESH_UNFINISHED_KEY).await? else {
@@ -136,7 +136,7 @@ pub(super) async fn refresh_owed_by(ctx: &DaemonContext) -> Result<bool, ArchonE
         unfinished <= generation,
         "a refresh replaced a generation that was"
     );
-    Ok(unfinished == generation)
+    Ok(true)
 }
 
 /// Whether `agent` waits only for its next message, unpaused, and has logged

@@ -1101,13 +1101,18 @@ async fn replace_generation(
     create_generation(ctx, client).await
 }
 
+/// One transaction: a stop halfway never leaves the old agent stored under
+/// the new generation, or its creation settings frozen for the next.
 async fn advance_generation(ctx: &DaemonContext) -> Result<(), ArchonError> {
     let mut store = ctx.store.lock().await;
     let generation = parse_generation(store.kv_get(keys::ORCHESTRATOR_GENERATION)?)?;
-    store.kv_set(keys::ORCHESTRATOR_GENERATION, &(generation + 1).to_string())?;
-    store.kv_delete(keys::ORCHESTRATOR_AGENT)?;
-    store.kv_delete(HOST_CONTEXT_KEY)?;
-    store.kv_delete(COMPACTION_TOKENS_KEY)
+    let next = (generation + 1).to_string();
+    let cleared = [
+        keys::ORCHESTRATOR_AGENT,
+        HOST_CONTEXT_KEY,
+        COMPACTION_TOKENS_KEY,
+    ];
+    store.kv_update(&[(keys::ORCHESTRATOR_GENERATION, &next)], &cleared)
 }
 
 /// The configured orchestrator model and effort, as `provider/model effort`.

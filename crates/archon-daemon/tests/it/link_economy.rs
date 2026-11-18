@@ -514,6 +514,31 @@ async fn an_idle_large_orchestrator_is_compacted_once_before_its_cache_expires()
     assert_eq!(compacts[0]["agent"], json!(ORCH));
 }
 
+/// A store left with the generation counted on but the cancelled outdated
+/// agent still stored (a stop inside a non-atomic change) is finished fresh.
+#[tokio::test]
+async fn a_refresh_stopped_halfway_through_its_generation_change_starts_a_fresh_one() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    let agents = agent_table(&harness);
+    create(&harness, &agents, ORCH).await;
+    as_if_created_by_an_older_build(&harness).await;
+    harness.set_kv("orchestrator_refresh_unfinished", "1").await;
+    harness.set_kv(keys::ORCHESTRATOR_GENERATION, "2").await;
+    set_state(&agents, ORCH, "cancelled");
+    script_successor(&harness, &agents);
+
+    let id = supervisor::ensure_orchestrator(&harness.ctx).await.unwrap();
+    assert_eq!(id.as_str(), ORCH_2, "a fresh generation");
+    let restarts = harness.fake.received_named("restart");
+    assert!(
+        restarts.is_empty(),
+        "restarted from the checkpoint: {restarts:?}"
+    );
+    let unfinished = harness.kv("orchestrator_refresh_unfinished").await;
+    assert!(unfinished.is_none(), "adoption ended the refresh");
+}
+
 /// No refresh is owed: a turn an operator message or trigger started after
 /// the first look is seen under the switch guard, and nothing is compacted.
 #[tokio::test]

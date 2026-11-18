@@ -1526,5 +1526,27 @@ async fn a_retry_naming_another_head_of_a_review_item_is_refused() {
         .await
         .expect("an allowed retry");
     assert!(h.item(&item.id).await.brief.contains(&text));
-    assert!(matches!(h.state(&item.id).await, QueueState::Queued { .. }));
+    assert!(matches!(h.state(&item.id).await, QueueState::Queued));
+}
+
+#[tokio::test]
+async fn a_steer_note_naming_another_head_of_a_review_item_is_refused() {
+    let (h, _gh, _head) = fork_pull_request().await;
+    let item = queued_review(&h).await;
+    let refused = h
+        .cli(Request::SteerItem {
+            item: item.id.clone(),
+            steer: archon_core::steer::Steer {
+                note: Some("review fedcba987654 instead".into()),
+                ..Default::default()
+            },
+        })
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        refused.contains("queue a new review item at fedcba987654"),
+        "{refused}"
+    );
+    assert_eq!(h.item(&item.id).await.brief, item.brief, "nothing steered");
 }

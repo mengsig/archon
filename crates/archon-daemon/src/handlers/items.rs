@@ -1033,7 +1033,7 @@ pub(super) fn queue_again(
 
 /// A review item's `onto` head is frozen, so text that names another commit
 /// would send a review attempt to a head the item cannot record.
-fn check_frozen_head(item: &QueueItem, text: Option<&str>) -> Result<(), ArchonError> {
+pub(super) fn check_frozen_head(item: &QueueItem, text: Option<&str>) -> Result<(), ArchonError> {
     let Some(onto) = item.onto.as_deref().filter(|onto| onto.review_only) else {
         return Ok(());
     };
@@ -1050,15 +1050,31 @@ fn check_frozen_head(item: &QueueItem, text: Option<&str>) -> Result<(), ArchonE
     )))
 }
 
-/// The first full commit id (40 or 64 hex digits) in `text` other than `head`;
-/// shorter hex such as a base abbreviation is context, not a head.
+/// The first commit id in `text` that is not `head` and not labelled as a
+/// base or earlier commit. Abbreviations of 7 or more hex digits with both a
+/// digit and a letter count; plain numbers and words do not.
 fn other_commit<'a>(text: &'a str, head: &str) -> Option<&'a str> {
-    text.split(|c: char| !c.is_ascii_alphanumeric())
-        .find(|token| {
-            let full =
-                matches!(token.len(), 40 | 64) && token.bytes().all(|b| b.is_ascii_hexdigit());
-            full && !head.eq_ignore_ascii_case(token)
-        })
+    const CONTEXT: [&str; 5] = ["base", "previous", "prior", "old", "parent"];
+    let mut before = "";
+    for token in text
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|t| !t.is_empty())
+    {
+        let label = before.to_ascii_lowercase();
+        before = token;
+        if CONTEXT.contains(&label.as_str()) || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
+            continue;
+        }
+        let lower = token.to_ascii_lowercase();
+        let full = matches!(token.len(), 40 | 64);
+        let abbreviated = (7..40).contains(&token.len())
+            && token.bytes().any(|b| b.is_ascii_digit())
+            && token.bytes().any(|b| b.is_ascii_alphabetic());
+        if (full || abbreviated) && !head.to_ascii_lowercase().starts_with(&lower) {
+            return Some(token);
+        }
+    }
+    None
 }
 
 /// Record an amendment of the item's brief in its feed history.
@@ -1332,9 +1348,21 @@ mod tests {
         assert_eq!(other_commit(&format!("review {head} again"), head), None);
         assert_eq!(other_commit(&format!("not {other}."), head), Some(other));
         assert_eq!(
-            other_commit("base 0123456789abcdef, #cafe1234, 1234567", head),
+            other_commit("base 0123456789abcdef, 1234567, decade", head),
             None
         );
+        assert_eq!(
+            other_commit(
+                "against base fedcba9876543210fedcba9876543210fedcba98",
+                head
+            ),
+            None
+        );
+        assert_eq!(
+            other_commit("review fedcba987654 instead", head),
+            Some("fedcba987654")
+        );
+        assert_eq!(other_commit("frozen 0123456789ab", head), None);
     }
 
     use super::*;

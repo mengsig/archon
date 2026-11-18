@@ -37,6 +37,16 @@ async fn set_catalog(h: &Harness, models: &[(&str, Tier)]) {
             tier: Some(*tier),
             is_default: false,
         })
+        .chain(
+            [MODEL, REVIEW_MODEL]
+                .into_iter()
+                .filter(|id| !models.iter().any(|(name, _)| name == id))
+                .map(|id| CatalogModel {
+                    model: id.parse().unwrap(),
+                    tier: None,
+                    is_default: false,
+                }),
+        )
         .collect();
     h.set_catalog(ModelCatalog::new(models)).await;
 }
@@ -286,9 +296,9 @@ async fn a_low_effort_cap_clamps_the_medium_worker_default_in_policy_and_contrac
 /// models: no worker is permitted, yet the lead still spawns, exempting its
 /// planned reviewer, and its contract and `get_item` say it works alone.
 #[tokio::test]
-async fn an_empty_catalog_under_an_allowlist_leaves_the_lead_alone_with_its_reviewers() {
+async fn an_untiered_catalog_under_an_allowlist_leaves_the_lead_alone_with_its_reviewers() {
     let h = Harness::with_config(allowing(&[MODEL, REVIEW_MODEL])).await;
-    assert!(h.ctx.store.lock().await.model_catalog().is_empty());
+    set_catalog(&h, &[]).await;
     let plan = plan_of(&[("build", MODEL), ("build.review", REVIEW_MODEL)]);
     let (item, build) = build_lead(&h, plan).await;
     let policy = build
@@ -309,14 +319,14 @@ async fn an_empty_catalog_under_an_allowlist_leaves_the_lead_alone_with_its_revi
     let line = worker_line(&build);
     assert!(line.contains("): none. Do the work yourself"), "{line}");
     assert!(
-        line.contains("(the model catalog is empty; planned: "),
+        line.contains("(the model policy permits none of: "),
         "{line}"
     );
     let shown = detail(&h, &item).await;
     let build_run = shown.stages.iter().find(|s| s.stage_id == "build").unwrap();
     let note = &shown.stage_notes[&build_run.id];
     assert!(
-        note.starts_with("no permitted worker model resolved (the model catalog is empty"),
+        note.starts_with("no permitted worker model resolved (the model policy permits none of"),
         "{note}"
     );
     assert!(note.ends_with("; the lead works alone"), "{note}");

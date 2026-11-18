@@ -134,6 +134,10 @@ async fn after_an_upgrade_that_changes_the_prompt_status_says_so_until_a_restart
     assert_eq!(line, current.replace("generation 1", "generation 2"));
 }
 
+fn config_model(harness: &Harness) -> archon_core::model::ModelRef {
+    harness.ctx.config.orchestrator.model.clone()
+}
+
 /// A refused first attempt under one model must not pin the settings a
 /// retry under another one then runs.
 #[tokio::test]
@@ -141,6 +145,11 @@ async fn a_retry_under_another_model_records_the_model_it_ran() {
     let mut config = Config::default();
     config.orchestrator.model = "claude-code/first".parse().unwrap();
     let harness = Harness::with(config, None).await;
+    let first = config_model(&harness);
+    let models = crate::common::catalog::default_models();
+    let listed = models.models().iter().map(|entry| entry.model.clone());
+    let catalog = crate::common::catalog::untiered(listed.chain([first]));
+    crate::common::catalog::answer(&harness.fake, &catalog);
     harness.connect().await;
     let states = agent_table(&harness);
     let refused = Scripted::refuse("internal", "store busy");

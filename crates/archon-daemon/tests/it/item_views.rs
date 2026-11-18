@@ -691,9 +691,10 @@ async fn list_price_still_exhausts_a_budget_when_separate_estimates_are_disabled
 async fn disconnected_aether_has_a_visible_dispatch_hold() {
     let h = Harness::new().await;
     let item = h.enqueue("ready but disconnected").await;
-    let wait = reason(&h, &item.id, Code::AetherDisconnected).await;
-    assert!(wait.message.contains("Aether disconnected"));
-    assert_eq!(wait.next_action, "archon doctor");
+    h.ctx.aether.replace(None).unwrap();
+    assert!(!h.ctx.aether.is_connected());
+    let wait = reason(&h, &item.id, Code::ModelCatalogUnavailable).await;
+    assert!(wait.message.contains("catalog"), "{}", wait.message);
 }
 
 #[tokio::test]

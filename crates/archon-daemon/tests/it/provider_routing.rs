@@ -65,6 +65,16 @@ fn catalog() -> ModelCatalog {
         entry("claude-code/opus", Tier::Frontier),
         entry("codex/mini", Tier::Fast),
         entry("codex/sol", Tier::Strong),
+        CatalogModel {
+            model: common::MODEL.parse().unwrap(),
+            tier: None,
+            is_default: false,
+        },
+        CatalogModel {
+            model: common::REVIEW_MODEL.parse().unwrap(),
+            tier: None,
+            is_default: false,
+        },
     ])
 }
 

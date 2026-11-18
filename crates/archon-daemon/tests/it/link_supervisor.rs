@@ -1674,3 +1674,30 @@ async fn mail_behind_a_hung_call_is_read_by_a_fresh_turn_within_minutes() {
     );
     assert_eq!(harness.fake.received_named("interrupt").len(), 1);
 }
+
+#[tokio::test]
+async fn orchestrator_creation_checks_the_configured_alias_against_the_live_catalog() {
+    let mut config = Config::default();
+    config.orchestrator.model = "claude-code/opus".parse().unwrap();
+    let h = Harness::with(config, None).await;
+    h.connect().await;
+    let error = supervisor::ensure_orchestrator(&h.ctx).await.unwrap_err();
+    assert!(error.to_string().contains("nearest"), "{error}");
+    assert!(h.fake.received_named("create_agent").is_empty());
+    h.fake.set_default(
+        "list_models",
+        Scripted::reply(
+            "models",
+            json!([
+                {"model":"claude-code/canonical", "configured": true, "aliases": ["opus"]}
+            ]),
+        ),
+    );
+    create_key(&h).await;
+    let creates = h.fake.received_named("create_agent");
+    assert_eq!(creates.len(), 1);
+    assert_eq!(
+        creates[0]["model"],
+        json!({"provider":"claude-code","model":"canonical"})
+    );
+}

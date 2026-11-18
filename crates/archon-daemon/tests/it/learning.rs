@@ -776,6 +776,7 @@ async fn ordinary_operator_chat_is_not_a_correction_but_structured_feedback_is()
     let item = h.enqueue("operator feedback").await;
     h.dispatch().await;
     let stage = h.running().await.pop().unwrap();
+    h.ctx.aether.replace(None).unwrap();
     let sent = h
         .cli(Request::Say {
             text: "Actually add another test for the typo".into(),

@@ -69,9 +69,15 @@ pub(crate) async fn fixture_on(
 /// A connected fake Aether that lists each of `vision` as a vision model.
 pub(crate) async fn models_listed(h: &Harness, vision: &[&str]) -> FakeAether {
     let fake = common::connect_aether_for_delegations(h).await;
-    let models: Vec<_> = vision.iter().map(|model| {
+    let mut models: Vec<_> = vision.iter().map(|model| {
         json!({"model":model.parse::<archon_core::model::ModelRef>().unwrap(),"configured":true,"tier":"strong","capabilities":{"vision":true}})
     }).collect();
+    // The plan's other models stay listed, without vision, so the plan passes the catalog.
+    for model in [common::MODEL, common::REVIEW_MODEL] {
+        if !vision.contains(&model) {
+            models.push(json!({"model":model.parse::<archon_core::model::ModelRef>().unwrap(),"configured":true,"tier":"strong"}));
+        }
+    }
     fake.set_default("list_models", Scripted::reply("models", json!(models)));
     fake
 }

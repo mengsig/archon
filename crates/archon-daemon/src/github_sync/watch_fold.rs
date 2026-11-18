@@ -41,8 +41,8 @@ pub(crate) fn same_watch(held: &TriggerEvent, event: &TriggerEvent) -> bool {
     }
 }
 
-/// `newer` folded into `held`: each pull request once, named with every kind
-/// of difference either named, the first [`MAX_CHANGES`] in full.
+/// `newer` folded into `held`: each pull request once, named with every kind of difference
+/// either named. The first [`MAX_CHANGES`] held stay in full; no later news displaces them.
 pub(crate) fn fold(held: &mut TriggerEvent, newer: TriggerEvent) {
     assert!(
         same_watch(held, &newer),
@@ -75,24 +75,17 @@ pub(crate) fn fold(held: &mut TriggerEvent, newer: TriggerEvent) {
     );
     let mut told = std::mem::take(changes);
     let mut named = std::mem::take(rest);
-    // What is held stays: a cut keeps the earliest, and leaves out the news that came last.
-    let mut room = MAX_HELD_NUMBERS.saturating_sub(reviewers_in(&told) + numbers_in(&named));
-    let mut cut = false;
-    for change in newer_changes {
-        match told.iter_mut().find(|known| known.number == change.number) {
-            Some(known) => cut |= join(known, change, &mut room),
-            None => {
-                let (change, clipped) = with_reviewers_within(change, &mut room);
-                cut |= clipped;
-                told.push(change);
-            }
-        }
-    }
+    let (asked, past) = place(&mut told, newer_changes);
     for change in &mut told {
         absorb_named(change, &mut named);
         absorb_named(change, &mut newer_rest);
     }
-    let past = told.split_off(told.len().min(MAX_CHANGES));
+    // What is held stays: a cut keeps the earliest, and leaves out the news that came last.
+    let mut room = MAX_HELD_NUMBERS.saturating_sub(reviewers_in(&told) + numbers_in(&named));
+    let mut cut = false;
+    for (index, reviewers) in asked {
+        cut |= add_reviewers(&mut told[index].reviewers, reviewers, &mut room);
+    }
     let reviewers = reviewers_in(&told);
     cut |= add_named(&mut named, by_kind(&past), reviewers);
     cut |= add_named(&mut named, newer_rest, reviewers);
@@ -110,16 +103,54 @@ pub(crate) fn fold(held: &mut TriggerEvent, newer: TriggerEvent) {
     *rest = named;
 }
 
-/// `known` with `newer`'s kinds, freshest text and, while there is `room`, reviewers
-/// joined in; whether a reviewer was left out.
-fn join(known: &mut WatchedChange, newer: WatchedChange, room: &mut usize) -> bool {
+/// Each of `newer` placed in `told`: joined into its pull request there, or added while fewer
+/// than [`MAX_CHANGES`] are told. What is told in full stays so, so the others are returned
+/// for `rest`, behind each placed one's reviewers by its index, to add within the cap.
+fn place(
+    told: &mut Vec<WatchedChange>,
+    newer: Vec<WatchedChange>,
+) -> (Vec<(usize, Vec<String>)>, Vec<WatchedChange>) {
+    let before = told.len();
+    let (mut asked, mut past) = (Vec::new(), Vec::new());
+    for mut change in newer {
+        let reviewers = std::mem::take(&mut change.reviewers);
+        let known = told.iter().position(|known| known.number == change.number);
+        let index = match known {
+            Some(index) => {
+                join(&mut told[index], change);
+                index
+            }
+            None if told.len() < MAX_CHANGES => {
+                told.push(change);
+                told.len() - 1
+            }
+            None => {
+                past.push(change);
+                continue;
+            }
+        };
+        asked.push((index, reviewers));
+    }
+    assert!(told.len() >= before, "none told in full is displaced");
+    assert!(
+        told.len() <= before.max(MAX_CHANGES),
+        "added only while fewer are told"
+    );
+    (asked, past)
+}
+
+/// `known` with `newer`'s kinds and freshest text joined in; its reviewers are added apart.
+fn join(known: &mut WatchedChange, newer: WatchedChange) {
     assert_eq!(known.number, newer.number, "one pull request");
+    assert!(
+        newer.reviewers.is_empty(),
+        "reviewers are added within the cap"
+    );
     let kinds: Vec<String> = newer.kinds().map(str::to_owned).collect();
     add_kinds(known, kinds);
     known.title = newer.title;
     known.author = newer.author;
     known.url = newer.url;
-    add_reviewers(&mut known.reviewers, newer.reviewers, room)
 }
 
 /// `change` with as many of its reviewers as there is `room` for; whether one was left out.
@@ -384,6 +415,48 @@ mod tests {
         assert_eq!(reviewers_in(changes) + numbers_in(rest), MAX_HELD_NUMBERS);
         assert!(*truncated, "a cut reviewer is told");
         assert_eq!(note.as_deref(), Some(TRUNCATED_NOTE));
+    }
+
+    /// Later news of a pull request that `rest` names never takes the place of
+    /// what `rest` already tells of it, whatever the order of the kinds' names.
+    #[test]
+    fn later_news_of_a_named_pull_request_does_not_displace_what_was_held() {
+        let full: Vec<WatchedChange> = (1..=MAX_CHANGES as u64)
+            .map(|n| change(n, &["new_comment"]))
+            .collect();
+        let others: Vec<u64> = (100..100 + MAX_HELD_NUMBERS as u64 - 1).collect();
+        let rest: [(&str, &[u64]); 2] = [("new_comment", &others), ("new_review", &[21])];
+        let mut held = news(full, &rest);
+        fold(&mut held, news(vec![change(21, &["new_head"])], &[]));
+        let TriggerEvent::GithubWatch {
+            changes,
+            rest,
+            truncated,
+            ..
+        } = &held
+        else {
+            panic!("watch news");
+        };
+        assert_eq!(changes.len(), MAX_CHANGES);
+        assert!(changes.iter().all(|c| c.number != 21), "the held 20 stay");
+        assert_eq!(rest["new_review"], [21], "the earlier review is told still");
+        assert!(
+            !rest.contains_key("new_head"),
+            "the later push found no room"
+        );
+        assert_eq!(numbers_in(rest), MAX_HELD_NUMBERS);
+        assert!(*truncated, "and the cut says so");
+
+        let mut roomy = news(vec![], &[("new_review", &[21])]);
+        fold(&mut roomy, news(vec![change(21, &["new_head"])], &[]));
+        let (told_in_full, rest) = told(&roomy);
+        let both = (21, "new_head".to_owned(), vec!["new_review".to_owned()]);
+        assert_eq!(
+            told_in_full,
+            [both],
+            "with a full slot free, it moves there"
+        );
+        assert!(rest.is_empty());
     }
 
     #[test]

@@ -170,8 +170,7 @@ pub(in crate::executor) fn select_model(
     let vision = vision_models(store)?;
     let catalog = store.model_catalog();
     let permitted: Vec<_> = catalog
-        .models()
-        .iter()
+        .candidates()
         .filter(|m| policy.permits_model(&m.model) && (!visual || vision.contains(&m.model)))
         .collect();
     let model = judge_model(

@@ -406,6 +406,14 @@ impl Store {
 }
 
 impl Store {
+    pub fn fresh_model_catalog(&self) -> Option<ModelCatalog> {
+        let learned = self.learned();
+        let fresh = learned
+            .catalog_at
+            .is_some_and(|at| archon_core::now() - at < chrono::Duration::minutes(5));
+        (fresh && learned.catalog.not_ready_reason().is_none()).then(|| learned.catalog.clone())
+    }
+
     pub fn learning_models_stale(&self) -> bool {
         self.learned()
             .catalog_at

@@ -72,6 +72,10 @@ async fn queue(ctx: &DaemonContext, repo: &RepoId) -> Result<(), ArchonError> {
     let daily = ctx.config.learning.distill_daily_budget_usd;
     let budgets_enabled = crate::resolve::caps(ctx).await.budgets_enabled;
     let reservation = (budgets_enabled || daily == 0.0).then_some(daily);
+    let catalog = super::catalog(ctx).await?;
+    if catalog.not_ready_reason().is_some() {
+        return Ok(());
+    }
     let mut store = ctx.store.lock().await;
     if !store.distillation_available(repo, reservation)? {
         return Ok(());
@@ -91,12 +95,25 @@ async fn queue(ctx: &DaemonContext, repo: &RepoId) -> Result<(), ArchonError> {
     }
     assert!(count > 0);
     let draft_key = format!("learning/distill-draft/{repo}/{consumed}");
-    let item = match store.kv_get(&draft_key)? {
-        Some(raw) => serde_json::from_str(&raw)
-            .map_err(|e| ArchonError::Corrupt(format!("distillation draft: {e}")))?,
-        None => {
-            let listed = store.learning_models();
-            let choice = cheap_choice(&window, &policy, &listed, &ctx.config.orchestrator.model)?;
+    let saved: Option<QueueItem> = store
+        .kv_get(&draft_key)?
+        .map(|raw| {
+            serde_json::from_str(&raw)
+                .map_err(|e| ArchonError::Corrupt(format!("distillation draft: {e}")))
+        })
+        .transpose()?;
+    let item = match saved {
+        Some(item)
+            if policy.check_plan(&item.model_plan).is_ok()
+                && item.model_plan.0.values().flatten().all(|c| {
+                    catalog.check(&c.model).is_ok_and(|id| id == c.model)
+                        && catalog.superseded_by(&c.model).is_none()
+                }) =>
+        {
+            item
+        }
+        _ => {
+            let choice = cheap_choice(&window, &policy, &catalog, &ctx.config.orchestrator.model)?;
             let evidence = distillation_input(&store, repo, &window)?;
             let item = errand(repo, &window, choice, &evidence)?;
             store.save_learning_value(
@@ -155,38 +172,36 @@ fn distillation_input(
 fn cheap_choice(
     outcomes: &[Outcome],
     policy: &archon_core::policy::ModelPolicy,
-    listed: &[ModelRef],
+    catalog: &archon_core::model_tier::ModelCatalog,
     orchestrator: &ModelRef,
 ) -> Result<ModelChoice, ArchonError> {
-    assert!(listed.is_sorted(), "learning_models is sorted");
-    let is_listed = |m: &ModelRef| listed.is_empty() || listed.binary_search(m).is_ok();
+    let canonical = |choice: &ModelChoice| {
+        let mut choice = choice.clone();
+        choice.model = catalog.check(&choice.model).ok()?;
+        (policy.check(&choice).is_ok() && catalog.superseded_by(&choice.model).is_none())
+            .then_some(choice)
+    };
     let cheapest = outcomes
         .iter()
         .flat_map(|o| &o.stages)
-        .filter(|s| policy.check(&s.choice).is_ok() && is_listed(&s.choice.model))
-        .min_by(|a, b| a.cost_usd.total_cmp(&b.cost_usd))
-        .map(|s| s.choice.clone());
-    let choice = cheapest.unwrap_or_else(|| {
-        let allowed = policy.allow.iter().flatten();
-        let model = allowed
-            .chain(std::iter::once(orchestrator))
-            .chain(listed)
-            .find(|m| policy.permits_model(m) && is_listed(m))
-            .unwrap_or(orchestrator);
-        ModelChoice {
-            model: model.clone(),
-            effort: Effort::Low,
-            tier: None,
-        }
-    });
-    policy.check(&choice)?;
-    assert!(policy.permits_model(&choice.model));
-    if !is_listed(&choice.model) {
-        return Err(ArchonError::Policy(format!(
-            "no model Aether lists is allowed for distillation; {} is not listed",
-            choice.model
-        )));
-    }
+        .filter_map(|stage| Some((stage.cost_usd, canonical(&stage.choice)?)))
+        .min_by(|(left, _), (right, _)| left.total_cmp(right))
+        .map(|(_, choice)| choice);
+    let choice = cheapest
+        .or_else(|| {
+            policy
+                .allow
+                .iter()
+                .flatten()
+                .chain(std::iter::once(orchestrator))
+                .chain(catalog.models().iter().map(|m| &m.model))
+                .find_map(|model| canonical(&ModelChoice::pinned(model.clone(), Effort::Low)))
+        })
+        .ok_or_else(|| {
+            ArchonError::Policy("no model Aether lists is allowed for distillation".to_owned())
+        })?;
+    debug_assert!(policy.check(&choice).is_ok());
+    debug_assert!(catalog.check(&choice.model).is_ok());
     Ok(choice)
 }
 

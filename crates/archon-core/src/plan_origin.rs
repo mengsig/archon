@@ -290,11 +290,30 @@ where
     Ok(Some(Box::new(origins)))
 }
 
+/// The result worth surfacing alongside a stored model plan.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum CatalogCheck {
+    Deferred { reason: String },
+    Warnings { warnings: Vec<String> },
+}
+
+impl std::fmt::Display for CatalogCheck {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Deferred { reason } => write!(f, "model catalog not checked: {reason}"),
+            Self::Warnings { warnings } => f.write_str(&warnings.join(", ")),
+        }
+    }
+}
+
 /// An item's model plan with where each field came from. Serialized as the
 /// item's `model_plan` and `model_origins` keys, so stored items and older
 /// readers see the plan as before.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PlannedPlan {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_check: Option<Box<CatalogCheck>>,
     model_plan: ModelPlan,
     // Boxed so a stored item stays about the size it was before origins.
     #[serde(
@@ -314,11 +333,75 @@ impl Deref for PlannedPlan {
 }
 
 impl PlannedPlan {
+    pub fn canonicalize_aliases(&mut self, catalog: &crate::model_tier::ModelCatalog) {
+        for choice in self.model_plan.0.values_mut().flatten() {
+            choice.model = catalog.canonical_alias(&choice.model).clone();
+        }
+    }
+
+    pub fn check_request_policy(
+        &self,
+        policy: &crate::policy::ModelPolicy,
+    ) -> Result<(), ArchonError> {
+        if matches!(
+            self.catalog_check.as_deref(),
+            Some(CatalogCheck::Deferred { .. })
+        ) {
+            for choice in self.model_plan.0.values().flatten() {
+                policy.check_pending_model(choice)?;
+            }
+            Ok(())
+        } else {
+            policy.check_plan(&self.model_plan)
+        }
+    }
+
+    /// Apply a request check to carried entries too, retaining their provenance
+    /// when the catalog supplies the canonical spelling.
+    pub fn checked_request_catalog(
+        mut self,
+        catalog: &crate::model_tier::ModelCatalog,
+    ) -> Result<Self, ArchonError> {
+        if catalog.not_ready_reason().is_none() {
+            for choice in self.model_plan.0.values_mut().flatten() {
+                choice.model = catalog.check(&choice.model)?;
+            }
+        }
+        self.record_catalog(catalog);
+        Ok(self)
+    }
+
+    pub fn record_catalog(&mut self, catalog: &crate::model_tier::ModelCatalog) {
+        self.catalog_check = if let Some(reason) = catalog.not_ready_reason() {
+            Some(Box::new(CatalogCheck::Deferred {
+                reason: reason.to_owned(),
+            }))
+        } else {
+            let warnings: std::collections::BTreeSet<_> = self
+                .model_plan
+                .0
+                .values()
+                .flatten()
+                .filter_map(|choice| {
+                    catalog
+                        .superseded_by(&choice.model)
+                        .map(|successor| format!("{} is superseded by {successor}", choice.model))
+                })
+                .collect();
+            (!warnings.is_empty()).then(|| {
+                Box::new(CatalogCheck::Warnings {
+                    warnings: warnings.into_iter().collect(),
+                })
+            })
+        };
+    }
+
     /// `plan` with no writer to vouch for it: every field reads as a pin and
     /// is counted as unattributed.
     pub fn unattributed(item: &QueueItemId, plan: ModelPlan) -> Self {
         let entries = shape_of(&plan, PlanSource::Unattributed);
         Self {
+            catalog_check: None,
             model_plan: plan,
             model_origins: Some(Box::new(PlanOrigins {
                 item: Some(item.clone()),
@@ -332,6 +415,7 @@ impl PlannedPlan {
     #[cfg(any(test, feature = "testing"))]
     pub fn legacy(plan: ModelPlan) -> Self {
         Self {
+            catalog_check: None,
             model_plan: plan,
             model_origins: None,
         }
@@ -521,6 +605,7 @@ fn shape_of(plan: &ModelPlan, source: PlanSource) -> BTreeMap<String, Vec<EntryO
 /// earlier plan of the same item keeps, then each fill step's additions.
 #[derive(Debug)]
 pub struct PlanWriter {
+    catalog_check: Option<Box<CatalogCheck>>,
     item: QueueItemId,
     at: Timestamp,
     plan: ModelPlan,
@@ -530,6 +615,7 @@ pub struct PlanWriter {
 impl PlanWriter {
     pub fn new(item: &QueueItemId, at: Timestamp) -> Self {
         Self {
+            catalog_check: None,
             item: item.clone(),
             at,
             plan: ModelPlan::default(),
@@ -672,6 +758,7 @@ impl PlanWriter {
     /// with for `item`, to change in place.
     fn editing(planned: &PlannedPlan, item: &QueueItemId, at: Timestamp) -> Self {
         let editing = Self {
+            catalog_check: planned.catalog_check.clone(),
             item: item.clone(),
             at,
             plan: planned.model_plan.clone(),
@@ -756,6 +843,7 @@ impl PlanWriter {
         let fault = origins.fault(&self.item, &self.plan);
         assert_eq!(fault, None, "one whole origin per field");
         PlannedPlan {
+            catalog_check: self.catalog_check,
             model_plan: self.plan,
             model_origins: Some(Box::new(origins)),
         }

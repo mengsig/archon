@@ -228,7 +228,21 @@ async fn update_choice(
 ) -> Result<(), ArchonError> {
     assert_eq!(stage.aether_agent.as_ref(), Some(agent));
     assert!(!stage.state.is_terminal());
-    let delivery = &no_earlier(&*ctx.store.lock().await, &stage.id, delivery)?;
+    let mut delivery = no_earlier(&*ctx.store.lock().await, &stage.id, delivery)?;
+    if let Some(choice) = &mut delivery.choice {
+        let catalog = crate::learned::catalog(ctx).await?;
+        if let Some(reason) = catalog.not_ready_reason() {
+            return Err(ArchonError::Unavailable(reason.to_owned()));
+        }
+        choice.model = catalog.check(&choice.model)?;
+        let item = {
+            let store = ctx.store.lock().await;
+            store.item(&store.run(&stage.run)?.item)?
+        };
+        let env = crate::resolve::RepoEnv::load(ctx, item.repo.as_ref()).await?;
+        env.policy(&ctx.config).check(choice)?;
+    }
+    let delivery = &delivery;
     let patch = delivery.patch();
     if !patch.is_empty() {
         patch_lead(ctx, agent, delivery).await?;

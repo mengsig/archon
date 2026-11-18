@@ -255,7 +255,7 @@ async fn distillation_plans_only_a_model_aether_lists() {
     samples(&h, "codex/gpt-6.1-astra", 0.0, 2).await;
     samples(&h, "codex/listed", 0.3, 2).await;
     let listed = vec!["codex/listed".parse().unwrap()];
-    h.ctx.store.lock().await.set_learning_models(listed);
+    h.set_learning_models(listed).await;
     archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
     let items = h.ctx.store.lock().await.items(&Default::default()).unwrap();
     let errands: Vec<_> = items.iter().filter(|i| i.pipeline == "errand").collect();
@@ -288,7 +288,7 @@ async fn distillation_falls_back_to_a_listed_model_when_no_stage_ran_on_one() {
         "the orchestrator's model is not listed"
     );
     let listed = vec!["codex/listed".parse().unwrap()];
-    h.ctx.store.lock().await.set_learning_models(listed);
+    h.set_learning_models(listed).await;
     archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
     let items = h.ctx.store.lock().await.items(&Default::default()).unwrap();
     assert_eq!(errand_models(&items), ["codex/listed"]);
@@ -301,7 +301,7 @@ async fn distillation_queues_nothing_when_no_listed_model_is_permitted() {
     let h = Harness::with_config(config).await;
     samples(&h, "codex/gpt-6.1-astra", 0.0, 2).await;
     let listed = vec!["codex/denied".parse().unwrap()];
-    h.ctx.store.lock().await.set_learning_models(listed);
+    h.set_learning_models(listed).await;
     h.repo_config("[models]\ndeny = [\"codex/denied\"]\n");
     archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
     let items = h.ctx.store.lock().await.items(&Default::default()).unwrap();
@@ -578,11 +578,12 @@ async fn distillation_has_only_one_in_flight_per_repository() {
 async fn cold_start_explores_ready_models_within_policy_and_keeps_explanations() {
     let h = Harness::new().await;
     let own = h.ctx.config.orchestrator.model.clone();
-    h.ctx.store.lock().await.set_learning_models(vec![
+    h.set_learning_models(vec![
         own.clone(),
         "codex/unseen".parse().unwrap(),
         "codex/denied".parse().unwrap(),
-    ]);
+    ])
+    .await;
     h.repo_config("[models]\ndeny = [\"codex/denied\"]\n");
     let mut unseen = 0;
     for n in 0..200 {
@@ -837,4 +838,64 @@ async fn stats_survive_the_removal_of_a_repository_with_runs() {
     assert_eq!(stats.pipelines.len(), 1);
     assert!(stats.repo_names.is_empty(), "the repository is gone");
     assert_eq!(stats.pipelines[0].estimated_saving_usd, None);
+}
+
+#[tokio::test]
+async fn distillation_rechecks_a_saved_draft_and_waits_for_a_listed_model() {
+    let mut config = archon_core::config::Config::default();
+    config.learning.distill_every = 2;
+    let h = Harness::with_config(config).await;
+    samples(&h, "codex/cheap", 0.1, 2).await;
+    let draft = h.enqueue("obsolete distillation draft").await;
+    let repo = draft.repo.as_ref().unwrap();
+    let draft_key = format!("learning/distill-draft/{repo}/0");
+    let cursor_key = format!("learning/distilled-v2/{repo}");
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(&draft_key, &serde_json::to_string(&draft).unwrap())
+        .unwrap();
+    h.set_learning_models(Vec::new()).await;
+    archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    assert!(
+        h.ctx
+            .store
+            .lock()
+            .await
+            .kv_get(&cursor_key)
+            .unwrap()
+            .is_none()
+    );
+    h.set_learning_models(vec!["codex/listed".parse().unwrap()])
+        .await;
+    archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    let items = h.ctx.store.lock().await.items(&Default::default()).unwrap();
+    assert_eq!(errand_models(&items), ["codex/listed"]);
+}
+
+#[tokio::test]
+async fn a_learned_model_removed_from_the_catalog_cannot_be_chosen_again() {
+    let mut config = archon_core::config::Config::default();
+    config.learning.explore_rate = 0.0;
+    let h = Harness::with_config(config).await;
+    samples(&h, "codex/cheap", 0.2, 5).await;
+    let learned = h
+        .enqueue_with("before removal", Default::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        learned.model_plan.0["implement"][0].model.to_string(),
+        "codex/cheap"
+    );
+    h.set_learning_models(vec![h.ctx.config.orchestrator.model.clone()])
+        .await;
+    let replaced = h
+        .enqueue_with("after removal", Default::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        replaced.model_plan.0["implement"][0].model,
+        h.ctx.config.orchestrator.model
+    );
 }

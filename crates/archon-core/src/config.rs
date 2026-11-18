@@ -1208,14 +1208,13 @@ impl Config {
         self.notify.validate()?;
         self.remote.validate()?;
         self.models.check_weights()?;
-        let orchestrator = crate::model::ModelChoice {
-            model: self.orchestrator.model.clone(),
-            effort: self.orchestrator.effort,
-            tier: None,
-        };
+        let orchestrator = crate::model::ModelChoice::pinned(
+            self.orchestrator.model.clone(),
+            self.orchestrator.effort,
+        );
         self.models
             .policy()
-            .check(&orchestrator)
+            .check_pending_model(&orchestrator)
             .map_err(|e| ArchonError::Config(format!("orchestrator.model violates [models]: {e}")))
     }
 }

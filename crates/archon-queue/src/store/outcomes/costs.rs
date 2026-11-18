@@ -22,12 +22,17 @@ impl Store {
             live.iter()
                 .all(|s| s.cost_usd.is_finite() && s.cost_usd >= 0.0)
         );
-        for stage in &mut outcome.stages {
-            if let Some(current) = live
-                .iter()
-                .find(|s| s.stage == stage.stage && s.choice == stage.choice)
-            {
-                stage.cost_usd = current.cost_usd;
+        if stages.iter().any(super::capture::creation_refused) {
+            // Older captured outcomes may still contain the refused attempt.
+            outcome.stages = live;
+        } else {
+            for stage in &mut outcome.stages {
+                if let Some(current) = live
+                    .iter()
+                    .find(|s| s.stage == stage.stage && s.choice == stage.choice)
+                {
+                    stage.cost_usd = current.cost_usd;
+                }
             }
         }
         outcome.cost_usd = self

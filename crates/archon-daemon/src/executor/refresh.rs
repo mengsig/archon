@@ -46,7 +46,7 @@ pub(crate) async fn refresh_item(
         Some(onto) => onto.head_ref.clone(),
         None => base_for(ctx, &owner, &run, &env).await?,
     };
-    let catalog = crate::learned::catalog(ctx).await?;
+    let catalog = crate::learned::request_catalog(ctx).await?;
     let (mut prepared, daemon_ships) = refresh_owner(ctx, &owner, &env, &catalog, (asked, by))?;
     let child_head = match repo.ship == ShipMode::Pr && run.shipped {
         true => check_pr_open(ctx, &repo, &run).await?,
@@ -256,6 +256,7 @@ fn refresh_owner(
     let fallen = knobs::fill_static_stages(&base, &spec, writer.plan().clone(), fallback.as_ref())?;
     writer.filled(fallen, (PlanSource::Fallback, PlanSource::Fallback));
     item.model_plan = writer.finish();
+    item.model_plan.record_catalog(catalog);
     item.model_reasons = asked.model_reasons;
     item.stage_timeouts = refresh_timeouts(&ctx.config.limits, &spec, asked.stage_timeouts);
     for stage in &spec.file.stages {

@@ -124,6 +124,7 @@ fn node_id(n: u32) -> String {
 /// its task settled and `completed` after; `get_task` the status the test
 /// set, `active` until then.
 fn script_fleet(aether: &FakeAether) -> Arc<Mutex<Fleet>> {
+    common::catalog::answer(aether, &common::catalog::default_models());
     let fleet = Arc::new(Mutex::new(Fleet::default()));
     let created = fleet.clone();
     aether.set_responder(
@@ -658,8 +659,8 @@ fn script_budget_models(aether: &FakeAether) {
         Scripted::reply(
             "models",
             json!([
-                {"model": model(REVIEW_MODEL), "capabilities": {"cost": null}},
-                {"model": model(MODEL), "capabilities": {"cost": null}},
+                {"model": model(REVIEW_MODEL), "configured": true, "capabilities": {"cost": null}},
+                {"model": model(MODEL), "configured": true, "capabilities": {"cost": null}},
             ]),
         ),
     );
@@ -1019,7 +1020,7 @@ async fn a_budget_decision_is_persisted_before_create_and_replayed_after_capabil
     h.dispatch().await;
     assert_eq!(h.stages(&item.id).await[0].state, StageState::Spawning);
     aether.set_default("providers", Scripted::reply("providers", json!([])));
-    aether.set_default("list_models", Scripted::reply("models", json!([])));
+    common::catalog::answer(&aether, &common::catalog::default_models());
     h.dispatch().await;
     let creates = aether.received_named("create_agent");
     assert_eq!(creates.len(), 3);

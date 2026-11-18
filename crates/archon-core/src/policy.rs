@@ -60,6 +60,19 @@ impl ModelPolicy {
         allowed && !self.deny.contains(model)
     }
 
+    /// What can be enforced before a catalog resolves provider-local aliases.
+    pub fn check_pending_model(&self, choice: &ModelChoice) -> Result<(), ArchonError> {
+        if self.deny.contains(&choice.model)
+            || self
+                .allow
+                .as_ref()
+                .is_some_and(|allowed| !allowed.iter().any(|m| m.provider == choice.model.provider))
+        {
+            return self.check(choice);
+        }
+        self.check_effort(choice.effort)
+    }
+
     /// Refuse a choice outside the policy with an error that names what is
     /// allowed, so the orchestrator can correct itself.
     pub fn check(&self, choice: &ModelChoice) -> Result<(), ArchonError> {

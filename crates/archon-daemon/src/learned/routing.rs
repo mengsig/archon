@@ -51,8 +51,17 @@ pub(crate) fn plan_for_item(
                 .map_err(|e| ArchonError::Corrupt(format!("stored model defaults: {e}")))
         })
         .transpose()?;
+    let catalog = store.model_catalog();
     let (mut plan, mut reasons) = match saved {
-        Some(saved) if policy.check_plan(&saved.0).is_ok() => saved,
+        Some(saved)
+            if policy.check_plan(&saved.0).is_ok()
+                && saved.0.0.values().flatten().all(|choice| {
+                    eligible_model(&catalog, &choice.model, max_tier)
+                        .is_some_and(|id| id == choice.model)
+                }) =>
+        {
+            saved
+        }
         _ => select_plan(
             store,
             repo,
@@ -198,15 +207,40 @@ fn stage_evidence(
     }
     seed(store, &mut cohort.routes, query, policy);
     let catalog = store.model_catalog();
-    let within = |m: &ModelRef| catalog.tier_of(m).is_none_or(|tier| tier <= max_tier);
-    cohort
-        .routes
-        .retain(|e| policy.check(&e.route.choice).is_ok() && within(&e.route.choice.model));
+    cohort.routes.retain_mut(|e| {
+        let choice = &mut e.route.choice;
+        let Some(canonical) = eligible_model(&catalog, &choice.model, max_tier) else {
+            return false;
+        };
+        choice.model = canonical;
+        policy.check(choice).is_ok()
+    });
     assert!(cohort.routes.iter().all(|e| e.route.stage == query.stage));
     assert!(cohort.routes.iter().all(|e| e.route.passed <= e.route.runs));
     let local = cohort.routes.iter().all(|e| e.route.repo.is_some());
     assert!(!cohort.feedback_history || local, "corrections never pool");
     Ok(cohort)
+}
+
+fn eligible_model(
+    catalog: &archon_core::model_tier::ModelCatalog,
+    model: &ModelRef,
+    max_tier: Tier,
+) -> Option<ModelRef> {
+    match catalog.check(model) {
+        Ok(canonical)
+            if catalog.superseded_by(&canonical).is_none()
+                && catalog
+                    .tier_of(&canonical)
+                    .is_none_or(|tier| tier <= max_tier) =>
+        {
+            Some(canonical)
+        }
+        result => {
+            tracing::info!(%model, ?result, "skipping ineligible learned model");
+            None
+        }
+    }
 }
 
 /// The corrected choice's samples in its cohort, read past the policy, and
@@ -248,9 +282,6 @@ fn seed(
 ) {
     use archon_core::{model::Effort, outcome::LearnedRoute};
     let ready = store.learning_models();
-    if !ready.is_empty() {
-        evidence.retain(|e| ready.contains(&e.route.choice.model));
-    }
     for model in ready {
         let choice = ModelChoice {
             model,

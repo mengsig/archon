@@ -31,7 +31,7 @@ fn catalog() -> ModelCatalog {
 
 async fn harness() -> Harness {
     let h = Harness::with_config(Config::default()).await;
-    h.ctx.store.lock().await.set_model_catalog(catalog());
+    h.set_catalog(catalog()).await;
     h
 }
 
@@ -177,4 +177,145 @@ async fn an_update_item_model_plan_and_reviewer_plan_pin_their_models_through_di
     );
     let stored = h.item(&item.id).await;
     assert_eq!(stored.model_plan.0["implement.review"], [fast(Effort::Low)]);
+}
+
+#[tokio::test]
+async fn request_checks_worker_and_reviewer_pins_before_policy_and_storage() {
+    use archon_aether::fake::Scripted;
+    use serde_json::json;
+    let h = Harness::new().await;
+    let canonical = "claude-code/claude-opus-5-5";
+    let listed = json!([
+        {"model": canonical, "configured": true, "aliases": ["opus"]},
+        {"model": "codex/gpt-6-astra", "configured": true}
+    ]);
+    h.catalog_server
+        .set_default("list_models", Scripted::reply("models", listed));
+    let item = enqueue(
+        &h,
+        "direct",
+        serde_json::from_value(json!({
+            "implement": [{"model":"claude-code/opus"}]
+        }))
+        .unwrap(),
+        "review=none",
+    )
+    .await;
+    assert_eq!(
+        h.item(&item.id).await.model_plan.0["implement"][0]
+            .model
+            .to_string(),
+        canonical
+    );
+    for key in ["implement", "implement.workers", "implement.review"] {
+        let unknown = "codex/gpt-6.1-astra";
+        let patch = ItemPatch {
+            model_plan: Some(
+                serde_json::from_value(json!({ (key): [{"model": unknown}] })).unwrap(),
+            ),
+            ..Default::default()
+        };
+        let error = h
+            .cli(Request::UpdateItem {
+                item: item.id.clone(),
+                patch,
+            })
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(unknown) && error.contains("nearest: codex/gpt-6-astra"),
+            "{error}"
+        );
+    }
+    h.repo_config(&format!("[models]\ndeny = [\"{canonical}\"]\n"));
+    let steer = Steer {
+        model: Some("claude-code/opus".parse().unwrap()),
+        stage: Some("implement".into()),
+        ..Default::default()
+    };
+    let error = h
+        .cli(Request::SteerItem {
+            item: item.id.clone(),
+            steer,
+        })
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains(canonical) && error.contains("not allowed"),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn a_superseded_pin_stays_pinned_and_the_reply_names_its_successor() {
+    use archon_aether::fake::Scripted;
+    use serde_json::json;
+    let h = Harness::new().await;
+    let old = "claude-code/claude-fable-5-1";
+    let successor = "claude-code/claude-fable-5-2";
+    h.catalog_server.set_default(
+        "list_models",
+        Scripted::reply(
+            "models",
+            json!([
+                {"model": old, "configured": true, "superseded_by": "claude-fable-5-2"},
+                {"model": successor, "configured": true}
+            ]),
+        ),
+    );
+    let plan = serde_json::from_value(json!({"implement": [{"model": old}]})).unwrap();
+    let item = enqueue(&h, "direct", plan, "review=none").await;
+    assert_eq!(item.model_plan.0["implement"][0].model.to_string(), old);
+    let warning = item.model_plan.catalog_check.as_ref().unwrap().to_string();
+    assert!(
+        warning.contains(old) && warning.contains(successor),
+        "{warning}"
+    );
+    assert_eq!(
+        h.item(&item.id).await.model_plan.catalog_check,
+        item.model_plan.catalog_check
+    );
+}
+
+#[tokio::test]
+async fn an_outage_defers_an_explicit_pin_but_cannot_resolve_a_tier() {
+    use archon_aether::fake::Scripted;
+    use serde_json::json;
+    let h = Harness::new().await;
+    h.catalog_server.set_default(
+        "list_models",
+        Scripted::refuse("unavailable", "catalog offline"),
+    );
+    let plan = serde_json::from_value(json!({"implement": [{"model": FAST}]})).unwrap();
+    let item = enqueue(&h, "direct", plan, "review=none").await;
+    let deferred = item.model_plan.catalog_check.as_ref().unwrap();
+    assert!(deferred.to_string().contains("not checked"));
+    assert!(deferred.to_string().contains("catalog offline"));
+    let Reply::ItemDetail(detail) = h
+        .cli(Request::GetItem {
+            item: item.id.clone(),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("expected item detail");
+    };
+    assert_eq!(
+        detail.item.model_plan.catalog_check.as_ref(),
+        Some(deferred)
+    );
+    let patch = ItemPatch {
+        model_plan: Some(balanced(&["implement"])),
+        ..Default::default()
+    };
+    let refused = h
+        .cli(Request::UpdateItem {
+            item: item.id.clone(),
+            patch,
+        })
+        .await
+        .unwrap_err();
+    assert!(refused.to_string().contains("tier"), "{refused}");
 }

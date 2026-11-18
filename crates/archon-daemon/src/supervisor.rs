@@ -1056,7 +1056,16 @@ async fn create_generation(
     ctx: &DaemonContext,
     client: &AetherClient,
 ) -> Result<AetherAgentId, ArchonError> {
-    let config = &ctx.config;
+    let catalog = crate::learned::request_catalog(ctx).await?;
+    let mut config = ctx.config.clone();
+    config.orchestrator.model = match catalog.check(&config.orchestrator.model) {
+        Ok(model) => model,
+        Err(error) => {
+            blocker_once(ctx, &format!("Orchestrator model: {error}")).await?;
+            return Err(error);
+        }
+    };
+    let config = &config;
     let choice = ModelChoice {
         model: config.orchestrator.model.clone(),
         effort: config.orchestrator.effort,
@@ -1100,7 +1109,7 @@ async fn create_generation(
     let agent = create_orchestrator(ctx, client, request).await?;
     let created = agent.config.instructions.as_deref();
     let mut store = ctx.store.lock().await;
-    let settings = configured_settings(config);
+    let settings = configured_settings(&ctx.config);
     origin::record_created(&mut store, generation, &prompt, &sent, created, &settings)?;
     drop(store);
     tracing::info!(agent = %agent.id, generation, delegation, github, "orchestrator created");

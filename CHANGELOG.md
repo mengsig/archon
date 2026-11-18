@@ -4,6 +4,13 @@
 
 ### Added
 
+- Model plans resolve aliases before policy checks. Requests report deferred
+  checks during a catalog outage. Dispatch waits for a fresh catalog and
+  blocks a removed pin with a re-plan hint. Superseded models are excluded
+  from tier choices. Aether 1.4.1 remains supported.
+- After a store migration, binary downgrade is unsupported because the
+  schema guard refuses a newer store. Use the feature switches for rollback.
+
 - Every item records where each field of its model plan came from, beside
   the plan as `model_origins`: for each stage entry, separately for the model
   and the effort, the source (`explicit`, `learned`, `tier`, `fallback`,

@@ -2,6 +2,7 @@
 //! agent backend, and a temp git repository carrying a test pipeline.
 #![allow(dead_code)]
 
+pub mod catalog;
 pub mod delivery;
 pub mod fake_ops;
 pub mod team;
@@ -128,6 +129,13 @@ pub async fn connect_aether_for_delegations(h: &Harness) -> archon_aether::fake:
     let fake = archon_aether::fake::FakeAether::start(&h.dir.path().join("aetherd.sock"))
         .await
         .expect("fake aetherd binds");
+    let catalog = h.ctx.store.lock().await.model_catalog();
+    let catalog = if catalog.unavailable_reason().is_some() {
+        catalog::default_models()
+    } else {
+        catalog
+    };
+    catalog::answer(&fake, &catalog);
     fake.set_default(
         "get_agent",
         archon_aether::fake::Scripted::refuse("not_found", "agent already ended"),
@@ -145,6 +153,7 @@ pub async fn connect_aether_for_delegations(h: &Harness) -> archon_aether::fake:
 /// A daemon context over a temp directory with a registered repository.
 pub struct Harness {
     pub ctx: Arc<DaemonContext>,
+    pub catalog_server: archon_aether::fake::FakeAether,
     pub backend: Arc<FakeBackend>,
     pub repo: PathBuf,
     pub dir: tempfile::TempDir,
@@ -249,6 +258,14 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
         }
         let repo = init_repo(&root.join("repo"));
         let aether = Arc::new(AetherLink::new());
+        let catalog_server = archon_aether::fake::FakeAether::start(&root.join("catalog.sock"))
+            .await
+            .expect("fake catalog");
+        catalog::answer(&catalog_server, &catalog::default_models());
+        let client = archon_aether::AetherClient::connect(&catalog_server.endpoint())
+            .await
+            .expect("catalog connection");
+        aether.replace(Some(Arc::new(client))).unwrap();
         let backend = make(aether.clone());
         let free_bytes = Arc::new(AtomicU64::new(u64::MAX));
         let disk = fake_disk(&free_bytes);
@@ -257,6 +274,7 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
         let harness = Self {
             ctx: Arc::new(ctx),
             backend: fake,
+            catalog_server,
             repo,
             dir,
             free_bytes,
@@ -468,6 +486,9 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
         let lavish = self.ctx.lavish.clone();
         let disk = fake_disk(&self.free_bytes);
         let link = Arc::new(AetherLink::new());
+        if let Ok(client) = self.ctx.aether.client() {
+            link.replace(Some(client)).unwrap();
+        }
         let ctx = context(&root, config, link, backend, lavish, disk, &self.ops);
         self.ctx = Arc::new(ctx);
     }

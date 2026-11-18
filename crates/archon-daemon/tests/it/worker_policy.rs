@@ -38,11 +38,7 @@ async fn set_catalog(h: &Harness, models: &[(&str, Tier)]) {
             is_default: false,
         })
         .collect();
-    h.ctx
-        .store
-        .lock()
-        .await
-        .set_model_catalog(ModelCatalog::new(models));
+    h.set_catalog(ModelCatalog::new(models)).await;
 }
 
 fn allowing(models: &[&str]) -> Config {
@@ -136,7 +132,7 @@ async fn a_worker_fallback_keeps_the_lead_s_reviewer_exemptions() {
         is_default: false,
     };
     let catalog = ModelCatalog::new(vec![strong(MODEL), strong(REVIEW_MODEL)]);
-    h.ctx.store.lock().await.set_model_catalog(catalog);
+    h.set_catalog(catalog).await;
     adaptive_item(&h).await;
     let build = h.backend.requests()[0].clone();
     let policy = build

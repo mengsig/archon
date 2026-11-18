@@ -4,15 +4,7 @@ use archon_core::model::ModelRef;
 use archon_core::model_tier::{CatalogModel, ModelCatalog};
 
 pub(super) async fn refresh(ctx: &DaemonContext) -> Result<(), ArchonError> {
-    let _guard = ctx.aether.lock_catalog().await;
-    let generation = ctx.aether.generation()?;
-    let store = ctx.store.lock().await;
-    let fresh = !store.learning_models_stale() && store.catalog_generation() == Some(generation);
-    drop(store);
-    if fresh && ctx.aether.is_connected() {
-        return Ok(());
-    }
-    read_and_cache(ctx, generation).await.map(drop)
+    read(ctx, false).await.map(drop)
 }
 
 fn reference(value: serde_json::Value, provider: &str) -> Result<ModelRef, ArchonError> {
@@ -24,13 +16,28 @@ fn reference(value: serde_json::Value, provider: &str) -> Result<ModelRef, Archo
 }
 
 pub(crate) async fn request_catalog(ctx: &DaemonContext) -> Result<ModelCatalog, ArchonError> {
+    catalog_result(read(ctx, true).await)
+}
+
+fn catalog_result(result: Result<ModelCatalog, ArchonError>) -> Result<ModelCatalog, ArchonError> {
+    match result {
+        Err(error) if !error.is_store() => Ok(ModelCatalog::unavailable(error.to_string())),
+        other => other,
+    }
+}
+
+async fn read(ctx: &DaemonContext, force: bool) -> Result<ModelCatalog, ArchonError> {
     let _guard = ctx.aether.lock_catalog().await;
     let generation = ctx.aether.generation()?;
-    match read_and_cache(ctx, generation).await {
-        Ok(catalog) => Ok(catalog),
-        Err(error) if error.is_store() => Err(error),
-        Err(error) => Ok(ModelCatalog::unavailable(error.to_string())),
+    if !force && ctx.aether.is_connected() {
+        let store = ctx.store.lock().await;
+        if store.catalog_generation() == Some(generation)
+            && let Some(catalog) = store.fresh_model_catalog()
+        {
+            return Ok(catalog);
+        }
     }
+    read_and_cache(ctx, generation).await
 }
 
 async fn read_and_cache(ctx: &DaemonContext, generation: u64) -> Result<ModelCatalog, ArchonError> {
@@ -70,8 +77,13 @@ async fn read_catalog(ctx: &DaemonContext, generation: u64) -> Result<ModelCatal
         ));
     }
     store.kv_set("acceptance_vision_models", &serde_json::to_string(&vision)?)?;
+    let recovered = store.model_catalog().is_empty() && !catalog.is_empty();
     store.set_model_catalog(catalog.clone());
     store.set_catalog_generation(generation);
+    drop(store);
+    if recovered {
+        ctx.dispatch.notify_one();
+    }
     Ok(catalog)
 }
 
@@ -111,17 +123,5 @@ fn make_catalog(
 }
 
 pub(crate) async fn catalog(ctx: &DaemonContext) -> Result<ModelCatalog, ArchonError> {
-    let _guard = ctx.aether.lock_catalog().await;
-    let generation = ctx.aether.generation()?;
-    let store = ctx.store.lock().await;
-    let fresh = !store.learning_models_stale() && store.catalog_generation() == Some(generation);
-    if fresh && ctx.aether.is_connected() {
-        return Ok(store.model_catalog());
-    }
-    drop(store);
-    match read_and_cache(ctx, generation).await {
-        Ok(catalog) => Ok(catalog),
-        Err(error) if error.is_store() => Err(error),
-        Err(error) => Ok(ModelCatalog::unavailable(error.to_string())),
-    }
+    catalog_result(read(ctx, false).await)
 }

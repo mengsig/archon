@@ -70,7 +70,7 @@ fn catalog() -> ModelCatalog {
 
 async fn harness(config: Config) -> Harness {
     let h = Harness::with_config(config).await;
-    h.ctx.store.lock().await.set_model_catalog(catalog());
+    h.set_catalog(catalog()).await;
     h.add_pipeline(ROUTED, ROUTED_TOML);
     h
 }
@@ -1040,7 +1040,7 @@ async fn a_recovered_run_with_pinned_models_follows_no_quota_move() {
         let before = pinned(&h, &item, source).await;
 
         h.restart();
-        h.ctx.store.lock().await.set_model_catalog(catalog());
+        h.set_catalog(catalog()).await;
         archon_daemon::executor::recover(&h.ctx)
             .await
             .expect("recover");
@@ -1081,7 +1081,7 @@ async fn a_recovered_run_from_before_origins_resumes_its_kept_tiered_implementer
     let spawned = h.backend.requests().len();
 
     h.restart();
-    h.ctx.store.lock().await.set_model_catalog(catalog());
+    h.set_catalog(catalog()).await;
     archon_daemon::executor::recover(&h.ctx)
         .await
         .expect("recover");

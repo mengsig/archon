@@ -168,6 +168,11 @@ impl ModelCatalog {
         self.aliases.insert(alias, canonical);
     }
 
+    /// Resolve only a known alias, without rejecting historical model IDs.
+    pub fn canonical_alias<'a>(&'a self, model: &'a ModelRef) -> &'a ModelRef {
+        self.aliases.get(model).unwrap_or(model)
+    }
+
     pub fn add_retired(&mut self, model: ModelRef, successor: Option<ModelRef>) {
         self.retired.insert(model, successor);
     }
@@ -233,7 +238,7 @@ impl ModelCatalog {
                     && !self.retired.contains_key(&entry.model)
             })
             .collect();
-        candidates.sort_by_key(|entry| {
+        candidates.sort_by_cached_key(|entry| {
             (
                 edit_distance(&entry.model.model, &model.model),
                 &entry.model,
@@ -253,6 +258,13 @@ impl ModelCatalog {
 
     pub fn models(&self) -> &[CatalogModel] {
         &self.models
+    }
+
+    /// Listed canonical models available for automatic choices.
+    pub fn candidates(&self) -> impl Iterator<Item = &CatalogModel> {
+        self.models.iter().filter(|entry| {
+            !self.is_retired(&entry.model) && self.superseded_by(&entry.model).is_none()
+        })
     }
 
     pub fn tier_of(&self, model: &ModelRef) -> Option<Tier> {

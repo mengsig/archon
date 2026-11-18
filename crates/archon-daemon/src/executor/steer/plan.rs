@@ -140,6 +140,10 @@ pub(super) async fn plan(
         change.rebuild = true;
     }
     retune(ctx, asked, &mut change, &at)?;
+    if let Some(catalog) = asked.catalog {
+        let plan = change.blueprint.item.model_plan;
+        change.blueprint.item.model_plan = plan.checked_request_catalog(catalog)?;
+    }
     rebudget(&mut change, asked.steer, &at, per_item_cap);
     extend(&mut change, asked.steer, &at)?;
     abort(ctx, asked, &mut change, &at)?;
@@ -367,13 +371,16 @@ fn retune(
             at.target
         )));
     };
-    let plan = &item.model_plan;
     let model_named = steer.model.as_ref().is_none_or(|model| *model == now.model);
     assert!(
         model_named && steer.effort.is_none_or(|e| e == now.effort),
         "the plan runs the steer"
     );
-    asked.env.policy(&ctx.config).check_plan(plan)?;
+    if let Some(catalog) = asked.catalog {
+        item.model_plan.record_catalog(catalog);
+    }
+    item.model_plan
+        .check_request_policy(&asked.env.policy(&ctx.config))?;
     for stage in at.live().filter(|stage| stage.stage_id == at.target) {
         let choice = retuned(stage.current_choice(), steer);
         if &choice != stage.current_choice() {

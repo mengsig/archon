@@ -183,8 +183,7 @@ impl WorkerPolicy {
     ) -> Narrowed {
         assert!(!cause.is_empty(), "a fallback says why");
         let cheapest = catalog
-            .models()
-            .iter()
+            .candidates()
             .filter(|m| m.tier.is_some() && policy.permits_model(&m.model))
             .filter(|m| Some(&m.model) != lead)
             .min_by_key(|m| m.tier)
@@ -236,9 +235,14 @@ impl WorkerPolicy {
         for worker in &self.workers {
             let effort = cap(worker.effort);
             let narrowed = match (&worker.model, worker.tier) {
-                (Some(model), _) if !policy.permits_model(model) => continue,
                 (Some(model), _) => {
-                    WorkerChoice::from_plan(&ModelChoice::pinned(model.clone(), effort))
+                    let Ok(canonical) = catalog.check(model) else {
+                        continue;
+                    };
+                    if !policy.permits_model(&canonical) {
+                        continue;
+                    }
+                    WorkerChoice::from_plan(&ModelChoice::pinned(canonical, effort))
                 }
                 (None, Some(tier)) => match place_tier(tier, effort, (policy, restricted), catalog)
                 {
@@ -290,7 +294,7 @@ fn place_tier(
     (policy, restricted): (&ModelPolicy, bool),
     catalog: &ModelCatalog,
 ) -> Option<WorkerChoice> {
-    let whole = !restricted && catalog.models().iter().any(|m| m.tier == Some(tier));
+    let whole = !restricted && catalog.candidates().any(|m| m.tier == Some(tier));
     if whole {
         return Some(WorkerChoice::of_tier(tier, effort));
     }

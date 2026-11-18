@@ -15,6 +15,17 @@ Aether's normal update, without pinning it to an older release. Keep a backup be
 adds persistent requirement and clarification records. Existing queue items
 without intent keep their previous behavior.
 
+### Model catalog availability
+
+Archon holds queued work with `model_catalog_unavailable` until Aether lists
+a configured model. Start or reconnect Aether, or configure a provider when
+its catalog is empty. Dispatch resumes automatically. Aether 1.4.1 supports
+catalog checks. With retirement metadata, a refusal can also name a successor.
+
+After a store migration, the schema guard refuses to open the newer store
+with an older daemon. Binary downgrade is unsupported. Use the documented
+feature switches for rollback. The dispatch catalog check has no bypass.
+
 ### Plan origins
 
 Each item now keeps `model_origins` beside `model_plan`: where every model

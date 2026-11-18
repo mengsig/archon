@@ -362,7 +362,9 @@ impl Store {
         items::insert(&mut self.conn, item, idempotency_key, asked)
     }
     pub fn item(&self, id: &QueueItemId) -> Result<QueueItem, ArchonError> {
-        items::load(&self.conn, id)
+        let mut item = items::load(&self.conn, id)?;
+        self.canonicalize_items(std::slice::from_mut(&mut item));
+        Ok(item)
     }
     /// How many plan fields of the unfinished items read as unattributed or
     /// legacy, and how many of their rows do not decode at all.
@@ -371,11 +373,17 @@ impl Store {
     }
     /// The item an enqueue with idempotency `key` stored, if any.
     pub fn item_by_key(&self, key: &str) -> Result<Option<QueueItem>, ArchonError> {
-        items::by_key(&self.conn, key)
+        let mut item = items::by_key(&self.conn, key)?;
+        if let Some(item) = &mut item {
+            self.canonicalize_items(std::slice::from_mut(item));
+        }
+        Ok(item)
     }
     /// Newest first, at most `limit` (default 50) items.
     pub fn items(&self, query: &ItemQuery) -> Result<Vec<QueueItem>, ArchonError> {
-        items::list(&self.conn, query)
+        let mut items = items::list(&self.conn, query)?;
+        self.canonicalize_items(&mut items);
+        Ok(items)
     }
     /// Items whose id starts with a checked `qi_…` prefix, oldest first, at
     /// most `limit`.
@@ -384,7 +392,17 @@ impl Store {
         prefix: &str,
         limit: usize,
     ) -> Result<Vec<QueueItem>, ArchonError> {
-        items::with_id_prefix(&self.conn, prefix, limit)
+        let mut items = items::with_id_prefix(&self.conn, prefix, limit)?;
+        self.canonicalize_items(&mut items);
+        Ok(items)
+    }
+
+    fn canonicalize_items(&self, items: &mut [QueueItem]) {
+        if let Some(catalog) = self.fresh_model_catalog() {
+            for item in items {
+                item.model_plan.canonicalize_aliases(&catalog);
+            }
+        }
     }
     /// Apply a checked transition; returns the updated item. Runs named by
     /// the next state must belong to the item, and an item with a live run
@@ -841,7 +859,13 @@ impl Store {
         range: &DayRange,
         estimates: bool,
     ) -> Result<ModelEvidenceSnapshot, ArchonError> {
-        model_evidence::read(&self.conn, query, range, estimates)
+        model_evidence::read(
+            &self.conn,
+            query,
+            range,
+            estimates,
+            self.fresh_model_catalog(),
+        )
     }
 
     /// Spend over the local days of `range` grouped `by`, counted as the

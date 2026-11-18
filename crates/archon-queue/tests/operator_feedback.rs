@@ -27,6 +27,37 @@ fn model(name: &str) -> ModelChoice {
     }
 }
 
+#[test]
+fn routing_pools_alias_costs_and_passes() {
+    use archon_core::model_tier::{CatalogModel, ModelCatalog};
+    let mut store = store();
+    let repo = repo("alias-routing");
+    store.insert_repo(&repo).unwrap();
+    let context = context("review");
+    finished_run(&mut store, &repo, &model("alias"), 1.0, &context);
+    finished_run(&mut store, &repo, &model("canonical"), 3.0, &context);
+    let mut catalog = ModelCatalog::new(vec![CatalogModel {
+        model: "codex/canonical".parse().unwrap(),
+        tier: None,
+        is_default: false,
+    }]);
+    catalog.add_alias(
+        "codex/alias".parse().unwrap(),
+        "codex/canonical".parse().unwrap(),
+    );
+    store.set_model_catalog(catalog);
+    let evidence = store
+        .route_evidence(Some(&repo.id), "direct", "implement", None)
+        .unwrap();
+    assert_eq!(evidence.len(), 1);
+    assert_eq!(
+        evidence[0].route.choice.model.to_string(),
+        "codex/canonical"
+    );
+    assert_eq!((evidence[0].route.runs, evidence[0].route.passed), (2, 2));
+    assert_eq!(evidence[0].median_cost_usd, 2.0);
+}
+
 fn context(review: &str) -> RouteContext {
     RouteContext {
         revision: "rev-1".into(),

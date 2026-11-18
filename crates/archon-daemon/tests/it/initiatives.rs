@@ -457,7 +457,7 @@ fn tier_catalog() -> ModelCatalog {
 /// [`tier_catalog`].
 async fn tiered(plan: serde_json::Value) -> (Harness, EnqueueInitiative) {
     let h = setup().await;
-    h.ctx.store.lock().await.set_model_catalog(tier_catalog());
+    h.set_catalog(tier_catalog()).await;
     let mut req = request();
     req.members.truncate(1);
     req.members[0].model_plan = Some(serde_json::from_value(plan).unwrap());

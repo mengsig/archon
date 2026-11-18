@@ -202,7 +202,7 @@ enum Handshake {
 }
 
 impl AetherClient {
-    /// Handshake at protocol 24, falling back to the newest served version down to 17.
+    /// Handshake at the preferred protocol, falling back to the newest served version down to 17.
     /// Incompatible refusals report both protocol windows.
     pub async fn connect(endpoint: &Endpoint) -> Result<Self, ArchonError> {
         Self::connect_with(endpoint, ClientOptions::default()).await

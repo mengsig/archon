@@ -945,6 +945,20 @@ async fn a_refresh_takes_the_plan_and_stage_timeouts_it_is_given() {
         refused.contains("stage_timeouts names stage \"ship_it\""),
         "{refused}"
     );
+    let unknown = Request::RefreshItem {
+        item: owner.id.clone(),
+        model_plan: Some(
+            serde_json::from_value(json!({
+                "implement": [{"model": "codex/gpt-6.1-astra"}]
+            }))
+            .unwrap(),
+        ),
+        model_reasons: None,
+        stage_timeouts: Default::default(),
+    };
+    let refusal = h.orchestrator(unknown).await.unwrap_err().to_string();
+    assert!(refusal.contains("codex/gpt-6.1-astra"), "{refusal}");
+    assert!(refusal.contains("nearest"), "{refusal}");
     let two = [("medium", REVIEW_MODEL), ("low", REVIEW_MODEL)]
         .map(|(effort, model)| json!({"model": model, "effort": effort}));
     let too_many = Request::RefreshItem {

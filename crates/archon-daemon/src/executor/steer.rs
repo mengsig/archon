@@ -45,6 +45,7 @@ pub(crate) struct Asked<'a> {
     pub env: &'a RepoEnv,
     pub sources: &'a Sources,
     pub steer: &'a Steer,
+    pub catalog: Option<&'a archon_core::model_tier::ModelCatalog>,
     /// A whole new, checked model plan (`update_item` on a running item).
     pub plan: Option<(PlannedPlan, Option<ModelReasons>)>,
 }

@@ -77,7 +77,7 @@ pub fn governed_reviewer_rules(
             policy.describe()
         );
     }
-    unplaced_rules(own, policy, (&effort, &sizing), governed)
+    unplaced_rules(own, policy, (&effort, &sizing), catalog, governed)
 }
 
 /// The models [`governed_reviewer_rules`] names for the reviewers, so the
@@ -103,7 +103,7 @@ pub fn reviewer_models(
     if let Some((model, _)) = resolve_default(profile.default_tier, own, policy, profile, catalog) {
         return vec![model];
     }
-    let placed = unplaced_model(own, policy, governed).cloned();
+    let placed = unplaced_model(own, policy, catalog, governed);
     assert!(
         placed.as_ref().is_none_or(|m| policy.permits_model(m)),
         "a placed reviewer is one the policy permits"
@@ -133,7 +133,7 @@ pub fn governed_review_refusal(
     }
     let tier = profile.default_tier;
     if resolve_default(tier, own, policy, profile, &cost_reporting(catalog)).is_some()
-        || unplaced_model(own, policy, true).is_some()
+        || unplaced_model(own, policy, catalog, true).is_some()
     {
         return None;
     }
@@ -146,8 +146,7 @@ pub fn governed_review_refusal(
 fn cost_reporting(catalog: &ModelCatalog) -> ModelCatalog {
     ModelCatalog::new(
         catalog
-            .models()
-            .iter()
+            .candidates()
             .filter(|entry| provider_reports_cost(&entry.model.provider))
             .cloned()
             .collect(),
@@ -180,17 +179,28 @@ fn resolve_default(
 /// The model to name when neither the catalog nor the policy places one:
 /// the lead's own, else the first the allowlist permits. `governed` also
 /// requires its provider to report a dollar cost.
-fn unplaced_model<'a>(
-    own: &'a ModelRef,
-    policy: &'a ModelPolicy,
+fn unplaced_model(
+    own: &ModelRef,
+    policy: &ModelPolicy,
+    catalog: &ModelCatalog,
     governed: bool,
-) -> Option<&'a ModelRef> {
-    let eligible = |model: &&ModelRef| {
-        policy.permits_model(model) && (!governed || provider_reports_cost(&model.provider))
-    };
+) -> Option<ModelRef> {
     std::iter::once(own)
         .chain(policy.allow.iter().flatten())
-        .find(eligible)
+        .chain(
+            catalog
+                .models()
+                .iter()
+                .filter(|m| m.tier.is_none())
+                .map(|m| &m.model),
+        )
+        .find_map(|model| {
+            let canonical = catalog.check(model).ok()?;
+            (policy.permits_model(&canonical)
+                && catalog.superseded_by(&canonical).is_none()
+                && (!governed || provider_reports_cost(&canonical.provider)))
+            .then_some(canonical)
+        })
 }
 
 /// Neither the catalog nor the policy places a model: name one the policy
@@ -199,6 +209,7 @@ fn unplaced_rules(
     own: &ModelRef,
     policy: &ModelPolicy,
     (effort, sizing): (&str, &str),
+    catalog: &ModelCatalog,
     governed: bool,
 ) -> String {
     assert!(!effort.is_empty(), "an effort to name");
@@ -206,7 +217,7 @@ fn unplaced_rules(
         sizing.is_empty() || sizing.starts_with(' '),
         "a sizing rule follows a sentence"
     );
-    let Some(model) = unplaced_model(own, policy, governed) else {
+    let Some(model) = unplaced_model(own, policy, catalog, governed) else {
         return format!(
             "- Delegate no reviewer: the model policy ({}) allows no model{}.\n",
             policy.describe(),
@@ -274,7 +285,11 @@ mod tests {
             None,
         );
         let config = ReviewConfig::default();
-        let none = ModelCatalog::default();
+        let none = ModelCatalog::new(vec![CatalogModel {
+            model: "claude-code/opus".parse().unwrap(),
+            tier: None,
+            is_default: false,
+        }]);
         assert!(governed_review_refusal(None, &own, &both, (&config, &none)).is_none());
         let rules = governed_reviewer_rules(None, &own, &both, (&config, &none), true, false);
         assert!(rules.contains("claude-code/opus"), "{rules}");
@@ -471,38 +486,28 @@ mod tests {
         let own: ModelRef = "codex/luna".parse().unwrap();
         let config = ReviewConfig::default();
         for catalog in [ModelCatalog::default(), catalog()] {
-            let rules = reviewer_profile_rules(
-                None,
-                &own,
-                &policy_allowing(&["codex/luna"]),
-                &config,
-                &catalog,
-            );
-            assert!(
-                rules.contains("on codex/luna at effort medium up to x_high"),
-                "{rules}"
-            );
-            assert_no_lookup_instruction(&rules);
+            let policy = policy_allowing(&["codex/luna"]);
+            let rules = reviewer_profile_rules(None, &own, &policy, &config, &catalog);
+            assert!(rules.contains("Delegate no reviewer"), "{rules}");
+            assert!(reviewer_models(None, &own, &policy, (&config, &catalog), false).is_empty());
         }
+        let untiered = ModelCatalog::new(vec![CatalogModel {
+            model: "third/other".parse().unwrap(),
+            tier: None,
+            is_default: false,
+        }]);
         let rules = reviewer_profile_rules(
             None,
             &own,
             &policy_allowing(&["third/other"]),
             &config,
-            &ModelCatalog::default(),
+            &untiered,
         );
         assert!(
             rules.contains("on third/other at effort medium up to x_high"),
             "{rules}"
         );
-        let rules = reviewer_profile_rules(
-            None,
-            &own,
-            &policy_allowing(&[]).narrowed_by(&policy_allowing(&["third/other"])),
-            &config,
-            &ModelCatalog::default(),
-        );
-        assert!(rules.contains("on third/other"), "{rules}");
+        assert_no_lookup_instruction(&rules);
         let none = ModelPolicy {
             allow: Some(Default::default()),
             ..ModelPolicy::default()

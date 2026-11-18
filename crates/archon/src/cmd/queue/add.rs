@@ -61,7 +61,7 @@ pub async fn run(args: QueueAddArgs, json: bool) -> anyhow::Result<()> {
     let (Reply::Item(item) | Reply::ItemBudgetsOff(item)) = &reply else {
         return Err(unexpected(&reply, "item"));
     };
-    super::note_budgets_off(&reply);
+    super::item_notes(&reply);
     emit(json, || reply_data(&reply), &item.id.to_string())
 }
 

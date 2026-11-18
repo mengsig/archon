@@ -358,3 +358,22 @@ async fn a_retry_sets_stage_timeouts_within_the_limit() {
     assert_eq!(queued.state, QueueState::Queued);
     assert_eq!(queued.stage_timeouts["implement"], 45);
 }
+
+#[tokio::test]
+async fn retry_checks_a_kept_pin_against_the_current_catalog() {
+    let h = Harness::new().await;
+    let item = h.enqueue("removed pin").await;
+    cancel(&h, &item).await;
+    h.set_learning_models(vec![common::REVIEW_MODEL.parse().unwrap()])
+        .await;
+    let error = h
+        .cli(retry(&item, false, None))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains(MODEL), "{error}");
+    assert!(matches!(
+        h.state(&item.id).await,
+        QueueState::Cancelled { .. }
+    ));
+}

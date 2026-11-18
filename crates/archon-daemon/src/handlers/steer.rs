@@ -60,8 +60,21 @@ async fn steer_run_or_waiting(
     ctx: &DaemonContext,
     by: SteeredBy,
     id: &QueueItemId,
-    steer: Steer,
+    mut steer: Steer,
 ) -> Result<Reply, ArchonError> {
+    let changes_plan =
+        steer.model.is_some() || steer.switch_pipeline.is_some() || steer.insert_stage.is_some();
+    let catalog = if changes_plan {
+        let catalog = crate::learned::request_catalog(ctx).await?;
+        if let Some(model) = &mut steer.model
+            && catalog.not_ready_reason().is_none()
+        {
+            *model = catalog.check(model)?;
+        }
+        Some(catalog)
+    } else {
+        None
+    };
     let item = ctx.store.lock().await.item(id)?;
     let env = RepoEnv::load(ctx, item.repo.as_ref()).await?;
     let sources = Sources::read(&env, &item, &steer)?;
@@ -71,6 +84,7 @@ async fn steer_run_or_waiting(
         sources: &sources,
         steer: &steer,
         plan: None,
+        catalog: catalog.as_ref(),
     };
     let item = steer_as(ctx, &asked, id).await?;
     Ok(super::items::item_reply(ctx, item, steer.budget_usd.is_some()).await)
@@ -134,6 +148,7 @@ pub(super) async fn update(
         env: &env,
         sources: &Sources::default(),
         steer: &steer,
+        catalog: None,
         plan: running_plan(ctx, (&env, by), run, &mut patch).await?,
     };
     assert!(patch.brief_append.is_none() && patch.model_plan.is_none());
@@ -287,6 +302,9 @@ async fn changed_item(
         asked.env.policy(&ctx.config).check_effort(effort)?;
     }
     what.extend(retune(steer, stages, (&mut item, asked.by))?);
+    if let Some(catalog) = asked.catalog {
+        item.model_plan = item.model_plan.checked_request_catalog(catalog)?;
+    }
     items::check_plan(ctx, asked.env, stages, &item.model_plan)?;
     assert!(!what.is_empty(), "a checked steer changes something");
     Ok(Changed { item, what, shape })

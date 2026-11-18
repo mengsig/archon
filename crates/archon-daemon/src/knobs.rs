@@ -445,17 +445,36 @@ pub(crate) fn default_choice(
             tier: Some(tier),
         })
     };
-    let pinnable = |m: &ModelRef| {
-        policy.permits_model(m) && scope.catalog.tier_of(m).is_none_or(|t| t <= max_tier)
+    let pinned = |model: &ModelRef| {
+        let catalog = scope.catalog;
+        let canonical = if catalog.not_ready_reason().is_some() {
+            model.clone()
+        } else {
+            match catalog.check(model) {
+                Ok(id) if catalog.superseded_by(&id).is_none() => id,
+                result => {
+                    tracing::info!(%model, ?result, "skipping catalog-ineligible model default");
+                    return None;
+                }
+            }
+        };
+        let eligible = policy.permits_model(&canonical)
+            && catalog
+                .tier_of(&canonical)
+                .is_none_or(|tier| tier <= max_tier);
+        eligible.then(|| ModelChoice::pinned(canonical, effort))
     };
-    let own = &config.orchestrator.model;
     let choice = nudged
         .and_then(tiered)
-        .or_else(|| pinnable(own).then(|| ModelChoice::pinned(own.clone(), effort)))
+        .or_else(|| pinned(&config.orchestrator.model))
         .or_else(|| tiered(Tier::Balanced))
+        .or_else(|| policy.allow.iter().flatten().find_map(pinned))
         .or_else(|| {
-            let first = policy.allow.iter().flatten().find(|m| pinnable(m))?;
-            Some(ModelChoice::pinned(first.clone(), effort))
+            scope
+                .catalog
+                .models()
+                .iter()
+                .find_map(|row| pinned(&row.model))
         })?;
     debug_assert!(
         policy.check(&choice).is_ok(),
@@ -591,10 +610,15 @@ pub(crate) fn resolve_tiers(
     tiers: TierScope<'_>,
 ) -> Result<ModelPlan, ArchonError> {
     let stages = draft.0.len();
-    let plan = draft.resolve(
+    let mut plan = draft.resolve(
         |key| spec.default_effort(key),
         |key, tier, provider| tiers.resolve((tier, spec.tier_floor(key, tier)), provider),
     )?;
+    if tiers.catalog.not_ready_reason().is_none() {
+        for choice in plan.0.values_mut().flatten() {
+            choice.model = tiers.catalog.check(&choice.model)?;
+        }
+    }
     assert_eq!(plan.0.len(), stages, "every drafted key is resolved");
     Ok(plan)
 }
@@ -832,10 +856,11 @@ mod tests {
         let balanced = default_choice(&config, tiers, Tier::Strong, &builtin("direct")).unwrap();
         assert_eq!(balanced.model.to_string(), "claude-code/one-balanced");
         spec.file.nudges.tier = None;
-        let own = default_choice(&config, tiers, Tier::Strong, &spec).unwrap();
-        assert_eq!(
-            (own.model, own.tier),
-            (config.orchestrator.model.clone(), None)
+        let fallback = default_choice(&config, tiers, Tier::Strong, &spec).unwrap();
+        assert_eq!(fallback.model.to_string(), "claude-code/one-balanced");
+        assert_ne!(
+            fallback.model, config.orchestrator.model,
+            "unlisted default"
         );
     }
 

@@ -785,6 +785,8 @@ pub(super) async fn retry(
             resolve_draft(ctx, (&env, route), &spec, (draft, reasons), by).await?
         }
         None => {
+            let catalog = learned::request_catalog(ctx).await?;
+            let kept_plan = kept_plan.checked_request_catalog(&catalog)?;
             let mut writer = PlanWriter::new(id, archon_core::now());
             writer.carry(&kept_plan, id, |_| Some(usize::MAX));
             writer
@@ -1128,7 +1130,6 @@ pub(super) async fn resolve_draft(
     by: Authority,
 ) -> Result<PlanWriter, ArchonError> {
     let plan = resolve_tiers(ctx, (env, item), spec, draft.clone()).await?;
-    env.policy(&ctx.config).check_plan(&plan)?;
     knobs::check_plan_reasons(spec, &plan, reasons)?;
     let mut writer = PlanWriter::new(item.id, archon_core::now());
     if !draft.0.is_empty() {
@@ -1145,7 +1146,7 @@ pub(super) async fn resolve_tiers(
     spec: &PipelineSpec,
     draft: ModelPlanDraft,
 ) -> Result<ModelPlan, ArchonError> {
-    let catalog = learned::catalog(ctx).await?;
+    let catalog = learned::request_catalog(ctx).await?;
     let policy = env.policy(&ctx.config);
     let weights = env.provider_weights(&ctx.config);
     let quota = crate::quota::current(ctx, weights.as_ref()).await;
@@ -1189,7 +1190,7 @@ pub(super) async fn filled_plan(
     writer.filled(tiered, (PlanSource::Tier, PlanSource::Fallback));
     let fallen = knobs::fill_static_stages(base, spec, writer.plan().clone(), fallback.as_ref())?;
     writer.filled(fallen, (PlanSource::Fallback, PlanSource::Fallback));
-    Ok(writer.finish())
+    writer.finish().checked_request_catalog(&catalog)
 }
 
 /// Every stage has 1 to `choice_limit` choices, no unknown stage is named, and
@@ -1198,7 +1199,7 @@ pub(crate) fn check_plan(
     ctx: &DaemonContext,
     env: &RepoEnv,
     spec: &PipelineSpec,
-    plan: &ModelPlan,
+    plan: &PlannedPlan,
 ) -> Result<(), ArchonError> {
     for stage in &spec.file.stages {
         let choices = plan.choices_for(&stage.id).unwrap_or_default();
@@ -1213,7 +1214,7 @@ pub(crate) fn check_plan(
         }
     }
     spec.check_plan_keys(plan)?;
-    env.policy(&ctx.config).check_plan(plan)
+    plan.check_request_policy(&env.policy(&ctx.config))
 }
 
 /// Each stage timeout names a stage of `spec` and stays within

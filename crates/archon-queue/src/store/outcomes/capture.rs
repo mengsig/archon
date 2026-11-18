@@ -67,6 +67,12 @@ impl Store {
     }
 }
 
+pub(super) fn creation_refused(stage: &StageRun) -> bool {
+    stage.aether_agent.is_none()
+        && matches!(&stage.state, archon_core::run::StageState::Failed { error }
+            if error.starts_with("cannot create agent:"))
+}
+
 pub(super) fn stage_observations(
     store: &Store,
     stages: &[StageRun],
@@ -85,11 +91,7 @@ pub(super) fn stage_observations(
         } else {
             0.0
         };
-        if cost == 0.0
-            && stage.aether_agent.is_none()
-            && matches!(&stage.state, archon_core::run::StageState::Failed { error }
-                if error.starts_with("cannot create agent:"))
-        {
+        if cost == 0.0 && creation_refused(stage) {
             continue;
         }
         for observed in super::segments::observations(stage, cost)? {

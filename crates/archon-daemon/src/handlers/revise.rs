@@ -201,8 +201,10 @@ async fn restage(
         spec
     };
     let spec = executor::steer::shaped(ctx, &revised, spec).await?;
+    let catalog = crate::learned::request_catalog(ctx).await?;
+    let current = item.model_plan.clone().checked_request_catalog(&catalog)?;
     let mut kept = PlanWriter::new(&item.id, archon_core::now());
-    kept.carry(&item.model_plan, &item.id, |key| {
+    kept.carry(&current, &item.id, |key| {
         spec.is_plan_key(key).then_some(usize::MAX)
     });
     let route = crate::knobs::ItemRoute::new(item);

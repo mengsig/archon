@@ -2578,11 +2578,7 @@ pub(crate) async fn seed_review_catalog(h: &Harness) {
             is_default: false,
         })
         .collect();
-    h.ctx
-        .store
-        .lock()
-        .await
-        .set_model_catalog(ModelCatalog::new(models));
+    h.set_catalog(ModelCatalog::new(models)).await;
 }
 
 /// The repository narrows its policy mid-run: the later lead is advised the

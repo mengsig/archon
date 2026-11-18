@@ -127,6 +127,7 @@ async fn refresh(item: &str, json: bool) -> anyhow::Result<()> {
     let Reply::Item(refresh) = &reply else {
         return Err(unexpected(&reply, "item"));
     };
+    item_notes(&reply);
     let done = match refresh.id == item {
         true => format!("Refreshed {item} in place; nothing was queued."),
         false => format!(
@@ -148,12 +149,17 @@ async fn change(
     if !matches!(reply, Reply::Item(_) | Reply::ItemBudgetsOff(_) | Reply::Ok) {
         return Err(unexpected(&reply, "item"));
     }
-    note_budgets_off(&reply);
+    item_notes(&reply);
     emit(json, || reply_data(&reply), done)
 }
 
-/// Say on stderr that a budget just set is not enforced, as stdout is data.
-pub(super) fn note_budgets_off(reply: &Reply) {
+/// Print request notices on stderr so stdout remains machine-readable.
+pub(super) fn item_notes(reply: &Reply) {
+    if let Reply::Item(item) | Reply::ItemBudgetsOff(item) = reply
+        && let Some(check) = &item.model_plan.catalog_check
+    {
+        eprintln!("note: {}", crate::wrap::sanitize_line(&check.to_string()));
+    }
     if matches!(reply, Reply::ItemBudgetsOff(_)) {
         eprintln!("note: {}", archon_core::protocol::BUDGETS_OFF_NOTE);
     }

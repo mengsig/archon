@@ -821,21 +821,25 @@ impl StageOutcome {
         "no new subtree cancellation was requested",
     ];
 
-    /// How Archon's label opens after a cost stop whose dollars may be notional.
-    pub const NOTIONAL_COST_NOTE: &'static str = " (notional cost: ";
+    /// Archon's whole label after a cost stop whose dollars may be notional.
+    pub const NOTIONAL_COST_LABEL: &'static str = " (notional cost: Claude Code reports list-price \
+        dollars whether or not its login bills them, and Aether showed no fresh subscription usage \
+        window with headroom for it, so the budget was enforced; under a subscription, raise or \
+        unset the item's budget)";
 
     /// How the daemon's error opens when Aether's disk stayed full through
     /// every spawn retry: an infrastructure stop, also on 1.6.3 records.
     pub const DISK_FULL_SPAWN: &'static str = "create_agent failed on a full disk";
 
-    /// Whether `error` is Aether's own cost-budget stop, in its grammar: the
-    /// bare reason (perhaps labelled notional), or its budget message around it.
+    /// Whether `error` is exactly Aether's cost-budget stop: its bare reason or
+    /// its whole budget message, with nothing after but Archon's notional label.
     pub fn is_cost_budget_stop(error: &str) -> bool {
-        let error = error.trim_start();
-        match error.strip_prefix(Self::BUDGET_STOP_MESSAGE) {
+        let stop = error
+            .strip_suffix(Self::NOTIONAL_COST_LABEL)
+            .unwrap_or(error);
+        match stop.strip_prefix(Self::BUDGET_STOP_MESSAGE) {
             Some(wrapped) => cost_stop_tail(wrapped).is_some_and(is_budget_message_rest),
-            None => cost_stop_tail(error)
-                .is_some_and(|tail| tail.is_empty() || tail.starts_with(Self::NOTIONAL_COST_NOTE)),
+            None => cost_stop_tail(stop) == Some(""),
         }
     }
 
@@ -856,15 +860,13 @@ impl StageOutcome {
 fn cost_stop_tail(text: &str) -> Option<&str> {
     let rest = text.strip_prefix(StageOutcome::COST_BUDGET_STOP)?;
     let (limit, rest) = rest.split_once(": ")?;
-    let limit: f64 = limit.parse().ok()?;
     let (cost, tail) = rest.split_once(" spent")?;
-    let shaped = limit.is_finite() && limit >= 0.0 && is_aether_cost(cost);
-    shaped.then_some(tail)
+    (is_dollars(limit) && is_aether_cost(cost)).then_some(tail)
 }
 
-/// Whether `rest` is the rest of Aether's budget message after the reason,
+/// Whether `rest` is all of Aether's budget message after the reason:
 /// `); {subtree}, {n} descendant(s) were live at the stop. Details are in the
-/// exhaustion.failed event.`, perhaps with Archon's notional label after it.
+/// exhaustion.failed event.`
 fn is_budget_message_rest(rest: &str) -> bool {
     let Some(rest) = rest.strip_prefix("); ") else {
         return false;
@@ -878,10 +880,7 @@ fn is_budget_message_rest(rest: &str) -> bool {
     let digits = counted.bytes().take_while(u8::is_ascii_digit).count();
     let ending =
         " descendant(s) were live at the stop. Details are in the exhaustion.failed event.";
-    let Some(after) = counted[digits..].strip_prefix(ending) else {
-        return false;
-    };
-    digits > 0 && (after.is_empty() || after.starts_with(StageOutcome::NOTIONAL_COST_NOTE))
+    digits > 0 && &counted[digits..] == ending
 }
 
 /// The labels Aether gives a cost gap (`CostGap::label`), each in the
@@ -1047,6 +1046,15 @@ pub fn retry_label(retry: u32) -> String {
         n => format!(" retry {n}"),
     }
 }
+
+/// The kv key of the review tally archond keeps for stage run `stage`: the
+/// failing verdicts the stage's reviewers returned.
+pub fn review_tally_key(stage: &StageRunId) -> String {
+    format!("review_rounds:{stage}")
+}
+
+/// The tally's lists of reviewer fails: those with a blocking finding, and the rest.
+pub const REVIEW_TALLY_FAILS: [&str; 2] = ["fails", "other_fails"];
 
 /// The stage id a run stopped by its item's dollar budget fails under; no
 /// stage of that id runs.
@@ -2106,6 +2114,39 @@ mod tests {
             summary: "ok".into(),
         };
         assert_eq!(done.live_stage(), None);
+    }
+
+    #[test]
+    fn a_cost_stop_is_read_only_as_aether_and_archon_write_it() {
+        let label = StageOutcome::NOTIONAL_COST_LABEL;
+        assert_eq!(
+            label,
+            " (notional cost: Claude Code reports list-price dollars whether or not its login bills them, and Aether showed no fresh subscription usage window with headroom for it, so the budget was enforced; under a subscription, raise or unset the item's budget)",
+            "the label 1.6.3 stored"
+        );
+        let reason = "cost budget of $2: $2.0100 spent";
+        let message = format!(
+            "Stopped by its budget ({reason}); its live subtree was cancelled with it, 3 \
+             descendant(s) were live at the stop. Details are in the exhaustion.failed event."
+        );
+        for stop in [reason.to_owned(), message.clone()] {
+            assert!(StageOutcome::is_cost_budget_stop(&stop), "{stop}");
+            let labelled = format!("{stop}{label}");
+            assert!(StageOutcome::is_cost_budget_stop(&labelled), "{labelled}");
+            for inexact in [
+                format!(" {stop}"),
+                format!("{stop} "),
+                format!("{stop} (notional cost: as I see it)"),
+                format!("{stop}{label} and more"),
+                format!("{stop}{label}{label}"),
+            ] {
+                assert!(!StageOutcome::is_cost_budget_stop(&inexact), "{inexact}");
+            }
+        }
+        for limit in ["1e3", "+5", "inf", "NaN", ".5", "5.", "", "5 or so"] {
+            let odd = format!("cost budget of ${limit}: $9.0000 spent");
+            assert!(!StageOutcome::is_cost_budget_stop(&odd), "{odd}");
+        }
     }
 
     fn stage(state: StageState, structured: Option<serde_json::Value>) -> StageRun {

@@ -1,34 +1,29 @@
 //! A failed run's failure class, read from the records the run left (its
 //! settled stages and the stage it failed under), never from its error's words.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use archon_core::catalog::StageKind;
 use archon_core::cost::{BUDGET_UNENFORCEABLE, BUDGET_USED_UP};
 use archon_core::error::ArchonError;
-use archon_core::id::PipelineRunId;
-use archon_core::outcome::{ClassSource, FailureClass, UNSCORED_FAILURES};
+use archon_core::id::StageRunId;
+use archon_core::outcome::FailureClass;
 use archon_core::run::{
-    PipelineRun, REVIEW_NOT_ON_RECORD, RunState, SHIP_STEP, StageOutcome, StageRun, StageState,
-    Verdict,
+    REVIEW_NOT_ON_RECORD, REVIEW_TALLY_FAILS, SHIP_STEP, StageOutcome, StageRun, StageState,
+    Verdict, review_tally_key,
 };
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::Connection;
 
-use super::super::codec::{SqlContext, from_json};
+use super::super::codec::from_json;
 
-/// The bundled pipeline that reviews an existing pull request, and its lead:
-/// how a lead recorded before Archon kept `only_reviews` (1.6.3) is known.
-const LEGACY_REVIEW_PIPELINE: &str = "review";
-const LEGACY_REVIEW_LEAD: &str = "review";
-
-/// Why the run of `pipeline` that failed under `stage_id` with `error`
-/// failed. Only the prefixes a stage or the daemon writes on purpose are read
-/// from `error`.
+/// Why the run that failed under `stage_id` with `error` failed. Only the
+/// prefixes a stage or the daemon writes on purpose are read from `error`;
+/// `failed_reviews` is [`failed_reviews`] of `stages`.
 pub(in crate::store) fn failure_class(
-    pipeline: &str,
     stage_id: &str,
     error: &str,
     stages: &[StageRun],
+    failed_reviews: &BTreeSet<StageRunId>,
 ) -> FailureClass {
     if let Some(class) = prefixed_class(error) {
         return class;
@@ -46,7 +41,7 @@ pub(in crate::store) fn failure_class(
     if gate_refused_review(error) {
         return FailureClass::Review;
     }
-    judged_class(pipeline, stage_id, &ending)
+    judged_class(stage_id, &ending, failed_reviews)
 }
 
 /// The class a stop names by the prefix its writer puts on it on purpose.
@@ -63,7 +58,7 @@ fn prefixed_class(error: &str) -> Option<FailureClass> {
 
 /// Whether a run that failed under `stage_id` with `error` can be classed
 /// without a record of that stage: the ship step, or a stop its prefix names.
-fn classed_without_its_stage(stage_id: &str, error: &str) -> bool {
+pub(in crate::store) fn classed_without_its_stage(stage_id: &str, error: &str) -> bool {
     stage_id == SHIP_STEP || prefixed_class(error).is_some()
 }
 
@@ -118,12 +113,16 @@ fn stopped_class(ending: &[&StageRun]) -> Option<FailureClass> {
 
 /// What the stage that ended the run was for. A review that passed did not
 /// fail the run, so it is not counted as a review failure.
-fn judged_class(pipeline: &str, stage_id: &str, ending: &[&StageRun]) -> FailureClass {
+fn judged_class(
+    stage_id: &str,
+    ending: &[&StageRun],
+    failed_reviews: &BTreeSet<StageRunId>,
+) -> FailureClass {
     assert!(!ending.is_empty());
     assert!(ending.iter().all(|s| s.stage_id == stage_id));
     let all_passed = ending.iter().all(|s| passed(s));
     let kind = ending.iter().find_map(|s| s.kind);
-    let reviews = ending.iter().any(|s| holds_review(pipeline, s));
+    let reviews = ending.iter().any(|s| holds_review(s, failed_reviews));
     if reviews && !all_passed {
         return FailureClass::Review;
     }
@@ -135,29 +134,79 @@ fn judged_class(pipeline: &str, stage_id: &str, ending: &[&StageRun]) -> Failure
     }
 }
 
-/// Whether the stage of a run of `pipeline` ran a review: a review stage, a
-/// review-only run's lead, or a stage whose result carries the review the gate
-/// reads. Older records name it: a 1.6.3 lead by the bundled review pipeline's
-/// lead id, a 1.4.x stage, which kept no kind, by its id.
-pub(in crate::store) fn holds_review(pipeline: &str, stage: &StageRun) -> bool {
+/// Whether the stage ran a review, by what it recorded: a review kind, a
+/// review-only run's lead, a result carrying the review the gate reads, or a
+/// reviewer's failing verdict in its tally. A recorded kind always wins over
+/// the id: only a kindless (1.4.x) stage is read by it, and only with a verdict.
+pub(in crate::store) fn holds_review(
+    stage: &StageRun,
+    failed_reviews: &BTreeSet<StageRunId>,
+) -> bool {
     assert!(!stage.stage_id.is_empty(), "a stage run names its stage");
     let recorded = stage.kind == Some(StageKind::Review)
         || stage.only_reviews == Some(true)
-        || nested_review(stage).is_some_and(|r| r.is_object());
-    if recorded || stage.only_reviews.is_some() {
-        return recorded;
-    }
-    match stage.kind {
-        None => stage.stage_id.contains("review"),
-        Some(StageKind::Work) => {
-            pipeline == LEGACY_REVIEW_PIPELINE && stage.stage_id == LEGACY_REVIEW_LEAD
+        || nested_review(stage).is_some_and(|r| r.is_object())
+        || failed_reviews.contains(&stage.id);
+    recorded || kindless_review(stage)
+}
+
+/// A stage run from before Archon kept kinds, named a review and holding the
+/// verdict a review returns.
+fn kindless_review(stage: &StageRun) -> bool {
+    let judged = matches!(stage.verdict, Some(Verdict::Pass | Verdict::Fail));
+    stage.kind.is_none() && stage.stage_id.contains("review") && judged
+}
+
+/// Whether a reviewer's verdict on the stage's work is on record: a review
+/// stage's own pass or fail, the verdict of the review its result carries
+/// (unless Archon refused that review), or a failing one in its tally. Being
+/// assigned a review (`only_reviews`) is no such record.
+pub(in crate::store) fn review_on_record(
+    stage: &StageRun,
+    failed_reviews: &BTreeSet<StageRunId>,
+) -> bool {
+    assert!(!stage.stage_id.is_empty(), "a stage run names its stage");
+    let judged = matches!(stage.verdict, Some(Verdict::Pass | Verdict::Fail));
+    let own = judged && (stage.kind == Some(StageKind::Review) || kindless_review(stage));
+    let carried = nested_verdict(stage).is_some() && !stage.review_refused();
+    own || carried || failed_reviews.contains(&stage.id)
+}
+
+/// The stage runs among `stages` whose review tally, which archond keeps as
+/// each reviewer settles, holds a failing verdict; a tally lists no pass.
+pub(in crate::store) fn failed_reviews(
+    conn: &Connection,
+    stages: &[StageRun],
+) -> Result<BTreeSet<StageRunId>, ArchonError> {
+    let mut failed = BTreeSet::new();
+    for stage in stages {
+        let key = review_tally_key(&stage.id);
+        let Some(raw) = super::super::settings::kv_get(conn, &key)? else {
+            continue;
+        };
+        let tally: serde_json::Value = from_json(&raw, "review tally")?;
+        let listed = |list: &&str| {
+            let fails = tally.get(*list).and_then(serde_json::Value::as_array);
+            fails.is_some_and(|fails| !fails.is_empty())
+        };
+        if REVIEW_TALLY_FAILS.iter().any(listed) {
+            failed.insert(stage.id.clone());
         }
-        Some(_) => false,
     }
+    assert!(failed.len() <= stages.len(), "a tally is of one stage run");
+    assert!(failed.iter().all(|id| stages.iter().any(|s| &s.id == id)));
+    Ok(failed)
 }
 
 fn nested_review(stage: &StageRun) -> Option<&serde_json::Value> {
     stage.structured.as_ref()?.get("review")
+}
+
+/// The pass or fail the review a stage's result carries says, if it says one.
+fn nested_verdict(stage: &StageRun) -> Option<Verdict> {
+    let review = nested_review(stage).filter(|r| r.is_object())?;
+    let verdict = review.get("verdict").and_then(serde_json::Value::as_str)?;
+    Verdict::of_phrase(verdict)
 }
 
 /// Whether the stage passed as the gate reads it: its own verdict, and the
@@ -170,9 +219,8 @@ fn passed(stage: &StageRun) -> bool {
         return true;
     };
     let verdict = review.get("verdict").and_then(serde_json::Value::as_str);
-    let review_passed = verdict.is_some_and(|v| {
-        v.trim().eq_ignore_ascii_case("skipped") || Verdict::of_phrase(v) == Some(Verdict::Pass)
-    });
+    let skipped = verdict.is_some_and(|v| v.trim().eq_ignore_ascii_case("skipped"));
+    let review_passed = skipped || nested_verdict(stage) == Some(Verdict::Pass);
     review_passed && !stage.review_refused()
 }
 
@@ -187,191 +235,4 @@ fn unrecorded_kind(stage_id: &str) -> FailureClass {
     } else {
         FailureClass::Other
     }
-}
-
-/// Per class, how many failed outcomes held it before and after the
-/// migration, and how many keep the class 1.6.3 gave them.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub(in crate::store) struct Reclassified {
-    pub before: BTreeMap<String, u64>,
-    pub after: BTreeMap<String, u64>,
-    pub legacy: BTreeMap<String, u64>,
-    pub recomputed: u64,
-}
-
-impl Reclassified {
-    fn rows(&self) -> u64 {
-        self.before.values().sum()
-    }
-
-    fn log(&self) {
-        let classes: BTreeSet<_> = self.before.keys().chain(self.after.keys()).collect();
-        for class in classes {
-            let count = |map: &BTreeMap<String, u64>| map.get(class).copied().unwrap_or(0);
-            tracing::info!(
-                class = class.as_str(),
-                old = count(&self.before),
-                new = count(&self.after),
-                legacy_163 = count(&self.legacy),
-                "outcome failure classes migrated"
-            );
-        }
-        let legacy: u64 = self.legacy.values().sum();
-        tracing::info!(
-            rows = self.rows(),
-            recomputed = self.recomputed,
-            legacy_163 = legacy,
-            "outcome failure classes migrated from stage records"
-        );
-    }
-}
-
-/// Recompute the class of every stored failed outcome whose run is still
-/// stored and readable, keeping the old class beside it; any other row keeps
-/// its old class. Only the class fields change: no record is decoded whole.
-pub(in crate::store) fn reclassify(conn: &Connection) -> Result<Reclassified, ArchonError> {
-    let mut stmt = conn
-        .prepare("SELECT run, COALESCE(failure_class, '') FROM outcomes WHERE result = 'failed' ORDER BY run")
-        .ctx("prepare the failed outcomes")?;
-    let rows = stmt
-        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
-        .ctx("query the failed outcomes")?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .ctx("read the failed outcomes")?;
-    let mut counts = Reclassified::default();
-    let mut rescored = Vec::new();
-    for (run, old) in rows {
-        *counts.before.entry(old.clone()).or_default() += 1;
-        let (class, source) = match recomputed(conn, &run)? {
-            Some(class) => {
-                rescored.push((run.clone(), !UNSCORED_FAILURES.contains(&class)));
-                (class.as_str().to_owned(), ClassSource::Recomputed)
-            }
-            None => (old.clone(), ClassSource::Legacy163),
-        };
-        match source {
-            ClassSource::Legacy163 => *counts.legacy.entry(class.clone()).or_default() += 1,
-            _ => counts.recomputed += 1,
-        }
-        save(conn, &run, &class, source, &old)?;
-        *counts.after.entry(class).or_default() += 1;
-    }
-    let legacy: u64 = counts.legacy.values().sum();
-    assert_eq!(
-        counts.recomputed + legacy,
-        counts.rows(),
-        "each row is recomputed or kept"
-    );
-    assert_eq!(
-        counts.after.values().sum::<u64>(),
-        counts.rows(),
-        "no row is lost"
-    );
-    let lessons = super::super::lessons::rescore_failed_runs(conn, &rescored)?;
-    tracing::info!(
-        runs = rescored.len(),
-        lessons,
-        "lesson scores follow the migrated classes"
-    );
-    counts.log();
-    Ok(counts)
-}
-
-/// The run's class from its stage records; `None` when any of them is gone
-/// or cannot be read, so the row keeps its old class.
-fn recomputed(conn: &Connection, run: &str) -> Result<Option<FailureClass>, ArchonError> {
-    let Ok(id) = PipelineRunId::parse(run) else {
-        tracing::warn!(
-            run,
-            "an outcome with an unreadable run id keeps its 1.6.3 class"
-        );
-        return Ok(None);
-    };
-    let (stored, stages) = match readable_run(conn, &id) {
-        Ok(read) => read,
-        Err(ArchonError::NotFound(_)) => return Ok(None),
-        Err(error @ ArchonError::Corrupt(_)) => {
-            tracing::warn!(run, %error, "an unreadable run keeps its 1.6.3 failure class");
-            return Ok(None);
-        }
-        Err(error) => return Err(error),
-    };
-    let RunState::Failed { stage_id, error } = &stored.state else {
-        tracing::warn!(
-            run,
-            "a failed outcome's run did not fail; it keeps its 1.6.3 class"
-        );
-        return Ok(None);
-    };
-    assert!(stages.iter().all(|s| s.run == id));
-    let recorded = stages.iter().any(|s| &s.stage_id == stage_id);
-    if !recorded && !classed_without_its_stage(stage_id, error) {
-        tracing::warn!(
-            run,
-            stage = stage_id.as_str(),
-            "the stage that ended the run left no record; it keeps its 1.6.3 class"
-        );
-        return Ok(None);
-    }
-    Ok(Some(failure_class(
-        &stored.pipeline,
-        stage_id,
-        error,
-        &stages,
-    )))
-}
-
-/// The run and every one of its stage runs, refusing an undecodable row or
-/// one that holds another run: a lost slot could hide the stop that ended it.
-fn readable_run(
-    conn: &Connection,
-    run: &PipelineRunId,
-) -> Result<(PipelineRun, Vec<StageRun>), ArchonError> {
-    let data: Option<String> = conn
-        .query_row("SELECT data FROM runs WHERE id = ?1", [run.as_str()], |r| {
-            r.get(0)
-        })
-        .optional()
-        .ctx("read a migrated outcome's run")?;
-    let data = data.ok_or_else(|| ArchonError::NotFound(format!("pipeline run {run}")))?;
-    let stored: PipelineRun = from_json(&data, "pipeline run")?;
-    if &stored.id != run {
-        return Err(ArchonError::Corrupt(format!(
-            "run row {run} holds {}",
-            stored.id
-        )));
-    }
-    let stages = super::super::runs::stages_of_strict(conn, run)?;
-    if let Some(other) = stages.iter().find(|s| &s.run != run) {
-        return Err(ArchonError::Corrupt(format!(
-            "a stage row of {run} holds run {}",
-            other.run
-        )));
-    }
-    Ok((stored, stages))
-}
-
-/// Write the new class into the row's columns and, when its record is JSON,
-/// into the record; `updated_at` stays, as no correction or merge happened.
-fn save(
-    conn: &Connection,
-    run: &str,
-    class: &str,
-    source: ClassSource,
-    old: &str,
-) -> Result<(), ArchonError> {
-    assert!(!run.is_empty(), "an outcome row names its run");
-    let changed = conn
-        .execute(
-            "UPDATE outcomes SET failure_class = NULLIF(?2, ''), class_source = ?3,
-                 failure_class_163 = NULLIF(?4, ''),
-                 data = CASE WHEN json_valid(data)
-                        THEN json_set(data, '$.failure', NULLIF(?2, ''), '$.failure_source', ?3)
-                        ELSE data END
-             WHERE run = ?1",
-            params![run, class, source.as_str(), old],
-        )
-        .ctx("migrate an outcome's failure class")?;
-    assert_eq!(changed, 1, "the outcome row exists");
-    Ok(())
 }

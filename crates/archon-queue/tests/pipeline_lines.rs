@@ -7,7 +7,7 @@ use archon_core::cost::DayRange;
 use archon_core::outcome::FailureClass;
 use archon_core::pull_request::{OntoPullRequest, OntoTarget, PullRequestRef};
 use archon_core::queue::{QueueItem, QueueState};
-use archon_core::run::{PipelineRun, RunState, StageRun, StageState};
+use archon_core::run::{PipelineRun, RunState, StageRun, StageState, Verdict, review_tally_key};
 use archon_queue::Store;
 use common::*;
 
@@ -46,8 +46,14 @@ fn reviewing_at(pr: u64, head: char) -> QueueItem {
     item
 }
 
-/// Runs `item` once to `state` at `at` and captures its outcome.
+/// Runs `item` once to `state` at `at` and captures its outcome. A run of
+/// the review pipeline leaves the reviewer verdict such a run records.
 fn finish(store: &mut Store, item: &QueueItem, state: RunState, at: Timestamp) {
+    finish_with(store, item, state, at, item.pipeline == "review");
+}
+
+/// Like [`finish`]; `judged` says whether a reviewer's verdict is recorded.
+fn finish_with(store: &mut Store, item: &QueueItem, state: RunState, at: Timestamp, judged: bool) {
     let id = match store.item(&item.id) {
         Ok(stored) => {
             store
@@ -58,9 +64,16 @@ fn finish(store: &mut Store, item: &QueueItem, state: RunState, at: Timestamp) {
         Err(_) => store.insert_item(item, None).unwrap().id,
     };
     let run = start(store, &id);
-    store
-        .upsert_stage_run(&lead(item, &run, &state, at))
-        .unwrap();
+    let lead = lead(item, &run, &state, at, judged);
+    store.upsert_stage_run(&lead).unwrap();
+    if judged && matches!(state, RunState::Failed { .. }) {
+        let tally = serde_json::json!({
+            "fails": [{"agent": "agt_r", "head": "abc1234", "findings": ["a bug"]}],
+            "read": ["agt_r"],
+        });
+        let key = review_tally_key(&lead.id);
+        store.kv_set(&key, &tally.to_string()).unwrap();
+    }
     let next = match &state {
         RunState::Succeeded { summary } => QueueState::Succeeded {
             run: run.id.clone(),
@@ -84,8 +97,15 @@ fn finish(store: &mut Store, item: &QueueItem, state: RunState, at: Timestamp) {
 }
 
 /// The stage as the bundled pipelines record it: the review pipeline's lead
-/// is a work stage that holds the review and fails through `fail_task`.
-fn lead(item: &QueueItem, run: &PipelineRun, state: &RunState, at: Timestamp) -> StageRun {
+/// is a work stage that holds the review. A pass carries the review in its
+/// result; a fail goes through `fail_task`, and only archond's tally keeps it.
+fn lead(
+    item: &QueueItem,
+    run: &PipelineRun,
+    state: &RunState,
+    at: Timestamp,
+    judged: bool,
+) -> StageRun {
     let mut ran = stage(run, 0);
     ran.stage_id = "review".into();
     ran.kind = Some(StageKind::Work);
@@ -96,6 +116,10 @@ fn lead(item: &QueueItem, run: &PipelineRun, state: &RunState, at: Timestamp) ->
         },
         _ => StageState::Completed,
     };
+    if ran.state == StageState::Completed {
+        ran.verdict = Some(Verdict::Pass);
+        ran.structured = judged.then(|| serde_json::json!({"review": {"verdict": "pass"}}));
+    }
     ran.finished_at = Some(at);
     ran
 }
@@ -238,19 +262,41 @@ fn a_pipeline_that_reviews_nothing_reviews_no_pull_request() {
 }
 
 #[test]
-fn a_review_level_of_none_reviews_no_pull_request() {
+fn a_level_none_read_that_records_no_review_reviews_no_pull_request() {
     let mut store = store();
     let at = t(DAY);
     let mut unreviewed = reviewing(11);
     unreviewed.autonomy.review = archon_core::autonomy::ReviewLevel::None;
-    finish(&mut store, &unreviewed, passed(), at);
+    finish_with(&mut store, &unreviewed, passed(), at, false);
+    let lines = store.pipeline_lines(None, None, &range(at)).unwrap();
+    assert_eq!((lines[0].runs, lines[0].scored), (1, 1), "{lines:?}");
+    assert_eq!(
+        lines[0].review_prs, None,
+        "the run succeeded, but no reviewer judged the pull request"
+    );
     finish(&mut store, &reviewing(12), passed(), at);
     let lines = store.pipeline_lines(None, None, &range(at)).unwrap();
-    assert_eq!(lines[0].runs, 2, "{lines:?}");
     let prs = lines[0].review_prs.as_ref().expect("one was reviewed");
+    assert_eq!((prs.reviewed, prs.passed), (1, 1));
+}
+
+#[test]
+fn being_assigned_a_review_is_no_reviewed_pull_request() {
+    let mut store = store();
+    let at = t(DAY);
+    let unreached = reviewing(21);
+    let failed_before = failed("the checkout failed");
+    finish_with(&mut store, &unreached, failed_before, at, false);
+    finish_with(&mut store, &reviewing(22), passed(), at, false);
+    let run = &store.runs_for_item(&unreached.id).unwrap()[0];
+    let outcome = store.outcome(&run.id).unwrap().unwrap();
     assert_eq!(
-        (prs.reviewed, prs.passed),
-        (1, 1),
-        "level none records no review, so it passes no pull request"
+        outcome.failure,
+        Some(FailureClass::Review),
+        "the review-only lead failed"
     );
+    assert_eq!(outcome.review_pr, None, "no reviewer verdict is on record");
+    let lines = store.pipeline_lines(None, None, &range(at)).unwrap();
+    assert_eq!((lines[0].runs, lines[0].scored), (2, 2));
+    assert_eq!(lines[0].review_prs, None);
 }

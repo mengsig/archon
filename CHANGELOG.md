@@ -21,16 +21,22 @@
   `budget` when the item's budget guard or Aether's cost cap stopped it, and
   `review` when a review-holding stage did not pass, including the bundled
   `review` pipeline's lead, which fails through `fail_task` (stage runs now
-  record `only_reviews`; a 1.6.3 record is read as that lead only when it is the
-  `review` stage of the `review` pipeline). Before, a review FAIL whose
+  record `only_reviews`). A recorded stage kind always wins over the stage id:
+  a 1.6.3 work stage's failure is a `review` failure only when its result
+  carries a review or archond's review tally (`review_rounds:<stage run>`)
+  holds a reviewer's fail, and a kindless 1.4.x stage with `review` in its id
+  only when it holds a pass or fail verdict. Before, a review FAIL whose
   error named "aether", "timeout" or "budget" was left unscored, so review pass
   rates of different repositories could not be compared. Only the prefixes
   Archon writes itself are still read: `BLOCKED:`, `ESCALATE:`, the budget
   guards' own blockers, Aether's cost stop (only in Aether's own grammar,
   `cost budget of $<limit>: <cost> spent`, where the cost is `$<amount>`,
   `≥ $<amount> (<gap>)` or `not reported`, with one of Aether's own gap labels,
-  alone or inside Aether's whole budget message; never a task's words that open with the phrase; the notional-cost
-  label reads it the same way) and the daemon's full-disk stop.
+  alone or inside Aether's whole budget message, matched exactly: nothing may
+  precede it, and nothing may follow but Archon's own whole notional-cost
+  label. Anything else, such as a task's words that open with the phrase, is
+  no budget stop and stays scored; the notional-cost label reads it the same
+  way) and the daemon's full-disk stop.
   A review is read as the gate reads it. A nested `review` that failed, one
   Archon refused, or one the gate found missing (such as a skip the pipeline
   does not allow) is a `review` failure. Migration V24 recomputes stored
@@ -38,8 +44,10 @@
   rows left on the 1.6.3 class. It also rescores the lesson uses and holdout
   trials of those runs, and recounts the lessons they used. Runs already pruned
   keep their old class, marked `legacy_163`, as do runs whose records it cannot
-  read and runs whose ending stage left no record. For one release the
-  old class stays in `failure_class_163`.
+  read, runs whose ending stage left no record, and kept runs missing any
+  stage run their outcome observed; none of these is recomputed, and their
+  lesson uses are not rescored. For one release the old class stays in
+  `failure_class_163`.
 - When `create_agent` keeps failing on Aether's full disk, the stage is now
   marked an infrastructure failure, as it was classed before.
 - The pipeline lines of `archon model-evidence` count only the runs that
@@ -48,8 +56,12 @@
   are counted in `blocked=` and `escalated=`, and routing already read them
   that way. Pipelines that review existing pull requests add
   `prs_passed=<passed>/<reviewed>` and `median_rounds_to_pass`, which count each
-  pull request once, however many heads were reviewed. A run at review level
-  `none` records no review, so it reviews no pull request. Each outcome now keeps
+  pull request once, however many heads were reviewed. A pull request counts
+  as reviewed only when a reviewer's verdict is on record for the run: a review
+  stage's pass or fail, the verdict of the review a stage's result carries
+  (unless Archon refused it), or a reviewer's fail in archond's review tally.
+  A review-only target or assignment alone is no review, so a level-`none`
+  read that records none reviews no pull request. Each outcome now keeps
   the pull request it reviewed, so pruning the item does not lose it. V24 fills
   it in for outcomes whose item is still stored. Outcomes whose item was already
   pruned have no pull request and are left out of these two counts.

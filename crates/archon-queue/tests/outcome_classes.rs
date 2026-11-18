@@ -3,7 +3,10 @@ mod common;
 use archon_core::catalog::StageKind;
 use archon_core::outcome::{ClassSource, FailureClass, Outcome};
 use archon_core::queue::QueueState;
-use archon_core::run::{BUDGET_STAGE, PipelineRun, RunState, StageRun, StageState, Verdict};
+use archon_core::run::{
+    BUDGET_STAGE, PipelineRun, RunState, StageOutcome, StageRun, StageState, Verdict,
+    review_tally_key,
+};
 use archon_queue::Store;
 use common::*;
 
@@ -26,13 +29,33 @@ fn failed_in(
     error: &str,
     stages: impl Fn(&PipelineRun) -> Vec<StageRun>,
 ) -> Outcome {
+    captured(pipeline, stage_id, error, stages, false)
+}
+
+/// Like [`failed_in`]; `tallied` keeps, for each stage, the review tally
+/// archond writes when one of its reviewers fails the work.
+fn captured(
+    pipeline: &str,
+    stage_id: &str,
+    error: &str,
+    stages: impl Fn(&PipelineRun) -> Vec<StageRun>,
+    tallied: bool,
+) -> Outcome {
     let mut store = store();
     let mut classed = item(None, "classed");
     classed.pipeline = pipeline.into();
     let item = store.insert_item(&classed, None).unwrap();
     let run = start(&mut store, &item.id);
+    let fail_tally = serde_json::json!({
+        "fails": [{"agent": "agt_r", "head": "abc1234", "findings": ["a bug"]}],
+        "read": ["agt_r"],
+    });
     for stage in stages(&run) {
         store.upsert_stage_run(&stage).unwrap();
+        if tallied {
+            let key = review_tally_key(&stage.id);
+            store.kv_set(&key, &fail_tally.to_string()).unwrap();
+        }
     }
     fail(&mut store, &run, stage_id, error);
     store
@@ -300,6 +323,17 @@ fn a_nested_review_is_read_as_the_gate_reads_it() {
         Some(FailureClass::Other),
         "a kindless review that passed"
     );
+    let unjudged = failed_with("review", "x", |run| {
+        let error = "x".into();
+        let mut old = settled(run, "review", StageKind::Work, StageState::Failed { error });
+        old.kind = None;
+        vec![old]
+    });
+    assert_eq!(
+        unjudged.failure,
+        Some(FailureClass::Other),
+        "a kindless stage's id alone names no review"
+    );
     let legacy_fail = failed_with("code-review", "x", |run| {
         let mut review = review_fail(run);
         review.stage_id = "code-review".into();
@@ -334,6 +368,14 @@ fn a_task_that_quotes_a_cost_budget_is_no_budget_stop() {
          fictional example from the review.",
         "Stopped by its budget (cost budget of $5: $5.0100 spent); no new subtree cancellation \
          was requested, 0 descendant(s) were live at the stop.",
+        "cost budget of $5: $5.0100 spent (notional cost: as the reviewer sees it)",
+        "cost budget of $5: $5.0100 spent, which the plan allowed",
+        "cost budget of $1e3: $5.0100 spent",
+        "cost budget of $5 or so: $5.0100 spent",
+        " cost budget of $5: $5.0100 spent",
+        "Stopped by its budget (cost budget of $5: $5.0100 spent); no new subtree cancellation \
+         was requested, 0 descendant(s) were live at the stop. Details are in the \
+         exhaustion.failed event. (notional cost: Claude Code reports list-price dollars)",
     ] {
         quoted_budget(quoted);
     }
@@ -341,21 +383,21 @@ fn a_task_that_quotes_a_cost_budget_is_no_budget_stop() {
 
 #[test]
 fn aethers_cost_stop_is_read_in_each_shape_it_takes() {
+    let message = "Stopped by its budget (cost budget of $3: $3.0001 spent); no new subtree \
+                   cancellation was requested, 2 descendant(s) were live at the stop. Details \
+                   are in the exhaustion.failed event.";
+    let label = StageOutcome::NOTIONAL_COST_LABEL;
     for stop in [
-        "cost budget of $1: ≥ $1.0200 (some unpriced) spent",
-        "cost budget of $0.5: not reported spent",
-        "cost budget of $0.5: not reported (usage not fully reported) spent",
-        "cost budget of $0.5: ≥ $0.6000 (interrupted run, cost unknown) spent",
-        "Stopped by its budget (cost budget of $3: $3.0001 spent); no new subtree cancellation \
-         was requested, 0 descendant(s) were live at the stop. Details are in the \
-         exhaustion.failed event.",
-        "Stopped by its budget (cost budget of $3: $3.0001 spent); no new subtree cancellation \
-         was requested, 2 descendant(s) were live at the stop. Details are in the \
-         exhaustion.failed event. (notional cost: Claude Code reports list-price dollars)",
-        "cost budget of $2: $2.0100 spent (notional cost: Claude Code reports list-price dollars)",
+        "cost budget of $1: ≥ $1.0200 (some unpriced) spent".to_owned(),
+        "cost budget of $0.5: not reported spent".to_owned(),
+        "cost budget of $0.5: not reported (usage not fully reported) spent".to_owned(),
+        "cost budget of $0.5: ≥ $0.6000 (interrupted run, cost unknown) spent".to_owned(),
+        message.to_owned(),
+        format!("{message}{label}"),
+        format!("cost budget of $2: $2.0100 spent{label}"),
     ] {
         let capped = failed_with("implement", "stage failed", |run| {
-            let error = stop.into();
+            let error = stop.clone();
             vec![settled(
                 run,
                 "implement",
@@ -394,42 +436,64 @@ fn quoted_budget(quoted: &'static str) {
     assert!(work.is_scored(), "the task judged its own work");
 }
 
+/// A run whose work-kind `stage_id` failed its task, as the bundled review
+/// pipeline's lead does; `only_reviews` is `None` on a 1.6.3 record.
+fn failed_lead(
+    pipeline: &str,
+    only_reviews: Option<bool>,
+    stage_id: &'static str,
+    tallied: bool,
+) -> Outcome {
+    let stages = move |run: &PipelineRun| {
+        let error = MISLEADING.into();
+        let mut lead = settled(run, stage_id, StageKind::Work, StageState::Failed { error });
+        lead.only_reviews = only_reviews;
+        vec![lead]
+    };
+    captured(pipeline, stage_id, MISLEADING, stages, tallied)
+}
+
 #[test]
 fn a_review_only_lead_that_fails_its_task_is_a_review_failure() {
-    let lead_in = |pipeline: &str, only_reviews: Option<bool>, stage_id: &'static str| {
-        failed_in(pipeline, stage_id, MISLEADING, move |run| {
-            let error = MISLEADING.into();
-            let mut lead = settled(run, stage_id, StageKind::Work, StageState::Failed { error });
-            lead.only_reviews = only_reviews;
-            vec![lead]
-        })
-    };
-    let lead = |only_reviews, stage_id| lead_in("review", only_reviews, stage_id);
-    let review = lead(Some(true), "review");
+    let review = failed_lead("review", Some(true), "review", false);
     assert_eq!(review.failure, Some(FailureClass::Review));
     assert_eq!(review.failure_source, Some(ClassSource::Structure));
-    let named = lead(Some(false), "review");
+    let named = failed_lead("review", Some(false), "review", false);
     assert_eq!(
         named.failure,
         Some(FailureClass::Other),
         "a recorded duty outranks the id"
     );
-    let implement = lead(Some(false), "implement");
+    let implement = failed_lead("direct", Some(false), "implement", false);
     assert_eq!(implement.failure, Some(FailureClass::Other));
-    let legacy = lead(None, "review");
-    assert_eq!(
-        legacy.failure,
-        Some(FailureClass::Review),
-        "a 1.6.3 record is read by its id"
-    );
-    for (pipeline, stage_id) in [("direct", "review"), ("review", "review-input")] {
-        let unrelated = lead_in(pipeline, None, stage_id);
+}
+
+#[test]
+fn a_recorded_work_kind_wins_over_a_stage_id_that_says_review() {
+    for (pipeline, stage_id) in [
+        ("review", "review"),
+        ("direct", "review"),
+        ("review", "review-input"),
+    ] {
+        let unrelated = failed_lead(pipeline, None, stage_id, false);
         assert_eq!(
             unrelated.failure,
             Some(FailureClass::Other),
-            "only the bundled review pipeline's lead: {pipeline} / {stage_id}"
+            "a 1.6.3 work stage is no review by its name: {pipeline} / {stage_id}"
         );
     }
+    let tallied = failed_lead("review", None, "review", true);
+    assert_eq!(
+        tallied.failure,
+        Some(FailureClass::Review),
+        "a reviewer's recorded fail is what makes a 1.6.3 lead's failure a review's"
+    );
+    let holder = failed_lead("direct", Some(false), "implement", true);
+    assert_eq!(
+        holder.failure,
+        Some(FailureClass::Review),
+        "a stage whose reviewer failed its work, failing through fail_task"
+    );
 }
 
 #[test]

@@ -12,7 +12,7 @@ use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::id::StageRunId;
 use archon_core::ports::{Descendant, DescendantState};
-use archon_core::run::{StageOutcome, StageRun};
+use archon_core::run::{StageOutcome, StageRun, review_tally_key};
 use archon_pipeline::contract::REVIEW_ROUND_CAP;
 use archon_pipeline::review::Verdict;
 use serde::{Deserialize, Serialize};
@@ -350,12 +350,8 @@ impl Tally {
     }
 }
 
-fn tally_key(stage: &StageRunId) -> String {
-    format!("review_rounds:{stage}")
-}
-
 async fn load(ctx: &DaemonContext, stage: &StageRunId) -> Result<Tally, ArchonError> {
-    let key = tally_key(stage);
+    let key = review_tally_key(stage);
     let Some(raw) = ctx.store.lock().await.kv_get(&key)? else {
         return Ok(Tally {
             every_fail_kept: true,
@@ -367,7 +363,10 @@ async fn load(ctx: &DaemonContext, stage: &StageRunId) -> Result<Tally, ArchonEr
 
 async fn save(ctx: &DaemonContext, stage: &StageRunId, tally: &Tally) -> Result<(), ArchonError> {
     let raw = serde_json::to_string(tally)?;
-    ctx.store.lock().await.kv_set(&tally_key(stage), &raw)
+    ctx.store
+        .lock()
+        .await
+        .kv_set(&review_tally_key(stage), &raw)
 }
 
 /// Whether two commit ids, each possibly abbreviated, can name one commit.
@@ -582,6 +581,19 @@ mod tests {
             !fresh.owes_reread(&old),
             "a tally that kept every fail owes none"
         );
+    }
+
+    #[test]
+    fn a_stored_tally_lists_each_fail_where_the_outcome_store_reads_it() {
+        let [blocking, other] = archon_core::run::REVIEW_TALLY_FAILS;
+        let tally = Tally {
+            fails: vec![fail("aaaaaaa1", &["a"])],
+            other_fails: vec![("agt_b".into(), "bbbbbbb1".into())],
+            ..Tally::default()
+        };
+        let stored = serde_json::to_value(&tally).unwrap();
+        assert_eq!(stored[blocking].as_array().map(Vec::len), Some(1));
+        assert_eq!(stored[other].as_array().map(Vec::len), Some(1));
     }
 
     #[test]

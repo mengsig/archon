@@ -778,37 +778,13 @@ CREATE INDEX lesson_trials_by_run ON lesson_trials (run);
 "#;
 
 /// Version 24 (1.6.4 A2): a failed run's class comes from its stage records.
-/// [`RECLASSIFY_VERSION`] recomputes stored rows after this SQL; the class 1.6.3
-/// gave a row stays in `failure_class_163` for one release. A reviewed pull
-/// request is frozen into its outcome while the item is still stored.
+/// [`RECLASSIFY_VERSION`] recomputes stored rows after this SQL and freezes each
+/// reviewed pull request into its outcome; the class 1.6.3 gave a row stays in
+/// `failure_class_163` for one release.
 const V24: &str = r#"
 ALTER TABLE outcomes ADD COLUMN class_source TEXT
     CHECK (class_source IN ('structure', 'recomputed', 'legacy_163'));
 ALTER TABLE outcomes ADD COLUMN failure_class_163 TEXT;
-WITH reviewed(run, pr) AS (
-    SELECT o.run, json_extract(i.data, '$.onto.pr')
-    FROM outcomes o JOIN items i ON i.id = o.item
-    WHERE json_valid(i.data) AND json_valid(o.data)
-      AND CASE WHEN json_valid(i.data) THEN json_extract(i.data, '$.onto.review_only') END
-      AND CASE WHEN json_valid(i.data) THEN json_type(i.data, '$.onto.pr') END = 'text'
-      AND CASE WHEN json_valid(i.data)
-          THEN COALESCE(json_extract(i.data, '$.autonomy.review'), 'standard') <> 'none' END
-      AND EXISTS (
-          SELECT 1 FROM stage_runs s
-          WHERE s.run = o.run AND json_valid(s.data)
-            AND CASE WHEN json_valid(s.data)
-                THEN json_extract(s.data, '$.kind') = 'review'
-                  OR json_type(s.data, '$.only_reviews') = 'true'
-                  OR json_type(s.data, '$.structured.review') = 'object'
-                  OR (json_type(s.data, '$.only_reviews') IS NULL
-                      AND json_type(s.data, '$.kind') IS NULL
-                      AND instr(s.stage_id, 'review') > 0)
-                  OR (json_type(s.data, '$.only_reviews') IS NULL
-                      AND json_extract(s.data, '$.kind') = 'work'
-                      AND o.pipeline = 'review' AND s.stage_id = 'review') END)
-)
-UPDATE outcomes SET data = json_set(data, '$.review_pr', reviewed.pr)
-FROM reviewed WHERE reviewed.run = outcomes.run AND reviewed.pr IS NOT NULL;
 "#;
 
 /// The migration after whose SQL stored failure classes are recomputed.
@@ -999,7 +975,8 @@ pub(super) fn migrate(conn: &mut Connection) -> Result<usize, ArchonError> {
         tx.execute_batch(sql)
             .ctx(&format!("apply migration {version}"))?;
         if version == RECLASSIFY_VERSION {
-            super::outcomes::class::reclassify(&tx)?;
+            super::outcomes::reclassify::reclassify(&tx)?;
+            super::outcomes::reclassify::freeze_review_prs(&tx)?;
         }
         tx.execute(
             "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
@@ -1019,6 +996,8 @@ mod history_upgrade;
 mod merge_upgrade;
 #[cfg(test)]
 mod outcome_classes;
+#[cfg(test)]
+mod outcome_reviews;
 #[cfg(test)]
 mod pr_identity;
 #[cfg(test)]

@@ -25,12 +25,17 @@ infrastructure, budget and review rules of the [changelog](../CHANGELOG.md)),
 and keeps the old class in `failure_class_163` for one release. Only the
 class columns and fields change. A run whose stage records were pruned keeps
 its old class, marked `legacy_163`. So does a run whose records V24 cannot
-read, or whose ending stage left no record: it logs the run and leaves an unreadable outcome record as it was.
+read, whose ending stage left no record, or whose outcome observed more runs
+of a stage than are still stored: it logs the run, recomputes nothing, rescores
+none of its lesson uses and leaves an unreadable outcome record as it was.
 archond logs, per class, the old count, the new count and the rows left on the
 1.6.3 class. When a recomputed class changes whether a run is scored, V24
 rescores the run's lesson uses and holdout trials and recounts the lessons it
-used, so lesson confidence and holdout lift follow the new classes. V24 also stores, in each outcome of a review that is still stored,
-the pull request it reviewed. Outcomes whose item was already pruned have no
+used, so lesson confidence and holdout lift follow the new classes. V24 also
+stores, in each outcome whose item is still stored and whose run holds a
+recorded reviewer verdict (a review stage's pass or fail, the review a stage's
+result carries, or a reviewer's fail in archond's review tally), the pull
+request it reviewed. Outcomes whose item was already pruned have no
 pull request, so the model evidence report leaves them out of its pull request
 counts.
 

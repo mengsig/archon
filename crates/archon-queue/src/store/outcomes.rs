@@ -1,10 +1,11 @@
 //! Durable run observations and corrections; all derived columns share the JSON write.
 
 mod capture;
-pub(super) mod class;
+mod class;
 mod costs;
 mod distillation;
 mod feedback;
+pub(super) mod reclassify;
 mod reconcile;
 mod segments;
 pub(super) mod stats;

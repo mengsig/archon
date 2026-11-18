@@ -2,8 +2,8 @@
 
 use super::super::Store;
 use super::super::codec::SqlContext;
-use archon_core::autonomy::ReviewLevel;
 use archon_core::error::ArchonError;
+use archon_core::id::StageRunId;
 use archon_core::outcome::{
     ClassSource, DiffStat, FailureClass, Outcome, OutcomeResult, OutcomeStage,
 };
@@ -34,11 +34,12 @@ impl Store {
             .finished_at
             .ok_or_else(|| ArchonError::Invalid("outcome requires a finished run".into()))?;
         let stages = self.stage_runs(&run.id)?;
-        let (result, failure) = result(&run.pipeline, &run.state, &stages)?;
+        let failed_reviews = super::class::failed_reviews(&self.conn, &stages)?;
+        let (result, failure) = result(&run.state, &stages, &failed_reviews)?;
         assert!(run.state.is_terminal());
         assert_eq!(item.id, run.item);
         let observations = stage_observations(self, &stages, estimates)?;
-        let review_pr = reviewed_pr(&item, run, &stages);
+        let review_pr = reviewed_pr(&item, &stages, &failed_reviews);
         let total = self
             .spend_for_run(&run.id, estimates)?
             .max(run.cost_usd)
@@ -140,9 +141,9 @@ fn elapsed(start: archon_core::Timestamp, end: archon_core::Timestamp) -> Result
 }
 
 fn result(
-    pipeline: &str,
     state: &RunState,
     stages: &[StageRun],
+    failed_reviews: &BTreeSet<StageRunId>,
 ) -> Result<(OutcomeResult, Option<FailureClass>), ArchonError> {
     match state {
         RunState::Succeeded { .. } => Ok((OutcomeResult::Succeeded, None)),
@@ -150,7 +151,10 @@ fn result(
         RunState::Failed { stage_id, error } => Ok((
             OutcomeResult::Failed,
             Some(super::class::failure_class(
-                pipeline, stage_id, error, stages,
+                stage_id,
+                error,
+                stages,
+                failed_reviews,
             )),
         )),
         _ => Err(ArchonError::Invalid("a live run has no outcome".into())),
@@ -158,16 +162,22 @@ fn result(
 }
 
 /// The pull request the run reviewed: its item's target when the item pushes
-/// nothing, asks for a review (level `none` records none) and a stage of the
-/// run held one.
-fn reviewed_pr(item: &QueueItem, run: &PipelineRun, stages: &[StageRun]) -> Option<String> {
-    assert_eq!(item.id, run.item, "the run is the item's");
+/// nothing and a reviewer's verdict is on record for one of the run's stages.
+/// The target alone, or a stage assigned the review, is no review.
+fn reviewed_pr(
+    item: &QueueItem,
+    stages: &[StageRun],
+    failed_reviews: &BTreeSet<StageRunId>,
+) -> Option<String> {
     let onto = item.onto.as_ref().filter(|onto| onto.review_only)?;
-    if item.autonomy.review == ReviewLevel::None {
-        return None;
-    }
-    let held = |stage: &StageRun| super::class::holds_review(&run.pipeline, stage);
-    stages.iter().any(held).then(|| onto.pr.url())
+    assert!(
+        failed_reviews
+            .iter()
+            .all(|id| stages.iter().any(|s| &s.id == id)),
+        "a tally is of one of the run's stages"
+    );
+    let reviewed = |stage: &StageRun| super::class::review_on_record(stage, failed_reviews);
+    stages.iter().any(reviewed).then(|| onto.pr.url())
 }
 
 fn reported_diff(stages: &[StageRun]) -> Option<DiffStat> {

@@ -40,12 +40,7 @@ fn labelled(error: &str) -> String {
         StageOutcome::is_cost_budget_stop(error),
         "only a cost stop is labelled"
     );
-    let note = StageOutcome::NOTIONAL_COST_NOTE;
-    let text = format!(
-        "{error}{note}Claude Code reports list-price dollars whether or not its \
-         login bills them, and Aether showed no fresh subscription usage window with headroom for it, so the \
-         budget was enforced; under a subscription, raise or unset the item's budget)"
-    );
+    let text = format!("{error}{}", StageOutcome::NOTIONAL_COST_LABEL);
     assert!(text.starts_with(error), "Aether's words come first");
     text
 }

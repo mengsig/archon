@@ -108,6 +108,30 @@ fn v24_keeps_a_run_whose_stage_row_decodes_into_no_stage_run() {
 }
 
 #[test]
+fn v24_keeps_a_run_holding_a_non_positive_attempt() {
+    let mut conn = v23_store();
+    let (unobserved, _) = budget_run(&conn);
+    conn.execute(
+        "UPDATE outcome_stages SET attempts = 0 WHERE run = ?1",
+        [unobserved.id.as_str()],
+    )
+    .unwrap();
+    let (negative, stage) = budget_run(&conn);
+    conn.execute(
+        "UPDATE stage_runs SET data = json_set(data, '$.attempt', -1) WHERE id = ?1",
+        [stage.id.as_str()],
+    )
+    .unwrap();
+    let (whole, _) = budget_run(&conn);
+
+    assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+
+    assert_kept(&conn, &unobserved, "an observed stage of no attempts");
+    assert_kept(&conn, &negative, "a stage run of a negative attempt");
+    assert_eq!(columns(&conn, &whole).1, some("recomputed"));
+}
+
+#[test]
 fn v24_leaves_a_failed_outcome_whose_class_is_no_text() {
     let mut conn = v23_store();
     let (odd, _) = budget_run(&conn);

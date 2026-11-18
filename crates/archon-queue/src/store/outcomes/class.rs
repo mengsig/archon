@@ -16,21 +16,25 @@ use rusqlite::{Connection, OptionalExtension};
 
 use super::super::codec::{SqlContext, from_json, text_column};
 
-/// Why the run that failed under `stage_id` with `error` failed. Only the
-/// prefixes a stage or the daemon writes on purpose are read from `error`;
-/// `failed_reviews` is [`failed_reviews`] of `stages`.
+/// Why the run that failed under `stage_id` with `error` failed. The records
+/// of the attempt that ended it come first: a stage's own blocker or
+/// escalation, then how a stage was stopped. Only then is `error` read, and
+/// only for the prefixes the daemon writes on purpose. `failed_reviews` is
+/// [`failed_reviews`] of `stages`.
 pub(in crate::store) fn failure_class(
     stage_id: &str,
     error: &str,
     stages: &[StageRun],
     failed_reviews: &BTreeSet<StageRunId>,
 ) -> FailureClass {
-    let ending = ending_attempt(stage_id, stages);
-    if let Some(class) = prefixed_class(error, &ending) {
-        return class;
-    }
+    // Recovery dropped the rows it could not read: the rest explain nothing.
     if error.starts_with(UNRESUMABLE_RUN) {
         return FailureClass::Infrastructure;
+    }
+    let ending = ending_attempt(stage_id, stages);
+    let recorded = said_by_a_stage(error, &ending).or_else(|| stopped_class(&ending));
+    if let Some(class) = recorded.or_else(|| daemon_prefixed_class(error)) {
+        return class;
     }
     if ending.is_empty() {
         return match stage_id {
@@ -38,26 +42,41 @@ pub(in crate::store) fn failure_class(
             _ => FailureClass::Other,
         };
     }
-    if let Some(stopped) = stopped_class(&ending) {
-        return stopped;
-    }
     if gate_refused_review(error) {
         return FailureClass::Review;
     }
     judged_class(stage_id, &ending, failed_reviews)
 }
 
-/// The class a stop names by the prefix its writer puts on it on purpose.
-/// The daemon's budget stop fails the run itself: a stage of the `ending`
-/// attempt that ended the run in those words blocked or escalated instead.
-fn prefixed_class(error: &str, ending: &[&StageRun]) -> Option<FailureClass> {
-    let budget = error.starts_with(BUDGET_USED_UP) || error.starts_with(BUDGET_UNENFORCEABLE);
-    let said_by_a_stage = ending
-        .iter()
-        .any(|s| matches!(&s.state, StageState::Failed { error } if StageOutcome::ends_run(error)));
-    if budget && !said_by_a_stage {
+/// The class of the stop a stage of the `ending` attempt named in failing its
+/// own task: it blocked or escalated, whatever its words share with the
+/// daemon's. A failure flagged infrastructure is the backend's, in its words.
+fn said_by_a_stage(error: &str, ending: &[&StageRun]) -> Option<FailureClass> {
+    let said = ending.iter().find_map(|s| match &s.state {
+        StageState::Failed { error }
+            if !s.infrastructure_failure && StageOutcome::ends_run(error) =>
+        {
+            Some(error.trim_start())
+        }
+        _ => None,
+    })?;
+    // The run fails in the words of the stage that stopped it, if it has them.
+    let class = ends_run_class(error).or_else(|| ends_run_class(said));
+    assert!(class.is_some(), "{said} blocks or escalates");
+    class
+}
+
+/// The class the daemon names by the prefix it puts on a run's `error` on
+/// purpose: its budget stop, or a blocker or escalation of its own.
+fn daemon_prefixed_class(error: &str) -> Option<FailureClass> {
+    if error.starts_with(BUDGET_USED_UP) || error.starts_with(BUDGET_UNENFORCEABLE) {
         return Some(FailureClass::Budget);
     }
+    ends_run_class(error)
+}
+
+/// The class `error` names by the prefix that ends a run at once.
+fn ends_run_class(error: &str) -> Option<FailureClass> {
     if error.starts_with(StageOutcome::ESCALATE_PREFIX) {
         return Some(FailureClass::Escalated);
     }
@@ -68,7 +87,7 @@ fn prefixed_class(error: &str, ending: &[&StageRun]) -> Option<FailureClass> {
 /// Whether a run that failed under `stage_id` with `error` can be classed
 /// without a record of that stage: the ship step, or a stop its prefix names.
 pub(in crate::store) fn classed_without_its_stage(stage_id: &str, error: &str) -> bool {
-    stage_id == SHIP_STEP || prefixed_class(error, &[]).is_some()
+    stage_id == SHIP_STEP || daemon_prefixed_class(error).is_some()
 }
 
 /// Whether the gate failed the stage because the review its pipeline
@@ -100,10 +119,9 @@ fn ending_attempt<'a>(stage_id: &str, stages: &'a [StageRun]) -> Vec<&'a StageRu
 }
 
 /// A deadline, a cost cap or the agent backend stopped the stage before it
-/// judged the work. Aether's cost stop also marks the agent failed, so it
-/// is read before the generic infrastructure flag.
+/// judged the work; none for a stage that left no record. The daemon flags
+/// every failed agent, so Aether's cost stop is read before that flag.
 fn stopped_class(ending: &[&StageRun]) -> Option<FailureClass> {
-    assert!(!ending.is_empty());
     let failed_with = |stop: fn(&str) -> bool| {
         ending
             .iter()

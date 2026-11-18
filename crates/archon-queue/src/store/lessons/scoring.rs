@@ -1,10 +1,11 @@
-use super::super::codec::SqlContext;
+use super::super::codec::{SqlContext, from_json, text_column};
 use archon_core::error::ArchonError;
 use archon_core::id::LessonId;
-use archon_core::lesson::{Lesson, LessonState};
+use archon_core::lesson::{Lesson, LessonState, MAX_LESSON_REFS};
 use archon_core::notify::FeedEntry;
 use archon_core::outcome::{FailureClass, Outcome, OutcomeResult, UNSCORED_FAILURES};
 use rusqlite::{Connection, params};
+use std::collections::BTreeSet;
 
 pub(in crate::store) fn score_run(conn: &Connection, outcome: &Outcome) -> Result<(), ArchonError> {
     assert!(outcome.check().is_ok());
@@ -40,13 +41,15 @@ pub(in crate::store) fn score_run(conn: &Connection, outcome: &Outcome) -> Resul
 }
 
 /// Re-scores the lesson uses and holdout trials of failed runs whose class
-/// was recomputed (`scored` per run), then recounts the lessons they used.
-/// A failed run never wins, so a use is a loss or, when unscored, `NULL`.
+/// V24 recomputed (`scored` per run), then recounts the lessons they used. A
+/// failed run never wins, so a use is a loss or, when unscored, `NULL`.
+/// Returns how many lessons were recounted: one whose rows cannot be read
+/// keeps its stored counts, so that no row stops the migration.
 pub(in crate::store) fn rescore_failed_runs(
     conn: &Connection,
     runs: &[(String, bool)],
 ) -> Result<usize, ArchonError> {
-    let mut touched = std::collections::BTreeSet::new();
+    let mut touched = BTreeSet::new();
     for (run, scored) in runs {
         assert!(!run.is_empty(), "a rescored run is named");
         let won = scored.then_some(false);
@@ -60,32 +63,129 @@ pub(in crate::store) fn rescore_failed_runs(
             params![won, run],
         )
         .ctx("rescore lesson trials")?;
-        let mut stmt = conn
-            .prepare_cached("SELECT lesson FROM lesson_uses WHERE run=?1")
-            .ctx("prepare rescored lessons")?;
-        let ids = stmt
-            .query_map([run.as_str()], |r| r.get::<_, String>(0))
-            .ctx("query rescored lessons")?;
-        for id in ids {
-            touched.insert(id.ctx("read a rescored lesson")?);
-        }
+        touched.extend(used_lessons(conn, run)?);
     }
     let at = archon_core::now();
-    let mut state_changed = false;
+    let (mut recounted, mut state_changed) = (0, false);
     for id in &touched {
-        let mut lesson = super::load(conn, &LessonId::parse(id)?)?;
-        let before = lesson.clone();
-        recount(conn, &mut lesson)?;
-        refresh(&mut lesson, at);
-        if lesson != before {
-            state_changed |= lesson.state != before.state;
-            save_scored(conn, before.state, lesson, at)?;
+        let what = format!("lesson {id} keeps its stored counts");
+        if let Some(changed) = or_skipped(conn, &what, || recount_stored(conn, id, at))? {
+            recounted += 1;
+            state_changed |= changed;
         }
     }
+    assert!(recounted <= touched.len(), "a lesson is recounted once");
     if state_changed {
-        super::consolidation::consolidate_all(conn)?;
+        let what = "the lesson clusters stay as they were";
+        or_skipped(conn, what, || {
+            check_every_lesson_writable(conn)?;
+            super::consolidation::consolidate_all(conn)
+        })?;
     }
-    Ok(touched.len())
+    Ok(recounted)
+}
+
+/// The lessons `run` used. A use whose lesson is not text names none.
+fn used_lessons(conn: &Connection, run: &str) -> Result<Vec<String>, ArchonError> {
+    let mut stmt = conn
+        .prepare_cached("SELECT lesson FROM lesson_uses WHERE run=?1")
+        .ctx("prepare rescored lessons")?;
+    let rows = stmt
+        .query_map([run], |r| text_column(r, 0))
+        .ctx("query rescored lessons")?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .ctx("read rescored lessons")?;
+    let stored = rows.len();
+    let named: Vec<String> = rows.into_iter().flatten().collect();
+    if named.len() < stored {
+        let skipped = stored - named.len();
+        tracing::warn!(
+            run,
+            skipped,
+            "lesson uses that name no lesson are not recounted"
+        );
+    }
+    Ok(named)
+}
+
+/// `step` in a savepoint: `None`, with its writes undone, when it fails on
+/// anything but a full disk, so that one unreadable row never stops V24.
+fn or_skipped<T>(
+    conn: &Connection,
+    what: &str,
+    step: impl FnOnce() -> Result<T, ArchonError>,
+) -> Result<Option<T>, ArchonError> {
+    assert!(!what.is_empty(), "a skipped step says what it leaves");
+    conn.execute_batch("SAVEPOINT rescore")
+        .ctx("open a rescoring savepoint")?;
+    let done = step();
+    let end = match &done {
+        Ok(_) => "RELEASE rescore",
+        Err(_) => "ROLLBACK TO rescore; RELEASE rescore",
+    };
+    conn.execute_batch(end).ctx("close a rescoring savepoint")?;
+    match done {
+        Ok(value) => Ok(Some(value)),
+        Err(error @ ArchonError::DiskFull(_)) => Err(error),
+        Err(error) => {
+            tracing::warn!(%error, "{what}: its rows cannot be rescored");
+            Ok(None)
+        }
+    }
+}
+
+/// Recounts the stored lesson `id` from its scored uses and writes it when
+/// that changed it; whether its state changed.
+fn recount_stored(
+    conn: &Connection,
+    id: &str,
+    at: archon_core::Timestamp,
+) -> Result<bool, ArchonError> {
+    let mut lesson = super::load(conn, &LessonId::parse(id)?)?;
+    if lesson.id.as_str() != id {
+        let what = format!("lesson row {id} holds {}", lesson.id);
+        return Err(ArchonError::Corrupt(what));
+    }
+    let before = lesson.clone();
+    recount(conn, &mut lesson)?;
+    refresh(&mut lesson, at);
+    if lesson == before {
+        return Ok(false);
+    }
+    check_writable(&lesson)?;
+    let state_changed = lesson.state != before.state;
+    save_scored(conn, before.state, lesson, at)?;
+    Ok(state_changed)
+}
+
+/// Refuses a stored lesson that [`super::write`] takes for a caller's bug.
+fn check_writable(lesson: &Lesson) -> Result<(), ArchonError> {
+    let counted = lesson.wins <= lesson.uses;
+    let confident = lesson.confidence.is_finite() && (0.0..=1.0).contains(&lesson.confidence);
+    if counted && confident && lesson.refs.len() <= MAX_LESSON_REFS {
+        return Ok(());
+    }
+    let what = format!(
+        "lesson {} holds counts, a confidence or refs no lesson has",
+        lesson.id
+    );
+    Err(ArchonError::Corrupt(what))
+}
+
+/// Refuses a store holding a lesson that consolidation could not write back.
+fn check_every_lesson_writable(conn: &Connection) -> Result<(), ArchonError> {
+    let mut stmt = conn
+        .prepare("SELECT data FROM lessons")
+        .ctx("prepare the stored lessons")?;
+    let rows = stmt
+        .query_map([], |r| text_column(r, 0))
+        .ctx("query the stored lessons")?;
+    for row in rows {
+        let unreadable = || ArchonError::Corrupt("a lesson row holds no text".into());
+        let data = row.ctx("read a stored lesson")?.ok_or_else(unreadable)?;
+        check_writable(&from_json(&data, "lesson")?)?;
+    }
+    Ok(())
 }
 
 fn score_lesson(conn: &Connection, outcome: &Outcome, id: &LessonId) -> Result<(), ArchonError> {

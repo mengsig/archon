@@ -42,9 +42,13 @@
   no budget stop and stays scored; the notional-cost label reads it the same
   way) and the spawns the daemon gave up on. Those are `infrastructure` only on
   a stage run that has no agent: an agent that fails its task in the daemon's
-  words judged its own work. The budget guards' blockers are `budget` only when
-  the daemon wrote them; a stage that fails its own task in those words is
-  `blocked`. A run recovery could not resume ("cannot resume the run: ") is
+  words judged its own work. The records of the attempt that ended the run are
+  read before any prefix on the run's error: a stage run's own `BLOCKED:` or
+  `ESCALATE:` failure first, then a recorded timeout, cost stop or
+  infrastructure flag. So the budget guards' blockers are `budget` only when
+  the daemon wrote them and no stage run of that attempt recorded a stop; a
+  stage that fails its own task in those words is `blocked`, and a failure
+  flagged infrastructure stays `infrastructure` whatever its words. A run recovery could not resume ("cannot resume the run: ") is
   `infrastructure`, as recovery drops the stage rows it cannot read first.
   A review is read as the gate reads it. A nested `review` that failed, one
   Archon refused, or one the gate found missing (such as a skip the pipeline
@@ -59,8 +63,9 @@
   something other than text, one that does not decode, and a review tally in
   any shape archond does not store (an object in which each fail names its
   reviewer's Aether agent id, the commit that reviewer read and its findings)
-  are records it cannot read:
-  V24 logs the run and goes on. For one release the old class stays in
+  are records it cannot read, as is an observed stage with no attempts:
+  V24 logs the run and goes on. A lesson it cannot recount (an unreadable row,
+  use or epoch) keeps its stored counts and never stops it either. For one release the old class stays in
   `failure_class_163`.
 - When `create_agent` keeps failing on Aether's full disk, the stage is now
   marked an infrastructure failure, as it was classed before. So is a stage

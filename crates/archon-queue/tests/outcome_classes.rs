@@ -611,6 +611,72 @@ fn a_stage_that_blocks_in_the_budget_stops_words_is_blocked() {
     );
 }
 
+/// What a stage run recorded of its stop classes the run before the words the
+/// daemon's budget guard put on the run's error.
+#[test]
+fn a_recorded_stop_outranks_the_budget_guards_words() {
+    let used_up =
+        "BLOCKED: the item's budget is used up: $1.00 spent of its $1.00 cap ($0.00 over)";
+    let unpriced = "BLOCKED: cannot enforce the item's dollar budget: Aether reported usage \
+                    without complete dollar cost";
+    for words in [used_up, unpriced] {
+        let flagged = failed_with("implement", words, |run| {
+            let error = "the stage agent failed".into();
+            let state = StageState::Failed { error };
+            let mut stage = settled(run, "implement", StageKind::Work, state);
+            stage.infrastructure_failure = true;
+            vec![stage]
+        });
+        assert_eq!(
+            flagged.failure,
+            Some(FailureClass::Infrastructure),
+            "{words}"
+        );
+        let late = failed_with("implement", words, |run| {
+            let state = StageState::TimedOut;
+            vec![settled(run, "implement", StageKind::Work, state)]
+        });
+        assert_eq!(late.failure, Some(FailureClass::Timeout), "{words}");
+        let unstarted = failed_with(BUDGET_STAGE, words, |_| Vec::new());
+        assert_eq!(unstarted.failure, Some(FailureClass::Budget), "{words}");
+        let judged = failed_with("review", words, |run| vec![review_fail(run)]);
+        assert_eq!(judged.failure, Some(FailureClass::Budget), "{words}");
+    }
+}
+
+/// A stage's own blocker or escalation is read from the stage run that said
+/// it, whatever the run's error opens with; a failure flagged infrastructure
+/// is the backend's, even in a blocker's words.
+#[test]
+fn a_stages_own_stop_is_read_from_the_stage_run_that_said_it() {
+    let own = |said: &'static str, infra: bool| {
+        failed_with("implement", "stage `implement` failed", move |run| {
+            let error = said.into();
+            let state = StageState::Failed { error };
+            let mut stage = settled(run, "implement", StageKind::Work, state);
+            stage.infrastructure_failure = infra;
+            vec![stage]
+        })
+    };
+    let blocked = own("  BLOCKED: no push access", false);
+    assert_eq!(blocked.failure, Some(FailureClass::Blocked));
+    let escalated = own("ESCALATE: split the work", false);
+    assert_eq!(escalated.failure, Some(FailureClass::Escalated));
+    let backend = failed_with("implement", "BLOCKED: quota exhausted", |run| {
+        let error = "BLOCKED: quota exhausted".into();
+        let state = StageState::Failed { error };
+        let mut stage = settled(run, "implement", StageKind::Work, state);
+        stage.infrastructure_failure = true;
+        vec![stage]
+    });
+    assert_eq!(
+        backend.failure,
+        Some(FailureClass::Infrastructure),
+        "the record marks the backend, whatever its words"
+    );
+    assert!(!backend.is_scored());
+}
+
 /// A spawn the daemon gave up on left no agent. An agent that fails its task
 /// in the daemon's words judged its own work.
 #[test]

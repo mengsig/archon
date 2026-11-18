@@ -5764,14 +5764,12 @@ segments retain cost without being labeled failures. Late corrections to estimat
 can make segment cost allocation approximate; the run's ledger total remains current.
 
 **Failure class.** A failed run's class is read from structure, never from its
-error's words. The only text read is what Archon writes on purpose. The budget
-guards' blockers (`BLOCKED: the item's budget is used up`, `BLOCKED: cannot
-enforce the item's dollar budget`) give `budget`, whichever stage the daemon
-stopped the run under. A stage that fails its own task in those words is
-`blocked`: the daemon's stop fails the run and no stage run.
-A stage's `ESCALATE:` or `BLOCKED:` prefix gives `escalated` or `blocked`.
-Otherwise the last stage run of each slot of the failing stage's last attempt
-decides:
+error's words. The records come first: the last stage run of each slot of the
+failing stage's last attempt. What they say of the stop decides, in this order:
+- a stage run that failed its own task with an `ESCALATE:` or `BLOCKED:` prefix
+  gives `escalated` or `blocked`, whatever its words share with the daemon's.
+  A failure flagged `infrastructure_failure` is the backend's, in the backend's
+  words, so it is read by its flag below;
 - a timeout gives `timeout`;
 - Aether's cost-cap stop gives `budget`, even though Aether also marks that
   agent failed. Aether gives no structured signal for it, so its text is
@@ -5792,7 +5790,16 @@ decides:
   gave up on: the stage run has no agent and its error opens `create_agent
   failed on a full disk` or `create_agent kept failing: `. archond flags both
   itself; the words are read only for 1.6.3 records, and never on a stage run
-  that has an agent;
+  that has an agent.
+
+Only when no record names the stop is the run's error read, and only for the
+prefixes the daemon writes on purpose. The budget guards' blockers (`BLOCKED:
+the item's budget is used up`, `BLOCKED: cannot enforce the item's dollar
+budget`) give `budget`, whichever stage the daemon stopped the run under, and
+another `BLOCKED:` or `ESCALATE:` prefix gives `blocked` or `escalated`. So a
+recorded timeout or infrastructure failure of that stage's last attempt
+outranks the guard's words, and a stage that fails its own task in those words
+is `blocked`. Otherwise the same stage runs decide:
 - a review-kind stage, a review-only run's lead (`only_reviews`), one whose
   result holds a `review` whose verdict reads pass or fail, or one whose review
   tally (kv `review_rounds:<stage run>`, kept by archond as reviewers settle)
@@ -5821,8 +5828,12 @@ stored, when recovery failed it (`cannot resume the run: `), or when the stage
 that ended it left no record (the `ship` step and prefixed stops excepted). A
 record V24 cannot read is any row of the run, its stage runs, its observed
 stages or its review tallies that SQLite holds as something other than text,
-that does not decode, or that names no stage or attempt 0: V24 logs the run and
-goes on, and never stops the migration for one. An outcome also keeps the pull request it reviewed,
+that does not decode, that names no stage or attempt 0, or that observed a stage
+with no attempts: V24 logs the run and goes on, and never stops the migration
+for one. Nor for a lesson: one V24 cannot recount (its row, its use or its
+epoch is unreadable, or it holds what no lesson holds) keeps its stored counts,
+and the lesson clusters stay as they were when any stored lesson is unfit to
+write back. An outcome also keeps the pull request it reviewed,
 `review_pr`, so pruning the item does not lose the report's pull request counts.
 It is kept only when a reviewer's verdict is on record for the run: a review
 stage's pass or fail, the pass or fail of the `review` a stage's result carries

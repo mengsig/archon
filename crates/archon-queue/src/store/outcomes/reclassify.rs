@@ -180,7 +180,8 @@ fn recomputed(conn: &Connection, run: &str) -> Result<Option<FailureClass>, Arch
 }
 
 /// The stage whose runs the outcome observed more of than are still stored,
-/// if any: each stage run was observed once per model it ran on.
+/// if any: each stage run was observed once per model it ran on. An observed
+/// stage that holds no id, or no attempts above zero, is corrupt.
 fn missing_stage_rows(
     conn: &Connection,
     run: &str,
@@ -195,7 +196,7 @@ fn missing_stage_rows(
         .ctx("prepare the observed stage runs")?;
     let count = |r: &rusqlite::Row<'_>| -> rusqlite::Result<Option<i64>> {
         match r.get_ref(1)? {
-            ValueRef::Integer(count) => Ok(Some(count)),
+            ValueRef::Integer(count) if count > 0 => Ok(Some(count)),
             _ => Ok(None),
         }
     };
@@ -207,7 +208,7 @@ fn missing_stage_rows(
     let mut observed: BTreeMap<String, i64> = BTreeMap::new();
     for row in rows {
         let (Some(stage), Some(count)) = row else {
-            let what = format!("an observed stage of run {run} holds no stage id or count");
+            let what = format!("an observed stage of run {run} holds no stage id or attempts");
             return Err(ArchonError::Corrupt(what));
         };
         let seen = observed.entry(stage).or_default();

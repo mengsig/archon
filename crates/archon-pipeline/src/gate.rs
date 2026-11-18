@@ -43,6 +43,9 @@ pub(crate) enum GroupResult {
     Pass { summary: String },
     /// `headline` is one line; `report` details every failing member.
     Fail { headline: String, report: String },
+    /// A completed stage handed in a broken delivery record: no `structured`
+    /// object, or a review that names no reviewer. One repair turn may fix it.
+    Unrecorded { headline: String, report: String },
     /// A strict stage's scenario list fell short: a product defect, which no
     /// loop back to an earlier stage can fix, so the run fails.
     Defect { headline: String, report: String },
@@ -128,17 +131,19 @@ fn recorded(stage: &StageSpec, attempt: u32, members: &[&StageRun], owed: Owed) 
     };
     assert_eq!(member.state, StageState::Completed, "it passed its gate");
     let summary = joined_summary(stage, members);
+    let structured = member.structured.as_ref();
+    let broken = broken_record(structured, owed);
     let unrecorded = |headline: String| {
         let report = format!(
             "**Stage `{}` attempt {attempt}: {headline}**\n\n{summary}\n",
             stage.id
         );
-        GroupResult::Fail {
-            headline,
-            report: clip(&report, MAX_FEEDBACK_CHARS),
+        let report = clip(&report, MAX_FEEDBACK_CHARS);
+        match broken {
+            true => GroupResult::Unrecorded { headline, report },
+            false => GroupResult::Fail { headline, report },
         }
     };
-    let structured = member.structured.as_ref();
     if owed.ship_record && crate::ship::no_change_reason(structured).is_some() {
         return GroupResult::Pass { summary };
     }
@@ -156,6 +161,17 @@ fn recorded(stage: &StageSpec, attempt: u32, members: &[&StageRun], owed: Owed) 
         },
         Err(why) => unrecorded(format!("{REVIEW_REFUSAL}: {why}")),
     }
+}
+
+/// Whether a completed stage's record is broken rather than refused on its
+/// merits: it has no `structured` object, or its owed review names no reviewer.
+fn broken_record(structured: Option<&serde_json::Value>, owed: Owed) -> bool {
+    assert!(owed != Owed::default(), "only an owing stage has a record");
+    let Some(structured) = structured else {
+        return true;
+    };
+    let reviews = owed.review.is_some_and(|duty| duty.reviewers > 0);
+    reviews && crate::review::names_no_reviewer(structured)
 }
 
 /// Which roles of a team group did not complete, and how.

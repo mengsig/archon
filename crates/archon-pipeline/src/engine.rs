@@ -180,6 +180,8 @@ struct Counters {
     loops: Vec<u32>,
     /// Operator revisions requested at each gate stage.
     revisions: Vec<u32>,
+    /// Record repairs given to each stage: at most one per run.
+    repairs: Vec<u32>,
 }
 
 /// A stage group in the replay plus the template context it runs with.
@@ -893,6 +895,7 @@ impl RunDriver {
             entries: vec![0_u32; stages.len()],
             loops: vec![0_u32; stages.len()],
             revisions: vec![0_u32; stages.len()],
+            repairs: vec![0_u32; stages.len()],
         };
         let approved = self.approved_proposal.as_ref();
         let mut at = Position::first(&mut counts.entries, approved);
@@ -945,6 +948,15 @@ impl RunDriver {
         let owed = self.spec.owed(stage);
         let (headline, report) = match gate::evaluate(stage, at.attempt, members, owed) {
             GroupResult::Fail { headline, report } => (headline, report),
+            GroupResult::Unrecorded { headline, report } => {
+                if counts.repairs[at.stage] == 0 {
+                    counts.repairs[at.stage] += 1;
+                    let feedback = sections::record_repair(stage, at.attempt, owed, &report);
+                    at.enter(at.stage, &mut counts.entries, feedback);
+                    return None;
+                }
+                (headline, report)
+            }
             GroupResult::Defect { headline, report } => {
                 return Some(self.stop_failed(at.stage, "", &headline, &report));
             }

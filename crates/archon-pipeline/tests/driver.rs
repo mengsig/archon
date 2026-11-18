@@ -1772,14 +1772,17 @@ fn adaptive_fails_a_build_that_completed_without_a_review_on_record() {
         (
             Agent::Done("Integrated; checks pass; review PASS."),
             "no `review` object",
+            true,
         ),
         (
             Agent::DoneStructured("Done.", serde_json::json!({"review": {"verdict": "fail"}})),
             "verdict is `fail`",
+            false,
         ),
         (
             Agent::DoneStructured("Done.", serde_json::json!({"review": {"verdict": "pass"}})),
             "not checked its reviewers",
+            true,
         ),
         (
             Agent::DoneStructured(
@@ -1787,6 +1790,7 @@ fn adaptive_fails_a_build_that_completed_without_a_review_on_record() {
                 serde_json::json!({"review": {"verdict": "skipped"}}),
             ),
             "`review.reason`",
+            false,
         ),
         (
             Agent::DoneStructured(
@@ -1796,12 +1800,17 @@ fn adaptive_fails_a_build_that_completed_without_a_review_on_record() {
                     "unverified": "reviewer agt_1 failed the change"}}),
             ),
             "reviewer agt_1 failed the change",
+            false,
         ),
     ];
-    for (outcome, why) in unreviewed {
+    for (outcome, why, broken) in unreviewed {
         let mut sim = sim("adaptive");
         sim.start();
-        let done = sim.settle("build", 0, outcome.clone());
+        let mut done = sim.settle("build", 0, outcome.clone());
+        if broken {
+            assert_eq!(spawned(&done), slots(&[("build", 2, 0)]), "{outcome:?}");
+            done = sim.settle("build", 0, outcome.clone());
+        }
         assert!(spawned(&done).is_empty(), "{outcome:?} reached ship");
         let (stage, error) = failed(&done);
         assert_eq!(stage, "build");
@@ -1933,17 +1942,37 @@ fn direct_runs_one_agent_and_archond_ships_what_it_recorded() {
     assert!(agent.allow_delegation, "it delegates its one reviewer");
     assert!(agent.instructions.contains("## Review on record"));
     let unreviewed = reviewed.settle("implement", 0, Agent::Done("Fixed."));
+    assert_eq!(spawned(&unreviewed), slots(&[("implement", 2, 0)]));
+    let repair = &spawn_plans(&unreviewed)[0].prompt;
+    assert!(repair.contains("no `review` object"), "{repair}");
+    assert!(
+        repair.contains("checks every agent id against Aether"),
+        "{repair}"
+    );
+    let unreviewed = reviewed.settle("implement", 0, Agent::Done("Fixed."));
     assert!(failed(&unreviewed).1.contains("no `review` object"));
 }
 
 /// The record names what ships, so a record stage that leaves none has
-/// delivered nothing archond could check.
+/// delivered nothing archond could check: one repair turn, then the run fails.
 #[test]
-fn a_record_stage_without_its_ship_record_fails_the_run() {
+fn a_record_stage_without_its_ship_record_fails_the_run_after_one_repair_turn() {
     let mut sim = sim("direct");
     sim.writes_record = false;
     sim.start();
-    let done = sim.settle("implement", 0, Agent::Done("Fixed it."));
+    let repair = sim.settle("implement", 0, Agent::Done("Fixed it."));
+    assert_eq!(spawned(&repair), slots(&[("implement", 2, 0)]));
+    let prompt = &spawn_plans(&repair)[0].prompt;
+    assert!(
+        prompt.contains("Archon record repair: attempt 1"),
+        "{prompt}"
+    );
+    assert!(prompt.contains("no `structured` object"), "{prompt}");
+    assert!(
+        prompt.contains("Fixed it."),
+        "the repair quotes the summary"
+    );
+    let done = sim.settle("implement", 0, Agent::Done("Fixed it again."));
     assert!(ship_plans(&done).is_empty());
     let (stage, error) = failed(&done);
     assert_eq!(stage, "implement");
@@ -1952,6 +1981,33 @@ fn a_record_stage_without_its_ship_record_fails_the_run() {
         "{error}"
     );
     assert!(error.contains("no `structured` object"), "{error}");
+}
+
+/// A result without `structured` gets one repair turn, and a repaired record
+/// lets the run go on to ship what it names.
+#[test]
+fn a_result_without_structured_gets_one_repair_turn_and_the_run_continues() {
+    let mut sim = sim("direct");
+    sim.writes_record = false;
+    sim.start();
+    let repair = sim.settle("implement", 0, Agent::Done("Fixed it."));
+    assert_eq!(spawned(&repair), slots(&[("implement", 2, 0)]));
+    sim.writes_record = true;
+    let done = sim.settle("implement", 0, Agent::Done("Record handed in."));
+    let plan = shipping(&done);
+    assert_eq!(plan.record_stage, "implement");
+    assert!(succeeded(&sim.ship_pr(PR)).contains("Record handed in."));
+}
+
+/// A record refused on its merits is not broken: no repair turn is given.
+#[test]
+fn a_record_with_too_few_reviewers_gets_no_repair_turn() {
+    let mut sim = sim_reviewed("adaptive", ReviewLevel::Strict);
+    sim.start();
+    let two = reviewed_by_all(&["a/1", "b/2"], &["agt_1", "agt_2"]);
+    let done = sim.settle("build", 0, Agent::DoneStructured("Built.", two));
+    assert!(spawned(&done).is_empty(), "no repair attempt");
+    assert_eq!(failed(&done).0, "build");
 }
 
 /// A task that needs no change succeeds honestly, with no review owed and
@@ -2193,6 +2249,8 @@ fn a_swarm_integrator_failing_without_redispatch_tells_workers_nothing_else() {
     sim.settle("build", 1, Agent::Done("cli built"));
     sim.merge(MergeOutcome::Merged);
     let unrecorded = "api: PRIVATE_API done; cli: PRIVATE_CLI done.";
+    let repair = sim.settle("integrate", 0, Agent::Done(unrecorded));
+    assert_eq!(spawned(&repair), slots(&[("integrate", 2, 0)]));
     let back = sim.settle("integrate", 0, Agent::Done(unrecorded));
     assert_eq!(spawned(&back), slots(&[("build", 2, 0), ("build", 2, 1)]));
     for worker in spawn_plans(&back) {

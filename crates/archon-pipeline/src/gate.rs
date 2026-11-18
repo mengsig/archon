@@ -140,7 +140,8 @@ fn recorded(stage: &StageSpec, attempt: u32, members: &[&StageRun], owed: Owed) 
     assert_eq!(member.state, StageState::Completed, "it passed its gate");
     let summary = joined_summary(stage, members);
     let structured = member.structured.as_ref();
-    let broken = broken_record(structured, owed);
+    // A stated fail is refused on its merits, whatever its gate.
+    let broken = repairable(stage, members, owed);
     let unrecorded = |headline: String| {
         let report = format!(
             "**Stage `{}` attempt {attempt}: {headline}**\n\n{summary}\n",

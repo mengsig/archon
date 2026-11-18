@@ -11,8 +11,11 @@
   Reviewers are still checked against the agents the lead delegated itself,
   so a repair cannot name one that never reviewed. A second broken record
   fails the run, with no fix loop. A stated fail verdict or too few reviewers
-  gets no repair turn. A broken record that states no fail gets its repair
-  turn before the stage's gate and scenario checks read it.
+  gets no repair turn, whatever the stage's gate. A broken record that states
+  no fail gets its repair turn before the stage's gate and scenario checks
+  read it. A kept agent's repair reply is not asked for its record again. A
+  run already past a broken record when it upgrades keeps the fix loop it
+  took.
 - The stage contract states that Aether refuses a delegation with more than
   16 `references`.
 

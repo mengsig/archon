@@ -475,12 +475,15 @@ async fn a_resumed_agent_asked_for_its_record_in_vain_fails_its_stage() {
     assert_eq!(agent(&repair), agent(&fix), "the kept agent repairs");
     let told = h.backend.resumed_with(&repair);
     assert!(told.contains("Archon record repair"), "{told}");
-    ends_without_its_record(&h, &repair, "added the test").await;
+    // Its repair reply without the record fails the run: it is not asked again.
+    let before = h.backend.messages().len();
     h.backend
-        .answer(&agent(&repair), resumed_reply_outcome("Committed again."));
+        .answer(&agent(&repair), resumed_reply_outcome("added the test"));
     let ended = executor::turn_ended(&h.ctx, &agent(&repair)).await;
     ended.expect("turn end");
     h.dispatch().await;
+    let messages = h.backend.messages();
+    assert_eq!(messages.len(), before, "no second request: {messages:?}");
     let state = h.state(&item.id).await;
     let QueueState::Failed { error, .. } = &state else {
         panic!("{state:?}");

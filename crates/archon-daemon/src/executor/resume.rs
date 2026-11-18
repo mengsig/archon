@@ -402,7 +402,7 @@ async fn recorded(
     let Err(why) = ShipRecord::read(structured.as_ref()) else {
         return Ok(Some(outcome));
     };
-    if !records_ship(ctx, stage).await {
+    if !records_ship(ctx, stage).await || is_record_repair(ctx, stage).await? {
         return Ok(Some(outcome));
     }
     let why = if structured.is_none() {
@@ -420,6 +420,19 @@ async fn records_ship(ctx: &DaemonContext, stage: &StageRun) -> bool {
     let table = ctx.runs.lock().await;
     let driver = table.drivers.get(&stage.run);
     driver.is_some_and(|driver| driver.records_ship(&stage.stage_id))
+}
+
+/// Whether `stage` is its run's one repair turn for a broken record, which
+/// settles as it stands: its agent is not asked for the record again.
+async fn is_record_repair(ctx: &DaemonContext, stage: &StageRun) -> Result<bool, ArchonError> {
+    let runs = ctx.store.lock().await.stage_runs(&stage.run)?;
+    assert!(
+        runs.iter().any(|run| run.id == stage.id),
+        "a stage run is among its run's"
+    );
+    let table = ctx.runs.lock().await;
+    let driver = table.drivers.get(&stage.run);
+    Ok(driver.is_some_and(|driver| driver.is_record_repair(&runs, stage)))
 }
 
 /// Ask `agent` once, keyed by the stage run, for the ship record its final

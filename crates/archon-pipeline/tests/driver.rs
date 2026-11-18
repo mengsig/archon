@@ -2103,6 +2103,87 @@ fn a_stated_fail_with_a_broken_record_gets_no_repair_turn() {
     assert!(error.contains("gate all_pass failed"), "{error}");
 }
 
+/// An ungated record stage that states a fail is refused on its merits too,
+/// though its gate passes every completed agent and its record is missing.
+#[test]
+fn an_ungated_stated_fail_without_structured_gets_no_repair_turn() {
+    let mut sim = sim("direct");
+    sim.writes_record = false;
+    sim.start();
+    let summary = "Could not fix it.\nVERDICT: FAIL";
+    let done = sim.settle("implement", 0, Agent::SummaryVerdict(summary));
+    assert!(spawned(&done).is_empty(), "no repair turn: {done:#?}");
+    assert_eq!(failed(&done).0, "implement");
+}
+
+/// A run persisted before repair turns existed took its fix loop after a
+/// broken record; replay keeps that decision and its workers' attempts.
+#[test]
+fn a_run_from_before_repair_turns_replays_its_fix_loop() {
+    let mut sim = swarm_sim();
+    assign_tasks(&mut sim, &["api", "cli"]);
+    sim.settle("plan", 0, Agent::Done("api, cli"));
+    sim.settle("build", 0, Agent::Done("api built"));
+    sim.settle("build", 1, Agent::Done("cli built"));
+    sim.merge(MergeOutcome::Merged);
+    let repair = sim.settle("integrate", 0, Agent::Done("Integrated."));
+    assert_eq!(spawned(&repair), slots(&[("integrate", 2, 0)]));
+    // What the earlier release persisted instead: the loop back to build.
+    sim.stages
+        .retain(|s| !(s.stage_id == "integrate" && s.attempt == 2));
+    sim.pending.clear();
+    let integrated = sim.stages.iter().find(|s| s.stage_id == "integrate");
+    let ended = integrated.and_then(|s| s.finished_at).expect("it ended");
+    let builds: Vec<StageRun> = (sim.stages.iter())
+        .filter(|s| s.stage_id == "build" && s.attempt == 1)
+        .cloned()
+        .collect();
+    for (n, build) in builds.into_iter().enumerate() {
+        sim.stages.push(StageRun {
+            id: StageRunId::new(),
+            attempt: 2,
+            state: StageState::Running,
+            summary: None,
+            structured: None,
+            verdict: None,
+            started_at: ended + std::time::Duration::from_secs(1 + n as u64),
+            finished_at: None,
+            ..build
+        });
+    }
+    let driver = sim.resumed_driver();
+    let replayed = sim.resume_fresh();
+    assert!(spawned(&replayed).is_empty(), "{replayed:#?}");
+    let integrate = sim
+        .stages
+        .iter()
+        .find(|s| s.stage_id == "integrate")
+        .unwrap();
+    let mut repaired = integrate.clone();
+    repaired.attempt = 2;
+    assert!(
+        !driver.is_record_repair(&sim.stages, &repaired),
+        "no repair turn was taken"
+    );
+}
+
+/// The daemon tells a record repair turn from any other attempt.
+#[test]
+fn a_record_repair_attempt_is_known_as_one() {
+    let mut sim = sim("direct");
+    sim.writes_record = false;
+    sim.start();
+    let repair = sim.settle("implement", 0, Agent::Done("Fixed it."));
+    assert_eq!(spawned(&repair), slots(&[("implement", 2, 0)]));
+    let driver = sim.resumed_driver();
+    let attempts: Vec<&StageRun> = sim.stages.iter().collect();
+    let [first, second] = attempts[..] else {
+        panic!("{attempts:#?}")
+    };
+    assert!(!driver.is_record_repair(&sim.stages, first));
+    assert!(driver.is_record_repair(&sim.stages, second));
+}
+
 /// A record refused on its merits is not broken: no repair turn is given.
 #[test]
 fn a_record_with_too_few_reviewers_gets_no_repair_turn() {

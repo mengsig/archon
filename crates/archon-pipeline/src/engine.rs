@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::autonomy::{self, OperatorGates};
 use crate::gate::{self, GroupResult};
 use crate::ship::{self, BodyAdditions, SHIP_STEP, ShipOutcome, ShipPlan, ShipRecord};
-use crate::spec::{PipelineSpec, ReviewDuty, StageSpec};
+use crate::spec::{Owed, PipelineSpec, ReviewDuty, StageSpec};
 use crate::team::{self, MergeOutcome, MergePlan, RoleBranch, TeamSlot};
 use crate::{contract, review, risk, sections, template};
 
@@ -526,6 +526,29 @@ impl RunDriver {
     }
 
     /// Whether stage `stage_id` hands in the ship record archond delivers.
+    /// Whether `stage` is the repair turn of a broken record: the previous
+    /// attempt of its stage handed one in, and `stage` is what ran next.
+    pub fn is_record_repair(&self, runs: &[StageRun], stage: &StageRun) -> bool {
+        assert!(stage.attempt >= 1, "attempts are 1-based");
+        let Some(spec) = self.spec.stage(&stage.stage_id) else {
+            return false;
+        };
+        let owed = self.spec.owed(spec);
+        if stage.attempt == 1 || owed == Owed::default() {
+            return false;
+        }
+        let slots = latest_per_slot(runs);
+        let group: Option<Vec<&StageRun>> = group_at(&slots, spec, stage.attempt - 1)
+            .into_iter()
+            .collect();
+        let Some(members) = group.filter(|g| g.iter().all(|m| m.state.is_terminal())) else {
+            return false;
+        };
+        let judged = gate::evaluate(spec, stage.attempt - 1, &members, owed);
+        matches!(judged, GroupResult::Unrecorded { .. })
+            && next_started(runs, &members).is_some_and(|next| next.id == stage.id)
+    }
+
     pub fn records_ship(&self, stage_id: &str) -> bool {
         let records = self.spec.ship_record_stage();
         records.is_some_and(|stage| stage.id == stage_id)
@@ -929,7 +952,7 @@ impl RunDriver {
             if !missing.is_empty() || members.iter().any(|m| !m.state.is_terminal()) {
                 return Replay::Await { at, missing };
             }
-            if let Some(replay) = self.decide_group(&mut at, &mut counts, &members) {
+            if let Some(replay) = self.decide_group(&mut at, &mut counts, &members, runs) {
                 return replay;
             }
         }
@@ -943,22 +966,25 @@ impl RunDriver {
         at: &mut Position,
         counts: &mut Counters,
         members: &[&StageRun],
+        runs: &[StageRun],
     ) -> Option<Replay> {
         let stage = &self.spec.file.stages[at.stage];
         let owed = self.spec.owed(stage);
         let (headline, report) = match gate::evaluate(stage, at.attempt, members, owed) {
             GroupResult::Fail { headline, report } => (headline, report),
-            GroupResult::Unrecorded { headline, report } => {
-                // The repair turn was spent: a second broken record fails the
-                // run, as no fix loop can hand in the record either.
-                if counts.repairs[at.stage] > 0 {
-                    return Some(self.stop_failed(at.stage, "", &headline, &report));
-                }
+            // The repair turn was spent: a second broken record fails the
+            // run, as no fix loop can hand in the record either.
+            GroupResult::Unrecorded { headline, report } if counts.repairs[at.stage] > 0 => {
+                return Some(self.stop_failed(at.stage, "", &headline, &report));
+            }
+            GroupResult::Unrecorded { report, .. } if repair_fits(runs, members) => {
                 counts.repairs[at.stage] += 1;
                 let feedback = sections::record_repair(stage, at.attempt, owed, &report);
                 at.enter(at.stage, &mut counts.entries, feedback);
                 return None;
             }
+            // A run persisted before repair turns existed took its fix loop.
+            GroupResult::Unrecorded { headline, report } => (headline, report),
             GroupResult::Defect { headline, report } => {
                 return Some(self.stop_failed(at.stage, "", &headline, &report));
             }
@@ -1577,6 +1603,30 @@ fn latest_per_slot(runs: &[StageRun]) -> BTreeMap<SlotKey<'_>, &StageRun> {
         }
     }
     slots
+}
+
+/// The first stage run started after the one-agent group `members` ended,
+/// other than its own; `None` for a larger group or before one starts.
+fn next_started<'a>(runs: &'a [StageRun], members: &[&StageRun]) -> Option<&'a StageRun> {
+    let [member] = members else {
+        return None;
+    };
+    let ended = member.finished_at.unwrap_or(member.started_at);
+    assert!(ended >= member.started_at, "a run ends after it starts");
+    let later = runs
+        .iter()
+        .filter(|r| r.id != member.id && r.started_at >= ended);
+    later.min_by_key(|r| (r.started_at, &r.id))
+}
+
+/// Whether persisted history leaves the repair turn to a broken record:
+/// nothing ran after it yet, or the next run is its own stage's next attempt.
+fn repair_fits(runs: &[StageRun], members: &[&StageRun]) -> bool {
+    assert!(!members.is_empty(), "a group has a member");
+    let next = next_started(runs, members);
+    next.is_none_or(|next| {
+        next.stage_id == members[0].stage_id && next.attempt > members[0].attempt
+    })
 }
 
 /// The latest stage run of each slot of `stage` at `attempt`.

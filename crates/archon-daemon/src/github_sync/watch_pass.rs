@@ -592,10 +592,9 @@ async fn origin_unmoved(due: &Due) -> bool {
 /// told in full, and every one past them is named by kind and number.
 fn watch_event(due: &Due, mut changes: Vec<WatchedChange>) -> TriggerEvent {
     assert!(!changes.is_empty(), "only news raises a trigger");
-    let told = changes.len().min(watch::MAX_CHANGES);
-    let (rest, truncated) = super::watch_fold::capped(watch::by_kind(&changes[told..]));
-    changes.truncate(told);
-    assert_eq!(changes.len(), told, "the first are told in full");
+    let past = changes.split_off(changes.len().min(watch::MAX_CHANGES));
+    let (changes, rest, truncated) = super::watch_fold::capped(changes, watch::by_kind(&past));
+    assert!(!changes.is_empty(), "the first are told in full");
     TriggerEvent::GithubWatch {
         repo: due.repo.name.clone(),
         repository: due.repository.clone(),

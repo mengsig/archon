@@ -28,5 +28,5 @@ order to watch it. A `github_watch` is news with
 included; read the thread and apply the usual trigger rules before acting.
 It tells up to 20 changes in `changes`, each with its pull request's other
 differences in `also`; `rest` names every other one, change kind to pull
-request numbers. With `truncated: true` more changed than it names: list
-the repository's open pull requests.
+request numbers. With `truncated: true` more pull requests or requested
+reviewers changed than it names: list the repository's open pull requests.

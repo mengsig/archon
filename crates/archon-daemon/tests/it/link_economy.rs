@@ -829,13 +829,19 @@ async fn check_as_news_comes_due(
             harness.fake.received_named("get_agent").len() >= looked + 2
         })
         .await;
+    let seen = tokio::time::Instant::now();
     let store = harness.ctx.store.lock().await;
     release.send(()).expect("the lookup is waiting");
-    while archon_core::now() < due_at + TimeDelta::milliseconds(200) {
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    wait_past(seen, now, due_at).await;
     drop(store);
     check.await.unwrap().unwrap()
+}
+
+/// Sleep until a check that began at `now`, and whose clock was running by
+/// `seen`, counts the time as past `due_at`, however late it started.
+async fn wait_past(seen: tokio::time::Instant, now: Timestamp, due_at: Timestamp) {
+    let until_due = (due_at - now).to_std().expect("due after the check began");
+    tokio::time::sleep_until(seen + until_due + Duration::from_millis(200)).await;
 }
 
 /// News that comes due after the refresh's recheck looked the orchestrator
@@ -905,9 +911,7 @@ async fn news_that_comes_due_while_the_compaction_waits_stops_it() {
             harness.fake.received_named("get_agent").len() > looked
         })
         .await;
-    while archon_core::now() < due_at + TimeDelta::milliseconds(200) {
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
+    wait_past(tokio::time::Instant::now(), now, due_at).await;
     drop(sending);
     let economy = check.await.unwrap().unwrap();
     assert_eq!(economy, Economy::Nothing, "the news came due meanwhile");

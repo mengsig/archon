@@ -528,6 +528,33 @@ async fn an_agent_beside_settings_frozen_for_another_generation_is_replaced_not_
     assert_eq!(after.threshold_key, key, "frozen for its own creation");
 }
 
+/// The mirror image: the counter and the recorded creation say generation 1,
+/// the settings beside the stopped agent were frozen for generation 2's
+/// creation. That key was used, so the fresh generation is the one after it.
+#[tokio::test]
+async fn settings_frozen_ahead_of_the_counter_give_the_fresh_generation_an_unused_key() {
+    let (harness, agents) = outdated_on_disk().await;
+    let raw = harness.kv(THRESHOLD).await.expect("frozen at creation");
+    let mut frozen: Value = serde_json::from_str(&raw).unwrap();
+    let own = frozen["key"].as_str().expect("its creation key").to_owned();
+    let ahead = format!("{}-2", own.strip_suffix("-1").expect("generation 1's key"));
+    frozen["key"] = json!(ahead);
+    harness.set_kv(THRESHOLD, &frozen.to_string()).await;
+    set_state(&agents, ORCH, "cancelled");
+    script_successor(&harness, &agents);
+
+    let id = supervisor::ensure_orchestrator(&harness.ctx).await.unwrap();
+    assert_eq!(id.as_str(), ORCH_2, "a fresh generation");
+    no_checkpoint_restart(&harness);
+    let after = stored(&harness).await;
+    assert_eq!(after.generation.as_deref(), Some("3"), "past the used key");
+    assert_eq!(after.marker, None);
+    let creates = harness.fake.received_named("create_agent");
+    let sent = creates[1]["idempotency_key"].as_str().map(str::to_owned);
+    assert_ne!(sent.as_deref(), Some(ahead.as_str()), "the used key again");
+    assert_eq!(after.threshold_key, sent, "frozen for its own creation");
+}
+
 /// The counter was lost beside a live agent created as generation 1: the
 /// refresh that mismatch owes runs at the idle moment without a panic, and
 /// the successor's generation follows the one last created, reusing no key.

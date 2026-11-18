@@ -389,7 +389,12 @@ pub fn orchestrator_create_agent(
 
 /// The idempotency key every attempt to create `generation` sends.
 fn creation_key(store: &StoreId, generation: u64) -> String {
-    format!("archon-orchestrator-{store}-{generation}")
+    format!("{}{generation}", creation_key_prefix(store))
+}
+
+/// What every creation key of `store` starts with, before its generation.
+fn creation_key_prefix(store: &StoreId) -> String {
+    format!("archon-orchestrator-{store}-")
 }
 
 /// `None` keeps the operator's `[approval] default` (the orchestrator is
@@ -1140,15 +1145,7 @@ async fn advance_generation(ctx: &DaemonContext) -> Result<(), ArchonError> {
     let mut store = ctx.store.lock().await;
     let generation = parse_generation(store.kv_get(keys::ORCHESTRATOR_GENERATION)?)?;
     let owed = economy::unfinished_refresh(&store, generation)?.map(|from| from.to_string());
-    // Past the generation last created too: a lost counter never reuses its key.
-    let created = origin::recorded_generation(&store)?.unwrap_or(0);
-    let Some(next) = generation.max(created).checked_add(1) else {
-        let key = keys::ORCHESTRATOR_GENERATION;
-        return Err(ArchonError::Corrupt(format!(
-            "kv {key}: no generation follows {generation}"
-        )));
-    };
-    let next = next.to_string();
+    let next = next_generation(&store, generation)?.to_string();
     let mut set = vec![(keys::ORCHESTRATOR_GENERATION, next.as_str())];
     if let Some(from) = &owed {
         set.push((economy::REFRESH_UNFINISHED_KEY, from.as_str()));
@@ -1399,16 +1396,43 @@ fn frozen_threshold(
 /// Whether the settings stored beside generation `generation`'s agent were frozen
 /// for another creation. No stored threshold is a build that froze none: no mismatch.
 fn frozen_for_another(store: &archon_queue::Store, generation: u64) -> Result<bool, ArchonError> {
-    let Some(raw) = store.kv_get(COMPACTION_TOKENS_KEY)? else {
+    if store.kv_get(COMPACTION_TOKENS_KEY)?.is_none() {
         return Ok(false);
+    }
+    Ok(frozen_generation(store)? != Some(generation))
+}
+
+/// The generation whose creation key the stored threshold was frozen under;
+/// `None` when none is stored or it names no creation of this store.
+fn frozen_generation(store: &archon_queue::Store) -> Result<Option<u64>, ArchonError> {
+    let Some(raw) = store.kv_get(COMPACTION_TOKENS_KEY)? else {
+        return Ok(None);
     };
     let Some(store_id) = store.kv_get(STORE_ID_KEY)? else {
-        return Ok(true);
+        return Ok(None);
     };
-    let key = creation_key(&StoreId::parse(&store_id)?, generation);
-    // An unreadable row matches no creation; the fresh generation replaces it.
-    let frozen = serde_json::from_str::<FrozenThreshold>(&raw);
-    Ok(!frozen.is_ok_and(|frozen| frozen.key == key))
+    let prefix = creation_key_prefix(&StoreId::parse(&store_id)?);
+    // An unreadable row names no creation; the fresh generation replaces it.
+    let Ok(frozen) = serde_json::from_str::<FrozenThreshold>(&raw) else {
+        return Ok(None);
+    };
+    let Some(number) = frozen.key.strip_prefix(&prefix) else {
+        return Ok(None);
+    };
+    let generation = number.parse::<u64>().ok();
+    Ok(generation.filter(|generation| generation.to_string() == number))
+}
+
+/// The generation after every one the store records as begun: the counter, the
+/// creation last recorded and the one its settings were frozen for. No key is reused.
+fn next_generation(store: &archon_queue::Store, generation: u64) -> Result<u64, ArchonError> {
+    let created = origin::recorded_generation(store)?.unwrap_or(0);
+    let frozen = frozen_generation(store)?.unwrap_or(0);
+    let last = generation.max(created).max(frozen);
+    last.checked_add(1).ok_or_else(|| {
+        let key = keys::ORCHESTRATOR_GENERATION;
+        ArchonError::Corrupt(format!("kv {key}: no generation follows {last}"))
+    })
 }
 
 /// The orchestrator's compaction threshold to send: the configured one, and

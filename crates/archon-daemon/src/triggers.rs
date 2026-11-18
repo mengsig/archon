@@ -224,9 +224,9 @@ pub enum TriggerEvent {
         /// Its GitHub `owner/name`.
         repository: String,
         changes: Vec<crate::github_sync::watch::WatchedChange>,
-        /// Changes left out of `changes`.
-        #[serde(default, skip_serializing_if = "is_zero")]
-        more: u32,
+        /// The changes past those told in `changes`: each kind's pull request numbers.
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        rest: BTreeMap<String, Vec<u64>>,
         operator: bool,
         trust: String,
     },

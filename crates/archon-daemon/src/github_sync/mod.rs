@@ -80,6 +80,8 @@ pub struct GithubSync {
     paused_until: Option<Instant>,
     /// When each repository watch was last asked about, and a cut walk's progress.
     watch_asked: HashMap<RepoId, watch_pass::Asked>,
+    /// When this sync began: a watch it has not asked yet waits the floor from here.
+    started: Instant,
     /// The registered repositories whose `origin` the last pass could not read.
     unreadable: Vec<String>,
 }
@@ -92,6 +94,7 @@ impl GithubSync {
             asked: HashMap::new(),
             paused_until: None,
             watch_asked: HashMap::new(),
+            started: Instant::now(),
             unreadable: Vec::new(),
         }
     }

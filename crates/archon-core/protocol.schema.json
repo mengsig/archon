@@ -11961,7 +11961,7 @@
       "description": "A registered repository whose open pull requests the GitHub sync watches.",
       "properties": {
         "fetched_at": {
-          "description": "When the last walk that GitHub sent a page of began (a 304 changes nothing).",
+          "description": "When the last completed walk of the list began, one of 304s too.",
           "format": "date-time",
           "type": [
             "string",
@@ -11996,6 +11996,10 @@
             "integer",
             "null"
           ]
+        },
+        "truncated": {
+          "description": "The repository has more open pull requests than a walk reads (1,000):\nonly the newest are watched.",
+          "type": "boolean"
         }
       },
       "required": [

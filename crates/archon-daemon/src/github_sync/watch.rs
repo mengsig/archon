@@ -22,7 +22,7 @@ pub(crate) const FORMAT: u32 = 1;
 /// The interval a watch gets when none is asked for.
 pub(crate) const DEFAULT_MINUTES: u32 = MIN_WATCH_MINUTES;
 
-/// Changes one trigger lists; the rest are counted.
+/// Changes one trigger tells in full; the rest it names by kind and number.
 pub(crate) const MAX_CHANGES: usize = 20;
 
 /// Rows a record holds at most: every listed one, and as many missed once.
@@ -47,10 +47,13 @@ pub(crate) struct WatchRecord {
     pub generation: String,
     /// The `owner/name` the rows below are of; another `origin` starts over.
     pub repository: String,
-    /// GitHub's clock when the last stored walk began; `None` before the first.
+    /// GitHub's clock when the last completed walk began; `None` before the first.
     #[serde(default)]
     pub walked_at: Option<Timestamp>,
-    /// Each page of that walk, for a conditional `GET` of it.
+    /// Completed walks so far, those of 304s too: they change only this and `walked_at`.
+    #[serde(default)]
+    pub walks: u64,
+    /// Each page of the last walk GitHub sent a page of, for a conditional `GET` of it.
     #[serde(default)]
     pub pages: Vec<PageMark>,
     /// What each pull request looked like in that walk.
@@ -68,6 +71,7 @@ impl WatchRecord {
             generation: ulid::Ulid::generate().to_string(),
             repository,
             walked_at: None,
+            walks: 0,
             pages: Vec::new(),
             pulls: BTreeMap::new(),
         }
@@ -78,10 +82,25 @@ impl WatchRecord {
         if self.repository != repository {
             self.repository = repository.to_owned();
             self.walked_at = None;
+            self.walks = 0;
             self.pages = Vec::new();
             self.pulls = BTreeMap::new();
         }
         self
+    }
+
+    /// `number`'s row, unless two completed walks running did not list it:
+    /// then it closed, and listed again it is first seen.
+    pub(crate) fn known(&self, number: u64) -> Option<&Row> {
+        let row = self.pulls.get(&number)?;
+        row.missed
+            .is_none_or(|walk| walk == self.walks)
+            .then_some(row)
+    }
+
+    /// The list went on past the pages a walk follows: the oldest are not watched.
+    pub(crate) fn is_truncated(&self) -> bool {
+        self.pages.len() >= MAX_PAGES as usize && self.pages.last().is_some_and(PageMark::is_full)
     }
 }
 
@@ -119,9 +138,10 @@ pub(crate) struct Row {
     pub reviewers: BTreeSet<String>,
     pub comments: u64,
     pub reviews: u64,
-    /// The last walk did not list it: kept once, as a page shift can hide one.
-    #[serde(default)]
-    pub missed: bool,
+    /// The completed walk (as `walks` counted it) that first did not list it:
+    /// kept through that one, as a page shift can hide a pull request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub missed: Option<u64>,
 }
 
 impl Row {
@@ -185,13 +205,53 @@ fn decode(raw: &str) -> Result<WatchRecord, serde_json::Error> {
         });
     }
     let record: WatchRecord = serde_json::from_str(raw)?;
-    let listed = record.pages.iter().flat_map(|page| &page.numbers);
-    if let Some(number) = listed.into_iter().find(|n| !record.pulls.contains_key(n)) {
-        return Err(serde::de::Error::custom(format!(
-            "a page lists #{number}, which has no row"
-        )));
-    }
+    check(&record).map_err(serde::de::Error::custom)?;
     Ok(record)
+}
+
+/// What a record of this format holds to, read or written: a stored one that
+/// does not is corrupt, and is refused before it is used.
+fn check(record: &WatchRecord) -> Result<(), String> {
+    let minutes = record.interval_minutes;
+    if !(MIN_WATCH_MINUTES..=MAX_WATCH_MINUTES).contains(&minutes) {
+        return Err(format!("an interval of {minutes} minutes"));
+    }
+    if record.walked_at.is_some() != (record.walks > 0) {
+        return Err(format!(
+            "{} walks, at odds with its walk time",
+            record.walks
+        ));
+    }
+    if record.walks == 0 && !(record.pages.is_empty() && record.pulls.is_empty()) {
+        return Err("pages or rows before the first walk".into());
+    }
+    if record.pages.len() > MAX_PAGES as usize || record.pulls.len() > MAX_ROWS {
+        return Err("more pages or rows than a walk reads".into());
+    }
+    check_pages(record)?;
+    let late = |row: &Row| row.missed.is_some_and(|walk| walk > record.walks);
+    if record.pulls.values().any(late) {
+        return Err("a row missed by a walk not made yet".into());
+    }
+    Ok(())
+}
+
+/// Each page but the last is full, its ETag bounded, and each number has a row.
+fn check_pages(record: &WatchRecord) -> Result<(), String> {
+    let last = record.pages.len().saturating_sub(1);
+    for (index, page) in record.pages.iter().enumerate() {
+        let short = index < last && !page.is_full();
+        if short || page.numbers.len() > PAGE {
+            return Err(format!("page {} of {} rows", index + 1, page.numbers.len()));
+        }
+        if page.etag.as_ref().is_some_and(|e| e.len() > MAX_ETAG_BYTES) {
+            return Err(format!("page {} has an oversized ETag", index + 1));
+        }
+        if let Some(number) = page.numbers.iter().find(|n| !record.pulls.contains_key(n)) {
+            return Err(format!("a page lists #{number}, which has no row"));
+        }
+    }
+    Ok(())
 }
 
 /// Every watch, by repository id.
@@ -227,22 +287,10 @@ pub(crate) fn put(
     record: &WatchRecord,
 ) -> Result<(), ArchonError> {
     assert_eq!(record.version, FORMAT, "written in this format only");
-    assert!(
-        (MIN_WATCH_MINUTES..=MAX_WATCH_MINUTES).contains(&record.interval_minutes),
-        "the interval was checked at the boundary"
-    );
-    assert!(record.pages.len() <= MAX_PAGES as usize, "a mark per page");
-    assert!(
-        record
-            .pages
-            .iter()
-            .all(|p| p.etag.as_ref().is_none_or(|e| e.len() <= MAX_ETAG_BYTES)),
-        "bounded ETags"
-    );
-    assert!(record.pulls.len() <= MAX_ROWS, "bounded rows");
-    assert!(
-        record.walked_at.is_some() || record.pulls.is_empty(),
-        "rows only of a completed walk"
+    assert_eq!(
+        check(record),
+        Ok(()),
+        "a record written holds to its format"
     );
     store.kv_set(&key(repo), &serde_json::to_string(record)?)
 }
@@ -303,7 +351,7 @@ impl Pull {
             reviewers: self.reviewers(),
             comments: counts.comments,
             reviews: counts.reviews,
-            missed: false,
+            missed: None,
         }
     }
 
@@ -370,12 +418,13 @@ pub(crate) struct Walk {
 /// pull request, and nothing on the first walk.
 pub(crate) fn after_walk(record: &WatchRecord, walk: Walk) -> (WatchRecord, Vec<WatchedChange>) {
     assert!(walk.pages.len() <= MAX_PAGES as usize, "a bounded walk");
+    let walks = record.walks + 1;
     let mut changes = Vec::new();
     let mut pulls = BTreeMap::new();
     for (number, (pull, row)) in &walk.fresh {
-        assert!(!row.missed, "a listed pull request is not missed");
+        assert!(row.missed.is_none(), "a listed pull request is not missed");
         if let Some(previous) = record.walked_at {
-            changes.extend(change(record.pulls.get(number), pull, row, previous));
+            changes.extend(change(record.known(*number), pull, row, previous));
         }
         pulls.insert(*number, row.clone());
     }
@@ -386,7 +435,7 @@ pub(crate) fn after_walk(record: &WatchRecord, walk: Walk) -> (WatchRecord, Vec<
             pulls.insert(
                 *number,
                 Row {
-                    missed: false,
+                    missed: None,
                     ..row
                 },
             );
@@ -394,9 +443,9 @@ pub(crate) fn after_walk(record: &WatchRecord, walk: Walk) -> (WatchRecord, Vec<
     }
     // Missing from one walk is a page shift until the next walk misses it too.
     for (number, row) in &record.pulls {
-        if !row.missed && !pulls.contains_key(number) {
+        if row.missed.is_none() && !pulls.contains_key(number) {
             let missed = Row {
-                missed: true,
+                missed: Some(walks),
                 ..row.clone()
             };
             pulls.insert(*number, missed);
@@ -405,6 +454,7 @@ pub(crate) fn after_walk(record: &WatchRecord, walk: Walk) -> (WatchRecord, Vec<
     assert!(changes.len() <= walk.fresh.len(), "one change each");
     let walked = WatchRecord {
         walked_at: Some(walk.started_at),
+        walks,
         pages: walk.pages,
         pulls,
         ..record.clone()
@@ -412,14 +462,28 @@ pub(crate) fn after_walk(record: &WatchRecord, walk: Walk) -> (WatchRecord, Vec<
     (walked, changes)
 }
 
-/// What `row` tells against `stored`, the row of the walk begun at `previous`.
+/// `record` after a walk of 304s begun at `started_at`: a completed walk that
+/// moves the pass time only. A row the walk before missed is now missed twice.
+pub(crate) fn after_unchanged_walk(record: &WatchRecord, started_at: Timestamp) -> WatchRecord {
+    assert!(record.walks > 0, "only a walked list answers 304");
+    assert!(!record.pages.is_empty(), "a 304 is of a stored page");
+    WatchRecord {
+        walked_at: Some(started_at),
+        walks: record.walks + 1,
+        ..record.clone()
+    }
+}
+
+/// What `row` tells against `stored`, the row known when the last completed
+/// walk began at `previous`. A cut walk's `row` may be older than `pull`.
 fn change(
     stored: Option<&Row>,
     pull: &Pull,
     row: &Row,
     previous: Timestamp,
 ) -> Option<WatchedChange> {
-    assert!(row.is_of(pull), "the row of this pull request");
+    assert!(pull.number > 0, "a pull request");
+    assert!(row.missed.is_none(), "a listed pull request is not missed");
     let Some(stored) = stored else {
         let kind = match pull.created_at > previous {
             true => "new_pull_request",
@@ -574,15 +638,51 @@ mod tests {
         let record = first_walk(both());
         let (hidden, changes) = after_walk(&record, walk(T1, one()));
         assert!(changes.is_empty());
-        assert!(hidden.pulls[&2].missed, "missed once, #2 keeps its row");
+        assert_eq!(
+            hidden.pulls[&2].missed,
+            Some(2),
+            "the second walk missed #2"
+        );
+        assert!(hidden.known(2).is_some(), "missed once, #2 keeps its row");
         let (back, changes) = after_walk(&hidden, walk(T2, both()));
         assert!(changes.is_empty(), "a page shift alone is no news");
-        assert!(!back.pulls[&2].missed);
+        assert_eq!(back.pulls[&2].missed, None);
 
         let (gone, _) = after_walk(&hidden, walk(T2, one()));
         assert!(!gone.pulls.contains_key(&2), "missed twice, it is closed");
         let (_, changes) = after_walk(&gone, walk(T2, both()));
         assert_eq!(told(&changes), [(2, "seen_pull_request")]);
+    }
+
+    /// A walk of 304s is a completed walk: it moves the clock a first-seen pull
+    /// request is new against, and makes a row missed before it missed twice.
+    #[test]
+    fn a_walk_of_304s_counts_as_a_completed_walk() {
+        let both = vec![
+            counted(pull(1, "a", T0, &[]), 0, 0),
+            counted(pull(2, "b", T0, &[]), 0, 0),
+        ];
+        let record = first_walk(both.clone());
+        let one = vec![counted(pull(1, "a", T0, &[]), 0, 0)];
+        let (hidden, _) = after_walk(&record, walk(T1, one));
+        let quiet = after_unchanged_walk(&hidden, T2.parse().unwrap());
+        assert_eq!(
+            (quiet.walks, quiet.walked_at),
+            (3, Some(T2.parse().unwrap()))
+        );
+        assert_eq!((&quiet.pulls, &quiet.pages), (&hidden.pulls, &hidden.pages));
+        assert!(quiet.known(2).is_none(), "missed by two walks, #2 closed");
+        assert_eq!(check(&quiet), Ok(()));
+
+        let mut next = both;
+        next.push(counted(created(pull(3, "c", T2, &[]), T1), 0, 0));
+        let (after, changes) = after_walk(&quiet, walk(T2, next));
+        assert_eq!(
+            told(&changes),
+            [(2, "seen_pull_request"), (3, "seen_pull_request")],
+            "#2 is first seen again, and #3 was made before the walk of 304s"
+        );
+        assert_eq!(after.pulls[&2].missed, None);
     }
 
     #[test]
@@ -655,6 +755,46 @@ mod tests {
         assert!(decode(&later).unwrap().walked_at.is_none());
         let torn = raw.replacen("\"pulls\":{\"1\":", "\"pulls\":{\"9\":", 1);
         assert!(decode(&torn).is_err(), "a page lists #1, which has no row");
+    }
+
+    /// A stored record of this format that a write would never make is
+    /// refused as it is read, before a walk or a setting can trip on it.
+    #[test]
+    fn a_malformed_record_of_this_format_is_refused() {
+        let record = first_walk(vec![counted(pull(1, "a", T0, &[]), 0, 0)]);
+        let raw = serde_json::to_string(&record).unwrap();
+        assert!(raw.contains("\"interval_minutes\":5") && raw.contains("\"walks\":1"));
+        let malformed = [
+            raw.replacen("\"interval_minutes\":5", "\"interval_minutes\":0", 1),
+            raw.replacen("\"walks\":1", "\"walks\":0", 1),
+            raw.replacen("W/", &"e".repeat(MAX_ETAG_BYTES + 1), 1),
+            raw.replacen("\"comments\":0", "\"comments\":0,\"missed\":7", 1),
+        ];
+        for raw in malformed {
+            let refused = decode(&raw).unwrap_err().to_string();
+            assert!(!refused.is_empty(), "{raw}");
+        }
+        let mut short = record.clone();
+        short.pages.push(PageMark {
+            etag: None,
+            numbers: vec![1],
+        });
+        assert!(check(&short).is_err(), "a page after one not full");
+        assert_eq!(check(&record), Ok(()));
+    }
+
+    #[test]
+    fn a_list_longer_than_a_walk_reads_is_truncated() {
+        let mut record = first_walk(Vec::new());
+        assert!(!record.is_truncated());
+        let full = PageMark {
+            etag: None,
+            numbers: (1..=PAGE as u64).collect(),
+        };
+        record.pages = vec![full; MAX_PAGES as usize];
+        assert!(record.is_truncated(), "the last page a walk reads is full");
+        record.pages.pop();
+        assert!(!record.is_truncated());
     }
 
     #[test]

@@ -350,22 +350,41 @@ never edits it implicitly.**
     builds a snapshot: number → head, `updated_at`, requested reviewers,
     comment count and review count. A pull request that is new, or whose
     `updated_at` moved, costs two more `GET`s for its counts. A page that
-    answers 304 keeps its stored rows; a walk of 304s writes nothing.
+    answers 304 keeps its stored rows. A walk of 304s is a completed walk
+    that writes its time and nothing else: no row, page or trigger. A 304 to
+    a page asked without an ETag fails the walk.
   - *Diff.* A completed walk is compared with the stored snapshot and raises
     at most one `github_watch` trigger (`operator: false`) naming the
     differences: `new_pull_request`, `seen_pull_request`, `new_head`,
     `review_requested`, `new_comment` or `new_review`, one per pull request.
-    The first completed walk, and the first after the record's format
-    changed, is stored silently.
+    The trigger tells the first 20 in full (title, author, URL) and names
+    every other one in `rest`, change kind → pull request numbers, so each
+    change of a stored walk is in its one trigger. The first completed walk,
+    and the first after the record's format changed, is stored silently. A
+    stored record of the current format that no write would make is refused
+    as corrupt where it is read, by the pass and the tool; removing the
+    watch clears it.
   - *Budget.* Watches take at most half of a pass's 50 `GET`s. A walk the
     budget or a backoff cuts short stores nothing; it goes first five
-    minutes later, and the sync keeps in memory what it had counted.
-  - *Page shifts.* A pull request missing from one stored walk keeps its row
-    and is dropped only when the next stored walk misses it too. One seen for
-    the first time is `new_pull_request` when it was created after the
-    previous stored walk began and `seen_pull_request` otherwise, told once
-    either way. So a shift can delay news by an interval, or tell a pull
+    minutes later, and the sync keeps in memory what it had counted. A row
+    counted before the cut is kept even if its pull request moved again, so
+    every resumption gets further: the walk stores that row as counted and
+    drops its page's ETag, and the next walk reads the page unconditionally
+    and tells what moved since. A restarted archond has forgotten when each
+    watch was asked, so it asks none in its first five minutes.
+  - *Page shifts.* A pull request missing from one completed walk keeps its
+    row, and is closed only when the next completed walk (one of 304s too)
+    misses it as well; listed again after that, it is first seen. One seen
+    for the first time is `new_pull_request` when it was created after the
+    previous completed walk began and `seen_pull_request` otherwise, told
+    once either way. So a shift can delay news by an interval, or tell a pull
     request once as seen, and never loses news across two completed walks.
+  - *Authority.* Only the operator and the orchestrator set or remove a
+    watch; `watch_repo` is refused through GitHub-borne authority, and its
+    `remove` stops a watch whatever the repository's `origin` now is. Removing
+    the repository drops its watch whoever removes it: a GitHub operator's
+    confirmed `repo remove` of the thread's own repository, which predates
+    watches, does so too, as the stated consequence of the removal.
   - *Accepted limits.* A `GET` in flight when a watch or registration is
     removed finishes, and its result is discarded under the store lock. An
     `origin` changed between the walk's last look at it and the write is
@@ -374,10 +393,12 @@ never edits it implicitly.**
     told with the pull request's next change. A page shift delays news by one
     interval. A list of exactly k × 100 pull requests costs one more
     conditional `GET`. A comment deleted and another made between two walks
-    cancel out, a review the login itself began counts when started, and open
-    pull requests past the first 1,000 are not watched. A walk completes only
-    when a pass can count what moved since the last one tried: about 12 pull
-    requests every five minutes.
+    cancel out, and a review the login itself began counts when started.
+    Open pull requests past the newest 1,000 (10 pages) are not watched, and
+    `repo_watches` marks such a watch `truncated`. A cut walk goes before the
+    other due watches, so it can delay them by the passes it needs: one for
+    about every 12 pull requests it has left to count, and for as long as a
+    repository keeps more than that moving every five minutes.
 - **Import (D2):** `import_issue{ref}` (operator change) creates an item
   whose brief is the issue body marked as untrusted. Its idempotency key is
   derived as `github:<host>/<owner>/<repo>#<number>`. A second import returns the

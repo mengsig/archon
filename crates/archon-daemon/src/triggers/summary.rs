@@ -151,10 +151,10 @@ fn label(event: &TriggerEvent) -> String {
         TriggerEvent::GithubWatch {
             repository,
             changes,
-            more,
+            rest,
             ..
         } => {
-            let count = changes.len() as u64 + u64::from(*more);
+            let count = changes.len() + rest.values().map(Vec::len).sum::<usize>();
             format!(
                 "github watch: {repository}, {count} pull request change(s), no operator standing"
             )

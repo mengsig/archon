@@ -246,10 +246,14 @@ pub struct RepoWatchView {
     pub repository: Option<String>,
     pub interval_minutes: u32,
     pub since: Timestamp,
-    /// When the last walk that GitHub sent a page of began (a 304 changes nothing).
+    /// When the last completed walk of the list began, one of 304s too.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fetched_at: Option<Timestamp>,
     /// Pull requests the watch keeps a row of; absent before the first walk.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tracked_pull_requests: Option<u32>,
+    /// The repository has more open pull requests than a walk reads (1,000):
+    /// only the newest are watched.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
 }

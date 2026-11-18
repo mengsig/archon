@@ -30,7 +30,8 @@ use common::{Harness, REPO_NAME};
 /// `comments-N` and `reviews-N`, which list none without a file;
 /// `link-<name>` makes its 200 name that page as the last. Any other call is a
 /// violation. While `hold-N` exists a read of N marks `started-N` and waits;
-/// while `retry-after` exists a 200 asks for that many seconds' backoff.
+/// while `retry-after` exists a 200 asks for that many seconds' backoff, and
+/// while `not-modified-N` exists N answers 304 whatever was asked.
 /// `gh pr view <url> --json reviewDecision,statusCheckRollup` answers from
 /// `pr-state-N.json`, else no review and no checks.
 const STUB_GH: &str = r#"#!/bin/sh
@@ -69,7 +70,7 @@ if [ -f "$dir/hold-$number" ]; then
   while [ -f "$dir/hold-$number" ]; do sleep 0.02; done
 fi
 current=$(cat "$dir/etag-$number" 2>/dev/null)
-if [ -n "$etag" ] && [ "$etag" = "$current" ]; then
+if [ -f "$dir/not-modified-$number" ] || { [ -n "$etag" ] && [ "$etag" = "$current" ]; }; then
   printf 'HTTP/2.0 304 Not Modified\r\nEtag: %s\r\n\r\n' "$etag"
   echo "gh: HTTP 304" >&2
   exit 1

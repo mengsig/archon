@@ -15,11 +15,16 @@
   eventually consistent: a walk the request budget cuts short stores nothing
   and resumes five minutes later, and a pull request a page shift hides is
   told by the next walk, so news can be an interval late but is not lost
-  (`docs/vnext/ARCHITECTURE.md` §f lists the accepted limits). Only a
+  (`docs/vnext/ARCHITECTURE.md` §f lists the accepted limits). A trigger
+  tells 20 changes in full and names every other by kind and number. A
+  restarted archond asks no watch in its first five minutes, and
+  `repo_watches` marks a watch `truncated` when the repository has more than
+  the 1,000 newest open pull requests a walk reads. Only a
   registered repository with a github.com `origin` can be watched, so a watch
   inherits the registration's trust and reads nothing the sync of linked
   issues could not; `watch_repo` never registers one. GitHub requests cannot
-  set a watch, and removing the repository drops it. The orchestrator prompt
+  set or remove a watch; removing the repository drops it, whoever removes
+  it. The orchestrator prompt
   now forbids polling GitHub from a schedule.
 
 ## 1.6.3

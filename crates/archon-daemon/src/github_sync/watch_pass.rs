@@ -1,7 +1,7 @@
 //! The repository watches' share of a sync pass: each due watch's list is
 //! walked whole, a conditional `GET` a page, and stored only when completed.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::time::Duration;
 
 use archon_core::Timestamp;
@@ -22,7 +22,7 @@ use crate::triggers::{self, TriggerEvent};
 /// Most watch `GET`s in one pass: the linked objects keep the rest.
 pub(super) const MAX_WATCH_REQUESTS: usize = MAX_REQUESTS_PER_PASS / 2;
 
-/// The soonest a walk cut short is taken up again.
+/// The soonest a walk cut short is taken up again, and a watch is asked after a restart.
 const FLOOR: Duration = Duration::from_secs(MIN_WATCH_MINUTES as u64 * 60);
 
 /// What the watches did in one pass.
@@ -30,7 +30,7 @@ const FLOOR: Duration = Duration::from_secs(MIN_WATCH_MINUTES as u64 * 60);
 pub struct WatchPass {
     /// `GET`s sent (pages and counts), also counted in [`Pass::requested`].
     pub requested: usize,
-    /// Watches whose list GitHub sent (a 200), unchanged (all 304s), or failed.
+    /// Watches GitHub sent a page of (a 200), unchanged (all 304s), or failed.
     pub changed: usize,
     pub unchanged: usize,
     pub failed: usize,
@@ -83,8 +83,8 @@ struct Listed {
 
 /// How far a walk of the list's pages got.
 enum Listing {
-    /// Every page was a 304: the stored snapshot stands.
-    Unchanged,
+    /// Every page was a 304: the stored snapshot stands. When the walk began.
+    Unchanged(Timestamp),
     /// The budget or a backoff left a page unasked.
     Cut,
     Changed(Listed),
@@ -199,11 +199,11 @@ impl GithubSync {
         Ok(due)
     }
 
-    /// Whether `record`'s interval passed since it was asked; a cut walk waits
-    /// only the floor.
+    /// Whether `record`'s interval passed since it was asked. A cut walk waits only
+    /// the floor; so does a watch not asked since the sync's start (a restart).
     fn is_due(&self, id: &RepoId, record: &WatchRecord, now: Instant) -> bool {
         let Some(asked) = self.watch_asked.get(id) else {
-            return true;
+            return now.duration_since(self.started) >= FLOOR;
         };
         let minutes = record.interval_minutes.max(MIN_WATCH_MINUTES);
         let every = match asked.resume {
@@ -305,13 +305,18 @@ async fn walk_one(
         return Ok(outcome);
     }
     match walked {
-        Ok(Walked::Unchanged) => pass.watch.unchanged += 1,
+        Ok(Walked::Unchanged(started_at)) => {
+            pass.watch.unchanged += 1;
+            let walked = watch::after_unchanged_walk(&due.record, started_at);
+            record_walk(ctx, due, walked, Vec::new()).await?;
+        }
         Ok(Walked::Cut(rows)) => {
             pass.watch.incomplete += 1;
             outcome.resume = Some(rows);
         }
         Ok(Walked::Whole(walk)) => {
-            if record_walk(ctx, due, walk).await? {
+            let (walked, changes) = watch::after_walk(&due.record, walk);
+            if record_walk(ctx, due, walked, changes).await? {
                 pass.watch.triggers += 1;
             }
         }
@@ -325,7 +330,8 @@ async fn walk_one(
 
 /// How a walk ended.
 enum Walked {
-    Unchanged,
+    /// Completed on 304s alone, begun at this time.
+    Unchanged(Timestamp),
     /// Cut short, with the rows counted so far, this walk's and `resumed`.
     Cut(BTreeMap<u64, Row>),
     Whole(Walk),
@@ -338,7 +344,7 @@ async fn walk(
     pass: &mut Pass,
 ) -> Result<Walked, ArchonError> {
     let listed = match list(asker, pass).await? {
-        Listing::Unchanged => return Ok(Walked::Unchanged),
+        Listing::Unchanged(started_at) => return Ok(Walked::Unchanged(started_at)),
         Listing::Cut => return Ok(Walked::Cut(resumed)),
         Listing::Changed(listed) => listed,
     };
@@ -348,14 +354,25 @@ async fn walk(
         return Ok(Walked::Cut(rows));
     }
     assert_eq!(rows.len(), listed.fresh.len(), "a row each");
-    let mut fresh = BTreeMap::new();
+    let (mut fresh, mut stale) = (BTreeMap::new(), BTreeSet::new());
     for (number, pull) in listed.fresh {
         let row = rows.remove(&number).expect("counted above");
+        if !row.is_of(&pull) {
+            stale.insert(number);
+        }
         fresh.insert(number, (pull, row));
+    }
+    let mut pages = listed.pages;
+    // A row counted before its pull request moved again is stored as counted:
+    // its page loses its ETag, so the next walk reads it and tells the rest.
+    for page in &mut pages {
+        if page.numbers.iter().any(|number| stale.contains(number)) {
+            page.etag = None;
+        }
     }
     Ok(Walked::Whole(Walk {
         started_at: listed.started_at,
-        pages: listed.pages,
+        pages,
         fresh,
     }))
 }
@@ -365,7 +382,7 @@ async fn walk(
 async fn list(asker: &mut Asker<'_>, pass: &mut Pass) -> Result<Listing, ArchonError> {
     let due = asker.due;
     let (mut pages, mut fresh) = (Vec::new(), BTreeMap::<u64, Pull>::new());
-    let mut started_at = None;
+    let (mut started_at, mut sent) = (None, false);
     for page in 1..=MAX_PAGES {
         let stored = due.record.pages.get(page as usize - 1);
         let etag = stored.and_then(|p| p.etag.as_deref());
@@ -374,13 +391,11 @@ async fn list(asker: &mut Asker<'_>, pass: &mut Pass) -> Result<Listing, ArchonE
             return Ok(Listing::Cut);
         };
         let (mark, date) = match got? {
-            Got::NotModified { date } => {
-                let mark = stored.cloned().expect("only a page read before is a 304");
-                (mark, date)
-            }
+            Got::NotModified { date } => (unmodified(stored, &endpoint)?, date),
             Got::Changed {
                 etag, body, date, ..
             } => {
+                sent = true;
                 let read = watch::parse_pulls(&due.repository, &body)?;
                 let numbers = read.iter().map(|p| p.number).collect();
                 for pull in read {
@@ -396,16 +411,26 @@ async fn list(asker: &mut Asker<'_>, pass: &mut Pass) -> Result<Listing, ArchonE
             break;
         }
     }
-    assert!(!pages.is_empty(), "a walk not cut asked a page");
-    if fresh.is_empty() && pages == due.record.pages {
-        return Ok(Listing::Unchanged);
+    let started_at = started_at.expect("a walk not cut asked a page");
+    if !sent {
+        assert_eq!(pages, due.record.pages, "304s tell the stored pages again");
+        return Ok(Listing::Unchanged(started_at));
     }
-    let started_at = started_at.expect("a page was answered");
     Ok(Listing::Changed(Listed {
         started_at,
         pages,
         fresh,
     }))
+}
+
+/// The stored mark a 304 says stands; a 304 to a page asked without one is refused.
+fn unmodified(stored: Option<&PageMark>, endpoint: &str) -> Result<PageMark, ArchonError> {
+    match stored {
+        Some(mark) if mark.etag.is_some() => Ok(mark.clone()),
+        _ => Err(ArchonError::Protocol(format!(
+            "GitHub answered 304 to the unconditional {endpoint}"
+        ))),
+    }
 }
 
 /// A pull request a shift put on two pages is kept as last updated.
@@ -418,8 +443,8 @@ fn keep_latest(fresh: &mut BTreeMap<u64, Pull>, pull: Pull) {
     }
 }
 
-/// A row for each of `fresh`: counted before (stored, or `resumed` from a cut
-/// walk) when it has not moved since, else counted now. `false` when cut short.
+/// A row for each of `fresh`: the stored counts if it has not moved, else a cut walk's
+/// row (kept though it moved again, to get further), else counted now. `false` when cut.
 async fn count_rows(
     asker: &mut Asker<'_>,
     pass: &mut Pass,
@@ -431,23 +456,22 @@ async fn count_rows(
     resumed.retain(|number, _| fresh.contains_key(number));
     let mut rows = BTreeMap::new();
     for (number, pull) in fresh {
-        let known = [stored.get(number), resumed.get(number)]
-            .into_iter()
-            .flatten()
-            .find(|row| row.is_of(pull));
-        let counts = match known {
-            Some(row) => row.counts(),
-            None => match counts(asker, pass, *number).await? {
-                Some(counts) => counts,
+        let current = stored.get(number).filter(|row| row.is_of(pull));
+        let row = match (current, resumed.get(number)) {
+            (Some(row), _) => pull.row(row.counts()),
+            (None, Some(row)) => row.clone(),
+            (None, None) => match counts(asker, pass, *number).await? {
+                Some(counts) => pull.row(counts),
                 None => {
                     resumed.extend(rows);
                     return Ok((resumed, false));
                 }
             },
         };
-        rows.insert(*number, pull.row(counts));
+        rows.insert(*number, row);
     }
     assert_eq!(rows.len(), fresh.len(), "a row each");
+    assert!(rows.values().all(|row| row.missed.is_none()), "listed rows");
     Ok((rows, true))
 }
 
@@ -486,10 +510,15 @@ async fn count(
     }
 }
 
-/// Save a completed walk and hold the news it carries, under one store lock.
-/// A watch removed, set up again or re-pointed during the walk, or whose
-/// checkout's `origin` moved meanwhile, is not written back. Whether a trigger was raised.
-async fn record_walk(ctx: &DaemonContext, due: &Due, walk: Walk) -> Result<bool, ArchonError> {
+/// Save a completed walk as `walked` and hold `changes` under one store lock, unless the
+/// watch, registration or `origin` changed meanwhile. Whether a trigger was raised.
+async fn record_walk(
+    ctx: &DaemonContext,
+    due: &Due,
+    mut walked: WatchRecord,
+    changes: Vec<WatchedChange>,
+) -> Result<bool, ArchonError> {
+    assert_eq!(walked.walks, due.record.walks + 1, "one more walk");
     if !origin_unmoved(due).await {
         tracing::info!(repository = %due.repository, "origin moved during a watch walk; discarded");
         return Ok(false);
@@ -502,7 +531,6 @@ async fn record_walk(ctx: &DaemonContext, due: &Due, walk: Walk) -> Result<bool,
         unreachable!("a current watch is stored");
     };
     assert_eq!(current.generation, due.record.generation, "the same watch");
-    let (mut walked, changes) = watch::after_walk(&due.record, walk);
     walked.interval_minutes = current.interval_minutes;
     let raised = !changes.is_empty();
     if raised {
@@ -552,16 +580,21 @@ async fn origin_unmoved(due: &Due) -> bool {
     }
 }
 
-/// The trigger for `changes`: news with no operator standing.
+/// The trigger for `changes`: news with no operator standing. The first are
+/// told in full, and every one past them is named by kind and number.
 fn watch_event(due: &Due, mut changes: Vec<WatchedChange>) -> TriggerEvent {
     assert!(!changes.is_empty(), "only news raises a trigger");
-    let more = changes.len().saturating_sub(watch::MAX_CHANGES);
-    changes.truncate(watch::MAX_CHANGES);
+    let told = changes.len().min(watch::MAX_CHANGES);
+    let mut rest = BTreeMap::<String, Vec<u64>>::new();
+    for change in changes.drain(told..) {
+        rest.entry(change.change).or_default().push(change.number);
+    }
+    assert_eq!(changes.len(), told, "the first are told in full");
     TriggerEvent::GithubWatch {
         repo: due.repo.name.clone(),
         repository: due.repository.clone(),
         changes,
-        more: u32::try_from(more).unwrap_or(u32::MAX),
+        rest,
         operator: false,
         trust: watch::WATCH_TRUST.to_owned(),
     }

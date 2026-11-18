@@ -15,7 +15,7 @@ use crate::executor::gh;
 pub(crate) const PAGE: usize = 100;
 
 /// Pages of the list one walk follows at most: past these, the oldest pull
-/// requests are not watched.
+/// requests are not watched, and the watch's view says the list is truncated.
 pub(crate) const MAX_PAGES: u32 = 10;
 
 /// Page `page` of `repository`'s open pull requests, newest first: an order
@@ -118,7 +118,10 @@ pub(crate) async fn get(
             date,
             body: response.body,
         }),
-        304 => Ok(Got::NotModified { date }),
+        304 if etag.is_some() => Ok(Got::NotModified { date }),
+        304 => Err(ArchonError::Protocol(format!(
+            "GitHub answered 304 to the unconditional {endpoint}"
+        ))),
         status => Err(ArchonError::Unavailable(format!(
             "GitHub answered {status} for {endpoint}: {}",
             ran.detail()

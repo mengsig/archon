@@ -80,6 +80,7 @@ pub(super) async fn list(ctx: &DaemonContext) -> Result<Reply, ArchonError> {
             tracked_pull_requests: record
                 .walked_at
                 .map(|_| u32::try_from(record.pulls.len()).unwrap_or(u32::MAX)),
+            truncated: record.is_truncated(),
         });
     }
     assert!(

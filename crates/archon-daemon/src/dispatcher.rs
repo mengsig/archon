@@ -39,7 +39,7 @@ pub(crate) async fn read_snapshot(
     ctx: &DaemonContext,
 ) -> Result<archon_queue::DispatchSnapshot, ArchonError> {
     let caps = resolve::caps(ctx).await;
-    let catalog = crate::learned::catalog(ctx).await?;
+    let catalog = catalog_for_view(ctx).await?;
     let envs = snapshot::Envs::prefetch(ctx, ReadOn::Reader).await?;
     // Recovery holds the run table while it rebuilds the drivers; no spawn is
     // pending before they are, so an empty table reads the same without waiting.
@@ -60,6 +60,27 @@ pub(crate) async fn read_snapshot(
         return snapshot::build(ctx, ReadOn::Reader, &unseen, caps, envs, &catalog).await;
     };
     snapshot::build(ctx, ReadOn::Reader, &table, caps, envs, &catalog).await
+}
+
+async fn catalog_for_view(
+    ctx: &DaemonContext,
+) -> Result<archon_core::model_tier::ModelCatalog, ArchonError> {
+    use archon_core::model_tier::ModelCatalog;
+    let store = ctx.read_store().await?;
+    if let Some(catalog) = crate::learned::cached_catalog(ctx, &store)? {
+        return Ok(catalog);
+    }
+    if !ctx.aether.is_connected() {
+        return Ok(ModelCatalog::unavailable("Aether disconnected".to_owned()));
+    }
+    let catalog = store.model_catalog();
+    if let Some(reason) = catalog.unavailable_reason() {
+        return Ok(ModelCatalog::unavailable(reason.to_owned()));
+    }
+    if store.catalog_generation() == Some(ctx.aether.generation()?) && catalog.is_empty() {
+        return Ok(catalog);
+    }
+    Ok(ModelCatalog::unavailable("waiting for a fresh catalog read".to_owned()))
 }
 
 /// Remembers the budget hold last announced, so each is posted once.

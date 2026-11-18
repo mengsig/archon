@@ -99,14 +99,13 @@ fn a_draft_naming_a_tier_leaves_the_model_to_the_daemon_and_names_who_asked() {
         (origin.model.source, origin.model.by),
         (PlanSource::Tier, Authority::Daemon)
     );
-    assert!(
-        origin
-            .model
-            .note
-            .as_deref()
-            .unwrap()
-            .contains("orchestrator"),
-        "{origin:?}"
+    let tier = origin
+        .tier
+        .as_ref()
+        .expect("a tiered choice has a tier origin");
+    assert_eq!(
+        (tier.source, tier.by),
+        (PlanSource::Explicit, Authority::Orchestrator)
     );
     assert_eq!(
         (origin.effort.source, origin.effort.by),
@@ -122,14 +121,16 @@ fn a_moved_tier_keeps_who_asked_for_it_however_often_it_moves() {
     let resolved = plan(&[("review", tiered("b/sol", Effort::High))]);
     writer.request(&asked, resolved, Authority::Orchestrator);
     let mut planned = writer.finish();
-    let asked_by = planned.origin(&item, "review", 0).model.note.unwrap();
+    let asked = planned.origin(&item, "review", 0).tier;
+    assert!(asked.is_some());
     for (model, why) in [("c/sol", "moved off b"), ("d/sol", "moved off c")] {
         let to = |_: &str, asked: &TierChoice| Ok(Some((model.parse().unwrap(), asked.clone())));
         planned
             .retier(&item, (crate::now(), Some(why)), to)
             .unwrap();
-        let note = planned.origin(&item, "review", 0).model.note.unwrap();
-        assert_eq!(note, format!("{why}; {asked_by}"));
+        let origin = planned.origin(&item, "review", 0);
+        assert_eq!(origin.model.note.as_deref(), Some(why));
+        assert_eq!(origin.tier, asked, "the tier still names who asked");
     }
 }
 
@@ -150,6 +151,33 @@ fn a_tier_the_daemon_chose_keeps_only_the_latest_move_s_note() {
         let note = planned.origin(&item, "review", 0).model.note;
         assert_eq!(note.as_deref(), Some(why));
     }
+}
+
+#[test]
+fn a_reroute_of_a_daemon_chosen_tier_carries_no_earlier_note_as_its_requester() {
+    let item = QueueItemId::new();
+    let mut stored = serde_json::to_value(enqueued(&item)).unwrap();
+    let earlier = "moved off x; tier strong asked by the operator";
+    stored["model_origins"]["entries"]["review"][0]["model"]["note"] = earlier.into();
+    let mut planned: PlannedPlan = serde_json::from_value(stored).unwrap();
+    let before = planned.origin(&item, "review", 0);
+    let to = |_: &str, asked: &TierChoice| Ok(Some(("c/sol".parse().unwrap(), asked.clone())));
+    planned
+        .retier(&item, (crate::now(), Some("moved off b")), to)
+        .unwrap();
+    let origin = planned.origin(&item, "review", 0);
+    assert_eq!(
+        (origin.model.source, origin.model.by),
+        (PlanSource::Tier, Authority::Daemon)
+    );
+    assert_eq!(origin.model.note.as_deref(), Some("moved off b"));
+    assert!(origin.model.at >= before.model.at && origin.model.at.is_some());
+    let tier = origin.tier.expect("a tiered choice has a tier origin");
+    assert_eq!(
+        (tier.source, tier.by),
+        (PlanSource::Fallback, Authority::Daemon),
+        "nobody asked for a tier the daemon chose"
+    );
 }
 
 #[test]
@@ -246,8 +274,8 @@ fn origins_kept_by_a_clone_under_another_id_read_as_unattributed_pins() {
     assert!(reconciled.faults(&clone).is_empty());
     assert_eq!(
         reconciled.unattributed_fields(&clone),
-        8,
-        "two fields of four entries"
+        9,
+        "two fields of four entries and one tier"
     );
     assert!(
         planned.reconciled(&item).is_none(),
@@ -315,6 +343,11 @@ fn a_plan_stored_without_origins_reads_as_legacy_pins_until_a_writer_changes_it(
         "the effort is not touched"
     );
     assert_eq!(
+        review.tier.map(|t| t.source),
+        Some(PlanSource::LegacyUnknown),
+        "nobody knows who asked for a legacy tier"
+    );
+    assert_eq!(
         planned.origin(&item, "build", 0).model.source,
         PlanSource::LegacyUnknown
     );
@@ -325,7 +358,11 @@ fn an_unattributed_tiered_model_is_a_pin_no_dispatch_resolves_again() {
     let item = QueueItemId::new();
     let mut planned =
         PlannedPlan::unattributed(&item, plan(&[("review", tiered("b/sol", Effort::Low))]));
-    assert_eq!(planned.unattributed_fields(&item), 2);
+    assert_eq!(
+        planned.unattributed_fields(&item),
+        3,
+        "model, effort and tier"
+    );
     let resolve = |_: &str, _: &TierChoice| -> Result<_, ArchonError> {
         unreachable!("an unattributed model is not resolved again")
     };

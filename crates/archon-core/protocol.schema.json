@@ -4645,7 +4645,7 @@
       ]
     },
     "EntryOrigin": {
-      "description": "The origins of one plan entry's model and effort, each on its own.",
+      "description": "The origins of one plan entry's model and effort, each on its own, and of\nits tier when the entry has one.",
       "properties": {
         "effort": {
           "$ref": "#/$defs/FieldOrigin",
@@ -4661,6 +4661,17 @@
             "source": "unattributed"
           },
           "description": "A stored entry missing a field's origin keeps the other one."
+        },
+        "tier": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FieldOrigin"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Who asked for the tier the daemon resolves the model in; present\nexactly when the choice has a tier."
         }
       },
       "type": "object"

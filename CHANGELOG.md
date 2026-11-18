@@ -7,7 +7,8 @@
 - Every item records where each field of its model plan came from, beside
   the plan as `model_origins`: for each stage entry, separately for the model
   and the effort, the source (`explicit`, `learned`, `tier`, `fallback`,
-  `migrated`), who chose it (operator, orchestrator or daemon) and when.
+  `migrated`), who chose it (operator, orchestrator or daemon) and when; a
+  tiered entry also records who asked for its tier.
   Enqueue, initiative members, update, retry, steers, pipeline switches,
   refreshes, restack fixes, dispatch tier resolution, provider reroutes and
   the distillation errand all record it. A steer that names the value already
@@ -24,9 +25,9 @@
 ### Upgrading
 
 Items stored by 1.6.3 or earlier have no origins. Each of their fields reads
-as `legacy_unknown` and is treated as a pin; nothing is backfilled. A 1.6.3
-`archond` ignores `model_origins` and drops it when it saves an item, which
-then reads as `legacy_unknown` too. See
+as `legacy_unknown` and is treated as a pin; nothing is backfilled.
+Downgrading the binary is not supported once a store migration of the release
+has run, because an older schema refuses a newer store. See
 [docs/upgrading.md](docs/upgrading.md#plan-origins).
 
 ## 1.6.3

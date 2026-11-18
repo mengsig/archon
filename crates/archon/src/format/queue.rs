@@ -252,9 +252,13 @@ fn origin_lines(
                 1 => String::new(),
                 _ => format!("[{slot}]"),
             };
+            let tier = match &origin.tier {
+                Some(tier) => format!("; tier {}", sanitize_line(&tier.to_string())),
+                None => String::new(),
+            };
             let _ = writeln!(
                 out,
-                "origin {}{slot}: model {}; effort {}",
+                "origin {}{slot}: model {}; effort {}{tier}",
                 sanitize_line(key),
                 sanitize_line(&origin.model.to_string()),
                 sanitize_line(&origin.effort.to_string())
@@ -1025,10 +1029,12 @@ mod tests {
         let pinned = EntryOrigin {
             model: named,
             effort: filled.clone(),
+            tier: None,
         };
         let daemon = EntryOrigin {
             model: filled.clone(),
-            effort: filled,
+            effort: filled.clone(),
+            tier: Some(filled),
         };
         detail.plan_origins = [
             ("build".to_owned(), vec![pinned]),
@@ -1044,7 +1050,8 @@ mod tests {
             "{text}"
         );
         assert!(
-            text.contains("origin review[1]: model fallback by daemon"),
+            text.contains("origin review[1]: model fallback by daemon")
+                && text.contains("; tier fallback by daemon at 2026-11-18 10:00\n"),
             "{text}"
         );
         assert!(!text.contains("origin review:"), "{text}");

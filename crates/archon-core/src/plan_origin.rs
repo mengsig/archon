@@ -199,7 +199,8 @@ impl fmt::Display for FieldOrigin {
     }
 }
 
-/// The origins of one plan entry's model and effort, each on its own.
+/// The origins of one plan entry's model and effort, each on its own, and of
+/// its tier when the entry has one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EntryOrigin {
     /// A stored entry missing a field's origin keeps the other one.
@@ -207,18 +208,40 @@ pub struct EntryOrigin {
     pub model: FieldOrigin,
     #[serde(default = "FieldOrigin::unattributed")]
     pub effort: FieldOrigin,
+    /// Who asked for the tier the daemon resolves the model in; present
+    /// exactly when the choice has a tier.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<FieldOrigin>,
 }
 
 impl EntryOrigin {
-    fn unknown(source: PlanSource) -> Self {
+    fn unknown(source: PlanSource, choice: &ModelChoice) -> Self {
         Self {
             model: FieldOrigin::unknown(source),
             effort: FieldOrigin::unknown(source),
+            tier: choice.tier.as_ref().map(|_| FieldOrigin::unknown(source)),
         }
     }
 
+    /// This stored origin with a tier origin exactly when `choice` has a tier:
+    /// a tier no writer accounted for reads as unattributed.
+    fn fitted(mut self, choice: &ModelChoice) -> Self {
+        self.tier = match (&choice.tier, self.tier) {
+            (None, _) => None,
+            (Some(_), Some(tier)) => Some(tier),
+            (Some(_), None) => Some(FieldOrigin::unattributed()),
+        };
+        debug_assert_eq!(self.tier.is_some(), choice.tier.is_some());
+        self
+    }
+
+    fn fields(&self) -> impl Iterator<Item = &FieldOrigin> {
+        [&self.model, &self.effort].into_iter().chain(&self.tier)
+    }
+
     fn noted(mut self, note: &str) -> Self {
-        for field in [&mut self.model, &mut self.effort] {
+        let fields = [&mut self.model, &mut self.effort].into_iter();
+        for field in fields.chain(self.tier.as_mut()) {
             field.note = Some(match field.note.take() {
                 Some(was) => format!("{note}; {was}"),
                 None => note.to_owned(),
@@ -260,7 +283,7 @@ impl PlannedPlan {
     /// `plan` with no writer to vouch for it: every field reads as a pin and
     /// is counted as unattributed.
     pub fn unattributed(item: &QueueItemId, plan: ModelPlan) -> Self {
-        let entries = shape_of(&plan, |_| EntryOrigin::unknown(PlanSource::Unattributed));
+        let entries = shape_of(&plan, |c| EntryOrigin::unknown(PlanSource::Unattributed, c));
         Self {
             model_plan: plan,
             model_origins: Some(Box::new(PlanOrigins {
@@ -322,14 +345,16 @@ impl PlannedPlan {
     /// Where slot `slot` of `key` came from, for the item `item`: legacy for
     /// a record without origins, unattributed where its origins do not fit.
     pub fn origin(&self, item: &QueueItemId, key: &str, slot: usize) -> EntryOrigin {
+        let choice = self.model_plan.0.get(key).and_then(|c| c.get(slot));
+        let choice = choice.expect("an origin is read for a choice of the plan");
         let Some(origins) = &self.model_origins else {
-            return EntryOrigin::unknown(PlanSource::LegacyUnknown);
+            return EntryOrigin::unknown(PlanSource::LegacyUnknown, choice);
         };
         let fits = origins.item == *item && self.fits(key);
         let found = origins.entries.get(key).and_then(|e| e.get(slot));
         match found.filter(|_| fits) {
-            Some(origin) => origin.clone(),
-            None => EntryOrigin::unknown(PlanSource::Unattributed),
+            Some(origin) => origin.clone().fitted(choice),
+            None => EntryOrigin::unknown(PlanSource::Unattributed, choice),
         }
     }
 
@@ -342,11 +367,14 @@ impl PlannedPlan {
         origins.collect()
     }
 
-    /// How many fields (a model or an effort each) read as unattributed.
+    /// How many fields (a model, an effort or a tier each) read as unattributed.
     pub fn unattributed_fields(&self, item: &QueueItemId) -> usize {
         let entries = self.origins(item).into_values().flatten();
-        let fields = entries.flat_map(|e| [e.model.source, e.effort.source]);
-        fields.filter(|s| *s == PlanSource::Unattributed).count()
+        let unattributed = |e: &EntryOrigin| {
+            let fields = e.fields().filter(|f| f.source == PlanSource::Unattributed);
+            fields.count()
+        };
+        entries.map(|e| unattributed(&e)).sum()
     }
 
     /// Why the stored origins do not describe this plan of `item`; empty
@@ -468,13 +496,17 @@ impl PlannedPlan {
                 origin.effort = FieldOrigin::chosen(PlanSource::Explicit, by, at, Some(was));
             }
             *choice = choice.steered(model, effort);
+            if choice.tier.is_none() {
+                origin.tier = None;
+            }
         }
         self.model_plan.0.get(key).map(Vec::as_slice)
     }
 
     /// Resolve each tiered choice the daemon may move again: `resolve`
     /// gives its new model and tier, or `None` to keep it. A model whose
-    /// origin is unattributed is a pin and is passed over.
+    /// origin is unattributed is a pin and is passed over. A moved model is
+    /// the daemon's, noted with `note` alone; the tier keeps who asked for it.
     pub fn retier(
         &mut self,
         item: &QueueItemId,
@@ -501,10 +533,11 @@ impl PlannedPlan {
                 debug_assert_eq!(tier.requested, asked.requested, "the tier asked for");
                 let moved = model != choice.model || origin.model.source != PlanSource::Tier;
                 if moved {
-                    let note = moved_note(note, origin.model.note.take());
+                    let note = note.map(str::to_owned);
                     origin.model =
                         FieldOrigin::chosen(PlanSource::Tier, Authority::Daemon, at, note);
                 }
+                debug_assert!(origin.tier.is_some(), "a tiered choice has a tier origin");
                 choice.model = model;
                 choice.tier = Some(tier);
             }
@@ -519,28 +552,6 @@ impl PlannedPlan {
             }));
         }
         Ok(())
-    }
-}
-
-/// Ends the note of a model a request asked for by tier, naming who asked.
-const REQUESTED_BY: &str = " asked by the ";
-
-/// The note of a model the daemon moved: the move's own note followed by
-/// who asked for the tier, when a request did; an earlier move's note is dropped.
-fn moved_note(note: Option<&str>, earlier: Option<String>) -> Option<String> {
-    let earlier = earlier.unwrap_or_default();
-    let requester = earlier
-        .rsplit("; ")
-        .next()
-        .filter(|last| last.contains(REQUESTED_BY));
-    debug_assert!(
-        note.is_none_or(|n| !n.contains(REQUESTED_BY)),
-        "a move names no requester"
-    );
-    match (note, requester) {
-        (Some(note), Some(requester)) => Some(format!("{note}; {requester}")),
-        (Some(note), None) => Some(note.to_owned()),
-        (None, requester) => requester.map(str::to_owned),
     }
 }
 
@@ -596,26 +607,43 @@ impl PlanWriter {
         for (key, choices) in resolved.0 {
             let drafts = draft.0.get(&key).expect("resolved from the draft");
             assert_eq!(drafts.len(), choices.len(), "one choice per draft");
-            let slots = drafts.iter().map(|d| self.requested(d, by)).collect();
+            let slots = drafts
+                .iter()
+                .zip(&choices)
+                .map(|(d, c)| self.requested(d, c, by))
+                .collect();
             self.insert(key, choices, slots);
         }
     }
 
-    fn requested(&self, draft: &ModelChoiceDraft, by: Authority) -> EntryOrigin {
+    fn requested(
+        &self,
+        draft: &ModelChoiceDraft,
+        choice: &ModelChoice,
+        by: Authority,
+    ) -> EntryOrigin {
         let at = self.at;
-        let model = match (&draft.model, draft.tier) {
-            (Some(_), _) => FieldOrigin::chosen(PlanSource::Explicit, by, at, None),
-            (None, tier) => {
-                let tier = tier.map_or_else(|| "a tier".to_owned(), |t| format!("tier {t}"));
-                let note = Some(format!("{tier}{REQUESTED_BY}{by}"));
-                FieldOrigin::chosen(PlanSource::Tier, Authority::Daemon, at, note)
-            }
+        let model = match &draft.model {
+            Some(_) => FieldOrigin::chosen(PlanSource::Explicit, by, at, None),
+            None => FieldOrigin::chosen(PlanSource::Tier, Authority::Daemon, at, None),
         };
         let effort = match draft.effort {
             Some(_) => FieldOrigin::chosen(PlanSource::Explicit, by, at, None),
             None => default_effort(at),
         };
-        EntryOrigin { model, effort }
+        let tier = choice.tier.as_ref().map(|_| match draft.tier {
+            Some(_) => FieldOrigin::chosen(PlanSource::Explicit, by, at, None),
+            None => default_tier(at),
+        });
+        debug_assert!(
+            draft.tier.is_none() || tier.is_some(),
+            "a drafted tier resolves to a tiered choice"
+        );
+        EntryOrigin {
+            model,
+            effort,
+            tier,
+        }
     }
 
     /// The entries of `kept` (a plan of `item`, which `limit` keeps a key of
@@ -668,6 +696,10 @@ impl PlanWriter {
                         None => FieldOrigin::chosen(model, Authority::Daemon, at, None),
                     },
                     effort: FieldOrigin::chosen(effort, Authority::Daemon, at, None),
+                    tier: choice.tier.as_ref().map(|_| match model {
+                        PlanSource::Tier => default_tier(at),
+                        step => FieldOrigin::chosen(step, Authority::Daemon, at, None),
+                    }),
                 })
                 .collect();
             self.insert(key, choices, slots);
@@ -699,6 +731,12 @@ impl PlanWriter {
         );
         planned
     }
+}
+
+/// A tier nobody asked for is the stage's or the pipeline's.
+fn default_tier(at: Timestamp) -> FieldOrigin {
+    let note = Some("the stage's tier".to_owned());
+    FieldOrigin::chosen(PlanSource::Fallback, Authority::Daemon, at, note)
 }
 
 /// A missing effort takes the stage's default.

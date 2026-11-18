@@ -1045,5 +1045,6 @@ async fn a_quota_reroute_never_moves_an_unattributed_model() {
             .to_string(),
         pinned
     );
-    assert_eq!(crate::plan_origins::unattributed(&h).await, 6);
+    // The model, effort and tier of each of the three tiered entries.
+    assert_eq!(crate::plan_origins::unattributed(&h).await, 9);
 }

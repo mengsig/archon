@@ -171,7 +171,8 @@ fn attributed(item: &QueueItem) -> std::borrow::Cow<'_, QueueItem> {
 }
 
 /// The rows whose plan may hold an unattributed field: one stored as such,
-/// one with a missing or unknown source, or origins of another item or shape.
+/// one with a missing or unknown source, a tier without an origin, or
+/// origins of another item or shape.
 fn maybe_unattributed() -> String {
     let known: Vec<String> = PlanSource::ATTRIBUTED
         .iter()
@@ -196,7 +197,17 @@ fn maybe_unattributed() -> String {
                                 WHERE coalesce(json_extract(slot.value, '$.model.source'), '')
                                           NOT IN ({known})
                                    OR coalesce(json_extract(slot.value, '$.effort.source'), '')
-                                          NOT IN ({known}))))"
+                                          NOT IN ({known})
+                                   OR (json_type(slot.value, '$.tier') IS NOT NULL
+                                       AND coalesce(json_extract(slot.value, '$.tier.source'), '')
+                                               NOT IN ({known})))
+                     OR EXISTS (SELECT 1 FROM json_each(data, '$.model_plan') AS plan,
+                                              json_each(plan.value) AS choice
+                                WHERE coalesce(json_type(choice.value, '$.tier'), 'null') <> 'null'
+                                  AND json_type(data, '$.model_origins.entries.'
+                                                      || json_quote(plan.key)
+                                                      || '[' || choice.key || '].tier')
+                                      IS NULL)))"
     )
 }
 

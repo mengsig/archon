@@ -19,7 +19,8 @@ without intent keep their previous behavior.
 
 Each item now keeps `model_origins` beside `model_plan`: where every model
 and effort of its plan came from, who chose it and when. `get_item` lists
-them as `origin <stage>: model …; effort …` lines, and `archon status` prints a line
+them as `origin <stage>: model …; effort …` lines (`; tier …` for a tiered
+entry), and `archon status` prints a line
 when any stored field reads as `unattributed`, a field no writer accounted
 for. Both kinds below are pins:
 
@@ -32,10 +33,13 @@ for. Both kinds below are pins:
   be counted: a non-zero count is a bug to report, not something to fix by
   hand.
 
-Going back to an older binary is unsupported once a store migration of the
-release has run: restore the backup taken before the update instead. Plan
-origins alone need no migration; an older `archond` ignores them and drops
-them when it saves an item, which then reads as `legacy_unknown`.
+A tiered entry also records who asked for its tier: the caller when the
+request named one, the daemon when the stage's default supplied it. A quota
+move changes the model's origin only; the tier keeps who asked for it.
+
+Downgrading the binary is not supported once a store migration of the
+release has run, because an older schema refuses a newer store. Restore the
+backup taken before the update instead.
 
 ## Contents
 

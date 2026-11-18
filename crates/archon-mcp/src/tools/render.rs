@@ -261,6 +261,9 @@ fn origin_text(
                 "\n  {key}[{slot}]: model {}; effort {}",
                 origin.model, origin.effort
             );
+            if let Some(tier) = &origin.tier {
+                let _ = write!(text, "; tier {tier}");
+            }
         }
     }
 }

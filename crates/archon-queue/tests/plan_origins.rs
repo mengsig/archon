@@ -4,6 +4,7 @@
 mod common;
 
 use archon_core::id::QueueItemId;
+use archon_core::model_tier::{Tier, TierChoice};
 use archon_core::plan_origin::{PlanSource, PlanWriter};
 use archon_core::queue::QueueItem;
 use archon_queue::store::Store;
@@ -77,6 +78,40 @@ fn the_count_finds_a_stored_field_without_an_origin_or_with_an_unknown_source() 
         let stored = store
             .insert_item(&planned(&alpha, &format!("edited {n}")), None)
             .unwrap();
+        let update = format!("UPDATE items SET data = {edit} WHERE id = ?1");
+        assert_eq!(conn.execute(&update, [stored.id.as_str()]).unwrap(), 1);
+        let read = store.item(&stored.id).unwrap();
+        assert_eq!(read.model_plan.unattributed_fields(&read.id), 1, "{edit}");
+        assert_eq!(store.unattributed_plan_fields().unwrap(), n + 1, "{edit}");
+    }
+}
+
+#[test]
+fn the_count_finds_a_stored_tier_without_an_origin_or_with_an_unknown_source() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.db");
+    let mut store = Store::open(&path).unwrap();
+    let alpha = repo("alpha");
+    store.insert_repo(&alpha).unwrap();
+    let edits = [
+        "json_remove(data, '$.model_origins.entries.implement[0].tier')",
+        "json_set(data, '$.model_origins.entries.implement[0].tier.source', 'future')",
+    ];
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    for (n, edit) in edits.iter().enumerate() {
+        let mut made = item(Some(&alpha), &format!("tiered {n}"));
+        let mut plan = made.model_plan.plan().clone();
+        let choice = &mut plan.0.get_mut("implement").unwrap()[0];
+        choice.tier = Some(TierChoice {
+            requested: Tier::Strong,
+            provider: None,
+            resolved: Tier::Strong,
+        });
+        let mut writer = PlanWriter::new(&made.id, t(1));
+        writer.filled(plan, (PlanSource::Tier, PlanSource::Fallback));
+        made.model_plan = writer.finish();
+        let stored = store.insert_item(&made, None).unwrap();
+        assert_eq!(store.unattributed_plan_fields().unwrap(), n, "{edit}");
         let update = format!("UPDATE items SET data = {edit} WHERE id = ?1");
         assert_eq!(conn.execute(&update, [stored.id.as_str()]).unwrap(), 1);
         let read = store.item(&stored.id).unwrap();

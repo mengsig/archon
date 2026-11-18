@@ -811,10 +811,8 @@ pub(super) async fn retry(
         let _table = ctx.runs.lock().await;
         let loaded = ctx.store.lock().await.item(id)?;
         check_retryable(&*ctx.store.lock().await, &loaded)?;
-        if !replaces_plan && loaded.model_plan != current.model_plan {
-            return Err(ArchonError::InvalidTransition(format!(
-                "{id}'s plan changed while it was being retried; retry it again"
-            )));
+        if !replaces_plan {
+            check_plan_unchanged(id, &current.model_plan, &loaded.model_plan)?;
         }
         let mut item = loaded.clone();
         item.model_plan = plan;
@@ -1311,10 +1309,53 @@ pub(super) async fn check_runs_here(
     Ok(())
 }
 
+/// A retry that keeps the plan carried `read`, and `now` is the plan as it
+/// is stored. A steer between the two, even one that kept every value but
+/// pinned a field, refuses the retry rather than dropping that pin.
+fn check_plan_unchanged(
+    id: &QueueItemId,
+    read: &PlannedPlan,
+    now: &PlannedPlan,
+) -> Result<(), ArchonError> {
+    if read == now {
+        return Ok(());
+    }
+    debug_assert!(
+        read.plan() != now.plan() || read.origins(id) != now.origins(id),
+        "only a change of a value or an origin refuses"
+    );
+    Err(ArchonError::InvalidTransition(format!(
+        "{id}'s plan changed while it was being retried; retry it again"
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use archon_core::model::{Effort, ModelChoice, ModelPlan};
     use archon_pipeline::Catalog;
+
+    #[test]
+    fn a_retry_refuses_a_plan_pinned_meanwhile_even_with_the_same_values() {
+        let id = QueueItemId::new();
+        let mut writer = PlanWriter::new(&id, archon_core::now());
+        let choice = ModelChoice::pinned("a/opus".parse().unwrap(), Effort::Medium);
+        let plan = ModelPlan([("implement".to_owned(), vec![choice])].into());
+        writer.filled(plan, (PlanSource::Fallback, PlanSource::Fallback));
+        let read = writer.finish();
+        let mut steered = read.clone();
+        let named = (None, Some(Effort::Medium));
+        let by = (Authority::Operator, archon_core::now());
+        assert!(steered.steer(&id, "implement", named, by).is_some());
+        assert_eq!(steered.plan(), read.plan(), "same values");
+        assert!(check_plan_unchanged(&id, &read, &read.clone()).is_ok());
+        let refused = check_plan_unchanged(&id, &read, &steered).unwrap_err();
+        assert!(
+            refused
+                .to_string()
+                .contains("changed while it was being retried")
+        );
+    }
 
     fn reasons(key: &str) -> ModelReasons {
         [(key.to_owned(), "why".to_owned())].into()

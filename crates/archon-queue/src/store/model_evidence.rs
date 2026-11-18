@@ -105,7 +105,7 @@ pub(super) fn read(
             attempt.item.model_plan.canonicalize_aliases(catalog);
         }
         // A failed engine login says nothing of the model: it is no attempt.
-        if !attempt.stage.failed_on_engine_login() {
+        if !attempt.stage.failed_on_engine_login() && !attempt.stage.zero_cost_create_refusal() {
             attempts.push(attempt);
         }
     }

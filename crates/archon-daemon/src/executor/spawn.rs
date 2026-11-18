@@ -1544,10 +1544,17 @@ async fn refuse(
     error: String,
 ) -> Result<FollowUp, ArchonError> {
     tracing::warn!(stage = %stage.id, %error, "stage spawn refused");
-    let outcome = StageOutcome::Failed {
-        error,
-        infra: false,
+    let infra = error.starts_with("cannot create agent:") && {
+        let message = error.to_ascii_lowercase();
+        message.contains("unknown model") || message.contains(" was retired; use ")
     };
+    if infra {
+        ctx.store
+            .lock()
+            .await
+            .invalidate_model_catalog(error.clone());
+    }
+    let outcome = StageOutcome::Failed { error, infra };
     settle::settle_locked(ctx, table, &stage.id, outcome).await
 }
 

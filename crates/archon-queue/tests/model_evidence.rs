@@ -574,3 +574,23 @@ fn evidence_also_groups_by_stage_tier_and_effort() {
         "{text}"
     );
 }
+
+#[test]
+fn direct_evidence_excludes_an_unbilled_refusal_before_agent_creation() {
+    let mut store = store();
+    let item = store
+        .insert_item(&item(None, "model refused"), None)
+        .unwrap();
+    let run = start(&mut store, &item.id);
+    let mut stage = running_stage(&run, 0, 0);
+    stage.aether_agent = None;
+    stage.cost_usd = 0.0;
+    stage.state = StageState::Failed {
+        error: "cannot create agent: unknown model".into(),
+    };
+    stage.finished_at = Some(t(120));
+    store.upsert_stage_run(&stage).unwrap();
+    let report = report(&store, Default::default(), range(0, 1000));
+    assert!(report.rows.is_empty());
+    assert!(report.providers.is_empty());
+}

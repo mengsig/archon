@@ -873,6 +873,13 @@ pub struct ModelSegment {
 pub const REVIEW_REFUSED_KEY: &str = "unverified";
 
 impl StageRun {
+    pub fn zero_cost_create_refusal(&self) -> bool {
+        self.cost_usd == 0.0
+            && self.aether_agent.is_none()
+            && matches!(&self.state, StageState::Failed { error }
+                if error.starts_with("cannot create agent:") || error.starts_with("create_agent kept failing:"))
+    }
+
     /// Whether its agent failed on its engine's login: an infrastructure
     /// failure, never evidence about the model.
     pub fn failed_on_engine_login(&self) -> bool {

@@ -22,7 +22,7 @@ impl Store {
             live.iter()
                 .all(|s| s.cost_usd.is_finite() && s.cost_usd >= 0.0)
         );
-        if stages.iter().any(super::capture::creation_refused) {
+        if stages.iter().any(|s| s.zero_cost_create_refusal()) {
             // Older captured outcomes may still contain the refused attempt.
             outcome.stages = live;
         } else {

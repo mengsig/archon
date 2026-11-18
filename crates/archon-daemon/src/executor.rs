@@ -498,7 +498,8 @@ pub(crate) async fn check_item_budget(
         } else {
             return Ok(());
         };
-        finish::fail_run(ctx, &mut table, run, "budget".into(), error, true).await?
+        let stage = archon_core::run::BUDGET_STAGE.to_owned();
+        finish::fail_run(ctx, &mut table, run, stage, error, true).await?
     };
     run_follow_up(ctx, follow).await
 }

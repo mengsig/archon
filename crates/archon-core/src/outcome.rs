@@ -122,6 +122,31 @@ impl FailureClass {
     }
 }
 
+/// How a failed run's [`FailureClass`] was found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+pub enum ClassSource {
+    /// From the run's stage records when it settled.
+    #[serde(rename = "structure")]
+    Structure,
+    /// Recomputed from the stage records by the 1.6.4 store migration.
+    #[serde(rename = "recomputed")]
+    Recomputed,
+    /// The class Archon 1.6.3 guessed from the error's words, kept because the
+    /// run's stage records were pruned before the migration could read them.
+    #[serde(rename = "legacy_163")]
+    Legacy163,
+}
+
+impl ClassSource {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Structure => "structure",
+            Self::Recomputed => "recomputed",
+            Self::Legacy163 => "legacy_163",
+        }
+    }
+}
+
 /// Someone had to step in after or during the run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -206,6 +231,10 @@ pub struct Outcome {
     pub review_rounds: u32,
     pub result: OutcomeResult,
     pub failure: Option<FailureClass>,
+    /// How `failure` was found; `None` on records written before 1.6.4 or
+    /// handed in whole by a caller.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_source: Option<ClassSource>,
     /// Appended as they happen, also after the run finished.
     #[serde(default)]
     pub corrections: Vec<Correction>,
@@ -234,6 +263,12 @@ impl Outcome {
         if self.failure.is_some() != (self.result == OutcomeResult::Failed) {
             return Err(ArchonError::Invalid(format!(
                 "outcome of {}: exactly a failed run has a failure class",
+                self.run
+            )));
+        }
+        if self.failure_source.is_some() && self.failure.is_none() {
+            return Err(ArchonError::Invalid(format!(
+                "outcome of {}: only a failure class has a source",
                 self.run
             )));
         }
@@ -329,6 +364,7 @@ mod tests {
             review_rounds: 0,
             result: OutcomeResult::Succeeded,
             failure: None,
+            failure_source: None,
             corrections: Vec::new(),
             feedback: Vec::new(),
             context: None,
@@ -402,6 +438,9 @@ mod tests {
         let mut classed_success = outcome();
         classed_success.failure = Some(FailureClass::Other);
         assert!(classed_success.check().is_err());
+        let mut sourced_success = outcome();
+        sourced_success.failure_source = Some(ClassSource::Structure);
+        assert!(sourced_success.check().is_err());
 
         let mut negative = outcome();
         negative.stages[0].cost_usd = -0.1;

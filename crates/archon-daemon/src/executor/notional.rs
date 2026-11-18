@@ -10,8 +10,7 @@ use archon_queue::Store;
 
 use super::spawn;
 
-/// What Aether's error says of an agent it stopped at its cost budget.
-const COST_BUDGET_STOP: &str = "cost budget of $";
+const COST_BUDGET_STOP: &str = StageOutcome::COST_BUDGET_STOP;
 
 /// `outcome`, its failure labelled notional cost when Aether stopped stage
 /// `id` at a dollar cap whose billing is unknown.

@@ -808,6 +808,9 @@ impl StageOutcome {
     /// orchestrator: the work needs another shape than this run has.
     pub const ESCALATE_PREFIX: &'static str = "ESCALATE:";
 
+    /// What Aether's error says of an agent it stopped at its cost budget.
+    pub const COST_BUDGET_STOP: &'static str = "cost budget of $";
+
     pub fn is_operator_blocker(&self) -> bool {
         matches!(self, Self::Failed { error, .. } if error.trim_start().starts_with(Self::BLOCKED_PREFIX))
     }
@@ -937,6 +940,13 @@ pub fn retry_label(retry: u32) -> String {
         n => format!(" retry {n}"),
     }
 }
+
+/// The stage id a run stopped by its item's dollar budget fails under; no
+/// stage of that id runs.
+pub const BUDGET_STAGE: &str = "budget";
+
+/// The stage id a failed delivery is reported under; no agent runs it.
+pub const SHIP_STEP: &str = "ship";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]

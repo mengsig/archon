@@ -204,14 +204,25 @@ impl ModelEvidenceReport {
                     .get(repo)
                     .map_or(repo.as_str(), String::as_str)
             });
+            let prs = p.review_prs.as_ref().map_or(String::new(), |prs| {
+                let rounds = prs
+                    .median_rounds_to_pass
+                    .map_or("-".to_owned(), |r| format!("{r:.1}"));
+                format!(
+                    " prs_passed={}/{} median_rounds_to_pass={rounds}",
+                    prs.passed, prs.reviewed
+                )
+            });
             let _ = writeln!(
                 text,
-                "Pipeline {} / {} n={} scored={} pass={:.0}% median=${:.3} wall={:.0}s corrected={:.0}%",
+                "Pipeline {} / {} n={} scored={} pass={:.0}% blocked={} escalated={} median=${:.3} wall={:.0}s corrected={:.0}%{prs}",
                 repo,
                 p.pipeline,
                 p.runs,
                 p.scored,
                 p.pass_rate * 100.0,
+                p.blocked,
+                p.escalated,
                 p.median_cost_usd,
                 p.median_wall_secs,
                 p.correction_rate * 100.0
@@ -235,6 +246,9 @@ mod tests {
             runs: 4,
             scored: 4,
             pass_rate: 0.5,
+            blocked: 0,
+            escalated: 0,
+            review_prs: None,
             median_cost_usd: 1.0,
             median_wall_secs: 60.0,
             correction_rate: 0.0,

@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### Upgrading
+
+- Store migration V24 is one-way. It adds `outcomes.class_source` and
+  `outcomes.failure_class_163` and recomputes the failure class of every
+  stored failed run. Downgrading the binary is not supported once it has run:
+  an older archond refuses the store ("store schema version 24 is newer than
+  this archon supports"), and no older daemon can read it. Stop archond and
+  back up `archon.db` (with any `archon.db-wal`) before `archon update`; going
+  back means restoring that copy, and losing what was recorded since. See
+  [upgrading](docs/upgrading.md#store-migration-v24).
+
+### Changed
+
+- A failed run's failure class now comes from its stage records, not from
+  words in its error. The class is `timeout` when the stage that ended the run
+  timed out, `infrastructure` when Aether reported an infrastructure failure,
+  `budget` when the item's budget guard or Aether's cost cap stopped it, and
+  `review` when a review-holding stage did not pass. Before, a review FAIL whose
+  error named "aether", "timeout" or "budget" was left unscored, so review pass
+  rates of different repositories could not be compared. Migration V24
+  recomputes stored rows whose runs are kept and logs, per class, the old and
+  new counts and the rows left on the 1.6.3 class. Runs already pruned keep
+  their old class, marked `legacy_163`. For one release the old class stays in
+  `failure_class_163`.
+- The pipeline lines of `archon model-evidence` count only the runs that
+  finished in the report's range, so a pipeline with no run in it has no line.
+  Runs a stage ended with `BLOCKED:` or `ESCALATE:` are no longer losses: they
+  are counted in `blocked=` and `escalated=`, and routing already read them
+  that way. Pipelines that review existing pull requests add
+  `prs_passed=<passed>/<reviewed>` and `median_rounds_to_pass`, which count each
+  pull request once, however many heads were reviewed. `archon lessons stats`
+  scores BLOCKED and ESCALATED runs the same way.
+
 ## 1.6.3
 
 Released 2026-11-18.

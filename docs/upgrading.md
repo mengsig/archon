@@ -15,8 +15,30 @@ Aether's normal update, without pinning it to an older release. Keep a backup be
 adds persistent requirement and clarification records. Existing queue items
 without intent keep their previous behavior.
 
+### Store migration V24
+
+The first start of an archond with migration V24 upgrades the store in place,
+in one write transaction. V24 adds `outcomes.class_source` and
+`outcomes.failure_class_163`. It then recomputes the failure class of every
+stored failed run from that run's stage records (the timed-out,
+infrastructure, budget and review rules of the [changelog](../CHANGELOG.md)),
+and keeps the old class in `failure_class_163` for one release. A run whose
+stage records were pruned keeps its old class, marked `legacy_163`. archond
+logs, per class, the old count, the new count and the rows left on the 1.6.3
+class.
+
+**Downgrading the binary is not supported after V24 has run.** The schema
+check of an older archond refuses a newer store ("store schema version 24 is
+newer than this archon supports (23); upgrade archon"), so no older daemon can
+read the upgraded store. Before the update, stop archond and copy `archon.db`
+and any `archon.db-wal`. Going back means stopping archond, installing the
+older release and restoring that copy. Everything recorded since the copy is
+lost. To roll back the behaviour of a release while keeping the store, use its
+configuration switches, not an older binary.
+
 ## Contents
 
+- [Store migration V24](#store-migration-v24)
 - [From 1.4.x to 1.5.0](#from-14x-to-150)
   - [What changes](#what-changes)
   - [Store migrations V19 to V23](#store-migrations-v19-to-v23)

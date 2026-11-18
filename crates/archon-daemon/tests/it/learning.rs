@@ -95,6 +95,7 @@ fn sample_outcome(
         review_rounds: 0,
         result: OutcomeResult::Succeeded,
         failure: None,
+        failure_source: None,
         corrections: Vec::new(),
         feedback: Vec::new(),
         context: None,

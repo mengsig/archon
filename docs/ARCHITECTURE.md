@@ -1475,7 +1475,12 @@ in a new worktree off the base branch (§13).
   archond moves it to 30 min from now, in Aether (the lead and every live
   agent beneath it whose deadline is lower, one by one when Aether cannot
   update a subtree) and in the stored request, and
-  never times it out while held. A later deadline a steer stored is kept,
+  never times it out while held. A reviewer held on a provider whose
+  quota the last reading shows spent (no usage left, reserves aside) is
+  cancelled after 3 minutes, and its lead is told to delegate the review on
+  another allowed provider or fail its task. A child created beneath a
+  running stage's lead with a deadline below the stored one is raised to it.
+  A later deadline a steer stored is kept,
   and sent to Aether again if the steer landed while the move was in flight.
   An agent `blocked` for inspection is moved on in the same way only while
   the stage watchdog is on, because the watchdog resumes it or fails its
@@ -2805,7 +2810,9 @@ what archond stores and delivers; one that names no single object of that
 type is refused, saying so. 40 digits are resolved too, as in a SHA-256
 worktree they abbreviate; elsewhere they stay the full SHA-1 id. The gate checks the record before the
 review: a pass without one fails the run at that stage, so no delivery is
-ever asked for without it. Stages after the record stage cannot commit
+ever asked for without it. A result without `structured`, or a pass that
+names no reviewer, first gets one repair turn: the stage is entered again
+with the refusal quoted, and a second broken record fails the run. Stages after the record stage cannot commit
 (§8.2), so what they verified is that tree.
 
 When the last stage passes, the driver emits `Ship(ShipPlan)`: the record,

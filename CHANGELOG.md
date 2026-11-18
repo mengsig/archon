@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Changed
+
+- A completed stage whose delivery record is broken gets one repair turn
+  before the run fails. A record is broken when it has no `structured`, or
+  when it names no reviewer although a review is owed. The stage is entered
+  again with the refusal quoted, and a kept agent is resumed in place.
+  Reviewers are still checked against the agents the lead delegated itself,
+  so a repair cannot name one that never reviewed. A second broken record
+  fails the run as before. A refused verdict or too few reviewers gets no
+  repair turn.
+- The stage contract states that Aether refuses a delegation with more than
+  16 `references`.
+
+### Fixed
+
+- A child delegated after a stage's deadline was extended gets the extended
+  deadline. Before, a child created from the lead's row before the move landed
+  kept the old deadline and stopped early.
+- A reviewer that Aether holds on a provider with a spent quota is cancelled
+  after 3 minutes, and its lead is told to delegate the review on another
+  allowed provider or to fail the task so the orchestrator re-plans. Before,
+  it waited until the stage deadline, and a held stage's deadline kept moving.
+  A quota restored within the 3 minutes stops nothing.
+
 ## 1.6.3
 
 Released 2026-11-18.

@@ -197,6 +197,7 @@ impl Harness {
     pub async fn new() -> Self {
         let mut config = Config::default();
         config.review.auto_repair = false;
+        config.learning.explore_rate = 0.0;
         Self::with_config(config).await
     }
 

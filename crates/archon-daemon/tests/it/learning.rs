@@ -576,7 +576,7 @@ async fn distillation_has_only_one_in_flight_per_repository() {
 
 #[tokio::test]
 async fn cold_start_explores_ready_models_within_policy_and_keeps_explanations() {
-    let h = Harness::new().await;
+    let h = Harness::with_config(Default::default()).await;
     let own = h.ctx.config.orchestrator.model.clone();
     h.set_learning_models(vec![
         own.clone(),

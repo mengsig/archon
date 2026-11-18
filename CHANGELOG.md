@@ -15,6 +15,10 @@
 - A review item's frozen head cannot be moved by an amendment, retry or steer.
   A review that names another head than the one checked out fails the stage
   with "queue a new review item at <sha>".
+- Cost reports attribute recorded delegates to the stage they worked for and
+  use each delegate's model and effort. The CLI and MCP report lead and
+  delegated spend separately, and can group by effort. Archon now records
+  delegation links for the orchestrator's helpers too.
 
 ## 1.6.3
 

@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 1.6.3
+
+Released 2026-11-18.
+
+Archon 1.6.3 requires **Aether 1.4.1**. The installer and a confirmed
+`archon update` select Aether `v1.4.1` for an older installation.
+
+### Changed
+
+- `codex/astra` and `codex/sol` now mean GPT-6.2 Astra (`codex/gpt-6.2-astra`)
+  and GPT-6.2 Sol (`codex/gpt-6.2-sol`), as Aether 1.4.1 resolves them. The
+  documentation's example models name the 6.2 ids.
+
+### Fixed
+
+- A distillation errand is planned only on a model Aether lists. It took the
+  cheapest model an earlier stage ran on, so a stage on an id Aether did not
+  list, such as `codex/gpt-6.1-astra`, could plan the errand on it.
+
 ## 1.6.2
 
 Released 2026-11-18.

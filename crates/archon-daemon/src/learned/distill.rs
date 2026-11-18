@@ -5,7 +5,7 @@ use crate::context::DaemonContext;
 use archon_core::error::ArchonError;
 use archon_core::id::RepoId;
 use archon_core::lesson::{Lesson, LessonKind, LessonScope, LessonSource, LessonState};
-use archon_core::model::{Effort, ModelChoice, ModelPlan};
+use archon_core::model::{Effort, ModelChoice, ModelPlan, ModelRef};
 use archon_core::outcome::Outcome;
 use archon_core::queue::{Priority, QueueItem, QueueState};
 use archon_core::run::{PipelineRun, RunState};
@@ -94,7 +94,8 @@ async fn queue(ctx: &DaemonContext, repo: &RepoId) -> Result<(), ArchonError> {
         Some(raw) => serde_json::from_str(&raw)
             .map_err(|e| ArchonError::Corrupt(format!("distillation draft: {e}")))?,
         None => {
-            let choice = cheap_choice(&window, &policy, ctx)?;
+            let listed = store.learning_models();
+            let choice = cheap_choice(&window, &policy, &listed, &ctx.config.orchestrator.model)?;
             let evidence = distillation_input(&store, repo, &window)?;
             let item = errand(repo, &window, choice, &evidence)?;
             store.save_learning_value(
@@ -148,29 +149,43 @@ fn distillation_input(
         .map_err(|e|ArchonError::Corrupt(format!("distillation input: {e}")))
 }
 
+/// The cheapest earlier stage choice, else the first allowed model, else the
+/// orchestrator's; once Aether's catalog is read, only a model it lists.
 fn cheap_choice(
     outcomes: &[Outcome],
     policy: &archon_core::policy::ModelPolicy,
-    ctx: &DaemonContext,
+    listed: &[ModelRef],
+    orchestrator: &ModelRef,
 ) -> Result<ModelChoice, ArchonError> {
+    assert!(listed.is_sorted(), "learning_models is sorted");
+    let is_listed = |m: &ModelRef| listed.is_empty() || listed.binary_search(m).is_ok();
     let cheapest = outcomes
         .iter()
         .flat_map(|o| &o.stages)
-        .filter(|s| policy.check(&s.choice).is_ok())
+        .filter(|s| policy.check(&s.choice).is_ok() && is_listed(&s.choice.model))
         .min_by(|a, b| a.cost_usd.total_cmp(&b.cost_usd))
         .map(|s| s.choice.clone());
-    let choice = cheapest.unwrap_or_else(|| ModelChoice {
-        model: policy
-            .allow
-            .as_ref()
-            .and_then(|models| models.iter().find(|m| policy.permits_model(m)))
-            .cloned()
-            .unwrap_or_else(|| ctx.config.orchestrator.model.clone()),
-        effort: Effort::Low,
-        tier: None,
+    let choice = cheapest.unwrap_or_else(|| {
+        let allowed = policy.allow.iter().flatten();
+        let model = allowed
+            .chain(std::iter::once(orchestrator))
+            .chain(listed)
+            .find(|m| policy.permits_model(m) && is_listed(m))
+            .unwrap_or(orchestrator);
+        ModelChoice {
+            model: model.clone(),
+            effort: Effort::Low,
+            tier: None,
+        }
     });
     policy.check(&choice)?;
     assert!(policy.permits_model(&choice.model));
+    if !is_listed(&choice.model) {
+        return Err(ArchonError::Policy(format!(
+            "no model Aether lists is allowed for distillation; {} is not listed",
+            choice.model
+        )));
+    }
     Ok(choice)
 }
 

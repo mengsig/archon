@@ -1708,15 +1708,13 @@ fn worktree_of(h: &Harness, item: &archon_core::queue::QueueItem) -> std::path::
     h.ctx.paths.worktrees.join(REPO_NAME).join(item.id.as_str())
 }
 
-/// The worktree is gone and git no longer lists it, but the start did
-/// add it: its branch, which removal keeps, exists.
+/// The worktree is absent from both disk and Git.
 fn assert_worktree_removed(h: &Harness, tree: &std::path::Path) {
     assert!(!tree.exists(), "{} is left behind", tree.display());
     let listed = git(&h.repo, &["worktree", "list", "--porcelain"]);
     let name = tree.file_name().unwrap().to_str().unwrap();
     assert!(!listed.contains(name), "git still lists it: {listed}");
-    let branches = git(&h.repo, &["branch", "--list", "archon/*"]);
-    assert!(!branches.is_empty(), "the start never added a worktree");
+
 }
 
 /// Edit the test pipeline after enqueue: its new `docs` stage is in no
@@ -1749,6 +1747,8 @@ async fn a_start_refused_after_its_worktree_was_added_removes_it() {
     };
     assert!(error.contains("docs"), "{error}");
     assert_worktree_removed(&h, &worktree_of(&h, &item));
+    let branches = git(&h.repo, &["branch", "--list", "archon/*"]);
+    assert!(!branches.is_empty(), "the start never added a worktree");
     let notes = h.notices(NotificationKind::Blocker).await;
     assert_eq!(notes.len(), 1, "{notes:?}");
 }

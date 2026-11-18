@@ -856,12 +856,9 @@ pub(super) async fn retry(
 /// A finished item whose restack fix, which works on its branch, is not
 /// still to run.
 fn check_retryable(store: &archon_queue::Store, item: &QueueItem) -> Result<(), ArchonError> {
-    if !matches!(
-        item.state,
-        QueueState::Succeeded { .. } | QueueState::Failed { .. } | QueueState::Cancelled { .. }
-    ) {
+    if !item.state.is_terminal() && !item.state.is_model_pin_block() {
         return Err(ArchonError::InvalidTransition(format!(
-            "only finished items are retried; {} is {}",
+            "only finished or model-blocked items are retried; {} is {}",
             item.id,
             item.state.kind()
         )));
@@ -1068,7 +1065,7 @@ fn unblock_dependents(
     );
     for dependent in store.dependents(id)? {
         let item = store.item(&dependent)?;
-        if !matches!(item.state, QueueState::Blocked { .. }) {
+        if !matches!(item.state, QueueState::Blocked { .. }) || item.state.is_model_pin_block() {
             continue;
         }
         let mut broken = false;

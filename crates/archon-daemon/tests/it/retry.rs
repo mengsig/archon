@@ -377,3 +377,29 @@ async fn retry_checks_a_kept_pin_against_the_current_catalog() {
         QueueState::Cancelled { .. }
     ));
 }
+
+#[tokio::test]
+async fn retry_of_a_model_pin_block_keeps_independently_blocked_dependents() {
+    let h = Harness::new().await;
+    let item = h.enqueue("replan").await;
+    let mut dependent = h.enqueue("independent invalid pin").await;
+    let blocked = QueueState::model_pin_block("re-plan the missing model");
+    {
+        let mut store = h.ctx.store.lock().await;
+        dependent.dependencies.push(item.id.clone());
+        store.update_item(&dependent).unwrap();
+        for id in [&item.id, &dependent.id] {
+            store
+                .transition_item(id, blocked.clone(), archon_core::now())
+                .unwrap();
+        }
+    }
+    let mut request = retry(&item, false, None);
+    let Request::RetryItem { model_plan, .. } = &mut request else {
+        unreachable!()
+    };
+    *model_plan = Some(common::plan().into());
+    h.cli(request).await.expect("retry with a checked plan");
+    assert_eq!(h.state(&item.id).await, QueueState::Queued);
+    assert_eq!(h.state(&dependent.id).await, blocked);
+}

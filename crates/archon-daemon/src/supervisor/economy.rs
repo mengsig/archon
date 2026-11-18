@@ -28,6 +28,9 @@ const IDLE_COMPACTION_KEY: &str = "orchestrator_idle_compaction";
 const INBOX_WAIT: &str = "inbox";
 /// `kv`: the [`RefreshTried`] of the latest refresh attempt.
 const REFRESH_TRIED_KEY: &str = "orchestrator_refresh_tried";
+/// `kv`: the generation a refresh replaces, kept until a successor is
+/// adopted, however many generations a failed creation advanced meanwhile.
+pub(super) const REFRESH_UNFINISHED_KEY: &str = "orchestrator_refresh_unfinished";
 /// How long the orchestrator must have logged nothing before either rule
 /// acts, so a message Aether just accepted is never cut off.
 const QUIET_BEFORE_ACTING: TimeDelta = TimeDelta::minutes(2);
@@ -93,12 +96,13 @@ pub async fn economize(ctx: &DaemonContext, now: Timestamp) -> Result<Economy, A
     let _serial = ctx.supervisor.serial.lock().await;
     let generation = super::generation(ctx).await?;
     let tried = read_kv::<RefreshTried>(ctx, REFRESH_TRIED_KEY).await?;
+    let unfinished = read_kv::<u64>(ctx, REFRESH_UNFINISHED_KEY).await?;
     let client = ctx.aether.client()?;
     let agent = match super::current_orchestrator(ctx).await? {
         Some(id) => Some(client.get_agent(&id).await?),
         None => None,
     };
-    if refresh_left_behind(tried.as_ref(), generation, agent.as_ref()) {
+    if refresh_left_behind(unfinished, generation, agent.as_ref()) {
         let id = super::ensure_locked(ctx).await?;
         tracing::info!(%id, "started the orchestrator a failed refresh left out");
         return Ok(Economy::Refreshed);
@@ -131,27 +135,23 @@ pub fn is_idle(agent: &Agent, now: Timestamp) -> bool {
     waits_for_mail && !agent.paused && quiet
 }
 
-/// Whether a refresh of this generation, or of the one before, stopped
-/// after the old orchestrator was cancelled and left none live (`agent`).
+/// Whether a refresh that replaced generation `unfinished` stopped before
+/// a successor was adopted and left none live (`agent`), even when a
+/// successor that stopped before its briefing advanced the generation again.
 pub fn refresh_left_behind(
-    tried: Option<&RefreshTried>,
+    unfinished: Option<u64>,
     generation: u64,
     agent: Option<&Agent>,
 ) -> bool {
-    let Some(tried) = tried else {
+    let Some(unfinished) = unfinished else {
         return false;
     };
-    assert!(tried.generation > 0, "generations start at 1");
+    assert!(unfinished > 0, "generations start at 1");
     assert!(
-        tried.generation <= generation,
-        "a refresh tried a generation that was"
+        unfinished <= generation,
+        "a refresh replaced a generation that was"
     );
-    let gone = agent.is_none_or(|agent| !LIVE_STATES.contains(&agent_state(agent).as_str()));
-    let ours = match agent {
-        None => tried.generation + 1 == generation,
-        Some(_) => tried.generation == generation,
-    };
-    ours && gone
+    agent.is_none_or(|agent| !LIVE_STATES.contains(&agent_state(agent).as_str()))
 }
 
 /// Whether generation `generation`, as `freshness` describes it, is owed a
@@ -205,7 +205,11 @@ async fn refresh_if_upgraded(
         tries,
         at: now,
     };
-    write_kv(ctx, REFRESH_TRIED_KEY, &attempt).await?;
+    {
+        let mut store = ctx.store.lock().await;
+        store.kv_set(REFRESH_TRIED_KEY, &serde_json::to_string(&attempt)?)?;
+        store.kv_set(REFRESH_UNFINISHED_KEY, &generation.to_string())?;
+    }
     let reason = "refreshed: an upgrade changed its prompt or tools";
     let why = "is a fresh generation, as an upgrade changed its prompt or tools";
     let id = super::replace_orchestrator(ctx, client, reason, why).await?;
@@ -428,32 +432,30 @@ mod tests {
 
     #[test]
     fn only_a_refresh_that_left_no_live_orchestrator_is_finished() {
-        let tried = RefreshTried {
-            generation: 3,
-            tries: 1,
-            at: at(0),
-        };
         let mut cancelled = orchestrator(None, None);
         cancelled.status =
             serde_json::from_value(serde_json::json!({ "state": "cancelled" })).unwrap();
         let live = orchestrator(None, None);
         assert!(
-            refresh_left_behind(Some(&tried), 4, None),
+            refresh_left_behind(Some(3), 4, None),
             "cancelled, none created"
         );
         assert!(
-            refresh_left_behind(Some(&tried), 3, Some(&cancelled)),
+            refresh_left_behind(Some(3), 5, None),
+            "its successor stopped before its briefing"
+        );
+        assert!(
+            refresh_left_behind(Some(3), 3, Some(&cancelled)),
             "cancelled, not advanced"
         );
         assert!(
-            !refresh_left_behind(Some(&tried), 3, Some(&live)),
+            !refresh_left_behind(Some(3), 3, Some(&live)),
             "the old one still runs"
         );
         assert!(
-            !refresh_left_behind(Some(&tried), 5, None),
-            "a later generation's gap"
+            !refresh_left_behind(None, 4, None),
+            "no refresh is unfinished"
         );
-        assert!(!refresh_left_behind(None, 4, None), "no refresh was tried");
     }
 
     #[test]

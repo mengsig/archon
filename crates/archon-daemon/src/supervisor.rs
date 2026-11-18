@@ -1028,6 +1028,8 @@ async fn adopt(ctx: &DaemonContext, id: &AetherAgentId) -> Result<(), ArchonErro
         let previous = store.kv_get(keys::ORCHESTRATOR_AGENT)?;
         store.kv_set(keys::ORCHESTRATOR_AGENT, id.as_str())?;
         store.kv_delete(BLOCKER_KEY)?;
+        // Whatever refresh was under way has its successor now.
+        store.kv_delete(economy::REFRESH_UNFINISHED_KEY)?;
         previous
     };
     ctx.supervisor.current.send_replace(Some(id.clone()));

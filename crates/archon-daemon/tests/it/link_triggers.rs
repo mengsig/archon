@@ -305,6 +305,44 @@ async fn a_backlog_past_a_triggers_size_goes_out_in_several() {
     assert_eq!(delivered, reasons_sent, "all of it, in order");
 }
 
+/// A flush of news past a trigger's size waits for every batch it splits
+/// into, not just the first, before the operator's turn starts.
+#[tokio::test]
+async fn a_flush_waits_for_every_batch_a_large_backlog_splits_into() {
+    let mut config = Config::default();
+    config.orchestrator.trigger_coalesce_ms = 60_000;
+    let harness = Harness::with(config, None).await;
+    harness.connect().await;
+    let delivery = delivering(&harness).await;
+    // The second batch is acknowledged only on a retry, a second later.
+    harness.fake.script("trigger", Scripted::ok());
+    harness
+        .fake
+        .script("trigger", Scripted::refuse("internal", "busy"));
+    let reasons_sent: Vec<String> = (0..5)
+        .map(|n| format!("{n}{}", "x".repeat(300 * 1024)))
+        .collect();
+    for reason in &reasons_sent {
+        triggers::push_quiet(&harness.ctx, blocked(reason))
+            .await
+            .unwrap();
+    }
+
+    triggers::flush_quiet(&harness.ctx).await.unwrap();
+    let held = triggers::held(&harness.ctx).await.unwrap();
+    let sent = harness.fake.received_named("trigger");
+    delivery.abort();
+    assert!(held.is_empty(), "{} events still held", held.len());
+    assert!(sent.len() >= 3, "two batches, the second retried");
+    let delivered: std::collections::BTreeSet<&str> =
+        sent.iter().flat_map(|trigger| reasons(trigger)).collect();
+    assert_eq!(
+        delivered.len(),
+        reasons_sent.len(),
+        "every batch went first"
+    );
+}
+
 #[tokio::test]
 async fn delivery_creates_the_orchestrator_when_none_exists() {
     let harness = harness().await;

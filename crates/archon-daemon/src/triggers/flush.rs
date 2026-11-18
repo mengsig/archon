@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use archon_core::error::ArchonError;
 
-use super::{read_outbox, write_outbox};
+use super::{batch_count, read_outbox, write_outbox};
 use crate::context::DaemonContext;
 
 /// Longest an operator message waits behind held news. Delivery retries
@@ -20,11 +20,9 @@ pub async fn flush_quiet(ctx: &DaemonContext) -> Result<(), ArchonError> {
     };
     ctx.triggers.urgent.notify_waiters();
     ctx.triggers.news.notify_one();
-    let mut settled = ctx.triggers.settled.subscribe();
-    let reached = tokio::time::timeout(FLUSH_WAIT, settled.wait_for(|count| *count >= target));
+    let reached = tokio::time::timeout(FLUSH_WAIT, settled_or_drained(ctx, target));
     match reached.await {
-        Ok(Ok(_)) => Ok(()),
-        Ok(Err(closed)) => unreachable!("the sender lives in the context: {closed}"),
+        Ok(result) => result,
         Err(_) => {
             tracing::warn!(
                 waited = ?FLUSH_WAIT,
@@ -35,13 +33,30 @@ pub async fn flush_quiet(ctx: &DaemonContext) -> Result<(), ArchonError> {
     }
 }
 
+/// Wait until `target` batches have settled, or nothing is held at all:
+/// compaction while waiting can leave fewer batches than counted.
+async fn settled_or_drained(ctx: &DaemonContext, target: u64) -> Result<(), ArchonError> {
+    let mut settled = ctx.triggers.settled.subscribe();
+    loop {
+        if *settled.borrow_and_update() >= target {
+            return Ok(());
+        }
+        let outbox = read_outbox(&*ctx.store.lock().await)?;
+        if outbox.in_flight.is_none() && outbox.pending.is_empty() {
+            return Ok(());
+        }
+        let changed = settled.changed().await;
+        assert!(changed.is_ok(), "the sender lives in the context");
+    }
+}
+
 /// Mark held news to go out at once, and the settled-batch count reached
 /// once it has: `None` when nothing is held or in flight.
 async fn mark_flush(ctx: &DaemonContext) -> Result<Option<u64>, ArchonError> {
     let mut store = ctx.store.lock().await;
     let mut outbox = read_outbox(&store)?;
-    // Keying takes every pending event, so they leave in one batch after the one in flight.
-    let ahead = u64::from(outbox.in_flight.is_some()) + u64::from(!outbox.pending.is_empty());
+    // Pending news leaves in as many batches as its size splits it into.
+    let ahead = u64::from(outbox.in_flight.is_some()) + batch_count(&outbox.pending)?;
     if ahead == 0 {
         return Ok(None);
     }
@@ -55,6 +70,6 @@ async fn mark_flush(ctx: &DaemonContext) -> Result<Option<u64>, ArchonError> {
     );
     // Read under the store lock, which every settled batch is counted under.
     let target = *ctx.triggers.settled.borrow() + ahead;
-    assert!(ahead <= 2, "one batch in flight and one keyed next at most");
+    assert!(target >= ahead, "the settled count never wraps");
     Ok(Some(target))
 }

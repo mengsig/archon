@@ -361,9 +361,9 @@ the build's success as is.
 
 A stage's `info` message does not wake the orchestrator: it rides with the
 next wake, or wakes it by itself once it has waited 30 minutes and then the
-`trigger_coalesce_ms` window. A relay, an escalation or a question still
-wakes it after that window alone; `quiet_info = false` makes every message
-wake it. News too large for one trigger goes out in several, in order. The
+`trigger_coalesce_ms` window. A relay still wakes it after that window
+alone; an escalation or a question is urgent and wakes it at once, skipping
+the window. `quiet_info = false` makes every message wake it. News too large for one trigger goes out in several, in order. The
 orchestrator compacts its context at `compaction_tokens` (from 100,000 to
 200,000, within every orchestrator model's window) when the connected Aether serves a
 per-agent threshold (its `compaction_tokens` feature); an older Aether keeps

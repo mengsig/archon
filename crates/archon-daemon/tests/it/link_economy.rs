@@ -12,6 +12,7 @@ use archon_core::Timestamp;
 use archon_core::id::QueueItemId;
 use archon_daemon::supervisor::{self, Economy};
 use archon_daemon::triggers::{self, TriggerEvent};
+use archon_queue::store::keys;
 use chrono::TimeDelta;
 use link_common::Harness;
 use serde_json::{Value, json};
@@ -305,6 +306,54 @@ async fn a_refresh_that_cancelled_but_could_not_create_is_finished_next_check() 
         current.unwrap().as_str(),
         ORCH_2,
         "finished at the next check"
+    );
+}
+
+/// The refresh's successor stopped before its briefing, which retired it
+/// and advanced the generation once more: the next check still finishes it.
+#[tokio::test]
+async fn a_refresh_whose_successor_stopped_before_its_briefing_is_finished_next_check() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    let agents = agent_table(&harness);
+    create(&harness, &agents, ORCH).await;
+    as_if_created_by_an_older_build(&harness).await;
+    set_state(&agents, ORCH, "waiting");
+    script_successor(&harness, &agents);
+    set_state(&agents, ORCH_2, "failed");
+    harness.fake.script(
+        "trigger",
+        Scripted::refuse("invalid_argument", "agent stopped"),
+    );
+    let now = archon_core::now();
+    supervisor::economize(&harness.ctx, now)
+        .await
+        .expect_err("the successor stopped before its briefing");
+    assert!(harness.kv(keys::ORCHESTRATOR_AGENT).await.is_none());
+    let generation = harness.kv(keys::ORCHESTRATOR_GENERATION).await;
+    assert_eq!(generation.as_deref(), Some("3"), "N+2, nothing adopted");
+
+    const ORCH_3: &str = "agt_0003";
+    agents
+        .lock()
+        .unwrap()
+        .insert(ORCH_3.into(), orchestrator(ORCH_3, "ready"));
+    let third = Scripted::reply("agent", orchestrator(ORCH_3, "ready"));
+    harness.fake.script("create_agent", third);
+    let next = supervisor::economize(&harness.ctx, now + TimeDelta::minutes(1));
+    assert_eq!(next.await.unwrap(), Economy::Refreshed);
+    let current = supervisor::current_orchestrator(&harness.ctx)
+        .await
+        .unwrap();
+    assert_eq!(
+        current.unwrap().as_str(),
+        ORCH_3,
+        "finished at the next check"
+    );
+    let unfinished = harness.kv("orchestrator_refresh_unfinished").await;
+    assert!(
+        unfinished.is_none(),
+        "adoption ended the refresh: {unfinished:?}"
     );
 }
 

@@ -809,15 +809,37 @@ async fn key_pending(ctx: &DaemonContext) -> Result<(), ArchonError> {
 /// keeping at least one event: one too large alone is refused and noted.
 fn split_past_bytes(held: &mut Vec<Held>, budget: usize) -> Result<Vec<Held>, ArchonError> {
     assert!(!held.is_empty(), "only held news is split");
+    let at = first_batch_len(held, budget)?;
+    Ok(held.split_off(at))
+}
+
+/// How many events of `held` the next batch takes: those within the first
+/// `budget` encoded bytes, and always the first.
+fn first_batch_len(held: &[Held], budget: usize) -> Result<usize, ArchonError> {
+    assert!(!held.is_empty(), "only held news is split");
     assert!(budget > 0, "a batch has room");
     let mut bytes = 0;
     for (at, news) in held.iter().enumerate() {
         bytes += serde_json::to_string(&news.event)?.len();
         if at > 0 && bytes > budget {
-            return Ok(held.split_off(at));
+            return Ok(at);
         }
     }
-    Ok(Vec::new())
+    Ok(held.len())
+}
+
+/// How many batches `held` leaves in when keyed one after another. Splits
+/// depend only on the news before them, so news pushed later never adds one.
+fn batch_count(held: &[Held]) -> Result<u64, ArchonError> {
+    let mut rest = held;
+    let mut count = 0;
+    while !rest.is_empty() {
+        let taken = first_batch_len(rest, BATCH_MAX_BYTES)?;
+        assert!(taken > 0 && taken <= rest.len(), "each batch takes news");
+        rest = &rest[taken..];
+        count += 1;
+    }
+    Ok(count)
 }
 
 /// `held` as a batch: its quiet item outcomes as one short list behind the

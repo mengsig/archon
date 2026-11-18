@@ -128,7 +128,7 @@ title = "A new user starts their first agent"
 artifact = { kind = "desktop", build = "npm ci && npm run package -- --linux dir", path = "dist/linux-unpacked/my-app" }
 engines = [
   { engine = "claude-code", model = "claude-sonnet-5-5", env = ["CLAUDE_CODE_OAUTH_TOKEN"] },
-  { engine = "codex", model = "gpt-6-astra", env = ["CODEX_API_KEY"] },
+  { engine = "codex", model = "gpt-6.2-astra", env = ["CODEX_API_KEY"] },
 ]
 script = "e2e/journeys/first-agent.spec.ts"
 run = "npx playwright test e2e/journeys/first-agent.spec.ts --reporter=line"

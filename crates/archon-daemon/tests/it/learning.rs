@@ -240,6 +240,72 @@ async fn distillation_queues_once_per_window_and_never_learns_from_itself() {
 }
 
 #[tokio::test]
+async fn distillation_plans_only_a_model_aether_lists() {
+    let mut config = archon_core::config::Config::default();
+    config.learning.distill_every = 4;
+    let h = Harness::with_config(config).await;
+    samples(&h, "codex/gpt-6.1-astra", 0.0, 2).await;
+    samples(&h, "codex/listed", 0.3, 2).await;
+    let listed = vec!["codex/listed".parse().unwrap()];
+    h.ctx.store.lock().await.set_learning_models(listed);
+    archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    let items = h.ctx.store.lock().await.items(&Default::default()).unwrap();
+    let errands: Vec<_> = items.iter().filter(|i| i.pipeline == "errand").collect();
+    assert_eq!(errands.len(), 1, "one window, one errand");
+    let planned: Vec<_> = errands[0].model_plan.0.values().flatten().collect();
+    assert!(!planned.is_empty());
+    assert!(
+        planned
+            .iter()
+            .all(|c| c.model.to_string() == "codex/listed"),
+        "the cheaper unlisted id is never planned: {planned:?}"
+    );
+}
+
+fn errand_models(items: &[archon_core::queue::QueueItem]) -> Vec<String> {
+    let errands = items.iter().filter(|i| i.pipeline == "errand");
+    let plans = errands.flat_map(|i| i.model_plan.0.values().flatten());
+    plans.map(|c| c.model.to_string()).collect()
+}
+
+#[tokio::test]
+async fn distillation_falls_back_to_a_listed_model_when_no_stage_ran_on_one() {
+    let mut config = archon_core::config::Config::default();
+    config.learning.distill_every = 2;
+    let h = Harness::with_config(config).await;
+    samples(&h, "codex/gpt-6.1-astra", 0.0, 2).await;
+    let own = h.ctx.config.orchestrator.model.to_string();
+    assert_ne!(
+        own, "codex/listed",
+        "the orchestrator's model is not listed"
+    );
+    let listed = vec!["codex/listed".parse().unwrap()];
+    h.ctx.store.lock().await.set_learning_models(listed);
+    archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    let items = h.ctx.store.lock().await.items(&Default::default()).unwrap();
+    assert_eq!(errand_models(&items), ["codex/listed"]);
+}
+
+#[tokio::test]
+async fn distillation_queues_nothing_when_no_listed_model_is_permitted() {
+    let mut config = archon_core::config::Config::default();
+    config.learning.distill_every = 2;
+    let h = Harness::with_config(config).await;
+    samples(&h, "codex/gpt-6.1-astra", 0.0, 2).await;
+    let listed = vec!["codex/denied".parse().unwrap()];
+    h.ctx.store.lock().await.set_learning_models(listed);
+    h.repo_config("[models]\ndeny = [\"codex/denied\"]\n");
+    archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    let items = h.ctx.store.lock().await.items(&Default::default()).unwrap();
+    assert!(
+        errand_models(&items).is_empty(),
+        "{:?}",
+        errand_models(&items)
+    );
+    assert_eq!(items.len(), 2, "only the sampled items exist");
+}
+
+#[tokio::test]
 async fn distillation_reads_a_window_whose_older_items_retention_deleted() {
     let mut config = archon_core::config::Config::default();
     config.learning.distill_every = 2;

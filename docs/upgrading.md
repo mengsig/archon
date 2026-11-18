@@ -7,10 +7,10 @@ are in the [changelog](../CHANGELOG.md).
 
 ## From 1.5.x to 1.6.x
 
-Archon 1.6.2 requires Aether 1.4.0 or later. Upgrade an older Aether with
-`aether update --version v1.4.0` and restart aetherd, then run
-`archon update --yes --version v1.6.2`. Confirmed Archon updates select
-Aether 1.4.0 only for an older installation; at 1.4.0 or later they use
+Archon 1.6.3 requires Aether 1.4.1 or later. Upgrade an older Aether with
+`aether update --version v1.4.1` and restart aetherd, then run
+`archon update --yes --version v1.6.3`. Confirmed Archon updates select
+Aether 1.4.1 only for an older installation; at 1.4.1 or later they use
 Aether's normal update, without pinning it to an older release. Keep a backup before the first daemon start: approved intent
 adds persistent requirement and clarification records. Existing queue items
 without intent keep their previous behavior.

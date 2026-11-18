@@ -1491,7 +1491,31 @@ in a new worktree off the base branch (§13).
   archond moves it to 30 min from now, in Aether (the lead and every live
   agent beneath it whose deadline is lower, one by one when Aether cannot
   update a subtree) and in the stored request, and
-  never times it out while held. A later deadline a steer stored is kept,
+  never times it out while held. A reviewer Aether itself blocks as
+  `exhausted` (quota or usage limit) is cancelled after 3 minutes, and its
+  lead is told to delegate the review on another allowed provider or fail
+  its task. The check runs every 30 seconds on its own worker
+  (`executor::quota_wait::watch`), apart from dispatch. Each time it starts
+  a check of every running stage as a task of its own and waits for none,
+  so no stage delays another's check; a stage whose last check still runs
+  is passed over. A check waits at most 10 seconds for each request to
+  Aether (20 for the listing of a stage's agents, which is two); an
+  unanswered read keeps the wait as recorded and is asked again next time.
+  A check that stops nothing ends within one period, so the worst case is
+  3 minutes, two periods and the 50 seconds of requests up to the cancel:
+  within 5 minutes of the block first being seen. A wait recorded ahead of
+  the clock counts from now and is saved so. The reviewer's own block
+  is read again with one `get_agent` right before the cancel, which carries
+  that hint as its reason; the lead is messaged once the cancel is
+  accepted. Known limitation: Aether has no conditional cancel, so a
+  reviewer whose quota returns within the one round trip between that read
+  and the cancel is still cancelled, and its lead re-plans the review.
+  When any agent of a running stage's tree gets a new child, every live
+  agent beneath the lead with a deadline below the stored one is raised to
+  it. The read and the raise run under the stage's steering lock, as every
+  deadline move does, so they are one compare-and-raise that lowers no
+  extension.
+  A later deadline a steer stored is kept,
   and sent to Aether again if the steer landed while the move was in flight.
   An agent `blocked` for inspection is moved on in the same way only while
   the stage watchdog is on, because the watchdog resumes it or fails its
@@ -2821,7 +2845,32 @@ what archond stores and delivers; one that names no single object of that
 type is refused, saying so. 40 digits are resolved too, as in a SHA-256
 worktree they abbreviate; elsewhere they stay the full SHA-1 id. The gate checks the record before the
 review: a pass without one fails the run at that stage, so no delivery is
-ever asked for without it. Stages after the record stage cannot commit
+ever asked for without it. A result without `structured`, or a pass that
+names no reviewer, first gets one repair turn: the stage is entered again
+with the refusal quoted. Every stage run carries a persisted
+`record_repair` marker. `open` means a broken record of that attempt gets
+the turn. The repair attempt and each later attempt of its stage are
+`spent`: a broken record of one fails the run without a fix loop, as does
+an invalid ship record in its `structured`, and its kept agent is not asked
+for the record again. The marker is set when the
+attempt starts, or when its outcome is recorded if an older archond
+started it. An outcome recorded before the marker has none and is
+evaluated in the order of that time (gate, scenarios, record, no stated
+failure read), so a replay keeps the decision already taken. In a stage
+that owes a record, a stated failure is judged first and on its merits: a
+fail verdict in `structured` or the summary's last `VERDICT:` line, or a
+summary that opens with `ESCALATE:` or `BLOCKED:`, fails the stage as its
+agent sent it, with no repair turn. A broken record that states none is
+judged before the gate and scenarios. archond records a stated failure
+and a reply with no `structured` as sent (`settle::settle_as_sent`), after
+the review-round cap and before its own checks of the result, so no check
+rewrites what the gate must read; the gate passes neither. Every other
+reply, the repaired one included, is verified in full first. A resumed
+agent's reply that goes on after its record block is its summary whole, so
+its lines are read where they stand in its Markdown. A stage that owes no record
+is judged as before. A run failed on a second broken record may still get
+the item's one automatic retry (`[review] auto_repair`).
+Stages after the record stage cannot commit
 (§8.2), so what they verified is that tree.
 
 When the last stage passes, the driver emits `Ship(ShipPlan)`: the record,

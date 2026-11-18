@@ -51,9 +51,80 @@
 
 ### Changed
 
+- A completed stage whose delivery record is broken gets one repair turn
+  before the run fails. A record is broken when the result has no
+  `structured`, or names no reviewer although a review is owed. The stage is
+  entered again with the refusal quoted, and a kept agent is resumed in
+  place. Reviewers are still checked against the agents the lead delegated
+  itself, so a repair cannot name one that never reviewed.
+  - One turn, marked. Each stage run now carries a persisted `record_repair`
+    marker, `open` or `spent`. The repair attempt and every later attempt of
+    its stage are `spent`: a broken record of one fails the run, with no fix
+    loop, and its kept agent is not asked for the record again. So does a
+    `spent` attempt whose `structured` still holds no valid ship record.
+  - A stated failure always wins in a stage that owes a delivery record (a
+    review or the ship record). A fail verdict in `structured` or in the
+    summary's last `VERDICT:` line, or a summary that opens with `ESCALATE:`
+    or `BLOCKED:`, fails the stage with the reply as its agent sent it,
+    whatever the stage's gate and even beside a valid record. It gets no
+    repair turn and no record request, and nothing of it ships. When a
+    resumed agent writes more after its record block, its whole reply is its
+    summary, so a failure stated there counts and an indented or fenced
+    example does not. A stage that owes no record is judged as before.
+  - Such a reply, and one with no `structured` at all, is recorded as sent
+    before archond checks anything else in it: the gate passes neither, and
+    the repaired reply is verified in full. Only the cap on review rounds is
+    still applied first. A reply with `structured` is verified as before,
+    whatever its record lacks.
+  - A record refused on its merits, such as one with too few reviewers, gets
+    no repair turn. A broken one is repaired before the stage's gate and
+    scenario checks read it.
+  - A stage run whose outcome was recorded before this release carries no
+    marker and replays as it was decided then: gate, scenarios, then the
+    record, with no repair turn. A stage run still going at the upgrade is
+    marked when its outcome is recorded, and gets its repair turn.
+  - A run that fails on a second broken record is a failed run like any
+    other: with `[review] auto_repair` on, the item's one automatic retry
+    may still follow it.
+- The stage contract states that Aether refuses a delegation with more than
+  16 `references`.
 - An initiative member's plan is checked as an enqueue's is: an effort above
   its stage's default needs a reason, given in the member's new
   `model_reasons`.
+
+### Fixed
+
+- A trigger larger than Aether takes is no longer lost. Aether refuses a
+  trigger payload over 2 MiB and archond dropped the refused batch with a
+  note, so a long enough backlog of held news went undelivered. A batch is
+  now keyed from at most 1 MiB of held events, and the rest goes out in the
+  batches after it, in order.
+- A child delegated after a stage's deadline was extended gets the extended
+  deadline, and so does a nested child. Before, a child created from the
+  lead's row before the move landed kept the old deadline and stopped early,
+  as did any agent it delegated in turn. The raise is one compare-and-raise
+  under the stage's steering lock, so it never lowers an extension made at
+  the same time.
+- A reviewer that Aether blocks as exhausted on a quota or usage limit is
+  cancelled after 3 minutes, and its lead is told to delegate the review on
+  another allowed provider or to fail the task so the orchestrator re-plans.
+  Before, it waited until the stage deadline, and a held stage's deadline
+  kept moving. The check runs on its own 30-second timer, apart from
+  dispatch. Every 30 seconds it starts a check of each running stage and
+  waits for none, so a slow stage delays no other; a stage whose last check
+  still runs is passed over. A check waits at most 10 seconds for each
+  request to Aether, and the cancel comes within 5 minutes of the block
+  first being seen. A wait recorded ahead of the clock, as after the
+  clock is set back, counts from now and is saved so. A quota restored within the 3 minutes stops nothing: the
+  block is read again, with one `get_agent`, right before the cancel. The
+  cancel carries the hint as its reason, and the lead is messaged after it.
+  Known limitation: a reviewer whose quota returns in the one Aether round
+  trip before the cancel is still cancelled, as Aether has no conditional
+  cancel.
+- Cost reports attribute recorded delegates to the stage they worked for and
+  use each delegate's model and effort. The CLI and MCP report lead and
+  delegated spend separately, and can group by effort. Archon now records
+  delegation links for the orchestrator's helpers too.
 
 ### Upgrading
 
@@ -64,18 +135,6 @@ Store migrations are one-way: back up `archon.db` before `archon update`.
 Downgrading the binary is not supported once a store migration of the release
 has run, because an older schema refuses a newer store. See
 [docs/upgrading.md](docs/upgrading.md#plan-origins).
-
-### Fixed
-
-- A trigger larger than Aether takes is no longer lost. Aether refuses a
-  trigger payload over 2 MiB and archond dropped the refused batch with a
-  note, so a long enough backlog of held news went undelivered. A batch is
-  now keyed from at most 1 MiB of held events, and the rest goes out in the
-  batches after it, in order.
-- Cost reports attribute recorded delegates to the stage they worked for and
-  use each delegate's model and effort. The CLI and MCP report lead and
-  delegated spend separately, and can group by effort. Archon now records
-  delegation links for the orchestrator's helpers too.
 
 ## 1.6.3
 

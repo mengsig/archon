@@ -7,7 +7,9 @@ use archon_core::Timestamp;
 use archon_core::error::ArchonError;
 use archon_core::id::StageRunId;
 use archon_core::notify::{FeedEntry, Notification, NotificationKind};
-use archon_core::run::{PipelineRun, RunState, StageOutcome, StageRun, StageState, Verdict};
+use archon_core::run::{
+    PipelineRun, RecordRepair, RunState, StageOutcome, StageRun, StageState, Verdict,
+};
 use archon_core::steer::RunEdit;
 use archon_pipeline::{EngineAction, SpawnPlan};
 
@@ -137,7 +139,7 @@ async fn settle_verified(
         };
         return settle_locked(ctx, &mut table, id, outcome).await;
     }
-    let (stage, run, review, daemon_ships, planner, record_stage, records_build) = {
+    let (stage, run, review, daemon_ships, planner, record_stage, records_build, as_sent) = {
         let table = ctx.runs.lock().await;
         let store = ctx.store.lock().await;
         let stage = store.stage_run(id)?;
@@ -161,6 +163,7 @@ async fn settle_verified(
         let records_build = driver.is_some_and(|d| {
             archon_pipeline::acceptance::reports_requirements(d.spec(), &stage.stage_id)
         });
+        let as_sent = driver.is_some_and(|d| decided_as_sent(d, &stage, &outcome));
         (
             stage,
             run,
@@ -169,12 +172,16 @@ async fn settle_verified(
             planner,
             record_stage,
             records_build,
+            as_sent,
         )
     };
     if review.reviewers > 0
         && let Some(capped) = super::review::capped_at_completion(ctx, &stage).await?
     {
         return settle_capped(ctx, id, capped).await;
+    }
+    if as_sent {
+        return settle_as_sent(ctx, &stage, &run, outcome).await;
     }
     // Leave the stage live until verification is persisted. If interrupted,
     // reconnect reconciliation reads the task outcome and verifies it again.
@@ -303,6 +310,55 @@ async fn assign_roles(
         .append_run_edit(&run.id, &edit, archon_core::now())?;
     table.drivers.remove(&run.id);
     progress(ctx, run, text).await
+}
+
+/// Whether the gate decides `stage`'s completed `outcome` as its agent sent
+/// it: a stated failure, or no `structured`, of a stage that owes a record.
+fn decided_as_sent(
+    driver: &archon_pipeline::RunDriver,
+    stage: &StageRun,
+    outcome: &StageOutcome,
+) -> bool {
+    assert!(!stage.state.is_terminal(), "only a live stage settles");
+    let StageOutcome::Completed {
+        summary,
+        structured,
+    } = outcome
+    else {
+        panic!("only a completed outcome is verified")
+    };
+    driver.decides_as_sent(&stage.stage_id, summary, structured.as_ref())
+}
+
+/// Persist a completed `outcome` unverified, for the gate to decide as sent:
+/// it fails or repairs it and passes neither, so nothing unverified ships.
+async fn settle_as_sent(
+    ctx: &DaemonContext,
+    seen: &StageRun,
+    seen_run: &PipelineRun,
+    outcome: StageOutcome,
+) -> Result<FollowUp, ArchonError> {
+    assert!(matches!(outcome, StageOutcome::Completed { .. }));
+    assert_eq!(seen.run, seen_run.id, "a stage settles into its own run");
+    let mut table = ctx.runs.lock().await;
+    let (stage, run, all) = {
+        let store = ctx.store.lock().await;
+        let stage = store.stage_run(&seen.id)?;
+        let run = store.run(&stage.run)?;
+        if stage.state != seen.state || run.state != seen_run.state {
+            // Cancellation, another settle or a driver decision won the race.
+            return Ok(FollowUp::poke());
+        }
+        // So does the review cap's stop, marked meanwhile.
+        if stall::escalation_marked(&store, &seen.id)? {
+            let escalated = stall::intended(&store, &seen.id, outcome)?;
+            drop(store);
+            return settle_locked(ctx, &mut table, &seen.id, escalated).await;
+        }
+        let all = store.stage_runs(&run.id)?;
+        (stage, run, all)
+    };
+    Box::pin(persist(ctx, &mut table, stage, run, &all, outcome)).await
 }
 
 /// Settle one stage run while the caller holds the run table. A stage run
@@ -466,6 +522,8 @@ pub(super) fn settled_stage(
         StageOutcome::TimedOut => StageState::TimedOut,
     };
     stage.finished_at = Some(now.max(stage.started_at));
+    // A stage started by an earlier release is marked as its outcome lands.
+    stage.record_repair.get_or_insert(RecordRepair::Open);
     debug_assert!(stage.state.is_terminal());
     stage
 }

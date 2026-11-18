@@ -10,7 +10,9 @@ use std::sync::Arc;
 use archon_core::Timestamp;
 use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
 use archon_core::model::ModelPlan;
-use archon_core::run::{GateDecision, PipelineRun, RunState, StageRun, StageState, Verdict};
+use archon_core::run::{
+    GateDecision, PipelineRun, RecordRepair, RunState, StageRun, StageState, Verdict,
+};
 use archon_core::steer::Then;
 use archon_pipeline::autonomy::OperatorGates;
 use archon_pipeline::spec::PipelineSpec;
@@ -72,6 +74,9 @@ pub struct Sim {
     /// Whether the record stage's agent writes the ship record its contract
     /// asks for; a test of a missing record turns it off.
     pub writes_record: bool,
+    /// Stage runs are persisted as a release before record repair turns
+    /// did: with no marker of one.
+    pub before_repairs: bool,
     /// Persisted steered aborts, oldest first.
     pub aborts: Vec<(String, u32, Then)>,
     /// The approved proposal the run started past, as the daemon persists it.
@@ -126,6 +131,7 @@ impl Sim {
             shipped: None,
             open_ship: None,
             writes_record: true,
+            before_repairs: false,
             aborts: Vec::new(),
             approved_proposal: None,
             clock,
@@ -176,6 +182,11 @@ impl Sim {
         let index = self.live_index(stage, fan);
         let at = self.tick();
         apply_agent(&mut self.stages[index], &agent, at);
+        // The daemon marks an outcome it records, on a run from before too.
+        if !self.before_repairs {
+            let marker = &mut self.stages[index].record_repair;
+            marker.get_or_insert(RecordRepair::Open);
+        }
         let records = self.spec.ship_record_stage().is_some_and(|s| s.id == stage);
         if records && self.writes_record {
             write_ship_record(&mut self.stages[index]);
@@ -576,6 +587,7 @@ impl Sim {
             fan_index: plan.fan_index,
             model_segments: Vec::new(),
             infrastructure_failure: false,
+            record_repair: (!self.before_repairs).then_some(plan.record_repair),
             host_context: Default::default(),
             choice: plan.choice.clone(),
             aether_agent: None,

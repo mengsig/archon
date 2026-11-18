@@ -4006,6 +4006,13 @@
             }
           ]
         },
+        "orchestrator_refresh_delayed": {
+          "description": "Why no orchestrator is recorded though an upgrade refresh began: its\nfresh generation has not started. `None` from an older archond.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "pause": {
           "$ref": "#/$defs/PauseState"
         },

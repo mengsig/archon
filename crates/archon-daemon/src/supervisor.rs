@@ -383,8 +383,13 @@ pub fn orchestrator_create_agent(
         approval: orchestrator_approval(config),
         run: None,
         start: true,
-        idempotency_key: Some(format!("archon-orchestrator-{store}-{generation}")),
+        idempotency_key: Some(creation_key(store, generation)),
     }
+}
+
+/// The idempotency key every attempt to create `generation` sends.
+fn creation_key(store: &StoreId, generation: u64) -> String {
+    format!("archon-orchestrator-{store}-{generation}")
 }
 
 /// `None` keeps the operator's `[approval] default` (the orchestrator is
@@ -789,6 +794,12 @@ pub async fn freshness(
     Ok(Some(fresh))
 }
 
+/// Why no orchestrator is recorded though an upgrade refresh began, for
+/// `status`; `None` when no refresh is unfinished.
+pub async fn stopped_refresh_delay(ctx: &DaemonContext) -> Result<Option<String>, ArchonError> {
+    economy::stopped_refresh_delay(ctx).await
+}
+
 /// [`freshness`] without the refresh's delay. Until the GitHub choice is
 /// recorded (an upgrade), either choice counts as current.
 async fn compared_with_today(
@@ -1172,16 +1183,8 @@ async fn create_generation(
     if !delegation {
         instructions.push_str(callers::NO_DELEGATION_NOTE);
     }
-    let generation = {
-        let mut store = ctx.store.lock().await;
-        let generation = parse_generation(store.kv_get(keys::ORCHESTRATOR_GENERATION)?)?.max(1);
-        store.kv_set(keys::ORCHESTRATOR_GENERATION, &generation.to_string())?;
-        origin::record_lessons(&mut store, generation)?;
-        // Chosen once per generation, so a retried create sends the same text.
-        instructions.push_str(&crate::learned::lessons_for_orchestrator(&store)?);
-        generation
-    };
     let store = store_id(ctx).await?;
+    let (generation, frozen) = settle_generation(ctx, client, &store, &mut instructions).await?;
     let network = client.daemon_defaults().await?.network_default;
     let sent = instructions.clone();
     let request = orchestrator_create_agent(
@@ -1193,7 +1196,7 @@ async fn create_generation(
         network,
         delegation,
     );
-    let agent = create_orchestrator(ctx, client, request).await?;
+    let agent = create_orchestrator(ctx, client, request, frozen).await?;
     let created = agent.config.instructions.as_deref();
     let mut store = ctx.store.lock().await;
     let settings = configured_settings(config);
@@ -1203,6 +1206,42 @@ async fn create_generation(
     brief_created_orchestrator(ctx, client, &agent.id, generation).await?;
     crate::triggers::collapse_for_new_orchestrator(ctx).await?;
     Ok(agent.id)
+}
+
+/// Settle, under one store lock and before any request, what the stored
+/// generation's creation sends on every attempt: its number, the lessons its
+/// first attempt chose (appended to `instructions`) and its frozen settings.
+async fn settle_generation(
+    ctx: &DaemonContext,
+    client: &AetherClient,
+    store_id: &StoreId,
+    instructions: &mut String,
+) -> Result<(u64, FrozenSettings), ArchonError> {
+    assert!(
+        !instructions.trim().is_empty(),
+        "the lessons follow a prompt"
+    );
+    let config = &ctx.config;
+    let mut store = ctx.store.lock().await;
+    let generation = parse_generation(store.kv_get(keys::ORCHESTRATOR_GENERATION)?)?.max(1);
+    store.kv_set(keys::ORCHESTRATOR_GENERATION, &generation.to_string())?;
+    let first = origin::record_lessons(&mut store, generation)?;
+    // Chosen once per generation, so a retried create sends the same text.
+    instructions.push_str(&crate::learned::lessons_for_orchestrator(&store)?);
+    let creation = Creation {
+        key: creation_key(store_id, generation),
+        first,
+    };
+    let host_context = config.aether.host_context;
+    let configured = host_context.for_model(&config.orchestrator.model);
+    let frozen = freeze_settings(
+        &mut store,
+        &config.orchestrator,
+        client,
+        &creation,
+        configured,
+    )?;
+    Ok((generation, frozen))
 }
 
 /// A stopped, unadopted agent cannot be revived by `ensure_locked`: retire it
@@ -1245,14 +1284,14 @@ async fn create_orchestrator(
     ctx: &DaemonContext,
     client: &AetherClient,
     mut request: CreateAgent,
+    frozen: FrozenSettings,
 ) -> Result<archon_aether::wire::Agent, ArchonError> {
     assert_eq!(request.role, ORCHESTRATOR_ROLE);
     assert!(request.parent.is_none() && request.start);
-    let key = request.idempotency_key.clone().expect("a keyed creation");
+    assert!(request.idempotency_key.is_some(), "a keyed creation");
     let config = request.config.as_mut().expect("orchestrator config");
-    let (host_context, tokens) = freeze_settings(ctx, client, &key, config.host_context).await?;
-    config.host_context = host_context;
-    config.compaction_tokens = tokens;
+    config.host_context = frozen.host_context;
+    config.compaction_tokens = frozen.compaction_tokens;
     let agent = client.create_agent(request).await?;
     callers::record_delegation(ctx, &agent).await?;
     Ok(agent)
@@ -1266,17 +1305,30 @@ struct FrozenThreshold {
     tokens: Option<u32>,
 }
 
-/// Settle what the creation under `key` sends, in one transaction before its
-/// first request: the host context and compaction threshold it froze, else
-/// today's. A changed config or Aether never alters a retried request.
-async fn freeze_settings(
-    ctx: &DaemonContext,
+/// What every attempt of one creation key sends.
+struct FrozenSettings {
+    host_context: HostContext,
+    compaction_tokens: Option<u32>,
+}
+
+/// One keyed creation: `first` when no attempt of it was recorded before.
+struct Creation {
+    key: String,
+    first: bool,
+}
+
+/// Settle what `creation` sends, in one transaction before its request: the
+/// host context and compaction threshold it froze, else today's. A retry with
+/// no threshold frozen repeats a build that froze none: it sent none either.
+fn freeze_settings(
+    store: &mut archon_queue::Store,
+    config: &OrchestratorConfig,
     client: &AetherClient,
-    key: &str,
+    creation: &Creation,
     configured: HostContext,
-) -> Result<(HostContext, Option<u32>), ArchonError> {
+) -> Result<FrozenSettings, ArchonError> {
+    let key = creation.key.as_str();
     assert!(!key.is_empty(), "a keyed creation");
-    let mut store = ctx.store.lock().await;
     let frozen: Option<HostContext> = match store.kv_get(HOST_CONTEXT_KEY)? {
         Some(raw) => Some(
             serde_json::from_str(&raw)
@@ -1289,14 +1341,12 @@ async fn freeze_settings(
     if requested != host_context {
         tracing::warn!("Aether lacks host_context; orchestrator creation falls back to full");
     }
-    let threshold = match frozen_threshold(&store, key)? {
+    let threshold = match frozen_threshold(store, key)? {
         Some(frozen) => frozen,
         None => FrozenThreshold {
             key: key.to_owned(),
-            tokens: compaction_threshold(
-                &ctx.config.orchestrator,
-                client.serves_compaction_tokens(),
-            ),
+            tokens: compaction_threshold(config, client.serves_compaction_tokens())
+                .filter(|_| creation.first),
         },
     };
     let threshold_raw = serde_json::to_string(&threshold)?;
@@ -1307,7 +1357,10 @@ async fn freeze_settings(
         set.push((HOST_CONTEXT_KEY, host_raw.as_str()));
     }
     store.kv_update(&set, &[])?;
-    Ok((host_context, threshold.tokens))
+    Ok(FrozenSettings {
+        host_context,
+        compaction_tokens: threshold.tokens,
+    })
 }
 
 /// The threshold frozen for creation `key`; `None` when none was, or the one

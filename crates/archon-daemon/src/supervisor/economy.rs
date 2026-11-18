@@ -74,6 +74,20 @@ pub struct RefreshTried {
     pub error: Option<String>,
 }
 
+impl RefreshTried {
+    /// The attempt on `generation` beginning at `now`, counted after `tried`
+    /// when that was an attempt on the same generation.
+    fn next(generation: u64, tried: Option<&Self>, now: Timestamp) -> Self {
+        let earlier = tried.filter(|tried| tried.generation == generation);
+        Self {
+            generation,
+            tries: earlier.map_or(1, |tried| tried.tries.saturating_add(1)),
+            at: now,
+            error: None,
+        }
+    }
+}
+
 /// One idle stretch an idle compaction was asked for: the agent and the end
 /// of the turn it has been idle since.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -98,19 +112,28 @@ pub async fn watch_economy(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
 /// Apply both rules to the orchestrator as of `now`: refresh an outdated
 /// generation, else compact an idle, large context.
 pub async fn economize(ctx: &DaemonContext, now: Timestamp) -> Result<Economy, ArchonError> {
+    let clock = Clock::starting(now);
     let _serial = ctx.supervisor.serial.lock().await;
-    let generation = super::generation(ctx).await?;
-    let tried = read_kv::<RefreshTried>(ctx, REFRESH_TRIED_KEY).await?;
-    let unfinished = read_kv::<u64>(ctx, REFRESH_UNFINISHED_KEY).await?;
+    let (generation, unfinished, tried) = {
+        let store = ctx.store.lock().await;
+        let generation = super::parse_generation(store.kv_get(keys::ORCHESTRATOR_GENERATION)?)?;
+        let tried = parse_kv::<RefreshTried>(&store, REFRESH_TRIED_KEY)?;
+        (generation, unfinished_refresh(&store, generation)?, tried)
+    };
     let client = ctx.aether.client()?;
     let agent = match super::current_orchestrator(ctx).await? {
         Some(id) => Some(client.get_agent(&id).await?),
         None => None,
     };
     if refresh_left_behind(unfinished, agent.as_ref()) {
-        let id = super::ensure_locked(ctx).await?;
-        tracing::info!(%id, "started the orchestrator a failed refresh left out");
-        return Ok(Economy::Refreshed);
+        let attempt = RefreshTried::next(generation, tried.as_ref(), now);
+        return match super::ensure_locked(ctx).await {
+            Ok(id) => {
+                tracing::info!(%id, "started the orchestrator a failed refresh left out");
+                Ok(Economy::Refreshed)
+            }
+            Err(error) => Err(keep_failure(ctx, attempt, error).await?),
+        };
     }
     let Some(agent) = agent.filter(|agent| is_idle(agent, now)) else {
         return Ok(Economy::Nothing);
@@ -121,25 +144,45 @@ pub async fn economize(ctx: &DaemonContext, now: Timestamp) -> Result<Economy, A
             unfinished,
             tried,
         };
-        match refresh_if_owed(ctx, &client, now, owed).await? {
+        match refresh_if_owed(ctx, &client, clock, owed).await? {
             Refresh::Done => return Ok(Economy::Refreshed),
             Refresh::Busy => return Ok(Economy::Nothing),
             Refresh::NotDue => {}
         }
     }
-    match compact_if_idle(ctx, &client, &agent, now).await? {
+    match compact_if_idle(ctx, &client, &agent, clock).await? {
         true => Ok(Economy::Compacted),
         false => Ok(Economy::Nothing),
     }
 }
 
-/// Whether a refresh is under way. The marker and a successor's id change
-/// in one transaction, so the agent stored beside a marker is the outdated
-/// one: a stopped one is replaced, never restarted from its checkpoint.
+/// The caller's `now`, carried across the waits for locks and for Aether, so
+/// a check made after them is made at the time it is by then.
+#[derive(Clone, Copy)]
+struct Clock {
+    at: Timestamp,
+    since: tokio::time::Instant,
+}
+
+impl Clock {
+    fn starting(at: Timestamp) -> Self {
+        let since = tokio::time::Instant::now();
+        Self { at, since }
+    }
+
+    fn now(&self) -> Timestamp {
+        let waited = TimeDelta::from_std(self.since.elapsed()).expect("a wait of this process");
+        self.at + waited
+    }
+}
+
+/// Whether a refresh is under way (see [`unfinished_refresh`]): the agent
+/// stored beside one is the outdated one, and a stopped one is replaced,
+/// never restarted from its checkpoint.
 pub(super) async fn refresh_owed_by(ctx: &DaemonContext) -> Result<bool, ArchonError> {
     let store = ctx.store.lock().await;
     let generation = super::parse_generation(store.kv_get(keys::ORCHESTRATOR_GENERATION)?)?;
-    let Some(unfinished) = parse_kv::<u64>(&store, REFRESH_UNFINISHED_KEY)? else {
+    let Some(unfinished) = unfinished_refresh(&store, generation)? else {
         return Ok(false);
     };
     if unfinished == 0 || unfinished > generation {
@@ -150,6 +193,38 @@ pub(super) async fn refresh_owed_by(ctx: &DaemonContext) -> Result<bool, ArchonE
         );
     }
     Ok(true)
+}
+
+/// The generation a refresh began from and adopted no successor for: the
+/// marker, else the generation a stored agent was created as when the counter
+/// names another (a build that advanced it and cleared the agent in two writes).
+fn unfinished_refresh(store: &Store, generation: u64) -> Result<Option<u64>, ArchonError> {
+    if let Some(marker) = parse_kv::<u64>(store, REFRESH_UNFINISHED_KEY)? {
+        return Ok(Some(marker));
+    }
+    if store.kv_get(keys::ORCHESTRATOR_AGENT)?.is_none() {
+        return Ok(None);
+    }
+    let created_as = super::origin::recorded_generation(store)?;
+    Ok(created_as.filter(|created_as| *created_as != generation))
+}
+
+/// Keep why finishing a refresh failed, for `status`; returns the error to
+/// raise. A store failure is raised as it is.
+async fn keep_failure(
+    ctx: &DaemonContext,
+    attempt: RefreshTried,
+    error: ArchonError,
+) -> Result<ArchonError, ArchonError> {
+    if error.is_store() {
+        return Ok(error);
+    }
+    let failed = RefreshTried {
+        error: Some(crate::executor::clip(&error.to_string(), 200)),
+        ..attempt
+    };
+    write_kv(ctx, REFRESH_TRIED_KEY, &failed).await?;
+    Ok(error)
 }
 
 /// Whether `agent` waits only for its next message, unpaused, and has logged
@@ -212,7 +287,7 @@ pub(super) async fn refresh_delay(
     }
     let (unfinished, tried) = {
         let store = ctx.store.lock().await;
-        let unfinished = parse_kv::<u64>(&store, REFRESH_UNFINISHED_KEY)?;
+        let unfinished = unfinished_refresh(&store, generation)?;
         let tried = parse_kv::<RefreshTried>(&store, REFRESH_TRIED_KEY)?;
         (unfinished, tried)
     };
@@ -237,6 +312,27 @@ fn delay_reason(tried: Option<&RefreshTried>) -> String {
     )
 }
 
+/// Why no orchestrator is recorded though a refresh began, for `status`:
+/// the fresh generation has not started, with the latest failure. `None`
+/// when no refresh is unfinished.
+pub(super) async fn stopped_refresh_delay(
+    ctx: &DaemonContext,
+) -> Result<Option<String>, ArchonError> {
+    let store = ctx.store.lock().await;
+    if parse_kv::<u64>(&store, REFRESH_UNFINISHED_KEY)?.is_none() {
+        return Ok(None);
+    }
+    let failure =
+        parse_kv::<RefreshTried>(&store, REFRESH_TRIED_KEY)?.and_then(|tried| tried.error);
+    let reason = match failure {
+        Some(error) => format!(
+            "the fresh generation has not started, the last attempt failed with: {error}; Archon keeps retrying"
+        ),
+        None => "the fresh generation has not started yet; Archon keeps retrying".to_owned(),
+    };
+    Ok(Some(reason))
+}
+
 /// What a check read about the refresh the stored generation may be owed.
 struct Owed {
     generation: u64,
@@ -250,22 +346,23 @@ struct Owed {
 async fn refresh_if_owed(
     ctx: &DaemonContext,
     client: &AetherClient,
-    now: Timestamp,
+    clock: Clock,
     owed: Owed,
 ) -> Result<Refresh, ArchonError> {
     let generation = owed.generation;
     let freshness = super::compared_with_today(ctx, generation).await?;
     let running = env!("CARGO_PKG_VERSION");
     let due = refresh_owed(freshness.as_ref(), owed.unfinished, running)
-        && retry_due(generation, owed.tried.as_ref(), now);
+        && retry_due(generation, owed.tried.as_ref(), clock.at);
     if !due {
         return Ok(Refresh::NotDue);
     }
     let _switch = super::switching(ctx).await;
-    let Some(checked) = still_idle(ctx, client, now).await? else {
+    let Some(checked) = still_idle(ctx, client, clock).await? else {
         return Ok(Refresh::Busy);
     };
-    let attempt = begin_refresh(ctx, generation, owed.tried, now).await?;
+    // The attempt is dated by its check, so the pause is counted between checks.
+    let attempt = begin_refresh(ctx, generation, owed.tried, clock.at).await?;
     let reason = "refreshed: an upgrade changed its prompt or tools";
     let why = "is a fresh generation, as an upgrade changed its prompt or tools";
     let checked = Some(&checked.id);
@@ -275,15 +372,7 @@ async fn refresh_if_owed(
             tracing::info!(%id, old_generation = generation, tries, "orchestrator refreshed after an upgrade");
             Ok(Refresh::Done)
         }
-        Err(error) if error.is_store() => Err(error),
-        Err(error) => {
-            let failed = RefreshTried {
-                error: Some(crate::executor::clip(&error.to_string(), 200)),
-                ..attempt
-            };
-            write_kv(ctx, REFRESH_TRIED_KEY, &failed).await?;
-            Err(error)
-        }
+        Err(error) => Err(keep_failure(ctx, attempt, error).await?),
     }
 }
 
@@ -297,16 +386,9 @@ async fn begin_refresh(
     now: Timestamp,
 ) -> Result<RefreshTried, ArchonError> {
     assert!(generation > 0, "only a created generation is refreshed");
-    let tries = tried
-        .filter(|tried| tried.generation == generation)
-        .map_or(1, |tried| tried.tries.saturating_add(1));
+    let attempt = RefreshTried::next(generation, tried.as_ref(), now);
+    let tries = attempt.tries;
     assert!(tries > 0, "this try counts");
-    let attempt = RefreshTried {
-        generation,
-        tries,
-        at: now,
-        error: None,
-    };
     let recorded = serde_json::to_string(&attempt)?;
     let marker = generation.to_string();
     let set = [
@@ -330,15 +412,17 @@ async fn begin_refresh(
 async fn still_idle(
     ctx: &DaemonContext,
     client: &AetherClient,
-    now: Timestamp,
+    clock: Clock,
 ) -> Result<Option<Agent>, ArchonError> {
     let Some(id) = super::current_orchestrator(ctx).await? else {
         return Ok(None);
     };
+    let agent = super::newest_incarnation(client, &id).await?.newest;
+    // Read last and at the time it is by now: news came due during the waits.
+    let now = clock.now();
     if crate::triggers::delivering(&*ctx.store.lock().await, now)? {
         return Ok(None);
     }
-    let agent = super::newest_incarnation(client, &id).await?.newest;
     let idle = agent.id == id && is_idle(&agent, now);
     Ok(idle.then_some(agent))
 }
@@ -382,16 +466,16 @@ async fn compact_if_idle(
     ctx: &DaemonContext,
     client: &AetherClient,
     agent: &Agent,
-    now: Timestamp,
+    clock: Clock,
 ) -> Result<bool, ArchonError> {
-    if !compaction_due(ctx, agent, now).await? {
+    if !compaction_due(ctx, agent, clock.now()).await? {
         return Ok(false);
     }
     let _switch = super::switching(ctx).await;
-    let Some(checked) = still_idle(ctx, client, now).await? else {
+    let Some(checked) = still_idle(ctx, client, clock).await? else {
         return Ok(false);
     };
-    if checked.id != agent.id || !compaction_due(ctx, &checked, now).await? {
+    if checked.id != agent.id || !compaction_due(ctx, &checked, clock.now()).await? {
         return Ok(false);
     }
     compact(ctx, client, &checked).await

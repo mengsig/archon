@@ -21,7 +21,9 @@
   and announced in the feed after three failures
   (`[orchestrator] refresh_on_upgrade`, default true). Until then `archon
   status` shows `upgrade refresh delayed` with the reason in place of
-  `prompt outdated`. The prompt now has long
+  `prompt outdated`, also while no successor could be started. News held
+  for the orchestrator is kept, not dropped, while Aether refuses to create
+  it. The prompt now has long
   multi-step work, such as report pages and statistics, queued as items.
   Nothing migrates. The rollback is the switches: `quiet_info = false`,
   `compaction_tokens = 0`, `idle_compact_after_minutes = 0` and

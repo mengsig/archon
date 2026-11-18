@@ -14,7 +14,9 @@ use crate::link_economy::{
 use std::sync::Arc;
 
 use archon_aether::fake::Scripted;
+use archon_core::id::QuestionId;
 use archon_daemon::supervisor::{self, Economy};
+use archon_daemon::triggers::{self, TriggerEvent};
 use archon_queue::Store;
 use archon_queue::store::keys;
 use chrono::TimeDelta;
@@ -380,4 +382,143 @@ async fn a_checkpoint_successor_adopted_during_a_refresh_keeps_the_refresh_owed(
     let after = stored(&harness).await;
     assert_eq!(after.marker, None, "the fresh generation ended it");
     assert_eq!(after.generation.as_deref(), Some("2"));
+}
+
+/// Stopped right after adoption committed, by the write that follows it:
+/// recovery finds the refresh over, with the successor, its generation and
+/// its frozen creation settings as adoption left them.
+#[tokio::test]
+async fn a_stop_right_after_adoption_recovers_the_successor_and_its_frozen_settings() {
+    let (harness, agents) = outdated_on_disk().await;
+    script_successor(&harness, &agents);
+    let db = stop_at(&harness, "orchestrator_restarts", Fails::Writing);
+    let now = archon_core::now();
+    let stopped = supervisor::economize(&harness.ctx, now).await;
+    let error = stopped.expect_err("the write after adoption failed");
+    assert!(error.is_store(), "{error}");
+    let adopted = stored(&harness).await;
+    assert_eq!(adopted.agent.as_deref(), Some(ORCH_2), "adoption committed");
+    assert_eq!(adopted.marker, None, "cleared with the adoption");
+    assert_eq!(adopted.generation.as_deref(), Some("2"));
+    let creates = harness.fake.received_named("create_agent");
+    let key = creates[1]["idempotency_key"].as_str().map(str::to_owned);
+    assert_eq!(adopted.threshold_key, key, "frozen for its creation");
+    let threshold = harness.kv(THRESHOLD).await;
+    let host_context = harness.kv("orchestrator_host_context").await;
+
+    resume(&db);
+    let recovered = supervisor::ensure_orchestrator(&harness.ctx).await.unwrap();
+    assert_eq!(recovered.as_str(), ORCH_2);
+    set_state(&agents, ORCH_2, "waiting");
+    let next = supervisor::economize(&harness.ctx, now + TimeDelta::minutes(1));
+    assert_eq!(next.await.unwrap(), Economy::Nothing, "the refresh is over");
+    no_checkpoint_restart(&harness);
+    assert_eq!(harness.fake.received_named("create_agent").len(), 2);
+    assert_eq!(harness.fake.received_named("cancel").len(), 1);
+    assert_eq!(stored(&harness).await, adopted, "recovery changed nothing");
+    assert_eq!(harness.kv(THRESHOLD).await, threshold);
+    assert_eq!(harness.kv("orchestrator_host_context").await, host_context);
+}
+
+/// A build that advanced the counter and cleared the agent in two writes
+/// stopped between them: generation 1's cancelled agent is stored under
+/// generation 2 with no marker. That mismatch is a refresh owed.
+#[tokio::test]
+async fn an_agent_stored_under_a_later_generation_is_replaced_not_restarted() {
+    let (harness, agents) = outdated_on_disk().await;
+    harness.set_kv(keys::ORCHESTRATOR_GENERATION, "2").await;
+    assert_eq!(harness.kv(MARKER).await, None, "no marker says so");
+    set_state(&agents, ORCH, "cancelled");
+    script_successor(&harness, &agents);
+
+    let id = supervisor::ensure_orchestrator(&harness.ctx).await.unwrap();
+    assert_eq!(id.as_str(), ORCH_2, "a fresh generation");
+    no_checkpoint_restart(&harness);
+    let after = stored(&harness).await;
+    assert_eq!(after.agent.as_deref(), Some(ORCH_2));
+    assert_eq!(after.generation.as_deref(), Some("3"));
+    assert_eq!(after.marker, None);
+}
+
+/// The same mismatch beside an agent that still runs: it is refreshed at
+/// the next idle moment, as an unfinished refresh is.
+#[tokio::test]
+async fn a_live_agent_stored_under_a_later_generation_is_refreshed_when_idle() {
+    let (harness, agents) = outdated_on_disk().await;
+    harness.set_kv(keys::ORCHESTRATOR_GENERATION, "2").await;
+    script_successor(&harness, &agents);
+
+    let now = archon_core::now();
+    let refreshed = supervisor::economize(&harness.ctx, now).await.unwrap();
+    assert_eq!(refreshed, Economy::Refreshed);
+    no_checkpoint_restart(&harness);
+    let after = stored(&harness).await;
+    assert_eq!(after.agent.as_deref(), Some(ORCH_2));
+    assert_eq!(after.generation.as_deref(), Some("3"));
+    assert_eq!(after.marker, None);
+}
+
+fn held_answer(events: &[TriggerEvent]) -> bool {
+    events.iter().any(
+        |event| matches!(event, TriggerEvent::OperatorAnswer { text, .. } if text == "ship it"),
+    )
+}
+
+/// A refresh stopped the old generation and Aether refuses to create its
+/// successor: an answer held for the orchestrator is no refused payload. It
+/// stays held and reaches the successor once one starts.
+#[tokio::test]
+async fn an_answer_outlives_a_successor_creation_aether_refuses() {
+    let (harness, agents) = outdated_on_disk().await;
+    let refused = Scripted::refuse("invalid_argument", "no such model");
+    harness.fake.set_default("create_agent", refused);
+    let now = archon_core::now();
+    let failed = supervisor::economize(&harness.ctx, now).await;
+    failed.expect_err("the successor was refused");
+    assert_eq!(
+        stored(&harness).await.agent,
+        None,
+        "the old one was stopped"
+    );
+
+    let tried = harness.fake.received_named("create_agent").len();
+    let delivery = tokio::spawn(triggers::deliver_loop(harness.ctx.clone()));
+    let answer = TriggerEvent::OperatorAnswer {
+        question: QuestionId::new(),
+        number: None,
+        question_text: String::new(),
+        options: vec![],
+        item: None,
+        asked_at: None,
+        text: "ship it".into(),
+    };
+    triggers::push(&harness.ctx, answer).await.unwrap();
+    let wait = std::time::Duration::from_secs(10);
+    harness.fake.wait_for("create_agent", tried + 1, wait).await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let held = triggers::held(&harness.ctx).await.unwrap();
+    assert!(held_answer(&held), "the answer was dropped: {held:?}");
+
+    agents.lock().unwrap().insert(
+        ORCH_2.into(),
+        crate::link_economy::orchestrator(ORCH_2, "ready"),
+    );
+    let successor = crate::link_economy::orchestrator(ORCH_2, "ready");
+    harness
+        .fake
+        .set_default("create_agent", Scripted::reply("agent", successor));
+    let started = supervisor::economize(&harness.ctx, now + TimeDelta::minutes(1));
+    assert_eq!(started.await.unwrap(), Economy::Refreshed);
+    harness
+        .eventually("the answer reaches the successor", || async {
+            let sent = harness.fake.received_named("trigger");
+            sent.iter().any(|trigger| {
+                let events = trigger["payload"]["events"].as_array();
+                let answered = |event: &Value| event["text"] == "ship it";
+                trigger["agent"] == ORCH_2
+                    && events.is_some_and(|events| events.iter().any(answered))
+            })
+        })
+        .await;
+    delivery.abort();
 }

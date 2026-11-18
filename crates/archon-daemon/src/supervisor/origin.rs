@@ -30,10 +30,11 @@ struct Origin {
 
 /// Record the lessons generation `generation` is chosen, unless already
 /// recorded: a retried creation sends the lessons its first attempt chose.
-pub(super) fn record_lessons(store: &mut Store, generation: u64) -> Result<(), ArchonError> {
+/// Returns whether this is that first attempt.
+pub(super) fn record_lessons(store: &mut Store, generation: u64) -> Result<bool, ArchonError> {
     assert!(generation > 0, "generations start at 1");
     if read(store)?.is_some_and(|origin| origin.generation == generation) {
-        return Ok(());
+        return Ok(false);
     }
     let origin = Origin {
         generation,
@@ -44,7 +45,13 @@ pub(super) fn record_lessons(store: &mut Store, generation: u64) -> Result<(), A
         lessons: chosen_lessons(store)?,
     };
     assert!(origin.lessons.len() <= archon_core::lesson::ORCHESTRATOR_LESSONS);
-    store.kv_set(ORIGIN_KEY, &serde_json::to_string(&origin)?)
+    store.kv_set(ORIGIN_KEY, &serde_json::to_string(&origin)?)?;
+    Ok(true)
+}
+
+/// The generation whose creation was last recorded; `None` before any was.
+pub(super) fn recorded_generation(store: &Store) -> Result<Option<u64>, ArchonError> {
+    Ok(read(store)?.map(|origin| origin.generation))
 }
 
 /// Record what Aether created generation `generation` with: `settings`, the

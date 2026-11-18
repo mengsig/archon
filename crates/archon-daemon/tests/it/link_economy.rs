@@ -767,3 +767,137 @@ async fn news_due_stops_the_idle_compaction() {
     let compacts = harness.fake.received_named("compact");
     assert!(compacts.is_empty(), "folded as a wake began: {compacts:?}");
 }
+
+/// News that comes due while the idle compaction waits for the switch guard
+/// is seen by its recheck, which reads the clock again under the guard.
+#[tokio::test]
+async fn news_that_comes_due_while_the_compaction_waits_stops_it() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    let agents = agent_table(&harness);
+    create(&harness, &agents, ORCH).await;
+    harness.fake.set_default("compact", Scripted::ok());
+    let now = archon_core::now();
+    set_state(&agents, ORCH, "waiting");
+    set_stats(&agents, ORCH, 150_000, now - TimeDelta::minutes(50));
+    let news = TriggerEvent::ItemBlocked {
+        item: QueueItemId::new(),
+        reason: "stuck".into(),
+    };
+    triggers::push_quiet(&harness.ctx, news).await.unwrap();
+    let due_at = now + TimeDelta::milliseconds(400);
+    let raw = harness.kv("trigger_outbox").await.expect("held news");
+    let mut outbox: Value = serde_json::from_str(&raw).unwrap();
+    let held = outbox["pending"][0].as_object_mut().expect("the news");
+    held.remove("quiet");
+    held.insert("defer_until".into(), json!(due_at));
+    harness.set_kv("trigger_outbox", &outbox.to_string()).await;
+
+    let sending = supervisor::hold_switch(&harness.ctx).await;
+    let looked = harness.fake.received_named("get_agent").len();
+    let ctx = harness.ctx.clone();
+    let check = tokio::spawn(async move { supervisor::economize(&ctx, now).await });
+    harness
+        .eventually("the first look, before the news is due", || async {
+            harness.fake.received_named("get_agent").len() > looked
+        })
+        .await;
+    while archon_core::now() < due_at + TimeDelta::milliseconds(200) {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    drop(sending);
+    let economy = check.await.unwrap().unwrap();
+    assert_eq!(economy, Economy::Nothing, "the news came due meanwhile");
+    let compacts = harness.fake.received_named("compact");
+    assert!(compacts.is_empty(), "folded as a wake began: {compacts:?}");
+}
+
+/// The release before froze nothing: a creation it sent and never adopted
+/// is retried under its key with no threshold, as it was first sent.
+#[tokio::test]
+async fn a_creation_an_older_build_began_is_retried_without_a_threshold() {
+    let harness = Harness::new().await;
+    harness
+        .fake
+        .set_features(vec!["compaction_tokens".to_owned()]);
+    harness.connect().await;
+    let agents = agent_table(&harness);
+    let begun = json!({
+        "generation": 1,
+        "archon_version": "1.6.3",
+        "prompt": "",
+        "tools": "0000000000000000",
+        "lessons": [],
+    });
+    harness.set_kv(keys::ORCHESTRATOR_GENERATION, "1").await;
+    harness.set_kv(ORIGIN_KEY, &begun.to_string()).await;
+    assert_eq!(harness.kv("orchestrator_compaction_tokens").await, None);
+
+    create(&harness, &agents, ORCH).await;
+    let creates = harness.fake.received_named("create_agent");
+    let sent = &creates[0]["config"]["compaction_tokens"];
+    assert!(sent.is_null(), "the retry added a threshold: {sent}");
+    let raw = harness.kv("orchestrator_compaction_tokens").await.unwrap();
+    let frozen: Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(frozen["key"], creates[0]["idempotency_key"]);
+    assert!(frozen["tokens"].is_null(), "an explicit absence: {frozen}");
+}
+
+/// What `status` answers the CLI about the orchestrator.
+async fn cli_status(harness: &Harness) -> archon_core::protocol::DaemonStatus {
+    use archon_core::protocol::{ClientKind, Reply, Request};
+    let request = Request::Status(Default::default());
+    match archon_daemon::handlers::handle(&harness.ctx, ClientKind::ArchonCli, request).await {
+        Ok(Reply::Status(status)) => *status,
+        other => panic!("status replied {other:?}"),
+    }
+}
+
+/// The refresh stopped the old generation and every creation fails: no
+/// orchestrator is recorded, and status still shows the delayed upgrade with
+/// its latest failure until the successor starts.
+#[tokio::test]
+async fn status_shows_a_refresh_whose_successor_cannot_start_and_why() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    let agents = agent_table(&harness);
+    create(&harness, &agents, ORCH).await;
+    assert_eq!(
+        cli_status(&harness).await.orchestrator_refresh_delayed,
+        None
+    );
+    as_if_created_by_an_older_build(&harness).await;
+    set_state(&agents, ORCH, "waiting");
+    let busy = Scripted::refuse("internal", "busy");
+    harness.fake.set_default("create_agent", busy);
+    let now = archon_core::now();
+    let failed = supervisor::economize(&harness.ctx, now).await;
+    failed.expect_err("the successor was not created");
+    let status = cli_status(&harness).await;
+    assert!(status.orchestrator.is_none(), "the old one was stopped");
+    let delayed = status.orchestrator_refresh_delayed.expect("the delay");
+    assert!(delayed.contains("busy"), "{delayed}");
+
+    let down = Scripted::refuse("internal", "still down");
+    harness.fake.set_default("create_agent", down);
+    let again = supervisor::economize(&harness.ctx, now + TimeDelta::minutes(1)).await;
+    again.expect_err("the next check failed too");
+    let delayed = cli_status(&harness).await.orchestrator_refresh_delayed;
+    let delayed = delayed.expect("still delayed");
+    assert!(delayed.contains("still down"), "the latest: {delayed}");
+
+    agents
+        .lock()
+        .unwrap()
+        .insert(ORCH_2.into(), orchestrator(ORCH_2, "ready"));
+    let successor = Scripted::reply("agent", orchestrator(ORCH_2, "ready"));
+    harness.fake.set_default("create_agent", successor);
+    let next = supervisor::economize(&harness.ctx, now + TimeDelta::minutes(2));
+    assert_eq!(next.await.unwrap(), Economy::Refreshed);
+    let status = cli_status(&harness).await;
+    assert_eq!(
+        status.orchestrator.map(|info| info.agent.to_string()),
+        Some(ORCH_2.to_owned())
+    );
+    assert_eq!(status.orchestrator_refresh_delayed, None);
+}

@@ -382,7 +382,9 @@ after three failures; a refresh stopped halfway is finished with a fresh
 generation, never a checkpoint restart of the outdated one. Until it
 happens, `archon status` shows `upgrade refresh (prompt) delayed:` and the
 reason (the idle moment it waits for, or the latest failure) where it used to
-show `prompt outdated`. `refresh_on_upgrade = false` turns it off. Like a manual
+show `prompt outdated`; if the refresh stopped the old generation and its
+successor cannot start, it shows `not running; upgrade refresh delayed:` and
+the latest failure. `refresh_on_upgrade = false` turns it off. Like a manual
 restart, it can still meet a wake Aether starts in the same instant.
 
 The helper agents the orchestrator delegates to

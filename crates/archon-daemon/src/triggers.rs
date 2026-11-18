@@ -1110,7 +1110,9 @@ async fn attempt(
     key: &str,
     payload: &serde_json::Value,
 ) -> Result<(), ArchonError> {
-    let orchestrator = supervisor::ensure_orchestrator(ctx).await?;
+    let orchestrator = supervisor::ensure_orchestrator(ctx)
+        .await
+        .map_err(not_started)?;
     // Held while the trigger is submitted, so a refresh never replaces the
     // agent between this check and Aether accepting the trigger.
     let _steady = supervisor::steady(ctx).await;
@@ -1131,6 +1133,17 @@ async fn attempt(
     Err(ArchonError::Unavailable(format!(
         "orchestrator {orchestrator} stopped before trigger {key} reached it ({refusal})"
     )))
+}
+
+/// No orchestrator to deliver to: a refused creation says nothing about the
+/// batch, which stays held and is retried, never dropped as a refused payload.
+fn not_started(error: ArchonError) -> ArchonError {
+    match error {
+        ArchonError::Invalid(refusal) => {
+            ArchonError::Unavailable(format!("the orchestrator could not be started: {refusal}"))
+        }
+        other => other,
+    }
 }
 
 #[cfg(test)]

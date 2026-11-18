@@ -1861,14 +1861,7 @@ impl OrchestratorInfo {
             "generation {}, created by {}",
             self.generation, fresh.created_by
         );
-        match fresh.prompt_outdated {
-            Some(true) => line.push_str("; prompt outdated"),
-            Some(false) => {}
-            None => line.push_str("; prompt unknown (the instructions file cannot be read)"),
-        }
-        if fresh.tools_outdated {
-            line.push_str("; tools outdated");
-        }
+        line.push_str(&fresh.describe_outdated());
         if let Some(drift) = &fresh.settings_drift {
             let _ = write!(
                 line,
@@ -1907,6 +1900,10 @@ pub struct OrchestratorFreshness {
     /// ones it was created with; `None` when they match or were not recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settings_drift: Option<SettingsDrift>,
+    /// Why the fresh generation an upgrade owes it has not started yet;
+    /// `None` when none is owed, or `refresh_on_upgrade` is off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_delayed: Option<String>,
 }
 
 /// Model and effort as `provider/model effort`.
@@ -1917,12 +1914,39 @@ pub struct SettingsDrift {
 }
 
 impl OrchestratorFreshness {
+    /// The prompt and tools part of the status line. A refresh Archon owes
+    /// and will make itself is shown as delayed, with why, not as outdated.
+    fn describe_outdated(&self) -> String {
+        let prompt = self.prompt_outdated == Some(true);
+        let mut line = String::new();
+        if let Some(reason) = &self.refresh_delayed {
+            assert!(!reason.trim().is_empty(), "a delay says why");
+            let what = match (prompt, self.tools_outdated) {
+                (true, true) => " (prompt and tools)",
+                (true, false) => " (prompt)",
+                (false, true) => " (tools)",
+                (false, false) => "",
+            };
+            let _ = write!(line, "; upgrade refresh{what} delayed: {reason}");
+        } else if prompt {
+            line.push_str("; prompt outdated");
+        }
+        if self.prompt_outdated.is_none() {
+            line.push_str("; prompt unknown (the instructions file cannot be read)");
+        }
+        if self.tools_outdated && self.refresh_delayed.is_none() {
+            line.push_str("; tools outdated");
+        }
+        line
+    }
+
     /// Whether a restart is owed, or may be when the prompt is unknown.
     pub fn is_stale(&self) -> bool {
         self.prompt_outdated != Some(false)
             || self.tools_outdated
             || self.new_lessons > 0
             || self.settings_drift.is_some()
+            || self.refresh_delayed.is_some()
     }
 }
 
@@ -2402,6 +2426,47 @@ impl From<&ArchonError> for ErrorReply {
 mod tests {
     use super::*;
     use crate::github::OperatorUsers;
+
+    /// A refresh Archon owes and will make itself is shown as delayed, with
+    /// why: "prompt outdated" is only said when the operator must restart.
+    #[test]
+    fn an_owed_refresh_is_described_as_delayed_with_its_reason() {
+        let info = |freshness: serde_json::Value| -> OrchestratorInfo {
+            serde_json::from_value(serde_json::json!({
+                "agent": "agt_01M52R3JSXYHJJA0AZX2B6MCD7", "model": "claude-code/opus",
+                "effort": "high", "status": "ready", "restarts": 0, "generation": 7,
+                "freshness": freshness,
+            }))
+            .unwrap()
+        };
+        let outdated = serde_json::json!({
+            "created_by": "1.6.3", "prompt_outdated": true, "tools_outdated": true,
+            "new_lessons": 0,
+        });
+        let unowed = info(outdated.clone());
+        assert_eq!(unowed.freshness.as_ref().unwrap().refresh_delayed, None);
+        assert_eq!(
+            unowed.describe_freshness(),
+            "generation 7, created by 1.6.3; prompt outdated; tools outdated"
+        );
+        let mut delayed = outdated;
+        delayed["refresh_delayed"] = "2 attempts failed, the last with: busy".into();
+        let owed = info(delayed.clone());
+        assert_eq!(
+            owed.describe_freshness(),
+            "generation 7, created by 1.6.3; upgrade refresh (prompt and tools) delayed: \
+             2 attempts failed, the last with: busy"
+        );
+        assert!(owed.freshness.as_ref().unwrap().is_stale());
+        delayed["prompt_outdated"] = false.into();
+        delayed["tools_outdated"] = false.into();
+        let unfinished = info(delayed).describe_freshness();
+        assert!(
+            unfinished
+                .ends_with("; upgrade refresh delayed: 2 attempts failed, the last with: busy"),
+            "{unfinished}"
+        );
+    }
 
     #[test]
     fn client_frames_flatten_the_command_beside_req() {

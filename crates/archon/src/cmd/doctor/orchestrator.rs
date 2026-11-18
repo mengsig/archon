@@ -82,6 +82,7 @@ mod tests {
             tools_outdated: false,
             new_lessons,
             settings_drift: None,
+            refresh_delayed: None,
         }
     }
 

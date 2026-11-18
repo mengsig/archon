@@ -17,14 +17,14 @@ use chrono::TimeDelta;
 use link_common::Harness;
 use serde_json::{Value, json};
 
-const ORCH: &str = "agt_0001";
-const ORCH_2: &str = "agt_0002";
+pub(crate) const ORCH: &str = "agt_0001";
+pub(crate) const ORCH_2: &str = "agt_0002";
 /// `kv`: what the newest generation was created with.
 const ORIGIN_KEY: &str = "orchestrator_origin";
 
-type Agents = Arc<Mutex<HashMap<String, Value>>>;
+pub(crate) type Agents = Arc<Mutex<HashMap<String, Value>>>;
 
-fn orchestrator(id: &str, state: &str) -> Value {
+pub(crate) fn orchestrator(id: &str, state: &str) -> Value {
     let mut agent = fake::agent(id, None);
     agent["role"] = json!(supervisor::ORCHESTRATOR_ROLE);
     agent["status"] = json!({ "state": state });
@@ -32,7 +32,7 @@ fn orchestrator(id: &str, state: &str) -> Value {
 }
 
 /// `get_agent` answers from a table the test edits; `cancel` stops the agent.
-fn agent_table(harness: &Harness) -> Agents {
+pub(crate) fn agent_table(harness: &Harness) -> Agents {
     let agents: Agents = Arc::default();
     let table = agents.clone();
     harness.fake.set_responder(
@@ -50,7 +50,7 @@ fn agent_table(harness: &Harness) -> Agents {
 }
 
 /// `cancel` stops the agent in `agents`.
-fn cancel_stops(harness: &Harness, agents: &Agents) {
+pub(crate) fn cancel_stops(harness: &Harness, agents: &Agents) {
     let table = agents.clone();
     harness.fake.set_responder(
         "cancel",
@@ -64,7 +64,7 @@ fn cancel_stops(harness: &Harness, agents: &Agents) {
     );
 }
 
-async fn create(harness: &Harness, agents: &Agents, id: &str) {
+pub(crate) async fn create(harness: &Harness, agents: &Agents, id: &str) {
     agents
         .lock()
         .unwrap()
@@ -77,7 +77,7 @@ async fn create(harness: &Harness, agents: &Agents, id: &str) {
 
 /// A `waiting` agent waits for its inbox and logged its last event ten
 /// minutes ago; any other state is set as given.
-fn set_state(agents: &Agents, id: &str, state: &str) {
+pub(crate) fn set_state(agents: &Agents, id: &str, state: &str) {
     let mut table = agents.lock().unwrap();
     let agent = table.get_mut(id).expect("a known agent");
     agent["status"] = match state {
@@ -93,7 +93,7 @@ fn set_paused(agents: &Agents, id: &str, paused: bool) {
     table.get_mut(id).expect("a known agent")["paused"] = json!(paused);
 }
 
-fn script_successor(harness: &Harness, agents: &Agents) {
+pub(crate) fn script_successor(harness: &Harness, agents: &Agents) {
     agents
         .lock()
         .unwrap()
@@ -102,13 +102,13 @@ fn script_successor(harness: &Harness, agents: &Agents) {
     harness.fake.script("create_agent", successor);
 }
 
-fn set_stats(agents: &Agents, id: &str, tokens: u64, turn_ended_at: Timestamp) {
+pub(crate) fn set_stats(agents: &Agents, id: &str, tokens: u64, turn_ended_at: Timestamp) {
     let mut table = agents.lock().unwrap();
     let agent = table.get_mut(id).expect("a known agent");
     agent["stats"] = json!({ "context_tokens": tokens, "last_turn_at": turn_ended_at });
 }
 
-async fn as_if_created_by_an_older_build(harness: &Harness) {
+pub(crate) async fn as_if_created_by_an_older_build(harness: &Harness) {
     let raw = harness
         .kv(ORIGIN_KEY)
         .await
@@ -237,6 +237,13 @@ async fn a_failed_refresh_keeps_the_old_generation_and_finishes_once_aether_reco
         .filter(|n| n.contains("failed 3 times"))
         .collect();
     assert_eq!(told.len(), 1, "the operator is told once: {told:?}");
+    let line = status_line(&harness).await;
+    assert!(
+        line.contains("upgrade refresh (prompt) delayed: 4 attempts failed, the last with:"),
+        "status says the upgrade is delayed: {line}"
+    );
+    assert!(line.contains("busy"), "and why: {line}");
+    assert!(!line.contains("prompt outdated"), "{line}");
 
     cancel_stops(&harness, &agents);
     script_successor(&harness, &agents);
@@ -247,6 +254,50 @@ async fn a_failed_refresh_keeps_the_old_generation_and_finishes_once_aether_reco
         .await
         .unwrap();
     assert_eq!(current.unwrap().as_str(), ORCH_2);
+    let line = status_line(&harness).await;
+    assert!(
+        line.ends_with("; up to date"),
+        "nothing is owed now: {line}"
+    );
+}
+
+/// How `archon status` describes the orchestrator's generation.
+async fn status_line(harness: &Harness) -> String {
+    let info = supervisor::orchestrator_info(&harness.ctx).await.unwrap();
+    info.expect("an orchestrator").describe_freshness()
+}
+
+/// An orchestrator that is never idle delays the refresh without a failure:
+/// status says so from the first moment, never a bare "prompt outdated".
+#[tokio::test]
+async fn status_says_why_an_owed_refresh_waits_and_keeps_the_old_words_when_it_is_off() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    let agents = agent_table(&harness);
+    create(&harness, &agents, ORCH).await;
+    as_if_created_by_an_older_build(&harness).await;
+    set_state(&agents, ORCH, "running");
+    let now = archon_core::now();
+    let busy = supervisor::economize(&harness.ctx, now).await.unwrap();
+    assert_eq!(busy, Economy::Nothing);
+    let line = status_line(&harness).await;
+    let waits = "upgrade refresh (prompt) delayed: it waits until the orchestrator is idle";
+    assert!(line.contains(waits), "{line}");
+    assert!(!line.contains("prompt outdated"), "{line}");
+
+    let mut config = archon_core::config::Config::default();
+    config.orchestrator.refresh_on_upgrade = false;
+    let harness = Harness::with(config, None).await;
+    harness.connect().await;
+    let agents = agent_table(&harness);
+    create(&harness, &agents, ORCH).await;
+    as_if_created_by_an_older_build(&harness).await;
+    let line = status_line(&harness).await;
+    assert!(
+        line.contains("; prompt outdated"),
+        "no refresh comes: {line}"
+    );
+    assert!(!line.contains("delayed"), "{line}");
 }
 
 /// archond stopped after Aether cancelled the outdated generation and before
@@ -604,4 +655,115 @@ async fn a_retried_creation_sends_the_threshold_it_first_sent() {
         creates[0]["config"], creates[1]["config"],
         "the same request under the same key"
     );
+}
+
+/// Aether 1.4.1 was sent no threshold: that absence is frozen with the
+/// creation key before the request, and a retry repeats it though the
+/// Aether connected by then would take one.
+#[tokio::test]
+async fn a_retried_creation_that_first_sent_no_threshold_sends_none_again() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    let agents = agent_table(&harness);
+    harness.fake.script(
+        "create_agent",
+        Scripted::refuse("unavailable", "reply lost"),
+    );
+    supervisor::ensure_orchestrator(&harness.ctx)
+        .await
+        .expect_err("the reply was lost");
+    let first = &harness.fake.received_named("create_agent")[0];
+    let raw = harness.kv("orchestrator_compaction_tokens").await;
+    let frozen: Value = serde_json::from_str(&raw.expect("frozen before the request")).unwrap();
+    assert_eq!(frozen["key"], first["idempotency_key"], "with its key");
+    assert!(frozen["tokens"].is_null(), "an explicit absence: {frozen}");
+
+    harness
+        .fake
+        .set_features(vec!["compaction_tokens".to_owned()]);
+    harness.connect().await;
+    create(&harness, &agents, ORCH).await;
+    let creates = harness.fake.received_named("create_agent");
+    assert_eq!(creates.len(), 2, "one retry");
+    assert_eq!(creates[0]["idempotency_key"], creates[1]["idempotency_key"]);
+    let resent = &creates[1]["config"]["compaction_tokens"];
+    assert!(resent.is_null(), "the retry changed the request: {resent}");
+}
+
+/// A threshold frozen for another creation is never applied to this one.
+#[tokio::test]
+async fn a_threshold_frozen_under_another_key_is_not_reused() {
+    let harness = Harness::new().await;
+    harness
+        .fake
+        .set_features(vec!["compaction_tokens".to_owned()]);
+    harness.connect().await;
+    let agents = agent_table(&harness);
+    let other = json!({ "key": "archon-orchestrator-other-9", "tokens": 120_000 });
+    harness
+        .set_kv("orchestrator_compaction_tokens", &other.to_string())
+        .await;
+    create(&harness, &agents, ORCH).await;
+    let creates = harness.fake.received_named("create_agent");
+    assert_eq!(creates[0]["config"]["compaction_tokens"], json!(160_000));
+    let raw = harness.kv("orchestrator_compaction_tokens").await.unwrap();
+    let frozen: Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(frozen["key"], creates[0]["idempotency_key"]);
+}
+
+/// The idle compaction takes the switch guard a Say or trigger holds while
+/// it starts a turn, and reads the orchestrator again once it has it.
+#[tokio::test]
+async fn an_idle_compaction_waits_out_a_message_being_sent_and_then_sees_its_turn() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    let agents = agent_table(&harness);
+    create(&harness, &agents, ORCH).await;
+    harness.fake.set_default("compact", Scripted::ok());
+    let now = archon_core::now();
+    set_state(&agents, ORCH, "waiting");
+    set_stats(&agents, ORCH, 150_000, now - TimeDelta::minutes(50));
+
+    let sending = supervisor::hold_switch(&harness.ctx).await;
+    let looked = harness.fake.received_named("get_agent").len();
+    let ctx = harness.ctx.clone();
+    let check = tokio::spawn(async move { supervisor::economize(&ctx, now).await });
+    harness
+        .eventually("the first look at the idle orchestrator", || async {
+            harness.fake.received_named("get_agent").len() > looked
+        })
+        .await;
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let early = harness.fake.received_named("compact");
+    assert!(early.is_empty(), "compacted beside the send: {early:?}");
+
+    set_state(&agents, ORCH, "running");
+    drop(sending);
+    let economy = check.await.unwrap().unwrap();
+    assert_eq!(economy, Economy::Nothing, "the message started a turn");
+    let compacts = harness.fake.received_named("compact");
+    assert!(compacts.is_empty(), "folded mid-turn: {compacts:?}");
+}
+
+/// News due to wake the orchestrator is about to start a turn: the idle
+/// compaction, checked again under the switch guard, leaves it alone.
+#[tokio::test]
+async fn news_due_stops_the_idle_compaction() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    let agents = agent_table(&harness);
+    create(&harness, &agents, ORCH).await;
+    harness.fake.set_default("compact", Scripted::ok());
+    let now = archon_core::now() + TimeDelta::minutes(1);
+    set_state(&agents, ORCH, "waiting");
+    set_stats(&agents, ORCH, 150_000, now - TimeDelta::minutes(50));
+    let news = TriggerEvent::ItemBlocked {
+        item: QueueItemId::new(),
+        reason: "stuck".into(),
+    };
+    triggers::push(&harness.ctx, news).await.unwrap();
+    let due = supervisor::economize(&harness.ctx, now).await.unwrap();
+    assert_eq!(due, Economy::Nothing, "the news goes first");
+    let compacts = harness.fake.received_named("compact");
+    assert!(compacts.is_empty(), "folded as a wake began: {compacts:?}");
 }

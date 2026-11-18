@@ -13,6 +13,8 @@ use archon_core::aether_ids::AetherAgentId;
 use archon_core::config::{MAX_COMPACTION_TOKENS, OrchestratorConfig};
 use archon_core::error::ArchonError;
 use archon_core::protocol::OrchestratorFreshness;
+use archon_queue::Store;
+use archon_queue::store::keys;
 use chrono::TimeDelta;
 use serde::{Deserialize, Serialize};
 
@@ -61,13 +63,15 @@ enum Refresh {
     Done,
 }
 
-/// The latest refresh attempt: its generation, how many tries it had, and
-/// when the last one began.
+/// The latest refresh attempt: its generation, how many tries it had, when
+/// the last one began, and why it failed (`None` while it runs).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RefreshTried {
     pub generation: u64,
     pub tries: u32,
     pub at: Timestamp,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// One idle stretch an idle compaction was asked for: the agent and the end
@@ -103,7 +107,7 @@ pub async fn economize(ctx: &DaemonContext, now: Timestamp) -> Result<Economy, A
         Some(id) => Some(client.get_agent(&id).await?),
         None => None,
     };
-    if refresh_left_behind(unfinished, generation, agent.as_ref()) {
+    if refresh_left_behind(unfinished, agent.as_ref()) {
         let id = super::ensure_locked(ctx).await?;
         tracing::info!(%id, "started the orchestrator a failed refresh left out");
         return Ok(Economy::Refreshed);
@@ -112,7 +116,12 @@ pub async fn economize(ctx: &DaemonContext, now: Timestamp) -> Result<Economy, A
         return Ok(Economy::Nothing);
     };
     if ctx.config.orchestrator.refresh_on_upgrade {
-        match refresh_if_upgraded(ctx, &client, now, generation, tried).await? {
+        let owed = Owed {
+            generation,
+            unfinished,
+            tried,
+        };
+        match refresh_if_owed(ctx, &client, now, owed).await? {
             Refresh::Done => return Ok(Economy::Refreshed),
             Refresh::Busy => return Ok(Economy::Nothing),
             Refresh::NotDue => {}
@@ -124,18 +133,22 @@ pub async fn economize(ctx: &DaemonContext, now: Timestamp) -> Result<Economy, A
     }
 }
 
-/// Whether a refresh is under way: adoption ends it, so the agent still
-/// stored is the outdated one it may have stopped before starting a successor.
+/// Whether a refresh is under way. The marker and a successor's id change
+/// in one transaction, so the agent stored beside a marker is the outdated
+/// one: a stopped one is replaced, never restarted from its checkpoint.
 pub(super) async fn refresh_owed_by(ctx: &DaemonContext) -> Result<bool, ArchonError> {
-    let generation = super::generation(ctx).await?;
-    let Some(unfinished) = read_kv::<u64>(ctx, REFRESH_UNFINISHED_KEY).await? else {
+    let store = ctx.store.lock().await;
+    let generation = super::parse_generation(store.kv_get(keys::ORCHESTRATOR_GENERATION)?)?;
+    let Some(unfinished) = parse_kv::<u64>(&store, REFRESH_UNFINISHED_KEY)? else {
         return Ok(false);
     };
-    assert!(unfinished > 0, "generations start at 1");
-    assert!(
-        unfinished <= generation,
-        "a refresh replaced a generation that was"
-    );
+    if unfinished == 0 || unfinished > generation {
+        tracing::warn!(
+            unfinished,
+            generation,
+            "the unfinished refresh names no generation that was; it is finished fresh all the same"
+        );
+    }
     Ok(true)
 }
 
@@ -151,82 +164,165 @@ pub fn is_idle(agent: &Agent, now: Timestamp) -> bool {
     waits_for_mail && !agent.paused && quiet
 }
 
-/// Whether a refresh that replaced generation `unfinished` stopped before
-/// a successor was adopted and left none live (`agent`), even when a
-/// successor that stopped before its briefing advanced the generation again.
-pub fn refresh_left_behind(
-    unfinished: Option<u64>,
-    generation: u64,
-    agent: Option<&Agent>,
-) -> bool {
-    let Some(unfinished) = unfinished else {
-        return false;
-    };
-    assert!(unfinished > 0, "generations start at 1");
-    assert!(
-        unfinished <= generation,
-        "a refresh replaced a generation that was"
-    );
-    agent.is_none_or(|agent| !LIVE_STATES.contains(&agent_state(agent).as_str()))
+/// Whether a refresh that began (`unfinished`, whatever generation it
+/// names: a stored value is never trusted to be sane) stopped before a
+/// successor was adopted and left none live (`agent`), even when a successor
+/// that stopped before its briefing advanced the generation again.
+pub fn refresh_left_behind(unfinished: Option<u64>, agent: Option<&Agent>) -> bool {
+    unfinished.is_some()
+        && agent.is_none_or(|agent| !LIVE_STATES.contains(&agent_state(agent).as_str()))
 }
 
-/// Whether generation `generation`, as `freshness` describes it, is owed a
-/// fresh one at `now`: another build (`running`) created it, its prompt or
-/// tools differ from this build's, and `tried` waited out its retry pause.
-pub fn refresh_due(
+/// Whether the stored generation, as `freshness` describes it, is owed a
+/// fresh one: another build (`running`) created it and its prompt or tools
+/// differ from this build's, or a refresh of it began and adopted no
+/// successor (`unfinished`).
+pub fn refresh_owed(
     freshness: Option<&OrchestratorFreshness>,
-    generation: u64,
-    tried: Option<&RefreshTried>,
-    now: Timestamp,
+    unfinished: Option<u64>,
     running: &str,
 ) -> bool {
-    assert!(generation > 0, "generations start at 1");
     assert!(!running.is_empty(), "this build has a version");
-    let Some(freshness) = freshness else {
-        return false;
-    };
-    let upgraded = freshness.created_by != running;
-    let outdated = freshness.prompt_outdated == Some(true) || freshness.tools_outdated;
-    let may_try = match tried.filter(|tried| tried.generation == generation) {
+    let outdated = freshness.is_some_and(|freshness| {
+        assert!(
+            !freshness.created_by.is_empty(),
+            "a recorded creator has a version"
+        );
+        let upgraded = freshness.created_by != running;
+        upgraded && (freshness.prompt_outdated == Some(true) || freshness.tools_outdated)
+    });
+    outdated || unfinished.is_some()
+}
+
+/// Whether a refresh owed to generation `generation` may be tried at `now`:
+/// a failed try (`tried`) waits out its pause, however many came before.
+pub fn retry_due(generation: u64, tried: Option<&RefreshTried>, now: Timestamp) -> bool {
+    assert!(generation > 0, "generations start at 1");
+    match tried.filter(|tried| tried.generation == generation) {
         None => true,
-        Some(tried) => now - tried.at >= REFRESH_RETRY,
+        Some(tried) => {
+            assert!(tried.tries > 0, "a recorded try was made");
+            now - tried.at >= REFRESH_RETRY
+        }
+    }
+}
+
+/// Why the refresh generation `generation` is owed has not happened yet,
+/// for `status`: `None` when none is owed or `refresh_on_upgrade` is off.
+pub(super) async fn refresh_delay(
+    ctx: &DaemonContext,
+    generation: u64,
+    freshness: &OrchestratorFreshness,
+) -> Result<Option<String>, ArchonError> {
+    if !ctx.config.orchestrator.refresh_on_upgrade {
+        return Ok(None);
+    }
+    let (unfinished, tried) = {
+        let store = ctx.store.lock().await;
+        let unfinished = parse_kv::<u64>(&store, REFRESH_UNFINISHED_KEY)?;
+        let tried = parse_kv::<RefreshTried>(&store, REFRESH_TRIED_KEY)?;
+        (unfinished, tried)
     };
-    upgraded && outdated && may_try
+    if !refresh_owed(Some(freshness), unfinished, env!("CARGO_PKG_VERSION")) {
+        return Ok(None);
+    }
+    let tried = tried.filter(|tried| tried.generation == generation);
+    Ok(Some(delay_reason(tried.as_ref())))
+}
+
+/// The reason `status` gives for an owed refresh: the latest failure, else
+/// the idle moment it waits for.
+fn delay_reason(tried: Option<&RefreshTried>) -> String {
+    let failed = tried.and_then(|tried| tried.error.as_ref().map(|error| (tried.tries, error)));
+    let Some((tries, error)) = failed else {
+        return "it waits until the orchestrator is idle with no news due".to_owned();
+    };
+    assert!(tries > 0, "a failed try was made");
+    assert!(!error.trim().is_empty(), "a failure says why");
+    let attempts = if tries == 1 { "attempt" } else { "attempts" };
+    format!(
+        "{tries} {attempts} failed, the last with: {error}; retried every {} minutes while it is idle",
+        REFRESH_RETRY.num_minutes()
+    )
+}
+
+/// What a check read about the refresh the stored generation may be owed.
+struct Owed {
+    generation: u64,
+    unfinished: Option<u64>,
+    tried: Option<RefreshTried>,
 }
 
 /// Start a fresh generation when an upgrade outdated the running one's
-/// prompt or tools. Fenced against trigger delivery; the operator is told
-/// once [`REFRESH_TRIES`] attempts for one generation failed.
-async fn refresh_if_upgraded(
+/// prompt or tools, or a refresh of it began. Fenced against trigger
+/// delivery; a failure is recorded for `status` and tried again.
+async fn refresh_if_owed(
     ctx: &DaemonContext,
     client: &AetherClient,
     now: Timestamp,
-    generation: u64,
-    tried: Option<RefreshTried>,
+    owed: Owed,
 ) -> Result<Refresh, ArchonError> {
-    let freshness = super::freshness(ctx, generation).await?;
+    let generation = owed.generation;
+    let freshness = super::compared_with_today(ctx, generation).await?;
     let running = env!("CARGO_PKG_VERSION");
-    if !refresh_due(freshness.as_ref(), generation, tried.as_ref(), now, running) {
+    let due = refresh_owed(freshness.as_ref(), owed.unfinished, running)
+        && retry_due(generation, owed.tried.as_ref(), now);
+    if !due {
         return Ok(Refresh::NotDue);
     }
     let _switch = super::switching(ctx).await;
     let Some(checked) = still_idle(ctx, client, now).await? else {
         return Ok(Refresh::Busy);
     };
-    let checked = checked.id;
+    let attempt = begin_refresh(ctx, generation, owed.tried, now).await?;
+    let reason = "refreshed: an upgrade changed its prompt or tools";
+    let why = "is a fresh generation, as an upgrade changed its prompt or tools";
+    let checked = Some(&checked.id);
+    match super::replace_orchestrator(ctx, client, reason, why, checked).await {
+        Ok(id) => {
+            let tries = attempt.tries;
+            tracing::info!(%id, old_generation = generation, tries, "orchestrator refreshed after an upgrade");
+            Ok(Refresh::Done)
+        }
+        Err(error) if error.is_store() => Err(error),
+        Err(error) => {
+            let failed = RefreshTried {
+                error: Some(crate::executor::clip(&error.to_string(), 200)),
+                ..attempt
+            };
+            write_kv(ctx, REFRESH_TRIED_KEY, &failed).await?;
+            Err(error)
+        }
+    }
+}
+
+/// Record that a refresh of generation `generation` starts: the attempt and
+/// the unfinished marker in one transaction, so a stop leaves both or
+/// neither. The operator is told once [`REFRESH_TRIES`] attempts failed.
+async fn begin_refresh(
+    ctx: &DaemonContext,
+    generation: u64,
+    tried: Option<RefreshTried>,
+    now: Timestamp,
+) -> Result<RefreshTried, ArchonError> {
+    assert!(generation > 0, "only a created generation is refreshed");
     let tries = tried
         .filter(|tried| tried.generation == generation)
-        .map_or(1, |tried| tried.tries + 1);
+        .map_or(1, |tried| tried.tries.saturating_add(1));
+    assert!(tries > 0, "this try counts");
     let attempt = RefreshTried {
         generation,
         tries,
         at: now,
+        error: None,
     };
-    {
-        let mut store = ctx.store.lock().await;
-        store.kv_set(REFRESH_TRIED_KEY, &serde_json::to_string(&attempt)?)?;
-        store.kv_set(REFRESH_UNFINISHED_KEY, &generation.to_string())?;
-    }
+    let recorded = serde_json::to_string(&attempt)?;
+    let marker = generation.to_string();
+    let set = [
+        (REFRESH_TRIED_KEY, recorded.as_str()),
+        (REFRESH_UNFINISHED_KEY, marker.as_str()),
+    ];
+    ctx.store.lock().await.kv_update(&set, &[])?;
     if tries == REFRESH_TRIES + 1 {
         let text = format!(
             "The orchestrator's refresh after the upgrade failed {REFRESH_TRIES} times; Archon keeps trying every {} minutes while it is idle, or `archon orchestrator restart` refreshes it now.",
@@ -234,11 +330,7 @@ async fn refresh_if_upgraded(
         );
         crate::feed::system(ctx, text).await?;
     }
-    let reason = "refreshed: an upgrade changed its prompt or tools";
-    let why = "is a fresh generation, as an upgrade changed its prompt or tools";
-    let id = super::replace_orchestrator(ctx, client, reason, why, Some(&checked)).await?;
-    tracing::info!(%id, old_generation = generation, tries, "orchestrator refreshed after an upgrade");
-    Ok(Refresh::Done)
+    Ok(attempt)
 }
 
 /// Read again under the switch guard, where no Archon trigger can be on its
@@ -360,7 +452,14 @@ async fn read_kv<T: serde::de::DeserializeOwned>(
     ctx: &DaemonContext,
     key: &str,
 ) -> Result<Option<T>, ArchonError> {
-    let Some(raw) = ctx.store.lock().await.kv_get(key)? else {
+    parse_kv(&*ctx.store.lock().await, key)
+}
+
+fn parse_kv<T: serde::de::DeserializeOwned>(
+    store: &Store,
+    key: &str,
+) -> Result<Option<T>, ArchonError> {
+    let Some(raw) = store.kv_get(key)? else {
         return Ok(None);
     };
     serde_json::from_str(&raw)
@@ -488,25 +587,22 @@ mod tests {
             serde_json::from_value(serde_json::json!({ "state": "cancelled" })).unwrap();
         let live = orchestrator(None, None);
         assert!(
-            refresh_left_behind(Some(3), 4, None),
+            refresh_left_behind(Some(3), None),
             "cancelled, none created"
         );
         assert!(
-            refresh_left_behind(Some(3), 5, None),
-            "its successor stopped before its briefing"
-        );
-        assert!(
-            refresh_left_behind(Some(3), 3, Some(&cancelled)),
+            refresh_left_behind(Some(3), Some(&cancelled)),
             "cancelled, not advanced"
         );
         assert!(
-            !refresh_left_behind(Some(3), 3, Some(&live)),
-            "the old one still runs"
+            refresh_left_behind(Some(0), Some(&cancelled)),
+            "a marker naming no generation is a refresh owed, never a panic"
         );
         assert!(
-            !refresh_left_behind(None, 4, None),
-            "no refresh is unfinished"
+            !refresh_left_behind(Some(3), Some(&live)),
+            "the old one still runs"
         );
+        assert!(!refresh_left_behind(None, None), "no refresh is unfinished");
     }
 
     #[test]
@@ -536,19 +632,23 @@ mod tests {
         );
     }
 
-    #[test]
-    fn an_upgrade_that_outdated_the_prompt_or_tools_is_refreshed_with_bounded_retries() {
-        let running = "1.6.4";
-        let fresh = OrchestratorFreshness {
+    fn created_by_an_older_build() -> OrchestratorFreshness {
+        OrchestratorFreshness {
             created_by: "1.6.3".into(),
             prompt_outdated: Some(false),
             tools_outdated: false,
             new_lessons: 3,
             settings_drift: None,
-        };
-        let now = at(0);
+            refresh_delayed: None,
+        }
+    }
+
+    #[test]
+    fn an_upgrade_that_outdated_the_prompt_or_tools_owes_a_refresh() {
+        let running = "1.6.4";
+        let fresh = created_by_an_older_build();
         assert!(
-            !refresh_due(Some(&fresh), 4, None, now, running),
+            !refresh_owed(Some(&fresh), None, running),
             "up to date; lessons wait"
         );
         let prompt = OrchestratorFreshness {
@@ -559,49 +659,75 @@ mod tests {
             tools_outdated: true,
             ..fresh.clone()
         };
-        let tried = |generation, tries, minutes| RefreshTried {
-            generation,
-            tries,
-            at: at(minutes),
-        };
-        for outdated in [&prompt, &tools] {
-            assert!(refresh_due(Some(outdated), 4, None, now, running));
-            let older = tried(3, REFRESH_TRIES, 0);
-            assert!(refresh_due(Some(outdated), 4, Some(&older), now, running));
-            let failed = tried(4, 1, -5);
-            assert!(
-                !refresh_due(Some(outdated), 4, Some(&failed), now, running),
-                "backs off"
-            );
-            assert!(
-                refresh_due(Some(outdated), 4, Some(&failed), at(5), running),
-                "retried"
-            );
-            let spent = tried(4, REFRESH_TRIES, -60);
-            assert!(
-                refresh_due(Some(outdated), 4, Some(&spent), now, running),
-                "never gives up for good"
-            );
-        }
+        assert!(refresh_owed(Some(&prompt), None, running));
+        assert!(refresh_owed(Some(&tools), None, running));
         let edited = OrchestratorFreshness {
             created_by: running.into(),
-            ..prompt.clone()
+            ..prompt
         };
         assert!(
-            !refresh_due(Some(&edited), 4, None, now, running),
+            !refresh_owed(Some(&edited), None, running),
             "no upgrade: an edit waits"
         );
         let unknown = OrchestratorFreshness {
             prompt_outdated: None,
-            ..fresh
+            ..fresh.clone()
         };
         assert!(
-            !refresh_due(Some(&unknown), 4, None, now, running),
+            !refresh_owed(Some(&unknown), None, running),
             "no prompt to compare"
         );
+        assert!(!refresh_owed(None, None, running), "no origin recorded");
+        for freshness in [Some(&fresh), Some(&edited), None] {
+            assert!(
+                refresh_owed(freshness, Some(4), running),
+                "a refresh that began is owed until a successor is adopted"
+            );
+        }
+    }
+
+    #[test]
+    fn a_failed_refresh_waits_out_its_pause_and_is_never_given_up() {
+        let now = at(0);
+        let tried = |generation, tries, minutes| RefreshTried {
+            generation,
+            tries,
+            at: at(minutes),
+            error: Some("busy".into()),
+        };
+        assert!(retry_due(4, None, now), "never tried");
+        let older = tried(3, REFRESH_TRIES, 0);
         assert!(
-            !refresh_due(None, 4, None, now, running),
-            "no origin recorded"
+            retry_due(4, Some(&older), now),
+            "another generation's tries"
+        );
+        let failed = tried(4, 1, -5);
+        assert!(!retry_due(4, Some(&failed), now), "backs off");
+        assert!(retry_due(4, Some(&failed), at(5)), "retried");
+        let spent = tried(4, REFRESH_TRIES + 20, -10);
+        assert!(retry_due(4, Some(&spent), now), "never gives up for good");
+    }
+
+    #[test]
+    fn status_is_told_why_an_owed_refresh_has_not_happened() {
+        let waiting = delay_reason(None);
+        assert!(waiting.contains("waits until the orchestrator is idle"));
+        let running = RefreshTried {
+            generation: 4,
+            tries: 1,
+            at: at(0),
+            error: None,
+        };
+        assert_eq!(delay_reason(Some(&running)), waiting, "no failure yet");
+        let failed = RefreshTried {
+            tries: 5,
+            error: Some("unavailable: busy".into()),
+            ..running
+        };
+        assert_eq!(
+            delay_reason(Some(&failed)),
+            "5 attempts failed, the last with: unavailable: busy; retried every 10 minutes \
+             while it is idle"
         );
     }
 }

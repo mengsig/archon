@@ -18,7 +18,8 @@ without intent keep their previous behavior.
 From 1.6.4 a running orchestrator whose prompt or tools changed in the
 upgrade is replaced by a fresh generation at its next idle moment, with the
 same hand-off as `archon orchestrator restart`, so `archon status` stops
-showing "prompt outdated" without a manual restart. Stage `info` messages
+showing "prompt outdated" without a manual restart; while the refresh waits
+or fails, it shows "upgrade refresh delayed" and why. Stage `info` messages
 no longer wake it, and its context is compacted earlier
 ([configuration](configuration.md)). None of this migrates the store. Going
 back to an older binary is not supported once a release's store migration

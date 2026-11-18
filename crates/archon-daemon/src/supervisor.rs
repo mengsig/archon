@@ -43,7 +43,7 @@ use retired::{Sweep, cancel_orphans};
 pub(crate) use authority::{authorize, saw_call};
 pub use economy::{
     ECONOMY_CHECK_INTERVAL, Economy, RefreshTried, economize, idle_compaction_due, is_idle,
-    refresh_due, refresh_left_behind, watch_economy,
+    refresh_left_behind, refresh_owed, retry_due, watch_economy,
 };
 pub use mcp::{
     HEALS_BEFORE_BLOCKER, MCP_CHECK_INTERVAL, check_mcp, check_mcp_soon, heal_status, mcp_status,
@@ -92,8 +92,8 @@ const RESTARTS_KEY: &str = "orchestrator_restarts";
 const BLOCKER_KEY: &str = "orchestrator_blocker";
 const STORE_ID_KEY: &str = "store_id";
 const HOST_CONTEXT_KEY: &str = "orchestrator_host_context";
-/// `kv`: the compaction threshold the generation's creation sent, `null` for
-/// none, so every retry under its key sends the same request.
+/// `kv`: the [`FrozenThreshold`] of the generation's creation, written before
+/// its first request, so every retry under its key sends the same one.
 const COMPACTION_TOKENS_KEY: &str = "orchestrator_compaction_tokens";
 /// Set once the GitHub watcher is wanted; never cleared by archond.
 const GITHUB_WANTED_KEY: &str = "orchestrator_github";
@@ -776,9 +776,22 @@ async fn info_for(
 }
 
 /// How generation `generation` compares with one this archond would start
-/// now; `None` when an Archon that recorded no origin created it. Until the
-/// GitHub choice is recorded (an upgrade), either choice counts as current.
+/// now, and why a refresh it is owed has not happened yet; `None` when an
+/// Archon that recorded no origin created it.
 pub async fn freshness(
+    ctx: &DaemonContext,
+    generation: u64,
+) -> Result<Option<OrchestratorFreshness>, ArchonError> {
+    let Some(mut fresh) = compared_with_today(ctx, generation).await? else {
+        return Ok(None);
+    };
+    fresh.refresh_delayed = economy::refresh_delay(ctx, generation, &fresh).await?;
+    Ok(Some(fresh))
+}
+
+/// [`freshness`] without the refresh's delay. Until the GitHub choice is
+/// recorded (an upgrade), either choice counts as current.
+async fn compared_with_today(
     ctx: &DaemonContext,
     generation: u64,
 ) -> Result<Option<OrchestratorFreshness>, ArchonError> {
@@ -983,12 +996,17 @@ async fn revive_now(
 }
 
 /// Restart `dead` from its checkpoint. A fresh generation loses the chat, so
-/// only when Aether will never restart it; any other failure is retried.
+/// only when Aether will never restart it, or a refresh owes one: its
+/// checkpoint holds the outdated instructions. Any other failure is retried.
 async fn restart_or_replace(
     ctx: &DaemonContext,
     client: &AetherClient,
     dead: &AetherAgentId,
 ) -> Result<(AetherAgentId, Revival), ArchonError> {
+    if economy::refresh_owed_by(ctx).await? {
+        tracing::info!(%dead, "a refresh is unfinished; starting its fresh generation instead of a restart");
+        return Ok((replace_generation(ctx, client).await?, Revival::Recreated));
+    }
     match client.restart(dead).await {
         Ok(successor) => {
             callers::record_delegation(ctx, &successor).await?;
@@ -1226,7 +1244,34 @@ async fn create_orchestrator(
 ) -> Result<archon_aether::wire::Agent, ArchonError> {
     assert_eq!(request.role, ORCHESTRATOR_ROLE);
     assert!(request.parent.is_none() && request.start);
+    let key = request.idempotency_key.clone().expect("a keyed creation");
     let config = request.config.as_mut().expect("orchestrator config");
+    let (host_context, tokens) = freeze_settings(ctx, client, &key, config.host_context).await?;
+    config.host_context = host_context;
+    config.compaction_tokens = tokens;
+    let agent = client.create_agent(request).await?;
+    callers::record_delegation(ctx, &agent).await?;
+    Ok(agent)
+}
+
+/// The compaction threshold a creation key sends: `tokens: None` is sending
+/// none, which a retry repeats as exactly as a number.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct FrozenThreshold {
+    key: String,
+    tokens: Option<u32>,
+}
+
+/// Settle what the creation under `key` sends, in one transaction before its
+/// first request: the host context and compaction threshold it froze, else
+/// today's. A changed config or Aether never alters a retried request.
+async fn freeze_settings(
+    ctx: &DaemonContext,
+    client: &AetherClient,
+    key: &str,
+    configured: HostContext,
+) -> Result<(HostContext, Option<u32>), ArchonError> {
+    assert!(!key.is_empty(), "a keyed creation");
     let mut store = ctx.store.lock().await;
     let frozen: Option<HostContext> = match store.kv_get(HOST_CONTEXT_KEY)? {
         Some(raw) => Some(
@@ -1235,47 +1280,50 @@ async fn create_orchestrator(
         ),
         None => None,
     };
-    let requested = frozen.unwrap_or(config.host_context);
-    config.host_context = client.welcome().effective_host_context(requested);
-    // A full fallback is frozen too, so a retry under this key never turns lean.
-    if frozen.is_some() || !requested.is_full() {
-        store.kv_set(
-            HOST_CONTEXT_KEY,
-            &serde_json::to_string(&config.host_context)?,
-        )?;
-    }
-    if requested != config.host_context {
+    let requested = frozen.unwrap_or(configured);
+    let host_context = client.welcome().effective_host_context(requested);
+    if requested != host_context {
         tracing::warn!("Aether lacks host_context; orchestrator creation falls back to full");
     }
-    drop(store);
-    config.compaction_tokens = frozen_threshold(ctx, client).await?;
-    let agent = client.create_agent(request).await?;
-    callers::record_delegation(ctx, &agent).await?;
-    Ok(agent)
+    let threshold = match frozen_threshold(&store, key)? {
+        Some(frozen) => frozen,
+        None => FrozenThreshold {
+            key: key.to_owned(),
+            tokens: compaction_threshold(
+                &ctx.config.orchestrator,
+                client.serves_compaction_tokens(),
+            ),
+        },
+    };
+    let threshold_raw = serde_json::to_string(&threshold)?;
+    let host_raw = serde_json::to_string(&host_context)?;
+    let mut set = vec![(COMPACTION_TOKENS_KEY, threshold_raw.as_str())];
+    // A full fallback is frozen too, so a retry under this key never turns lean.
+    if frozen.is_some() || !requested.is_full() {
+        set.push((HOST_CONTEXT_KEY, host_raw.as_str()));
+    }
+    store.kv_update(&set, &[])?;
+    Ok((host_context, threshold.tokens))
 }
 
-/// The threshold this generation's creation sent first, else the one to send
-/// now, kept for its retries: a changed config or Aether never alters a request.
-async fn frozen_threshold(
-    ctx: &DaemonContext,
-    client: &AetherClient,
-) -> Result<Option<u32>, ArchonError> {
-    let mut store = ctx.store.lock().await;
-    if let Some(raw) = store.kv_get(COMPACTION_TOKENS_KEY)? {
-        let frozen: Option<u32> = serde_json::from_str(&raw).map_err(|error| {
-            ArchonError::Corrupt(format!("kv {COMPACTION_TOKENS_KEY} = {raw:?}: {error}"))
-        })?;
-        if frozen == Some(0) {
-            return Err(ArchonError::Corrupt(format!(
-                "kv {COMPACTION_TOKENS_KEY}: 0 is never sent"
-            )));
-        }
-        return Ok(frozen);
+/// The threshold frozen for creation `key`; `None` when none was, or the one
+/// stored belongs to another creation and is replaced.
+fn frozen_threshold(
+    store: &archon_queue::Store,
+    key: &str,
+) -> Result<Option<FrozenThreshold>, ArchonError> {
+    let Some(raw) = store.kv_get(COMPACTION_TOKENS_KEY)? else {
+        return Ok(None);
+    };
+    let frozen: FrozenThreshold = serde_json::from_str(&raw).map_err(|error| {
+        ArchonError::Corrupt(format!("kv {COMPACTION_TOKENS_KEY} = {raw:?}: {error}"))
+    })?;
+    if frozen.tokens == Some(0) {
+        return Err(ArchonError::Corrupt(format!(
+            "kv {COMPACTION_TOKENS_KEY}: 0 is never sent"
+        )));
     }
-    let served = client.serves_compaction_tokens();
-    let tokens = compaction_threshold(&ctx.config.orchestrator, served);
-    store.kv_set(COMPACTION_TOKENS_KEY, &serde_json::to_string(&tokens)?)?;
-    Ok(tokens)
+    Ok(Some(frozen).filter(|frozen| frozen.key == key))
 }
 
 /// The orchestrator's compaction threshold to send: the configured one, and

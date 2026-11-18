@@ -117,6 +117,7 @@ pub(super) fn freshness(
         tools_outdated: tools_fingerprint() != origin.tools,
         new_lessons: u32::try_from(new_lessons).expect("at most ORCHESTRATOR_LESSONS"),
         settings_drift,
+        refresh_delayed: None,
     }))
 }
 

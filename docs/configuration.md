@@ -379,7 +379,10 @@ orchestrator restart`: it waits until the orchestrator has waited for mail,
 unpaused, for two minutes with no news due. A failed refresh is retried
 every ten minutes while the orchestrator stays idle, and the feed says so
 after three failures; a refresh stopped halfway is finished with a fresh
-generation, never a checkpoint restart of the outdated one. `refresh_on_upgrade = false` turns it off. Like a manual
+generation, never a checkpoint restart of the outdated one. Until it
+happens, `archon status` shows `upgrade refresh (prompt) delayed:` and the
+reason (the idle moment it waits for, or the latest failure) where it used to
+show `prompt outdated`. `refresh_on_upgrade = false` turns it off. Like a manual
 restart, it can still meet a wake Aether starts in the same instant.
 
 The helper agents the orchestrator delegates to

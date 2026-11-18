@@ -71,9 +71,8 @@ pub(super) async fn sweep(
 }
 
 /// The live reviewers beneath `lead` on a provider of `spent` that Aether
-/// holds for a named cause with nothing of theirs running. Each is judged by
-/// its own pulse, so a hold elsewhere in the lead's tree stops no working
-/// reviewer. Every Aether field it reads is optional: none reported, none stop.
+/// itself blocks on a spent quota. Each is judged by its own block, so no
+/// other hold stops one. An Aether that names no block class stops none.
 async fn waiting_reviewers(
     ctx: &DaemonContext,
     lead: &AetherAgentId,
@@ -90,7 +89,7 @@ async fn waiting_reviewers(
             continue;
         };
         let pulse = ctx.backend.pulse(&reviewer.agent).await?;
-        if !pulse.is_some_and(|pulse| pulse.held_for_cause && !pulse.running) {
+        if !pulse.is_some_and(|pulse| pulse.quota_blocked) {
             continue;
         }
         assert_ne!(reviewer.agent, *lead, "a lead is not its own reviewer");

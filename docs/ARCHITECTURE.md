@@ -1475,9 +1475,10 @@ in a new worktree off the base branch (§13).
   archond moves it to 30 min from now, in Aether (the lead and every live
   agent beneath it whose deadline is lower, one by one when Aether cannot
   update a subtree) and in the stored request, and
-  never times it out while held. A reviewer held on a provider whose
-  quota the last reading shows spent (no usage left, reserves aside) is
-  cancelled after 3 minutes, and its lead is told to delegate the review on
+  never times it out while held. A reviewer Aether itself blocks as
+  `exhausted` (quota or usage limit) on a provider whose quota the last
+  reading shows spent (no usage left, reserves aside) is cancelled after
+  3 minutes, and its lead is told to delegate the review on
   another allowed provider or fail its task. A child created beneath a
   running stage's lead with a deadline below the stored one is raised to it.
   A later deadline a steer stored is kept,

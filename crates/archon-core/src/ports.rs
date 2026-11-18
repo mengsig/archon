@@ -255,6 +255,9 @@ pub struct TreePulse {
     pub inspection: bool,
     /// Aether holds an agent of the tree `running`, so it owes events.
     pub running: bool,
+    /// The agent asked about, not its tree, is `blocked` on a spent quota or
+    /// usage limit; `false` from an Aether that names no exhaustion class.
+    pub quota_blocked: bool,
 }
 
 /// A tool call an agent's current turn started and has no outcome for.

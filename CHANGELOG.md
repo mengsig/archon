@@ -11,7 +11,8 @@
   Reviewers are still checked against the agents the lead delegated itself,
   so a repair cannot name one that never reviewed. A second broken record
   fails the run as before. A refused verdict or too few reviewers gets no
-  repair turn.
+  repair turn. A gated stage that holds the record and hands in no
+  `structured` gets the repair turn before its gate reads the missing verdict.
 - The stage contract states that Aether refuses a delegation with more than
   16 `references`.
 
@@ -20,7 +21,7 @@
 - A child delegated after a stage's deadline was extended gets the extended
   deadline. Before, a child created from the lead's row before the move landed
   kept the old deadline and stopped early.
-- A reviewer that Aether holds on a provider with a spent quota is cancelled
+- A reviewer that Aether blocks on a provider with a spent quota is cancelled
   after 3 minutes, and its lead is told to delegate the review on another
   allowed provider or to fail the task so the orchestrator re-plans. Before,
   it waited until the stage deadline, and a held stage's deadline kept moving.

@@ -4336,6 +4336,7 @@ fn lead_looks_stalled(h: &Harness, lead: &StageRun) {
         held_for_cause: false,
         inspection: false,
         running: true,
+        quota_blocked: false,
     };
     h.backend.set_pulse(&agent, dead);
 }

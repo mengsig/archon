@@ -152,6 +152,27 @@ fn link_lines(out: &mut String, status: &DaemonStatus, verbose: bool) {
     if let Some(stale) = stale.filter(|s| !s.is_empty()) {
         let _ = writeln!(out, "health: STALE {}", sanitize_line(&stale.join("; ")));
     }
+    if status.unattributed_plan_fields > 0 {
+        let _ = writeln!(
+            out,
+            "plan origins: {} field(s) no writer accounted for, treated as pins",
+            status.unattributed_plan_fields
+        );
+    }
+    if status.legacy_plan_fields > 0 {
+        let _ = writeln!(
+            out,
+            "plan origins: {} field(s) stored before origins were recorded, treated as pins",
+            status.legacy_plan_fields
+        );
+    }
+    if status.unreadable_plan_items > 0 {
+        let _ = writeln!(
+            out,
+            "plan origins: {} unfinished item(s) that cannot be read are not counted",
+            status.unreadable_plan_items
+        );
+    }
     if status.held_news > 0 {
         let line = held_news_line(status.held_news, status.held_news_due);
         let _ = writeln!(out, "news: {line}");
@@ -998,6 +1019,9 @@ pub(crate) mod tests {
             waiting_total: 0,
             waiting_next_offset: None,
             health: None,
+            unattributed_plan_fields: 0,
+            legacy_plan_fields: 0,
+            unreadable_plan_items: 0,
             quota: None,
             recovery: None,
             integration: Vec::new(),

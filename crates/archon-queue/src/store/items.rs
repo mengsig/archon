@@ -32,7 +32,7 @@ impl Asked {
     pub fn everything(item: &QueueItem) -> Self {
         Self {
             autonomy: AutonomyPatch::from(item.autonomy),
-            model_plan: item.model_plan.clone().into(),
+            model_plan: item.model_plan.plan().clone().into(),
         }
     }
 }
@@ -153,8 +153,79 @@ fn replace_deps(conn: &Connection, item: &QueueItem) -> Result<(), ArchonError> 
     Ok(())
 }
 
+/// `item` as it is stored: plan origins that do not describe its plan, such
+/// as those a clone kept from the item it was cloned from, become unattributed.
+fn attributed(item: &QueueItem) -> std::borrow::Cow<'_, QueueItem> {
+    let Some(plan) = item.model_plan.reconciled(&item.id) else {
+        return std::borrow::Cow::Borrowed(item);
+    };
+    let fault = item.model_plan.fault(&item.id);
+    tracing::error!(item = %item.id, ?fault, "plan origins no writer accounted for are stored as unattributed");
+    debug_assert!(fault.is_none(), "item {}: {fault:?}", item.id);
+    assert!(plan.fault(&item.id).is_none(), "reconciled origins fit");
+    std::borrow::Cow::Owned(QueueItem {
+        model_plan: plan,
+        ..item.clone()
+    })
+}
+
+/// What [`Store::plan_field_count`](super::Store::plan_field_count) found in the unfinished items.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct PlanFieldCount {
+    /// Fields no writer accounted for.
+    pub unattributed: usize,
+    /// Fields stored before origins were recorded.
+    pub legacy: usize,
+    /// Rows that do not decode as an item, so their fields are in neither count.
+    pub unreadable: usize,
+}
+
+/// A row of an unfinished item as the item it holds; why not, when its data
+/// does not decode or holds an item in another state than its column says.
+fn unfinished_item(row: &rusqlite::Row<'_>) -> Result<QueueItem, String> {
+    let state = row
+        .get_ref(1)
+        .map(|state| state.as_str().map(str::to_owned));
+    let data = row.get_ref(2).map(|data| data.as_str().map(str::to_owned));
+    let (Ok(Ok(state)), Ok(Ok(data))) = (&state, &data) else {
+        return Err(format!("state {state:?}, data {data:?}"));
+    };
+    let item: QueueItem = serde_json::from_str(data).map_err(|e| e.to_string())?;
+    if item.state.kind() != state {
+        let held = item.state.kind();
+        return Err(format!("the row is {state} and its item is {held}"));
+    }
+    Ok(item)
+}
+
+/// The plan fields of every unfinished item that read as unattributed or as
+/// legacy, by the rules an item read uses. A row that does not decode is
+/// counted, never fatal.
+pub(super) fn plan_field_count(conn: &Connection) -> Result<PlanFieldCount, ArchonError> {
+    let unfinished =
+        "SELECT id, state, data FROM items WHERE state NOT IN ('succeeded', 'failed', 'cancelled')";
+    let mut stmt = conn.prepare(unfinished).ctx("prepare plan field count")?;
+    let mut rows = stmt.query([]).ctx("count plan fields")?;
+    let mut count = PlanFieldCount::default();
+    while let Some(row) = rows.next().ctx("read item for plan field count")? {
+        match unfinished_item(row) {
+            Ok(item) => {
+                count.unattributed += item.model_plan.unattributed_fields(&item.id);
+                count.legacy += item.model_plan.legacy_fields(&item.id);
+            }
+            Err(error) => {
+                let id = row.get_ref(0).map(|id| id.as_str().map(str::to_owned));
+                tracing::error!(item = ?id, %error, "an item row does not decode; its plan fields are not counted");
+                count.unreadable += 1;
+            }
+        }
+    }
+    Ok(count)
+}
+
 /// Rewrites every derived column from `item`, so columns and `data` agree.
 pub(super) fn write_columns(conn: &Connection, item: &QueueItem) -> Result<(), ArchonError> {
+    let item = &*attributed(item);
     let changed = conn
         .execute(
             "UPDATE items SET repo = ?2, pipeline = ?3, priority = ?4, state = ?5, tags = ?6,
@@ -243,7 +314,10 @@ fn check_replay(
             fields.remove("asked_plan").is_some(),
             "request_value has asked_plan"
         );
-        fields.insert("model_plan".into(), serde_json::json!(item.model_plan));
+        fields.insert(
+            "model_plan".into(),
+            serde_json::json!(item.model_plan.plan()),
+        );
     }
     let legacy = !stored_fields.contains_key("autonomy");
     if legacy {
@@ -313,6 +387,7 @@ fn insert_requested_in(
 ) -> Result<QueueItem, ArchonError> {
     validate_new(item, key)?;
     assert_eq!(item.state, QueueState::Queued);
+    let item = &*attributed(item);
     assert!(
         !tx.is_autocommit(),
         "item insertion belongs to a transaction"

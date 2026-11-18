@@ -10,7 +10,6 @@ use archon_aether::wire::{ApprovalPolicy, NetworkPolicy, TaskResult, TaskStatus}
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::id::{FeedItemId, NotificationId, PipelineRunId, QueueItemId, RepoId};
-use archon_core::model::ModelPlan;
 use archon_core::notify::{FeedEntry, FeedItem, Notification, NotificationKind};
 use archon_core::protocol::{ItemDetail, Request};
 use archon_core::queue::{Priority, QueueItem, QueueState};
@@ -263,7 +262,7 @@ fn item(state: QueueState, repo: Option<RepoId>, minute: i64) -> QueueItem {
         priority: Priority::Normal,
         dependencies: Vec::new(),
         tags: Vec::new(),
-        model_plan: ModelPlan::default(),
+        model_plan: Default::default(),
         model_reasons: None,
         budget_usd: None,
         risk: None,
@@ -307,6 +306,7 @@ fn succeeded(repo: &RepoId, branch: &str, minute: i64) -> ItemDetail {
     ItemDetail {
         acceptance: Default::default(),
         clarifications: Vec::new(),
+        plan_origins: Default::default(),
         default_efforts: Default::default(),
         worker_policies: Default::default(),
         stage_notes: Default::default(),
@@ -760,6 +760,7 @@ fn result_branches_follow_completion_order_per_repo() {
     let failed = ItemDetail {
         acceptance: Default::default(),
         clarifications: Vec::new(),
+        plan_origins: Default::default(),
         default_efforts: Default::default(),
         worker_policies: Default::default(),
         stage_notes: Default::default(),

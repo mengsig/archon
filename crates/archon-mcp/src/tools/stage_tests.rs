@@ -249,6 +249,7 @@ fn item_detail(stage: StageRun) -> ItemDetail {
     item.id = run.item.clone();
     ItemDetail {
         acceptance: Default::default(),
+        plan_origins: Default::default(),
         default_efforts: Default::default(),
         worker_policies: Default::default(),
         stage_notes: Default::default(),

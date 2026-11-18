@@ -87,7 +87,11 @@ fn rerouted(first: &QueueItem) -> QueueItem {
         model: "codex/gpt-6.1-sol".parse().unwrap(),
         ..choice()
     };
-    retry.model_plan.0.insert("implement".into(), vec![other]);
+    retry
+        .model_plan
+        .legacy_mut()
+        .0
+        .insert("implement".into(), vec![other]);
     assert_ne!(retry.model_plan, first.model_plan);
     retry
 }
@@ -105,7 +109,7 @@ fn a_retry_that_routing_fills_otherwise_returns_the_first_item() {
     assert_eq!(again.unwrap(), first);
     // Naming another plan is another request.
     let named = Asked {
-        model_plan: ModelPlanDraft::from(retry.model_plan.clone()),
+        model_plan: ModelPlanDraft::from(retry.model_plan.plan().clone()),
         ..Asked::default()
     };
     let err = store.insert_enqueued(&retry, Some("enq-1"), &named);
@@ -126,7 +130,7 @@ fn a_fingerprint_of_the_filled_plan_still_matches_a_retry_filled_alike() {
         .unwrap();
     // The fingerprint as stores wrote it before `asked_plan`.
     let conn = rusqlite::Connection::open(&path).unwrap();
-    let plan = serde_json::to_string(&first.model_plan).unwrap();
+    let plan = serde_json::to_string(first.model_plan.plan()).unwrap();
     let changed = conn.execute(
         "UPDATE items SET request = json_set(json_remove(request, '$.asked_plan'),
                                              '$.model_plan', json(?1))",

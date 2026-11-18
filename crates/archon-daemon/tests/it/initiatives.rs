@@ -8,6 +8,7 @@ use archon_core::initiative::{
 };
 use archon_core::model::Effort;
 use archon_core::model_tier::{CatalogModel, ModelCatalog, Tier};
+use archon_core::plan_origin::{Authority, PlanSource};
 use archon_core::protocol::{Reply, RepoAdd, RepoRef, Request};
 use archon_core::pull_request::{OntoPullRequest, OntoTarget, PullRequestRef};
 use archon_core::queue::QueueState;
@@ -35,6 +36,7 @@ fn member(repo: &str) -> InitiativeMember {
         title: None,
         pipeline: Some(PIPELINE.into()),
         model_plan: Some(plan().into()),
+        model_reasons: None,
         autonomy: Default::default(),
         after: Vec::new(),
     }
@@ -398,6 +400,7 @@ async fn a_store_failure_after_the_first_member_rolls_back_the_whole_initiative(
     let mut members = vec![first.clone(); 3];
     for member in &mut members {
         member.id = archon_core::id::QueueItemId::new();
+        member.model_plan = first.model_plan.copy_for(&first.id, &member.id, None);
         member.initiative = Some(initiative.id.clone());
     }
     members[1].repo = Some(archon_core::id::RepoId::new());
@@ -461,16 +464,46 @@ async fn tiered(plan: serde_json::Value) -> (Harness, EnqueueInitiative) {
     (h, req)
 }
 
-/// A member's tier resolves as an enqueue's does, on the provider it names.
-/// A member gives no model_reasons, so an effort above the default stands.
-#[tokio::test]
-async fn a_member_tier_resolves_to_a_model_on_its_provider() {
-    let (h, req) = tiered(json!({
+fn above_default() -> serde_json::Value {
+    json!({
         "implement": [{"tier": "strong", "provider": "codex", "effort": "high"}],
         "review": [{"tier": "fast", "provider": "codex"}, {"model": MODEL}],
-    }))
-    .await;
+    })
+}
+
+/// A member's effort above its stage's default needs a reason, as an enqueue's does.
+#[tokio::test]
+async fn a_member_effort_above_the_default_needs_a_reason() {
+    let (h, req) = tiered(above_default()).await;
+    let refused = h.cli(Request::EnqueueInitiative(req)).await;
+    let Err(ArchonError::Invalid(why)) = refused else {
+        panic!("{refused:?}")
+    };
+    assert!(
+        why.contains("model_reasons") && why.contains("implement"),
+        "{why}"
+    );
+    assert!(h.ctx.store.lock().await.initiatives().unwrap().is_empty());
+}
+
+/// A member's tier resolves as an enqueue's does, on the provider it names.
+#[tokio::test]
+async fn a_member_tier_resolves_to_a_model_on_its_provider() {
+    let (h, mut req) = tiered(above_default()).await;
+    let reasons = [("implement".to_owned(), "a wide rename".to_owned())].into();
+    req.members[0].model_reasons = Some(reasons);
     let detail = enqueue(&h, req).await;
+    let origins = crate::plan_origins::shown(&h, &detail.members[0]).await;
+    let implement = &origins["implement"][0];
+    assert_eq!(
+        (implement.model.source, implement.model.by),
+        (PlanSource::Tier, Authority::Daemon)
+    );
+    assert_eq!(
+        (implement.effort.source, implement.effort.by),
+        (PlanSource::Explicit, Authority::Operator)
+    );
+    assert_eq!(origins["review"][1].model.source, PlanSource::Explicit);
     let plan = &detail.members[0].model_plan;
     let implement = &plan.0["implement"][0];
     assert_eq!(implement.model.to_string(), "codex/sol");

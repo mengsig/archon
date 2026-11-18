@@ -2,19 +2,32 @@
 
 ## Unreleased
 
-### Upgrading
+### Added
 
-- Store migration V24 is one-way. It adds `outcomes.class_source` and
-  `outcomes.failure_class_163` and recomputes the failure class of every
-  stored failed run. Downgrading the binary is not supported once it has run:
-  an older archond refuses the store ("store schema version 24 is newer than
-  this archon supports"), and no older daemon can read it. Stop archond and
-  back up `archon.db` (with any `archon.db-wal`) before `archon update`; going
-  back means restoring that copy, and losing what was recorded since. See
-  [upgrading](docs/upgrading.md#store-migration-v24).
+- Every item records where each field of its model plan came from, beside
+  the plan as `model_origins`: for each stage entry, separately for the model
+  and the effort, the source (`explicit`, `learned`, `tier`, `fallback`,
+  and `sizer`, `escalation` and `migrated`, which nothing sets yet), who
+  chose it (operator, orchestrator or daemon) and when; a
+  tiered entry also records who asked for its tier.
+  Enqueue, initiative members, update, retry, steers, pipeline switches,
+  refreshes, restack fixes, dispatch tier resolution, provider reroutes and
+  the distillation errand all record it. A steer that names the value already
+  stored still records it as explicit. `get_item` shows each entry's origin.
+  `archon status` counts, over unfinished items, the fields no writer
+  accounted for (`unattributed`, which should be zero) and the fields stored
+  before origins were recorded (`legacy_unknown`).
+- The daemon moves a model or effort again only when it filled that field
+  itself. A field a caller named, a migrated one, a legacy one and an
+  unattributed one are pins for dispatch, reroutes, quota holds and recovery.
+  A pinned tier is still resolved to a model when dispatch starts a run, and
+  moves only within that tier afterwards.
 
 ### Changed
 
+- An initiative member's plan is checked as an enqueue's is: an effort above
+  its stage's default needs a reason, given in the member's new
+  `model_reasons`.
 - A failed run's failure class now comes from its stage records, not from
   words in its error. The class is `timeout` when the stage that ended the run
   timed out, `infrastructure` when Aether reported an infrastructure failure,
@@ -104,6 +117,32 @@
   pruned have no pull request and are left out of these two counts.
   `archon lessons stats` scores BLOCKED and ESCALATED runs the same way and
   shows the same columns.
+
+### Upgrading
+
+Items stored by 1.6.3 or earlier have no origins. Each of their fields reads
+as `legacy_unknown` and is treated as a pin; nothing is backfilled. Stored
+origins that cannot be read make every field of that item `unattributed`.
+Store migrations are one-way: back up `archon.db` before `archon update`.
+Downgrading the binary is not supported once a store migration of the release
+has run, because an older schema refuses a newer store. See
+[docs/upgrading.md](docs/upgrading.md#plan-origins).
+
+Store migration V24 is one-way. It adds `outcomes.class_source` and
+`outcomes.failure_class_163` and recomputes the failure class of every
+stored failed run. Downgrading the binary is not supported once it has run:
+an older archond refuses the store ("store schema version 24 is newer than
+this archon supports"), and no older daemon can read it. Stop archond and
+back up `archon.db` (with any `archon.db-wal`) before `archon update`; going
+back means restoring that copy, and losing what was recorded since. See
+[upgrading](docs/upgrading.md#store-migration-v24).
+
+### Fixed
+
+- Cost reports attribute recorded delegates to the stage they worked for and
+  use each delegate's model and effort. The CLI and MCP report lead and
+  delegated spend separately, and can group by effort. Archon now records
+  delegation links for the orchestrator's helpers too.
 
 ## 1.6.3
 

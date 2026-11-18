@@ -15,6 +15,51 @@ Aether's normal update, without pinning it to an older release. Keep a backup be
 adds persistent requirement and clarification records. Existing queue items
 without intent keep their previous behavior.
 
+### Plan origins
+
+Each item now keeps `model_origins` beside `model_plan`: where every model
+and effort of its plan came from, who chose it and when. `get_item` lists
+them as `origin <stage>: model …; effort …` lines (`; tier …` for a tiered
+entry).
+
+The daemon may change a field again only when it filled that field itself:
+its source is `learned`, `tier`, `fallback`, `sizer` or `escalation` and the
+daemon chose it. Every other field is a pin, and so are these two:
+
+- `legacy_unknown`: an item stored before origins were recorded. Nothing is
+  backfilled; every field of it reads this way.
+- `unattributed`: a field no writer accounted for. Stored origins that
+  cannot be read, that do not match the plan's stages and entries, or that
+  were written for another item make every field of that item read this
+  way. Nothing is repaired field by field, and the item stays readable.
+  It should never be counted: a non-zero count is a bug to report, not
+  something to fix by hand.
+
+A pinned tier is the one thing that still resolves. When dispatch starts a
+run, a choice whose tier is pinned is resolved to a model of that tier, and
+that model is recorded as `tier`, chosen by the daemon; a queued one waits
+for provider quota like any tier. From then on a reroute, a quota move and
+a restart move it only within that tier. A pinned model whose tier the
+daemon chose, and any pinned model of a run already under way when archond
+was upgraded, stays where it is. A restack fix of a legacy item stays
+`legacy_unknown`; a refresh of one is a new item with origins of its own.
+
+`archon status` counts the `unattributed` and the `legacy_unknown` fields of
+unfinished items, each on its own line when it is not zero. An unfinished
+item whose row cannot be read is counted on a third line instead of failing
+the count. The parts of `archon status` that read queued, blocked and
+running items themselves still fail on such a row, as they did before.
+
+A tiered entry also records who asked for its tier: the caller when the
+request named one, the daemon when the stage's default supplied it. A quota
+move changes the model's origin only; the tier keeps who asked for it. A
+request the orchestrator sends through the CLI is recorded as the
+orchestrator's, not the operator's.
+
+Downgrading the binary is not supported once a store migration of the
+release has run, because an older schema refuses a newer store. Restore the
+backup taken before the update instead.
+
 ### Store migration V24
 
 The first start of an archond with migration V24 upgrades the store in place,

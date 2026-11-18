@@ -178,6 +178,9 @@ pub struct InitiativeMember {
     pub pipeline: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_plan: Option<ModelPlanDraft>,
+    /// Why an effort of `model_plan` is above its stage's default, as in an enqueue.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_reasons: Option<crate::model::ModelReasons>,
     /// Knobs for this member's item, as in an enqueue. An atomic
     /// initiative's members merge by hand, together.
     #[serde(default, skip_serializing_if = "AutonomyPatch::is_empty")]
@@ -270,6 +273,7 @@ mod tests {
             title: None,
             pipeline: None,
             model_plan: None,
+            model_reasons: None,
             autonomy: AutonomyPatch::default(),
             after: after.to_vec(),
         }

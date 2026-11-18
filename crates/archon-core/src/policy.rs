@@ -163,6 +163,23 @@ mod tests {
     }
 
     #[test]
+    fn a_deferred_alias_must_pass_the_policy_after_canonicalization() {
+        use crate::model_tier::{CatalogModel, ModelCatalog};
+        let canonical = m("claude-code/claude-opus-5-5");
+        let mut requested = choice("claude-code/opus", Effort::Medium);
+        let policy = ModelPolicy::from_lists(&[], std::slice::from_ref(&canonical), None);
+        let mut catalog = ModelCatalog::new(vec![CatalogModel {
+            model: canonical.clone(),
+            tier: None,
+            is_default: false,
+        }]);
+        catalog.add_alias(requested.model.clone(), canonical);
+        assert!(policy.check_pending_model(&requested).is_ok());
+        requested.model = catalog.check(&requested.model).unwrap();
+        assert!(policy.check(&requested).is_err());
+    }
+
+    #[test]
     fn empty_allowlist_permits_anything_not_denied() {
         let policy = ModelPolicy::from_lists(&[], &[m("codex/x")], None);
         assert!(

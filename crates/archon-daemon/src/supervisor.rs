@@ -1065,6 +1065,9 @@ async fn create_generation(
             return Err(error);
         }
     };
+    if let Some(successor) = catalog.superseded_by(&config.orchestrator.model) {
+        tracing::warn!(model = %config.orchestrator.model, %successor, "configured orchestrator model is superseded");
+    }
     let config = &config;
     let choice = ModelChoice {
         model: config.orchestrator.model.clone(),

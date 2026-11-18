@@ -544,7 +544,7 @@ async fn record_walk(
     if raised {
         // Held before the snapshot is saved: a crash between repeats the news
         // rather than losing it.
-        triggers::hold(&mut store, watch_event(due, changes))?;
+        triggers::hold_watch(&mut store, watch_event(due, changes))?;
     }
     watch::put(&mut store, &due.id, &walked)?;
     drop(store);

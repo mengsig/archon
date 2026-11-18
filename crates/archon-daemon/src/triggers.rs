@@ -527,6 +527,27 @@ pub(crate) fn hold(store: &mut Store, event: TriggerEvent) -> Result<(), ArchonE
     hold_as(store, Held::new(event, archon_core::now(), false))
 }
 
+/// Save a repository watch's news under the caller's store lock, folded into
+/// that repository's watch news still held; the caller then calls [`wake`].
+pub(crate) fn hold_watch(store: &mut Store, event: TriggerEvent) -> Result<(), ArchonError> {
+    assert!(
+        matches!(event, TriggerEvent::GithubWatch { .. }),
+        "only watch news folds"
+    );
+    let mut outbox = read_outbox(store)?;
+    let before = outbox.pending.len();
+    let held = outbox
+        .pending
+        .iter_mut()
+        .find(|news| crate::github_sync::watch_fold::same_watch(&news.event, &event));
+    let Some(held) = held else {
+        return hold(store, event);
+    };
+    crate::github_sync::watch_fold::fold(&mut held.event, event);
+    assert_eq!(outbox.pending.len(), before, "folding adds no event");
+    write_outbox(store, &outbox)
+}
+
 /// Save an item's success under the caller's store lock, to wake the
 /// orchestrator at `until` unless news wakes it before; the caller then calls [`wake`].
 pub(crate) fn hold_deferred(

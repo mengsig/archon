@@ -91,6 +91,14 @@ async fn watch_events(h: &Harness) -> Vec<TriggerEvent> {
         .collect()
 }
 
+/// The orchestrator takes the news held so far.
+async fn taken(h: &Harness) {
+    let mut store = h.ctx.store.lock().await;
+    store.kv_delete("trigger_outbox").unwrap();
+    drop(store);
+    assert!(watch_events(h).await.is_empty(), "no news is held");
+}
+
 async fn watches(h: &Harness) -> usize {
     let store = h.ctx.store.lock().await;
     store.kv_prefix(KEY_PREFIX).unwrap().len()
@@ -550,8 +558,13 @@ async fn only_a_new_comment_or_review_makes_activity_news() {
     github.serve_count("reviews-1", 3);
     github.serve_list(serde_json::json!([pull_at(1, "a", T3)]), "W/\"l4\"");
     assert_eq!(pass(&h).await.watch.triggers, 1);
-    assert_eq!(told(&h).await, [(1, "new_review".to_owned(), vec![])]);
-    assert_eq!(watch_events(&h).await.len(), 2);
+    assert_eq!(told(&h).await, [(1, "new_comment".to_owned(), vec![])]);
+    assert_eq!(also(&h).await, [(1, vec!["new_review".to_owned()])]);
+    assert_eq!(
+        watch_events(&h).await.len(),
+        1,
+        "news joins the repository's watch news still held"
+    );
     github.assert_only_reads();
 }
 
@@ -1033,6 +1046,7 @@ async fn a_resumed_walk_gets_further_though_what_it_counted_moved_again() {
         "the comment the cut walk counted is told with the head, not stored untold"
     );
 
+    taken(&h).await;
     let before = github.calls().len();
     let mut back = pulls((1..=14).rev(), T2);
     back[13] = pull_at(1, "a", T3);

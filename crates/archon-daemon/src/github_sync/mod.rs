@@ -8,6 +8,7 @@ mod fetch;
 pub mod import;
 mod pr_state;
 pub mod watch;
+pub(crate) mod watch_fold;
 mod watch_pass;
 mod watch_read;
 

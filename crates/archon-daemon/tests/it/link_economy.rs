@@ -273,6 +273,79 @@ async fn a_refresh_waits_for_due_news_a_pause_and_an_actual_upgrade() {
 }
 
 #[tokio::test]
+async fn a_refresh_that_cancelled_but_could_not_create_is_finished_next_check() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    let agents = agent_table(&harness);
+    create(&harness, &agents, ORCH).await;
+    as_if_created_by_an_older_build(&harness).await;
+    set_state(&agents, ORCH, "waiting");
+    harness
+        .fake
+        .script("create_agent", Scripted::refuse("internal", "busy"));
+    let now = archon_core::now();
+    supervisor::economize(&harness.ctx, now)
+        .await
+        .expect_err("the successor was not created");
+    let current = supervisor::current_orchestrator(&harness.ctx)
+        .await
+        .unwrap();
+    assert!(
+        current.is_none(),
+        "the old generation was cancelled: {current:?}"
+    );
+
+    script_successor(&harness, &agents);
+    let next = supervisor::economize(&harness.ctx, now + TimeDelta::minutes(1));
+    assert_eq!(next.await.unwrap(), Economy::Refreshed);
+    let current = supervisor::current_orchestrator(&harness.ctx)
+        .await
+        .unwrap();
+    assert_eq!(
+        current.unwrap().as_str(),
+        ORCH_2,
+        "finished at the next check"
+    );
+}
+
+/// The recheck under the switch guard saw a turn start: neither rule acts
+/// on the stale first answer.
+#[tokio::test]
+async fn a_turn_seen_by_the_refresh_recheck_also_stops_the_compaction() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    let agents = agent_table(&harness);
+    create(&harness, &agents, ORCH).await;
+    as_if_created_by_an_older_build(&harness).await;
+    harness.fake.set_default("compact", Scripted::ok());
+    let ended = archon_core::now() - TimeDelta::minutes(50);
+    set_state(&agents, ORCH, "waiting");
+    set_stats(&agents, ORCH, 150_000, ended);
+    let table = agents.clone();
+    let asked = Arc::new(Mutex::new(0));
+    harness.fake.set_responder(
+        "get_agent",
+        Arc::new(move |_| {
+            let mut asked = asked.lock().unwrap();
+            *asked += 1;
+            let mut agent = table.lock().unwrap()[ORCH].clone();
+            if *asked > 1 {
+                agent["status"] = json!({ "state": "running" });
+            }
+            Scripted::reply("agent", agent)
+        }),
+    );
+    let now = archon_core::now();
+    let economy = supervisor::economize(&harness.ctx, now).await.unwrap();
+    assert_eq!(economy, Economy::Nothing);
+    assert!(
+        harness.fake.received_named("compact").is_empty(),
+        "no fold mid-turn"
+    );
+    assert!(harness.fake.received_named("cancel").is_empty());
+}
+
+#[tokio::test]
 async fn an_idle_large_orchestrator_is_compacted_once_before_its_cache_expires() {
     let harness = Harness::new().await;
     harness.connect().await;

@@ -336,6 +336,9 @@ pub struct OrchestratorConfig {
 
 /// The smallest `compaction_tokens` Aether accepts.
 pub const MIN_COMPACTION_TOKENS: u32 = 100_000;
+/// The largest `compaction_tokens`: within every orchestrator model's
+/// window, so Aether applies it as sent and the idle rule can halve it.
+pub const MAX_COMPACTION_TOKENS: u32 = 200_000;
 /// `compaction_tokens` by default, and the threshold the idle rule halves
 /// when `compaction_tokens` is 0.
 pub const DEFAULT_COMPACTION_TOKENS: u32 = 160_000;
@@ -348,9 +351,10 @@ const IDLE_COMPACT_MAX_MINUTES: u32 = 55;
 impl OrchestratorConfig {
     fn validate(&self) -> Result<(), ArchonError> {
         let tokens = self.compaction_tokens;
-        if tokens != 0 && tokens < MIN_COMPACTION_TOKENS {
+        if tokens != 0 && !(MIN_COMPACTION_TOKENS..=MAX_COMPACTION_TOKENS).contains(&tokens) {
             return Err(ArchonError::Config(format!(
-                "orchestrator.compaction_tokens {tokens} must be 0 or at least {MIN_COMPACTION_TOKENS}"
+                "orchestrator.compaction_tokens {tokens} must be 0 or from \
+                 {MIN_COMPACTION_TOKENS} to {MAX_COMPACTION_TOKENS}"
             )));
         }
         if self.idle_compact_after_minutes > IDLE_COMPACT_MAX_MINUTES {
@@ -1456,9 +1460,17 @@ mod tests {
         off.validate().unwrap();
         assert_eq!(off.orchestrator.idle_compact_floor(), 80_000);
         assert!(!off.orchestrator.quiet_info);
-        let small: Config = toml::from_str("[orchestrator]\ncompaction_tokens = 50000").unwrap();
-        let error = small.validate().unwrap_err().to_string();
-        assert!(error.contains("orchestrator.compaction_tokens"), "{error}");
+        for refused in [50_000, 200_001] {
+            let raw = format!("[orchestrator]\ncompaction_tokens = {refused}");
+            let error = toml::from_str::<Config>(&raw)
+                .unwrap()
+                .validate()
+                .unwrap_err();
+            assert!(
+                error.to_string().contains("orchestrator.compaction_tokens"),
+                "{error}"
+            );
+        }
         let late: Config =
             toml::from_str("[orchestrator]\nidle_compact_after_minutes = 56").unwrap();
         let error = late.validate().unwrap_err().to_string();

@@ -5,10 +5,12 @@
 ### Changed
 
 - **The orchestrator costs less to keep.** A stage's `info` message no
-  longer wakes it: it rides with the next wake and goes out by itself after
-  30 minutes at the latest, while relay, escalation and question still wake
-  it at once (`[orchestrator] quiet_info`, default true). The orchestrator
-  compacts at `[orchestrator] compaction_tokens` (default 160,000) when the
+  longer wakes it: it rides with the next wake, or wakes it by itself after
+  30 minutes plus the coalescing window (`trigger_coalesce_ms`), while relay,
+  escalation and question still wake it as before (`[orchestrator]
+  quiet_info`, default true). A backlog too large for one trigger goes out
+  in several, in order. The orchestrator compacts at `[orchestrator]
+  compaction_tokens` (default 160,000, at most 200,000) when the
   connected Aether announces the `compaction_tokens` feature (Aether 1.4.2);
   Aether 1.4.1 keeps the model's threshold and is sent nothing new. The
   threshold applies to generations created from then on. Idle for

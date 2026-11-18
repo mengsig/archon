@@ -271,6 +271,40 @@ async fn a_refused_payload_is_dropped_with_a_note_and_later_news_still_flows() {
     assert!(harness.system_notes().await[0].contains("payload too large"));
 }
 
+/// Aether refuses a trigger past 2 MiB: a long backlog goes out in several,
+/// in order, each within its share.
+#[tokio::test]
+async fn a_backlog_past_a_triggers_size_goes_out_in_several() {
+    let harness = harness().await;
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    live_orchestrator(&harness);
+    harness.fake.set_default("trigger", Scripted::ok());
+    let reasons_sent: Vec<String> = (0..5)
+        .map(|n| format!("{n}{}", "x".repeat(300 * 1024)))
+        .collect();
+    let hold = supervisor::hold_switch(&harness.ctx).await;
+    let delivery = tokio::spawn(triggers::deliver_loop(harness.ctx.clone()));
+    for reason in &reasons_sent {
+        triggers::push(&harness.ctx, blocked(reason)).await.unwrap();
+    }
+    drop(hold);
+    harness.fake.wait_for("trigger", 2, WAIT).await;
+    harness
+        .eventually("every reason is delivered", || async {
+            triggers::held(&harness.ctx).await.unwrap().is_empty()
+        })
+        .await;
+    delivery.abort();
+    let sent = harness.fake.received_named("trigger");
+    assert!(sent.len() >= 2, "one trigger cannot carry it all");
+    let mut delivered = Vec::new();
+    for trigger in &sent {
+        assert!(trigger["payload"].to_string().len() < 2 * 1024 * 1024);
+        delivered.extend(reasons(trigger).into_iter().map(str::to_owned));
+    }
+    assert_eq!(delivered, reasons_sent, "all of it, in order");
+}
+
 #[tokio::test]
 async fn delivery_creates_the_orchestrator_when_none_exists() {
     let harness = harness().await;

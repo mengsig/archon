@@ -628,8 +628,9 @@ every outcome to the feed itself and wakes the orchestrator for:
   cancelled helper.
 
 A stage's `info` message waits for the next wake, and wakes the
-orchestrator by itself only after 30 minutes (`quiet_info = false` under
-`[orchestrator]` makes it wake at once).
+orchestrator by itself only after 30 minutes and the usual coalescing
+window (`quiet_info = false` under `[orchestrator]` makes it wake as other
+messages do).
 
 A cancelled item waits. So does a routine success when you turn success
 wakes off, which saves a turn per item; the outcome is still posted to the

@@ -6,10 +6,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use archon_aether::AetherClient;
+use archon_aether::backend::{LIVE_STATES, agent_state};
 use archon_aether::wire::Agent;
 use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
-use archon_core::config::OrchestratorConfig;
+use archon_core::config::{MAX_COMPACTION_TOKENS, OrchestratorConfig};
 use archon_core::error::ArchonError;
 use archon_core::protocol::OrchestratorFreshness;
 use chrono::TimeDelta;
@@ -46,6 +47,16 @@ pub enum Economy {
     Compacted,
 }
 
+/// What a refresh attempt found under the switch guard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Refresh {
+    /// None is owed.
+    NotDue,
+    /// One is owed, but the orchestrator stopped being idle.
+    Busy,
+    Done,
+}
+
 /// The latest refresh attempt: its generation, how many tries it had, and
 /// when the last one began.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,17 +91,27 @@ pub async fn watch_economy(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
 /// generation, else compact an idle, large context.
 pub async fn economize(ctx: &DaemonContext, now: Timestamp) -> Result<Economy, ArchonError> {
     let _serial = ctx.supervisor.serial.lock().await;
-    let Some(id) = super::current_orchestrator(ctx).await? else {
+    let generation = super::generation(ctx).await?;
+    let tried = read_kv::<RefreshTried>(ctx, REFRESH_TRIED_KEY).await?;
+    let client = ctx.aether.client()?;
+    let agent = match super::current_orchestrator(ctx).await? {
+        Some(id) => Some(client.get_agent(&id).await?),
+        None => None,
+    };
+    if refresh_left_behind(tried.as_ref(), generation, agent.as_ref()) {
+        let id = super::ensure_locked(ctx).await?;
+        tracing::info!(%id, "started the orchestrator a failed refresh left out");
+        return Ok(Economy::Refreshed);
+    }
+    let Some(agent) = agent.filter(|agent| is_idle(agent, now)) else {
         return Ok(Economy::Nothing);
     };
-    let client = ctx.aether.client()?;
-    let agent = client.get_agent(&id).await?;
-    assert_eq!(agent.id, id, "Aether answers for the agent asked");
-    if !is_idle(&agent, now) {
-        return Ok(Economy::Nothing);
-    }
-    if ctx.config.orchestrator.refresh_on_upgrade && refresh_if_upgraded(ctx, &client, now).await? {
-        return Ok(Economy::Refreshed);
+    if ctx.config.orchestrator.refresh_on_upgrade {
+        match refresh_if_upgraded(ctx, &client, now, generation, tried).await? {
+            Refresh::Done => return Ok(Economy::Refreshed),
+            Refresh::Busy => return Ok(Economy::Nothing),
+            Refresh::NotDue => {}
+        }
     }
     match compact_if_idle(ctx, &client, &agent, now).await? {
         true => Ok(Economy::Compacted),
@@ -108,6 +129,29 @@ pub fn is_idle(agent: &Agent, now: Timestamp) -> bool {
         .last_event_at
         .is_some_and(|at| now - at >= QUIET_BEFORE_ACTING);
     waits_for_mail && !agent.paused && quiet
+}
+
+/// Whether a refresh of this generation, or of the one before, stopped
+/// after the old orchestrator was cancelled and left none live (`agent`).
+pub fn refresh_left_behind(
+    tried: Option<&RefreshTried>,
+    generation: u64,
+    agent: Option<&Agent>,
+) -> bool {
+    let Some(tried) = tried else {
+        return false;
+    };
+    assert!(tried.generation > 0, "generations start at 1");
+    assert!(
+        tried.generation <= generation,
+        "a refresh tried a generation that was"
+    );
+    let gone = agent.is_none_or(|agent| !LIVE_STATES.contains(&agent_state(agent).as_str()));
+    let ours = match agent {
+        None => tried.generation + 1 == generation,
+        Some(_) => tried.generation == generation,
+    };
+    ours && gone
 }
 
 /// Whether generation `generation`, as `freshness` describes it, is owed a
@@ -141,17 +185,17 @@ async fn refresh_if_upgraded(
     ctx: &DaemonContext,
     client: &AetherClient,
     now: Timestamp,
-) -> Result<bool, ArchonError> {
-    let generation = super::generation(ctx).await?;
+    generation: u64,
+    tried: Option<RefreshTried>,
+) -> Result<Refresh, ArchonError> {
     let freshness = super::freshness(ctx, generation).await?;
-    let tried = read_kv::<RefreshTried>(ctx, REFRESH_TRIED_KEY).await?;
     let running = env!("CARGO_PKG_VERSION");
     if !refresh_due(freshness.as_ref(), generation, tried.as_ref(), now, running) {
-        return Ok(false);
+        return Ok(Refresh::NotDue);
     }
     let _switch = super::switching(ctx).await;
     if !still_idle(ctx, client, now).await? {
-        return Ok(false);
+        return Ok(Refresh::Busy);
     }
     let tries = tried
         .filter(|tried| tried.generation == generation)
@@ -166,7 +210,7 @@ async fn refresh_if_upgraded(
     let why = "is a fresh generation, as an upgrade changed its prompt or tools";
     let id = super::replace_orchestrator(ctx, client, reason, why).await?;
     tracing::info!(%id, old_generation = generation, tries, "orchestrator refreshed after an upgrade");
-    Ok(true)
+    Ok(Refresh::Done)
 }
 
 /// Read again under the switch guard, where no Archon trigger can be on its
@@ -209,9 +253,11 @@ pub fn idle_compaction_due(
 }
 
 /// The context size above which the idle `agent` is compacted: half the
-/// threshold Aether applied to it, else half the configured one.
+/// threshold Aether applied to it, else half the configured one. A threshold
+/// past every model's window is capped as Aether caps it.
 fn compaction_floor(config: &OrchestratorConfig, agent: &Agent) -> u64 {
     let applied = agent.config.compaction_tokens.filter(|tokens| *tokens > 0);
+    let applied = applied.map(|tokens| tokens.min(MAX_COMPACTION_TOKENS));
     let floor = applied.map_or_else(|| config.idle_compact_floor(), |t| u64::from(t / 2));
     assert!(floor > 0, "a threshold is positive");
     floor
@@ -366,12 +412,48 @@ mod tests {
             80_000,
             "no override reported"
         );
-        agent.config.compaction_tokens = Some(300_000);
+        agent.config.compaction_tokens = Some(180_000);
         assert_eq!(
             compaction_floor(&config, &agent),
-            150_000,
+            90_000,
             "the running agent's own"
         );
+        agent.config.compaction_tokens = Some(2_000_000);
+        assert_eq!(
+            compaction_floor(&config, &agent),
+            100_000,
+            "capped as Aether caps it"
+        );
+    }
+
+    #[test]
+    fn only_a_refresh_that_left_no_live_orchestrator_is_finished() {
+        let tried = RefreshTried {
+            generation: 3,
+            tries: 1,
+            at: at(0),
+        };
+        let mut cancelled = orchestrator(None, None);
+        cancelled.status =
+            serde_json::from_value(serde_json::json!({ "state": "cancelled" })).unwrap();
+        let live = orchestrator(None, None);
+        assert!(
+            refresh_left_behind(Some(&tried), 4, None),
+            "cancelled, none created"
+        );
+        assert!(
+            refresh_left_behind(Some(&tried), 3, Some(&cancelled)),
+            "cancelled, not advanced"
+        );
+        assert!(
+            !refresh_left_behind(Some(&tried), 3, Some(&live)),
+            "the old one still runs"
+        );
+        assert!(
+            !refresh_left_behind(Some(&tried), 5, None),
+            "a later generation's gap"
+        );
+        assert!(!refresh_left_behind(None, 4, None), "no refresh was tried");
     }
 
     #[test]

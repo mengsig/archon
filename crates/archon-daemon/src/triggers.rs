@@ -47,10 +47,9 @@ const TRIGGER_SEQ_KEY: &str = "trigger_seq";
 /// `kv`: the [`Outbox`], so an `archond` restart neither loses held news
 /// nor re-keys a batch Aether may already have.
 const OUTBOX_KEY: &str = "trigger_outbox";
-/// Most text bytes of `info` messages held for a later wake; one past it
-/// wakes the orchestrator, so a held batch stays far below Aether's 2 MiB
-/// trigger limit.
-const QUIET_INFO_MAX_BYTES: usize = 256 * 1024;
+/// Most encoded bytes of the events one trigger carries; the rest wait for
+/// the next. Aether refuses a payload past 2 MiB, directives included.
+const BATCH_MAX_BYTES: usize = 1024 * 1024;
 /// Most bytes of `lavish-axi poll` output a `lavish_feedback` event carries
 /// once its DOM snapshot is dropped. The prompts table precedes `next_step`,
 /// so a cut takes lavish-axi's instructions before any prompt row.
@@ -596,8 +595,7 @@ pub(crate) fn record_message(
         at,
     });
     let mut outbox = read_outbox(store)?;
-    let room = held_info_bytes(&outbox.pending) + message.text.len() <= QUIET_INFO_MAX_BYTES;
-    let held = message_news(message, at, quiet_info && room);
+    let held = message_news(message, at, quiet_info);
     outbox.pending.push(held);
     if outbox.pending.len() > MAX_PENDING {
         compact_pending(store, &mut outbox)?;
@@ -606,25 +604,6 @@ pub(crate) fn record_message(
     let mut updates = updates.to_vec();
     updates.push((OUTBOX_KEY, &raw));
     store.append_feed_with_kv(entry, at, &updates)
-}
-
-/// The text bytes of the `info` messages held for a later wake.
-fn held_info_bytes(pending: &[Held]) -> usize {
-    use archon_core::agent_message::MessageKind;
-    let held_info = |news: &&Held| match &news.event {
-        TriggerEvent::AgentMessage { message } => {
-            message.kind == MessageKind::Info && news.defer_until.is_some()
-        }
-        _ => false,
-    };
-    let bytes = pending
-        .iter()
-        .filter(held_info)
-        .map(|news| match &news.event {
-            TriggerEvent::AgentMessage { message } => message.text.len(),
-            _ => unreachable!("filtered to messages"),
-        });
-    bytes.sum()
 }
 
 /// `message` as held news: an `info` under `quiet_info` wakes the
@@ -801,9 +780,13 @@ async fn key_pending(ctx: &DaemonContext) -> Result<(), ArchonError> {
     if !outbox.is_due(archon_core::now()) {
         return Ok(());
     }
-    let held = std::mem::take(&mut outbox.pending);
+    let mut held = std::mem::take(&mut outbox.pending);
+    let rest = split_past_bytes(&mut held, BATCH_MAX_BYTES)?;
     let collapse = std::mem::take(&mut outbox.collapse);
-    outbox.flush = false;
+    // What did not fit goes out next, to the generation this batch reaches.
+    outbox.flush = !rest.is_empty();
+    outbox.collapse = collapse && !rest.is_empty();
+    outbox.pending = rest;
     let events = batch_events(&mut store, held, collapse)?;
     if events.is_empty() {
         // Every outcome held was superseded since: nothing is left to tell.
@@ -820,6 +803,21 @@ async fn key_pending(ctx: &DaemonContext) -> Result<(), ArchonError> {
         directives,
     });
     write_outbox(&mut store, &outbox)
+}
+
+/// Split off the news past the first `budget` encoded bytes of `held`,
+/// keeping at least one event: one too large alone is refused and noted.
+fn split_past_bytes(held: &mut Vec<Held>, budget: usize) -> Result<Vec<Held>, ArchonError> {
+    assert!(!held.is_empty(), "only held news is split");
+    assert!(budget > 0, "a batch has room");
+    let mut bytes = 0;
+    for (at, news) in held.iter().enumerate() {
+        bytes += serde_json::to_string(&news.event)?.len();
+        if at > 0 && bytes > budget {
+            return Ok(held.split_off(at));
+        }
+    }
+    Ok(Vec::new())
 }
 
 /// `held` as a batch: its quiet item outcomes as one short list behind the
@@ -901,12 +899,21 @@ async fn restate(ctx: &DaemonContext, reason: &str, quiet: bool) -> Result<(), A
         if !directives::forget_told(&mut store, archon_core::now())? {
             return Ok(());
         }
-        let restated = |news: &Held| matches!(news.event, TriggerEvent::DirectivesRestated { .. });
+        let restated =
+            |news: &&mut Held| matches!(news.event, TriggerEvent::DirectivesRestated { .. });
+        let mut outbox = read_outbox(&store)?;
         // One already waits: the trigger it leaves in states them all.
-        if !read_outbox(&store)?.pending.iter().any(restated) {
-            let reason = reason.to_owned();
-            let event = TriggerEvent::DirectivesRestated { reason };
-            hold_as(&mut store, Held::new(event, archon_core::now(), quiet))?;
+        match outbox.pending.iter_mut().find(restated) {
+            None => {
+                let reason = reason.to_owned();
+                let event = TriggerEvent::DirectivesRestated { reason };
+                hold_as(&mut store, Held::new(event, archon_core::now(), quiet))?;
+            }
+            Some(held) if held.quiet && !quiet => {
+                *held = Held::new(held.event.clone(), archon_core::now(), false);
+                write_outbox(&mut store, &outbox)?;
+            }
+            Some(_) => {}
         }
     }
     ctx.triggers.news.notify_one();
@@ -1227,26 +1234,36 @@ mod tests {
     }
 
     #[test]
-    fn held_info_past_its_byte_budget_wakes_the_orchestrator() {
+    fn a_batch_past_its_byte_budget_leaves_the_rest_for_the_next() {
         use archon_core::agent_message::MessageKind;
-        let mut store = Store::open_in_memory().unwrap();
         let mut message = stage_message(MessageKind::Info);
-        message.text = "x".repeat(QUIET_INFO_MAX_BYTES / 2);
+        message.text = "\u{1}".repeat(4096);
         let now = archon_core::now();
-        for _ in 0..2 {
-            record_message(&mut store, message.clone(), &[], true).unwrap();
-        }
+        let news = |message: &archon_core::agent_message::AgentMessage| {
+            message_news(message.clone(), now, true)
+        };
+        let mut held: Vec<Held> = (0..100).map(|_| news(&message)).collect();
+        let rest = split_past_bytes(&mut held, BATCH_MAX_BYTES).unwrap();
         assert!(
-            !read_outbox(&store).unwrap().is_due(now),
-            "within the budget"
+            !held.is_empty() && !rest.is_empty(),
+            "escaped text fills it early"
         );
-        record_message(&mut store, message, &[], true).unwrap();
-        let outbox = read_outbox(&store).unwrap();
+        assert_eq!(held.len() + rest.len(), 100, "nothing is lost");
+        let sent: usize = held
+            .iter()
+            .map(|news| serde_json::to_string(&news.event).unwrap().len())
+            .sum();
+        assert!(sent <= BATCH_MAX_BYTES, "{sent} bytes in one batch");
+        message.text = "x".repeat(10);
+        let mut small = vec![news(&message), news(&message)];
         assert!(
-            outbox.is_due(now),
-            "past the budget it wakes and carries the rest"
+            split_past_bytes(&mut small, BATCH_MAX_BYTES)
+                .unwrap()
+                .is_empty()
         );
-        assert_eq!(held_info_bytes(&outbox.pending), QUIET_INFO_MAX_BYTES);
+        let mut huge = vec![news(&message), news(&message)];
+        let rest = split_past_bytes(&mut huge, 1).unwrap();
+        assert_eq!((huge.len(), rest.len()), (1, 1), "one event always goes");
     }
 
     #[test]

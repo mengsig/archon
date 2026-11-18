@@ -43,7 +43,7 @@ use retired::{Sweep, cancel_orphans};
 pub(crate) use authority::{authorize, saw_call};
 pub use economy::{
     ECONOMY_CHECK_INTERVAL, Economy, RefreshTried, economize, idle_compaction_due, is_idle,
-    refresh_due, watch_economy,
+    refresh_due, refresh_left_behind, watch_economy,
 };
 pub use mcp::{
     HEALS_BEFORE_BLOCKER, MCP_CHECK_INTERVAL, check_mcp, check_mcp_soon, heal_status, mcp_status,
@@ -774,11 +774,18 @@ pub async fn deliver_operator_message(
     if text.trim().is_empty() && images.is_empty() {
         return Err(ArchonError::Invalid("an empty message was not sent".into()));
     }
-    let orchestrator = ensure_orchestrator(ctx).await?;
+    ensure_orchestrator(ctx).await?;
     // The turn this message starts also reads the routine news held for it,
     // in mirrors as current as the repositories are now.
     crate::triggers::flush_quiet(ctx).await?;
     ctx.mirrors.request();
+    // No switch runs while it is sent, and it goes to the one in charge now.
+    let _steady = steady(ctx).await;
+    let Some(orchestrator) = current_orchestrator(ctx).await? else {
+        return Err(ArchonError::Unavailable(
+            "the orchestrator is being replaced; send the message again".into(),
+        ));
+    };
     let client = ctx.aether.client()?;
     client
         .send_message(&orchestrator, text, images, feed_item.as_str())
@@ -1202,6 +1209,10 @@ fn compaction_threshold(config: &OrchestratorConfig, served: bool) -> Option<u32
     let tokens = config.compaction_tokens;
     assert!(
         tokens == 0 || tokens >= archon_core::config::MIN_COMPACTION_TOKENS,
+        "the config was validated"
+    );
+    assert!(
+        tokens <= archon_core::config::MAX_COMPACTION_TOKENS,
         "the config was validated"
     );
     (served && tokens > 0).then_some(tokens)

@@ -1932,6 +1932,13 @@ async fn a_natively_compacted_orchestrator_hears_its_directives_with_its_next_wa
         !triggers::due(&harness.ctx).await.unwrap(),
         "the fold wakes nobody"
     );
+    triggers::restate_directives(&harness.ctx, "a new orchestrator generation started")
+        .await
+        .unwrap();
+    assert!(
+        triggers::due(&harness.ctx).await.unwrap(),
+        "a successor hears them at once"
+    );
     let restated = TriggerEvent::DirectivesRestated {
         reason: "your context was compacted".into(),
     };

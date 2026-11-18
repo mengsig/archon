@@ -867,7 +867,8 @@ fn cost_stop_tail(text: &str) -> Option<&str> {
     let (limit, rest) = rest.split_once(": ")?;
     let (cost, tail) = rest.split_once(" spent")?;
     let spend = aether_spend(cost)?;
-    (is_aether_limit(limit) && reaches(spend, limit)).then_some(tail)
+    let budget = aether_limit(limit)?;
+    reaches(spend, limit, budget).then_some(tail)
 }
 
 /// Whether `rest` is all of Aether's budget message after the reason:
@@ -951,52 +952,49 @@ fn aether_format_usd(amount: f64) -> String {
     trimmed.to_owned()
 }
 
-/// Whether `text` is a budget exactly as Aether writes one: a plain decimal
-/// that [`aether_format_usd`] writes back unchanged for the amount it names.
-fn is_aether_limit(text: &str) -> bool {
+/// The budget `text` names when it is one exactly as Aether writes it: a plain
+/// decimal that [`aether_format_usd`] writes back unchanged for that amount.
+fn aether_limit(text: &str) -> Option<f64> {
     let (whole, fraction) = text.split_once('.').unwrap_or((text, "0"));
     let plain = is_whole_number(whole)
         && !fraction.is_empty()
         && fraction.bytes().all(|b| b.is_ascii_digit());
     if !plain {
-        return false;
+        return None;
     }
-    let budget = text
-        .parse::<f64>()
-        .ok()
-        .filter(|b| b.is_finite() && *b > 0.0);
-    budget.is_some_and(|budget| aether_format_usd(budget) == text)
+    let budget = text.parse::<f64>().ok()?;
+    let positive = budget.is_finite() && budget > 0.0;
+    (positive && aether_format_usd(budget) == text).then_some(budget)
 }
 
-/// Whether a spend Aether writes as `spend` (four decimals) can have reached
-/// the budget it writes as `limit` (six): Aether stops at `spend >= limit`
-/// and rounds each as it writes it, so the two may differ by half a unit of
-/// each last place, 50.5 millionths, and by no more.
-fn reaches(spend: &str, limit: &str) -> bool {
-    let (spent, capped) = (whole_dollars(spend), whole_dollars(limit));
-    if spent != capped {
-        // A fraction, even with that half unit, never carries into the dollars.
-        return spent > capped;
+/// Whether a spend Aether writes as `spend` can have reached the `budget` it
+/// writes as `limit`. Aether stops at `spend >= limit`, so at four decimals
+/// the spend reads no less than the least budget written as `limit` does.
+fn reaches(spend: &str, limit: &str, budget: f64) -> bool {
+    assert!(is_aether_spend(spend), "{spend} is no spend Aether writes");
+    let least = least_budget_written(limit, budget);
+    let floor = format!("{least:.4}");
+    // Both are plain decimals of four places: the longer one is the larger.
+    (spend.len(), spend) >= (floor.len(), floor.as_str())
+}
+
+/// The least amount Aether writes as `limit`, as it writes `budget`. It never
+/// writes a larger amount as a smaller number, so those amounts are neighbours.
+fn least_budget_written(limit: &str, budget: f64) -> f64 {
+    assert_eq!(aether_format_usd(budget), limit, "the budget reads so");
+    // Positive floats order as their bits do, and zero is no budget.
+    let (mut below, mut least) = (0_u64, budget.to_bits());
+    while least - below > 1 {
+        let middle = below + (least - below) / 2;
+        if aether_format_usd(f64::from_bits(middle)) == limit {
+            least = middle;
+        } else {
+            below = middle;
+        }
     }
-    millionths(limit) <= millionths(spend) + 50
-}
-
-/// The whole dollars of the plain decimal `text`, ordered as numbers are:
-/// by how many digits they have, then digit by digit.
-fn whole_dollars(text: &str) -> (usize, &str) {
-    let digits = text.split_once('.').map_or(text, |(whole, _)| whole);
-    assert!(is_whole_number(digits), "{text} is no amount Aether writes");
-    (digits.len(), digits)
-}
-
-/// The first six decimals of the plain decimal `text`, as millionths.
-fn millionths(text: &str) -> u32 {
-    let fraction = text.split_once('.').map_or("", |(_, fraction)| fraction);
-    assert!(fraction.bytes().all(|b| b.is_ascii_digit()), "{text}");
-    let digits = fraction.bytes().chain(std::iter::repeat(b'0')).take(6);
-    let read = digits.fold(0, |sum, digit| sum * 10 + u32::from(digit - b'0'));
-    assert!(read < 1_000_000, "six digits");
-    read
+    let least = f64::from_bits(least);
+    assert!(least > 0.0 && least <= budget, "{least} is a budget");
+    least
 }
 
 impl StageState {
@@ -1146,25 +1144,57 @@ pub fn review_field(text: &str) -> String {
 }
 
 /// A stored review tally, read for the failing verdicts it holds: the fails
-/// with a blocking finding, and the rest as (agent, head). Every field decodes
-/// only as archond stores it, so a tally of any other shape is corrupt.
+/// with a blocking finding, and the rest as (agent, head). It decodes only as
+/// archond stores one, so a tally of any other shape is corrupt.
 #[derive(Debug, Deserialize)]
+#[serde(try_from = "serde_json::Value")]
+pub struct TalliedFails {
+    reviewers: usize,
+}
+
+impl TryFrom<serde_json::Value> for TalliedFails {
+    type Error = String;
+
+    fn try_from(stored: serde_json::Value) -> Result<Self, Self::Error> {
+        if !stored.is_object() {
+            return Err(format!("{stored} is no tally: archond stores an object"));
+        }
+        let tally: StoredTally = serde_json::from_value(stored).map_err(|e| e.to_string())?;
+        Ok(Self {
+            reviewers: tally.fails.len() + tally.other_fails.len(),
+        })
+    }
+}
+
+impl TalliedFails {
+    /// How many failing verdicts the tally holds: archond keeps one a reviewer.
+    pub fn reviewers(&self) -> usize {
+        self.reviewers
+    }
+}
+
+/// Every field archond has kept in a tally, each in the type it wrote: `told`
+/// by 1.4 alone, the rest as they were added.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[expect(
     dead_code,
     reason = "a field nothing reads still holds the tally to its shape"
 )]
-pub struct TalliedFails {
-    fails: Vec<TalliedFail>,
+struct StoredTally {
+    fails: Vec<StoredFail>,
     #[serde(default)]
-    read: Vec<String>,
+    told: bool,
     #[serde(default)]
-    earlier: Option<Vec<String>>,
+    read: Vec<TalliedAgent>,
     #[serde(default)]
-    other_fails: Vec<(AetherAgentId, ReadCommit)>,
+    earlier: Option<Vec<TalliedAgent>>,
+    #[serde(default)]
+    other_fails: Vec<(TalliedAgent, ReadCommit)>,
     #[serde(default)]
     every_fail_kept: bool,
     #[serde(default)]
-    reread: Vec<String>,
+    reread: Vec<TalliedAgent>,
 }
 
 /// One failing verdict as archond keeps it, in either shape it has written:
@@ -1173,17 +1203,37 @@ pub struct TalliedFails {
 #[derive(Debug, Deserialize)]
 #[serde(untagged, deny_unknown_fields)]
 #[expect(dead_code, reason = "decoding each field is the check")]
-enum TalliedFail {
+enum StoredFail {
     Described {
-        agent: AetherAgentId,
+        agent: TalliedAgent,
         head: ReadCommit,
         findings: Vec<String>,
     },
     Titled {
-        agent: AetherAgentId,
+        agent: TalliedAgent,
         head: ReadCommit,
         titles: Vec<String>,
     },
+}
+
+/// A reviewer as archond names one in a tally: the id Aether gave it, `agt_`
+/// and a ULID in the 26 characters Aether writes.
+#[derive(Debug, Deserialize)]
+#[serde(try_from = "String")]
+#[expect(dead_code, reason = "decoding it is the check")]
+struct TalliedAgent(String);
+
+impl TryFrom<String> for TalliedAgent {
+    type Error = String;
+
+    fn try_from(agent: String) -> Result<Self, Self::Error> {
+        let ulid = agent.strip_prefix("agt_").unwrap_or_default();
+        let written = |id: ulid::Ulid| id.to_string() == ulid;
+        if ulid::Ulid::from_string(ulid).is_ok_and(written) {
+            return Ok(Self(agent));
+        }
+        Err(format!("{agent:?} is no agent id Aether writes"))
+    }
 }
 
 /// The commit a reviewer read, as archond takes one from a verdict: 7 to 64
@@ -1202,13 +1252,6 @@ impl TryFrom<String> for ReadCommit {
             return Ok(Self(head));
         }
         Err(format!("{head:?} is no commit a reviewer read"))
-    }
-}
-
-impl TalliedFails {
-    /// How many failing verdicts the tally holds: archond keeps one a reviewer.
-    pub fn reviewers(&self) -> usize {
-        self.fails.len() + self.other_fails.len()
     }
 }
 
@@ -2396,6 +2439,8 @@ mod tests {
             ("0.0000001", "$0.0000"),
             ("0.000001", "$0.0000"),
             ("0.00005", "$0.0000"),
+            ("4294967296.00045", "$4294967296.0005"),
+            ("4294967296.00044", "$4294967296.0004"),
         ];
         for (limit, cost) in reached {
             let said = stop(limit, cost);
@@ -2407,6 +2452,8 @@ mod tests {
             ("10", "$9.0000"),
             ("5.00006", "$5.0000"),
             ("0.000051", "$0.0000"),
+            // No amount written as that limit is written as so small a spend.
+            ("4294967296.00045", "$4294967296.0004"),
             ("5", "≥ $1.0000 (some unpriced)"),
             ("0.5", "not reported"),
             ("0.5", "not reported (usage not fully reported)"),
@@ -2440,6 +2487,9 @@ mod tests {
             120.0,
             1234.5678,
             1_000_000.000_001,
+            4_294_967_296.000_45,
+            70_368_744_177_664.5,
+            9e15,
         ];
         let over = [0.0, 1e-7, 0.000_04, 0.000_05, 0.0001, 0.37, 1000.0];
         for limit in limits {
@@ -2457,7 +2507,8 @@ mod tests {
                 );
                 assert!(StageOutcome::is_cost_budget_stop(&floor), "{floor}");
             }
-            if limit < 0.001 {
+            // A float this large holds no thousandth: none is short by one.
+            if limit < 0.001 || limit - 0.001 == limit {
                 continue;
             }
             let short = format!(
@@ -2511,19 +2562,20 @@ mod tests {
     #[test]
     fn a_review_tally_decodes_only_in_the_shape_archond_stores() {
         let read = |tally: &str| serde_json::from_str::<TalliedFails>(tally);
-        let fail = r#"{"agent":"agt_r","head":"abc1234","findings":["a bug"]}"#;
+        let fail =
+            r#"{"agent":"agt_01JB000000000000000000000R","head":"abc1234","findings":["a bug"]}"#;
         let stored = [
             (r#"{"fails":[]}"#.to_owned(), 0),
             (format!(r#"{{"fails":[{fail}]}}"#), 1),
             (format!(r#"{{"fails":[{fail}],"told":true}}"#), 1),
             (
-                r#"{"fails":[{"agent":"agt_r","head":"abc1234","titles":[]}]}"#.to_owned(),
+                r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"abc1234","titles":[]}]}"#.to_owned(),
                 1,
             ),
             (
                 format!(
-                    r#"{{"fails":[{fail}],"read":["agt_r","agt_s"],"earlier":["agt_q"],
-                    "other_fails":[["agt_s","{}"]],"every_fail_kept":true,"reread":[]}}"#,
+                    r#"{{"fails":[{fail}],"read":["agt_01JB000000000000000000000R","agt_01JB000000000000000000000S"],"earlier":["agt_01JB000000000000000000000Q"],
+                    "other_fails":[["agt_01JB000000000000000000000S","{}"]],"every_fail_kept":true,"reread":[]}}"#,
                     "f".repeat(64)
                 ),
                 2,
@@ -2535,35 +2587,50 @@ mod tests {
         }
         for unstorable in [
             r#"{}"#,
+            r#"[[]]"#,
+            r#"{"fails":[],"told":"yes"}"#,
+            r#"{"fails":[],"told":null}"#,
+            r#"{"fails":[],"round":1}"#,
+            r#"{"fails":[{"agent":"agt_r","head":"abc1234","findings":["a bug"]}]}"#,
+            r#"{"fails":[{"agent":"agt_not an agent","head":"abc1234","findings":["a bug"]}]}"#,
+            r#"{"fails":[{"agent":"agt_01jb000000000000000000000r","head":"abc1234","findings":[]}]}"#,
+            r#"{"fails":[{"agent":"agt_81JB000000000000000000000R","head":"abc1234","findings":[]}]}"#,
+            r#"{"fails":[{"agent":"tsk_01JB000000000000000000000R","head":"abc1234","findings":[]}]}"#,
+            r#"{"fails":[],"other_fails":[["agt_not an agent","abc1234"]]}"#,
+            r#"{"fails":[],"read":["agt_r"]}"#,
+            r#"{"fails":[],"earlier":["agt_r"]}"#,
+            r#"{"fails":[],"reread":["agt_r"]}"#,
             r#"{"fails":[null]}"#,
             r#"{"fails":[{"agent":"not an agent"}]}"#,
-            r#"{"fails":[{"agent":"agt_r"}]}"#,
-            r#"{"fails":[{"agent":"agt_r","head":"abc1234"}]}"#,
-            r#"{"fails":[{"agent":"agt_r","findings":["a bug"]}]}"#,
+            r#"{"fails":[{"agent":"agt_01JB000000000000000000000R"}]}"#,
+            r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"abc1234"}]}"#,
+            r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","findings":["a bug"]}]}"#,
             r#"{"fails":[{"agent":"not an agent","head":"abc1234","findings":["a bug"]}]}"#,
             r#"{"fails":[{"agent":" ","head":"abc1234","findings":["a bug"]}]}"#,
-            r#"{"fails":[{"agent":"agt_r","head":"","findings":["a bug"]}]}"#,
-            r#"{"fails":[{"agent":"agt_r","head":"abc123","findings":["a bug"]}]}"#,
-            r#"{"fails":[{"agent":"agt_r","head":"ABC1234","findings":["a bug"]}]}"#,
-            r#"{"fails":[{"agent":"agt_r","head":"the head","findings":["a bug"]}]}"#,
-            r#"{"fails":[{"agent":"agt_r","head":"abc1234","findings":"a bug"}]}"#,
-            r#"{"fails":[{"agent":"agt_r","head":"abc1234","findings":[7]}]}"#,
-            r#"{"fails":[{"agent":"agt_r","head":"abc1234","findings":[],"titles":[]}]}"#,
-            r#"{"fails":[{"agent":"agt_r","head":"abc1234","findings":[],"pass":true}]}"#,
-            r#"{"fails":[{"agent":"agt_r","head":"abc1234","findings":null,"titles":[]}]}"#,
-            r#"{"fails":[["agt_r","abc1234",[]]]}"#,
+            r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"","findings":["a bug"]}]}"#,
+            r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"abc123","findings":["a bug"]}]}"#,
+            r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"ABC1234","findings":["a bug"]}]}"#,
+            r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"the head","findings":["a bug"]}]}"#,
+            r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"abc1234","findings":"a bug"}]}"#,
+            r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"abc1234","findings":[7]}]}"#,
+            r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"abc1234","findings":[],"titles":[]}]}"#,
+            r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"abc1234","findings":[],"pass":true}]}"#,
+            r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"abc1234","findings":null,"titles":[]}]}"#,
+            r#"{"fails":[["agt_01JB000000000000000000000R","abc1234",[]]]}"#,
             r#"{"fails":[],"other_fails":[["not an agent","abc1234"]]}"#,
-            r#"{"fails":[],"other_fails":[["agt_r","abc1234","more"]]}"#,
-            r#"{"fails":[],"other_fails":[["agt_r","HEAD"]]}"#,
-            r#"{"fails":[],"other_fails":[["agt_r"]]}"#,
-            r#"{"fails":[],"read":"agt_r"}"#,
+            r#"{"fails":[],"other_fails":[["agt_01JB000000000000000000000R","abc1234","more"]]}"#,
+            r#"{"fails":[],"other_fails":[["agt_01JB000000000000000000000R","HEAD"]]}"#,
+            r#"{"fails":[],"other_fails":[["agt_01JB000000000000000000000R"]]}"#,
+            r#"{"fails":[],"read":"agt_01JB000000000000000000000R"}"#,
             r#"{"fails":[],"every_fail_kept":"yes"}"#,
         ] {
             assert!(read(unstorable).is_err(), "{unstorable}");
         }
+        let listed = format!("[[{fail}]]");
+        assert!(read(&listed).is_err(), "{listed}");
         assert!(
             read(&format!(
-                r#"{{"fails":[{{"agent":"agt_r","head":"{}","findings":[]}}]}}"#,
+                r#"{{"fails":[{{"agent":"agt_01JB000000000000000000000R","head":"{}","findings":[]}}]}}"#,
                 "a".repeat(65)
             ))
             .is_err()
@@ -2625,7 +2692,9 @@ mod tests {
         let review = |review: serde_json::Value| Some(serde_json::json!({"review": review}));
         let refused = review(serde_json::json!({"verdict": "pass", REVIEW_REFUSED_KEY: "why"}));
         assert!(stage(StageState::Completed, refused).review_refused());
-        let checked = review(serde_json::json!({"verdict": "pass", "reviewer_agents": ["agt_r"]}));
+        let checked = review(
+            serde_json::json!({"verdict": "pass", "reviewer_agents": ["agt_01JB000000000000000000000R"]}),
+        );
         assert!(!stage(StageState::Completed, checked).review_refused());
         let blank = review(serde_json::json!({REVIEW_REFUSED_KEY: "  "}));
         assert!(!stage(StageState::Completed, blank).review_refused());

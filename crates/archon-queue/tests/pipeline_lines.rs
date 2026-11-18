@@ -80,8 +80,8 @@ fn finish_saying(
     store.upsert_stage_run(&lead).unwrap();
     if judged && matches!(state, RunState::Failed { .. }) {
         let tally = serde_json::json!({
-            "fails": [{"agent": "agt_r", "head": "abc1234", "findings": ["a bug"]}],
-            "read": ["agt_r"],
+            "fails": [{"agent": "agt_01JB000000000000000000000R", "head": "abc1234", "findings": ["a bug"]}],
+            "read": ["agt_01JB000000000000000000000R"],
         });
         let key = review_tally_key(&lead.id);
         store.kv_set(&key, &tally.to_string()).unwrap();

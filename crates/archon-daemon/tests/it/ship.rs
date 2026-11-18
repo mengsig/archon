@@ -1000,7 +1000,11 @@ async fn the_review_level_decides_how_many_reviewers_adaptive_must_show() {
             found, reviewers,
             "{level}: every reviewer is a different agent"
         );
-        assert_eq!(body.matches("(agent agt_child").count(), owed, "{body}");
+        assert_eq!(
+            body.matches("(agent agt_0000000000000000000000").count(),
+            owed,
+            "{body}"
+        );
     }
 }
 
@@ -1045,7 +1049,11 @@ async fn a_strict_review_whose_whole_reads_all_failed_ships_on_one_delta_pass() 
     expected.sort();
     assert_eq!(found, expected, "the answered fails and the delta pass");
     let (_, body) = gh.created();
-    assert_eq!(body.matches("(agent agt_child").count(), 4, "{body}");
+    assert_eq!(
+        body.matches("(agent agt_0000000000000000000000").count(),
+        4,
+        "{body}"
+    );
 }
 
 /// Fewer reviewers than the level asks for is no review: the item fails at

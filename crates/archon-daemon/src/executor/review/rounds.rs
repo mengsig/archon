@@ -585,13 +585,19 @@ mod tests {
 
     #[test]
     fn a_stored_tally_lists_each_fail_where_the_outcome_store_reads_it() {
+        // Aether names an agent `agt_` and a ULID; a tally holds those names.
+        let agent = |n: u8| format!("agt_01JB00000000000000000000{n:02}");
+        let failed = Fail {
+            agent: agent(1),
+            ..fail("aaaaaaa1", &["a"])
+        };
         let tally = Tally {
-            fails: vec![fail("aaaaaaa1", &["a"])],
-            read: vec!["agt_a".into(), "agt_b".into()],
-            earlier: Some(vec!["agt_z".into()]),
-            other_fails: vec![("agt_b".into(), "bbbbbbb1".into())],
+            fails: vec![failed],
+            read: vec![agent(1), agent(2)],
+            earlier: Some(vec![agent(9)]),
+            other_fails: vec![(agent(2), "bbbbbbb1".into())],
             every_fail_kept: true,
-            reread: vec!["agt_b".into()],
+            reread: vec![agent(2)],
         };
         let stored = serde_json::to_string(&tally).unwrap();
         let read: archon_core::run::TalliedFails = serde_json::from_str(&stored).unwrap();
@@ -603,7 +609,7 @@ mod tests {
 
     #[test]
     fn a_tally_written_with_titles_still_reads() {
-        let old = r#"{"fails":[{"agent":"agt_a","head":"aaaaaaa1","titles":["t"]}]}"#;
+        let old = r#"{"fails":[{"agent":"agt_01JB0000000000000000000001","head":"aaaaaaa1","titles":["t"]}],"told":true}"#;
         let tally: Tally = serde_json::from_str(old).unwrap();
         assert_eq!(tally.fails[0].findings, ["t"]);
         let read: archon_core::run::TalliedFails = serde_json::from_str(old).unwrap();

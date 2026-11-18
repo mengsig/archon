@@ -193,8 +193,8 @@ pub(super) fn observe(conn: &Connection, run: &PipelineRun, stage_id: &str, atte
 /// The review tally archond kept for `stage`: one reviewer failed its work.
 pub(super) fn tally_a_fail(conn: &Connection, stage: &StageRun) {
     let tally = serde_json::json!({
-        "fails": [{"agent": "agt_r", "head": "abc1234", "findings": ["a bug"]}],
-        "read": ["agt_r"],
+        "fails": [{"agent": "agt_01JB000000000000000000000R", "head": "abc1234", "findings": ["a bug"]}],
+        "read": ["agt_01JB000000000000000000000R"],
     });
     conn.execute(
         "INSERT INTO kv (key, value) VALUES (?1, ?2)",

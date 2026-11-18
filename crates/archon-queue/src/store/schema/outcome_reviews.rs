@@ -156,17 +156,21 @@ fn v24_reads_a_carried_verdict_as_the_gate_does_and_a_tally_by_its_reviewers() {
     let capped = carried_run(&conn, &format!("PASS{}x", "-".repeat(396)));
     let overlong = carried_run(&conn, &format!("PASS{}x", "-".repeat(395)));
     let unstorable = [
+        r#"[[{"agent":"agt_01JB000000000000000000000R","head":"abc1234","findings":["a bug"]}]]"#,
+        r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"abc1234","titles":[]}],"told":"yes"}"#,
+        r#"{"fails":[{"agent":"agt_not an agent","head":"abc1234","findings":["a bug"]}]}"#,
+        r#"{"fails":[],"other_fails":[["agt_not an agent","abc1234"]]}"#,
         r#"{"fails":[null]}"#,
         r#"{"fails":[{"agent":"not an agent"}]}"#,
-        r#"{"fails":[{"agent":"agt_r","head":"abc1234"}]}"#,
+        r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"abc1234"}]}"#,
         r#"{"fails":[{"agent":"not an agent","head":"abc1234","findings":["a bug"]}]}"#,
-        r#"{"fails":[{"agent":"agt_r","head":"the head","findings":["a bug"]}]}"#,
-        r#"{"fails":[],"other_fails":[["agt_r","HEAD"]]}"#,
+        r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"the head","findings":["a bug"]}]}"#,
+        r#"{"fails":[],"other_fails":[["agt_01JB000000000000000000000R","HEAD"]]}"#,
     ]
     .map(|tally| tallied_run(&conn, tally));
     let stored = tallied_run(
         &conn,
-        r#"{"fails":[{"agent":"agt_r","head":"abc1234","titles":[]}],"told":true}"#,
+        r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"abc1234","titles":[]}],"told":true}"#,
     );
     let mut every = vec![&spaced, &capped, &overlong, &stored];
     every.extend(&unstorable);
@@ -193,7 +197,11 @@ fn v24_reads_a_carried_verdict_as_the_gate_does_and_a_tally_by_its_reviewers() {
             "a tally archond did not write keeps the run's class"
         );
     }
-    assert_eq!(frozen(&conn, &stored), some(PR), "a fail as 1.3 stored it");
+    assert_eq!(
+        frozen(&conn, &stored),
+        some(PR),
+        "a fail as 1.4.3 stored it"
+    );
     assert_eq!(
         columns(&conn, &stored),
         (some("review"), some("recomputed"), some("other"))

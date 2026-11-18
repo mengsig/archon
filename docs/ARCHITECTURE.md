@@ -5783,9 +5783,9 @@ decides:
   `format_usd` spells it (at most six decimals and no trailing zero, `$5` or
   `$2.5`; an amount below that precision in its shortest form), and a spend
   with exactly four decimals (`$5.0100`, or `≥ $5.0100 (<gap>)` with one of
-  Aether's gap labels) that has reached the limit, as Aether stops an agent at
-  `spend >= limit`: its four decimals may round it down by half a unit, and
-  no further. Any other text is no budget stop and falls to the rules below:
+  Aether's gap labels) that can have reached the limit, as Aether stops an
+  agent at `spend >= limit`: at four decimals it reads no less than the least
+  amount Aether writes as that limit. Any other text is no budget stop and falls to the rules below:
   `$9 spent`, `$5.00`, `$0.0000009` (which Aether writes `$0.000001`),
   `$5: $4.9999 spent` and `not reported` among them;
 - `infrastructure_failure` gives `infrastructure`. So does a spawn the daemon
@@ -5828,10 +5828,11 @@ It is kept only when a reviewer's verdict is on record for the run: a review
 stage's pass or fail, the pass or fail of the `review` a stage's result carries
 (unless Archon refused it), or a reviewer's fail in the tally. The carried
 verdict is read as the gate reads it: as one line, and no more than its first
-400 characters. A tally counts only in the shape archond stores: each fail
-names its reviewer's Aether agent id, the commit that reviewer read (7 to 64
-lowercase hexadecimal digits) and its findings (`titles` before they were
-described). A tally in any other shape is unreadable, so no reviewer's fail. A
+400 characters. A tally counts only in the shape archond stores: an object of
+the fields archond has kept, in which each fail names its reviewer's Aether
+agent id (`agt_` and a ULID), the commit that reviewer read (7 to 64 lowercase
+hexadecimal digits) and its findings (`titles` before they were described). A
+tally in any other shape is unreadable, so no reviewer's fail. A
 review-only target or assignment alone is no review.
 
 **Attribution.** Structured operator feedback is explicit:

@@ -47,8 +47,8 @@ fn captured(
     let item = store.insert_item(&classed, None).unwrap();
     let run = start(&mut store, &item.id);
     let fail_tally = serde_json::json!({
-        "fails": [{"agent": "agt_r", "head": "abc1234", "findings": ["a bug"]}],
-        "read": ["agt_r"],
+        "fails": [{"agent": "agt_01JB000000000000000000000R", "head": "abc1234", "findings": ["a bug"]}],
+        "read": ["agt_01JB000000000000000000000R"],
     });
     for stage in stages(&run) {
         store.upsert_stage_run(&stage).unwrap();
@@ -555,7 +555,7 @@ fn a_carried_review_with_no_verdict_makes_no_review_of_a_work_stage() {
         serde_json::json!({"verdict": ""}),
         serde_json::json!({"verdict": "blocked"}),
         serde_json::json!({"verdict": 7}),
-        serde_json::json!({"reviewers": [{"agent": "agt_r"}]}),
+        serde_json::json!({"reviewers": [{"agent": "agt_01JB000000000000000000000R"}]}),
         serde_json::json!("fail"),
     ] {
         let outcome = judged(unstated.clone());
@@ -683,20 +683,27 @@ fn a_tally_archond_cannot_have_stored_is_no_review() {
         captured.map(|()| store.outcome(&run.id).unwrap().unwrap().failure)
     };
     for unstorable in [
+        serde_json::json!([[{"agent": "agt_01JB000000000000000000000R", "head": "abc1234", "findings": ["a bug"]}]]),
+        serde_json::json!({"fails": [], "told": "yes"}),
+        serde_json::json!({"fails": [{"agent": "agt_r", "head": "abc1234", "findings": ["a bug"]}]}),
+        serde_json::json!({"fails": [
+            {"agent": "agt_not an agent", "head": "abc1234", "findings": ["a bug"]}
+        ]}),
+        serde_json::json!({"fails": [], "other_fails": [["agt_not an agent", "abc1234"]]}),
         serde_json::json!({"fails": [null]}),
         serde_json::json!({"fails": [{"agent": " "}]}),
         serde_json::json!({"fails": [{"agent": "not an agent"}]}),
-        serde_json::json!({"fails": [{"agent": "agt_r"}]}),
-        serde_json::json!({"fails": [{"agent": "agt_r", "head": "abc1234"}]}),
-        serde_json::json!({"fails": [{"agent": "agt_r", "findings": ["a bug"]}]}),
+        serde_json::json!({"fails": [{"agent": "agt_01JB000000000000000000000R"}]}),
+        serde_json::json!({"fails": [{"agent": "agt_01JB000000000000000000000R", "head": "abc1234"}]}),
+        serde_json::json!({"fails": [{"agent": "agt_01JB000000000000000000000R", "findings": ["a bug"]}]}),
         serde_json::json!({"fails": [
             {"agent": "not an agent", "head": "abc1234", "findings": ["a bug"]}
         ]}),
         serde_json::json!({"fails": [
-            {"agent": "agt_r", "head": "the head", "findings": ["a bug"]}
+            {"agent": "agt_01JB000000000000000000000R", "head": "the head", "findings": ["a bug"]}
         ]}),
         serde_json::json!({"fails": [], "other_fails": [["not an agent", "abc1234"]]}),
-        serde_json::json!({"fails": [], "other_fails": [["agt_r", ""]]}),
+        serde_json::json!({"fails": [], "other_fails": [["agt_01JB000000000000000000000R", ""]]}),
     ] {
         let read = lead_with(unstorable.clone());
         assert!(
@@ -705,15 +712,17 @@ fn a_tally_archond_cannot_have_stored_is_no_review() {
         );
     }
     let titled = serde_json::json!({
-        "fails": [{"agent": "agt_r", "head": "abc1234", "titles": []}], "told": false
+        "fails": [{"agent": "agt_01JB000000000000000000000R", "head": "abc1234", "titles": []}], "told": false
     });
     assert_eq!(
         lead_with(titled).unwrap(),
         Some(FailureClass::Review),
-        "a fail as 1.3 stored it"
+        "a fail as 1.4.3 stored it"
     );
     let empty = lead_with(serde_json::json!({"fails": []}));
     assert_eq!(empty.unwrap(), Some(FailureClass::Other));
-    let other = lead_with(serde_json::json!({"fails": [], "other_fails": [["agt_r", "abc1234"]]}));
+    let other = lead_with(
+        serde_json::json!({"fails": [], "other_fails": [["agt_01JB000000000000000000000R", "abc1234"]]}),
+    );
     assert_eq!(other.unwrap(), Some(FailureClass::Review));
 }

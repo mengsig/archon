@@ -57,8 +57,9 @@
   runs missing any stage run their outcome observed; none of these is
   recomputed, and their lesson uses are not rescored. A row SQLite holds as
   something other than text, one that does not decode, and a review tally in
-  any shape archond does not store (each fail names its reviewer's agent id,
-  the commit that reviewer read and its findings) are records it cannot read:
+  any shape archond does not store (an object in which each fail names its
+  reviewer's Aether agent id, the commit that reviewer read and its findings)
+  are records it cannot read:
   V24 logs the run and goes on. For one release the old class stays in
   `failure_class_163`.
 - When `create_agent` keeps failing on Aether's full disk, the stage is now

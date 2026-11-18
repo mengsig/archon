@@ -32,8 +32,9 @@ recomputes nothing, rescores none of its lesson uses and leaves an unreadable
 outcome record as it was. A record it cannot read never stops the migration:
 that covers a run, stage run, observed-stage or review-tally row SQLite holds
 as something other than text, one that does not decode, a stage run naming no
-stage or attempt 0, and a tally in any shape archond does not store (each fail
-names its reviewer's agent id, the commit that reviewer read and its findings).
+stage or attempt 0, and a tally in any shape archond does not store (an object
+in which each fail names its reviewer's Aether agent id, `agt_` and a ULID, the
+commit that reviewer read and its findings).
 archond logs, per class, the old count, the new count and the rows left on the
 1.6.3 class. When a recomputed class changes whether a run is scored, V24
 rescores the run's lesson uses and holdout trials and recounts the lessons it

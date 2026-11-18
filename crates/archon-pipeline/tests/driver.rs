@@ -2184,6 +2184,55 @@ fn a_record_repair_attempt_is_known_as_one() {
     assert!(driver.is_record_repair(&sim.stages, second));
 }
 
+/// A repair attempt woken onto a new row, after a deadline or an
+/// infrastructure failure, is still known as the repair.
+#[test]
+fn a_replacement_row_of_a_record_repair_is_known_as_one() {
+    let mut sim = sim("direct");
+    sim.writes_record = false;
+    sim.start();
+    let repair = sim.settle("implement", 0, Agent::Done("Fixed it."));
+    assert_eq!(spawned(&repair), slots(&[("implement", 2, 0)]));
+    let mut woken = sim.stages[1].clone();
+    woken.id = StageRunId::new();
+    woken.started_at += std::time::Duration::from_secs(60);
+    sim.stages[1].state = StageState::TimedOut;
+    sim.stages[1].finished_at = Some(woken.started_at);
+    sim.stages.push(woken.clone());
+    let driver = sim.resumed_driver();
+    assert!(driver.is_record_repair(&sim.stages, &woken), "{woken:#?}");
+}
+
+/// An ungated record stage whose agent states a fail beside a valid record
+/// is refused on its merits: nothing ships.
+#[test]
+fn an_ungated_stated_fail_with_a_valid_record_does_not_ship() {
+    let mut sim = sim("direct");
+    sim.start();
+    let summary = "Shipped what I had.\nVERDICT: FAIL";
+    let done = sim.settle("implement", 0, Agent::SummaryVerdict(summary));
+    assert!(spawned(&done).is_empty(), "no repair turn: {done:#?}");
+    let (stage, error) = failed(&done);
+    assert_eq!(stage, "implement");
+    assert!(error.contains("stated a fail verdict"), "{error}");
+}
+
+/// A summary that states a fail disputes a structured pass; the broken
+/// record of that disputed result gets no repair turn.
+#[test]
+fn a_disputed_fail_with_a_broken_record_gets_no_repair_turn() {
+    let mut sim = gated_reviewed_sim();
+    sim.start();
+    let pass = serde_json::json!({"verdict": "pass", "review": {"reviewers": []}});
+    let done = sim.settle(
+        "check",
+        0,
+        Agent::DoneStructured("Nope.\nVERDICT: FAIL", pass),
+    );
+    assert!(spawned(&done).is_empty(), "no repair turn: {done:#?}");
+    assert_eq!(failed(&done).0, "check");
+}
+
 /// A record refused on its merits is not broken: no repair turn is given.
 #[test]
 fn a_record_with_too_few_reviewers_gets_no_repair_turn() {

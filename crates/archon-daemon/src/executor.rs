@@ -41,7 +41,7 @@ mod pages;
 pub(crate) mod plan_view;
 mod proposal;
 pub mod pull_requests;
-mod quota_wait;
+pub mod quota_wait;
 mod reap;
 mod recover;
 pub(crate) mod refresh;

@@ -402,6 +402,10 @@ async fn recorded(
     let Err(why) = ShipRecord::read(structured.as_ref()) else {
         return Ok(Some(outcome));
     };
+    // A stated fail is settled on its merits, not asked for a record.
+    if archon_core::run::Verdict::states_fail(summary, structured.as_ref()) {
+        return Ok(Some(outcome));
+    }
     if !records_ship(ctx, stage).await || is_record_repair(ctx, stage).await? {
         return Ok(Some(outcome));
     }

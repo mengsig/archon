@@ -738,6 +738,15 @@ impl AgentBackend for AetherBackend {
         Ok(tree.map(|(root, beneath)| tree_pulse(&root, &beneath)))
     }
 
+    /// One `get_agent`, so the answer is as fresh as a single round trip.
+    async fn quota_blocked(&self, agent: &AetherAgentId) -> Result<Option<bool>, ArchonError> {
+        match self.link.client()?.get_agent(agent).await {
+            Ok(found) => Ok(Some(is_quota_blocked(&found))),
+            Err(ArchonError::NotFound(_)) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
     async fn open_tool_call(
         &self,
         agent: &AetherAgentId,

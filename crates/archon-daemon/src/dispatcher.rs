@@ -70,20 +70,9 @@ const NEVER_FITS_KEY: &str = "dispatch_never_fits";
 /// followed by another so their first stages are admitted promptly.
 const MAX_PASSES: usize = 8;
 
-/// The longest wait between dispatch passes, whatever `tick_secs` asks: a
-/// pass's sweep must see a quota-blocked reviewer within its fail-fast bound.
-pub(crate) const MAX_PASS_INTERVAL: Duration = Duration::from_secs(30);
-
-/// The wait between dispatch passes for `tick_secs`.
-fn pass_interval(tick_secs: u64) -> Duration {
-    assert!(tick_secs > 0, "config validation refuses tick_secs = 0");
-    let tick = Duration::from_secs(tick_secs).min(MAX_PASS_INTERVAL);
-    assert!(!tick.is_zero() && tick <= MAX_PASS_INTERVAL);
-    tick
-}
-
 pub async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
-    let tick = pass_interval(ctx.config.dispatcher.tick_secs);
+    let tick = Duration::from_secs(ctx.config.dispatcher.tick_secs);
+    assert!(!tick.is_zero(), "config validation refuses tick_secs = 0");
     loop {
         if ctx.aether.is_connected() {
             let pass =
@@ -405,15 +394,4 @@ async fn post_never_fits(ctx: &DaemonContext, team: &NeverFits) -> Result<(), Ar
         run.as_ref(),
     )
     .await
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_long_tick_still_passes_every_30_seconds() {
-        assert_eq!(pass_interval(15), Duration::from_secs(15));
-        assert_eq!(pass_interval(300), MAX_PASS_INTERVAL);
-    }
 }

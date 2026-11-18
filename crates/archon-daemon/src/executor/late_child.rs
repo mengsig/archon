@@ -38,9 +38,12 @@ pub(crate) async fn lift_new_child(
     let lead = stage.aether_agent.as_ref().expect("a running stage's lead");
     assert_ne!(lead, child, "a new child is not its stage's lead");
     let _steering = ctx.coordination.steering.hold(&stage.id).await;
-    let stored = spawn::load_spawn(&*ctx.store.lock().await, &stage.id)?
-        .request
-        .deadline;
+    let stored = match spawn::load_spawn(&*ctx.store.lock().await, &stage.id) {
+        Ok(spawn) => spawn.request.deadline,
+        // A stage with no stored request has no deadline to raise to.
+        Err(ArchonError::NotFound(_)) => None,
+        Err(error) => return Err(error),
+    };
     let Some(stored) = stored.filter(|at| *at > archon_core::now()) else {
         return Ok(());
     };

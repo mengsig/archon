@@ -1478,11 +1478,11 @@ in a new worktree off the base branch (§13).
   never times it out while held. A reviewer Aether itself blocks as
   `exhausted` (quota or usage limit) is cancelled after 3 minutes, and its
   lead is told to delegate the review on another allowed provider or fail
-  its task. The sweep reads the reviewer's block again just before the
-  cancel, which carries that hint as its reason; the lead is messaged once
-  the cancel is accepted. Dispatch passes run at least every 30 seconds
-  whatever `dispatcher.tick_secs` says, so the cancel comes within 4 minutes
-  of the block. Known limitation: Aether has no conditional cancel, so a
+  its task. The check runs every 30 seconds on its own worker
+  (`executor::quota_wait::watch`), apart from dispatch. It reads the
+  reviewer's own block again with one `get_agent` just before the cancel,
+  which carries that hint as its reason; the lead is messaged once the
+  cancel is accepted. So the cancel comes within 4 minutes of the block. Known limitation: Aether has no conditional cancel, so a
   reviewer whose quota returns within the one round trip between that read
   and the cancel is still cancelled, and its lead re-plans the review. When any agent of a running stage's tree gets a new child, every
   live agent beneath the lead with a deadline below the stored one is raised

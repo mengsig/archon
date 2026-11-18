@@ -42,6 +42,13 @@ impl Verdict {
         }
     }
 
+    /// Whether a result states a fail where it may give a verdict: a
+    /// `structured` field or the summary's last `VERDICT:` line, either alone.
+    pub fn states_fail(summary: &str, structured: Option<&serde_json::Value>) -> bool {
+        let in_structured = structured.and_then(Self::as_worded) == Some(Self::Fail);
+        in_structured || Self::from_summary(summary) == Some(Self::Fail)
+    }
+
     /// Whether anything in a result takes a pass back: the summary's last
     /// `VERDICT:` line or [`summary_json`] verdict reading other than pass,
     /// or a blocking finding in `structured` or that JSON.

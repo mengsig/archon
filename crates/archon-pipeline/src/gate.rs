@@ -140,7 +140,16 @@ fn recorded(stage: &StageSpec, attempt: u32, members: &[&StageRun], owed: Owed) 
     assert_eq!(member.state, StageState::Completed, "it passed its gate");
     let summary = joined_summary(stage, members);
     let structured = member.structured.as_ref();
-    // A stated fail is refused on its merits, whatever its gate.
+    // A stated fail is refused on its merits, whatever its gate or record.
+    if states_fail(member) {
+        let headline = "its agent stated a fail verdict".to_owned();
+        let report = format!(
+            "**Stage `{}` attempt {attempt}: {headline}**\n\n{summary}\n",
+            stage.id
+        );
+        let report = clip(&report, MAX_FEEDBACK_CHARS);
+        return GroupResult::Fail { headline, report };
+    }
     let broken = repairable(stage, members, owed);
     let unrecorded = |headline: String| {
         let report = format!(
@@ -172,16 +181,21 @@ fn recorded(stage: &StageSpec, attempt: u32, members: &[&StageRun], owed: Owed) 
     }
 }
 
-/// Whether the one agent holding a record completed with a broken record and
-/// no stated fail verdict. A stated fail is refused on its merits instead.
+/// Whether the one agent holding a record completed with a broken record.
+/// [`recorded`] refuses a stated fail on its merits before any repair.
 fn repairable(stage: &StageSpec, members: &[&StageRun], owed: Owed) -> bool {
     let [member] = members else {
         return false;
     };
     assert_eq!(stage.fan_out, 1, "one agent holds a record");
-    member.state == StageState::Completed
-        && verdict_of(member) != Verdict::Fail
-        && broken_record(member.structured.as_ref(), owed)
+    member.state == StageState::Completed && broken_record(member.structured.as_ref(), owed)
+}
+
+/// Whether `member` stated a fail anywhere, even beside a pass elsewhere.
+fn states_fail(member: &StageRun) -> bool {
+    let summary = member.summary.as_deref().unwrap_or_default();
+    let stated = Verdict::states_fail(summary, member.structured.as_ref());
+    stated || member.verdict == Some(Verdict::Fail)
 }
 
 /// Whether a completed stage's record is broken rather than refused on its

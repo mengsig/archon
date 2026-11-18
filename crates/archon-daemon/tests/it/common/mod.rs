@@ -797,6 +797,10 @@ struct FakeState {
     lost_replies: u32,
     outcomes: BTreeMap<AetherTaskId, StageOutcome>,
     cancelled: Vec<AetherAgentId>,
+    /// The reason each cancel call gave, refused ones included, in order.
+    cancel_reasons: Vec<(AetherAgentId, String)>,
+    /// Every agent whose own quota block was read, in order.
+    quota_reads: Vec<AetherAgentId>,
     /// Every accepted `update_agent`, in order.
     updates: Vec<(AetherAgentId, AgentUpdate)>,
     update_failures: VecDeque<ArchonError>,
@@ -997,6 +1001,14 @@ impl FakeBackend {
 
     pub fn cancelled(&self) -> Vec<AetherAgentId> {
         self.state().cancelled.clone()
+    }
+
+    pub fn cancel_reasons(&self) -> Vec<(AetherAgentId, String)> {
+        self.state().cancel_reasons.clone()
+    }
+
+    pub fn quota_reads(&self) -> Vec<AetherAgentId> {
+        self.state().quota_reads.clone()
     }
 
     /// Every agent `archive` cleared from the view, in order, repeats included.
@@ -1555,8 +1567,11 @@ impl AgentBackend for FakeBackend {
         Ok(state.logged_out.get(provider).cloned())
     }
 
-    async fn cancel(&self, agent: &AetherAgentId, _reason: &str) -> Result<(), ArchonError> {
+    async fn cancel(&self, agent: &AetherAgentId, reason: &str) -> Result<(), ArchonError> {
         let mut state = self.state();
+        state
+            .cancel_reasons
+            .push((agent.clone(), reason.to_owned()));
         if let Some(error) = state.cancel_failures.pop_front() {
             return Err(error);
         }
@@ -1700,6 +1715,11 @@ impl AgentBackend for FakeBackend {
             }
         }
         Ok(Some(read))
+    }
+
+    async fn quota_blocked(&self, agent: &AetherAgentId) -> Result<Option<bool>, ArchonError> {
+        self.state().quota_reads.push(agent.clone());
+        Ok(self.pulse(agent).await?.map(|pulse| pulse.quota_blocked))
     }
 
     async fn open_tool_call(

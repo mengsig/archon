@@ -3,8 +3,11 @@
 //! review could wait for hours. Once such a reviewer has waited
 //! [`FAIL_AFTER`], the sweep cancels it with a hint telling its lead to
 //! re-plan the review, well within five minutes of the wait being seen.
+//! The sweep runs on its own timer, so slow dispatch work never delays it.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
+use std::time::Duration;
 
 use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
@@ -19,6 +22,9 @@ use crate::context::DaemonContext;
 /// How long a reviewer may wait on a spent quota before it is stopped.
 const FAIL_AFTER: TimeDelta = TimeDelta::minutes(3);
 
+/// The wait between two sweeps.
+pub const SWEEP_INTERVAL: Duration = Duration::from_secs(30);
+
 /// `kv` key prefix of when a reviewer was first seen waiting, per stage run.
 const WAIT_PREFIX: &str = "quota_wait:";
 
@@ -28,9 +34,35 @@ struct Waiting {
     resets_at: Option<Timestamp>,
 }
 
+/// Sweep every [`SWEEP_INTERVAL`] while Aether is connected and start-up
+/// recovery is done; `Err` only when the store fails.
+pub async fn watch(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
+    loop {
+        tokio::time::sleep(SWEEP_INTERVAL).await;
+        if !ctx.aether.is_connected() || !ctx.recovery.is_recovered() {
+            continue;
+        }
+        match sweep_running(&ctx).await {
+            Ok(()) => {}
+            Err(error) if error.is_store() => return Err(error),
+            Err(error) => tracing::error!(%error, "quota wait sweep failed"),
+        }
+    }
+}
+
+/// One sweep over every running stage, as [`watch`] runs it.
+pub async fn sweep_running(ctx: &DaemonContext) -> Result<(), ArchonError> {
+    let live = ctx.store.lock().await.live_stage_runs()?;
+    let running: Vec<StageRun> = (live.into_iter())
+        .filter(|stage| stage.state == StageState::Running)
+        .collect();
+    assert!(running.iter().all(|s| s.state == StageState::Running));
+    sweep(ctx, &running, archon_core::now()).await
+}
+
 /// Stop each reviewer of the `running` stages that waited [`FAIL_AFTER`] on
 /// a spent quota, and forget the waits of reviewers that no longer wait.
-pub(super) async fn sweep(
+async fn sweep(
     ctx: &DaemonContext,
     running: &[StageRun],
     now: Timestamp,
@@ -210,8 +242,8 @@ async fn still_blocked(
         StageState::Running,
         "only a running stage waits"
     );
-    match ctx.backend.pulse(reviewer).await {
-        Ok(pulse) => Ok(Some(pulse.is_some_and(|p| p.quota_blocked))),
+    match ctx.backend.quota_blocked(reviewer).await {
+        Ok(blocked) => Ok(Some(blocked.unwrap_or(false))),
         Err(error) if error.is_store() => Err(error),
         Err(error) => {
             tracing::info!(stage = %stage.id, %reviewer, %error, "quota block not read again; read next sweep");
@@ -273,9 +305,10 @@ mod tests {
 
     /// A wait is seen within one dispatch pass and stopped by the first pass
     /// after [`FAIL_AFTER`], so a blocked reviewer ends within five minutes.
+    /// Each sweep's own work, a few Aether calls a reviewer, is ignored here.
     #[test]
     fn a_blocked_reviewer_is_stopped_within_five_minutes() {
-        let pass = crate::dispatcher::MAX_PASS_INTERVAL.as_secs();
+        let pass = SWEEP_INTERVAL.as_secs();
         let seconds = u64::try_from(FAIL_AFTER.num_seconds()).expect("positive");
         assert!(
             2 * pass + seconds < 5 * 60,

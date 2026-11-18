@@ -146,7 +146,6 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
     }
     follow.time_out = held::sweep(ctx, expired, &nearing, now).await?;
     forewarn::sweep(ctx, &running, now).await?;
-    super::quota_wait::sweep(ctx, &running, now).await?;
     let stalled = settle_stalled(ctx, &running, now, &mut follow).await;
     run_follow_up(ctx, follow).await?;
     stalled

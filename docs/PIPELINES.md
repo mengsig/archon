@@ -442,7 +442,10 @@ names no reviewer. The stage is entered once more with the refusal quoted.
 The reviewers it then names are checked as above, so they must be agents it
 delegated itself. A second broken record fails the run, with no fix loop.
 A broken record is judged before the stage's gate, unless it states a fail
-verdict, which is refused on its merits. At `none` the contract tells the agent to delegate no
+verdict, which is refused on its merits. A fail stated in the summary's last
+`VERDICT:` line or in `structured` counts even when the other says pass, and
+a record stage without a gate that states a fail ships nothing. A repair
+attempt woken onto a new stage run is still the repair. At `none` the contract tells the agent to delegate no
 reviewer and record no review.
 
 A pass is not taken on the agent's word. As the stage ends, Archon lists

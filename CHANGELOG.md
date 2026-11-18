@@ -11,7 +11,10 @@
   Reviewers are still checked against the agents the lead delegated itself,
   so a repair cannot name one that never reviewed. A second broken record
   fails the run, with no fix loop. A stated fail verdict or too few reviewers
-  gets no repair turn, whatever the stage's gate. A broken record that states
+  gets no repair turn, whatever the stage's gate. A fail stated in the summary
+  or in `structured` counts even when the other says pass, and a record stage
+  without a gate that states a fail does not ship. A repair attempt woken onto
+  a new stage run is still the repair. A broken record that states
   no fail gets its repair turn before the stage's gate and scenario checks
   read it. A kept agent's repair reply is not asked for its record again. A
   run already past a broken record when it upgrades keeps the fix loop it
@@ -31,8 +34,8 @@
   allowed provider or to fail the task so the orchestrator re-plans. Before,
   it waited until the stage deadline, and a held stage's deadline kept moving.
   A quota restored within the 3 minutes stops nothing, and the block is read
-  again just before the cancel. Dispatch passes now run at least every 30
-  seconds whatever `dispatcher.tick_secs` says, so the cancel comes within 4
+  again, with one `get_agent`, just before the cancel. The check runs on its
+  own 30-second timer, apart from dispatch, so the cancel comes within 4
   minutes. Known limitation: a reviewer whose quota returns in the one Aether
   round trip before the cancel is still cancelled, as Aether has no
   conditional cancel.

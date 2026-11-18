@@ -406,6 +406,12 @@ pub trait AgentBackend: Send + Sync {
         Ok(Some(TreePulse::default()))
     }
 
+    /// Whether Aether blocks `agent` itself on a spent quota, read with as
+    /// few calls as the backend can; `None` when Aether no longer knows it.
+    async fn quota_blocked(&self, agent: &AetherAgentId) -> Result<Option<bool>, ArchonError> {
+        Ok(self.pulse(agent).await?.map(|pulse| pulse.quota_blocked))
+    }
+
     /// The tool call `agent`'s current turn left open; `None` when there is
     /// none, or the backend cannot tell.
     async fn open_tool_call(

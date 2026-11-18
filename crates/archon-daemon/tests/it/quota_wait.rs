@@ -2,12 +2,15 @@
 //! minutes, and its lead is told to re-plan the review, instead of waiting
 //! until the stage deadline.
 
+use std::time::Duration;
+
 use crate::common;
 
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::ports::TreePulse;
 use archon_core::quota::{ProviderHeadroom, QuotaWindow};
 use archon_core::run::StageRun;
+use archon_daemon::executor::quota_wait;
 use archon_daemon::quota::Reading;
 use chrono::TimeDelta;
 use common::Harness;
@@ -66,6 +69,13 @@ async fn backdate_wait(h: &Harness, stage: &StageRun, reviewer: &AetherAgentId, 
     store.kv_set(&key, &(since - ago).to_rfc3339()).unwrap();
 }
 
+/// One quota sweep, as the daemon's own timer runs it.
+async fn sweep(h: &Harness) {
+    quota_wait::sweep_running(&h.ctx)
+        .await
+        .expect("a quota sweep");
+}
+
 fn told(h: &Harness, lead: &AetherAgentId) -> Vec<String> {
     let messages = h.backend.messages().into_iter();
     messages
@@ -79,15 +89,17 @@ async fn a_reviewer_waiting_on_a_spent_quota_fails_within_five_minutes() {
     let h = Harness::new().await;
     let (stage, lead, reviewer) = held_reviewer(&h).await;
     read_review_quota(&h, 0);
-    h.dispatch().await;
+    sweep(&h).await;
     assert!(
         h.backend.cancelled().is_empty(),
         "a fresh wait is not stopped"
     );
     backdate_wait(&h, &stage, &reviewer, TimeDelta::minutes(3)).await;
     read_review_quota(&h, 0);
-    h.dispatch().await;
+    sweep(&h).await;
     assert_eq!(h.backend.cancelled(), vec![reviewer.clone()]);
+    let reasons = h.backend.cancel_reasons();
+    assert!(reasons[0].1.contains("Re-plan the review"), "{reasons:?}");
     let told = told(&h, &lead);
     assert_eq!(told.len(), 1, "{told:?}");
     assert!(told[0].contains(reviewer.as_str()), "{}", told[0]);
@@ -104,7 +116,7 @@ async fn a_quota_restored_before_the_limit_stops_nothing() {
     let h = Harness::new().await;
     let (stage, lead, reviewer) = held_reviewer(&h).await;
     read_review_quota(&h, 0);
-    h.dispatch().await;
+    sweep(&h).await;
     backdate_wait(&h, &stage, &reviewer, TimeDelta::minutes(2)).await;
     // Aether runs the reviewer again once its quota is back.
     let working = TreePulse {
@@ -113,7 +125,7 @@ async fn a_quota_restored_before_the_limit_stops_nothing() {
     };
     h.backend.set_pulse(&reviewer, working);
     read_review_quota(&h, 40);
-    h.dispatch().await;
+    sweep(&h).await;
     let key = format!("quota_wait:{}:{reviewer}", stage.id);
     let left = h.ctx.store.lock().await.kv_get(&key).unwrap();
     assert_eq!(left, None, "a restored quota clears the wait");
@@ -126,7 +138,7 @@ async fn a_quota_restored_before_the_limit_stops_nothing() {
     };
     h.backend.set_pulse(&reviewer, blocked);
     read_review_quota(&h, 0);
-    h.dispatch().await;
+    sweep(&h).await;
     assert!(h.backend.cancelled().is_empty());
     assert!(told(&h, &lead).is_empty());
 }
@@ -150,7 +162,7 @@ async fn a_reviewer_held_for_another_cause_is_not_stopped() {
     for pulse in other_holds {
         h.backend.set_pulse(&reviewer, pulse);
         read_review_quota(&h, 0);
-        h.dispatch().await;
+        sweep(&h).await;
         let key = format!("quota_wait:{}:{reviewer}", stage.id);
         let mark = h.ctx.store.lock().await.kv_get(&key).unwrap();
         assert_eq!(mark, None, "{pulse:?} does not wait on the quota");
@@ -165,10 +177,10 @@ async fn a_reviewer_held_for_another_cause_is_not_stopped() {
 async fn a_quota_blocked_reviewer_fails_without_a_matching_reading() {
     let h = Harness::new().await;
     let (stage, lead, reviewer) = held_reviewer(&h).await;
-    h.dispatch().await;
+    sweep(&h).await;
     backdate_wait(&h, &stage, &reviewer, TimeDelta::minutes(3)).await;
     read_review_quota(&h, 40);
-    h.dispatch().await;
+    sweep(&h).await;
     assert_eq!(h.backend.cancelled(), vec![reviewer.clone()]);
     let told = told(&h, &lead);
     assert_eq!(told.len(), 1, "{told:?}");
@@ -181,20 +193,58 @@ async fn a_quota_blocked_reviewer_fails_without_a_matching_reading() {
 async fn a_reviewer_that_resumes_before_its_cancel_is_not_stopped() {
     let h = Harness::new().await;
     let (stage, lead, reviewer) = held_reviewer(&h).await;
-    h.dispatch().await;
+    sweep(&h).await;
     backdate_wait(&h, &stage, &reviewer, TimeDelta::minutes(3)).await;
     let working = TreePulse {
         running: true,
         ..TreePulse::default()
     };
     h.backend.set_pulse_after_reads(&reviewer, 1, working);
-    h.dispatch().await;
+    sweep(&h).await;
     assert!(
         h.backend.cancelled().is_empty(),
         "a working reviewer is kept"
     );
     assert!(told(&h, &lead).is_empty(), "its lead is told nothing");
+    // The last read is the reviewer's own status, not its whole tree.
+    assert_eq!(h.backend.quota_reads(), vec![reviewer.clone()]);
     let key = format!("quota_wait:{}:{reviewer}", stage.id);
     let left = h.ctx.store.lock().await.kv_get(&key).unwrap();
     assert_eq!(left, None, "its wait is forgotten");
+}
+
+/// Aether refuses the cancel, most likely as the reviewer ended: the lead is
+/// told nothing and the wait is forgotten.
+#[tokio::test]
+async fn a_refused_cancel_tells_the_lead_nothing() {
+    let h = Harness::new().await;
+    let (stage, lead, reviewer) = held_reviewer(&h).await;
+    sweep(&h).await;
+    backdate_wait(&h, &stage, &reviewer, TimeDelta::minutes(3)).await;
+    let refusal = archon_core::error::ArchonError::Invalid("agent has ended".into());
+    h.backend.fail_next_cancel(refusal);
+    sweep(&h).await;
+    assert_eq!(h.backend.cancel_reasons().len(), 1, "one cancel was tried");
+    assert!(h.backend.cancelled().is_empty());
+    assert!(told(&h, &lead).is_empty(), "the lead is told nothing");
+    let key = format!("quota_wait:{}:{reviewer}", stage.id);
+    let left = h.ctx.store.lock().await.kv_get(&key).unwrap();
+    assert_eq!(left, None, "its wait is forgotten");
+}
+
+/// The sweep keeps its own 30-second timer: with no dispatch pass at all, a
+/// blocked reviewer is stopped within minutes of the paused clock.
+#[tokio::test(start_paused = true)]
+async fn the_quota_timer_stops_a_reviewer_without_any_dispatch() {
+    let h = Harness::new().await;
+    let (stage, lead, reviewer) = held_reviewer(&h).await;
+    let _aether = common::connect_aether_for_delegations(&h).await;
+    let watcher = tokio::spawn(quota_wait::watch(h.ctx.clone()));
+    tokio::time::sleep(quota_wait::SWEEP_INTERVAL + Duration::from_secs(1)).await;
+    assert!(h.backend.cancelled().is_empty(), "a fresh wait is kept");
+    backdate_wait(&h, &stage, &reviewer, TimeDelta::minutes(3)).await;
+    tokio::time::sleep(quota_wait::SWEEP_INTERVAL).await;
+    assert_eq!(h.backend.cancelled(), vec![reviewer.clone()]);
+    assert_eq!(told(&h, &lead).len(), 1);
+    watcher.abort();
 }

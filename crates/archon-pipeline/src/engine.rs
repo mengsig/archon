@@ -545,8 +545,13 @@ impl RunDriver {
             return false;
         };
         let judged = gate::evaluate(spec, stage.attempt - 1, &members, owed);
+        // By slot, not row: a wake or deadline replacement keeps the attempt.
+        let same_slot = |next: &StageRun| {
+            (next.stage_id.as_str(), next.attempt, next.fan_index)
+                == (stage.stage_id.as_str(), stage.attempt, stage.fan_index)
+        };
         matches!(judged, GroupResult::Unrecorded { .. })
-            && next_started(runs, &members).is_some_and(|next| next.id == stage.id)
+            && next_started(runs, &members).is_some_and(same_slot)
     }
 
     pub fn records_ship(&self, stage_id: &str) -> bool {

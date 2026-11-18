@@ -7,7 +7,6 @@ use crate::common;
 use archon_core::autonomy::{AutonomyPatch, ReviewLevel};
 use archon_core::error::ArchonError;
 use archon_core::merge::{LocalReview, MergeAuthority, MergeRequest, MergeState};
-use archon_core::model::ModelPlan;
 use archon_core::protocol::{EnqueueRequest, Reply, RepoPatch, RepoRef, Request};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::repo::ShipMode;
@@ -46,7 +45,7 @@ async fn deliver_local(
         priority: Default::default(),
         depends_on,
         tags: Vec::new(),
-        model_plan: ModelPlan::default().into(),
+        model_plan: Default::default(),
         stage_timeouts: Default::default(),
         model_reasons: None,
         budget_usd: None,

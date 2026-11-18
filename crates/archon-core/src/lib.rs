@@ -43,6 +43,7 @@ pub mod operator_commands;
 pub mod ops;
 pub mod outcome;
 pub mod paths;
+pub mod plan_origin;
 pub mod policy;
 pub mod ports;
 pub mod protocol;

@@ -10,7 +10,6 @@ use std::os::unix::fs::PermissionsExt;
 use archon_core::autonomy::{AutonomyPatch, ReviewLevel};
 use archon_core::error::ArchonError;
 use archon_core::merge::{MergeAuthority, MergeRequest, MergeState};
-use archon_core::model::ModelPlan;
 use archon_core::notify::NotificationKind;
 use archon_core::protocol::{EnqueueRequest, Reply, RepoPatch, RepoRef, Request};
 use archon_core::pull_request::OntoTarget;
@@ -115,7 +114,7 @@ fn enqueue_request(title: &str, pipeline: &str, review: ReviewLevel) -> EnqueueR
         priority: Default::default(),
         depends_on: Vec::new(),
         tags: Vec::new(),
-        model_plan: ModelPlan::default().into(),
+        model_plan: Default::default(),
         stage_timeouts: Default::default(),
         model_reasons: None,
         budget_usd: None,

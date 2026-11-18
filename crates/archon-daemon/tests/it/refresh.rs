@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 
 use archon_core::autonomy::{AutonomyPatch, ReviewLevel};
 use archon_core::error::ArchonError;
-use archon_core::model::ModelPlan;
 use archon_core::notify::NotificationKind;
+use archon_core::plan_origin::{Authority, PlanSource};
 use archon_core::protocol::{EnqueueRequest, Reply, RepoRef, Request};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::run::PipelineRun;
@@ -53,7 +53,7 @@ async fn enqueue_in(
         priority: Default::default(),
         depends_on: Vec::new(),
         tags: Vec::new(),
-        model_plan: ModelPlan::default().into(),
+        model_plan: Default::default(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,
@@ -885,14 +885,29 @@ async fn a_refresh_runs_the_stage_defaults_not_its_owner_s_overrides() {
         archon_core::model::Effort::Max,
     )];
     assert_ne!(defaults.choices_for("implement"), Some(pricey.as_slice()));
-    stored.model_plan.0.insert("implement".into(), pricey);
+    stored
+        .model_plan
+        .legacy_mut()
+        .0
+        .insert("implement".into(), pricey);
     stored.model_reasons = Some([("implement".into(), "a hard change".into())].into());
     stored.stage_timeouts = [("implement".to_owned(), 45)].into();
     h.ctx.store.lock().await.update_item(&stored).unwrap();
     advance_origin(&h, "upstream.txt", "elsewhere\n");
     let fix = refresh(&h, &owner).await.unwrap();
     assert_eq!(fix.pipeline, "direct");
-    assert_eq!(fix.model_plan, defaults, "the stage defaults");
+    assert_eq!(*fix.model_plan, *defaults, "the stage defaults");
+    let note = format!("for the refresh of {}", owner.id);
+    for (key, entries) in crate::plan_origins::shown(&h, &fix).await {
+        for origin in entries {
+            for field in [&origin.model, &origin.effort] {
+                assert_eq!(field.by, Authority::Daemon, "{key}: not the owner's pin");
+                assert!(!field.is_pin(), "{key}: {field:?}");
+                let said = field.note.as_deref().unwrap_or_default();
+                assert!(said.starts_with(&note), "{key}: {said}");
+            }
+        }
+    }
     assert_eq!(fix.model_reasons, None);
     assert_eq!(
         fix.stage_timeouts,
@@ -952,9 +967,19 @@ async fn a_refresh_takes_the_plan_and_stage_timeouts_it_is_given() {
         Some([high].as_slice())
     );
     assert_eq!(
-        fix.model_reasons.unwrap()["implement"],
+        fix.model_reasons.as_ref().unwrap()["implement"],
         "conflicts to resolve"
     );
+    let implement = &crate::plan_origins::shown(&h, &fix).await["implement"][0];
+    for field in [&implement.model, &implement.effort] {
+        assert_eq!(
+            (field.source, field.by),
+            (PlanSource::Explicit, Authority::Orchestrator)
+        );
+        let named = format!("for the refresh of {}", owner.id);
+        let said = field.note.as_deref().unwrap_or_default();
+        assert!(said.starts_with(&named), "{said}");
+    }
     assert_eq!(fix.stage_timeouts, [("implement".to_owned(), 30)].into());
 }
 
@@ -1063,9 +1088,9 @@ async fn a_refresh_defaults_missing_or_disallowed_models_and_refuses_an_empty_po
         let (h, _gh) = delivering().await;
         let (owner, _) = shipped(&h, "model fallback").await;
         let mut stored = h.ctx.store.lock().await.item(&owner.id).unwrap();
-        stored.model_plan.0.clear();
+        stored.model_plan.legacy_mut().0.clear();
         if !missing {
-            stored.model_plan.0.insert(
+            stored.model_plan.legacy_mut().0.insert(
                 "build".into(),
                 vec![common::choice(
                     "blocked/model",

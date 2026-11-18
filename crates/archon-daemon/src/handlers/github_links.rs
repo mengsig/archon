@@ -159,7 +159,8 @@ pub(super) async fn import_issue(
         autonomy: Default::default(),
         origin: None,
     };
-    let item = match super::items::enqueue(ctx, request).await {
+    let by = archon_core::plan_origin::Authority::Daemon;
+    let item = match super::items::enqueue(ctx, request, by).await {
         Ok(Reply::Item(item) | Reply::ItemBudgetsOff(item)) => item,
         Ok(other) => unreachable!("an enqueue replies with its item, not {other:?}"),
         // A concurrent import of the same issue won the key: return its item.

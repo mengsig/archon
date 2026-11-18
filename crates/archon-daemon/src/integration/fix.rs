@@ -3,7 +3,6 @@
 
 use archon_core::error::ArchonError;
 use archon_core::integration::short;
-use archon_core::model::ModelPlan;
 use archon_core::notify::NotificationKind;
 use archon_core::protocol::{EnqueueRequest, ItemQuery, RepoRef};
 use archon_core::queue::{Priority, QueueItem};
@@ -135,7 +134,7 @@ fn request(repo: &Repo, state: &BranchState, red: &Red) -> EnqueueRequest {
         depends_on: Vec::new(),
         onto: None,
         tags: vec![FIX_TAG.to_owned()],
-        model_plan: ModelPlan::default().into(),
+        model_plan: Default::default(),
         model_reasons: None,
         budget_usd: None,
         stage_timeouts: Default::default(),

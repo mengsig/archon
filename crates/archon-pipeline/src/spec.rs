@@ -471,7 +471,7 @@ impl PipelineSpec {
     /// longer has; `true` when any went. User pipelines and run snapshots keep theirs.
     pub fn drop_retired_ship(
         &self,
-        plan: &mut ModelPlan,
+        plan: &mut archon_core::plan_origin::PlannedPlan,
         reasons: Option<&mut ModelReasons>,
     ) -> bool {
         let shipped_by_daemon = self.file.pipeline.ship.is_some();
@@ -481,7 +481,7 @@ impl PipelineSpec {
         {
             return false;
         }
-        let choice = plan.0.remove(RETIRED_SHIP_STAGE).is_some();
+        let choice = plan.remove_key(RETIRED_SHIP_STAGE);
         let reason = reasons.is_some_and(|r| r.remove(RETIRED_SHIP_STAGE).is_some());
         assert!(!plan.0.contains_key(RETIRED_SHIP_STAGE), "removed above");
         assert!(

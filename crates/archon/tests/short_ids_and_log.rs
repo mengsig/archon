@@ -49,7 +49,7 @@ fn item(id: &str, title: &str) -> QueueItem {
         priority: archon_core::queue::Priority::Normal,
         dependencies: vec![],
         tags: vec![],
-        model_plan: archon_core::model::ModelPlan::default(),
+        model_plan: Default::default(),
         model_reasons: None,
         budget_usd: None,
         autonomy: archon_core::autonomy::Autonomy::default(),
@@ -148,6 +148,7 @@ impl Fake {
             Request::ResolveItem { prefix } => return self.resolve(prefix),
             Request::GetItem { item } => Reply::ItemDetail(Box::new(ItemDetail {
                 acceptance: Default::default(),
+                plan_origins: Default::default(),
                 default_efforts: Default::default(),
                 worker_policies: Default::default(),
                 stage_notes: Default::default(),

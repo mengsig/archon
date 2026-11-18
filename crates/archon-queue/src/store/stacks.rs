@@ -179,6 +179,8 @@ impl Store {
         }
         let mut fix = child.clone();
         fix.id = QueueItemId::new();
+        let note = format!("copied from {}", child.id);
+        fix.model_plan = child.model_plan.copy_for(&child.id, &fix.id, Some(&note));
         fix.title = format!("Restack {}", child.id);
         fix.brief = format!(
             "Merge {sha}, the head of `{}`, into `{}` with `git merge {sha}`: Archon's own \
@@ -247,6 +249,9 @@ impl Store {
         }
         let mut fix = owner.clone();
         fix.id = QueueItemId::new();
+        // The caller built the plan for this refresh; it moves to the refresh's own id.
+        let note = format!("for the refresh of {}", owner.id);
+        fix.model_plan = owner.model_plan.copy_for(&owner.id, &fix.id, Some(&note));
         fix.title = format!("Refresh {} onto {}", owner.id, refresh.base);
         fix.brief = refresh_brief(owner, &run.branch, refresh);
         if let Some(onto) = fix.onto.as_mut() {

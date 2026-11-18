@@ -9,6 +9,7 @@ use crate::common;
 use std::collections::BTreeMap;
 
 use archon_core::model::{Effort, ModelPlan};
+use archon_core::plan_origin::PlannedPlan;
 use archon_core::protocol::Request;
 use archon_core::queue::{QueueItem, QueueState};
 use archon_daemon::executor;
@@ -82,7 +83,7 @@ async fn v101_item(h: &Harness, title: &str) -> QueueItem {
     let mut plan = v101_plan();
     plan.0.remove("ship");
     let mut item = h.enqueue_in(BUILTIN, title, plan).await.expect("enqueue");
-    item.model_plan = v101_plan();
+    item.model_plan = PlannedPlan::legacy(v101_plan());
     item.model_reasons = Some(v101_reasons());
     h.ctx
         .store
@@ -108,7 +109,7 @@ async fn a_queued_1_0_item_starts_on_the_built_in_without_its_ship_stage() {
     ));
     let stored = h.item(&item.id).await;
     assert_eq!(
-        stored.model_plan,
+        *stored.model_plan,
         v101_plan(),
         "the repair is made as the item is read, not written back"
     );
@@ -136,7 +137,7 @@ async fn a_retried_1_0_item_keeps_its_plan_without_the_ship_stage() {
     let stored = h.item(&item.id).await;
     let mut expected = v101_plan();
     expected.0.remove("ship");
-    assert_eq!(stored.model_plan, expected, "the 1.0 choices are kept");
+    assert_eq!(*stored.model_plan, expected, "the 1.0 choices are kept");
     let reasons = stored.model_reasons.expect("reasons kept");
     assert_eq!(
         reasons.keys().collect::<Vec<_>>(),
@@ -188,7 +189,7 @@ async fn a_run_started_by_1_0_finishes_with_its_frozen_ship_agent() {
         h.state(&item.id).await,
         QueueState::Succeeded { .. }
     ));
-    assert_eq!(h.item(&item.id).await.model_plan, v101_retired_plan());
+    assert_eq!(*h.item(&item.id).await.model_plan, v101_retired_plan());
 }
 
 #[tokio::test]
@@ -237,8 +238,8 @@ async fn a_custom_pipeline_s_plan_naming_ship_is_not_repaired() {
         .await
         .expect("enqueue");
     let mut stored = h.item(&item.id).await;
-    stored.model_plan = v101_retired_plan();
-    stored.model_plan.0.remove("review");
+    stored.model_plan = PlannedPlan::legacy(v101_retired_plan());
+    stored.model_plan.legacy_mut().0.remove("review");
     h.ctx.store.lock().await.update_item(&stored).expect("plan");
 
     h.dispatch().await;

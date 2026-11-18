@@ -440,7 +440,9 @@ and nothing ships. A record that is broken rather than refused gets one
 repair turn first. Broken means a result without `structured`, or a pass that
 names no reviewer. The stage is entered once more with the refusal quoted.
 The reviewers it then names are checked as above, so they must be agents it
-delegated itself. A second broken record fails the run. At `none` the contract tells the agent to delegate no
+delegated itself. A second broken record fails the run, with no fix loop.
+A broken record is judged before the stage's gate, unless it states a fail
+verdict, which is refused on its merits. At `none` the contract tells the agent to delegate no
 reviewer and record no review.
 
 A pass is not taken on the agent's word. As the stage ends, Archon lists
@@ -538,7 +540,7 @@ record beside anything else it returns:
 ```
 
 A pass without a readable record fails the run at that stage, after one
-repair turn when its result has no `structured`. Stages after
+repair turn when its record is broken. Stages after
 it (reviews, tests) verify that tree and commit nothing more. The `risk` key
 is the level archond labels the pull request with (see
 [risk labels](guide.md#risk-labels)); a missing or invalid one never fails

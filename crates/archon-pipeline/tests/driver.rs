@@ -2032,6 +2032,77 @@ fn a_gated_record_stage_without_structured_gets_one_repair_turn() {
     assert_eq!(failed(&again).0, "check");
 }
 
+/// A second broken record fails the run: the stage's fix loop back to its
+/// workers is not taken, as it cannot hand in the record either.
+#[test]
+fn a_second_broken_record_fails_the_run_without_a_fix_loop() {
+    let mut sim = swarm_sim();
+    assign_tasks(&mut sim, &["api", "cli"]);
+    sim.settle("plan", 0, Agent::Done("api, cli"));
+    sim.settle("build", 0, Agent::Done("api built"));
+    sim.settle("build", 1, Agent::Done("cli built"));
+    sim.merge(MergeOutcome::Merged);
+    let repair = sim.settle("integrate", 0, Agent::Done("Integrated."));
+    assert_eq!(spawned(&repair), slots(&[("integrate", 2, 0)]));
+    let done = sim.settle("integrate", 0, Agent::Done("Integrated again."));
+    assert!(spawned(&done).is_empty(), "no fix loop: {done:#?}");
+    let (stage, error) = failed(&done);
+    assert_eq!(stage, "integrate");
+    assert!(error.contains("no `review` object"), "{error}");
+    assert!(!error.contains("fix loop"), "{error}");
+}
+
+/// A gated record stage owing a review, whose `structured` names neither a
+/// verdict nor a reviewer.
+fn gated_reviewed_sim() -> Sim {
+    let toml = r#"
+        [pipeline]
+        name = "checked"
+        description = "check, then ship"
+        version = 1
+        workspace = "worktree"
+        requires_repo = true
+        [pipeline.review]
+        level = "standard"
+        stage = "check"
+        [pipeline.ship]
+        stage = "check"
+        [[stage]]
+        id = "check"
+        kind = "test"
+        prompt = "check.md"
+        gate = "all_pass"
+    "#;
+    let spec = Arc::new(support::spec_from(toml, &[]));
+    let plan = support::plan_for(&spec, &["claude-code/opus"]);
+    Sim::new(spec, plan)
+}
+
+/// The order is defined: a broken record that states no fail gets its
+/// repair turn before the gate, which could not read a verdict from it.
+#[test]
+fn a_broken_record_is_repaired_before_its_gate_fails() {
+    let mut sim = gated_reviewed_sim();
+    sim.start();
+    let nameless = serde_json::json!({"review": {"reviewers": []}});
+    let repair = sim.settle("check", 0, Agent::DoneStructured("Checked.", nameless));
+    assert_eq!(spawned(&repair), slots(&[("check", 2, 0)]), "{repair:#?}");
+    let prompt = &spawn_plans(&repair)[0].prompt;
+    assert!(prompt.contains("Archon record repair"), "{prompt}");
+}
+
+/// A stated fail is refused on its merits before its broken record.
+#[test]
+fn a_stated_fail_with_a_broken_record_gets_no_repair_turn() {
+    let mut sim = gated_reviewed_sim();
+    sim.start();
+    let done = sim.settle("check", 0, Agent::Fail("the checks fail"));
+    assert!(spawned(&done).is_empty(), "no repair turn: {done:#?}");
+    let (stage, error) = failed(&done);
+    assert_eq!(stage, "check");
+    assert!(error.contains("gate all_pass failed"), "{error}");
+}
+
 /// A record refused on its merits is not broken: no repair turn is given.
 #[test]
 fn a_record_with_too_few_reviewers_gets_no_repair_turn() {
@@ -2282,9 +2353,12 @@ fn a_swarm_integrator_failing_without_redispatch_tells_workers_nothing_else() {
     sim.settle("build", 1, Agent::Done("cli built"));
     sim.merge(MergeOutcome::Merged);
     let unrecorded = "api: PRIVATE_API done; cli: PRIVATE_CLI done.";
-    let repair = sim.settle("integrate", 0, Agent::Done(unrecorded));
-    assert_eq!(spawned(&repair), slots(&[("integrate", 2, 0)]));
-    let back = sim.settle("integrate", 0, Agent::Done(unrecorded));
+    let failed_review = serde_json::json!({"review": {"verdict": "fail"}});
+    let back = sim.settle(
+        "integrate",
+        0,
+        Agent::DoneStructured(unrecorded, failed_review),
+    );
     assert_eq!(spawned(&back), slots(&[("build", 2, 0), ("build", 2, 1)]));
     for worker in spawn_plans(&back) {
         assert!(!worker.prompt.contains("PRIVATE_"), "{}", worker.prompt);

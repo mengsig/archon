@@ -10,9 +10,9 @@
   again with the refusal quoted, and a kept agent is resumed in place.
   Reviewers are still checked against the agents the lead delegated itself,
   so a repair cannot name one that never reviewed. A second broken record
-  fails the run as before. A refused verdict or too few reviewers gets no
-  repair turn. A gated stage that holds the record and hands in no
-  `structured` gets the repair turn before its gate reads the missing verdict.
+  fails the run, with no fix loop. A stated fail verdict or too few reviewers
+  gets no repair turn. A broken record that states no fail gets its repair
+  turn before the stage's gate and scenario checks read it.
 - The stage contract states that Aether refuses a delegation with more than
   16 `references`.
 

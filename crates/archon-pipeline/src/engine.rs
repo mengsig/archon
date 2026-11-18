@@ -949,13 +949,15 @@ impl RunDriver {
         let (headline, report) = match gate::evaluate(stage, at.attempt, members, owed) {
             GroupResult::Fail { headline, report } => (headline, report),
             GroupResult::Unrecorded { headline, report } => {
-                if counts.repairs[at.stage] == 0 {
-                    counts.repairs[at.stage] += 1;
-                    let feedback = sections::record_repair(stage, at.attempt, owed, &report);
-                    at.enter(at.stage, &mut counts.entries, feedback);
-                    return None;
+                // The repair turn was spent: a second broken record fails the
+                // run, as no fix loop can hand in the record either.
+                if counts.repairs[at.stage] > 0 {
+                    return Some(self.stop_failed(at.stage, "", &headline, &report));
                 }
-                (headline, report)
+                counts.repairs[at.stage] += 1;
+                let feedback = sections::record_repair(stage, at.attempt, owed, &report);
+                at.enter(at.stage, &mut counts.entries, feedback);
+                return None;
             }
             GroupResult::Defect { headline, report } => {
                 return Some(self.stop_failed(at.stage, "", &headline, &report));

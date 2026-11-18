@@ -52,7 +52,9 @@ pub(crate) enum GroupResult {
 }
 
 /// Evaluate a stage group whose every slot is terminal. `members` holds the
-/// latest stage run per slot, by fan index; `owed` as for `recorded`.
+/// latest stage run per slot, by fan index; `owed` as for `recorded`. A
+/// broken record that is not a stated fail is judged before the gate and
+/// scenarios, which read that record, so it gets its repair turn first.
 pub(crate) fn evaluate(
     stage: &StageSpec,
     attempt: u32,
@@ -64,8 +66,11 @@ pub(crate) fn evaluate(
         members.iter().all(|m| m.state.is_terminal()),
         "only finished groups are evaluated"
     );
-    if owed != Owed::default() && handed_in_nothing(stage, members) {
-        return recorded(stage, attempt, members, owed);
+    if owed != Owed::default()
+        && repairable(stage, members, owed)
+        && let unrecorded @ GroupResult::Unrecorded { .. } = recorded(stage, attempt, members, owed)
+    {
+        return unrecorded;
     }
     let total = members.len();
     let passes = members.iter().filter(|m| member_passes(stage, m)).count();
@@ -166,17 +171,16 @@ fn recorded(stage: &StageSpec, attempt: u32, members: &[&StageRun], owed: Owed) 
     }
 }
 
-/// Whether the one agent holding a record completed with no `structured` and
-/// no failing verdict: its gate and scenarios cannot be read, so the missing
-/// record is what failed, and it gets the repair turn before any gate.
-fn handed_in_nothing(stage: &StageSpec, members: &[&StageRun]) -> bool {
+/// Whether the one agent holding a record completed with a broken record and
+/// no stated fail verdict. A stated fail is refused on its merits instead.
+fn repairable(stage: &StageSpec, members: &[&StageRun], owed: Owed) -> bool {
     let [member] = members else {
         return false;
     };
     assert_eq!(stage.fan_out, 1, "one agent holds a record");
     member.state == StageState::Completed
-        && member.structured.is_none()
         && verdict_of(member) != Verdict::Fail
+        && broken_record(member.structured.as_ref(), owed)
 }
 
 /// Whether a completed stage's record is broken rather than refused on its

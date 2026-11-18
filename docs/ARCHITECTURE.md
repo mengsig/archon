@@ -2812,7 +2812,9 @@ worktree they abbreviate; elsewhere they stay the full SHA-1 id. The gate checks
 review: a pass without one fails the run at that stage, so no delivery is
 ever asked for without it. A result without `structured`, or a pass that
 names no reviewer, first gets one repair turn: the stage is entered again
-with the refusal quoted, and a second broken record fails the run. Stages after the record stage cannot commit
+with the refusal quoted, and a second broken record fails the run without
+a fix loop. A broken record that states no fail is judged before the gate
+and scenarios; a stated fail is refused on its merits. Stages after the record stage cannot commit
 (§8.2), so what they verified is that tree.
 
 When the last stage passes, the driver emits `Ship(ShipPlan)`: the record,

@@ -358,6 +358,27 @@ async fn a_check_that_fails_does_not_end_the_sweeps() {
     watcher.abort();
 }
 
+/// A request Aether leaves unanswered is cut off at the request limit, so a
+/// later sweep checks its stage again: once Aether answers, the due reviewer
+/// is stopped, though the request that hung has still not ended.
+#[tokio::test(start_paused = true)]
+async fn an_unanswered_request_is_cut_off_and_its_stage_checked_again() {
+    let h = Harness::new().await;
+    let (stage, lead, reviewer) = held_reviewer(&h).await;
+    let _aether = common::connect_aether_for_delegations(&h).await;
+    let watcher = tokio::spawn(quota_wait::watch(h.ctx.clone()));
+    tokio::time::sleep(quota_wait::SWEEP_INTERVAL + Duration::from_secs(1)).await;
+    backdate_wait(&h, &stage, &reviewer, TimeDelta::minutes(3)).await;
+    // The next sweep's listing hangs; Aether answers at once from then on.
+    h.backend.slow_answers(&lead, Duration::from_secs(3600));
+    tokio::time::sleep(quota_wait::SWEEP_INTERVAL).await;
+    assert!(h.backend.cancelled().is_empty(), "the listing hangs");
+    h.backend.slow_answers(&lead, Duration::ZERO);
+    tokio::time::sleep(quota_wait::SWEEP_INTERVAL * 2).await;
+    assert_eq!(h.backend.cancelled(), vec![reviewer.clone()]);
+    watcher.abort();
+}
+
 /// The sweep keeps its own 30-second timer: with no dispatch pass at all, a
 /// blocked reviewer is stopped within minutes of the paused clock.
 #[tokio::test(start_paused = true)]

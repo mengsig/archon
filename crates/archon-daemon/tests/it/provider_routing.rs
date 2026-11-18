@@ -794,6 +794,37 @@ async fn a_repository_s_own_weights_hold_its_items_when_every_provider_is_out() 
 }
 
 #[tokio::test]
+async fn an_unattributed_tier_model_is_a_pin_that_no_quota_holds_at_admission() {
+    let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![
+            ("claude-code", window(0, TimeDelta::hours(2))),
+            ("codex", window(0, TimeDelta::hours(1))),
+        ],
+    );
+    let item = enqueue(&h, ROUTED, "unaccounted", tier_plan()).await;
+    {
+        let mut store = h.ctx.store.lock().await;
+        let mut stored = store.item(&item.id).unwrap();
+        let plan = stored.model_plan.plan().clone();
+        assert!(plan.0.values().flatten().any(|c| c.tier.is_some()));
+        stored.model_plan = PlannedPlan::unattributed(&stored.id, plan);
+        store.update_item(&stored).unwrap();
+    }
+    h.dispatch().await;
+    assert_eq!(
+        h.stages(&item.id).await.len(),
+        1,
+        "the pinned implementer runs"
+    );
+    let status = status(&h).await;
+    let row = (status.waiting_items.iter()).find(|row| row.item.id == item.id);
+    assert!(row.is_none(), "a pin waits for no quota: {row:?}");
+}
+
+#[tokio::test]
 async fn a_stage_waiting_for_quota_takes_no_agent_slot_from_other_work() {
     let mut config = weighted(&[("claude-code", 1), ("codex", 1)]);
     config.limits.max_parallel_agents = 1;

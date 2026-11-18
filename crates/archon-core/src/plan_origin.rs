@@ -43,6 +43,18 @@ pub enum PlanSource {
 }
 
 impl PlanSource {
+    /// Every source a writer can account for a field with.
+    pub const ATTRIBUTED: [Self; 8] = [
+        Self::Explicit,
+        Self::Learned,
+        Self::Tier,
+        Self::Fallback,
+        Self::Sizer,
+        Self::Escalation,
+        Self::Migrated,
+        Self::LegacyUnknown,
+    ];
+
     fn unattributed() -> Self {
         Self::Unattributed
     }
@@ -231,8 +243,9 @@ pub struct PlanOrigins {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PlannedPlan {
     model_plan: ModelPlan,
+    // Boxed so a stored item stays about the size it was before origins.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    model_origins: Option<PlanOrigins>,
+    model_origins: Option<Box<PlanOrigins>>,
 }
 
 impl Deref for PlannedPlan {
@@ -250,10 +263,10 @@ impl PlannedPlan {
         let entries = shape_of(&plan, |_| EntryOrigin::unknown(PlanSource::Unattributed));
         Self {
             model_plan: plan,
-            model_origins: Some(PlanOrigins {
+            model_origins: Some(Box::new(PlanOrigins {
                 item: item.clone(),
                 entries,
-            }),
+            })),
         }
     }
 
@@ -303,7 +316,7 @@ impl PlannedPlan {
 
     /// The origins as stored; `None` for an item stored before 1.6.4.
     pub fn stored_origins(&self) -> Option<&PlanOrigins> {
-        self.model_origins.as_ref()
+        self.model_origins.as_deref()
     }
 
     /// Where slot `slot` of `key` came from, for the item `item`: legacy for
@@ -365,10 +378,10 @@ impl PlannedPlan {
         debug_assert!(entries.keys().eq(self.model_plan.0.keys()));
         Some(Self {
             model_plan: self.model_plan.clone(),
-            model_origins: Some(PlanOrigins {
+            model_origins: Some(Box::new(PlanOrigins {
                 item: item.clone(),
                 entries,
-            }),
+            })),
         })
     }
 
@@ -383,10 +396,10 @@ impl PlannedPlan {
     fn make_whole(&mut self, item: &QueueItemId) {
         let entries = self.origins(item);
         debug_assert!(entries.keys().eq(self.model_plan.0.keys()));
-        self.model_origins = Some(PlanOrigins {
+        self.model_origins = Some(Box::new(PlanOrigins {
             item: item.clone(),
             entries,
-        });
+        }));
         debug_assert!(self.faults(item).is_empty());
     }
 
@@ -405,10 +418,10 @@ impl PlannedPlan {
         }
         let copy = Self {
             model_plan: self.model_plan.clone(),
-            model_origins: Some(PlanOrigins {
+            model_origins: Some(Box::new(PlanOrigins {
                 item: to.clone(),
                 entries,
-            }),
+            })),
         };
         debug_assert!(copy.faults(to).is_empty());
         copy
@@ -488,7 +501,7 @@ impl PlannedPlan {
                 debug_assert_eq!(tier.requested, asked.requested, "the tier asked for");
                 let moved = model != choice.model || origin.model.source != PlanSource::Tier;
                 if moved {
-                    let note = note.map(str::to_owned).or(origin.model.note.take());
+                    let note = moved_note(note, origin.model.note.take());
                     origin.model =
                         FieldOrigin::chosen(PlanSource::Tier, Authority::Daemon, at, note);
                 }
@@ -500,12 +513,26 @@ impl PlannedPlan {
         assert_eq!(shape, after, "only models change");
         self.model_plan = plan;
         if self.model_origins.is_some() || origins.values().flatten().any(|o| !o.model.is_pin()) {
-            self.model_origins = Some(PlanOrigins {
+            self.model_origins = Some(Box::new(PlanOrigins {
                 item: item.clone(),
                 entries: origins,
-            });
+            }));
         }
         Ok(())
+    }
+}
+
+/// The note of a model the daemon moved: the move's own note followed by
+/// who first asked for the tier, so repeated moves never grow it further.
+fn moved_note(note: Option<&str>, earlier: Option<String>) -> Option<String> {
+    let requester = earlier.map(|old| match old.rsplit_once("; ") {
+        Some((_, first)) => first.to_owned(),
+        None => old,
+    });
+    match (note, requester) {
+        (Some(note), Some(requester)) => Some(format!("{note}; {requester}")),
+        (Some(note), None) => Some(note.to_owned()),
+        (None, requester) => requester,
     }
 }
 
@@ -653,10 +680,10 @@ impl PlanWriter {
     pub fn finish(self) -> PlannedPlan {
         let planned = PlannedPlan {
             model_plan: self.plan,
-            model_origins: Some(PlanOrigins {
+            model_origins: Some(Box::new(PlanOrigins {
                 item: self.item.clone(),
                 entries: self.entries,
-            }),
+            })),
         };
         assert!(
             planned.faults(&self.item).is_empty(),

@@ -115,6 +115,25 @@ fn a_draft_naming_a_tier_leaves_the_model_to_the_daemon_and_names_who_asked() {
 }
 
 #[test]
+fn a_moved_tier_keeps_who_asked_for_it_however_often_it_moves() {
+    let item = QueueItemId::new();
+    let mut writer = PlanWriter::new(&item, crate::now());
+    let asked = draft(serde_json::json!({"review": [{"tier": "strong"}]}));
+    let resolved = plan(&[("review", tiered("b/sol", Effort::High))]);
+    writer.request(&asked, resolved, Authority::Orchestrator);
+    let mut planned = writer.finish();
+    let asked_by = planned.origin(&item, "review", 0).model.note.unwrap();
+    for (model, why) in [("c/sol", "moved off b"), ("d/sol", "moved off c")] {
+        let to = |_: &str, asked: &TierChoice| Ok(Some((model.parse().unwrap(), asked.clone())));
+        planned
+            .retier(&item, (crate::now(), Some(why)), to)
+            .unwrap();
+        let note = planned.origin(&item, "review", 0).model.note.unwrap();
+        assert_eq!(note, format!("{why}; {asked_by}"));
+    }
+}
+
+#[test]
 fn a_steer_naming_the_stored_value_still_pins_it_and_leaves_the_other_field_alone() {
     let item = QueueItemId::new();
     let mut planned = enqueued(&item);
@@ -339,12 +358,11 @@ fn removing_a_key_drops_its_origins() {
         "origins still fit the plan"
     );
     assert!(
-        planned
+        !planned
             .stored_origins()
             .unwrap()
             .entries
-            .get("ship")
-            .is_none()
+            .contains_key("ship")
     );
 }
 
@@ -436,4 +454,25 @@ fn a_run_drives_an_unattributed_tiered_model_as_a_pin() {
         "no quota move changes a pin"
     );
     assert_eq!(driven.0["review"][0].model, planned.0["review"][0].model);
+}
+
+#[test]
+fn every_source_but_unattributed_is_an_attributed_one_named_as_it_is_stored() {
+    let listed = |source: PlanSource| match source {
+        PlanSource::Explicit
+        | PlanSource::Learned
+        | PlanSource::Tier
+        | PlanSource::Fallback
+        | PlanSource::Sizer
+        | PlanSource::Escalation
+        | PlanSource::Migrated
+        | PlanSource::LegacyUnknown => PlanSource::ATTRIBUTED.contains(&source),
+        PlanSource::Unattributed => !PlanSource::ATTRIBUTED.contains(&source),
+    };
+    assert!(listed(PlanSource::Unattributed));
+    for source in PlanSource::ATTRIBUTED {
+        assert!(listed(source));
+        let stored = serde_json::to_value(source).unwrap();
+        assert_eq!(stored, serde_json::json!(source.to_string()));
+    }
 }

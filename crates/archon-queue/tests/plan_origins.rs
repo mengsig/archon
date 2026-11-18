@@ -56,6 +56,31 @@ fn the_count_finds_stored_origins_of_another_item_or_another_shape() {
     assert_eq!(read.model_plan.unattributed_fields(&read.id), fields(&read));
 }
 
+#[test]
+fn the_count_finds_a_stored_field_without_an_origin_or_with_an_unknown_source() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.db");
+    let mut store = Store::open(&path).unwrap();
+    let alpha = repo("alpha");
+    store.insert_repo(&alpha).unwrap();
+    let edits = [
+        "json_remove(data, '$.model_origins.entries.implement[0].effort')",
+        "json_remove(data, '$.model_origins.entries.implement[0].model.source')",
+        "json_set(data, '$.model_origins.entries.implement[0].model.source', 'comparison')",
+    ];
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    for (n, edit) in edits.iter().enumerate() {
+        let stored = store
+            .insert_item(&planned(&alpha, &format!("edited {n}")), None)
+            .unwrap();
+        let update = format!("UPDATE items SET data = {edit} WHERE id = ?1");
+        assert_eq!(conn.execute(&update, [stored.id.as_str()]).unwrap(), 1);
+        let read = store.item(&stored.id).unwrap();
+        assert_eq!(read.model_plan.unattributed_fields(&read.id), 1, "{edit}");
+        assert_eq!(store.unattributed_plan_fields().unwrap(), n + 1, "{edit}");
+    }
+}
+
 /// A test build fails loudly; a release build stores the fields as unattributed.
 #[test]
 #[cfg_attr(debug_assertions, should_panic(expected = "origins written for"))]

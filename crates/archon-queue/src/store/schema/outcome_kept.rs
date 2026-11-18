@@ -154,10 +154,18 @@ fn v24_keeps_a_run_whose_stage_row_the_store_would_not_write() {
         [stage.id.as_str()],
     )
     .unwrap();
+    let (unnamed, stage) = budget_run(&conn);
+    conn.execute(
+        "UPDATE stage_runs SET stage_id = '', data = json_set(data, '$.stage_id', '')
+         WHERE id = ?1",
+        [stage.id.as_str()],
+    )
+    .unwrap();
     let (whole, _) = budget_run(&conn);
 
     assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
 
+    assert_kept(&conn, &unnamed, "a stage row with no stage id");
     assert_kept(&conn, &unfinished, "a settled stage with no finish time");
     assert_kept(&conn, &uncounted, "a stage row counted as attempt 0");
     assert_kept(&conn, &miscounted, "a stage row whose attempt is text");

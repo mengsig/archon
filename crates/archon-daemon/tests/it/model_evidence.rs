@@ -521,6 +521,7 @@ async fn retired_run(h: &Harness, like: &archon_core::queue::QueueItem) {
     let mut store = h.ctx.store.lock().await;
     let mut item = store.item(&like.id).unwrap();
     item.id = archon_core::id::QueueItemId::new();
+    item.model_plan = item.model_plan.copy_for(&like.id, &item.id, None);
     item.pipeline = "retired".into();
     item.state = QueueState::Queued;
     let item = store.insert_item(&item, None).unwrap();

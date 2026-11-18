@@ -841,6 +841,28 @@ fn a_run_recovery_could_not_resume_is_an_infrastructure_failure() {
     assert_eq!(rowless.failure, Some(FailureClass::Infrastructure));
 }
 
+/// No daemon writes a stage run without a name. Capture reads one by its
+/// records alone, then refuses the outcome it cannot key by stage.
+#[test]
+fn a_stage_run_with_no_name_is_refused_and_stops_nothing() {
+    for kind in [None, Some(StageKind::Review)] {
+        let mut store = store();
+        let item = store.insert_item(&item(None, "classed"), None).unwrap();
+        let run = start(&mut store, &item.id);
+        let error = "it went wrong".into();
+        let mut unnamed = settled(&run, "", StageKind::Work, StageState::Failed { error });
+        unnamed.kind = kind;
+        store.upsert_stage_run(&unnamed).unwrap();
+        fail(&mut store, &run, "", MISLEADING);
+        let captured = store.capture_outcome(&store.run(&run.id).unwrap(), None, true);
+        assert!(
+            matches!(&captured, Err(archon_core::error::ArchonError::Invalid(why)) if why.contains("named")),
+            "{kind:?}: {captured:?}"
+        );
+        assert_eq!(store.outcome(&run.id).unwrap(), None, "{kind:?}");
+    }
+}
+
 /// Only a tally archond can have stored holds a reviewer's verdict: each fail
 /// names its reviewer's agent, the commit it read and its findings.
 #[test]

@@ -343,6 +343,35 @@ fn a_verdict_the_gate_took_across_a_line_break_reviewed_its_pull_request() {
     );
 }
 
+/// No daemon writes a stage run without a name. Capture reads the review such
+/// a stage run recorded, then refuses the outcome it cannot key by stage.
+#[test]
+fn a_reviewing_stage_run_with_no_name_is_refused_and_stops_nothing() {
+    let mut store = store();
+    let at = t(DAY);
+    let item = store.insert_item(&reviewing(41), None).unwrap();
+    let run = start(&mut store, &item.id);
+    let mut unnamed = lead(&item, &run, &passed(), at, Some("pass"));
+    unnamed.stage_id = String::new();
+    store.upsert_stage_run(&unnamed).unwrap();
+    let next = QueueState::Succeeded {
+        run: run.id.clone(),
+        summary: "VERDICT: PASS".into(),
+    };
+    let finished = PipelineRun {
+        state: passed(),
+        finished_at: Some(at),
+        ..run
+    };
+    store.finish_run(&finished, next, at).unwrap();
+    let captured = store.capture_outcome(&store.run(&finished.id).unwrap(), None, true);
+    assert!(
+        matches!(&captured, Err(archon_core::error::ArchonError::Invalid(why)) if why.contains("named")),
+        "{captured:?}"
+    );
+    assert_eq!(store.outcome(&finished.id).unwrap(), None);
+}
+
 /// An outcome recorded again under no repository keeps the one its row was
 /// filed under: that repository's reports still read it.
 #[test]

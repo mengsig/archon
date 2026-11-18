@@ -229,11 +229,11 @@ fn judged_class(
 /// review-only run's lead, a result carrying a review whose verdict reads pass
 /// or fail, or a reviewer's failing verdict in its tally. A recorded kind always
 /// wins over the id: only a kindless (1.4.x) stage is read by it, and only with a verdict.
+/// A stage run with no name, which no daemon writes, is read by its records alone.
 pub(in crate::store) fn holds_review(
     stage: &StageRun,
     failed_reviews: &BTreeSet<StageRunId>,
 ) -> bool {
-    assert!(!stage.stage_id.is_empty(), "a stage run names its stage");
     let recorded = stage.kind == Some(StageKind::Review)
         || stage.only_reviews == Some(true)
         || nested_verdict(stage).is_some()
@@ -251,12 +251,12 @@ fn kindless_review(stage: &StageRun) -> bool {
 /// Whether a reviewer's verdict on the stage's work is on record: a review
 /// stage's own pass or fail, the verdict of the review its result carries
 /// (unless Archon refused that review), or a failing one in its tally. Being
-/// assigned a review (`only_reviews`) is no such record.
+/// assigned a review (`only_reviews`) is no such record, and neither is a name
+/// the stage run does not have.
 pub(in crate::store) fn review_on_record(
     stage: &StageRun,
     failed_reviews: &BTreeSet<StageRunId>,
 ) -> bool {
-    assert!(!stage.stage_id.is_empty(), "a stage run names its stage");
     let judged = matches!(stage.verdict, Some(Verdict::Pass | Verdict::Fail));
     let own = judged && (stage.kind == Some(StageKind::Review) || kindless_review(stage));
     let carried = nested_verdict(stage).is_some() && !stage.review_refused();
@@ -333,9 +333,12 @@ fn passed(stage: &StageRun) -> bool {
 }
 
 /// Stage runs from before Archon kept their stage's kind (1.4.x) name it only
-/// by its id; a review among them is read by [`judged_class`].
+/// by its id; a review among them is read by [`judged_class`]. A stage run
+/// with no id, which no daemon writes, names no kind: its failure is `other`.
 fn unrecorded_kind(stage_id: &str) -> FailureClass {
-    assert!(!stage_id.is_empty(), "a stage run names its stage");
+    if stage_id.is_empty() {
+        return FailureClass::Other;
+    }
     if stage_id.contains("test") {
         FailureClass::Verification
     } else if stage_id.contains("ship") {

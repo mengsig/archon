@@ -88,7 +88,10 @@ pub(crate) enum Got {
         /// GitHub's clock when it answered, from the `Date` header.
         date: Option<Timestamp>,
     },
-    NotModified,
+    NotModified {
+        /// GitHub's clock when it answered, from the `Date` header.
+        date: Option<Timestamp>,
+    },
 }
 
 /// A `GET` and the backoff its headers asked for.
@@ -116,6 +119,10 @@ pub(crate) async fn get(
     };
     let now = u64::try_from(archon_core::now().timestamp()).unwrap_or(0);
     let backoff = response.backoff(now);
+    let date = response
+        .header("date")
+        .and_then(|d| chrono::DateTime::parse_from_rfc2822(d).ok())
+        .map(|d| d.with_timezone(&chrono::Utc));
     let got = match response.status {
         200 => Ok(Got::Changed {
             etag: response
@@ -123,13 +130,10 @@ pub(crate) async fn get(
                 .filter(|e| e.len() <= MAX_ETAG_BYTES)
                 .map(str::to_owned),
             last_page: response.header("link").and_then(last_page),
-            date: response
-                .header("date")
-                .and_then(|d| chrono::DateTime::parse_from_rfc2822(d).ok())
-                .map(|d| d.with_timezone(&chrono::Utc)),
+            date,
             body: response.body,
         }),
-        304 => Ok(Got::NotModified),
+        304 => Ok(Got::NotModified { date }),
         status => Err(ArchonError::Unavailable(format!(
             "GitHub answered {status} for {endpoint}: {}",
             ran.detail()

@@ -1,6 +1,5 @@
 //! Repository watches (A18): the sync reads a registered repository's open
-//! pull requests, newest update first, with the first page conditional on its
-//! ETag, and raises a `github_watch` trigger only for a new pull request, a
+//! pull requests, each page conditional on its own ETag, and raises a `github_watch` trigger only for a new pull request, a
 //! new head, a new review request, or a new comment or review. A watch is
 //! news only: it grants no operator standing.
 
@@ -14,7 +13,7 @@ use archon_queue::Store;
 use archon_queue::store::MAX_ETAG_BYTES;
 use serde::{Deserialize, Serialize};
 
-use super::watch_read::Activity;
+use super::watch_read::{Activity, MAX_PAGES};
 
 /// `kv`: one watch per registered repository, keyed by its id.
 pub const KEY_PREFIX: &str = "github_repo_watch:";
@@ -25,7 +24,8 @@ pub(crate) const DEFAULT_MINUTES: u32 = MIN_WATCH_MINUTES;
 /// Changes one trigger lists; the rest are counted.
 pub(crate) const MAX_CHANGES: usize = 20;
 
-/// Pull requests a watch keeps a mark of; the least recently updated go first.
+/// Pull requests a watch keeps a mark of, closed ones included, so a reopened
+/// one is compared with its mark; the least recently updated go first.
 pub(crate) const MAX_MARKS: usize = 1_000;
 
 /// A mark of an `updated_at` this close to its read is checked again: GitHub
@@ -50,23 +50,21 @@ pub(crate) struct WatchRecord {
     pub generation: String,
     /// The `owner/name` the marks below are of; another `origin` re-baselines.
     pub repository: String,
+    /// Each page of the list as last read, for a conditional `GET` of it;
+    /// empty when the next read must ask every page afresh.
     #[serde(default)]
-    pub etag: Option<String>,
-    /// When GitHub last sent the list (a 200).
+    pub pages: Vec<PageMark>,
+    /// When GitHub last sent the list (a 200 of a page).
     #[serde(default)]
     pub fetched_at: Option<Timestamp>,
-    /// The newest `updated_at` every change up to which was told: later
-    /// pages are read only while the list is newer than this.
-    #[serde(default)]
-    pub watermark: Option<Timestamp>,
-    /// The highest pull request number of a complete read: an unmarked one
-    /// above, made since the baseline, is new.
+    /// The highest pull request number seen: without a `created_at`, an
+    /// unmarked one above is new.
     #[serde(default)]
     pub max_number: u64,
-    /// GitHub's clock at the baseline read: a pull request made before it,
-    /// closed then and reopened later, is no new one.
+    /// GitHub's clock at the first page of the last read of every page: an
+    /// unmarked pull request made before it was closed then, so is no new one.
     #[serde(default)]
-    pub baseline_at: Option<Timestamp>,
+    pub complete_at: Option<Timestamp>,
     /// What each pull request looked like when last told; `None` before the
     /// baseline. A pull request that left the list keeps its mark until a
     /// read of the whole list.
@@ -82,11 +80,10 @@ impl WatchRecord {
             since: archon_core::now(),
             generation: ulid::Ulid::generate().to_string(),
             repository,
-            etag: None,
+            pages: Vec::new(),
             fetched_at: None,
-            watermark: None,
             max_number: 0,
-            baseline_at: None,
+            complete_at: None,
             pulls: None,
         }
     }
@@ -95,14 +92,22 @@ impl WatchRecord {
     pub(crate) fn rebased(mut self, repository: &str) -> Self {
         if self.repository != repository {
             self.repository = repository.to_owned();
-            self.etag = None;
-            self.watermark = None;
+            self.pages = Vec::new();
             self.max_number = 0;
-            self.baseline_at = None;
+            self.complete_at = None;
             self.pulls = None;
         }
         self
     }
+}
+
+/// One page of the list as last read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct PageMark {
+    #[serde(default)]
+    pub etag: Option<String>,
+    /// It held a whole page, so the list goes on past it.
+    pub full: bool,
 }
 
 /// What a later list is compared with.
@@ -197,11 +202,15 @@ pub(crate) fn put(
         "the interval was checked at the boundary"
     );
     assert!(
+        record.pages.len() <= MAX_PAGES as usize,
+        "a page mark per page read"
+    );
+    assert!(
         record
-            .etag
-            .as_ref()
-            .is_none_or(|e| e.len() <= MAX_ETAG_BYTES),
-        "a bounded ETag"
+            .pages
+            .iter()
+            .all(|p| p.etag.as_ref().is_none_or(|e| e.len() <= MAX_ETAG_BYTES)),
+        "bounded ETags"
     );
     assert!(
         record.pulls.as_ref().is_none_or(|p| p.len() <= MAX_MARKS),
@@ -422,16 +431,16 @@ pub(crate) fn diff(record: &WatchRecord, pulls: &[Pull]) -> Diffed {
     diffed
 }
 
-/// Whether `pull`, which has no mark, was opened since `record`'s last
-/// complete read: numbered above it and, when GitHub says, made since the
-/// baseline (a higher number closed then may be reopened).
+/// Whether `pull`, which has no mark, was opened since `record`'s last read
+/// of every page; one made before was closed then, or past the cap, and is
+/// reopened now. Without a `created_at`, a number above every one seen is new.
 fn is_new(record: &WatchRecord, pull: &Pull) -> bool {
     assert!(record.pulls.is_some(), "only a baselined watch tells news");
-    let made_since = match (pull.created_at, record.baseline_at) {
-        (Some(created), Some(baseline)) => created >= baseline,
-        _ => true,
-    };
-    pull.number > record.max_number && made_since
+    assert!(record.complete_at.is_some(), "a baseline reads every page");
+    match (pull.created_at, record.complete_at) {
+        (Some(created), Some(complete)) => created >= complete,
+        _ => pull.number > record.max_number,
+    }
 }
 
 /// What one read adds to the marks.
@@ -444,19 +453,15 @@ pub(crate) struct Followed {
     pub seen: BTreeMap<u64, Seen>,
 }
 
-/// The marks after `pulls` was read at `read_at`: a read of the `whole` list
-/// replaces them, a partial one adds to them.
+/// The marks after `pulls` was read at `read_at`. A pull request no longer
+/// listed keeps its mark until the cap drops it, so a reopening is no news.
 pub(crate) fn merged_marks(
     before: Option<&BTreeMap<u64, PullMark>>,
     pulls: &[Pull],
-    whole: bool,
     followed: &Followed,
     read_at: Timestamp,
 ) -> BTreeMap<u64, PullMark> {
-    let mut marks = match before {
-        Some(before) if !whole => before.clone(),
-        _ => BTreeMap::new(),
-    };
+    let mut marks = before.cloned().unwrap_or_default();
     for pull in pulls {
         let old = before.and_then(|b| b.get(&pull.number));
         let mark = match old {
@@ -536,8 +541,9 @@ mod tests {
 
     fn baseline(pulls: &[Pull]) -> WatchRecord {
         let mut record = WatchRecord::new(5, "o/r".into());
-        record.pulls = Some(merged_marks(None, pulls, true, &none(), now()));
+        record.pulls = Some(merged_marks(None, pulls, &none(), now()));
         record.max_number = pulls.iter().map(|p| p.number).max().unwrap_or(0);
+        record.complete_at = Some(now());
         record
     }
 
@@ -593,13 +599,7 @@ mod tests {
         assert_eq!(diffed.follow_ups.len(), 1, "#4 only moved updated_at");
         assert_eq!(after[diffed.follow_ups[0].index].number, 4);
         let mut record = record;
-        record.pulls = Some(merged_marks(
-            record.pulls.as_ref(),
-            &after,
-            true,
-            &none(),
-            now(),
-        ));
+        record.pulls = Some(merged_marks(record.pulls.as_ref(), &after, &none(), now()));
         let again = diff(&record, &after);
         assert!(again.changes.is_empty() && again.follow_ups.is_empty());
     }
@@ -672,7 +672,7 @@ mod tests {
     #[test]
     fn a_higher_number_made_before_the_baseline_is_a_reopening() {
         let mut record = baseline(&[pull(5, "a", T0, &[])]);
-        record.baseline_at = Some(T1.parse().unwrap());
+        record.complete_at = Some(T1.parse().unwrap());
         let reopened = created(pull(7, "c", T2, &[]), T0);
         let opened = created(pull(8, "d", T2, &[]), T1);
         let diffed = diff(&record, &[opened, reopened]);
@@ -681,22 +681,25 @@ mod tests {
     }
 
     #[test]
-    fn a_partial_read_keeps_unread_marks_and_a_whole_one_drops_closed() {
-        let before = merged_marks(
-            None,
-            &[pull(1, "a", T0, &[]), pull(2, "b", T0, &[])],
-            true,
+    fn a_closed_pull_request_keeps_its_mark_so_its_reopening_is_told_once() {
+        let mut record = baseline(&[pull(1, "a", T0, &[])]);
+        let opened = created(pull(9, "i", T1, &[]), "2099-01-01T00:00:00Z");
+        let told = diff(&record, std::slice::from_ref(&opened));
+        assert_eq!(told.changes.len(), 1, "#9 is new");
+        let marks = merged_marks(
+            record.pulls.as_ref(),
+            std::slice::from_ref(&opened),
             &none(),
             now(),
         );
-        let read = [pull(2, "b2", T1, &[])];
-        let partial = merged_marks(Some(&before), &read, false, &none(), now());
-        assert_eq!(partial.keys().copied().collect::<Vec<_>>(), [1, 2]);
-        assert_eq!(partial[&2].head, "b2");
-        let whole = merged_marks(Some(&before), &read, true, &none(), now());
-        assert_eq!(whole.keys().copied().collect::<Vec<_>>(), [2]);
-        let kept = merged_marks(Some(&before), &read, true, &kept(2), now());
-        assert_eq!(kept[&2].head, "b", "an unread follow-up keeps its mark");
+        let closed = merged_marks(Some(&marks), &[pull(1, "a", T0, &[])], &none(), now());
+        assert_eq!(closed.keys().copied().collect::<Vec<_>>(), [1, 9]);
+        record.pulls = Some(closed);
+        let reopened = diff(&record, &[opened]);
+        assert!(reopened.changes.is_empty(), "#9 was told already");
+        let read = [pull(1, "a2", T1, &[])];
+        let kept = merged_marks(record.pulls.as_ref(), &read, &kept(1), now());
+        assert_eq!(kept[&1].head, "a", "an unread follow-up keeps its mark");
     }
 
     #[test]
@@ -725,19 +728,13 @@ mod tests {
             ..Followed::default()
         };
         let later = now() + SETTLE + SETTLE;
-        record.pulls = Some(merged_marks(
-            record.pulls.as_ref(),
-            &pulls,
-            true,
-            &seen,
-            later,
-        ));
+        record.pulls = Some(merged_marks(record.pulls.as_ref(), &pulls, &seen, later));
         let mark = &record.pulls.as_ref().unwrap()[&1];
         assert_eq!(
             (mark.comment_id, mark.reviewed.ids.len(), mark.settled),
             (9, 1, true)
         );
-        let carried = merged_marks(record.pulls.as_ref(), &pulls, true, &none(), later);
+        let carried = merged_marks(record.pulls.as_ref(), &pulls, &none(), later);
         assert_eq!(
             carried[&1].comment_id, 9,
             "ids carry over a read without follow-up"
@@ -753,7 +750,7 @@ mod tests {
                 pull(n, "a", updated, &[])
             })
             .collect();
-        let marks = merged_marks(None, &pulls, true, &none(), now());
+        let marks = merged_marks(None, &pulls, &none(), now());
         assert_eq!(marks.len(), MAX_MARKS);
         assert!(!marks.contains_key(&1) && marks.contains_key(&4));
     }

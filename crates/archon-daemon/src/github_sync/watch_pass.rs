@@ -1,8 +1,9 @@
-//! The repository watches' share of a sync pass. An unchanged list costs one
-//! conditional `GET`; a changed one reads further pages only while they hold
-//! updates at or after the watermark, and a comment or review check only for
-//! a pull request that moved with nothing else to show, or whose last mark
-//! was too recent to trust. Every `GET` counts against [`MAX_WATCH_REQUESTS`]
+//! The repository watches' share of a sync pass. Each page of the list is a
+//! `GET` conditional on its own ETag, so an unchanged list costs one per page
+//! (one for up to 100 pull requests); GitHub's order by update is not exact
+//! enough to stop early. A comment or review check is asked only for a pull
+//! request that moved with nothing else to show, or whose last mark was too
+//! recent to trust. Every `GET` counts against [`MAX_WATCH_REQUESTS`]
 //! and the pass's [`MAX_REQUESTS_PER_PASS`].
 
 use std::collections::HashSet;
@@ -17,7 +18,7 @@ use archon_core::repo::Repo;
 use archon_queue::Store;
 use tokio::time::Instant;
 
-use super::watch::{self, Followed, Pull, PullMark, Seen, WatchRecord, WatchedChange};
+use super::watch::{self, Followed, PageMark, Pull, PullMark, Seen, WatchRecord, WatchedChange};
 use super::watch_read::{self, Got, MAX_PAGES, PAGE};
 use super::{GithubSync, MAX_REQUESTS_PER_PASS, Pass, Registry};
 use crate::context::DaemonContext;
@@ -60,10 +61,10 @@ struct Due {
 
 /// A changed list: what was read, and whether all of what was needed.
 struct Walked {
-    etag: Option<String>,
+    /// Each page asked, in order, with the ETag it was answered with.
+    pages: Vec<PageMark>,
+    /// The pull requests of the pages that changed.
     pulls: Vec<Pull>,
-    /// Every page was read, down to a short one: absent pull requests are closed.
-    whole: bool,
     /// No page was left unread for want of budget.
     complete: bool,
     /// GitHub's clock at the first page, which marks are settled against.
@@ -267,58 +268,52 @@ async fn read_one(
     Ok(asker.backoff)
 }
 
-/// The list's pages, newest update first: `None` for a 304 of the first. Any
-/// news moves a pull request's `updated_at` to the top of page 1, so a 304
-/// there means none. A baseline reads every page; a later read stops at the
-/// watermark.
+/// Every page of the list, each conditional on its last ETag: `None` when
+/// none changed. The walk ends at a page that is not full, or the cap.
 async fn walk(asker: &mut Asker<'_>, pass: &mut Pass) -> Result<Option<Walked>, ArchonError> {
     let due = asker.due;
-    let first = watch_read::list_endpoint(&due.repository, 1);
-    let etag = due.record.etag.as_deref();
-    let (etag, body, date) = match asker.get(pass, &first, etag).await {
-        None => {
-            assert!(asker.revoked, "a watch is read only within the budget");
-            return Ok(None);
-        }
-        Some(Ok(Got::NotModified)) => return Ok(None),
-        Some(Ok(Got::Changed {
-            etag, body, date, ..
-        })) => (etag, body, date),
-        Some(Err(error)) => return Err(error),
-    };
-    let read_at = date.unwrap_or_else(archon_core::now);
-    let mut pulls = watch::parse_pulls(&due.repository, &body)?;
-    let mut last_page = (pulls.len(), pulls.last().map(|p| p.updated_at));
-    let (mut page, mut whole, mut complete) = (1, true, true);
-    while last_page.0 >= PAGE {
-        let newer = last_page.1.is_some_and(|oldest| {
-            // Ties too: GitHub dates to the second, and more may share it.
-            due.record.pulls.is_none() || due.record.watermark.is_none_or(|w| oldest >= w)
-        });
-        if !newer || page == MAX_PAGES {
-            whole = false;
-            break;
-        }
-        page += 1;
+    let (mut pages, mut pulls) = (Vec::new(), Vec::<Pull>::new());
+    let (mut read_at, mut changed, mut complete) = (None, false, true);
+    for page in 1..=MAX_PAGES {
+        let stored = due.record.pages.get(page as usize - 1);
+        let etag = stored.and_then(|p| p.etag.as_deref());
         let endpoint = watch_read::list_endpoint(&due.repository, page);
-        let read = match asker.get(pass, &endpoint, None).await {
-            Some(Ok(Got::Changed { body, .. })) => watch::parse_pulls(&due.repository, &body)?,
-            Some(Ok(Got::NotModified)) => Vec::new(),
-            Some(Err(error)) => return Err(error),
+        let (mark, date) = match asker.get(pass, &endpoint, etag).await {
             None => {
-                (whole, complete) = (false, false);
+                complete = false;
                 break;
             }
+            Some(Err(error)) => return Err(error),
+            Some(Ok(Got::NotModified { date })) => {
+                let mark = stored.cloned().expect("only a page read before is a 304");
+                (mark, date)
+            }
+            Some(Ok(Got::Changed {
+                etag, body, date, ..
+            })) => {
+                let read = watch::parse_pulls(&due.repository, &body)?;
+                let full = read.len() >= PAGE;
+                let seen: HashSet<u64> = pulls.iter().map(|p| p.number).collect();
+                pulls.extend(read.into_iter().filter(|p| !seen.contains(&p.number)));
+                changed = true;
+                (PageMark { etag, full }, date)
+            }
         };
-        last_page = (read.len(), read.last().map(|p| p.updated_at));
-        let seen: HashSet<u64> = pulls.iter().map(|p| p.number).collect();
-        pulls.extend(read.into_iter().filter(|p| !seen.contains(&p.number)));
+        read_at = read_at.or(Some(date.unwrap_or_else(archon_core::now)));
+        let full = mark.full;
+        pages.push(mark);
+        if !full {
+            break;
+        }
     }
     assert!(pulls.len() <= PAGE * MAX_PAGES as usize, "bounded pages");
+    let Some(read_at) = read_at.filter(|_| changed) else {
+        return Ok(None);
+    };
+    assert!(!pages.is_empty(), "a changed list has a page");
     Ok(Some(Walked {
-        etag,
+        pages,
         pulls,
-        whole,
         complete,
         read_at,
     }))
@@ -453,7 +448,7 @@ async fn read_feed(
             Ok(items) => return Some((items, last_page)),
             Err(error) => error,
         },
-        Ok(Got::NotModified) => return Some((Vec::new(), None)),
+        Ok(Got::NotModified { .. }) => return Some((Vec::new(), None)),
         Err(error) => error,
     };
     tracing::debug!(error = %failed, endpoint, "repository watch follow-up failed");
@@ -531,35 +526,31 @@ fn updated(
     complete: bool,
 ) -> WatchRecord {
     assert_eq!(current.generation, read.generation, "the same watch");
-    let newest = walked.pulls.iter().map(|p| p.updated_at).max();
     let highest = walked.pulls.iter().map(|p| p.number).max().unwrap_or(0);
-    let marks = watch::merged_marks(
-        read.pulls.as_ref(),
-        &walked.pulls,
-        walked.whole,
-        followed,
-        walked.read_at,
-    );
+    let marks = watch::merged_marks(read.pulls.as_ref(), &walked.pulls, followed, walked.read_at);
     let settled = walked
         .pulls
         .iter()
         .all(|p| marks.get(&p.number).is_none_or(|m| m.settled));
-    current.etag = walked.etag.clone().filter(|_| complete && settled);
-    if complete {
-        current.watermark = current.watermark.max(newest);
-    }
+    current.pages = if complete && settled {
+        walked.pages.clone()
+    } else {
+        Vec::new()
+    };
     if walked.complete {
-        // A pull request on a page left unread stays above it, so is told later.
-        current.max_number = current.max_number.max(highest);
+        // Every page was asked: an unmarked pull request made before is old.
+        current.complete_at = Some(walked.read_at);
     }
-    if read.pulls.is_none() {
-        current.baseline_at = Some(walked.read_at);
-    }
+    current.max_number = current.max_number.max(highest);
     current.fetched_at = Some(archon_core::now());
     current.pulls = Some(marks);
     assert!(
-        (complete && settled) || current.etag.is_none(),
+        (complete && settled) || current.pages.is_empty(),
         "an incomplete or unsettled read is asked again"
+    );
+    assert!(
+        current.complete_at.is_some(),
+        "a saved read follows a baseline"
     );
     current
 }
@@ -604,45 +595,46 @@ fn watch_event(due: &Due, mut changes: Vec<WatchedChange>) -> TriggerEvent {
 mod tests {
     use super::*;
 
-    fn walked(numbers: &[u64], complete: bool) -> Walked {
+    fn walked(numbers: &[u64], complete: bool, read_at: &str) -> Walked {
         let pulls: Vec<serde_json::Value> = numbers
             .iter()
             .map(|n| serde_json::json!({"number": n, "head": {"sha": "a"}, "updated_at": "2026-11-02T00:00:00Z"}))
             .collect();
         let body = serde_json::Value::from(pulls).to_string();
         Walked {
-            etag: None,
+            pages: vec![PageMark {
+                etag: Some(format!("W/\"{read_at}\"")),
+                full: false,
+            }],
             pulls: watch::parse_pulls("o/r", &body).unwrap(),
-            whole: false,
             complete,
-            read_at: archon_core::now(),
+            read_at: read_at.parse().unwrap(),
         }
     }
 
     #[test]
-    fn a_read_cut_short_keeps_the_number_new_pull_requests_are_told_above() {
-        let mut read = WatchRecord::new(5, "o/r".into());
-        let baseline = updated(
-            read.clone(),
-            &read,
-            &walked(&[3], true),
-            &Followed::default(),
-            true,
+    fn only_a_read_of_every_page_moves_the_cutoff_and_keeps_its_etags() {
+        let none = Followed::default();
+        let read = WatchRecord::new(5, "o/r".into());
+        let baseline = walked(&[3], true, "2026-11-10T00:00:00Z");
+        let based = updated(read.clone(), &read, &baseline, &none, true);
+        assert_eq!(based.complete_at, Some(baseline.read_at));
+        assert_eq!(
+            based.pages, baseline.pages,
+            "a settled whole read is conditional next"
         );
-        assert_eq!(baseline.max_number, 3);
-        assert!(
-            baseline.baseline_at.is_some(),
-            "the baseline's clock is kept"
-        );
-        read = baseline.clone();
         let cut = updated(
-            baseline,
-            &read,
-            &walked(&[9], false),
-            &Followed::default(),
+            based.clone(),
+            &based,
+            &walked(&[9], false, "2026-11-12T00:00:00Z"),
+            &none,
             false,
         );
-        assert_eq!(cut.max_number, 3, "#5 to #8 may sit on a page left unread");
-        assert_eq!(cut.baseline_at, read.baseline_at);
+        assert_eq!(cut.complete_at, based.complete_at, "a page went unread");
+        assert!(cut.pages.is_empty(), "every page is asked afresh");
+        let whole = walked(&[9], true, "2026-11-13T00:00:00Z");
+        let next = updated(cut.clone(), &cut, &whole, &none, true);
+        assert_eq!(next.complete_at, Some(whole.read_at));
+        assert_eq!(next.max_number, 9);
     }
 }

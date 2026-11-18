@@ -496,8 +496,8 @@ async fn a_team_review_request_is_news() {
     );
 }
 
-/// Past 100 open pull requests: the baseline reads every page, and a later
-/// read follows the pages only while they are newer than the watermark.
+/// Past 100 open pull requests: every read asks every page, down to a
+/// short one.
 #[tokio::test]
 async fn more_than_a_page_of_pull_requests_is_watched() {
     let github = Github::new();
@@ -511,7 +511,6 @@ async fn more_than_a_page_of_pull_requests_is_watched() {
 
     github.serve_list(pulls((106..=205).rev(), T1), "W/\"p2\"");
     github.serve_named("pulls-2", pulls((6..=105).rev(), T0), "");
-    // Page 2 ends at the watermark's second, so page 3 is read too.
     github.serve_named("pulls-3", pulls((1..=5).rev(), T0), "");
     let before = github.calls().len();
     let grown = pass(&h).await;
@@ -541,8 +540,8 @@ async fn more_than_a_page_of_pull_requests_is_watched() {
     let one = pass(&h).await;
     assert_eq!(
         (one.watch.requested, one.watch.triggers),
-        (2, 1),
-        "page 1 ends tied with the watermark, page 2 before it"
+        (3, 1),
+        "every page is asked, though only page 1 holds news"
     );
     github.assert_only_reads();
 }
@@ -642,30 +641,45 @@ async fn a_comment_in_the_marked_second_is_still_told() {
     assert_eq!(again.watch.triggers, 0, "a comment is told once: {again:?}");
 }
 
-/// More than a page sharing the watermark's second: the next page is read.
+/// GitHub's order by update is not exact, so news can change a later page
+/// while the first is unchanged: every page is asked, each conditionally.
 #[tokio::test]
-async fn pull_requests_tied_with_the_watermark_are_read_past_the_first_page() {
+async fn news_on_a_later_page_is_read_though_the_first_is_unchanged() {
     let github = Github::new();
     github.serve_list(pulls((6..=105).rev(), T0), "W/\"t1\"");
-    github.serve_named("pulls-2", pulls((1..=5).rev(), T0), "");
+    github.serve_named("pulls-2", pulls((1..=5).rev(), T0), "W/\"u1\"");
     let h = harness(&github).await;
     h.orchestrator(watch_repo(REPO_NAME)).await.unwrap();
     assert_eq!(pass(&h).await.watch.requested, 2);
-    github.serve_list(pulls((6..=105).rev(), T0), "W/\"t2\"");
+    let mut later: Vec<serde_json::Value> = vec![pull_at(106, "n", T0)];
+    later.extend((2..=5).rev().map(|n| pull_at(n, "a", T0)));
+    later.push(pull_at(1, "a", T1));
+    github.serve_named("pulls-2", later.into(), "W/\"u2\"");
     github.serve_named(
-        "pulls-2",
-        pulls((1..=6).rev().map(|n| if n == 6 { 106 } else { n }), T0),
+        "comments-1",
+        serde_json::json!([{"id": 7, "created_at": T1}]),
         "",
     );
-    let tied = pass(&h).await;
+    let read = pass(&h).await;
     assert_eq!(
-        (tied.watch.requested, tied.watch.triggers),
-        (2, 1),
-        "{tied:?}"
+        (read.watch.requested, read.watch.triggers),
+        (4, 1),
+        "two pages, then #1's comments and reviews: {read:?}"
     );
     assert_eq!(
         told(&h).await,
-        [(106, "new_pull_request".to_owned(), vec![])]
+        [
+            (106, "new_pull_request".to_owned(), vec![]),
+            (1, "new_comment".to_owned(), vec![])
+        ]
+    );
+    let first = github.calls()[github.calls().len() - 4].clone();
+    assert!(first.contains("If-None-Match: W/\"t1\""), "{first}");
+    let unchanged = pass(&h).await;
+    assert_eq!(
+        (unchanged.watch.requested, unchanged.watch.unchanged),
+        (2, 1),
+        "one conditional GET a page: {unchanged:?}"
     );
 }
 
@@ -741,14 +755,15 @@ async fn a_reopened_pull_request_alone_is_no_news() {
     pass(&h).await;
     github.serve_list(serde_json::json!([pull_at(2, "b", T0)]), "W/\"o2\"");
     assert_eq!(pass(&h).await.watch.triggers, 0, "a closing is no news");
-    assert_eq!(listed(&h).await[0].tracked_pull_requests, Some(1));
+    let tracked = listed(&h).await[0].tracked_pull_requests;
+    assert_eq!(tracked, Some(2), "a closed pull request keeps its mark");
     let reopened = serde_json::json!([pull_at(1, "a", T1), pull(2, "b")]);
     github.serve_list(reopened, "W/\"o3\"");
     let read = pass(&h).await;
     assert_eq!(
         (read.watch.requested, read.watch.triggers),
-        (1, 0),
-        "{read:?}"
+        (3, 0),
+        "the list, then #1's comments and reviews: {read:?}"
     );
     assert!(watch_events(&h).await.is_empty());
 }

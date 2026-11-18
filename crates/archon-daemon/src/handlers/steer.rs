@@ -9,7 +9,7 @@ use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 use archon_core::model::ModelReasons;
 use archon_core::plan_origin::PlannedPlan;
-use archon_core::protocol::{ClientKind, ItemPatch, Reply};
+use archon_core::protocol::{ItemPatch, Reply};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::steer::{RunEdit, Steer, SteerRecord, SteeredBy};
 use archon_pipeline::PipelineSpec;
@@ -26,38 +26,30 @@ use crate::resolve::RepoEnv;
 /// table; a steer follows it this often before it gives up.
 const STATE_CHANGES: usize = 3;
 
-/// The orchestrator steers through the MCP bridge, the operator otherwise.
-fn steered_by(client: ClientKind) -> SteeredBy {
-    match client {
-        ClientKind::ArchonMcp => SteeredBy::Orchestrator,
-        _ => SteeredBy::Operator,
-    }
-}
-
 /// Replies `Reply::Item` with the item as steered (`ItemBudgetsOff` when
 /// it set a budget while budgets are off). Its `autonomy` is checked first
 /// and applied after the rest, as `update_item` would.
 pub(super) async fn steer(
     ctx: &DaemonContext,
-    client: ClientKind,
+    by: SteeredBy,
     id: &QueueItemId,
     mut steer: Steer,
 ) -> Result<Reply, ArchonError> {
     steer.check()?;
     let Some(knobs) = steer.autonomy.take() else {
-        return steer_run_or_waiting(ctx, client, id, steer).await;
+        return steer_run_or_waiting(ctx, by, id, steer).await;
     };
     let patch = ItemPatch {
         autonomy: Some(knobs),
         ..ItemPatch::default()
     };
     if steer == Steer::default() {
-        return items::update(ctx, id, patch, steered_by(client).into()).await;
+        return items::update(ctx, id, patch, by.into()).await;
     }
     let item = ctx.store.lock().await.item(id)?;
     revise::prepare(ctx, &item, &knobs, Ceiling::Enforced).await?;
-    let steered = steer_run_or_waiting(ctx, client, id, steer).await?;
-    let revised = items::update(ctx, id, patch, steered_by(client).into()).await?;
+    let steered = steer_run_or_waiting(ctx, by, id, steer).await?;
+    let revised = items::update(ctx, id, patch, by.into()).await?;
     Ok(match (steered, revised) {
         (Reply::ItemBudgetsOff(_), Reply::Item(item)) => Reply::ItemBudgetsOff(item),
         (_, revised) => revised,
@@ -66,7 +58,7 @@ pub(super) async fn steer(
 
 async fn steer_run_or_waiting(
     ctx: &DaemonContext,
-    client: ClientKind,
+    by: SteeredBy,
     id: &QueueItemId,
     steer: Steer,
 ) -> Result<Reply, ArchonError> {
@@ -74,7 +66,7 @@ async fn steer_run_or_waiting(
     let env = RepoEnv::load(ctx, item.repo.as_ref()).await?;
     let sources = Sources::read(&env, &item, &steer)?;
     let asked = Asked {
-        by: steered_by(client),
+        by,
         env: &env,
         sources: &sources,
         steer: &steer,
@@ -112,17 +104,17 @@ async fn steer_as(
 /// steered into its run; everything else is patched as on any item.
 pub(super) async fn update(
     ctx: &DaemonContext,
-    client: ClientKind,
+    by: SteeredBy,
     id: &QueueItemId,
     mut patch: ItemPatch,
 ) -> Result<Reply, ArchonError> {
     let item = ctx.store.lock().await.item(id)?;
     let steers = patch.brief_append.is_some() || patch.model_plan.is_some();
     let QueueState::Running { run } = &item.state else {
-        return items::update(ctx, id, patch, steered_by(client).into()).await;
+        return items::update(ctx, id, patch, by.into()).await;
     };
     if !steers {
-        return items::update(ctx, id, patch, steered_by(client).into()).await;
+        return items::update(ctx, id, patch, by.into()).await;
     }
     if let Some(knobs) = &patch.autonomy {
         revise::prepare(ctx, &item, knobs, Ceiling::Enforced).await?;
@@ -138,11 +130,11 @@ pub(super) async fn update(
         ));
     }
     let asked = Asked {
-        by: steered_by(client),
+        by,
         env: &env,
         sources: &Sources::default(),
         steer: &steer,
-        plan: running_plan(ctx, (&env, steered_by(client)), run, &mut patch).await?,
+        plan: running_plan(ctx, (&env, by), run, &mut patch).await?,
     };
     assert!(patch.brief_append.is_none() && patch.model_plan.is_none());
     if live::steer_run(ctx, &asked, id).await?.is_none() {
@@ -150,7 +142,7 @@ pub(super) async fn update(
             "item {id} ended its run while it was updated; send the update again"
         )));
     }
-    items::update(ctx, id, patch, steered_by(client).into()).await
+    items::update(ctx, id, patch, by.into()).await
 }
 
 /// The model plan `patch` gives a running item, taken out of the patch with

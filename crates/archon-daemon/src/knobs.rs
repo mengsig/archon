@@ -583,8 +583,8 @@ pub(crate) fn resolve_plan(
     Ok(plan)
 }
 
-/// [`resolve_plan`] without its effort check, for a request that gives no
-/// `model_reasons`, such as an initiative member.
+/// [`resolve_plan`] without its effort check, for a caller that checks the
+/// reasons itself.
 pub(crate) fn resolve_tiers(
     spec: &PipelineSpec,
     draft: ModelPlanDraft,

@@ -226,9 +226,15 @@ async fn tiers_at_dispatch(
         tiers.resolve((asked.requested, floor), provider).map(Some)
     };
     let id = stored.id.clone();
-    stored
-        .model_plan
-        .retier(&id, (archon_core::now(), None), resolve)?;
+    stored.model_plan.retier(
+        &id,
+        (
+            archon_core::now(),
+            None,
+            archon_core::plan_origin::LegacyTiers::Resolve,
+        ),
+        resolve,
+    )?;
     stored.routed_provider = held.clone();
     let moved = (held_before.as_deref(), held.as_deref());
     if let Some(note) = crate::quota::switch_note(moved, quota.as_ref(), "its run") {

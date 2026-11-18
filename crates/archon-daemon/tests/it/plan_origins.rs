@@ -126,6 +126,55 @@ async fn the_orchestrator_is_recorded_as_the_one_who_chose() {
     assert_eq!(origins["implement"][0].model.by, Authority::Daemon);
 }
 
+/// `request` as `archon` sends it for the agent its environment names.
+async fn forwarded_by_the_cli(h: &Harness, request: Request) -> QueueItem {
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(
+            archon_queue::store::keys::ORCHESTRATOR_AGENT,
+            common::ORCHESTRATOR,
+        )
+        .unwrap();
+    let forwarded = Request::ForAgent {
+        caller: archon_core::aether_ids::AetherAgentId::parse(common::ORCHESTRATOR).unwrap(),
+        request: Box::new(request),
+    };
+    item(h.cli(forwarded).await).await
+}
+
+#[tokio::test]
+async fn the_orchestrator_forwarded_by_the_cli_is_recorded_as_the_one_who_chose() {
+    let h = Harness::new().await;
+    let queued = forwarded_by_the_cli(&h, enqueue(named_model("review", REVIEW_MODEL))).await;
+    let review = &shown(&h, &queued).await["review"][0];
+    assert_eq!(
+        (review.model.source, review.model.by),
+        (PlanSource::Explicit, Authority::Orchestrator)
+    );
+    let steer = Request::SteerItem {
+        item: queued.id.clone(),
+        steer: Steer {
+            stage: Some("implement".into()),
+            model: Some(MODEL.parse().unwrap()),
+            ..Steer::default()
+        },
+    };
+    forwarded_by_the_cli(&h, steer).await;
+    let implement = &shown(&h, &queued).await["implement"][0];
+    assert_eq!(
+        (implement.model.source, implement.model.by),
+        (PlanSource::Explicit, Authority::Orchestrator)
+    );
+    let mine = item(h.cli(enqueue(named_model("review", REVIEW_MODEL))).await).await;
+    assert_eq!(
+        shown(&h, &mine).await["review"][0].model.by,
+        Authority::Operator,
+        "the operator's own CLI call"
+    );
+}
+
 #[tokio::test]
 async fn a_retry_that_keeps_the_plan_keeps_its_origins() {
     let h = Harness::new().await;

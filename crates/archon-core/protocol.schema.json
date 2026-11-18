@@ -4082,6 +4082,13 @@
           "minimum": 0,
           "type": "integer"
         },
+        "unreadable_plan_items": {
+          "default": 0,
+          "description": "Stored items whose plan could not be read to count its fields, so the\ncount above is incomplete; `0` from an older archond.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "upgrade": {
           "description": "The upgrade under way, in one line.",
           "type": [
@@ -9631,12 +9638,18 @@
           "type": "object"
         },
         "item": {
-          "$ref": "#/$defs/QueueItemId",
-          "description": "The item these origins were written for: a clone under another id\nthat kept them by accident reads as unattributed."
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QueueItemId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The item these origins were written for: a clone under another id\nthat kept them by accident reads as unattributed, as do origins\nstored without one."
         }
       },
       "required": [
-        "item",
         "entries"
       ],
       "type": "object"

@@ -7,7 +7,7 @@ use archon_core::autonomy::AutonomyPatch;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId, RepoId};
 use archon_core::model::ModelPlanDraft;
-use archon_core::plan_origin::PlanSource;
+use archon_core::plan_origin::PlannedPlan;
 use archon_core::protocol::ItemQuery;
 use archon_core::pull_request::OntoTarget;
 use archon_core::queue::{QueueItem, QueueState};
@@ -170,62 +170,53 @@ fn attributed(item: &QueueItem) -> std::borrow::Cow<'_, QueueItem> {
     })
 }
 
-/// The rows whose plan may hold an unattributed field: one stored as such,
-/// one with a missing or unknown source, a tier without an origin, or
-/// origins of another item or shape.
-fn maybe_unattributed() -> String {
-    let known: Vec<String> = PlanSource::ATTRIBUTED
-        .iter()
-        .map(|source| format!("'{source}'"))
-        .collect();
-    let known = known.join(", ");
-    format!(
-        "SELECT data FROM items
-         WHERE instr(data, '\"unattributed\"') > 0
-            OR json_type(data, '$.model_origins') NOT IN ('object', 'null')
-            OR (json_type(data, '$.model_origins') = 'object'
-                AND (json_extract(data, '$.model_origins.item') IS NOT id
-                     OR EXISTS (SELECT 1 FROM json_each(data, '$.model_plan') AS plan
-                                WHERE json_array_length(data, '$.model_origins.entries.'
-                                                              || json_quote(plan.key))
-                                      IS NOT json_array_length(plan.value))
-                     OR EXISTS (SELECT 1 FROM json_each(data, '$.model_origins.entries') AS kept
-                                WHERE json_type(data, '$.model_plan.' || json_quote(kept.key))
-                                      IS NULL)
-                     OR EXISTS (SELECT 1 FROM json_each(data, '$.model_origins.entries') AS kept,
-                                              json_each(kept.value) AS slot
-                                WHERE coalesce(json_extract(slot.value, '$.model.source'), '')
-                                          NOT IN ({known})
-                                   OR coalesce(json_extract(slot.value, '$.effort.source'), '')
-                                          NOT IN ({known})
-                                   OR (json_type(slot.value, '$.tier') IS NOT NULL
-                                       AND coalesce(json_extract(slot.value, '$.tier.source'), '')
-                                               NOT IN ({known})))
-                     OR EXISTS (SELECT 1 FROM json_each(data, '$.model_plan') AS plan,
-                                              json_each(plan.value) AS choice
-                                WHERE coalesce(json_type(choice.value, '$.tier'), 'null') <> 'null'
-                                  AND json_type(data, '$.model_origins.entries.'
-                                                      || json_quote(plan.key)
-                                                      || '[' || choice.key || '].tier')
-                                      IS NULL)))"
-    )
+/// What [`unattributed_plan_fields`] found: the fields that read as
+/// unattributed, and the items whose plan could not be read at all.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct PlanFieldCount {
+    pub unattributed: usize,
+    pub unreadable: Vec<String>,
 }
 
-/// The plan fields of every item that read as unattributed. Only the rows
-/// [`maybe_unattributed`] selects are parsed: a sound store parses none.
-pub(super) fn unattributed_plan_fields(conn: &Connection) -> Result<usize, ArchonError> {
+/// Each item with origins, its plan and origins alone, read as the daemon
+/// reads them; `NULL` for a row that is not JSON. Legacy rows hold no origins.
+const PLANS_WITH_ORIGINS: &str = "SELECT id,
+       CASE WHEN json_valid(data)
+            THEN json_object('model_plan', json_extract(data, '$.model_plan'),
+                             'model_origins', json_extract(data, '$.model_origins'))
+       END
+     FROM items
+     WHERE CASE WHEN json_valid(data)
+                THEN json_type(data, '$.model_origins') IS NOT NULL
+                ELSE 1
+           END";
+
+/// The plan fields of every item that read as unattributed, by the same
+/// rules an item read uses. A row that cannot be read is named, not fatal.
+pub(super) fn unattributed_plan_fields(conn: &Connection) -> Result<PlanFieldCount, ArchonError> {
     let mut stmt = conn
-        .prepare(&maybe_unattributed())
+        .prepare(PLANS_WITH_ORIGINS)
         .ctx("prepare unattributed count")?;
     let rows = stmt
-        .query_map([], |row| row.get::<_, String>(0))
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })
         .ctx("count unattributed plan fields")?;
-    let mut fields = 0;
+    let mut count = PlanFieldCount::default();
     for row in rows {
-        let item: QueueItem = from_json(&row.ctx("read item")?, "queue item")?;
-        fields += item.model_plan.unattributed_fields(&item.id);
+        let (id, plan) = row.ctx("read item plan")?;
+        let read = plan.as_deref().map(serde_json::from_str::<PlannedPlan>);
+        let item = id.parse::<QueueItemId>();
+        match (item, read) {
+            (Ok(item), Some(Ok(plan))) => count.unattributed += plan.unattributed_fields(&item),
+            (item, read) => {
+                tracing::error!(item = %id, ?item, ?read, "an item's plan cannot be read to count its origins");
+                count.unreadable.push(id);
+            }
+        }
     }
-    Ok(fields)
+    debug_assert!(count.unreadable.iter().all(|id| !id.is_empty()));
+    Ok(count)
 }
 
 /// Rewrites every derived column from `item`, so columns and `data` agree.

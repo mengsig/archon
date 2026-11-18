@@ -126,7 +126,7 @@ fn a_moved_tier_keeps_who_asked_for_it_however_often_it_moves() {
     for (model, why) in [("c/sol", "moved off b"), ("d/sol", "moved off c")] {
         let to = |_: &str, asked: &TierChoice| Ok(Some((model.parse().unwrap(), asked.clone())));
         planned
-            .retier(&item, (crate::now(), Some(why)), to)
+            .retier(&item, (crate::now(), Some(why), LegacyTiers::Resolve), to)
             .unwrap();
         let origin = planned.origin(&item, "review", 0);
         assert_eq!(origin.model.note.as_deref(), Some(why));
@@ -146,7 +146,7 @@ fn a_tier_the_daemon_chose_keeps_only_the_latest_move_s_note() {
     ] {
         let to = |_: &str, asked: &TierChoice| Ok(Some((model.parse().unwrap(), asked.clone())));
         planned
-            .retier(&item, (crate::now(), Some(why)), to)
+            .retier(&item, (crate::now(), Some(why), LegacyTiers::Resolve), to)
             .unwrap();
         let note = planned.origin(&item, "review", 0).model.note;
         assert_eq!(note.as_deref(), Some(why));
@@ -163,7 +163,11 @@ fn a_reroute_of_a_daemon_chosen_tier_carries_no_earlier_note_as_its_requester() 
     let before = planned.origin(&item, "review", 0);
     let to = |_: &str, asked: &TierChoice| Ok(Some(("c/sol".parse().unwrap(), asked.clone())));
     planned
-        .retier(&item, (crate::now(), Some("moved off b")), to)
+        .retier(
+            &item,
+            (crate::now(), Some("moved off b"), LegacyTiers::Resolve),
+            to,
+        )
         .unwrap();
     let origin = planned.origin(&item, "review", 0);
     assert_eq!(
@@ -330,7 +334,7 @@ fn a_plan_stored_without_origins_reads_as_legacy_pins_until_a_writer_changes_it(
     let resolve =
         |_: &str, asked: &TierChoice| Ok(Some(("b/sol2".parse().unwrap(), asked.clone())));
     planned
-        .retier(&item, (crate::now(), None), resolve)
+        .retier(&item, (crate::now(), None, LegacyTiers::Resolve), resolve)
         .unwrap();
     let review = planned.origin(&item, "review", 0);
     assert_eq!(
@@ -367,7 +371,7 @@ fn an_unattributed_tiered_model_is_a_pin_no_dispatch_resolves_again() {
         unreachable!("an unattributed model is not resolved again")
     };
     planned
-        .retier(&item, (crate::now(), None), resolve)
+        .retier(&item, (crate::now(), None, LegacyTiers::Resolve), resolve)
         .unwrap();
     assert_eq!(
         planned.choices_for("review").unwrap()[0].model.to_string(),
@@ -382,7 +386,11 @@ fn a_retier_that_moves_a_model_records_when_and_why() {
     let first = planned.origin(&item, "review", 0);
     let same = |_: &str, asked: &TierChoice| Ok(Some(("b/sol".parse().unwrap(), asked.clone())));
     planned
-        .retier(&item, (crate::now(), Some("unused")), same)
+        .retier(
+            &item,
+            (crate::now(), Some("unused"), LegacyTiers::Resolve),
+            same,
+        )
         .unwrap();
     assert_eq!(
         planned.origin(&item, "review", 0),
@@ -391,7 +399,11 @@ fn a_retier_that_moves_a_model_records_when_and_why() {
     );
     let moved = |_: &str, asked: &TierChoice| Ok(Some(("c/sol".parse().unwrap(), asked.clone())));
     planned
-        .retier(&item, (crate::now(), Some("moved off b")), moved)
+        .retier(
+            &item,
+            (crate::now(), Some("moved off b"), LegacyTiers::Resolve),
+            moved,
+        )
         .unwrap();
     let origin = planned.origin(&item, "review", 0);
     assert_eq!(origin.model.source, PlanSource::Tier);
@@ -460,7 +472,7 @@ fn a_retier_that_fails_part_way_leaves_the_plan_and_its_origins_as_they_were() {
     };
     assert!(
         planned
-            .retier(&item, (crate::now(), None), failing)
+            .retier(&item, (crate::now(), None, LegacyTiers::Resolve), failing)
             .is_err()
     );
     assert_eq!(
@@ -531,4 +543,128 @@ fn every_source_but_unattributed_is_an_attributed_one_named_as_it_is_stored() {
         let stored = serde_json::to_value(source).unwrap();
         assert_eq!(stored, serde_json::json!(source.to_string()));
     }
+}
+
+/// `enqueued` stored, with its review tier origin edited by `edit`.
+fn with_review_tier(item: &QueueItemId, edit: impl FnOnce(&mut serde_json::Value)) -> PlannedPlan {
+    let mut stored = serde_json::to_value(enqueued(item)).unwrap();
+    edit(&mut stored["model_origins"]["entries"]["review"][0]);
+    serde_json::from_value(stored).unwrap()
+}
+
+#[test]
+fn a_tier_no_writer_accounted_for_pins_its_model_even_when_the_model_origin_is_sound() {
+    let item = QueueItemId::new();
+    let edits: [fn(&mut serde_json::Value); 2] = [
+        |review| {
+            review.as_object_mut().unwrap().remove("tier");
+        },
+        |review| review["tier"]["source"] = "future".into(),
+    ];
+    for edit in edits {
+        let mut planned = with_review_tier(&item, edit);
+        let origin = planned.origin(&item, "review", 0);
+        assert_eq!(origin.model.source, PlanSource::Tier, "the model is sound");
+        assert_eq!(origin.tier.unwrap().source, PlanSource::Unattributed);
+        assert_eq!(planned.unattributed_fields(&item), 1);
+        assert_eq!(
+            planned.dispatched(&item).0["review"][0].tier,
+            None,
+            "no quota move"
+        );
+        let resolve = |_: &str, _: &TierChoice| -> Result<_, ArchonError> {
+            unreachable!("a pinned tier is not resolved again")
+        };
+        planned
+            .retier(&item, (crate::now(), None, LegacyTiers::Resolve), resolve)
+            .unwrap();
+        assert_eq!(planned.0["review"][0].model.to_string(), "b/sol");
+    }
+}
+
+#[test]
+fn a_legacy_tier_is_resolved_only_where_dispatch_starts_a_run() {
+    let stored = serde_json::json!({
+        "model_plan": {"review": [{"model": {"provider": "b", "model": "sol"}, "effort": "low",
+                                   "tier": {"requested": "strong", "resolved": "strong"}}]}
+    });
+    let mut planned: PlannedPlan = serde_json::from_value(stored).unwrap();
+    let item = QueueItemId::new();
+    assert_eq!(
+        planned.dispatched(&item).0["review"][0].tier,
+        None,
+        "a recovered legacy run drives its model as a pin"
+    );
+    let follow = |_: &str, _: &TierChoice| -> Result<_, ArchonError> {
+        unreachable!("a quota move never resolves a legacy model")
+    };
+    planned
+        .retier(
+            &item,
+            (crate::now(), Some("follow"), LegacyTiers::Keep),
+            follow,
+        )
+        .unwrap();
+    assert_eq!(
+        planned.origin(&item, "review", 0).model.source,
+        PlanSource::LegacyUnknown
+    );
+    let dispatch =
+        |_: &str, asked: &TierChoice| Ok(Some(("c/sol".parse().unwrap(), asked.clone())));
+    planned
+        .retier(&item, (crate::now(), None, LegacyTiers::Resolve), dispatch)
+        .unwrap();
+    assert_eq!(
+        planned.origin(&item, "review", 0).model.source,
+        PlanSource::Tier
+    );
+    assert!(
+        planned.dispatched(&item).0["review"][0].tier.is_some(),
+        "now the daemon's"
+    );
+}
+
+#[test]
+fn an_origin_missing_who_chose_it_or_when_reads_as_unattributed() {
+    let item = QueueItemId::new();
+    let edits: [fn(&mut serde_json::Value); 4] = [
+        |model| {
+            model.as_object_mut().unwrap().remove("by");
+        },
+        |model| {
+            model.as_object_mut().unwrap().remove("at");
+        },
+        |model| model["by"] = "someone".into(),
+        |model| model["by"] = "operator".into(),
+    ];
+    for edit in edits {
+        let mut stored = serde_json::to_value(enqueued(&item)).unwrap();
+        edit(&mut stored["model_origins"]["entries"]["review"][0]["model"]);
+        let planned: PlannedPlan = serde_json::from_value(stored).unwrap();
+        let origin = planned.origin(&item, "review", 0);
+        assert_eq!(origin.model.source, PlanSource::Unattributed, "{origin:?}");
+        assert_eq!(planned.unattributed_fields(&item), 1);
+        assert_eq!(planned.dispatched(&item).0["review"][0].tier, None);
+    }
+}
+
+#[test]
+fn origins_missing_their_item_or_entries_keep_the_plan_readable_as_pins() {
+    let item = QueueItemId::new();
+    for key in ["item", "entries"] {
+        let mut stored = serde_json::to_value(enqueued(&item)).unwrap();
+        stored["model_origins"].as_object_mut().unwrap().remove(key);
+        let planned: PlannedPlan = serde_json::from_value(stored).expect("readable");
+        assert_eq!(planned.plan(), enqueued(&item).plan());
+        assert_eq!(
+            planned.unattributed_fields(&item),
+            9,
+            "{key}: every field and the tier"
+        );
+        assert!(!planned.faults(&item).is_empty());
+    }
+    let mut stored = serde_json::to_value(enqueued(&item)).unwrap();
+    stored["model_origins"]["entries"] = "garbage".into();
+    let planned: PlannedPlan = serde_json::from_value(stored).expect("readable");
+    assert_eq!(planned.unattributed_fields(&item), 9);
 }

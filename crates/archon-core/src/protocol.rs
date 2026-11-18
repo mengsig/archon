@@ -1562,6 +1562,10 @@ pub struct DaemonStatus {
     /// treats as pins; `0` from an older archond.
     #[serde(default)]
     pub unattributed_plan_fields: u32,
+    /// Stored items whose plan could not be read to count its fields, so the
+    /// count above is incomplete; `0` from an older archond.
+    #[serde(default)]
+    pub unreadable_plan_items: u32,
     /// Each provider's quota headroom for stage routing, as archond last
     /// read it from Aether. `None` before a reading or from an older archond.
     #[serde(default, skip_serializing_if = "Option::is_none")]

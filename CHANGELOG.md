@@ -26,6 +26,7 @@
 
 Items stored by 1.6.3 or earlier have no origins. Each of their fields reads
 as `legacy_unknown` and is treated as a pin; nothing is backfilled.
+Store migrations are one-way: back up `archon.db` before `archon update`.
 Downgrading the binary is not supported once a store migration of the release
 has run, because an older schema refuses a newer store. See
 [docs/upgrading.md](docs/upgrading.md#plan-origins).

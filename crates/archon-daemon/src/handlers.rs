@@ -39,6 +39,7 @@ use archon_core::notify::{AnswerVia, Question};
 use archon_core::protocol::{
     ClientKind, DeviceRole, ItemPatch, Reply, RepoRef, Request, TransitionActor, WelcomeDevice,
 };
+use archon_core::steer::SteeredBy;
 use tokio::sync::RwLockReadGuard;
 
 use crate::context::DaemonContext;
@@ -332,7 +333,17 @@ async fn special_routes(
         };
         return promote(ctx, repo, by).await;
     }
-    route(ctx, client, request).await
+    route(ctx, client, acting_for(client, caller), request).await
+}
+
+/// Who a request chooses for: the orchestrator over MCP or when forwarded
+/// for an agent, whose mutating calls only the orchestrator's authority
+/// passes; the operator otherwise.
+fn acting_for(client: ClientKind, caller: Option<&AetherAgentId>) -> SteeredBy {
+    match for_an_agent(client, caller) {
+        true => SteeredBy::Orchestrator,
+        false => SteeredBy::Operator,
+    }
 }
 
 async fn promote(
@@ -391,6 +402,7 @@ fn check_named_caller(
 pub(crate) async fn route(
     ctx: &DaemonContext,
     client: ClientKind,
+    by: SteeredBy,
     request: Request,
 ) -> Result<Reply, ArchonError> {
     match request {
@@ -489,7 +501,7 @@ pub(crate) async fn route(
                 Box::pin(operator::answer_from(ctx, client, &question, &text, via)).await?;
             chat_answered(ctx, answered, &text, chat).await
         }
-        request => handle_adaptive(ctx, client, request).await,
+        request => handle_adaptive(ctx, client, by, request).await,
     }
 }
 
@@ -497,10 +509,11 @@ pub(crate) async fn route(
 async fn handle_adaptive(
     ctx: &DaemonContext,
     client: ClientKind,
+    by: SteeredBy,
     request: Request,
 ) -> Result<Reply, ArchonError> {
     match request {
-        Request::EnqueueInitiative(enqueue) => initiatives::enqueue(ctx, enqueue, by(client)).await,
+        Request::EnqueueInitiative(enqueue) => initiatives::enqueue(ctx, enqueue, by.into()).await,
         Request::ListInitiatives => initiatives::list(ctx).await,
         Request::CancelInitiative { initiative } => initiatives::cancel(ctx, &initiative).await,
         Request::RetryInitiative { initiative } => initiatives::retry(ctx, &initiative).await,
@@ -508,8 +521,8 @@ async fn handle_adaptive(
         Request::UpdateInitiative { initiative, change } => {
             initiatives::update(ctx, &initiative, &change).await
         }
-        Request::SteerItem { item, steer } => steer::steer(ctx, client, &item, steer).await,
-        Request::UpdateItem { item, patch } => steer::update(ctx, client, &item, patch).await,
+        Request::SteerItem { item, steer } => steer::steer(ctx, by, &item, steer).await,
+        Request::UpdateItem { item, patch } => steer::update(ctx, by, &item, patch).await,
         Request::RecordLesson(draft) => lessons::record(ctx, client, draft).await,
         Request::Lessons(query) => lessons::list(ctx, &query).await,
         Request::UpdateLesson { lesson, patch } => lessons::update(ctx, &lesson, patch).await,
@@ -522,7 +535,7 @@ async fn handle_adaptive(
             learning::restore_memory(ctx, &feedback).await
         }
         Request::LearningRetryMemory { feedback } => learning::retry_memory(ctx, &feedback).await,
-        request => handle_queue(ctx, client, request).await,
+        request => handle_queue(ctx, by, request).await,
     }
 }
 
@@ -580,18 +593,14 @@ pub(crate) async fn resolve_item(
     }
 }
 
-/// Who chooses the plan fields a request of `client` names.
-fn by(client: ClientKind) -> archon_core::plan_origin::Authority {
-    archon_core::plan_origin::Authority::of_client(client)
-}
-
+/// `by` chooses the plan fields its request names.
 async fn handle_queue(
     ctx: &DaemonContext,
-    client: ClientKind,
+    by: SteeredBy,
     request: Request,
 ) -> Result<Reply, ArchonError> {
     match request {
-        Request::Enqueue(enqueue) => items::enqueue(ctx, enqueue, by(client)).await,
+        Request::Enqueue(enqueue) => items::enqueue(ctx, enqueue, by.into()).await,
         Request::ApproveIntent(record) => Box::pin(intent::approve(ctx, record)).await,
         Request::ListItems(query) => items::list(ctx, &query).await,
         Request::GetItem { item } => items::get(ctx, &item).await,
@@ -617,7 +626,7 @@ async fn handle_queue(
                 brief_append,
                 stage_timeouts,
             };
-            items::retry(ctx, &item, retry, by(client)).await
+            items::retry(ctx, &item, retry, by.into()).await
         }
         Request::RefreshItem {
             item,
@@ -630,7 +639,7 @@ async fn handle_queue(
                 model_reasons,
                 stage_timeouts,
             };
-            items::refresh(ctx, &item, asked, by(client)).await
+            items::refresh(ctx, &item, asked, by.into()).await
         }
         Request::Status(query) => control::status(ctx, query).await,
         Request::SetCaps { caps } => control::set_caps(ctx, caps).await,

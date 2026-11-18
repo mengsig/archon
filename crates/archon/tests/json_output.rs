@@ -192,6 +192,7 @@ fn linked_status() -> archon_core::protocol::DaemonStatus {
         upgrade: None,
         health: None,
         unattributed_plan_fields: 0,
+        unreadable_plan_items: 0,
         quota: None,
         recovery: None,
         integration: vec![],

@@ -550,9 +550,12 @@ async fn a_choice_that_no_longer_resolves_keeps_the_rest_of_a_reroute_stored() {
     h.dispatch().await;
     {
         let mut store = h.ctx.store.lock().await;
-        let mut stored = store.item(&item.id).unwrap();
-        let ship = &mut stored.model_plan.legacy_mut().0.get_mut("ship").unwrap()[0];
-        ship.tier.as_mut().expect("a tier").provider = Some("gone".into());
+        // Edited as stored, so the daemon's origins of the other stages stay.
+        let mut raw = serde_json::to_value(store.item(&item.id).unwrap()).unwrap();
+        let tier = &mut raw["model_plan"]["ship"][0]["tier"];
+        assert!(tier.is_object(), "a tier");
+        tier["provider"] = "gone".into();
+        let stored: QueueItem = serde_json::from_value(raw).unwrap();
         store.update_item(&stored).unwrap();
     }
     read(
@@ -986,6 +989,50 @@ async fn dispatch_records_the_tier_it_resolves_for_an_item_stored_before_origins
         }
     }
     assert_eq!(crate::plan_origins::unattributed(&h).await, 0);
+}
+
+/// A run 1.6.3 started holds legacy models: a later quota move follows the
+/// provider in no stored choice of it, since only dispatch resolves them again.
+#[tokio::test]
+async fn a_quota_move_of_a_running_item_from_before_origins_keeps_its_stored_models() {
+    let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![
+            ("claude-code", window(80, TimeDelta::hours(4))),
+            ("codex", window(0, TimeDelta::hours(1))),
+        ],
+    );
+    let item = enqueue(&h, ROUTED, "run by 1.6.3", tier_plan()).await;
+    h.dispatch().await;
+    let before = {
+        let mut store = h.ctx.store.lock().await;
+        let mut stored = store.item(&item.id).unwrap();
+        stored.model_plan = PlannedPlan::legacy(stored.model_plan.into_plan());
+        store.update_item(&stored).unwrap();
+        stored.model_plan.plan().clone()
+    };
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![
+            ("claude-code", window(10, TimeDelta::hours(3))),
+            ("codex", window(90, TimeDelta::hours(4))),
+        ],
+    );
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    let stored = h.item(&item.id).await;
+    assert_eq!(*stored.model_plan, before, "no legacy model was moved");
+    let origins = crate::plan_origins::shown(&h, &stored).await;
+    assert!(
+        origins
+            .values()
+            .flatten()
+            .all(|o| o.model.source == PlanSource::LegacyUnknown),
+        "{origins:?}"
+    );
 }
 
 /// A tiered model no writer accounted for is a pin: a quota move leaves both

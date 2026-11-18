@@ -126,8 +126,8 @@ async fn prepare_member(
     })
 }
 
-/// `draft` resolved, filled and checked as an enqueue's plan is. A member gives
-/// no model_reasons, so only the policy's ceiling bounds its effort.
+/// `draft` resolved, filled and checked as an enqueue's plan is: an effort above
+/// its stage's default needs a reason in the member's `model_reasons`.
 async fn route_member(
     ctx: &DaemonContext,
     (env, by): (&RepoEnv, Authority),

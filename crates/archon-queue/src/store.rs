@@ -28,7 +28,7 @@ mod graph;
 mod handoffs;
 pub mod initiatives;
 mod items;
-pub use items::Asked;
+pub use items::{Asked, PlanFieldCount};
 mod lessons;
 mod merges;
 mod model_evidence;
@@ -363,8 +363,9 @@ impl Store {
     pub fn item(&self, id: &QueueItemId) -> Result<QueueItem, ArchonError> {
         items::load(&self.conn, id)
     }
-    /// How many plan fields of all stored items no writer accounted for.
-    pub fn unattributed_plan_fields(&self) -> Result<usize, ArchonError> {
+    /// How many plan fields of all stored items no writer accounted for, and
+    /// which items' plans could not be read to count them.
+    pub fn unattributed_plan_fields(&self) -> Result<PlanFieldCount, ArchonError> {
         items::unattributed_plan_fields(&self.conn)
     }
     /// The item an enqueue with idempotency `key` stored, if any.

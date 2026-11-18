@@ -429,7 +429,7 @@ async fn ensure_locked(ctx: &DaemonContext) -> Result<AetherAgentId, ArchonError
     let Some(stored) = current_orchestrator(ctx).await? else {
         let _switch = switching(ctx).await;
         let id = create_generation(ctx, &client).await?;
-        adopt(ctx, &id).await?;
+        adopt(ctx, &id, Revival::Recreated).await?;
         return Ok(id);
     };
     let lineage = match newest_incarnation(&client, &stored).await {
@@ -1064,7 +1064,7 @@ async fn record_revival(
     id: &AetherAgentId,
     how: Revival,
 ) -> Result<(), ArchonError> {
-    adopt(ctx, id).await?;
+    adopt(ctx, id, how).await?;
     {
         let mut store = ctx.store.lock().await;
         let restarts = store
@@ -1084,14 +1084,18 @@ async fn record_revival(
 /// Record `id` as the orchestrator and wake the pump's subscription. A new
 /// agent (not one woken in place) owes no restart for the MCP tools unless
 /// the server is down (see [`mcp::orchestrator_replaced`]).
-async fn adopt(ctx: &DaemonContext, id: &AetherAgentId) -> Result<(), ArchonError> {
+async fn adopt(ctx: &DaemonContext, id: &AetherAgentId, how: Revival) -> Result<(), ArchonError> {
     let previous = {
         let mut store = ctx.store.lock().await;
         let previous = store.kv_get(keys::ORCHESTRATOR_AGENT)?;
-        // One transaction: whatever refresh was under way has its successor
-        // now, and a stop never leaves the successor stored beside its marker.
-        let set = [(keys::ORCHESTRATOR_AGENT, id.as_str())];
-        store.kv_update(&set, &[BLOCKER_KEY, economy::REFRESH_UNFINISHED_KEY])?;
+        // One transaction: a stop never leaves a fresh successor stored beside
+        // the marker of the refresh it ends. An agent woken or restarted from
+        // a checkpoint (Aether's own restart) keeps the outdated instructions.
+        let ended: &[&str] = match how {
+            Revival::Recreated => &[BLOCKER_KEY, economy::REFRESH_UNFINISHED_KEY],
+            Revival::Woken | Revival::Restarted => &[BLOCKER_KEY],
+        };
+        store.kv_update(&[(keys::ORCHESTRATOR_AGENT, id.as_str())], ended)?;
         previous
     };
     ctx.supervisor.current.send_replace(Some(id.clone()));

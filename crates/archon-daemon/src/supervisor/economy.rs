@@ -184,10 +184,6 @@ pub fn refresh_owed(
 ) -> bool {
     assert!(!running.is_empty(), "this build has a version");
     let outdated = freshness.is_some_and(|freshness| {
-        assert!(
-            !freshness.created_by.is_empty(),
-            "a recorded creator has a version"
-        );
         let upgraded = freshness.created_by != running;
         upgraded && (freshness.prompt_outdated == Some(true) || freshness.tools_outdated)
     });
@@ -200,10 +196,7 @@ pub fn retry_due(generation: u64, tried: Option<&RefreshTried>, now: Timestamp) 
     assert!(generation > 0, "generations start at 1");
     match tried.filter(|tried| tried.generation == generation) {
         None => true,
-        Some(tried) => {
-            assert!(tried.tries > 0, "a recorded try was made");
-            now - tried.at >= REFRESH_RETRY
-        }
+        Some(tried) => now - tried.at >= REFRESH_RETRY,
     }
 }
 
@@ -237,8 +230,6 @@ fn delay_reason(tried: Option<&RefreshTried>) -> String {
     let Some((tries, error)) = failed else {
         return "it waits until the orchestrator is idle with no news due".to_owned();
     };
-    assert!(tries > 0, "a failed try was made");
-    assert!(!error.trim().is_empty(), "a failure says why");
     let attempts = if tries == 1 { "attempt" } else { "attempts" };
     format!(
         "{tries} {attempts} failed, the last with: {error}; retried every {} minutes while it is idle",

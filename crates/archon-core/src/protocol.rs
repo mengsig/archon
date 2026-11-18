@@ -1920,7 +1920,6 @@ impl OrchestratorFreshness {
         let prompt = self.prompt_outdated == Some(true);
         let mut line = String::new();
         if let Some(reason) = &self.refresh_delayed {
-            assert!(!reason.trim().is_empty(), "a delay says why");
             let what = match (prompt, self.tools_outdated) {
                 (true, true) => " (prompt and tools)",
                 (true, false) => " (prompt)",

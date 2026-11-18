@@ -355,3 +355,29 @@ async fn a_leftover_marker_beside_a_live_agent_is_refreshed_at_the_next_idle_mom
     assert_eq!(stored(&harness).await.marker, None);
     assert_eq!(stored(&harness).await.agent.as_deref(), Some(ORCH_2));
 }
+
+/// Aether itself restarted the outdated agent from its checkpoint while a
+/// refresh was unfinished (the operator's `aether restart`), and that
+/// successor stopped: adopting it does not end the refresh, so it is
+/// replaced by the fresh generation, not restarted once more.
+#[tokio::test]
+async fn a_checkpoint_successor_adopted_during_a_refresh_keeps_the_refresh_owed() {
+    let (harness, agents) = outdated_on_disk().await;
+    harness.set_kv(MARKER, "1").await;
+    const RESTARTED: &str = "agt_0009";
+    {
+        let mut table = agents.lock().unwrap();
+        table.get_mut(ORCH).unwrap()["status"] = json!({ "state": "cancelled" });
+        table.get_mut(ORCH).unwrap()["restarted_as"] = json!(RESTARTED);
+        let stopped = crate::link_economy::orchestrator(RESTARTED, "cancelled");
+        table.insert(RESTARTED.into(), stopped);
+    }
+    script_successor(&harness, &agents);
+
+    let id = supervisor::ensure_orchestrator(&harness.ctx).await.unwrap();
+    assert_eq!(id.as_str(), ORCH_2, "the fresh generation the refresh owed");
+    no_checkpoint_restart(&harness);
+    let after = stored(&harness).await;
+    assert_eq!(after.marker, None, "the fresh generation ended it");
+    assert_eq!(after.generation.as_deref(), Some("2"));
+}

@@ -1499,7 +1499,7 @@ async fn no_amendment_retry_or_steer_moves_the_frozen_head_of_a_review_item() {
         },
     })
     .await
-    .ok();
+    .expect("a steer note is only text");
     assert_eq!(frozen_head(&h, &item).await, head, "amended and steered");
 
     h.cli(Request::CancelItem {
@@ -1512,4 +1512,24 @@ async fn no_amendment_retry_or_steer_moves_the_frozen_head_of_a_review_item() {
         .await
         .expect("a retry");
     assert_eq!(frozen_head(&h, &item).await, head, "retried");
+}
+
+#[tokio::test]
+async fn steering_a_running_review_item_leaves_its_frozen_head() {
+    let (h, _gh, head) = fork_pull_request().await;
+    let item = review_item(&h, &head, ReviewLevel::Standard).await;
+    let other = "0123456789abcdef0123456789abcdef01234567";
+    h.cli(Request::SteerItem {
+        item: item.id.clone(),
+        steer: archon_core::steer::Steer {
+            note: Some(format!("review {other} instead")),
+            ..Default::default()
+        },
+    })
+    .await
+    .expect("a steer note is only text");
+    h.cli(amend(&item, &format!("review {other} instead")))
+        .await
+        .expect("free text is only text");
+    assert_eq!(frozen_head(&h, &item).await, head);
 }

@@ -32,7 +32,7 @@ impl Asked {
     pub fn everything(item: &QueueItem) -> Self {
         Self {
             autonomy: AutonomyPatch::from(item.autonomy),
-            model_plan: item.model_plan.clone().into(),
+            model_plan: item.model_plan.plan().clone().into(),
         }
     }
 }
@@ -153,8 +153,42 @@ fn replace_deps(conn: &Connection, item: &QueueItem) -> Result<(), ArchonError> 
     Ok(())
 }
 
+/// `item` as it is stored: plan origins no writer accounted for, such as
+/// those a clone kept from the item it was cloned from, become unattributed.
+fn attributed(item: &QueueItem) -> std::borrow::Cow<'_, QueueItem> {
+    let Some(plan) = item.model_plan.reconciled(&item.id) else {
+        return std::borrow::Cow::Borrowed(item);
+    };
+    let faults = item.model_plan.faults(&item.id);
+    tracing::error!(item = %item.id, ?faults, "plan origins no writer accounted for are stored as unattributed");
+    debug_assert!(faults.is_empty(), "item {}: {faults:?}", item.id);
+    assert!(plan.faults(&item.id).is_empty(), "reconciled origins fit");
+    std::borrow::Cow::Owned(QueueItem {
+        model_plan: plan,
+        ..item.clone()
+    })
+}
+
+/// The plan fields of every item that read as unattributed. Only rows whose
+/// JSON names the source are parsed: a store without any parses none.
+pub(super) fn unattributed_plan_fields(conn: &Connection) -> Result<usize, ArchonError> {
+    let mut stmt = conn
+        .prepare("SELECT data FROM items WHERE instr(data, '\"unattributed\"') > 0")
+        .ctx("prepare unattributed count")?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .ctx("count unattributed plan fields")?;
+    let mut fields = 0;
+    for row in rows {
+        let item: QueueItem = from_json(&row.ctx("read item")?, "queue item")?;
+        fields += item.model_plan.unattributed_fields(&item.id);
+    }
+    Ok(fields)
+}
+
 /// Rewrites every derived column from `item`, so columns and `data` agree.
 pub(super) fn write_columns(conn: &Connection, item: &QueueItem) -> Result<(), ArchonError> {
+    let item = &*attributed(item);
     let changed = conn
         .execute(
             "UPDATE items SET repo = ?2, pipeline = ?3, priority = ?4, state = ?5, tags = ?6,
@@ -243,7 +277,10 @@ fn check_replay(
             fields.remove("asked_plan").is_some(),
             "request_value has asked_plan"
         );
-        fields.insert("model_plan".into(), serde_json::json!(item.model_plan));
+        fields.insert(
+            "model_plan".into(),
+            serde_json::json!(item.model_plan.plan()),
+        );
     }
     let legacy = !stored_fields.contains_key("autonomy");
     if legacy {
@@ -313,6 +350,7 @@ fn insert_requested_in(
 ) -> Result<QueueItem, ArchonError> {
     validate_new(item, key)?;
     assert_eq!(item.state, QueueState::Queued);
+    let item = &*attributed(item);
     assert!(
         !tx.is_autocommit(),
         "item insertion belongs to a transaction"

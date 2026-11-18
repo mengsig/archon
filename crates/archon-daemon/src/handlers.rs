@@ -76,7 +76,8 @@ pub async fn update_item_autonomy_above_ceiling(
         autonomy: Some(autonomy),
         ..ItemPatch::default()
     };
-    items::update_within(ctx, item, patch, revise::Ceiling::Waived).await
+    let by = archon_core::plan_origin::Authority::Operator;
+    items::update_within(ctx, item, patch, (revise::Ceiling::Waived, by)).await
 }
 
 /// Validate and execute one request. Operator-only requests are refused
@@ -499,7 +500,7 @@ async fn handle_adaptive(
     request: Request,
 ) -> Result<Reply, ArchonError> {
     match request {
-        Request::EnqueueInitiative(enqueue) => initiatives::enqueue(ctx, enqueue).await,
+        Request::EnqueueInitiative(enqueue) => initiatives::enqueue(ctx, enqueue, by(client)).await,
         Request::ListInitiatives => initiatives::list(ctx).await,
         Request::CancelInitiative { initiative } => initiatives::cancel(ctx, &initiative).await,
         Request::RetryInitiative { initiative } => initiatives::retry(ctx, &initiative).await,
@@ -521,7 +522,7 @@ async fn handle_adaptive(
             learning::restore_memory(ctx, &feedback).await
         }
         Request::LearningRetryMemory { feedback } => learning::retry_memory(ctx, &feedback).await,
-        request => handle_queue(ctx, request).await,
+        request => handle_queue(ctx, client, request).await,
     }
 }
 
@@ -561,7 +562,8 @@ pub(crate) async fn enqueue_for_archond(
     ctx: &DaemonContext,
     request: archon_core::protocol::EnqueueRequest,
 ) -> Result<archon_core::queue::QueueItem, ArchonError> {
-    match items::enqueue(ctx, request).await? {
+    let by = archon_core::plan_origin::Authority::Daemon;
+    match items::enqueue(ctx, request, by).await? {
         Reply::Item(item) | Reply::ItemBudgetsOff(item) => Ok(item),
         other => unreachable!("an enqueue answers with its item, not {other:?}"),
     }
@@ -578,9 +580,18 @@ pub(crate) async fn resolve_item(
     }
 }
 
-async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, ArchonError> {
+/// Who chooses the plan fields a request of `client` names.
+fn by(client: ClientKind) -> archon_core::plan_origin::Authority {
+    archon_core::plan_origin::Authority::of_client(client)
+}
+
+async fn handle_queue(
+    ctx: &DaemonContext,
+    client: ClientKind,
+    request: Request,
+) -> Result<Reply, ArchonError> {
     match request {
-        Request::Enqueue(enqueue) => items::enqueue(ctx, enqueue).await,
+        Request::Enqueue(enqueue) => items::enqueue(ctx, enqueue, by(client)).await,
         Request::ApproveIntent(record) => Box::pin(intent::approve(ctx, record)).await,
         Request::ListItems(query) => items::list(ctx, &query).await,
         Request::GetItem { item } => items::get(ctx, &item).await,
@@ -606,7 +617,7 @@ async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, Ar
                 brief_append,
                 stage_timeouts,
             };
-            items::retry(ctx, &item, retry).await
+            items::retry(ctx, &item, retry, by(client)).await
         }
         Request::RefreshItem {
             item,
@@ -619,7 +630,7 @@ async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, Ar
                 model_reasons,
                 stage_timeouts,
             };
-            items::refresh(ctx, &item, asked).await
+            items::refresh(ctx, &item, asked, by(client)).await
         }
         Request::Status(query) => control::status(ctx, query).await,
         Request::SetCaps { caps } => control::set_caps(ctx, caps).await,

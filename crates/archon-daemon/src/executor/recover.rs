@@ -546,7 +546,7 @@ pub(super) async fn driver_of(
     };
     let operator_gates = OperatorGates::for_run(&spec, &item.autonomy);
     let experiments = crate::experiments::item_dir(&ctx.paths, &item.id);
-    let driver = RunDriver::new(Arc::new(spec), item.model_plan, vars)?
+    let driver = RunDriver::new(Arc::new(spec), item.model_plan.into_plan(), vars)?
         .with_gates(operator_gates)?
         .with_experiments(experiments);
     let mut driver = super::proposal::start_past(driver, approved)?;

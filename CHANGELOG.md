@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Added
+
+- Every item records where each field of its model plan came from, beside
+  the plan as `model_origins`: for each stage entry, separately for the model
+  and the effort, the source (`explicit`, `learned`, `tier`, `fallback`,
+  `migrated`), who chose it (operator, orchestrator or daemon) and when.
+  Enqueue, initiative members, update, retry, steers, pipeline switches,
+  refreshes, restack fixes, dispatch tier resolution, provider reroutes and
+  the distillation errand all record it. A steer that names the value already
+  stored still records it as explicit. `get_item` shows each entry's origin,
+  and `archon status` counts the fields no writer accounted for
+  (`unattributed`), which should be zero.
+
+### Changed
+
+- An initiative member's plan is checked as an enqueue's is: an effort above
+  its stage's default needs a reason, given in the member's new
+  `model_reasons`.
+
+### Upgrading
+
+Items stored by 1.6.3 or earlier have no origins. Each of their fields reads
+as `legacy_unknown` and is treated as a pin; nothing is backfilled. A 1.6.3
+`archond` ignores `model_origins` and drops it when it saves an item, which
+then reads as `legacy_unknown` too. See
+[docs/upgrading.md](docs/upgrading.md#plan-origins).
+
 ## 1.6.3
 
 Released 2026-11-18.

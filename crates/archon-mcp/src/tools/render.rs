@@ -245,6 +245,26 @@ fn state_detail(state: &QueueState) -> Option<String> {
     }
 }
 
+/// Where each plan entry's model and effort came from, one line per entry.
+fn origin_text(
+    text: &mut String,
+    origins: &std::collections::BTreeMap<String, Vec<archon_core::plan_origin::EntryOrigin>>,
+) {
+    if origins.is_empty() {
+        return;
+    }
+    text.push_str("\nPlan origins:");
+    for (key, entries) in origins {
+        for (slot, origin) in entries.iter().enumerate() {
+            let _ = write!(
+                text,
+                "\n  {key}[{slot}]: model {}; effort {}",
+                origin.model, origin.effort
+            );
+        }
+    }
+}
+
 fn item_detail(detail: &ItemDetail) -> String {
     let item = &detail.item;
     let budget = item
@@ -276,6 +296,7 @@ fn item_detail(detail: &ItemDetail) -> String {
         ),
         item.autonomy.describe()
     );
+    origin_text(&mut text, &detail.plan_origins);
     if let Some(provider) = &item.routed_provider {
         let _ = write!(
             text,

@@ -152,6 +152,13 @@ fn link_lines(out: &mut String, status: &DaemonStatus, verbose: bool) {
     if let Some(stale) = stale.filter(|s| !s.is_empty()) {
         let _ = writeln!(out, "health: STALE {}", sanitize_line(&stale.join("; ")));
     }
+    if status.unattributed_plan_fields > 0 {
+        let _ = writeln!(
+            out,
+            "plan origins: {} field(s) no writer accounted for, treated as pins",
+            status.unattributed_plan_fields
+        );
+    }
     if status.held_news > 0 {
         let line = held_news_line(status.held_news, status.held_news_due);
         let _ = writeln!(out, "news: {line}");
@@ -998,6 +1005,7 @@ pub(crate) mod tests {
             waiting_total: 0,
             waiting_next_offset: None,
             health: None,
+            unattributed_plan_fields: 0,
             quota: None,
             recovery: None,
             integration: Vec::new(),

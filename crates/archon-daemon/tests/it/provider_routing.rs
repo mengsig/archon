@@ -10,6 +10,7 @@ use archon_core::Timestamp;
 use archon_core::config::Config;
 use archon_core::model::{ModelPlan, ModelPlanDraft};
 use archon_core::model_tier::{CatalogModel, ModelCatalog, Tier};
+use archon_core::plan_origin::{Authority, PlanSource};
 use archon_core::protocol::{
     DaemonStatus, EnqueueRequest, Reply, RepoRef, Request, WaitingReason, WaitingReasonCode,
 };
@@ -506,7 +507,21 @@ async fn a_quota_reroute_posts_each_model_it_swaps_and_never_moves_a_pin() {
         !notice.contains("claude-code/opus"),
         "the pin did not move: {notice}"
     );
-    let switch = h.item(&item.id).await.provider_switch.expect("noted");
+    let rerouted = h.item(&item.id).await;
+    let origins = crate::plan_origins::shown(&h, &rerouted).await;
+    let (pin, moved) = (&origins["review"][0].model, &origins["ship"][0].model);
+    assert_eq!(
+        (pin.source, pin.by),
+        (PlanSource::Explicit, Authority::Operator)
+    );
+    assert_eq!(
+        (moved.source, moved.by),
+        (PlanSource::Tier, Authority::Daemon)
+    );
+    let note = moved.note.as_deref().unwrap_or_default();
+    assert!(note.starts_with("moved to follow provider codex"), "{note}");
+    assert_eq!(crate::plan_origins::unattributed(&h).await, 0);
+    let switch = rerouted.provider_switch.expect("noted");
     for swap in [
         "stage review now runs on codex/mini instead of claude-code/haiku",
         "stage ship now runs on codex/mini instead of claude-code/haiku",
@@ -536,7 +551,7 @@ async fn a_choice_that_no_longer_resolves_keeps_the_rest_of_a_reroute_stored() {
     {
         let mut store = h.ctx.store.lock().await;
         let mut stored = store.item(&item.id).unwrap();
-        let ship = &mut stored.model_plan.0.get_mut("ship").unwrap()[0];
+        let ship = &mut stored.model_plan.legacy_mut().0.get_mut("ship").unwrap()[0];
         ship.tier.as_mut().expect("a tier").provider = Some("gone".into());
         store.update_item(&stored).unwrap();
     }

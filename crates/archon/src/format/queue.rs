@@ -199,6 +199,7 @@ pub fn item_detail(detail: &ItemDetail, names: &RepoNames, full: bool) -> String
         let _ = writeln!(out, "provider switch: {}", sanitize_line(switch));
     }
     plan_lines(&mut out, item);
+    origin_lines(&mut out, &detail.plan_origins);
     worker_lines(&mut out, &detail.worker_policies);
     for run in &detail.runs {
         run_lines(&mut out, detail, run, full);
@@ -237,6 +238,28 @@ fn plan_lines(out: &mut String, item: &QueueItem) {
             sanitize_line(stage),
             picks.join(" + ")
         );
+    }
+}
+
+/// `origin build: model explicit by operator ..., effort ...` per plan entry.
+fn origin_lines(
+    out: &mut String,
+    origins: &std::collections::BTreeMap<String, Vec<archon_core::plan_origin::EntryOrigin>>,
+) {
+    for (key, entries) in origins {
+        for (slot, origin) in entries.iter().enumerate() {
+            let slot = match entries.len() {
+                1 => String::new(),
+                _ => format!("[{slot}]"),
+            };
+            let _ = writeln!(
+                out,
+                "origin {}{slot}: model {}; effort {}",
+                sanitize_line(key),
+                sanitize_line(&origin.model.to_string()),
+                sanitize_line(&origin.effort.to_string())
+            );
+        }
     }
 }
 
@@ -486,7 +509,7 @@ mod tests {
     use archon_core::aether_ids::AetherAgentId;
     use archon_core::autonomy::Autonomy;
     use archon_core::id::{PipelineRunId, QuestionId, QueueItemId, RepoId, StageRunId};
-    use archon_core::model::{Effort, ModelChoice, ModelPlan};
+    use archon_core::model::{Effort, ModelChoice};
     use archon_core::queue::{Priority, QueueItem};
     use archon_core::run::{GateSubject, Verdict};
     use chrono::TimeZone as _;
@@ -512,7 +535,7 @@ mod tests {
             priority: Priority::Normal,
             dependencies: vec![],
             tags: vec![],
-            model_plan: ModelPlan::default(),
+            model_plan: Default::default(),
             model_reasons: None,
             budget_usd: None,
             risk: None,
@@ -747,6 +770,7 @@ mod tests {
         ship.structured = Some(serde_json::json!({"pr_url": "https://github.com/o/r/pull/12"}));
         ItemDetail {
             acceptance: Default::default(),
+            plan_origins: Default::default(),
             default_efforts: Default::default(),
             worker_policies: Default::default(),
             stage_notes: Default::default(),
@@ -986,12 +1010,54 @@ mod tests {
     }
 
     #[test]
+    fn item_detail_shows_each_entry_s_origin_with_its_slot_when_it_has_several() {
+        use archon_core::plan_origin::{Authority, EntryOrigin, FieldOrigin, PlanSource};
+        let mut detail = detail_with_stages();
+        let at = "2026-11-18T10:00:00Z".parse().unwrap();
+        let field = |source, by| FieldOrigin {
+            source,
+            by,
+            at: Some(at),
+            note: None,
+        };
+        let named = field(PlanSource::Explicit, Authority::Operator);
+        let filled = field(PlanSource::Fallback, Authority::Daemon);
+        let pinned = EntryOrigin {
+            model: named,
+            effort: filled.clone(),
+        };
+        let daemon = EntryOrigin {
+            model: filled.clone(),
+            effort: filled,
+        };
+        detail.plan_origins = [
+            ("build".to_owned(), vec![pinned]),
+            ("review".to_owned(), vec![daemon.clone(), daemon]),
+        ]
+        .into();
+        let text = item_detail(&detail, &RepoNames::new(), false);
+        assert!(
+            text.contains(
+                "origin build: model explicit by operator at 2026-11-18 10:00; \
+                 effort fallback by daemon at 2026-11-18 10:00"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("origin review[1]: model fallback by daemon"),
+            "{text}"
+        );
+        assert!(!text.contains("origin review:"), "{text}");
+    }
+
+    #[test]
     fn item_detail_shows_reasons_only_beside_current_plan_choices() {
         let mut detail = detail_with_stages();
         let choice = detail.stages[0].choice.clone();
         detail
             .item
             .model_plan
+            .legacy_mut()
             .0
             .insert("review".into(), vec![choice]);
         detail.item.model_reasons = Some([("review".into(), "Check supplied fix".into())].into());
@@ -1068,6 +1134,7 @@ mod tests {
         let gate = rejected_with_escapes(&run);
         let detail = ItemDetail {
             acceptance: Default::default(),
+            plan_origins: Default::default(),
             default_efforts: Default::default(),
             worker_policies: Default::default(),
             stage_notes: Default::default(),

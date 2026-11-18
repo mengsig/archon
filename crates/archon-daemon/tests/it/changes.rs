@@ -62,9 +62,11 @@ async fn insert_copies(h: &Harness, like: &QueueItem, count: usize) -> Vec<Queue
     let mut store = h.ctx.store.lock().await;
     (0..count)
         .map(|_| {
+            let id = QueueItemId::new();
             let copy = QueueItem {
                 intent: None,
-                id: QueueItemId::new(),
+                model_plan: like.model_plan.copy_for(&like.id, &id, None),
+                id,
                 ..like.clone()
             };
             store.insert_item(&copy, None).expect("insert").id

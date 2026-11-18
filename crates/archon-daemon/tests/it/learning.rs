@@ -131,7 +131,7 @@ async fn seeded_outcomes_fill_the_plan_and_why_retains_sample_sizes() {
     assert!(why.routing["implement"].contains("n=5"));
     assert!(why.routing["implement"].contains("repository evidence"));
     let explicit = h.enqueue("explicit choice").await;
-    assert_eq!(explicit.model_plan, plan());
+    assert_eq!(*explicit.model_plan, plan());
 }
 
 #[tokio::test]

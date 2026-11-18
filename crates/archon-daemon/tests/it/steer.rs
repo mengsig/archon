@@ -811,7 +811,7 @@ async fn the_model_policy_holds_against_a_steer() {
     };
     let error = steer(&h, &waiting.id, named).await.expect_err("denied");
     assert!(matches!(error, ArchonError::Policy(_)), "{error:?}");
-    assert_eq!(h.item(&waiting.id).await.model_plan, plan());
+    assert_eq!(*h.item(&waiting.id).await.model_plan, plan());
 }
 
 #[tokio::test]
@@ -835,7 +835,7 @@ async fn update_item_on_a_running_item_is_steered_into_its_run() {
         panic!("update_item replies with the item");
     };
     assert!(updated.brief.ends_with(&format!("{NOTE}\n")));
-    assert_eq!(updated.model_plan, replaced);
+    assert_eq!(*updated.model_plan, replaced);
     assert_eq!(updated.tags, ["steered"]);
     let messages = h.backend.messages();
     assert_eq!(messages.len(), 1, "{messages:?}");

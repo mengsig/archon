@@ -11,6 +11,7 @@ use archon_core::error::ArchonError;
 use archon_core::id::{QueueItemId, RepoId};
 use archon_core::model::{Effort, ModelChoice, ModelPlan, ModelPlanDraft, ModelReasons, ModelRef};
 use archon_core::model_tier::{ModelCatalog, TierChoice};
+use archon_core::plan_origin::{PlanSource, PlanWriter};
 use archon_core::policy::ModelPolicy;
 use archon_core::provider_route::{ProviderRoute, ProviderWeights, Routed};
 use archon_core::queue::QueueItem;
@@ -516,10 +517,11 @@ pub(crate) fn fill_plan(
     store: &Store,
     repo: Option<&RepoId>,
     (base, spec): (&PipelineSpec, &PipelineSpec),
-    mut plan: ModelPlan,
+    writer: &mut PlanWriter,
     (policy, max_tier): (&ModelPolicy, Tier),
     fallback: Option<&ModelChoice>,
-) -> Result<ModelPlan, ArchonError> {
+) -> Result<(), ArchonError> {
+    let mut plan = writer.plan().clone();
     let learned = learned::default_plan(store, repo, spec, policy, max_tier)?;
     for (stage, choices) in learned.0 {
         // A default learned on an earlier version of the pipeline may name a stage it dropped.
@@ -529,7 +531,10 @@ pub(crate) fn fill_plan(
         }
         plan.0.entry(stage).or_insert(choices);
     }
-    fill_static_stages(base, spec, plan, fallback)
+    writer.filled(plan, (PlanSource::Learned, PlanSource::Learned));
+    let fallen = fill_static_stages(base, spec, writer.plan().clone(), fallback)?;
+    writer.filled(fallen, (PlanSource::Fallback, PlanSource::Fallback));
+    Ok(())
 }
 
 /// `plan` completed without learning: `fallback` for the pipeline's own
@@ -695,15 +700,11 @@ mod tests {
         }
         let store = Store::open_in_memory().unwrap();
         let policy = ModelPolicy::default();
-        let filled = fill_plan(
-            &store,
-            None,
-            (&base, &spec),
-            plan.clone(),
-            (&policy, Tier::Strong),
-            None,
-        )
-        .unwrap();
+        let mut writer = PlanWriter::new(&QueueItemId::new(), archon_core::now());
+        writer.filled(plan.clone(), (PlanSource::Learned, PlanSource::Learned));
+        let bounds = (&policy, Tier::Strong);
+        fill_plan(&store, None, (&base, &spec), &mut writer, bounds, None).unwrap();
+        let filled = writer.finish();
         assert_eq!(filled.choices_for("propose"), Some(&[choice.clone()][..]));
         assert_eq!(filled.choices_for("report"), Some(&[choice][..]));
         assert_eq!(filled.0.len(), plan.0.len() + 2);
@@ -732,15 +733,22 @@ mod tests {
         plan.0.insert("review".into(), vec![named.clone()]);
         let store = Store::open_in_memory().unwrap();
         let policy = ModelPolicy::default();
-        let filled = fill_plan(
+        let id = QueueItemId::new();
+        let mut writer = PlanWriter::new(&id, archon_core::now());
+        writer.filled(plan, (PlanSource::Learned, PlanSource::Learned));
+        let bounds = (&policy, Tier::Strong);
+        fill_plan(
             &store,
             None,
             (&base, &spec),
-            plan,
-            (&policy, Tier::Strong),
+            &mut writer,
+            bounds,
             Some(&default),
         )
         .unwrap();
+        let filled = writer.finish();
+        let origin = filled.origin(&id, "verify", 0);
+        assert_eq!(origin.effort.source, PlanSource::Fallback, "{origin:?}");
         assert_eq!(filled.choices_for("review"), Some(&[named][..]), "kept");
         for stage in ["baseline", "refactor", "verify", "report"] {
             assert_eq!(filled.choices_for(stage), Some(&[default.clone()][..]));

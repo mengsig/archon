@@ -1554,6 +1554,10 @@ pub struct DaemonStatus {
     /// archond that asked Aether while answering.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health: Option<StatusHealth>,
+    /// Plan fields of stored items no writer accounted for, which archond
+    /// treats as pins; `0` from an older archond.
+    #[serde(default)]
+    pub unattributed_plan_fields: u32,
     /// Each provider's quota headroom for stage routing, as archond last
     /// read it from Aether. `None` before a reading or from an older archond.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2013,6 +2017,9 @@ pub struct ItemDetail {
     /// How the cost of each stage run that delegated splits.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub delegations: BTreeMap<StageRunId, StageDelegation>,
+    /// Where each plan entry's model and effort came from, keyed like the plan.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub plan_origins: BTreeMap<String, Vec<crate::plan_origin::EntryOrigin>>,
     /// The default effort of each plan key, to see which choices exceed it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub default_efforts: BTreeMap<String, Effort>,
@@ -2536,7 +2543,7 @@ mod tests {
             priority: Priority::Normal,
             dependencies: vec![],
             tags: vec![],
-            model_plan: crate::model::ModelPlan::default(),
+            model_plan: Default::default(),
             model_reasons: None,
             budget_usd: None,
             stage_timeouts: BTreeMap::new(),

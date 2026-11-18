@@ -9,7 +9,6 @@ use crate::common;
 use archon_core::autonomy::{AutonomyPatch, MergeMode, ReviewLevel, ToolsMode};
 use archon_core::config::Config;
 use archon_core::error::ArchonError;
-use archon_core::model::ModelPlan;
 use archon_core::protocol::{
     ClientKind, DeviceRole, EnqueueRequest, ItemPatch, Reply, RepoPatch, RepoRef, Request,
     WelcomeDevice,
@@ -58,7 +57,7 @@ async fn enqueue(h: &Harness, autonomy: AutonomyPatch) -> QueueItem {
         priority: Default::default(),
         depends_on: Vec::new(),
         tags: Vec::new(),
-        model_plan: ModelPlan::default().into(),
+        model_plan: Default::default(),
         model_reasons: None,
         stage_timeouts: Default::default(),
         budget_usd: None,
@@ -490,7 +489,7 @@ async fn restaging_keeps_explicit_reviewer_choices_and_reasons() {
         effort: archon_core::model::Effort::Low,
         tier: None,
     }];
-    let mut plan = item.model_plan.clone();
+    let mut plan = item.model_plan.plan().clone();
     plan.0.insert("implement.review".into(), reviewers.clone());
     h.cli(Request::UpdateItem {
         item: item.id.clone(),

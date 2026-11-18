@@ -9,6 +9,7 @@ use archon_core::id::QueueItemId;
 use archon_core::initiative::InitiativeState;
 use archon_core::model::{Effort, ModelPlan, ModelPlanDraft, ModelReasons, check_reason_lengths};
 use archon_core::notify::NotificationKind;
+use archon_core::plan_origin::{Authority, PlanSource, PlanWriter, PlannedPlan};
 use archon_core::protocol::{EnqueueRequest, ItemDetail, ItemPatch, ItemQuery, Reply};
 use archon_core::pull_request::{OntoPullRequest, OntoTarget};
 use archon_core::queue::{
@@ -32,6 +33,7 @@ use archon_core::autonomy::MergeMode;
 pub(super) async fn enqueue(
     ctx: &DaemonContext,
     mut req: EnqueueRequest,
+    by: Authority,
 ) -> Result<Reply, ArchonError> {
     req.intent = resolve_intent(ctx, req.intent.as_ref(), req.onto.as_ref()).await?;
     let title = req.title.trim().to_owned();
@@ -64,7 +66,7 @@ pub(super) async fn enqueue(
         held: routed_provider.as_deref(),
         ..unrouted
     };
-    let plan = enqueue_plan(ctx, &req, &env, &resolved, route).await?;
+    let plan = enqueue_plan(ctx, &req, &env, &resolved, (route, by)).await?;
     let now = archon_core::now();
     let item = QueueItem {
         intent: req.intent.clone().map(Box::new),
@@ -106,16 +108,11 @@ async fn enqueue_plan(
     req: &EnqueueRequest,
     env: &RepoEnv,
     resolved: &knobs::Resolved,
-    route: ItemRoute<'_>,
-) -> Result<archon_core::model::ModelPlan, ArchonError> {
-    let given = resolve_draft(
-        ctx,
-        (env, route),
-        &resolved.spec,
-        req.model_plan.clone(),
-        req.model_reasons.as_ref(),
-    )
-    .await?;
+    (route, by): (ItemRoute<'_>, Authority),
+) -> Result<PlannedPlan, ArchonError> {
+    let draft = req.model_plan.clone();
+    let reasons = req.model_reasons.as_ref();
+    let given = resolve_draft(ctx, (env, route), &resolved.spec, (draft, reasons), by).await?;
     check_stage_timeouts(ctx, &resolved.spec, &req.stage_timeouts)?;
     let plan = filled_plan(ctx, route, env, &resolved.base, &resolved.spec, given).await?;
     check_plan(ctx, env, &resolved.spec, &plan)?;
@@ -438,6 +435,7 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
     let stage_notes = executor::stage_note::read(&store, &stages)?;
     Ok(Reply::ItemDetail(Box::new(ItemDetail {
         acceptance,
+        plan_origins: item.model_plan.origins(&item.id),
         default_efforts,
         worker_policies,
         stage_notes,
@@ -511,8 +509,9 @@ pub(super) async fn update(
     ctx: &DaemonContext,
     id: &QueueItemId,
     patch: ItemPatch,
+    by: Authority,
 ) -> Result<Reply, ArchonError> {
-    update_within(ctx, id, patch, Ceiling::Enforced).await
+    update_within(ctx, id, patch, (Ceiling::Enforced, by)).await
 }
 
 /// [`update`] with the ceiling `ceiling` says bounds the autonomy knobs.
@@ -520,7 +519,7 @@ pub(super) async fn update_within(
     ctx: &DaemonContext,
     id: &QueueItemId,
     mut patch: ItemPatch,
-    ceiling: Ceiling,
+    (ceiling, by): (Ceiling, Authority),
 ) -> Result<Reply, ArchonError> {
     check_item_budget(patch.budget_usd)?;
     if let Some(tags) = &patch.tags {
@@ -556,7 +555,7 @@ pub(super) async fn update_within(
         if let Some(draft) = patch.model_plan.take() {
             let route = ItemRoute::new(&current);
             let reasons = patch.model_reasons.as_ref();
-            let given = resolve_draft(ctx, (&env, route), &spec, draft, reasons).await?;
+            let given = resolve_draft(ctx, (&env, route), &spec, (draft, reasons), by).await?;
             let filled = filled_plan(ctx, route, &env, &base, &spec, given).await?;
             check_plan(ctx, &env, &spec, &filled)?;
             plan = Some(filled);
@@ -692,7 +691,7 @@ fn check_patchable(
 fn apply_patch(
     item: &mut QueueItem,
     patch: ItemPatch,
-    plan: Option<ModelPlan>,
+    plan: Option<PlannedPlan>,
 ) -> Result<(), ArchonError> {
     // First: an empty amendment is refused before anything changes.
     if item.onto.is_some() && !patch.add_depends_on.is_empty() {
@@ -742,8 +741,9 @@ pub(super) async fn refresh(
     ctx: &DaemonContext,
     id: &QueueItemId,
     asked: executor::refresh::Asked,
+    by: Authority,
 ) -> Result<Reply, ArchonError> {
-    let refresh = executor::refresh::refresh_item(ctx, id, asked).await?;
+    let refresh = executor::refresh::refresh_item(ctx, id, asked, by).await?;
     Ok(Reply::Item(refresh))
 }
 
@@ -766,6 +766,7 @@ pub(super) async fn retry(
     ctx: &DaemonContext,
     id: &QueueItemId,
     retry: Retry,
+    by: Authority,
 ) -> Result<Reply, ArchonError> {
     let current = ctx.store.lock().await.item(id)?;
     let replaces_plan = retry.model_plan.is_some();
@@ -781,9 +782,13 @@ pub(super) async fn retry(
     let plan = match retry.model_plan {
         Some(draft) => {
             let reasons = retry.model_reasons.as_ref();
-            resolve_draft(ctx, (&env, route), &spec, draft, reasons).await?
+            resolve_draft(ctx, (&env, route), &spec, (draft, reasons), by).await?
         }
-        None => kept_plan,
+        None => {
+            let mut writer = PlanWriter::new(id, archon_core::now());
+            writer.carry(&kept_plan, id, |_| Some(usize::MAX));
+            writer
+        }
     };
     let plan = filled_plan(ctx, route, &env, &base, &spec, plan).await?;
     check_plan(ctx, &env, &spec, &plan)?;
@@ -1110,18 +1115,23 @@ pub(crate) async fn routed_provider(
 }
 
 /// `draft` as [`knobs::resolve_plan`] gives it, its tiers resolved from
-/// Aether's catalog within `env`'s model policy and routed for `item`.
+/// Aether's catalog within `env`'s model policy and routed for `item`, and
+/// what it names written as chosen `by` the request.
 pub(super) async fn resolve_draft(
     ctx: &DaemonContext,
     (env, item): (&RepoEnv, ItemRoute<'_>),
     spec: &PipelineSpec,
-    draft: ModelPlanDraft,
-    reasons: Option<&ModelReasons>,
-) -> Result<ModelPlan, ArchonError> {
-    let plan = resolve_tiers(ctx, (env, item), spec, draft).await?;
+    (draft, reasons): (ModelPlanDraft, Option<&ModelReasons>),
+    by: Authority,
+) -> Result<PlanWriter, ArchonError> {
+    let plan = resolve_tiers(ctx, (env, item), spec, draft.clone()).await?;
     env.policy(&ctx.config).check_plan(&plan)?;
     knobs::check_plan_reasons(spec, &plan, reasons)?;
-    Ok(plan)
+    let mut writer = PlanWriter::new(item.id, archon_core::now());
+    if !draft.0.is_empty() {
+        writer.request(&draft, plan, by);
+    }
+    Ok(writer)
 }
 
 /// Resolve tiers without checking the plan cap or effort reasons, for a request
@@ -1149,8 +1159,8 @@ pub(super) async fn filled_plan(
     env: &RepoEnv,
     base: &PipelineSpec,
     spec: &PipelineSpec,
-    plan: ModelPlan,
-) -> Result<ModelPlan, ArchonError> {
+    mut writer: PlanWriter,
+) -> Result<PlannedPlan, ArchonError> {
     let id = item.id;
     let policy = env.policy(&ctx.config);
     let catalog = learned::catalog(ctx).await?;
@@ -1167,11 +1177,16 @@ pub(super) async fn filled_plan(
     let unnamed = knobs::fill_stage_tiers(tiers, max_tier, spec, ModelPlan::default());
     let baseline = knobs::fill_static_stages(base, spec, unnamed, fallback.as_ref())?;
     store.record_static_plan(repo, spec.name(), &baseline)?;
-    let learned = learned::plan_for_item(&store, id, repo, spec, (&policy, max_tier), &plan)?;
-    let mut plan = plan;
+    let asked = writer.plan();
+    let learned = learned::plan_for_item(&store, id, repo, spec, (&policy, max_tier), asked)?;
+    let mut plan = asked.clone();
     plan.0.extend(learned.0);
-    let plan = knobs::fill_stage_tiers(tiers, max_tier, spec, plan);
-    knobs::fill_static_stages(base, spec, plan, fallback.as_ref())
+    writer.filled(plan, (PlanSource::Learned, PlanSource::Learned));
+    let tiered = knobs::fill_stage_tiers(tiers, max_tier, spec, writer.plan().clone());
+    writer.filled(tiered, (PlanSource::Tier, PlanSource::Fallback));
+    let fallen = knobs::fill_static_stages(base, spec, writer.plan().clone(), fallback.as_ref())?;
+    writer.filled(fallen, (PlanSource::Fallback, PlanSource::Fallback));
+    Ok(writer.finish())
 }
 
 /// Every stage has 1 to `choice_limit` choices, no unknown stage is named, and

@@ -462,7 +462,7 @@ async fn send_generation(
     let network = request.network;
     let repository = RepositoryIdentity::from_request(&request);
     repository.check_checkout()?;
-    match ctx.backend.create_run_node(request).await {
+    match create_checked_node(ctx, request).await {
         Ok(created) => {
             record_agent(&mut *ctx.store.lock().await, run, generation, &created)?;
             Ok(Created::Agent(RunNode {
@@ -476,6 +476,17 @@ async fn send_generation(
         }
         Err(error) => Err(error),
     }
+}
+
+async fn create_checked_node(
+    ctx: &DaemonContext,
+    request: RunNodeRequest,
+) -> Result<CreatedNode, ArchonError> {
+    let catalog = crate::learned::catalog(ctx).await?;
+    catalog.check(&request.model).map_err(|why| {
+        ArchonError::Unavailable(format!("run node waits for model {}: {why}", request.model))
+    })?;
+    ctx.backend.create_run_node(request).await
 }
 
 async fn prepare_replay(
@@ -853,7 +864,7 @@ async fn find_agent(
         idempotency_key(run, node.generation)
     );
     let key = request.idempotency_key.clone();
-    match ctx.backend.create_run_node(request).await {
+    match create_checked_node(ctx, request).await {
         Ok(created) => {
             index_node_agent(&mut *ctx.store.lock().await, run, &created.agent)?;
             Ok(Found::Agent(created.agent))

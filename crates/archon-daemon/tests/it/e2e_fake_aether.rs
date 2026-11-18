@@ -1255,3 +1255,29 @@ async fn downgraded_requests_stay_full_when_host_context_support_returns() {
         assert_eq!(h.stages(&item.id).await[0].state, StageState::Running);
     }
 }
+
+#[tokio::test]
+async fn frozen_creates_wait_for_a_listed_model_before_replay() {
+    for stage in [false, true] {
+        let (_dir, aether, h, item) = pending_lean_creation(stage, false).await;
+        let before = aether.received_named("create_agent").len();
+        aether.set_default(
+            "list_models",
+            Scripted::reply(
+                "models",
+                json!([
+                    {"model": common::MODEL, "configured": true}
+                ]),
+            ),
+        );
+        h.dispatch().await;
+        assert_eq!(aether.received_named("create_agent").len(), before);
+        assert_eq!(h.stages(&item.id).await[0].state, StageState::Spawning);
+        common::catalog::answer(&aether, &common::catalog::default_models());
+        let client = AetherClient::connect(&aether.endpoint()).await.unwrap();
+        h.ctx.aether.replace(Some(Arc::new(client))).unwrap();
+        h.dispatch().await;
+        assert!(aether.received_named("create_agent").len() > before);
+        assert_eq!(h.stages(&item.id).await[0].state, StageState::Running);
+    }
+}

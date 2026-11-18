@@ -1259,6 +1259,7 @@ async fn resume_or_spawn(
     stage: &StageRun,
     mut spawn: StoredSpawn,
 ) -> Result<Issued, ArchonError> {
+    check_frozen_request(ctx, &spawn.request, stage).await?;
     // A grant reserved while budgets were on is dropped once they are off.
     let granted = spawn.request.cost_budget_usd.is_some();
     let repo = {
@@ -1293,6 +1294,43 @@ async fn resume_or_spawn(
         save_spawn(&mut *ctx.store.lock().await, &stage.id, &spawn)?;
     }
     spawn_bound(ctx, stage, spawn).await.map(Issued::Spawned)
+}
+
+async fn check_frozen_request(
+    ctx: &DaemonContext,
+    request: &SpawnRequest,
+    stage: &StageRun,
+) -> Result<(), ArchonError> {
+    let catalog = learned::catalog(ctx).await?;
+    let repo = {
+        let store = ctx.store.lock().await;
+        let run = store.run(&stage.run)?;
+        store.item(&run.item)?.repo
+    };
+    let env = RepoEnv::load(ctx, repo.as_ref()).await?;
+    let policy = env.policy(&ctx.config);
+    let models = std::iter::once(&request.choice.model).chain(
+        request.delegation_policy.iter().flat_map(|bounds| {
+            bounds
+                .workers
+                .iter()
+                .filter_map(|w| w.model.as_ref())
+                .chain(&bounds.exempt_models)
+        }),
+    );
+    for model in models {
+        let canonical = catalog.check(model).map_err(|why| {
+            ArchonError::Unavailable(format!(
+                "frozen stage request waits for model {model}: {why}"
+            ))
+        })?;
+        if !policy.permits_model(&canonical) {
+            return Err(ArchonError::Policy(format!(
+                "frozen stage model {canonical} is outside the current policy"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Bind a new stage to its run node and freeze its parent, network and context.

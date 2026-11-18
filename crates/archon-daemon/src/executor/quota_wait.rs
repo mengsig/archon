@@ -1,7 +1,7 @@
 //! A reviewer delegated on a provider whose quota is spent is blocked by Aether
 //! until the quota resets, and a held stage has its deadline moved, so the
 //! review could wait for hours. Once such a reviewer has waited
-//! [`FAIL_AFTER`], the sweep cancels it with a hint telling its lead to
+//! `FAIL_AFTER`, the sweep cancels it with a hint telling its lead to
 //! re-plan the review.
 //!
 //! The sweep keeps its own timer, apart from the dispatcher's. Each sweep

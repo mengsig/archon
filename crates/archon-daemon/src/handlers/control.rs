@@ -79,7 +79,8 @@ pub(super) async fn status(ctx: &DaemonContext, query: StatusQuery) -> Result<Re
         health: Some(aether.health),
         quota: crate::quota::status(ctx),
         unattributed_plan_fields: count(counts.plan_fields.unattributed),
-        unreadable_plan_items: count(counts.plan_fields.unreadable.len()),
+        legacy_plan_fields: count(counts.plan_fields.legacy),
+        unreadable_plan_items: count(counts.plan_fields.unreadable),
         recovery: ctx.recovery.progress(),
         integration,
         stage_warnings,
@@ -127,7 +128,7 @@ impl StoreCounts {
             directives: store.directives(now)?,
             open_gates: store.open_gates()?.len(),
             merges: super::autonomy::merges_now(&store)?,
-            plan_fields: store.unattributed_plan_fields()?,
+            plan_fields: store.plan_field_count()?,
         })
     }
 }

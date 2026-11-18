@@ -363,10 +363,10 @@ impl Store {
     pub fn item(&self, id: &QueueItemId) -> Result<QueueItem, ArchonError> {
         items::load(&self.conn, id)
     }
-    /// How many plan fields of all stored items no writer accounted for, and
-    /// which items' plans could not be read to count them.
-    pub fn unattributed_plan_fields(&self) -> Result<PlanFieldCount, ArchonError> {
-        items::unattributed_plan_fields(&self.conn)
+    /// How many plan fields of the unfinished items read as unattributed or
+    /// legacy, and how many of their rows do not decode at all.
+    pub fn plan_field_count(&self) -> Result<PlanFieldCount, ArchonError> {
+        items::plan_field_count(&self.conn)
     }
     /// The item an enqueue with idempotency `key` stored, if any.
     pub fn item_by_key(&self, key: &str) -> Result<Option<QueueItem>, ArchonError> {

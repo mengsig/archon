@@ -161,8 +161,8 @@ async fn handle_unattributed(
             answered => break 'handled answered.map(|reply| reply.expect("answered")),
         }
         // Held to the end of the call: the orchestrator is not replaced under it.
-        let _authority = match take_authority(ctx, client, caller, &request).await {
-            Ok(authority) => authority,
+        let (_authority, by) = match take_authority(ctx, client, caller, &request).await {
+            Ok(authorized) => authorized,
             Err(error) => break 'handled Err(error),
         };
         // Serialize the state whose before/after authority confirmations observe.
@@ -172,7 +172,7 @@ async fn handle_unattributed(
             true => Some(ctx.authority_changes.lock().await),
             false => None,
         };
-        special_routes(ctx, client, caller, request).await
+        special_routes(ctx, (client, by), caller, request).await
     };
     if let Some(ticket) = ticket {
         tracked::finish(ticket, &result).await?;
@@ -283,31 +283,37 @@ async fn prepare_watcher(
     Ok(None)
 }
 
-/// The orchestrator's authority for a call only it may make; any other call
-/// is only seen.
+/// The orchestrator's authority for a call only it may make, with the
+/// principal the call is let through as; any other call is only seen. A call
+/// made for an agent is the orchestrator's or an agent's, never the operator's.
 async fn take_authority<'a>(
     ctx: &'a DaemonContext,
     client: ClientKind,
     caller: Option<&AetherAgentId>,
     request: &Request,
-) -> Result<Option<RwLockReadGuard<'a, ()>>, ArchonError> {
+) -> Result<(Option<RwLockReadGuard<'a, ()>>, SteeredBy), ArchonError> {
     // A CLI forwards for the agent its environment names, which says nothing
     // of whether Aether names the callers of Archon's tools.
     let named_by_aether = client == ClientKind::ArchonMcp;
+    let by = match for_an_agent(client, caller) {
+        true => SteeredBy::Orchestrator,
+        false => SteeredBy::Operator,
+    };
     if orchestrators_alone(client, caller, request) {
-        return supervisor::authorize(ctx, caller, named_by_aether)
-            .await
-            .map(Some);
+        assert_eq!(by, SteeredBy::Orchestrator, "only an agent's call needs it");
+        let held = supervisor::authorize(ctx, caller, named_by_aether).await?;
+        return Ok((Some(held), by));
     }
     supervisor::saw_call(ctx, caller, named_by_aether).await?;
-    Ok(None)
+    Ok((None, by))
 }
 
 /// The operator's own settings changes and `Promote` go their own way;
-/// every other request goes to [`route`].
+/// every other request goes to [`route`], chosen by the principal `by`
+/// that [`take_authority`] let it through as.
 async fn special_routes(
     ctx: &DaemonContext,
-    client: ClientKind,
+    (client, by): (ClientKind, SteeredBy),
     caller: Option<&AetherAgentId>,
     request: Request,
 ) -> Result<Reply, ArchonError> {
@@ -333,17 +339,7 @@ async fn special_routes(
         };
         return promote(ctx, repo, by).await;
     }
-    route(ctx, client, acting_for(client, caller), request).await
-}
-
-/// Who a request chooses for: the orchestrator over MCP or when forwarded
-/// for an agent, whose mutating calls only the orchestrator's authority
-/// passes; the operator otherwise.
-fn acting_for(client: ClientKind, caller: Option<&AetherAgentId>) -> SteeredBy {
-    match for_an_agent(client, caller) {
-        true => SteeredBy::Orchestrator,
-        false => SteeredBy::Operator,
-    }
+    route(ctx, client, by, request).await
 }
 
 async fn promote(

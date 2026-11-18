@@ -7,7 +7,6 @@ use archon_core::autonomy::AutonomyPatch;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId, RepoId};
 use archon_core::model::ModelPlanDraft;
-use archon_core::plan_origin::PlannedPlan;
 use archon_core::protocol::ItemQuery;
 use archon_core::pull_request::OntoTarget;
 use archon_core::queue::{QueueItem, QueueState};
@@ -154,69 +153,63 @@ fn replace_deps(conn: &Connection, item: &QueueItem) -> Result<(), ArchonError> 
     Ok(())
 }
 
-/// `item` as it is stored: plan origins no writer accounted for, such as
-/// those a clone kept from the item it was cloned from, become unattributed.
+/// `item` as it is stored: plan origins that do not describe its plan, such
+/// as those a clone kept from the item it was cloned from, become unattributed.
 fn attributed(item: &QueueItem) -> std::borrow::Cow<'_, QueueItem> {
     let Some(plan) = item.model_plan.reconciled(&item.id) else {
         return std::borrow::Cow::Borrowed(item);
     };
-    let faults = item.model_plan.faults(&item.id);
-    tracing::error!(item = %item.id, ?faults, "plan origins no writer accounted for are stored as unattributed");
-    debug_assert!(faults.is_empty(), "item {}: {faults:?}", item.id);
-    assert!(plan.faults(&item.id).is_empty(), "reconciled origins fit");
+    let fault = item.model_plan.fault(&item.id);
+    tracing::error!(item = %item.id, ?fault, "plan origins no writer accounted for are stored as unattributed");
+    debug_assert!(fault.is_none(), "item {}: {fault:?}", item.id);
+    assert!(plan.fault(&item.id).is_none(), "reconciled origins fit");
     std::borrow::Cow::Owned(QueueItem {
         model_plan: plan,
         ..item.clone()
     })
 }
 
-/// What [`unattributed_plan_fields`] found: the fields that read as
-/// unattributed, and the items whose plan could not be read at all.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+/// What [`plan_field_count`] found in the items that are not finished.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct PlanFieldCount {
+    /// Fields no writer accounted for.
     pub unattributed: usize,
-    pub unreadable: Vec<String>,
+    /// Fields stored before origins were recorded.
+    pub legacy: usize,
+    /// Rows that do not decode as an item, so their fields are in neither count.
+    pub unreadable: usize,
 }
 
-/// Each item with origins, its plan and origins alone, read as the daemon
-/// reads them; `NULL` for a row that is not JSON. Legacy rows hold no origins.
-const PLANS_WITH_ORIGINS: &str = "SELECT id,
-       CASE WHEN json_valid(data)
-            THEN json_object('model_plan', json_extract(data, '$.model_plan'),
-                             'model_origins', json_extract(data, '$.model_origins'))
-       END
-     FROM items
-     WHERE CASE WHEN json_valid(data)
-                THEN json_type(data, '$.model_origins') IS NOT NULL
-                     OR json_type(data, '$.model_plan') IS NOT 'object'
-                ELSE 1
-           END";
-
-/// The plan fields of every item that read as unattributed, by the same
-/// rules an item read uses. A row that cannot be read is named, not fatal.
-pub(super) fn unattributed_plan_fields(conn: &Connection) -> Result<PlanFieldCount, ArchonError> {
+/// The plan fields of every unfinished item that read as unattributed or as
+/// legacy, by the rules an item read uses. A row that does not decode is
+/// counted, never fatal.
+pub(super) fn plan_field_count(conn: &Connection) -> Result<PlanFieldCount, ArchonError> {
     let mut stmt = conn
-        .prepare(PLANS_WITH_ORIGINS)
-        .ctx("prepare unattributed count")?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
-        })
-        .ctx("count unattributed plan fields")?;
+        .prepare(
+            "SELECT id, data FROM items WHERE state NOT IN ('succeeded', 'failed', 'cancelled')",
+        )
+        .ctx("prepare plan field count")?;
+    let mut rows = stmt.query([]).ctx("count plan fields")?;
     let mut count = PlanFieldCount::default();
-    for row in rows {
-        let (id, plan) = row.ctx("read item plan")?;
-        let read = plan.as_deref().map(serde_json::from_str::<PlannedPlan>);
-        let item = id.parse::<QueueItemId>();
-        match (item, read) {
-            (Ok(item), Some(Ok(plan))) => count.unattributed += plan.unattributed_fields(&item),
-            (item, read) => {
-                tracing::error!(item = %id, ?item, ?read, "an item's plan cannot be read to count its origins");
-                count.unreadable.push(id);
+    while let Some(row) = rows.next().ctx("read item for plan field count")? {
+        let id = row.get_ref(0).map(|id| id.as_str().map(str::to_owned));
+        let data = row.get_ref(1).map(|data| data.as_str().map(str::to_owned));
+        let item = match &data {
+            Ok(Ok(data)) => serde_json::from_str::<QueueItem>(data).map_err(|e| e.to_string()),
+            unread => Err(format!("{unread:?}")),
+        };
+        match item {
+            Ok(item) => {
+                debug_assert!(!item.state.is_terminal(), "the state column filters");
+                count.unattributed += item.model_plan.unattributed_fields(&item.id);
+                count.legacy += item.model_plan.legacy_fields(&item.id);
+            }
+            Err(error) => {
+                tracing::error!(item = ?id, %error, "an item row does not decode; its plan fields are not counted");
+                count.unreadable += 1;
             }
         }
     }
-    debug_assert!(count.unreadable.iter().all(|id| !id.is_empty()));
     Ok(count)
 }
 

@@ -43,9 +43,9 @@ pub(crate) fn item_hold(
     };
     let policy = env.policy(&ctx.config);
     let route = ItemRoute::new(item).by(Some(&weights), Some(view))?;
-    let plan = item
-        .model_plan
-        .dispatched(&item.id, archon_core::plan_origin::LegacyTiers::Resolve);
+    // Read as dispatch will resolve it, so the hold is for the run it starts.
+    let when = archon_core::plan_origin::TierMove::Dispatch;
+    let plan = item.model_plan.dispatched(&item.id, when);
     let hold = knobs::quota_hold(&plan, &spec, (catalog, &policy), route);
     if let Some(hold) = &hold {
         tracing::debug!(item = %item.id, stage = %hold.stage, until = ?hold.until, "held for provider quota");

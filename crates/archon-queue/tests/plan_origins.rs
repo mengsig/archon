@@ -1,10 +1,10 @@
 //! Plan origins at the store's boundary: a save stores origins no writer
-//! accounted for as unattributed, and the count finds every such field.
+//! accounted for as unattributed, and the count reads unfinished items as
+//! any item read does.
 
 mod common;
 
 use archon_core::id::QueueItemId;
-use archon_core::model_tier::{Tier, TierChoice};
 use archon_core::plan_origin::{PlanSource, PlanWriter};
 use archon_core::queue::QueueItem;
 use archon_queue::store::Store;
@@ -21,182 +21,133 @@ fn planned(repo: &archon_core::repo::Repo, title: &str) -> QueueItem {
     made
 }
 
+/// The model and the effort of every entry; the common plans have no tier.
 fn fields(item: &QueueItem) -> usize {
-    item.model_plan
-        .0
-        .values()
-        .map(|entry| 2 * entry.len())
-        .sum()
+    let entries = item.model_plan.0.values().flatten();
+    entries.inspect(|c| assert!(c.tier.is_none())).count() * 2
 }
 
-#[test]
-fn the_count_finds_stored_origins_of_another_item_or_another_shape() {
-    let dir = tempfile::tempdir().unwrap();
+fn opened(dir: &tempfile::TempDir) -> (Store, rusqlite::Connection, archon_core::repo::Repo) {
     let path = dir.path().join("store.db");
     let mut store = Store::open(&path).unwrap();
     let alpha = repo("alpha");
     store.insert_repo(&alpha).unwrap();
-    let stored: Vec<QueueItem> = ["sound", "foreign", "misshapen"]
-        .into_iter()
-        .map(|title| store.insert_item(&planned(&alpha, title), None).unwrap())
-        .collect();
-    assert_eq!(store.unattributed_plan_fields().unwrap().unattributed, 0);
-    // Rows no save reconciled, as another writer of the database leaves them.
-    let conn = rusqlite::Connection::open(&path).unwrap();
-    let foreign =
-        "UPDATE items SET data = json_set(data, '$.model_origins.item', ?2) WHERE id = ?1";
-    let ids = [stored[1].id.as_str(), stored[0].id.as_str()];
-    assert_eq!(conn.execute(foreign, ids).unwrap(), 1);
-    let misshapen = "UPDATE items SET data =
-        json_set(data, '$.model_origins.entries.implement', json('[]')) WHERE id = ?1";
-    assert_eq!(conn.execute(misshapen, [stored[2].id.as_str()]).unwrap(), 1);
-    let expected = fields(&stored[1]) + fields(&stored[2]);
-    assert!(expected > 0);
-    assert_eq!(
-        store.unattributed_plan_fields().unwrap().unattributed,
-        expected
-    );
-    let read = store.item(&stored[1].id).unwrap();
-    assert_eq!(read.model_plan.unattributed_fields(&read.id), fields(&read));
+    (store, rusqlite::Connection::open(&path).unwrap(), alpha)
 }
 
+/// S1 at the store: origins that do not decode, do not fit or are another
+/// item's leave the item readable, with every field unattributed.
 #[test]
-fn the_count_finds_a_stored_field_without_an_origin_or_with_an_unknown_source() {
+fn stored_origins_that_do_not_decode_or_fit_read_the_whole_item_as_unattributed() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("store.db");
-    let mut store = Store::open(&path).unwrap();
-    let alpha = repo("alpha");
-    store.insert_repo(&alpha).unwrap();
+    let (mut store, conn, alpha) = opened(&dir);
+    let other = store.insert_item(&planned(&alpha, "other"), None).unwrap();
     let edits = [
-        "json_remove(data, '$.model_origins.entries.implement[0].effort')",
-        "json_remove(data, '$.model_origins.entries.implement[0].model.source')",
-        "json_set(data, '$.model_origins.entries.implement[0].model.source', 'comparison')",
-        "json_remove(data, '$.model_origins.entries.implement[0].model.by')",
-        "json_remove(data, '$.model_origins.entries.implement[0].model.at')",
-        "json_set(data, '$.model_origins.entries.implement[0].model.by', 'operator')",
-        "json_set(data, '$.model_origins', json_array(
-            json_extract(data, '$.model_origins.item'),
-            json_set(json_extract(data, '$.model_origins.entries'),
-                     '$.implement[0].model.source', 'future')))",
+        "json_remove(data, '$.model_origins.item')".to_owned(),
+        "json_remove(data, '$.model_origins.entries')".to_owned(),
+        format!("json_set(data, '$.model_origins.item', '{}')", other.id),
+        "json_set(data, '$.model_origins', 'garbage')".to_owned(),
+        "json_set(data, '$.model_origins.entries.implement', json('[]'))".to_owned(),
+        "json_remove(data, '$.model_origins.entries.implement[0].effort')".to_owned(),
+        "json_set(data, '$.model_origins.entries.implement[0].model.source', 'comparison')"
+            .to_owned(),
+        "json_remove(data, '$.model_origins.entries.implement[0].model.by')".to_owned(),
+        "json_remove(data, '$.model_origins.entries.implement[0].model.at')".to_owned(),
     ];
-    let conn = rusqlite::Connection::open(&path).unwrap();
-    for (n, edit) in edits.iter().enumerate() {
-        let stored = store
-            .insert_item(&planned(&alpha, &format!("edited {n}")), None)
-            .unwrap();
+    let mut expected = 0;
+    for edit in &edits {
+        let stored = store.insert_item(&planned(&alpha, edit), None).unwrap();
         let update = format!("UPDATE items SET data = {edit} WHERE id = ?1");
-        assert_eq!(conn.execute(&update, [stored.id.as_str()]).unwrap(), 1);
-        let read = store.item(&stored.id).unwrap();
-        assert_eq!(read.model_plan.unattributed_fields(&read.id), 1, "{edit}");
-        assert_eq!(
-            store.unattributed_plan_fields().unwrap().unattributed,
-            n + 1,
-            "{edit}"
-        );
-    }
-}
-
-#[test]
-fn the_count_finds_a_stored_tier_without_an_origin_or_with_an_unknown_source() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("store.db");
-    let mut store = Store::open(&path).unwrap();
-    let alpha = repo("alpha");
-    store.insert_repo(&alpha).unwrap();
-    let edits = [
-        "json_remove(data, '$.model_origins.entries.implement[0].tier')",
-        "json_set(data, '$.model_origins.entries.implement[0].tier.source', 'future')",
-    ];
-    let conn = rusqlite::Connection::open(&path).unwrap();
-    for (n, edit) in edits.iter().enumerate() {
-        let mut made = item(Some(&alpha), &format!("tiered {n}"));
-        let mut plan = made.model_plan.plan().clone();
-        let choice = &mut plan.0.get_mut("implement").unwrap()[0];
-        choice.tier = Some(TierChoice {
-            requested: Tier::Strong,
-            provider: None,
-            resolved: Tier::Strong,
-        });
-        let mut writer = PlanWriter::new(&made.id, t(1));
-        writer.filled(plan, (PlanSource::Tier, PlanSource::Fallback));
-        made.model_plan = writer.finish();
-        let stored = store.insert_item(&made, None).unwrap();
-        assert_eq!(
-            store.unattributed_plan_fields().unwrap().unattributed,
-            n,
-            "{edit}"
-        );
-        let update = format!("UPDATE items SET data = {edit} WHERE id = ?1");
-        assert_eq!(conn.execute(&update, [stored.id.as_str()]).unwrap(), 1);
-        let read = store.item(&stored.id).unwrap();
-        assert_eq!(read.model_plan.unattributed_fields(&read.id), 1, "{edit}");
-        assert_eq!(
-            store.unattributed_plan_fields().unwrap().unattributed,
-            n + 1,
-            "{edit}"
-        );
-    }
-}
-
-#[test]
-fn origins_missing_their_item_or_entries_read_as_unattributed_pins() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("store.db");
-    let mut store = Store::open(&path).unwrap();
-    let alpha = repo("alpha");
-    store.insert_repo(&alpha).unwrap();
-    let conn = rusqlite::Connection::open(&path).unwrap();
-    for (n, key) in ["item", "entries"].into_iter().enumerate() {
-        let stored = store
-            .insert_item(&planned(&alpha, &format!("without {key}")), None)
-            .unwrap();
-        let update = format!(
-            "UPDATE items SET data = json_remove(data, '$.model_origins.{key}') WHERE id = ?1"
-        );
         assert_eq!(conn.execute(&update, [stored.id.as_str()]).unwrap(), 1);
         let read = store.item(&stored.id).expect("the item stays readable");
-        let origin = read.model_plan.origin(&read.id, "implement", 0);
-        assert_eq!(origin.model.source, PlanSource::Unattributed, "{key}");
-        assert!(origin.model.is_pin() && origin.effort.is_pin());
-        let count = store.unattributed_plan_fields().unwrap();
-        assert_eq!(count.unattributed, 2 * (n + 1), "{key}");
-        assert!(count.unreadable.is_empty());
+        assert_eq!(read.model_plan.plan(), stored.model_plan.plan(), "{edit}");
+        for (key, slots) in read.model_plan.origins(&read.id) {
+            for origin in slots {
+                assert_eq!(
+                    origin.model.source,
+                    PlanSource::Unattributed,
+                    "{edit}: {key}"
+                );
+                assert_eq!(
+                    origin.effort.source,
+                    PlanSource::Unattributed,
+                    "{edit}: {key}"
+                );
+                assert!(origin.model.is_pin() && origin.effort.is_pin());
+            }
+        }
+        expected += fields(&read);
+        let count = store.plan_field_count().unwrap();
+        assert_eq!(
+            (count.unattributed, count.unreadable),
+            (expected, 0),
+            "{edit}"
+        );
     }
+    assert!(expected >= 2 * edits.len());
 }
 
+/// S5: the count reads unfinished items in Rust, legacy fields apart; a row
+/// that does not decode as an item is counted as unreadable and aborts nothing.
 #[test]
-fn a_corrupt_row_is_named_and_the_count_of_the_others_still_stands() {
+fn the_count_reads_unfinished_items_and_counts_a_row_it_cannot_decode() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("store.db");
-    let mut store = Store::open(&path).unwrap();
-    let alpha = repo("alpha");
-    store.insert_repo(&alpha).unwrap();
-    let sound = store.insert_item(&planned(&alpha, "sound"), None).unwrap();
-    let corrupt = store
-        .insert_item(&planned(&alpha, "corrupt"), None)
-        .unwrap();
-    let edited = store.insert_item(&planned(&alpha, "edited"), None).unwrap();
-    let planless = store
-        .insert_item(&planned(&alpha, "planless"), None)
-        .unwrap();
-    let conn = rusqlite::Connection::open(&path).unwrap();
-    let broken = "UPDATE items SET state = 'succeeded', data = '{not json' WHERE id = ?1";
-    assert_eq!(conn.execute(broken, [corrupt.id.as_str()]).unwrap(), 1);
-    let unknown = "UPDATE items SET data =
-        json_set(data, '$.model_origins.entries.implement[0].effort.source', 'future') WHERE id = ?1";
-    assert_eq!(conn.execute(unknown, [edited.id.as_str()]).unwrap(), 1);
-    let no_plan = "UPDATE items SET state = 'succeeded',
-        data = json_remove(data, '$.model_plan', '$.model_origins') WHERE id = ?1";
-    assert_eq!(conn.execute(no_plan, [planless.id.as_str()]).unwrap(), 1);
-    let count = store
-        .unattributed_plan_fields()
-        .expect("a corrupt row is not fatal");
-    assert_eq!(count.unattributed, 1);
-    let mut unreadable = vec![corrupt.id.to_string(), planless.id.to_string()];
-    unreadable.sort();
-    let mut named = count.unreadable.clone();
-    named.sort();
-    assert_eq!(named, unreadable);
+    let (mut store, conn, alpha) = opened(&dir);
+    let mut insert = |made: QueueItem| store.insert_item(&made, None).unwrap();
+    let sound = insert(planned(&alpha, "sound"));
+    let legacy = insert(item(Some(&alpha), "legacy"));
+    let foreign = insert(planned(&alpha, "foreign"));
+    let finished = insert(planned(&alpha, "finished"));
+    let finished_corrupt = insert(planned(&alpha, "finished and corrupt"));
+    let corrupt = insert(planned(&alpha, "corrupt"));
+    let planless = insert(planned(&alpha, "planless"));
+    let misplanned = insert(planned(&alpha, "misplanned"));
+    let binary = insert(planned(&alpha, "binary"));
+    assert_eq!(
+        store.plan_field_count().unwrap(),
+        archon_queue::store::PlanFieldCount {
+            unattributed: 0,
+            legacy: fields(&legacy),
+            unreadable: 0,
+        }
+    );
+    let run =
+        |sql: &str, id: &QueueItemId| assert_eq!(conn.execute(sql, [id.as_str()]).unwrap(), 1);
+    let unbound = "UPDATE items SET data = json_remove(data, '$.model_origins.item') WHERE id = ?1";
+    run(unbound, &foreign.id);
+    run(unbound, &finished.id);
+    run(
+        "UPDATE items SET state = 'succeeded' WHERE id = ?1",
+        &finished.id,
+    );
+    run(
+        "UPDATE items SET state = 'cancelled', data = '{not json' WHERE id = ?1",
+        &finished_corrupt.id,
+    );
+    run(
+        "UPDATE items SET data = '{not json' WHERE id = ?1",
+        &corrupt.id,
+    );
+    run(
+        "UPDATE items SET data = json_remove(data, '$.model_plan') WHERE id = ?1",
+        &planless.id,
+    );
+    run(
+        "UPDATE items SET data = json_set(data, '$.model_plan', json_object('review', 1)) WHERE id = ?1",
+        &misplanned.id,
+    );
+    run("UPDATE items SET data = x'00ff' WHERE id = ?1", &binary.id);
+    let count = store.plan_field_count().expect("status never aborts");
+    assert_eq!(
+        count.unattributed,
+        fields(&foreign),
+        "finished items are not read"
+    );
+    assert_eq!(count.legacy, fields(&legacy));
+    assert_eq!(
+        count.unreadable, 4,
+        "corrupt, planless, misplanned and binary"
+    );
     assert_eq!(store.item(&sound.id).unwrap().id, sound.id);
 }
 
@@ -215,12 +166,9 @@ fn a_save_stores_origins_kept_from_another_item_as_unattributed() {
     };
     let saved = store.insert_item(&clone, None).unwrap();
     let read = store.item(&saved.id).unwrap();
-    assert!(
-        read.model_plan.faults(&read.id).is_empty(),
-        "stored reconciled"
-    );
+    assert_eq!(read.model_plan.fault(&read.id), None, "stored reconciled");
     assert_eq!(
-        store.unattributed_plan_fields().unwrap().unattributed,
+        store.plan_field_count().unwrap().unattributed,
         fields(&first)
     );
 }

@@ -231,7 +231,7 @@ async fn tiers_at_dispatch(
         (
             archon_core::now(),
             None,
-            archon_core::plan_origin::LegacyTiers::Resolve,
+            archon_core::plan_origin::TierMove::Dispatch,
         ),
         resolve,
     )?;
@@ -303,7 +303,7 @@ fn assemble(
     let driver = RunDriver::new(
         spec.clone(),
         item.model_plan
-            .dispatched(&item.id, archon_core::plan_origin::LegacyTiers::Keep),
+            .dispatched(&item.id, archon_core::plan_origin::TierMove::InRun),
         base_vars.clone(),
     )?
     .with_gates(gates)?

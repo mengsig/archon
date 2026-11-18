@@ -796,61 +796,45 @@ async fn a_repository_s_own_weights_hold_its_items_when_every_provider_is_out() 
     assert_eq!(reason.code, WaitingReasonCode::ProviderQuota);
 }
 
-/// Dispatch resolves a queued legacy tier, so admission holds it for quota
-/// like a daemon tier rather than letting it start on an exhausted provider.
-#[tokio::test]
-async fn a_queued_item_from_before_origins_waits_for_quota_like_any_tier() {
-    let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
-    read(
-        &h,
-        TimeDelta::zero(),
-        vec![
-            ("claude-code", window(0, TimeDelta::hours(2))),
-            ("codex", window(0, TimeDelta::hours(1))),
-        ],
-    );
-    let item = enqueue(&h, ROUTED, "queued by 1.6.3", tier_plan()).await;
-    {
-        let mut store = h.ctx.store.lock().await;
-        let mut stored = store.item(&item.id).unwrap();
-        stored.model_plan = PlannedPlan::legacy(stored.model_plan.into_plan());
-        store.update_item(&stored).unwrap();
-    }
-    h.dispatch().await;
-    assert!(h.stages(&item.id).await.is_empty(), "nothing spawned");
-    let reason = waiting_reason(&status(&h).await, &item);
-    assert_eq!(reason.code, WaitingReasonCode::ProviderQuota);
+/// Stores `item`'s plan as a store without origins of its own reads it: every
+/// field a pin of `source`. Answers the plan it pinned.
+async fn pinned(h: &Harness, item: &QueueItem, source: PlanSource) -> ModelPlan {
+    let mut store = h.ctx.store.lock().await;
+    let mut stored = store.item(&item.id).unwrap();
+    let plan = stored.model_plan.plan().clone();
+    assert!(plan.0.values().flatten().all(|c| c.tier.is_some()));
+    stored.model_plan = match source {
+        PlanSource::LegacyUnknown => PlannedPlan::legacy(plan.clone()),
+        PlanSource::Unattributed => PlannedPlan::unattributed(&stored.id, plan.clone()),
+        other => panic!("no store read makes a {other:?} pin"),
+    };
+    store.update_item(&stored).unwrap();
+    plan
 }
 
+const PINS: [PlanSource; 2] = [PlanSource::LegacyUnknown, PlanSource::Unattributed];
+
+/// Dispatch resolves a queued pinned tier, so admission holds it for quota
+/// like a daemon tier rather than letting it start on an exhausted provider.
 #[tokio::test]
-async fn an_unattributed_tier_model_is_a_pin_that_no_quota_holds_at_admission() {
-    let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
-    read(
-        &h,
-        TimeDelta::zero(),
-        vec![
-            ("claude-code", window(0, TimeDelta::hours(2))),
-            ("codex", window(0, TimeDelta::hours(1))),
-        ],
-    );
-    let item = enqueue(&h, ROUTED, "unaccounted", tier_plan()).await;
-    {
-        let mut store = h.ctx.store.lock().await;
-        let mut stored = store.item(&item.id).unwrap();
-        let plan = stored.model_plan.plan().clone();
-        assert!(plan.0.values().flatten().any(|c| c.tier.is_some()));
-        stored.model_plan = PlannedPlan::unattributed(&stored.id, plan);
-        store.update_item(&stored).unwrap();
+async fn a_queued_item_with_pinned_tiers_waits_for_quota_like_any_tier() {
+    for source in PINS {
+        let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+        read(
+            &h,
+            TimeDelta::zero(),
+            vec![
+                ("claude-code", window(0, TimeDelta::hours(2))),
+                ("codex", window(0, TimeDelta::hours(1))),
+            ],
+        );
+        let item = enqueue(&h, ROUTED, "queued with pins", tier_plan()).await;
+        pinned(&h, &item, source).await;
+        h.dispatch().await;
+        assert!(h.stages(&item.id).await.is_empty(), "{source:?}: spawned");
+        let reason = waiting_reason(&status(&h).await, &item);
+        assert_eq!(reason.code, WaitingReasonCode::ProviderQuota, "{source:?}");
     }
-    h.dispatch().await;
-    assert_eq!(
-        h.stages(&item.id).await.len(),
-        1,
-        "the pinned implementer runs"
-    );
-    let status = status(&h).await;
-    let row = (status.waiting_items.iter()).find(|row| row.item.id == item.id);
-    assert!(row.is_none(), "a pin waits for no quota: {row:?}");
 }
 
 #[tokio::test]
@@ -984,140 +968,96 @@ async fn a_steered_model_runs_on_every_fan_out_slot_loop_and_retry_off_quota() {
     );
 }
 
-/// Dispatch resolves a stored tier again and records the daemon's choice; an
-/// item from before origins keeps its efforts as `legacy_unknown` pins.
-#[tokio::test]
-async fn dispatch_records_the_tier_it_resolves_for_an_item_stored_before_origins() {
-    let h = harness(Config::default()).await;
-    let item = enqueue(&h, ROUTED, "from 1.6.3", tier_plan()).await;
-    {
-        let mut store = h.ctx.store.lock().await;
-        let mut stored = store.item(&item.id).unwrap();
-        stored.model_plan = PlannedPlan::legacy(stored.model_plan.into_plan());
-        store.update_item(&stored).unwrap();
-    }
-    let legacy = crate::plan_origins::shown(&h, &item).await;
-    assert_eq!(
-        legacy["implement"][0].model.source,
-        PlanSource::LegacyUnknown
-    );
-    h.dispatch().await;
-    let dispatched = crate::plan_origins::shown(&h, &item).await;
-    for (key, entries) in &dispatched {
-        for origin in entries {
-            assert_eq!(
-                (origin.model.source, origin.model.by),
-                (PlanSource::Tier, Authority::Daemon),
-                "{key}"
-            );
-            assert!(origin.model.at.is_some(), "{key}");
-            assert_eq!(origin.effort.source, PlanSource::LegacyUnknown, "{key}");
-        }
-    }
-    assert_eq!(crate::plan_origins::unattributed(&h).await, 0);
+/// The models each stage of `item` was spawned on, in spawn order.
+async fn spawned_on(h: &Harness, item: &QueueItem, stage: &str) -> Vec<String> {
+    (h.stages(&item.id).await.into_iter())
+        .filter(|s| s.stage_id == stage)
+        .map(|s| s.choice.model.to_string())
+        .collect()
 }
 
-/// A run 1.6.3 started holds legacy models: a later quota move follows the
-/// provider in no stored choice of it, since only dispatch resolves them again.
+fn claude_then_codex(h: &Harness, claude: u64, codex: u64) {
+    read(
+        h,
+        TimeDelta::zero(),
+        vec![
+            ("claude-code", window(claude, TimeDelta::hours(3))),
+            ("codex", window(codex, TimeDelta::hours(4))),
+        ],
+    );
+}
+
+/// A pinned tier is what was pinned: dispatch resolves it to a model it
+/// records as its own, and later quota moves keep that choice in the tier.
 #[tokio::test]
-async fn a_quota_move_of_a_running_item_from_before_origins_keeps_its_stored_models() {
-    let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
-    read(
-        &h,
-        TimeDelta::zero(),
-        vec![
-            ("claude-code", window(80, TimeDelta::hours(4))),
-            ("codex", window(0, TimeDelta::hours(1))),
-        ],
-    );
-    let item = enqueue(&h, ROUTED, "run by 1.6.3", tier_plan()).await;
-    h.dispatch().await;
-    let before = {
-        let mut store = h.ctx.store.lock().await;
-        let mut stored = store.item(&item.id).unwrap();
-        stored.model_plan = PlannedPlan::legacy(stored.model_plan.into_plan());
-        store.update_item(&stored).unwrap();
-        stored.model_plan.plan().clone()
-    };
-    read(
-        &h,
-        TimeDelta::zero(),
-        vec![
-            ("claude-code", window(10, TimeDelta::hours(3))),
-            ("codex", window(90, TimeDelta::hours(4))),
-        ],
-    );
-    h.settle_running(|_| completed("implemented")).await;
-    h.dispatch().await;
-    let stored = h.item(&item.id).await;
-    assert_eq!(*stored.model_plan, before, "no legacy model was moved");
-    let origins = crate::plan_origins::shown(&h, &stored).await;
-    assert!(
-        origins
+async fn dispatch_resolves_a_pinned_tier_which_then_moves_only_within_it() {
+    for source in PINS {
+        let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+        claude_then_codex(&h, 80, 0);
+        let item = enqueue(&h, ROUTED, "pinned tiers", tier_plan()).await;
+        let queued = pinned(&h, &item, source).await;
+        let before = crate::plan_origins::shown(&h, &item).await;
+        assert_eq!(before["implement"][0].model.source, source);
+
+        claude_then_codex(&h, 10, 90);
+        h.dispatch().await;
+        assert_eq!(spawned_on(&h, &item, "implement").await, ["codex/sol"]);
+        let dispatched = crate::plan_origins::shown(&h, &item).await;
+        for (key, origin) in dispatched
+            .iter()
+            .flat_map(|(k, e)| e.iter().map(move |o| (k, o)))
+        {
+            let model = (origin.model.source, origin.model.by);
+            assert_eq!(model, (PlanSource::Tier, Authority::Daemon), "{key}");
+            assert!(origin.model.at.is_some(), "{source:?} {key}");
+            assert_eq!(origin.effort.source, source, "{key}: the effort stays");
+            let tier = origin.tier.as_ref().expect("a tiered choice");
+            assert_eq!(tier.source, source, "{key}: the tier is the pin");
+        }
+
+        claude_then_codex(&h, 90, 0);
+        h.settle_running(|_| completed("implemented")).await;
+        h.dispatch().await;
+        let reviews = spawned_on(&h, &item, "review").await;
+        assert_eq!(reviews, ["claude-code/opus", "claude-code/haiku"]);
+        let stored = h.item(&item.id).await;
+        let tiers = |plan: &ModelPlan| -> Vec<_> {
+            plan.0.values().flatten().map(|c| c.tier.clone()).collect()
+        };
+        assert_eq!(tiers(&stored.model_plan), tiers(&queued), "{source:?}");
+    }
+}
+
+/// A run whose stored models are pins moves none of them: not the stored plan,
+/// not the driver a restart rebuilds, not the stage it spawns next.
+#[tokio::test]
+async fn a_recovered_run_with_pinned_models_follows_no_quota_move() {
+    for source in PINS {
+        let mut h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+        claude_then_codex(&h, 80, 0);
+        let item = enqueue(&h, ROUTED, "run with pins", tier_plan()).await;
+        h.dispatch().await;
+        let before = pinned(&h, &item, source).await;
+
+        h.restart();
+        h.ctx.store.lock().await.set_model_catalog(catalog());
+        archon_daemon::executor::recover(&h.ctx)
+            .await
+            .expect("recover");
+        claude_then_codex(&h, 10, 90);
+        h.settle_running(|_| completed("implemented")).await;
+        h.dispatch().await;
+
+        let reviews = spawned_on(&h, &item, "review").await;
+        assert_eq!(reviews, ["claude-code/opus", "claude-code/haiku"]);
+        let stored = h.item(&item.id).await;
+        assert_eq!(*stored.model_plan, before, "{source:?}: a pin moved");
+        let origins = crate::plan_origins::shown(&h, &stored).await;
+        let fields = origins
             .values()
             .flatten()
-            .all(|o| o.model.source == PlanSource::LegacyUnknown),
-        "{origins:?}"
-    );
-}
-
-/// A tiered model no writer accounted for is a pin: a quota move leaves both
-/// the stored choice and the spawned one on it.
-#[tokio::test]
-async fn a_quota_reroute_never_moves_an_unattributed_model() {
-    let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
-    read(
-        &h,
-        TimeDelta::zero(),
-        vec![
-            ("claude-code", window(80, TimeDelta::hours(4))),
-            ("codex", window(0, TimeDelta::hours(1))),
-        ],
-    );
-    let plan = serde_json::from_value(serde_json::json!({
-        "implement": [{"tier": "strong"}],
-        "review": [{"tier": "fast"}],
-        "ship": [{"tier": "fast"}],
-    }))
-    .unwrap();
-    let item = enqueue(&h, ROUTED, "unaccounted", plan).await;
-    let pinned = {
-        let mut store = h.ctx.store.lock().await;
-        let mut stored = store.item(&item.id).unwrap();
-        let plan = stored.model_plan.plan().clone();
-        stored.model_plan = PlannedPlan::unattributed(&stored.id, plan);
-        store.update_item(&stored).unwrap();
-        stored.model_plan.choices_for("review").unwrap()[0]
-            .model
-            .to_string()
-    };
-    assert_eq!(pinned, "claude-code/haiku");
-    h.dispatch().await;
-    read(
-        &h,
-        TimeDelta::zero(),
-        vec![
-            ("claude-code", window(10, TimeDelta::hours(3))),
-            ("codex", window(90, TimeDelta::hours(4))),
-        ],
-    );
-    h.settle_running(|_| completed("implemented")).await;
-    h.dispatch().await;
-    let reviews: Vec<String> = (h.stages(&item.id).await.into_iter())
-        .filter(|s| s.stage_id == "review")
-        .map(|s| s.choice.model.to_string())
-        .collect();
-    assert!(
-        !reviews.is_empty() && reviews.iter().all(|m| *m == pinned),
-        "{reviews:?}"
-    );
-    let stored = h.item(&item.id).await;
-    assert_eq!(
-        stored.model_plan.choices_for("review").unwrap()[0]
-            .model
-            .to_string(),
-        pinned
-    );
-    // The model, effort and tier of each of the three tiered entries.
-    assert_eq!(crate::plan_origins::unattributed(&h).await, 9);
+            .flat_map(|o| [&o.model, &o.effort]);
+        assert!(fields.clone().all(|f| f.source == source), "{origins:?}");
+        assert_eq!(fields.count(), 8, "the model and effort of four choices");
+    }
 }

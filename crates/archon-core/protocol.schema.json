@@ -455,13 +455,21 @@
     },
     "Authority": {
       "description": "Who chose a plan field.",
-      "enum": [
-        "operator",
-        "orchestrator",
-        "daemon",
-        "unknown"
-      ],
-      "type": "string"
+      "oneOf": [
+        {
+          "enum": [
+            "operator",
+            "orchestrator",
+            "daemon"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "Nobody known: a legacy or an unattributed field.",
+          "type": "string"
+        }
+      ]
     },
     "Autonomy": {
       "additionalProperties": false,
@@ -3963,6 +3971,13 @@
         "lavish_available": {
           "type": "boolean"
         },
+        "legacy_plan_fields": {
+          "default": 0,
+          "description": "Plan fields of unfinished items stored before origins were recorded,\npins as well; `0` from an older archond.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "mcp": {
           "anyOf": [
             {
@@ -4077,14 +4092,14 @@
         },
         "unattributed_plan_fields": {
           "default": 0,
-          "description": "Plan fields of stored items no writer accounted for, which archond\ntreats as pins; `0` from an older archond.",
+          "description": "Plan fields of unfinished items no writer accounted for, which\narchond treats as pins; `0` from an older archond.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "unreadable_plan_items": {
           "default": 0,
-          "description": "Stored items whose plan could not be read to count its fields, so the\ncount above is incomplete; `0` from an older archond.",
+          "description": "Unfinished items whose row does not decode, so their fields are in\nneither count; `0` from an older archond.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -4655,19 +4670,10 @@
       "description": "The origins of one plan entry's model and effort, each on its own, and of\nits tier when the entry has one.",
       "properties": {
         "effort": {
-          "$ref": "#/$defs/FieldOrigin",
-          "default": {
-            "by": "unknown",
-            "source": "unattributed"
-          }
+          "$ref": "#/$defs/FieldOrigin"
         },
         "model": {
-          "$ref": "#/$defs/FieldOrigin",
-          "default": {
-            "by": "unknown",
-            "source": "unattributed"
-          },
-          "description": "A stored entry missing a field's origin keeps the other one."
+          "$ref": "#/$defs/FieldOrigin"
         },
         "tier": {
           "anyOf": [
@@ -4681,6 +4687,10 @@
           "description": "Who asked for the tier the daemon resolves the model in; present\nexactly when the choice has a tier."
         }
       },
+      "required": [
+        "model",
+        "effort"
+      ],
       "type": "object"
     },
     "ErrorCode": {
@@ -5036,7 +5046,7 @@
       "type": "object"
     },
     "FieldOrigin": {
-      "description": "The origin of one field (the model or the effort) of one plan entry.",
+      "description": "The origin of one field (the model, the effort or the tier) of one plan entry.",
       "properties": {
         "at": {
           "description": "When the field was last chosen; `None` when nobody knows.",
@@ -5047,8 +5057,7 @@
           ]
         },
         "by": {
-          "$ref": "#/$defs/Authority",
-          "default": "unknown"
+          "$ref": "#/$defs/Authority"
         },
         "note": {
           "type": [
@@ -5057,11 +5066,13 @@
           ]
         },
         "source": {
-          "$ref": "#/$defs/PlanSource",
-          "default": "unattributed",
-          "description": "A stored origin that names no source was accounted for by nobody."
+          "$ref": "#/$defs/PlanSource"
         }
       },
+      "required": [
+        "source",
+        "by"
+      ],
       "type": "object"
     },
     "Gate": {
@@ -9646,7 +9657,7 @@
               "type": "null"
             }
           ],
-          "description": "The item these origins were written for: a clone under another id\nthat kept them by accident reads as unattributed, as do origins\nstored without one."
+          "description": "The item these origins were written for; `None` describes no item."
         }
       },
       "required": [
@@ -9689,7 +9700,7 @@
         },
         {
           "const": "migrated",
-          "description": "Moved by the daemon off a model that can no longer run it.",
+          "description": "Moved by the daemon off a model that can no longer run it. No writer sets it yet.",
           "type": "string"
         },
         {
@@ -9699,7 +9710,7 @@
         },
         {
           "const": "unattributed",
-          "description": "No writer accounted for it, or a source this archond does not know.",
+          "description": "No writer accounted for it.",
           "type": "string"
         }
       ]

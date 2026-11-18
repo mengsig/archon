@@ -6,7 +6,7 @@ use archon_core::id::{NotificationId, QueueItemId};
 use archon_core::model::{ModelPlan, ModelRef};
 use archon_core::model_tier::ModelCatalog;
 use archon_core::notify::{FeedEntry, Notification, NotificationKind};
-use archon_core::plan_origin::LegacyTiers;
+use archon_core::plan_origin::TierMove;
 use archon_core::policy::ModelPolicy;
 use archon_core::provider_route::{ProviderRoute, ProviderWeights, Routed};
 use archon_core::queue::QueueItem;
@@ -429,7 +429,7 @@ fn follow_plan(item: &mut QueueItem, spec: &PipelineSpec, tiers: TierScope<'_>) 
     );
     let result = item.model_plan.retier(
         &id,
-        (archon_core::now(), Some(&note), LegacyTiers::Keep),
+        (archon_core::now(), Some(&note), TierMove::InRun),
         follow,
     );
     result.expect("following a provider refuses nothing");

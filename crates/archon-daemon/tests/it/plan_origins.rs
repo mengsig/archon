@@ -296,7 +296,7 @@ async fn origins_copied_onto_another_item_are_counted_as_unattributed() {
         id: archon_core::id::QueueItemId::new(),
         ..h.item(&queued.id).await
     };
-    assert_eq!(clone.model_plan.faults(&clone.id).len(), 1);
+    assert!(clone.model_plan.fault(&clone.id).is_some());
     h.ctx.store.lock().await.insert_item(&clone, None).unwrap();
     assert!(unattributed(&h).await as usize >= 2 * fields);
     for entries in shown(&h, &clone).await.values() {

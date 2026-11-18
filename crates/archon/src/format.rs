@@ -159,10 +159,17 @@ fn link_lines(out: &mut String, status: &DaemonStatus, verbose: bool) {
             status.unattributed_plan_fields
         );
     }
+    if status.legacy_plan_fields > 0 {
+        let _ = writeln!(
+            out,
+            "plan origins: {} field(s) stored before origins were recorded, treated as pins",
+            status.legacy_plan_fields
+        );
+    }
     if status.unreadable_plan_items > 0 {
         let _ = writeln!(
             out,
-            "plan origins: {} item(s) whose plan cannot be read are not counted",
+            "plan origins: {} unfinished item(s) that cannot be read are not counted",
             status.unreadable_plan_items
         );
     }
@@ -1013,6 +1020,7 @@ pub(crate) mod tests {
             waiting_next_offset: None,
             health: None,
             unattributed_plan_fields: 0,
+            legacy_plan_fields: 0,
             unreadable_plan_items: 0,
             quota: None,
             recovery: None,

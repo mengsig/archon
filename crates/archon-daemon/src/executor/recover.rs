@@ -549,7 +549,7 @@ pub(super) async fn driver_of(
     let driver = RunDriver::new(
         Arc::new(spec),
         item.model_plan
-            .dispatched(&item.id, archon_core::plan_origin::LegacyTiers::Keep),
+            .dispatched(&item.id, archon_core::plan_origin::TierMove::InRun),
         vars,
     )?
     .with_gates(operator_gates)?

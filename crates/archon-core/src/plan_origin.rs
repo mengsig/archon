@@ -32,37 +32,25 @@ pub enum PlanSource {
     Sizer,
     /// Raised by the daemon after a failure. No writer sets it yet.
     Escalation,
-    /// Moved by the daemon off a model that can no longer run it.
+    /// Moved by the daemon off a model that can no longer run it. No writer sets it yet.
     Migrated,
     /// Stored before origins were recorded.
     LegacyUnknown,
-    /// No writer accounted for it, or a source this archond does not know.
-    #[serde(other)]
+    /// No writer accounted for it.
     Unattributed,
 }
 
 impl PlanSource {
-    /// Every source a writer can account for a field with.
-    pub const ATTRIBUTED: [Self; 8] = [
-        Self::Explicit,
-        Self::Learned,
-        Self::Tier,
-        Self::Fallback,
-        Self::Sizer,
-        Self::Escalation,
-        Self::Migrated,
-        Self::LegacyUnknown,
-    ];
-
-    fn unattributed() -> Self {
-        Self::Unattributed
+    /// Whether a writer accounted for the field, so it names who and when.
+    fn is_attributed(self) -> bool {
+        !matches!(self, Self::LegacyUnknown | Self::Unattributed)
     }
 
-    /// A pinned field is never sized, escalated or rewritten by the daemon.
-    pub fn is_pin(self) -> bool {
+    /// Whether the daemon fills a field this way and may change it again.
+    fn is_fill(self) -> bool {
         matches!(
             self,
-            Self::Explicit | Self::LegacyUnknown | Self::Unattributed
+            Self::Learned | Self::Tier | Self::Fallback | Self::Sizer | Self::Escalation
         )
     }
 }
@@ -90,14 +78,8 @@ pub enum Authority {
     Operator,
     Orchestrator,
     Daemon,
-    #[serde(other)]
+    /// Nobody known: a legacy or an unattributed field.
     Unknown,
-}
-
-impl Authority {
-    fn unknown() -> Self {
-        Self::Unknown
-    }
 }
 
 impl From<SteeredBy> for Authority {
@@ -120,13 +102,10 @@ impl fmt::Display for Authority {
     }
 }
 
-/// The origin of one field (the model or the effort) of one plan entry.
+/// The origin of one field (the model, the effort or the tier) of one plan entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FieldOrigin {
-    /// A stored origin that names no source was accounted for by nobody.
-    #[serde(default = "PlanSource::unattributed")]
     pub source: PlanSource,
-    #[serde(default = "Authority::unknown")]
     pub by: Authority,
     /// When the field was last chosen; `None` when nobody knows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -142,10 +121,7 @@ impl FieldOrigin {
                 == matches!(by, Authority::Operator | Authority::Orchestrator),
             "a request or a steer names a field; the daemon fills the rest"
         );
-        debug_assert!(!matches!(
-            source,
-            PlanSource::LegacyUnknown | PlanSource::Unattributed
-        ));
+        debug_assert!(source.is_attributed());
         Self {
             source,
             by,
@@ -155,10 +131,7 @@ impl FieldOrigin {
     }
 
     fn unknown(source: PlanSource) -> Self {
-        assert!(matches!(
-            source,
-            PlanSource::LegacyUnknown | PlanSource::Unattributed
-        ));
+        assert!(!source.is_attributed());
         Self {
             source,
             by: Authority::Unknown,
@@ -167,35 +140,21 @@ impl FieldOrigin {
         }
     }
 
-    fn unattributed() -> Self {
-        Self::unknown(PlanSource::Unattributed)
+    /// The one rule for what the daemon may change by itself: a field it
+    /// chose itself. Everything else is a pin.
+    pub fn is_movable(&self) -> bool {
+        self.source.is_fill() && self.by == Authority::Daemon
     }
 
+    /// A pinned field is never sized, escalated or rewritten by the daemon.
     pub fn is_pin(&self) -> bool {
-        self.source.is_pin()
+        !self.is_movable()
     }
 
-    /// This origin as read: one that names a writer's source but not who
-    /// chose it, or not when, was accounted for by nobody.
-    fn sound(self) -> Self {
-        let named = matches!(self.by, Authority::Operator | Authority::Orchestrator);
-        let complete = match self.source {
-            PlanSource::LegacyUnknown | PlanSource::Unattributed => true,
-            PlanSource::Explicit => named && self.at.is_some(),
-            _ => self.by == Authority::Daemon && self.at.is_some(),
-        };
-        let sound = if complete { self } else { Self::unattributed() };
-        debug_assert!(sound.source != PlanSource::Explicit || sound.by != Authority::Daemon);
-        sound
+    /// Whether a field a writer accounted for names who chose it and when.
+    fn is_whole(&self) -> bool {
+        !self.source.is_attributed() || (self.by != Authority::Unknown && self.at.is_some())
     }
-}
-
-/// Whether a stored model chosen before origins were recorded may be
-/// resolved again in its tier: only when dispatch starts a new run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LegacyTiers {
-    Resolve,
-    Keep,
 }
 
 impl fmt::Display for FieldOrigin {
@@ -212,14 +171,20 @@ impl fmt::Display for FieldOrigin {
     }
 }
 
+/// When the daemon considers resolving a tiered choice's model again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TierMove {
+    /// Dispatch starts a run, or admission holds a queued item for it.
+    Dispatch,
+    /// A run is under way: a quota reroute, a pending spawn or a recovery.
+    InRun,
+}
+
 /// The origins of one plan entry's model and effort, each on its own, and of
 /// its tier when the entry has one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EntryOrigin {
-    /// A stored entry missing a field's origin keeps the other one.
-    #[serde(default = "FieldOrigin::unattributed")]
     pub model: FieldOrigin,
-    #[serde(default = "FieldOrigin::unattributed")]
     pub effort: FieldOrigin,
     /// Who asked for the tier the daemon resolves the model in; present
     /// exactly when the choice has a tier.
@@ -236,40 +201,27 @@ impl EntryOrigin {
         }
     }
 
-    /// This stored origin as read for `choice`: each incomplete field reads
-    /// as unattributed, and a tier origin is there exactly when the choice
-    /// has a tier, unattributed when no writer accounted for it.
-    fn fitted(self, choice: &ModelChoice) -> Self {
-        let tier = match (&choice.tier, self.tier) {
-            (None, _) => None,
-            (Some(_), Some(tier)) => Some(tier.sound()),
-            (Some(_), None) => Some(FieldOrigin::unattributed()),
-        };
-        let fitted = Self {
-            model: self.model.sound(),
-            effort: self.effort.sound(),
-            tier,
-        };
-        debug_assert_eq!(fitted.tier.is_some(), choice.tier.is_some());
-        fitted
-    }
-
-    /// Whether the daemon may move this entry's model inside its tier: only
-    /// a model it chose itself, in a tier somebody accounted for. A legacy
-    /// model moves only where `legacy` resolves it.
-    pub fn tier_may_move(&self, legacy: LegacyTiers) -> bool {
+    /// Whether the daemon may resolve this entry's model in its tier at
+    /// `when`: a model it chose itself, always; at dispatch also the model
+    /// of a pinned tier, because the tier is what was pinned.
+    pub fn may_move(&self, when: TierMove) -> bool {
         let Some(tier) = &self.tier else {
             return false;
         };
-        let model = match self.model.source {
-            PlanSource::LegacyUnknown => legacy == LegacyTiers::Resolve,
-            source => !source.is_pin(),
-        };
-        model && tier.source != PlanSource::Unattributed
+        match when {
+            TierMove::Dispatch => self.model.is_movable() || tier.is_pin(),
+            TierMove::InRun => self.model.is_movable(),
+        }
     }
 
     fn fields(&self) -> impl Iterator<Item = &FieldOrigin> {
         [&self.model, &self.effort].into_iter().chain(&self.tier)
+    }
+
+    /// Whether this is a whole origin of `choice`: a tier origin exactly
+    /// when the choice has a tier, and no field missing who or when.
+    fn describes(&self, choice: &ModelChoice) -> bool {
+        self.tier.is_some() == choice.tier.is_some() && self.fields().all(FieldOrigin::is_whole)
     }
 
     fn noted(mut self, note: &str) -> Self {
@@ -287,31 +239,41 @@ impl EntryOrigin {
 /// The origins of a plan, written for one item.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PlanOrigins {
-    /// The item these origins were written for: a clone under another id
-    /// that kept them by accident reads as unattributed, as do origins
-    /// stored without one.
+    /// The item these origins were written for; `None` describes no item.
     pub item: Option<QueueItemId>,
     pub entries: BTreeMap<String, Vec<EntryOrigin>>,
 }
 
 impl PlanOrigins {
-    fn written_for(item: &QueueItemId, entries: BTreeMap<String, Vec<EntryOrigin>>) -> Self {
-        Self {
-            item: Some(item.clone()),
-            entries,
+    /// Why these origins do not describe `plan` of `item`; `None` when they
+    /// do: written for it, with its keys and counts, every origin whole.
+    fn fault(&self, item: &QueueItemId, plan: &ModelPlan) -> Option<String> {
+        match &self.item {
+            Some(written) if written == item => {}
+            Some(written) => return Some(format!("origins written for {written}")),
+            None => return Some("origins written for no item".to_owned()),
         }
+        if !self.entries.keys().eq(plan.0.keys()) {
+            return Some("origins of other plan keys".to_owned());
+        }
+        for ((key, choices), slots) in plan.0.iter().zip(self.entries.values()) {
+            let whole = choices.len() == slots.len()
+                && choices.iter().zip(slots).all(|(c, o)| o.describes(c));
+            if !whole {
+                return Some(format!("plan key {key:?} has origins of another shape"));
+            }
+        }
+        None
     }
 }
 
-/// Stored origins as read: present but unreadable ones vouch for no field, so
-/// the item stays readable and every field reads as an unattributed pin.
+/// Stored origins as read: present ones that do not decode, a `null` among
+/// them, vouch for no field, so every field of the item reads as unattributed.
 fn lenient_origins<'de, D>(stored: D) -> Result<Option<Box<PlanOrigins>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let Some(value) = Option::<serde_json::Value>::deserialize(stored)? else {
-        return Ok(None);
-    };
+    let value = serde_json::Value::deserialize(stored)?;
     let origins = serde_json::from_value(value).unwrap_or_else(|_| PlanOrigins {
         item: None,
         entries: BTreeMap::new(),
@@ -346,10 +308,13 @@ impl PlannedPlan {
     /// `plan` with no writer to vouch for it: every field reads as a pin and
     /// is counted as unattributed.
     pub fn unattributed(item: &QueueItemId, plan: ModelPlan) -> Self {
-        let entries = shape_of(&plan, |c| EntryOrigin::unknown(PlanSource::Unattributed, c));
+        let entries = shape_of(&plan, PlanSource::Unattributed);
         Self {
             model_plan: plan,
-            model_origins: Some(Box::new(PlanOrigins::written_for(item, entries))),
+            model_origins: Some(Box::new(PlanOrigins {
+                item: Some(item.clone()),
+                entries,
+            })),
         }
     }
 
@@ -375,15 +340,20 @@ impl PlannedPlan {
         &self.model_plan
     }
 
-    /// The plan a run is driven by and quota holds read: a pinned choice
-    /// drops its tier there, so no quota move of an unstarted stage changes
-    /// it. A legacy tier stays only where `legacy` resolves it: the hold of a
-    /// queued item, which dispatch resolves before a run reads it with `Keep`.
-    pub fn dispatched(&self, item: &QueueItemId, legacy: LegacyTiers) -> ModelPlan {
+    pub fn into_plan(self) -> ModelPlan {
+        self.model_plan
+    }
+
+    /// The plan a run is driven by and quota holds read: a choice the daemon
+    /// may not move at `when` drops its tier there, so it is an exact pin to
+    /// every reroute, hold and recovery that reads it.
+    pub fn dispatched(&self, item: &QueueItemId, when: TierMove) -> ModelPlan {
+        let origins = self.origins(item);
         let mut plan = self.model_plan.clone();
-        for (key, choices) in plan.0.iter_mut() {
-            for (slot, choice) in choices.iter_mut().enumerate() {
-                if !self.origin(item, key, slot).tier_may_move(legacy) {
+        for (choices, slots) in plan.0.values_mut().zip(origins.values()) {
+            assert_eq!(choices.len(), slots.len(), "an origin per choice");
+            for (choice, origin) in choices.iter_mut().zip(slots) {
+                if !origin.may_move(when) {
                     choice.tier = None;
                 }
             }
@@ -395,123 +365,84 @@ impl PlannedPlan {
         plan
     }
 
-    pub fn into_plan(self) -> ModelPlan {
-        self.model_plan
+    /// Why the stored origins do not describe this plan of `item`; `None`
+    /// when they do or when there are none.
+    pub fn fault(&self, item: &QueueItemId) -> Option<String> {
+        let origins = self.model_origins.as_ref()?;
+        origins.fault(item, &self.model_plan)
     }
 
-    /// The origins as stored; `None` for an item stored before 1.6.4.
-    pub fn stored_origins(&self) -> Option<&PlanOrigins> {
-        self.model_origins.as_deref()
-    }
-
-    /// Where slot `slot` of `key` came from, for the item `item`: legacy for
-    /// a record without origins, unattributed where its origins do not fit.
-    pub fn origin(&self, item: &QueueItemId, key: &str, slot: usize) -> EntryOrigin {
-        let choice = self.model_plan.0.get(key).and_then(|c| c.get(slot));
-        let choice = choice.expect("an origin is read for a choice of the plan");
-        let Some(origins) = &self.model_origins else {
-            return EntryOrigin::unknown(PlanSource::LegacyUnknown, choice);
-        };
-        let fits = origins.item.as_ref() == Some(item) && self.fits(key);
-        let found = origins.entries.get(key).and_then(|e| e.get(slot));
-        match found.filter(|_| fits) {
-            Some(origin) => origin.clone().fitted(choice),
-            None => EntryOrigin::unknown(PlanSource::Unattributed, choice),
-        }
-    }
-
-    /// Every entry's origin, keyed like the plan.
+    /// Every entry's origin, keyed like the plan, by the one rule of reading:
+    /// no stored origins read as legacy, stored origins that describe this
+    /// plan of `item` as they are, and any others as unattributed, whole.
     pub fn origins(&self, item: &QueueItemId) -> BTreeMap<String, Vec<EntryOrigin>> {
-        let origins = self.model_plan.0.iter().map(|(key, choices)| {
-            let slots = (0..choices.len()).map(|slot| self.origin(item, key, slot));
-            (key.clone(), slots.collect())
-        });
-        origins.collect()
+        let origins = match &self.model_origins {
+            None => shape_of(&self.model_plan, PlanSource::LegacyUnknown),
+            Some(stored) => match stored.fault(item, &self.model_plan) {
+                None => stored.entries.clone(),
+                Some(_) => shape_of(&self.model_plan, PlanSource::Unattributed),
+            },
+        };
+        debug_assert!(origins.keys().eq(self.model_plan.0.keys()));
+        origins
+    }
+
+    /// Where slot `slot` of `key` came from, for the item `item`.
+    pub fn origin(&self, item: &QueueItemId, key: &str, slot: usize) -> EntryOrigin {
+        let mut origins = self.origins(item);
+        let slots = origins.remove(key);
+        let slots = slots.expect("an origin is read for a key of the plan");
+        assert!(slot < slots.len(), "{key:?} has no choice {slot}");
+        slots.into_iter().nth(slot).expect("checked above")
     }
 
     /// How many fields (a model, an effort or a tier each) read as unattributed.
     pub fn unattributed_fields(&self, item: &QueueItemId) -> usize {
+        self.fields_from(item, PlanSource::Unattributed)
+    }
+
+    /// How many fields read as stored before origins were recorded.
+    pub fn legacy_fields(&self, item: &QueueItemId) -> usize {
+        self.fields_from(item, PlanSource::LegacyUnknown)
+    }
+
+    fn fields_from(&self, item: &QueueItemId, source: PlanSource) -> usize {
         let entries = self.origins(item).into_values().flatten();
-        let unattributed = |e: &EntryOrigin| {
+        let from = |e: &EntryOrigin| {
             debug_assert!(e.fields().count() >= 2, "a model and an effort");
-            let fields = e.fields().filter(|f| f.source == PlanSource::Unattributed);
-            fields.count()
+            e.fields().filter(|f| f.source == source).count()
         };
-        entries.map(|e| unattributed(&e)).sum()
+        entries.map(|e| from(&e)).sum()
     }
 
-    /// Why the stored origins do not describe this plan of `item`; empty
-    /// when they do or when there are none.
-    pub fn faults(&self, item: &QueueItemId) -> Vec<String> {
-        let Some(origins) = &self.model_origins else {
-            return Vec::new();
-        };
-        let mut faults = Vec::new();
-        match &origins.item {
-            Some(written) if written == item => {}
-            Some(written) => faults.push(format!("origins written for {written}")),
-            None => faults.push("origins written for no item".to_owned()),
-        }
-        let keys = self.model_plan.0.keys().chain(origins.entries.keys());
-        for key in keys.collect::<std::collections::BTreeSet<_>>() {
-            if !self.fits(key) {
-                faults.push(format!("plan key {key:?} has origins of another shape"));
-            }
-        }
-        faults
-    }
-
-    /// This plan with faulty origins replaced by unattributed ones; `None`
-    /// when nothing needs replacing.
+    /// This plan with origins that do not describe it replaced by
+    /// unattributed ones; `None` when nothing needs replacing.
     pub fn reconciled(&self, item: &QueueItemId) -> Option<Self> {
-        if self.faults(item).is_empty() {
-            return None;
-        }
-        let entries = self.origins(item);
-        debug_assert!(entries.keys().eq(self.model_plan.0.keys()));
-        Some(Self {
-            model_plan: self.model_plan.clone(),
-            model_origins: Some(Box::new(PlanOrigins::written_for(item, entries))),
-        })
-    }
-
-    fn fits(&self, key: &str) -> bool {
-        let origins = self.model_origins.as_ref().map(|o| o.entries.get(key));
-        let slots = origins.flatten().map(Vec::len);
-        slots == self.model_plan.0.get(key).map(Vec::len)
-    }
-
-    /// Make the origins whole for `item` before a change: a legacy record
-    /// gets `legacy_unknown` for every field it had.
-    fn make_whole(&mut self, item: &QueueItemId) {
-        let entries = self.origins(item);
-        debug_assert!(entries.keys().eq(self.model_plan.0.keys()));
-        self.model_origins = Some(Box::new(PlanOrigins::written_for(item, entries)));
-        debug_assert!(self.faults(item).is_empty());
+        self.fault(item)?;
+        let reconciled = Self::unattributed(item, self.model_plan.clone());
+        debug_assert!(reconciled.fault(item).is_none());
+        Some(reconciled)
     }
 
     /// The same plan for the new item `to`, cloned from `from`: each field
     /// keeps its source, authority and time, with `note` added when given.
+    /// A plan without origins stays without them.
     pub fn copy_for(&self, from: &QueueItemId, to: &QueueItemId, note: Option<&str>) -> Self {
         assert_ne!(from, to, "a copy is for another item");
-        let Some(_) = &self.model_origins else {
+        if self.model_origins.is_none() {
             return self.clone();
-        };
-        let mut entries = self.origins(from);
+        }
+        let mut writer = PlanWriter::editing(self, from, crate::now());
+        writer.item = to.clone();
         if let Some(note) = note {
-            for entry in entries.values_mut().flatten() {
+            for entry in writer.entries.values_mut().flatten() {
                 *entry = entry.clone().noted(note);
             }
         }
-        let copy = Self {
-            model_plan: self.model_plan.clone(),
-            model_origins: Some(Box::new(PlanOrigins::written_for(to, entries))),
-        };
-        debug_assert!(copy.faults(to).is_empty());
-        copy
+        writer.finish()
     }
 
-    /// Drop `key` and its origins; `true` when it was there.
+    /// Drop `key` and its origins together; `true` when it was there.
     pub fn remove_key(&mut self, key: &str) -> bool {
         let removed = self.model_plan.0.remove(key).is_some();
         if let Some(origins) = &mut self.model_origins {
@@ -528,94 +459,44 @@ impl PlannedPlan {
         &mut self,
         item: &QueueItemId,
         key: &str,
-        (model, effort): (Option<&ModelRef>, Option<Effort>),
+        named: (Option<&ModelRef>, Option<Effort>),
         (by, at): (Authority, Timestamp),
     ) -> Option<&[ModelChoice]> {
-        assert!(model.is_some() || effort.is_some(), "a steer names a field");
         self.model_plan.0.get(key)?;
-        self.make_whole(item);
-        let Self {
-            model_plan,
-            model_origins,
-        } = self;
-        let origins = model_origins.as_mut().expect("made whole above");
-        let slots = origins.entries.get_mut(key).expect("made whole above");
-        let choices = model_plan.0.get_mut(key).expect("checked above");
-        assert_eq!(slots.len(), choices.len(), "origins fit the plan");
-        for (choice, origin) in choices.iter_mut().zip(slots.iter_mut()) {
-            if model.is_some() {
-                let was = format!("was {}: {}", origin.model.source, choice.model);
-                origin.model = FieldOrigin::chosen(PlanSource::Explicit, by, at, Some(was));
-            }
-            if effort.is_some() {
-                let was = format!("was {}: {}", origin.effort.source, choice.effort);
-                origin.effort = FieldOrigin::chosen(PlanSource::Explicit, by, at, Some(was));
-            }
-            *choice = choice.steered(model, effort);
-            if choice.tier.is_none() {
-                origin.tier = None;
-            }
-        }
+        let mut writer = PlanWriter::editing(self, item, at);
+        writer.steer(key, named, by);
+        *self = writer.finish();
         self.model_plan.0.get(key).map(Vec::as_slice)
     }
 
-    /// Resolve each tiered choice the daemon may move again: `resolve`
-    /// gives its new model and tier, or `None` to keep it. A pin is passed
-    /// over, and a legacy model unless `legacy` resolves it. A moved model is
-    /// the daemon's, noted with `note` alone; the tier keeps who asked for it.
+    /// Resolve each tiered choice the daemon may move at `when`: `resolve`
+    /// gives its new model and tier, or `None` to keep it. A moved model is
+    /// the daemon's, noted with `note` alone; the tier keeps who asked for
+    /// it. All or nothing: a refusal leaves the plan and its origins alone.
     pub fn retier(
         &mut self,
         item: &QueueItemId,
-        (at, note, legacy): (Timestamp, Option<&str>, LegacyTiers),
-        mut resolve: impl FnMut(
-            &str,
-            &TierChoice,
-        ) -> Result<Option<(ModelRef, TierChoice)>, ArchonError>,
+        (at, note, when): (Timestamp, Option<&str>, TierMove),
+        resolve: impl FnMut(&str, &TierChoice) -> Result<Option<(ModelRef, TierChoice)>, ArchonError>,
     ) -> Result<(), ArchonError> {
-        let shape: Vec<usize> = self.model_plan.0.values().map(Vec::len).collect();
-        // Resolved into copies, so a failure leaves both halves as they were.
-        let mut plan = self.model_plan.clone();
-        let mut origins = self.origins(item);
-        for (key, choices) in plan.0.iter_mut() {
-            let slots = origins.get_mut(key).expect("an origin per entry");
-            for (choice, origin) in choices.iter_mut().zip(slots.iter_mut()) {
-                let Some(asked) = &choice.tier else { continue };
-                if !origin.tier_may_move(legacy) {
-                    continue;
-                }
-                let Some((model, tier)) = resolve(key, asked)? else {
-                    continue;
-                };
-                debug_assert_eq!(tier.requested, asked.requested, "the tier asked for");
-                let moved = model != choice.model || origin.model.source != PlanSource::Tier;
-                if moved {
-                    let note = note.map(str::to_owned);
-                    origin.model =
-                        FieldOrigin::chosen(PlanSource::Tier, Authority::Daemon, at, note);
-                }
-                debug_assert!(origin.tier.is_some(), "a tiered choice has a tier origin");
-                choice.model = model;
-                choice.tier = Some(tier);
-            }
+        let mut writer = PlanWriter::editing(self, item, at);
+        let before = writer.entries.clone();
+        writer.retier((note, when), resolve)?;
+        if writer.plan == self.model_plan && writer.entries == before {
+            return Ok(());
         }
-        let after: Vec<usize> = plan.0.values().map(Vec::len).collect();
-        assert_eq!(shape, after, "only models change");
-        self.model_plan = plan;
-        if self.model_origins.is_some() || origins.values().flatten().any(|o| !o.model.is_pin()) {
-            self.model_origins = Some(Box::new(PlanOrigins::written_for(item, origins)));
-        }
+        *self = writer.finish();
         Ok(())
     }
 }
 
-fn shape_of(
-    plan: &ModelPlan,
-    origin: impl Fn(&ModelChoice) -> EntryOrigin,
-) -> BTreeMap<String, Vec<EntryOrigin>> {
+/// `source` for every field of `plan`.
+fn shape_of(plan: &ModelPlan, source: PlanSource) -> BTreeMap<String, Vec<EntryOrigin>> {
+    let origin = |choice| EntryOrigin::unknown(source, choice);
     let entries = plan
         .0
         .iter()
-        .map(|(key, choices)| (key.clone(), choices.iter().map(&origin).collect()));
+        .map(|(key, choices)| (key.clone(), choices.iter().map(origin).collect()));
     entries.collect()
 }
 
@@ -724,7 +605,7 @@ impl PlanWriter {
     /// tiered) and its effort `effort`.
     pub fn filled(&mut self, filled: ModelPlan, (model, effort): (PlanSource, PlanSource)) {
         assert!(
-            !model.is_pin() && !effort.is_pin(),
+            model.is_fill() && effort.is_fill(),
             "a fill step is the daemon's"
         );
         for (key, choices) in &self.plan.0 {
@@ -770,16 +651,97 @@ impl PlanWriter {
         self.plan.0.insert(key, choices);
     }
 
-    pub fn finish(self) -> PlannedPlan {
-        let planned = PlannedPlan {
-            model_plan: self.plan,
-            model_origins: Some(Box::new(PlanOrigins::written_for(&self.item, self.entries))),
+    /// The plan as stored, every entry carried with the origin it reads
+    /// with for `item`, to change in place.
+    fn editing(planned: &PlannedPlan, item: &QueueItemId, at: Timestamp) -> Self {
+        let editing = Self {
+            item: item.clone(),
+            at,
+            plan: planned.model_plan.clone(),
+            entries: planned.origins(item),
         };
-        assert!(
-            planned.faults(&self.item).is_empty(),
-            "one origin per field"
-        );
-        planned
+        debug_assert!(editing.entries.keys().eq(editing.plan.0.keys()));
+        editing
+    }
+
+    /// Steer every choice of `key`, which the plan has: see [`PlannedPlan::steer`].
+    fn steer(
+        &mut self,
+        key: &str,
+        (model, effort): (Option<&ModelRef>, Option<Effort>),
+        by: Authority,
+    ) {
+        assert!(model.is_some() || effort.is_some(), "a steer names a field");
+        let at = self.at;
+        let choices = self
+            .plan
+            .0
+            .get_mut(key)
+            .expect("the caller checked the key");
+        let slots = self.entries.get_mut(key).expect("an origin per entry");
+        assert_eq!(slots.len(), choices.len(), "origins fit the plan");
+        for (choice, origin) in choices.iter_mut().zip(slots.iter_mut()) {
+            if model.is_some() {
+                let was = format!("was {}: {}", origin.model.source, choice.model);
+                origin.model = FieldOrigin::chosen(PlanSource::Explicit, by, at, Some(was));
+            }
+            if effort.is_some() {
+                let was = format!("was {}: {}", origin.effort.source, choice.effort);
+                origin.effort = FieldOrigin::chosen(PlanSource::Explicit, by, at, Some(was));
+            }
+            *choice = choice.steered(model, effort);
+            if choice.tier.is_none() {
+                origin.tier = None;
+            }
+        }
+    }
+
+    /// Resolve each tiered choice the daemon may move: see [`PlannedPlan::retier`].
+    fn retier(
+        &mut self,
+        (note, when): (Option<&str>, TierMove),
+        mut resolve: impl FnMut(
+            &str,
+            &TierChoice,
+        ) -> Result<Option<(ModelRef, TierChoice)>, ArchonError>,
+    ) -> Result<(), ArchonError> {
+        let at = self.at;
+        for (key, choices) in self.plan.0.iter_mut() {
+            let slots = self.entries.get_mut(key).expect("an origin per entry");
+            assert_eq!(slots.len(), choices.len(), "origins fit the plan");
+            for (choice, origin) in choices.iter_mut().zip(slots.iter_mut()) {
+                let Some(asked) = &choice.tier else { continue };
+                if !origin.may_move(when) {
+                    continue;
+                }
+                let Some((model, tier)) = resolve(key, asked)? else {
+                    continue;
+                };
+                debug_assert_eq!(tier.requested, asked.requested, "the tier asked for");
+                let daemons = (PlanSource::Tier, Authority::Daemon);
+                if model != choice.model || (origin.model.source, origin.model.by) != daemons {
+                    let note = note.map(str::to_owned);
+                    origin.model = FieldOrigin::chosen(daemons.0, daemons.1, at, note);
+                }
+                choice.model = model;
+                choice.tier = Some(tier);
+            }
+        }
+        Ok(())
+    }
+
+    /// The plan and its origins as one value: the only place either is set.
+    pub fn finish(self) -> PlannedPlan {
+        let origins = PlanOrigins {
+            item: Some(self.item.clone()),
+            entries: self.entries,
+        };
+        let fault = origins.fault(&self.item, &self.plan);
+        assert_eq!(fault, None, "one whole origin per field");
+        PlannedPlan {
+            model_plan: self.plan,
+            model_origins: Some(Box::new(origins)),
+        }
     }
 }
 

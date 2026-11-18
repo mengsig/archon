@@ -1558,12 +1558,16 @@ pub struct DaemonStatus {
     /// archond that asked Aether while answering.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health: Option<StatusHealth>,
-    /// Plan fields of stored items no writer accounted for, which archond
-    /// treats as pins; `0` from an older archond.
+    /// Plan fields of unfinished items no writer accounted for, which
+    /// archond treats as pins; `0` from an older archond.
     #[serde(default)]
     pub unattributed_plan_fields: u32,
-    /// Stored items whose plan could not be read to count its fields, so the
-    /// count above is incomplete; `0` from an older archond.
+    /// Plan fields of unfinished items stored before origins were recorded,
+    /// pins as well; `0` from an older archond.
+    #[serde(default)]
+    pub legacy_plan_fields: u32,
+    /// Unfinished items whose row does not decode, so their fields are in
+    /// neither count; `0` from an older archond.
     #[serde(default)]
     pub unreadable_plan_items: u32,
     /// Each provider's quota headroom for stage routing, as archond last

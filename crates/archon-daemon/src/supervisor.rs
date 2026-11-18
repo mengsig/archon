@@ -794,10 +794,10 @@ pub async fn freshness(
     Ok(Some(fresh))
 }
 
-/// Why no orchestrator is recorded though an upgrade refresh began, for
-/// `status`; `None` when no refresh is unfinished.
-pub async fn stopped_refresh_delay(ctx: &DaemonContext) -> Result<Option<String>, ArchonError> {
-    economy::stopped_refresh_delay(ctx).await
+/// Why an unfinished upgrade refresh has not happened, for a `status` whose
+/// orchestrator cannot say; `None` when no refresh is unfinished.
+pub async fn unrecorded_refresh_delay(ctx: &DaemonContext) -> Result<Option<String>, ArchonError> {
+    economy::unrecorded_refresh_delay(ctx).await
 }
 
 /// [`freshness`] without the refresh's delay. Until the GitHub choice is
@@ -1134,18 +1134,31 @@ async fn replace_generation(
     create_generation(ctx, client).await
 }
 
-/// One transaction: a stop halfway never leaves the old agent stored under
-/// the new generation, or its creation settings frozen for the next.
+/// One transaction, so a stop never leaves the old agent or its frozen settings
+/// under the new generation; a refresh the records only imply is marked in it.
 async fn advance_generation(ctx: &DaemonContext) -> Result<(), ArchonError> {
     let mut store = ctx.store.lock().await;
     let generation = parse_generation(store.kv_get(keys::ORCHESTRATOR_GENERATION)?)?;
-    let next = (generation + 1).to_string();
+    let owed = economy::unfinished_refresh(&store, generation)?.map(|from| from.to_string());
+    // Past the generation last created too: a lost counter never reuses its key.
+    let created = origin::recorded_generation(&store)?.unwrap_or(0);
+    let Some(next) = generation.max(created).checked_add(1) else {
+        let key = keys::ORCHESTRATOR_GENERATION;
+        return Err(ArchonError::Corrupt(format!(
+            "kv {key}: no generation follows {generation}"
+        )));
+    };
+    let next = next.to_string();
+    let mut set = vec![(keys::ORCHESTRATOR_GENERATION, next.as_str())];
+    if let Some(from) = &owed {
+        set.push((economy::REFRESH_UNFINISHED_KEY, from.as_str()));
+    }
     let cleared = [
         keys::ORCHESTRATOR_AGENT,
         HOST_CONTEXT_KEY,
         COMPACTION_TOKENS_KEY,
     ];
-    store.kv_update(&[(keys::ORCHESTRATOR_GENERATION, &next)], &cleared)
+    store.kv_update(&set, &cleared)
 }
 
 /// The configured orchestrator model and effort, as `provider/model effort`.
@@ -1381,6 +1394,21 @@ fn frozen_threshold(
         )));
     }
     Ok(Some(frozen).filter(|frozen| frozen.key == key))
+}
+
+/// Whether the settings stored beside generation `generation`'s agent were frozen
+/// for another creation. No stored threshold is a build that froze none: no mismatch.
+fn frozen_for_another(store: &archon_queue::Store, generation: u64) -> Result<bool, ArchonError> {
+    let Some(raw) = store.kv_get(COMPACTION_TOKENS_KEY)? else {
+        return Ok(false);
+    };
+    let Some(store_id) = store.kv_get(STORE_ID_KEY)? else {
+        return Ok(true);
+    };
+    let key = creation_key(&StoreId::parse(&store_id)?, generation);
+    // An unreadable row matches no creation; the fresh generation replaces it.
+    let frozen = serde_json::from_str::<FrozenThreshold>(&raw);
+    Ok(!frozen.is_ok_and(|frozen| frozen.key == key))
 }
 
 /// The orchestrator's compaction threshold to send: the configured one, and

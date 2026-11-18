@@ -384,8 +384,10 @@ happens, `archon status` shows `upgrade refresh (prompt) delayed:` and the
 reason (the idle moment it waits for, or the latest failure) where it used to
 show `prompt outdated`; if the refresh stopped the old generation and its
 successor cannot start, it shows `not running; upgrade refresh delayed:` and
-the latest failure. `refresh_on_upgrade = false` turns it off. Like a manual
-restart, it can still meet a wake Aether starts in the same instant.
+the latest failure. Stored records that disagree about the orchestrator's
+generation count as a refresh stopped halfway. `refresh_on_upgrade = false`
+turns it off. Like a manual restart, it can still meet a wake Aether starts
+in the same instant.
 
 The helper agents the orchestrator delegates to
 ([guide](guide.md#what-the-orchestrator-does-without-queueing)) work in a

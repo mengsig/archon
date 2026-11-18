@@ -4007,7 +4007,7 @@
           ]
         },
         "orchestrator_refresh_delayed": {
-          "description": "Why no orchestrator is recorded though an upgrade refresh began: its\nfresh generation has not started. `None` from an older archond.",
+          "description": "Why an unfinished upgrade refresh has not happened, when `orchestrator`\ncannot say: none is recorded, or its creation is not. `None` from an older archond.",
           "type": [
             "string",
             "null"

@@ -5,7 +5,9 @@
 use crate::link_common;
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use archon_aether::fake::{self, Scripted};
 use archon_core::Timestamp;
@@ -768,6 +770,117 @@ async fn news_due_stops_the_idle_compaction() {
     assert!(compacts.is_empty(), "folded as a wake began: {compacts:?}");
 }
 
+/// Hold one piece of news that wakes the orchestrator from `due_at` on.
+async fn hold_news_until(harness: &Harness, due_at: Timestamp) {
+    let news = TriggerEvent::ItemBlocked {
+        item: QueueItemId::new(),
+        reason: "stuck".into(),
+    };
+    triggers::push_quiet(&harness.ctx, news).await.unwrap();
+    let raw = harness.kv("trigger_outbox").await.expect("held news");
+    let mut outbox: Value = serde_json::from_str(&raw).unwrap();
+    let held = outbox["pending"][0].as_object_mut().expect("the news");
+    held.remove("quiet");
+    held.insert("defer_until".into(), json!(due_at));
+    harness.set_kv("trigger_outbox", &outbox.to_string()).await;
+}
+
+/// Answer `get_agent` from `agents`, keeping the `nth` lookup from now
+/// waiting until the returned sender is used. For a multi-thread runtime.
+fn hold_lookup(harness: &Harness, agents: &Agents, nth: usize) -> std::sync::mpsc::Sender<()> {
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let held = Mutex::new(held);
+    let table = agents.clone();
+    let lookups = AtomicUsize::new(0);
+    harness.fake.set_responder(
+        "get_agent",
+        Arc::new(move |cmd| {
+            if lookups.fetch_add(1, Ordering::SeqCst) + 1 == nth {
+                let wait = || held.lock().unwrap().recv_timeout(Duration::from_secs(10));
+                tokio::task::block_in_place(wait).expect("the test releases the lookup");
+            }
+            let id = cmd["id"].as_str().unwrap_or_default();
+            match table.lock().unwrap().get(id) {
+                Some(agent) => Scripted::reply("agent", agent.clone()),
+                None => Scripted::refuse("not_found", "no such agent"),
+            }
+        }),
+    );
+    release
+}
+
+/// One check at `now` whose recheck under the switch guard has looked the
+/// orchestrator up before news is due at `due_at`, and then waits for the
+/// store until after it.
+async fn check_as_news_comes_due(
+    harness: &Harness,
+    agents: &Agents,
+    now: Timestamp,
+    due_at: Timestamp,
+) -> Economy {
+    hold_news_until(harness, due_at).await;
+    let looked = harness.fake.received_named("get_agent").len();
+    // The check's first look, then the recheck's under the guard.
+    let release = hold_lookup(harness, agents, 2);
+    let ctx = harness.ctx.clone();
+    let check = tokio::spawn(async move { supervisor::economize(&ctx, now).await });
+    harness
+        .eventually("the recheck looks the orchestrator up", || async {
+            harness.fake.received_named("get_agent").len() >= looked + 2
+        })
+        .await;
+    let store = harness.ctx.store.lock().await;
+    release.send(()).expect("the lookup is waiting");
+    while archon_core::now() < due_at + TimeDelta::milliseconds(200) {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    drop(store);
+    check.await.unwrap().unwrap()
+}
+
+/// News that comes due after the refresh's recheck looked the orchestrator
+/// up, while it waits for the store: the news is checked at the time it is
+/// once the store is held, where the attempt is recorded, so it is seen.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn news_that_comes_due_while_the_recheck_waits_for_the_store_stops_the_refresh() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    let agents = agent_table(&harness);
+    create(&harness, &agents, ORCH).await;
+    as_if_created_by_an_older_build(&harness).await;
+    set_state(&agents, ORCH, "waiting");
+    let now = archon_core::now();
+    let due_at = now + TimeDelta::milliseconds(1500);
+
+    let economy = check_as_news_comes_due(&harness, &agents, now, due_at).await;
+    assert_eq!(economy, Economy::Nothing, "the news came due meanwhile");
+    let cancels = harness.fake.received_named("cancel");
+    assert!(cancels.is_empty(), "refreshed as a wake began: {cancels:?}");
+    let begun = harness.kv("orchestrator_refresh_unfinished").await;
+    assert_eq!(begun, None, "no refresh began");
+}
+
+/// The same wait in the idle compaction: nothing is marked done or folded.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn news_that_comes_due_while_the_recheck_waits_for_the_store_stops_the_compaction() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    let agents = agent_table(&harness);
+    create(&harness, &agents, ORCH).await;
+    harness.fake.set_default("compact", Scripted::ok());
+    let now = archon_core::now();
+    set_state(&agents, ORCH, "waiting");
+    set_stats(&agents, ORCH, 150_000, now - TimeDelta::minutes(50));
+    let due_at = now + TimeDelta::milliseconds(1500);
+
+    let economy = check_as_news_comes_due(&harness, &agents, now, due_at).await;
+    assert_eq!(economy, Economy::Nothing, "the news came due meanwhile");
+    let compacts = harness.fake.received_named("compact");
+    assert!(compacts.is_empty(), "folded as a wake began: {compacts:?}");
+    let marked = harness.kv("orchestrator_idle_compaction").await;
+    assert_eq!(marked, None, "the idle stretch is still owed its fold");
+}
+
 /// News that comes due while the idle compaction waits for the switch guard
 /// is seen by its recheck, which reads the clock again under the guard.
 #[tokio::test]
@@ -780,18 +893,8 @@ async fn news_that_comes_due_while_the_compaction_waits_stops_it() {
     let now = archon_core::now();
     set_state(&agents, ORCH, "waiting");
     set_stats(&agents, ORCH, 150_000, now - TimeDelta::minutes(50));
-    let news = TriggerEvent::ItemBlocked {
-        item: QueueItemId::new(),
-        reason: "stuck".into(),
-    };
-    triggers::push_quiet(&harness.ctx, news).await.unwrap();
     let due_at = now + TimeDelta::milliseconds(400);
-    let raw = harness.kv("trigger_outbox").await.expect("held news");
-    let mut outbox: Value = serde_json::from_str(&raw).unwrap();
-    let held = outbox["pending"][0].as_object_mut().expect("the news");
-    held.remove("quiet");
-    held.insert("defer_until".into(), json!(due_at));
-    harness.set_kv("trigger_outbox", &outbox.to_string()).await;
+    hold_news_until(&harness, due_at).await;
 
     let sending = supervisor::hold_switch(&harness.ctx).await;
     let looked = harness.fake.received_named("get_agent").len();
@@ -844,7 +947,7 @@ async fn a_creation_an_older_build_began_is_retried_without_a_threshold() {
 }
 
 /// What `status` answers the CLI about the orchestrator.
-async fn cli_status(harness: &Harness) -> archon_core::protocol::DaemonStatus {
+pub(crate) async fn cli_status(harness: &Harness) -> archon_core::protocol::DaemonStatus {
     use archon_core::protocol::{ClientKind, Reply, Request};
     let request = Request::Status(Default::default());
     match archon_daemon::handlers::handle(&harness.ctx, ClientKind::ArchonCli, request).await {
@@ -900,4 +1003,24 @@ async fn status_shows_a_refresh_whose_successor_cannot_start_and_why() {
         Some(ORCH_2.to_owned())
     );
     assert_eq!(status.orchestrator_refresh_delayed, None);
+}
+
+/// The counter names a generation the stored agent was not created as: its
+/// creation is not recorded under it, so `status` has no freshness to carry
+/// the owed refresh and says beside the orchestrator why it waits.
+#[tokio::test]
+async fn status_shows_a_refresh_owed_by_records_that_disagree() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    let agents = agent_table(&harness);
+    create(&harness, &agents, ORCH).await;
+    set_state(&agents, ORCH, "running");
+    harness.set_kv(keys::ORCHESTRATOR_GENERATION, "2").await;
+
+    let status = cli_status(&harness).await;
+    let info = status.orchestrator.expect("the orchestrator still runs");
+    assert_eq!(info.agent.to_string(), ORCH);
+    assert_eq!(info.freshness, None, "generation 2 was never recorded");
+    let delayed = status.orchestrator_refresh_delayed.expect("the delay");
+    assert!(delayed.contains("idle"), "what it waits for: {delayed}");
 }

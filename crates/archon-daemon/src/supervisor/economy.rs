@@ -195,10 +195,12 @@ pub(super) async fn refresh_owed_by(ctx: &DaemonContext) -> Result<bool, ArchonE
     Ok(true)
 }
 
-/// The generation a refresh began from and adopted no successor for: the
-/// marker, else the generation a stored agent was created as when the counter
-/// names another (a build that advanced it and cleared the agent in two writes).
-fn unfinished_refresh(store: &Store, generation: u64) -> Result<Option<u64>, ArchonError> {
+/// The generation a refresh began from and adopted no successor for: the marker,
+/// else the one a stored agent's records disagree about (its creation, its settings).
+pub(super) fn unfinished_refresh(
+    store: &Store,
+    generation: u64,
+) -> Result<Option<u64>, ArchonError> {
     if let Some(marker) = parse_kv::<u64>(store, REFRESH_UNFINISHED_KEY)? {
         return Ok(Some(marker));
     }
@@ -206,7 +208,10 @@ fn unfinished_refresh(store: &Store, generation: u64) -> Result<Option<u64>, Arc
         return Ok(None);
     }
     let created_as = super::origin::recorded_generation(store)?;
-    Ok(created_as.filter(|created_as| *created_as != generation))
+    if let Some(created_as) = created_as.filter(|created_as| *created_as != generation) {
+        return Ok(Some(created_as));
+    }
+    Ok(super::frozen_for_another(store, generation)?.then_some(generation))
 }
 
 /// Keep why finishing a refresh failed, for `status`; returns the error to
@@ -268,7 +273,6 @@ pub fn refresh_owed(
 /// Whether a refresh owed to generation `generation` may be tried at `now`:
 /// a failed try (`tried`) waits out its pause, however many came before.
 pub fn retry_due(generation: u64, tried: Option<&RefreshTried>, now: Timestamp) -> bool {
-    assert!(generation > 0, "generations start at 1");
     match tried.filter(|tried| tried.generation == generation) {
         None => true,
         Some(tried) => now - tried.at >= REFRESH_RETRY,
@@ -312,19 +316,23 @@ fn delay_reason(tried: Option<&RefreshTried>) -> String {
     )
 }
 
-/// Why no orchestrator is recorded though a refresh began, for `status`:
-/// the fresh generation has not started, with the latest failure. `None`
-/// when no refresh is unfinished.
-pub(super) async fn stopped_refresh_delay(
+/// Why an unfinished refresh has not happened, for a `status` whose orchestrator
+/// cannot say: its creation is not recorded, or none is stored at all.
+pub(super) async fn unrecorded_refresh_delay(
     ctx: &DaemonContext,
 ) -> Result<Option<String>, ArchonError> {
     let store = ctx.store.lock().await;
-    if parse_kv::<u64>(&store, REFRESH_UNFINISHED_KEY)?.is_none() {
+    let generation = super::parse_generation(store.kv_get(keys::ORCHESTRATOR_GENERATION)?)?;
+    if unfinished_refresh(&store, generation)?.is_none() {
         return Ok(None);
     }
-    let failure =
-        parse_kv::<RefreshTried>(&store, REFRESH_TRIED_KEY)?.and_then(|tried| tried.error);
-    let reason = match failure {
+    let tried = parse_kv::<RefreshTried>(&store, REFRESH_TRIED_KEY)?;
+    if store.kv_get(keys::ORCHESTRATOR_AGENT)?.is_some() {
+        let tried = tried.filter(|tried| tried.generation == generation);
+        let waits = ctx.config.orchestrator.refresh_on_upgrade;
+        return Ok(waits.then(|| delay_reason(tried.as_ref())));
+    }
+    let reason = match tried.and_then(|tried| tried.error) {
         Some(error) => format!(
             "the fresh generation has not started, the last attempt failed with: {error}; Archon keeps retrying"
         ),
@@ -361,8 +369,9 @@ async fn refresh_if_owed(
     let Some(checked) = still_idle(ctx, client, clock).await? else {
         return Ok(Refresh::Busy);
     };
-    // The attempt is dated by its check, so the pause is counted between checks.
-    let attempt = begin_refresh(ctx, generation, owed.tried, clock.at).await?;
+    let Some(attempt) = begin_refresh(ctx, generation, owed.tried, clock).await? else {
+        return Ok(Refresh::Busy);
+    };
     let reason = "refreshed: an upgrade changed its prompt or tools";
     let why = "is a fresh generation, as an upgrade changed its prompt or tools";
     let checked = Some(&checked.id);
@@ -376,17 +385,17 @@ async fn refresh_if_owed(
     }
 }
 
-/// Record that a refresh of generation `generation` starts: the attempt and
-/// the unfinished marker in one transaction, so a stop leaves both or
-/// neither. The operator is told once [`REFRESH_TRIES`] attempts failed.
+/// Record that a refresh of generation `generation` starts: the attempt and the
+/// marker in one transaction, or nothing (`None`) when news is due once the store
+/// is held. The operator is told once [`REFRESH_TRIES`] attempts failed.
 async fn begin_refresh(
     ctx: &DaemonContext,
     generation: u64,
     tried: Option<RefreshTried>,
-    now: Timestamp,
-) -> Result<RefreshTried, ArchonError> {
-    assert!(generation > 0, "only a created generation is refreshed");
-    let attempt = RefreshTried::next(generation, tried.as_ref(), now);
+    clock: Clock,
+) -> Result<Option<RefreshTried>, ArchonError> {
+    // Dated by its check, so the pause is counted between checks.
+    let attempt = RefreshTried::next(generation, tried.as_ref(), clock.at);
     let tries = attempt.tries;
     assert!(tries > 0, "this try counts");
     let recorded = serde_json::to_string(&attempt)?;
@@ -395,7 +404,13 @@ async fn begin_refresh(
         (REFRESH_TRIED_KEY, recorded.as_str()),
         (REFRESH_UNFINISHED_KEY, marker.as_str()),
     ];
-    ctx.store.lock().await.kv_update(&set, &[])?;
+    {
+        let mut store = ctx.store.lock().await;
+        if news_due(&store, clock)? {
+            return Ok(None);
+        }
+        store.kv_update(&set, &[])?;
+    }
     if tries == REFRESH_TRIES + 1 {
         let text = format!(
             "The orchestrator's refresh after the upgrade failed {REFRESH_TRIES} times; Archon keeps trying every {} minutes while it is idle, or `archon orchestrator restart` refreshes it now.",
@@ -403,12 +418,18 @@ async fn begin_refresh(
         );
         crate::feed::system(ctx, text).await?;
     }
-    Ok(attempt)
+    Ok(Some(attempt))
+}
+
+/// Whether held news is due at the time it is now that the caller holds `store`,
+/// so the wait for it counts and the caller's write follows with none between.
+fn news_due(store: &Store, clock: Clock) -> Result<bool, ArchonError> {
+    crate::triggers::delivering(store, clock.now())
 }
 
 /// Read again under the switch guard, where no Archon trigger can be on its
-/// way: the orchestrator, not restarted into a successor, is still idle and
-/// no news is due to wake it. Returns the agent as so read.
+/// way: the orchestrator, not restarted into a successor, is still idle.
+/// Returns the agent as so read; due news is checked where the act is recorded.
 async fn still_idle(
     ctx: &DaemonContext,
     client: &AetherClient,
@@ -418,12 +439,7 @@ async fn still_idle(
         return Ok(None);
     };
     let agent = super::newest_incarnation(client, &id).await?.newest;
-    // Read last and at the time it is by now: news came due during the waits.
-    let now = clock.now();
-    if crate::triggers::delivering(&*ctx.store.lock().await, now)? {
-        return Ok(None);
-    }
-    let idle = agent.id == id && is_idle(&agent, now);
+    let idle = agent.id == id && is_idle(&agent, clock.now());
     Ok(idle.then_some(agent))
 }
 
@@ -468,47 +484,58 @@ async fn compact_if_idle(
     agent: &Agent,
     clock: Clock,
 ) -> Result<bool, ArchonError> {
-    if !compaction_due(ctx, agent, clock.now()).await? {
+    let config = &ctx.config.orchestrator;
+    if !compaction_due(&*ctx.store.lock().await, config, agent, clock.now())? {
         return Ok(false);
     }
     let _switch = super::switching(ctx).await;
     let Some(checked) = still_idle(ctx, client, clock).await? else {
         return Ok(false);
     };
-    if checked.id != agent.id || !compaction_due(ctx, &checked, clock.now()).await? {
+    if checked.id != agent.id || !claim_compaction(ctx, &checked, clock).await? {
         return Ok(false);
     }
-    compact(ctx, client, &checked).await
+    compact(client, &checked).await
 }
 
 /// Whether `agent`, as read at `now`, is owed its idle compaction.
-async fn compaction_due(
-    ctx: &DaemonContext,
+fn compaction_due(
+    store: &Store,
+    config: &OrchestratorConfig,
     agent: &Agent,
     now: Timestamp,
 ) -> Result<bool, ArchonError> {
-    let config = &ctx.config.orchestrator;
     let after = TimeDelta::minutes(i64::from(config.idle_compact_after_minutes));
     let floor = compaction_floor(config, agent);
-    let done = read_kv::<IdleCompaction>(ctx, IDLE_COMPACTION_KEY)
-        .await?
+    let done = parse_kv::<IdleCompaction>(store, IDLE_COMPACTION_KEY)?
         .filter(|done| done.agent == agent.id)
         .map(|done| done.turn_ended_at);
     Ok(idle_compaction_due(agent, now, after, floor, done))
 }
 
-/// Mark this idle stretch done, then ask Aether to compact `agent`.
-async fn compact(
+/// Under one hold of the store, at the time it is once held: no news is due,
+/// `agent` is still owed its compaction, and this idle stretch is marked done.
+async fn claim_compaction(
     ctx: &DaemonContext,
-    client: &AetherClient,
     agent: &Agent,
+    clock: Clock,
 ) -> Result<bool, ArchonError> {
+    let mut store = ctx.store.lock().await;
+    let owed = compaction_due(&store, &ctx.config.orchestrator, agent, clock.now())?;
+    if !owed || news_due(&store, clock)? {
+        return Ok(false);
+    }
     let turn_ended_at = agent.stats.last_turn_at.expect("checked by the rule");
     let mark = IdleCompaction {
         agent: agent.id.clone(),
         turn_ended_at,
     };
-    write_kv(ctx, IDLE_COMPACTION_KEY, &mark).await?;
+    store.kv_set(IDLE_COMPACTION_KEY, &serde_json::to_string(&mark)?)?;
+    Ok(true)
+}
+
+/// Ask Aether to compact `agent`, whose idle stretch is marked done.
+async fn compact(client: &AetherClient, agent: &Agent) -> Result<bool, ArchonError> {
     let tokens = agent.stats.context_tokens.unwrap_or_default();
     match client.compact(&agent.id).await {
         Ok(()) => {
@@ -521,13 +548,6 @@ async fn compact(
             Ok(false)
         }
     }
-}
-
-async fn read_kv<T: serde::de::DeserializeOwned>(
-    ctx: &DaemonContext,
-    key: &str,
-) -> Result<Option<T>, ArchonError> {
-    parse_kv(&*ctx.store.lock().await, key)
 }
 
 fn parse_kv<T: serde::de::DeserializeOwned>(

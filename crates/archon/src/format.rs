@@ -141,7 +141,13 @@ pub fn status(status: &DaemonStatus, names: &RepoNames, verbose: bool) -> String
 fn link_lines(out: &mut String, status: &DaemonStatus, verbose: bool) {
     let _ = writeln!(out, "aether: {}", aether_link(&status.aether));
     let orchestrator = match (&status.orchestrator, &status.orchestrator_refresh_delayed) {
-        (Some(info), _) => orchestrator_line(info),
+        (Some(info), None) => orchestrator_line(info),
+        (Some(info), Some(reason)) => {
+            format!(
+                "{}; upgrade refresh delayed: {reason}",
+                orchestrator_line(info)
+            )
+        }
         (None, Some(reason)) => format!("not running; upgrade refresh delayed: {reason}"),
         (None, None) => "not running".to_owned(),
     };
@@ -1075,6 +1081,27 @@ pub(crate) mod tests {
                 "restarted 6 times; generation 7, created by 1.2.3; prompt outdated; \
                  tools outdated; 1 new lesson\n"
             ),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn status_says_why_a_refresh_waits_when_the_orchestrator_s_creation_is_unrecorded() {
+        let mut up = status_with(AetherLinkStatus::Disconnected {
+            error: "x".into(),
+            retry_at: None,
+        });
+        up.orchestrator = Some(
+            serde_json::from_value(serde_json::json!({
+                "agent": "agt_0001", "model": "claude-code/opus", "effort": "high",
+                "status": "ready", "restarts": 0, "generation": 2,
+            }))
+            .unwrap(),
+        );
+        up.orchestrator_refresh_delayed = Some("it waits until idle".into());
+        let text = status(&up, &RepoNames::new(), false);
+        assert!(
+            text.contains("one it tracks; upgrade refresh delayed: it waits until idle\n"),
             "{text}"
         );
     }

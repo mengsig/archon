@@ -1498,8 +1498,8 @@ pub struct DaemonStatus {
     pub started_at: Timestamp,
     pub aether: AetherLinkStatus,
     pub orchestrator: Option<OrchestratorInfo>,
-    /// Why no orchestrator is recorded though an upgrade refresh began: its
-    /// fresh generation has not started. `None` from an older archond.
+    /// Why an unfinished upgrade refresh has not happened, when `orchestrator`
+    /// cannot say: none is recorded, or its creation is not. `None` from an older archond.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub orchestrator_refresh_delayed: Option<String>,
     pub caps: Caps,

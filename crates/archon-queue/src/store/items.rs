@@ -181,6 +181,7 @@ fn maybe_unattributed() -> String {
     format!(
         "SELECT data FROM items
          WHERE instr(data, '\"unattributed\"') > 0
+            OR json_type(data, '$.model_origins') NOT IN ('object', 'null')
             OR (json_type(data, '$.model_origins') = 'object'
                 AND (json_extract(data, '$.model_origins.item') IS NOT id
                      OR EXISTS (SELECT 1 FROM json_each(data, '$.model_plan') AS plan

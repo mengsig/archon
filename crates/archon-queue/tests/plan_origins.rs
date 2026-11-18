@@ -67,6 +67,10 @@ fn the_count_finds_a_stored_field_without_an_origin_or_with_an_unknown_source() 
         "json_remove(data, '$.model_origins.entries.implement[0].effort')",
         "json_remove(data, '$.model_origins.entries.implement[0].model.source')",
         "json_set(data, '$.model_origins.entries.implement[0].model.source', 'comparison')",
+        "json_set(data, '$.model_origins', json_array(
+            json_extract(data, '$.model_origins.item'),
+            json_set(json_extract(data, '$.model_origins.entries'),
+                     '$.implement[0].model.source', 'future')))",
     ];
     let conn = rusqlite::Connection::open(&path).unwrap();
     for (n, edit) in edits.iter().enumerate() {

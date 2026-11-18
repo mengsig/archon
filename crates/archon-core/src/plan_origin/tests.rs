@@ -134,6 +134,25 @@ fn a_moved_tier_keeps_who_asked_for_it_however_often_it_moves() {
 }
 
 #[test]
+fn a_tier_the_daemon_chose_keeps_only_the_latest_move_s_note() {
+    let item = QueueItemId::new();
+    let mut planned = enqueued(&item);
+    assert_eq!(planned.origin(&item, "review", 0).model.note, None);
+    for (model, why) in [
+        ("c/sol", "moved to c"),
+        ("b/sol", "moved to b"),
+        ("c/sol", "moved to c"),
+    ] {
+        let to = |_: &str, asked: &TierChoice| Ok(Some((model.parse().unwrap(), asked.clone())));
+        planned
+            .retier(&item, (crate::now(), Some(why)), to)
+            .unwrap();
+        let note = planned.origin(&item, "review", 0).model.note;
+        assert_eq!(note.as_deref(), Some(why));
+    }
+}
+
+#[test]
 fn a_steer_naming_the_stored_value_still_pins_it_and_leaves_the_other_field_alone() {
     let item = QueueItemId::new();
     let mut planned = enqueued(&item);

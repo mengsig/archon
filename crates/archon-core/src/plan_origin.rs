@@ -522,17 +522,25 @@ impl PlannedPlan {
     }
 }
 
+/// Ends the note of a model a request asked for by tier, naming who asked.
+const REQUESTED_BY: &str = " asked by the ";
+
 /// The note of a model the daemon moved: the move's own note followed by
-/// who first asked for the tier, so repeated moves never grow it further.
+/// who asked for the tier, when a request did; an earlier move's note is dropped.
 fn moved_note(note: Option<&str>, earlier: Option<String>) -> Option<String> {
-    let requester = earlier.map(|old| match old.rsplit_once("; ") {
-        Some((_, first)) => first.to_owned(),
-        None => old,
-    });
+    let earlier = earlier.unwrap_or_default();
+    let requester = earlier
+        .rsplit("; ")
+        .next()
+        .filter(|last| last.contains(REQUESTED_BY));
+    debug_assert!(
+        note.is_none_or(|n| !n.contains(REQUESTED_BY)),
+        "a move names no requester"
+    );
     match (note, requester) {
         (Some(note), Some(requester)) => Some(format!("{note}; {requester}")),
         (Some(note), None) => Some(note.to_owned()),
-        (None, requester) => requester,
+        (None, requester) => requester.map(str::to_owned),
     }
 }
 
@@ -599,7 +607,7 @@ impl PlanWriter {
             (Some(_), _) => FieldOrigin::chosen(PlanSource::Explicit, by, at, None),
             (None, tier) => {
                 let tier = tier.map_or_else(|| "a tier".to_owned(), |t| format!("tier {t}"));
-                let note = Some(format!("{tier} asked by the {by}"));
+                let note = Some(format!("{tier}{REQUESTED_BY}{by}"));
                 FieldOrigin::chosen(PlanSource::Tier, Authority::Daemon, at, note)
             }
         };

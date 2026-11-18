@@ -514,8 +514,9 @@ async fn an_idle_large_orchestrator_is_compacted_once_before_its_cache_expires()
     assert_eq!(compacts[0]["agent"], json!(ORCH));
 }
 
-/// A store left with the generation counted on but the cancelled outdated
-/// agent still stored (a stop inside a non-atomic change) is finished fresh.
+/// An unfinished refresh marker, whatever generation it names, means the
+/// agent still stored is the outdated one: adoption clears it in the same
+/// transaction that stores a successor. So it is finished fresh too.
 #[tokio::test]
 async fn a_refresh_stopped_halfway_through_its_generation_change_starts_a_fresh_one() {
     let harness = Harness::new().await;

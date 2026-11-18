@@ -402,10 +402,9 @@ struct Outbox {
     /// The orchestrator is starting a turn anyway: quiet news goes out now.
     #[serde(default)]
     flush: bool,
-    /// How many events at the front of `pending` a flush waits for; all of
-    /// them once compaction mixed them with later news.
+    /// The last [`Held::seq`] a flush gave out.
     #[serde(default)]
-    flush_left: usize,
+    last_seq: u64,
 }
 
 impl Outbox {
@@ -439,9 +438,9 @@ struct Batch {
     events: Vec<TriggerEvent>,
     #[serde(flatten)]
     directives: DirectiveNews,
-    /// It carries news a flush waits for.
+    /// The lowest [`Held::seq`] it carries; 0 when none had one.
     #[serde(default)]
-    flushed: bool,
+    first_seq: u64,
 }
 
 /// Wakes the delivery task; the news itself waits in the outbox.
@@ -680,10 +679,6 @@ fn compact_pending(store: &mut Store, outbox: &mut Outbox) -> Result<(), ArchonE
     let facts = Facts::gather(store, &held)?;
     outbox.pending = compact::compact(held, &facts, archon_core::now());
     let after = outbox.pending.len();
-    if outbox.flush_left > 0 {
-        // Flushed news may now sit anywhere in it, a digest at the front too.
-        outbox.flush_left = after;
-    }
     assert!(
         after > 0 && after <= before,
         "compaction keeps at least a digest and never grows the news"
@@ -793,12 +788,7 @@ async fn key_pending(ctx: &DaemonContext) -> Result<(), ArchonError> {
     }
     let mut held = std::mem::take(&mut outbox.pending);
     let rest = split_past_bytes(&mut held, BATCH_MAX_BYTES)?;
-    let flushed = outbox.flush_left > 0;
-    outbox.flush_left = outbox.flush_left.saturating_sub(held.len());
-    assert!(
-        outbox.flush_left <= rest.len(),
-        "what a flush waits for is held"
-    );
+    let first_seq = compact::first_seq(&held);
     let collapse = std::mem::take(&mut outbox.collapse);
     // What did not fit goes out next, to the generation this batch reaches.
     outbox.flush = !rest.is_empty();
@@ -818,7 +808,7 @@ async fn key_pending(ctx: &DaemonContext) -> Result<(), ArchonError> {
         key,
         events,
         directives,
-        flushed,
+        first_seq,
     });
     write_outbox(&mut store, &outbox)
 }
@@ -928,7 +918,10 @@ async fn restate(ctx: &DaemonContext, reason: &str, quiet: bool) -> Result<(), A
                 hold_as(&mut store, Held::new(event, archon_core::now(), quiet))?;
             }
             Some(held) if held.quiet && !quiet => {
+                // A flush that waits for it still does.
+                let seq = held.seq;
                 *held = Held::new(held.event.clone(), archon_core::now(), false);
+                held.seq = seq;
                 write_outbox(&mut store, &outbox)?;
             }
             Some(_) => {}
@@ -971,9 +964,9 @@ fn read_outbox(store: &Store) -> Result<Outbox, ArchonError> {
         keyed.is_none_or(|batch| !batch.events.is_empty() && !batch.key.is_empty()),
         "only a keyed, non-empty batch is ever in flight"
     );
-    if outbox.flush_left > outbox.pending.len() {
+    if outbox.pending.iter().any(|news| news.seq > outbox.last_seq) {
         return Err(ArchonError::Corrupt(format!(
-            "kv {OUTBOX_KEY}: a flush waits for more news than is held"
+            "kv {OUTBOX_KEY}: held news is numbered past the last number given"
         )));
     }
     Ok(outbox)

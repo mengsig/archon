@@ -395,6 +395,58 @@ async fn a_flush_waits_for_its_news_after_a_concurrent_compaction_moves_it() {
     assert!(told.contains(&"chat_answer"), "{told:?}");
 }
 
+/// Two overlapping flushes each wait for their own news: the first returns
+/// once its batch is acknowledged, while the second's is still retried.
+#[tokio::test]
+async fn an_earlier_flush_does_not_wait_for_news_a_later_flush_marked() {
+    let harness = harness().await;
+    let delivery = delivering(&harness).await;
+    // Each batch is acknowledged only on its retry, a second later.
+    let busy = Scripted::refuse("internal", "busy");
+    harness.fake.script("trigger", busy.clone());
+    harness.fake.script("trigger", Scripted::ok());
+    harness.fake.script("trigger", busy);
+    triggers::push(&harness.ctx, blocked("first"))
+        .await
+        .unwrap();
+    harness.fake.wait_for("trigger", 1, WAIT).await;
+    let ctx = harness.ctx.clone();
+    let first = tokio::spawn(async move { triggers::flush_quiet(&ctx).await });
+    // Marking takes one store write; the retry is a second away.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    triggers::push_quiet(&harness.ctx, blocked("second"))
+        .await
+        .unwrap();
+    let ctx = harness.ctx.clone();
+    let second = tokio::spawn(async move { triggers::flush_quiet(&ctx).await });
+
+    tokio::time::timeout(WAIT, first)
+        .await
+        .expect("the first flush ends")
+        .unwrap()
+        .unwrap();
+    let held = triggers::held(&harness.ctx).await.unwrap();
+    let left: Vec<&str> = held
+        .iter()
+        .map(|event| match event {
+            TriggerEvent::ItemBlocked { reason, .. } => reason.as_str(),
+            other => other.kind(),
+        })
+        .collect();
+    assert_eq!(
+        left,
+        ["second"],
+        "it returned with only the later news held"
+    );
+    tokio::time::timeout(WAIT, second)
+        .await
+        .expect("the second flush ends")
+        .unwrap()
+        .unwrap();
+    assert!(triggers::held(&harness.ctx).await.unwrap().is_empty());
+    delivery.abort();
+}
+
 #[tokio::test]
 async fn delivery_creates_the_orchestrator_when_none_exists() {
     let harness = harness().await;

@@ -30,7 +30,12 @@
   after 3 minutes, and its lead is told to delegate the review on another
   allowed provider or to fail the task so the orchestrator re-plans. Before,
   it waited until the stage deadline, and a held stage's deadline kept moving.
-  A quota restored within the 3 minutes stops nothing.
+  A quota restored within the 3 minutes stops nothing, and the block is read
+  again just before the cancel. Dispatch passes now run at least every 30
+  seconds whatever `dispatcher.tick_secs` says, so the cancel comes within 4
+  minutes. Known limitation: a reviewer whose quota returns in the one Aether
+  round trip before the cancel is still cancelled, as Aether has no
+  conditional cancel.
 
 ## 1.6.3
 

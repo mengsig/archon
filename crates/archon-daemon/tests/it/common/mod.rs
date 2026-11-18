@@ -848,6 +848,8 @@ struct FakeState {
     stalls: Vec<(String, Arc<tokio::sync::Semaphore>)>,
     /// What `pulse` reports of an agent's tree; an empty pulse otherwise.
     pulses: BTreeMap<AetherAgentId, TreePulse>,
+    /// The pulse an agent reports once it was read this many more times.
+    pulses_after_reads: BTreeMap<AetherAgentId, (usize, TreePulse)>,
     /// What `open_tool_call` reports of an agent until its turn is interrupted.
     open_calls: BTreeMap<AetherAgentId, OpenToolCall>,
     /// Every `clear_inspection` that resumed a tree: its lead and the note.
@@ -1182,6 +1184,16 @@ impl FakeBackend {
     /// `pulse` reports `pulse` for `agent`'s tree from now on.
     pub fn set_pulse(&self, agent: &AetherAgentId, pulse: TreePulse) {
         self.state().pulses.insert(agent.clone(), pulse);
+    }
+
+    /// `agent` reports `pulse` once its current pulse was read `reads` more
+    /// times, as when Aether changes its state between two reads.
+    pub fn set_pulse_after_reads(&self, agent: &AetherAgentId, reads: usize, pulse: TreePulse) {
+        assert!(reads >= 1, "the current pulse is read at least once");
+        let mut state = self.state();
+        state
+            .pulses_after_reads
+            .insert(agent.clone(), (reads, pulse));
     }
 
     /// `network_default` reports `network` from now on: Aether's
@@ -1676,7 +1688,18 @@ impl AgentBackend for FakeBackend {
         if !state.knows(agent) && !delegated {
             return Ok(None);
         }
-        Ok(Some(state.pulses.get(agent).copied().unwrap_or_default()))
+        let read = state.pulses.get(agent).copied().unwrap_or_default();
+        if let Some((reads, next)) = state.pulses_after_reads.remove(agent) {
+            match reads {
+                0 | 1 => drop(state.pulses.insert(agent.clone(), next)),
+                more => drop(
+                    state
+                        .pulses_after_reads
+                        .insert(agent.clone(), (more - 1, next)),
+                ),
+            }
+        }
+        Ok(Some(read))
     }
 
     async fn open_tool_call(

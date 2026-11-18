@@ -206,7 +206,7 @@ hung_check_minutes = 60        # the same for a known long check (`make ci`, `ca
 # max = { merge = "manual", tools = "guarded" }   # the ceiling only the operator raises; values in ARCHITECTURE §18.1
 
 [dispatcher]
-tick_secs = 15                 # how often the queue is scanned
+tick_secs = 15                 # how often the queue is scanned; at most 30
 inbox_unread_after = "15m"     # an inbox item a running stage's agent leaves unread this long warns in get_item and status
 
 [chat]

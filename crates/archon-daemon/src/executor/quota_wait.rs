@@ -1,8 +1,8 @@
 //! A reviewer delegated on a provider whose quota is spent is blocked by Aether
 //! until the quota resets, and a held stage has its deadline moved, so the
 //! review could wait for hours. Once such a reviewer has waited
-//! [`FAIL_AFTER`], the sweep tells its lead to re-plan the review and
-//! cancels it, well within five minutes of the wait being seen.
+//! [`FAIL_AFTER`], the sweep cancels it with a hint telling its lead to
+//! re-plan the review, well within five minutes of the wait being seen.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -156,9 +156,8 @@ async fn forget_unwatched(ctx: &DaemonContext, watched: &[StageRun]) -> Result<(
     Ok(())
 }
 
-/// Tell `lead` how to re-plan its review, then cancel the waiting reviewer.
-/// The message is keyed, so a sweep that repeats it after a failed cancel
-/// delivers it once.
+/// Cancel the waiting reviewer if it is still quota-blocked, with the
+/// re-plan hint as the reason its lead reads, then tell the lead the same.
 async fn stop(
     ctx: &DaemonContext,
     stage: &StageRun,
@@ -172,15 +171,19 @@ async fn stop(
         waited >= FAIL_AFTER,
         "a reviewer is stopped only after its wait"
     );
-    let text = replan_hint(reviewer, waiting.resets_at);
-    let key = format!("{}:quota-wait:{}", stage.id, reviewer.agent);
-    let mut stopped = ctx.backend.send_message(lead, &text, &key).await;
-    if stopped.is_ok() {
-        stopped = ctx.backend.cancel(&reviewer.agent, &text).await;
+    let key = format!("{WAIT_PREFIX}{}:{}", stage.id, reviewer.agent);
+    // Aether has no conditional cancel: the block is read again just before
+    // the cancel, which leaves one round trip for the reviewer to resume in.
+    match still_blocked(ctx, stage, &reviewer.agent).await? {
+        Some(true) => {}
+        Some(false) => return ctx.store.lock().await.kv_delete(&key),
+        None => return Ok(()),
     }
-    match stopped {
+    let text = replan_hint(reviewer, waiting.resets_at);
+    match ctx.backend.cancel(&reviewer.agent, &text).await {
         Ok(()) => {
             tracing::info!(stage = %stage.id, reviewer = %reviewer.agent, "reviewer waiting on a spent quota stopped");
+            tell_lead(ctx, stage, lead, &reviewer.agent, &text).await?;
         }
         Err(error) if error.is_store() => return Err(error),
         Err(error) if resume::unanswered(&error) => {
@@ -192,8 +195,53 @@ async fn stop(
             tracing::warn!(stage = %stage.id, reviewer = %reviewer.agent, %refusal, "quota-waiting reviewer not stopped");
         }
     }
-    let key = format!("{WAIT_PREFIX}{}:{}", stage.id, reviewer.agent);
     ctx.store.lock().await.kv_delete(&key)
+}
+
+/// Whether Aether still blocks `reviewer` on a spent quota; `None` when it
+/// did not answer, so the next sweep reads it again.
+async fn still_blocked(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    reviewer: &AetherAgentId,
+) -> Result<Option<bool>, ArchonError> {
+    assert_eq!(
+        stage.state,
+        StageState::Running,
+        "only a running stage waits"
+    );
+    match ctx.backend.pulse(reviewer).await {
+        Ok(pulse) => Ok(Some(pulse.is_some_and(|p| p.quota_blocked))),
+        Err(error) if error.is_store() => Err(error),
+        Err(error) => {
+            tracing::info!(stage = %stage.id, %reviewer, %error, "quota block not read again; read next sweep");
+            Ok(None)
+        }
+    }
+}
+
+/// Tell `lead` the hint its cancelled reviewer's outcome also carries. Keyed,
+/// so it is delivered once; a lost message leaves the hint in that outcome.
+async fn tell_lead(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    lead: &AetherAgentId,
+    reviewer: &AetherAgentId,
+    text: &str,
+) -> Result<(), ArchonError> {
+    assert!(
+        text.contains("Re-plan the review"),
+        "the hint says what to do"
+    );
+    let key = format!("{}:quota-wait:{reviewer}", stage.id);
+    match ctx.backend.send_message(lead, text, &key).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.is_store() => Err(error),
+        Err(error) => {
+            tracing::warn!(stage = %stage.id, %lead, %error, "re-plan hint not sent; the cancelled reviewer's outcome carries it");
+            Ok(())
+        }
+    }
 }
 
 /// What the lead is told; the same words for a repeat of the same wait.
@@ -217,4 +265,21 @@ fn replan_hint(reviewer: &Descendant, resets_at: Option<Timestamp>) -> String {
         "the hint says what to do"
     );
     text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A wait is seen within one dispatch pass and stopped by the first pass
+    /// after [`FAIL_AFTER`], so a blocked reviewer ends within five minutes.
+    #[test]
+    fn a_blocked_reviewer_is_stopped_within_five_minutes() {
+        let pass = crate::dispatcher::MAX_PASS_INTERVAL.as_secs();
+        let seconds = u64::try_from(FAIL_AFTER.num_seconds()).expect("positive");
+        assert!(
+            2 * pass + seconds < 5 * 60,
+            "{pass}s passes, {seconds}s wait"
+        );
+    }
 }

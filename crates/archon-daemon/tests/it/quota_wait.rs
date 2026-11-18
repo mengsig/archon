@@ -174,3 +174,27 @@ async fn a_quota_blocked_reviewer_fails_without_a_matching_reading() {
     assert_eq!(told.len(), 1, "{told:?}");
     assert!(told[0].contains("names no reset"), "{}", told[0]);
 }
+
+/// Aether resumes the reviewer after the sweep listed it as blocked and
+/// before its cancel: the block is read again, so nothing is stopped.
+#[tokio::test]
+async fn a_reviewer_that_resumes_before_its_cancel_is_not_stopped() {
+    let h = Harness::new().await;
+    let (stage, lead, reviewer) = held_reviewer(&h).await;
+    h.dispatch().await;
+    backdate_wait(&h, &stage, &reviewer, TimeDelta::minutes(3)).await;
+    let working = TreePulse {
+        running: true,
+        ..TreePulse::default()
+    };
+    h.backend.set_pulse_after_reads(&reviewer, 1, working);
+    h.dispatch().await;
+    assert!(
+        h.backend.cancelled().is_empty(),
+        "a working reviewer is kept"
+    );
+    assert!(told(&h, &lead).is_empty(), "its lead is told nothing");
+    let key = format!("quota_wait:{}:{reviewer}", stage.id);
+    let left = h.ctx.store.lock().await.kv_get(&key).unwrap();
+    assert_eq!(left, None, "its wait is forgotten");
+}

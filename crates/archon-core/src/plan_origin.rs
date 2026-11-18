@@ -377,15 +377,13 @@ impl PlannedPlan {
 
     /// The plan a run is driven by and quota holds read: a pinned choice
     /// drops its tier there, so no quota move of an unstarted stage changes
-    /// it. Dispatch resolves a legacy tier before this, and then it is the daemon's.
-    pub fn dispatched(&self, item: &QueueItemId) -> ModelPlan {
+    /// it. A legacy tier stays only where `legacy` resolves it: the hold of a
+    /// queued item, which dispatch resolves before a run reads it with `Keep`.
+    pub fn dispatched(&self, item: &QueueItemId, legacy: LegacyTiers) -> ModelPlan {
         let mut plan = self.model_plan.clone();
         for (key, choices) in plan.0.iter_mut() {
             for (slot, choice) in choices.iter_mut().enumerate() {
-                if !self
-                    .origin(item, key, slot)
-                    .tier_may_move(LegacyTiers::Keep)
-                {
+                if !self.origin(item, key, slot).tier_may_move(legacy) {
                     choice.tier = None;
                 }
             }

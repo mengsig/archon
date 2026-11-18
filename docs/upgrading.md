@@ -27,7 +27,8 @@ for. Both kinds below are pins:
 - `legacy_unknown`: an item stored before origins were recorded. Nothing is
   backfilled. Its exact models and its efforts stay as planned; a choice
   stored with a tier is resolved again when dispatch starts a new run, and
-  that model then reads as `tier`. A run already under way when archond was
+  that model then reads as `tier`, so a queued one waits for provider quota
+  like any tier. A run already under way when archond was
   upgraded, and any quota move, leaves a legacy model where it is. A restack fix of one stays `legacy_unknown`; a
   refresh of one is a new item with origins of its own.
 - `unattributed`: never resolved again, not even its tier. A stored origin
@@ -35,8 +36,9 @@ for. Both kinds below are pins:
   origin, reads as one, and origins that cannot be read leave the item
   readable with every field unattributed. It should never be counted: a
   non-zero count is a bug to report, not something to fix by hand. An item
-  whose plan cannot be read at all is logged and counted on its own line,
-  and the rest of `archon status` still answers.
+  whose plan cannot be read at all is logged and counted on its own line
+  instead of failing the count. A queued, blocked or running one still fails
+  `archon status`, as any unreadable item there did before.
 
 A tiered entry also records who asked for its tier: the caller when the
 request named one, the daemon when the stage's default supplied it. A quota

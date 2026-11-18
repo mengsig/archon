@@ -546,9 +546,14 @@ pub(super) async fn driver_of(
     };
     let operator_gates = OperatorGates::for_run(&spec, &item.autonomy);
     let experiments = crate::experiments::item_dir(&ctx.paths, &item.id);
-    let driver = RunDriver::new(Arc::new(spec), item.model_plan.dispatched(&item.id), vars)?
-        .with_gates(operator_gates)?
-        .with_experiments(experiments);
+    let driver = RunDriver::new(
+        Arc::new(spec),
+        item.model_plan
+            .dispatched(&item.id, archon_core::plan_origin::LegacyTiers::Keep),
+        vars,
+    )?
+    .with_gates(operator_gates)?
+    .with_experiments(experiments);
     let mut driver = super::proposal::start_past(driver, approved)?;
     for gate in gates {
         assert_eq!(gate.run, run.id, "gates_for_run returns the run's gates");

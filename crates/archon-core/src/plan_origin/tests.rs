@@ -511,12 +511,14 @@ fn a_run_drives_an_unattributed_tiered_model_as_a_pin() {
     let item = QueueItemId::new();
     let planned = enqueued(&item);
     assert!(
-        planned.dispatched(&item).0["review"][0].tier.is_some(),
+        planned.dispatched(&item, LegacyTiers::Keep).0["review"][0]
+            .tier
+            .is_some(),
         "a daemon tier may move"
     );
     let other = QueueItemId::new();
     let unattributed = PlannedPlan::unattributed(&other, planned.plan().clone());
-    let driven = unattributed.dispatched(&other);
+    let driven = unattributed.dispatched(&other, LegacyTiers::Keep);
     assert_eq!(
         driven.0["review"][0].tier, None,
         "no quota move changes a pin"
@@ -568,7 +570,7 @@ fn a_tier_no_writer_accounted_for_pins_its_model_even_when_the_model_origin_is_s
         assert_eq!(origin.tier.unwrap().source, PlanSource::Unattributed);
         assert_eq!(planned.unattributed_fields(&item), 1);
         assert_eq!(
-            planned.dispatched(&item).0["review"][0].tier,
+            planned.dispatched(&item, LegacyTiers::Keep).0["review"][0].tier,
             None,
             "no quota move"
         );
@@ -591,9 +593,15 @@ fn a_legacy_tier_is_resolved_only_where_dispatch_starts_a_run() {
     let mut planned: PlannedPlan = serde_json::from_value(stored).unwrap();
     let item = QueueItemId::new();
     assert_eq!(
-        planned.dispatched(&item).0["review"][0].tier,
+        planned.dispatched(&item, LegacyTiers::Keep).0["review"][0].tier,
         None,
         "a recovered legacy run drives its model as a pin"
+    );
+    assert!(
+        planned.dispatched(&item, LegacyTiers::Resolve).0["review"][0]
+            .tier
+            .is_some(),
+        "a queued legacy stage waits for quota as dispatch will resolve it"
     );
     let follow = |_: &str, _: &TierChoice| -> Result<_, ArchonError> {
         unreachable!("a quota move never resolves a legacy model")
@@ -619,7 +627,9 @@ fn a_legacy_tier_is_resolved_only_where_dispatch_starts_a_run() {
         PlanSource::Tier
     );
     assert!(
-        planned.dispatched(&item).0["review"][0].tier.is_some(),
+        planned.dispatched(&item, LegacyTiers::Keep).0["review"][0]
+            .tier
+            .is_some(),
         "now the daemon's"
     );
 }
@@ -644,7 +654,10 @@ fn an_origin_missing_who_chose_it_or_when_reads_as_unattributed() {
         let origin = planned.origin(&item, "review", 0);
         assert_eq!(origin.model.source, PlanSource::Unattributed, "{origin:?}");
         assert_eq!(planned.unattributed_fields(&item), 1);
-        assert_eq!(planned.dispatched(&item).0["review"][0].tier, None);
+        assert_eq!(
+            planned.dispatched(&item, LegacyTiers::Keep).0["review"][0].tier,
+            None
+        );
     }
 }
 

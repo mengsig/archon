@@ -302,7 +302,8 @@ fn assemble(
     let gates = OperatorGates::for_run(&spec, &item.autonomy);
     let driver = RunDriver::new(
         spec.clone(),
-        item.model_plan.dispatched(&item.id),
+        item.model_plan
+            .dispatched(&item.id, archon_core::plan_origin::LegacyTiers::Keep),
         base_vars.clone(),
     )?
     .with_gates(gates)?

@@ -796,6 +796,32 @@ async fn a_repository_s_own_weights_hold_its_items_when_every_provider_is_out() 
     assert_eq!(reason.code, WaitingReasonCode::ProviderQuota);
 }
 
+/// Dispatch resolves a queued legacy tier, so admission holds it for quota
+/// like a daemon tier rather than letting it start on an exhausted provider.
+#[tokio::test]
+async fn a_queued_item_from_before_origins_waits_for_quota_like_any_tier() {
+    let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![
+            ("claude-code", window(0, TimeDelta::hours(2))),
+            ("codex", window(0, TimeDelta::hours(1))),
+        ],
+    );
+    let item = enqueue(&h, ROUTED, "queued by 1.6.3", tier_plan()).await;
+    {
+        let mut store = h.ctx.store.lock().await;
+        let mut stored = store.item(&item.id).unwrap();
+        stored.model_plan = PlannedPlan::legacy(stored.model_plan.into_plan());
+        store.update_item(&stored).unwrap();
+    }
+    h.dispatch().await;
+    assert!(h.stages(&item.id).await.is_empty(), "nothing spawned");
+    let reason = waiting_reason(&status(&h).await, &item);
+    assert_eq!(reason.code, WaitingReasonCode::ProviderQuota);
+}
+
 #[tokio::test]
 async fn an_unattributed_tier_model_is_a_pin_that_no_quota_holds_at_admission() {
     let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;

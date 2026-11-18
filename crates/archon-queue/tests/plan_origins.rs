@@ -176,17 +176,27 @@ fn a_corrupt_row_is_named_and_the_count_of_the_others_still_stands() {
         .insert_item(&planned(&alpha, "corrupt"), None)
         .unwrap();
     let edited = store.insert_item(&planned(&alpha, "edited"), None).unwrap();
+    let planless = store
+        .insert_item(&planned(&alpha, "planless"), None)
+        .unwrap();
     let conn = rusqlite::Connection::open(&path).unwrap();
     let broken = "UPDATE items SET state = 'succeeded', data = '{not json' WHERE id = ?1";
     assert_eq!(conn.execute(broken, [corrupt.id.as_str()]).unwrap(), 1);
     let unknown = "UPDATE items SET data =
         json_set(data, '$.model_origins.entries.implement[0].effort.source', 'future') WHERE id = ?1";
     assert_eq!(conn.execute(unknown, [edited.id.as_str()]).unwrap(), 1);
+    let no_plan = "UPDATE items SET state = 'succeeded',
+        data = json_remove(data, '$.model_plan', '$.model_origins') WHERE id = ?1";
+    assert_eq!(conn.execute(no_plan, [planless.id.as_str()]).unwrap(), 1);
     let count = store
         .unattributed_plan_fields()
         .expect("a corrupt row is not fatal");
     assert_eq!(count.unattributed, 1);
-    assert_eq!(count.unreadable, vec![corrupt.id.to_string()]);
+    let mut unreadable = vec![corrupt.id.to_string(), planless.id.to_string()];
+    unreadable.sort();
+    let mut named = count.unreadable.clone();
+    named.sort();
+    assert_eq!(named, unreadable);
     assert_eq!(store.item(&sound.id).unwrap().id, sound.id);
 }
 

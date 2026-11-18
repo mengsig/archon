@@ -188,6 +188,7 @@ const PLANS_WITH_ORIGINS: &str = "SELECT id,
      FROM items
      WHERE CASE WHEN json_valid(data)
                 THEN json_type(data, '$.model_origins') IS NOT NULL
+                     OR json_type(data, '$.model_plan') IS NOT 'object'
                 ELSE 1
            END";
 

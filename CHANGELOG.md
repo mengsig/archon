@@ -12,9 +12,9 @@
 
 ### Fixed
 
-- An amendment or retry of a review item queued onto a pull request that names
-  a commit other than its frozen head is refused with "queue a new review item
-  at <sha>", instead of starting a review attempt its item cannot record.
+- A review item's frozen head cannot be moved by an amendment, retry or steer.
+  A review that names another head than the one checked out fails the stage
+  with "queue a new review item at <sha>".
 
 ## 1.6.3
 

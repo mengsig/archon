@@ -475,6 +475,11 @@ async fn a_review_whose_branch_moved_off_the_frozen_head_is_refused() {
     };
     assert!(error.contains("a review item commits nothing"), "{error}");
     assert!(error.contains(&head), "{error}");
+    let moved = made["commit"].as_str().unwrap();
+    assert!(
+        error.contains(&format!("queue a new review item at {moved}")),
+        "{error}"
+    );
     nothing_pushed_to_the_fork(&h, &gh, &head);
 }
 
@@ -1472,81 +1477,39 @@ async fn queued_review(h: &Harness) -> QueueItem {
     enqueue(h, asked).await.expect("a fork's pull request")
 }
 
-#[tokio::test]
-async fn an_amendment_naming_another_head_of_a_review_item_is_refused() {
-    let (h, _gh, head) = fork_pull_request().await;
-    let item = queued_review(&h).await;
-    let other = "0123456789abcdef0123456789abcdef01234567";
-    let refused = h
-        .cli(amend(&item, &format!("review {other} instead")))
-        .await
-        .unwrap_err()
-        .to_string();
-    assert!(
-        refused.contains(&format!("queue a new review item at {other}")),
-        "{refused}"
-    );
-    assert_eq!(h.item(&item.id).await.brief, item.brief, "nothing amended");
-
-    for text in [format!("still {head}"), "plain words".to_owned()] {
-        h.cli(amend(&item, &text))
-            .await
-            .expect("an allowed amendment");
-        assert!(h.item(&item.id).await.brief.contains(&text));
-    }
+async fn frozen_head(h: &Harness, item: &QueueItem) -> String {
+    h.item(&item.id).await.onto.expect("onto").head_sha
 }
 
 #[tokio::test]
-async fn a_retry_naming_another_head_of_a_review_item_is_refused() {
+async fn no_amendment_retry_or_steer_moves_the_frozen_head_of_a_review_item() {
     let (h, _gh, head) = fork_pull_request().await;
     let item = queued_review(&h).await;
+    assert_eq!(frozen_head(&h, &item).await, head);
+    let other = "0123456789abcdef0123456789abcdef01234567";
+
+    h.cli(amend(&item, &format!("review {other} instead")))
+        .await
+        .expect("free text is only text");
+    h.cli(Request::SteerItem {
+        item: item.id.clone(),
+        steer: archon_core::steer::Steer {
+            note: Some(format!("review {other} instead")),
+            ..Default::default()
+        },
+    })
+    .await
+    .ok();
+    assert_eq!(frozen_head(&h, &item).await, head, "amended and steered");
+
     h.cli(Request::CancelItem {
         item: item.id.clone(),
         reason: None,
     })
     .await
     .expect("a queued item cancels");
-    let other = "fedcba9876543210fedcba9876543210fedcba98";
-    let refused = h
-        .cli(retry_with(&item, Some(&format!("try {other}"))))
+    h.cli(retry_with(&item, Some(&format!("try {other}"))))
         .await
-        .unwrap_err()
-        .to_string();
-    assert!(
-        refused.contains(&format!("queue a new review item at {other}")),
-        "{refused}"
-    );
-    assert!(matches!(
-        h.state(&item.id).await,
-        QueueState::Cancelled { .. }
-    ));
-
-    let text = format!("again at {head}");
-    h.cli(retry_with(&item, Some(&text)))
-        .await
-        .expect("an allowed retry");
-    assert!(h.item(&item.id).await.brief.contains(&text));
-    assert!(matches!(h.state(&item.id).await, QueueState::Queued));
-}
-
-#[tokio::test]
-async fn a_steer_note_naming_another_head_of_a_review_item_is_refused() {
-    let (h, _gh, _head) = fork_pull_request().await;
-    let item = queued_review(&h).await;
-    let refused = h
-        .cli(Request::SteerItem {
-            item: item.id.clone(),
-            steer: archon_core::steer::Steer {
-                note: Some("review fedcba987654 instead".into()),
-                ..Default::default()
-            },
-        })
-        .await
-        .unwrap_err()
-        .to_string();
-    assert!(
-        refused.contains("queue a new review item at fedcba987654"),
-        "{refused}"
-    );
-    assert_eq!(h.item(&item.id).await.brief, item.brief, "nothing steered");
+        .expect("a retry");
+    assert_eq!(frozen_head(&h, &item).await, head, "retried");
 }

@@ -943,7 +943,7 @@ fn moved_off(reviewed: Option<&OntoPullRequest>, head: &str) -> Option<String> {
     (reviewed.head_sha != head).then(|| {
         format!(
             "this item reviews {} at {}, but its branch is at {head}: a review item commits \
-             nothing, so reset the branch to {} and review that commit",
+             nothing, so reset the branch to {} or queue a new review item at {head}",
             reviewed.pr.url(),
             reviewed.head_sha,
             reviewed.head_sha

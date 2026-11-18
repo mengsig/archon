@@ -530,7 +530,6 @@ pub(super) async fn update_within(
         check_title(title)?;
     }
     let current = ctx.store.lock().await.item(id)?;
-    check_frozen_head(&current, patch.brief_append.as_deref())?;
     if matches!(current.state, QueueState::Succeeded { .. }) && patch.autonomy.is_some() {
         return after_success(ctx, current, patch, ceiling).await;
     }
@@ -769,7 +768,6 @@ pub(super) async fn retry(
     retry: Retry,
 ) -> Result<Reply, ArchonError> {
     let current = ctx.store.lock().await.item(id)?;
-    check_frozen_head(&current, retry.brief_append.as_deref())?;
     let replaces_plan = retry.model_plan.is_some();
     let (env, base, spec) = item_pipeline(ctx, &current).await?;
     // A 1.0 item names the ship agent its built-in no longer has; the retry stores the repair.
@@ -1029,52 +1027,6 @@ pub(super) fn queue_again(
     let item = store.transition_item(&item.id, QueueState::Queued, archon_core::now())?;
     unblock_dependents(store, &item.id)?;
     Ok(item)
-}
-
-/// A review item's `onto` head is frozen, so text that names another commit
-/// would send a review attempt to a head the item cannot record.
-pub(super) fn check_frozen_head(item: &QueueItem, text: Option<&str>) -> Result<(), ArchonError> {
-    let Some(onto) = item.onto.as_deref().filter(|onto| onto.review_only) else {
-        return Ok(());
-    };
-    assert!(
-        !onto.head_sha.is_empty(),
-        "a frozen head is recorded at enqueue"
-    );
-    let Some(other) = text.and_then(|text| other_commit(text, &onto.head_sha)) else {
-        return Ok(());
-    };
-    Err(ArchonError::Invalid(format!(
-        "{} reviews the frozen head {} and cannot move to {other}: queue a new review item at {other}",
-        item.id, onto.head_sha
-    )))
-}
-
-/// The first commit id in `text` that is not `head` and not labelled as a
-/// base or earlier commit. Abbreviations of 7 or more hex digits with both a
-/// digit and a letter count; plain numbers and words do not.
-fn other_commit<'a>(text: &'a str, head: &str) -> Option<&'a str> {
-    const CONTEXT: [&str; 5] = ["base", "previous", "prior", "old", "parent"];
-    let mut before = "";
-    for token in text
-        .split(|c: char| !c.is_ascii_alphanumeric())
-        .filter(|t| !t.is_empty())
-    {
-        let label = before.to_ascii_lowercase();
-        before = token;
-        if CONTEXT.contains(&label.as_str()) || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
-            continue;
-        }
-        let lower = token.to_ascii_lowercase();
-        let full = matches!(token.len(), 40 | 64);
-        let abbreviated = (7..40).contains(&token.len())
-            && token.bytes().any(|b| b.is_ascii_digit())
-            && token.bytes().any(|b| b.is_ascii_alphabetic());
-        if (full || abbreviated) && !head.to_ascii_lowercase().starts_with(&lower) {
-            return Some(token);
-        }
-    }
-    None
 }
 
 /// Record an amendment of the item's brief in its feed history.
@@ -1341,30 +1293,6 @@ pub(super) async fn check_runs_here(
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn only_a_full_commit_id_other_than_the_frozen_head_is_found() {
-        let head = "0123456789abcdef0123456789abcdef01234567";
-        let other = "fedcba9876543210fedcba9876543210fedcba98";
-        assert_eq!(other_commit(&format!("review {head} again"), head), None);
-        assert_eq!(other_commit(&format!("not {other}."), head), Some(other));
-        assert_eq!(
-            other_commit("base 0123456789abcdef, 1234567, decade", head),
-            None
-        );
-        assert_eq!(
-            other_commit(
-                "against base fedcba9876543210fedcba9876543210fedcba98",
-                head
-            ),
-            None
-        );
-        assert_eq!(
-            other_commit("review fedcba987654 instead", head),
-            Some("fedcba987654")
-        );
-        assert_eq!(other_commit("frozen 0123456789ab", head), None);
-    }
-
     use super::*;
     use archon_pipeline::Catalog;
 

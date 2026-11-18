@@ -70,7 +70,6 @@ async fn steer_run_or_waiting(
     steer: Steer,
 ) -> Result<Reply, ArchonError> {
     let item = ctx.store.lock().await.item(id)?;
-    items::check_frozen_head(&item, steer.note.as_deref())?;
     let env = RepoEnv::load(ctx, item.repo.as_ref()).await?;
     let sources = Sources::read(&env, &item, &steer)?;
     let asked = Asked {
@@ -117,7 +116,6 @@ pub(super) async fn update(
     mut patch: ItemPatch,
 ) -> Result<Reply, ArchonError> {
     let item = ctx.store.lock().await.item(id)?;
-    items::check_frozen_head(&item, patch.brief_append.as_deref())?;
     let steers = patch.brief_append.is_some() || patch.model_plan.is_some();
     let QueueState::Running { run } = &item.state else {
         return items::update(ctx, id, patch).await;

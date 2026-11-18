@@ -59,9 +59,14 @@ pub(crate) struct WatchRecord {
     /// pages are read only while the list is newer than this.
     #[serde(default)]
     pub watermark: Option<Timestamp>,
-    /// The highest pull request number seen: an unmarked one above is new.
+    /// The highest pull request number of a complete read: an unmarked one
+    /// above, made since the baseline, is new.
     #[serde(default)]
     pub max_number: u64,
+    /// GitHub's clock at the baseline read: a pull request made before it,
+    /// closed then and reopened later, is no new one.
+    #[serde(default)]
+    pub baseline_at: Option<Timestamp>,
     /// What each pull request looked like when last told; `None` before the
     /// baseline. A pull request that left the list keeps its mark until a
     /// read of the whole list.
@@ -81,6 +86,7 @@ impl WatchRecord {
             fetched_at: None,
             watermark: None,
             max_number: 0,
+            baseline_at: None,
             pulls: None,
         }
     }
@@ -92,6 +98,7 @@ impl WatchRecord {
             self.etag = None;
             self.watermark = None;
             self.max_number = 0;
+            self.baseline_at = None;
             self.pulls = None;
         }
         self
@@ -118,6 +125,19 @@ pub(crate) struct PullMark {
     /// next read checks the pull request's comments and reviews again.
     #[serde(default)]
     pub settled: bool,
+}
+
+impl PullMark {
+    /// Whether activity at `at` came after this mark's read. A settled mark
+    /// was read over [`SETTLE`] after `updated_at`, so activity in that second
+    /// was there already; an unsettled one may have missed it.
+    pub(crate) fn is_after(&self, at: Timestamp) -> bool {
+        if self.settled {
+            at > self.updated_at
+        } else {
+            at >= self.updated_at
+        }
+    }
 }
 
 /// One change a trigger reports.
@@ -223,6 +243,8 @@ pub(crate) struct Pull {
     #[serde(deserialize_with = "head_sha")]
     head: String,
     pub updated_at: Timestamp,
+    #[serde(default)]
+    created_at: Option<Timestamp>,
     #[serde(default, deserialize_with = "logins")]
     requested_reviewers: BTreeSet<String>,
     #[serde(default, deserialize_with = "teams")]
@@ -324,15 +346,15 @@ pub(crate) struct Reviewed {
 
 impl Reviewed {
     /// Whether `reviews` hold a submission not seen yet, and what is seen
-    /// after them. With none seen before, only one at or after `since` (the
-    /// mark's `updated_at`) is news: the older ones were there at the baseline.
-    pub(crate) fn after(&self, since: Timestamp, reviews: &[Activity]) -> (bool, Reviewed) {
+    /// after them. With none seen before, only one after `mark`'s read is
+    /// news: the older ones were there at the baseline.
+    pub(crate) fn after(&self, mark: &PullMark, reviews: &[Activity]) -> (bool, Reviewed) {
         let submitted: Vec<(Timestamp, u64)> = reviews
             .iter()
             .filter_map(|r| r.at.map(|at| (at, r.id)))
             .collect();
         let unseen = |&(at, id): &(Timestamp, u64)| match self.at {
-            None => at >= since,
+            None => mark.is_after(at),
             Some(seen) => at > seen || (at == seen && !self.ids.contains(&id)),
         };
         let news = submitted.iter().any(unseen);
@@ -368,9 +390,9 @@ pub(crate) fn diff(record: &WatchRecord, pulls: &[Pull]) -> Diffed {
     let mut diffed = Diffed::default();
     for (index, pull) in pulls.iter().enumerate() {
         let Some(mark) = before.get(&pull.number) else {
-            // An older number without a mark (reopened, or past the cap) is
-            // marked quietly: with nothing to compare, nothing in it is news.
-            if pull.number > record.max_number {
+            // One reopened, or past the cap, is marked quietly: with nothing
+            // to compare, nothing in it is news.
+            if is_new(record, pull) {
                 diffed
                     .changes
                     .push(pull.told("new_pull_request", Vec::new()));
@@ -398,6 +420,18 @@ pub(crate) fn diff(record: &WatchRecord, pulls: &[Pull]) -> Diffed {
         "one change per pull request"
     );
     diffed
+}
+
+/// Whether `pull`, which has no mark, was opened since `record`'s last
+/// complete read: numbered above it and, when GitHub says, made since the
+/// baseline (a higher number closed then may be reopened).
+fn is_new(record: &WatchRecord, pull: &Pull) -> bool {
+    assert!(record.pulls.is_some(), "only a baselined watch tells news");
+    let made_since = match (pull.created_at, record.baseline_at) {
+        (Some(created), Some(baseline)) => created >= baseline,
+        _ => true,
+    };
+    pull.number > record.max_number && made_since
 }
 
 /// What one read adds to the marks.
@@ -587,9 +621,21 @@ mod tests {
         }
     }
 
+    /// The mark of a pull request last updated at `T0`, `settled` or not.
+    fn mark_at_t0(settled: bool) -> PullMark {
+        PullMark {
+            head: "a".into(),
+            updated_at: T0.parse().unwrap(),
+            reviewers: BTreeSet::new(),
+            comment_id: 0,
+            reviewed: Reviewed::default(),
+            settled,
+        }
+    }
+
     #[test]
     fn a_review_is_told_by_its_submission_not_its_id() {
-        let since: Timestamp = T0.parse().unwrap();
+        let since = &mark_at_t0(true);
         let none = Reviewed::default();
         let (news, seen) = none.after(since, &[review(10, None), review(11, Some(T1))]);
         assert!(news, "#11 was submitted after the mark");
@@ -605,6 +651,33 @@ mod tests {
         assert!(!news, "each submission is told once");
         let (news, _) = none.after(since, &[review(3, Some("2026-10-01T00:00:00Z"))]);
         assert!(!news, "one submitted before the baseline's mark");
+    }
+
+    #[test]
+    fn activity_in_a_settled_marks_second_was_there_at_its_read() {
+        let at_t0: Timestamp = T0.parse().unwrap();
+        let (settled, unsettled) = (mark_at_t0(true), mark_at_t0(false));
+        assert!(!settled.is_after(at_t0) && settled.is_after(T1.parse().unwrap()));
+        assert!(unsettled.is_after(at_t0), "the read may have missed it");
+        let reviews = [review(4, Some(T0))];
+        assert!(!Reviewed::default().after(&settled, &reviews).0);
+        assert!(Reviewed::default().after(&unsettled, &reviews).0);
+    }
+
+    fn created(mut pull: Pull, at: &str) -> Pull {
+        pull.created_at = Some(at.parse().unwrap());
+        pull
+    }
+
+    #[test]
+    fn a_higher_number_made_before_the_baseline_is_a_reopening() {
+        let mut record = baseline(&[pull(5, "a", T0, &[])]);
+        record.baseline_at = Some(T1.parse().unwrap());
+        let reopened = created(pull(7, "c", T2, &[]), T0);
+        let opened = created(pull(8, "d", T2, &[]), T1);
+        let diffed = diff(&record, &[opened, reopened]);
+        let told: Vec<u64> = diffed.changes.iter().map(|c| c.number).collect();
+        assert_eq!(told, [8], "#7 was made before the baseline and closed then");
     }
 
     #[test]

@@ -752,3 +752,80 @@ async fn a_reopened_pull_request_alone_is_no_news() {
     );
     assert!(watch_events(&h).await.is_empty());
 }
+
+/// A watch removed while its list is read sends nothing more: the follow-ups
+/// the changed list asks for are not sent.
+#[tokio::test]
+async fn a_watch_removed_during_a_read_sends_no_more_requests() {
+    let github = Github::new();
+    let h = watched(&github).await;
+    github.serve_list(serde_json::json!([pull_at(1, "a", T1)]), "W/\"v2\"");
+    let hold = github.path("hold-pulls-1");
+    std::fs::write(&hold, "").unwrap();
+    let remove = Request::WatchRepo {
+        repo: RepoRef(REPO_NAME.into()),
+        interval_minutes: None,
+        remove: true,
+    };
+    let mut sync = GithubSync::new(MIN_INTERVAL);
+    let driver = async {
+        while !github.path("started-pulls-1").exists() {
+            tokio::task::yield_now().await;
+        }
+        h.orchestrator(remove).await.unwrap();
+        std::fs::remove_file(&hold).unwrap();
+    };
+    let (read, ()) = busy(async { tokio::join!(sync.pass(&h.ctx), driver) }).await;
+    let read = read.unwrap();
+    assert_eq!(
+        (read.watch.requested, read.watch.revoked),
+        (1, 1),
+        "{read:?}"
+    );
+    let calls = github.calls();
+    assert!(
+        !calls
+            .iter()
+            .any(|c| c.contains("/comments") || c.contains("/reviews")),
+        "{calls:?}"
+    );
+    assert_eq!(watches(&h).await, 0);
+}
+
+/// A comment and a review already there at the baseline, in the second of
+/// its `updated_at`, are no news when a later label moves the pull request.
+#[tokio::test]
+async fn activity_already_there_at_the_baseline_is_no_news() {
+    let github = Github::new();
+    let h = watched(&github).await;
+    let comment = serde_json::json!([{"id": 5, "created_at": T0}]);
+    github.serve_named("comments-1", comment, "");
+    let review = serde_json::json!([{"id": 6, "submitted_at": T0}]);
+    github.serve_named("reviews-1", review, "");
+    github.serve_list(serde_json::json!([pull_at(1, "a", T1)]), "W/\"b2\"");
+    let labelled = pass(&h).await;
+    assert_eq!(
+        (labelled.watch.requested, labelled.watch.triggers),
+        (3, 0),
+        "{labelled:?}"
+    );
+    assert!(watch_events(&h).await.is_empty());
+}
+
+/// A pull request closed at the baseline and reopened later is no new one,
+/// though its number is above every one the baseline saw; one opened since is.
+#[tokio::test]
+async fn a_pull_request_closed_at_the_baseline_and_reopened_is_no_new_one() {
+    let github = Github::new();
+    let h = watched(&github).await;
+    let mut reopened = pull_at(7, "c", T1);
+    reopened["created_at"] = T0.into();
+    let mut opened = pull_at(8, "d", T1);
+    opened["created_at"] = archon_core::now().to_rfc3339().into();
+    github.serve_list(
+        serde_json::json!([opened, reopened, pull(1, "a")]),
+        "W/\"c2\"",
+    );
+    assert_eq!(pass(&h).await.watch.triggers, 1);
+    assert_eq!(told(&h).await, [(8, "new_pull_request".to_owned(), vec![])]);
+}

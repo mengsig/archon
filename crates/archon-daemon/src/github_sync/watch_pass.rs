@@ -14,6 +14,7 @@ use archon_core::github::GithubRepo;
 use archon_core::id::RepoId;
 use archon_core::protocol::github_links::MIN_WATCH_MINUTES;
 use archon_core::repo::Repo;
+use archon_queue::Store;
 use tokio::time::Instant;
 
 use super::watch::{self, Followed, Pull, PullMark, Seen, WatchRecord, WatchedChange};
@@ -42,6 +43,8 @@ pub struct WatchPass {
     pub dropped: usize,
     /// Reads cut short by the budget or a failed follow-up: asked again.
     pub incomplete: usize,
+    /// Reads stopped because the watch or registration changed meanwhile.
+    pub revoked: usize,
 }
 
 /// A due watch and the registration it reads as.
@@ -168,18 +171,21 @@ async fn drop_unregistered(ctx: &DaemonContext, id: &RepoId) -> Result<bool, Arc
 
 /// Sends a due watch's `GET`s within the pass's budget, and stops at the
 /// first backoff GitHub asks for.
+/// Before each, the watch and registration it reads under are checked again.
 struct Asker<'a> {
     ctx: &'a DaemonContext,
     due: &'a Due,
     backoff: Option<Duration>,
+    /// The watch was removed or set up again, or the registration changed.
+    revoked: bool,
 }
 
 impl Asker<'_> {
     fn can_ask(&self, pass: &Pass) -> bool {
-        self.backoff.is_none() && within_budget(pass)
+        self.backoff.is_none() && !self.revoked && within_budget(pass)
     }
 
-    /// `None` when the budget or a backoff allows no more.
+    /// `None` when the budget, a backoff or a revocation allows no more.
     async fn get(
         &mut self,
         pass: &mut Pass,
@@ -188,6 +194,18 @@ impl Asker<'_> {
     ) -> Option<Result<Got, ArchonError>> {
         if !self.can_ask(pass) {
             return None;
+        }
+        let current = match self.ctx.read_store().await {
+            Ok(store) => still_current(&store, self.due),
+            Err(error) => Err(error),
+        };
+        match current {
+            Ok(true) => {}
+            Ok(false) => {
+                self.revoked = true;
+                return None;
+            }
+            Err(error) => return Some(Err(error)),
         }
         pass.requested += 1;
         pass.watch.requested += 1;
@@ -211,8 +229,15 @@ async fn read_one(
         ctx,
         due,
         backoff: None,
+        revoked: false,
     };
-    let walked = match walk(&mut asker, pass).await {
+    let walked = walk(&mut asker, pass).await;
+    if asker.revoked {
+        tracing::info!(repository = %due.repository, "watch or registration changed during a read; stopped");
+        pass.watch.revoked += 1;
+        return Ok(asker.backoff);
+    }
+    let walked = match walked {
         Ok(Some(walked)) => walked,
         Ok(None) => {
             pass.watch.unchanged += 1;
@@ -229,6 +254,10 @@ async fn read_one(
         Some(_) => follow_up(&mut asker, pass, &walked.pulls).await,
         None => Told::default(),
     };
+    if asker.revoked {
+        pass.watch.revoked += 1;
+        return Ok(asker.backoff);
+    }
     if !walked.complete || !told.followed.kept.is_empty() {
         pass.watch.incomplete += 1;
     }
@@ -238,14 +267,19 @@ async fn read_one(
     Ok(asker.backoff)
 }
 
-/// The list's pages, newest update first: `None` for a 304 of the first. A
-/// baseline reads every page; a later read stops at the watermark.
+/// The list's pages, newest update first: `None` for a 304 of the first. Any
+/// news moves a pull request's `updated_at` to the top of page 1, so a 304
+/// there means none. A baseline reads every page; a later read stops at the
+/// watermark.
 async fn walk(asker: &mut Asker<'_>, pass: &mut Pass) -> Result<Option<Walked>, ArchonError> {
     let due = asker.due;
     let first = watch_read::list_endpoint(&due.repository, 1);
     let etag = due.record.etag.as_deref();
     let (etag, body, date) = match asker.get(pass, &first, etag).await {
-        None => unreachable!("a watch is read only within the budget"),
+        None => {
+            assert!(asker.revoked, "a watch is read only within the budget");
+            return Ok(None);
+        }
         Some(Ok(Got::NotModified)) => return Ok(None),
         Some(Ok(Got::Changed {
             etag, body, date, ..
@@ -312,7 +346,7 @@ async fn follow_up(asker: &mut Asker<'_>, pass: &mut Pass, pulls: &[Pull]) -> To
             told.followed.kept.insert(pull.number);
             continue;
         };
-        let (reviewed, seen) = mark.reviewed.after(mark.updated_at, &read);
+        let (reviewed, seen) = mark.reviewed.after(mark, &read);
         if commented {
             told.changes.push(pull.told("new_comment", Vec::new()));
         } else if reviewed {
@@ -361,7 +395,7 @@ async fn comments(
     let known = mark.comment_id;
     let news = items
         .iter()
-        .any(|a| a.id > known && a.at.is_some_and(|at| at >= mark.updated_at));
+        .any(|a| a.id > known && a.at.is_some_and(|at| mark.is_after(at)));
     let newest = items.iter().map(|a| a.id).max().unwrap_or(0).max(known);
     assert!(!news || newest > known, "a new comment has a new id");
     Some((news, newest))
@@ -441,16 +475,12 @@ async fn record_list(
         return Ok(false);
     }
     let mut store = ctx.store.lock().await;
+    if !still_current(&store, due)? {
+        return Ok(false);
+    }
     let Some(current) = watch::get(&store, &due.id)? else {
-        return Ok(false);
+        unreachable!("a current watch is stored");
     };
-    if current.generation != due.record.generation || current.repository != due.stored {
-        return Ok(false);
-    }
-    let registered = store.repos()?.into_iter().find(|r| r.id == due.id);
-    if registered.is_none_or(|r| r.path != due.repo.path) {
-        return Ok(false);
-    }
     let baseline = due.record.pulls.is_none();
     if baseline && !walked.complete {
         return Ok(false);
@@ -475,6 +505,19 @@ async fn record_list(
         triggers::wake(ctx);
     }
     Ok(raised)
+}
+
+/// Whether `due`'s watch is the one the pass read, and its repository is
+/// registered still at the same checkout with the same `gh` login.
+fn still_current(store: &Store, due: &Due) -> Result<bool, ArchonError> {
+    let Some(current) = watch::get(store, &due.id)? else {
+        return Ok(false);
+    };
+    if current.generation != due.record.generation || current.repository != due.stored {
+        return Ok(false);
+    }
+    let registered = store.repos()?.into_iter().find(|r| r.id == due.id);
+    Ok(registered.is_some_and(|r| r.path == due.repo.path && r.gh_user == due.repo.gh_user))
 }
 
 /// `current` after `walked` was read against `read` (the record the pass
@@ -505,7 +548,13 @@ fn updated(
     if complete {
         current.watermark = current.watermark.max(newest);
     }
-    current.max_number = current.max_number.max(highest);
+    if walked.complete {
+        // A pull request on a page left unread stays above it, so is told later.
+        current.max_number = current.max_number.max(highest);
+    }
+    if read.pulls.is_none() {
+        current.baseline_at = Some(walked.read_at);
+    }
     current.fetched_at = Some(archon_core::now());
     current.pulls = Some(marks);
     assert!(
@@ -548,5 +597,52 @@ fn watch_event(due: &Due, mut changes: Vec<WatchedChange>) -> TriggerEvent {
         more: u32::try_from(more).unwrap_or(u32::MAX),
         operator: false,
         trust: watch::WATCH_TRUST.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn walked(numbers: &[u64], complete: bool) -> Walked {
+        let pulls: Vec<serde_json::Value> = numbers
+            .iter()
+            .map(|n| serde_json::json!({"number": n, "head": {"sha": "a"}, "updated_at": "2026-11-02T00:00:00Z"}))
+            .collect();
+        let body = serde_json::Value::from(pulls).to_string();
+        Walked {
+            etag: None,
+            pulls: watch::parse_pulls("o/r", &body).unwrap(),
+            whole: false,
+            complete,
+            read_at: archon_core::now(),
+        }
+    }
+
+    #[test]
+    fn a_read_cut_short_keeps_the_number_new_pull_requests_are_told_above() {
+        let mut read = WatchRecord::new(5, "o/r".into());
+        let baseline = updated(
+            read.clone(),
+            &read,
+            &walked(&[3], true),
+            &Followed::default(),
+            true,
+        );
+        assert_eq!(baseline.max_number, 3);
+        assert!(
+            baseline.baseline_at.is_some(),
+            "the baseline's clock is kept"
+        );
+        read = baseline.clone();
+        let cut = updated(
+            baseline,
+            &read,
+            &walked(&[9], false),
+            &Followed::default(),
+            false,
+        );
+        assert_eq!(cut.max_number, 3, "#5 to #8 may sit on a page left unread");
+        assert_eq!(cut.baseline_at, read.baseline_at);
     }
 }

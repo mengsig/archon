@@ -322,6 +322,12 @@ fn a_task_that_quotes_a_cost_budget_is_no_budget_stop() {
         "cost budget of $5: we have insufficient test time and the remaining day is spent",
         "cost budget of $5: ≥ $9 of my time spent",
         "Stopped by its budget (cost budget of $5: $5.0100 spent); this is my own explanation",
+        "cost budget of $5: ≥ $9.0000 (for the smoke tests) spent",
+        "cost budget of $5: not reported (by anyone) spent",
+        "Stopped by its budget (cost budget of $5: $5.0100 spent); no new subtree cancellation \
+         was requested by the release plan",
+        "Stopped by its budget (cost budget of $5: $5.0100 spent); its live subtree was cancelled \
+         with it, many descendant(s) were live at the stop.",
     ] {
         quoted_budget(quoted);
     }
@@ -333,6 +339,7 @@ fn aethers_cost_stop_is_read_in_each_shape_it_takes() {
         "cost budget of $1: ≥ $1.0200 (some unpriced) spent",
         "cost budget of $0.5: not reported spent",
         "cost budget of $0.5: not reported (usage not fully reported) spent",
+        "cost budget of $0.5: ≥ $0.6000 (interrupted run, cost unknown) spent",
         "Stopped by its budget (cost budget of $3: $3.0001 spent); no new subtree cancellation \
          was requested, 0 descendant(s) were live at the stop.",
         "cost budget of $2: $2.0100 spent (notional cost: Claude Code reports list-price dollars)",

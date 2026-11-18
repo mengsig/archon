@@ -833,12 +833,7 @@ impl StageOutcome {
     pub fn is_cost_budget_stop(error: &str) -> bool {
         let error = error.trim_start();
         match error.strip_prefix(Self::BUDGET_STOP_MESSAGE) {
-            Some(wrapped) => cost_stop_tail(wrapped).is_some_and(|tail| {
-                Self::BUDGET_STOP_SUBTREE.iter().any(|subtree| {
-                    tail.strip_prefix("); ")
-                        .is_some_and(|t| t.starts_with(subtree))
-                })
-            }),
+            Some(wrapped) => cost_stop_tail(wrapped).is_some_and(is_budget_message_rest),
             None => cost_stop_tail(error)
                 .is_some_and(|tail| tail.is_empty() || tail.starts_with(Self::NOTIONAL_COST_NOTE)),
         }
@@ -867,6 +862,32 @@ fn cost_stop_tail(text: &str) -> Option<&str> {
     shaped.then_some(tail)
 }
 
+/// Whether `rest` goes on as Aether's budget message does after the reason:
+/// `); {subtree}, {n} descendant(s) were live at the stop.`
+fn is_budget_message_rest(rest: &str) -> bool {
+    let Some(rest) = rest.strip_prefix("); ") else {
+        return false;
+    };
+    let after_subtree = StageOutcome::BUDGET_STOP_SUBTREE
+        .iter()
+        .find_map(|subtree| rest.strip_prefix(subtree)?.strip_prefix(", "));
+    let Some(counted) = after_subtree else {
+        return false;
+    };
+    let digits = counted.bytes().take_while(u8::is_ascii_digit).count();
+    digits > 0 && counted[digits..].starts_with(" descendant(s) were live at the stop.")
+}
+
+/// The labels Aether gives a cost gap (`CostGap::label`), each in the
+/// parentheses after an incomplete cost.
+const AETHER_COST_GAPS: [&str; 5] = [
+    "some unpriced",
+    "some cost unknown",
+    "usage not fully reported",
+    "interrupted run, cost unknown",
+    "multiple cost gaps",
+];
+
 /// Whether `cost` is a cost as Aether says one: `$1.2345`, a floor
 /// `≥ $1.2345 (some unpriced)`, or `not reported`, perhaps with its gap.
 fn is_aether_cost(cost: &str) -> bool {
@@ -889,13 +910,10 @@ fn is_dollars(text: &str) -> bool {
     digits(whole) && digits(fraction)
 }
 
-/// Aether's label for a cost gap in parentheses, such as `(some unpriced)`.
+/// One of Aether's cost gap labels in parentheses, such as `(some unpriced)`.
 fn is_cost_gap(text: &str) -> bool {
-    let Some(label) = text.strip_prefix('(').and_then(|t| t.strip_suffix(')')) else {
-        return false;
-    };
-    let worded = |c: char| c.is_ascii_lowercase() || matches!(c, ' ' | '-' | ',');
-    !label.trim().is_empty() && label.chars().all(worded)
+    let label = text.strip_prefix('(').and_then(|t| t.strip_suffix(')'));
+    label.is_some_and(|label| AETHER_COST_GAPS.contains(&label))
 }
 
 impl StageState {

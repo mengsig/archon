@@ -28,8 +28,8 @@
   Archon writes itself are still read: `BLOCKED:`, `ESCALATE:`, the budget
   guards' own blockers, Aether's cost stop (only in Aether's own grammar,
   `cost budget of $<limit>: <cost> spent`, where the cost is `$<amount>`,
-  `≥ $<amount> (<gap>)` or `not reported`, alone or inside Aether's budget
-  message; never a task's words that open with the phrase; the notional-cost
+  `≥ $<amount> (<gap>)` or `not reported`, with one of Aether's own gap labels,
+  alone or inside Aether's whole budget message; never a task's words that open with the phrase; the notional-cost
   label reads it the same way) and the daemon's full-disk stop.
   A review is read as the gate reads it. A nested `review` that failed, one
   Archon refused, or one the gate found missing (such as a skip the pipeline

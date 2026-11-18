@@ -85,6 +85,13 @@ pub(super) fn stage_observations(
         } else {
             0.0
         };
+        if cost == 0.0
+            && stage.aether_agent.is_none()
+            && matches!(&stage.state, archon_core::run::StageState::Failed { error }
+                if error.starts_with("cannot create agent:"))
+        {
+            continue;
+        }
         for observed in super::segments::observations(stage, cost)? {
             merge_observation(&mut grouped, observed, stage.attempt);
         }

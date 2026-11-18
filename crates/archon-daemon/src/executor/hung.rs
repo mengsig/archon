@@ -344,7 +344,8 @@ async fn tell(
         original_sender: MessageSender::System,
         addressed_to_run_node: None,
     };
-    let saved = crate::triggers::record_message(&mut store, message, &updates)?;
+    let quiet_info = ctx.config.orchestrator.quiet_info;
+    let saved = crate::triggers::record_message(&mut store, message, &updates, quiet_info)?;
     drop(store);
     crate::feed::publish(ctx, vec![saved]);
     crate::triggers::wake(ctx);

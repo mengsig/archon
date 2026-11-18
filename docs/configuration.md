@@ -185,6 +185,9 @@ name = "Archon"                # the orchestrator's name in Aether
 # instructions_file = "~/orchestrator.md"   # appended to the built-in prompt
 trigger_coalesce_ms = 2000     # triggers within this window wake it once
 validate_before_handoff = true # validate a user-facing build before calling it ready
+compaction_tokens = 160000     # compact at this context size; 0: the model's own threshold
+idle_compact_after_minutes = 50 # compact an idle, large context before its cache expires; 0: never
+quiet_info = true              # stage `info` messages ride with the next wake, at most 30 min late
 
 [models]
 # deny = ["codex/gpt-6.1-terra"] # never used, whatever `allow` says
@@ -354,6 +357,21 @@ independent validation item and reports that item's outcome
 ([product journeys](journeys.md#before-a-hand-off)). Set
 `validate_before_handoff = false` under `[orchestrator]` to have it relay
 the build's success as is.
+
+A stage's `info` message does not wake the orchestrator: it rides with the
+next wake and goes out by itself after 30 minutes at the latest. A relay,
+an escalation or a question still wakes it at once; `quiet_info = false`
+makes every message wake it. The orchestrator compacts its context at
+`compaction_tokens` (at least 100,000) when the connected Aether serves a
+per-agent threshold (its `compaction_tokens` feature); an older Aether keeps
+the model's own threshold. When it has been idle for
+`idle_compact_after_minutes` with more than half that threshold in context
+(half of 160,000 when `compaction_tokens = 0`), Archon asks Aether to
+compact it once, before the hour-long prompt cache expires, so the next wake
+does not rewrite the whole context. 0 turns either part off. After an upgrade
+that changes the orchestrator's prompt or tools, Archon starts a fresh
+generation at its next idle moment, with the same hand-off as `archon
+orchestrator restart`.
 
 The helper agents the orchestrator delegates to
 ([guide](guide.md#what-the-orchestrator-does-without-queueing)) work in a

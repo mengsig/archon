@@ -568,10 +568,13 @@ fn hold_as(store: &mut Store, news: Held) -> Result<(), ArchonError> {
 
 /// Record a stage's or run node's message as one feed entry and the
 /// orchestrator's news together; only an escalation shows in the conversation.
+/// With `quiet_info`, an `info` waits for the next wake, at most
+/// [`QUIET_INFO_MAX_WAIT_MINUTES`](archon_core::config::QUIET_INFO_MAX_WAIT_MINUTES).
 pub(crate) fn record_message(
     store: &mut Store,
     message: archon_core::agent_message::AgentMessage,
     updates: &[(&str, &str)],
+    quiet_info: bool,
 ) -> Result<archon_core::notify::FeedItem, ArchonError> {
     use archon_core::agent_message::MessageKind;
     use archon_core::notify::{FeedEntry, Notification, NotificationKind};
@@ -589,10 +592,8 @@ pub(crate) fn record_message(
         at,
     });
     let mut outbox = read_outbox(store)?;
-    let event = TriggerEvent::AgentMessage {
-        message: Box::new(message),
-    };
-    outbox.pending.push(Held::new(event, at, false));
+    let held = message_news(message, at, quiet_info);
+    outbox.pending.push(held);
     if outbox.pending.len() > MAX_PENDING {
         compact_pending(store, &mut outbox)?;
     }
@@ -600,6 +601,26 @@ pub(crate) fn record_message(
     let mut updates = updates.to_vec();
     updates.push((OUTBOX_KEY, &raw));
     store.append_feed_with_kv(entry, at, &updates)
+}
+
+/// `message` as held news: an `info` under `quiet_info` wakes the
+/// orchestrator only once it has waited the longest a quiet `info` may.
+fn message_news(
+    message: archon_core::agent_message::AgentMessage,
+    at: Timestamp,
+    quiet_info: bool,
+) -> Held {
+    use archon_core::agent_message::MessageKind;
+    let quiet = quiet_info && message.kind == MessageKind::Info;
+    let event = TriggerEvent::AgentMessage {
+        message: Box::new(message),
+    };
+    assert!(!event.is_urgent() || !quiet, "urgent news never waits");
+    let wait = chrono::TimeDelta::minutes(archon_core::config::QUIET_INFO_MAX_WAIT_MINUTES);
+    Held {
+        defer_until: quiet.then_some(at + wait),
+        ..Held::new(event, at, false)
+    }
 }
 
 /// Record a stage agent reaching its message cap as one feed entry and the
@@ -1074,6 +1095,82 @@ mod tests {
         outbox.pending.truncate(2);
         outbox.flush = true;
         assert!(outbox.is_now(now), "a turn starting takes it at once");
+    }
+
+    fn stage_message(
+        kind: archon_core::agent_message::MessageKind,
+    ) -> archon_core::agent_message::AgentMessage {
+        archon_core::agent_message::AgentMessage {
+            item: QueueItemId::new(),
+            run: archon_core::id::PipelineRunId::new(),
+            stage: Some("build".into()),
+            stage_run: None,
+            attempt: Some(1),
+            agent: None,
+            kind,
+            text: "progress".into(),
+            original_sender: archon_core::agent_message::MessageSender::System,
+            addressed_to_run_node: None,
+        }
+    }
+
+    /// What `record_message` holds for one message of `kind` in a fresh store.
+    fn recorded(kind: archon_core::agent_message::MessageKind, quiet_info: bool) -> Outbox {
+        let mut store = Store::open_in_memory().unwrap();
+        record_message(&mut store, stage_message(kind), &[], quiet_info).unwrap();
+        let outbox = read_outbox(&store).unwrap();
+        assert_eq!(outbox.pending.len(), 1, "one message, one piece of news");
+        outbox
+    }
+
+    #[test]
+    fn a_quiet_info_waits_for_the_next_wake_at_most_thirty_minutes() {
+        use archon_core::agent_message::MessageKind;
+        let now = archon_core::now();
+        let info = recorded(MessageKind::Info, true);
+        assert!(!info.is_due(now), "an info alone does not wake it");
+        let cap = info.next_due().expect("a lone info still goes out");
+        let wait = cap - info.pending[0].pushed_at.unwrap();
+        assert_eq!(wait, chrono::TimeDelta::minutes(30));
+        assert!(info.is_due(cap), "it wakes the orchestrator at the cap");
+        let mut joined = info;
+        joined.pending.push(Held::new(success(), now, false));
+        assert!(joined.is_due(now), "it rides with the next wake");
+
+        let question = recorded(MessageKind::Question, true);
+        assert!(
+            question.is_due(now) && question.is_now(now),
+            "a question wakes at once"
+        );
+        for kind in [MessageKind::Relay, MessageKind::Escalation] {
+            assert!(recorded(kind, true).is_due(now), "{kind:?} wakes at once");
+        }
+        let loud = recorded(MessageKind::Info, false);
+        assert!(loud.is_due(now), "quiet_info = false: an info wakes it");
+    }
+
+    #[test]
+    fn quiet_infos_past_max_pending_are_all_kept_and_due_at_the_first_cap() {
+        use archon_core::agent_message::MessageKind;
+        let mut store = Store::open_in_memory().unwrap();
+        for _ in 0..=MAX_PENDING {
+            let message = stage_message(MessageKind::Info);
+            record_message(&mut store, message, &[], true).unwrap();
+        }
+        let outbox = read_outbox(&store).unwrap();
+        assert_eq!(
+            outbox.pending.len(),
+            MAX_PENDING + 1,
+            "messages are never dropped"
+        );
+        let now = archon_core::now();
+        assert!(!outbox.is_due(now), "a backlog of info wakes nothing early");
+        let first = outbox.pending[0].defer_until.expect("each info is capped");
+        assert_eq!(
+            outbox.next_due(),
+            Some(first),
+            "the oldest cap wakes them all"
+        );
     }
 
     #[test]

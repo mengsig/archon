@@ -22,6 +22,7 @@ pub const STARTER_CONFIG: &str = r#"# Archon's configuration. Every key is optio
 # model = "claude-code/claude-opus-5-5"   # an entry of `archon aether models`
 # effort = "high"
 # wake_on_success = true    # false: a routine success waits for its next turn
+# quiet_info = true         # false: every stage `info` message wakes it
 
 # Optional narrowing. Without [models] every model Aether reports ready may
 # be used. Tiers (fast, balanced, strong, frontier) come from Aether's catalog.

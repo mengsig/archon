@@ -13,7 +13,7 @@ use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, StageRunId};
 use archon_core::ports::{AgentUpdate, SpawnRequest};
-use archon_core::run::{StageOutcome, StageRun, StageState};
+use archon_core::run::{RecordRepair, StageOutcome, StageRun, StageState};
 use archon_pipeline::contract::SHIP_RECORD_JSON;
 use archon_pipeline::{ShipRecord, SpawnPlan};
 use archon_queue::Store;
@@ -391,6 +391,11 @@ async fn recorded(
     else {
         return Ok(Some(outcome));
     };
+    // A stated failure settles as sent, on its merits: the reply is read
+    // before any record is asked for or put beside an earlier summary.
+    if StageOutcome::states_failure(summary, structured.as_ref()) {
+        return Ok(Some(outcome));
+    }
     if let Some(first) = &kept.asked_record {
         assert!(!first.trim().is_empty(), "a final message has a summary");
         let structured = structured.clone();
@@ -403,7 +408,9 @@ async fn recorded(
     let Err(why) = ShipRecord::read(structured.as_ref()) else {
         return Ok(Some(outcome));
     };
-    if !records_ship(ctx, stage).await {
+    // The repair turn's broken record fails the run: it is not asked again.
+    let repair_spent = stage.record_repair == Some(RecordRepair::Spent);
+    if repair_spent || !records_ship(ctx, stage).await {
         return Ok(Some(outcome));
     }
     let why = if structured.is_none() {

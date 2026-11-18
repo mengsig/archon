@@ -1502,3 +1502,31 @@ async fn reference_wire_shape_is_frozen_across_retries_and_refused_after_capabil
     );
     assert_eq!(fake.received_named("create_agent").len(), 2);
 }
+
+/// The read right before a quota-waiting reviewer is cancelled is a single
+/// `get_agent`: no second call widens the window a resume can land in.
+#[tokio::test]
+async fn a_quota_block_is_read_with_one_get_agent() {
+    const REVIEWER: &str = "agt_01BX5ZZKBKACTAV9WEVGEMMVS4";
+    let (_dir, fake) = fake_aether().await;
+    let mut reviewer = fake::agent(REVIEWER, None);
+    reviewer["run"] = json!(RUN);
+    reviewer["status"] = json!({"state": "blocked", "reason":
+        {"block": "exhausted", "class": "quota_exhausted", "detail": "x"}});
+    fake.set_default("get_agent", Scripted::reply("agent", reviewer.clone()));
+    fake.set_default("list_agents", Scripted::reply("agents", json!([reviewer])));
+    let backend = backend(&fake, any_model()).await;
+    let id = AetherAgentId::parse(REVIEWER).unwrap();
+    let before = fake.received().len();
+
+    assert_eq!(backend.quota_blocked(&id).await.unwrap(), Some(true));
+
+    let sent: Vec<String> = fake.received()[before..]
+        .iter()
+        .filter_map(|frame| frame["cmd"].as_str().map(str::to_owned))
+        .collect();
+    assert_eq!(sent, ["get_agent"], "one call, no list_agents");
+    reviewer["status"] = json!({"state": "running"});
+    fake.set_default("get_agent", Scripted::reply("agent", reviewer));
+    assert_eq!(backend.quota_blocked(&id).await.unwrap(), Some(false));
+}

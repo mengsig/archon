@@ -2,7 +2,7 @@
 //! gate pass, and if not, what feedback goes back to the looped-to stage.
 
 use archon_core::catalog::{Gate, StageKind};
-use archon_core::run::{StageRun, StageState, Verdict};
+use archon_core::run::{RecordRepair, StageOutcome, StageRun, StageState, Verdict};
 
 use crate::review::Evidence;
 use crate::ship::ShipRecord;
@@ -43,13 +43,21 @@ pub(crate) enum GroupResult {
     Pass { summary: String },
     /// `headline` is one line; `report` details every failing member.
     Fail { headline: String, report: String },
+    /// A completed stage handed in a broken delivery record: no `structured`
+    /// object, or a review that names no reviewer. One repair turn may fix it.
+    Unrecorded { headline: String, report: String },
     /// A strict stage's scenario list fell short: a product defect, which no
     /// loop back to an earlier stage can fix, so the run fails.
     Defect { headline: String, report: String },
 }
 
 /// Evaluate a stage group whose every slot is terminal. `members` holds the
-/// latest stage run per slot, by fan index; `owed` as for `recorded`.
+/// latest stage run per slot, by fan index; `owed` as for `recorded`. The
+/// order is fixed: a stated failure fails on its merits, whatever its gate
+/// or record; then a broken record is `Unrecorded`, before the gate and
+/// scenarios that would read it; then the gate, scenarios and record. An
+/// outcome from before repair turns keeps the order that decided it then:
+/// gate, scenarios, record, with no stated failure read.
 pub(crate) fn evaluate(
     stage: &StageSpec,
     attempt: u32,
@@ -61,6 +69,13 @@ pub(crate) fn evaluate(
         members.iter().all(|m| m.state.is_terminal()),
         "only finished groups are evaluated"
     );
+    if owed != Owed::default()
+        && members.iter().all(|m| decided_since_repairs(m))
+        && repairable(stage, members, owed)
+        && let unrecorded @ GroupResult::Unrecorded { .. } = recorded(stage, attempt, members, owed)
+    {
+        return unrecorded;
+    }
     let total = members.len();
     let passes = members.iter().filter(|m| member_passes(stage, m)).count();
     let ok = match stage.gate {
@@ -128,24 +143,38 @@ fn recorded(stage: &StageSpec, attempt: u32, members: &[&StageRun], owed: Owed) 
     };
     assert_eq!(member.state, StageState::Completed, "it passed its gate");
     let summary = joined_summary(stage, members);
-    let unrecorded = |headline: String| {
+    let structured = member.structured.as_ref();
+    // A stated failure is refused on its merits, whatever its gate or record.
+    if decided_since_repairs(member) && states_failure(member) {
+        let headline = "its agent stated a failure".to_owned();
         let report = format!(
             "**Stage `{}` attempt {attempt}: {headline}**\n\n{summary}\n",
             stage.id
         );
-        GroupResult::Fail {
-            headline,
-            report: clip(&report, MAX_FEEDBACK_CHARS),
+        let report = clip(&report, MAX_FEEDBACK_CHARS);
+        return GroupResult::Fail { headline, report };
+    }
+    let broken = repairable(stage, members, owed);
+    let refused = |headline: String, unrecorded: bool| {
+        let report = format!(
+            "**Stage `{}` attempt {attempt}: {headline}**\n\n{summary}\n",
+            stage.id
+        );
+        let report = clip(&report, MAX_FEEDBACK_CHARS);
+        match unrecorded {
+            true => GroupResult::Unrecorded { headline, report },
+            false => GroupResult::Fail { headline, report },
         }
     };
-    let structured = member.structured.as_ref();
     if owed.ship_record && crate::ship::no_change_reason(structured).is_some() {
         return GroupResult::Pass { summary };
     }
     if owed.ship_record
         && let Err(why) = ShipRecord::read(structured)
     {
-        return unrecorded(format!("{SHIP_REFUSAL}: {why}"));
+        // A repair that still hands in no valid ship record has none to loop on.
+        let spent = member.record_repair == Some(RecordRepair::Spent);
+        return refused(format!("{SHIP_REFUSAL}: {why}"), broken || spent);
     }
     let Some(duty) = owed.review else {
         return GroupResult::Pass { summary };
@@ -154,8 +183,57 @@ fn recorded(stage: &StageSpec, attempt: u32, members: &[&StageRun], owed: Owed) 
         Ok(evidence) => GroupResult::Pass {
             summary: format!("{summary}\n\n{}", evidence.line()),
         },
-        Err(why) => unrecorded(format!("{REVIEW_REFUSAL}: {why}")),
+        Err(why) => refused(format!("{REVIEW_REFUSAL}: {why}"), broken),
     }
+}
+
+/// Whether the one agent holding a record completed with a broken record.
+/// [`recorded`] refuses a stated fail on its merits before any repair.
+fn repairable(stage: &StageSpec, members: &[&StageRun], owed: Owed) -> bool {
+    let [member] = members else {
+        return false;
+    };
+    assert_eq!(stage.fan_out, 1, "one agent holds a record");
+    member.state == StageState::Completed && broken_record(member.structured.as_ref(), owed)
+}
+
+/// Whether `member`'s outcome was recorded since stages have repair turns:
+/// one from before is replayed by the rules that decided it then.
+fn decided_since_repairs(member: &StageRun) -> bool {
+    assert!(member.state.is_terminal(), "only an outcome is decided");
+    member.record_repair.is_some()
+}
+
+/// Whether a reply of a stage that owes a record is decided as sent, unverified:
+/// it states a failure or has no `structured`, neither of which the gate passes.
+pub(crate) fn decided_as_sent(
+    owed: Owed,
+    summary: &str,
+    structured: Option<&serde_json::Value>,
+) -> bool {
+    if owed == Owed::default() {
+        return false;
+    }
+    structured.is_none() || StageOutcome::states_failure(summary, structured)
+}
+
+/// Whether `member` stated its failure anywhere, even beside a pass
+/// elsewhere: in the reply as its agent sent it, or its persisted verdict.
+fn states_failure(member: &StageRun) -> bool {
+    let summary = member.summary.as_deref().unwrap_or_default();
+    let stated = StageOutcome::states_failure(summary, member.structured.as_ref());
+    stated || member.verdict == Some(Verdict::Fail)
+}
+
+/// Whether a completed stage's record is broken rather than refused on its
+/// merits: it has no `structured` object, or its owed review names no reviewer.
+fn broken_record(structured: Option<&serde_json::Value>, owed: Owed) -> bool {
+    assert!(owed != Owed::default(), "only an owing stage has a record");
+    let Some(structured) = structured else {
+        return true;
+    };
+    let reviews = owed.review.is_some_and(|duty| duty.reviewers > 0);
+    reviews && crate::review::names_no_reviewer(structured)
 }
 
 /// Which roles of a team group did not complete, and how.

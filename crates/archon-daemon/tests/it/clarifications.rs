@@ -301,6 +301,7 @@ async fn a_stage_waiting_for_a_clarification_is_not_mistaken_for_a_stall() {
             held_for_cause: false,
             inspection: false,
             running: true,
+            quota_blocked: false,
         },
     );
     archon_daemon::dispatcher::dispatch_once(&h.ctx)

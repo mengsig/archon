@@ -1212,6 +1212,12 @@ async fn direct_delegates_a_reviewer_when_the_item_asks_for_one() {
     let alone = shipped_by(&h, &unreviewed, "Changed it", json!({})).await;
     h.settle_running(|_| alone.clone()).await;
     h.dispatch().await;
+    // Its one repair turn names no reviewer either.
+    let repair = h.running().await.remove(0);
+    assert_eq!(repair.attempt, 2, "the repair turn");
+    let alone = shipped_by(&h, &repair, "Changed it", json!({})).await;
+    h.settle_running(|_| alone.clone()).await;
+    h.dispatch().await;
     let error = failed(&h, &item).await;
     assert!(
         error.contains("the review this pipeline declares is not on record"),

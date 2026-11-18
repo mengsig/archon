@@ -61,10 +61,10 @@ pub(crate) struct WatchRecord {
     /// unmarked one above is new.
     #[serde(default)]
     pub max_number: u64,
-    /// GitHub's clock at the first page of the last read of every page: an
-    /// unmarked pull request made before it was closed then, so is no new one.
+    /// GitHub's clock at the baseline, which never moves: an unmarked pull
+    /// request made before it was closed then (or past the cap), so is no new one.
     #[serde(default)]
-    pub complete_at: Option<Timestamp>,
+    pub baseline_at: Option<Timestamp>,
     /// What each pull request looked like when last told; `None` before the
     /// baseline. A pull request that left the list keeps its mark until a
     /// read of the whole list.
@@ -83,7 +83,7 @@ impl WatchRecord {
             pages: Vec::new(),
             fetched_at: None,
             max_number: 0,
-            complete_at: None,
+            baseline_at: None,
             pulls: None,
         }
     }
@@ -94,7 +94,7 @@ impl WatchRecord {
             self.repository = repository.to_owned();
             self.pages = Vec::new();
             self.max_number = 0;
-            self.complete_at = None;
+            self.baseline_at = None;
             self.pulls = None;
         }
         self
@@ -106,8 +106,12 @@ impl WatchRecord {
 pub(crate) struct PageMark {
     #[serde(default)]
     pub etag: Option<String>,
-    /// It held a whole page, so the list goes on past it.
+    /// It held a whole page, so the list may go on past it: a 304 cannot
+    /// say whether a page was added behind it, so the next page is asked.
     pub full: bool,
+    /// The pull requests it listed, which stay listed while it is a 304.
+    #[serde(default)]
+    pub numbers: Vec<u64>,
 }
 
 /// What a later list is compared with.
@@ -130,6 +134,14 @@ pub(crate) struct PullMark {
     /// next read checks the pull request's comments and reviews again.
     #[serde(default)]
     pub settled: bool,
+    /// It was on the list when last read whole: the cap drops closed marks
+    /// before listed ones, so an open pull request keeps its mark.
+    #[serde(default = "listed_by_default")]
+    pub listed: bool,
+}
+
+fn listed_by_default() -> bool {
+    true
 }
 
 impl PullMark {
@@ -277,6 +289,7 @@ impl Pull {
             comment_id: seen.comment_id,
             reviewed: seen.reviewed,
             settled: self.updated_at + SETTLE < read_at,
+            listed: true,
         }
     }
 
@@ -431,14 +444,14 @@ pub(crate) fn diff(record: &WatchRecord, pulls: &[Pull]) -> Diffed {
     diffed
 }
 
-/// Whether `pull`, which has no mark, was opened since `record`'s last read
-/// of every page; one made before was closed then, or past the cap, and is
-/// reopened now. Without a `created_at`, a number above every one seen is new.
+/// Whether `pull`, which has no mark, was opened since the baseline; one
+/// made before was closed then, or past the cap, and is reopened now. With
+/// no `created_at` or baseline clock, a number above every one seen is new.
 fn is_new(record: &WatchRecord, pull: &Pull) -> bool {
     assert!(record.pulls.is_some(), "only a baselined watch tells news");
-    assert!(record.complete_at.is_some(), "a baseline reads every page");
-    match (pull.created_at, record.complete_at) {
-        (Some(created), Some(complete)) => created >= complete,
+    assert!(pull.number > 0, "parsed pull requests are numbered");
+    match (pull.created_at, record.baseline_at) {
+        (Some(created), Some(baseline)) => created >= baseline,
         _ => pull.number > record.max_number,
     }
 }
@@ -453,11 +466,13 @@ pub(crate) struct Followed {
     pub seen: BTreeMap<u64, Seen>,
 }
 
-/// The marks after `pulls` was read at `read_at`. A pull request no longer
-/// listed keeps its mark until the cap drops it, so a reopening is no news.
+/// The marks after `pulls` was read at `read_at`, with `listed` every pull
+/// request on the list when it was read whole. One no longer listed keeps its
+/// mark until the cap drops it, so a reopening is no news.
 pub(crate) fn merged_marks(
     before: Option<&BTreeMap<u64, PullMark>>,
     pulls: &[Pull],
+    listed: Option<&BTreeSet<u64>>,
     followed: &Followed,
     read_at: Timestamp,
 ) -> BTreeMap<u64, PullMark> {
@@ -486,17 +501,29 @@ pub(crate) fn merged_marks(
         };
         marks.insert(pull.number, mark);
     }
+    if let Some(listed) = listed {
+        for (number, mark) in &mut marks {
+            mark.listed = listed.contains(number);
+        }
+    }
+    capped(&mut marks);
+    marks
+}
+
+/// Drop marks past [`MAX_MARKS`]: closed ones first, then the least recently updated.
+fn capped(marks: &mut BTreeMap<u64, PullMark>) {
     if marks.len() > MAX_MARKS {
-        let mut by_age: Vec<(Timestamp, u64)> =
-            marks.iter().map(|(n, m)| (m.updated_at, *n)).collect();
+        let mut by_age: Vec<(bool, Timestamp, u64)> = marks
+            .iter()
+            .map(|(n, m)| (m.listed, m.updated_at, *n))
+            .collect();
         by_age.sort_unstable();
         let excess = marks.len() - MAX_MARKS;
-        for (_, number) in &by_age[..excess] {
+        for (_, _, number) in &by_age[..excess] {
             marks.remove(number);
         }
     }
     assert!(marks.len() <= MAX_MARKS, "bounded marks");
-    marks
 }
 
 /// `title` on one line, without control or format characters, clipped.
@@ -541,9 +568,9 @@ mod tests {
 
     fn baseline(pulls: &[Pull]) -> WatchRecord {
         let mut record = WatchRecord::new(5, "o/r".into());
-        record.pulls = Some(merged_marks(None, pulls, &none(), now()));
+        record.pulls = Some(merged_marks(None, pulls, None, &none(), now()));
         record.max_number = pulls.iter().map(|p| p.number).max().unwrap_or(0);
-        record.complete_at = Some(now());
+        record.baseline_at = Some(now());
         record
     }
 
@@ -599,7 +626,13 @@ mod tests {
         assert_eq!(diffed.follow_ups.len(), 1, "#4 only moved updated_at");
         assert_eq!(after[diffed.follow_ups[0].index].number, 4);
         let mut record = record;
-        record.pulls = Some(merged_marks(record.pulls.as_ref(), &after, &none(), now()));
+        record.pulls = Some(merged_marks(
+            record.pulls.as_ref(),
+            &after,
+            None,
+            &none(),
+            now(),
+        ));
         let again = diff(&record, &after);
         assert!(again.changes.is_empty() && again.follow_ups.is_empty());
     }
@@ -630,6 +663,7 @@ mod tests {
             comment_id: 0,
             reviewed: Reviewed::default(),
             settled,
+            listed: true,
         }
     }
 
@@ -672,7 +706,7 @@ mod tests {
     #[test]
     fn a_higher_number_made_before_the_baseline_is_a_reopening() {
         let mut record = baseline(&[pull(5, "a", T0, &[])]);
-        record.complete_at = Some(T1.parse().unwrap());
+        record.baseline_at = Some(T1.parse().unwrap());
         let reopened = created(pull(7, "c", T2, &[]), T0);
         let opened = created(pull(8, "d", T2, &[]), T1);
         let diffed = diff(&record, &[opened, reopened]);
@@ -689,16 +723,17 @@ mod tests {
         let marks = merged_marks(
             record.pulls.as_ref(),
             std::slice::from_ref(&opened),
+            None,
             &none(),
             now(),
         );
-        let closed = merged_marks(Some(&marks), &[pull(1, "a", T0, &[])], &none(), now());
+        let closed = merged_marks(Some(&marks), &[pull(1, "a", T0, &[])], None, &none(), now());
         assert_eq!(closed.keys().copied().collect::<Vec<_>>(), [1, 9]);
         record.pulls = Some(closed);
         let reopened = diff(&record, &[opened]);
         assert!(reopened.changes.is_empty(), "#9 was told already");
         let read = [pull(1, "a2", T1, &[])];
-        let kept = merged_marks(record.pulls.as_ref(), &read, &kept(1), now());
+        let kept = merged_marks(record.pulls.as_ref(), &read, None, &kept(1), now());
         assert_eq!(kept[&1].head, "a", "an unread follow-up keeps its mark");
     }
 
@@ -728,13 +763,19 @@ mod tests {
             ..Followed::default()
         };
         let later = now() + SETTLE + SETTLE;
-        record.pulls = Some(merged_marks(record.pulls.as_ref(), &pulls, &seen, later));
+        record.pulls = Some(merged_marks(
+            record.pulls.as_ref(),
+            &pulls,
+            None,
+            &seen,
+            later,
+        ));
         let mark = &record.pulls.as_ref().unwrap()[&1];
         assert_eq!(
             (mark.comment_id, mark.reviewed.ids.len(), mark.settled),
             (9, 1, true)
         );
-        let carried = merged_marks(record.pulls.as_ref(), &pulls, &none(), later);
+        let carried = merged_marks(record.pulls.as_ref(), &pulls, None, &none(), later);
         assert_eq!(
             carried[&1].comment_id, 9,
             "ids carry over a read without follow-up"
@@ -750,9 +791,30 @@ mod tests {
                 pull(n, "a", updated, &[])
             })
             .collect();
-        let marks = merged_marks(None, &pulls, &none(), now());
+        let marks = merged_marks(None, &pulls, None, &none(), now());
         assert_eq!(marks.len(), MAX_MARKS);
         assert!(!marks.contains_key(&1) && marks.contains_key(&4));
+    }
+
+    #[test]
+    fn the_cap_drops_closed_marks_before_an_open_one() {
+        let open: Vec<Pull> = (1..=MAX_MARKS as u64)
+            .map(|n| pull(n, "a", if n == 1 { T0 } else { T1 }, &[]))
+            .collect();
+        let marks = merged_marks(None, &open, None, &none(), now());
+        let mut listed: BTreeSet<u64> = (1..=MAX_MARKS as u64 - 2).collect();
+        listed.extend([MAX_MARKS as u64 + 1, MAX_MARKS as u64 + 2]);
+        let replaced = [
+            pull(MAX_MARKS as u64 + 1, "a", T2, &[]),
+            pull(MAX_MARKS as u64 + 2, "a", T2, &[]),
+        ];
+        let marks = merged_marks(Some(&marks), &replaced, Some(&listed), &none(), now());
+        assert_eq!(marks.len(), MAX_MARKS);
+        assert!(marks.contains_key(&1), "the oldest open one keeps its mark");
+        assert!(
+            !marks.contains_key(&(MAX_MARKS as u64)),
+            "a closed one goes first"
+        );
     }
 
     #[test]

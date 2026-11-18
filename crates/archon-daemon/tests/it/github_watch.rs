@@ -844,3 +844,31 @@ async fn a_pull_request_closed_at_the_baseline_and_reopened_is_no_new_one() {
     assert_eq!(pass(&h).await.watch.triggers, 1);
     assert_eq!(told(&h).await, [(8, "new_pull_request".to_owned(), vec![])]);
 }
+
+/// A watch saved before the record kept its pages and baseline clock reads
+/// on: a new pull request is told by its number, and nothing panics.
+#[tokio::test]
+async fn a_watch_saved_by_an_earlier_build_reads_on() {
+    let github = Github::new();
+    let h = watched(&github).await;
+    {
+        let mut store = h.ctx.store.lock().await;
+        let (key, raw) = store.kv_prefix(KEY_PREFIX).unwrap().remove(0);
+        let mut record: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let record_map = record.as_object_mut().unwrap();
+        for gone in ["pages", "baseline_at"] {
+            record_map.remove(gone);
+        }
+        record_map.insert("etag".into(), "W/\"l1\"".into());
+        record_map.insert("watermark".into(), T0.into());
+        for mark in record_map["pulls"].as_object_mut().unwrap().values_mut() {
+            mark.as_object_mut().unwrap().remove("listed");
+        }
+        store.kv_set(&key, &record.to_string()).unwrap();
+    }
+    let mut opened = pull_at(2, "b", T1);
+    opened["created_at"] = T1.into();
+    github.serve_list(serde_json::json!([opened, pull(1, "a")]), "W/\"e2\"");
+    assert_eq!(pass(&h).await.watch.triggers, 1);
+    assert_eq!(told(&h).await, [(2, "new_pull_request".to_owned(), vec![])]);
+}

@@ -568,6 +568,7 @@ impl Sim {
         let id = StageRunId::new();
         self.plans.insert(id.clone(), plan.clone());
         self.stages.push(StageRun {
+            only_reviews: None,
             id,
             run: self.run.id.clone(),
             stage_id: plan.stage_id.clone(),

@@ -4,9 +4,10 @@ mod common;
 use archon_core::Timestamp;
 use archon_core::catalog::StageKind;
 use archon_core::cost::DayRange;
+use archon_core::outcome::FailureClass;
 use archon_core::pull_request::{OntoPullRequest, OntoTarget, PullRequestRef};
 use archon_core::queue::{QueueItem, QueueState};
-use archon_core::run::{PipelineRun, RunState, StageState};
+use archon_core::run::{PipelineRun, RunState, StageRun, StageState};
 use archon_queue::Store;
 use common::*;
 
@@ -51,15 +52,9 @@ fn finish(store: &mut Store, item: &QueueItem, state: RunState, at: Timestamp) {
         Err(_) => store.insert_item(item, None).unwrap().id,
     };
     let run = start(store, &id);
-    let mut ran = stage(&run, 0);
-    ran.stage_id = "review".into();
-    ran.kind = Some(match item.pipeline.as_str() {
-        "review" => StageKind::Review,
-        _ => StageKind::Work,
-    });
-    ran.state = StageState::Completed;
-    ran.finished_at = Some(at);
-    store.upsert_stage_run(&ran).unwrap();
+    store
+        .upsert_stage_run(&lead(item, &run, &state, at))
+        .unwrap();
     let next = match &state {
         RunState::Succeeded { summary } => QueueState::Succeeded {
             run: run.id.clone(),
@@ -80,6 +75,23 @@ fn finish(store: &mut Store, item: &QueueItem, state: RunState, at: Timestamp) {
     store
         .capture_outcome(&store.run(&finished.id).unwrap(), None, true)
         .unwrap();
+}
+
+/// The stage as the bundled pipelines record it: the review pipeline's lead
+/// is a work stage that holds the review and fails through `fail_task`.
+fn lead(item: &QueueItem, run: &PipelineRun, state: &RunState, at: Timestamp) -> StageRun {
+    let mut ran = stage(run, 0);
+    ran.stage_id = "review".into();
+    ran.kind = Some(StageKind::Work);
+    ran.only_reviews = Some(item.pipeline == "review");
+    ran.state = match state {
+        RunState::Failed { error, .. } => StageState::Failed {
+            error: error.clone(),
+        },
+        _ => StageState::Completed,
+    };
+    ran.finished_at = Some(at);
+    ran
 }
 
 fn passed() -> RunState {
@@ -174,6 +186,13 @@ fn a_pull_request_reviewed_at_five_heads_counts_once() {
     finish(&mut store, &reviewing(42), passed(), at);
     finish(&mut store, &reviewing(7), passed(), at);
     finish(&mut store, &reviewing(9), failed("the review failed"), at);
+    let failed_round = store.outcome(&store.runs_for_item(&first.id).unwrap()[0].id);
+    let failed_round = failed_round.unwrap().unwrap();
+    assert_eq!(failed_round.failure, Some(FailureClass::Review));
+    assert!(
+        failed_round.review_pr.is_some(),
+        "a failed round reviewed it"
+    );
     let lines = store.pipeline_lines(None, None, &range(at)).unwrap();
     let prs = lines[0].review_prs.as_ref().expect("a review pipeline");
     assert_eq!((prs.reviewed, prs.passed), (3, 2));

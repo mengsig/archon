@@ -19,11 +19,14 @@
   words in its error. The class is `timeout` when the stage that ended the run
   timed out, `infrastructure` when Aether reported an infrastructure failure,
   `budget` when the item's budget guard or Aether's cost cap stopped it, and
-  `review` when a review-holding stage did not pass. Before, a review FAIL whose
+  `review` when a review-holding stage did not pass, including the bundled
+  `review` pipeline's lead, which fails through `fail_task` (stage runs now
+  record `only_reviews`; 1.6.3 records are read by their stage id). Before, a review FAIL whose
   error named "aether", "timeout" or "budget" was left unscored, so review pass
   rates of different repositories could not be compared. Only the prefixes
   Archon writes itself are still read: `BLOCKED:`, `ESCALATE:`, the budget
-  guards' own blockers, Aether's cost stop and the daemon's full-disk stop.
+  guards' own blockers, Aether's cost stop (only as Aether words it, not quoted
+  in a task's own failure) and the daemon's full-disk stop.
   A review is read as the gate reads it. A nested `review` that failed, one
   Archon refused, or one the gate found missing (such as a skip the pipeline
   does not allow) is a `review` failure. Migration V24 recomputes stored

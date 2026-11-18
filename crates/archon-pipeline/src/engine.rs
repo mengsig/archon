@@ -61,6 +61,8 @@ pub struct SpawnPlan {
     pub stage_id: String,
     /// The stage's kind, recorded on its stage run for later attribution.
     pub kind: StageKind,
+    /// The stage's work is only the review its pipeline declares.
+    pub only_reviews: bool,
     pub attempt: u32,
     /// 0-based slot within the stage's `fan_out`.
     pub fan_index: u32,
@@ -1312,6 +1314,7 @@ impl RunDriver {
                 EngineAction::Spawn(SpawnPlan {
                     stage_id: stage.id.clone(),
                     kind: stage.kind,
+                    only_reviews: self.spec.reviews_only() && self.spec.holds_review(stage),
                     attempt: at.attempt,
                     fan_index: fan,
                     fan_count: stage.fan_out,

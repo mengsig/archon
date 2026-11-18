@@ -271,6 +271,7 @@ fn item_detail(stage: StageRun) -> ItemDetail {
 
 fn long_review(run: PipelineRunId) -> StageRun {
     StageRun {
+        only_reviews: None,
         id: StageRunId::new(),
         run,
         stage_id: "review".into(),

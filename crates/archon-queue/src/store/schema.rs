@@ -790,13 +790,16 @@ WITH reviewed(run, pr) AS (
     FROM outcomes o JOIN items i ON i.id = o.item
     WHERE json_valid(i.data) AND json_valid(o.data)
       AND CASE WHEN json_valid(i.data) THEN json_extract(i.data, '$.onto.review_only') END
-      AND CASE WHEN json_valid(i.data) THEN json_type(i.data, '$.onto.pr') END = 'text' 
+      AND CASE WHEN json_valid(i.data) THEN json_type(i.data, '$.onto.pr') END = 'text'
       AND EXISTS (
           SELECT 1 FROM stage_runs s
           WHERE s.run = o.run AND json_valid(s.data)
             AND CASE WHEN json_valid(s.data)
                 THEN json_extract(s.data, '$.kind') = 'review'
-                  OR json_type(s.data, '$.structured.review') = 'object' END)
+                  OR json_type(s.data, '$.only_reviews') = 'true'
+                  OR json_type(s.data, '$.structured.review') = 'object'
+                  OR (json_type(s.data, '$.only_reviews') IS NULL
+                      AND instr(s.stage_id, 'review') > 0) END)
 )
 UPDATE outcomes SET data = json_set(data, '$.review_pr', reviewed.pr)
 FROM reviewed WHERE reviewed.run = outcomes.run AND reviewed.pr IS NOT NULL;

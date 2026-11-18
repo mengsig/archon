@@ -95,7 +95,7 @@ fn deadlines_backends_and_cost_caps_are_read_from_the_stage_that_ended_the_run()
     });
     assert_eq!(infra.failure, Some(FailureClass::Infrastructure));
     let capped = failed_with("implement", "stage failed", |run| {
-        let error = "agent stopped: cost budget of $2.00 reached".into();
+        let error = "cost budget of $2.00: $2.01 spent".into();
         vec![settled(
             run,
             "implement",
@@ -133,7 +133,9 @@ fn deadlines_backends_and_cost_caps_are_read_from_the_stage_that_ended_the_run()
         "a stage named budget is no budget stop"
     );
     let failed_agent = failed_with("implement", "stage failed", |run| {
-        let error = "agent stopped: cost budget of $2.00 reached".into();
+        let error = "Stopped by its budget (cost budget of $2.00: $2.01 spent); its live \
+                     subtree was cancelled with it, 0 descendant(s) were live at the stop."
+            .into();
         let mut stage = settled(
             run,
             "implement",
@@ -295,6 +297,64 @@ fn a_nested_review_is_read_as_the_gate_reads_it() {
         legacy_fail.failure,
         Some(FailureClass::Review),
         "a kindless review that failed"
+    );
+}
+
+#[test]
+fn a_task_that_quotes_a_cost_budget_is_no_budget_stop() {
+    let quoted = "the change exceeds the cost budget of $2.00 stated in the PR";
+    let review = failed_with("review", quoted, |run| {
+        let mut lead = settled(
+            run,
+            "review",
+            StageKind::Work,
+            StageState::Failed {
+                error: quoted.into(),
+            },
+        );
+        lead.only_reviews = Some(true);
+        vec![lead]
+    });
+    assert_eq!(review.failure, Some(FailureClass::Review));
+    let work = failed_with("implement", quoted, |run| {
+        let error = quoted.into();
+        vec![settled(
+            run,
+            "implement",
+            StageKind::Work,
+            StageState::Failed { error },
+        )]
+    });
+    assert_eq!(work.failure, Some(FailureClass::Other));
+    assert!(work.is_scored(), "the task judged its own work");
+}
+
+#[test]
+fn a_review_only_lead_that_fails_its_task_is_a_review_failure() {
+    let lead = |only_reviews: Option<bool>, stage_id: &'static str| {
+        failed_with(stage_id, MISLEADING, move |run| {
+            let error = MISLEADING.into();
+            let mut lead = settled(run, stage_id, StageKind::Work, StageState::Failed { error });
+            lead.only_reviews = only_reviews;
+            vec![lead]
+        })
+    };
+    let review = lead(Some(true), "review");
+    assert_eq!(review.failure, Some(FailureClass::Review));
+    assert_eq!(review.failure_source, Some(ClassSource::Structure));
+    let named = lead(Some(false), "review");
+    assert_eq!(
+        named.failure,
+        Some(FailureClass::Other),
+        "a recorded duty outranks the id"
+    );
+    let implement = lead(Some(false), "implement");
+    assert_eq!(implement.failure, Some(FailureClass::Other));
+    let legacy = lead(None, "review");
+    assert_eq!(
+        legacy.failure,
+        Some(FailureClass::Review),
+        "a 1.6.3 record is read by its id"
     );
 }
 

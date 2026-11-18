@@ -15070,6 +15070,13 @@
           },
           "type": "array"
         },
+        "only_reviews": {
+          "description": "Whether the stage's work is only the review its pipeline declares (a\nreview-only run's lead); `None` on stage runs recorded before Archon kept it.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "run": {
           "$ref": "#/$defs/PipelineRunId"
         },

@@ -562,6 +562,7 @@ mod tests {
 
     fn stage_run(run: &PipelineRun, stage_id: &str, summary: &str) -> StageRun {
         StageRun {
+            only_reviews: None,
             id: StageRunId::new(),
             run: run.id.clone(),
             stage_id: stage_id.into(),

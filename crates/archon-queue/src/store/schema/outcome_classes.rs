@@ -51,6 +51,7 @@ fn run(item: &QueueItemId, state: RunState) -> PipelineRun {
 
 fn stage(run: &PipelineRun, stage_id: &str, kind: StageKind, state: StageState) -> StageRun {
     StageRun {
+        only_reviews: None,
         id: StageRunId::new(),
         run: run.id.clone(),
         stage_id: stage_id.into(),
@@ -364,7 +365,7 @@ fn v24_reads_daemon_stops_and_nested_reviews() {
     let stop = failed_stage(
         &capped,
         StageKind::Work,
-        "agent stopped at its cost budget of $2.00",
+        "cost budget of $2.00: $2.01 spent",
         true,
     );
     seed(
@@ -374,6 +375,10 @@ fn v24_reads_daemon_stops_and_nested_reviews() {
         Some(FailureClass::Infrastructure),
         false,
     );
+    let quoted = "the change exceeds the cost budget of $2.00 stated in the PR";
+    let quoting = failed_run("implement", quoted);
+    let words = failed_stage(&quoting, StageKind::Work, quoted, false);
+    seed(&conn, &quoting, &[words], Some(FailureClass::Budget), false);
     let disk = failed_run(
         "review",
         "create_agent failed on a full disk 5 times (ENOSPC)",
@@ -414,6 +419,11 @@ fn v24_reads_daemon_stops_and_nested_reviews() {
         class(&capped),
         some("budget"),
         "Aether's cost stop outranks its failure flag"
+    );
+    assert_eq!(
+        class(&quoting),
+        some("other"),
+        "a task quoting a budget is no budget stop"
     );
     assert_eq!(
         class(&disk),
@@ -518,11 +528,27 @@ fn v24_freezes_the_reviewed_pull_request_into_its_outcome() {
         Some(FailureClass::Review),
         false,
     );
+    // The bundled review pipeline's lead is a work stage; 1.6.3 kept no duty.
+    let failed_lead = failed_run("review", "the review found blocking issues");
+    let lead = failed_stage(
+        &failed_lead,
+        StageKind::Work,
+        "the review found blocking issues",
+        false,
+    );
+    assert!(lead.only_reviews.is_none(), "a 1.6.3 record");
+    seed(
+        &conn,
+        &failed_lead,
+        &[lead],
+        Some(FailureClass::Other),
+        false,
+    );
     let read = failed_run("read", "x");
     let analysis = stage(&read, "read", StageKind::Work, StageState::Completed);
     seed(&conn, &read, &[analysis], Some(FailureClass::Other), false);
     let target = serde_json::json!({"onto": {"review_only": true, "pr": pr}}).to_string();
-    for run in [&reviewed, &read] {
+    for run in [&reviewed, &failed_lead, &read] {
         conn.execute(
             "UPDATE items SET data = ?2 WHERE id = ?1",
             [run.item.as_str(), &target],
@@ -547,6 +573,12 @@ fn v24_freezes_the_reviewed_pull_request_into_its_outcome() {
         some(pr),
         "the record itself names the pull request"
     );
+    assert_eq!(
+        frozen(&failed_lead),
+        some(pr),
+        "a failed round of the work-kind lead"
+    );
+    assert_eq!(columns(&conn, &failed_lead).0, some("review"));
     assert_eq!(
         frozen(&read),
         None,

@@ -1060,6 +1060,7 @@ mod tests {
     /// Attempt `n` of `run`'s `build` stage, run by `agent_id`.
     fn attempt(run: &PipelineRunId, n: u32, agent_id: &str) -> StageRun {
         StageRun {
+            only_reviews: None,
             id: archon_core::id::StageRunId::new(),
             run: run.clone(),
             stage_id: "build".into(),

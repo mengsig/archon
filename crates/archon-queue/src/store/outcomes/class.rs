@@ -81,22 +81,20 @@ fn ending_attempt<'a>(stage_id: &str, stages: &'a [StageRun]) -> Vec<&'a StageRu
 /// is read before the generic infrastructure flag.
 fn stopped_class(ending: &[&StageRun]) -> Option<FailureClass> {
     assert!(!ending.is_empty());
-    let failed_with = |marker: &str, at_start: bool| {
-        ending.iter().any(|s| match &s.state {
-            StageState::Failed { error } if at_start => error.starts_with(marker),
-            StageState::Failed { error } => error.contains(marker),
-            _ => false,
-        })
+    let failed_with = |stop: fn(&str) -> bool| {
+        ending
+            .iter()
+            .any(|s| matches!(&s.state, StageState::Failed { error } if stop(error)))
     };
     if ending.iter().any(|s| s.state == StageState::TimedOut) {
         return Some(FailureClass::Timeout);
     }
-    if failed_with(StageOutcome::COST_BUDGET_STOP, false) {
+    if failed_with(StageOutcome::is_cost_budget_stop) {
         return Some(FailureClass::Budget);
     }
     let infra = ending.iter().any(|s| s.infrastructure_failure);
-    (infra || failed_with(StageOutcome::DISK_FULL_SPAWN, true))
-        .then_some(FailureClass::Infrastructure)
+    let disk_full = |error: &str| error.starts_with(StageOutcome::DISK_FULL_SPAWN);
+    (infra || failed_with(disk_full)).then_some(FailureClass::Infrastructure)
 }
 
 /// What the stage that ended the run was for. A review that passed did not
@@ -106,8 +104,7 @@ fn judged_class(stage_id: &str, ending: &[&StageRun]) -> FailureClass {
     assert!(ending.iter().all(|s| s.stage_id == stage_id));
     let all_passed = ending.iter().all(|s| passed(s));
     let kind = ending.iter().find_map(|s| s.kind);
-    let reviews =
-        ending.iter().any(|s| holds_review(s)) || (kind.is_none() && stage_id.contains("review"));
+    let reviews = ending.iter().any(|s| holds_review(s));
     if reviews && !all_passed {
         return FailureClass::Review;
     }
@@ -119,10 +116,14 @@ fn judged_class(stage_id: &str, ending: &[&StageRun]) -> FailureClass {
     }
 }
 
-/// Whether the stage ran a review: a review stage, or a stage whose result
-/// carries the structured review the gate reads.
+/// Whether the stage ran a review: a review stage, a review-only run's lead,
+/// or a stage whose result carries the review the gate reads. A record from
+/// before Archon kept the lead (1.6.3) is read by its id.
 pub(in crate::store) fn holds_review(stage: &StageRun) -> bool {
-    stage.kind == Some(StageKind::Review) || nested_review(stage).is_some_and(|r| r.is_object())
+    let recorded = stage.kind == Some(StageKind::Review)
+        || stage.only_reviews == Some(true)
+        || nested_review(stage).is_some_and(|r| r.is_object());
+    recorded || (stage.only_reviews.is_none() && stage.stage_id.contains("review"))
 }
 
 fn nested_review(stage: &StageRun) -> Option<&serde_json::Value> {

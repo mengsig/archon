@@ -297,6 +297,7 @@ mod tests {
 
     fn attempt(run: &PipelineRun, attempt: u32, agent: &AetherAgentId) -> StageRun {
         StageRun {
+            only_reviews: None,
             id: StageRunId::new(),
             run: run.id.clone(),
             stage_id: "implement".into(),

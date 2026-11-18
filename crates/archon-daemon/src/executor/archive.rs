@@ -610,6 +610,7 @@ mod tests {
     fn stage(id: &str, attempt: u32, agent: Option<&str>, state: StageState) -> StageRun {
         let started_at = archon_core::now() + chrono::Duration::seconds(i64::from(attempt));
         StageRun {
+            only_reviews: None,
             id: StageRunId::new(),
             run: PipelineRunId::new(),
             stage_id: id.into(),

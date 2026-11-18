@@ -811,9 +811,22 @@ impl StageOutcome {
     /// What Aether's error says of an agent it stopped at its cost budget.
     pub const COST_BUDGET_STOP: &'static str = "cost budget of $";
 
+    /// How Aether's budget message opens around the stop reason it names.
+    pub const BUDGET_STOP_MESSAGE: &'static str = "Stopped by its budget (";
+
     /// How the daemon's error opens when Aether's disk stayed full through
     /// every spawn retry: an infrastructure stop, also on 1.6.3 records.
     pub const DISK_FULL_SPAWN: &'static str = "create_agent failed on a full disk";
+
+    /// Whether `error` is Aether's own cost-budget stop: its reason as the
+    /// error, or its budget message around it. Text quoting it elsewhere is not.
+    pub fn is_cost_budget_stop(error: &str) -> bool {
+        let error = error.trim_start();
+        error.starts_with(Self::COST_BUDGET_STOP)
+            || error
+                .strip_prefix(Self::BUDGET_STOP_MESSAGE)
+                .is_some_and(|reason| reason.starts_with(Self::COST_BUDGET_STOP))
+    }
 
     pub fn is_operator_blocker(&self) -> bool {
         matches!(self, Self::Failed { error, .. } if error.trim_start().starts_with(Self::BLOCKED_PREFIX))
@@ -844,6 +857,10 @@ pub struct StageRun {
     /// runs recorded before Archon kept it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<StageKind>,
+    /// Whether the stage's work is only the review its pipeline declares (a
+    /// review-only run's lead); `None` on stage runs recorded before Archon kept it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub only_reviews: Option<bool>,
     /// 1-based; grows with each retry/fix loop iteration.
     pub attempt: u32,
     /// 0-based slot within a fan-out stage; 0 for single-agent stages.
@@ -2011,6 +2028,7 @@ mod tests {
 
     fn stage(state: StageState, structured: Option<serde_json::Value>) -> StageRun {
         StageRun {
+            only_reviews: None,
             id: StageRunId::new(),
             run: PipelineRunId::new(),
             stage_id: "ship".into(),

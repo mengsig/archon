@@ -483,10 +483,13 @@ async fn create_checked_node(
     request: RunNodeRequest,
 ) -> Result<CreatedNode, ArchonError> {
     let catalog = crate::learned::catalog(ctx).await?;
-    catalog.check(&request.model).map_err(|why| {
-        ArchonError::Unavailable(format!("run node waits for model {}: {why}", request.model))
-    })?;
-    ctx.backend.create_run_node(request).await
+    match catalog.check(&request.model) {
+        Ok(_) => ctx.backend.create_run_node(request).await,
+        Err(error @ ArchonError::Invalid(_)) => {
+            ctx.backend.find_run_node(&request).await?.ok_or(error)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 async fn prepare_replay(
@@ -680,6 +683,7 @@ fn request(
         ("archon.item", item.id.to_string()),
         ("archon.run", run.id.to_string()),
         ("archon.pipeline", run.pipeline.clone()),
+        ("archon.node_generation", generation.to_string()),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_owned(), v))

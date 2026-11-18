@@ -877,7 +877,12 @@ impl StageRun {
         self.cost_usd == 0.0
             && self.aether_agent.is_none()
             && matches!(&self.state, StageState::Failed { error }
-                if error.starts_with("cannot create agent:") || error.starts_with("create_agent kept failing:"))
+                if error.starts_with("cannot create agent:") || error.starts_with("create_agent kept failing:")
+                    || error.starts_with("create_agent failed on a full disk")
+                    || error.starts_with("workspace missing:")
+                    || error.starts_with("preparing the experiments directory failed:")
+                    || error.strip_prefix("stage ").and_then(|s| s.strip_prefix(&self.stage_id))
+                        .is_some_and(|s| s.starts_with(" refused at spawn:")))
     }
 
     /// Whether its agent failed on its engine's login: an infrastructure

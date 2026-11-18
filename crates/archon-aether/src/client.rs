@@ -1148,7 +1148,8 @@ mod tests {
         assert_eq!(serving(16, 17), Some(17), "Aether's floor is still spoken");
         assert_eq!(serving(15, 16), None, "older than Aether's own floor");
         assert_eq!(serving(14, 15), None);
-        assert_eq!(serving(24, 25), None, "newer: retrying older cannot help");
+        assert_eq!(serving(24, 25), Some(25));
+        assert_eq!(serving(27, 28), None, "newer: retrying older cannot help");
         assert_eq!(fallback_version("unauthorized"), None);
     }
 

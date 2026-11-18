@@ -66,7 +66,7 @@ Contents:
         ▲                  │ aether link (1 connection, 2 subscriptions) · worktrees · lavish │
         │                  │ SQLite store (archon.db)                                         │
         │                  └───────────────▲──────────────────────────────┬───────────────────┘
-        │                    archon protocol│                              │ aether protocol v24
+        │                    archon protocol│                              │ aether protocol v26
         │                                  │                              ▼
         │          ┌──── archon mcp (stdio) ◀── spawned by ──┐   ┌───────── aetherd ─────────┐
         └──────────┤                                         └───┤ orchestrator agent (root) │
@@ -101,7 +101,7 @@ archon-core ◀── archon-aether ◀──┐
 | Crate | Owns | Must not |
 | --- | --- | --- |
 | `archon-core` | Ids (Archon's and Aether's), domain records (repo, queue item, run, stage run, feed), `Config` schema and loading, `ModelPolicy`, the Archon daemon protocol (`protocol`), the `AgentBackend` port trait (`ports`), pipeline catalog vocabulary (`catalog`), and the MCP tool names (`mcp_tools`). | Do I/O beyond reading config files. |
-| `archon-aether` | Rust client for Aether protocol v24 (falls back to 23 down to 17): transport, handshake, request multiplexing, subscriptions, typed subset of commands and events (`wire`, `events`), the reconnecting `AetherLink`, and `AetherBackend: AgentBackend`. | Know about queues or pipelines. |
+| `archon-aether` | Rust client for Aether protocol v26 (falls back to 25 down to 17): transport, handshake, request multiplexing, subscriptions, typed subset of commands and events (`wire`, `events`), the reconnecting `AetherLink`, and `AetherBackend: AgentBackend`. | Know about queues or pipelines. |
 | `archon-queue` | `Store` (SQLite, migrations): repos, items, dependencies, runs, stage runs, feed, questions, spend ledger, pause state, kv cursors, tracked requests. Its read-only readers and `Checkpointer` (§16). Pure scheduler `plan_dispatch`. | Talk to Aether. |
 | `archon-pipeline` | Pipeline discovery (built-in, user, repo), TOML parse and validation, prompt templating, and the `RunDriver` state machine (gates, loops, fan-out). | Do I/O except reading pipeline files; spawn anything. |
 | `archon-client` | Async client for the Archon daemon socket (`connect`, `connect_or_start`, `request`, `subscribe_feed`), and the NDJSON framing shared with the server. | Contain daemon logic. |
@@ -114,8 +114,8 @@ archon-core ◀── archon-aether ◀──┐
 ## 4. Aether integration
 
 Everything below was checked against Aether's source (`aether-protocol`,
-`aether-core`, `clients/protocol.schema.json`, protocol version **24**; the
-daemon also serves 23 down to 17, Aether's own floor).
+`aether-core`, `clients/protocol.schema.json`, protocol version **26**; Archon
+negotiates older versions down to 17, Aether's protocol floor).
 
 The lean creation extension is checked against **v17 + host_context feature**;
 protocol 17 and later alone do not imply support.
@@ -146,19 +146,19 @@ protocol 17 and later alone do not imply support.
 ### 4.2 Handshake
 
 ```json
-{"req":1,"cmd":"hello","protocol_version":24,"client_name":"archon",
+{"req":1,"cmd":"hello","protocol_version":26,"client_name":"archon",
  "client_version":"1.6.3","features":["history_expired"]}
 ```
 
 The reply is `Welcome {protocol_version, daemon_version, instance_id,
 schema_version, pid, features, daemon_protocol_version?, min_protocol_version?,
 idle_timeout_secs?, submission_horizon?}`. If Aether refuses the handshake with `incompatible`
-and the newest protocol it serves is 23 down to 17, Archon reconnects and
+and the newest protocol it serves is 25 down to 17, Archon reconnects and
 says hello at that one: an aetherd not yet upgraded keeps working, and
 images and command notes wait for the protocols that carry them (19 and 23).
 No supported Aether serves less than 17, so every connection stores GitHub
 watcher allowlists and operator logins. Any other refusal is reported as
-"Archon speaks Aether protocol 17..24; the daemon serves {min}..{max}". A change to `instance_id` between connections means
+"Archon speaks Aether protocol 17..26; the daemon serves {min}..{max}". A change to `instance_id` between connections means
 Aether restarted, which triggers reconciliation (§16).
 
 ### 4.3 Commands Archon uses

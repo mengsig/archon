@@ -1398,6 +1398,23 @@ impl FakeBackend {
 
 #[async_trait]
 impl AgentBackend for FakeBackend {
+    async fn find_spawn(
+        &self,
+        request: &SpawnRequest,
+    ) -> Result<Option<SpawnedAgent>, ArchonError> {
+        Ok(self.state().by_key.get(&request.idempotency_key).cloned())
+    }
+    async fn find_run_node(
+        &self,
+        request: &RunNodeRequest,
+    ) -> Result<Option<CreatedNode>, ArchonError> {
+        Ok(self
+            .state()
+            .node_by_key
+            .get(&request.idempotency_key)
+            .cloned())
+    }
+
     async fn host_context(
         &self,
         requested: archon_core::config::HostContext,

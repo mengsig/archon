@@ -80,6 +80,7 @@ pub(super) async fn finish_run(
                 .any(|s| &s.stage_id == id && s.state == StageState::Completed),
             ShippingProof::None => false,
         };
+        store.kv_delete(&format!("dispatch_model_wait/{}", run.id))?;
         run.finish(state, now)?;
         let mut finished =
             store.finish_run_with_plan(&run, plan.as_ref(), item_state(&run), now)?;

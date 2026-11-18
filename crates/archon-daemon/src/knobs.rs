@@ -922,7 +922,14 @@ mod tests {
         let raised = default_choice(&config, tiers, Tier::Frontier, &spec).unwrap();
         assert_eq!(raised.model.to_string(), "p/top", "the operator raised it");
 
-        let strong = ModelCatalog::new(vec![entry("p/top", Tier::Strong)]);
+        let strong = ModelCatalog::new(vec![
+            entry("p/top", Tier::Strong),
+            CatalogModel {
+                model: "q/untiered".parse().unwrap(),
+                tier: None,
+                is_default: false,
+            },
+        ]);
         let allowed: Vec<ModelRef> = vec!["p/top".parse().unwrap(), "q/untiered".parse().unwrap()];
         let listed = ModelPolicy::from_lists(&allowed, &[], None);
         let tiers = TierScope::new(&config, &listed, &strong);

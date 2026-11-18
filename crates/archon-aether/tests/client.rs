@@ -107,7 +107,7 @@ async fn raw_peer(
         };
         let hello = read_frame().await;
         let welcome = json!({"frame":"reply","id":hello["req"],"result":{"Ok":{"reply":"welcome",
-            "data":{"protocol_version":24,"daemon_version":"x","instance_id":"raw","schema_version":1,"pid":1}}}});
+            "data":{"protocol_version":archon_aether::wire::PROTOCOL_VERSION,"daemon_version":"x","instance_id":"raw","schema_version":1,"pid":1}}}});
         write
             .write_all(format!("{welcome}\n").as_bytes())
             .await
@@ -467,7 +467,7 @@ async fn stalled_peer(dir: &std::path::Path) -> std::path::PathBuf {
             .unwrap();
         let hello: Value = serde_json::from_str(&hello).unwrap();
         let welcome = json!({"frame":"reply","id":hello["req"],"result":{"Ok":{"reply":"welcome",
-            "data":{"protocol_version":24,"daemon_version":"x","instance_id":"stalled","schema_version":1,"pid":1}}}});
+            "data":{"protocol_version":archon_aether::wire::PROTOCOL_VERSION,"daemon_version":"x","instance_id":"stalled","schema_version":1,"pid":1}}}});
         write
             .write_all(format!("{welcome}\n").as_bytes())
             .await

@@ -176,7 +176,7 @@ impl WaitingView {
                     _ => None,
                 };
                 match model_reason {
-                    Some(reason) => (reason.to_owned(), format!("archon queue steer {} --help", item.id)),
+                    Some(reason) => (reason.to_owned(), format!("archon queue retry {} --model-plan-file <path>", item.id)),
                     None => ("Dependencies recovered; inspect the recorded block before cancelling and retrying".into(), format!("archon queue show {} --full", item.id)),
                 }
             }

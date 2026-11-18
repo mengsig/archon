@@ -51,7 +51,8 @@ pub(super) async fn settle(
             )
             .await
         }
-        Err(error @ ArchonError::Unavailable(_)) => {
+        Err(ArchonError::Unavailable(why)) if why.starts_with(super::model_catalog::RETRY_WAIT) => {
+            let error = ArchonError::Unavailable(why);
             hold_for_retry(ctx, id, "settling the stage", error).await
         }
         Err(error) => Err(error),
@@ -909,6 +910,67 @@ async fn replace(
     // stage run, never a failure that looks final on resume.
     store.upsert_stage_run(failed)?;
     Ok(Some(id))
+}
+
+pub(super) async fn replace_refused_model(
+    ctx: &DaemonContext,
+    table: &mut RunTable,
+    stage: &StageRun,
+    reason: String,
+) -> Result<FollowUp, ArchonError> {
+    let (run, all) = {
+        let store = ctx.store.lock().await;
+        (store.run(&stage.run)?, store.stage_runs(&stage.run)?)
+    };
+    let error = format!("cannot create agent: {reason}");
+    if run.state.is_terminal() {
+        return settle_locked(
+            ctx,
+            table,
+            &stage.id,
+            StageOutcome::Cancelled {
+                reason: Some(error),
+            },
+        )
+        .await;
+    }
+    let outcome = StageOutcome::Failed {
+        error: error.clone(),
+        infra: true,
+    };
+    let failed = settled_stage(stage.clone(), outcome, archon_core::now());
+    let retry = spawn::Retry {
+        nth: all.iter().filter(|s| spawn::same_slot_as(s, stage)).count(),
+        wake: None,
+        not_before: None,
+        extension: None,
+        engine_login: false,
+    };
+    match replace(ctx, table, &run, &all, &failed, retry, None).await {
+        Ok(Some(id)) => Ok(FollowUp {
+            issue: vec![id],
+            descendant_stops: vec![stage.id.clone()],
+            ..FollowUp::default()
+        }),
+        Ok(None) => spawn::fail_stage_and_run(ctx, table, stage, error).await,
+        Err(ArchonError::Unavailable(why)) => {
+            let subject = format!("stage:{}", stage.id);
+            let what = format!(
+                "Stage {} waits for a model; re-plan item {}",
+                stage.stage_id, run.item
+            );
+            super::coordination::isolate(
+                ctx,
+                &subject,
+                Some(&run.item),
+                &what,
+                Err(ArchonError::Invalid(why)),
+            )
+            .await?;
+            Ok(FollowUp::default())
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// The agent cap a replaced planner is told, from the repository as it is now.

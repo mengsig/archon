@@ -54,6 +54,42 @@ impl AetherBackend {
         }
         self.policy.canonicalized(&aliases).check(&resolved)
     }
+
+    async fn find_creation(
+        client: &AetherClient,
+        labels: &BTreeMap<String, String>,
+        role: &str,
+        parent: Option<&AetherAgentId>,
+    ) -> Result<Option<Agent>, ArchonError> {
+        if labels.is_empty() {
+            return Err(ArchonError::Unavailable(
+                "cannot identify a frozen create without labels".into(),
+            ));
+        }
+        let query = AgentQuery {
+            parent: parent.cloned(),
+            include_archived: true,
+            ..Default::default()
+        };
+        let agents = client.list_agents(query).await.map_err(|error| {
+            ArchonError::Unavailable(format!("could not verify frozen create: {error}"))
+        })?;
+        let mut matches = agents.into_iter().filter(|agent| {
+            agent.role == role
+                && agent.parent.as_ref() == parent
+                && agent
+                    .scope
+                    .as_ref()
+                    .is_some_and(|scope| labels.iter().all(|(k, v)| scope.labels.get(k) == Some(v)))
+        });
+        let found = matches.next();
+        if matches.next().is_some() {
+            return Err(ArchonError::Unavailable(
+                "multiple agents match the frozen creation labels".into(),
+            ));
+        }
+        Ok(found)
+    }
 }
 
 fn require_host_context(
@@ -461,6 +497,22 @@ pub fn task_outcome(task: &Task) -> Option<StageOutcome> {
 
 /// Task from `agent.current_task`, run from `get_task`, which also proves
 /// the task exists and belongs to this agent.
+fn node_from(agent: Agent, key: &str) -> Result<CreatedNode, ArchonError> {
+    if agent.current_task.is_some() {
+        return Err(ArchonError::Protocol(format!(
+            "run node {} (key {key}) was given a task; it must stay passive",
+            agent.id
+        )));
+    }
+    let run = agent.run.ok_or_else(|| {
+        ArchonError::Protocol(format!("run node {} (key {key}) has no run", agent.id))
+    })?;
+    Ok(CreatedNode {
+        agent: agent.id,
+        run,
+    })
+}
+
 async fn spawned_from(
     client: &AetherClient,
     agent: Agent,
@@ -533,6 +585,42 @@ impl AgentBackend for AetherBackend {
         spawned_from(&client, agent, &request.idempotency_key).await
     }
 
+    async fn find_spawn(
+        &self,
+        request: &SpawnRequest,
+    ) -> Result<Option<SpawnedAgent>, ArchonError> {
+        let client = self.link.client()?;
+        let agent = Self::find_creation(
+            &client,
+            &request.labels,
+            &request.role,
+            request.parent.as_ref(),
+        )
+        .await?;
+        match agent {
+            Some(agent) => spawned_from(&client, agent, &request.idempotency_key)
+                .await
+                .map(Some)
+                .map_err(|error| {
+                    ArchonError::Unavailable(format!(
+                        "could not recover frozen stage task: {error}"
+                    ))
+                }),
+            None => Ok(None),
+        }
+    }
+
+    async fn find_run_node(
+        &self,
+        request: &RunNodeRequest,
+    ) -> Result<Option<CreatedNode>, ArchonError> {
+        let client = self.link.client()?;
+        Self::find_creation(&client, &request.labels, &request.role, None)
+            .await?
+            .map(|agent| node_from(agent, &request.idempotency_key))
+            .transpose()
+    }
+
     async fn host_context(
         &self,
         requested: archon_core::config::HostContext,
@@ -590,20 +678,7 @@ impl AgentBackend for AetherBackend {
         let client = self.link.client()?;
         require_host_context(&client, request.host_context)?;
         let agent = client.create_agent(run_node_create_agent(&request)).await?;
-        let key = &request.idempotency_key;
-        if agent.current_task.is_some() {
-            return Err(ArchonError::Protocol(format!(
-                "run node {} (key {key}) was given a task; it must stay passive",
-                agent.id
-            )));
-        }
-        let run = agent.run.ok_or_else(|| {
-            ArchonError::Protocol(format!("run node {} (key {key}) has no run", agent.id))
-        })?;
-        Ok(CreatedNode {
-            agent: agent.id,
-            run,
-        })
+        node_from(agent, &request.idempotency_key)
     }
 
     async fn network_default(&self) -> Result<NetworkPolicy, ArchonError> {

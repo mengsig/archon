@@ -174,7 +174,7 @@ pub(crate) fn reshape(
         max_tier: env.max_default_tier(&ctx.config),
     };
     let plan = projected_plan(&learning, spec, &reshaped, item)?
-        .checked_request_catalog(&store.model_catalog())?;
+        .checked_request_catalog(&store.model_catalog(), Some(item.model_plan.plan()))?;
     plan.check_request_policy(&policy)?;
     Ok(Some(Reshaped {
         edit,

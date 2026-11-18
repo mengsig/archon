@@ -34,7 +34,19 @@ pub async fn run(command: QueueCommand, json: bool) -> anyhow::Result<ExitCode> 
             fresh,
             append,
             stage_timeout,
-        } => retry(&item, fresh, append, stage_timeout, json).await?,
+            model_plan_file,
+            model_reasons_file,
+        } => {
+            retry(
+                &item,
+                fresh,
+                append,
+                stage_timeout,
+                (model_plan_file, model_reasons_file),
+                json,
+            )
+            .await?
+        }
         QueueCommand::Refresh { item } => refresh(&item, json).await?,
         QueueCommand::Caps {
             max_parallel_agents,
@@ -94,6 +106,7 @@ async fn retry(
     fresh: bool,
     append: Option<String>,
     stage_timeout: Vec<(String, u32)>,
+    files: (Option<std::path::PathBuf>, Option<std::path::PathBuf>),
     json: bool,
 ) -> anyhow::Result<()> {
     let client = connect_or_start().await?;
@@ -104,8 +117,8 @@ async fn retry(
     };
     let request = Request::RetryItem {
         item,
-        model_plan: None,
-        model_reasons: None,
+        model_plan: files.0.as_deref().map(crate::cmd::read_map).transpose()?,
+        model_reasons: files.1.as_deref().map(crate::cmd::read_map).transpose()?,
         fresh,
         brief_append: append,
         stage_timeouts: stage_timeout.into_iter().collect(),

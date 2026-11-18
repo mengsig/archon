@@ -90,7 +90,9 @@ impl Fleet {
             .chain(stages)
             .map(|(key, id, task)| {
                 let mut agent = fake::agent(&id, task.as_deref());
-                agent["parent"] = self.requests[key]["parent"].clone();
+                for field in ["parent", "role", "scope"] {
+                    agent[field] = self.requests[key][field].clone();
+                }
                 agent["status"] = json!({"state": self.agent_state(&id)});
                 agent
             })
@@ -1273,11 +1275,72 @@ async fn frozen_creates_wait_for_a_listed_model_before_replay() {
         h.dispatch().await;
         assert_eq!(aether.received_named("create_agent").len(), before);
         assert_eq!(h.stages(&item.id).await[0].state, StageState::Spawning);
+        h.dispatch().await;
+        let notices = h
+            .notices(archon_core::notify::NotificationKind::Blocker)
+            .await;
+        assert_eq!(
+            notices
+                .iter()
+                .filter(|note| note.contains("re-plan item"))
+                .count(),
+            1,
+            "{notices:?}"
+        );
+        assert_eq!(aether.received_named("create_agent").len(), before);
         common::catalog::answer(&aether, &common::catalog::default_models());
         let client = AetherClient::connect(&aether.endpoint()).await.unwrap();
         h.ctx.aether.replace(Some(Arc::new(client))).unwrap();
         h.dispatch().await;
         assert!(aether.received_named("create_agent").len() > before);
         assert_eq!(h.stages(&item.id).await[0].state, StageState::Running);
+    }
+}
+
+#[tokio::test]
+async fn frozen_daemon_creates_recover_when_the_original_model_stays_retired() {
+    use archon_core::plan_origin::{PlanSource, PlanWriter};
+    const NEXT: &str = "claude-code/claude-haiku-new";
+    const OLD: &str = "claude-code/claude-haiku-5-5";
+    for (stage_pending, landed) in [(true, false), (false, false), (true, true), (false, true)] {
+        let (_dir, aether, h, item) = pending_lean_creation(stage_pending, landed).await;
+        let mut item = h.item(&item.id).await;
+        let mut writer = PlanWriter::new(&item.id, archon_core::now());
+        writer.filled(
+            item.model_plan.plan().clone(),
+            (PlanSource::Fallback, PlanSource::Fallback),
+        );
+        item.model_plan = writer.finish();
+        h.ctx.store.lock().await.update_item(&item).unwrap();
+        let before = aether.received_named("create_agent").len();
+        aether.set_features(vec!["retired_models".into()]);
+        let listed: Vec<_> = [NEXT, MODEL, REVIEW_MODEL]
+            .map(|id| json!({"model": id, "configured":true}))
+            .into();
+        aether.set_default("list_models", Scripted::reply("models", json!(listed)));
+        aether.set_default(
+            "list_retired_models",
+            Scripted::reply("retired_models", json!([{"model": OLD, "successor": NEXT}])),
+        );
+        let client = AetherClient::connect(&aether.endpoint()).await.unwrap();
+        h.ctx.aether.replace(Some(Arc::new(client))).unwrap();
+        h.dispatch().await;
+        let stages = h.stages(&item.id).await;
+        let creates = aether.received_named("create_agent");
+        assert!(
+            creates[before..].iter().all(|c| c["model"] == model(NEXT)),
+            "{creates:?}"
+        );
+        let running = stages
+            .iter()
+            .find(|s| s.state == StageState::Running)
+            .unwrap_or_else(|| panic!("stage pending={stage_pending} landed={landed}: {stages:?}"));
+        if stage_pending && landed {
+            assert_eq!(creates.len(), before);
+            assert_eq!(running.choice.model.to_string(), OLD);
+        } else {
+            assert_eq!(running.choice.model.to_string(), NEXT);
+            assert!(creates.len() > before);
+        }
     }
 }

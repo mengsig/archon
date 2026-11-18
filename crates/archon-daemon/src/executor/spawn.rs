@@ -1302,6 +1302,7 @@ pub(super) enum Issued {
     Resumed(AetherAgentId),
     /// The agent stopped at its stage deadline could not be woken.
     NotWoken,
+    CatalogRefused(String),
 }
 
 /// Resume the slot's kept agent when there is one and it takes the message;
@@ -1311,7 +1312,18 @@ async fn resume_or_spawn(
     stage: &StageRun,
     mut spawn: StoredSpawn,
 ) -> Result<Issued, ArchonError> {
-    check_frozen_request(ctx, &spawn.request, stage).await?;
+    match check_frozen_request(ctx, &spawn.request, stage).await {
+        Ok(()) => {}
+        Err(ArchonError::Invalid(reason)) => {
+            if spawn.parent == ParentBinding::Bound
+                && let Some(agent) = ctx.backend.find_spawn(&spawn.request).await?
+            {
+                return Ok(Issued::Spawned(agent));
+            }
+            return Ok(Issued::CatalogRefused(reason));
+        }
+        Err(error) => return Err(error),
+    }
     // A grant reserved while budgets were on is dropped once they are off.
     let granted = spawn.request.cost_budget_usd.is_some();
     let repo = {
@@ -1371,11 +1383,7 @@ async fn check_frozen_request(
         }),
     );
     for model in models {
-        let canonical = catalog.check(model).map_err(|why| {
-            ArchonError::Unavailable(format!(
-                "frozen stage request waits for model {model}: {why}"
-            ))
-        })?;
+        let canonical = catalog.check(model)?;
         if !policy.permits_model(&canonical) {
             return Err(ArchonError::Policy(format!(
                 "frozen stage model {canonical} is outside the current policy"
@@ -1538,6 +1546,9 @@ async fn record(
             table.spawn_errors.remove(&stage.id);
             return resume::resumed_ok(ctx, stage, agent).await;
         }
+        Ok(Issued::CatalogRefused(reason)) => {
+            return settle::replace_refused_model(ctx, table, stage, reason).await;
+        }
         Ok(Issued::NotWoken) => {
             table.spawn_errors.remove(&stage.id);
             tracing::info!(stage = %stage.id, "agent stopped at its deadline not woken; the stage timed out");
@@ -1664,7 +1675,7 @@ async fn policy_refusal(
 /// Fail a spawning stage and its run with a `Blocker`, as only the operator
 /// can resolve why its agent cannot be created. A run already finished is
 /// stopped instead, which retires it once no stage is left.
-async fn fail_stage_and_run(
+pub(super) async fn fail_stage_and_run(
     ctx: &DaemonContext,
     table: &mut RunTable,
     stage: &StageRun,

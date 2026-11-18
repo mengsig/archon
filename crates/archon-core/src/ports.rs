@@ -294,6 +294,25 @@ pub trait AgentBackend: Send + Sync {
     /// `idempotency_key`; implementations re-check the model policy.
     async fn spawn(&self, request: SpawnRequest) -> Result<SpawnedAgent, ArchonError>;
 
+    /// Look up a previously issued create without creating an agent.
+    async fn find_spawn(
+        &self,
+        _request: &SpawnRequest,
+    ) -> Result<Option<SpawnedAgent>, ArchonError> {
+        Err(ArchonError::Unavailable(
+            "backend cannot look up a frozen stage create".into(),
+        ))
+    }
+
+    async fn find_run_node(
+        &self,
+        _request: &RunNodeRequest,
+    ) -> Result<Option<CreatedNode>, ArchonError> {
+        Err(ArchonError::Unavailable(
+            "backend cannot look up a frozen run node".into(),
+        ))
+    }
+
     /// Resolve a new agent's context before storing its keyed request.
     async fn host_context(
         &self,

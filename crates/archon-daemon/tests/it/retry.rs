@@ -403,3 +403,62 @@ async fn retry_of_a_model_pin_block_keeps_independently_blocked_dependents() {
     assert_eq!(h.state(&item.id).await, QueueState::Queued);
     assert_eq!(h.state(&dependent.id).await, blocked);
 }
+
+#[tokio::test]
+async fn a_plain_retry_repicks_a_removed_daemon_choice() {
+    use archon_core::plan_origin::{PlanSource, PlanWriter};
+    let h = Harness::new().await;
+    let mut item = h.enqueue("retry fallback").await;
+    let mut writer = PlanWriter::new(&item.id, archon_core::now());
+    writer.filled(
+        item.model_plan.plan().clone(),
+        (PlanSource::Fallback, PlanSource::Fallback),
+    );
+    item.model_plan = writer.finish();
+    h.ctx.store.lock().await.update_item(&item).unwrap();
+    cancel(&h, &item).await;
+    h.set_learning_models(vec![common::REVIEW_MODEL.parse().unwrap()])
+        .await;
+    h.cli(retry(&item, false, None))
+        .await
+        .expect("repick removed fallback");
+    let queued = h.item(&item.id).await;
+    assert_eq!(queued.state, QueueState::Queued);
+    assert_eq!(
+        queued.model_plan.0["implement"][0].model.to_string(),
+        common::REVIEW_MODEL
+    );
+}
+
+#[tokio::test]
+async fn steers_repair_multiple_removed_pins_before_a_plain_retry() {
+    let h = Harness::new().await;
+    let mut plan = common::plan();
+    plan.0.get_mut("review").unwrap().truncate(1);
+    let item = h.enqueue_with("repair two pins", plan).await.unwrap();
+    h.set_learning_models(vec![common::REVIEW_MODEL.parse().unwrap()])
+        .await;
+    h.dispatch().await;
+    assert!(h.state(&item.id).await.is_model_pin_block());
+    for stage in ["implement", "ship"] {
+        h.cli(Request::SteerItem {
+            item: item.id.clone(),
+            steer: archon_core::steer::Steer {
+                stage: Some(stage.into()),
+                model: Some(common::REVIEW_MODEL.parse().unwrap()),
+                ..Default::default()
+            },
+        })
+        .await
+        .expect("change one pin independently");
+    }
+    h.cli(retry(&item, false, None))
+        .await
+        .expect("retry repaired pins");
+    assert_eq!(h.state(&item.id).await, QueueState::Queued);
+    h.dispatch().await;
+    assert!(matches!(
+        h.state(&item.id).await,
+        QueueState::Running { .. }
+    ));
+}

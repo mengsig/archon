@@ -8,7 +8,6 @@ use archon_core::config::Config;
 use archon_core::error::ArchonError;
 use archon_core::id::{QueueItemId, RepoId};
 use archon_core::model_tier::ModelCatalog;
-use archon_core::protocol::ItemQuery;
 use archon_core::queue::{Caps, QueueItem};
 use archon_core::quota::QuotaView;
 use archon_core::repo::Repo;
@@ -306,23 +305,18 @@ async fn holdable(
     snapshot: &DispatchSnapshot,
 ) -> Result<BTreeMap<QueueItemId, QueueItem>, ArchonError> {
     let store = ctx.read_on(on).await?;
-    let query = ItemQuery {
-        states: vec!["queued".into()],
-        limit: Some(snapshot.queued.len().max(1)),
-        ..ItemQuery::default()
-    };
-    let mut items = store.items(&query)?;
-    for spawn in &snapshot.pending_spawns {
-        items.push(store.item(&spawn.item)?);
+    let ids = snapshot
+        .queued
+        .iter()
+        .map(|candidate| &candidate.item)
+        .chain(snapshot.pending_spawns.iter().map(|spawn| &spawn.item));
+    let mut items = BTreeMap::new();
+    for id in ids {
+        if let std::collections::btree_map::Entry::Vacant(entry) = items.entry(id.clone()) {
+            entry.insert(store.item(id)?);
+        }
     }
-    let by_id: BTreeMap<_, _> = items.into_iter().map(|i| (i.id.clone(), i)).collect();
-    debug_assert!(
-        snapshot
-            .pending_spawns
-            .iter()
-            .all(|s| by_id.contains_key(&s.item))
-    );
-    Ok(by_id)
+    Ok(items)
 }
 
 /// Spawns drivers emitted that the dispatcher has not admitted yet.

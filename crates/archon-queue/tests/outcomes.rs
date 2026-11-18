@@ -360,6 +360,18 @@ fn refused_agent_creation_is_absent_from_cost_and_routing_evidence() {
     stage.state = StageState::Failed {
         error: error.into(),
     };
+    for error in [
+        format!("stage {} refused at spawn: policy", stage.stage_id),
+        "workspace missing: /tmp/item".into(),
+        "preparing the experiments directory failed: access denied".into(),
+        "create_agent failed on a full disk 5 times".into(),
+    ] {
+        let mut refused = stage.clone();
+        refused.state = StageState::Failed { error };
+        assert!(refused.zero_cost_create_refusal());
+        refused.cost_usd = 0.5;
+        assert!(!refused.zero_cost_create_refusal());
+    }
     stage.finished_at = Some(t(30));
     store.upsert_stage_run(&stage).unwrap();
     settle_run(

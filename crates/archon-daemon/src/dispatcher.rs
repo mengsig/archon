@@ -299,16 +299,18 @@ async fn note_model_waits(
         if message == previous {
             continue;
         }
-        if !message.is_empty() {
-            executor::notify(
-                ctx,
-                NotificationKind::Blocker,
-                &message,
-                Some(&spawn.item),
-                Some(&spawn.run),
-            )
-            .await?;
+        if message.is_empty() {
+            ctx.store.lock().await.kv_delete(&key)?;
+            continue;
         }
+        executor::notify(
+            ctx,
+            NotificationKind::Blocker,
+            &message,
+            Some(&spawn.item),
+            Some(&spawn.run),
+        )
+        .await?;
         ctx.store.lock().await.kv_set(&key, &message)?;
     }
     Ok(())

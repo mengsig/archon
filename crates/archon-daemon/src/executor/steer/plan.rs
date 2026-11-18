@@ -120,6 +120,9 @@ pub(super) async fn plan(
         what: Vec::new(),
         rebuild: false,
     };
+    let carried = asked
+        .catalog
+        .map(|_| change.blueprint.item.model_plan.plan().clone());
     amend(&mut change, asked.steer, &at)?;
     replan(&mut change, asked, &at);
     reshape_run(ctx, asked, &mut change, &at).await?;
@@ -142,7 +145,8 @@ pub(super) async fn plan(
     retune(ctx, asked, &mut change, &at)?;
     if let Some(catalog) = asked.catalog {
         let plan = change.blueprint.item.model_plan;
-        change.blueprint.item.model_plan = plan.checked_request_catalog(catalog)?;
+        change.blueprint.item.model_plan =
+            plan.checked_request_catalog(catalog, carried.as_ref())?;
     }
     rebudget(&mut change, asked.steer, &at, per_item_cap);
     extend(&mut change, asked.steer, &at)?;

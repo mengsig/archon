@@ -89,6 +89,8 @@ pub(super) async fn agent_created(
     let Some(item) = parent_item(ctx, parent).await? else {
         return Ok(());
     };
+    let aliases = ctx.aether.aliases();
+    let model = aliases.get(model).unwrap_or(model);
     let delegated = {
         let mut store = ctx.store.lock().await;
         let run = store.agent_run(parent)?;

@@ -182,7 +182,7 @@ async fn running_plan(
     let route = crate::knobs::ItemRoute::new(&item);
     let asked = (plan, reasons.as_ref());
     let given = items::resolve_draft(ctx, (env, route), &spec, asked, by.into()).await?;
-    let plan = items::filled_plan(ctx, route, env, &spec, &spec, given).await?;
+    let plan = items::filled_plan(ctx, route, env, &spec, &spec, given, None).await?;
     items::check_plan(ctx, env, &spec, &plan)?;
     items::check_reasons(&spec, reasons.as_ref())?;
     assert!(plan.0.len() >= spec.file.stages.len(), "a choice per stage");
@@ -303,7 +303,9 @@ async fn changed_item(
     }
     what.extend(retune(steer, stages, (&mut item, asked.by))?);
     if let Some(catalog) = asked.catalog {
-        item.model_plan = item.model_plan.checked_request_catalog(catalog)?;
+        item.model_plan = item
+            .model_plan
+            .checked_request_catalog(catalog, Some(loaded.model_plan.plan()))?;
     }
     items::check_plan(ctx, asked.env, stages, &item.model_plan)?;
     assert!(!what.is_empty(), "a checked steer changes something");

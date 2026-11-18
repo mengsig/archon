@@ -121,6 +121,8 @@ pub(crate) fn repair_pending(
     Ok((repaired, pending))
 }
 
+pub(super) const RETRY_WAIT: &str = "model catalog holds stage replacement";
+
 pub(super) fn retry_plan(
     ctx: &crate::context::DaemonContext,
     store: &mut archon_queue::Store,
@@ -131,9 +133,9 @@ pub(super) fn retry_plan(
     spec: &archon_pipeline::PipelineSpec,
 ) -> Result<SpawnPlan, ArchonError> {
     if crate::learned::cached_catalog(ctx, store)?.as_ref() != Some(catalog) {
-        return Err(ArchonError::Unavailable(
-            "model catalog changed before retry".into(),
-        ));
+        return Err(ArchonError::Unavailable(format!(
+            "{RETRY_WAIT}: the catalog changed"
+        )));
     }
     let item = store.item(&run.item)?;
     let repo = item
@@ -155,9 +157,7 @@ pub(super) fn retry_plan(
         if error.is_store() {
             error
         } else {
-            ArchonError::Unavailable(format!(
-                "stage replacement waits for a usable model: {error}"
-            ))
+            ArchonError::Unavailable(format!("{RETRY_WAIT}: {error}"))
         }
     })?;
     if repaired.model_plan != item.model_plan {

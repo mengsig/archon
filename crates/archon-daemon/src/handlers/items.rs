@@ -114,7 +114,7 @@ async fn enqueue_plan(
     let reasons = req.model_reasons.as_ref();
     let given = resolve_draft(ctx, (env, route), &resolved.spec, (draft, reasons), by).await?;
     check_stage_timeouts(ctx, &resolved.spec, &req.stage_timeouts)?;
-    let plan = filled_plan(ctx, route, env, &resolved.base, &resolved.spec, given).await?;
+    let plan = filled_plan(ctx, route, env, &resolved.base, &resolved.spec, given, None).await?;
     check_plan(ctx, env, &resolved.spec, &plan)?;
     let budgeted = Budgeted {
         budget_usd: req.budget_usd,
@@ -556,7 +556,7 @@ pub(super) async fn update_within(
             let route = ItemRoute::new(&current);
             let reasons = patch.model_reasons.as_ref();
             let given = resolve_draft(ctx, (&env, route), &spec, (draft, reasons), by).await?;
-            let filled = filled_plan(ctx, route, &env, &base, &spec, given).await?;
+            let filled = filled_plan(ctx, route, &env, &base, &spec, given, None).await?;
             check_plan(ctx, &env, &spec, &filled)?;
             plan = Some(filled);
         }
@@ -792,13 +792,27 @@ pub(super) async fn retry(
             let catalog = kept_catalog
                 .as_ref()
                 .expect("read before loading the kept plan");
-            let kept_plan = kept_plan.checked_request_catalog(catalog)?;
+            let kept_plan = if catalog.not_ready_reason().is_none() {
+                let mut kept = current.clone();
+                kept.model_plan = kept_plan;
+                executor::model_catalog::repair_item(
+                    ctx,
+                    &*ctx.store.lock().await,
+                    &kept,
+                    catalog,
+                    &env,
+                    &spec,
+                )?
+                .model_plan
+            } else {
+                kept_plan.checked_request_catalog(catalog, None)?
+            };
             let mut writer = PlanWriter::new(id, archon_core::now());
             writer.carry(&kept_plan, id, |_| Some(usize::MAX));
             writer
         }
     };
-    let plan = filled_plan(ctx, route, &env, &base, &spec, plan).await?;
+    let plan = filled_plan(ctx, route, &env, &base, &spec, plan, None).await?;
     check_plan(ctx, &env, &spec, &plan)?;
     if replaces_plan {
         let budgeted = Budgeted {
@@ -1181,6 +1195,7 @@ pub(super) async fn filled_plan(
     base: &PipelineSpec,
     spec: &PipelineSpec,
     mut writer: PlanWriter,
+    carried: Option<&ModelPlan>,
 ) -> Result<PlannedPlan, ArchonError> {
     let id = item.id;
     let policy = env.resolved_policy(ctx);
@@ -1207,7 +1222,7 @@ pub(super) async fn filled_plan(
     writer.filled(tiered, (PlanSource::Tier, PlanSource::Fallback));
     let fallen = knobs::fill_static_stages(base, spec, writer.plan().clone(), fallback.as_ref())?;
     writer.filled(fallen, (PlanSource::Fallback, PlanSource::Fallback));
-    writer.finish().checked_request_catalog(&catalog)
+    writer.finish().checked_request_catalog(&catalog, carried)
 }
 
 /// Every stage has 1 to `choice_limit` choices, no unknown stage is named, and

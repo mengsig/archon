@@ -1443,3 +1443,63 @@ async fn gh_failure_recovers(restarted: bool) {
     .await
     .expect("settlement and sweep must not deadlock");
 }
+
+fn amend(item: &QueueItem, text: &str) -> Request {
+    Request::UpdateItem {
+        item: item.id.clone(),
+        patch: archon_core::protocol::ItemPatch {
+            brief_append: Some(text.into()),
+            ..Default::default()
+        },
+    }
+}
+
+fn retry_with(item: &QueueItem, text: Option<&str>) -> Request {
+    Request::RetryItem {
+        item: item.id.clone(),
+        model_plan: None,
+        model_reasons: None,
+        fresh: false,
+        brief_append: text.map(str::to_owned),
+        stage_timeouts: Default::default(),
+    }
+}
+
+#[tokio::test]
+async fn an_amendment_naming_another_head_of_a_review_item_is_refused() {
+    let (h, _gh, head, item) = reviewed_fork().await;
+    let other = "0123456789abcdef0123456789abcdef01234567";
+    let refused = h
+        .cli(amend(&item, &format!("review {other} instead")))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        refused.contains(&format!("queue a new review item at {other}")),
+        "{refused}"
+    );
+    let named = h.cli(amend(&item, &format!("still {head}"))).await;
+    let named = named.err().map(|e| e.to_string()).unwrap_or_default();
+    assert!(!named.contains("queue a new review item at"), "{named}");
+    assert_eq!(h.item(&item.id).await.brief, item.brief, "nothing amended");
+}
+
+#[tokio::test]
+async fn a_retry_naming_another_head_of_a_review_item_is_refused() {
+    let (h, _gh, head, item) = reviewed_fork().await;
+    let other = "fedcba9876543210fedcba9876543210fedcba98";
+    let refused = h
+        .cli(retry_with(&item, Some(&format!("try {other}"))))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        refused.contains(&format!("queue a new review item at {other}")),
+        "{refused}"
+    );
+    let plain = h
+        .cli(retry_with(&item, Some(&format!("again at {head}"))))
+        .await;
+    let plain = plain.err().map(|e| e.to_string()).unwrap_or_default();
+    assert!(!plain.contains("queue a new review item at"), "{plain}");
+}

@@ -11,7 +11,9 @@ Attempt {{attempt}}: build on what the branch already holds.
 1. Read the repository's contributor guidance and the code the change
    touches. If it turns out risky (security, concurrency, a data migration,
    a public API break) or reaches into code it depends on beyond the task,
-   commit nothing and escalate as your contract says. Size alone is no
+   commit nothing and escalate as your contract says. When the risk is
+   concurrency, security or a migration, start the `ESCALATE:` error with
+   the hint "re-queue on adaptive". Size alone is no
    risk: a large mechanical change can stay here.
 2. For a visible or measurable change, capture its `before` first, as
    your contract's Summary and evidence section says.

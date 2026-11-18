@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Changed
+
+- Work that names concurrency, locking, security or a migration is routed to
+  `adaptive`: the `direct` pipeline's notes and nudge and the orchestrator
+  prompt say so, and an `implement` ESCALATE for such risk carries a
+  "re-queue on adaptive" hint.
+- `queue show` prints that a reviewer is exempt from a stage's worker policy.
+
+### Fixed
+
+- An amendment or retry of a review item queued onto a pull request that names
+  a commit other than its frozen head is refused with "queue a new review item
+  at <sha>", instead of starting a review attempt its item cannot record.
+
 ## 1.6.3
 
 Released 2026-11-18.

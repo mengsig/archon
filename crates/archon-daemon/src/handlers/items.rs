@@ -530,6 +530,7 @@ pub(super) async fn update_within(
         check_title(title)?;
     }
     let current = ctx.store.lock().await.item(id)?;
+    check_frozen_head(&current, patch.brief_append.as_deref())?;
     if matches!(current.state, QueueState::Succeeded { .. }) && patch.autonomy.is_some() {
         return after_success(ctx, current, patch, ceiling).await;
     }
@@ -768,6 +769,7 @@ pub(super) async fn retry(
     retry: Retry,
 ) -> Result<Reply, ArchonError> {
     let current = ctx.store.lock().await.item(id)?;
+    check_frozen_head(&current, retry.brief_append.as_deref())?;
     let replaces_plan = retry.model_plan.is_some();
     let (env, base, spec) = item_pipeline(ctx, &current).await?;
     // A 1.0 item names the ship agent its built-in no longer has; the retry stores the repair.
@@ -1027,6 +1029,41 @@ pub(super) fn queue_again(
     let item = store.transition_item(&item.id, QueueState::Queued, archon_core::now())?;
     unblock_dependents(store, &item.id)?;
     Ok(item)
+}
+
+/// A review item's `onto` head is frozen, so text that names another commit
+/// would send a review attempt to a head the item cannot record.
+fn check_frozen_head(item: &QueueItem, text: Option<&str>) -> Result<(), ArchonError> {
+    let Some(onto) = item.onto.as_deref().filter(|onto| onto.review_only) else {
+        return Ok(());
+    };
+    assert!(
+        !onto.head_sha.is_empty(),
+        "a frozen head is recorded at enqueue"
+    );
+    let Some(other) = text.and_then(|text| other_commit(text, &onto.head_sha)) else {
+        return Ok(());
+    };
+    Err(ArchonError::Invalid(format!(
+        "{} reviews the frozen head {} and cannot move to {other}: queue a new review item at {other}",
+        item.id, onto.head_sha
+    )))
+}
+
+/// The first commit-like token (7 to 64 hex digits holding a digit and a
+/// letter) of `text` that is not a prefix of `head`.
+fn other_commit<'a>(text: &'a str, head: &str) -> Option<&'a str> {
+    text.split(|c: char| !c.is_ascii_alphanumeric())
+        .find(|token| {
+            let hex =
+                (7..=64).contains(&token.len()) && token.bytes().all(|b| b.is_ascii_hexdigit());
+            let mixed = token.bytes().any(|b| b.is_ascii_digit())
+                && token.bytes().any(|b| b.is_ascii_alphabetic());
+            hex && mixed
+                && !head
+                    .to_ascii_lowercase()
+                    .starts_with(&token.to_ascii_lowercase())
+        })
 }
 
 /// Record an amendment of the item's brief in its feed history.
@@ -1293,6 +1330,17 @@ pub(super) async fn check_runs_here(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_commit_like_tokens_outside_the_frozen_head_are_found() {
+        let head = "0123456789abcdef0123456789abcdef01234567";
+        assert_eq!(other_commit("review 0123456789ab again", head), None);
+        assert_eq!(other_commit("an 1234567 deadbeef", head), Some("deadbeef"));
+        assert_eq!(
+            other_commit("1234567 only digits, a decade and accede", head),
+            None
+        );
+    }
+
     use super::*;
     use archon_pipeline::Catalog;
 

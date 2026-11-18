@@ -28,7 +28,7 @@ mod graph;
 mod handoffs;
 pub mod initiatives;
 mod items;
-pub use items::Asked;
+pub use items::{Asked, PlanFieldCount};
 mod lessons;
 mod merges;
 mod model_evidence;
@@ -362,6 +362,11 @@ impl Store {
     }
     pub fn item(&self, id: &QueueItemId) -> Result<QueueItem, ArchonError> {
         items::load(&self.conn, id)
+    }
+    /// How many plan fields of the unfinished items read as unattributed or
+    /// legacy, and how many of their rows do not decode at all.
+    pub fn plan_field_count(&self) -> Result<PlanFieldCount, ArchonError> {
+        items::plan_field_count(&self.conn)
     }
     /// The item an enqueue with idempotency `key` stored, if any.
     pub fn item_by_key(&self, key: &str) -> Result<Option<QueueItem>, ArchonError> {

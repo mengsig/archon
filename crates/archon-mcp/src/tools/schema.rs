@@ -295,7 +295,7 @@ fn stage_timeouts() -> Value {
         "additionalProperties": {"type": "integer", "minimum": 1}})
 }
 
-fn model_reasons() -> Value {
+pub(super) fn model_reasons() -> Value {
     json!({"type": "object", "description": "Why per stage id (not pipeline).",
         "additionalProperties": {"type": "string", "maxLength": MAX_MODEL_REASON_CHARS}})
 }
@@ -524,8 +524,8 @@ fn cost_report() -> ToolDefinition {
     define(
         "cost_report",
         "Spend report",
-        "Spend by local day as budgets count it, grouped `by`, with a total. \
-         `(none)` is spend with no such owner: the orchestrator's, and agents outside a stage.",
+        "Spend over local days as budgets count it, grouped `by`, with a total. \
+         Shows lead spend (including the orchestrator) and recorded delegate spend. +         Delegates use their own model and effort.",
         object(
             json!({
                 "since": {"type": "string", "minLength": 1, "description": format!("First day: `YYYY-MM-DD`, or days back as `7d` (the last 7 days, with today) or `2w`. Default: {DEFAULT_DAYS}d.")},

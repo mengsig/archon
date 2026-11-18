@@ -222,6 +222,10 @@ pub struct ClientFrame {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "frame", rename_all = "snake_case")]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "most frames are replies; boxing them would allocate once per reply"
+)]
 pub enum ServerFrame {
     /// `id: 0` is the daemon explaining why it is closing the connection.
     Reply {
@@ -1570,6 +1574,18 @@ pub struct DaemonStatus {
     /// archond that asked Aether while answering.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health: Option<StatusHealth>,
+    /// Plan fields of unfinished items no writer accounted for, which
+    /// archond treats as pins; `0` from an older archond.
+    #[serde(default)]
+    pub unattributed_plan_fields: u32,
+    /// Plan fields of unfinished items stored before origins were recorded,
+    /// pins as well; `0` from an older archond.
+    #[serde(default)]
+    pub legacy_plan_fields: u32,
+    /// Unfinished items whose row does not decode, so their fields are in
+    /// neither count; `0` from an older archond.
+    #[serde(default)]
+    pub unreadable_plan_items: u32,
     /// Each provider's quota headroom for stage routing, as archond last
     /// read it from Aether. `None` before a reading or from an older archond.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2029,6 +2045,9 @@ pub struct ItemDetail {
     /// How the cost of each stage run that delegated splits.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub delegations: BTreeMap<StageRunId, StageDelegation>,
+    /// Where each plan entry's model and effort came from, keyed like the plan.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub plan_origins: BTreeMap<String, Vec<crate::plan_origin::EntryOrigin>>,
     /// The default effort of each plan key, to see which choices exceed it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub default_efforts: BTreeMap<String, Effort>,
@@ -2552,7 +2571,7 @@ mod tests {
             priority: Priority::Normal,
             dependencies: vec![],
             tags: vec![],
-            model_plan: crate::model::ModelPlan::default(),
+            model_plan: Default::default(),
             model_reasons: None,
             budget_usd: None,
             stage_timeouts: BTreeMap::new(),

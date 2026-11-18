@@ -8,7 +8,6 @@ use std::path::Path;
 use std::process::Command;
 
 use archon_core::autonomy::AutonomyPatch;
-use archon_core::model::ModelPlan;
 use archon_core::protocol::{EnqueueRequest, Reply, RepoPatch, RepoRef, Request};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::repo::Attribution;
@@ -40,7 +39,7 @@ async fn started(h: &Harness, parents: &[&QueueItem]) -> (QueueItem, PipelineRun
         priority: Default::default(),
         depends_on: parents.iter().map(|p| p.id.clone()).collect(),
         tags: Vec::new(),
-        model_plan: ModelPlan::default().into(),
+        model_plan: Default::default(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,

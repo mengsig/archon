@@ -127,7 +127,14 @@ async fn ask(ctx: &DaemonContext, request: Request) -> Result<Reply, ArchonError
         request.is_read_only(),
         "a read command only reads: {request:?}"
     );
-    Box::pin(crate::handlers::route(ctx, ClientKind::ArchonCli, request)).await
+    let by = archon_core::steer::SteeredBy::Operator;
+    Box::pin(crate::handlers::route(
+        ctx,
+        ClientKind::ArchonCli,
+        by,
+        request,
+    ))
+    .await
 }
 
 fn unexpected(reply: &Reply) -> ! {

@@ -40,6 +40,7 @@ use archon_core::notify::{AnswerVia, Question};
 use archon_core::protocol::{
     ClientKind, DeviceRole, ItemPatch, Reply, RepoRef, Request, TransitionActor, WelcomeDevice,
 };
+use archon_core::steer::SteeredBy;
 use tokio::sync::RwLockReadGuard;
 
 use crate::context::DaemonContext;
@@ -77,7 +78,8 @@ pub async fn update_item_autonomy_above_ceiling(
         autonomy: Some(autonomy),
         ..ItemPatch::default()
     };
-    items::update_within(ctx, item, patch, revise::Ceiling::Waived).await
+    let by = archon_core::plan_origin::Authority::Operator;
+    items::update_within(ctx, item, patch, (revise::Ceiling::Waived, by)).await
 }
 
 /// Validate and execute one request. Operator-only requests are refused
@@ -160,8 +162,8 @@ async fn handle_unattributed(
             answered => break 'handled answered.map(|reply| reply.expect("answered")),
         }
         // Held to the end of the call: the orchestrator is not replaced under it.
-        let _authority = match take_authority(ctx, client, caller, &request).await {
-            Ok(authority) => authority,
+        let (_authority, by) = match take_authority(ctx, client, caller, &request).await {
+            Ok(authorized) => authorized,
             Err(error) => break 'handled Err(error),
         };
         // Serialize the state whose before/after authority confirmations observe.
@@ -171,7 +173,7 @@ async fn handle_unattributed(
             true => Some(ctx.authority_changes.lock().await),
             false => None,
         };
-        special_routes(ctx, client, caller, request).await
+        special_routes(ctx, (client, by), caller, request).await
     };
     if let Some(ticket) = ticket {
         tracked::finish(ticket, &result).await?;
@@ -282,31 +284,37 @@ async fn prepare_watcher(
     Ok(None)
 }
 
-/// The orchestrator's authority for a call only it may make; any other call
-/// is only seen.
+/// The orchestrator's authority for a call only it may make, with the
+/// principal the call is let through as; any other call is only seen. A call
+/// made for an agent is the orchestrator's or an agent's, never the operator's.
 async fn take_authority<'a>(
     ctx: &'a DaemonContext,
     client: ClientKind,
     caller: Option<&AetherAgentId>,
     request: &Request,
-) -> Result<Option<RwLockReadGuard<'a, ()>>, ArchonError> {
+) -> Result<(Option<RwLockReadGuard<'a, ()>>, SteeredBy), ArchonError> {
     // A CLI forwards for the agent its environment names, which says nothing
     // of whether Aether names the callers of Archon's tools.
     let named_by_aether = client == ClientKind::ArchonMcp;
+    let by = match for_an_agent(client, caller) {
+        true => SteeredBy::Orchestrator,
+        false => SteeredBy::Operator,
+    };
     if orchestrators_alone(client, caller, request) {
-        return supervisor::authorize(ctx, caller, named_by_aether)
-            .await
-            .map(Some);
+        assert_eq!(by, SteeredBy::Orchestrator, "only an agent's call needs it");
+        let held = supervisor::authorize(ctx, caller, named_by_aether).await?;
+        return Ok((Some(held), by));
     }
     supervisor::saw_call(ctx, caller, named_by_aether).await?;
-    Ok(None)
+    Ok((None, by))
 }
 
 /// The operator's own settings changes and `Promote` go their own way;
-/// every other request goes to [`route`].
+/// every other request goes to [`route`], chosen by the principal `by`
+/// that [`take_authority`] let it through as.
 async fn special_routes(
     ctx: &DaemonContext,
-    client: ClientKind,
+    (client, by): (ClientKind, SteeredBy),
     caller: Option<&AetherAgentId>,
     request: Request,
 ) -> Result<Reply, ArchonError> {
@@ -332,7 +340,7 @@ async fn special_routes(
         };
         return promote(ctx, repo, by).await;
     }
-    route(ctx, client, request).await
+    route(ctx, client, by, request).await
 }
 
 async fn promote(
@@ -391,6 +399,7 @@ fn check_named_caller(
 pub(crate) async fn route(
     ctx: &DaemonContext,
     client: ClientKind,
+    by: SteeredBy,
     request: Request,
 ) -> Result<Reply, ArchonError> {
     match request {
@@ -489,7 +498,7 @@ pub(crate) async fn route(
                 Box::pin(operator::answer_from(ctx, client, &question, &text, via)).await?;
             chat_answered(ctx, answered, &text, chat).await
         }
-        request => handle_adaptive(ctx, client, request).await,
+        request => handle_adaptive(ctx, client, by, request).await,
     }
 }
 
@@ -497,10 +506,11 @@ pub(crate) async fn route(
 async fn handle_adaptive(
     ctx: &DaemonContext,
     client: ClientKind,
+    by: SteeredBy,
     request: Request,
 ) -> Result<Reply, ArchonError> {
     match request {
-        Request::EnqueueInitiative(enqueue) => initiatives::enqueue(ctx, enqueue).await,
+        Request::EnqueueInitiative(enqueue) => initiatives::enqueue(ctx, enqueue, by.into()).await,
         Request::ListInitiatives => initiatives::list(ctx).await,
         Request::CancelInitiative { initiative } => initiatives::cancel(ctx, &initiative).await,
         Request::RetryInitiative { initiative } => initiatives::retry(ctx, &initiative).await,
@@ -508,8 +518,8 @@ async fn handle_adaptive(
         Request::UpdateInitiative { initiative, change } => {
             initiatives::update(ctx, &initiative, &change).await
         }
-        Request::SteerItem { item, steer } => steer::steer(ctx, client, &item, steer).await,
-        Request::UpdateItem { item, patch } => steer::update(ctx, client, &item, patch).await,
+        Request::SteerItem { item, steer } => steer::steer(ctx, by, &item, steer).await,
+        Request::UpdateItem { item, patch } => steer::update(ctx, by, &item, patch).await,
         Request::RecordLesson(draft) => lessons::record(ctx, client, draft).await,
         Request::Lessons(query) => lessons::list(ctx, &query).await,
         Request::UpdateLesson { lesson, patch } => lessons::update(ctx, &lesson, patch).await,
@@ -522,7 +532,7 @@ async fn handle_adaptive(
             learning::restore_memory(ctx, &feedback).await
         }
         Request::LearningRetryMemory { feedback } => learning::retry_memory(ctx, &feedback).await,
-        request => handle_queue(ctx, request).await,
+        request => handle_queue(ctx, by, request).await,
     }
 }
 
@@ -562,7 +572,8 @@ pub(crate) async fn enqueue_for_archond(
     ctx: &DaemonContext,
     request: archon_core::protocol::EnqueueRequest,
 ) -> Result<archon_core::queue::QueueItem, ArchonError> {
-    match items::enqueue(ctx, request).await? {
+    let by = archon_core::plan_origin::Authority::Daemon;
+    match items::enqueue(ctx, request, by).await? {
         Reply::Item(item) | Reply::ItemBudgetsOff(item) => Ok(item),
         other => unreachable!("an enqueue answers with its item, not {other:?}"),
     }
@@ -579,9 +590,14 @@ pub(crate) async fn resolve_item(
     }
 }
 
-async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, ArchonError> {
+/// `by` chooses the plan fields its request names.
+async fn handle_queue(
+    ctx: &DaemonContext,
+    by: SteeredBy,
+    request: Request,
+) -> Result<Reply, ArchonError> {
     match request {
-        Request::Enqueue(enqueue) => items::enqueue(ctx, enqueue).await,
+        Request::Enqueue(enqueue) => items::enqueue(ctx, enqueue, by.into()).await,
         Request::ApproveIntent(record) => Box::pin(intent::approve(ctx, record)).await,
         Request::ListItems(query) => items::list(ctx, &query).await,
         Request::GetItem { item } => items::get(ctx, &item).await,
@@ -607,7 +623,7 @@ async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, Ar
                 brief_append,
                 stage_timeouts,
             };
-            items::retry(ctx, &item, retry).await
+            items::retry(ctx, &item, retry, by.into()).await
         }
         Request::RefreshItem {
             item,
@@ -620,7 +636,7 @@ async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, Ar
                 model_reasons,
                 stage_timeouts,
             };
-            items::refresh(ctx, &item, asked).await
+            items::refresh(ctx, &item, asked, by.into()).await
         }
         Request::Status(query) => control::status(ctx, query).await,
         Request::SetCaps { caps } => control::set_caps(ctx, caps).await,

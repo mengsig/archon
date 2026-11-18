@@ -11,6 +11,7 @@ use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 use archon_core::model::Effort;
 use archon_core::notify::{NotificationKind, Question};
+use archon_core::plan_origin::{Authority, PlanSource};
 use archon_core::ports::{AgentUpdate, DescendantState};
 use archon_core::protocol::{
     EnqueueRequest, ItemDetail, ItemPatch, ItemQuery, Reply, RepoRef, Request, StageQuery,
@@ -227,6 +228,13 @@ async fn a_note_and_a_new_model_reach_the_running_agent_without_a_cancel() {
         steered.model_plan.choices_for("implement"),
         Some(std::slice::from_ref(&new))
     );
+    let origin = &crate::plan_origins::shown(&h, &steered).await["implement"][0];
+    for field in [&origin.model, &origin.effort] {
+        assert_eq!(
+            (field.source, field.by),
+            (PlanSource::Explicit, Authority::Operator)
+        );
+    }
     assert_eq!(steered.state, item_running(&h, &item.id).await);
     assert!(h.backend.cancelled().is_empty(), "no agent is cancelled");
     assert_eq!(h.backend.created(), 1, "no agent is spawned");
@@ -693,9 +701,16 @@ async fn a_stage_is_inserted_among_those_not_started_only() {
 async fn the_pipeline_is_switched_for_the_stages_not_started() {
     let h = harness().await;
     let (item, working) = implementing(&h, "skip the ceremony").await;
+    let before = crate::plan_origins::shown(&h, &item).await;
     let steered = steer(&h, &item.id, switch("steer-quick"))
         .await
         .expect("switched");
+    let after = crate::plan_origins::shown(&h, &steered).await;
+    assert_eq!(
+        after["implement"], before["implement"],
+        "a kept stage keeps its origin"
+    );
+    assert_eq!(crate::plan_origins::unattributed(&h).await, 0);
     assert_eq!(
         steered.pipeline, "wp5-review",
         "the item keeps its pipeline's name"
@@ -811,7 +826,7 @@ async fn the_model_policy_holds_against_a_steer() {
     };
     let error = steer(&h, &waiting.id, named).await.expect_err("denied");
     assert!(matches!(error, ArchonError::Policy(_)), "{error:?}");
-    assert_eq!(h.item(&waiting.id).await.model_plan, plan());
+    assert_eq!(*h.item(&waiting.id).await.model_plan, plan());
 }
 
 #[tokio::test]
@@ -835,7 +850,16 @@ async fn update_item_on_a_running_item_is_steered_into_its_run() {
         panic!("update_item replies with the item");
     };
     assert!(updated.brief.ends_with(&format!("{NOTE}\n")));
-    assert_eq!(updated.model_plan, replaced);
+    assert_eq!(*updated.model_plan, replaced);
+    let origins = crate::plan_origins::shown(&h, &updated).await;
+    let ship = &origins["ship"][0];
+    for field in [&ship.model, &ship.effort] {
+        assert_eq!(
+            (field.source, field.by),
+            (PlanSource::Explicit, Authority::Operator)
+        );
+    }
+    assert_eq!(crate::plan_origins::unattributed(&h).await, 0);
     assert_eq!(updated.tags, ["steered"]);
     let messages = h.backend.messages();
     assert_eq!(messages.len(), 1, "{messages:?}");

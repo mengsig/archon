@@ -141,7 +141,7 @@ async fn informational_ambiguous_and_mismatched_corrections_penalize_no_model() 
         "no model was penalized"
     );
     assert_eq!(
-        h.item(&explicit.id).await.model_plan,
+        *h.item(&explicit.id).await.model_plan,
         plan(),
         "explicit choices hold"
     );

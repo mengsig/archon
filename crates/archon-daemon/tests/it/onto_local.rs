@@ -7,7 +7,6 @@ use crate::common;
 use archon_core::autonomy::{AutonomyPatch, ReviewLevel};
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
-use archon_core::model::ModelPlan;
 use archon_core::protocol::{EnqueueRequest, Reply, RepoAdd, RepoPatch, RepoRef, Request};
 use archon_core::pull_request::OntoTarget;
 use archon_core::queue::{QueueItem, QueueState};
@@ -44,7 +43,7 @@ fn request(title: &str, onto: Option<OntoTarget>, depends_on: &[&QueueItem]) -> 
         priority: Default::default(),
         depends_on: depends_on.iter().map(|item| item.id.clone()).collect(),
         tags: Vec::new(),
-        model_plan: ModelPlan::default().into(),
+        model_plan: Default::default(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,

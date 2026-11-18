@@ -60,6 +60,7 @@ fn member(after: &[usize]) -> InitiativeMember {
         title: None,
         pipeline: None,
         model_plan: None,
+        model_reasons: None,
         autonomy: Default::default(),
         after: after.to_vec(),
         onto: None,

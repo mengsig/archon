@@ -10,7 +10,7 @@ use crate::autonomy::Autonomy;
 use crate::error::ArchonError;
 use crate::github::GithubThread;
 use crate::id::{InitiativeId, PipelineRunId, QueueItemId, RepoId};
-use crate::model::{ModelPlan, ModelReasons};
+use crate::model::ModelReasons;
 use crate::pull_request::OntoPullRequest;
 
 /// The longest brief an enqueue accepts, well under the protocol frame cap.
@@ -215,7 +215,10 @@ pub struct QueueItem {
     /// Items that must have succeeded before this one dispatches.
     pub dependencies: Vec<QueueItemId>,
     pub tags: Vec<String>,
-    pub model_plan: ModelPlan,
+    /// The plan and where each of its fields came from: the JSON keys
+    /// `model_plan` and `model_origins`.
+    #[serde(flatten)]
+    pub model_plan: crate::plan_origin::PlannedPlan,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_reasons: Option<ModelReasons>,
     /// Dollar cap for this item's whole run; `None` falls back to config.
@@ -415,7 +418,7 @@ mod tests {
             priority: Priority::Normal,
             dependencies: vec![],
             tags: vec![],
-            model_plan: ModelPlan::default(),
+            model_plan: Default::default(),
             model_reasons: None,
             budget_usd: None,
             stage_timeouts: BTreeMap::new(),

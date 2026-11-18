@@ -1072,10 +1072,12 @@ fn rendered_autonomy_names_defaults_ceiling_and_directives() {
 fn get_item_shows_recorded_reasons_next_to_choices_and_omits_missing_reasons() {
     use archon_core::protocol::{ItemDetail, Reply};
     let mut item = item(QueueState::Queued);
-    item.model_plan = serde_json::from_value(plan()).unwrap();
+    let stored = serde_json::from_value(plan()).unwrap();
+    item.model_plan = archon_core::plan_origin::PlannedPlan::legacy(stored);
     item.model_reasons = Some([("implement".into(), "Apply supplied fix".into())].into());
     let mut detail = ItemDetail {
         acceptance: Default::default(),
+        plan_origins: Default::default(),
         default_efforts: Default::default(),
         worker_policies: Default::default(),
         stage_notes: Default::default(),
@@ -1103,9 +1105,22 @@ fn get_item_shows_recorded_reasons_next_to_choices_and_omits_missing_reasons() {
         text.contains("review = codex/gpt-6-sol x_high + claude-code/claude-sonnet-5 max"),
         "{text}"
     );
+    assert!(!text.contains("Plan origins:"), "{text}");
     detail.item.model_reasons = None;
+    detail.plan_origins = detail.item.model_plan.origins(&detail.item.id);
     let text = render("get_item", &Reply::ItemDetail(Box::new(detail)));
     assert!(!text.contains("Apply supplied fix"));
+    assert!(
+        text.contains(
+            "Plan origins:\n  implement[0]: model legacy_unknown by unknown; \
+             effort legacy_unknown by unknown"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("\n  review[1]: model legacy_unknown"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -1140,6 +1155,7 @@ fn get_item_lists_the_steers_made_to_the_item() {
     let at = archon_core::now();
     let mut detail = ItemDetail {
         acceptance: Default::default(),
+        plan_origins: Default::default(),
         default_efforts: Default::default(),
         worker_policies: Default::default(),
         stage_notes: Default::default(),
@@ -1230,6 +1246,7 @@ fn list_queue_and_get_item_expose_stable_waiting_reasons_in_text_and_json() {
             "get_item",
             Reply::ItemDetail(Box::new(ItemDetail {
                 acceptance: Default::default(),
+                plan_origins: Default::default(),
                 default_efforts: Default::default(),
                 worker_policies: Default::default(),
                 stage_notes: Default::default(),
@@ -1295,6 +1312,7 @@ fn dependency_titles_are_escaped_in_waiting_text() {
             "get_item",
             Reply::ItemDetail(Box::new(ItemDetail {
                 acceptance: Default::default(),
+                plan_origins: Default::default(),
                 default_efforts: Default::default(),
                 worker_policies: Default::default(),
                 stage_notes: Default::default(),

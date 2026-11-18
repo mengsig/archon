@@ -453,6 +453,24 @@
       ],
       "type": "object"
     },
+    "Authority": {
+      "description": "Who chose a plan field.",
+      "oneOf": [
+        {
+          "enum": [
+            "operator",
+            "orchestrator",
+            "daemon"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "Nobody known: a legacy or an unattributed field.",
+          "type": "string"
+        }
+      ]
+    },
     "Autonomy": {
       "additionalProperties": false,
       "description": "Every knob set. The default is standard review, no proposal or report,\nmanual merge and guarded tools.",
@@ -3699,13 +3717,14 @@
             "pipeline",
             "model",
             "item",
-            "stage"
+            "stage",
+            "effort"
           ],
           "type": "string"
         },
         {
           "const": "provider",
-          "description": "The provider of the model a stage ran, as provider weights route it.",
+          "description": "The provider of each spending agent's recorded model.",
           "type": "string"
         }
       ]
@@ -3761,6 +3780,16 @@
           },
           "type": "array"
         },
+        "split": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CostSplit"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "total": {
           "$ref": "#/$defs/CostAmounts"
         }
@@ -3792,10 +3821,20 @@
           "type": "number"
         },
         "key": {
-          "description": "The day, repository name, pipeline, `provider/model`, item id or\nstage id. `None` gathers spend with no such owner: the\norchestrator's, and agents outside a stage for model and stage.",
+          "description": "The grouping key, including an explicit orchestrator bucket where applicable.\n`None` gathers spend without a key in this grouping.",
           "type": [
             "string",
             "null"
+          ]
+        },
+        "split": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CostSplit"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "unclassified_cost_usd": {
@@ -3809,6 +3848,24 @@
         "counted_usd",
         "cost_usd",
         "estimated_cost_usd"
+      ],
+      "type": "object"
+    },
+    "CostSplit": {
+      "description": "Budget-counted spend from stage leads and the orchestrator, and from\nrecorded delegates. The rest of `counted_usd` lacks attribution.",
+      "properties": {
+        "delegated_usd": {
+          "format": "double",
+          "type": "number"
+        },
+        "lead_usd": {
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "lead_usd",
+        "delegated_usd"
       ],
       "type": "object"
     },
@@ -3995,6 +4052,13 @@
         "lavish_available": {
           "type": "boolean"
         },
+        "legacy_plan_fields": {
+          "default": 0,
+          "description": "Plan fields of unfinished items stored before origins were recorded,\npins as well; `0` from an older archond.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "mcp": {
           "anyOf": [
             {
@@ -4106,6 +4170,20 @@
         "started_at": {
           "format": "date-time",
           "type": "string"
+        },
+        "unattributed_plan_fields": {
+          "default": 0,
+          "description": "Plan fields of unfinished items no writer accounted for, which\narchond treats as pins; `0` from an older archond.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unreadable_plan_items": {
+          "default": 0,
+          "description": "Unfinished items whose row does not decode, so their fields are in\nneither count; `0` from an older archond.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         },
         "upgrade": {
           "description": "The upgrade under way, in one line.",
@@ -4669,6 +4747,33 @@
         }
       ]
     },
+    "EntryOrigin": {
+      "description": "The origins of one plan entry's model and effort, each on its own, and of\nits tier when the entry has one.",
+      "properties": {
+        "effort": {
+          "$ref": "#/$defs/FieldOrigin"
+        },
+        "model": {
+          "$ref": "#/$defs/FieldOrigin"
+        },
+        "tier": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FieldOrigin"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Who asked for the tier the daemon resolves the model in; present\nexactly when the choice has a tier."
+        }
+      },
+      "required": [
+        "model",
+        "effort"
+      ],
+      "type": "object"
+    },
     "ErrorCode": {
       "oneOf": [
         {
@@ -5018,6 +5123,36 @@
       "required": [
         "feedback",
         "penalizing"
+      ],
+      "type": "object"
+    },
+    "FieldOrigin": {
+      "description": "The origin of one field (the model, the effort or the tier) of one plan entry.",
+      "properties": {
+        "at": {
+          "description": "When the field was last chosen; `None` when nobody knows.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "by": {
+          "$ref": "#/$defs/Authority"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/PlanSource"
+        }
+      },
+      "required": [
+        "source",
+        "by"
       ],
       "type": "object"
     },
@@ -5894,6 +6029,16 @@
             }
           ]
         },
+        "model_reasons": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Why an effort of `model_plan` is above its stage's default, as in an enqueue.",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
         "onto": {
           "anyOf": [
             {
@@ -6257,6 +6402,16 @@
           },
           "type": "array"
         },
+        "plan_origins": {
+          "additionalProperties": {
+            "items": {
+              "$ref": "#/$defs/EntryOrigin"
+            },
+            "type": "array"
+          },
+          "description": "Where each plan entry's model and effort came from, keyed like the plan.",
+          "type": "object"
+        },
         "runs": {
           "items": {
             "$ref": "#/$defs/PipelineRun"
@@ -6578,6 +6733,16 @@
             }
           ],
           "description": "The issue the item came from or closes; feature `github_links`."
+        },
+        "model_origins": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanOrigins"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "model_plan": {
           "$ref": "#/$defs/ModelPlan"
@@ -9552,6 +9717,85 @@
       ],
       "type": "object"
     },
+    "PlanOrigins": {
+      "description": "The origins of a plan, written for one item.",
+      "properties": {
+        "entries": {
+          "additionalProperties": {
+            "items": {
+              "$ref": "#/$defs/EntryOrigin"
+            },
+            "type": "array"
+          },
+          "type": "object"
+        },
+        "item": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QueueItemId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The item these origins were written for; `None` describes no item."
+        }
+      },
+      "required": [
+        "entries"
+      ],
+      "type": "object"
+    },
+    "PlanSource": {
+      "description": "How a plan field got its value.",
+      "oneOf": [
+        {
+          "const": "explicit",
+          "description": "Named by a request or a steer.",
+          "type": "string"
+        },
+        {
+          "const": "learned",
+          "description": "The learned route of the repository.",
+          "type": "string"
+        },
+        {
+          "const": "tier",
+          "description": "Resolved inside a tier the request or the stage asked for.",
+          "type": "string"
+        },
+        {
+          "const": "fallback",
+          "description": "The stage's or the pipeline's default.",
+          "type": "string"
+        },
+        {
+          "const": "sizer",
+          "description": "Sized by the daemon for an effort nobody pinned. No writer sets it yet.",
+          "type": "string"
+        },
+        {
+          "const": "escalation",
+          "description": "Raised by the daemon after a failure. No writer sets it yet.",
+          "type": "string"
+        },
+        {
+          "const": "migrated",
+          "description": "Moved by the daemon off a model that can no longer run it. No writer sets it yet.",
+          "type": "string"
+        },
+        {
+          "const": "legacy_unknown",
+          "description": "Stored before origins were recorded.",
+          "type": "string"
+        },
+        {
+          "const": "unattributed",
+          "description": "No writer accounted for it.",
+          "type": "string"
+        }
+      ]
+    },
     "PrRef": {
       "description": "A pull request with what is known of its state; the reference's fields\nsit beside the state.",
       "properties": {
@@ -9957,6 +10201,7 @@
       "type": "string"
     },
     "QueueItem": {
+      "description": "An item's model plan with where each field came from. Serialized as the\nitem's `model_plan` and `model_origins` keys, so stored items and older\nreaders see the plan as before.",
       "properties": {
         "autonomy": {
           "$ref": "#/$defs/Autonomy",
@@ -10017,6 +10262,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/IntentBinding"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model_origins": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanOrigins"
             },
             {
               "type": "null"

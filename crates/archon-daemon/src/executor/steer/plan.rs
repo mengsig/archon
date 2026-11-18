@@ -357,18 +357,17 @@ fn retune(
         let reasons = blueprint.item.model_reasons.as_ref();
         knobs::check_effort_reason(at.target, effort, default, reasons)?;
     }
-    let plan = &mut blueprint.item.model_plan;
-    let choices = plan.0.get_mut(at.target).filter(|c| !c.is_empty());
-    let Some(choices) = choices else {
+    let item = &mut blueprint.item;
+    let named = (steer.model.as_ref(), steer.effort);
+    let by = (asked.by.into(), archon_core::now());
+    let choices = item.model_plan.steer(&item.id, at.target, named, by);
+    let Some(now) = choices.and_then(|c| c.first()).cloned() else {
         return Err(ArchonError::Invalid(format!(
             "the item's model plan has no choice for stage {:?} to change",
             at.target
         )));
     };
-    for choice in choices.iter_mut() {
-        *choice = retuned(choice, steer);
-    }
-    let now = choices[0].clone();
+    let plan = &item.model_plan;
     let model_named = steer.model.as_ref().is_none_or(|model| *model == now.model);
     assert!(
         model_named && steer.effort.is_none_or(|e| e == now.effort),

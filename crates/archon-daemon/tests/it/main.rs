@@ -79,6 +79,7 @@ mod operator_authority;
 mod operator_merge;
 mod operator_settings;
 mod ops;
+mod plan_origins;
 mod planning_controls;
 mod pr_evidence;
 mod provider_routing;

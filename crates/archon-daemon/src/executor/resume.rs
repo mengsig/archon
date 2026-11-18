@@ -88,8 +88,9 @@ pub(super) fn takeover(
         return Ok(Takeover::Fresh);
     }
     // A steer that planned another model wants it from the start; a live retune
-    // already moved the agent to its current choice.
-    let same_model = *last.current_choice() == plan.choice;
+    // already moved the agent to its current choice. A tier is not the agent.
+    let current = last.current_choice();
+    let same_model = (&current.model, current.effort) == (&plan.choice.model, plan.choice.effort);
     let (Some(message), Some(parked_at)) = (&plan.resume, last.finished_at) else {
         return Ok(Takeover::Replace(agent));
     };

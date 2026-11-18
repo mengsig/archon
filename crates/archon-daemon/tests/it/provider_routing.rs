@@ -10,6 +10,7 @@ use archon_core::Timestamp;
 use archon_core::config::Config;
 use archon_core::model::{ModelPlan, ModelPlanDraft};
 use archon_core::model_tier::{CatalogModel, ModelCatalog, Tier};
+use archon_core::plan_origin::{Authority, PlanSource, PlannedPlan};
 use archon_core::protocol::{
     DaemonStatus, EnqueueRequest, Reply, RepoRef, Request, WaitingReason, WaitingReasonCode,
 };
@@ -506,7 +507,21 @@ async fn a_quota_reroute_posts_each_model_it_swaps_and_never_moves_a_pin() {
         !notice.contains("claude-code/opus"),
         "the pin did not move: {notice}"
     );
-    let switch = h.item(&item.id).await.provider_switch.expect("noted");
+    let rerouted = h.item(&item.id).await;
+    let origins = crate::plan_origins::shown(&h, &rerouted).await;
+    let (pin, moved) = (&origins["review"][0].model, &origins["ship"][0].model);
+    assert_eq!(
+        (pin.source, pin.by),
+        (PlanSource::Explicit, Authority::Operator)
+    );
+    assert_eq!(
+        (moved.source, moved.by),
+        (PlanSource::Tier, Authority::Daemon)
+    );
+    let note = moved.note.as_deref().unwrap_or_default();
+    assert!(note.starts_with("moved to follow provider codex"), "{note}");
+    assert_eq!(crate::plan_origins::unattributed(&h).await, 0);
+    let switch = rerouted.provider_switch.expect("noted");
     for swap in [
         "stage review now runs on codex/mini instead of claude-code/haiku",
         "stage ship now runs on codex/mini instead of claude-code/haiku",
@@ -535,9 +550,12 @@ async fn a_choice_that_no_longer_resolves_keeps_the_rest_of_a_reroute_stored() {
     h.dispatch().await;
     {
         let mut store = h.ctx.store.lock().await;
-        let mut stored = store.item(&item.id).unwrap();
-        let ship = &mut stored.model_plan.0.get_mut("ship").unwrap()[0];
-        ship.tier.as_mut().expect("a tier").provider = Some("gone".into());
+        // Edited as stored, so the daemon's origins of the other stages stay.
+        let mut raw = serde_json::to_value(store.item(&item.id).unwrap()).unwrap();
+        let tier = &mut raw["model_plan"]["ship"][0]["tier"];
+        assert!(tier.is_object(), "a tier");
+        tier["provider"] = "gone".into();
+        let stored: QueueItem = serde_json::from_value(raw).unwrap();
         store.update_item(&stored).unwrap();
     }
     read(
@@ -778,6 +796,47 @@ async fn a_repository_s_own_weights_hold_its_items_when_every_provider_is_out() 
     assert_eq!(reason.code, WaitingReasonCode::ProviderQuota);
 }
 
+/// Stores `item`'s plan as a store without origins of its own reads it: every
+/// field a pin of `source`. Answers the plan it pinned.
+async fn pinned(h: &Harness, item: &QueueItem, source: PlanSource) -> ModelPlan {
+    let mut store = h.ctx.store.lock().await;
+    let mut stored = store.item(&item.id).unwrap();
+    let plan = stored.model_plan.plan().clone();
+    assert!(plan.0.values().flatten().all(|c| c.tier.is_some()));
+    stored.model_plan = match source {
+        PlanSource::LegacyUnknown => PlannedPlan::legacy(plan.clone()),
+        PlanSource::Unattributed => PlannedPlan::unattributed(&stored.id, plan.clone()),
+        other => panic!("no store read makes a {other:?} pin"),
+    };
+    store.update_item(&stored).unwrap();
+    plan
+}
+
+const PINS: [PlanSource; 2] = [PlanSource::LegacyUnknown, PlanSource::Unattributed];
+
+/// Dispatch resolves a queued pinned tier, so admission holds it for quota
+/// like a daemon tier rather than letting it start on an exhausted provider.
+#[tokio::test]
+async fn a_queued_item_with_pinned_tiers_waits_for_quota_like_any_tier() {
+    for source in PINS {
+        let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+        read(
+            &h,
+            TimeDelta::zero(),
+            vec![
+                ("claude-code", window(0, TimeDelta::hours(2))),
+                ("codex", window(0, TimeDelta::hours(1))),
+            ],
+        );
+        let item = enqueue(&h, ROUTED, "queued with pins", tier_plan()).await;
+        pinned(&h, &item, source).await;
+        h.dispatch().await;
+        assert!(h.stages(&item.id).await.is_empty(), "{source:?}: spawned");
+        let reason = waiting_reason(&status(&h).await, &item);
+        assert_eq!(reason.code, WaitingReasonCode::ProviderQuota, "{source:?}");
+    }
+}
+
 #[tokio::test]
 async fn a_stage_waiting_for_quota_takes_no_agent_slot_from_other_work() {
     let mut config = weighted(&[("claude-code", 1), ("codex", 1)]);
@@ -907,4 +966,135 @@ async fn a_steered_model_runs_on_every_fan_out_slot_loop_and_retry_off_quota() {
         !notices.iter().any(|n| n.contains("instead of codex/sol")),
         "no pin was swapped: {notices:?}"
     );
+}
+
+/// The models each stage of `item` was spawned on, in spawn order.
+async fn spawned_on(h: &Harness, item: &QueueItem, stage: &str) -> Vec<String> {
+    (h.stages(&item.id).await.into_iter())
+        .filter(|s| s.stage_id == stage)
+        .map(|s| s.choice.model.to_string())
+        .collect()
+}
+
+fn claude_then_codex(h: &Harness, claude: u64, codex: u64) {
+    read(
+        h,
+        TimeDelta::zero(),
+        vec![
+            ("claude-code", window(claude, TimeDelta::hours(3))),
+            ("codex", window(codex, TimeDelta::hours(4))),
+        ],
+    );
+}
+
+/// A pinned tier is what was pinned: dispatch resolves it to a model it
+/// records as its own, and later quota moves keep that choice in the tier.
+#[tokio::test]
+async fn dispatch_resolves_a_pinned_tier_which_then_moves_only_within_it() {
+    for source in PINS {
+        let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+        claude_then_codex(&h, 80, 0);
+        let item = enqueue(&h, ROUTED, "pinned tiers", tier_plan()).await;
+        let queued = pinned(&h, &item, source).await;
+        let before = crate::plan_origins::shown(&h, &item).await;
+        assert_eq!(before["implement"][0].model.source, source);
+
+        claude_then_codex(&h, 10, 90);
+        h.dispatch().await;
+        assert_eq!(spawned_on(&h, &item, "implement").await, ["codex/sol"]);
+        let dispatched = crate::plan_origins::shown(&h, &item).await;
+        for (key, origin) in dispatched
+            .iter()
+            .flat_map(|(k, e)| e.iter().map(move |o| (k, o)))
+        {
+            let model = (origin.model.source, origin.model.by);
+            assert_eq!(model, (PlanSource::Tier, Authority::Daemon), "{key}");
+            assert!(origin.model.at.is_some(), "{source:?} {key}");
+            assert_eq!(origin.effort.source, source, "{key}: the effort stays");
+            let tier = origin.tier.as_ref().expect("a tiered choice");
+            assert_eq!(tier.source, source, "{key}: the tier is the pin");
+        }
+
+        claude_then_codex(&h, 90, 0);
+        h.settle_running(|_| completed("implemented")).await;
+        h.dispatch().await;
+        let reviews = spawned_on(&h, &item, "review").await;
+        assert_eq!(reviews, ["claude-code/opus", "claude-code/haiku"]);
+        let stored = h.item(&item.id).await;
+        let tiers = |plan: &ModelPlan| -> Vec<_> {
+            plan.0.values().flatten().map(|c| c.tier.clone()).collect()
+        };
+        assert_eq!(tiers(&stored.model_plan), tiers(&queued), "{source:?}");
+    }
+}
+
+/// A run whose stored models are pins moves none of them: not the stored plan,
+/// not the driver a restart rebuilds, not the stage it spawns next.
+#[tokio::test]
+async fn a_recovered_run_with_pinned_models_follows_no_quota_move() {
+    for source in PINS {
+        let mut h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+        claude_then_codex(&h, 80, 0);
+        let item = enqueue(&h, ROUTED, "run with pins", tier_plan()).await;
+        h.dispatch().await;
+        let before = pinned(&h, &item, source).await;
+
+        h.restart();
+        h.ctx.store.lock().await.set_model_catalog(catalog());
+        archon_daemon::executor::recover(&h.ctx)
+            .await
+            .expect("recover");
+        claude_then_codex(&h, 10, 90);
+        h.settle_running(|_| completed("implemented")).await;
+        h.dispatch().await;
+
+        let reviews = spawned_on(&h, &item, "review").await;
+        assert_eq!(reviews, ["claude-code/opus", "claude-code/haiku"]);
+        let stored = h.item(&item.id).await;
+        assert_eq!(*stored.model_plan, before, "{source:?}: a pin moved");
+        let origins = crate::plan_origins::shown(&h, &stored).await;
+        let fields = origins
+            .values()
+            .flatten()
+            .flat_map(|o| [&o.model, &o.effort]);
+        assert!(fields.clone().all(|f| f.source == source), "{origins:?}");
+        assert_eq!(fields.count(), 8, "the model and effort of four choices");
+    }
+}
+
+/// A run 1.6.3 left with a tiered implementer keeps that agent through the
+/// restart of an upgrade: its pinned model reads without a tier, the same agent.
+#[tokio::test]
+async fn a_recovered_run_from_before_origins_resumes_its_kept_tiered_implementer() {
+    let mut h = harness(Config::default()).await;
+    let item = enqueue(&h, ROUTED, "kept through an upgrade", tier_plan()).await;
+    h.dispatch().await;
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    let implementers = |stages: Vec<archon_core::run::StageRun>| -> Vec<_> {
+        let of_implement = stages.into_iter().filter(|s| s.stage_id == "implement");
+        of_implement.map(|s| (s.choice, s.aether_agent)).collect()
+    };
+    let first = implementers(h.stages(&item.id).await);
+    assert!(first[0].0.tier.is_some(), "a tiered implementer: {first:?}");
+    pinned(&h, &item, PlanSource::LegacyUnknown).await;
+    let spawned = h.backend.requests().len();
+
+    h.restart();
+    h.ctx.store.lock().await.set_model_catalog(catalog());
+    archon_daemon::executor::recover(&h.ctx)
+        .await
+        .expect("recover");
+    let failed = archon_core::run::StageOutcome::Completed {
+        summary: "the greeting is never tested\nVERDICT: fail".into(),
+        structured: Some(serde_json::json!({"verdict": "fail", "findings": []})),
+    };
+    h.settle_running(|_| failed.clone()).await;
+    h.dispatch().await;
+
+    let again = implementers(h.stages(&item.id).await);
+    assert_eq!(again.len(), 2, "the fix is a second attempt: {again:?}");
+    assert_eq!(again[1].0.model, first[0].0.model, "the pinned model");
+    assert_eq!(again[1].1, first[0].1, "the kept agent takes the findings");
+    assert_eq!(h.backend.requests().len(), spawned, "nothing respawned");
 }

@@ -2,6 +2,43 @@
 
 ## Unreleased
 
+### Added
+
+- Every item records where each field of its model plan came from, beside
+  the plan as `model_origins`: for each stage entry, separately for the model
+  and the effort, the source (`explicit`, `learned`, `tier`, `fallback`,
+  and `sizer`, `escalation` and `migrated`, which nothing sets yet), who
+  chose it (operator, orchestrator or daemon) and when; a
+  tiered entry also records who asked for its tier.
+  Enqueue, initiative members, update, retry, steers, pipeline switches,
+  refreshes, restack fixes, dispatch tier resolution, provider reroutes and
+  the distillation errand all record it. A steer that names the value already
+  stored still records it as explicit. `get_item` shows each entry's origin.
+  `archon status` counts, over unfinished items, the fields no writer
+  accounted for (`unattributed`, which should be zero) and the fields stored
+  before origins were recorded (`legacy_unknown`).
+- The daemon moves a model or effort again only when it filled that field
+  itself. A field a caller named, a migrated one, a legacy one and an
+  unattributed one are pins for dispatch, reroutes, quota holds and recovery.
+  A pinned tier is still resolved to a model when dispatch starts a run, and
+  moves only within that tier afterwards.
+
+### Changed
+
+- An initiative member's plan is checked as an enqueue's is: an effort above
+  its stage's default needs a reason, given in the member's new
+  `model_reasons`.
+
+### Upgrading
+
+Items stored by 1.6.3 or earlier have no origins. Each of their fields reads
+as `legacy_unknown` and is treated as a pin; nothing is backfilled. Stored
+origins that cannot be read make every field of that item `unattributed`.
+Store migrations are one-way: back up `archon.db` before `archon update`.
+Downgrading the binary is not supported once a store migration of the release
+has run, because an older schema refuses a newer store. See
+[docs/upgrading.md](docs/upgrading.md#plan-origins).
+
 ### Fixed
 
 - Cost reports attribute recorded delegates to the stage they worked for and

@@ -7,6 +7,7 @@ use archon_core::id::RepoId;
 use archon_core::lesson::{Lesson, LessonKind, LessonScope, LessonSource, LessonState};
 use archon_core::model::{Effort, ModelChoice, ModelPlan, ModelRef};
 use archon_core::outcome::Outcome;
+use archon_core::plan_origin::{PlanSource, PlanWriter};
 use archon_core::queue::{Priority, QueueItem, QueueState};
 use archon_core::run::{PipelineRun, RunState};
 use std::sync::Arc;
@@ -210,10 +211,17 @@ fn errand(
     assert!(!outcomes.is_empty());
     assert!(outcomes.iter().all(|o| o.repo.as_ref() == Some(repo)));
     let now = archon_core::now();
+    let id = archon_core::id::QueueItemId::new();
+    let mut plan = PlanWriter::new(&id, now);
+    let chosen = ModelPlan(std::collections::BTreeMap::from([(
+        "errand".into(),
+        vec![choice],
+    )]));
+    plan.filled(chosen, (PlanSource::Fallback, PlanSource::Fallback));
     Ok(QueueItem {
         intent: None,
         onto: None,
-        id: archon_core::id::QueueItemId::new(),
+        id,
         repo: Some(repo.clone()),
         pipeline: "errand".into(),
         title: "Distill run outcomes into lessons".into(),
@@ -221,10 +229,7 @@ fn errand(
         priority: Priority::Low,
         dependencies: Vec::new(),
         tags: vec!["archon:distillation".into()],
-        model_plan: ModelPlan(std::collections::BTreeMap::from([(
-            "errand".into(),
-            vec![choice],
-        )])),
+        model_plan: plan.finish(),
         model_reasons: None,
         budget_usd: Some(1.0),
         autonomy: Default::default(),

@@ -6,6 +6,7 @@ use archon_core::id::{NotificationId, QueueItemId};
 use archon_core::model::{ModelPlan, ModelRef};
 use archon_core::model_tier::ModelCatalog;
 use archon_core::notify::{FeedEntry, Notification, NotificationKind};
+use archon_core::plan_origin::TierMove;
 use archon_core::policy::ModelPolicy;
 use archon_core::provider_route::{ProviderRoute, ProviderWeights, Routed};
 use archon_core::queue::QueueItem;
@@ -108,7 +109,7 @@ pub(crate) fn reroute_spawns(
         return Ok(Reserve::Go);
     }
     item.routed_provider = held.clone();
-    let stored = item.model_plan.clone();
+    let stored = item.model_plan.plan().clone();
     follow_plan(item, spec, tiers);
     record_moves(ctx, store, item, (&moved, &stored), view.as_ref())?;
     item.updated_at = archon_core::now();
@@ -411,24 +412,27 @@ fn move_plans(
 /// resolves keeps its model alone; the rest still follow.
 fn follow_plan(item: &mut QueueItem, spec: &PipelineSpec, tiers: TierScope<'_>) {
     let before = plan_shape(&item.model_plan);
-    for (key, choices) in item.model_plan.0.iter_mut() {
-        for choice in choices.iter_mut() {
-            let Some(asked) = &choice.tier else {
-                continue;
-            };
-            let floor = spec.tier_floor(key, asked.requested);
-            match tiers.resolve((asked.requested, floor), asked.provider.as_deref()) {
-                Ok((model, tier)) => {
-                    debug_assert_eq!(tier.requested, asked.requested, "the tier asked for");
-                    choice.model = model;
-                    choice.tier = Some(tier);
-                }
-                Err(error) => {
-                    tracing::warn!(item = %item.id, stage = %key, %error, "a stored choice keeps its model");
-                }
+    let id = item.id.clone();
+    let follow = |key: &str, asked: &archon_core::model_tier::TierChoice| {
+        let floor = spec.tier_floor(key, asked.requested);
+        match tiers.resolve((asked.requested, floor), asked.provider.as_deref()) {
+            Ok(resolved) => Ok(Some(resolved)),
+            Err(error) => {
+                tracing::warn!(item = %id, stage = %key, %error, "a stored choice keeps its model");
+                Ok(None)
             }
         }
-    }
+    };
+    let note = format!(
+        "moved to follow provider {}",
+        item.routed_provider.as_deref().unwrap_or("of the item")
+    );
+    let result = item.model_plan.retier(
+        &id,
+        (archon_core::now(), Some(&note), TierMove::InRun),
+        follow,
+    );
+    result.expect("following a provider refuses nothing");
     assert_eq!(plan_shape(&item.model_plan), before, "only models change");
 }
 

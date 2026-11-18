@@ -10,7 +10,6 @@ use archon_core::id::QueueItemId;
 use archon_core::initiative::{
     EnqueueInitiative, InitiativeDetail, InitiativeMember, InitiativeState,
 };
-use archon_core::model::ModelPlan;
 use archon_core::outcome::{Correction, Outcome};
 use archon_core::protocol::{EnqueueRequest, Reply, RepoAdd, RepoRef, Request};
 use archon_core::queue::{QueueItem, QueueState};
@@ -53,7 +52,7 @@ async fn enqueue_in(h: &Harness, repo: &str, title: &str, parents: &[&QueueItem]
         priority: Default::default(),
         depends_on: parents.iter().map(|p| p.id.clone()).collect(),
         tags: Vec::new(),
-        model_plan: ModelPlan::default().into(),
+        model_plan: Default::default(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,
@@ -188,6 +187,7 @@ fn member(repo: &str) -> InitiativeMember {
         title: None,
         pipeline: Some(PIPELINE.into()),
         model_plan: None,
+        model_reasons: None,
         autonomy: Default::default(),
         after: Vec::new(),
     }

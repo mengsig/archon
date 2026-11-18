@@ -1146,5 +1146,10 @@ fn direct_routes_risky_work_to_adaptive() {
     let nudge = spec.stage("implement").unwrap().nudge.as_deref().unwrap();
     assert!(nudge.contains("re-queue that on adaptive"), "{nudge}");
     let prompt = &spec.prompts["implement.md"];
+    for risk in ["concurrency", "locking", "security", "a migration"] {
+        assert!(nudge.contains(risk), "nudge lacks {risk}");
+        assert!(prompt.contains(risk), "prompt lacks {risk}");
+    }
+    let prompt = &spec.prompts["implement.md"];
     assert!(prompt.contains("re-queue on adaptive"), "{prompt}");
 }

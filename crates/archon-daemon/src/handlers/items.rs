@@ -1050,8 +1050,8 @@ fn check_frozen_head(item: &QueueItem, text: Option<&str>) -> Result<(), ArchonE
     )))
 }
 
-/// The first commit-like token (7 to 64 hex digits holding a digit and a
-/// letter) of `text` that is not a prefix of `head`.
+/// The first full commit id (40 or 64 hex digits) in `text` other than `head`;
+/// shorter hex such as a base abbreviation is context, not a head.
 fn other_commit<'a>(text: &'a str, head: &str) -> Option<&'a str> {
     text.split(|c: char| !c.is_ascii_alphanumeric())
         .find(|token| {
@@ -1331,12 +1331,13 @@ pub(super) async fn check_runs_here(
 #[cfg(test)]
 mod tests {
     #[test]
-    fn only_commit_like_tokens_outside_the_frozen_head_are_found() {
+    fn only_a_full_commit_id_other_than_the_frozen_head_is_found() {
         let head = "0123456789abcdef0123456789abcdef01234567";
-        assert_eq!(other_commit("review 0123456789ab again", head), None);
-        assert_eq!(other_commit("an 1234567 cafe1234", head), Some("cafe1234"));
+        let other = "fedcba9876543210fedcba9876543210fedcba98";
+        assert_eq!(other_commit(&format!("review {head} again"), head), None);
+        assert_eq!(other_commit(&format!("not {other}."), head), Some(other));
         assert_eq!(
-            other_commit("1234567 only digits, a decade and accede", head),
+            other_commit("base 0123456789abcdef, #cafe1234, 1234567", head),
             None
         );
     }

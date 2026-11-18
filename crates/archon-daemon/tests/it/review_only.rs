@@ -1465,9 +1465,17 @@ fn retry_with(item: &QueueItem, text: Option<&str>) -> Request {
     }
 }
 
+/// A review item of #200 that has not run, so it takes an amendment.
+async fn queued_review(h: &Harness) -> QueueItem {
+    let mut asked = enqueue_request("review #200", "review", ReviewLevel::Standard);
+    asked.onto = Some(OntoTarget::Pr(200));
+    enqueue(h, asked).await.expect("a fork's pull request")
+}
+
 #[tokio::test]
 async fn an_amendment_naming_another_head_of_a_review_item_is_refused() {
-    let (h, _gh, head, item) = reviewed_fork().await;
+    let (h, _gh, head) = fork_pull_request().await;
+    let item = queued_review(&h).await;
     let other = "0123456789abcdef0123456789abcdef01234567";
     let refused = h
         .cli(amend(&item, &format!("review {other} instead")))
@@ -1478,15 +1486,26 @@ async fn an_amendment_naming_another_head_of_a_review_item_is_refused() {
         refused.contains(&format!("queue a new review item at {other}")),
         "{refused}"
     );
-    let named = h.cli(amend(&item, &format!("still {head}"))).await;
-    let named = named.err().map(|e| e.to_string()).unwrap_or_default();
-    assert!(!named.contains("queue a new review item at"), "{named}");
     assert_eq!(h.item(&item.id).await.brief, item.brief, "nothing amended");
+
+    for text in [format!("still {head}"), "plain words".to_owned()] {
+        h.cli(amend(&item, &text))
+            .await
+            .expect("an allowed amendment");
+        assert!(h.item(&item.id).await.brief.contains(&text));
+    }
 }
 
 #[tokio::test]
 async fn a_retry_naming_another_head_of_a_review_item_is_refused() {
-    let (h, _gh, head, item) = reviewed_fork().await;
+    let (h, _gh, head) = fork_pull_request().await;
+    let item = queued_review(&h).await;
+    h.cli(Request::CancelItem {
+        item: item.id.clone(),
+        reason: None,
+    })
+    .await
+    .expect("a queued item cancels");
     let other = "fedcba9876543210fedcba9876543210fedcba98";
     let refused = h
         .cli(retry_with(&item, Some(&format!("try {other}"))))
@@ -1497,9 +1516,15 @@ async fn a_retry_naming_another_head_of_a_review_item_is_refused() {
         refused.contains(&format!("queue a new review item at {other}")),
         "{refused}"
     );
-    let plain = h
-        .cli(retry_with(&item, Some(&format!("again at {head}"))))
-        .await;
-    let plain = plain.err().map(|e| e.to_string()).unwrap_or_default();
-    assert!(!plain.contains("queue a new review item at"), "{plain}");
+    assert!(matches!(
+        h.state(&item.id).await,
+        QueueState::Cancelled { .. }
+    ));
+
+    let text = format!("again at {head}");
+    h.cli(retry_with(&item, Some(&text)))
+        .await
+        .expect("an allowed retry");
+    assert!(h.item(&item.id).await.brief.contains(&text));
+    assert!(matches!(h.state(&item.id).await, QueueState::Queued { .. }));
 }

@@ -4648,16 +4648,21 @@
       "description": "The origins of one plan entry's model and effort, each on its own.",
       "properties": {
         "effort": {
-          "$ref": "#/$defs/FieldOrigin"
+          "$ref": "#/$defs/FieldOrigin",
+          "default": {
+            "by": "unknown",
+            "source": "unattributed"
+          }
         },
         "model": {
-          "$ref": "#/$defs/FieldOrigin"
+          "$ref": "#/$defs/FieldOrigin",
+          "default": {
+            "by": "unknown",
+            "source": "unattributed"
+          },
+          "description": "A stored entry missing a field's origin keeps the other one."
         }
       },
-      "required": [
-        "model",
-        "effort"
-      ],
       "type": "object"
     },
     "ErrorCode": {
@@ -5024,7 +5029,8 @@
           ]
         },
         "by": {
-          "$ref": "#/$defs/Authority"
+          "$ref": "#/$defs/Authority",
+          "default": "unknown"
         },
         "note": {
           "type": [
@@ -5033,13 +5039,11 @@
           ]
         },
         "source": {
-          "$ref": "#/$defs/PlanSource"
+          "$ref": "#/$defs/PlanSource",
+          "default": "unattributed",
+          "description": "A stored origin that names no source was accounted for by nobody."
         }
       },
-      "required": [
-        "source",
-        "by"
-      ],
       "type": "object"
     },
     "Gate": {
@@ -9671,7 +9675,7 @@
         },
         {
           "const": "unattributed",
-          "description": "No writer accounted for it.",
+          "description": "No writer accounted for it, or a source this archond does not know.",
           "type": "string"
         }
       ]

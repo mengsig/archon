@@ -296,7 +296,7 @@ fn assemble(
     let gates = OperatorGates::for_run(&spec, &item.autonomy);
     let driver = RunDriver::new(
         spec.clone(),
-        item.model_plan.plan().clone(),
+        item.model_plan.dispatched(&item.id),
         base_vars.clone(),
     )?
     .with_gates(gates)?

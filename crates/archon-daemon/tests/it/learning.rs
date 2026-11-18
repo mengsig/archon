@@ -1,6 +1,7 @@
 use crate::common;
 use archon_core::model::{Effort, ModelChoice};
 use archon_core::outcome::{Outcome, OutcomeResult, OutcomeStage};
+use archon_core::plan_origin::{Authority, PlanSource};
 use archon_core::protocol::{Reply, Request};
 use archon_core::queue::QueueState;
 use archon_core::run::{PipelineRun, RunState};
@@ -214,6 +215,13 @@ async fn distillation_queues_once_per_window_and_never_learns_from_itself() {
     let errands: Vec<_> = items.iter().filter(|i| i.pipeline == "errand").collect();
     assert_eq!(errands.len(), 1);
     assert_eq!(errands[0].budget_usd, Some(1.0));
+    for entries in crate::plan_origins::shown(&h, errands[0]).await.values() {
+        for origin in entries {
+            assert_eq!(origin.model.by, Authority::Daemon, "{origin:?}");
+            assert_eq!(origin.model.source, PlanSource::Fallback, "{origin:?}");
+        }
+    }
+    assert_eq!(crate::plan_origins::unattributed(&h).await, 0);
     h.dispatch().await;
     h.settle_running(|_| archon_core::run::StageOutcome::Completed {
         summary: "Distilled".into(),

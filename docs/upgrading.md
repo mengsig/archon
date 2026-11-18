@@ -21,14 +21,16 @@ Each item now keeps `model_origins` beside `model_plan`: where every model
 and effort of its plan came from, who chose it and when. `get_item` lists
 them as `origin <stage>: model …; effort …` lines, and `archon status` prints a line
 when any stored field reads as `unattributed`, a field no writer accounted
-for. Both kinds below are pins: archond does not resolve their tier again.
+for. Both kinds below are pins:
 
 - `legacy_unknown`: an item stored before origins were recorded. Nothing is
-  backfilled, so queued items from before the upgrade run exactly as
-  planned. A restack fix of one stays `legacy_unknown`; a refresh of one is a
-  new item with origins of its own.
-- `unattributed`: should never be counted. A non-zero count is a bug to
-  report, not something to fix by hand.
+  backfilled. Its exact models and its efforts stay as planned; a choice
+  stored with a tier is resolved again at dispatch as before, and that model
+  then reads as `tier`. A restack fix of one stays `legacy_unknown`; a
+  refresh of one is a new item with origins of its own.
+- `unattributed`: never resolved again, not even its tier. It should never
+  be counted: a non-zero count is a bug to report, not something to fix by
+  hand.
 
 Going back to an older binary is unsupported once a store migration of the
 release has run: restore the backup taken before the update instead. Plan

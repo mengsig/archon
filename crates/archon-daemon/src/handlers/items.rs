@@ -811,6 +811,11 @@ pub(super) async fn retry(
         let _table = ctx.runs.lock().await;
         let loaded = ctx.store.lock().await.item(id)?;
         check_retryable(&*ctx.store.lock().await, &loaded)?;
+        if !replaces_plan && loaded.model_plan != current.model_plan {
+            return Err(ArchonError::InvalidTransition(format!(
+                "{id}'s plan changed while it was being retried; retry it again"
+            )));
+        }
         let mut item = loaded.clone();
         item.model_plan = plan;
         item.routed_provider = provider;

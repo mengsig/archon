@@ -37,11 +37,16 @@ pub enum PlanSource {
     Migrated,
     /// Stored before origins were recorded.
     LegacyUnknown,
-    /// No writer accounted for it.
+    /// No writer accounted for it, or a source this archond does not know.
+    #[serde(other)]
     Unattributed,
 }
 
 impl PlanSource {
+    fn unattributed() -> Self {
+        Self::Unattributed
+    }
+
     /// A pinned field is never sized, escalated or rewritten by the daemon.
     pub fn is_pin(self) -> bool {
         matches!(
@@ -74,10 +79,15 @@ pub enum Authority {
     Operator,
     Orchestrator,
     Daemon,
+    #[serde(other)]
     Unknown,
 }
 
 impl Authority {
+    fn unknown() -> Self {
+        Self::Unknown
+    }
+
     /// The orchestrator calls through the MCP bridge, the operator otherwise.
     pub fn of_client(client: ClientKind) -> Self {
         match client {
@@ -110,7 +120,10 @@ impl fmt::Display for Authority {
 /// The origin of one field (the model or the effort) of one plan entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FieldOrigin {
+    /// A stored origin that names no source was accounted for by nobody.
+    #[serde(default = "PlanSource::unattributed")]
     pub source: PlanSource,
+    #[serde(default = "Authority::unknown")]
     pub by: Authority,
     /// When the field was last chosen; `None` when nobody knows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -151,6 +164,10 @@ impl FieldOrigin {
         }
     }
 
+    fn unattributed() -> Self {
+        Self::unknown(PlanSource::Unattributed)
+    }
+
     pub fn is_pin(&self) -> bool {
         self.source.is_pin()
     }
@@ -173,7 +190,10 @@ impl fmt::Display for FieldOrigin {
 /// The origins of one plan entry's model and effort, each on its own.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EntryOrigin {
+    /// A stored entry missing a field's origin keeps the other one.
+    #[serde(default = "FieldOrigin::unattributed")]
     pub model: FieldOrigin,
+    #[serde(default = "FieldOrigin::unattributed")]
     pub effort: FieldOrigin,
 }
 
@@ -257,6 +277,24 @@ impl PlannedPlan {
 
     pub fn plan(&self) -> &ModelPlan {
         &self.model_plan
+    }
+
+    /// The plan a run is driven by: a model no writer accounted for drops its
+    /// tier there, so no quota move of an unstarted stage changes it.
+    pub fn dispatched(&self, item: &QueueItemId) -> ModelPlan {
+        let mut plan = self.model_plan.clone();
+        for (key, choices) in plan.0.iter_mut() {
+            for (slot, choice) in choices.iter_mut().enumerate() {
+                if self.origin(item, key, slot).model.source == PlanSource::Unattributed {
+                    choice.tier = None;
+                }
+            }
+        }
+        debug_assert!(
+            plan.0.keys().eq(self.model_plan.0.keys()),
+            "only tiers change"
+        );
+        plan
     }
 
     pub fn into_plan(self) -> ModelPlan {
@@ -434,8 +472,10 @@ impl PlannedPlan {
         ) -> Result<Option<(ModelRef, TierChoice)>, ArchonError>,
     ) -> Result<(), ArchonError> {
         let shape: Vec<usize> = self.model_plan.0.values().map(Vec::len).collect();
+        // Resolved into copies, so a failure leaves both halves as they were.
+        let mut plan = self.model_plan.clone();
         let mut origins = self.origins(item);
-        for (key, choices) in self.model_plan.0.iter_mut() {
+        for (key, choices) in plan.0.iter_mut() {
             let slots = origins.get_mut(key).expect("an origin per entry");
             for (choice, origin) in choices.iter_mut().zip(slots.iter_mut()) {
                 let Some(asked) = &choice.tier else { continue };
@@ -456,8 +496,9 @@ impl PlannedPlan {
                 choice.tier = Some(tier);
             }
         }
-        let after: Vec<usize> = self.model_plan.0.values().map(Vec::len).collect();
+        let after: Vec<usize> = plan.0.values().map(Vec::len).collect();
         assert_eq!(shape, after, "only models change");
+        self.model_plan = plan;
         if self.model_origins.is_some() || origins.values().flatten().any(|o| !o.model.is_pin()) {
             self.model_origins = Some(PlanOrigins {
                 item: item.clone(),

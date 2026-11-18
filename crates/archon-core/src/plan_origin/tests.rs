@@ -362,3 +362,78 @@ fn a_fill_step_that_changes_an_entry_it_was_given_is_refused() {
         (PlanSource::Fallback, PlanSource::Fallback),
     );
 }
+
+#[test]
+fn a_retier_that_fails_part_way_leaves_the_plan_and_its_origins_as_they_were() {
+    let item = QueueItemId::new();
+    let mut planned = enqueued(&item);
+    let mut tiers = planned.plan().clone();
+    tiers
+        .0
+        .insert("verify".into(), vec![tiered("b/sol", Effort::Low)]);
+    let mut writer = PlanWriter::new(&item, crate::now());
+    writer.carry(&planned, &item, |_| Some(usize::MAX));
+    writer.filled(tiers, (PlanSource::Tier, PlanSource::Fallback));
+    planned = writer.finish();
+    let before = planned.clone();
+    let mut calls = 0;
+    let failing = |_: &str, asked: &TierChoice| {
+        calls += 1;
+        match calls {
+            1 => Ok(Some(("c/moved".parse().unwrap(), asked.clone()))),
+            _ => Err(ArchonError::Invalid("no provider".into())),
+        }
+    };
+    assert!(
+        planned
+            .retier(&item, (crate::now(), None), failing)
+            .is_err()
+    );
+    assert_eq!(
+        planned, before,
+        "the first move is not kept without its origin"
+    );
+}
+
+#[test]
+fn a_stored_origin_missing_a_field_or_naming_an_unknown_source_reads_as_unattributed() {
+    let item = QueueItemId::new();
+    let mut stored = serde_json::to_value(enqueued(&item)).unwrap();
+    let build = &mut stored["model_origins"]["entries"]["build"][0];
+    build.as_object_mut().unwrap().remove("effort");
+    stored["model_origins"]["entries"]["plan"][0]["model"]["source"] = "comparison".into();
+    stored["model_origins"]["entries"]["plan"][0]["model"]["by"] = "someone".into();
+    let planned: PlannedPlan = serde_json::from_value(stored).unwrap();
+    let build = planned.origin(&item, "build", 0);
+    assert_eq!(
+        build.model.source,
+        PlanSource::Explicit,
+        "the present field survives"
+    );
+    assert_eq!(build.effort.source, PlanSource::Unattributed);
+    let plan = planned.origin(&item, "plan", 0);
+    assert_eq!(
+        (plan.model.source, plan.model.by),
+        (PlanSource::Unattributed, Authority::Unknown)
+    );
+    assert_eq!(plan.effort.source, PlanSource::Learned);
+    assert_eq!(planned.unattributed_fields(&item), 2);
+}
+
+#[test]
+fn a_run_drives_an_unattributed_tiered_model_as_a_pin() {
+    let item = QueueItemId::new();
+    let planned = enqueued(&item);
+    assert!(
+        planned.dispatched(&item).0["review"][0].tier.is_some(),
+        "a daemon tier may move"
+    );
+    let other = QueueItemId::new();
+    let unattributed = PlannedPlan::unattributed(&other, planned.plan().clone());
+    let driven = unattributed.dispatched(&other);
+    assert_eq!(
+        driven.0["review"][0].tier, None,
+        "no quota move changes a pin"
+    );
+    assert_eq!(driven.0["review"][0].model, planned.0["review"][0].model);
+}

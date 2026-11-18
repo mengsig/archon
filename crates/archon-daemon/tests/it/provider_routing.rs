@@ -10,7 +10,7 @@ use archon_core::Timestamp;
 use archon_core::config::Config;
 use archon_core::model::{ModelPlan, ModelPlanDraft};
 use archon_core::model_tier::{CatalogModel, ModelCatalog, Tier};
-use archon_core::plan_origin::{Authority, PlanSource};
+use archon_core::plan_origin::{Authority, PlanSource, PlannedPlan};
 use archon_core::protocol::{
     DaemonStatus, EnqueueRequest, Reply, RepoRef, Request, WaitingReason, WaitingReasonCode,
 };
@@ -922,4 +922,97 @@ async fn a_steered_model_runs_on_every_fan_out_slot_loop_and_retry_off_quota() {
         !notices.iter().any(|n| n.contains("instead of codex/sol")),
         "no pin was swapped: {notices:?}"
     );
+}
+
+/// Dispatch resolves a stored tier again and records the daemon's choice; an
+/// item from before origins keeps its efforts as `legacy_unknown` pins.
+#[tokio::test]
+async fn dispatch_records_the_tier_it_resolves_for_an_item_stored_before_origins() {
+    let h = harness(Config::default()).await;
+    let item = enqueue(&h, ROUTED, "from 1.6.3", tier_plan()).await;
+    {
+        let mut store = h.ctx.store.lock().await;
+        let mut stored = store.item(&item.id).unwrap();
+        stored.model_plan = PlannedPlan::legacy(stored.model_plan.into_plan());
+        store.update_item(&stored).unwrap();
+    }
+    let legacy = crate::plan_origins::shown(&h, &item).await;
+    assert_eq!(
+        legacy["implement"][0].model.source,
+        PlanSource::LegacyUnknown
+    );
+    h.dispatch().await;
+    let dispatched = crate::plan_origins::shown(&h, &item).await;
+    for (key, entries) in &dispatched {
+        for origin in entries {
+            assert_eq!(
+                (origin.model.source, origin.model.by),
+                (PlanSource::Tier, Authority::Daemon),
+                "{key}"
+            );
+            assert!(origin.model.at.is_some(), "{key}");
+            assert_eq!(origin.effort.source, PlanSource::LegacyUnknown, "{key}");
+        }
+    }
+    assert_eq!(crate::plan_origins::unattributed(&h).await, 0);
+}
+
+/// A tiered model no writer accounted for is a pin: a quota move leaves both
+/// the stored choice and the spawned one on it.
+#[tokio::test]
+async fn a_quota_reroute_never_moves_an_unattributed_model() {
+    let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![
+            ("claude-code", window(80, TimeDelta::hours(4))),
+            ("codex", window(0, TimeDelta::hours(1))),
+        ],
+    );
+    let plan = serde_json::from_value(serde_json::json!({
+        "implement": [{"tier": "strong"}],
+        "review": [{"tier": "fast"}],
+        "ship": [{"tier": "fast"}],
+    }))
+    .unwrap();
+    let item = enqueue(&h, ROUTED, "unaccounted", plan).await;
+    let pinned = {
+        let mut store = h.ctx.store.lock().await;
+        let mut stored = store.item(&item.id).unwrap();
+        let plan = stored.model_plan.plan().clone();
+        stored.model_plan = PlannedPlan::unattributed(&stored.id, plan);
+        store.update_item(&stored).unwrap();
+        stored.model_plan.choices_for("review").unwrap()[0]
+            .model
+            .to_string()
+    };
+    assert_eq!(pinned, "claude-code/haiku");
+    h.dispatch().await;
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![
+            ("claude-code", window(10, TimeDelta::hours(3))),
+            ("codex", window(90, TimeDelta::hours(4))),
+        ],
+    );
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    let reviews: Vec<String> = (h.stages(&item.id).await.into_iter())
+        .filter(|s| s.stage_id == "review")
+        .map(|s| s.choice.model.to_string())
+        .collect();
+    assert!(
+        !reviews.is_empty() && reviews.iter().all(|m| *m == pinned),
+        "{reviews:?}"
+    );
+    let stored = h.item(&item.id).await;
+    assert_eq!(
+        stored.model_plan.choices_for("review").unwrap()[0]
+            .model
+            .to_string(),
+        pinned
+    );
+    assert_eq!(crate::plan_origins::unattributed(&h).await, 6);
 }

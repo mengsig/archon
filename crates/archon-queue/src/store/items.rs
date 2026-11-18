@@ -169,11 +169,26 @@ fn attributed(item: &QueueItem) -> std::borrow::Cow<'_, QueueItem> {
     })
 }
 
-/// The plan fields of every item that read as unattributed. Only rows whose
-/// JSON names the source are parsed: a store without any parses none.
+/// Rows whose plan origins may read as unattributed: they name the source, or
+/// were written for another item, or do not fit the plan's keys and slots.
+const MAYBE_UNATTRIBUTED: &str = "
+    SELECT data FROM items
+    WHERE instr(data, '\"unattributed\"') > 0
+       OR (json_type(data, '$.model_origins') = 'object'
+           AND (json_extract(data, '$.model_origins.item') IS NOT id
+                OR EXISTS (SELECT 1 FROM json_each(data, '$.model_plan') AS plan
+                           WHERE json_array_length(data, '$.model_origins.entries.'
+                                                         || json_quote(plan.key))
+                                 IS NOT json_array_length(plan.value))
+                OR EXISTS (SELECT 1 FROM json_each(data, '$.model_origins.entries') AS kept
+                           WHERE json_type(data, '$.model_plan.' || json_quote(kept.key))
+                                 IS NULL)))";
+
+/// The plan fields of every item that read as unattributed. Only the rows
+/// [`MAYBE_UNATTRIBUTED`] selects are parsed: a sound store parses none.
 pub(super) fn unattributed_plan_fields(conn: &Connection) -> Result<usize, ArchonError> {
     let mut stmt = conn
-        .prepare("SELECT data FROM items WHERE instr(data, '\"unattributed\"') > 0")
+        .prepare(MAYBE_UNATTRIBUTED)
         .ctx("prepare unattributed count")?;
     let rows = stmt
         .query_map([], |row| row.get::<_, String>(0))

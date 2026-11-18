@@ -17,7 +17,8 @@
   `idle_compact_after_minutes` (default 50) with more than half that in
   context, it is compacted once before its prompt cache expires. After an
   upgrade that changes its prompt or tools, a fresh generation replaces it
-  at its next quiet idle moment, with at most three tries per generation
+  at its next quiet idle moment, retried every ten minutes while it fails
+  and announced in the feed after three failures
   (`[orchestrator] refresh_on_upgrade`, default true). The prompt now has long
   multi-step work, such as report pages and statistics, queued as items.
   Nothing migrates. The rollback is the switches: `quiet_info = false`,

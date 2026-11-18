@@ -45,6 +45,12 @@ fn agent_table(harness: &Harness) -> Agents {
             }
         }),
     );
+    cancel_stops(harness, &agents);
+    agents
+}
+
+/// `cancel` stops the agent in `agents`.
+fn cancel_stops(harness: &Harness, agents: &Agents) {
     let table = agents.clone();
     harness.fake.set_responder(
         "cancel",
@@ -56,7 +62,6 @@ fn agent_table(harness: &Harness) -> Agents {
             Scripted::ok()
         }),
     );
-    agents
 }
 
 async fn create(harness: &Harness, agents: &Agents, id: &str) {
@@ -199,8 +204,10 @@ async fn a_changed_fingerprint_schedules_one_refresh_and_only_when_no_turn_runs(
     );
 }
 
+/// The old generation stays while the refresh fails; the feed says so after
+/// three tries, and the refresh still happens once Aether recovers.
 #[tokio::test]
-async fn a_failed_refresh_keeps_the_old_generation_and_retries_three_times_at_most() {
+async fn a_failed_refresh_keeps_the_old_generation_and_finishes_once_aether_recovers() {
     let harness = Harness::new().await;
     harness.connect().await;
     let agents = agent_table(&harness);
@@ -211,7 +218,7 @@ async fn a_failed_refresh_keeps_the_old_generation_and_retries_three_times_at_mo
         .fake
         .set_responder("cancel", Arc::new(|_| Scripted::refuse("internal", "busy")));
     let start = archon_core::now();
-    for minutes in [0, 10, 20] {
+    for minutes in [0, 10, 20, 30] {
         let now = start + TimeDelta::minutes(minutes);
         supervisor::economize(&harness.ctx, now)
             .await
@@ -224,10 +231,52 @@ async fn a_failed_refresh_keeps_the_old_generation_and_retries_three_times_at_mo
         .await
         .unwrap();
     assert_eq!(current.unwrap().as_str(), ORCH, "the old generation stays");
-    let later = start + TimeDelta::minutes(60);
-    let spent = supervisor::economize(&harness.ctx, later).await.unwrap();
-    assert_eq!(spent, Economy::Nothing, "given up after three tries");
-    assert_eq!(harness.fake.received_named("cancel").len(), 3);
+    let told = harness.system_notes().await;
+    let told: Vec<_> = told
+        .iter()
+        .filter(|n| n.contains("failed 3 times"))
+        .collect();
+    assert_eq!(told.len(), 1, "the operator is told once: {told:?}");
+
+    cancel_stops(&harness, &agents);
+    script_successor(&harness, &agents);
+    let later = start + TimeDelta::minutes(40);
+    let recovered = supervisor::economize(&harness.ctx, later).await.unwrap();
+    assert_eq!(recovered, Economy::Refreshed, "never given up for good");
+    let current = supervisor::current_orchestrator(&harness.ctx)
+        .await
+        .unwrap();
+    assert_eq!(current.unwrap().as_str(), ORCH_2);
+}
+
+/// archond stopped after Aether cancelled the outdated generation and before
+/// the next one was started: it is finished fresh, never restarted from its
+/// checkpoint with the outdated instructions.
+#[tokio::test]
+async fn a_refresh_stopped_after_its_cancel_starts_a_fresh_generation() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    let agents = agent_table(&harness);
+    create(&harness, &agents, ORCH).await;
+    as_if_created_by_an_older_build(&harness).await;
+    harness.set_kv("orchestrator_refresh_unfinished", "1").await;
+    set_state(&agents, ORCH, "cancelled");
+    script_successor(&harness, &agents);
+
+    let id = supervisor::ensure_orchestrator(&harness.ctx).await.unwrap();
+    assert_eq!(id.as_str(), ORCH_2, "a fresh generation");
+    let restarts = harness.fake.received_named("restart");
+    assert!(
+        restarts.is_empty(),
+        "restarted from the checkpoint: {restarts:?}"
+    );
+    assert_eq!(supervisor::generation(&harness.ctx).await.unwrap(), 2);
+    let unfinished = harness.kv("orchestrator_refresh_unfinished").await;
+    assert!(unfinished.is_none(), "adoption ended the refresh");
+    set_state(&agents, ORCH_2, "waiting");
+    let now = archon_core::now();
+    let after = supervisor::economize(&harness.ctx, now).await.unwrap();
+    assert_eq!(after, Economy::Nothing, "the fresh generation is current");
 }
 
 #[tokio::test]
@@ -463,4 +512,70 @@ async fn an_idle_large_orchestrator_is_compacted_once_before_its_cache_expires()
     let compacts = harness.fake.received_named("compact");
     assert_eq!(compacts.len(), 1);
     assert_eq!(compacts[0]["agent"], json!(ORCH));
+}
+
+/// No refresh is owed: a turn an operator message or trigger started after
+/// the first look is seen under the switch guard, and nothing is compacted.
+#[tokio::test]
+async fn a_turn_started_after_the_first_look_stops_the_idle_compaction() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    let agents = agent_table(&harness);
+    create(&harness, &agents, ORCH).await;
+    harness.fake.set_default("compact", Scripted::ok());
+    let ended = archon_core::now() - TimeDelta::minutes(50);
+    set_state(&agents, ORCH, "waiting");
+    set_stats(&agents, ORCH, 150_000, ended);
+    let table = agents.clone();
+    let asked = Arc::new(Mutex::new(0));
+    harness.fake.set_responder(
+        "get_agent",
+        Arc::new(move |_| {
+            let mut asked = asked.lock().unwrap();
+            *asked += 1;
+            let mut agent = table.lock().unwrap()[ORCH].clone();
+            if *asked > 1 {
+                agent["status"] = json!({ "state": "running" });
+            }
+            Scripted::reply("agent", agent)
+        }),
+    );
+    let now = archon_core::now();
+    let economy = supervisor::economize(&harness.ctx, now).await.unwrap();
+    assert_eq!(economy, Economy::Nothing);
+    let compacts = harness.fake.received_named("compact");
+    assert!(compacts.is_empty(), "folded mid-turn: {compacts:?}");
+}
+
+/// A creation whose reply was lost is retried under its key with the
+/// threshold it first sent, though the config changed meanwhile.
+#[tokio::test]
+async fn a_retried_creation_sends_the_threshold_it_first_sent() {
+    let harness = Harness::new().await;
+    harness
+        .fake
+        .set_features(vec!["compaction_tokens".to_owned()]);
+    harness.connect().await;
+    let agents = agent_table(&harness);
+    harness.fake.script(
+        "create_agent",
+        Scripted::refuse("unavailable", "reply lost"),
+    );
+    supervisor::ensure_orchestrator(&harness.ctx)
+        .await
+        .expect_err("the reply was lost");
+    harness.fake.set_features(Vec::new());
+    harness.connect().await;
+    create(&harness, &agents, ORCH).await;
+    let creates = harness.fake.received_named("create_agent");
+    assert_eq!(creates.len(), 2, "one retry");
+    assert_eq!(creates[0]["idempotency_key"], creates[1]["idempotency_key"]);
+    assert!(
+        creates[0]["idempotency_key"].is_string(),
+        "a keyed creation"
+    );
+    assert_eq!(
+        creates[0]["config"], creates[1]["config"],
+        "the same request under the same key"
+    );
 }

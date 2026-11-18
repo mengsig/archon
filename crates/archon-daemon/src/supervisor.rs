@@ -92,6 +92,9 @@ const RESTARTS_KEY: &str = "orchestrator_restarts";
 const BLOCKER_KEY: &str = "orchestrator_blocker";
 const STORE_ID_KEY: &str = "store_id";
 const HOST_CONTEXT_KEY: &str = "orchestrator_host_context";
+/// `kv`: the compaction threshold the generation's creation sent, `null` for
+/// none, so every retry under its key sends the same request.
+const COMPACTION_TOKENS_KEY: &str = "orchestrator_compaction_tokens";
 /// Set once the GitHub watcher is wanted; never cleared by archond.
 const GITHUB_WANTED_KEY: &str = "orchestrator_github";
 
@@ -452,7 +455,39 @@ async fn ensure_locked(ctx: &DaemonContext) -> Result<AetherAgentId, ArchonError
             .send_if_modified(|current| replace_if_changed(current, &agent.id));
         return Ok(agent.id);
     }
+    if economy::refresh_owed_by(ctx).await? {
+        return finish_refresh(ctx, &client, &agent).await;
+    }
     revive(ctx, &client, &agent).await
+}
+
+/// A refresh stopped `dead` but never started its successor: a checkpoint
+/// restart would bring back the outdated instructions, so start the fresh
+/// generation it owed instead.
+async fn finish_refresh(
+    ctx: &DaemonContext,
+    client: &AetherClient,
+    dead: &Agent,
+) -> Result<AetherAgentId, ArchonError> {
+    let state = state_of(dead);
+    assert!(
+        !LIVE_STATES.contains(&state.as_str()),
+        "{} is live",
+        dead.id
+    );
+    assert_eq!(
+        dead.role, ORCHESTRATOR_ROLE,
+        "only an orchestrator is refreshed"
+    );
+    if state != "cancelled" {
+        cancel_orphans(client, &dead.id).await?;
+    }
+    let _switch = switching(ctx).await;
+    retired::retire(ctx, std::slice::from_ref(&dead.id), Sweep::Done).await?;
+    let id = replace_generation(ctx, client).await?;
+    let why = "is a fresh generation, as an upgrade changed its prompt or tools";
+    announce_revival(ctx, &id, Revival::Recreated, why).await?;
+    Ok(id)
 }
 
 /// Adopt `to`, the agent Aether restarted the orchestrator `from` into (the
@@ -1071,7 +1106,8 @@ async fn advance_generation(ctx: &DaemonContext) -> Result<(), ArchonError> {
     let generation = parse_generation(store.kv_get(keys::ORCHESTRATOR_GENERATION)?)?;
     store.kv_set(keys::ORCHESTRATOR_GENERATION, &(generation + 1).to_string())?;
     store.kv_delete(keys::ORCHESTRATOR_AGENT)?;
-    store.kv_delete(HOST_CONTEXT_KEY)
+    store.kv_delete(HOST_CONTEXT_KEY)?;
+    store.kv_delete(COMPACTION_TOKENS_KEY)
 }
 
 /// The configured orchestrator model and effort, as `provider/model effort`.
@@ -1207,11 +1243,34 @@ async fn create_orchestrator(
         tracing::warn!("Aether lacks host_context; orchestrator creation falls back to full");
     }
     drop(store);
-    let served = client.serves_compaction_tokens();
-    config.compaction_tokens = compaction_threshold(&ctx.config.orchestrator, served);
+    config.compaction_tokens = frozen_threshold(ctx, client).await?;
     let agent = client.create_agent(request).await?;
     callers::record_delegation(ctx, &agent).await?;
     Ok(agent)
+}
+
+/// The threshold this generation's creation sent first, else the one to send
+/// now, kept for its retries: a changed config or Aether never alters a request.
+async fn frozen_threshold(
+    ctx: &DaemonContext,
+    client: &AetherClient,
+) -> Result<Option<u32>, ArchonError> {
+    let mut store = ctx.store.lock().await;
+    if let Some(raw) = store.kv_get(COMPACTION_TOKENS_KEY)? {
+        let frozen: Option<u32> = serde_json::from_str(&raw).map_err(|error| {
+            ArchonError::Corrupt(format!("kv {COMPACTION_TOKENS_KEY} = {raw:?}: {error}"))
+        })?;
+        if frozen == Some(0) {
+            return Err(ArchonError::Corrupt(format!(
+                "kv {COMPACTION_TOKENS_KEY}: 0 is never sent"
+            )));
+        }
+        return Ok(frozen);
+    }
+    let served = client.serves_compaction_tokens();
+    let tokens = compaction_threshold(&ctx.config.orchestrator, served);
+    store.kv_set(COMPACTION_TOKENS_KEY, &serde_json::to_string(&tokens)?)?;
+    Ok(tokens)
 }
 
 /// The orchestrator's compaction threshold to send: the configured one, and

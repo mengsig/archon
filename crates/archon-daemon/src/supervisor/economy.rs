@@ -34,7 +34,8 @@ pub(super) const REFRESH_UNFINISHED_KEY: &str = "orchestrator_refresh_unfinished
 /// How long the orchestrator must have logged nothing before either rule
 /// acts, so a message Aether just accepted is never cut off.
 const QUIET_BEFORE_ACTING: TimeDelta = TimeDelta::minutes(2);
-/// Attempts at refreshing one generation, and the wait between them.
+/// Failed attempts at refreshing one generation before the operator is told;
+/// retries go on, so the outdated prompt never outlives a recovered Aether.
 const REFRESH_TRIES: u32 = 3;
 const REFRESH_RETRY: TimeDelta = TimeDelta::minutes(10);
 /// The prompt cache lasts an hour; a fold later than this would read it cold.
@@ -123,6 +124,21 @@ pub async fn economize(ctx: &DaemonContext, now: Timestamp) -> Result<Economy, A
     }
 }
 
+/// Whether a refresh of the stored generation is under way: it may have
+/// stopped that generation's agent before it could start the successor.
+pub(super) async fn refresh_owed_by(ctx: &DaemonContext) -> Result<bool, ArchonError> {
+    let generation = super::generation(ctx).await?;
+    let Some(unfinished) = read_kv::<u64>(ctx, REFRESH_UNFINISHED_KEY).await? else {
+        return Ok(false);
+    };
+    assert!(unfinished > 0, "generations start at 1");
+    assert!(
+        unfinished <= generation,
+        "a refresh replaced a generation that was"
+    );
+    Ok(unfinished == generation)
+}
+
 /// Whether `agent` waits only for its next message, unpaused, and has logged
 /// nothing for `QUIET_BEFORE_ACTING` (two minutes): no turn runs and none is starting.
 /// A wait on a task, an approval or a child is outstanding work, not idleness.
@@ -156,7 +172,7 @@ pub fn refresh_left_behind(
 
 /// Whether generation `generation`, as `freshness` describes it, is owed a
 /// fresh one at `now`: another build (`running`) created it, its prompt or
-/// tools differ from this build's, and `tried` leaves an attempt.
+/// tools differ from this build's, and `tried` waited out its retry pause.
 pub fn refresh_due(
     freshness: Option<&OrchestratorFreshness>,
     generation: u64,
@@ -173,14 +189,14 @@ pub fn refresh_due(
     let outdated = freshness.prompt_outdated == Some(true) || freshness.tools_outdated;
     let may_try = match tried.filter(|tried| tried.generation == generation) {
         None => true,
-        Some(tried) => tried.tries < REFRESH_TRIES && now - tried.at >= REFRESH_RETRY,
+        Some(tried) => now - tried.at >= REFRESH_RETRY,
     };
     upgraded && outdated && may_try
 }
 
 /// Start a fresh generation when an upgrade outdated the running one's
-/// prompt or tools. Fenced against trigger delivery, and given up after
-/// [`REFRESH_TRIES`] failed attempts for one generation.
+/// prompt or tools. Fenced against trigger delivery; the operator is told
+/// once [`REFRESH_TRIES`] attempts for one generation failed.
 async fn refresh_if_upgraded(
     ctx: &DaemonContext,
     client: &AetherClient,
@@ -197,6 +213,7 @@ async fn refresh_if_upgraded(
     let Some(checked) = still_idle(ctx, client, now).await? else {
         return Ok(Refresh::Busy);
     };
+    let checked = checked.id;
     let tries = tried
         .filter(|tried| tried.generation == generation)
         .map_or(1, |tried| tried.tries + 1);
@@ -210,6 +227,13 @@ async fn refresh_if_upgraded(
         store.kv_set(REFRESH_TRIED_KEY, &serde_json::to_string(&attempt)?)?;
         store.kv_set(REFRESH_UNFINISHED_KEY, &generation.to_string())?;
     }
+    if tries == REFRESH_TRIES + 1 {
+        let text = format!(
+            "The orchestrator's refresh after the upgrade failed {REFRESH_TRIES} times; Archon keeps trying every {} minutes while it is idle, or `archon orchestrator restart` refreshes it now.",
+            REFRESH_RETRY.num_minutes()
+        );
+        crate::feed::system(ctx, text).await?;
+    }
     let reason = "refreshed: an upgrade changed its prompt or tools";
     let why = "is a fresh generation, as an upgrade changed its prompt or tools";
     let id = super::replace_orchestrator(ctx, client, reason, why, Some(&checked)).await?;
@@ -219,12 +243,12 @@ async fn refresh_if_upgraded(
 
 /// Read again under the switch guard, where no Archon trigger can be on its
 /// way: the orchestrator, not restarted into a successor, is still idle and
-/// no news is due to wake it. Returns the agent so checked.
+/// no news is due to wake it. Returns the agent as so read.
 async fn still_idle(
     ctx: &DaemonContext,
     client: &AetherClient,
     now: Timestamp,
-) -> Result<Option<AetherAgentId>, ArchonError> {
+) -> Result<Option<Agent>, ArchonError> {
     let Some(id) = super::current_orchestrator(ctx).await? else {
         return Ok(None);
     };
@@ -233,7 +257,7 @@ async fn still_idle(
     }
     let agent = super::newest_incarnation(client, &id).await?.newest;
     let idle = agent.id == id && is_idle(&agent, now);
-    Ok(idle.then_some(id))
+    Ok(idle.then_some(agent))
 }
 
 /// Whether an orchestrator in `agent`'s state is due an idle compaction at
@@ -268,11 +292,31 @@ fn compaction_floor(config: &OrchestratorConfig, agent: &Agent) -> u64 {
     floor
 }
 
-/// Ask Aether to compact the idle orchestrator once per idle stretch. A
-/// refused request is reported and not retried for the same stretch.
+/// Ask Aether to compact the idle orchestrator once per idle stretch, after
+/// reading it again under the switch guard, where no Archon trigger or
+/// operator message can start a turn. A refused request is not retried.
 async fn compact_if_idle(
     ctx: &DaemonContext,
     client: &AetherClient,
+    agent: &Agent,
+    now: Timestamp,
+) -> Result<bool, ArchonError> {
+    if !compaction_due(ctx, agent, now).await? {
+        return Ok(false);
+    }
+    let _switch = super::switching(ctx).await;
+    let Some(checked) = still_idle(ctx, client, now).await? else {
+        return Ok(false);
+    };
+    if checked.id != agent.id || !compaction_due(ctx, &checked, now).await? {
+        return Ok(false);
+    }
+    compact(ctx, client, &checked).await
+}
+
+/// Whether `agent`, as read at `now`, is owed its idle compaction.
+async fn compaction_due(
+    ctx: &DaemonContext,
     agent: &Agent,
     now: Timestamp,
 ) -> Result<bool, ArchonError> {
@@ -283,9 +327,15 @@ async fn compact_if_idle(
         .await?
         .filter(|done| done.agent == agent.id)
         .map(|done| done.turn_ended_at);
-    if !idle_compaction_due(agent, now, after, floor, done) {
-        return Ok(false);
-    }
+    Ok(idle_compaction_due(agent, now, after, floor, done))
+}
+
+/// Mark this idle stretch done, then ask Aether to compact `agent`.
+async fn compact(
+    ctx: &DaemonContext,
+    client: &AetherClient,
+    agent: &Agent,
+) -> Result<bool, ArchonError> {
     let turn_ended_at = agent.stats.last_turn_at.expect("checked by the rule");
     let mark = IdleCompaction {
         agent: agent.id.clone(),
@@ -529,8 +579,8 @@ mod tests {
             );
             let spent = tried(4, REFRESH_TRIES, -60);
             assert!(
-                !refresh_due(Some(outdated), 4, Some(&spent), now, running),
-                "gives up"
+                refresh_due(Some(outdated), 4, Some(&spent), now, running),
+                "never gives up for good"
             );
         }
         let edited = OrchestratorFreshness {

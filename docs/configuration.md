@@ -376,8 +376,10 @@ does not rewrite the whole context. 0 turns either part off. After an upgrade
 that changes the orchestrator's prompt or tools, Archon starts a fresh
 generation at its next idle moment, with the same hand-off as `archon
 orchestrator restart`: it waits until the orchestrator has waited for mail,
-unpaused, for two minutes with no news due, and gives up after three tries
-for one generation. `refresh_on_upgrade = false` turns it off. Like a manual
+unpaused, for two minutes with no news due. A failed refresh is retried
+every ten minutes while the orchestrator stays idle, and the feed says so
+after three failures; a refresh stopped halfway is finished with a fresh
+generation, never a checkpoint restart of the outdated one. `refresh_on_upgrade = false` turns it off. Like a manual
 restart, it can still meet a wake Aether starts in the same instant.
 
 The helper agents the orchestrator delegates to

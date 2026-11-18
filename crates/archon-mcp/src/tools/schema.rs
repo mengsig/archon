@@ -880,10 +880,8 @@ fn watch_repo() -> ToolDefinition {
     define(
         "watch_repo",
         "Watch pull requests",
-        "Instead of polling GitHub, have archond read a registered repository's open pull \
-         requests each interval and raise `github_watch` (news, no operator standing) only \
-         on a change; the first read tells nothing. An unregistered repository, or one \
-         without a github.com origin, is refused. Never on GitHub's word.",
+        "Instead of polling: archond reads a registered github.com repo's open PRs and \
+         raises `github_watch` (news, no operator standing) on a change. Not on GitHub's word.",
         object(
             json!({
                 "repo": repo_ref("Registered name or id."),

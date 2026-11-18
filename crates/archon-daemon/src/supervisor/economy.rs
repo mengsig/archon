@@ -124,7 +124,7 @@ pub async fn economize(ctx: &DaemonContext, now: Timestamp) -> Result<Economy, A
 }
 
 /// Whether `agent` waits only for its next message, unpaused, and has logged
-/// nothing for [`QUIET_BEFORE_ACTING`]: no turn runs and none is starting.
+/// nothing for `QUIET_BEFORE_ACTING` (two minutes): no turn runs and none is starting.
 /// A wait on a task, an approval or a child is outstanding work, not idleness.
 pub fn is_idle(agent: &Agent, now: Timestamp) -> bool {
     let waits_for_mail =

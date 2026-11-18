@@ -64,3 +64,36 @@ async fn reconnect_and_outage_invalidate_a_fresh_catalog() {
         "p/new"
     );
 }
+
+#[tokio::test]
+async fn a_failed_refresh_cannot_use_a_catalog_older_than_five_minutes() {
+    let h = Harness::new().await;
+    h.connect().await;
+    let old = archon_core::now() - chrono::Duration::minutes(5);
+    let generation = h.ctx.aether.generation().unwrap();
+    {
+        let store = h.ctx.store.lock().await;
+        store.record_model_catalog(
+            crate::common::catalog::default_models(),
+            old,
+            Some(generation),
+        );
+        assert!(store.fresh_model_catalog().is_none());
+        assert!(!store.model_catalog().models().is_empty());
+    }
+    h.fake.set_default(
+        "list_models",
+        Scripted::refuse("internal", "refresh failed"),
+    );
+    archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    assert!(!h.fake.received_named("list_models").is_empty());
+    let store = h.ctx.store.lock().await;
+    assert!(store.fresh_model_catalog().is_none());
+    assert!(
+        store
+            .model_catalog()
+            .unavailable_reason()
+            .unwrap()
+            .contains("refresh failed")
+    );
+}

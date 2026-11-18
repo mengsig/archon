@@ -408,16 +408,19 @@ impl Store {
 impl Store {
     pub fn fresh_model_catalog(&self) -> Option<ModelCatalog> {
         let learned = self.learned();
-        let fresh = learned
-            .catalog_at
-            .is_some_and(|at| archon_core::now() - at < chrono::Duration::minutes(5));
-        (fresh && learned.catalog.not_ready_reason().is_none()).then(|| learned.catalog.clone())
+        (Self::catalog_fresh(learned.catalog_at) && learned.catalog.not_ready_reason().is_none())
+            .then(|| learned.catalog.clone())
+    }
+
+    fn catalog_fresh(read_at: Option<archon_core::Timestamp>) -> bool {
+        read_at.is_some_and(|at| {
+            (chrono::Duration::zero()..chrono::Duration::minutes(5))
+                .contains(&(archon_core::now() - at))
+        })
     }
 
     pub fn learning_models_stale(&self) -> bool {
-        self.learned()
-            .catalog_at
-            .is_none_or(|at| archon_core::now() - at >= chrono::Duration::minutes(5))
+        !Self::catalog_fresh(self.learned().catalog_at)
     }
 
     /// Connected models Aether places in no tier.
@@ -434,6 +437,15 @@ impl Store {
     }
 
     pub fn set_model_catalog(&self, catalog: ModelCatalog) {
+        self.record_model_catalog(catalog, archon_core::now(), None);
+    }
+
+    pub fn record_model_catalog(
+        &self,
+        catalog: ModelCatalog,
+        read_at: archon_core::Timestamp,
+        generation: Option<u64>,
+    ) {
         assert!(
             catalog
                 .models()
@@ -442,12 +454,8 @@ impl Store {
         );
         let mut learned = self.learned();
         learned.catalog = catalog;
-        learned.catalog_at = Some(archon_core::now());
-        learned.catalog_generation = None;
-    }
-
-    pub fn set_catalog_generation(&self, generation: u64) {
-        self.learned().catalog_generation = Some(generation);
+        learned.catalog_at = Some(read_at);
+        learned.catalog_generation = generation;
     }
 
     pub fn catalog_generation(&self) -> Option<u64> {

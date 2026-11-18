@@ -95,35 +95,14 @@ async fn queue(ctx: &DaemonContext, repo: &RepoId) -> Result<(), ArchonError> {
     }
     assert!(count > 0);
     let draft_key = format!("learning/distill-draft/{repo}/{consumed}");
-    let saved: Option<QueueItem> = store
-        .kv_get(&draft_key)?
-        .map(|raw| {
-            serde_json::from_str(&raw)
-                .map_err(|e| ArchonError::Corrupt(format!("distillation draft: {e}")))
-        })
-        .transpose()?;
-    let item = match saved {
-        Some(item)
-            if policy.check_plan(&item.model_plan).is_ok()
-                && item.model_plan.0.values().flatten().all(|c| {
-                    catalog.check(&c.model).is_ok_and(|id| id == c.model)
-                        && catalog.superseded_by(&c.model).is_none()
-                }) =>
-        {
-            item
-        }
-        _ => {
-            let choice = cheap_choice(&window, &policy, &catalog, &ctx.config.orchestrator.model)?;
-            let evidence = distillation_input(&store, repo, &window)?;
-            let item = errand(repo, &window, choice, &evidence)?;
-            store.save_learning_value(
-                &draft_key,
-                &serde_json::to_string(&item)
-                    .map_err(|e| ArchonError::Corrupt(format!("save distillation draft: {e}")))?,
-            )?;
-            item
-        }
-    };
+    let item = current_draft(
+        &store,
+        &draft_key,
+        repo,
+        &window,
+        (&policy, &catalog),
+        &ctx.config.orchestrator.model,
+    )?;
     assert!(item.budget_usd.is_some_and(|b| b <= 1.0));
     let item = store.insert_item(&item, Some(&format!("learning:{repo}:{consumed}")))?;
     store.save_learning_value(&format!("learning/distillation/{}", item.id), repo.as_str())?;
@@ -134,6 +113,48 @@ async fn queue(ctx: &DaemonContext, repo: &RepoId) -> Result<(), ArchonError> {
     )?;
     ctx.dispatch.notify_one();
     Ok(())
+}
+
+fn current_draft(
+    store: &archon_queue::Store,
+    draft_key: &str,
+    repo: &RepoId,
+    window: &[Outcome],
+    (policy, catalog): (
+        &archon_core::policy::ModelPolicy,
+        &archon_core::model_tier::ModelCatalog,
+    ),
+    orchestrator: &ModelRef,
+) -> Result<QueueItem, ArchonError> {
+    let saved: Option<QueueItem> = store
+        .kv_get(draft_key)?
+        .map(|raw| {
+            serde_json::from_str(&raw)
+                .map_err(|e| ArchonError::Corrupt(format!("distillation draft: {e}")))
+        })
+        .transpose()?;
+    match saved {
+        Some(item)
+            if policy.check_plan(&item.model_plan).is_ok()
+                && item.model_plan.0.values().flatten().all(|c| {
+                    catalog.check(&c.model).is_ok_and(|id| id == c.model)
+                        && catalog.superseded_by(&c.model).is_none()
+                }) =>
+        {
+            Ok(item)
+        }
+        _ => {
+            let choice = cheap_choice(window, policy, catalog, orchestrator)?;
+            let evidence = distillation_input(store, repo, window)?;
+            let item = errand(repo, window, choice, &evidence)?;
+            store.save_learning_value(
+                draft_key,
+                &serde_json::to_string(&item)
+                    .map_err(|e| ArchonError::Corrupt(format!("save distillation draft: {e}")))?,
+            )?;
+            Ok(item)
+        }
+    }
 }
 
 fn distillation_input(

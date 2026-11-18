@@ -165,11 +165,16 @@ impl ModelCatalog {
     }
 
     pub fn add_alias(&mut self, alias: ModelRef, canonical: ModelRef) {
-        self.aliases.insert(alias, canonical);
+        if !self.models.iter().any(|entry| entry.model == alias) {
+            self.aliases.insert(alias, canonical);
+        }
     }
 
     /// Resolve only a known alias, without rejecting historical model IDs.
     pub fn canonical_alias<'a>(&'a self, model: &'a ModelRef) -> &'a ModelRef {
+        if self.is_retired(model) {
+            return model;
+        }
         self.aliases.get(model).unwrap_or(model)
     }
 
@@ -199,7 +204,7 @@ impl ModelCatalog {
         if let Some(reason) = self.not_ready_reason() {
             return Err(ArchonError::Unavailable(reason.to_owned()));
         }
-        let canonical = self.aliases.get(model).unwrap_or(model);
+        let canonical = self.canonical_alias(model);
         if let Some(successor) = self
             .retired
             .get(model)
@@ -212,9 +217,6 @@ impl ModelCatalog {
             return Err(ArchonError::Invalid(format!(
                 "model {model} is retired{hint}"
             )));
-        }
-        if self.models.iter().any(|entry| &entry.model == model) {
-            return Ok(model.clone());
         }
         if self.models.iter().any(|entry| &entry.model == canonical) {
             return Ok(canonical.clone());
@@ -287,13 +289,11 @@ impl ModelCatalog {
         policy: &ModelPolicy,
     ) -> Result<(ModelRef, TierChoice), ArchonError> {
         let usable = |m: &&CatalogModel| {
-            !self.retired.contains_key(&m.model)
-                && self.superseded_by(&m.model).is_none()
-                && m.tier.is_some_and(|t| t <= requested)
+            m.tier.is_some_and(|t| t <= requested)
                 && provider.is_none_or(|p| m.model.provider == p)
                 && policy.permits_model(&m.model)
         };
-        let candidates: Vec<&CatalogModel> = self.models.iter().filter(usable).collect();
+        let candidates: Vec<&CatalogModel> = self.candidates().filter(usable).collect();
         let on = |p: &str| candidates.iter().any(|m| m.model.provider == p);
         let chosen_provider = match prefer.filter(|p| on(p)) {
             Some(p) => Some(p),
@@ -333,11 +333,7 @@ impl ModelCatalog {
         policy: &ModelPolicy,
     ) -> ArchonError {
         let mut tiers: BTreeMap<&str, BTreeSet<Tier>> = BTreeMap::new();
-        for m in self.models.iter().filter(|m| {
-            !self.retired.contains_key(&m.model)
-                && self.superseded_by(&m.model).is_none()
-                && policy.permits_model(&m.model)
-        }) {
+        for m in self.candidates().filter(|m| policy.permits_model(&m.model)) {
             if let Some(tier) = m.tier {
                 tiers.entry(&m.model.provider).or_default().insert(tier);
             }
@@ -467,6 +463,15 @@ mod tests {
                 .1
                 .resolved,
             Tier::Fast
+        );
+        let retired_alias: ModelRef = "p/archived".parse().unwrap();
+        catalog.add_alias(retired_alias.clone(), "p/new".parse().unwrap());
+        catalog.add_retired(retired_alias.clone(), None);
+        assert_eq!(catalog.canonical_alias(&retired_alias), &retired_alias);
+        assert!(
+            catalog
+                .check(catalog.canonical_alias(&retired_alias))
+                .is_err()
         );
         let error = catalog
             .check(&"q/new".parse().unwrap())

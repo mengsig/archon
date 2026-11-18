@@ -811,11 +811,17 @@ pub(super) async fn retry(
     };
     let (item, fresh_note) = {
         let _table = ctx.runs.lock().await;
-        let loaded = ctx.store.lock().await.item(id)?;
-        check_retryable(&*ctx.store.lock().await, &loaded)?;
+        let store = ctx.store.lock().await;
+        let loaded = store.item(id)?;
+        check_retryable(&store, &loaded)?;
         if !replaces_plan {
-            check_plan_unchanged(id, &current.model_plan, &loaded.model_plan)?;
+            let mut read = current.model_plan;
+            if let Some(catalog) = store.fresh_model_catalog() {
+                read.canonicalize_aliases(&catalog);
+            }
+            check_plan_unchanged(id, &read, &loaded.model_plan)?;
         }
+        drop(store);
         let mut item = loaded.clone();
         item.model_plan = plan;
         item.routed_provider = provider;
@@ -1318,10 +1324,6 @@ fn check_plan_unchanged(
     if read == now {
         return Ok(());
     }
-    debug_assert!(
-        read.plan() != now.plan() || read.origins(id) != now.origins(id),
-        "only a change of a value or an origin refuses"
-    );
     Err(ArchonError::InvalidTransition(format!(
         "{id}'s plan changed while it was being retried; retry it again"
     )))

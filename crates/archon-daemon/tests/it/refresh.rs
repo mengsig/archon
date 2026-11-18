@@ -1445,3 +1445,50 @@ async fn a_refresh_with_nothing_to_merge_ends_at_once() {
     assert!(runs.is_empty(), "no run started: {runs:?}");
     assert!(h.running().await.is_empty(), "no agent");
 }
+
+/// Aether stops answering `list_models` and archond drops its catalog.
+pub(crate) async fn catalog_outage(h: &Harness) {
+    h.catalog_server.set_default(
+        "list_models",
+        archon_aether::fake::Scripted::refuse("internal", "catalog unavailable"),
+    );
+    h.ctx
+        .store
+        .lock()
+        .await
+        .invalidate_model_catalog("catalog unavailable".into());
+}
+
+/// Aether answers again; the next pass must read a fresh catalog itself.
+pub(crate) fn catalog_back(h: &Harness) {
+    common::catalog::answer(&h.catalog_server, &common::catalog::default_models());
+}
+
+#[tokio::test]
+async fn a_refresh_item_waits_through_a_catalog_outage_with_no_attempt() {
+    let (h, _gh) = delivering().await;
+    let (owner, _) = shipped(&h, "the change").await;
+    advance_origin(&h, "change.txt", "upstream wording\n");
+    let fix = refresh(&h, &owner).await.expect("queued");
+    let created = h.backend.created();
+
+    catalog_outage(&h).await;
+    h.dispatch().await;
+    h.dispatch().await;
+    assert_eq!(h.state(&fix.id).await, QueueState::Queued);
+    assert_eq!(h.backend.created(), created, "no attempt during the outage");
+    assert!(
+        h.ctx
+            .store
+            .lock()
+            .await
+            .runs_for_item(&fix.id)
+            .unwrap()
+            .is_empty()
+    );
+
+    catalog_back(&h);
+    h.dispatch().await;
+    assert!(h.state(&fix.id).await.is_active());
+    assert_eq!(h.backend.created(), created + 1);
+}

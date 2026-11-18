@@ -803,3 +803,40 @@ async fn a_restack_runs_no_program_the_repository_or_its_remote_configures() {
     let pushed = format!("refs/heads/{}", child_run.branch);
     assert_eq!(git(&remote, &["rev-parse", &pushed]), merged);
 }
+
+#[tokio::test]
+async fn a_restack_fix_waits_through_a_catalog_outage_with_no_attempt() {
+    let (h, parent, child) = stack_pair().await;
+    finish_item(&h, &child.id).await;
+    let sha = git(&h.repo, &["rev-parse", &h.run(&parent.id).await.branch]);
+    let fix = {
+        let mut store = h.ctx.store.lock().await;
+        let item = store.item(&child.id).unwrap();
+        let run = store.runs_for_item(&child.id).unwrap().pop().unwrap();
+        let stacked = store.stack_parents(&child.id).unwrap().remove(0);
+        store
+            .enqueue_stack_fix(&item, &run, &stacked, &sha, "parent.txt")
+            .unwrap()
+    };
+    let created = h.backend.created();
+
+    crate::refresh::catalog_outage(&h).await;
+    h.dispatch().await;
+    h.dispatch().await;
+    assert_eq!(h.state(&fix).await, QueueState::Queued);
+    assert_eq!(h.backend.created(), created, "no attempt during the outage");
+    assert!(
+        h.ctx
+            .store
+            .lock()
+            .await
+            .runs_for_item(&fix)
+            .unwrap()
+            .is_empty()
+    );
+
+    crate::refresh::catalog_back(&h);
+    h.dispatch().await;
+    assert!(h.state(&fix).await.is_active(), "{:?}", h.state(&fix).await);
+    assert_eq!(h.backend.created(), created + 1);
+}

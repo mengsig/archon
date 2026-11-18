@@ -97,3 +97,59 @@ async fn a_failed_refresh_cannot_use_a_catalog_older_than_five_minutes() {
             .contains("refresh failed")
     );
 }
+
+fn retired_catalog(h: &Harness) {
+    h.fake.set_features(vec!["retired_models".into()]);
+    h.fake.set_default(
+        "list_models",
+        Scripted::reply(
+            "models",
+            serde_json::json!([{"model": "p/new", "configured": true}]),
+        ),
+    );
+    h.fake.set_default(
+        "list_retired_models",
+        Scripted::reply(
+            "retired_models",
+            serde_json::json!([
+                {"model": "p/old", "successor": "new"},
+                {"model": "p/gone"}
+            ]),
+        ),
+    );
+}
+
+#[tokio::test]
+async fn a_negotiated_retired_list_keeps_a_successor_only_where_aether_names_one() {
+    let h = Harness::new().await;
+    retired_catalog(&h);
+    h.connect().await;
+    archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    assert_eq!(h.fake.received_named("list_retired_models").len(), 1);
+    let store = h.ctx.store.lock().await;
+    let catalog = store.model_catalog();
+    let (old, gone) = ("p/old".parse().unwrap(), "p/gone".parse().unwrap());
+    assert!(catalog.is_retired(&old) && catalog.is_retired(&gone));
+    assert_eq!(catalog.successor(&old).unwrap().to_string(), "p/new");
+    assert!(catalog.successor(&gone).is_none());
+    let hint = catalog.check(&old).unwrap_err().to_string();
+    assert!(hint.contains("successor: p/new"), "{hint}");
+    let bare = catalog.check(&gone).unwrap_err().to_string();
+    assert!(
+        bare.contains("retired") && !bare.contains("successor"),
+        "{bare}"
+    );
+}
+
+#[tokio::test]
+async fn a_welcome_without_the_retired_feature_never_asks_for_the_list() {
+    let h = Harness::new().await;
+    retired_catalog(&h);
+    h.fake.set_features(Vec::new());
+    h.connect().await;
+    archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    assert!(h.fake.received_named("list_retired_models").is_empty());
+    let store = h.ctx.store.lock().await;
+    assert!(!store.model_catalog().is_retired(&"p/old".parse().unwrap()));
+    assert!(!store.model_catalog().models().is_empty());
+}

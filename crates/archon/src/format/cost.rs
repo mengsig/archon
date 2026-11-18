@@ -40,7 +40,7 @@ pub fn cost(report: &CostReport) -> String {
         cells.push(row_cells(key, &row.amounts));
     }
     cells.push(row_cells("total".to_owned(), &report.total));
-    let mut text = format!("{header}\n{}", table(&cells));
+    let mut text = format!("{header}\n{}", cost_table(cells, report));
     debug_assert_eq!(text.lines().count(), report.rows.len() + 3);
     // Uncounted estimates, such as Codex usage, must not read as free.
     if let Some(total) = report.total.uncounted_api_equivalent_usd() {
@@ -50,6 +50,41 @@ pub fn cost(report: &CostReport) -> String {
         );
     }
     text
+}
+
+fn cost_table(cells: Vec<[String; 5]>, report: &CostReport) -> String {
+    let Some(total) = report.split else {
+        return table(&cells);
+    };
+    assert_eq!(cells.len(), report.rows.len() + 2);
+    let splits = report.rows.iter().map(|row| row.split).chain([Some(total)]);
+    let mut cells = cells.into_iter();
+    let [key, counted, billed, estimate, unclassified] = cells.next().expect("a cost header");
+    let mut with_split = vec![[
+        key,
+        counted,
+        billed,
+        estimate,
+        unclassified,
+        "lead".into(),
+        "delegated".into(),
+    ]];
+    for ([key, counted, billed, estimate, unclassified], split) in cells.zip(splits) {
+        let [lead, delegated] = split.map_or_else(
+            || ["-".into(), "-".into()],
+            |split| [format_usd(split.lead_usd), format_usd(split.delegated_usd)],
+        );
+        with_split.push([
+            key,
+            counted,
+            billed,
+            estimate,
+            unclassified,
+            lead,
+            delegated,
+        ]);
+    }
+    table(&with_split)
 }
 
 fn row_cells(key: String, amounts: &CostAmounts) -> [String; 5] {
@@ -64,7 +99,7 @@ fn row_cells(key: String, amounts: &CostAmounts) -> [String; 5] {
 
 #[cfg(test)]
 mod tests {
-    use archon_core::cost::{CostGroup, CostRow, DayRange};
+    use archon_core::cost::{CostGroup, CostRow, CostSplit, DayRange};
 
     use super::*;
 
@@ -87,6 +122,7 @@ mod tests {
             estimates_counted: true,
             rows,
             total,
+            split: None,
         }
     }
 
@@ -96,10 +132,12 @@ mod tests {
             CostRow {
                 key: Some("default-pr-review".into()),
                 amounts: amounts(10.0, 2.25),
+                split: None,
             },
             CostRow {
                 key: None,
                 amounts: amounts(0.0, 1.5),
+                split: None,
             },
         ];
         let text = cost(&report(rows, amounts(10.0, 3.75)));
@@ -125,7 +163,14 @@ mod tests {
             estimated_cost_usd: 2.0,
             unclassified_cost_usd: 1.0,
         };
-        let mut report = report(vec![CostRow { key: None, amounts }], amounts);
+        let mut report = report(
+            vec![CostRow {
+                key: None,
+                amounts,
+                split: None,
+            }],
+            amounts,
+        );
         report.estimates_counted = false;
         let text = cost(&report);
         assert!(text.contains("separate API-equivalent estimates do not count"));
@@ -140,10 +185,46 @@ mod tests {
     }
 
     #[test]
+    fn the_cost_table_shows_lead_and_delegated_amounts() {
+        let split = Some(CostSplit {
+            lead_usd: 2.0,
+            delegated_usd: 1.5,
+        });
+        let mut report = report(
+            vec![CostRow {
+                key: Some("high".into()),
+                amounts: amounts(2.0, 1.5),
+                split,
+            }],
+            amounts(2.0, 1.5),
+        );
+        report.by = CostGroup::Effort;
+        report.split = split;
+        let text = cost(&report);
+        let lines: Vec<_> = text.lines().collect();
+        assert_eq!(lines.len(), 4, "{text}");
+        assert!(
+            lines[1]
+                .split_whitespace()
+                .rev()
+                .take(2)
+                .eq(["delegated", "lead"])
+        );
+        for (line, key) in lines[2..].iter().zip(["high", "total"]) {
+            assert!(line.starts_with(key), "{text}");
+            assert!(
+                line.split_whitespace().rev().take(2).eq(["$1.50", "$2.00"]),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
     fn sub_cent_rows_are_marked_not_rounded_to_zero() {
         let row = |key: &str| CostRow {
             key: Some(key.into()),
             amounts: amounts(0.004, 0.0),
+            split: None,
         };
         let text = cost(&report(
             vec![row("a"), row("b"), row("c")],
@@ -164,6 +245,7 @@ mod tests {
             vec![CostRow {
                 key: None,
                 amounts: amounts(1.0, 0.0),
+                split: None,
             }],
             amounts(1.0, 0.0),
         );

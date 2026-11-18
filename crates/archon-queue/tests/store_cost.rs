@@ -4,9 +4,9 @@
 mod common;
 
 use archon_core::aether_ids::AetherAgentId;
-use archon_core::cost::{CostBasis, CostGroup, CostReport, DayRange};
+use archon_core::cost::{CostBasis, CostGroup, CostReport, CostSplit, DayRange};
 use archon_core::error::ArchonError;
-use archon_core::model::ModelChoice;
+use archon_core::model::{Effort, ModelChoice};
 use archon_core::queue::QueueItem;
 use archon_queue::Store;
 use archon_queue::store::SpendRow;
@@ -14,6 +14,7 @@ use chrono::NaiveDate;
 use common::{agent, item, repo, running_stage, start, store, t};
 
 const DAY: i64 = 86_400;
+const ROUNDING_USD: f64 = 1e-6;
 
 /// The local calendar day of `t(secs)`, as the ledger records it.
 fn day(secs: i64) -> NaiveDate {
@@ -103,7 +104,10 @@ fn seeded() -> (Store, [QueueItem; 3]) {
 /// `(key, counted)` per row, after checking the rows add up to the total.
 fn rows(report: &CostReport) -> Vec<(Option<String>, f64)> {
     let sum: f64 = report.rows.iter().map(|r| r.amounts.counted_usd).sum();
-    assert_eq!(sum, report.total.counted_usd, "rows add up to the total");
+    assert!(
+        (sum - report.total.counted_usd).abs() <= ROUNDING_USD,
+        "rows add up to the total"
+    );
     report
         .rows
         .iter()
@@ -142,12 +146,18 @@ fn each_grouping_splits_the_same_total() {
         vec![
             (key("codex/astra"), 4.0),
             (key("claude-code/claude-opus-5-5"), 3.0),
-            (None, 1.75)
+            (key("(orchestrator)"), 1.0),
+            (None, 0.75)
         ]
     );
     assert_eq!(
         rows(&report(CostGroup::Provider)),
-        vec![(key("codex"), 4.0), (key("claude-code"), 3.0), (None, 1.75)],
+        vec![
+            (key("codex"), 4.0),
+            (key("claude-code"), 3.0),
+            (key("(orchestrator)"), 1.0),
+            (None, 0.75)
+        ],
         "the model rows summed by provider"
     );
     let ids = [a, b, c].map(|i| key(i.id.as_str()));
@@ -162,7 +172,12 @@ fn each_grouping_splits_the_same_total() {
     );
     assert_eq!(
         rows(&report(CostGroup::Stage)),
-        vec![(key("review"), 4.0), (key("implement"), 3.0), (None, 1.75)]
+        vec![
+            (key("review"), 4.0),
+            (key("implement"), 3.0),
+            (key("(orchestrator)"), 1.0),
+            (None, 0.75)
+        ]
     );
     for by in CostGroup::ALL {
         let report = report(by);
@@ -171,6 +186,135 @@ fn each_grouping_splits_the_same_total() {
         assert_eq!(report.total.cost_usd, 3.5, "{by:?}");
         assert_eq!(report.total.estimated_cost_usd, 5.25, "{by:?}");
     }
+}
+
+fn delegation_window() -> (Store, QueueItem) {
+    let mut store = store();
+    let item = store
+        .insert_item(&item(None, "delegation window"), None)
+        .unwrap();
+    staged(&mut store, &item, "implement", "claude-code/opus", 1);
+    for (child, parent, model, effort) in [
+        (2, 1, "codex/astra", Some(Effort::Medium)),
+        (3, 2, "codex/astra", Some(Effort::High)),
+        (4, 3, "claude-code/sonnet", None),
+        (7, 6, "codex/sol", Some(Effort::Low)),
+    ] {
+        store
+            .record_delegated(
+                &agent(child),
+                &agent(parent),
+                &model.parse().unwrap(),
+                effort,
+            )
+            .unwrap();
+    }
+    for (n, item, usd) in [
+        (1, Some(&item), (4300.0, 0.0)),
+        (2, Some(&item), (250.0, 0.0)),
+        (3, Some(&item), (500.0, 0.0)),
+        (4, None, (0.0, 50.0)),
+        (5, Some(&item), (23.0, 0.0)),
+        (6, None, (854.0, 0.0)),
+        (7, None, (10.0, 0.0)),
+    ] {
+        charge(&mut store, &agent(n), item, 0, usd);
+    }
+    charge(&mut store, &agent(3), Some(&item), DAY, (1066.0, 0.0));
+    (store, item)
+}
+
+#[test]
+fn three_levels_of_delegation_roll_up_to_the_root_stage() {
+    let (store, item) = delegation_window();
+    let report = |by, estimates| store.cost_report(&range(0, DAY), by, estimates).unwrap();
+    let stage = report(CostGroup::Stage, true);
+    assert_eq!(
+        rows(&stage),
+        vec![
+            (key("implement"), 5666.0),
+            (key("(orchestrator)"), 864.0),
+            (None, 23.0)
+        ]
+    );
+    assert_eq!(
+        stage.rows[0].split,
+        Some(CostSplit {
+            lead_usd: 4300.0,
+            delegated_usd: 1366.0
+        })
+    );
+    assert_eq!(
+        stage.rows[1].split,
+        Some(CostSplit {
+            lead_usd: 854.0,
+            delegated_usd: 10.0
+        })
+    );
+    assert_eq!(stage.rows[2].split, Some(CostSplit::default()));
+    assert_eq!(
+        rows(&report(CostGroup::Item, true)),
+        vec![(key(item.id.as_str()), 5689.0), (None, 864.0)]
+    );
+    for by in CostGroup::ALL {
+        for (estimates, delegated, counted) in [(false, 1326.0, 6503.0), (true, 1376.0, 6553.0)] {
+            let report = report(by, estimates);
+            rows(&report);
+            assert_eq!(report.total.counted_usd, counted, "{by:?}");
+            assert_eq!(
+                report.split,
+                Some(CostSplit {
+                    lead_usd: 5154.0,
+                    delegated_usd: delegated
+                }),
+                "{by:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn delegates_use_their_own_model_and_effort_in_the_seeded_window() {
+    let (store, _) = delegation_window();
+    let report = |by| store.cost_report(&range(0, DAY), by, true).unwrap();
+    let model = report(CostGroup::Model);
+    assert_eq!(
+        rows(&model),
+        vec![
+            (key("claude-code/opus"), 4300.0),
+            (key("codex/astra"), 1316.0),
+            (key("(orchestrator)"), 854.0),
+            (key("claude-code/sonnet"), 50.0),
+            (None, 23.0),
+            (key("codex/sol"), 10.0)
+        ]
+    );
+    assert!(
+        model
+            .rows
+            .iter()
+            .filter(|row| row.key.is_none())
+            .all(|row| row.amounts.counted_usd < 0.01 * model.total.counted_usd)
+    );
+    assert_eq!(
+        rows(&report(CostGroup::Effort)),
+        vec![
+            (key("high"), 5366.0),
+            (key("(orchestrator)"), 854.0),
+            (key("medium"), 250.0),
+            (None, 73.0),
+            (key("low"), 10.0)
+        ]
+    );
+    assert_eq!(
+        rows(&report(CostGroup::Provider)),
+        vec![
+            (key("claude-code"), 4350.0),
+            (key("codex"), 1326.0),
+            (key("(orchestrator)"), 854.0),
+            (None, 23.0)
+        ]
+    );
 }
 
 #[test]

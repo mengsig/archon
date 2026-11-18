@@ -48,6 +48,7 @@ fn group(by: CostBy) -> CostGroup {
         CostBy::Provider => CostGroup::Provider,
         CostBy::Item => CostGroup::Item,
         CostBy::Stage => CostGroup::Stage,
+        CostBy::Effort => CostGroup::Effort,
     }
 }
 

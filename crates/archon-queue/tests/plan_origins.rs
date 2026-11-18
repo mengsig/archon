@@ -103,6 +103,8 @@ fn the_count_reads_unfinished_items_and_counts_a_row_it_cannot_decode() {
     let planless = insert(planned(&alpha, "planless"));
     let misplanned = insert(planned(&alpha, "misplanned"));
     let binary = insert(planned(&alpha, "binary"));
+    let misfiled = insert(planned(&alpha, "finished in a row that is not"));
+    let twice = insert(planned(&alpha, "two origins"));
     assert_eq!(
         store.plan_field_count().unwrap(),
         archon_queue::store::PlanFieldCount {
@@ -137,6 +139,14 @@ fn the_count_reads_unfinished_items_and_counts_a_row_it_cannot_decode() {
         &misplanned.id,
     );
     run("UPDATE items SET data = x'00ff' WHERE id = ?1", &binary.id);
+    run(
+        "UPDATE items SET data = json_set(data, '$.state', json_object('state', 'cancelled')) WHERE id = ?1",
+        &misfiled.id,
+    );
+    run(
+        "UPDATE items SET data = replace(data, '\"model_plan\":', '\"model_origins\":null,\"model_plan\":') WHERE id = ?1",
+        &twice.id,
+    );
     let count = store.plan_field_count().expect("status never aborts");
     assert_eq!(
         count.unattributed,
@@ -145,8 +155,8 @@ fn the_count_reads_unfinished_items_and_counts_a_row_it_cannot_decode() {
     );
     assert_eq!(count.legacy, fields(&legacy));
     assert_eq!(
-        count.unreadable, 4,
-        "corrupt, planless, misplanned and binary"
+        count.unreadable, 6,
+        "corrupt, planless, misplanned, binary, misfiled and twice-keyed"
     );
     assert_eq!(store.item(&sound.id).unwrap().id, sound.id);
 }

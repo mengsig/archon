@@ -1061,3 +1061,40 @@ async fn a_recovered_run_with_pinned_models_follows_no_quota_move() {
         assert_eq!(fields.count(), 8, "the model and effort of four choices");
     }
 }
+
+/// A run 1.6.3 left with a tiered implementer keeps that agent through the
+/// restart of an upgrade: its pinned model reads without a tier, the same agent.
+#[tokio::test]
+async fn a_recovered_run_from_before_origins_resumes_its_kept_tiered_implementer() {
+    let mut h = harness(Config::default()).await;
+    let item = enqueue(&h, ROUTED, "kept through an upgrade", tier_plan()).await;
+    h.dispatch().await;
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    let implementers = |stages: Vec<archon_core::run::StageRun>| -> Vec<_> {
+        let of_implement = stages.into_iter().filter(|s| s.stage_id == "implement");
+        of_implement.map(|s| (s.choice, s.aether_agent)).collect()
+    };
+    let first = implementers(h.stages(&item.id).await);
+    assert!(first[0].0.tier.is_some(), "a tiered implementer: {first:?}");
+    pinned(&h, &item, PlanSource::LegacyUnknown).await;
+    let spawned = h.backend.requests().len();
+
+    h.restart();
+    h.ctx.store.lock().await.set_model_catalog(catalog());
+    archon_daemon::executor::recover(&h.ctx)
+        .await
+        .expect("recover");
+    let failed = archon_core::run::StageOutcome::Completed {
+        summary: "the greeting is never tested\nVERDICT: fail".into(),
+        structured: Some(serde_json::json!({"verdict": "fail", "findings": []})),
+    };
+    h.settle_running(|_| failed.clone()).await;
+    h.dispatch().await;
+
+    let again = implementers(h.stages(&item.id).await);
+    assert_eq!(again.len(), 2, "the fix is a second attempt: {again:?}");
+    assert_eq!(again[1].0.model, first[0].0.model, "the pinned model");
+    assert_eq!(again[1].1, first[0].1, "the kept agent takes the findings");
+    assert_eq!(h.backend.requests().len(), spawned, "nothing respawned");
+}

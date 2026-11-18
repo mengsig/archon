@@ -362,6 +362,36 @@ fn removing_a_key_drops_its_origins() {
     assert_eq!(planned.unattributed_fields(&item), 0);
 }
 
+/// S1: origins that do not fit vouch for nothing after a key is dropped
+/// either, whether the dropped key or another one held the fault.
+#[test]
+fn removing_a_key_never_turns_faulty_origins_into_fitting_ones() {
+    let faults: [(&str, Edit); 4] = [
+        ("a stray origin", |i| without(i, "/model_plan", "ship")),
+        ("no origin to drop", |i| {
+            without(i, "/model_origins/entries", "ship")
+        }),
+        ("a misfit to drop", |i| {
+            i["model_origins"]["entries"]["ship"] = [0; 0].into()
+        }),
+        ("a misfit elsewhere", |i| {
+            i["model_origins"]["entries"]["plan"] = [0; 0].into()
+        }),
+    ];
+    let item = QueueItemId::new();
+    for (why, edit) in faults {
+        let mut stored = serde_json::to_value(enqueued(&item)).unwrap();
+        edit(&mut stored);
+        let mut planned: PlannedPlan = serde_json::from_value(stored).unwrap();
+        assert!(planned.fault(&item).is_some(), "{why}");
+        let had = planned.0.contains_key("ship");
+        assert_eq!(planned.remove_key("ship"), had, "{why}");
+        assert!(!planned.0.contains_key("ship"), "{why}");
+        assert_all(&planned, &item, PlanSource::Unattributed, why);
+        assert!(planned.fault(&item).is_some(), "{why}: still a fault");
+    }
+}
+
 /// Every field of `planned` reads as `source`, by nobody known.
 fn assert_all(planned: &PlannedPlan, item: &QueueItemId, source: PlanSource, why: &str) {
     let origins = planned.origins(item);

@@ -244,7 +244,21 @@ pub struct PlanOrigins {
     pub entries: BTreeMap<String, Vec<EntryOrigin>>,
 }
 
+/// Whether `slots` are the whole origins of `choices`, one each.
+fn describe(slots: &[EntryOrigin], choices: &[ModelChoice]) -> bool {
+    slots.len() == choices.len() && slots.iter().zip(choices).all(|(o, c)| o.describes(c))
+}
+
 impl PlanOrigins {
+    /// Origins that describe no field of any item, so every field of the
+    /// item they are stored with reads as unattributed.
+    fn of_no_item() -> Self {
+        Self {
+            item: None,
+            entries: BTreeMap::new(),
+        }
+    }
+
     /// Why these origins do not describe `plan` of `item`; `None` when they
     /// do: written for it, with its keys and counts, every origin whole.
     fn fault(&self, item: &QueueItemId, plan: &ModelPlan) -> Option<String> {
@@ -256,14 +270,12 @@ impl PlanOrigins {
         if !self.entries.keys().eq(plan.0.keys()) {
             return Some("origins of other plan keys".to_owned());
         }
-        for ((key, choices), slots) in plan.0.iter().zip(self.entries.values()) {
-            let whole = choices.len() == slots.len()
-                && choices.iter().zip(slots).all(|(c, o)| o.describes(c));
-            if !whole {
-                return Some(format!("plan key {key:?} has origins of another shape"));
-            }
-        }
-        None
+        let misfit = plan.0.iter().zip(self.entries.values());
+        let (key, _) = misfit
+            .filter(|((_, choices), slots)| !describe(slots, choices))
+            .map(|(entry, _)| entry)
+            .next()?;
+        Some(format!("plan key {key:?} has origins of another shape"))
     }
 }
 
@@ -274,10 +286,7 @@ where
     D: serde::Deserializer<'de>,
 {
     let value = serde_json::Value::deserialize(stored)?;
-    let origins = serde_json::from_value(value).unwrap_or_else(|_| PlanOrigins {
-        item: None,
-        entries: BTreeMap::new(),
-    });
+    let origins = serde_json::from_value(value).unwrap_or_else(|_| PlanOrigins::of_no_item());
     Ok(Some(Box::new(origins)))
 }
 
@@ -442,14 +451,22 @@ impl PlannedPlan {
         writer.finish()
     }
 
-    /// Drop `key` and its origins together; `true` when it was there.
+    /// Drop `key` and its origins together; `true` when the plan had it.
+    /// Origins that did not describe the dropped choices vouch for none of
+    /// the rest either, so dropping a key never turns a fault into a fit.
     pub fn remove_key(&mut self, key: &str) -> bool {
-        let removed = self.model_plan.0.remove(key).is_some();
-        if let Some(origins) = &mut self.model_origins {
-            origins.entries.remove(key);
+        let Some(choices) = self.model_plan.0.remove(key) else {
+            return false;
+        };
+        let Some(origins) = &mut self.model_origins else {
+            return true;
+        };
+        let slots = origins.entries.remove(key);
+        if !slots.is_some_and(|slots| describe(&slots, &choices)) {
+            **origins = PlanOrigins::of_no_item();
         }
-        debug_assert!(!self.model_plan.0.contains_key(key));
-        removed
+        debug_assert!(!origins.entries.contains_key(key), "dropped with its key");
+        true
     }
 
     /// Steer every choice of `key` to the `model` and `effort` named: each

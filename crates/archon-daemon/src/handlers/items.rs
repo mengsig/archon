@@ -1334,7 +1334,7 @@ mod tests {
     fn only_commit_like_tokens_outside_the_frozen_head_are_found() {
         let head = "0123456789abcdef0123456789abcdef01234567";
         assert_eq!(other_commit("review 0123456789ab again", head), None);
-        assert_eq!(other_commit("an 1234567 deadbeef", head), Some("deadbeef"));
+        assert_eq!(other_commit("an 1234567 cafe1234", head), Some("cafe1234"));
         assert_eq!(
             other_commit("1234567 only digits, a decade and accede", head),
             None

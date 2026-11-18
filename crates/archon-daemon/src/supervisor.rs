@@ -2050,8 +2050,9 @@ mod tests {
     }
 
     /// The prompt is paid for on every turn; the tools describe themselves.
-    /// Includes 1 KiB for approved-intent and clarification guidance.
-    const BUDGET_BYTES: usize = 14 * 1024 + 768;
+    /// Includes 1 KiB for approved-intent and clarification guidance, and
+    /// 128 B for routing risky work to `adaptive`.
+    const BUDGET_BYTES: usize = 14 * 1024 + 768 + 128;
 
     #[test]
     fn builtin_prompt_stays_within_its_budget() {

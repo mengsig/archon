@@ -70,7 +70,7 @@ pub fn item(repo: Option<&Repo>, title: &str) -> QueueItem {
         priority: Priority::Normal,
         dependencies: vec![],
         tags: vec!["t1".into()],
-        model_plan: plan,
+        model_plan: archon_core::plan_origin::PlannedPlan::legacy(plan),
         model_reasons: None,
         budget_usd: Some(2.5),
         autonomy: Autonomy::default(),

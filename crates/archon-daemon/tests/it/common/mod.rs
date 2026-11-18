@@ -1939,7 +1939,7 @@ pub async fn legacy_gate_item(h: &Harness, mut item: QueueItem) -> QueueItem {
             .unwrap()
             .is_empty()
     );
-    item.model_plan.0.remove("intent-acceptance");
+    item.model_plan.remove_key("intent-acceptance");
     h.ctx.store.lock().await.update_item(&item).unwrap();
     item
 }

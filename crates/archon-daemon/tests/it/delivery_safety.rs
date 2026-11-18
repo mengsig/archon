@@ -8,7 +8,6 @@ use crate::common;
 use archon_core::autonomy::AutonomyPatch;
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
-use archon_core::model::ModelPlan;
 use archon_core::protocol::{EnqueueRequest, Reply, RepoPatch, RepoRef, Request};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::run::{PipelineRun, StageOutcome};
@@ -129,7 +128,7 @@ async fn started_after(
         priority: Default::default(),
         depends_on: parents.iter().map(|p| p.id.clone()).collect(),
         tags: Vec::new(),
-        model_plan: ModelPlan::default().into(),
+        model_plan: Default::default(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,
@@ -412,7 +411,7 @@ async fn a_changed_git_identity_stops_a_run_before_it_works() {
         priority: Default::default(),
         depends_on: Vec::new(),
         tags: Vec::new(),
-        model_plan: ModelPlan::default().into(),
+        model_plan: Default::default(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,

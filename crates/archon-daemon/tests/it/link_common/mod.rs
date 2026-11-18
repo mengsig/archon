@@ -480,7 +480,7 @@ fn queue_item(repo: &Repo) -> QueueItem {
         priority: Priority::Normal,
         dependencies: vec![],
         tags: vec![],
-        model_plan: plan,
+        model_plan: archon_core::plan_origin::PlannedPlan::legacy(plan),
         model_reasons: None,
         budget_usd: None,
         autonomy: Default::default(),

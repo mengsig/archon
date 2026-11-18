@@ -78,6 +78,9 @@ pub(super) async fn status(ctx: &DaemonContext, query: StatusQuery) -> Result<Re
         merge_granted: counts.merges.granted,
         health: Some(aether.health),
         quota: crate::quota::status(ctx),
+        unattributed_plan_fields: count(counts.plan_fields.unattributed),
+        legacy_plan_fields: count(counts.plan_fields.legacy),
+        unreadable_plan_items: count(counts.plan_fields.unreadable),
         recovery: ctx.recovery.progress(),
         integration,
         stage_warnings,
@@ -101,6 +104,7 @@ struct StoreCounts {
     directives: Vec<Directive>,
     open_gates: usize,
     merges: super::autonomy::MergesNow,
+    plan_fields: archon_queue::store::PlanFieldCount,
 }
 
 impl StoreCounts {
@@ -124,6 +128,7 @@ impl StoreCounts {
             directives: store.directives(now)?,
             open_gates: store.open_gates()?.len(),
             merges: super::autonomy::merges_now(&store)?,
+            plan_fields: store.plan_field_count()?,
         })
     }
 }

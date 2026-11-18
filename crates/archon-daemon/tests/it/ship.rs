@@ -11,7 +11,6 @@ use std::process::Command;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::autonomy::{AutonomyPatch, MergeMode, ReviewLevel};
 use archon_core::error::ArchonError;
-use archon_core::model::ModelPlan;
 use archon_core::notify::NotificationKind;
 use archon_core::outcome::{Correction, FailureClass};
 use archon_core::ports::resumed_reply_outcome;
@@ -57,7 +56,7 @@ async fn enqueue(
         priority: Default::default(),
         depends_on: Vec::new(),
         tags: Vec::new(),
-        model_plan: ModelPlan::default().into(),
+        model_plan: Default::default(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,

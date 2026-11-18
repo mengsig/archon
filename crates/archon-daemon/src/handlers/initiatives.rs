@@ -6,7 +6,8 @@ use archon_core::id::{InitiativeId, QueueItemId};
 use archon_core::initiative::{
     ContractChange, EnqueueInitiative, Initiative, InitiativeMember, InitiativeState,
 };
-use archon_core::model::{ModelPlan, ModelPlanDraft};
+use archon_core::model::{ModelPlanDraft, ModelReasons};
+use archon_core::plan_origin::{Authority, PlannedPlan};
 use archon_core::protocol::Reply;
 use archon_core::queue::{QueueItem, QueueState, check_enqueue};
 
@@ -19,6 +20,7 @@ use crate::resolve::RepoEnv;
 pub(super) async fn enqueue(
     ctx: &DaemonContext,
     request: EnqueueInitiative,
+    by: Authority,
 ) -> Result<Reply, ArchonError> {
     request.check(&ctx.config.limits.initiatives())?;
     if let Some(existing) = ctx.store.lock().await.replay_initiative(&request)? {
@@ -32,7 +34,7 @@ pub(super) async fn enqueue(
     )?;
     let mut members = Vec::with_capacity(request.members.len());
     for member in &request.members {
-        members.push(prepare_member(ctx, &initiative, member, &members).await?);
+        members.push(prepare_member(ctx, (&initiative, by), member, &members).await?);
     }
     assert_eq!(members.len(), request.members.len());
     assert!(
@@ -51,7 +53,7 @@ pub(super) async fn enqueue(
 
 async fn prepare_member(
     ctx: &DaemonContext,
-    initiative: &Initiative,
+    (initiative, by): (&Initiative, Authority),
     member: &InitiativeMember,
     earlier: &[QueueItem],
 ) -> Result<QueueItem, ArchonError> {
@@ -83,7 +85,7 @@ async fn prepare_member(
         resolved.spec = archon_pipeline::acceptance::augment(&resolved.spec)?;
     }
     let id = QueueItemId::new();
-    let (plan, routed_provider) = route_member(ctx, &env, &resolved, member, &id).await?;
+    let (plan, routed_provider) = route_member(ctx, (&env, by), &resolved, member, &id).await?;
     let title = member
         .title
         .clone()
@@ -108,7 +110,7 @@ async fn prepare_member(
         dependencies,
         tags: Vec::new(),
         model_plan: plan,
-        model_reasons: None,
+        model_reasons: member.model_reasons.clone(),
         budget_usd: None,
         autonomy: resolved.autonomy,
         origin: None,
@@ -124,15 +126,15 @@ async fn prepare_member(
     })
 }
 
-/// `draft` resolved, filled and checked as an enqueue's plan is. A member gives
-/// no model_reasons, so only the policy's ceiling bounds its effort.
+/// `draft` resolved, filled and checked as an enqueue's plan is: an effort above
+/// its stage's default needs a reason in the member's `model_reasons`.
 async fn route_member(
     ctx: &DaemonContext,
-    env: &RepoEnv,
+    (env, by): (&RepoEnv, Authority),
     resolved: &knobs::Resolved,
     member: &InitiativeMember,
     id: &QueueItemId,
-) -> Result<(archon_core::model::ModelPlan, Option<String>), ArchonError> {
+) -> Result<(PlannedPlan, Option<String>), ArchonError> {
     let unrouted = ItemRoute { id, held: None };
     let routed_provider = items::routed_provider(ctx, env, unrouted).await?;
     let route = ItemRoute {
@@ -140,7 +142,8 @@ async fn route_member(
         ..unrouted
     };
     let draft = member.model_plan.clone().unwrap_or_default();
-    let plan = member_plan(ctx, (env, route), resolved, draft).await?;
+    let asked = (draft, member.model_reasons.as_ref());
+    let plan = member_plan(ctx, (env, route), resolved, asked, by).await?;
     Ok((plan, routed_provider))
 }
 
@@ -148,11 +151,14 @@ async fn member_plan(
     ctx: &DaemonContext,
     (env, route): (&RepoEnv, ItemRoute<'_>),
     resolved: &knobs::Resolved,
-    draft: ModelPlanDraft,
-) -> Result<ModelPlan, ArchonError> {
-    let given = items::resolve_tiers(ctx, (env, route), &resolved.spec, draft).await?;
-    let plan = items::filled_plan(ctx, route, env, &resolved.base, &resolved.spec, given).await?;
-    items::check_plan(ctx, env, &resolved.spec, &plan)?;
+    (draft, reasons): (ModelPlanDraft, Option<&ModelReasons>),
+    by: Authority,
+) -> Result<PlannedPlan, ArchonError> {
+    let spec = &resolved.spec;
+    let given = items::resolve_draft(ctx, (env, route), spec, (draft, reasons), by).await?;
+    let plan = items::filled_plan(ctx, route, env, &resolved.base, spec, given).await?;
+    items::check_plan(ctx, env, spec, &plan)?;
+    items::check_reasons(spec, reasons)?;
     Ok(plan)
 }
 

@@ -12,7 +12,8 @@ mod shape;
 use archon_core::Timestamp;
 use archon_core::error::ArchonError;
 use archon_core::id::{NotificationId, QueueItemId, StageRunId};
-use archon_core::model::{ModelPlan, ModelReasons};
+use archon_core::model::ModelReasons;
+use archon_core::plan_origin::PlannedPlan;
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::run::{PipelineRun, StageOutcome, StageRun};
 use archon_core::steer::{RunEdit, Steer, SteerRecord, SteeredBy};
@@ -45,7 +46,7 @@ pub(crate) struct Asked<'a> {
     pub sources: &'a Sources,
     pub steer: &'a Steer,
     /// A whole new, checked model plan (`update_item` on a running item).
-    pub plan: Option<(ModelPlan, Option<ModelReasons>)>,
+    pub plan: Option<(PlannedPlan, Option<ModelReasons>)>,
 }
 
 /// What an agent is told when a steer amended its task's brief.

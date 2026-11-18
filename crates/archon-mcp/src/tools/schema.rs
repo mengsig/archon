@@ -294,7 +294,7 @@ fn stage_timeouts() -> Value {
         "additionalProperties": {"type": "integer", "minimum": 1}})
 }
 
-fn model_reasons() -> Value {
+pub(super) fn model_reasons() -> Value {
     json!({"type": "object", "description": "Why per stage id (not pipeline).",
         "additionalProperties": {"type": "string", "maxLength": MAX_MODEL_REASON_CHARS}})
 }

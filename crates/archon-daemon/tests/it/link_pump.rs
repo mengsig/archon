@@ -1998,7 +1998,7 @@ async fn reviewer_cancels(effort_sizing: bool) -> Vec<(String, String)> {
         let mut store = harness.ctx.store.lock().await;
         let run = store.run(&stage.run).unwrap();
         let mut item = store.item(&run.item).unwrap();
-        item.model_plan.0.insert(
+        item.model_plan.legacy_mut().0.insert(
             "implement.review".into(),
             vec![ModelChoice {
                 model: ModelRef::new(ALLOWED.0, ALLOWED.1),
@@ -2113,6 +2113,7 @@ async fn alone_cancels(reviewer_plan: bool) -> Vec<Value> {
         let mut item = store.item(&run.item).unwrap();
         let named = ModelChoice::pinned(reviewer.clone(), Effort::Medium);
         item.model_plan
+            .legacy_mut()
             .0
             .insert("implement.review".into(), vec![named]);
         store.update_item(&item).unwrap();

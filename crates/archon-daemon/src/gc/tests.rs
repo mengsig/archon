@@ -639,7 +639,7 @@ fn item_in(state: QueueState, updated_secs_ago: i64) -> QueueItem {
         priority: archon_core::queue::Priority::Normal,
         dependencies: vec![],
         tags: vec![],
-        model_plan: archon_core::model::ModelPlan::default(),
+        model_plan: Default::default(),
         model_reasons: None,
         budget_usd: None,
         autonomy: archon_core::autonomy::Autonomy::default(),

@@ -310,7 +310,7 @@ async fn running_steer_refuses_max_before_requiring_a_reason() {
         error.contains("maximum x_high") && error.contains("max_effort"),
         "{error}"
     );
-    assert_eq!(h.item(&item.id).await.model_plan, plan());
+    assert_eq!(*h.item(&item.id).await.model_plan, plan());
     assert!(h.backend.updates().is_empty());
 }
 
@@ -511,7 +511,7 @@ async fn a_running_item_is_steered_onto_a_new_model_plan() {
         .filter_map(|(agent, update)| update.choice.map(|choice| (agent, choice)))
         .collect();
     assert_eq!(retuned, vec![(implementer, choice(MODEL, Effort::Medium))]);
-    assert_eq!(h.item(&item.id).await.model_plan, plan());
+    assert_eq!(*h.item(&item.id).await.model_plan, plan());
     assert!(h.backend.cancelled().is_empty(), "nothing was cancelled");
 }
 

@@ -255,6 +255,29 @@ async fn a_merge_conflict_enqueues_one_fix_on_the_child_branch_and_survives_rest
         brief.contains(&format!("git merge {new_parent}")),
         "{brief}"
     );
+    let fix = h.item(&fix_id).await;
+    let copied = crate::plan_origins::shown(&h, &fix).await;
+    let kept = crate::plan_origins::shown(&h, &child).await;
+    assert_eq!(copied.len(), kept.len());
+    let note = format!("copied from {}", child.id);
+    for (key, entries) in &kept {
+        for (fixed, had) in copied[key].iter().zip(entries) {
+            for (field, was) in [(&fixed.model, &had.model), (&fixed.effort, &had.effort)] {
+                assert_eq!(
+                    (field.source, field.by, field.at),
+                    (was.source, was.by, was.at)
+                );
+                assert!(
+                    field.note.as_deref().unwrap_or_default().starts_with(&note),
+                    "{key}"
+                );
+            }
+        }
+    }
+    assert!(
+        kept["implement"][0].model.is_pin(),
+        "the child's pin is the fix's pin"
+    );
     h.cli(Request::Gc {
         older_than_secs: Some(0),
         force: true,

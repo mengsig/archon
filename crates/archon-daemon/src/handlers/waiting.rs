@@ -137,6 +137,15 @@ impl WaitingView {
             }
             Code::Capacity => self.capacity(store, item)?,
             Code::ProviderQuota => self.provider_quota(item),
+            Code::ModelCatalogUnavailable => {
+                let (_, index) = self.reasons[&item.id];
+                let reason = self.snapshot.queued[index]
+                    .model_hold
+                    .as_ref()
+                    .map(|hold| hold.reason.as_str())
+                    .expect("model hold has a reason");
+                (format!("Dispatch held: {reason}"), "archon doctor".into())
+            }
             Code::AetherDisconnected => (
                 "Dispatch held: Aether disconnected".into(),
                 "archon doctor".into(),
@@ -145,11 +154,24 @@ impl WaitingView {
                 "Next in line for the next dispatch pass".into(),
                 format!("archon queue show {}", item.id),
             ),
-            Code::Blocked => (
-                "Dependencies recovered; inspect the recorded block before cancelling and retrying"
-                    .into(),
-                format!("archon queue show {} --full", item.id),
-            ),
+            Code::Blocked => {
+                let model_reason = match &item.state {
+                    QueueState::Blocked { reason } if item.state.is_model_pin_block() => {
+                        Some(reason.as_str())
+                    }
+                    QueueState::Queued => self.reasons.get(&item.id).and_then(|(_, index)| {
+                        self.snapshot.queued[*index]
+                            .model_hold
+                            .as_ref()
+                            .map(|hold| hold.reason.as_str())
+                    }),
+                    _ => None,
+                };
+                match model_reason {
+                    Some(reason) => (reason.to_owned(), format!("archon queue steer {} --help", item.id)),
+                    None => ("Dependencies recovered; inspect the recorded block before cancelling and retrying".into(), format!("archon queue show {} --full", item.id)),
+                }
+            }
             Code::OperatorGate => {
                 unreachable!("operator waits are handled before dispatch reasons")
             }
@@ -249,6 +271,9 @@ fn shell_arg(value: &str) -> String {
 }
 
 fn blocked_code(store: &Store, item: &QueueItem) -> Result<Code, ArchonError> {
+    if item.state.is_model_pin_block() {
+        return Ok(Code::Blocked);
+    }
     let mut waiting = false;
     for id in &item.dependencies {
         match store.item(id)?.state {

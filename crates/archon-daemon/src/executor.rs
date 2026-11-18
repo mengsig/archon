@@ -32,6 +32,7 @@ mod landed;
 mod lanes;
 pub(crate) mod local_base;
 mod local_merge;
+pub(crate) mod model_catalog;
 mod naming;
 mod notional;
 pub(crate) mod onto;
@@ -352,9 +353,10 @@ pub async fn spawn_admitted(
     run: &PipelineRunId,
     slots: u32,
 ) -> Result<(), ArchonError> {
+    let catalog = crate::learned::catalog(ctx).await?;
     let follow = {
         let mut table = ctx.runs.lock().await;
-        spawn::reserve(ctx, &mut table, run, slots).await?
+        spawn::reserve(ctx, &mut table, run, slots, &catalog).await?
     };
     run_follow_up(ctx, follow).await
 }
@@ -366,8 +368,9 @@ pub(crate) async fn reserve(
     table: &mut RunTable,
     run: &PipelineRunId,
     slots: u32,
+    catalog: &archon_core::model_tier::ModelCatalog,
 ) -> Result<FollowUp, ArchonError> {
-    spawn::reserve(ctx, table, run, slots).await
+    spawn::reserve(ctx, table, run, slots, catalog).await
 }
 
 /// Called by the event pump when a stage agent's task settles. Idempotent:

@@ -447,6 +447,16 @@ impl Store {
         items::requeue_orphaned_dispatching(&mut self.conn, at)
     }
 
+    /// Return an admitted item without a live run to the queue after a
+    /// pre-run admission condition changes.
+    pub fn release_dispatching(
+        &mut self,
+        id: &QueueItemId,
+        at: Timestamp,
+    ) -> Result<bool, ArchonError> {
+        items::release_dispatching(&mut self.conn, id, at)
+    }
+
     // ----- pipeline and stage runs ------------------------------------------
     /// At most one non-terminal run per item, and only for a `dispatching`
     /// item of the same pipeline.

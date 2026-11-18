@@ -347,6 +347,7 @@ pub(super) async fn reserve(
     table: &mut RunTable,
     run: &PipelineRunId,
     slots: u32,
+    catalog: &archon_core::model_tier::ModelCatalog,
 ) -> Result<FollowUp, ArchonError> {
     assert!(slots > 0, "the planner grants at least one slot");
     let Some(queue) = table.pending.get_mut(run) else {
@@ -364,10 +365,24 @@ pub(super) async fn reserve(
         table.pending.remove(run);
     }
     let spec = table.drivers.get(run).map(|driver| driver.spec().clone());
-    let reserved = {
+    let (reserved, before, after) = {
         let mut store = ctx.store.lock().await;
-        reserve_plans(ctx, &mut store, (run, spec.as_deref()), plans)?
+        let item_id = store.run(run)?.item;
+        let before = store.item(&item_id)?.model_plan.into_plan();
+        let reserved = reserve_plans(ctx, &mut store, (run, spec.as_deref()), plans, catalog)?;
+        let after = store.item(&item_id)?.model_plan.into_plan();
+        (reserved, before, after)
     };
+    if before != after {
+        if let Some(driver) = table.drivers.get_mut(run) {
+            driver.follow_models(&before, &after);
+        }
+        if let Some(pending) = table.pending.get_mut(run) {
+            for plan in pending {
+                super::model_catalog::repair_stage(plan, &before, &after);
+            }
+        }
+    }
     match reserved {
         Reserved::Spawned(ids) => Ok(FollowUp {
             issue: ids,
@@ -392,25 +407,58 @@ fn reserve_plans(
     store: &mut Store,
     (run_id, spec): (&PipelineRunId, Option<&PipelineSpec>),
     mut plans: Vec<SpawnPlan>,
+    catalog: &archon_core::model_tier::ModelCatalog,
 ) -> Result<Reserved, ArchonError> {
     let run = store.run(run_id)?;
     if run.state.is_terminal() || plans.is_empty() {
         return Ok(Reserved::Spawned(Vec::new()));
     }
     let mut item = store.item(&run.item)?;
+    let Some(spec) = spec else {
+        return Ok(Reserved::Waiting(plans));
+    };
     let repo = item
         .repo
         .as_ref()
         .map(|id| store.repo(&resolve::repo_ref(id)))
         .transpose()?;
-    if let Some(spec) = spec {
+    let env = RepoEnv::new(repo.clone())?;
+    let (repaired, pending) = match super::model_catalog::repair_pending(
+        ctx, store, &item, &plans, catalog, &env, spec,
+    ) {
+        Ok(repaired) => repaired,
+        Err(error) if error.is_store() => return Err(error),
+        Err(error) => {
+            tracing::info!(item = %item.id, %error, "pending stages wait for a usable model");
+            return Ok(Reserved::Waiting(plans));
+        }
+    };
+    if repaired.model_plan != item.model_plan {
+        item = repaired;
+        item.updated_at = archon_core::now().max(item.updated_at);
+        store.update_item(&item)?;
+    }
+    plans = pending;
+    {
         let target = (&mut item, spec);
         let routed = crate::quota::reroute_spawns(ctx, store, target, &mut plans, repo.as_ref())?;
         if routed == crate::quota::Reserve::Wait {
             return Ok(Reserved::Waiting(plans));
         }
     }
-    if let Err(error) = super::acceptance::select_model(ctx, store, &item, &run, &mut plans) {
+    reserve_checked(ctx, store, &run, spec, item, plans, (&env, catalog))
+}
+
+fn reserve_checked(
+    ctx: &DaemonContext,
+    store: &mut Store,
+    run: &PipelineRun,
+    spec: &PipelineSpec,
+    item: QueueItem,
+    mut plans: Vec<SpawnPlan>,
+    (env, catalog): (&RepoEnv, &archon_core::model_tier::ModelCatalog),
+) -> Result<Reserved, ArchonError> {
+    if let Err(error) = super::acceptance::select_model(ctx, store, &item, run, &mut plans) {
         if error.is_store() {
             return Err(error);
         }
@@ -427,19 +475,28 @@ fn reserve_plans(
         return Ok(Reserved::Blocked(Exhausted { stage, error }));
     }
     if budget.is_some()
-        && let Some(error) = review_refusal(ctx, store, &item, repo.as_ref(), &plans)
+        && let Some(error) = review_refusal(ctx, store, &item, env.repo.as_ref(), &plans)
     {
         let stage = plans[0].stage_id.clone();
         return Ok(Reserved::Blocked(Exhausted { stage, error }));
     }
-    if let Some(spec) = spec {
-        let cap = RepoEnv::new(repo.clone())?.agent_cap(ctx, &run.pipeline);
+    {
+        let cap = env.agent_cap(ctx, &run.pipeline);
         for plan in &mut plans {
             super::swarm::brief(plan, spec, cap, None);
         }
     }
+    plans =
+        match super::model_catalog::repair_pending(ctx, store, &item, &plans, catalog, env, spec) {
+            Ok((_, pending)) => pending,
+            Err(error) if error.is_store() => return Err(error),
+            Err(error) => {
+                tracing::info!(item = %item.id, %error, "pending stages wait for a usable model");
+                return Ok(Reserved::Waiting(plans));
+            }
+        };
     let left = budget.map(|budget| budget.left());
-    let ids = reserve_each(ctx, store, (&run, &item, repo.as_ref()), plans, left)?;
+    let ids = reserve_each(ctx, store, (run, &item, env.repo.as_ref()), plans, left)?;
     Ok(Reserved::Spawned(ids))
 }
 

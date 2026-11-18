@@ -70,6 +70,7 @@ mod link_workers;
 mod local_merge;
 mod message_caps;
 mod mirrors;
+mod model_dispatch;
 mod model_evidence;
 mod model_reasons;
 mod notification_center;

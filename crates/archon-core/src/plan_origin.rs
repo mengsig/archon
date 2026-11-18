@@ -32,7 +32,7 @@ pub enum PlanSource {
     Sizer,
     /// Raised by the daemon after a failure. No writer sets it yet.
     Escalation,
-    /// Moved by the daemon off a model that can no longer run it. No writer sets it yet.
+    /// Moved by the daemon off a model that can no longer run it.
     Migrated,
     /// Stored before origins were recorded.
     LegacyUnknown,
@@ -143,7 +143,8 @@ impl FieldOrigin {
     /// The one rule for what the daemon may change by itself: a field it
     /// chose itself. Everything else is a pin.
     pub fn is_movable(&self) -> bool {
-        self.source.is_fill() && self.by == Authority::Daemon
+        (self.source.is_fill() || self.source == PlanSource::Migrated)
+            && self.by == Authority::Daemon
     }
 
     /// A pinned field is never sized, escalated or rewritten by the daemon.
@@ -289,6 +290,9 @@ where
     let origins = serde_json::from_value(value).unwrap_or_else(|_| PlanOrigins::of_no_item());
     Ok(Some(Box::new(origins)))
 }
+
+/// A replacement model and its tier resolution, when the choice is tiered.
+pub type CatalogReplacement = (ModelRef, Option<TierChoice>);
 
 /// The result worth surfacing alongside a stored model plan.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -568,6 +572,74 @@ impl PlannedPlan {
         writer.steer(key, named, by);
         *self = writer.finish();
         self.model_plan.0.get(key).map(Vec::as_slice)
+    }
+
+    /// Check every choice, allowing the caller to replace unavailable daemon choices.
+    pub fn repair_catalog_with(
+        &mut self,
+        item: &QueueItemId,
+        catalog: &crate::model_tier::ModelCatalog,
+        at: Timestamp,
+        mut replacement: impl FnMut(
+            &str,
+            usize,
+            &ModelChoice,
+            &EntryOrigin,
+        ) -> Result<Option<CatalogReplacement>, ArchonError>,
+    ) -> Result<(), ArchonError> {
+        if let Some(reason) = catalog.not_ready_reason() {
+            return Err(ArchonError::Unavailable(reason.to_owned()));
+        }
+        let mut writer = PlanWriter::editing(self, item, at);
+        for (key, choices) in &mut writer.plan.0 {
+            let slots = writer.entries.get_mut(key).expect("an origin per entry");
+            assert_eq!(choices.len(), slots.len(), "origins fit the plan");
+            for (slot, (choice, origin)) in choices.iter_mut().zip(slots).enumerate() {
+                let model = match catalog.check(&choice.model) {
+                    Ok(model) => model,
+                    Err(error) if origin.model.is_movable() => {
+                        let Some((model, tier)) = replacement(key, slot, choice, origin)? else {
+                            return Err(error);
+                        };
+                        let model = catalog.check(&model)?;
+                        choice.tier = tier;
+                        origin.model = FieldOrigin::chosen(
+                            PlanSource::Migrated,
+                            Authority::Daemon,
+                            at,
+                            Some(format!("was {}", choice.model)),
+                        );
+                        model
+                    }
+                    Err(error) => return Err(error),
+                };
+                choice.model = model;
+            }
+        }
+        let mut repaired = if writer.plan == self.model_plan {
+            self.clone()
+        } else {
+            writer.finish()
+        };
+        repaired.record_catalog(catalog);
+        assert_eq!(repaired.fault(item), None, "repaired origins fit the plan");
+        *self = repaired;
+        Ok(())
+    }
+
+    /// Migrate unavailable daemon choices only when Aether names a successor.
+    pub fn repair_catalog(
+        &mut self,
+        item: &QueueItemId,
+        catalog: &crate::model_tier::ModelCatalog,
+        at: Timestamp,
+    ) -> Result<(), ArchonError> {
+        self.repair_catalog_with(item, catalog, at, |_, _, choice, _| {
+            Ok(catalog
+                .successor(&choice.model)
+                .cloned()
+                .map(|model| (model, choice.tier.clone())))
+        })
     }
 
     /// Resolve each tiered choice the daemon may move at `when`: `resolve`

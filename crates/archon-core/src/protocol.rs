@@ -1994,6 +1994,8 @@ pub enum WaitingReasonCode {
     Blocked,
     /// Every provider that meets one of its stages' floors is out of quota.
     ProviderQuota,
+    /// A model or the model catalog is unavailable.
+    ModelCatalogUnavailable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

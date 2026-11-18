@@ -680,6 +680,37 @@ pub(super) fn requeue_orphaned_dispatching(
     Ok(requeued)
 }
 
+pub(super) fn release_dispatching(
+    conn: &mut Connection,
+    id: &QueueItemId,
+    at: Timestamp,
+) -> Result<bool, ArchonError> {
+    let tx = write_tx(conn)?;
+    let mut item = load(&tx, id)?;
+    if item.state != QueueState::Dispatching {
+        return Ok(false);
+    }
+    let live: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM runs WHERE item = ?1 AND terminal = 0)",
+            [id.as_str()],
+            |row| row.get(0),
+        )
+        .ctx("check live runs before releasing dispatch")?;
+    if live {
+        return Err(ArchonError::InvalidTransition(format!(
+            "cannot release {id}: it has a live run"
+        )));
+    }
+    item.state = QueueState::Queued;
+    item.updated_at = at.max(item.updated_at);
+    write_columns(&tx, &item)?;
+    super::changes::record_item(&tx, &item, Some(&QueueState::Dispatching))?;
+    tx.commit().ctx("release dispatching item")?;
+    assert_eq!(item.state, QueueState::Queued);
+    Ok(true)
+}
+
 fn query_filters(
     conn: &Connection,
     query: &ItemQuery,

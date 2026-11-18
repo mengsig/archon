@@ -63,6 +63,7 @@ fn random_candidate(rng: &mut Rng, repos: &[RepoId], seq: u64) -> QueuedCandidat
         first_stage_agents: 1 + rng.below(3) as u32,
         gang: rng.below(4) == 0,
         quota_hold: None,
+        model_hold: None,
     }
 }
 
@@ -77,6 +78,7 @@ fn random_pending(rng: &mut Rng, repos: &[RepoId], seq: u64) -> PendingSpawn {
         wanted: rng.below(4) as u32,
         gang: rng.below(3) == 0,
         quota_hold: None,
+        model_hold: None,
     }
 }
 

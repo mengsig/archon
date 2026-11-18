@@ -51,7 +51,12 @@ pub(super) async fn start_item(
     ctx: &DaemonContext,
     id: &QueueItemId,
 ) -> Result<FollowUp, ArchonError> {
-    let Some(item) = claim_item(ctx, id).await? else {
+    let catalog = crate::learned::catalog(ctx).await?;
+    let preview = ctx.read_store().await?.item(id)?;
+    let env = RepoEnv::load(ctx, preview.repo.as_ref()).await?;
+    let (_, spec) = knobs::item_specs(&env, &preview)?;
+    let spec = super::steer::shaped(ctx, &preview, spec).await?;
+    let Some(item) = claim_item(ctx, id, &catalog, &env, &spec).await? else {
         return Ok(FollowUp::default());
     };
     if let Some(reason) = super::refresh::nothing_to_merge(ctx, &item).await? {
@@ -77,10 +82,48 @@ pub(super) async fn start_item(
 async fn claim_item(
     ctx: &DaemonContext,
     id: &QueueItemId,
+    catalog: &archon_core::model_tier::ModelCatalog,
+    env: &RepoEnv,
+    spec: &PipelineSpec,
 ) -> Result<Option<QueueItem>, ArchonError> {
     let _table = ctx.runs.lock().await;
     let mut store = ctx.store.lock().await;
-    let item = store.item(id)?;
+    let mut item = store.item(id)?;
+    if item.state == QueueState::Dispatching
+        && store
+            .runs_for_item(id)?
+            .iter()
+            .any(|run| !run.state.is_terminal())
+    {
+        return Ok(None);
+    }
+    if matches!(item.state, QueueState::Queued | QueueState::Dispatching) {
+        let repaired =
+            match super::model_catalog::repair_item(ctx, &store, &item, catalog, env, spec) {
+                Ok(repaired) => repaired,
+                Err(error) if error.is_store() => return Err(error),
+                Err(error) => {
+                    tracing::info!(item = %id, %error, "item waits for a usable model catalog");
+                    if item.state == QueueState::Dispatching {
+                        store.release_dispatching(id, archon_core::now())?;
+                    }
+                    if let Some(reason) = crate::dispatcher::invalid_pin(&item, catalog) {
+                        let reason = format!("{reason}; re-plan this item and retry");
+                        store.transition_item(
+                            id,
+                            QueueState::model_pin_block(&reason),
+                            archon_core::now(),
+                        )?;
+                    }
+                    return Ok(None);
+                }
+            };
+        if repaired.model_plan != item.model_plan {
+            item = repaired;
+            item.updated_at = archon_core::now().max(item.updated_at);
+            store.update_item(&item)?;
+        }
+    }
     let owner = store.stack_fix(id)?.map(|t| t.owner);
     let collecting =
         ctx.collecting.contains(id) || owner.as_ref().is_some_and(|id| ctx.collecting.contains(id));
@@ -90,13 +133,7 @@ async fn claim_item(
             let item = store.transition_item(id, QueueState::Dispatching, archon_core::now())?;
             Ok(Some(item))
         }
-        QueueState::Dispatching => {
-            let live = store
-                .runs_for_item(id)?
-                .iter()
-                .any(|r| !r.state.is_terminal());
-            Ok((!live).then_some(item))
-        }
+        QueueState::Dispatching => Ok(Some(item)),
         _ => Ok(None),
     }
 }

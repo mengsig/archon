@@ -362,6 +362,26 @@ impl RunDriver {
         &self.spec
     }
 
+    /// Follow models repaired in the stored plan without overwriting a
+    /// choice that this driver has independently changed.
+    pub fn follow_models(&mut self, before: &ModelPlan, after: &ModelPlan) {
+        assert!(
+            before.0.keys().eq(after.0.keys()),
+            "repair preserves plan keys"
+        );
+        for (key, choices) in &mut self.plan.0 {
+            let (Some(old), Some(new)) = (before.0.get(key), after.0.get(key)) else {
+                continue;
+            };
+            assert_eq!(old.len(), new.len(), "repair preserves plan slots");
+            for ((choice, was), now) in choices.iter_mut().zip(old).zip(new) {
+                if choice.model == was.model {
+                    choice.model = now.model.clone();
+                }
+            }
+        }
+    }
+
     /// The stages that wait for the operator once they pass.
     pub fn gates(&self) -> &OperatorGates {
         &self.gates

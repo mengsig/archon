@@ -1014,16 +1014,23 @@ arrives. An unbudgeted stage makes no capability queries.
 
 `archon cost` and the `cost_report` tool (`CostReport`) report the ledger
 over a range of local days, grouped by day, repository (by name), pipeline,
-model (`provider/model`), item or stage. `--since` and `--until` take a date
+model (`provider/model`), provider, item, stage or effort. `--since` and `--until` take a date
 (`2026-09-01`) or whole days back from today (`7d`, `2w`): as a start, `7d`
 is the last 7 days with today; as an end, `1d` ends yesterday, so `since Nd`
 and `until Nd` never overlap. Hours are refused, since the ledger keeps days.
 The default is the last 7 days, grouped by day. One SQL query sums
 `spend_daily` for the rows and another for the total, in one read
-transaction; only a grouping by owner joins the items, repositories and
-stage runs. Each row and the total show provider-reported billing (`cost_usd`),
+transaction. The grouped query follows `delegated_agents` parent links to the
+owning stage. A recorded delegate uses its own model and effort. An agent
+whose effort was never recorded goes under `(no effort)`. Itemless spend
+without stage or delegation records is reported under `(orchestrator)` in
+model, provider and effort groupings, including any older unlinked helpers.
+Each row and the total show provider-reported billing (`cost_usd`),
 list-price/API-equivalent estimates (`estimated_cost_usd`), unclassified cost
 (`unclassified_cost_usd`), and the budget-counted amount (`counted_usd`).
+The `split` gives the lead (including the orchestrator) and recorded delegate
+portions of the budget-counted amount. Unlinked orchestrator helpers remain
+in the orchestrator's lead portion.
 Aether's raw `cost_usd` is classified by `total.cost_basis`: `provider_reported`
 is billing, `list_price` is an estimate, and `unknown` or `mixed` is
 unclassified because no trustworthy split is supplied. Separate raw
@@ -3668,7 +3675,7 @@ can reach the socket (§5.5).
 | `refresh_item` | `{item, model_plan?, model_reasons?, stage_timeouts?}` | `RefreshItem` (§13: a finished item's base, fetched from `origin`, merged into the same branch and pull request) |
 | `queue_status` | `{}` | `Status` |
 | `model_evidence` | `{repo?, pipeline?, stage?, since?}` | `ModelEvidence` (30 local days by default; stage attempt observations, at most 60 groups) |
-| `cost_report` | `{since?, until?, by?: day\|repo\|pipeline\|model\|item\|stage}` | `CostReport` (§5.3) |
+| `cost_report` | `{since?, until?, by?: day\|repo\|pipeline\|model\|provider\|item\|stage\|effort}` | `CostReport` (§5.3) |
 | `pause` / `resume` | `{scope: "global"\|"repo"\|"pipeline", name?}` | `Pause` / `Resume` |
 | `notify` | `{kind: question\|decision\|blocker\|outcome\|progress, text, item?}` | `Notify` |
 | `clear_notifications` | `{item?, all?}` | `ClearNotifications` (resolves the blockers archond posted for the item in Aether's notification center, or every open blocker and outcome with `all`; archond also does so itself when the item is steered, answered or finished) |

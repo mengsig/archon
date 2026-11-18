@@ -1,6 +1,6 @@
-//! `watch_repo` and `repo_watches` (A18): a watch reads only a repository the
-//! operator registered, with a github.com `origin`, as that registration's
-//! login. Setting one never registers anything.
+//! `watch_repo` and `repo_watches` (A18): a watch reads only a registered
+//! repository with a github.com `origin`, as that registration's login, so it
+//! inherits the registration's trust. Setting one never registers anything.
 
 use archon_core::error::ArchonError;
 use archon_core::github::GithubRepo;
@@ -26,14 +26,20 @@ pub(super) async fn set(
         ));
     }
     let interval = checked_interval(interval_minutes)?;
-    let repo = registered(ctx, reference).await?;
+    let repo = registered(&*ctx.read_store().await?, reference)?;
     if remove {
-        watch::forget(&mut *ctx.store.lock().await, &repo.id)?;
+        let mut store = ctx.store.lock().await;
+        watch::forget(&mut store, &repo.id)?;
+        drop(store);
         tracing::info!(repo = %repo.name, "repository watch removed");
         return list(ctx).await;
     }
-    github_origin(&repo).await?;
+    let repository = github_origin(&repo).await?;
     let mut store = ctx.store.lock().await;
+    // Again under the lock: a repository removed meanwhile leaves no watch.
+    if registered(&store, reference)?.id != repo.id {
+        return Err(not_registered(reference));
+    }
     let record = match watch::get(&store, &repo.id)? {
         Some(record) => watch::WatchRecord {
             interval_minutes: interval.unwrap_or(record.interval_minutes),
@@ -44,13 +50,10 @@ pub(super) async fn set(
                 "at most {MAX_REPO_WATCHES} repositories are watched at once; remove one first"
             )));
         }
-        None => watch::WatchRecord {
-            interval_minutes: interval.unwrap_or(watch::DEFAULT_MINUTES),
-            since: archon_core::now(),
-            etag: None,
-            fetched_at: None,
-            pulls: None,
-        },
+        None => watch::WatchRecord::new(
+            interval.unwrap_or(watch::DEFAULT_MINUTES),
+            repository.to_string(),
+        ),
     };
     watch::put(&mut store, &repo.id, &record)?;
     drop(store);
@@ -73,8 +76,8 @@ pub(super) async fn list(ctx: &DaemonContext) -> Result<Reply, ArchonError> {
             repository: registry.by_id.get(&id).map(|(name, _)| name.clone()),
             interval_minutes: record.interval_minutes,
             since: record.since,
-            read_at: record.fetched_at,
-            open_pull_requests: record
+            fetched_at: record.fetched_at,
+            tracked_pull_requests: record
                 .pulls
                 .map(|p| u32::try_from(p.len()).unwrap_or(u32::MAX)),
         });
@@ -97,18 +100,22 @@ fn checked_interval(minutes: Option<u32>) -> Result<Option<u32>, ArchonError> {
     }
 }
 
-/// The registered repository `reference` names; an unknown one is refused,
-/// as only the operator registers repositories.
-async fn registered(ctx: &DaemonContext, reference: &RepoRef) -> Result<Repo, ArchonError> {
-    match ctx.read_store().await?.repo(reference) {
+/// The registered repository `reference` names; an unknown one is refused:
+/// a watch never registers one.
+fn registered(store: &archon_queue::Store, reference: &RepoRef) -> Result<Repo, ArchonError> {
+    match store.repo(reference) {
         Ok(repo) => Ok(repo),
-        Err(ArchonError::NotFound(_)) => Err(ArchonError::NotFound(format!(
-            "{} is not a registered repository: a watch reads only one the operator \
-             registered (`archon repo add`), and watch_repo never registers one",
-            reference.0
-        ))),
+        Err(ArchonError::NotFound(_)) => Err(not_registered(reference)),
         Err(error) => Err(error),
     }
+}
+
+fn not_registered(reference: &RepoRef) -> ArchonError {
+    ArchonError::NotFound(format!(
+        "{} is not a registered repository: a watch reads only a registered one \
+         (`archon repo add`), and watch_repo never registers one",
+        reference.0
+    ))
 }
 
 /// `repo`'s github.com `owner/name`; a repository without one is refused.

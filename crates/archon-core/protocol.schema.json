@@ -11960,27 +11960,18 @@
     "RepoWatchView": {
       "description": "A registered repository whose open pull requests the GitHub sync watches.",
       "properties": {
-        "interval_minutes": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "open_pull_requests": {
-          "description": "Open pull requests at the last 200; absent before the first.",
-          "format": "uint32",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "read_at": {
-          "description": "When GitHub last answered, 200 or 304.",
+        "fetched_at": {
+          "description": "When GitHub last sent the list (a 200; a 304 changes nothing).",
           "format": "date-time",
           "type": [
             "string",
             "null"
           ]
+        },
+        "interval_minutes": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         },
         "repo": {
           "description": "The registered repository's name.",
@@ -11996,6 +11987,15 @@
         "since": {
           "format": "date-time",
           "type": "string"
+        },
+        "tracked_pull_requests": {
+          "description": "Pull requests the watch keeps a mark of; absent before the baseline.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "required": [

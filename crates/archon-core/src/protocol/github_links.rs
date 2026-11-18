@@ -246,10 +246,10 @@ pub struct RepoWatchView {
     pub repository: Option<String>,
     pub interval_minutes: u32,
     pub since: Timestamp,
-    /// When GitHub last answered, 200 or 304.
+    /// When GitHub last sent the list (a 200; a 304 changes nothing).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub read_at: Option<Timestamp>,
-    /// Open pull requests at the last 200; absent before the first.
+    pub fetched_at: Option<Timestamp>,
+    /// Pull requests the watch keeps a mark of; absent before the baseline.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub open_pull_requests: Option<u32>,
+    pub tracked_pull_requests: Option<u32>,
 }

@@ -4,23 +4,45 @@
 //! when the list changed.
 
 use crate::common;
-use crate::github_sync::{Github, harness, reference};
+use crate::github_sync::{Github, busy, harness, reference};
 
+use std::time::Duration;
+
+use archon_core::aether_ids::AetherAgentId;
 use archon_core::config::Config;
 use archon_core::protocol::github_links::LinkSource;
-use archon_core::protocol::{GithubKind, GithubLink, LinkRelation, Reply, RepoRef, Request};
+use archon_core::protocol::{
+    ClientKind, GithubKind, GithubLink, LinkRelation, Reply, RepoRef, Request,
+};
 use archon_daemon::github_sync::watch::{KEY_PREFIX, WATCH_TRUST};
 use archon_daemon::github_sync::{GithubSync, MIN_INTERVAL, Pass};
+use archon_daemon::handlers;
 use archon_daemon::triggers::{self, TriggerEvent};
 use common::{Harness, REPO_NAME};
 
+const T0: &str = "2026-11-01T00:00:00Z";
+const T1: &str = "2026-11-02T00:00:00Z";
+const T2: &str = "2026-11-03T00:00:00Z";
+const T3: &str = "2026-11-04T00:00:00Z";
+
 fn pull(number: u64, head: &str) -> serde_json::Value {
+    pull_at(number, head, T0)
+}
+
+fn pull_at(number: u64, head: &str, updated: &str) -> serde_json::Value {
     serde_json::json!({
         "number": number, "title": format!("PR {number}"), "user": {"login": "devArchOverclocked"},
         "html_url": format!("https://github.com/o/r/pull/{number}"),
-        "head": {"sha": head}, "updated_at": "2026-11-01T00:00:00Z", "requested_reviewers": [],
+        "head": {"sha": head}, "updated_at": updated, "requested_reviewers": [],
     })
 }
+
+/// The open pull requests `numbers`, newest first, each at `updated`.
+fn pulls(numbers: impl Iterator<Item = u64>, updated: &str) -> serde_json::Value {
+    numbers.map(|n| pull_at(n, "a", updated)).collect()
+}
+
+const LIST: &str = "repos/o/r/pulls?state=open&sort=updated&direction=desc&per_page=100&page=";
 
 fn watch_repo(repo: &str) -> Request {
     Request::WatchRepo {
@@ -80,10 +102,7 @@ async fn an_unchanged_list_costs_one_conditional_request_and_raises_nothing() {
     );
     let last = github.calls().pop().unwrap();
     assert!(last.contains("If-None-Match: W/\"l1\""), "{last}");
-    assert!(
-        last.ends_with("repos/o/r/pulls?state=open&per_page=100"),
-        "{last}"
-    );
+    assert!(last.ends_with(&format!("{LIST}1")), "{last}");
     assert_eq!(
         h.ctx.store.lock().await.rows_written(),
         written,
@@ -264,4 +283,287 @@ async fn a_removed_watch_stops_and_the_list_says_so() {
     let calls = github.calls().len();
     assert_eq!(pass(&h).await.watch.requested, 0);
     assert_eq!(github.calls().len(), calls);
+}
+
+/// The one trigger held since the baseline: its changes as (number, change).
+async fn told(h: &Harness) -> Vec<(u64, String, Vec<String>)> {
+    let events = watch_events(h).await;
+    let Some(TriggerEvent::GithubWatch { changes, .. }) = events.last() else {
+        return Vec::new();
+    };
+    changes
+        .iter()
+        .map(|c| (c.number, c.change.clone(), c.reviewers.clone()))
+        .collect()
+}
+
+async fn listed(h: &Harness) -> Vec<archon_core::protocol::github_links::RepoWatchView> {
+    let Reply::RepoWatches(listed) = h.cli(Request::RepoWatches).await.unwrap() else {
+        panic!("repo_watches replies with the watches");
+    };
+    listed
+}
+
+#[tokio::test]
+async fn only_the_orchestrator_and_the_operator_set_a_watch() {
+    let github = Github::new();
+    github.serve_list(serde_json::json!([pull(1, "a")]), "W/\"l1\"");
+    let h = harness(&github).await;
+    h.orchestrator(Request::Status(Default::default()))
+        .await
+        .unwrap();
+    let stage = Request::ForAgent {
+        caller: AetherAgentId::parse("agt_stage_worker").unwrap(),
+        request: Box::new(watch_repo(REPO_NAME)),
+    };
+    let refused = handlers::handle(&h.ctx, ClientKind::ArchonMcp, stage)
+        .await
+        .unwrap_err();
+    assert!(
+        refused.to_string().contains("orchestrator"),
+        "a stage agent is refused: {refused}"
+    );
+    assert_eq!(watches(&h).await, 0);
+    let Reply::RepoWatches(set) = h.cli(watch_repo(REPO_NAME)).await.unwrap() else {
+        panic!("watch_repo replies with the watches");
+    };
+    assert_eq!(set.len(), 1, "the operator sets one from the CLI");
+    assert!(github.calls().is_empty(), "setting a watch reads nothing");
+}
+
+/// One sync, as archond runs it: a watch is read again only after its interval.
+#[tokio::test]
+async fn a_watch_is_read_again_only_after_its_interval() {
+    let github = Github::new();
+    let h = watched(&github).await;
+    tokio::time::pause();
+    let mut sync = GithubSync::new(MIN_INTERVAL);
+    let first = busy(sync.pass(&h.ctx)).await.unwrap();
+    assert_eq!((first.watch.requested, first.watch.unchanged), (1, 1));
+    tokio::time::advance(Duration::from_secs(4 * 60)).await;
+    let early = busy(sync.pass(&h.ctx)).await.unwrap();
+    assert_eq!(
+        early.watch.requested, 0,
+        "asked four minutes ago: {early:?}"
+    );
+    tokio::time::advance(Duration::from_secs(60)).await;
+    let due = busy(sync.pass(&h.ctx)).await.unwrap();
+    assert_eq!(due.watch.requested, 1, "five minutes on: {due:?}");
+}
+
+/// GitHub's backoff on a watch read stops the pass: no linked object is read,
+/// and the sync waits before asking again.
+#[tokio::test]
+async fn a_backoff_on_a_watch_read_pauses_the_sync() {
+    let github = Github::new();
+    let h = watched(&github).await;
+    let item = h.enqueue("linked work").await;
+    let link = GithubLink {
+        item: item.id.clone(),
+        reference: reference(9, GithubKind::Issue),
+        relation: LinkRelation::Mentioned,
+        source: LinkSource::Operator,
+        created_at: archon_core::now(),
+    };
+    h.ctx.store.lock().await.link_github(&link).unwrap();
+    github.serve_list(serde_json::json!([pull(2, "b"), pull(1, "a")]), "W/\"l2\"");
+    std::fs::write(github.path("retry-after"), "120").unwrap();
+    let mut sync = GithubSync::new(MIN_INTERVAL);
+    let limited = sync.pass(&h.ctx).await.unwrap();
+    assert_eq!(
+        limited.backoff,
+        Some(Duration::from_secs(120)),
+        "{limited:?}"
+    );
+    assert_eq!((limited.requested, limited.watch.triggers), (1, 1));
+    assert_eq!(limited.missing, 0, "the linked object waits");
+    std::fs::remove_file(github.path("retry-after")).unwrap();
+    let paused = sync.pass(&h.ctx).await.unwrap();
+    assert_eq!(paused.requested, 0, "still within the backoff");
+}
+
+/// A watch removed and set up again while its read is in flight starts over:
+/// the old read writes no baseline into the new watch.
+#[tokio::test]
+async fn a_read_begun_under_a_removed_watch_is_not_written_back() {
+    let github = Github::new();
+    let h = watched(&github).await;
+    github.serve_list(serde_json::json!([pull(2, "b"), pull(1, "a")]), "W/\"l2\"");
+    let hold = github.path("hold-pulls-1");
+    std::fs::write(&hold, "").unwrap();
+    let remove = Request::WatchRepo {
+        repo: RepoRef(REPO_NAME.into()),
+        interval_minutes: None,
+        remove: true,
+    };
+    let mut sync = GithubSync::new(MIN_INTERVAL);
+    let driver = async {
+        while !github.path("started-pulls-1").exists() {
+            tokio::task::yield_now().await;
+        }
+        h.orchestrator(remove).await.unwrap();
+        h.orchestrator(watch_repo(REPO_NAME)).await.unwrap();
+        std::fs::remove_file(&hold).unwrap();
+    };
+    let (read, ()) = busy(async { tokio::join!(sync.pass(&h.ctx), driver) }).await;
+    let read = read.unwrap();
+    assert_eq!(
+        (read.watch.changed, read.watch.triggers),
+        (1, 0),
+        "{read:?}"
+    );
+    assert!(watch_events(&h).await.is_empty());
+    let after = listed(&h).await;
+    assert_eq!(after.len(), 1);
+    assert_eq!(
+        after[0].tracked_pull_requests, None,
+        "the new watch has no baseline"
+    );
+}
+
+/// A label or edit moves `updated_at` and is no news; a comment or a review
+/// after the mark is.
+#[tokio::test]
+async fn only_a_new_comment_or_review_makes_activity_news() {
+    let github = Github::new();
+    let h = watched(&github).await;
+    github.serve_list(serde_json::json!([pull_at(1, "a", T1)]), "W/\"l2\"");
+    let edited = pass(&h).await;
+    assert_eq!(
+        (edited.watch.requested, edited.watch.triggers),
+        (3, 0),
+        "{edited:?}"
+    );
+    let calls = github.calls();
+    assert!(
+        calls
+            .iter()
+            .any(|c| c.ends_with("issues/1/comments?since=2026-11-01T00:00:00Z&per_page=100")),
+        "{calls:?}"
+    );
+    assert!(
+        calls
+            .iter()
+            .any(|c| c.ends_with("pulls/1/reviews?per_page=100")),
+        "{calls:?}"
+    );
+    assert_eq!(
+        pass(&h).await.watch.requested,
+        1,
+        "the edit is marked: one 304"
+    );
+
+    github.serve_named("comments-1", serde_json::json!([{"created_at": T2}]), "");
+    github.serve_list(serde_json::json!([pull_at(1, "a", T2)]), "W/\"l3\"");
+    assert_eq!(pass(&h).await.watch.triggers, 1);
+    assert_eq!(told(&h).await, [(1, "new_comment".to_owned(), vec![])]);
+
+    github.serve_named("reviews-1", serde_json::json!([{"submitted_at": T3}]), "");
+    github.serve_list(serde_json::json!([pull_at(1, "a", T3)]), "W/\"l4\"");
+    assert_eq!(pass(&h).await.watch.triggers, 1);
+    assert_eq!(told(&h).await, [(1, "new_review".to_owned(), vec![])]);
+    github.assert_only_reads();
+}
+
+#[tokio::test]
+async fn a_team_review_request_is_news() {
+    let github = Github::new();
+    let h = watched(&github).await;
+    let mut requested = pull_at(1, "a", T1);
+    requested["requested_teams"] = serde_json::json!([{"slug": "core"}]);
+    github.serve_list(serde_json::json!([requested]), "W/\"l2\"");
+    let read = pass(&h).await;
+    assert_eq!(
+        (read.watch.requested, read.watch.triggers),
+        (1, 1),
+        "{read:?}"
+    );
+    assert_eq!(
+        told(&h).await,
+        [(
+            1,
+            "review_requested".to_owned(),
+            vec!["team:core".to_owned()]
+        )]
+    );
+}
+
+/// Past 100 open pull requests: the baseline reads every page, and a later
+/// read follows the pages only while they are newer than the watermark.
+#[tokio::test]
+async fn more_than_a_page_of_pull_requests_is_watched() {
+    let github = Github::new();
+    github.serve_list(pulls((6..=105).rev(), T0), "W/\"p1\"");
+    github.serve_named("pulls-2", pulls((1..=5).rev(), T0), "");
+    let h = harness(&github).await;
+    h.orchestrator(watch_repo(REPO_NAME)).await.unwrap();
+    let baseline = pass(&h).await;
+    assert_eq!(baseline.watch.requested, 2, "{baseline:?}");
+    assert_eq!(listed(&h).await[0].tracked_pull_requests, Some(105));
+
+    github.serve_list(pulls((106..=205).rev(), T1), "W/\"p2\"");
+    github.serve_named("pulls-2", pulls((6..=105).rev(), T0), "");
+    let before = github.calls().len();
+    let grown = pass(&h).await;
+    assert_eq!(
+        (grown.watch.requested, grown.watch.triggers),
+        (2, 1),
+        "{grown:?}"
+    );
+    assert!(github.calls()[before + 1].ends_with(&format!("{LIST}2")));
+    let events = watch_events(&h).await;
+    let TriggerEvent::GithubWatch { changes, more, .. } = &events[0] else {
+        unreachable!()
+    };
+    assert_eq!(
+        (changes.len(), *more),
+        (20, 80),
+        "100 new pull requests, 20 listed"
+    );
+    assert!(changes.iter().all(|c| c.change == "new_pull_request"));
+
+    let mut newest = pulls((107..=205).rev(), T1);
+    newest
+        .as_array_mut()
+        .unwrap()
+        .insert(0, pull_at(206, "a", T2));
+    github.serve_list(newest, "W/\"p3\"");
+    let one = pass(&h).await;
+    assert_eq!(
+        (one.watch.requested, one.watch.triggers),
+        (1, 1),
+        "page 1 ends at the watermark"
+    );
+    github.assert_only_reads();
+}
+
+/// Follow-ups past the budget are left for the next pass, whose first page
+/// is read again unconditionally, until every one was asked.
+#[tokio::test]
+async fn follow_ups_past_the_budget_wait_for_the_next_pass() {
+    let github = Github::new();
+    github.serve_list(pulls((1..=30).rev(), T0), "W/\"f1\"");
+    let h = harness(&github).await;
+    h.orchestrator(watch_repo(REPO_NAME)).await.unwrap();
+    pass(&h).await;
+    github.serve_list(pulls((1..=30).rev(), T1), "W/\"f2\"");
+    let first = pass(&h).await;
+    assert_eq!(
+        (first.watch.requested, first.watch.incomplete),
+        (25, 1),
+        "{first:?}"
+    );
+    let second = pass(&h).await;
+    let unconditional = github.calls()[github.calls().len() - 25].clone();
+    assert!(!unconditional.contains("If-None-Match"), "{unconditional}");
+    assert_eq!((second.watch.requested, second.watch.incomplete), (25, 1));
+    let third = pass(&h).await;
+    assert_eq!(
+        (third.watch.requested, third.watch.incomplete),
+        (13, 0),
+        "{third:?}"
+    );
+    let settled = pass(&h).await;
+    assert_eq!((settled.requested, settled.watch.unchanged), (1, 1));
+    assert!(watch_events(&h).await.is_empty(), "edits only, no news");
 }

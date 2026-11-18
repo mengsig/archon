@@ -179,8 +179,8 @@ fn watch_line(watch: &archon_core::protocol::github_links::RepoWatchView) -> Str
         .repository
         .as_deref()
         .unwrap_or("no github.com origin now");
-    let open = match watch.open_pull_requests {
-        Some(count) => format!("{count} open pull requests at the last change"),
+    let open = match watch.tracked_pull_requests {
+        Some(count) => format!("{count} pull requests tracked"),
         None => "not read yet".to_owned(),
     };
     format!(

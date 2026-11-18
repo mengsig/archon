@@ -24,9 +24,12 @@ use archon_daemon::github_sync::{GithubSync, MIN_INTERVAL};
 use common::{Harness, REPO_NAME};
 
 /// Answers `gh api --method GET … repos/o/r/issues/N` from `issue-N.json`
-/// and `etag-N` beside it, and the open pull request list from `issue-pulls.json`: a 304 when `If-None-Match` sends the current ETag,
-/// a 404 for a number it has no file for. Any other call is a violation.
-/// While `hold-N` exists a read of #N marks `started-N` and waits.
+/// and `etag-N` beside it: a 304 when `If-None-Match` sends the current ETag,
+/// a 404 for a number it has no file for. Page P of the open pull requests
+/// reads as `pulls-P`, #N's comments as `comments-N` and its reviews as
+/// `reviews-N`, which list none without a file. Any other call is a
+/// violation. While `hold-N` exists a read of N marks `started-N` and waits;
+/// while `retry-after` exists a 200 asks for that many seconds' backoff.
 /// `gh pr view <url> --json reviewDecision,statusCheckRollup` answers from
 /// `pr-state-N.json`, else no review and no checks.
 const STUB_GH: &str = r#"#!/bin/sh
@@ -53,8 +56,13 @@ for arg in "$@"; do
   prev=$arg endpoint=$arg
 done
 [ "$method" = GET ] || violate "method '$method'"
-number=${endpoint##*/}
-case "$number" in "pulls?state=open&per_page=100") number=pulls ;; esac
+case "$endpoint" in
+  *"/pulls?state=open&sort=updated&direction=desc&per_page=100&page="*)
+    number=pulls-${endpoint##*page=} ;;
+  *"/comments?since="*"&per_page=100") n=${endpoint%%/comments*}; number=comments-${n##*/} ;;
+  *"/reviews?per_page=100") n=${endpoint%%/reviews*}; number=reviews-${n##*/} ;;
+  *) number=${endpoint##*/} ;;
+esac
 if [ -f "$dir/hold-$number" ]; then
   : > "$dir/started-$number"
   while [ -f "$dir/hold-$number" ]; do sleep 0.02; done
@@ -65,11 +73,16 @@ if [ -n "$etag" ] && [ "$etag" = "$current" ]; then
   echo "gh: HTTP 304" >&2
   exit 1
 fi
+case "$number" in comments-*|reviews-*)
+  [ -f "$dir/issue-$number.json" ] || echo '[]' > "$dir/issue-$number.json" ;;
+esac
 if [ ! -f "$dir/issue-$number.json" ]; then
   printf 'HTTP/2.0 404 Not Found\r\n\r\n{"message":"Not Found"}'
   exit 1
 fi
-printf 'HTTP/2.0 200 OK\r\nEtag: %s\r\nX-Ratelimit-Remaining: 4999\r\n\r\n' "$current"
+printf 'HTTP/2.0 200 OK\r\nEtag: %s\r\nX-Ratelimit-Remaining: 4999\r\n' "$current"
+[ -f "$dir/retry-after" ] && printf 'Retry-After: %s\r\n' "$(cat "$dir/retry-after")"
+printf '\r\n'
 cat "$dir/issue-$number.json"
 "#;
 
@@ -139,9 +152,20 @@ impl Github {
 
     /// GitHub now lists `pulls` (the pulls API's JSON) as the open pull requests, at `etag`.
     pub(crate) fn serve_list(&self, pulls: serde_json::Value, etag: &str) {
+        self.serve_named("pulls-1", pulls, etag);
+    }
+
+    /// GitHub now answers the stub's file `name` (`pulls-2`, `comments-7`,
+    /// `reviews-7`) with `json`, at `etag`.
+    pub(crate) fn serve_named(&self, name: &str, json: serde_json::Value, etag: &str) {
         let at = self.dir.path();
-        std::fs::write(at.join("issue-pulls.json"), pulls.to_string()).unwrap();
-        std::fs::write(at.join("etag-pulls"), etag).unwrap();
+        std::fs::write(at.join(format!("issue-{name}.json")), json.to_string()).unwrap();
+        std::fs::write(at.join(format!("etag-{name}")), etag).unwrap();
+    }
+
+    /// A file in the stub's directory: `hold-…`, `started-…`, `retry-after`.
+    pub(crate) fn path(&self, name: &str) -> PathBuf {
+        self.dir.path().join(name)
     }
 
     /// The `gh api` calls, in order.
@@ -313,7 +337,7 @@ async fn the_sync_only_reads_and_a_304_writes_nothing() {
 
 /// `future`, with the runtime kept busy meanwhile: a paused clock then moves
 /// only when the test advances it, never on to a `gh` timeout.
-async fn busy<T>(future: impl std::future::Future<Output = T>) -> T {
+pub(crate) async fn busy<T>(future: impl std::future::Future<Output = T>) -> T {
     let done = std::cell::Cell::new(false);
     let finish = async {
         let out = future.await;

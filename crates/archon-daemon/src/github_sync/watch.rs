@@ -1,7 +1,8 @@
 //! Repository watches (A18): the sync reads a registered repository's open
-//! pull requests with one `GET` conditional on the list's ETag, and raises a
-//! `github_watch` trigger only when the list changed in a way worth a turn.
-//! A watch is news only: it grants no operator standing.
+//! pull requests, newest update first, with the first page conditional on its
+//! ETag, and raises a `github_watch` trigger only for a new pull request, a
+//! new head, a new review request, or a new comment or review. A watch is
+//! news only: it grants no operator standing.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -9,13 +10,9 @@ use archon_core::Timestamp;
 use archon_core::error::ArchonError;
 use archon_core::id::RepoId;
 use archon_core::protocol::github_links::{MAX_WATCH_MINUTES, MIN_WATCH_MINUTES};
-use archon_core::repo::{GH_HOST, Repo};
 use archon_queue::Store;
 use archon_queue::store::MAX_ETAG_BYTES;
 use serde::{Deserialize, Serialize};
-
-use super::fetch::{self, Response};
-use crate::executor::gh;
 
 /// `kv`: one watch per registered repository, keyed by its id.
 pub const KEY_PREFIX: &str = "github_repo_watch:";
@@ -23,11 +20,11 @@ pub const KEY_PREFIX: &str = "github_repo_watch:";
 /// The interval a watch gets when none is asked for.
 pub(crate) const DEFAULT_MINUTES: u32 = MIN_WATCH_MINUTES;
 
-/// Open pull requests one read lists; newer ones come first.
-const PAGE: u32 = 100;
-
 /// Changes one trigger lists; the rest are counted.
 pub(crate) const MAX_CHANGES: usize = 20;
+
+/// Pull requests a watch keeps a mark of; the least recently updated go first.
+pub(crate) const MAX_MARKS: usize = 1_000;
 
 /// Characters of a pull request's title a trigger carries.
 const MAX_TITLE_CHARS: usize = 200;
@@ -42,14 +39,57 @@ pub const WATCH_TRUST: &str = "News from a repository watch, with no operator st
 pub(crate) struct WatchRecord {
     pub interval_minutes: u32,
     pub since: Timestamp,
+    /// New each time the watch is set up: a read begun under an earlier
+    /// watch of the repository is never written back to a later one.
+    pub generation: String,
+    /// The `owner/name` the marks below are of; another `origin` re-baselines.
+    pub repository: String,
     #[serde(default)]
     pub etag: Option<String>,
     /// When GitHub last sent the list (a 200).
     #[serde(default)]
     pub fetched_at: Option<Timestamp>,
-    /// The open pull requests at that 200, by number; `None` before the first.
+    /// The newest `updated_at` every change up to which was told: later
+    /// pages are read only while the list is newer than this.
+    #[serde(default)]
+    pub watermark: Option<Timestamp>,
+    /// The highest pull request number seen: an unmarked one above is new.
+    #[serde(default)]
+    pub max_number: u64,
+    /// What each pull request looked like when last told; `None` before the
+    /// baseline. A pull request that left the list keeps its mark until a
+    /// read of the whole list.
     #[serde(default)]
     pub pulls: Option<BTreeMap<u64, PullMark>>,
+}
+
+impl WatchRecord {
+    /// A watch of `repository` with no baseline yet.
+    pub(crate) fn new(interval_minutes: u32, repository: String) -> Self {
+        Self {
+            interval_minutes,
+            since: archon_core::now(),
+            generation: ulid::Ulid::generate().to_string(),
+            repository,
+            etag: None,
+            fetched_at: None,
+            watermark: None,
+            max_number: 0,
+            pulls: None,
+        }
+    }
+
+    /// This watch re-pointed at `repository`, its marks of another dropped.
+    pub(crate) fn rebased(mut self, repository: &str) -> Self {
+        if self.repository != repository {
+            self.repository = repository.to_owned();
+            self.etag = None;
+            self.watermark = None;
+            self.max_number = 0;
+            self.pulls = None;
+        }
+        self
+    }
 }
 
 /// What a later list is compared with.
@@ -57,6 +97,7 @@ pub(crate) struct WatchRecord {
 pub(crate) struct PullMark {
     pub head: String,
     pub updated_at: Timestamp,
+    /// Requested reviewers: logins, and teams as `team:<slug>`.
     #[serde(default)]
     pub reviewers: BTreeSet<String>,
 }
@@ -65,8 +106,8 @@ pub(crate) struct PullMark {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WatchedChange {
     pub number: u64,
-    /// `new_pull_request`, `new_head`, `review_requested` or `activity` (a
-    /// comment, review or edit moved `updated_at`).
+    /// `new_pull_request`, `reopened`, `new_head`, `review_requested`,
+    /// `new_comment` or `new_review`.
     pub change: String,
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -124,6 +165,10 @@ pub(crate) fn put(
             .is_none_or(|e| e.len() <= MAX_ETAG_BYTES),
         "a bounded ETag"
     );
+    assert!(
+        record.pulls.as_ref().is_none_or(|p| p.len() <= MAX_MARKS),
+        "bounded marks"
+    );
     store.kv_set(&key(repo), &serde_json::to_string(record)?)
 }
 
@@ -132,82 +177,14 @@ pub(crate) fn forget(store: &mut Store, repo: &RepoId) -> Result<(), ArchonError
     store.kv_delete(&key(repo))
 }
 
-/// The `gh api` arguments that list `repository`'s open pull requests,
-/// conditional on `etag`.
-pub(crate) fn list_args(repository: &str, etag: Option<&str>) -> Vec<String> {
-    assert!(
-        archon_core::github::GithubRepo::parse(repository).is_ok(),
-        "an owner/name: {repository}"
-    );
-    let mut args: Vec<String> = ["api", "--method", "GET", "--include", "--hostname", GH_HOST]
-        .map(String::from)
-        .into();
-    args.extend(["-H".into(), "Accept: application/vnd.github+json".into()]);
-    if let Some(etag) = etag {
-        args.extend(["-H".into(), format!("If-None-Match: {etag}")]);
-    }
-    args.push(format!(
-        "repos/{repository}/pulls?state=open&per_page={PAGE}"
-    ));
-    fetch::assert_read_only(&args);
-    args
-}
-
-/// What one list read found.
-#[derive(Debug)]
-pub(crate) enum Listed {
-    Changed {
-        etag: Option<String>,
-        pulls: Vec<Pull>,
-    },
-    NotModified,
-}
-
-/// A list read and the backoff its headers asked for.
-#[derive(Debug)]
-pub(crate) struct ListRead {
-    pub listed: Result<Listed, ArchonError>,
-    pub backoff: Option<std::time::Duration>,
-}
-
-/// `GET` `repository`'s open pull requests as `repo`'s login.
-pub(crate) async fn read(
-    binary: &std::path::Path,
-    repo: &Repo,
-    repository: &str,
-    etag: Option<&str>,
-) -> Result<ListRead, ArchonError> {
-    let args = list_args(repository, etag);
-    let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    let ran = gh::run(binary, repo, &args, None).await?;
-    let Some(response) = Response::parse(&ran.stdout) else {
-        return Err(ArchonError::Unavailable(format!(
-            "gh api list of {repository}'s pull requests failed: {}",
-            ran.detail()
-        )));
-    };
-    let now = u64::try_from(archon_core::now().timestamp()).unwrap_or(0);
-    let backoff = response.backoff(now);
-    let listed = match response.status {
-        200 => parse_pulls(repository, &response.body).map(|pulls| Listed::Changed {
-            etag: response
-                .header("etag")
-                .filter(|e| e.len() <= MAX_ETAG_BYTES)
-                .map(str::to_owned),
-            pulls,
-        }),
-        304 => Ok(Listed::NotModified),
-        status => Err(ArchonError::Unavailable(format!(
-            "GitHub answered {status} for {repository}'s pull requests: {}",
-            ran.detail()
-        ))),
-    };
-    Ok(ListRead { listed, backoff })
-}
-
 #[derive(Debug, Deserialize)]
 struct Login {
     login: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct Team {
+    slug: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -218,7 +195,7 @@ struct Head {
 /// The pulls API's fields a watch compares or reports; the rest is ignored.
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct Pull {
-    number: u64,
+    pub number: u64,
     #[serde(default)]
     title: String,
     #[serde(default)]
@@ -227,9 +204,40 @@ pub(crate) struct Pull {
     user: Option<String>,
     #[serde(deserialize_with = "head_sha")]
     head: String,
-    updated_at: Timestamp,
+    pub updated_at: Timestamp,
     #[serde(default, deserialize_with = "logins")]
     requested_reviewers: BTreeSet<String>,
+    #[serde(default, deserialize_with = "teams")]
+    requested_teams: BTreeSet<String>,
+}
+
+impl Pull {
+    /// Requested reviewers and teams, as a mark keeps them.
+    fn reviewers(&self) -> BTreeSet<String> {
+        let mut all = self.requested_reviewers.clone();
+        all.extend(self.requested_teams.iter().map(|t| format!("team:{t}")));
+        all
+    }
+
+    fn mark(&self) -> PullMark {
+        PullMark {
+            head: self.head.clone(),
+            updated_at: self.updated_at,
+            reviewers: self.reviewers(),
+        }
+    }
+
+    /// The trigger's line for this pull request.
+    pub(crate) fn told(&self, change: &str, reviewers: Vec<String>) -> WatchedChange {
+        WatchedChange {
+            number: self.number,
+            change: change.to_owned(),
+            title: clipped_title(&self.title),
+            author: self.user.clone(),
+            url: self.html_url.clone(),
+            reviewers,
+        }
+    }
 }
 
 fn login<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
@@ -245,7 +253,13 @@ fn logins<'de, D: serde::Deserializer<'de>>(d: D) -> Result<BTreeSet<String>, D:
     Ok(users.into_iter().map(|l| l.login).collect())
 }
 
-fn parse_pulls(repository: &str, body: &str) -> Result<Vec<Pull>, ArchonError> {
+fn teams<'de, D: serde::Deserializer<'de>>(d: D) -> Result<BTreeSet<String>, D::Error> {
+    let teams = Option::<Vec<Team>>::deserialize(d)?.unwrap_or_default();
+    Ok(teams.into_iter().map(|t| t.slug).collect())
+}
+
+/// One page of the list. A repeated number or a 0 is refused.
+pub(crate) fn parse_pulls(repository: &str, body: &str) -> Result<Vec<Pull>, ArchonError> {
     let pulls: Vec<Pull> = serde_json::from_str(body).map_err(|e| {
         ArchonError::Protocol(format!(
             "GitHub's list of {repository}'s pull requests did not parse: {e}"
@@ -260,58 +274,94 @@ fn parse_pulls(repository: &str, body: &str) -> Result<Vec<Pull>, ArchonError> {
     Ok(pulls)
 }
 
-/// The marks a later list is compared with.
-pub(crate) fn marks(pulls: &[Pull]) -> BTreeMap<u64, PullMark> {
-    let marks: BTreeMap<u64, PullMark> = pulls
-        .iter()
-        .map(|p| {
-            let mark = PullMark {
-                head: p.head.clone(),
-                updated_at: p.updated_at,
-                reviewers: p.requested_reviewers.clone(),
-            };
-            (p.number, mark)
-        })
-        .collect();
-    assert_eq!(marks.len(), pulls.len(), "numbers are unique");
-    marks
+/// A pull request whose `updated_at` moved with nothing else a mark shows:
+/// a comment or review since `since` is news, a label or edit is not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FollowUp {
+    pub index: usize,
+    pub since: Timestamp,
 }
 
-/// What changed from `before` to `pulls`, one change per pull request at
-/// most: a new one, a new head, a new review request, then other activity.
-/// A pull request that left the list (closed or merged) is no news here.
-pub(crate) fn diff(before: &BTreeMap<u64, PullMark>, pulls: &[Pull]) -> Vec<WatchedChange> {
-    let mut changes = Vec::new();
-    for pull in pulls {
-        let (change, reviewers) = match before.get(&pull.number) {
-            None => ("new_pull_request", Vec::new()),
-            Some(mark) if mark.head != pull.head => ("new_head", Vec::new()),
-            Some(mark) => {
-                let added: Vec<String> = pull
-                    .requested_reviewers
-                    .difference(&mark.reviewers)
-                    .cloned()
-                    .collect();
-                if !added.is_empty() {
-                    ("review_requested", added)
-                } else if pull.updated_at > mark.updated_at {
-                    ("activity", Vec::new())
-                } else {
-                    continue;
-                }
-            }
+/// What a list told at once, and what it needs read further.
+#[derive(Debug, Default)]
+pub(crate) struct Diffed {
+    pub changes: Vec<WatchedChange>,
+    pub follow_ups: Vec<FollowUp>,
+}
+
+/// What changed from `record`'s marks to `pulls`, at most one change per
+/// pull request. One that left the list (closed or merged) is no news.
+pub(crate) fn diff(record: &WatchRecord, pulls: &[Pull]) -> Diffed {
+    let before = record
+        .pulls
+        .as_ref()
+        .expect("diffed only after the baseline");
+    let mut diffed = Diffed::default();
+    for (index, pull) in pulls.iter().enumerate() {
+        let Some(mark) = before.get(&pull.number) else {
+            let change = if pull.number > record.max_number {
+                "new_pull_request"
+            } else {
+                "reopened"
+            };
+            diffed.changes.push(pull.told(change, Vec::new()));
+            continue;
         };
-        changes.push(WatchedChange {
-            number: pull.number,
-            change: change.to_owned(),
-            title: clipped_title(&pull.title),
-            author: pull.user.clone(),
-            url: pull.html_url.clone(),
-            reviewers,
-        });
+        if mark.head != pull.head {
+            diffed.changes.push(pull.told("new_head", Vec::new()));
+            continue;
+        }
+        let added: Vec<String> = pull
+            .reviewers()
+            .difference(&mark.reviewers)
+            .cloned()
+            .collect();
+        if !added.is_empty() {
+            diffed.changes.push(pull.told("review_requested", added));
+        } else if pull.updated_at > mark.updated_at {
+            let since = mark.updated_at;
+            diffed.follow_ups.push(FollowUp { index, since });
+        }
     }
-    assert!(changes.len() <= pulls.len(), "one change per pull request");
-    changes
+    assert!(
+        diffed.changes.len() + diffed.follow_ups.len() <= pulls.len(),
+        "one change per pull request"
+    );
+    diffed
+}
+
+/// The marks after `pulls` was read: a read of the `whole` list replaces
+/// them, a partial one adds to them. A pull request in `kept`, whose follow-up
+/// was not read, keeps its old mark, so the next read asks again.
+pub(crate) fn merged_marks(
+    before: Option<&BTreeMap<u64, PullMark>>,
+    pulls: &[Pull],
+    whole: bool,
+    kept: &BTreeSet<u64>,
+) -> BTreeMap<u64, PullMark> {
+    let mut marks = match before {
+        Some(before) if !whole => before.clone(),
+        _ => BTreeMap::new(),
+    };
+    for pull in pulls {
+        let old = before.and_then(|b| b.get(&pull.number));
+        let mark = match old {
+            Some(old) if kept.contains(&pull.number) => old.clone(),
+            _ => pull.mark(),
+        };
+        marks.insert(pull.number, mark);
+    }
+    if marks.len() > MAX_MARKS {
+        let mut by_age: Vec<(Timestamp, u64)> =
+            marks.iter().map(|(n, m)| (m.updated_at, *n)).collect();
+        by_age.sort_unstable();
+        let excess = marks.len() - MAX_MARKS;
+        for (_, number) in &by_age[..excess] {
+            marks.remove(number);
+        }
+    }
+    assert!(marks.len() <= MAX_MARKS, "bounded marks");
+    marks
 }
 
 /// `title` on one line, without control or format characters, clipped.
@@ -335,53 +385,55 @@ mod tests {
     use super::*;
 
     fn pull(number: u64, head: &str, updated: &str, reviewers: &[&str]) -> Pull {
-        let reviewers: Vec<_> = reviewers
+        let users: Vec<_> = reviewers
             .iter()
+            .filter(|l| !l.starts_with('@'))
             .map(|l| serde_json::json!({"login": l}))
+            .collect();
+        let teams: Vec<_> = reviewers
+            .iter()
+            .filter_map(|l| l.strip_prefix('@'))
+            .map(|slug| serde_json::json!({"slug": slug}))
             .collect();
         serde_json::from_value(serde_json::json!({
             "number": number, "title": format!("PR {number}"), "user": {"login": "someone"},
             "html_url": format!("https://github.com/o/r/pull/{number}"),
-            "head": {"sha": head}, "updated_at": updated, "requested_reviewers": reviewers,
+            "head": {"sha": head}, "updated_at": updated,
+            "requested_reviewers": users, "requested_teams": teams,
         }))
         .unwrap()
     }
 
-    #[test]
-    fn a_list_read_is_a_conditional_get_and_nothing_else() {
-        let args = list_args("o/r", Some("W/\"l1\"")).join(" ");
-        assert!(
-            args.starts_with("api --method GET --include --hostname github.com"),
-            "{args}"
-        );
-        assert!(args.contains("If-None-Match: W/\"l1\""), "{args}");
-        assert!(
-            args.ends_with("repos/o/r/pulls?state=open&per_page=100"),
-            "{args}"
-        );
-        assert!(!list_args("o/r", None).join(" ").contains("If-None-Match"));
+    fn baseline(pulls: &[Pull]) -> WatchRecord {
+        let mut record = WatchRecord::new(5, "o/r".into());
+        record.pulls = Some(merged_marks(None, pulls, true, &BTreeSet::new()));
+        record.max_number = pulls.iter().map(|p| p.number).max().unwrap_or(0);
+        record
     }
 
+    const T0: &str = "2026-11-01T00:00:00Z";
+    const T1: &str = "2026-11-02T00:00:00Z";
+
     #[test]
-    fn each_kind_of_change_is_told_once_and_nothing_else_is() {
-        let t0 = "2026-11-01T00:00:00Z";
-        let t1 = "2026-11-02T00:00:00Z";
-        let before = marks(&[
-            pull(1, "a", t0, &[]),
-            pull(2, "b", t0, &[]),
-            pull(3, "c", t0, &["x"]),
-            pull(4, "d", t0, &[]),
-            pull(5, "e", t0, &[]),
+    fn each_kind_of_change_is_told_once_and_an_edit_only_asks_further() {
+        let record = baseline(&[
+            pull(1, "a", T0, &[]),
+            pull(2, "b", T0, &[]),
+            pull(3, "c", T0, &["x"]),
+            pull(4, "d", T0, &[]),
+            pull(5, "e", T0, &[]),
+            pull(7, "g", T0, &[]),
         ]);
         let after = [
-            pull(1, "a", t0, &[]),
-            pull(2, "b2", t1, &["y"]),
-            pull(3, "c", t1, &["x", "y"]),
-            pull(4, "d", t1, &[]),
-            pull(6, "f", t1, &[]),
+            pull(1, "a", T0, &[]),
+            pull(2, "b2", T1, &["y"]),
+            pull(3, "c", T1, &["x", "@core"]),
+            pull(4, "d", T1, &[]),
+            pull(8, "h", T1, &[]),
         ];
-        let changes = diff(&before, &after);
-        let told: Vec<(u64, &str)> = changes
+        let diffed = diff(&record, &after);
+        let told: Vec<(u64, &str)> = diffed
+            .changes
             .iter()
             .map(|c| (c.number, c.change.as_str()))
             .collect();
@@ -390,14 +442,71 @@ mod tests {
             [
                 (2, "new_head"),
                 (3, "review_requested"),
-                (4, "activity"),
-                (6, "new_pull_request")
+                (8, "new_pull_request")
             ]
         );
-        assert_eq!(changes[1].reviewers, ["y"]);
-        assert!(
-            diff(&marks(&after), &after).is_empty(),
-            "the same list is no news"
+        assert_eq!(diffed.changes[1].reviewers, ["team:core"]);
+        assert_eq!(diffed.follow_ups.len(), 1, "#4 only moved updated_at");
+        assert_eq!(after[diffed.follow_ups[0].index].number, 4);
+        let mut record = record;
+        record.pulls = Some(merged_marks(
+            record.pulls.as_ref(),
+            &after,
+            true,
+            &BTreeSet::new(),
+        ));
+        let again = diff(&record, &after);
+        assert!(again.changes.is_empty() && again.follow_ups.is_empty());
+    }
+
+    #[test]
+    fn an_unmarked_old_number_is_reopened_not_new() {
+        let mut record = baseline(&[pull(9, "a", T0, &[])]);
+        record.pulls = Some(BTreeMap::new());
+        let diffed = diff(&record, &[pull(3, "c", T1, &[])]);
+        assert_eq!(diffed.changes[0].change, "reopened");
+    }
+
+    #[test]
+    fn a_partial_read_keeps_unread_marks_and_a_whole_one_drops_closed() {
+        let before = merged_marks(
+            None,
+            &[pull(1, "a", T0, &[]), pull(2, "b", T0, &[])],
+            true,
+            &BTreeSet::new(),
+        );
+        let read = [pull(2, "b2", T1, &[])];
+        let partial = merged_marks(Some(&before), &read, false, &BTreeSet::new());
+        assert_eq!(partial.keys().copied().collect::<Vec<_>>(), [1, 2]);
+        assert_eq!(partial[&2].head, "b2");
+        let whole = merged_marks(Some(&before), &read, true, &BTreeSet::new());
+        assert_eq!(whole.keys().copied().collect::<Vec<_>>(), [2]);
+        let kept = merged_marks(Some(&before), &read, true, &BTreeSet::from([2]));
+        assert_eq!(kept[&2].head, "b", "an unread follow-up keeps its mark");
+    }
+
+    #[test]
+    fn marks_are_capped_dropping_the_least_recently_updated() {
+        let pulls: Vec<Pull> = (1..=MAX_MARKS as u64 + 3)
+            .map(|n| {
+                let updated = if n <= 3 { T0 } else { T1 };
+                pull(n, "a", updated, &[])
+            })
+            .collect();
+        let marks = merged_marks(None, &pulls, true, &BTreeSet::new());
+        assert_eq!(marks.len(), MAX_MARKS);
+        assert!(!marks.contains_key(&1) && marks.contains_key(&4));
+    }
+
+    #[test]
+    fn another_origin_rebaselines_the_watch() {
+        let record = baseline(&[pull(1, "a", T0, &[])]);
+        let same = record.clone().rebased("o/r");
+        assert_eq!(same, record);
+        let moved = record.rebased("o/s");
+        assert_eq!(
+            (moved.repository.as_str(), moved.pulls, moved.max_number),
+            ("o/s", None, 0)
         );
     }
 

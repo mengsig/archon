@@ -9,6 +9,7 @@ pub mod import;
 mod pr_state;
 pub mod watch;
 mod watch_pass;
+mod watch_read;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;

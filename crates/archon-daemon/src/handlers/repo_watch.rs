@@ -71,9 +71,15 @@ pub(super) async fn list(ctx: &DaemonContext) -> Result<Reply, ArchonError> {
         let Some(repo) = repos.iter().find(|r| r.id == id) else {
             continue;
         };
+        let repository = registry.by_id.get(&id).map(|(name, _)| name.clone());
+        // A snapshot of another `origin` says nothing of this one: shown as not walked yet.
+        let record = match &repository {
+            Some(now) => record.rebased(now),
+            None => record,
+        };
         views.push(RepoWatchView {
             repo: repo.name.clone(),
-            repository: registry.by_id.get(&id).map(|(name, _)| name.clone()),
+            repository,
             interval_minutes: record.interval_minutes,
             since: record.since,
             fetched_at: record.walked_at,

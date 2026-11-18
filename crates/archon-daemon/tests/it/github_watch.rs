@@ -778,7 +778,16 @@ async fn a_walk_is_discarded_when_the_origin_moves_meanwhile() {
         watch_events(&h).await.is_empty(),
         "no news of the old repository"
     );
-    assert_eq!(listed(&h).await[0].tracked_pull_requests, Some(1));
+    let kept = stored(&h).await;
+    assert_eq!(kept["repository"], "o/r", "the walk was not stored");
+    assert_eq!(kept["pulls"].as_object().unwrap().len(), 1);
+    let before = listed(&h).await;
+    assert_eq!(before[0].repository.as_deref(), Some("o/s"));
+    assert_eq!(
+        (before[0].tracked_pull_requests, before[0].fetched_at),
+        (None, None),
+        "o/r's snapshot is not shown as o/s's"
+    );
     let rebased = pass(&h).await;
     assert_eq!(
         (rebased.watch.changed, rebased.watch.triggers),

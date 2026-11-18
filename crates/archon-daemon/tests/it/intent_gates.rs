@@ -1,7 +1,9 @@
 //! Approved-intent gates apply only to operator-approved ledgers, and
 //! a ledger item that slips is repaired or judged honestly, not burned.
 use crate::common::{self, Harness};
-use crate::intent_acceptance::{evidence, fixture_on, judgment, readiness, record, settle};
+use crate::intent_acceptance::{
+    evidence, fixture_in, fixture_on, judgment, readiness, record, settle,
+};
 use archon_aether::fake::{FakeAether, Scripted};
 use archon_core::acceptance::AcceptanceStatus;
 use archon_core::config::Config;
@@ -9,7 +11,7 @@ use archon_core::intent::{ApprovedIntent, IntentBinding};
 use archon_core::model::Effort;
 use archon_core::protocol::{Reply, Request};
 use archon_core::queue::{QueueItem, QueueState};
-use archon_core::run::StageState;
+use archon_core::run::{RecordRepair, StageOutcome, StageState};
 use archon_queue::store::keys;
 use serde_json::json;
 use sha2::Digest;
@@ -148,6 +150,76 @@ async fn a_ledger_build_without_requirement_results_gets_one_clear_repair() {
     assert_eq!(h.running().await[0].stage_id, "implement");
     settle(&h, evidence(&h, &item, "implemented").await).await;
     assert!(h.running().await.iter().all(|s| s.stage_id == "review"));
+}
+
+/// A running ledger item whose build stage also hands in the ship record
+/// archond delivers; a refused run fails, with no automatic repair.
+async fn ledger_delivery() -> (Harness, FakeAether, QueueItem) {
+    let mut config = Config::default();
+    config.review.auto_repair = false;
+    let vision = [common::MODEL, common::REVIEW_MODEL];
+    let mut plan = common::plan();
+    plan.0.remove("ship");
+    plan.0.get_mut("review").expect("planned").truncate(1);
+    let pipeline = (common::REVIEWED, Some(common::REVIEWED_TOML), plan);
+    fixture_in(config, pipeline, false, &vision).await
+}
+
+/// The running ledger build completes with `summary` and no `structured`.
+async fn settle_bare(h: &Harness, summary: &str) {
+    let outcome = StageOutcome::Completed {
+        summary: summary.to_owned(),
+        structured: None,
+    };
+    h.settle_running(|_| outcome.clone()).await;
+    h.dispatch().await;
+}
+
+/// A ledger build that hands in no `structured` at all has a broken delivery
+/// record: it gets its repair turn in the same run before its requirement
+/// results are checked, and the repaired result is checked as any other.
+#[tokio::test]
+async fn a_ledger_build_without_structured_gets_its_repair_turn_in_the_same_run() {
+    let (h, _fake, item) = ledger_delivery().await;
+    let first = h.running().await.remove(0);
+    settle_bare(&h, "Built it.").await;
+    let repair = h.running().await.remove(0);
+    assert_eq!(repair.run, first.run, "the same run");
+    assert_eq!(repair.stage_id, "implement");
+    assert_eq!(repair.record_repair, Some(RecordRepair::Spent));
+    let stages = h.stages(&item.id).await;
+    let broken = stages.iter().find(|s| s.id == first.id).expect("the build");
+    assert_eq!(broken.state, StageState::Completed, "settled as sent");
+    assert_eq!(broken.record_repair, Some(RecordRepair::Open));
+    // A record without the results the ledger asks for is refused as before.
+    settle(&h, json!({})).await;
+    let stages = h.stages(&item.id).await;
+    let repaired = stages.iter().find(|s| s.id == repair.id).expect("it");
+    let StageState::Failed { error } = &repaired.state else {
+        panic!("the repaired result is verified: {:?}", repaired.state)
+    };
+    assert!(error.contains("requirement_results refused"), "{error}");
+}
+
+/// A ledger build that states a failure with no `structured` settles as its
+/// agent sent it: no requirement check rewrites the escalation into a
+/// refusal, so nothing repairs it and its stage fails on what it said.
+#[tokio::test]
+async fn a_ledger_build_that_states_a_failure_settles_as_sent() {
+    let (h, _fake, item) = ledger_delivery().await;
+    let first = h.running().await.remove(0);
+    let said = "ESCALATE: the ledger needs a schema migration first";
+    settle_bare(&h, said).await;
+    let stages = h.stages(&item.id).await;
+    let stated = stages.iter().find(|s| s.id == first.id).expect("the build");
+    assert_eq!(stated.state, StageState::Completed, "settled as sent");
+    assert_eq!(stated.summary.as_deref(), Some(said));
+    let item = h.item(&item.id).await;
+    let QueueState::Failed { error, .. } = &item.state else {
+        panic!("a stated failure fails its run: {:?}", item.state)
+    };
+    assert!(error.contains("stated a failure"), "{error}");
+    assert!(!error.contains("requirement_results"), "{error}");
 }
 
 /// A ledger item at its acceptance stage, Aether listing only the builder's model.

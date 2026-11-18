@@ -36,7 +36,7 @@ const EVIDENCE_BUDGET: usize = 2_100;
 const STRICT_SCENARIO_BUDGET: usize = 800;
 /// 131,000 before `e2e-strict` and `release-journey` added six stages of about 20.6 kB,
 /// 152,000 before the building stages' user-outcome rule (#397).
-const TOTAL_BUDGET: usize = 153_000;
+const TOTAL_BUDGET: usize = 153_300;
 
 /// One built-in stage's fixed input, in bytes.
 struct Cost {
@@ -165,7 +165,8 @@ fn built_in_contracts_stay_within_their_byte_budgets() {
     println!("BYTES total contract+delegation = {total}");
     assert!(over.is_empty(), "contracts over their budget: {over:?}");
     // 139,966 B while every shipping pipeline ended in a ship agent; 130,312 B
-    // once every delegation section carried the effort rubric.
+    // once every delegation section carried the effort rubric; 153,088 B once
+    // it named Aether's 16-reference limit.
     assert!(total <= TOTAL_BUDGET, "built-in contracts total {total} B");
 }
 

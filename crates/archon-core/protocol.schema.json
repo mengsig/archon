@@ -10583,6 +10583,21 @@
       ],
       "type": "object"
     },
+    "RecordRepair": {
+      "description": "Whether a stage's one record repair turn is still to give when an attempt\nof it completes with a broken delivery record.",
+      "oneOf": [
+        {
+          "const": "open",
+          "description": "A broken record of this attempt gets the repair turn.",
+          "type": "string"
+        },
+        {
+          "const": "spent",
+          "description": "The attempt is the repair turn or follows it: a broken record of it\nfails the run, and its agent is not asked for the record again.",
+          "type": "string"
+        }
+      ]
+    },
     "RecoveryProgress": {
       "description": "`DaemonStatus::recovery`: how far archond is in recovering its runs.\nUntil it is done, changes are refused and nothing is dispatched.",
       "properties": {
@@ -15271,6 +15286,17 @@
             "$ref": "#/$defs/ModelSegment"
           },
           "type": "array"
+        },
+        "record_repair": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RecordRepair"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the attempt stands to its stage's one record repair turn; `None`\non a stage run from before Archon gave one, which is replayed as then."
         },
         "run": {
           "$ref": "#/$defs/PipelineRunId"

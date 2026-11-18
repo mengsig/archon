@@ -553,3 +553,196 @@ fn v24_freezes_the_reviewed_pull_request_into_its_outcome() {
         "a pipeline that reviewed nothing reviewed no pull request"
     );
 }
+
+#[test]
+fn v24_keeps_the_old_class_of_runs_whose_rows_hold_another_run() {
+    let mut conn = v23_store();
+    let failed_review = |run: &PipelineRun| {
+        let mut verdict = stage(run, "review", StageKind::Review, StageState::Completed);
+        verdict.verdict = Some(Verdict::Fail);
+        verdict
+    };
+    let stray_stage = failed_run("review", "x");
+    let mut stray = failed_review(&stray_stage);
+    stray.run = PipelineRunId::new();
+    seed(
+        &conn,
+        &stray_stage,
+        &[stray],
+        Some(FailureClass::Other),
+        false,
+    );
+    let stray_run = failed_run("review", "x");
+    seed(
+        &conn,
+        &stray_run,
+        &[failed_review(&stray_run)],
+        Some(FailureClass::Other),
+        false,
+    );
+    let mut other = stray_run.clone();
+    other.id = PipelineRunId::new();
+    conn.execute(
+        "UPDATE runs SET data = ?2 WHERE id = ?1",
+        [
+            stray_run.id.as_str(),
+            &serde_json::to_string(&other).unwrap(),
+        ],
+    )
+    .unwrap();
+
+    assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+
+    let kept = (some("other"), some("legacy_163"), some("other"));
+    assert_eq!(
+        columns(&conn, &stray_stage),
+        kept,
+        "a stage row of another run"
+    );
+    assert_eq!(
+        columns(&conn, &stray_run),
+        kept,
+        "a run row holding another run"
+    );
+}
+
+fn lesson(conn: &Connection, uses: u32) -> archon_core::id::LessonId {
+    let lesson: archon_core::lesson::Lesson = serde_json::from_value(serde_json::json!({
+        "id": archon_core::id::LessonId::new(), "scope": {"repo": null, "pipeline": null},
+        "kind": "pitfall", "text": "mind the gap", "state": "active", "uses": uses, "wins": 0,
+        "confidence": 0.5, "source": "operator", "created_at": at(0), "updated_at": at(0),
+    }))
+    .unwrap();
+    conn.execute(
+        "INSERT INTO lessons (id, kind, state, pinned, uses, wins, confidence, source, created_at,
+                              updated_at, data)
+         VALUES (?1, 'pitfall', 'active', 0, ?2, 0, 0.5, 'operator', 't', 't', ?3)",
+        rusqlite::params![
+            lesson.id.as_str(),
+            uses,
+            serde_json::to_string(&lesson).unwrap()
+        ],
+    )
+    .unwrap();
+    lesson.id
+}
+
+fn use_and_trial(
+    conn: &Connection,
+    lesson: &archon_core::id::LessonId,
+    run: &PipelineRun,
+    won: Option<bool>,
+) {
+    conn.execute(
+        "INSERT INTO lesson_uses (lesson, run, used_at, won) VALUES (?1, ?2, 't', ?3)",
+        rusqlite::params![lesson.as_str(), run.id.as_str(), won],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO lesson_trials (lesson, run, item, held, at, won) VALUES (?1, ?2, ?3, 1, 't', ?4)",
+        rusqlite::params![lesson.as_str(), run.id.as_str(), run.item.as_str(), won],
+    )
+    .unwrap();
+}
+
+#[test]
+fn v24_rescores_the_lessons_of_runs_whose_scoring_changed() {
+    let mut conn = v23_store();
+    let capped = failed_run(
+        "budget",
+        "BLOCKED: the item's budget is used up: $1.00 spent of its $1.00 cap ($0.00 over)",
+    );
+    seed(&conn, &capped, &[], Some(FailureClass::Blocked), false);
+    let reviewed = failed_run("review", "stage `review` failed: aether budget");
+    let mut verdict = stage(
+        &reviewed,
+        "review",
+        StageKind::Review,
+        StageState::Completed,
+    );
+    verdict.verdict = Some(Verdict::Fail);
+    seed(
+        &conn,
+        &reviewed,
+        &[verdict],
+        Some(FailureClass::Budget),
+        false,
+    );
+    let was_loss = lesson(&conn, 1);
+    use_and_trial(&conn, &was_loss, &capped, Some(false));
+    let was_unscored = lesson(&conn, 0);
+    use_and_trial(&conn, &was_unscored, &reviewed, None);
+
+    assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+
+    let won = |table: &str, run: &PipelineRun| -> Option<bool> {
+        conn.query_row(
+            &format!("SELECT won FROM {table} WHERE run = ?1"),
+            [run.id.as_str()],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    let uses = |id: &archon_core::id::LessonId| -> u32 {
+        conn.query_row(
+            "SELECT uses FROM lessons WHERE id = ?1",
+            [id.as_str()],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        won("lesson_uses", &capped),
+        None,
+        "a budget stop is no loss"
+    );
+    assert_eq!(won("lesson_trials", &capped), None, "nor in the holdout");
+    assert_eq!(
+        won("lesson_uses", &reviewed),
+        Some(false),
+        "a failed review is a loss"
+    );
+    assert_eq!(won("lesson_trials", &reviewed), Some(false));
+    assert_eq!(
+        (uses(&was_loss), uses(&was_unscored)),
+        (0, 1),
+        "the lessons are recounted"
+    );
+}
+
+#[test]
+fn v24_skips_a_pull_request_target_it_cannot_read() {
+    let mut conn = v23_store();
+    let reviewed = failed_run("review", "x");
+    let review = stage(
+        &reviewed,
+        "review",
+        StageKind::Review,
+        StageState::Completed,
+    );
+    seed(
+        &conn,
+        &reviewed,
+        &[review],
+        Some(FailureClass::Review),
+        false,
+    );
+    let target = serde_json::json!({"onto": {"review_only": true, "pr": 42}}).to_string();
+    conn.execute(
+        "UPDATE items SET data = ?2 WHERE id = ?1",
+        [reviewed.item.as_str(), &target],
+    )
+    .unwrap();
+
+    assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+
+    let data: String = conn
+        .query_row(
+            "SELECT data FROM outcomes WHERE run = ?1",
+            [reviewed.id.as_str()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let outcome: Outcome = serde_json::from_str(&data).expect("the outcome stays readable");
+    assert_eq!(outcome.review_pr, None);
+}

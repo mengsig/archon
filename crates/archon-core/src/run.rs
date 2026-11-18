@@ -879,6 +879,10 @@ pub struct ModelSegment {
 /// why it refused the review pass the result claims.
 pub const REVIEW_REFUSED_KEY: &str = "unverified";
 
+/// The headline a gate fails a stage with when the review its pipeline
+/// declares is not on record, e.g. a skip the pipeline does not allow.
+pub const REVIEW_NOT_ON_RECORD: &str = "the review this pipeline declares is not on record";
+
 impl StageRun {
     /// Whether its agent failed on its engine's login: an infrastructure
     /// failure, never evidence about the model.

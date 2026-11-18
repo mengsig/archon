@@ -256,6 +256,24 @@ fn a_nested_review_is_read_as_the_gate_reads_it() {
         Some(FailureClass::Other),
         "a passed review failed nothing"
     );
+    let skip = serde_json::json!({"verdict": "skipped", "reason": "docs only"});
+    let refused_skip = failed_with(
+        "implement",
+        "stage `implement` failed: the review this pipeline declares is not on record: \
+         a skip needs reviewers here\n\nreport",
+        claimed(skip.clone()),
+    );
+    assert_eq!(
+        refused_skip.failure,
+        Some(FailureClass::Review),
+        "the gate refused the skip"
+    );
+    let accepted_skip = failed_with("implement", "stage `implement` failed: push", claimed(skip));
+    assert_eq!(
+        accepted_skip.failure,
+        Some(FailureClass::Other),
+        "the gate took the skip"
+    );
     let legacy = failed_with("code-review", "later", |run| {
         let mut review = settled(run, "code-review", StageKind::Review, StageState::Completed);
         review.kind = None;

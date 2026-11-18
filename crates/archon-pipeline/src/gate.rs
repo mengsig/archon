@@ -13,7 +13,7 @@ use crate::spec::{Owed, Scenarios, StageSpec};
 pub const MAX_FEEDBACK_CHARS: usize = 32_000;
 
 const SHIP_REFUSAL: &str = "the ship record archond delivers is not on record";
-const REVIEW_REFUSAL: &str = "the review this pipeline declares is not on record";
+const REVIEW_REFUSAL: &str = archon_core::run::REVIEW_NOT_ON_RECORD;
 /// Most characters of an unreadable verdict quoted in a gate's refusal.
 const MAX_QUOTED_VERDICT_CHARS: usize = 160;
 

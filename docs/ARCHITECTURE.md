@@ -5775,7 +5775,9 @@ decides:
   `infrastructure`;
 - a review-kind stage, or one whose result holds a `review`, gives `review`
   unless every slot passed. A slot passes as the gate reads it: by its verdict,
-  by its nested `review.verdict`, and only if Archon did not refuse that review;
+  by its nested `review.verdict`, and only if Archon did not refuse that review.
+  A gate failure that names the declared review as not on record (the gate's own
+  headline) also gives `review`;
 - a test stage gives `verification`, and a ship stage `ship`;
 - a daemon `ship` step with no stage run also gives `ship`;
 - anything else is `other`.

@@ -39,6 +39,55 @@ pub(in crate::store) fn score_run(conn: &Connection, outcome: &Outcome) -> Resul
     Ok(())
 }
 
+/// Re-scores the lesson uses and holdout trials of failed runs whose class
+/// was recomputed (`scored` per run), then recounts the lessons they used.
+/// A failed run never wins, so a use is a loss or, when unscored, `NULL`.
+pub(in crate::store) fn rescore_failed_runs(
+    conn: &Connection,
+    runs: &[(String, bool)],
+) -> Result<usize, ArchonError> {
+    let mut touched = std::collections::BTreeSet::new();
+    for (run, scored) in runs {
+        assert!(!run.is_empty(), "a rescored run is named");
+        let won = scored.then_some(false);
+        conn.execute(
+            "UPDATE lesson_uses SET won=?1 WHERE run=?2",
+            params![won, run],
+        )
+        .ctx("rescore lesson uses")?;
+        conn.execute(
+            "UPDATE lesson_trials SET won=?1 WHERE run=?2",
+            params![won, run],
+        )
+        .ctx("rescore lesson trials")?;
+        let mut stmt = conn
+            .prepare_cached("SELECT lesson FROM lesson_uses WHERE run=?1")
+            .ctx("prepare rescored lessons")?;
+        let ids = stmt
+            .query_map([run.as_str()], |r| r.get::<_, String>(0))
+            .ctx("query rescored lessons")?;
+        for id in ids {
+            touched.insert(id.ctx("read a rescored lesson")?);
+        }
+    }
+    let at = archon_core::now();
+    let mut state_changed = false;
+    for id in &touched {
+        let mut lesson = super::load(conn, &LessonId::parse(id)?)?;
+        let before = lesson.clone();
+        recount(conn, &mut lesson)?;
+        refresh(&mut lesson, at);
+        if lesson != before {
+            state_changed |= lesson.state != before.state;
+            save_scored(conn, before.state, lesson, at)?;
+        }
+    }
+    if state_changed {
+        super::consolidation::consolidate_all(conn)?;
+    }
+    Ok(touched.len())
+}
+
 fn score_lesson(conn: &Connection, outcome: &Outcome, id: &LessonId) -> Result<(), ArchonError> {
     let mut lesson = super::load(conn, id)?;
     let before = lesson.state;

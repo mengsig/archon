@@ -24,11 +24,14 @@
   rates of different repositories could not be compared. Only the prefixes
   Archon writes itself are still read: `BLOCKED:`, `ESCALATE:`, the budget
   guards' own blockers, Aether's cost stop and the daemon's full-disk stop.
-  A review is read as the gate reads it, so a nested `review` that failed or
-  that Archon refused is a `review` failure. Migration V24 recomputes stored
+  A review is read as the gate reads it. A nested `review` that failed, one
+  Archon refused, or one the gate found missing (such as a skip the pipeline
+  does not allow) is a `review` failure. Migration V24 recomputes stored
   rows whose runs are kept and logs, per class, the old and new counts and the
-  rows left on the 1.6.3 class. Runs already pruned keep their old class, marked
-  `legacy_163`, as do runs whose records it cannot read. For one release the
+  rows left on the 1.6.3 class. It also rescores the lesson uses and holdout
+  trials of those runs, and recounts the lessons they used. Runs already pruned
+  keep their old class, marked `legacy_163`, as do runs whose records it cannot
+  read. For one release the
   old class stays in `failure_class_163`.
 - When `create_agent` keeps failing on Aether's full disk, the stage is now
   marked an infrastructure failure, as it was classed before.

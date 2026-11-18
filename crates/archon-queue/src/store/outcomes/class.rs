@@ -7,13 +7,14 @@ use archon_core::catalog::StageKind;
 use archon_core::cost::{BUDGET_UNENFORCEABLE, BUDGET_USED_UP};
 use archon_core::error::ArchonError;
 use archon_core::id::PipelineRunId;
-use archon_core::outcome::{ClassSource, FailureClass};
+use archon_core::outcome::{ClassSource, FailureClass, UNSCORED_FAILURES};
 use archon_core::run::{
-    PipelineRun, RunState, SHIP_STEP, StageOutcome, StageRun, StageState, Verdict,
+    PipelineRun, REVIEW_NOT_ON_RECORD, RunState, SHIP_STEP, StageOutcome, StageRun, StageState,
+    Verdict,
 };
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
-use super::super::codec::SqlContext;
+use super::super::codec::{SqlContext, from_json};
 
 /// Why the run that failed under `stage_id` with `error` failed. Only the
 /// prefixes a stage or the daemon writes on purpose are read from `error`.
@@ -38,7 +39,24 @@ pub(in crate::store) fn failure_class(
             _ => FailureClass::Other,
         };
     }
-    stopped_class(&ending).unwrap_or_else(|| judged_class(stage_id, &ending))
+    if let Some(stopped) = stopped_class(&ending) {
+        return stopped;
+    }
+    if gate_refused_review(error) {
+        return FailureClass::Review;
+    }
+    judged_class(stage_id, &ending)
+}
+
+/// Whether the gate failed the stage because the review its pipeline
+/// declares is not on record: `stage `id` failed[..]: {REVIEW_NOT_ON_RECORD}`.
+fn gate_refused_review(error: &str) -> bool {
+    let headline = error.split("\n\n").next().unwrap_or(error);
+    let Some(at) = headline.find(REVIEW_NOT_ON_RECORD) else {
+        return false;
+    };
+    let prefix = &headline[..at];
+    prefix.starts_with("stage `") && prefix.contains("` failed") && prefix.ends_with(": ")
 }
 
 /// The last stage run of each slot of the stage's last attempt: what ended
@@ -190,10 +208,14 @@ pub(in crate::store) fn reclassify(conn: &Connection) -> Result<Reclassified, Ar
         .collect::<rusqlite::Result<Vec<_>>>()
         .ctx("read the failed outcomes")?;
     let mut counts = Reclassified::default();
+    let mut rescored = Vec::new();
     for (run, old) in rows {
         *counts.before.entry(old.clone()).or_default() += 1;
         let (class, source) = match recomputed(conn, &run)? {
-            Some(class) => (class.as_str().to_owned(), ClassSource::Recomputed),
+            Some(class) => {
+                rescored.push((run.clone(), !UNSCORED_FAILURES.contains(&class)));
+                (class.as_str().to_owned(), ClassSource::Recomputed)
+            }
             None => (old.clone(), ClassSource::Legacy163),
         };
         match source {
@@ -213,6 +235,12 @@ pub(in crate::store) fn reclassify(conn: &Connection) -> Result<Reclassified, Ar
         counts.after.values().sum::<u64>(),
         counts.rows(),
         "no row is lost"
+    );
+    let lessons = super::super::lessons::rescore_failed_runs(conn, &rescored)?;
+    tracing::info!(
+        runs = rescored.len(),
+        lessons,
+        "lesson scores follow the migrated classes"
     );
     counts.log();
     Ok(counts)
@@ -248,13 +276,20 @@ fn recomputed(conn: &Connection, run: &str) -> Result<Option<FailureClass>, Arch
     Ok(Some(failure_class(stage_id, error, &stages)))
 }
 
-/// The run and every one of its stage runs, refusing an undecodable row: a
-/// lost slot could hide the stop that ended the run.
+/// The run and every one of its stage runs, refusing an undecodable row or
+/// one that holds another run: a lost slot could hide the stop that ended it.
 fn readable_run(
     conn: &Connection,
     run: &PipelineRunId,
 ) -> Result<(PipelineRun, Vec<StageRun>), ArchonError> {
-    let stored = super::super::runs::load(conn, run)?;
+    let data: Option<String> = conn
+        .query_row("SELECT data FROM runs WHERE id = ?1", [run.as_str()], |r| {
+            r.get(0)
+        })
+        .optional()
+        .ctx("read a migrated outcome's run")?;
+    let data = data.ok_or_else(|| ArchonError::NotFound(format!("pipeline run {run}")))?;
+    let stored: PipelineRun = from_json(&data, "pipeline run")?;
     if &stored.id != run {
         return Err(ArchonError::Corrupt(format!(
             "run row {run} holds {}",
@@ -262,6 +297,12 @@ fn readable_run(
         )));
     }
     let stages = super::super::runs::stages_of_strict(conn, run)?;
+    if let Some(other) = stages.iter().find(|s| &s.run != run) {
+        return Err(ArchonError::Corrupt(format!(
+            "a stage row of {run} holds run {}",
+            other.run
+        )));
+    }
     Ok((stored, stages))
 }
 

@@ -790,6 +790,7 @@ WITH reviewed(run, pr) AS (
     FROM outcomes o JOIN items i ON i.id = o.item
     WHERE json_valid(i.data) AND json_valid(o.data)
       AND CASE WHEN json_valid(i.data) THEN json_extract(i.data, '$.onto.review_only') END
+      AND CASE WHEN json_valid(i.data) THEN json_type(i.data, '$.onto.pr') END = 'text' 
       AND EXISTS (
           SELECT 1 FROM stage_runs s
           WHERE s.run = o.run AND json_valid(s.data)

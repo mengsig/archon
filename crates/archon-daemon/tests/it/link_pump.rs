@@ -1911,6 +1911,33 @@ async fn a_compacted_orchestrator_is_told_its_directives_again() {
     assert_eq!(harness.drain_triggers().await, vec![restated]);
 }
 
+/// Claude Code folded the orchestrator's context itself: the directives are
+/// stated again with its next wake, which the fold must not start.
+#[tokio::test]
+async fn a_natively_compacted_orchestrator_hears_its_directives_with_its_next_wake() {
+    let mut harness = Harness::new().await;
+    let (_agents, pump) = running_pump(&harness).await;
+    let directive = Directive::new(
+        "no yolo today",
+        DirectiveSource::Operator,
+        None,
+        archon_core::now(),
+    );
+    let mut store = harness.ctx.store.lock().await;
+    store.insert_directive(&directive.unwrap()).unwrap();
+    drop(store);
+    orch(&harness, json!({"type": "compaction.native"})).await;
+    pump.abort();
+    assert!(
+        !triggers::due(&harness.ctx).await.unwrap(),
+        "the fold wakes nobody"
+    );
+    let restated = TriggerEvent::DirectivesRestated {
+        reason: "your context was compacted".into(),
+    };
+    assert_eq!(harness.drain_triggers().await, vec![restated]);
+}
+
 /// The plan's named reviewers, as `effort_sizing` sets the watchdog: the
 /// reasons it gave for each reviewer it cancelled, in spawn order.
 async fn reviewer_cancels(effort_sizing: bool) -> Vec<(String, String)> {

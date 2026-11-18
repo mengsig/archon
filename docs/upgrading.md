@@ -23,8 +23,10 @@ no longer wake it, and its context is compacted earlier
 ([configuration](configuration.md)). None of this migrates the store. Going
 back to an older binary is not supported once a release's store migration
 has run, as an older archond refuses a newer store; undo these behaviours
-with their switches instead: `quiet_info = false`, `compaction_tokens = 0`
-and `idle_compact_after_minutes = 0` under `[orchestrator]`.
+with their switches instead: `quiet_info = false`, `compaction_tokens = 0`,
+`idle_compact_after_minutes = 0` and `refresh_on_upgrade = false` under
+`[orchestrator]`. A compaction threshold already sent stays with the running
+generation until `archon orchestrator restart`.
 
 ## Contents
 

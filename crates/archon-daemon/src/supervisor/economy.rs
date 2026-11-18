@@ -9,6 +9,7 @@ use archon_aether::AetherClient;
 use archon_aether::wire::Agent;
 use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
+use archon_core::config::OrchestratorConfig;
 use archon_core::error::ArchonError;
 use archon_core::protocol::OrchestratorFreshness;
 use chrono::TimeDelta;
@@ -22,8 +23,18 @@ pub const ECONOMY_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 const IDLE_STATE: &str = "waiting";
 /// `kv`: the [`IdleCompaction`] last asked for.
 const IDLE_COMPACTION_KEY: &str = "orchestrator_idle_compaction";
-/// `kv`: the generation a freshness refresh was last tried for.
+/// Aether's wait condition for an agent that waits for any inbox item.
+const INBOX_WAIT: &str = "inbox";
+/// `kv`: the [`RefreshTried`] of the latest refresh attempt.
 const REFRESH_TRIED_KEY: &str = "orchestrator_refresh_tried";
+/// How long the orchestrator must have logged nothing before either rule
+/// acts, so a message Aether just accepted is never cut off.
+const QUIET_BEFORE_ACTING: TimeDelta = TimeDelta::minutes(2);
+/// Attempts at refreshing one generation, and the wait between them.
+const REFRESH_TRIES: u32 = 3;
+const REFRESH_RETRY: TimeDelta = TimeDelta::minutes(10);
+/// The prompt cache lasts an hour; a fold later than this would read it cold.
+const CACHE_STILL_WARM: TimeDelta = TimeDelta::minutes(57);
 
 /// What one check did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +44,15 @@ pub enum Economy {
     Refreshed,
     /// Aether was asked to compact the idle orchestrator.
     Compacted,
+}
+
+/// The latest refresh attempt: its generation, how many tries it had, and
+/// when the last one began.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RefreshTried {
+    pub generation: u64,
+    pub tries: u32,
+    pub at: Timestamp,
 }
 
 /// One idle stretch an idle compaction was asked for: the agent and the end
@@ -66,10 +86,10 @@ pub async fn economize(ctx: &DaemonContext, now: Timestamp) -> Result<Economy, A
     let client = ctx.aether.client()?;
     let agent = client.get_agent(&id).await?;
     assert_eq!(agent.id, id, "Aether answers for the agent asked");
-    if super::state_of(&agent) != IDLE_STATE {
+    if !is_idle(&agent, now) {
         return Ok(Economy::Nothing);
     }
-    if refresh_if_outdated(ctx, &client).await? {
+    if ctx.config.orchestrator.refresh_on_upgrade && refresh_if_upgraded(ctx, &client, now).await? {
         return Ok(Economy::Refreshed);
     }
     match compact_if_idle(ctx, &client, &agent, now).await? {
@@ -78,48 +98,99 @@ pub async fn economize(ctx: &DaemonContext, now: Timestamp) -> Result<Economy, A
     }
 }
 
-/// Whether a generation `freshness` describes, not yet tried, is owed a
-/// fresh one: its prompt or tools differ from what this archond starts.
+/// Whether `agent` waits only for its next message, unpaused, and has logged
+/// nothing for [`QUIET_BEFORE_ACTING`]: no turn runs and none is starting.
+/// A wait on a task, an approval or a child is outstanding work, not idleness.
+pub fn is_idle(agent: &Agent, now: Timestamp) -> bool {
+    let waits_for_mail =
+        agent.status["state"] == IDLE_STATE && agent.status["condition"]["on"] == INBOX_WAIT;
+    let quiet = agent
+        .last_event_at
+        .is_some_and(|at| now - at >= QUIET_BEFORE_ACTING);
+    waits_for_mail && !agent.paused && quiet
+}
+
+/// Whether generation `generation`, as `freshness` describes it, is owed a
+/// fresh one at `now`: another build (`running`) created it, its prompt or
+/// tools differ from this build's, and `tried` leaves an attempt.
 pub fn refresh_due(
     freshness: Option<&OrchestratorFreshness>,
     generation: u64,
-    tried: Option<u64>,
+    tried: Option<&RefreshTried>,
+    now: Timestamp,
+    running: &str,
 ) -> bool {
     assert!(generation > 0, "generations start at 1");
-    assert!(
-        tried.is_none_or(|tried| tried <= generation),
-        "a refresh is tried only for a generation that existed"
-    );
+    assert!(!running.is_empty(), "this build has a version");
     let Some(freshness) = freshness else {
         return false;
     };
+    let upgraded = freshness.created_by != running;
     let outdated = freshness.prompt_outdated == Some(true) || freshness.tools_outdated;
-    outdated && tried != Some(generation)
+    let may_try = match tried.filter(|tried| tried.generation == generation) {
+        None => true,
+        Some(tried) => tried.tries < REFRESH_TRIES && now - tried.at >= REFRESH_RETRY,
+    };
+    upgraded && outdated && may_try
 }
 
-/// Start a fresh generation when the running one's prompt or tools are
-/// outdated. Tried once per generation: a failed refresh leaves the old one.
-async fn refresh_if_outdated(
+/// Start a fresh generation when an upgrade outdated the running one's
+/// prompt or tools. Fenced against trigger delivery, and given up after
+/// [`REFRESH_TRIES`] failed attempts for one generation.
+async fn refresh_if_upgraded(
     ctx: &DaemonContext,
     client: &AetherClient,
+    now: Timestamp,
 ) -> Result<bool, ArchonError> {
     let generation = super::generation(ctx).await?;
     let freshness = super::freshness(ctx, generation).await?;
-    let tried = read_kv::<u64>(ctx, REFRESH_TRIED_KEY).await?;
-    if !refresh_due(freshness.as_ref(), generation, tried) {
+    let tried = read_kv::<RefreshTried>(ctx, REFRESH_TRIED_KEY).await?;
+    let running = env!("CARGO_PKG_VERSION");
+    if !refresh_due(freshness.as_ref(), generation, tried.as_ref(), now, running) {
         return Ok(false);
     }
-    write_kv(ctx, REFRESH_TRIED_KEY, &generation).await?;
-    let reason = "refreshed: its prompt or tools are outdated";
-    let why = "is a fresh generation, as its prompt or tools changed in an upgrade";
+    let _switch = super::switching(ctx).await;
+    if !still_idle(ctx, client, now).await? {
+        return Ok(false);
+    }
+    let tries = tried
+        .filter(|tried| tried.generation == generation)
+        .map_or(1, |tried| tried.tries + 1);
+    let attempt = RefreshTried {
+        generation,
+        tries,
+        at: now,
+    };
+    write_kv(ctx, REFRESH_TRIED_KEY, &attempt).await?;
+    let reason = "refreshed: an upgrade changed its prompt or tools";
+    let why = "is a fresh generation, as an upgrade changed its prompt or tools";
     let id = super::replace_orchestrator(ctx, client, reason, why).await?;
-    tracing::info!(%id, old_generation = generation, "orchestrator refreshed after an upgrade");
+    tracing::info!(%id, old_generation = generation, tries, "orchestrator refreshed after an upgrade");
     Ok(true)
 }
 
+/// Read again under the switch guard, where no Archon trigger can be on its
+/// way: the orchestrator is still idle and no news is due to wake it.
+async fn still_idle(
+    ctx: &DaemonContext,
+    client: &AetherClient,
+    now: Timestamp,
+) -> Result<bool, ArchonError> {
+    let Some(id) = super::current_orchestrator(ctx).await? else {
+        return Ok(false);
+    };
+    if crate::triggers::delivering(&*ctx.store.lock().await, now)? {
+        return Ok(false);
+    }
+    let agent = client.get_agent(&id).await?;
+    assert_eq!(agent.id, id, "Aether answers for the agent asked");
+    Ok(is_idle(&agent, now))
+}
+
 /// Whether an orchestrator in `agent`'s state is due an idle compaction at
-/// `now`: idle for `after` since its last turn ended, with more than `floor`
-/// tokens of context, and not yet compacted for this idle stretch (`done`).
+/// `now`: idle for `after` since its last turn ended and still inside the
+/// prompt cache's lifetime, with more than `floor` tokens of context, and
+/// not yet compacted for this idle stretch (`done`).
 pub fn idle_compaction_due(
     agent: &Agent,
     now: Timestamp,
@@ -132,9 +203,18 @@ pub fn idle_compaction_due(
     let (Some(ended), Some(tokens)) = (agent.stats.last_turn_at, agent.stats.context_tokens) else {
         return false;
     };
-    let switched_on = after > TimeDelta::zero();
-    let idle_long = now - ended >= after;
-    switched_on && idle_long && tokens > floor && done != Some(ended)
+    let idle = now - ended;
+    let in_window = after > TimeDelta::zero() && idle >= after && idle < CACHE_STILL_WARM;
+    in_window && tokens > floor && done != Some(ended)
+}
+
+/// The context size above which the idle `agent` is compacted: half the
+/// threshold Aether applied to it, else half the configured one.
+fn compaction_floor(config: &OrchestratorConfig, agent: &Agent) -> u64 {
+    let applied = agent.config.compaction_tokens.filter(|tokens| *tokens > 0);
+    let floor = applied.map_or_else(|| config.idle_compact_floor(), |t| u64::from(t / 2));
+    assert!(floor > 0, "a threshold is positive");
+    floor
 }
 
 /// Ask Aether to compact the idle orchestrator once per idle stretch. A
@@ -147,7 +227,7 @@ async fn compact_if_idle(
 ) -> Result<bool, ArchonError> {
     let config = &ctx.config.orchestrator;
     let after = TimeDelta::minutes(i64::from(config.idle_compact_after_minutes));
-    let floor = config.idle_compact_floor();
+    let floor = compaction_floor(config, agent);
     let done = read_kv::<IdleCompaction>(ctx, IDLE_COMPACTION_KEY)
         .await?
         .filter(|done| done.agent == agent.id)
@@ -167,6 +247,7 @@ async fn compact_if_idle(
             tracing::info!(agent = %agent.id, tokens, "asked Aether to compact the idle orchestrator");
             Ok(true)
         }
+        Err(error) if error.is_store() => Err(error),
         Err(error) => {
             tracing::warn!(agent = %agent.id, tokens, %error, "Aether refused to compact the idle orchestrator; its context is kept");
             Ok(false)
@@ -206,7 +287,8 @@ mod tests {
 
     fn orchestrator(tokens: Option<u64>, turn_ended_at: Option<Timestamp>) -> Agent {
         let mut raw = archon_aether::fake::agent("agt_0001", None);
-        raw["status"] = serde_json::json!({ "state": IDLE_STATE });
+        raw["status"] = serde_json::json!({ "state": IDLE_STATE, "condition": { "on": "inbox" } });
+        raw["last_event_at"] = serde_json::json!(turn_ended_at);
         raw["stats"] = serde_json::json!({
             "context_tokens": tokens,
             "last_turn_at": turn_ended_at,
@@ -214,8 +296,8 @@ mod tests {
         serde_json::from_value(raw).unwrap()
     }
 
-    /// A fake clock walks one idle stretch: the rule fires once, at 50
-    /// minutes, only above half the threshold.
+    /// A fake clock walks one idle stretch: the rule fires once, from 50
+    /// minutes until the cache is nearly cold, only above half the threshold.
     #[test]
     fn the_idle_rule_fires_once_per_idle_stretch_above_half_the_threshold() {
         let after = TimeDelta::minutes(50);
@@ -228,6 +310,14 @@ mod tests {
         assert!(
             idle_compaction_due(&large, at(50), after, floor, None),
             "idle 50 minutes"
+        );
+        assert!(
+            !idle_compaction_due(&large, at(57), after, floor, None),
+            "the cache is cold"
+        );
+        assert!(
+            !idle_compaction_due(&large, at(180), after, floor, None),
+            "a late reconnect"
         );
         let done = Some(at(0));
         assert!(
@@ -252,32 +342,78 @@ mod tests {
 
         let small = orchestrator(Some(80_000), Some(at(0)));
         assert!(
-            !idle_compaction_due(&small, at(90), after, floor, None),
+            !idle_compaction_due(&small, at(52), after, floor, None),
             "at half, kept"
         );
         let unknown = orchestrator(None, Some(at(0)));
         assert!(
-            !idle_compaction_due(&unknown, at(90), after, floor, None),
+            !idle_compaction_due(&unknown, at(52), after, floor, None),
             "no usage yet"
         );
         let off = TimeDelta::zero();
         assert!(
-            !idle_compaction_due(&large, at(90), off, floor, None),
+            !idle_compaction_due(&large, at(52), off, floor, None),
             "0 turns it off"
         );
     }
 
     #[test]
-    fn a_changed_prompt_or_tool_fingerprint_is_refreshed_once_per_generation() {
+    fn the_floor_is_half_the_threshold_aether_applied_else_the_configured_one() {
+        let config = OrchestratorConfig::default();
+        let mut agent = orchestrator(Some(1), Some(at(0)));
+        assert_eq!(
+            compaction_floor(&config, &agent),
+            80_000,
+            "no override reported"
+        );
+        agent.config.compaction_tokens = Some(300_000);
+        assert_eq!(
+            compaction_floor(&config, &agent),
+            150_000,
+            "the running agent's own"
+        );
+    }
+
+    #[test]
+    fn only_an_unpaused_quiet_inbox_wait_is_idle() {
+        let idle = orchestrator(Some(1), Some(at(0)));
+        assert!(is_idle(&idle, at(2)), "waits for mail, quiet two minutes");
+        assert!(
+            !is_idle(&idle, at(1)),
+            "an event a minute ago: a wake may be starting"
+        );
+        let mut paused = idle.clone();
+        paused.paused = true;
+        assert!(!is_idle(&paused, at(10)), "an operator pause is kept");
+        let mut on_task = idle.clone();
+        on_task.status = serde_json::json!({
+            "state": IDLE_STATE, "condition": { "on": "task", "id": "tsk_01" }
+        });
+        assert!(!is_idle(&on_task, at(10)), "it waits on outstanding work");
+        let mut running = idle.clone();
+        running.status = serde_json::json!({ "state": "running" });
+        assert!(!is_idle(&running, at(10)));
+        let mut unknown = idle;
+        unknown.last_event_at = None;
+        assert!(
+            !is_idle(&unknown, at(10)),
+            "no activity record: leave it be"
+        );
+    }
+
+    #[test]
+    fn an_upgrade_that_outdated_the_prompt_or_tools_is_refreshed_with_bounded_retries() {
+        let running = "1.6.4";
         let fresh = OrchestratorFreshness {
-            created_by: "1.6.4".into(),
+            created_by: "1.6.3".into(),
             prompt_outdated: Some(false),
             tools_outdated: false,
             new_lessons: 3,
             settings_drift: None,
         };
+        let now = at(0);
         assert!(
-            !refresh_due(Some(&fresh), 4, None),
+            !refresh_due(Some(&fresh), 4, None, now, running),
             "up to date; lessons wait"
         );
         let prompt = OrchestratorFreshness {
@@ -288,22 +424,49 @@ mod tests {
             tools_outdated: true,
             ..fresh.clone()
         };
+        let tried = |generation, tries, minutes| RefreshTried {
+            generation,
+            tries,
+            at: at(minutes),
+        };
         for outdated in [&prompt, &tools] {
-            assert!(refresh_due(Some(outdated), 4, None));
+            assert!(refresh_due(Some(outdated), 4, None, now, running));
+            let older = tried(3, REFRESH_TRIES, 0);
+            assert!(refresh_due(Some(outdated), 4, Some(&older), now, running));
+            let failed = tried(4, 1, -5);
             assert!(
-                refresh_due(Some(outdated), 4, Some(3)),
-                "tried for an older one"
+                !refresh_due(Some(outdated), 4, Some(&failed), now, running),
+                "backs off"
             );
-            assert!(!refresh_due(Some(outdated), 4, Some(4)), "tried once");
+            assert!(
+                refresh_due(Some(outdated), 4, Some(&failed), at(5), running),
+                "retried"
+            );
+            let spent = tried(4, REFRESH_TRIES, -60);
+            assert!(
+                !refresh_due(Some(outdated), 4, Some(&spent), now, running),
+                "gives up"
+            );
         }
+        let edited = OrchestratorFreshness {
+            created_by: running.into(),
+            ..prompt.clone()
+        };
+        assert!(
+            !refresh_due(Some(&edited), 4, None, now, running),
+            "no upgrade: an edit waits"
+        );
         let unknown = OrchestratorFreshness {
             prompt_outdated: None,
             ..fresh
         };
         assert!(
-            !refresh_due(Some(&unknown), 4, None),
+            !refresh_due(Some(&unknown), 4, None, now, running),
             "no prompt to compare"
         );
-        assert!(!refresh_due(None, 4, None), "no origin recorded");
+        assert!(
+            !refresh_due(None, 4, None, now, running),
+            "no origin recorded"
+        );
     }
 }

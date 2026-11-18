@@ -9,7 +9,9 @@ use std::sync::{Arc, Mutex};
 
 use archon_aether::fake::{self, Scripted};
 use archon_core::Timestamp;
+use archon_core::id::QueueItemId;
 use archon_daemon::supervisor::{self, Economy};
+use archon_daemon::triggers::{self, TriggerEvent};
 use chrono::TimeDelta;
 use link_common::Harness;
 use serde_json::{Value, json};
@@ -67,10 +69,31 @@ async fn create(harness: &Harness, agents: &Agents, id: &str) {
     assert_eq!(adopted.as_str(), id);
 }
 
+/// A `waiting` agent waits for its inbox and logged its last event ten
+/// minutes ago; any other state is set as given.
 fn set_state(agents: &Agents, id: &str, state: &str) {
     let mut table = agents.lock().unwrap();
     let agent = table.get_mut(id).expect("a known agent");
-    agent["status"] = json!({ "state": state });
+    agent["status"] = match state {
+        "waiting" => json!({ "state": state, "condition": { "on": "inbox" } }),
+        _ => json!({ "state": state }),
+    };
+    let last_event = archon_core::now() - TimeDelta::minutes(10);
+    agent["last_event_at"] = json!(last_event);
+}
+
+fn set_paused(agents: &Agents, id: &str, paused: bool) {
+    let mut table = agents.lock().unwrap();
+    table.get_mut(id).expect("a known agent")["paused"] = json!(paused);
+}
+
+fn script_successor(harness: &Harness, agents: &Agents) {
+    agents
+        .lock()
+        .unwrap()
+        .insert(ORCH_2.into(), orchestrator(ORCH_2, "ready"));
+    let successor = Scripted::reply("agent", orchestrator(ORCH_2, "ready"));
+    harness.fake.script("create_agent", successor);
 }
 
 fn set_stats(agents: &Agents, id: &str, tokens: u64, turn_ended_at: Timestamp) {
@@ -151,12 +174,7 @@ async fn a_changed_fingerprint_schedules_one_refresh_and_only_when_no_turn_runs(
     assert!(harness.fake.received_named("cancel").is_empty());
 
     set_state(&agents, ORCH, "waiting");
-    agents
-        .lock()
-        .unwrap()
-        .insert(ORCH_2.into(), orchestrator(ORCH_2, "ready"));
-    let successor = Scripted::reply("agent", orchestrator(ORCH_2, "ready"));
-    harness.fake.script("create_agent", successor);
+    script_successor(&harness, &agents);
     let idle = supervisor::economize(&harness.ctx, now).await.unwrap();
     assert_eq!(idle, Economy::Refreshed, "refreshed at the idle moment");
     let current = supervisor::current_orchestrator(&harness.ctx)
@@ -181,7 +199,7 @@ async fn a_changed_fingerprint_schedules_one_refresh_and_only_when_no_turn_runs(
 }
 
 #[tokio::test]
-async fn a_refresh_that_fails_leaves_the_old_generation_and_is_not_retried() {
+async fn a_failed_refresh_keeps_the_old_generation_and_retries_three_times_at_most() {
     let harness = Harness::new().await;
     harness.connect().await;
     let agents = agent_table(&harness);
@@ -191,17 +209,67 @@ async fn a_refresh_that_fails_leaves_the_old_generation_and_is_not_retried() {
     harness
         .fake
         .set_responder("cancel", Arc::new(|_| Scripted::refuse("internal", "busy")));
-    let now = archon_core::now();
-    supervisor::economize(&harness.ctx, now)
-        .await
-        .expect_err("the refresh failed");
+    let start = archon_core::now();
+    for minutes in [0, 10, 20] {
+        let now = start + TimeDelta::minutes(minutes);
+        supervisor::economize(&harness.ctx, now)
+            .await
+            .expect_err("the refresh failed");
+        let soon = now + TimeDelta::minutes(5);
+        let early = supervisor::economize(&harness.ctx, soon).await.unwrap();
+        assert_eq!(early, Economy::Nothing, "a retry waits ten minutes");
+    }
     let current = supervisor::current_orchestrator(&harness.ctx)
         .await
         .unwrap();
     assert_eq!(current.unwrap().as_str(), ORCH, "the old generation stays");
-    let again = supervisor::economize(&harness.ctx, now).await.unwrap();
-    assert_eq!(again, Economy::Nothing, "tried once for this generation");
-    assert_eq!(harness.fake.received_named("cancel").len(), 1);
+    let later = start + TimeDelta::minutes(60);
+    let spent = supervisor::economize(&harness.ctx, later).await.unwrap();
+    assert_eq!(spent, Economy::Nothing, "given up after three tries");
+    assert_eq!(harness.fake.received_named("cancel").len(), 3);
+}
+
+#[tokio::test]
+async fn a_refresh_waits_for_due_news_a_pause_and_an_actual_upgrade() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    let agents = agent_table(&harness);
+    create(&harness, &agents, ORCH).await;
+    set_state(&agents, ORCH, "waiting");
+    let now = archon_core::now() + TimeDelta::minutes(1);
+
+    let raw = harness
+        .kv(ORIGIN_KEY)
+        .await
+        .expect("the creation was recorded");
+    let mut origin: Value = serde_json::from_str(&raw).unwrap();
+    origin["prompt"] = json!("0000000000000000");
+    harness.set_kv(ORIGIN_KEY, &origin.to_string()).await;
+    let edited = supervisor::economize(&harness.ctx, now).await.unwrap();
+    assert_eq!(
+        edited,
+        Economy::Nothing,
+        "an edit on the same build waits for a restart"
+    );
+
+    as_if_created_by_an_older_build(&harness).await;
+    set_paused(&agents, ORCH, true);
+    let paused = supervisor::economize(&harness.ctx, now).await.unwrap();
+    assert_eq!(paused, Economy::Nothing, "an operator pause is kept");
+    set_paused(&agents, ORCH, false);
+
+    let news = TriggerEvent::ItemBlocked {
+        item: QueueItemId::new(),
+        reason: "stuck".into(),
+    };
+    triggers::push(&harness.ctx, news).await.unwrap();
+    let due = supervisor::economize(&harness.ctx, now).await.unwrap();
+    assert_eq!(
+        due,
+        Economy::Nothing,
+        "due news reaches the running generation first"
+    );
+    assert!(harness.fake.received_named("cancel").is_empty());
 }
 
 #[tokio::test]

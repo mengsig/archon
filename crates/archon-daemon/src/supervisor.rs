@@ -42,7 +42,8 @@ use retired::{Sweep, cancel_orphans};
 
 pub(crate) use authority::{authorize, saw_call};
 pub use economy::{
-    ECONOMY_CHECK_INTERVAL, Economy, economize, idle_compaction_due, refresh_due, watch_economy,
+    ECONOMY_CHECK_INTERVAL, Economy, RefreshTried, economize, idle_compaction_due, is_idle,
+    refresh_due, watch_economy,
 };
 pub use mcp::{
     HEALS_BEFORE_BLOCKER, MCP_CHECK_INTERVAL, check_mcp, check_mcp_soon, heal_status, mcp_status,
@@ -591,11 +592,13 @@ pub async fn restart_orchestrator(ctx: &DaemonContext) -> Result<AetherAgentId, 
     let _serial = ctx.supervisor.serial.lock().await;
     let client = ctx.aether.client()?;
     let why = "was restarted by the operator";
+    let _switch = switching(ctx).await;
     replace_orchestrator(ctx, &client, "restarted by the operator", why).await
 }
 
 /// Cancel the orchestrator and start a fresh generation, briefed and handed
-/// the held news as any new generation is; the caller holds `serial`.
+/// the held news as any new generation is; the caller holds `serial` and
+/// the [`switching`] guard, so no trigger is submitted meanwhile.
 async fn replace_orchestrator(
     ctx: &DaemonContext,
     client: &AetherClient,
@@ -608,7 +611,6 @@ async fn replace_orchestrator(
         cancel_newest(ctx, client, &stored, reason).await?;
     }
     revival::reset(ctx).await?;
-    let _switch = switching(ctx).await;
     let id = replace_generation(ctx, client).await?;
     announce_revival(ctx, &id, Revival::Recreated, why).await?;
     Ok(id)
@@ -1561,9 +1563,7 @@ mod tests {
             "`item_finished`: a failure, a blocker, an item tagged `notify`, one with a GitHub \
              `origin` to answer, and a success unless the operator turned that off.",
             "Relay code review, CI and approved-intent acceptance separately.",
-            "Other messages do not wait; an `info` comes with your next turn.",
-            "Long multi-step work, such as a report page or statistics, is an item too, never \
-             your own turn.",
+            "Other messages do not wait.",
             "A trigger states all `directives` once, then only `directive_changes`; if you hold \
              fewer than `directives_in_force`, read `autonomy_policy`.",
             "A mirror holds the registered repository's local base commit (HEAD when no base \
@@ -1639,12 +1639,12 @@ mod tests {
         assert!(at.is_sorted(), "cheapest shape first: {at:?}");
         for said in [
             "Take the first that fits",
-            "every repository in `list_repos` has a mirror, so reading code takes no item",
+            "or a `list_repos` mirror's code (no item)",
             "Queue clear changes at once, in one message; read code only to split them or judge \
              risk, not to fix or test them.",
             "a large request is a backlog ordered with `depends_on` and `priority`",
-            "Never change a repository, build, run apps or drive journeys, yourself or through \
-             a child.",
+            "Never change a repository, build, run apps, drive journeys or do long multi-step \
+             work (reports, statistics), yourself or through a child.",
             "A mirror holds the registered repository's local base commit",
             "Before you say a file has or lacks a change, or a commit or fix is present, read \
              the file in the mirror or run `git log`, `git show` or `git grep` there",
@@ -1980,8 +1980,8 @@ mod tests {
     /// own or a helper's, whether or not the hand-off rule is on.
     #[test]
     fn the_orchestrator_never_does_validation_work_itself() {
-        let ban = "Never change a repository, build, run apps or drive journeys, yourself or \
-                   through a child.";
+        let ban = "Never change a repository, build, run apps, drive journeys or do long \
+                   multi-step work (reports, statistics), yourself or through a child.";
         let mut config = Config::default();
         config.orchestrator.validate_before_handoff = false;
         for config in [Config::default(), config] {

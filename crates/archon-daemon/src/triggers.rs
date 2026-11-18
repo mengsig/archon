@@ -47,6 +47,10 @@ const TRIGGER_SEQ_KEY: &str = "trigger_seq";
 /// `kv`: the [`Outbox`], so an `archond` restart neither loses held news
 /// nor re-keys a batch Aether may already have.
 const OUTBOX_KEY: &str = "trigger_outbox";
+/// Most text bytes of `info` messages held for a later wake; one past it
+/// wakes the orchestrator, so a held batch stays far below Aether's 2 MiB
+/// trigger limit.
+const QUIET_INFO_MAX_BYTES: usize = 256 * 1024;
 /// Most bytes of `lavish-axi poll` output a `lavish_feedback` event carries
 /// once its DOM snapshot is dropped. The prompts table precedes `next_step`,
 /// so a cut takes lavish-axi's instructions before any prompt row.
@@ -592,7 +596,8 @@ pub(crate) fn record_message(
         at,
     });
     let mut outbox = read_outbox(store)?;
-    let held = message_news(message, at, quiet_info);
+    let room = held_info_bytes(&outbox.pending) + message.text.len() <= QUIET_INFO_MAX_BYTES;
+    let held = message_news(message, at, quiet_info && room);
     outbox.pending.push(held);
     if outbox.pending.len() > MAX_PENDING {
         compact_pending(store, &mut outbox)?;
@@ -601,6 +606,25 @@ pub(crate) fn record_message(
     let mut updates = updates.to_vec();
     updates.push((OUTBOX_KEY, &raw));
     store.append_feed_with_kv(entry, at, &updates)
+}
+
+/// The text bytes of the `info` messages held for a later wake.
+fn held_info_bytes(pending: &[Held]) -> usize {
+    use archon_core::agent_message::MessageKind;
+    let held_info = |news: &&Held| match &news.event {
+        TriggerEvent::AgentMessage { message } => {
+            message.kind == MessageKind::Info && news.defer_until.is_some()
+        }
+        _ => false,
+    };
+    let bytes = pending
+        .iter()
+        .filter(held_info)
+        .map(|news| match &news.event {
+            TriggerEvent::AgentMessage { message } => message.text.len(),
+            _ => unreachable!("filtered to messages"),
+        });
+    bytes.sum()
 }
 
 /// `message` as held news: an `info` under `quiet_info` wakes the
@@ -858,6 +882,19 @@ pub async fn collapse_for_new_orchestrator(ctx: &DaemonContext) -> Result<(), Ar
 /// The orchestrator lost the directives (new, or compacted): the next trigger
 /// states all in force, and is sent now when any is.
 pub async fn restate_directives(ctx: &DaemonContext, reason: &str) -> Result<(), ArchonError> {
+    restate(ctx, reason, false).await
+}
+
+/// [`restate_directives`] with the next wake, not one of its own: after a
+/// fold the orchestrator needs them before it acts, not at once.
+pub async fn restate_directives_later(
+    ctx: &DaemonContext,
+    reason: &str,
+) -> Result<(), ArchonError> {
+    restate(ctx, reason, true).await
+}
+
+async fn restate(ctx: &DaemonContext, reason: &str, quiet: bool) -> Result<(), ArchonError> {
     assert!(!reason.is_empty(), "the orchestrator is told why");
     {
         let mut store = ctx.store.lock().await;
@@ -868,11 +905,19 @@ pub async fn restate_directives(ctx: &DaemonContext, reason: &str) -> Result<(),
         // One already waits: the trigger it leaves in states them all.
         if !read_outbox(&store)?.pending.iter().any(restated) {
             let reason = reason.to_owned();
-            hold(&mut store, TriggerEvent::DirectivesRestated { reason })?;
+            let event = TriggerEvent::DirectivesRestated { reason };
+            hold_as(&mut store, Held::new(event, archon_core::now(), quiet))?;
         }
     }
     ctx.triggers.news.notify_one();
     Ok(())
+}
+
+/// Whether a trigger is being delivered or held news is due to make one:
+/// the orchestrator is about to start a turn.
+pub(crate) fn delivering(store: &Store, now: Timestamp) -> Result<bool, ArchonError> {
+    let outbox = read_outbox(store)?;
+    Ok(outbox.in_flight.is_some() || outbox.is_due(now))
 }
 
 /// Drop the batch the orchestrator now has; news pushed meanwhile stays.
@@ -1043,6 +1088,14 @@ async fn attempt(
     payload: &serde_json::Value,
 ) -> Result<(), ArchonError> {
     let orchestrator = supervisor::ensure_orchestrator(ctx).await?;
+    // Held while the trigger is submitted, so a refresh never replaces the
+    // agent between this check and Aether accepting the trigger.
+    let _steady = supervisor::steady(ctx).await;
+    if supervisor::current_orchestrator(ctx).await?.as_ref() != Some(&orchestrator) {
+        return Err(ArchonError::Unavailable(format!(
+            "orchestrator {orchestrator} was replaced before trigger {key} reached it"
+        )));
+    }
     let client = ctx.aether.client()?;
     let keyed = sent_key(key, &orchestrator);
     let refusal = match client.trigger(&orchestrator, payload.clone(), &keyed).await {
@@ -1171,6 +1224,29 @@ mod tests {
             Some(first),
             "the oldest cap wakes them all"
         );
+    }
+
+    #[test]
+    fn held_info_past_its_byte_budget_wakes_the_orchestrator() {
+        use archon_core::agent_message::MessageKind;
+        let mut store = Store::open_in_memory().unwrap();
+        let mut message = stage_message(MessageKind::Info);
+        message.text = "x".repeat(QUIET_INFO_MAX_BYTES / 2);
+        let now = archon_core::now();
+        for _ in 0..2 {
+            record_message(&mut store, message.clone(), &[], true).unwrap();
+        }
+        assert!(
+            !read_outbox(&store).unwrap().is_due(now),
+            "within the budget"
+        );
+        record_message(&mut store, message, &[], true).unwrap();
+        let outbox = read_outbox(&store).unwrap();
+        assert!(
+            outbox.is_due(now),
+            "past the budget it wakes and carries the rest"
+        );
+        assert_eq!(held_info_bytes(&outbox.pending), QUIET_INFO_MAX_BYTES);
     }
 
     #[test]

@@ -10,15 +10,19 @@
   it at once (`[orchestrator] quiet_info`, default true). The orchestrator
   compacts at `[orchestrator] compaction_tokens` (default 160,000) when the
   connected Aether announces the `compaction_tokens` feature (Aether 1.4.2);
-  Aether 1.4.1 keeps the model's threshold and is sent nothing new. Idle for
+  Aether 1.4.1 keeps the model's threshold and is sent nothing new. The
+  threshold applies to generations created from then on. Idle for
   `idle_compact_after_minutes` (default 50) with more than half that in
   context, it is compacted once before its prompt cache expires. After an
   upgrade that changes its prompt or tools, a fresh generation replaces it
-  at its next idle moment, once per generation. The prompt now has long
+  at its next quiet idle moment, with at most three tries per generation
+  (`[orchestrator] refresh_on_upgrade`, default true). The prompt now has long
   multi-step work, such as report pages and statistics, queued as items.
-  Nothing migrates; 0 or false switches each part off, and that is the
-  rollback, as an older binary is not supported on a store a newer release
-  migrated.
+  Nothing migrates. The rollback is the switches: `quiet_info = false`,
+  `compaction_tokens = 0`, `idle_compact_after_minutes = 0` and
+  `refresh_on_upgrade = false`; a threshold already sent stays with that
+  generation until `archon orchestrator restart`. An older binary is not
+  supported on a store a newer release migrated.
 
 ## 1.6.3
 

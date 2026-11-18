@@ -329,6 +329,9 @@ pub struct OrchestratorConfig {
     /// Stage `info` messages ride with the next wake, at most
     /// [`QUIET_INFO_MAX_WAIT_MINUTES`] late, instead of waking it.
     pub quiet_info: bool,
+    /// After an upgrade that changed the orchestrator's prompt or tools,
+    /// start a fresh generation at its next idle moment.
+    pub refresh_on_upgrade: bool,
 }
 
 /// The smallest `compaction_tokens` Aether accepts.
@@ -338,8 +341,9 @@ pub const MIN_COMPACTION_TOKENS: u32 = 100_000;
 pub const DEFAULT_COMPACTION_TOKENS: u32 = 160_000;
 /// The longest a quiet `info` message waits for the orchestrator's next wake.
 pub const QUIET_INFO_MAX_WAIT_MINUTES: i64 = 30;
-/// The prompt cache lasts an hour; idle compaction must come before it ends.
-const IDLE_COMPACT_MAX_MINUTES: u32 = 59;
+/// The prompt cache lasts an hour; idle compaction must come before it
+/// ends, with minutes to spare for the once-a-minute check.
+const IDLE_COMPACT_MAX_MINUTES: u32 = 55;
 
 impl OrchestratorConfig {
     fn validate(&self) -> Result<(), ArchonError> {
@@ -382,6 +386,7 @@ impl Default for OrchestratorConfig {
             compaction_tokens: DEFAULT_COMPACTION_TOKENS,
             idle_compact_after_minutes: 50,
             quiet_info: true,
+            refresh_on_upgrade: true,
         }
     }
 }
@@ -1439,6 +1444,7 @@ mod tests {
         assert_eq!(config.orchestrator.compaction_tokens, 160_000);
         assert_eq!(config.orchestrator.idle_compact_after_minutes, 50);
         assert!(config.orchestrator.quiet_info);
+        assert!(config.orchestrator.refresh_on_upgrade);
     }
 
     #[test]
@@ -1454,7 +1460,7 @@ mod tests {
         let error = small.validate().unwrap_err().to_string();
         assert!(error.contains("orchestrator.compaction_tokens"), "{error}");
         let late: Config =
-            toml::from_str("[orchestrator]\nidle_compact_after_minutes = 60").unwrap();
+            toml::from_str("[orchestrator]\nidle_compact_after_minutes = 56").unwrap();
         let error = late.validate().unwrap_err().to_string();
         assert!(error.contains("idle_compact_after_minutes"), "{error}");
         let set: Config = toml::from_str("[orchestrator]\ncompaction_tokens = 200000").unwrap();

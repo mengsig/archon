@@ -686,6 +686,10 @@ pub struct AgentSettings {
     /// As Aether wrote it; it may name an effort Archon does not know.
     #[serde(default)]
     pub effort: Option<String>,
+    /// The agent's own compaction threshold; absent from an aetherd that
+    /// predates it, or when the agent keeps its model's.
+    #[serde(default)]
+    pub compaction_tokens: Option<u32>,
     /// Aether's hard cap in dollars; `None` when it has none.
     #[serde(default)]
     pub cost_budget: Option<f64>,

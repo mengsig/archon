@@ -23,6 +23,7 @@ pub const STARTER_CONFIG: &str = r#"# Archon's configuration. Every key is optio
 # effort = "high"
 # wake_on_success = true    # false: a routine success waits for its next turn
 # quiet_info = true         # false: every stage `info` message wakes it
+# refresh_on_upgrade = true # false: keep a generation an upgrade outdated until a restart
 
 # Optional narrowing. Without [models] every model Aether reports ready may
 # be used. Tiers (fast, balanced, strong, frontier) come from Aether's catalog.

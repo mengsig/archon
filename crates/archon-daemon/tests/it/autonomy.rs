@@ -225,15 +225,31 @@ async fn answer(h: &Harness, question: &Question, text: &str) {
 async fn to_first_gate(h: &Harness, title: &str) -> QueueItem {
     let item = enqueue_knobs(h, title, proposal()).await.expect("enqueue");
     assert_eq!(item.autonomy.proposal, ProposalMode::Lavish);
-    assert_eq!(
-        item.model_plan.choices_for("propose"),
-        item.model_plan.choices_for("implement")
-    );
     h.dispatch().await;
     let settled = settle(h).await;
     assert_eq!(settled.len(), 1);
     assert_eq!(settled[0].stage_id, "propose", "the knob put propose first");
+    assert_eq!(
+        item.model_plan.choices_for("propose"),
+        Some(std::slice::from_ref(&settled[0].choice))
+    );
     item
+}
+
+#[tokio::test]
+async fn an_inserted_proposal_borrows_the_first_model_without_a_routing_pick() {
+    let mut config = Config::default();
+    config.learning.explore_rate = 0.0;
+    let h = Harness::with_config(config).await;
+    let item = enqueue_knobs(&h, "Use the first stage's model", proposal())
+        .await
+        .unwrap();
+    let first = item
+        .model_plan
+        .choices_for("implement")
+        .expect("first stage");
+    assert_eq!(first.len(), 1);
+    assert_eq!(item.model_plan.choices_for("propose"), Some(first));
 }
 
 #[tokio::test]

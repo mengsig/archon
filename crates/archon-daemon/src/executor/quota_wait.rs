@@ -78,7 +78,11 @@ pub async fn watch(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
             continue;
         }
         let uptime = TimeDelta::from_std(started.elapsed()).expect("an uptime fits");
-        start_checks(&ctx, &mut checks, wall + uptime).await?;
+        match start_checks(&ctx, &mut checks, wall + uptime).await {
+            Ok(()) => {}
+            Err(error) if error.is_store() => return Err(error),
+            Err(error) => tracing::error!(%error, "quota wait sweep not started"),
+        }
     }
 }
 
@@ -121,6 +125,7 @@ async fn start_checks(
 }
 
 /// Take the checks that ended out of `checks`; `Err` when one's store failed.
+/// Any other failure of a check is its stage's alone, and is checked again.
 async fn reap(checks: &mut Checks) -> Result<(), ArchonError> {
     let ended: Vec<StageRunId> = (checks.iter())
         .filter(|(_, check)| check.is_finished())
@@ -128,7 +133,11 @@ async fn reap(checks: &mut Checks) -> Result<(), ArchonError> {
         .collect();
     for stage in ended {
         let check = checks.remove(&stage).expect("listed just above");
-        joined(check).await?;
+        match joined(check).await {
+            Ok(()) => {}
+            Err(error) if error.is_store() => return Err(error),
+            Err(error) => tracing::error!(%stage, %error, "quota wait check failed"),
+        }
     }
     Ok(())
 }

@@ -336,6 +336,28 @@ async fn a_stage_slow_in_every_request_does_not_push_back_the_next_sweep() {
     watcher.abort();
 }
 
+/// A stage whose check fails on a wait mark that is no time keeps that
+/// failure to itself: the sweeps go on, and another stage's due reviewer
+/// is still stopped.
+#[tokio::test(start_paused = true)]
+async fn a_check_that_fails_does_not_end_the_sweeps() {
+    let h = Harness::new().await;
+    let (stage, _, reviewer) = held_reviewer(&h).await;
+    let (broken_stage, _, broken) = held_reviewer(&h).await;
+    let _aether = common::connect_aether_for_delegations(&h).await;
+    let watcher = tokio::spawn(quota_wait::watch(h.ctx.clone()));
+    tokio::time::sleep(quota_wait::SWEEP_INTERVAL + Duration::from_secs(1)).await;
+    backdate_wait(&h, &stage, &reviewer, TimeDelta::minutes(3)).await;
+    let mark = format!("quota_wait:{}:{broken}", broken_stage.id);
+    let marked = h.ctx.store.lock().await.kv_set(&mark, "no time");
+    marked.expect("the mark is written");
+    // The broken stage's check fails in the second sweep and is reaped in the third.
+    tokio::time::sleep(quota_wait::SWEEP_INTERVAL * 3).await;
+    assert!(!watcher.is_finished(), "the sweeps go on");
+    assert_eq!(h.backend.cancelled(), vec![reviewer.clone()]);
+    watcher.abort();
+}
+
 /// The sweep keeps its own 30-second timer: with no dispatch pass at all, a
 /// blocked reviewer is stopped within minutes of the paused clock.
 #[tokio::test(start_paused = true)]

@@ -1999,6 +1999,39 @@ fn a_result_without_structured_gets_one_repair_turn_and_the_run_continues() {
     assert!(succeeded(&sim.ship_pr(PR)).contains("Record handed in."));
 }
 
+/// A gated stage that holds the ship record and hands in no `structured`
+/// gets its repair turn before its gate reads an unknown verdict as a fail.
+#[test]
+fn a_gated_record_stage_without_structured_gets_one_repair_turn() {
+    let toml = r#"
+        [pipeline]
+        name = "checked"
+        description = "check, then ship"
+        version = 1
+        workspace = "worktree"
+        requires_repo = true
+        [pipeline.ship]
+        stage = "check"
+        [[stage]]
+        id = "check"
+        kind = "test"
+        prompt = "check.md"
+        gate = "all_pass"
+    "#;
+    let spec = Arc::new(support::spec_from(toml, &[]));
+    let plan = support::plan_for(&spec, &[]);
+    let mut sim = Sim::new(spec, plan);
+    sim.writes_record = false;
+    sim.start();
+    let repair = sim.settle("check", 0, Agent::NoVerdict);
+    assert_eq!(spawned(&repair), slots(&[("check", 2, 0)]), "{repair:#?}");
+    let prompt = &spawn_plans(&repair)[0].prompt;
+    assert!(prompt.contains("Archon record repair"), "{prompt}");
+    let again = sim.settle("check", 0, Agent::NoVerdict);
+    assert!(spawned(&again).is_empty(), "one repair turn only");
+    assert_eq!(failed(&again).0, "check");
+}
+
 /// A record refused on its merits is not broken: no repair turn is given.
 #[test]
 fn a_record_with_too_few_reviewers_gets_no_repair_turn() {

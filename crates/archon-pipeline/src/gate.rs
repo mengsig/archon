@@ -64,6 +64,9 @@ pub(crate) fn evaluate(
         members.iter().all(|m| m.state.is_terminal()),
         "only finished groups are evaluated"
     );
+    if owed != Owed::default() && handed_in_nothing(stage, members) {
+        return recorded(stage, attempt, members, owed);
+    }
     let total = members.len();
     let passes = members.iter().filter(|m| member_passes(stage, m)).count();
     let ok = match stage.gate {
@@ -161,6 +164,19 @@ fn recorded(stage: &StageSpec, attempt: u32, members: &[&StageRun], owed: Owed) 
         },
         Err(why) => unrecorded(format!("{REVIEW_REFUSAL}: {why}")),
     }
+}
+
+/// Whether the one agent holding a record completed with no `structured` and
+/// no failing verdict: its gate and scenarios cannot be read, so the missing
+/// record is what failed, and it gets the repair turn before any gate.
+fn handed_in_nothing(stage: &StageSpec, members: &[&StageRun]) -> bool {
+    let [member] = members else {
+        return false;
+    };
+    assert_eq!(stage.fan_out, 1, "one agent holds a record");
+    member.state == StageState::Completed
+        && member.structured.is_none()
+        && verdict_of(member) != Verdict::Fail
 }
 
 /// Whether a completed stage's record is broken rather than refused on its

@@ -458,6 +458,49 @@ async fn a_resumed_agent_that_leaves_out_its_record_is_asked_for_it_once() {
     running(&h, "review").await;
 }
 
+/// The review stages started for `item` so far.
+async fn reviews(h: &Harness, item: &archon_core::id::QueueItemId) -> usize {
+    let stages = h.stages(item).await;
+    stages.iter().filter(|s| s.stage_id == "review").count()
+}
+
+/// A kept agent whose record reply states a fail beside a valid record is
+/// refused on its merits: the review does not start on it.
+#[tokio::test]
+async fn a_record_reply_that_states_a_fail_is_not_reviewed() {
+    let h = harness().await;
+    let (item, _) = implemented(&h, "fails on asking").await;
+    let fix = sent_back(&h).await;
+    let reviewed = reviews(&h, &item.id).await;
+    ends_without_its_record(&h, &fix, "added the test").await;
+    answers(&h, &fix, "Here is the record.\nVERDICT: FAIL").await;
+    assert_eq!(reviews(&h, &item.id).await, reviewed, "no review of a fail");
+    let stages = h.stages(&item.id).await;
+    let done = stages.iter().find(|s| s.id == fix.id).expect("the fix");
+    let summary = done.summary.as_deref().unwrap_or_default();
+    assert!(
+        summary.contains("VERDICT: FAIL"),
+        "the reply as sent: {summary}"
+    );
+}
+
+/// A kept agent that states a fail without its record is not asked for one.
+#[tokio::test]
+async fn a_resumed_reply_that_states_a_fail_is_not_asked_for_its_record() {
+    let h = harness().await;
+    let (item, _) = implemented(&h, "fails at once").await;
+    let fix = sent_back(&h).await;
+    let reviewed = reviews(&h, &item.id).await;
+    let before = h.backend.messages().len();
+    let outcome = resumed_reply_outcome("Could not fix it.\nVERDICT: FAIL");
+    h.backend.answer(&agent(&fix), outcome);
+    let ended = executor::turn_ended(&h.ctx, &agent(&fix)).await;
+    ended.expect("turn end");
+    h.dispatch().await;
+    assert_eq!(h.backend.messages().len(), before, "no record request");
+    assert_eq!(reviews(&h, &item.id).await, reviewed, "no review of a fail");
+}
+
 #[tokio::test]
 async fn a_resumed_agent_asked_for_its_record_in_vain_fails_its_stage() {
     let h = harness().await;

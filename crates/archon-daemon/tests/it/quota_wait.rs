@@ -248,3 +248,31 @@ async fn the_quota_timer_stops_a_reviewer_without_any_dispatch() {
     assert_eq!(told(&h, &lead).len(), 1);
     watcher.abort();
 }
+
+/// Stages whose reads hang do not hold back another stage's due reviewer:
+/// each stage's check has its own limit, and all run at once.
+#[tokio::test(start_paused = true)]
+async fn slow_unrelated_stages_do_not_delay_a_due_reviewer() {
+    let h = Harness::new().await;
+    let (stage, lead, reviewer) = held_reviewer(&h).await;
+    for n in 0..3 {
+        h.enqueue(&format!("unrelated {n}")).await;
+    }
+    h.dispatch().await;
+    let others: Vec<AetherAgentId> = (h.running().await.into_iter())
+        .filter_map(|s| s.aether_agent)
+        .filter(|agent| *agent != lead)
+        .collect();
+    assert_eq!(others.len(), 3, "three unrelated stages run");
+    for other in &others {
+        h.backend.slow_pulse(other, Duration::from_secs(100));
+    }
+    let _aether = common::connect_aether_for_delegations(&h).await;
+    let watcher = tokio::spawn(quota_wait::watch(h.ctx.clone()));
+    let first = quota_wait::SWEEP_INTERVAL + quota_wait::STAGE_LIMIT;
+    tokio::time::sleep(first + Duration::from_secs(1)).await;
+    backdate_wait(&h, &stage, &reviewer, TimeDelta::minutes(3)).await;
+    tokio::time::sleep(first).await;
+    assert_eq!(h.backend.cancelled(), vec![reviewer.clone()]);
+    watcher.abort();
+}

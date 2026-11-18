@@ -390,8 +390,13 @@ async fn recorded(
     else {
         return Ok(Some(outcome));
     };
+    let states_fail = archon_core::run::Verdict::states_fail(summary, structured.as_ref());
     if let Some(first) = &kept.asked_record {
         assert!(!first.trim().is_empty(), "a final message has a summary");
+        // A record reply that states a fail is settled as sent, on its merits.
+        if states_fail {
+            return Ok(Some(outcome));
+        }
         let structured = structured.clone();
         let summary = first.clone();
         return Ok(Some(StageOutcome::Completed {
@@ -403,7 +408,7 @@ async fn recorded(
         return Ok(Some(outcome));
     };
     // A stated fail is settled on its merits, not asked for a record.
-    if archon_core::run::Verdict::states_fail(summary, structured.as_ref()) {
+    if states_fail {
         return Ok(Some(outcome));
     }
     if !records_ship(ctx, stage).await || is_record_repair(ctx, stage).await? {

@@ -25,6 +25,10 @@ const FAIL_AFTER: TimeDelta = TimeDelta::minutes(3);
 /// The wait between two sweeps.
 pub const SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 
+/// The longest one stage's check may take in a sweep; a slower one is
+/// checked again next sweep, so it never delays another stage's reviewer.
+pub const STAGE_LIMIT: Duration = Duration::from_secs(15);
+
 /// `kv` key prefix of when a reviewer was first seen waiting, per stage run.
 const WAIT_PREFIX: &str = "quota_wait:";
 
@@ -71,27 +75,48 @@ async fn sweep(
     // Only the hint's reset time comes from the last reading; Aether's own
     // block says the reviewer waits on quota.
     let resets = crate::quota::spent(ctx).unwrap_or_default();
-    for stage in running {
-        assert_eq!(
-            stage.state,
-            StageState::Running,
-            "only a running stage waits"
-        );
-        let Some(lead) = &stage.aether_agent else {
-            continue;
-        };
-        let waiting = match waiting_reviewers(ctx, lead, &resets).await {
-            Ok(waiting) => waiting,
-            Err(error) if error.is_store() => return Err(error),
-            Err(error) => {
-                tracing::info!(stage = %stage.id, %error, "quota wait not read; read again next sweep");
-                continue;
+    // Every stage at once, each within its limit, so a sweep ends in time.
+    let checks = running.iter().map(|stage| async {
+        let check = sweep_stage(ctx, stage, &resets, now);
+        match tokio::time::timeout(STAGE_LIMIT, check).await {
+            Ok(checked) => checked,
+            Err(_) => {
+                tracing::info!(stage = %stage.id, "quota wait check too slow; checked again next sweep");
+                Ok(())
             }
-        };
-        for (waiting, since) in note_waits(ctx, stage, waiting, now).await? {
-            if now - since >= FAIL_AFTER {
-                stop(ctx, stage, lead, &waiting, now - since).await?;
-            }
+        }
+    });
+    let checked = futures_util::future::join_all(checks).await;
+    assert_eq!(checked.len(), running.len(), "one check a stage");
+    checked.into_iter().collect()
+}
+
+/// [`sweep`] for one running `stage`.
+async fn sweep_stage(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    resets: &BTreeMap<String, Option<Timestamp>>,
+    now: Timestamp,
+) -> Result<(), ArchonError> {
+    assert_eq!(
+        stage.state,
+        StageState::Running,
+        "only a running stage waits"
+    );
+    let Some(lead) = &stage.aether_agent else {
+        return Ok(());
+    };
+    let waiting = match waiting_reviewers(ctx, lead, resets).await {
+        Ok(waiting) => waiting,
+        Err(error) if error.is_store() => return Err(error),
+        Err(error) => {
+            tracing::info!(stage = %stage.id, %error, "quota wait not read; read again next sweep");
+            return Ok(());
+        }
+    };
+    for (waiting, since) in note_waits(ctx, stage, waiting, now).await? {
+        if now - since >= FAIL_AFTER {
+            stop(ctx, stage, lead, &waiting, now - since).await?;
         }
     }
     Ok(())
@@ -303,12 +328,12 @@ fn replan_hint(reviewer: &Descendant, resets_at: Option<Timestamp>) -> String {
 mod tests {
     use super::*;
 
-    /// A wait is seen within one dispatch pass and stopped by the first pass
+    /// A wait is seen within one sweep and stopped by the first sweep
     /// after [`FAIL_AFTER`], so a blocked reviewer ends within five minutes.
-    /// Each sweep's own work, a few Aether calls a reviewer, is ignored here.
+    /// A sweep's checks run at once, each cut off at [`STAGE_LIMIT`].
     #[test]
     fn a_blocked_reviewer_is_stopped_within_five_minutes() {
-        let pass = SWEEP_INTERVAL.as_secs();
+        let pass = (SWEEP_INTERVAL + STAGE_LIMIT).as_secs();
         let seconds = u64::try_from(FAIL_AFTER.num_seconds()).expect("positive");
         assert!(
             2 * pass + seconds < 5 * 60,

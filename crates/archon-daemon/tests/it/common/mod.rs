@@ -801,6 +801,8 @@ struct FakeState {
     cancel_reasons: Vec<(AetherAgentId, String)>,
     /// Every agent whose own quota block was read, in order.
     quota_reads: Vec<AetherAgentId>,
+    /// Agents whose `pulse` answers only after this long.
+    slow_pulses: BTreeMap<AetherAgentId, std::time::Duration>,
     /// Every accepted `update_agent`, in order.
     updates: Vec<(AetherAgentId, AgentUpdate)>,
     update_failures: VecDeque<ArchonError>,
@@ -1005,6 +1007,11 @@ impl FakeBackend {
 
     pub fn cancel_reasons(&self) -> Vec<(AetherAgentId, String)> {
         self.state().cancel_reasons.clone()
+    }
+
+    /// Every `pulse` of `agent` answers only after `delay`.
+    pub fn slow_pulse(&self, agent: &AetherAgentId, delay: std::time::Duration) {
+        self.state().slow_pulses.insert(agent.clone(), delay);
     }
 
     pub fn quota_reads(&self) -> Vec<AetherAgentId> {
@@ -1695,6 +1702,10 @@ impl AgentBackend for FakeBackend {
     }
 
     async fn pulse(&self, agent: &AetherAgentId) -> Result<Option<TreePulse>, ArchonError> {
+        let delay = self.state().slow_pulses.get(agent).copied();
+        if let Some(delay) = delay {
+            tokio::time::sleep(delay).await;
+        }
         let mut state = self.state();
         if let Some(error) = state.pulse_failures.pop_front() {
             return Err(error);

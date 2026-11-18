@@ -35,8 +35,8 @@
   it waited until the stage deadline, and a held stage's deadline kept moving.
   A quota restored within the 3 minutes stops nothing, and the block is read
   again, with one `get_agent`, just before the cancel. The check runs on its
-  own 30-second timer, apart from dispatch, so the cancel comes within 4
-  minutes. Known limitation: a reviewer whose quota returns in the one Aether
+  own 30-second timer, apart from dispatch, and checks every stage at once,
+  each for at most 15 seconds, so the cancel comes within 5 minutes. Known limitation: a reviewer whose quota returns in the one Aether
   round trip before the cancel is still cancelled, as Aether has no
   conditional cancel.
 

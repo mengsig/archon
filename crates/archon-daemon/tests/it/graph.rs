@@ -459,8 +459,10 @@ pub(crate) async fn owner_and_onto(h: &Harness) -> (QueueItem, QueueItem) {
     let owner = h.enqueue("owns the pull request").await;
     let queued = h.enqueue("queued onto it").await;
     let pr = PullRequestRef::from_url("https://github.com/o/r/pull/12").unwrap();
+    let id = QueueItemId::new();
     let onto = QueueItem {
-        id: QueueItemId::new(),
+        model_plan: queued.model_plan.copy_for(&queued.id, &id, None),
+        id,
         onto: Some(Box::new(OntoPullRequest {
             target: OntoTarget::Pr(pr.number),
             pr,

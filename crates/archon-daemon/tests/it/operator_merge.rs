@@ -13,7 +13,6 @@ use archon_core::config::{AetherMode, Config};
 use archon_core::error::ArchonError;
 use archon_core::id::QuestionId;
 use archon_core::merge::{MergeAuthority, MergeRequest, MergeState};
-use archon_core::model::ModelPlan;
 use archon_core::notify::{FeedEntry, NotificationKind};
 use archon_core::protocol::{ClientKind, EnqueueRequest, Reply, RepoPatch, RepoRef, Request};
 use archon_core::queue::{QueueItem, QueueState};
@@ -70,7 +69,7 @@ async fn enqueue(h: &Harness, pipeline: &str, review: ReviewLevel) -> QueueItem 
         priority: Default::default(),
         depends_on: Vec::new(),
         tags: Vec::new(),
-        model_plan: ModelPlan::default().into(),
+        model_plan: Default::default(),
         stage_timeouts: Default::default(),
         model_reasons: None,
         budget_usd: None,

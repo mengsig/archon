@@ -220,15 +220,27 @@ async fn tiers_at_dispatch(
     };
     let tiers = knobs::TierScope::new(&ctx.config, &policy, &catalog)
         .routed(route.by(routing.0, routing.1));
-    stored.model_plan.resolve_tiers(|key, tier, provider| {
-        tiers.resolve((tier, spec.tier_floor(key, tier)), provider)
-    })?;
+    let resolve = |key: &str, asked: &archon_core::model_tier::TierChoice| {
+        let floor = spec.tier_floor(key, asked.requested);
+        let provider = asked.provider.as_deref();
+        tiers.resolve((asked.requested, floor), provider).map(Some)
+    };
+    let id = stored.id.clone();
+    stored.model_plan.retier(
+        &id,
+        (
+            archon_core::now(),
+            None,
+            archon_core::plan_origin::TierMove::Dispatch,
+        ),
+        resolve,
+    )?;
     stored.routed_provider = held.clone();
     let moved = (held_before.as_deref(), held.as_deref());
     if let Some(note) = crate::quota::switch_note(moved, quota.as_ref(), "its run") {
         stored.provider_switch = Some(note);
     }
-    let unstarted = (&[][..], &plan_before);
+    let unstarted = (&[][..], plan_before.plan());
     crate::quota::record_moves(ctx, &mut store, &mut stored, unstarted, quota.as_ref())?;
     if stored.model_plan != plan_before || stored.routed_provider != held_before {
         tracing::info!(item = %item.id, provider = ?held, "re-resolved tiered model choices at dispatch");
@@ -288,9 +300,14 @@ fn assemble(
     }
     .to_map();
     let gates = OperatorGates::for_run(&spec, &item.autonomy);
-    let driver = RunDriver::new(spec.clone(), item.model_plan.clone(), base_vars.clone())?
-        .with_gates(gates)?
-        .with_experiments(experiments);
+    let driver = RunDriver::new(
+        spec.clone(),
+        item.model_plan
+            .dispatched(&item.id, archon_core::plan_origin::TierMove::InRun),
+        base_vars.clone(),
+    )?
+    .with_gates(gates)?
+    .with_experiments(experiments);
     let driver = super::proposal::start_past(driver, approved)?;
     if let Some(approved) = driver.approved_proposal() {
         tracing::info!(item = %item.id, stage = %approved.stage_id, "starting past the proposal approved in an earlier run");

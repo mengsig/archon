@@ -10,7 +10,7 @@ use archon_core::autonomy::{
 };
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
-use archon_core::model::ModelPlan;
+use archon_core::plan_origin::{PlanWriter, PlannedPlan};
 use archon_core::policy::ModelPolicy;
 use archon_core::queue::QueueItem;
 use archon_core::run::PipelineRun;
@@ -88,7 +88,7 @@ pub(crate) struct Reshaped {
     /// The pipeline the edit yields.
     pub spec: PipelineSpec,
     /// The item's plan for exactly the stages of `spec`.
-    pub plan: ModelPlan,
+    pub plan: PlannedPlan,
     pub autonomy: Autonomy,
     /// For the item's history.
     pub what: String,
@@ -173,7 +173,7 @@ pub(crate) fn reshape(
         policy: &policy,
         max_tier: env.max_default_tier(&ctx.config),
     };
-    let plan = projected_plan(&learning, spec, &reshaped, &item.model_plan)?;
+    let plan = projected_plan(&learning, spec, &reshaped, item)?;
     policy.check_plan(&plan)?;
     Ok(Some(Reshaped {
         edit,
@@ -245,25 +245,26 @@ struct Learning<'a> {
     max_tier: archon_core::model_tier::Tier,
 }
 
-/// `plan` for the stages of `new`: the choices of the stages it keeps, then
-/// what was learned for the repository, then the first choice it had.
+/// `item`'s plan for the stages of `new`: the choices of the stages it keeps,
+/// then what was learned for the repository, then the first choice it had.
 fn projected_plan(
     learning: &Learning<'_>,
     old: &PipelineSpec,
     new: &PipelineSpec,
-    plan: &ModelPlan,
-) -> Result<ModelPlan, ArchonError> {
+    item: &QueueItem,
+) -> Result<PlannedPlan, ArchonError> {
+    let plan = &item.model_plan;
     let stages = old.file.stages.iter();
     let fallback = stages
         .filter_map(|stage| plan.choices_for(&stage.id))
         .find_map(|choices| choices.first().cloned());
-    let mut kept = plan.clone();
-    kept.0.retain(|id, _| new.is_plan_key(id));
-    for (id, choices) in &mut kept.0 {
-        if let Some(stage) = new.stage(id) {
-            choices.truncate(stage.choice_limit() as usize);
-        }
-    }
+    let mut kept = PlanWriter::new(&item.id, archon_core::now());
+    kept.carry(plan, &item.id, |id| {
+        let limit = new
+            .stage(id)
+            .map_or(usize::MAX, |s| s.choice_limit() as usize);
+        new.is_plan_key(id).then_some(limit)
+    });
     let Learning {
         store,
         repo,
@@ -271,7 +272,15 @@ fn projected_plan(
         max_tier,
     } = *learning;
     let bounds = (policy, max_tier);
-    let filled = knobs::fill_plan(store, repo, (new, new), kept, bounds, fallback.as_ref())?;
+    knobs::fill_plan(
+        store,
+        repo,
+        (new, new),
+        &mut kept,
+        bounds,
+        fallback.as_ref(),
+    )?;
+    let filled = kept.finish();
     let unfilled = new.file.stages.iter();
     if let Some(stage) = unfilled
         .into_iter()

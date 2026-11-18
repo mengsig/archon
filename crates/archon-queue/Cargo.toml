@@ -21,6 +21,7 @@ tracing = { workspace = true }
 testing = []
 
 [dev-dependencies]
+archon-core = { workspace = true, features = ["testing"] }
 tempfile = { workspace = true }
 
 [lints]

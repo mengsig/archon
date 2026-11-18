@@ -2,8 +2,32 @@
 
 ## Unreleased
 
+### Added
+
+- Every item records where each field of its model plan came from, beside
+  the plan as `model_origins`: for each stage entry, separately for the model
+  and the effort, the source (`explicit`, `learned`, `tier`, `fallback`,
+  and `sizer`, `escalation` and `migrated`, which nothing sets yet), who
+  chose it (operator, orchestrator or daemon) and when; a
+  tiered entry also records who asked for its tier.
+  Enqueue, initiative members, update, retry, steers, pipeline switches,
+  refreshes, restack fixes, dispatch tier resolution, provider reroutes and
+  the distillation errand all record it. A steer that names the value already
+  stored still records it as explicit. `get_item` shows each entry's origin.
+  `archon status` counts, over unfinished items, the fields no writer
+  accounted for (`unattributed`, which should be zero) and the fields stored
+  before origins were recorded (`legacy_unknown`).
+- The daemon moves a model or effort again only when it filled that field
+  itself. A field a caller named, a migrated one, a legacy one and an
+  unattributed one are pins for dispatch, reroutes, quota holds and recovery.
+  A pinned tier is still resolved to a model when dispatch starts a run, and
+  moves only within that tier afterwards.
+
 ### Changed
 
+- An initiative member's plan is checked as an enqueue's is: an effort above
+  its stage's default needs a reason, given in the member's new
+  `model_reasons`.
 - **The orchestrator costs less to keep.** A stage's `info` message no
   longer wakes it: it rides with the next wake, or wakes it by itself after
   30 minutes plus the coalescing window (`trigger_coalesce_ms`), while relay,
@@ -23,11 +47,28 @@
   ("prompt outdated" and the command after an edited instructions file).
   News held for the orchestrator is kept, not dropped, while Aether refuses
   to create it. The prompt now has long multi-step work, such as report
-  pages and statistics, queued as items. Nothing migrates. The rollback is the switches: `quiet_info =
-  false`, `compaction_tokens = 0` and `idle_compact_after_minutes = 0`; a
-  threshold already sent stays with that generation until `archon
-  orchestrator restart`. An older binary is not supported on a store a
-  newer release migrated.
+  pages and statistics, queued as items. Nothing migrates. The rollback is
+  the switches: `quiet_info = false`, `compaction_tokens = 0` and
+  `idle_compact_after_minutes = 0`; a threshold already sent stays with that
+  generation until `archon orchestrator restart`. An older binary is not
+  supported on a store a newer release migrated.
+
+### Upgrading
+
+Items stored by 1.6.3 or earlier have no origins. Each of their fields reads
+as `legacy_unknown` and is treated as a pin; nothing is backfilled. Stored
+origins that cannot be read make every field of that item `unattributed`.
+Store migrations are one-way: back up `archon.db` before `archon update`.
+Downgrading the binary is not supported once a store migration of the release
+has run, because an older schema refuses a newer store. See
+[docs/upgrading.md](docs/upgrading.md#plan-origins).
+
+### Fixed
+
+- Cost reports attribute recorded delegates to the stage they worked for and
+  use each delegate's model and effort. The CLI and MCP report lead and
+  delegated spend separately, and can group by effort. Archon now records
+  delegation links for the orchestrator's helpers too.
 
 ## 1.6.3
 

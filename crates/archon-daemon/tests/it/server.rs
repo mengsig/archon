@@ -691,8 +691,10 @@ async fn a_client_of_the_last_release_decodes_graphs_and_changes_with_its_types(
     let serving = tokio::spawn(server::serve(h.ctx.clone(), listener));
     let pump = tokio::spawn(archon_daemon::handlers::changes::pump(h.ctx.clone()));
     let (owner, onto) = crate::graph::owner_and_onto(&h).await;
+    let id = archon_core::id::QueueItemId::new();
     let waiting = archon_core::queue::QueueItem {
-        id: archon_core::id::QueueItemId::new(),
+        model_plan: owner.model_plan.copy_for(&owner.id, &id, None),
+        id,
         dependencies: vec![owner.id.clone()],
         ..owner.clone()
     };

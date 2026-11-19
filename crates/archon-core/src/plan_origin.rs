@@ -427,21 +427,6 @@ impl PlannedPlan {
         };
     }
 
-    /// Whether the plan's last catalog check kept `model` though the catalog
-    /// named its `successor`: the repair saw the supersession and left it.
-    pub fn kept_superseded(
-        &self,
-        model: &crate::model::ModelRef,
-        successor: &crate::model::ModelRef,
-    ) -> bool {
-        assert_ne!(model, successor, "a successor is another model");
-        let warning = superseded_warning(model, successor);
-        match self.catalog_check.as_deref() {
-            Some(CatalogCheck::Warnings { warnings }) => warnings.contains(&warning),
-            Some(CatalogCheck::Deferred { .. }) | None => false,
-        }
-    }
-
     /// `plan` with no writer to vouch for it: every field reads as a pin and
     /// is counted as unattributed.
     pub fn unattributed(item: &QueueItemId, plan: ModelPlan) -> Self {
@@ -627,13 +612,10 @@ impl PlannedPlan {
         item: &QueueItemId,
         catalog: &crate::model_tier::ModelCatalog,
     ) -> bool {
+        // A superseded model the catalog still lists is kept: only its check warns.
         let origins = self.origins(item);
-        self.model_plan.0.iter().any(|(key, choices)| {
-            choices.iter().zip(&origins[key]).any(|(choice, origin)| {
-                catalog.check(&choice.model).is_err()
-                    || (origin.model.is_movable() && catalog.superseded_by(&choice.model).is_some())
-            })
-        })
+        debug_assert_eq!(origins.len(), self.model_plan.0.len(), "an origin per key");
+        (self.model_plan.0.values().flatten()).any(|choice| catalog.check(&choice.model).is_err())
     }
 
     /// Check every choice, allowing the caller to replace unavailable daemon choices.
@@ -684,7 +666,7 @@ impl PlannedPlan {
                 if !in_scope(key, slot) {
                     continue;
                 }
-                let model = match still_listed(catalog, &choice.model, origin) {
+                let model = match catalog.check(&choice.model) {
                     Ok(model) => model,
                     Err(error) if origin.may_replace(when) => {
                         match replacement(key, slot, choice, origin)? {
@@ -699,8 +681,7 @@ impl PlannedPlan {
                                 );
                                 model
                             }
-                            // Superseded alone, with no eligible model to move to: it still runs.
-                            None => catalog.check(&choice.model).map_err(|_| error)?,
+                            None => return Err(error),
                         }
                     }
                     Err(error) => return Err(error),
@@ -761,24 +742,6 @@ fn superseded_warning(
     successor: &crate::model::ModelRef,
 ) -> String {
     format!("{model} is superseded by {successor}")
-}
-
-/// `model` as `catalog` lists it; a choice the daemon made is listed no longer
-/// once the catalog names its successor.
-fn still_listed(
-    catalog: &crate::model_tier::ModelCatalog,
-    model: &crate::model::ModelRef,
-    origin: &EntryOrigin,
-) -> Result<crate::model::ModelRef, ArchonError> {
-    let listed = catalog.check(model)?;
-    if origin.model.is_movable()
-        && let Some(next) = catalog.superseded_by(&listed)
-    {
-        return Err(ArchonError::Invalid(format!(
-            "{listed} is superseded by {next}"
-        )));
-    }
-    Ok(listed)
 }
 
 /// `source` for every field of `plan`.

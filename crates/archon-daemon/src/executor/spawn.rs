@@ -1496,6 +1496,9 @@ pub(super) enum Issued {
     /// The agent stopped at its stage deadline could not be woken.
     NotWoken,
     CatalogRefused(String),
+    /// The kept agent cannot go on, and a fresh one runs another model: a
+    /// replacement attempt is reserved for it instead.
+    Rerouted,
 }
 
 /// Resume the slot's kept agent when there is one and it takes the message;
@@ -1549,6 +1552,10 @@ async fn resume_or_spawn(
         if spawn.deadline_wake {
             return Ok(Issued::NotWoken);
         }
+        // A fresh agent on another model is a fresh attempt, routed as one (I2).
+        if resume::moves_unkept(ctx, stage, &spawn.request).await? {
+            return Ok(Issued::Rerouted);
+        }
         save_spawn(&mut *ctx.store.lock().await, &stage.id, &spawn)?;
         match check_frozen_request(ctx, &spawn.request, stage, usize::MAX).await {
             Ok(_) => {}
@@ -1557,9 +1564,6 @@ async fn resume_or_spawn(
             }
             Err(error) => return Err(error),
         }
-    }
-    if let Some(reason) = superseded_pick(ctx, stage, &spawn.request, &checked).await? {
-        return landed_or_refused(ctx, &spawn, reason).await;
     }
     if let Some(agent) = spawn.replaces.take() {
         resume::replace(ctx, &agent).await?;
@@ -1585,41 +1589,6 @@ async fn landed_or_refused(
         return Ok(Issued::Spawned(agent));
     }
     Ok(Issued::CatalogRefused(reason))
-}
-
-/// Why the create `request` freezes for `stage` is not sent though `catalog`
-/// lists its model: that model has a successor, and the plan names it for the
-/// stage's slot no longer, or as the daemon's own pick. A listed pin replays.
-async fn superseded_pick(
-    ctx: &DaemonContext,
-    stage: &StageRun,
-    request: &SpawnRequest,
-    catalog: &archon_core::model_tier::ModelCatalog,
-) -> Result<Option<String>, ArchonError> {
-    assert_eq!(stage.state, StageState::Spawning, "a reserved attempt");
-    // The acceptance judge is chosen at reservation, never from the plan.
-    if stage.stage_id == archon_pipeline::acceptance::STAGE {
-        return Ok(None);
-    }
-    let model = catalog.canonical_alias(&request.choice.model);
-    let Some(successor) = catalog.superseded_by(model) else {
-        return Ok(None);
-    };
-    assert_ne!(model, successor, "a successor is another model");
-    let store = ctx.store.lock().await;
-    let run = store.run(&stage.run)?;
-    let item = store.item(&run.item)?;
-    let planned = item.model_plan.plan().choices_for(&stage.stage_id);
-    let Some(planned) = planned.filter(|choices| !choices.is_empty()) else {
-        return Ok(None);
-    };
-    let slot = stage.fan_index as usize % planned.len();
-    let origin = item.model_plan.origin(&item.id, &stage.stage_id, slot);
-    // A pin runs as asked; a daemon choice runs once a repair that saw the
-    // supersession kept it, for want of an eligible model to move to.
-    let decided = origin.model.is_pin() || item.model_plan.kept_superseded(model, successor);
-    let kept = catalog.canonical_alias(&planned[slot].model) == model && decided;
-    Ok((!kept).then(|| format!("model {model} is superseded by {successor}")))
 }
 
 /// Count a deadline wake's minutes from now when it waited to be asked, as for
@@ -1988,6 +1957,11 @@ async fn record(
         }
         Ok(Issued::CatalogRefused(reason)) => {
             return settle::replace_refused_model(ctx, table, stage, reason).await;
+        }
+        Ok(Issued::Rerouted) => {
+            table.spawn_errors.remove(&stage.id);
+            let reason = "its kept agent cannot go on, and quota routes a fresh one elsewhere";
+            return settle::replace_refused_model(ctx, table, stage, reason.to_owned()).await;
         }
         Ok(Issued::NotWoken) => {
             table.spawn_errors.remove(&stage.id);

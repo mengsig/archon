@@ -3,7 +3,7 @@
 
 use archon_core::error::ArchonError;
 use archon_core::id::{NotificationId, QueueItemId};
-use archon_core::model::{ModelPlan, ModelRef};
+use archon_core::model::{ModelChoice, ModelPlan, ModelRef};
 use archon_core::model_tier::ModelCatalog;
 use archon_core::notify::{FeedEntry, Notification, NotificationKind};
 use archon_core::plan_origin::TierMove;
@@ -90,7 +90,10 @@ pub(crate) fn reroute_spawns(
         return Ok(Reserve::Wait);
     }
     let read = (&routing, replaced, view.as_ref());
-    let unmoved = route_plans(ctx, store, (item, spec), plans, (read, None))?;
+    let mover = |tiers: TierScope<'_>, held: Option<&str>| {
+        move_plans(plans, (spec, tiers), (held, view.as_ref()))
+    };
+    let unmoved = route_plans(ctx, store, (item, spec), mover, (read, None))?;
     // These plans passed the quota hold above; a replacement skips it, so never ends a wait.
     if unmoved {
         note_started(store, item, plans)?;
@@ -110,33 +113,83 @@ pub(crate) fn route_replacement(
     plan: &mut SpawnPlan,
     repo: Option<&Repo>,
 ) -> Result<(), ArchonError> {
+    let resume = plan.resume.clone();
+    let fresh = (plan.stage_id.as_str(), &mut plan.choice);
+    route_fresh_choice(ctx, store, (item, spec), fresh, repo)?;
+    assert_eq!(
+        plan.resume, resume,
+        "routing leaves what the attempt is told"
+    );
+    Ok(())
+}
+
+/// Whether quota routing would move a fresh agent of `stage` off `choice`,
+/// as [`route_fresh_choice`] routes one; it reads and stores nothing.
+pub(crate) fn fresh_route_moves(
+    ctx: &DaemonContext,
+    store: &Store,
+    (item, spec): (&QueueItem, &PipelineSpec),
+    (stage, choice): (&str, &ModelChoice),
+    repo: Option<&Repo>,
+) -> bool {
     assert!(
-        spec.file.stages.iter().any(|s| s.id == plan.stage_id),
-        "the plan is a stage of the run's pipeline"
+        spec.file.stages.iter().any(|s| s.id == stage),
+        "the choice is a stage of the run's pipeline"
+    );
+    let view = super::view(ctx);
+    let Some((weights, policy, catalog)) = quota_routing(ctx, store, item, repo, view.as_ref())
+    else {
+        return false;
+    };
+    let quota = (Some(&weights), view.as_ref());
+    let held = knobs::item_provider(quota, &catalog, &policy, ItemRoute::new(item));
+    let route = ItemRoute {
+        id: &item.id,
+        held: held.as_deref(),
+    }
+    .by(quota.0, quota.1);
+    let tiers = TierScope::new(&ctx.config, &policy, &catalog).routed(route);
+    let mut fresh = choice.clone();
+    let moved = move_choice(
+        (stage, &mut fresh),
+        (spec, tiers),
+        (held.as_deref(), quota.1),
+    );
+    debug_assert_eq!(
+        moved.is_some(),
+        fresh != *choice,
+        "a move changes the choice"
+    );
+    moved.is_some()
+}
+
+/// Route the `choice` a fresh agent of `stage` is created on by quota, as a
+/// cold replacement is: it never waits, and the item is stored when it moved.
+fn route_fresh_choice(
+    ctx: &DaemonContext,
+    store: &mut Store,
+    (item, spec): (&mut QueueItem, &PipelineSpec),
+    (stage, choice): (&str, &mut ModelChoice),
+    repo: Option<&Repo>,
+) -> Result<(), ArchonError> {
+    assert!(
+        spec.file.stages.iter().any(|s| s.id == stage),
+        "the choice is a stage of the run's pipeline"
     );
     let view = super::view(ctx);
     let Some(routing) = quota_routing(ctx, store, item, repo, view.as_ref()) else {
         return Ok(());
     };
-    let mut fresh = SpawnPlan {
-        resume: None,
-        ..plan.clone()
-    };
+    let effort = choice.effort;
     // A pending attempt still waits behind this note: the replacement skips that hold.
     let waiting = (item.provider_switch.clone()).filter(|note| note.contains(WAITS_NOTE));
-    let plans = std::slice::from_mut(&mut fresh);
-    route_plans(
-        ctx,
-        store,
-        (item, spec),
-        plans,
-        ((&routing, None, view.as_ref()), waiting.as_deref()),
-    )?;
-    assert_eq!(
-        fresh.choice.effort, plan.choice.effort,
-        "routing moves no effort"
-    );
-    plan.choice = fresh.choice;
+    let mover = |tiers: TierScope<'_>, held: Option<&str>| {
+        let moved = move_choice((stage, &mut *choice), (spec, tiers), (held, view.as_ref()));
+        moved.into_iter().collect()
+    };
+    let read = (&routing, None, view.as_ref());
+    route_plans(ctx, store, (item, spec), mover, (read, waiting.as_deref()))?;
+    assert_eq!(choice.effort, effort, "routing moves no effort");
     Ok(())
 }
 
@@ -156,7 +209,7 @@ fn route_plans(
     ctx: &DaemonContext,
     store: &mut Store,
     (item, spec): (&mut QueueItem, &PipelineSpec),
-    plans: &mut [SpawnPlan],
+    mover: impl FnOnce(TierScope<'_>, Option<&str>) -> Vec<Moved>,
     (((weights, policy, catalog), replaced, view), keep): (RoutingRead<'_>, Option<&str>),
 ) -> Result<bool, ArchonError> {
     let quota = (Some(weights), view);
@@ -169,7 +222,7 @@ fn route_plans(
     .by(quota.0, quota.1);
     let route = route.expect("weights route the item");
     let tiers = TierScope::new(&ctx.config, policy, catalog).routed(Some(route));
-    let moved = move_plans(plans, (spec, tiers), (held.as_deref(), view));
+    let moved = mover(tiers, held.as_deref());
     if moved.is_empty() && item.routed_provider == held {
         note_repair(ctx, store, item, replaced, view)?;
         return Ok(true);
@@ -613,41 +666,54 @@ fn move_plans(
     (spec, tiers): (&PipelineSpec, TierScope<'_>),
     (held, view): (Option<&str>, Option<&QuotaView>),
 ) -> Vec<Moved> {
-    let mut moved = Vec::new();
-    for plan in plans.iter_mut() {
-        let Some(tier) = plan.choice.tier.as_ref().filter(|t| t.provider.is_none()) else {
-            continue;
-        };
-        let on = plan.choice.model.provider.as_str();
-        let spent = view
-            .and_then(|v| v.get(on))
-            .is_some_and(Headroom::exhausted);
-        if plan.resume.is_some() || (!spent && held.is_none_or(|h| h == on)) {
-            continue;
-        }
-        let floor = spec.tier_floor(&plan.stage_id, tier.requested);
-        let (model, tier) = match tiers.resolve((tier.requested, floor), None) {
-            Ok(resolved) => resolved,
-            Err(error) => {
-                tracing::warn!(stage = %plan.stage_id, %error, "no provider to move a stage to; it keeps its own");
-                continue;
-            }
-        };
-        if model.provider == on {
-            continue;
-        }
-        tracing::info!(stage = %plan.stage_id, from = %plan.choice.model, to = %model, "moved an unstarted stage to the item's provider");
-        let from = std::mem::replace(&mut plan.choice.model, model);
-        debug_assert!(tier.resolved >= floor, "never below the floor");
-        plan.choice.tier = Some(tier);
-        moved.push(Moved {
-            stage: plan.stage_id.clone(),
-            from,
-            to: plan.choice.model.clone(),
-            dropped: None,
-        });
+    let fresh = plans.iter_mut().filter(|plan| plan.resume.is_none());
+    let moves = fresh.filter_map(|plan| {
+        move_choice(
+            (&plan.stage_id, &mut plan.choice),
+            (spec, tiers),
+            (held, view),
+        )
+    });
+    moves.collect()
+}
+
+/// [`move_plans`] for the `choice` of one fresh agent of `stage`.
+fn move_choice(
+    (stage, choice): (&str, &mut ModelChoice),
+    (spec, tiers): (&PipelineSpec, TierScope<'_>),
+    (held, view): (Option<&str>, Option<&QuotaView>),
+) -> Option<Moved> {
+    let tier = choice.tier.as_ref().filter(|t| t.provider.is_none())?;
+    let on = choice.model.provider.as_str();
+    let spent = view
+        .and_then(|v| v.get(on))
+        .is_some_and(Headroom::exhausted);
+    if !spent && held.is_none_or(|h| h == on) {
+        return None;
     }
-    moved
+    let floor = spec.tier_floor(stage, tier.requested);
+    let (model, tier) = match tiers.resolve((tier.requested, floor), None) {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            tracing::warn!(%stage, %error, "no provider to move a stage to; it keeps its own");
+            return None;
+        }
+    };
+    if model.provider == on {
+        return None;
+    }
+    tracing::info!(%stage, from = %choice.model, to = %model, "moved an unstarted stage to the item's provider");
+    let from = std::mem::replace(&mut choice.model, model);
+    debug_assert!(tier.resolved >= floor, "never below the floor");
+    choice.tier = Some(tier);
+    let to = choice.model.clone();
+    assert_ne!(from, to, "a move changes the model");
+    Some(Moved {
+        stage: stage.to_owned(),
+        from,
+        to,
+        dropped: None,
+    })
 }
 
 /// Resolve `item`'s stored tiered choices again, so its later stages and a

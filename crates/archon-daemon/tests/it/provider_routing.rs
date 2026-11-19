@@ -8,7 +8,7 @@ use crate::common;
 
 use archon_core::Timestamp;
 use archon_core::config::Config;
-use archon_core::model::{ModelPlan, ModelPlanDraft};
+use archon_core::model::{ModelPlan, ModelPlanDraft, ModelRef};
 use archon_core::model_tier::{CatalogModel, ModelCatalog, Tier};
 use archon_core::notify::NotificationKind;
 use archon_core::plan_origin::{Authority, PlanSource, PlannedPlan};
@@ -964,10 +964,21 @@ async fn a_tier_the_catalog_repair_moved_is_still_noted_at_dispatch() {
     }
 }
 
+/// How [`list_beside`] lists `old` beside its new model `next`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Beside {
+    /// `next` is the default of `old`'s tier.
+    Default,
+    /// `old` is still listed, superseded by `next`.
+    Superseded,
+    /// `old` is retired with `next` its successor, over a connection that
+    /// reads Aether's retired list.
+    Retired,
+}
+
 /// `catalog()` and a new model `next` of `old`'s tier, as Aether lists them
-/// and archond holds them: `old` superseded by `next` when `superseded`,
-/// else `next` the default of its tier.
-async fn list_beside(h: &Harness, (old, next): (&str, &str), superseded: bool) {
+/// and archond holds them, `old` listed beside it as `beside` says.
+async fn list_beside(h: &Harness, (old, next): (&str, &str), beside: Beside) {
     use serde_json::json;
     let old: archon_core::model::ModelRef = old.parse().unwrap();
     let next: archon_core::model::ModelRef = next.parse().unwrap();
@@ -978,8 +989,12 @@ async fn list_beside(h: &Harness, (old, next): (&str, &str), superseded: bool) {
     listed.push(CatalogModel {
         model: next.clone(),
         tier,
-        is_default: !superseded,
+        is_default: beside == Beside::Default,
     });
+    if beside == Beside::Retired {
+        listed.retain(|e| e.model != old);
+    }
+    let superseded = beside == Beside::Superseded;
     let rows: Vec<_> = (listed.iter())
         .map(|e| {
             let successor = held.superseded_by(&e.model).map(|m| &m.model);
@@ -993,16 +1008,45 @@ async fn list_beside(h: &Harness, (old, next): (&str, &str), superseded: bool) {
     let reply = archon_aether::fake::Scripted::reply("models", json!(rows));
     h.catalog_server.set_default("list_models", reply);
     let was: Vec<_> = (held.models().iter())
+        .filter(|e| e.model != old || superseded)
         .filter_map(|e| Some((e.model.clone(), held.superseded_by(&e.model)?.clone())))
         .collect();
     held = ModelCatalog::new(listed);
     for (model, successor) in was {
         held.add_superseded(model, successor);
     }
-    if superseded {
-        held.add_superseded(old, next);
+    match beside {
+        Beside::Default => {}
+        Beside::Superseded => held.add_superseded(old, next),
+        Beside::Retired => {
+            retire_on_server(h, (&old, &next)).await;
+            held.add_retired(old, Some(next));
+        }
     }
     h.ctx.store.lock().await.set_model_catalog(held);
+}
+
+/// Have the catalog server report `old` retired for `next`, and connect to it
+/// again so the daemon reads its retired list as well.
+async fn retire_on_server(h: &Harness, (old, next): (&ModelRef, &ModelRef)) {
+    let retired = serde_json::json!([{"model": old, "successor": next.model}]);
+    h.catalog_server.set_features(vec!["retired_models".into()]);
+    let reply = archon_aether::fake::Scripted::reply("retired_models", retired);
+    h.catalog_server.set_default("list_retired_models", reply);
+    let client = archon_aether::AetherClient::connect(&h.catalog_server.endpoint())
+        .await
+        .expect("catalog connection");
+    assert!(
+        client
+            .welcome()
+            .features
+            .iter()
+            .any(|f| f == "retired_models")
+    );
+    h.ctx
+        .aether
+        .replace(Some(std::sync::Arc::new(client)))
+        .unwrap();
 }
 
 /// No weights and no exploring: a stage a plan leaves out is filled with the
@@ -1031,29 +1075,75 @@ async fn with_untiered_fallback(h: &Harness, fallback: &str) -> (QueueItem, Stri
     (item.clone(), filled.model.to_string())
 }
 
-/// An untiered fallback the catalog superseded moves for that reason: the
+/// An untiered fallback the catalog retired moves for that reason: the
 /// note never says a tier resolved, as the stage has none.
 #[tokio::test]
-async fn a_superseded_fallback_the_repair_moved_is_noted_as_the_catalog_s_move() {
+async fn a_retired_fallback_the_repair_moved_is_noted_as_the_catalog_s_move() {
     let h = harness(untiered_fallback()).await;
     let (item, old) = with_untiered_fallback(&h, "implement").await;
     let next = format!("{old}-next");
-    list_beside(&h, (&old, &next), true).await;
+    list_beside(&h, (&old, &next), Beside::Retired).await;
     h.dispatch().await;
 
     assert_eq!(spawned_on(&h, &item, "implement").await, [next.as_str()]);
     let told = changed_models(&h, &item).await;
     let moved = format!(
-        "stage implement moved from {old} to {next}: {old} is superseded by {next}; \
+        "stage implement moved from {old} to {next}: {old} is retired; \
          stage implement now runs on {next} instead of {old}"
     );
     assert_eq!(told, moved, "the only move, for the catalog's reason");
 }
 
-/// A reserved create of the daemon's own pick, superseded before it is sent,
-/// is never created on the old model: the repair moves it to the successor.
+/// A daemon pick and a pin the catalog supersedes but still lists keep their
+/// models (I3): no repair rewrites them, and the stage runs as planned.
 #[tokio::test]
-async fn a_daemon_pick_superseded_before_its_reserved_create_is_sent_moves_on() {
+async fn a_listed_superseded_pick_and_pin_are_kept() {
+    let h = harness(untiered_fallback()).await;
+    let pins = serde_json::json!({
+        "review": [{"model": "claude-code/opus"}, {"model": "claude-code/sonnet"}],
+        "ship": [{"model": "claude-code/haiku"}],
+    });
+    let item = enqueue(
+        &h,
+        ROUTED,
+        "superseded",
+        serde_json::from_value(pins).unwrap(),
+    )
+    .await;
+    let old = item.model_plan.0["implement"][0].model.to_string();
+    assert_ne!(old, "claude-code/opus", "the pick is not the pin");
+    list_beside(&h, (&old, &format!("{old}-next")), Beside::Superseded).await;
+    list_beside(
+        &h,
+        ("claude-code/opus", "claude-code/opus-next"),
+        Beside::Superseded,
+    )
+    .await;
+    h.dispatch().await;
+
+    assert_eq!(spawned_on(&h, &item, "implement").await, [old.as_str()]);
+    let stored = h.item(&item.id).await.model_plan;
+    assert_eq!(
+        stored.0["implement"][0].model.to_string(),
+        old,
+        "the pick is kept"
+    );
+    assert_eq!(
+        stored.0["review"][0].model.to_string(),
+        "claude-code/opus",
+        "the pin is kept"
+    );
+    let notices = h.notices(NotificationKind::Progress).await;
+    assert!(
+        !notices.iter().any(|n| n.contains("changed models")),
+        "{notices:?}"
+    );
+}
+
+/// A reserved create of the daemon's own pick, superseded before it is sent,
+/// is sent again on that model: a listed superseded model is kept (I3).
+#[tokio::test]
+async fn a_daemon_pick_superseded_before_its_reserved_create_is_sent_is_kept() {
     let h = harness(untiered_fallback()).await;
     let busy = archon_core::error::ArchonError::Unavailable("aetherd busy".into());
     h.backend.fail_next(busy);
@@ -1068,18 +1158,18 @@ async fn a_daemon_pick_superseded_before_its_reserved_create_is_sent_moves_on() 
     };
     assert_eq!(sent(&h), [old.as_str()], "the create that failed");
     let next = format!("{old}-next");
-    list_beside(&h, (&old, &next), true).await;
+    list_beside(&h, (&old, &next), Beside::Superseded).await;
     h.dispatch().await;
     h.dispatch().await;
 
     assert_eq!(
         sent(&h),
-        [old.as_str(), next.as_str()],
-        "never sent again on {old}"
+        [old.as_str(), old.as_str()],
+        "sent again on {old}"
     );
     let running = h.running().await;
     let models: Vec<_> = running.iter().map(|s| s.choice.model.to_string()).collect();
-    assert_eq!(models, [next.as_str()], "{:?}", h.state(&item.id).await);
+    assert_eq!(models, [old.as_str()], "{:?}", h.state(&item.id).await);
 }
 
 /// A plan without any tier is repaired and noted too, though dispatch has no
@@ -1097,13 +1187,13 @@ async fn a_repair_of_a_plan_without_tiers_is_noted_at_dispatch() {
     assert!(choices.iter().all(|c| c.tier.is_none()), "{choices:?}");
     let old = item.model_plan.0["implement"][0].model.to_string();
     let next = format!("{old}-next");
-    list_beside(&h, (&old, &next), true).await;
+    list_beside(&h, (&old, &next), Beside::Retired).await;
     h.dispatch().await;
 
     assert_eq!(spawned_on(&h, &item, "implement").await, [next.as_str()]);
     let told = changed_models(&h, &item).await;
     let moved = format!(
-        "stage implement moved from {old} to {next}: {old} is superseded by {next}; \
+        "stage implement moved from {old} to {next}: {old} is retired; \
          stage implement now runs on {next} instead of {old}"
     );
     assert_eq!(told, moved, "the only move, for the catalog's reason");
@@ -1117,7 +1207,7 @@ async fn a_tier_dispatch_moved_with_no_repair_keeps_the_tier_s_reason() {
     let item = enqueue(&h, ROUTED, "a tier that moves", tier_plan()).await;
     let old = item.model_plan.0["implement"][0].model.to_string();
     let next = format!("{old}-next");
-    list_beside(&h, (&old, &next), false).await;
+    list_beside(&h, (&old, &next), Beside::Default).await;
     h.dispatch().await;
 
     assert_eq!(spawned_on(&h, &item, "implement").await, [next.as_str()]);
@@ -1138,15 +1228,15 @@ async fn a_catalog_repair_beside_a_tier_move_is_told_first_for_its_own_reason() 
     let (item, fallback) = with_untiered_fallback(&h, "ship").await;
     let old = item.model_plan.0["implement"][0].model.to_string();
     let (next, successor) = (format!("{old}-next"), format!("{fallback}-next"));
-    list_beside(&h, (&old, &next), false).await;
-    list_beside(&h, (&fallback, &successor), true).await;
+    list_beside(&h, (&old, &next), Beside::Default).await;
+    list_beside(&h, (&fallback, &successor), Beside::Retired).await;
     h.dispatch().await;
 
     assert_eq!(spawned_on(&h, &item, "implement").await, [next.as_str()]);
     let told = changed_models(&h, &item).await;
     let moved = format!(
         "stage ship moved from {fallback} to {successor}: \
-         {fallback} is superseded by {successor}; \
+         {fallback} is retired; \
          stage ship now runs on {successor} instead of {fallback}; \
          stage implement now runs on {next} instead of {old}"
     );
@@ -1569,7 +1659,7 @@ async fn a_recovered_run_from_before_origins_resumes_its_kept_tiered_implementer
     assert_eq!(h.backend.requests().len(), spawned, "nothing respawned");
 }
 
-/// A retry the catalog repair moves off a superseded daemon pick is noted on
+/// A retry the catalog repair moves off a retired daemon pick is noted on
 /// the item and in its feed, as a move the repair makes at dispatch is.
 #[tokio::test]
 async fn a_retry_the_catalog_repair_moved_is_noted() {
@@ -1578,7 +1668,7 @@ async fn a_retry_the_catalog_repair_moved_is_noted() {
     h.dispatch().await;
     assert_eq!(spawned_on(&h, &item, "implement").await, [old.as_str()]);
     let next = format!("{old}-next");
-    list_beside(&h, (&old, &next), true).await;
+    list_beside(&h, (&old, &next), Beside::Retired).await;
     h.settle_running(|_| archon_core::run::StageOutcome::Failed {
         error: "aetherd lost the agent".into(),
         infra: true,
@@ -1591,22 +1681,21 @@ async fn a_retry_the_catalog_repair_moved_is_noted() {
         [old.as_str(), next.as_str()]
     );
     let told = changed_models(&h, &item).await;
-    let moved =
-        format!("stage implement moved from {old} to {next}: {old} is superseded by {next}");
+    let moved = format!("stage implement moved from {old} to {next}: {old} is retired");
     assert!(told.starts_with(&moved), "{told}");
 }
 
-/// A retry the run still plans on a superseded model, while the stored plan
-/// already names another for its slot, runs that one: its create is never
-/// refused over and over for the stale choice.
+/// A retry the run still plans on a superseded model the catalog lists,
+/// while the stored plan names another for its slot, keeps its model (I3):
+/// its create is sent once, never refused over and over.
 #[tokio::test]
-async fn a_retry_on_a_superseded_model_runs_the_stored_slots_model() {
+async fn a_retry_on_a_listed_superseded_model_keeps_it() {
     let h = harness(untiered_fallback()).await;
     let (item, old) = with_untiered_fallback(&h, "implement").await;
     h.dispatch().await;
     assert_eq!(spawned_on(&h, &item, "implement").await, [old.as_str()]);
     let next = format!("{old}-next");
-    list_beside(&h, (&old, &next), true).await;
+    list_beside(&h, (&old, &next), Beside::Superseded).await;
     // The stored slot moved on; the run's own copy of the plan did not.
     {
         let mut store = h.ctx.store.lock().await;
@@ -1640,19 +1729,14 @@ async fn a_retry_on_a_superseded_model_runs_the_stored_slots_model() {
     let attempts = spawned_on(&h, &item, "implement").await;
     assert_eq!(
         attempts,
-        [old.as_str(), next.as_str()],
-        "one retry, on {next}"
+        [old.as_str(), old.as_str()],
+        "one retry, on {old}: {:?}",
+        h.state(&item.id).await
     );
     let running: Vec<_> = (h.running().await.into_iter())
         .map(|s| s.choice.model.to_string())
         .collect();
-    assert_eq!(running, [next.as_str()]);
-    let notices = h.notices(NotificationKind::Progress).await;
-    let told = notices
-        .iter()
-        .find(|text| text.contains("aetherd lost the agent"));
-    let told = told.expect("the retry is told");
-    assert!(!told.contains("in the same agent"), "a fresh agent: {told}");
+    assert_eq!(running, [old.as_str()]);
 }
 
 /// A kept implementer takes its review's findings though a quota move took the
@@ -1695,6 +1779,63 @@ async fn a_kept_implementer_takes_its_findings_after_a_quota_move() {
     }
 }
 
+/// A kept implementer that cannot go on after a quota move, for findings or
+/// on an infrastructure wake Aether refuses, is replaced by a fresh agent
+/// routed as any fresh stage is (I2): on the provider that has quota.
+#[tokio::test]
+async fn a_kept_implementer_that_cannot_go_on_is_replaced_on_the_routed_provider() {
+    for findings in [true, false] {
+        let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+        claude_then_codex(&h, 90, 0);
+        let item = enqueue(&h, ROUTED, "replaced after a quota move", tier_plan()).await;
+        h.dispatch().await;
+        let implementers = |stages: Vec<archon_core::run::StageRun>| -> Vec<_> {
+            let of_implement = stages.into_iter().filter(|s| s.stage_id == "implement");
+            of_implement.map(|s| (s.choice, s.aether_agent)).collect()
+        };
+        let first = implementers(h.stages(&item.id).await);
+        assert_eq!(first[0].0.model.provider, "claude-code", "{first:?}");
+        let agent = first[0].1.clone().expect("the implementer's agent");
+        if findings {
+            h.settle_running(|_| completed("implemented")).await;
+            h.dispatch().await;
+            claude_then_codex(&h, 10, 90);
+            h.backend.kill(&agent);
+            let failed = archon_core::run::StageOutcome::Completed {
+                summary: "the greeting is never tested\nVERDICT: fail".into(),
+                structured: Some(serde_json::json!({"verdict": "fail", "findings": []})),
+            };
+            h.settle_running(|_| failed.clone()).await;
+        } else {
+            claude_then_codex(&h, 10, 90);
+            h.settle_running(|_| archon_core::run::StageOutcome::Failed {
+                error: "aetherd lost the agent".into(),
+                infra: true,
+            })
+            .await;
+        }
+        h.dispatch().await;
+        h.dispatch().await;
+
+        let case = format!("findings: {findings}");
+        let again = implementers(h.stages(&item.id).await);
+        // The attempt reserved for the kept agent creates none: its replacement does.
+        assert_eq!(again.len(), 3, "{case}: {again:?}");
+        assert_eq!(
+            again[1].1, None,
+            "{case}: nothing created on the kept model"
+        );
+        let (routed, fresh) = &again[2];
+        assert_eq!(routed.model.provider, "codex", "{case}: {again:?}");
+        assert!(
+            fresh.is_some() && fresh.as_ref() != Some(&agent),
+            "{case}: a fresh agent"
+        );
+        let created = h.backend.requests().pop().expect("the fresh implementer");
+        assert_eq!(&created.choice, routed, "{case}: created as recorded");
+    }
+}
+
 /// A pin superseded while the run waits for it, though Aether still lists it,
 /// leaves the stored models as they were: its reviewers start on their pins.
 #[tokio::test]
@@ -1717,7 +1858,12 @@ async fn a_repair_that_moves_no_model_reserves_the_pending_stages() {
         spawned_on(&h, &item, "implement").await,
         ["claude-code/sonnet"]
     );
-    list_beside(&h, ("claude-code/opus", "claude-code/opus-next"), true).await;
+    list_beside(
+        &h,
+        ("claude-code/opus", "claude-code/opus-next"),
+        Beside::Superseded,
+    )
+    .await;
     h.settle_running(|_| completed("implemented")).await;
     h.dispatch().await;
 
@@ -2020,7 +2166,7 @@ async fn a_superseded_daemon_choice_with_no_successor_allowed_runs() {
         (PlanSource::Fallback, Authority::Daemon)
     );
     assert_eq!(item.model_plan.0["implement"][0].model.to_string(), old);
-    list_beside(&h, (&old, &next), true).await;
+    list_beside(&h, (&old, &next), Beside::Superseded).await;
     // A create refused on the kept model, reserved again, would never end.
     for _ in 0..2 {
         let bounded = tokio::time::timeout(std::time::Duration::from_secs(10), h.dispatch());

@@ -791,10 +791,10 @@ fn migrated_entries_remain_daemon_owned_and_can_move_again() {
     assert_eq!(planned.0["build"][0].effort, Effort::High);
 }
 
-/// A daemon choice the catalog supersedes yet still lists keeps running when
-/// no eligible model replaces it; a retired one with none still refuses.
+/// A daemon choice the catalog supersedes yet still lists keeps its model
+/// even with a successor at hand (I3); a retired one with none still refuses.
 #[test]
-fn a_superseded_daemon_choice_with_no_replacement_keeps_its_model() {
+fn a_listed_superseded_daemon_choice_is_kept_by_the_repair() {
     use crate::model_tier::{CatalogModel, ModelCatalog};
     let id = QueueItemId::new();
     let mut writer = PlanWriter::new(&id, crate::now());
@@ -810,13 +810,24 @@ fn a_superseded_daemon_choice_with_no_replacement_keeps_its_model() {
     };
     let mut listed = ModelCatalog::new(vec![model("p/old"), model("p/next")]);
     listed.add_superseded("p/old".parse().unwrap(), "p/next".parse().unwrap());
-    assert!(planned.needs_catalog_repair(&id, &listed));
+    assert!(!planned.needs_catalog_repair(&id, &listed));
     let before = planned.clone();
+    let successor = |_: &str, _: usize, choice: &crate::model::ModelChoice, _: &EntryOrigin| {
+        Ok(listed
+            .superseded_by(&choice.model)
+            .cloned()
+            .map(|m| (m, None)))
+    };
     planned
-        .repair_catalog_with(&id, &listed, crate::now(), |_, _, _, _| Ok(None))
-        .expect("a listed model with nothing to move to still runs");
+        .repair_catalog_with(&id, &listed, crate::now(), successor)
+        .expect("a listed superseded model still runs");
     assert_eq!(planned.0["report"][0].model.to_string(), "p/old");
     assert_eq!(planned.0, before.0, "nothing moved");
+    planned.repair_catalog(&id, &listed, crate::now()).unwrap();
+    assert_eq!(
+        planned.0, before.0,
+        "nor to the successor the catalog names"
+    );
 
     let mut retired = ModelCatalog::new(vec![model("p/next")]);
     retired.add_retired("p/old".parse().unwrap(), None);

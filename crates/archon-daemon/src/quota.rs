@@ -6,8 +6,8 @@ mod reroute;
 
 pub(crate) use holds::{item_hold, spawn_hold};
 pub(crate) use reroute::{
-    Moved, Reserve, catalog_moves, note_waits, notice_baseline, record_moves, reroute_spawns,
-    route_replacement, switch_note,
+    Moved, Reserve, catalog_moves, fresh_route_moves, note_waits, notice_baseline, record_moves,
+    reroute_spawns, route_replacement, switch_note,
 };
 
 use std::collections::BTreeMap;

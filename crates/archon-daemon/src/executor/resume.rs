@@ -151,7 +151,7 @@ pub(super) fn kept_model(
 
 /// `plan` on the model and tier its agent `ran` (I1), keeping the plan's
 /// effort as a quota follow does, when the daemon alone moved the slot off
-/// that model and the catalog lists it unsuperseded (I3). A steer that pinned
+/// that model and the catalog lists it (I3). A steer that pinned
 /// another model, or an unusable one, leaves the plan as it is.
 pub(super) fn held_on_agent(
     item: &archon_core::queue::QueueItem,
@@ -166,12 +166,9 @@ pub(super) fn held_on_agent(
         .model_plan
         .choices_for(&plan.stage_id)
         .map_or(0, <[_]>::len);
-    // An unknown, retired or superseded model is the catalog repair's to replace:
+    // An unknown or retired model is the catalog repair's to replace:
     // a fresh agent is never created on one, should the agent not go on.
     let model = catalog.check(&ran.model).ok()?;
-    if catalog.superseded_by(&model).is_some() {
-        return None;
-    }
     if model == plan.choice.model || slots == 0 {
         return None;
     }
@@ -185,6 +182,68 @@ pub(super) fn held_on_agent(
     assert_ne!(held.model, plan.choice.model, "only a moved slot is held");
     assert_eq!(held.effort, plan.choice.effort, "a hold keeps the effort");
     origin.model.is_movable().then_some(held)
+}
+
+/// Whether the fresh agent that replaces a kept one which would not go on
+/// needs another model than the reserved `request` names (I2): the stored
+/// plan's slot, when only the daemon held it on the kept agent's model, or
+/// quota routing would move it. Such an agent is a fresh attempt of its own.
+pub(super) async fn moves_unkept(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    request: &SpawnRequest,
+) -> Result<bool, ArchonError> {
+    assert_eq!(stage.state, StageState::Spawning, "a reserved attempt");
+    if stage.stage_id == archon_pipeline::acceptance::STAGE {
+        return Ok(false);
+    }
+    let table = ctx.runs.lock().await;
+    let Some(spec) = table.drivers.get(&stage.run).map(|d| d.spec().clone()) else {
+        return Ok(false);
+    };
+    let store = ctx.store.lock().await;
+    let item = store.item(&store.run(&stage.run)?.item)?;
+    if unheld(&item, stage, &request.choice) != request.choice {
+        return Ok(true);
+    }
+    let repo = (item.repo.as_ref())
+        .map(|id| store.repo(&crate::resolve::repo_ref(id)))
+        .transpose()?;
+    let fresh = (stage.stage_id.as_str(), &request.choice);
+    Ok(crate::quota::fresh_route_moves(
+        ctx,
+        &store,
+        (&item, &spec),
+        fresh,
+        repo.as_ref(),
+    ))
+}
+
+/// The choice a fresh agent of `stage` starts from: the stored plan's slot
+/// when the daemon alone moved it off the model `held` keeps, else `held`.
+fn unheld(
+    item: &archon_core::queue::QueueItem,
+    stage: &StageRun,
+    held: &ModelChoice,
+) -> ModelChoice {
+    let slots = item
+        .model_plan
+        .choices_for(&stage.stage_id)
+        .unwrap_or_default();
+    if slots.is_empty() {
+        return held.clone();
+    }
+    let slot = stage.fan_index as usize % slots.len();
+    let origin = item.model_plan.origin(&item.id, &stage.stage_id, slot);
+    if slots[slot].model == held.model || !origin.model.is_movable() {
+        return held.clone();
+    }
+    let stored = ModelChoice {
+        effort: held.effort,
+        ..slots[slot].clone()
+    };
+    assert_eq!(stored.effort, held.effort, "a fresh agent keeps the effort");
+    stored
 }
 
 /// Record that the agent of resumed attempt `stage` was told `text` after

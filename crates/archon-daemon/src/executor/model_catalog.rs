@@ -271,11 +271,11 @@ pub(super) fn retry_plan(
     Ok(plan)
 }
 
-/// Move a retry still on a superseded model onto the model the stored plan
-/// names for its slot instead, as its create would be refused for.
+/// Move a retry still on an unknown or retired model onto the model the
+/// stored plan names for its slot instead; a listed superseded model is kept.
 fn onto_stored_slot(plan: &mut SpawnPlan, stored: &ModelPlan, catalog: &ModelCatalog) {
     if plan.stage_id == archon_pipeline::acceptance::STAGE
-        || catalog.superseded_by(&plan.choice.model).is_none()
+        || catalog.check(&plan.choice.model).is_ok()
     {
         return;
     }

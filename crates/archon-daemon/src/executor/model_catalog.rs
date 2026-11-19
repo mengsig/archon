@@ -132,7 +132,6 @@ impl Replacement<'_> {
         let catalog = self.tiers.catalog;
         self.tiers.policy.permits_model(model)
             && catalog.check(model).is_ok()
-            && catalog.superseded_by(model).is_none()
             && catalog
                 .tier_of(model)
                 .is_none_or(|tier| tier <= self.max_tier)
@@ -614,5 +613,43 @@ mod tests {
             kept.choice.model, old.model,
             "a kept alias is sent canonical"
         );
+    }
+
+    /// A retired untiered choice moves to its listed successor even when the
+    /// catalog marks that successor superseded by a model the policy denies.
+    #[test]
+    fn an_untiered_repair_takes_a_listed_superseded_successor() {
+        let mut catalog = ModelCatalog::new(
+            ["p/old", "p/middle", "p/new"]
+                .map(|id| archon_core::model_tier::CatalogModel {
+                    model: id.parse().unwrap(),
+                    tier: None,
+                    is_default: false,
+                })
+                .to_vec(),
+        );
+        catalog.add_retired("p/old".parse().unwrap(), Some("p/middle".parse().unwrap()));
+        catalog.add_superseded("p/middle".parse().unwrap(), "p/new".parse().unwrap());
+        let config = archon_core::config::Config::default();
+        let policy =
+            archon_core::policy::ModelPolicy::from_lists(&[], &["p/new".parse().unwrap()], None);
+        let spec = archon_pipeline::Catalog::builtin()
+            .get("direct")
+            .expect("built-in")
+            .clone();
+        let learned = ModelPlan::default();
+        let selection = Replacement {
+            tiers: crate::knobs::TierScope::new(&config, &policy, &catalog),
+            spec: &spec,
+            learned: &learned,
+            fallback: None,
+            max_tier: Tier::Frontier,
+        };
+        let (model, tier) = selection
+            .choose("implement", 0, &choice("p/old"))
+            .unwrap()
+            .expect("the listed successor replaces it");
+        assert_eq!(model.to_string(), "p/middle");
+        assert!(tier.is_none(), "an untiered choice stays untiered");
     }
 }

@@ -204,7 +204,7 @@ pub(in crate::executor) fn select_model(
 /// The model apart from every builder that prefers another vendor and then
 /// the strongest tier; with none, the strongest permitted one unless `strict`.
 /// Listed models `judges` accepts. A superseded one is dropped only for a
-/// successor that judges too, and as independently of every builder.
+/// same-provider successor that judges too, and as independently of every builder.
 fn judge_pool<'c>(
     catalog: &'c archon_core::model_tier::ModelCatalog,
     judges: impl Fn(&ModelRef) -> bool,
@@ -217,7 +217,9 @@ fn judge_pool<'c>(
         .filter(|m| {
             let independent = !builders.contains(&m.model);
             !catalog.replaced_for(&m.model, |s| {
-                judges(&s.model) && (!independent || !builders.contains(&s.model))
+                s.model.provider == m.model.provider
+                    && judges(&s.model)
+                    && (!independent || !builders.contains(&s.model))
             })
         })
         .collect();
@@ -521,6 +523,24 @@ mod tests {
             names(&pool),
             ["claude-code/new"],
             "a judging successor replaces it"
+        );
+    }
+
+    #[test]
+    fn an_other_vendor_judge_is_not_replaced_by_a_cross_provider_successor() {
+        let mut catalog = listed(&["codex/build", "claude-code/old", "codex/new"]);
+        catalog.add_superseded(
+            "claude-code/old".parse().unwrap(),
+            "codex/new".parse().unwrap(),
+        );
+        let builders: Vec<ModelRef> = vec!["codex/build".parse().unwrap()];
+        let pool = judge_pool(&catalog, |_| true, &builders);
+        assert!(names(&pool).contains(&"claude-code/old".to_owned()));
+        let model = judge_model(&pool, &builders, false, true).unwrap();
+        assert_eq!(
+            model.to_string(),
+            "claude-code/old",
+            "the other vendor judges"
         );
     }
 }

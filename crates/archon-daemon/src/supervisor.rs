@@ -94,6 +94,9 @@ const HOST_CONTEXT_KEY: &str = "orchestrator_host_context";
 /// `kv`: the [`FrozenThreshold`] of the generation's creation, written before
 /// its first request, so every retry under its key sends the same one.
 const COMPACTION_TOKENS_KEY: &str = "orchestrator_compaction_tokens";
+/// `kv`: the generation this build allocated whose creation key no request
+/// has used yet. Absent for a generation an older build may have sent.
+const UNSENT_GENERATION_KEY: &str = "orchestrator_unsent_generation";
 /// Set once the GitHub watcher is wanted; never cleared by archond.
 const GITHUB_WANTED_KEY: &str = "orchestrator_github";
 
@@ -1054,17 +1057,21 @@ async fn replace_generation(
 }
 
 /// One transaction, so a stop never leaves the old agent or the settings
-/// frozen for its creation under the new generation.
+/// frozen for its creation under the new generation, marked as unsent.
 async fn advance_generation(ctx: &DaemonContext) -> Result<(), ArchonError> {
     let mut store = ctx.store.lock().await;
     let generation = parse_generation(store.kv_get(keys::ORCHESTRATOR_GENERATION)?)?;
     let next = (generation + 1).to_string();
+    let set = [
+        (keys::ORCHESTRATOR_GENERATION, next.as_str()),
+        (UNSENT_GENERATION_KEY, next.as_str()),
+    ];
     let cleared = [
         keys::ORCHESTRATOR_AGENT,
         HOST_CONTEXT_KEY,
         COMPACTION_TOKENS_KEY,
     ];
-    store.kv_update(&[(keys::ORCHESTRATOR_GENERATION, next.as_str())], &cleared)
+    store.kv_update(&set, &cleared)
 }
 
 /// The configured orchestrator model and effort, as `provider/model effort`.
@@ -1142,14 +1149,14 @@ async fn settle_generation(
     );
     let config = &ctx.config;
     let mut store = ctx.store.lock().await;
-    let generation = parse_generation(store.kv_get(keys::ORCHESTRATOR_GENERATION)?)?.max(1);
-    store.kv_set(keys::ORCHESTRATOR_GENERATION, &generation.to_string())?;
-    let first = origin::record_lessons(&mut store, generation)?;
+    let generation = allocated_generation(&mut store)?;
+    origin::record_lessons(&mut store, generation)?;
     // Chosen once per generation, so a retried create sends the same text.
     instructions.push_str(&crate::learned::lessons_for_orchestrator(&store)?);
+    let unsent = store.kv_get(UNSENT_GENERATION_KEY)?;
     let creation = Creation {
         key: creation_key(store_id, generation),
-        first,
+        first: unsent == Some(generation.to_string()),
     };
     let host_context = config.aether.host_context;
     let configured = host_context.for_model(&config.orchestrator.model);
@@ -1161,6 +1168,21 @@ async fn settle_generation(
         configured,
     )?;
     Ok((generation, frozen))
+}
+
+/// The stored generation, or the first one, allocated here with its mark
+/// that no request has used its creation key.
+fn allocated_generation(store: &mut archon_queue::Store) -> Result<u64, ArchonError> {
+    let stored = parse_generation(store.kv_get(keys::ORCHESTRATOR_GENERATION)?)?;
+    if stored > 0 {
+        return Ok(stored);
+    }
+    let first = [
+        (keys::ORCHESTRATOR_GENERATION, "1"),
+        (UNSENT_GENERATION_KEY, "1"),
+    ];
+    store.kv_update(&first, &[])?;
+    Ok(1)
 }
 
 /// A stopped, unadopted agent cannot be revived by `ensure_locked`: retire it
@@ -1230,15 +1252,16 @@ struct FrozenSettings {
     compaction_tokens: Option<u32>,
 }
 
-/// One keyed creation: `first` when no attempt of it was recorded before.
+/// One keyed creation: `first` when this build allocated its generation and
+/// no request has used the key. One an older build left may have been sent.
 struct Creation {
     key: String,
     first: bool,
 }
 
 /// Settle what `creation` sends, in one transaction before its request: the
-/// host context and compaction threshold it froze, else today's. A retry with
-/// no threshold frozen repeats a build that froze none: it sent none either.
+/// host context and compaction threshold it froze, else today's. A key that
+/// may have been sent with nothing frozen was sent by a build that sent none.
 fn freeze_settings(
     store: &mut archon_queue::Store,
     config: &OrchestratorConfig,
@@ -1275,7 +1298,7 @@ fn freeze_settings(
     if frozen.is_some() || !requested.is_full() {
         set.push((HOST_CONTEXT_KEY, host_raw.as_str()));
     }
-    store.kv_update(&set, &[])?;
+    store.kv_update(&set, &[UNSENT_GENERATION_KEY])?;
     Ok(FrozenSettings {
         host_context,
         compaction_tokens: threshold.tokens,

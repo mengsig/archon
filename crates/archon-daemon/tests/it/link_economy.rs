@@ -20,6 +20,7 @@ use link_common::Harness;
 use serde_json::{Value, json};
 
 const ORCH: &str = "agt_0001";
+const ORCH_2: &str = "agt_0002";
 /// `kv`: what the newest generation was created with.
 const ORIGIN_KEY: &str = "orchestrator_origin";
 
@@ -479,11 +480,65 @@ async fn a_creation_an_older_build_began_is_retried_without_a_threshold() {
     assert_eq!(harness.kv("orchestrator_compaction_tokens").await, None);
 
     create(&harness, &agents, ORCH).await;
+    assert_created_without_threshold(&harness).await;
+}
+
+/// Before 1.3.0 Archon recorded no origin: a creation it sent and never
+/// adopted left only its generation, and is retried with no threshold.
+#[tokio::test]
+async fn a_creation_begun_before_origins_were_recorded_is_retried_without_a_threshold() {
+    let harness = Harness::new().await;
+    harness
+        .fake
+        .set_features(vec!["compaction_tokens".to_owned()]);
+    harness.connect().await;
+    let agents = agent_table(&harness);
+    harness.set_kv(keys::ORCHESTRATOR_GENERATION, "1").await;
+    assert_eq!(harness.kv(ORIGIN_KEY).await, None, "no origin recorded");
+
+    create(&harness, &agents, ORCH).await;
+    assert_created_without_threshold(&harness).await;
+}
+
+/// The one creation sent carried no threshold, and that absence is frozen.
+async fn assert_created_without_threshold(harness: &Harness) {
     let creates = harness.fake.received_named("create_agent");
+    assert_eq!(creates.len(), 1, "one creation");
     let sent = &creates[0]["config"]["compaction_tokens"];
     assert!(sent.is_null(), "the retry added a threshold: {sent}");
     let raw = harness.kv("orchestrator_compaction_tokens").await.unwrap();
     let frozen: Value = serde_json::from_str(&raw).unwrap();
     assert_eq!(frozen["key"], creates[0]["idempotency_key"]);
     assert!(frozen["tokens"].is_null(), "an explicit absence: {frozen}");
+}
+
+/// A generation a restart starts is this build's own: no request has used
+/// its creation key, so it is sent the configured threshold.
+#[tokio::test]
+async fn a_generation_a_restart_starts_is_sent_the_threshold() {
+    let harness = Harness::new().await;
+    harness
+        .fake
+        .set_features(vec!["compaction_tokens".to_owned()]);
+    harness.connect().await;
+    let agents = agent_table(&harness);
+    create(&harness, &agents, ORCH).await;
+
+    set_state(&agents, ORCH, "cancelled");
+    let successor = orchestrator(ORCH_2, "ready");
+    agents
+        .lock()
+        .unwrap()
+        .insert(ORCH_2.into(), successor.clone());
+    harness.fake.script("cancel", Scripted::ok());
+    harness
+        .fake
+        .script("create_agent", Scripted::reply("agent", successor));
+    let restarted = supervisor::restart_orchestrator(&harness.ctx).await;
+    assert_eq!(restarted.unwrap().as_str(), ORCH_2);
+
+    let creates = harness.fake.received_named("create_agent");
+    assert_eq!(creates.len(), 2, "one creation a generation");
+    assert_ne!(creates[0]["idempotency_key"], creates[1]["idempotency_key"]);
+    assert_eq!(creates[1]["config"]["compaction_tokens"], json!(160_000));
 }

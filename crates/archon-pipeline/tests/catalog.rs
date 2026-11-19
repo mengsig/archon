@@ -734,7 +734,7 @@ fn design_doc_researches_and_critiques_before_reporting_without_shipping() {
 /// has the stage names other items rely on; `e2e-testing` stays lenient.
 #[test]
 fn the_strict_e2e_pipelines_keep_their_shared_shape() {
-    use archon_pipeline::spec::Scenarios;
+    use archon_pipeline::spec::{LoopWhen, Scenarios};
     let catalog = Catalog::builtin();
     let shape = |name: &str| {
         let spec = catalog.get(name).expect("a built-in loads");
@@ -749,6 +749,19 @@ fn the_strict_e2e_pipelines_keep_their_shared_shape() {
             ("setup", 1),
             "{name}"
         );
+        // Setup can only fix the environment: nothing else re-runs it.
+        assert_eq!(on_fail.when, Some(LoopWhen::EnvironmentFinding), "{name}");
+        let prompt = spec.prompts[&test.prompt].replace('\n', " ");
+        for said in [
+            "`\"blocking\": true, \"fault\": \"environment\"`",
+            "`\"blocking\": false, \"fault\": \"product\"`",
+            "only for a finding whose `fault` is `environment`",
+        ] {
+            assert!(
+                prompt.contains(said),
+                "{name}: missing {said:?} in {prompt}"
+            );
+        }
         (ids, test.scenarios)
     };
     let lenient = shape("e2e-testing");

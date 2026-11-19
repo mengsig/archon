@@ -57,7 +57,8 @@ judges the product from your scenario list, as the stage contract says.
 
 - **fail** if the environment is at fault: it could not start, a backing
   service or seed data was missing, or scenarios were `blocked` by the
-  environment rather than by the product. The run goes back to setup once.
+  environment rather than by the product. With such a finding the run goes
+  back to setup once.
 - **pass** otherwise, even when scenarios failed because of product
   defects: Archon fails the run on them, with each one named.
 
@@ -65,9 +66,11 @@ Give each failed, skipped or blocked scenario a finding with the scenario id
 and title, the step that failed, expected against actual, the evidence path,
 and whether the environment or the product is at fault. Severity is high for
 a broken main journey or environment, medium for a broken secondary path, and
-low for cosmetic issues. Mark an environment finding `"blocking": true` and
-a product defect `"blocking": false`: the scenario list, not the finding,
-fails the run on a product defect.
+low for cosmetic issues. Mark an environment finding `"blocking": true,
+"fault": "environment"` and a product defect `"blocking": false, "fault":
+"product"`: the scenario list, not the finding, fails the run on a product
+defect, and setup runs again only for a finding whose `fault` is
+`environment`.
 
 ## Report
 

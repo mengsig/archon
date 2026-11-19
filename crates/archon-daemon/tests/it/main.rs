@@ -117,6 +117,7 @@ mod team_pr;
 mod tracked;
 mod trigger_summaries;
 mod upgrade;
+mod verdict_restatement;
 mod worker_policy;
 mod workspace_hygiene;
 mod worktree;

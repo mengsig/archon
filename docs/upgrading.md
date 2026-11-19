@@ -29,6 +29,27 @@ with their switches instead: `quiet_info = false`, `compaction_tokens = 0`,
 `[orchestrator]`. A compaction threshold already sent stays with the running
 generation until `archon orchestrator restart`.
 
+From 1.6.4 a stage with a verdict calls the new `submit_verdict` tool before
+it finishes, and is asked once to restate a verdict Archon cannot read
+([PIPELINES.md](PIPELINES.md#the-stage-contract)). It needs no Aether change
+and works with Aether 1.4.1 and later; `archon setup` adds the tool's class
+to the `archon` server entry, and an entry without it still serves the tool.
+A stage agent sees the tool once its `archon mcp` is the upgraded binary: a
+server Aether starts per agent is, from the next stage on, and one shared
+`archon mcp` started before the upgrade is not until it is restarted. A
+stage whose agent does not have the tool finishes as before. The built-in
+`e2e-testing`, `e2e-strict` and `release-journey` now go back to `setup`
+only for a verdict that reads as `fail` with a finding whose `"fault"` is
+`"environment"`. A test stage that failed its gate any other way (a `fail`
+naming only the product, a verdict Archon could not read, a timeout, an
+agent that failed) fails the run there, where 1.6.3 re-ran setup once
+first. A pipeline of your own
+keeps its loop unless it sets `on_fail.when`; a copy of a built-in in
+`.archon/pipelines` keeps its old loop until you add
+`when = "environment_finding"`. This adds no store migration either: stored
+stage runs gain an optional `restatement` field an older archond ignores,
+and the same rule about going back to an older binary applies.
+
 ### Effort sizing on by default
 
 From 1.6.4 `[models] effort_sizing` is on unless the global config turns it
@@ -45,7 +66,8 @@ reviews of small low-risk diffs move to `low`, and inserted stages and the
 default `[review] default_effort` change as above.
 
 To keep 1.6.3's effort rules, set `effort_sizing = false` under the global
-`[models]` and restart archond; new spawns then get exactly what 1.6.3 issued.
+`[models]` and restart archond; new spawns then get 1.6.3's effort rules,
+byte for byte (a stage with a verdict still gets the `submit_verdict` rule above).
 A running orchestrator keeps the prompt it was created with until
 `archon orchestrator restart`; archond refreshes it by itself only after an
 upgrade to another build. A repository config may still say `effort_sizing =

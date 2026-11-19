@@ -21,7 +21,7 @@ kind = "test"
 prompt = "e2e.md"
 gate = "all_pass"
 timeout_minutes = 120
-on_fail = { goto = "setup", max_loops = 1 }
+on_fail = { goto = "setup", max_loops = 1, when = "environment_finding" }
 
 [[stage]]
 id = "report"

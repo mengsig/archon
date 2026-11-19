@@ -11,8 +11,10 @@ use crate::id::{PipelineRunId, QuestionId, QueueItemId, ReportId, StageRunId};
 use crate::model::ModelChoice;
 use crate::verdict_prose::reports_problem;
 
+mod restatement;
 mod verdict_note;
 
+pub use restatement::{CheckDecision, Restatement, Submission, VerdictCheck, VerdictReading};
 pub use verdict_note::VerdictNote;
 
 /// What a review/test stage concluded, as [`Verdict::extract`] reads it from
@@ -30,6 +32,22 @@ const BLOCKING_SEVERITIES: [&str; 4] = ["blocking", "blocker", "critical", "high
 
 /// `structured` keys a result may give its verdict under, in the order read.
 const VERDICT_KEYS: [&str; 3] = ["verdict", "result", "status"];
+
+/// The `fault` a finding gives when the environment, not the product, failed.
+const ENVIRONMENT_FAULT: &str = "environment";
+
+/// Whether `structured.findings` holds a finding that names the environment
+/// as at fault (`"fault": "environment"`): what a stage that loops back only
+/// to fix the environment (`on_fail.when`) loops for.
+pub fn names_environment(structured: &serde_json::Value) -> bool {
+    let Some(findings) = structured.get("findings").and_then(|f| f.as_array()) else {
+        return false;
+    };
+    findings.iter().any(|finding| {
+        let fault = finding.get("fault").and_then(|fault| fault.as_str());
+        fault.is_some_and(|fault| fault.trim().eq_ignore_ascii_case(ENVIRONMENT_FAULT))
+    })
+}
 
 impl Verdict {
     /// `structured.verdict`, else a readable `structured.result` or `status`,
@@ -906,7 +924,8 @@ impl StageOutcome {
 /// stays in the stage runs.
 pub const MAX_RUN_ERROR_CHARS: usize = 8_000;
 
-const CLIP_MARKER: &str = "\n\n[… truncated by Archon]";
+/// What [`clip`] ends a text it cut with.
+pub const CLIP_MARKER: &str = "\n\n[… truncated by Archon]";
 
 /// At most `max` characters, cut on a char boundary with a visible marker.
 pub fn clip(text: &str, max: usize) -> String {
@@ -1099,6 +1118,10 @@ pub struct StageRun {
     /// runs recorded before Archon kept it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verdict_note: Option<VerdictNote>,
+    /// The one restatement of its verdict the attempt was asked for through
+    /// `submit_verdict`; `None` when it was never asked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restatement: Option<Restatement>,
     pub summary: Option<String>,
     pub structured: Option<serde_json::Value>,
     pub cost_usd: f64,
@@ -1566,6 +1589,31 @@ mod tests {
         assert_eq!(slot_retries(slots), [0, 1, 0, 0, 2, 0]);
         assert_eq!(retry_label(0), "");
         assert_eq!(retry_label(2), " retry 2");
+    }
+
+    /// Only a finding's own `fault` names the environment: its wording, its
+    /// title and any other key do not send a run back to setup.
+    #[test]
+    fn only_a_finding_whose_fault_is_environment_names_the_environment() {
+        let naming = [
+            json!({"findings": [{"fault": "environment"}]}),
+            json!({"findings": [{"fault": "product"}, {"fault": " Environment "}]}),
+        ];
+        for structured in naming {
+            assert!(names_environment(&structured), "{structured}");
+        }
+        let silent = [
+            json!({"findings": [{"fault": "product"}]}),
+            json!({"findings": [{"title": "the environment is broken", "severity": "high"}]}),
+            json!({"findings": [{"fault": "environment or product"}, {"fault": true}]}),
+            json!({"fault": "environment", "findings": []}),
+            json!({"findings": "environment"}),
+            json!({"verdict": "fail"}),
+            json!(null),
+        ];
+        for structured in silent {
+            assert!(!names_environment(&structured), "{structured}");
+        }
     }
 
     #[test]
@@ -2751,6 +2799,7 @@ mod tests {
             state,
             verdict: None,
             verdict_note: None,
+            restatement: None,
             summary: None,
             structured,
             cost_usd: 0.0,

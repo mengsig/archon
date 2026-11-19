@@ -123,18 +123,23 @@ impl Replacement<'_> {
         let model = [successor, learned, fallback]
             .into_iter()
             .flatten()
-            .find(|model| self.eligible(model))
-            .cloned();
+            .find_map(|model| self.eligible(model));
         Ok(model.map(|model| (model, None)))
     }
 
-    fn eligible(&self, model: &archon_core::model::ModelRef) -> bool {
+    /// The canonical id of a listed, unretired candidate the policy and the
+    /// tier cap allow: an alias is judged as the model it stores.
+    fn eligible(
+        &self,
+        model: &archon_core::model::ModelRef,
+    ) -> Option<archon_core::model::ModelRef> {
         let catalog = self.tiers.catalog;
-        self.tiers.policy.permits_model(model)
-            && catalog.check(model).is_ok()
+        let canonical = catalog.check(model).ok()?;
+        let allowed = self.tiers.policy.permits_model(&canonical)
             && catalog
-                .tier_of(model)
-                .is_none_or(|tier| tier <= self.max_tier)
+                .tier_of(&canonical)
+                .is_none_or(|tier| tier <= self.max_tier);
+        allowed.then_some(canonical)
     }
 }
 
@@ -651,5 +656,57 @@ mod tests {
             .expect("the listed successor replaces it");
         assert_eq!(model.to_string(), "p/middle");
         assert!(tier.is_none(), "an untiered choice stays untiered");
+    }
+
+    /// A successor named by an alias is judged as its canonical model: a
+    /// denied one gives way to the permitted fallback.
+    #[test]
+    fn an_untiered_repair_judges_a_successor_alias_as_its_canonical_model() {
+        let mut catalog = ModelCatalog::new(
+            ["p/old", "p/middle", "p/fallback"]
+                .map(|id| archon_core::model_tier::CatalogModel {
+                    model: id.parse().unwrap(),
+                    tier: None,
+                    is_default: false,
+                })
+                .to_vec(),
+        );
+        catalog.add_alias("p/alias".parse().unwrap(), "p/middle".parse().unwrap());
+        catalog.add_retired("p/old".parse().unwrap(), Some("p/alias".parse().unwrap()));
+        let config = archon_core::config::Config::default();
+        let policy =
+            archon_core::policy::ModelPolicy::from_lists(&[], &["p/middle".parse().unwrap()], None);
+        let spec = archon_pipeline::Catalog::builtin()
+            .get("direct")
+            .expect("built-in")
+            .clone();
+        let learned = ModelPlan::default();
+        let fallback = choice("p/fallback");
+        let selection = Replacement {
+            tiers: crate::knobs::TierScope::new(&config, &policy, &catalog),
+            spec: &spec,
+            learned: &learned,
+            fallback: Some(&fallback),
+            max_tier: Tier::Frontier,
+        };
+        let (model, _) = selection
+            .choose("implement", 0, &choice("p/old"))
+            .unwrap()
+            .expect("the fallback replaces it");
+        assert_eq!(
+            model.to_string(),
+            "p/fallback",
+            "the denied target is skipped"
+        );
+        let open = archon_core::policy::ModelPolicy::default();
+        let selection = Replacement {
+            tiers: crate::knobs::TierScope::new(&config, &open, &catalog),
+            ..selection
+        };
+        let (model, _) = selection
+            .choose("implement", 0, &choice("p/old"))
+            .unwrap()
+            .expect("the successor replaces it");
+        assert_eq!(model.to_string(), "p/middle", "stored as its canonical id");
     }
 }

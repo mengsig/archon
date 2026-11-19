@@ -65,16 +65,21 @@ pub(crate) async fn submit(
         let recorded = ctx.spawn_recorded.notified();
         tokio::pin!(recorded);
         recorded.as_mut().enable();
-        if let Some(check) = submit_for_held_stage(ctx, agent, &sent).await? {
-            return Ok(Reply::VerdictCheck(check));
-        }
+        let standing = {
+            let table = ctx.runs.lock().await;
+            let mut store = ctx.store.lock().await;
+            standing(&table, &mut store, agent, &sent)?
+        };
         let now = tokio::time::Instant::now();
-        let pending = now < deadline && binding_pending(&*ctx.store.lock().await, agent)?;
-        if !pending {
-            return Err(ArchonError::Forbidden(format!(
-                "submit_verdict is for a stage agent while its stage runs, and Archon has none \
-                 on record for {agent}. Finish as your instructions say"
-            )));
+        match standing {
+            Standing::Checked(check) => return Ok(Reply::VerdictCheck(check)),
+            Standing::Unbound if now < deadline => {}
+            Standing::Unbound | Standing::Refused => {
+                return Err(ArchonError::Forbidden(format!(
+                    "submit_verdict is for a stage agent while its stage runs, and Archon has \
+                     none on record for {agent}. Finish as your instructions say"
+                )));
+            }
         }
         tokio::select! {
             () = &mut recorded => {}
@@ -83,37 +88,62 @@ pub(crate) async fn submit(
     }
 }
 
-/// The check of `sent` for the stage `agent` runs now, recorded with its
-/// attempt; `None` when the agent holds no running stage.
-async fn submit_for_held_stage(
-    ctx: &DaemonContext,
+/// Where a caller of `submit_verdict` stands.
+enum Standing {
+    /// It holds its attempt's running stage, whose verdict was read.
+    Checked(VerdictCheck),
+    /// A spawn or wake not on record yet may make it a stage's agent.
+    Unbound,
+    Refused,
+}
+
+/// Where `agent` stands, from one reading of the store: a binding recorded
+/// between a lookup and a later look for one pending would be seen by neither.
+fn standing(
+    table: &RunTable,
+    store: &mut Store,
     agent: &AetherAgentId,
     sent: &Submitted<'_>,
-) -> Result<Option<VerdictCheck>, ArchonError> {
-    let table = ctx.runs.lock().await;
-    let mut store = ctx.store.lock().await;
-    let Some(stage) = held_stage(&store, agent)? else {
-        return Ok(None);
+) -> Result<Standing, ArchonError> {
+    let Some(stage) = held_stage(store, agent)? else {
+        let pending = binding_pending(store, agent)?;
+        return Ok(if pending {
+            Standing::Unbound
+        } else {
+            Standing::Refused
+        });
     };
-    holds_verdict(&table, &stage)?;
+    check(table, store, &stage, sent).map(Standing::Checked)
+}
+
+/// The check of `sent` for running `stage`, recorded with its attempt.
+fn check(
+    table: &RunTable,
+    store: &mut Store,
+    stage: &StageRun,
+    sent: &Submitted<'_>,
+) -> Result<VerdictCheck, ArchonError> {
+    assert!(!stage.state.is_terminal(), "only a running stage submits");
+    holds_verdict(table, stage)?;
     let submission = Submission {
-        reading: read(&stage, sent.summary, sent.structured),
+        reading: read(stage, sent.summary, sent.structured),
         restating: sent.restating,
         environment: sent.structured.is_some_and(names_environment),
         said: archon_pipeline::submission_text(sent.summary, sent.structured),
     };
-    let key = key(&stage);
-    let state = load(&store, &key)?;
+    let key = key(stage);
+    let state = load(store, &key)?;
     let (next, check) = Restatement::submit(state.as_ref(), submission);
     if next != state {
         let next = next.expect("a submission never forgets an ask");
         store.kv_set(&key, &serde_json::to_string(&next)?)?;
     }
     tracing::info!(
-        stage = %stage.id, %agent, decision = ?check.decision, verdict = ?check.reading.verdict,
-        note = ?check.reading.note, "verdict submitted before completion"
+        stage = %stage.id, agent = ?stage.aether_agent, decision = ?check.decision,
+        verdict = ?check.reading.verdict, note = ?check.reading.note,
+        "verdict submitted before completion"
     );
-    Ok(Some(check))
+    Ok(check)
 }
 
 /// The running stage run `agent` holds, when it is its attempt's current one: after a

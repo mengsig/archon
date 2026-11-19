@@ -2,7 +2,9 @@
 //! gate pass, and if not, what feedback goes back to the looped-to stage.
 
 use archon_core::catalog::{Gate, StageKind};
-use archon_core::run::{RecordRepair, StageOutcome, StageRun, StageState, Verdict, VerdictNote};
+use archon_core::run::{
+    CLIP_MARKER, RecordRepair, StageOutcome, StageRun, StageState, Verdict, VerdictNote,
+};
 
 use crate::review::Evidence;
 use crate::ship::ShipRecord;
@@ -419,14 +421,16 @@ fn restated_over(member: &StageRun) -> Option<&'static str> {
 /// A submission's summary and findings as a failure report shows them, each
 /// clipped: what `submit_verdict` keeps of a final restatement that is no pass.
 pub fn submission_text(summary: &str, structured: Option<&serde_json::Value>) -> String {
-    let share = MAX_RESTATED_CHARS / 2;
-    let findings = findings_text(structured);
-    let text = format!(
-        "{}\n{}",
-        clip(summary.trim(), share),
-        clip(&findings, share)
+    // Half each, less the line that joins them and the note a cut part ends with.
+    let share = (MAX_RESTATED_CHARS - 1) / 2 - CLIP_MARKER.chars().count();
+    let summary = clip(summary.trim(), share);
+    let findings = clip(&findings_text(structured), share);
+    let text = format!("{summary}\n{findings}").trim_end().to_owned();
+    assert!(
+        text.chars().count() <= MAX_RESTATED_CHARS,
+        "the kept text is bounded"
     );
-    text.trim_end().to_owned()
+    text
 }
 
 /// Why a completed member's verdict counts as fail, quoting what it said:
@@ -530,6 +534,28 @@ mod tests {
         let cut = clip("ééé", 2);
         assert!(cut.starts_with("éé\n"), "{cut}");
         assert!(cut.ends_with("[… truncated by Archon]"));
+    }
+
+    /// Neither part can push the other out, and the notes of both cuts fit.
+    #[test]
+    fn a_kept_submission_stays_within_its_bound_with_both_parts_cut() {
+        let long = "s".repeat(MAX_RESTATED_CHARS);
+        let structured = serde_json::json!({"findings": [
+            {"severity": "high", "title": "no display", "detail": "d".repeat(MAX_RESTATED_CHARS)}
+        ]});
+        let kept = submission_text(&format!("  {long}"), Some(&structured));
+        assert_eq!(kept.chars().count(), MAX_RESTATED_CHARS - 1, "the bound");
+        let (summary, findings) = kept
+            .split_once(&format!("{CLIP_MARKER}\n"))
+            .expect("a cut summary, then the findings");
+        assert!(long.starts_with(summary) && !summary.is_empty());
+        assert!(
+            findings.contains("- [high] no display\n  ddd"),
+            "the finding"
+        );
+        assert!(findings.ends_with(CLIP_MARKER), "the findings are cut too");
+        assert_eq!(findings.chars().count(), summary.chars().count() + 25);
+        assert_eq!(submission_text(" Ran it.\n", None), "Ran it.");
     }
 
     #[test]

@@ -924,7 +924,8 @@ impl StageOutcome {
 /// stays in the stage runs.
 pub const MAX_RUN_ERROR_CHARS: usize = 8_000;
 
-const CLIP_MARKER: &str = "\n\n[… truncated by Archon]";
+/// What [`clip`] ends a text it cut with.
+pub const CLIP_MARKER: &str = "\n\n[… truncated by Archon]";
 
 /// At most `max` characters, cut on a char boundary with a visible marker.
 pub fn clip(text: &str, max: usize) -> String {

@@ -129,7 +129,13 @@ async fn steer_and_update(
     // The steer is stored whether or not the update was, so its work is owed.
     live::follow_steer(ctx, id, follow).await;
     ctx.dispatch.notify_one();
-    let revised = items::finish_update(ctx, id, stored?).await;
+    let revised = match stored? {
+        items::SteeredUpdate::Stored(stored) => items::finish_update(ctx, id, *stored).await,
+        items::SteeredUpdate::RunEnded(patch) => {
+            let updating: Erased<'_, _> = Box::pin(items::update(ctx, id, patch, asked.by.into()));
+            updating.await?
+        }
+    };
     Ok(Some((steered, revised)))
 }
 

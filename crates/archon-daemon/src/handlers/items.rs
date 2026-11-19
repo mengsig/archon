@@ -536,6 +536,14 @@ pub(super) async fn update_within(
     Ok(finish_update(ctx, id, stored).await)
 }
 
+/// What became of an update made in the same hold of the run table as a steer.
+pub(super) enum SteeredUpdate {
+    Stored(Box<Stored>),
+    /// The steer ended the run (a skipped stage can leave the next one
+    /// nothing to run), so the patch is applied by [`update`] afterwards.
+    RunEnded(ItemPatch),
+}
+
 /// [`update`] of an item whose live run the caller just steered, with the
 /// run table it still holds: no stage of the run starts between the two.
 pub(super) async fn update_steered(
@@ -543,15 +551,16 @@ pub(super) async fn update_steered(
     table: &mut executor::RunTable,
     id: &QueueItemId,
     (patch, by): (ItemPatch, Authority),
-) -> Result<Stored, ArchonError> {
+) -> Result<SteeredUpdate, ArchonError> {
     check_patch_values(&patch)?;
     let current = ctx.store.lock().await.item(id)?;
-    assert!(
-        matches!(current.state, QueueState::Running { .. }),
-        "only a running item is steered and updated at once"
-    );
+    assert_eq!(&current.id, id, "the store returns the item asked for");
+    if !matches!(current.state, QueueState::Running { .. }) {
+        return Ok(SteeredUpdate::RunEnded(patch));
+    }
     let prepared = prepare_update(ctx, current, patch, (Ceiling::Enforced, by)).await?;
-    Box::pin(store_prepared(ctx, table, id, prepared)).await
+    let stored = Box::pin(store_prepared(ctx, table, id, prepared)).await?;
+    Ok(SteeredUpdate::Stored(Box::new(stored)))
 }
 
 fn check_patch_values(patch: &ItemPatch) -> Result<(), ArchonError> {

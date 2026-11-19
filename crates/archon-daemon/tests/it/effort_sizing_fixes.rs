@@ -263,3 +263,52 @@ async fn a_steer_that_moves_no_sizing_input_leaves_a_retried_plan_frozen() {
     let noted = steer(&h, &queued.id, note("Keep the old layout.")).await;
     assert_eq!(class(&noted), Some(RiskClass::Elevated));
 }
+
+#[tokio::test]
+async fn a_steer_that_ends_its_run_still_applies_its_autonomy_and_replies() {
+    use archon_core::autonomy::{AutonomyPatch, ToolsMode};
+    use archon_core::model::ModelPlan;
+    use archon_core::queue::QueueState;
+    use archon_core::steer::Then;
+
+    let h = harness(sizing_off()).await;
+    let stages = ["plan", "build", "integrate"].map(|stage| {
+        let choice = crate::common::choice(crate::common::MODEL, Medium);
+        (stage.to_owned(), vec![choice])
+    });
+    let plan = ModelPlan(stages.into_iter().collect());
+    let item = h.enqueue_in("swarm", "Split the work", plan).await.unwrap();
+    h.dispatch().await;
+    assert_eq!(h.running().await[0].stage_id, "plan");
+    // Skipping the planner leaves `build` no roles, so the steer fails the run.
+    let steer = Steer {
+        stage: Some("plan".into()),
+        abort: Some(Then::Skip),
+        autonomy: Some(AutonomyPatch {
+            tools: Some(ToolsMode::Yolo),
+            ..AutonomyPatch::default()
+        }),
+        ..Steer::default()
+    };
+    let request = Request::SteerItem {
+        item: item.id.clone(),
+        steer,
+    };
+    let reply = in_time("the steer's reply", h.cli(request)).await.unwrap();
+    let Reply::Item(replied) = reply else {
+        panic!("steer_item replied {reply:?}");
+    };
+    let stored = h.item(&item.id).await;
+    assert!(
+        matches!(stored.state, QueueState::Failed { .. }),
+        "{:?}",
+        stored.state
+    );
+    assert_eq!(
+        stored.autonomy.tools,
+        ToolsMode::Yolo,
+        "the patch is applied"
+    );
+    assert_eq!(replied, stored, "the reply is the item as stored");
+    assert!(h.running().await.is_empty(), "the planner was stopped");
+}

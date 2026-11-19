@@ -375,15 +375,14 @@ pub(super) async fn settle_locked(
         !matches!(outcome, StageOutcome::Completed { .. }),
         "completed outcomes must use unlocked verification"
     );
-    let (stage, run, all, outcome, spawn_gave_up) = {
+    let (stage, run, all, outcome, flagged) = {
         let store = ctx.store.lock().await;
         let stage = store.stage_run(id)?;
         let run = store.run(&stage.run)?;
         let all = store.stage_runs(&run.id)?;
         let flagged = matches!(outcome, StageOutcome::Failed { infra: true, .. });
-        let spawn_gave_up = flagged && stage.aether_agent.is_none();
         let outcome = blame_missing_workspace(&store, &stage, &run, outcome)?;
-        (stage, run, all, outcome, spawn_gave_up)
+        (stage, run, all, outcome, flagged)
     };
     if stage.state.is_terminal() {
         return Ok(FollowUp::default());
@@ -391,7 +390,7 @@ pub(super) async fn settle_locked(
     if let Some(follow) = infra_retry(ctx, table, &stage, &run, &all, &outcome, false).await? {
         return Ok(follow);
     }
-    let outcome = recorded(outcome, spawn_gave_up);
+    let outcome = recorded(outcome, flagged, stage.aether_agent.is_none());
     // Cancellation also polls settlement deep inside a request's follow-up chain.
     Box::pin(persist(ctx, table, stage, run, &all, outcome)).await
 }
@@ -431,14 +430,18 @@ fn blame_missing_workspace(
     })
 }
 
-/// `outcome` as it is recorded: a spawn the daemon gave up on reached no
-/// agent, so it stays an infrastructure failure though its workspace went.
-fn recorded(outcome: StageOutcome, spawn_gave_up: bool) -> StageOutcome {
+/// `outcome` as it is recorded, after the retry decision read it: a failure
+/// flagged infrastructure (`flagged`) stays so though its workspace went, and
+/// a workspace gone before any agent ran (`agentless`) is the machine's too.
+fn recorded(outcome: StageOutcome, flagged: bool, agentless: bool) -> StageOutcome {
     match outcome {
-        StageOutcome::Failed { error, infra } => StageOutcome::Failed {
-            error,
-            infra: infra || spawn_gave_up,
-        },
+        StageOutcome::Failed { error, infra } => {
+            let workspace_gone = agentless && error.starts_with(spawn::WORKSPACE_MISSING);
+            StageOutcome::Failed {
+                error,
+                infra: infra || flagged || workspace_gone,
+            }
+        }
         other => other,
     }
 }

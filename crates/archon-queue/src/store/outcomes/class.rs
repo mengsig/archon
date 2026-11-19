@@ -329,14 +329,16 @@ fn gave_up_spawn(error: &str) -> bool {
     openings.iter().any(|opening| error.starts_with(opening))
 }
 
-/// `stages`, each agentless spawn 1.6.3 gave up on in a workspace gone missing
-/// flagged as 1.6.4 flags it. Its error wraps the spawn's: `workspace missing:
+/// `stages`, each agentless spawn 1.6.3 gave up on in a workspace gone missing,
+/// or refused for that workspace before any agent ran, flagged as 1.6.4 flags it. Its error wraps the spawn's: `workspace missing:
 /// <path>; the engine said: …`, `<path>` being the run's or a worker's tree.
 fn flag_wrapped_spawns(run: &PipelineRun, stages: &[StageRun]) -> Vec<StageRun> {
     let mut flagged = stages.to_vec();
     for stage in flagged.iter_mut().filter(|s| s.aether_agent.is_none()) {
         let wrapped = match &stage.state {
-            StageState::Failed { error } => engine_said(run, error).is_some_and(gave_up_spawn),
+            StageState::Failed { error } => {
+                engine_said(run, error).is_some_and(gave_up_spawn) || bare_missing(run, error)
+            }
             _ => false,
         };
         stage.infrastructure_failure |= wrapped;
@@ -347,6 +349,31 @@ fn flag_wrapped_spawns(run: &PipelineRun, stages: &[StageRun]) -> Vec<StageRun> 
         "flags, never drops, a stage run"
     );
     flagged
+}
+
+/// Whether `error` is the daemon's bare refusal of the run's or a worker's
+/// tree gone missing before a spawn: `workspace missing: <path>`.
+fn bare_missing(run: &PipelineRun, error: &str) -> bool {
+    let Some(path) = error
+        .strip_prefix(StageOutcome::WORKSPACE_MISSING)
+        .and_then(|rest| rest.strip_prefix(' '))
+    else {
+        return false;
+    };
+    if path == run.workspace.display().to_string() {
+        return true;
+    }
+    let Some(root) = &run.team_root else {
+        return false;
+    };
+    let worker = path.strip_prefix(&format!("{}/", root.display()));
+    worker.is_some_and(worker_dir)
+}
+
+/// Whether `dir` is a worker's directory, `<stage>-<role>`, both of `[a-z0-9-]`.
+fn worker_dir(dir: &str) -> bool {
+    let allowed = |b: u8| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-';
+    !dir.is_empty() && dir.bytes().all(allowed)
 }
 
 /// The error the daemon wrapped in its missing-workspace error, where the
@@ -366,12 +393,7 @@ fn engine_said<'a>(run: &PipelineRun, error: &'a str) -> Option<&'a str> {
     let (worker, said) = path_on
         .strip_prefix(root.as_str())?
         .split_once(StageOutcome::ENGINE_SAID)?;
-    // A worker's directory is `<stage>-<role>`, both of `[a-z0-9-]`.
-    let named = !worker.is_empty()
-        && worker
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
-    named.then_some(said)
+    worker_dir(worker).then_some(said)
 }
 
 /// What the stage that ended the run was for. A review that passed did not

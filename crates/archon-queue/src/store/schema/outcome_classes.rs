@@ -927,7 +927,8 @@ fn v24_reads_a_spawn_failure_wrapped_by_a_missing_workspace() {
 }
 
 /// The wrapper is read at the end of the path the run's records name, never at
-/// a separator inside a configured path: a bare preflight refusal stays scored.
+/// a separator inside a configured path; a bare refusal of that path before any
+/// agent ran is the machine's too, and a path the run never had is neither.
 #[test]
 fn v24_reads_the_wrapper_at_the_end_of_the_runs_own_path() {
     let mut conn = v23_store();
@@ -962,12 +963,25 @@ fn v24_reads_the_wrapper_at_the_end_of_the_runs_own_path() {
         None,
         format!("workspace missing: /wt/y; the engine said: {gave_up}"),
     );
+    let bare_worker = seeded(
+        &conn,
+        &format!("{root}/main"),
+        Some(&root),
+        format!("workspace missing: {root}/review-lead"),
+    );
+    let bare_elsewhere = seeded(&conn, "/wt/x", None, "workspace missing: /wt/y".into());
 
     assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
 
     let class = |run: &PipelineRun| columns(&conn, run).0;
-    assert_eq!(class(&bare), some("other"), "no spawn was tried");
+    assert_eq!(class(&bare), some("infrastructure"), "gone before a spawn");
     assert_eq!(class(&wrapped), some("infrastructure"));
     assert_eq!(class(&worker), some("infrastructure"), "a worker's tree");
     assert_eq!(class(&elsewhere), some("other"), "a path the run never had");
+    assert_eq!(
+        class(&bare_worker),
+        some("infrastructure"),
+        "a worker's tree"
+    );
+    assert_eq!(class(&bare_elsewhere), some("other"), "not the run's tree");
 }

@@ -985,3 +985,46 @@ fn v24_reads_the_wrapper_at_the_end_of_the_runs_own_path() {
     );
     assert_eq!(class(&bare_elsewhere), some("other"), "not the run's tree");
 }
+
+/// 1.6.3 could not prepare a worker when the run's tree was gone, and wrapped
+/// that in the worker's missing tree: the machine's. A worker never made
+/// because the plan left the run's tree dirty is the work's, and stays scored.
+#[test]
+fn v24_reads_a_worker_unprepared_for_a_run_tree_gone() {
+    let mut conn = v23_store();
+    let root = "/wt/team";
+    let tree = format!("{root}/main");
+    let seeded = |conn: &Connection, said: String| {
+        let error = format!("workspace missing: {root}/build-api; the engine said: {said}");
+        let mut run = failed_run("build", &error);
+        run.workspace = tree.as_str().into();
+        run.team_root = Some(root.into());
+        let failed = failed_stage(&run, StageKind::Work, &error, false);
+        seed(conn, &run, &[failed], Some(FailureClass::Other), false);
+        run
+    };
+    let prepare = "preparing the role's worktree failed: io: inspecting";
+    let gone = seeded(
+        &conn,
+        format!("{prepare} {tree}: No such file or directory (os error 2)"),
+    );
+    let denied = seeded(
+        &conn,
+        format!("{prepare} {tree}: Permission denied (os error 13)"),
+    );
+    let dirty = seeded(
+        &conn,
+        format!(
+            "preparing the role's worktree failed: invalid argument: the run worktree {tree} has \
+             uncommitted changes to README.md; roles fork from the last commit on the run \
+             branch \"archon/x\", so commit them there (or discard them) first"
+        ),
+    );
+
+    assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+
+    let class = |run: &PipelineRun| columns(&conn, run).0;
+    assert_eq!(class(&gone), some("infrastructure"), "the run's tree went");
+    assert_eq!(class(&denied), some("other"), "the tree is there");
+    assert_eq!(class(&dirty), some("other"), "the plan left it dirty");
+}

@@ -329,15 +329,17 @@ fn gave_up_spawn(error: &str) -> bool {
     openings.iter().any(|opening| error.starts_with(opening))
 }
 
-/// `stages`, each agentless spawn 1.6.3 gave up on in a workspace gone missing,
-/// or refused for that workspace before any agent ran, flagged as 1.6.4 flags it. Its error wraps the spawn's: `workspace missing:
-/// <path>; the engine said: …`, `<path>` being the run's or a worker's tree.
+/// `stages`, each agentless spawn 1.6.3 gave up on, or refused, for a workspace
+/// gone missing, flagged as 1.6.4 flags it. Its error wraps the spawn's:
+/// `workspace missing: <path>; the engine said: …`, `<path>` the run's or a worker's tree.
 fn flag_wrapped_spawns(run: &PipelineRun, stages: &[StageRun]) -> Vec<StageRun> {
     let mut flagged = stages.to_vec();
     for stage in flagged.iter_mut().filter(|s| s.aether_agent.is_none()) {
         let wrapped = match &stage.state {
             StageState::Failed { error } => {
-                engine_said(run, error).is_some_and(gave_up_spawn) || bare_missing(run, error)
+                let said = engine_said(run, error);
+                said.is_some_and(|said| gave_up_spawn(said) || run_tree_not_found(run, said))
+                    || bare_missing(run, error)
             }
             _ => false,
         };
@@ -349,6 +351,17 @@ fn flag_wrapped_spawns(run: &PipelineRun, stages: &[StageRun]) -> Vec<StageRun> 
         "flags, never drops, a stage run"
     );
     flagged
+}
+
+/// Whether `said` is the error 1.6.3 gave a worker it could not prepare
+/// because the run's own tree was gone, as `std::io` words it on Linux.
+fn run_tree_not_found(run: &PipelineRun, said: &str) -> bool {
+    let expected = format!(
+        "preparing the role's worktree failed: io: inspecting {}: \
+         No such file or directory (os error 2)",
+        run.workspace.display()
+    );
+    said == expected
 }
 
 /// Whether `error` is the daemon's bare refusal of the run's or a worker's

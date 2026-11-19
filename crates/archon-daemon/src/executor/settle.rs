@@ -381,8 +381,9 @@ pub(super) async fn settle_locked(
         let run = store.run(&stage.run)?;
         let all = store.stage_runs(&run.id)?;
         let flagged = matches!(outcome, StageOutcome::Failed { infra: true, .. });
+        let lost = stage.aether_agent.is_none() && lost_before_spawn(&run, &outcome);
         let outcome = blame_missing_workspace(&store, &stage, &run, outcome)?;
-        (stage, run, all, outcome, flagged)
+        (stage, run, all, outcome, flagged || lost)
     };
     if stage.state.is_terminal() {
         return Ok(FollowUp::default());
@@ -390,7 +391,7 @@ pub(super) async fn settle_locked(
     if let Some(follow) = infra_retry(ctx, table, &stage, &run, &all, &outcome, false).await? {
         return Ok(follow);
     }
-    let outcome = recorded(outcome, flagged, stage.aether_agent.is_none());
+    let outcome = recorded(outcome, flagged);
     // Cancellation also polls settlement deep inside a request's follow-up chain.
     Box::pin(persist(ctx, table, stage, run, &all, outcome)).await
 }
@@ -430,18 +431,25 @@ fn blame_missing_workspace(
     })
 }
 
+/// Whether a stage run's workspace was gone before its agent was created:
+/// the spawn's own refusal of it, or any failure once the run's tree is gone.
+/// A worker tree never made because preparing it was refused is not.
+fn lost_before_spawn(run: &PipelineRun, outcome: &StageOutcome) -> bool {
+    assert!(run.workspace.is_absolute(), "run workspaces are absolute");
+    let StageOutcome::Failed { error, .. } = outcome else {
+        return false;
+    };
+    error.starts_with(spawn::WORKSPACE_MISSING) || !run.workspace.is_dir()
+}
+
 /// `outcome` as it is recorded, after the retry decision read it: a failure
-/// flagged infrastructure (`flagged`) stays so though its workspace went, and
-/// a workspace gone before any agent ran (`agentless`) is the machine's too.
-fn recorded(outcome: StageOutcome, flagged: bool, agentless: bool) -> StageOutcome {
+/// the machine caused (`flagged`) stays so though its workspace went.
+fn recorded(outcome: StageOutcome, flagged: bool) -> StageOutcome {
     match outcome {
-        StageOutcome::Failed { error, infra } => {
-            let workspace_gone = agentless && error.starts_with(spawn::WORKSPACE_MISSING);
-            StageOutcome::Failed {
-                error,
-                infra: infra || flagged || workspace_gone,
-            }
-        }
+        StageOutcome::Failed { error, infra } => StageOutcome::Failed {
+            error,
+            infra: infra || flagged,
+        },
         other => other,
     }
 }

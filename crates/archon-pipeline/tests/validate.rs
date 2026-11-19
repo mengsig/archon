@@ -226,6 +226,29 @@ fn review_and_test_stages_need_a_gate() {
 }
 
 #[test]
+fn on_fail_when_needs_a_gated_stage_that_is_no_team() {
+    let when = "on_fail = { goto = \"build\", max_loops = 1, when = \"environment_finding\" }";
+    let after_build = |kind: &str, extra: &str| {
+        let extra = format!("{extra}\n{when}");
+        [stage("build", "work", ""), stage("check", kind, &extra)].concat()
+    };
+    validate(&after_build("test", "gate = \"all_pass\""), &[]).expect("a gated test stage");
+    let needle = "on_fail.when reads a failing verdict's findings";
+    assert_refused(&after_build("report", ""), &[], needle);
+    assert_refused(
+        &after_build("team", "roles = [\"api\", \"ui\"]"),
+        &[],
+        needle,
+    );
+    let unknown = when.replace("environment_finding", "always");
+    let text = format!("{HEADER}{}", stage("check", "test", &unknown));
+    let error = toml::from_str::<archon_pipeline::spec::PipelineFile>(&text)
+        .expect_err("an unknown `when` does not parse")
+        .to_string();
+    assert!(error.contains("environment_finding"), "{error}");
+}
+
+#[test]
 fn propose_and_report_stages_need_a_writable_workspace() {
     for (mode, allowed) in [
         ("repo-readonly", false),

@@ -59,16 +59,18 @@ judges the product from your scenario list, as the stage contract says.
 
 - **fail** if the stack is at fault: the artifact did not build or launch
   for a reason outside the product, a private service did not start, a
-  display was missing, or a run was `blocked` by the environment. The run
-  goes back to setup once.
+  display was missing, or a run was `blocked` by the environment. With such
+  a finding the run goes back to setup once.
 - **pass** otherwise, even when journeys failed because of product defects:
   Archon fails the run on them, with each one named.
 
 Give each run that did not pass a finding with its id, the step or assertion
 that failed, expected against actual, and the evidence path. Severity is
 high for a journey a user cannot complete. Mark an environment finding
-`"blocking": true` and a product defect `"blocking": false`: the scenario
-list, not the finding, fails the run on a product defect.
+`"blocking": true, "fault": "environment"` and a product defect `"blocking":
+false, "fault": "product"`: the scenario list, not the finding, fails the
+run on a product defect, and setup runs again only for a finding whose
+`fault` is `environment`.
 
 ## Report
 

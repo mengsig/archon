@@ -29,6 +29,22 @@ with their switches instead: `quiet_info = false`, `compaction_tokens = 0`,
 `[orchestrator]`. A compaction threshold already sent stays with the running
 generation until `archon orchestrator restart`.
 
+From 1.6.4 a stage with a verdict calls the new `submit_verdict` tool before
+it completes, and is asked once to restate a verdict Archon cannot read
+([PIPELINES.md](PIPELINES.md#the-stage-contract)). It needs no Aether change
+and works with Aether 1.4.1 and later; `archon setup` adds the tool's class
+to the `archon` server entry, and an entry without it still serves the tool.
+A stage whose agent does not have the tool yet (an `archon mcp` started
+before the upgrade) completes as before. The built-in `e2e-testing`,
+`e2e-strict` and `release-journey` now go back to `setup` only for a finding
+with `"fault": "environment"`: any other failure of their test stage fails
+the run there, where 1.6.3 re-ran setup once first. A pipeline of your own
+keeps its loop unless it sets `on_fail.when`; a copy of a built-in in
+`.archon/pipelines` keeps its old loop until you add
+`when = "environment_finding"`. This adds no store migration either: stored
+stage runs gain an optional `restatement` field an older archond ignores,
+and the same rule about going back to an older binary applies.
+
 ### Plan origins
 
 Each item now keeps `model_origins` beside `model_plan`: where every model

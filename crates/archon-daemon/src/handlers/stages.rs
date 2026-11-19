@@ -318,6 +318,7 @@ mod tests {
             state: StageState::Running,
             verdict: None,
             verdict_note: None,
+            restatement: None,
             summary: None,
             structured: None,
             cost_usd: 0.0,

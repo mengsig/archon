@@ -288,6 +288,17 @@ pub enum Request {
         /// Aether's out-of-band MCP caller identity, never a tool argument.
         caller: Option<AetherAgentId>,
     },
+    /// A stage agent has its verdict read before it completes, and is asked
+    /// once to restate one Archon cannot read (ARCHITECTURE §6.4).
+    SubmitVerdict {
+        /// The `summary` it is about to complete with.
+        summary: String,
+        /// The `structured` data it is about to complete with.
+        #[serde(default)]
+        structured: Option<serde_json::Value>,
+        /// Aether's out-of-band MCP caller identity, never a tool argument.
+        caller: Option<AetherAgentId>,
+    },
     ListArtifacts {
         item: QueueItemId,
     },
@@ -877,6 +888,7 @@ impl Request {
             | Self::Resume(_)
             | Self::MessageOrchestrator { .. }
             | Self::PublishArtifact { .. }
+            | Self::SubmitVerdict { .. }
             | Self::ApproveIntent(_)
             | Self::Enqueue(_)
             | Self::UpdateItem { .. }
@@ -1236,6 +1248,8 @@ pub enum Reply {
     Gc(Box<GcReport>),
     Artifacts(Box<ArtifactListing>),
     ArtifactPage(Box<ArtifactPage>),
+    /// How `submit_verdict` read a stage's verdict, and what it decided.
+    VerdictCheck(crate::run::VerdictCheck),
     CostReport(Box<CostReport>),
     ModelEvidence(Box<ModelEvidenceReport>),
     Initiative(Box<InitiativeDetail>),

@@ -52,8 +52,9 @@ Read `{{workspace}}/.archon/e2e/env.md` for the details.
 ## Verdict
 
 The verdict says whether this run produced trustworthy results, not whether
-the product is defect-free. A `fail` sends the run back to the setup stage,
-which can only fix the environment; a `pass` moves on to the report.
+the product is defect-free. A `fail` with an environment finding sends the
+run back to the setup stage, which can only fix the environment; a `pass`
+moves on to the report.
 
 - **fail** if the environment is at fault: it could not start, a backing
   service or seed data was missing, or scenarios were `blocked` by the
@@ -65,9 +66,10 @@ Give each failed or blocked scenario a finding with the scenario id and
 title, the step that failed, expected against actual, the evidence path, and
 whether the environment or the product is at fault. Severity is high for a
 broken main journey or environment, medium for a broken secondary path, and
-low for cosmetic issues. Mark an environment finding `"blocking": true` and
-a product defect `"blocking": false`: a product defect never fails this
-gate, whatever its severity.
+low for cosmetic issues. Mark an environment finding `"blocking": true,
+"fault": "environment"` and a product defect `"blocking": false, "fault":
+"product"`: a product defect never fails this gate, whatever its severity,
+and setup runs again only for a finding whose `fault` is `environment`.
 
 ## Report
 

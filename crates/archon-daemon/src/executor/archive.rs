@@ -628,6 +628,7 @@ mod tests {
             state,
             verdict: None,
             verdict_note: None,
+            restatement: None,
             summary: None,
             structured: None,
             cost_usd: 0.0,

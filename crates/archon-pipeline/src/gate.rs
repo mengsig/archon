@@ -307,7 +307,7 @@ pub(crate) fn role_outcome(stage: &StageSpec, member: &StageRun) -> String {
 
 /// A slot passes when its agent completed and, for gated stages, its
 /// verdict is `pass`. `unknown` counts as fail.
-fn member_passes(stage: &StageSpec, member: &StageRun) -> bool {
+pub(crate) fn member_passes(stage: &StageSpec, member: &StageRun) -> bool {
     if member.state != StageState::Completed {
         return false;
     }
@@ -366,9 +366,10 @@ fn member_report(stage: &StageSpec, member: &StageRun) -> String {
     let summary = member.summary.as_deref().unwrap_or_default().trim();
     match &member.state {
         StageState::Completed => {
-            let verdict = match verdict_of(member) {
-                Verdict::Fail => "fail".to_owned(),
-                _ => unreadable_verdict(member),
+            let verdict = match (restated_over(member), verdict_of(member)) {
+                (Some(restated), _) => restated.to_owned(),
+                (None, Verdict::Fail) => "fail".to_owned(),
+                (None, _) => unreadable_verdict(member),
             };
             let findings = findings_text(member.structured.as_ref());
             format!("{label}: verdict {verdict}**\n\n{summary}\n{findings}")
@@ -383,6 +384,26 @@ fn member_report(stage: &StageSpec, member: &StageRun) -> String {
             unreachable!("evaluate() asserts every member is terminal")
         }
     }
+}
+
+/// The verdict of a member whose final restatement (`submit_verdict`) stands
+/// over a result that reads otherwise; `None` when its result reads as recorded.
+fn restated_over(member: &StageRun) -> Option<&'static str> {
+    let stands = member.standing_restatement()?;
+    let summary = member.summary.as_deref().unwrap_or_default();
+    let structured = member.structured.as_ref();
+    let (own, _) = match member.only_reviews {
+        Some(true) => Verdict::read_review_lead(summary, structured),
+        _ => Verdict::read(summary, structured),
+    };
+    if Some(own) == member.verdict {
+        return None;
+    }
+    assert_ne!(stands.verdict, Verdict::Pass, "only a non-pass stands");
+    Some(match stands.verdict {
+        Verdict::Fail => "fail, as it restated before completing (final)",
+        _ => "unreadable as pass or fail, as it restated before completing (final; counts as fail)",
+    })
 }
 
 /// Why a completed member's verdict counts as fail, quoting what it said:

@@ -278,6 +278,30 @@ pub struct OnFail {
     /// An earlier stage to re-enter with `{{feedback}}`.
     pub goto: String,
     pub max_loops: u32,
+    /// Which failures loop; unset, every one does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<LoopWhen>,
+}
+
+/// The failures of a stage that take its `on_fail` loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LoopWhen {
+    /// Only one where a failing agent's result lists a finding with
+    /// `"fault": "environment"`: any other fails the run at the stage.
+    EnvironmentFinding,
+}
+
+impl LoopWhen {
+    /// Whether the failed group `failing` takes the loop.
+    pub(crate) fn applies(self, failing: &[&archon_core::run::StageRun]) -> bool {
+        match self {
+            Self::EnvironmentFinding => failing.iter().any(|member| {
+                let structured = member.structured.as_ref();
+                structured.is_some_and(archon_core::run::names_environment)
+            }),
+        }
+    }
 }
 
 /// A loaded, validated pipeline with its prompt templates in memory.
@@ -716,6 +740,18 @@ impl PipelineSpec {
         }
         if on_fail.max_loops > MAX_LOOPS {
             return Err(format!("on_fail.max_loops must be at most {MAX_LOOPS}"));
+        }
+        if on_fail.when.is_none() {
+            return Ok(());
+        }
+        // Only a gated verdict lists findings; a team also fails on its merge.
+        let stage = &self.file.stages[index];
+        if stage.gate == Gate::None || stage.kind == StageKind::Team {
+            return Err(
+                "on_fail.when reads a failing verdict's findings, so it needs a gated stage \
+                 that is no team"
+                    .into(),
+            );
         }
         Ok(())
     }

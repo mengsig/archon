@@ -361,7 +361,9 @@ fn orchestrators_alone(
 ) -> bool {
     let stage_message = matches!(
         request,
-        Request::MessageOrchestrator { .. } | Request::PublishArtifact { .. }
+        Request::MessageOrchestrator { .. }
+            | Request::PublishArtifact { .. }
+            | Request::SubmitVerdict { .. }
     );
     for_an_agent(client, caller) && !request.is_read_only() && !stage_message
 }
@@ -380,6 +382,7 @@ fn check_named_caller(
     let named = match request {
         Request::MessageOrchestrator { caller, .. }
         | Request::PublishArtifact { caller, .. }
+        | Request::SubmitVerdict { caller, .. }
         | Request::AskOperator { caller, .. }
         | Request::RecordChatAnswer { caller, .. }
         | Request::RequestAuthority { caller, .. } => caller.as_ref(),
@@ -411,6 +414,14 @@ pub(crate) async fn route(
         } => crate::agent_messages::send(ctx, caller.as_ref(), kind, text, clarification).await,
         Request::PublishArtifact { path, name, caller } => {
             crate::artifacts::publish_for(ctx, caller.as_ref(), path, name).await
+        }
+        Request::SubmitVerdict {
+            summary,
+            structured,
+            caller,
+        } => {
+            let structured = structured.as_ref();
+            crate::executor::restatement::submit(ctx, caller.as_ref(), &summary, structured).await
         }
         Request::ListArtifacts { item } => crate::artifacts::list_for(ctx, &item).await,
         Request::ReadArtifact {

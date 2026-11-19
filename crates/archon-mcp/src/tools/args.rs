@@ -66,6 +66,11 @@ fn query_request(tool: &str, args: &mut Args) -> Result<Option<Request>, ToolErr
             name: args.optional_text("name")?,
             caller: None,
         },
+        "submit_verdict" => Request::SubmitVerdict {
+            summary: args.required_text("summary")?,
+            structured: args.optional("structured")?,
+            caller: None,
+        },
         "list_artifacts" => Request::ListArtifacts {
             item: args.required("item")?,
         },

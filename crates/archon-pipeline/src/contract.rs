@@ -73,6 +73,9 @@ pub fn instructions(
     if owed.review.is_some_and(|duty| duty.records_verdict) {
         out.push_str(LEAD_VERDICT_RULES);
     }
+    if holds_verdict(stage, owed) {
+        out.push_str(SUBMIT_VERDICT_RULE);
+    }
     if stage.scenarios == Scenarios::Strict {
         out.push_str(STRICT_SCENARIO_RULES);
     }
@@ -344,6 +347,12 @@ fn contract_header(
 /// test stages, and for any gated stage.
 pub fn needs_verdict(stage: &StageSpec) -> bool {
     matches!(stage.kind, StageKind::Review | StageKind::Test) || stage.gate != Gate::None
+}
+
+/// Whether the stage's contract has a Verdict section: its result carries a
+/// verdict a gate reads, its own or a review-only run's.
+pub fn holds_verdict(stage: &StageSpec, owed: Owed) -> bool {
+    needs_verdict(stage) || owed.review.is_some_and(|duty| duty.records_verdict)
 }
 
 fn kind_name(kind: StageKind) -> &'static str {
@@ -1078,6 +1087,13 @@ a fail included. `fail_task` means only that the review could not be done.\n\
 finding `\"blocking\"`; an unmarked one blocks when its severity is critical or high.\n\
 - End the `summary` with a final line that is exactly `VERDICT: PASS` or \
 `VERDICT: FAIL`, matching the structured verdict.\n";
+
+/// Ends either Verdict section: a finished agent cannot be asked again, so
+/// its verdict is read, and restated once if unreadable, before it completes.
+const SUBMIT_VERDICT_RULE: &str = "\
+- Before `complete_task`, call `mcp__archon__submit_verdict` with that `summary` and \
+`structured` (skip it if you have no such tool). If it asks, restate once as it says; \
+that submission is final. Then complete with what you last submitted.\n";
 
 const STRICT_SCENARIO_RULES: &str = "\n## Strict scenario gate\n\n\
 - Each scenario lists `required_steps` ids and `steps` {id,required,status}; \
@@ -1824,6 +1840,51 @@ mod tests {
         assert!(building.contains("follow-ups in your summary and `pr.body`.\n"));
         assert!(!building.contains("## Verdict"));
         assert!(building.ends_with("write no `REVIEW:` line yourself.\n"));
+    }
+
+    /// A finished agent cannot be asked again, so every contract with a
+    /// Verdict section, and no other, has the verdict read before completion.
+    #[test]
+    fn only_a_contract_with_a_verdict_section_asks_for_submit_verdict() {
+        let rule = "- Before `complete_task`, call `mcp__archon__submit_verdict`";
+        let contract = |kind, gate, owed| {
+            let (mode, part) = (WorkspaceMode::Worktree, TeamPart::Solo);
+            instructions(&stage(kind, gate, 1), mode, "/w", part, owed, None)
+        };
+        let mut lead = owing(1, false);
+        lead.review = lead.review.map(|duty| ReviewDuty {
+            records_verdict: true,
+            ..duty
+        });
+        let holders = [
+            (StageKind::Review, Gate::AllPass, Owed::default()),
+            (StageKind::Test, Gate::AllPass, Owed::default()),
+            (StageKind::Report, Gate::Majority, Owed::default()),
+            (StageKind::Work, Gate::None, lead),
+        ];
+        for (kind, gate, owed) in holders {
+            let text = contract(kind, gate, owed);
+            assert_eq!(text.matches(rule).count(), 1, "{kind:?}: {text}");
+            let verdict = text.split("## Verdict").nth(1).expect("a Verdict section");
+            assert!(
+                verdict.contains(rule),
+                "{kind:?}: the rule ends that section"
+            );
+            assert!(verdict.contains("that submission is final"), "{kind:?}");
+            assert!(
+                verdict.contains("(skip it if you have no such tool)"),
+                "{kind:?}"
+            );
+        }
+        let others = [
+            (StageKind::Work, Gate::None, Owed::default()),
+            (StageKind::Work, Gate::None, owing(1, false)),
+            (StageKind::Report, Gate::None, Owed::default()),
+        ];
+        for (kind, gate, owed) in others {
+            let text = contract(kind, gate, owed);
+            assert!(!text.contains("submit_verdict"), "{kind:?}: {text}");
+        }
     }
 
     fn work_contract(owed: Owed) -> String {

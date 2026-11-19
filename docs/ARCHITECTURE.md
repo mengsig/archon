@@ -5825,15 +5825,19 @@ the id `ship`: such a run is `ship`, or `budget`, `blocked` or `escalated` when
 the delivery's error opens with the daemon's own prefix for one. A pipeline may
 name a stage `ship` too. Its records are read instead, by the rules below, only
 when that stage failed the run itself: the run failed in the very words of one
-of its stage runs, the error opens `BLOCKED:` or `ESCALATE:` and a slot of its
+of its stage runs that the daemon ends a run on (one that failed with a
+`BLOCKED:` or `ESCALATE:` prefix, or a spawn the daemon gave up on, which has no
+agent; an agent's plain task failure goes to the gate, which may pass it over),
+the error opens `BLOCKED:` or `ESCALATE:` and a slot of its
 last attempt failed with such a prefix, or the error is the driver's word on
 the stage, which opens with the stage's quoted id (`stage `ship` failed…`,
 `stage `ship` was aborted…`, `stage `ship`: the operator asked…`, `team stage
 `ship` has no roles…`). Otherwise that stage explains nothing, however it
 ended: completed, skipped by a steer, or with a failed slot its gate passed.
 One limit: archond's own failure of a live stage named `ship`, written in other
-words (a team merge that failed, say), is labelled `ship` where `other` would be
-exact; both are scored classes.
+words (a team merge that failed, say), is read as the ship step's, so it is
+`ship` whatever that stage's records would give. The records cannot tell the
+two apart; a pipeline with no stage named `ship` has no such case.
 
 For every other run the records come first: the newest stage run of each slot of
 the failing stage's last attempt, lowest slot first, as the driver reads

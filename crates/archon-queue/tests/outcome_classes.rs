@@ -957,6 +957,63 @@ fn a_stage_named_ship_that_failed_itself_is_no_ship_step() {
     );
 }
 
+/// One slot of a test stage named `ship` whose gate passes on any slot, as its
+/// agent left it.
+fn ship_slot(run: &PipelineRun, fan_index: u32, state: StageState) -> StageRun {
+    let mut slot = settled(run, "ship", StageKind::Test, state);
+    slot.fan_index = fan_index;
+    slot.aether_agent = Some(agent(7 + fan_index));
+    slot
+}
+
+/// A slot the gate passed over never claims the delivery that later failed in
+/// the very words its agent failed its task in, whatever a sibling recorded.
+#[test]
+fn a_passed_over_slot_that_shares_the_deliverys_words_does_not_claim_it() {
+    let refused = "the fast check `false` failed on the committed change (it ended with exit \
+                   status: 1); fix what it reports, commit, and retry the item.";
+    let said = || StageState::Failed {
+        error: refused.into(),
+    };
+    let passed_over = |sibling: Option<(StageState, bool)>| {
+        failed_with("ship", refused, |run| {
+            let mut slots = vec![
+                ship_slot(run, 0, said()),
+                ship_slot(run, 1, StageState::Completed),
+            ];
+            if let Some((state, infra)) = sibling.clone() {
+                let mut third = ship_slot(run, 2, state);
+                third.infrastructure_failure = infra;
+                slots.push(third);
+            }
+            slots
+        })
+    };
+    let died = StageState::Failed {
+        error: "the backend went away".into(),
+    };
+    for sibling in [
+        None,
+        Some((StageState::TimedOut, false)),
+        Some((died, true)),
+    ] {
+        let delivery = passed_over(sibling.clone());
+        assert_eq!(delivery.failure, Some(FailureClass::Ship), "{sibling:?}");
+        assert!(
+            delivery.is_scored(),
+            "{sibling:?}: a failed delivery is a loss"
+        );
+    }
+    // A spawn the daemon gave up on has no agent: the run ends in its words.
+    let spawn = failed_with("ship", refused, |run| {
+        let mut unspawned = ship_slot(run, 0, said());
+        unspawned.aether_agent = None;
+        unspawned.infrastructure_failure = true;
+        vec![unspawned]
+    });
+    assert_eq!(spawn.failure, Some(FailureClass::Infrastructure));
+}
+
 /// No daemon writes a stage run without a name. Capture reads one by its
 /// records alone, then refuses the outcome it cannot key by stage.
 #[test]

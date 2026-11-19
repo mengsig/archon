@@ -68,10 +68,24 @@ fn ship_step_failed(stage_id: &str, error: &str, ending: &[&StageRun]) -> bool {
         ending.iter().all(|s| s.stage_id == SHIP_STEP),
         "the ending attempt is the named stage's"
     );
-    let own_words = ended_by(error, ending).is_some();
+    let own_words = ending
+        .iter()
+        .any(|s| failed_in_words(s, error) && ends_a_run(s));
     // A blocker the driver clipped out of a slot opens as the slot's error does.
     let clipped_stop = ends_run_class(error).is_some() && driver_stop(ending).is_some();
     !own_words && !clipped_stop && !driver_names_stage(error, stage_id)
+}
+
+/// Whether the daemon ends a run in this failed stage run's own words: on its
+/// blocker or escalation, at once, or on a spawn it gave up on, which has no
+/// agent. An agent's plain task failure goes to the gate, which may pass it over.
+fn ends_a_run(stage: &StageRun) -> bool {
+    match &stage.state {
+        StageState::Failed { error } => {
+            StageOutcome::ends_run(error) || stage.aether_agent.is_none()
+        }
+        _ => false,
+    }
 }
 
 /// Whether `error` is the driver's word on the stage `stage_id` itself, which
@@ -105,17 +119,19 @@ fn stated_stop(error: &str, ending: &[&StageRun]) -> Option<FailureClass> {
 /// the words of, whole or as the driver clips them: the one that ended it,
 /// whatever its siblings recorded. The driver read the lowest slot first.
 fn ended_by<'a>(error: &str, ending: &[&'a StageRun]) -> Option<&'a StageRun> {
+    ending.iter().copied().find(|s| failed_in_words(s, error))
+}
+
+/// Whether the stage run failed in the words the run failed in (`error`),
+/// whole or as the driver clips a long error into the run.
+fn failed_in_words(stage: &StageRun, error: &str) -> bool {
     let quoted = error.trim();
-    if quoted.is_empty() {
-        return None;
-    }
-    let said = |s: &StageRun| match &s.state {
-        StageState::Failed { error } => {
+    match &stage.state {
+        StageState::Failed { error } if !quoted.is_empty() => {
             error.trim() == quoted || StageOutcome::run_stop_error(error) == quoted
         }
         _ => false,
-    };
-    ending.iter().copied().find(|s| said(s))
+    }
 }
 
 /// The stage run the driver stops a run on, whose long error it clips: the

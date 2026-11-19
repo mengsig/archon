@@ -1368,46 +1368,59 @@ mod tests {
         assert!(events.contains(&watch), "the watch is delivered in full");
     }
 
-    /// A repository's held watch news is bounded (`MAX_HELD_NUMBERS`), so even at
-    /// its cap, with the longest numbers and logins, it leaves a batch room to spare.
+    /// A repository's held watch news is bounded: `MAX_HELD_NUMBERS` names, each
+    /// at most a read bounds it to, so even at its cap two such events share a batch.
     #[test]
     fn a_repositorys_watch_news_at_its_cap_fits_a_batch() {
-        use crate::github_sync::watch::{MAX_CHANGES, WATCH_TRUST, WatchedChange};
+        use crate::github_sync::watch::{
+            MAX_CHANGES, MAX_NAME_BYTES, MAX_URL_BYTES, WATCH_TRUST, WatchedChange,
+        };
         use crate::github_sync::watch_fold::{MAX_HELD_NUMBERS, TRUNCATED_NOTE};
-        let reviewers = MAX_HELD_NUMBERS / 2 / MAX_CHANGES;
+        let longest_reviewer = format!("team:{}", "s".repeat(MAX_NAME_BYTES));
         let change = |number: u64| WatchedChange {
             number,
             change: "review_requested".into(),
             also: vec!["new_head".into(), "new_comment".into(), "new_review".into()],
-            title: "t".repeat(201),
-            author: Some("a".repeat(39)),
-            url: format!("https://github.com/{}/pull/{number}", "o".repeat(140)),
-            reviewers: (0..reviewers).map(|r| format!("{r:039}")).collect(),
+            title: "\u{1F600}".repeat(200) + "…",
+            author: Some("a".repeat(MAX_NAME_BYTES)),
+            url: "u".repeat(MAX_URL_BYTES),
+            reviewers: vec![longest_reviewer.clone(); MAX_HELD_NUMBERS / MAX_CHANGES],
         };
-        let numbers: Vec<u64> = (0..MAX_HELD_NUMBERS as u64 / 2)
-            .map(|n| u64::MAX - n)
-            .collect();
-        let event = TriggerEvent::GithubWatch {
+        let all_reviewers = TriggerEvent::GithubWatch {
             repo: "r".repeat(100),
             repository: "o".repeat(140),
             changes: (1..=MAX_CHANGES as u64).map(change).collect(),
-            rest: [("seen_pull_request".to_owned(), numbers)].into(),
+            rest: BTreeMap::new(),
             truncated: true,
             note: Some(TRUNCATED_NOTE.to_owned()),
             operator: false,
             trust: WATCH_TRUST.to_owned(),
         };
-        let mut held = vec![Held::new(event, archon_core::now(), false)];
-        let encoded = serde_json::to_string(&held[0].event).unwrap().len();
-        assert!(encoded > 100_000, "a watch at its cap: {encoded} bytes");
-        assert!(encoded * 2 < BATCH_MAX_BYTES, "{encoded} bytes of news");
-        held.push(held[0].clone());
-        let rest = split_past_bytes(&mut held, BATCH_MAX_BYTES).unwrap();
-        assert!(rest.is_empty(), "two capped watches share one batch");
+        let all_numbers = TriggerEvent::GithubWatch {
+            repo: "r".repeat(100),
+            repository: "o".repeat(140),
+            changes: vec![],
+            rest: [(
+                "seen_pull_request".to_owned(),
+                vec![u64::MAX; MAX_HELD_NUMBERS],
+            )]
+            .into(),
+            truncated: true,
+            note: Some(TRUNCATED_NOTE.to_owned()),
+            operator: false,
+            trust: WATCH_TRUST.to_owned(),
+        };
+        for event in [all_reviewers, all_numbers] {
+            let mut held = vec![Held::new(event, archon_core::now(), false)];
+            let encoded = serde_json::to_string(&held[0].event).unwrap().len();
+            assert!(encoded > 200_000, "a watch at its cap: {encoded} bytes");
+            assert!(encoded * 2 < BATCH_MAX_BYTES, "{encoded} bytes of news");
+            held.push(held[0].clone());
+            let rest = split_past_bytes(&mut held, BATCH_MAX_BYTES).unwrap();
+            assert!(rest.is_empty(), "two capped watches share one batch");
+        }
     }
 
-    /// The budget is the list's encoded size, separators included: a prefix
-    /// whose bare events fit but whose list does not is split.
     #[test]
     fn a_batch_budget_counts_the_encoded_list_to_the_byte() {
         let now = archon_core::now();

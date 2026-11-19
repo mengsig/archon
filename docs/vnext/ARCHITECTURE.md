@@ -368,7 +368,11 @@ never edits it implicitly.**
     event per repository however long delivery waits. Its `rest` and the
     reviewers of its 20 full changes name at most 10,000 numbers and logins
     together, the earliest held; past that it is `truncated`, with a note to
-    list the repository's open pull requests. A trigger batch is keyed from
+    list the repository's open pull requests. A login or team slug is kept
+    as read when it is a plain name of at most 39 bytes, and otherwise as its
+    plain prefix and a digest within that, and a URL over 300 bytes is
+    dropped, so the count cap bounds the event's bytes, well under half a
+    batch. A trigger batch is keyed from
     at most 1 MiB of held events (Aether refuses a payload over 2 MiB, and a
     refused batch is dropped), so a larger backlog goes out in several
     batches, in order. The first completed walk,

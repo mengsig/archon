@@ -207,7 +207,8 @@ pub(crate) fn follow_stored(
         before.0.keys().eq(after.0.keys()),
         "following a provider changes only models"
     );
-    for plan in plans.iter_mut() {
+    // A kept agent's resume keeps its model, as quota routing leaves it.
+    for plan in plans.iter_mut().filter(|plan| plan.resume.is_none()) {
         let delegates = delegates(plan, item);
         repair_spawn(plan, (before, after), catalog, delegates)?;
     }

@@ -364,6 +364,7 @@ fn refused_agent_creation_is_absent_from_cost_and_routing_evidence() {
         format!("stage {} refused at spawn: policy", stage.stage_id),
         "workspace missing: /tmp/item".into(),
         "preparing the experiments directory failed: access denied".into(),
+        "preparing the role's worktree failed: io: inspecting /tmp/role".into(),
         "create_agent failed on a full disk 5 times".into(),
     ] {
         let mut refused = stage.clone();

@@ -1281,13 +1281,18 @@ impl Config {
         self.notify.validate()?;
         self.remote.validate()?;
         self.models.check_weights()?;
+        // An alias may name another provider's model, so the allowlist is
+        // decided at orchestrator creation, on the model the catalog resolves.
         let orchestrator = crate::model::ModelChoice::pinned(
             self.orchestrator.model.clone(),
             self.orchestrator.effort,
         );
-        self.models
-            .policy()
-            .check_pending_model(&orchestrator)
+        let policy = self.models.policy();
+        let checked = match policy.deny.contains(&orchestrator.model) {
+            true => policy.check(&orchestrator),
+            false => policy.check_effort(orchestrator.effort),
+        };
+        checked
             .map_err(|e| ArchonError::Config(format!("orchestrator.model violates [models]: {e}")))
     }
 }
@@ -1891,16 +1896,28 @@ mod tests {
         }
     }
 
+    /// `codex/opus` may be a catalog alias of the one allowed model, so the
+    /// allowlist waits for orchestrator creation; a raw deny and the cap do not.
     #[test]
-    fn orchestrator_outside_allowlist_is_refused() {
-        let text = r#"
+    fn orchestrator_allowlist_waits_for_the_catalog_but_deny_and_cap_do_not() {
+        let alias = r#"
             [orchestrator]
-            model = "codex/gpt-5"
+            model = "codex/opus"
             [models]
-            allow = ["claude-code/claude-opus-5-5"]
+            allow = ["claude-code/canonical"]
         "#;
-        let config: Config = toml::from_str(text).unwrap();
-        assert!(matches!(config.validate(), Err(ArchonError::Config(_))));
+        let config: Config = toml::from_str(alias).unwrap();
+        config.validate().expect("its canonical id may be allowed");
+        for refused in [
+            "[orchestrator]\nmodel = \"codex/gpt-5\"\n[models]\ndeny = [\"codex/gpt-5\"]",
+            "[orchestrator]\neffort = \"high\"\n[models]\nmax_effort = \"low\"",
+        ] {
+            let config: Config = toml::from_str(refused).unwrap();
+            assert!(
+                matches!(config.validate(), Err(ArchonError::Config(_))),
+                "{refused}"
+            );
+        }
     }
 
     #[test]

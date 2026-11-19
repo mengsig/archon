@@ -1654,3 +1654,34 @@ async fn a_retry_on_a_superseded_model_runs_the_stored_slots_model() {
     let told = told.expect("the retry is told");
     assert!(!told.contains("in the same agent"), "a fresh agent: {told}");
 }
+
+/// A kept implementer takes its review's findings though a quota move took the
+/// stored plan to another provider meanwhile: its resume keeps the agent's model.
+#[tokio::test]
+async fn a_kept_implementer_takes_its_findings_after_a_quota_move() {
+    let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+    claude_then_codex(&h, 90, 0);
+    let item = enqueue(&h, ROUTED, "kept through a quota move", tier_plan()).await;
+    h.dispatch().await;
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    let implementers = |stages: Vec<archon_core::run::StageRun>| -> Vec<_> {
+        let of_implement = stages.into_iter().filter(|s| s.stage_id == "implement");
+        of_implement.map(|s| (s.choice, s.aether_agent)).collect()
+    };
+    let first = implementers(h.stages(&item.id).await);
+    assert_eq!(first[0].0.model.provider, "claude-code", "{first:?}");
+
+    claude_then_codex(&h, 10, 90);
+    let failed = archon_core::run::StageOutcome::Completed {
+        summary: "the greeting is never tested\nVERDICT: fail".into(),
+        structured: Some(serde_json::json!({"verdict": "fail", "findings": []})),
+    };
+    h.settle_running(|_| failed.clone()).await;
+    h.dispatch().await;
+
+    let again = implementers(h.stages(&item.id).await);
+    assert_eq!(again.len(), 2, "the fix is a second attempt: {again:?}");
+    assert_eq!(again[1].0.model, first[0].0.model, "the kept agent's model");
+    assert_eq!(again[1].1, first[0].1, "the kept agent takes the findings");
+}

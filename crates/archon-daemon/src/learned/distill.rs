@@ -178,7 +178,9 @@ fn current_draft(
             Ok(item)
         }
         _ => {
-            let choice = cheap_choice(window, policy, catalog, orchestrator)?;
+            let ran = window.iter().flat_map(|o| &o.stages);
+            let ran = ran.map(|stage| (stage.cost_usd, &stage.choice));
+            let choice = cheap_choice(ran, policy, catalog, orchestrator)?;
             let evidence = distillation_input(store, repo, window)?;
             let item = errand(repo, window, choice, &evidence)?;
             store.save_learning_value(
@@ -222,10 +224,10 @@ fn distillation_input(
         .map_err(|e|ArchonError::Corrupt(format!("distillation input: {e}")))
 }
 
-/// The cheapest earlier stage choice, else the first allowed model, else the
-/// orchestrator's; once Aether's catalog is read, only a model it lists.
-fn cheap_choice(
-    outcomes: &[Outcome],
+/// The cheapest choice that `ran` at its cost, else the first allowed model, else
+/// the orchestrator's; once Aether's catalog is read, only a model it lists.
+fn cheap_choice<'a>(
+    ran: impl Iterator<Item = (f64, &'a ModelChoice)>,
     policy: &archon_core::policy::ModelPolicy,
     catalog: &archon_core::model_tier::ModelCatalog,
     orchestrator: &ModelRef,
@@ -236,10 +238,10 @@ fn cheap_choice(
         (policy.check(&choice).is_ok() && catalog.superseded_by(&choice.model).is_none())
             .then_some(choice)
     };
-    let cheapest = outcomes
-        .iter()
-        .flat_map(|o| &o.stages)
-        .filter_map(|stage| Some((stage.cost_usd, canonical(&stage.choice)?)))
+    // A cost speaks for the model that ran: an alias now naming another model drops it.
+    let as_ran = |choice: &ModelChoice| canonical(choice).filter(|c| c.model == choice.model);
+    let cheapest = ran
+        .filter_map(|(cost, choice)| Some((cost, as_ran(choice)?)))
         .min_by(|(left, _), (right, _)| left.total_cmp(right))
         .map(|(_, choice)| choice);
     let choice = cheapest
@@ -540,4 +542,34 @@ async fn report_error(ctx: &DaemonContext, error: &ArchonError) -> Result<(), Ar
     assert!(item.seq > 0);
     crate::feed::publish(ctx, vec![item]);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use archon_core::model_tier::{CatalogModel, ModelCatalog};
+
+    /// An earlier cost speaks for the model that ran it, never for the model
+    /// its alias names now.
+    #[test]
+    fn a_cost_under_an_alias_does_not_price_its_current_target() {
+        let current: ModelRef = "claude-code/claude-haiku-5".parse().unwrap();
+        let alias: ModelRef = "claude-code/haiku".parse().unwrap();
+        let dear: ModelRef = "claude-code/claude-sonnet-5".parse().unwrap();
+        let listed = |model: &ModelRef| CatalogModel {
+            model: model.clone(),
+            tier: None,
+            is_default: false,
+        };
+        let mut catalog = ModelCatalog::new(vec![listed(&current), listed(&dear)]);
+        catalog.add_alias(alias.clone(), current.clone());
+        let (cheap, costly) = (
+            ModelChoice::pinned(alias, Effort::Low),
+            ModelChoice::pinned(dear.clone(), Effort::Low),
+        );
+        let ran = [(0.01, &cheap), (0.5, &costly)];
+        let policy = archon_core::policy::ModelPolicy::default();
+        let choice = cheap_choice(ran.into_iter(), &policy, &catalog, &dear).unwrap();
+        assert_eq!(choice.model, dear, "only the model that ran is priced");
+    }
 }

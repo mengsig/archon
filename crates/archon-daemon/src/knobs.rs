@@ -265,7 +265,8 @@ impl<'a> TierScope<'a> {
         Self {
             catalog,
             policy,
-            prefer: &config.orchestrator.model.provider,
+            // The provider the orchestrator runs on: an alias may name another one.
+            prefer: &catalog.canonical_alias(&config.orchestrator.model).provider,
             route: None,
             sized: config.models.effort_sizing(),
         }
@@ -750,6 +751,29 @@ mod tests {
 
     fn policy() -> AutonomyPolicy {
         AutonomyPolicy::resolve(&Default::default(), None, None)
+    }
+
+    /// Tier-only choices prefer the provider the orchestrator runs on, which a
+    /// catalog alias may name differently from its configured spelling.
+    #[test]
+    fn tiers_prefer_the_orchestrator_s_canonical_provider() {
+        use archon_core::model_tier::CatalogModel;
+        let canonical: archon_core::model::ModelRef = "claude-code/canonical".parse().unwrap();
+        let mut catalog = ModelCatalog::new(vec![CatalogModel {
+            model: canonical.clone(),
+            tier: None,
+            is_default: false,
+        }]);
+        catalog.add_alias("codex/opus".parse().unwrap(), canonical);
+        let mut config = Config::default();
+        config.orchestrator.model = "codex/opus".parse().unwrap();
+        let policy = ModelPolicy::default();
+        assert_eq!(
+            TierScope::new(&config, &policy, &catalog).prefer,
+            "claude-code"
+        );
+        let unlisted = ModelCatalog::new(Vec::new());
+        assert_eq!(TierScope::new(&config, &policy, &unlisted).prefer, "codex");
     }
 
     #[test]

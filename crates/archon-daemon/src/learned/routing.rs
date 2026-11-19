@@ -246,19 +246,25 @@ fn stage_evidence(
     }
     seed(store, &mut cohort.routes, query, policy);
     let catalog = store.model_catalog();
-    cohort.routes.retain_mut(|e| {
-        let choice = &mut e.route.choice;
-        let Some(canonical) = eligible_model(&catalog, &choice.model, max_tier) else {
-            return false;
-        };
-        choice.model = canonical;
-        policy.check(choice).is_ok()
-    });
+    cohort
+        .routes
+        .retain(|e| applies(&catalog, (policy, max_tier), &e.route.choice));
     assert!(cohort.routes.iter().all(|e| e.route.stage == query.stage));
     assert!(cohort.routes.iter().all(|e| e.route.passed <= e.route.runs));
     let local = cohort.routes.iter().all(|e| e.route.repo.is_some());
     assert!(!cohort.feedback_history || local, "corrections never pool");
     Ok(cohort)
+}
+
+/// Whether evidence recorded on `choice` counts now: it speaks only for the
+/// model it ran, so an alias since moved to another model counts for neither.
+fn applies(
+    catalog: &archon_core::model_tier::ModelCatalog,
+    (policy, max_tier): (&ModelPolicy, Tier),
+    choice: &ModelChoice,
+) -> bool {
+    let listed = eligible_model(catalog, &choice.model, max_tier);
+    listed.is_some_and(|id| id == choice.model) && policy.check(choice).is_ok()
 }
 
 fn eligible_model(
@@ -507,6 +513,25 @@ mod tests {
         assert_eq!(trial.route.choice.model.model, "tiny");
         assert!(explored);
         assert!(choose(&options[..1], false).is_none());
+    }
+    #[test]
+    fn evidence_under_an_alias_counts_for_neither_the_alias_nor_its_target() {
+        use archon_core::model_tier::{CatalogModel, ModelCatalog};
+        let current: ModelRef = "claude-code/claude-opus-5-5".parse().unwrap();
+        let alias: ModelRef = "claude-code/opus".parse().unwrap();
+        let mut catalog = ModelCatalog::new(vec![CatalogModel {
+            model: current.clone(),
+            tier: Some(Tier::Frontier),
+            is_default: false,
+        }]);
+        catalog.add_alias(alias.clone(), current.clone());
+        let read = (&ModelPolicy::default(), Tier::Frontier);
+        let ran = |model: &ModelRef| ModelChoice::pinned(model.clone(), Effort::Low);
+        assert!(applies(&catalog, read, &ran(&current)));
+        assert!(
+            !applies(&catalog, read, &ran(&alias)),
+            "it ran an older model"
+        );
     }
     #[test]
     fn exploration_is_stable_and_ten_percent_is_a_hard_configuration_ceiling() {

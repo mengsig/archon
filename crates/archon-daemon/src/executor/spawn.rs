@@ -1463,7 +1463,7 @@ async fn ready_to_spawn(
         assert_eq!(&worker.item, item, "a team slot works for its run's item");
         team::ready_worker(ctx, worker)
             .await
-            .map_err(|e| format!("preparing the role's worktree failed: {e}"))?;
+            .map_err(|e| format!("{} {e}", archon_core::run::ROLE_WORKTREE_FAILED))?;
     }
     // An engine started in a directory that is gone says something else.
     if let Some(workspace) = workspace.filter(|path| !path.is_dir()) {

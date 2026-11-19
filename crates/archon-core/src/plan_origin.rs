@@ -603,6 +603,23 @@ impl PlannedPlan {
         item: &QueueItemId,
         catalog: &crate::model_tier::ModelCatalog,
         at: Timestamp,
+        replacement: impl FnMut(
+            &str,
+            usize,
+            &ModelChoice,
+            &EntryOrigin,
+        ) -> Result<Option<CatalogReplacement>, ArchonError>,
+    ) -> Result<(), ArchonError> {
+        self.repair_catalog_in(item, catalog, (at, |_: &str| true), replacement)
+    }
+
+    /// [`Self::repair_catalog_with`] for the keys `in_scope` accepts alone; the
+    /// others, such as a finished stage's pins, are kept unchecked.
+    pub fn repair_catalog_in(
+        &mut self,
+        item: &QueueItemId,
+        catalog: &crate::model_tier::ModelCatalog,
+        (at, in_scope): (Timestamp, impl Fn(&str) -> bool),
         mut replacement: impl FnMut(
             &str,
             usize,
@@ -620,6 +637,9 @@ impl PlannedPlan {
         }
         let mut writer = PlanWriter::editing(self, item, at);
         for (key, choices) in &mut writer.plan.0 {
+            if !in_scope(key) {
+                continue;
+            }
             let slots = writer.entries.get_mut(key).expect("an origin per entry");
             assert_eq!(choices.len(), slots.len(), "origins fit the plan");
             for (slot, (choice, origin)) in choices.iter_mut().zip(slots).enumerate() {

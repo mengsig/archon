@@ -147,6 +147,7 @@ async fn repair_claimed(
         store.release_dispatching(id, archon_core::now())?;
         return Ok(None);
     }
+    let item = without_retired_ship(&item, spec);
     match super::model_catalog::repair_item(ctx, &store, &item, catalog, env, spec) {
         Ok(mut repaired) => {
             if repaired.model_plan != item.model_plan {

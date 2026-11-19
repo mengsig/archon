@@ -990,3 +990,126 @@ async fn status_pages_its_waiting_items_with_a_next_offset() {
         );
     }
 }
+
+const HAIKU: &str = "claude-code/claude-haiku-5-5";
+
+/// Aether lists the harness models but `without`; the next pass reads it.
+async fn serve_catalog_without(h: &Harness, without: &str) {
+    let listed: Vec<archon_core::model::ModelRef> = common::catalog::default_models()
+        .models()
+        .iter()
+        .map(|entry| entry.model.clone())
+        .filter(|model| model.to_string() != without)
+        .collect();
+    common::catalog::answer(&h.catalog_server, &common::catalog::untiered(listed));
+    h.ctx
+        .store
+        .lock()
+        .await
+        .invalidate_model_catalog("catalog changed".into());
+}
+
+#[tokio::test]
+async fn a_finished_stages_retired_pin_holds_no_later_stage() {
+    let h = Harness::new().await;
+    let mut plan = common::plan();
+    plan.0.insert(
+        "implement".into(),
+        vec![common::choice(HAIKU, archon_core::model::Effort::Medium)],
+    );
+    let item = h.enqueue_with("retire a finished pin", plan).await.unwrap();
+    h.dispatch().await;
+    assert_eq!(h.running().await[0].choice.model.to_string(), HAIKU);
+    serve_catalog_without(&h, HAIKU).await;
+    h.settle_running(passing).await;
+    h.dispatch().await;
+    let running = h.running().await;
+    assert!(!running.is_empty(), "the next stage starts");
+    assert!(running.iter().all(|stage| stage.stage_id == "review"));
+    assert!(detail(&h, &item.id).await.waiting_reason.is_none());
+}
+
+#[tokio::test]
+async fn a_running_items_next_stage_names_its_retired_pin() {
+    let h = Harness::new().await;
+    let item = h.enqueue("retire the next stage's pin").await;
+    h.dispatch().await;
+    assert_eq!(h.running().await.len(), 1);
+    serve_catalog_without(&h, common::REVIEW_MODEL).await;
+    h.settle_running(passing).await;
+    h.dispatch().await;
+    assert!(
+        h.running().await.is_empty(),
+        "the held stage creates no agent"
+    );
+    let wait = reason(&h, &item.id, Code::Blocked).await;
+    assert!(wait.message.contains("valid model"), "{}", wait.message);
+    assert!(
+        wait.message.contains(common::REVIEW_MODEL),
+        "{}",
+        wait.message
+    );
+    assert!(
+        wait.next_action.contains("update_item"),
+        "{}",
+        wait.next_action
+    );
+}
+
+#[tokio::test]
+async fn a_pin_retired_while_its_create_is_prepared_is_never_sent() {
+    let h = Harness::new().await;
+    let mut plan = common::plan();
+    plan.0.insert(
+        "implement".into(),
+        vec![common::choice(HAIKU, archon_core::model::Effort::Medium)],
+    );
+    let item = h
+        .enqueue_with("retire a pin mid-create", plan)
+        .await
+        .unwrap();
+    let retired = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    serve_until_retired(&h, retired.clone());
+    let ctx = h.ctx.clone();
+    h.backend.on_host_context(2, move || {
+        retired.store(true, std::sync::atomic::Ordering::SeqCst);
+        ctx.store
+            .try_lock()
+            .expect("no store lock is held while a create is prepared")
+            .invalidate_model_catalog("catalog changed".into());
+    });
+    h.dispatch().await;
+    assert!(
+        h.backend.requests().is_empty(),
+        "no create under a retired pin"
+    );
+    let stages = h.live_stages().await;
+    assert_eq!(stages.len(), 1, "the stage stays reserved for a new check");
+    assert_eq!(stages[0].state, archon_core::run::StageState::Spawning);
+    let state = h.item(&item.id).await.state;
+    assert!(matches!(state, QueueState::Running { .. }), "{state:?}");
+}
+
+/// Lists the default catalog, without `HAIKU` once `retired` is set.
+fn serve_until_retired(h: &Harness, retired: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+    let rows = |without: Option<&str>| {
+        let models = common::catalog::default_models();
+        let listed: Vec<serde_json::Value> = models
+            .models()
+            .iter()
+            .filter(|entry| Some(entry.model.to_string().as_str()) != without)
+            .map(|entry| serde_json::json!({"model": entry.model, "configured": true}))
+            .collect();
+        archon_aether::fake::Scripted::reply("models", serde_json::json!(listed))
+    };
+    let (all, without) = (rows(None), rows(Some(HAIKU)));
+    h.catalog_server.set_responder(
+        "list_models",
+        std::sync::Arc::new(
+            move |_| match retired.load(std::sync::atomic::Ordering::SeqCst) {
+                true => without.clone(),
+                false => all.clone(),
+            },
+        ),
+    );
+}

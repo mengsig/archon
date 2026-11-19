@@ -1313,8 +1313,8 @@ async fn resume_or_spawn(
     stage: &StageRun,
     mut spawn: StoredSpawn,
 ) -> Result<Issued, ArchonError> {
-    match check_frozen_request(ctx, &spawn.request, stage).await {
-        Ok(()) => {}
+    let checked = match check_frozen_request(ctx, &spawn.request, stage).await {
+        Ok(catalog) => catalog,
         Err(ArchonError::Invalid(reason)) => {
             if spawn.parent == ParentBinding::Bound
                 && let Some(agent) = ctx.backend.find_spawn(&spawn.request).await?
@@ -1324,7 +1324,7 @@ async fn resume_or_spawn(
             return Ok(Issued::CatalogRefused(reason));
         }
         Err(error) => return Err(error),
-    }
+    };
     // A grant reserved while budgets were on is dropped once they are off.
     let granted = spawn.request.cost_budget_usd.is_some();
     let repo = {
@@ -1358,14 +1358,16 @@ async fn resume_or_spawn(
         resume::replace(ctx, &agent).await?;
         save_spawn(&mut *ctx.store.lock().await, &stage.id, &spawn)?;
     }
-    spawn_bound(ctx, stage, spawn).await.map(Issued::Spawned)
+    spawn_bound(ctx, stage, spawn, &checked)
+        .await
+        .map(Issued::Spawned)
 }
 
 async fn check_frozen_request(
     ctx: &DaemonContext,
     request: &SpawnRequest,
     stage: &StageRun,
-) -> Result<(), ArchonError> {
+) -> Result<archon_core::model_tier::ModelCatalog, ArchonError> {
     let catalog = learned::catalog(ctx).await?;
     let repo = {
         let store = ctx.store.lock().await;
@@ -1391,7 +1393,27 @@ async fn check_frozen_request(
             )));
         }
     }
-    Ok(())
+    Ok(catalog)
+}
+
+/// The create goes out only on the connection whose catalog `checked` is:
+/// a reconnect or catalog change since the check waits for the next issue.
+fn still_checked(
+    ctx: &DaemonContext,
+    store: &archon_queue::Store,
+    checked: &archon_core::model_tier::ModelCatalog,
+) -> Result<(), ArchonError> {
+    assert!(
+        checked.not_ready_reason().is_none(),
+        "only a ready catalog checks a create"
+    );
+    match learned::cached_catalog(ctx, store)? {
+        Some(current) if current == *checked => Ok(()),
+        _ => Err(ArchonError::Unavailable(
+            "the model catalog changed before the stage's create was sent; it is checked again"
+                .into(),
+        )),
+    }
 }
 
 /// Bind a new stage to its run node and freeze its parent, network and context.
@@ -1400,6 +1422,7 @@ async fn spawn_bound(
     ctx: &DaemonContext,
     stage: &StageRun,
     mut spawn: StoredSpawn,
+    checked: &archon_core::model_tier::ModelCatalog,
 ) -> Result<SpawnedAgent, ArchonError> {
     if spawn.request.cost_budget_usd.is_some() {
         let unresolved = spawn.request.aether_cost_budget.is_none();
@@ -1445,6 +1468,7 @@ async fn spawn_bound(
         save_spawn(&mut store, &stage.id, &spawn)?;
         tracing::warn!(stage = %stage.id, "lean host context unavailable for this engine or Aether; frozen stage request falls back to full");
     }
+    still_checked(ctx, &store, checked)?;
     drop(store);
     ctx.backend.spawn(spawn.request).await
 }
@@ -1519,7 +1543,7 @@ async fn claim(ctx: &DaemonContext, id: &StageRunId) -> Result<Claimed, ArchonEr
     });
     let allowed = RepoEnv::new(repo)
         .map_err(|e| ArchonError::Policy(format!("repository model policy unreadable: {e}")))
-        .and_then(|env| env.resolved_policy(ctx).check(&spawn.request.choice));
+        .and_then(|env| claim_policy_check(ctx, &env, &spawn.request.choice));
     table.in_flight.insert(id.clone());
     Ok(Claimed::Issue(Box::new(Claim {
         stage,
@@ -1529,6 +1553,29 @@ async fn claim(ctx: &DaemonContext, id: &StageRunId) -> Result<Claimed, ArchonEr
         worker,
         item: run.item,
     })))
+}
+
+/// The policy decision a claim can make. Without aliases read on this
+/// connection, the model waits for `check_frozen_request`'s catalog read.
+fn claim_policy_check(
+    ctx: &DaemonContext,
+    env: &RepoEnv,
+    choice: &archon_core::model::ModelChoice,
+) -> Result<(), ArchonError> {
+    let aliases = ctx.aether.aliases();
+    let policy = env.policy_in(&ctx.config, &aliases);
+    if aliases.is_empty() {
+        return policy.check_effort(choice.effort);
+    }
+    let canonical = archon_core::model::ModelChoice {
+        model: aliases.get(&choice.model).unwrap_or(&choice.model).clone(),
+        ..choice.clone()
+    };
+    assert_eq!(
+        canonical.effort, choice.effort,
+        "only the model is canonicalized"
+    );
+    policy.check(&canonical)
 }
 
 async fn record(

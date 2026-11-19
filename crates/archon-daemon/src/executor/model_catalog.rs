@@ -13,6 +13,18 @@ pub(crate) fn repair_item(
     env: &crate::resolve::RepoEnv,
     spec: &archon_pipeline::PipelineSpec,
 ) -> Result<QueueItem, ArchonError> {
+    repair_item_in(ctx, store, item, catalog, env, (spec, &|_| true))
+}
+
+/// [`repair_item`] for the plan keys `in_scope` accepts; the rest are kept as stored.
+fn repair_item_in(
+    ctx: &crate::context::DaemonContext,
+    store: &archon_queue::Store,
+    item: &QueueItem,
+    catalog: &ModelCatalog,
+    env: &crate::resolve::RepoEnv,
+    (spec, in_scope): (&archon_pipeline::PipelineSpec, &dyn Fn(&str) -> bool),
+) -> Result<QueueItem, ArchonError> {
     let policy = env.resolved_policy(ctx);
     let max_tier = env.max_default_tier(&ctx.config);
     let tiers = crate::knobs::TierScope::new(&ctx.config, &policy, catalog);
@@ -37,10 +49,10 @@ pub(crate) fn repair_item(
         max_tier,
     };
     let mut repaired = item.clone();
-    repaired.model_plan.repair_catalog_with(
+    repaired.model_plan.repair_catalog_in(
         &item.id,
         catalog,
-        archon_core::now(),
+        (archon_core::now(), in_scope),
         |key, slot, choice, _| selection.choose(key, slot, choice),
     )?;
     assert_eq!(repaired.id, item.id);
@@ -108,13 +120,24 @@ pub(crate) fn repair_pending(
     env: &crate::resolve::RepoEnv,
     spec: &archon_pipeline::PipelineSpec,
 ) -> Result<(QueueItem, Vec<SpawnPlan>), ArchonError> {
-    let repaired = repair_item(ctx, store, item, catalog, env, spec)?;
+    let keys: std::collections::BTreeSet<String> = plans
+        .iter()
+        .flat_map(|plan| {
+            [
+                plan.stage_id.clone(),
+                archon_core::model::workers_key(&plan.stage_id),
+            ]
+        })
+        .collect();
+    // A finished stage's pins no longer run: only the pending stages' keys are repaired.
+    let in_scope =
+        |key: &str| keys.contains(key) || key.ends_with(archon_core::model::REVIEWERS_KEY_SUFFIX);
+    let repaired = repair_item_in(ctx, store, item, catalog, env, (spec, &in_scope))?;
     let before = item.model_plan.plan();
     let after = repaired.model_plan.plan();
     let mut pending = plans.to_vec();
     for plan in &mut pending {
-        repair_stage(plan, before, after);
-        validate_spawn(plan, catalog)?;
+        repair_spawn(plan, (before, after), catalog)?;
     }
     assert_eq!(pending.len(), plans.len());
     assert_eq!(repaired.id, item.id);
@@ -198,9 +221,7 @@ pub(super) fn repair_stage(plan: &mut SpawnPlan, before: &ModelPlan, after: &Mod
         && old.len() == new.len()
     {
         let slot = plan.fan_index as usize % old.len();
-        if plan.choice.model == old[slot].model {
-            plan.choice.model = new[slot].model.clone();
-        }
+        plan.choice.follow(&old[slot], &new[slot]);
     }
     if let (Some(named), Some(old), Some(new)) = (
         plan.reviewers.as_mut(),
@@ -210,9 +231,7 @@ pub(super) fn repair_stage(plan: &mut SpawnPlan, before: &ModelPlan, after: &Mod
         && old.len() == new.len()
     {
         for ((choice, was), now) in named.iter_mut().zip(old).zip(new) {
-            if choice.model == was.model {
-                choice.model = now.model.clone();
-            }
+            choice.follow(was, now);
         }
     }
     if let (Some(policy), Some(old), Some(new)) = (
@@ -246,18 +265,58 @@ pub(super) fn repair_stage(plan: &mut SpawnPlan, before: &ModelPlan, after: &Mod
     }
 }
 
-fn validate_spawn(plan: &SpawnPlan, catalog: &ModelCatalog) -> Result<(), ArchonError> {
-    let choices = std::iter::once(&plan.choice.model)
-        .chain(plan.reviewers.iter().flatten().map(|choice| &choice.model));
-    let workers = plan.workers.iter().flat_map(|policy| {
+/// Move one emitted plan with its stored entries, matched by canonical id, and
+/// refuse it if a model it names is still not listed.
+fn repair_spawn(
+    plan: &mut SpawnPlan,
+    (before, after): (&ModelPlan, &ModelPlan),
+    catalog: &ModelCatalog,
+) -> Result<(), ArchonError> {
+    canonicalize_spawn(plan, catalog);
+    repair_stage(plan, before, after);
+    validate_spawn(plan, catalog)
+}
+
+/// Each model `plan` names, mutably: its choice, reviewers and workers.
+fn spawn_models(plan: &mut SpawnPlan) -> impl Iterator<Item = &mut archon_core::model::ModelRef> {
+    let choices = std::iter::once(&mut plan.choice.model).chain(
+        plan.reviewers
+            .iter_mut()
+            .flatten()
+            .map(|choice| &mut choice.model),
+    );
+    let workers = plan.workers.iter_mut().flat_map(|policy| {
         policy
             .workers
-            .iter()
-            .filter_map(|choice| choice.model.as_ref())
-            .chain(policy.exempt_models.iter())
+            .iter_mut()
+            .filter_map(|choice| choice.model.as_mut())
+            .chain(policy.exempt_models.iter_mut())
     });
-    for model in choices.chain(workers) {
-        catalog.check(model)?;
+    choices.chain(workers)
+}
+
+/// Name each alias by its canonical id, as the stored plan it is matched with does.
+fn canonicalize_spawn(plan: &mut SpawnPlan, catalog: &ModelCatalog) {
+    assert!(
+        catalog.not_ready_reason().is_none(),
+        "aliases come from a ready catalog"
+    );
+    for model in spawn_models(plan) {
+        let canonical = catalog.canonical_alias(model).clone();
+        *model = canonical;
+    }
+}
+
+/// Refuse a model the catalog does not list, keeping each canonical id it returns.
+fn validate_spawn(plan: &mut SpawnPlan, catalog: &ModelCatalog) -> Result<(), ArchonError> {
+    for model in spawn_models(plan) {
+        let canonical = catalog.check(model)?;
+        assert_eq!(
+            &canonical,
+            catalog.canonical_alias(&canonical),
+            "a checked id is canonical"
+        );
+        *model = canonical;
     }
     Ok(())
 }
@@ -268,6 +327,7 @@ mod tests {
     use archon_core::catalog::{StageKind, WorkspaceMode};
     use archon_core::delegation::{WorkerChoice, WorkerPolicy};
     use archon_core::model::{Effort, ModelChoice, ModelRef};
+    use archon_core::model_tier::Tier;
     use std::collections::BTreeMap;
 
     fn choice(model: &str) -> ModelChoice {
@@ -321,5 +381,91 @@ mod tests {
         assert_eq!(workers.workers[0].model.as_ref(), Some(&expected));
         assert_eq!(workers.exempt_models, vec![expected]);
         assert_eq!(before.0["build"][0], other);
+    }
+
+    fn spawn(choice: ModelChoice) -> SpawnPlan {
+        SpawnPlan {
+            stage_id: "build".into(),
+            kind: StageKind::Work,
+            attempt: 1,
+            fan_index: 0,
+            fan_count: 1,
+            choice,
+            prompt: "task".into(),
+            instructions: "contract".into(),
+            timeout_minutes: 1,
+            allow_delegation: false,
+            workspace: WorkspaceMode::Scratch,
+            team: None,
+            keep: false,
+            resume: None,
+            reviewers: None,
+            workers: None,
+            reports_requirements: false,
+            record_repair: archon_core::run::RecordRepair::Open,
+        }
+    }
+
+    fn plan(choice: &ModelChoice) -> ModelPlan {
+        ModelPlan(BTreeMap::from([("build".into(), vec![choice.clone()])]))
+    }
+
+    fn tiered(model: &str, requested: Tier, resolved: Tier) -> ModelChoice {
+        let tier = archon_core::model_tier::TierChoice {
+            requested,
+            provider: None,
+            resolved,
+        };
+        ModelChoice {
+            tier: Some(tier),
+            ..choice(model)
+        }
+    }
+
+    #[test]
+    fn a_replacement_carries_its_tier_unless_the_copy_set_its_own() {
+        let old = tiered("p/old", Tier::Strong, Tier::Strong);
+        let new = tiered("p/new", Tier::Strong, Tier::Balanced);
+        let mut follows = spawn(old.clone());
+        repair_stage(&mut follows, &plan(&old), &plan(&new));
+        assert_eq!(
+            follows.choice, new,
+            "the copy follows its entry, tier and all"
+        );
+        let override_tier = tiered("p/old", Tier::Fast, Tier::Fast);
+        let mut own = spawn(override_tier.clone());
+        repair_stage(&mut own, &plan(&old), &plan(&new));
+        assert_eq!(own.choice.model, new.model, "the retired model is replaced");
+        assert_eq!(
+            own.choice.tier, override_tier.tier,
+            "an override keeps its tier"
+        );
+    }
+
+    #[test]
+    fn a_pending_alias_is_repaired_as_its_canonical_id() {
+        let (old, new) = (choice("p/old"), choice("p/new"));
+        let mut catalog = ModelCatalog::new(
+            ["p/new", "p/old"]
+                .map(|id| archon_core::model_tier::CatalogModel {
+                    model: id.parse().unwrap(),
+                    tier: None,
+                    is_default: false,
+                })
+                .to_vec(),
+        );
+        catalog.add_alias("p/alias".parse().unwrap(), old.model.clone());
+        let mut pending = spawn(choice("p/alias"));
+        repair_spawn(&mut pending, (&plan(&old), &plan(&new)), &catalog).unwrap();
+        assert_eq!(
+            pending.choice.model, new.model,
+            "the alias follows its entry"
+        );
+        let mut kept = spawn(choice("p/alias"));
+        repair_spawn(&mut kept, (&plan(&new), &plan(&new)), &catalog).unwrap();
+        assert_eq!(
+            kept.choice.model, old.model,
+            "a kept alias is sent canonical"
+        );
     }
 }

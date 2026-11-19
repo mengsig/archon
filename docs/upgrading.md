@@ -33,6 +33,10 @@ Archon holds queued work with `model_catalog_unavailable` until Aether lists
 a configured model. Start or reconnect Aether, or configure a provider when
 its catalog is empty. Dispatch resumes automatically. Aether 1.4.1 supports
 catalog checks. With retirement metadata, a refusal can also name a successor.
+An enqueue that names only a tier also needs the catalog to resolve it, so
+during an outage it is refused with the outage named, as 1.6.3 refused it. Retry
+it once Aether lists models again. An explicit pin is accepted and checked at
+dispatch, and a keyed replay returns its stored item.
 
 After a store migration, the schema guard refuses to open the newer store
 with an older daemon. Binary downgrade is unsupported. Use the documented

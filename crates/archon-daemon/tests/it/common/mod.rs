@@ -890,6 +890,8 @@ struct FakeState {
     update_hook: Option<Box<dyn FnOnce() + Send>>,
     /// Runs once, as the next `interrupt` is made.
     interrupt_hook: Option<Box<dyn FnOnce() + Send>>,
+    /// Runs once, as the next `network_default` is read.
+    host_context_hook: Option<(usize, Box<dyn FnOnce() + Send>)>,
 }
 
 impl FakeState {
@@ -1219,6 +1221,12 @@ impl FakeBackend {
         self.state().update_hook = Some(Box::new(hook));
     }
 
+    /// Run `hook` once, as the host context is resolved after `skip` more
+    /// lookups: the last lookup comes after the run node, before the create.
+    pub fn on_host_context(&self, skip: usize, hook: impl FnOnce() + Send + 'static) {
+        self.state().host_context_hook = Some((skip, Box::new(hook)));
+    }
+
     /// Run `hook` once, as the next `interrupt` is made.
     pub fn on_next_interrupt(&self, hook: impl FnOnce() + Send + 'static) {
         self.state().interrupt_hook = Some(Box::new(hook));
@@ -1452,6 +1460,20 @@ impl AgentBackend for FakeBackend {
         &self,
         requested: archon_core::config::HostContext,
     ) -> Result<archon_core::config::HostContext, ArchonError> {
+        let hook = {
+            let mut state = self.state();
+            match state.host_context_hook.take() {
+                Some((0, hook)) => Some(hook),
+                Some((skip, hook)) => {
+                    state.host_context_hook = Some((skip - 1, hook));
+                    None
+                }
+                None => None,
+            }
+        };
+        if let Some(hook) = hook {
+            hook();
+        }
         Ok(if self.state().host_context_supported {
             requested
         } else {

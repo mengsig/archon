@@ -126,9 +126,11 @@ impl ModelReads<'_> {
                 kind: ModelHoldKind::CatalogUnavailable,
             }));
         }
-        let Some(item) = self.items.get(&candidate.item) else {
+        let Some(stored) = self.items.get(&candidate.item) else {
             return Ok(None);
         };
+        let projected = self.as_run_reads(stored)?;
+        let item = projected.as_ref().unwrap_or(stored);
         if let Some(reason) = invalid_pin(item, self.catalog) {
             return Ok(Some(ModelHold {
                 reason,
@@ -138,16 +140,9 @@ impl ModelReads<'_> {
         if !item.model_plan.needs_catalog_repair(&item.id, self.catalog) {
             return Ok(None);
         }
-        let Some(env) = self.env(item.repo.as_ref()) else {
+        let (Some(env), Some(spec)) = (self.env(item.repo.as_ref()), self.shaped_spec(item)?)
+        else {
             return Ok(None);
-        };
-        let Ok((_, spec)) = crate::knobs::item_specs(env, item) else {
-            return Ok(None);
-        };
-        let spec = match crate::executor::steer::shaped_in(self.store, item, spec) {
-            Ok(spec) => spec,
-            Err(error) if error.is_store() => return Err(error),
-            Err(_) => return Ok(None),
         };
         hold_error(
             item,
@@ -161,6 +156,45 @@ impl ModelReads<'_> {
                 &spec,
             ),
         )
+    }
+
+    /// A 1.0 plan as its run reads it, without the retired ship entry no
+    /// stage uses; `None` for every other plan, read as stored.
+    fn as_run_reads(&self, item: &QueueItem) -> Result<Option<QueueItem>, ArchonError> {
+        let retired = archon_pipeline::spec::RETIRED_SHIP_STAGE;
+        if !item.model_plan.0.contains_key(retired) {
+            return Ok(None);
+        }
+        let Some(spec) = self.shaped_spec(item)? else {
+            return Ok(None);
+        };
+        let mut read = item.clone();
+        if !spec.drop_retired_ship(&mut read.model_plan, read.model_reasons.as_mut()) {
+            return Ok(None);
+        }
+        assert!(
+            !read.model_plan.0.contains_key(retired),
+            "the retired entry is dropped"
+        );
+        Ok(Some(read))
+    }
+
+    /// The pipeline `item` would run, as steered; `None` when it cannot be read.
+    fn shaped_spec(
+        &self,
+        item: &QueueItem,
+    ) -> Result<Option<archon_pipeline::PipelineSpec>, ArchonError> {
+        let Some(env) = self.env(item.repo.as_ref()) else {
+            return Ok(None);
+        };
+        let Ok((_, spec)) = crate::knobs::item_specs(env, item) else {
+            return Ok(None);
+        };
+        match crate::executor::steer::shaped_in(self.store, item, spec) {
+            Ok(spec) => Ok(Some(spec)),
+            Err(error) if error.is_store() => Err(error),
+            Err(_) => Ok(None),
+        }
     }
 
     fn pending(

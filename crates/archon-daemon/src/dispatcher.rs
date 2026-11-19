@@ -62,7 +62,7 @@ pub(crate) async fn read_snapshot(
     snapshot::build(ctx, ReadOn::Reader, &table, caps, envs, &catalog).await
 }
 
-async fn catalog_for_view(
+pub(crate) async fn catalog_for_view(
     ctx: &DaemonContext,
 ) -> Result<archon_core::model_tier::ModelCatalog, ArchonError> {
     use archon_core::model_tier::ModelCatalog;

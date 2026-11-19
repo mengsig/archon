@@ -382,9 +382,7 @@ impl RunDriver {
             };
             assert_eq!(old.len(), new.len(), "repair preserves plan slots");
             for ((choice, was), now) in choices.iter_mut().zip(old).zip(new) {
-                if choice.model == was.model {
-                    choice.model = now.model.clone();
-                }
+                choice.follow(was, now);
             }
         }
     }

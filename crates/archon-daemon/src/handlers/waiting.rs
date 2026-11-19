@@ -17,8 +17,8 @@ pub(super) struct WaitingView {
     snapshot: DispatchSnapshot,
     connected: bool,
     reasons: BTreeMap<QueueItemId, (Code, usize)>,
-    /// Running items whose next stage waits for a ready model catalog.
-    held_stages: BTreeMap<QueueItemId, String>,
+    /// Running items whose next stage waits for a usable model, with why.
+    held_stages: BTreeMap<QueueItemId, (ModelHoldKind, String)>,
 }
 
 impl WaitingView {
@@ -31,7 +31,12 @@ impl WaitingView {
             .enumerate()
             .map(|(index, candidate)| (candidate.item.clone(), (codes[&candidate.item], index)))
             .collect();
-        let held_stages = catalog_held_stages(&snapshot);
+        let mut held_stages = model_held_stages(&snapshot);
+        let catalog = dispatcher::catalog_for_view(ctx).await?;
+        if let Some(reason) = catalog.not_ready_reason() {
+            let store = ctx.read_store().await?;
+            held_by_outage(&store, reason, &mut held_stages)?;
+        }
         Ok(Self {
             snapshot,
             reasons,
@@ -66,9 +71,11 @@ impl WaitingView {
                 }
             }
             QueueState::Blocked { .. } => blocked_code(store, item)?,
-            _ if item.state.is_active() && self.held_stages.contains_key(&item.id) => {
-                Code::ModelCatalogUnavailable
-            }
+            _ if item.state.is_active() => match self.held_stages.get(&item.id) {
+                Some((ModelHoldKind::CatalogUnavailable, _)) => Code::ModelCatalogUnavailable,
+                Some(_) => Code::Blocked,
+                None => return Ok(None),
+            },
             _ => return Ok(None),
         };
         let (message, next_action) = self.describe(store, item, code)?;
@@ -165,6 +172,7 @@ impl WaitingView {
                 "Next in line for the next dispatch pass".into(),
                 format!("archon queue show {}", item.id),
             ),
+            Code::Blocked if item.state.is_active() => self.held_stage_model(item),
             Code::Blocked => {
                 let model_reason = match &item.state {
                     QueueState::Blocked { reason } if item.state.is_model_pin_block() => {
@@ -192,8 +200,9 @@ impl WaitingView {
     /// Why the model catalog holds `item`: its queued admission or, once it
     /// runs, the creation of its next stage.
     fn catalog_hold(&self, item: &QueueItem) -> &str {
-        if let Some(reason) = self.held_stages.get(&item.id) {
+        if let Some((kind, reason)) = self.held_stages.get(&item.id) {
             assert!(item.state.is_active(), "a held stage belongs to a run");
+            assert_eq!(*kind, ModelHoldKind::CatalogUnavailable, "a catalog hold");
             return reason;
         }
         let (_, index) = self.reasons[&item.id];
@@ -207,6 +216,21 @@ impl WaitingView {
             .as_ref()
             .map(|hold| hold.reason.as_str())
             .expect("model hold has a reason")
+    }
+
+    /// Why a running item's next stage has no usable model, and how to re-plan it.
+    fn held_stage_model(&self, item: &QueueItem) -> (String, String) {
+        let (kind, reason) = &self.held_stages[&item.id];
+        assert_ne!(
+            *kind,
+            ModelHoldKind::CatalogUnavailable,
+            "a model, not a catalog, hold"
+        );
+        assert!(!reason.is_empty(), "a model hold says why");
+        (
+            format!("Next stage waits for a valid model: {reason}"),
+            format!("Re-plan the stage's model for {} with update_item", item.id),
+        )
     }
 
     /// The stage no provider has quota for, and the earliest reset.
@@ -353,17 +377,37 @@ fn dependency(
     ))
 }
 
-/// Each item whose pending stage spawn the model catalog holds, with why.
-fn catalog_held_stages(snapshot: &DispatchSnapshot) -> BTreeMap<QueueItemId, String> {
+/// Each item whose pending stage spawn a model hold stops, with why.
+fn model_held_stages(
+    snapshot: &DispatchSnapshot,
+) -> BTreeMap<QueueItemId, (ModelHoldKind, String)> {
     snapshot
         .pending_spawns
         .iter()
         .filter_map(|spawn| {
             let hold = spawn.model_hold.as_ref()?;
-            (hold.kind == ModelHoldKind::CatalogUnavailable)
-                .then(|| (spawn.item.clone(), hold.reason.clone()))
+            Some((spawn.item.clone(), (hold.kind, hold.reason.clone())))
         })
         .collect()
+}
+
+/// Reserved stage creations wait for a ready catalog as well (`check_frozen_request`),
+/// though the run table no longer lists them as pending.
+fn held_by_outage(
+    store: &Store,
+    reason: &str,
+    held: &mut BTreeMap<QueueItemId, (ModelHoldKind, String)>,
+) -> Result<(), ArchonError> {
+    assert!(!reason.is_empty(), "an outage says why");
+    for stage in store.live_stage_runs()? {
+        if stage.state != archon_core::run::StageState::Spawning {
+            continue;
+        }
+        let item = store.run(&stage.run)?.item;
+        held.entry(item)
+            .or_insert_with(|| (ModelHoldKind::CatalogUnavailable, reason.to_owned()));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

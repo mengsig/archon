@@ -1344,3 +1344,74 @@ async fn frozen_daemon_creates_recover_when_the_original_model_stays_retired() {
         }
     }
 }
+
+/// A fake whose catalog lists the harness models and haiku under its alias.
+fn alias_catalog(aether: &FakeAether) {
+    let listed = json!([
+        {"model": MODEL, "configured": true},
+        {"model": REVIEW_MODEL, "configured": true},
+        {"model": "claude-code/claude-haiku-5-5", "configured": true, "aliases": ["haiku"]},
+    ]);
+    aether.set_default("list_models", Scripted::reply("models", listed));
+}
+
+#[tokio::test]
+async fn a_reserved_create_under_an_alias_allowlist_waits_through_an_outage() {
+    const HAIKU: &str = "claude-code/claude-haiku-5-5";
+    let dir = tempfile::tempdir().unwrap();
+    let aether = start_aether(dir.path()).await;
+    let _fleet = script_fleet(&aether);
+    alias_catalog(&aether);
+    aether.script("create_agent", Scripted::Silent);
+    let mut config = Config::default();
+    config.models.allow = vec!["claude-code/haiku".parse().unwrap()];
+    let options = ClientOptions {
+        request_timeout: Duration::from_millis(100),
+        ..Default::default()
+    };
+    let h = harness_with_config(&aether, options, config).await;
+    let mut plan = common::plan();
+    for choice in plan.0.values_mut().flatten() {
+        choice.model = HAIKU.parse().unwrap();
+    }
+    let item = h.enqueue_with("an alias allowlist", plan).await.unwrap();
+    h.dispatch().await;
+    assert_eq!(h.stages(&item.id).await[0].state, StageState::Spawning);
+    let sent = aether.received_named("create_agent").len();
+
+    aether.set_default(
+        "list_models",
+        Scripted::refuse("unavailable", "catalog offline"),
+    );
+    let client = AetherClient::connect_with(&aether.endpoint(), options)
+        .await
+        .unwrap();
+    h.ctx.aether.replace(Some(Arc::new(client))).unwrap();
+    h.dispatch().await;
+    let stage = &h.stages(&item.id).await[0];
+    assert_eq!(stage.state, StageState::Spawning, "{stage:?}");
+    assert_eq!(aether.received_named("create_agent").len(), sent);
+    let wait = waiting_reason(&h, &item.id)
+        .await
+        .expect("a held create is named");
+    assert_eq!(
+        wait.code,
+        archon_core::protocol::WaitingReasonCode::ModelCatalogUnavailable
+    );
+
+    alias_catalog(&aether);
+    h.dispatch().await;
+    assert!(aether.received_named("create_agent").len() > sent);
+    assert_eq!(h.stages(&item.id).await[0].state, StageState::Running);
+}
+
+async fn waiting_reason(
+    h: &Harness,
+    item: &archon_core::id::QueueItemId,
+) -> Option<archon_core::protocol::WaitingReason> {
+    let request = archon_core::protocol::Request::GetItem { item: item.clone() };
+    let Ok(archon_core::protocol::Reply::ItemDetail(detail)) = h.cli(request).await else {
+        panic!("expected item detail");
+    };
+    detail.waiting_reason
+}

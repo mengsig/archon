@@ -244,46 +244,64 @@ async fn a_sample_that_ages_out_while_waiting_for_the_store_warns_of_nothing() {
     assert!(pace_news(&h).await.is_empty());
 }
 
-#[tokio::test]
-async fn a_caller_waiting_on_a_failed_ask_takes_its_failure_instead_of_asking_again() {
+/// A connected fake aetherd that never answers `providers`, under a 500 ms
+/// request timeout.
+async fn silent_providers(h: &Harness) -> archon_aether::fake::FakeAether {
     use archon_aether::client::{AetherClient, ClientOptions};
     use archon_aether::fake::{FakeAether, Scripted};
-    use archon_daemon::quota::{Asker, refresh};
-    use std::time::{Duration, Instant};
-
-    let h = Harness::with_config(Config::default()).await;
     let aether = FakeAether::start(&h.dir.path().join("aetherd.sock"))
         .await
         .expect("fake aetherd");
     aether.set_default("providers", Scripted::Silent);
     let options = ClientOptions {
-        request_timeout: Duration::from_millis(500),
+        request_timeout: std::time::Duration::from_millis(500),
         ..ClientOptions::default()
     };
     let client = AetherClient::connect_with(&aether.endpoint(), options)
         .await
         .expect("connect");
-    h.ctx
-        .aether
-        .replace(Some(std::sync::Arc::new(client)))
-        .expect("link");
+    let linked = h.ctx.aether.replace(Some(std::sync::Arc::new(client)));
+    linked.expect("link");
+    aether
+}
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn callers_joining_a_failed_ask_take_its_failure_instead_of_asking_again() {
+    use archon_daemon::quota::{Asker, refresh};
+    use std::time::{Duration, Instant};
+
+    let h = Harness::with_config(Config::default()).await;
+    let aether = silent_providers(&h).await;
     let started = Instant::now();
     let ctx = h.ctx.clone();
     let poll = tokio::spawn(async move { refresh(&ctx, Asker::PacePoll).await });
     aether
         .wait_for("providers", 1, Duration::from_secs(5))
         .await;
-    let routed = refresh(&h.ctx, Asker::Routing).await;
-    assert!(routed.is_err(), "routing takes the poll's failure");
+    let joiners: Vec<_> = (0..8)
+        .map(|_| {
+            let ctx = h.ctx.clone();
+            tokio::spawn(async move { refresh(&ctx, Asker::Routing).await })
+        })
+        .collect();
     assert!(poll.await.expect("joins").is_err());
+    // A new ask starting the moment the first fails holds no joiner of the first.
+    let ctx = h.ctx.clone();
+    let next = tokio::spawn(async move { refresh(&ctx, Asker::Routing).await });
+    for joiner in joiners {
+        assert!(
+            joiner.await.expect("joins").is_err(),
+            "a joiner takes the failure"
+        );
+    }
     assert!(
         started.elapsed() < Duration::from_millis(900),
         "one timeout, not two"
     );
-    assert_eq!(aether.received_named("providers").len(), 1);
-
-    // A later pass asks afresh.
-    assert!(refresh(&h.ctx, Asker::Routing).await.is_err());
-    assert_eq!(aether.received_named("providers").len(), 2);
+    assert!(next.await.expect("joins").is_err());
+    assert_eq!(
+        aether.received_named("providers").len(),
+        2,
+        "the joiners asked nothing"
+    );
 }

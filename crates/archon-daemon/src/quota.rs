@@ -41,21 +41,22 @@ pub struct Reading {
 #[derive(Debug, Default)]
 pub struct QuotaCache {
     reading: std::sync::Mutex<Option<Reading>>,
-    /// Held across each ask, so a caller waits for one in flight and shares
-    /// its answer, failure included.
-    asking: tokio::sync::Mutex<Asking>,
+    /// The ask in flight, if any, and when the pace poll last asked. Held
+    /// only to join or install an ask, never across one.
+    asking: std::sync::Mutex<Asking>,
     /// A background pace poll is running.
     in_flight: AtomicBool,
 }
 
-/// What the last holder of [`QuotaCache::asking`] did.
+/// An ask's outcome as every caller sharing it sees it; `None` until it ends.
+type Outcome = Option<Result<(), String>>;
+
 #[derive(Debug, Default)]
 struct Asking {
     /// When the pace poll last asked, answered or not.
     polled: Option<Timestamp>,
-    /// The failure of the ask the last holder made; `None` when it made
-    /// none or it answered.
-    failed: Option<String>,
+    /// The ask in flight; a caller arriving meanwhile waits for its outcome.
+    current: Option<tokio::sync::watch::Receiver<Outcome>>,
 }
 
 /// Who asks Aether: routing retries a failed ask on its next pass, as it
@@ -69,6 +70,12 @@ pub enum Asker {
 impl QuotaCache {
     fn lock(&self) -> std::sync::MutexGuard<'_, Option<Reading>> {
         self.reading
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn asking(&self) -> std::sync::MutexGuard<'_, Asking> {
+        self.asking
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
@@ -98,22 +105,36 @@ impl Drop for InFlight<'_> {
 
 /// Ask Aether for its providers' usage unless the last reading is recent.
 /// An aetherd that predates headroom answers none, which routes by weight.
-/// One ask runs at a time; a caller that waited for one takes its outcome,
-/// so a silent aetherd costs each pass one request timeout, as in 1.6.3.
+/// One ask runs at a time; a caller arriving while one is in flight takes
+/// that ask's outcome, so a silent aetherd costs a pass at most one timeout.
 pub async fn refresh(ctx: &DaemonContext, asker: Asker) -> Result<(), ArchonError> {
-    let mut asking = match ctx.quota.asking.try_lock() {
-        Ok(idle) => idle,
-        Err(_) => {
-            let joined = ctx.quota.asking.lock().await;
-            if let Some(why) = &joined.failed {
-                return Err(ArchonError::Aether(format!(
-                    "the providers ask in flight failed: {why}"
-                )));
-            }
-            joined
+    match join_or_start(ctx, asker) {
+        Turn::Skip => Ok(()),
+        Turn::Join(outcome) => joined(outcome).await,
+        Turn::Ask(done) => {
+            let mut owned = Owned {
+                cache: &ctx.quota,
+                done: Some(done),
+            };
+            let asked = ask(ctx).await;
+            owned.finish(asked.as_ref().map(|_| ()).map_err(ToString::to_string));
+            asked
         }
-    };
-    asking.failed = None;
+    }
+}
+
+enum Turn {
+    Skip,
+    Join(tokio::sync::watch::Receiver<Outcome>),
+    Ask(tokio::sync::watch::Sender<Outcome>),
+}
+
+/// Under one lock: join the ask in flight, skip, or install a new one.
+fn join_or_start(ctx: &DaemonContext, asker: Asker) -> Turn {
+    let mut asking = ctx.quota.asking();
+    if let Some(current) = &asking.current {
+        return Turn::Join(current.clone());
+    }
     let now = archon_core::now();
     let recent = ctx
         .quota
@@ -121,17 +142,53 @@ pub async fn refresh(ctx: &DaemonContext, asker: Asker) -> Result<(), ArchonErro
         .is_some_and(|r| now - r.read_at < REFRESH_EVERY);
     let polled_recently = (asking.polled).is_some_and(|at| now >= at && now - at < REFRESH_EVERY);
     if recent || !ctx.aether.is_connected() || (asker == Asker::PacePoll && polled_recently) {
-        return Ok(());
+        return Turn::Skip;
     }
     if asker == Asker::PacePoll {
         asking.polled = Some(now);
     }
-    let asked = ask(ctx).await;
-    if let Err(error) = &asked {
-        asking.failed = Some(error.to_string());
+    let (done, outcome) = tokio::sync::watch::channel(None);
+    asking.current = Some(outcome);
+    debug_assert!(asking.current.is_some());
+    Turn::Ask(done)
+}
+
+/// The outcome of the ask `outcome` follows; one abandoned midway failed.
+async fn joined(mut outcome: tokio::sync::watch::Receiver<Outcome>) -> Result<(), ArchonError> {
+    let ended = match outcome.wait_for(Option::is_some).await {
+        Ok(ended) => ended.clone(),
+        Err(_) => Some(Err("it was abandoned".to_owned())),
+    };
+    match ended.expect("waited for an outcome") {
+        Ok(()) => Ok(()),
+        Err(why) => Err(ArchonError::Aether(format!(
+            "the providers ask in flight failed: {why}"
+        ))),
     }
-    debug_assert_eq!(asked.is_err(), asking.failed.is_some());
-    asked
+}
+
+/// The ask this caller installed; clears it however the caller ends, so a
+/// cancelled ask never blocks the next.
+struct Owned<'a> {
+    cache: &'a QuotaCache,
+    done: Option<tokio::sync::watch::Sender<Outcome>>,
+}
+
+impl Owned<'_> {
+    fn finish(&mut self, outcome: Result<(), String>) {
+        let done = self.done.take().expect("an ask finishes once");
+        self.cache.asking().current = None;
+        // No receiver left is fine: nobody joined.
+        let _ = done.send(Some(outcome));
+    }
+}
+
+impl Drop for Owned<'_> {
+    fn drop(&mut self) {
+        if self.done.take().is_some() {
+            self.cache.asking().current = None;
+        }
+    }
 }
 
 /// One `providers` ask, its answer stored as the reading.

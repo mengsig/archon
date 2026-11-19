@@ -1,9 +1,11 @@
 # Quota pace
 
-Archon reads each provider's quota windows from Aether (at most every 30
-seconds, beside dispatch). An unweighted dispatch pass never waits for this
-read; a weighted one that finds it in flight takes its answer, or its
-failure, so it waits no longer than its own read would. Archon then
+Archon reads each provider's quota windows from Aether: a background poll
+beside dispatch asks at most every 30 seconds, and weighted routing reuses
+an answer under 30 seconds old or asks again, as it always has. An
+unweighted dispatch pass never waits for a read; a weighted one that finds
+one in flight takes its answer, or its failure, so it waits no longer than
+its own read would. Archon then
 compares, for every window, how much of the quota is spent with how much of
 the window's time has passed:
 

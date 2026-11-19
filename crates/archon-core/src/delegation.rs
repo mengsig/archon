@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::ArchonError;
 use crate::model::{Effort, ModelChoice, ModelRef};
-use crate::model_tier::{ModelCatalog, Tier};
+use crate::model_tier::{CatalogModel, ModelCatalog, Tier};
 use crate::policy::ModelPolicy;
 
 /// Most parallel workers a pipeline or plan may allow one lead.
@@ -182,10 +182,14 @@ impl WorkerPolicy {
         cause: &str,
     ) -> Narrowed {
         assert!(!cause.is_empty(), "a fallback says why");
+        let serves = |m: &CatalogModel| {
+            m.tier.is_some() && policy.permits_model(&m.model) && Some(&m.model) != lead
+        };
         let cheapest = catalog
-            .candidates()
-            .filter(|m| m.tier.is_some() && policy.permits_model(&m.model))
-            .filter(|m| Some(&m.model) != lead)
+            .models()
+            .iter()
+            .filter(|m| !catalog.is_retired(&m.model) && serves(m))
+            .filter(|m| !catalog.replaced_for(&m.model, serves))
             .min_by_key(|m| m.tier)
             .map(|m| m.model.clone());
         let (workers, default_tier, rest) = match cheapest {
@@ -346,6 +350,31 @@ mod tests {
             policy.describe(),
             "each worker on codex/terra at effort low or the balanced tier at effort medium, \
              at most 2 at once"
+        );
+    }
+
+    #[test]
+    fn a_fallback_worker_keeps_a_superseded_model_whose_successor_is_denied() {
+        let entry = |model: &str| CatalogModel {
+            model: model.parse().unwrap(),
+            tier: Some(Tier::Strong),
+            is_default: false,
+        };
+        let mut catalog = ModelCatalog::new(vec![entry("p/lead"), entry("p/old"), entry("p/new")]);
+        catalog.add_superseded("p/old".parse().unwrap(), "p/new".parse().unwrap());
+        let denied = ModelPolicy::from_lists(&[], &["p/new".parse().unwrap()], None);
+        let lead: ModelRef = "p/lead".parse().unwrap();
+        let workers = vec![WorkerChoice::of_tier(Tier::Balanced, Effort::Medium)];
+        let base = WorkerPolicy::new(workers, Some(Tier::Balanced), Some(2)).unwrap();
+        let narrowed = base.fallback(&denied, (&catalog, Some(&lead)), "no balanced model");
+        let wire = serde_json::to_value(&narrowed.policy).unwrap().to_string();
+        assert!(wire.contains("\"old\""), "{wire}");
+        let open = ModelPolicy::default();
+        let narrowed = base.fallback(&open, (&catalog, Some(&lead)), "no balanced model");
+        let wire = serde_json::to_value(&narrowed.policy).unwrap().to_string();
+        assert!(
+            wire.contains("\"new\"") && !wire.contains("\"old\""),
+            "{wire}"
         );
     }
 

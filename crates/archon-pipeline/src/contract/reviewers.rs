@@ -205,11 +205,9 @@ fn unplaced_model(
         )
         .find_map(|model| {
             let canonical = catalog.check(model).ok()?;
-            let eligible = |m: &ModelRef| {
-                policy.permits_model(m) && (!governed || provider_reports_cost(&m.provider))
-            };
-            let replaced = catalog.replaced_for(&canonical, |s| eligible(&s.model));
-            (eligible(&canonical) && !replaced).then_some(canonical)
+            (policy.permits_model(&canonical)
+                && (!governed || provider_reports_cost(&canonical.provider)))
+            .then_some(canonical)
         })
 }
 
@@ -331,6 +329,31 @@ mod tests {
             let rules = governed_reviewer_rules(None, &own, &policy, args, true, false);
             assert!(rules.contains("claude-code/sonnet"), "{successor}: {rules}");
         }
+    }
+
+    #[test]
+    fn a_budget_falls_back_to_a_superseded_lead_the_tier_cannot_place() {
+        let own: ModelRef = "claude-code/old".parse().unwrap();
+        let entry = |model: &str, tier| CatalogModel {
+            model: model.parse().unwrap(),
+            tier: Some(tier),
+            is_default: false,
+        };
+        let mut listed = ModelCatalog::new(vec![
+            entry("claude-code/old", Tier::Strong),
+            entry("claude-code/new", Tier::Frontier),
+        ]);
+        listed.add_superseded(own.clone(), "claude-code/new".parse().unwrap());
+        let config = ReviewConfig::default();
+        let open = ModelPolicy::default();
+        let args = (&config, &listed);
+        assert!(governed_review_refusal(None, &own, &open, args).is_none());
+        assert_eq!(
+            reviewer_models(None, &own, &open, args, true),
+            vec![own.clone()]
+        );
+        let rules = governed_reviewer_rules(None, &own, &open, args, true, false);
+        assert!(rules.contains("claude-code/old"), "{rules}");
     }
 
     #[test]

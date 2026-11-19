@@ -1545,3 +1545,116 @@ async fn a_refresh_with_sizing_off_is_not_sized_and_borrows_nothing_of_its_owner
     let stored = serde_json::to_value(&fix).unwrap();
     assert!(stored.get("effort_sizing").is_none(), "{stored}");
 }
+
+/// Record `count` finished `direct` runs whose `implement` ran `model`, so the
+/// model is a learned route for the repository.
+async fn learn_implement_route(h: &Harness, model: &str, cost: f64, count: usize) {
+    use archon_core::model::Effort;
+    use archon_core::outcome::{Outcome, OutcomeResult, OutcomeStage};
+    use archon_core::run::RunState;
+    for n in 0..count {
+        let item = enqueue(h, &format!("learn {model} {n}")).await;
+        let now = archon_core::now();
+        let mut store = h.ctx.store.lock().await;
+        let dispatching = QueueState::Dispatching;
+        store.transition_item(&item.id, dispatching, now).unwrap();
+        let mut run = PipelineRun {
+            id: archon_core::id::PipelineRunId::new(),
+            item: item.id.clone(),
+            pipeline: "direct".into(),
+            shipped: false,
+            aether_run: None,
+            workspace: h.repo.clone(),
+            team_root: None,
+            branch: "archon/seeded".into(),
+            state: RunState::Running {
+                stage_id: "implement".into(),
+                attempt: 1,
+            },
+            cost_usd: cost,
+            started_at: now,
+            finished_at: None,
+        };
+        store.insert_run(&run).unwrap();
+        let running = QueueState::Running {
+            run: run.id.clone(),
+        };
+        store.transition_item(&item.id, running, now).unwrap();
+        run.finish(
+            RunState::Succeeded {
+                summary: "done".into(),
+            },
+            now,
+        )
+        .unwrap();
+        let done = QueueState::Succeeded {
+            run: run.id.clone(),
+            summary: "done".into(),
+        };
+        store.finish_run(&run, done, now).unwrap();
+        let stage = OutcomeStage {
+            stage: "implement".into(),
+            choice: common::choice(model, Effort::Low),
+            cost_usd: cost,
+            wall_secs: 30,
+            attempts: 1,
+            passed: Some(true),
+        };
+        let outcome = Outcome {
+            run: run.id.clone(),
+            item: item.id.clone(),
+            repo: item.repo.clone(),
+            pipeline: "direct".into(),
+            diff: None,
+            stages: vec![stage],
+            review_rounds: 0,
+            result: OutcomeResult::Succeeded,
+            failure: None,
+            failure_source: None,
+            review_pr: None,
+            corrections: Vec::new(),
+            feedback: Vec::new(),
+            context: None,
+            merged: None,
+            cost_usd: cost,
+            cost_provisional: true,
+            count_estimates: true,
+            wall_secs: 30,
+            finished_at: now,
+        };
+        store.record_outcome(&outcome).unwrap();
+    }
+}
+
+/// A11 check 4: with sizing off a refresh makes origin/next's one routing
+/// decision. A route learned since the owner was planned is not applied to it
+/// by a second pass, though a fresh enqueue picks it up.
+#[tokio::test]
+async fn a_refresh_with_sizing_off_makes_one_routing_decision_and_applies_no_learned_route() {
+    let (mut h, _gh) = delivering().await;
+    let owner = enqueue(&h, "the change").await;
+    h.dispatch().await;
+    settle_reviewed(&h, None).await;
+    let mut rolled_back = h.ctx.config.clone();
+    rolled_back.models.effort_sizing = Some(false);
+    h.restart_with(rolled_back);
+    executor::recover(&h.ctx).await.unwrap();
+    let own = owner.model_plan.0["implement"][0].clone();
+    learn_implement_route(&h, &own.model.to_string(), 2.0, 5).await;
+    learn_implement_route(&h, "codex/cheap", 0.2, 5).await;
+    let fresh = enqueue(&h, "learned").await;
+    assert_eq!(
+        fresh.model_plan.0["implement"][0].model.to_string(),
+        "codex/cheap",
+        "the learned route is eligible, so a second pass would take it"
+    );
+
+    advance_origin(&h, "upstream.txt", "elsewhere\n");
+    let fix = refresh(&h, &owner).await.expect("queued");
+    assert_eq!(fix.model_plan.0["implement"][0].model, own.model);
+    assert!(fix.model_plan.sizing().is_none(), "not sized");
+    for key in fix.model_plan.0.keys() {
+        let origin = fix.model_plan.origin(&fix.id, key, 0);
+        assert_ne!(origin.model.source, PlanSource::Learned, "{key}");
+    }
+}

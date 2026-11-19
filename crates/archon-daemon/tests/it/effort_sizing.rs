@@ -759,6 +759,11 @@ async fn after_a_restart_with_sizing_off_the_plan_is_frozen_and_a_new_stage_is_1
     );
     assert_eq!(reason(&added, "verify"), "");
     assert_ne!(effort_source(&added, "verify"), PlanSource::Sizer);
+    assert_eq!(
+        efforts(&added).into_iter().find(|(k, _)| *k == "verify"),
+        Some(("verify", XHigh)),
+        "1.6.3 borrows the run's first choice, not verify's own high"
+    );
 
     h.dispatch().await;
     let implement = attempt(&h, &queued.id, "implement").await;
@@ -770,6 +775,7 @@ async fn after_a_restart_with_sizing_off_the_plan_is_frozen_and_a_new_stage_is_1
     h.settle_running(|_| completed("implemented")).await;
     h.dispatch().await;
     let verify = attempt(&h, &queued.id, "verify").await;
+    assert_eq!(verify.choice.effort, XHigh, "issued as stored");
     assert_eq!(
         verify.sizing,
         AttemptSizing::default(),

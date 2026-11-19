@@ -9,11 +9,11 @@ use archon_core::aether_ids::AetherAgentId;
 use archon_core::delegation::WorkerPolicy;
 use archon_core::error::ArchonError;
 use archon_core::id::StageRunId;
-use archon_core::model::{EffortContract, ModelRef};
+use archon_core::model::ModelRef;
 use serde_json::Value;
 
 use crate::context::DaemonContext;
-use crate::executor;
+use crate::executor::{self, StoredSpawn};
 
 /// Why a child with role `reviewer` of stage agent `parent` breaks the
 /// reviewer models its contract named; `None` for any other child, or when
@@ -115,6 +115,10 @@ async fn sent_policy(
         return Ok(None);
     };
     let store = ctx.store.lock().await;
+    // A resumed or woken agent holds the policy it was created with.
+    if let Some(issuing) = executor::issuing_spawn(&store, &stage_run)? {
+        return Ok(issuing.request.delegation_policy);
+    }
     let spawn = match executor::load_spawn(&store, &stage_run) {
         Ok(spawn) => spawn,
         // Pruned once its stage settled: no live lead delegates from it.
@@ -124,23 +128,18 @@ async fn sent_policy(
     Ok(spawn.request.delegation_policy)
 }
 
-/// The effort rule the stage agent above `parent` (itself, or the lead it
-/// was delegated below) was issued, as its stored spawn records it; `None`
-/// when no stage agent or spawn is found, or the spawn tells no rule.
-pub(super) async fn issued_effort_contract(
+/// The spawn that issued the contract of the stage agent above `parent`
+/// (itself, or the lead it was delegated below); `None` when no stage agent
+/// or spawn is found, as once a settled stage's spawn is pruned.
+pub(super) async fn lead_spawn(
     ctx: &DaemonContext,
     parent: &AetherAgentId,
-) -> Result<Option<EffortContract>, ArchonError> {
+) -> Result<Option<StoredSpawn>, ArchonError> {
     let Some(stage_run) = lead_stage_run(ctx, parent).await? else {
         return Ok(None);
     };
     let store = ctx.store.lock().await;
-    match executor::load_spawn(&store, &stage_run) {
-        Ok(spawn) => Ok(spawn.issued_effort_contract()),
-        // Pruned once its stage settled: nothing tells, so nothing is held stricter.
-        Err(ArchonError::NotFound(_)) => Ok(None),
-        Err(error) => Err(error),
-    }
+    executor::issuing_spawn(&store, &stage_run)
 }
 
 /// The stage run of the stage agent `agent` works for: its own, or that of

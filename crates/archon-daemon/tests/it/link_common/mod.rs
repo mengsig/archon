@@ -381,6 +381,68 @@ pub async fn issued_spawn(
         .unwrap();
 }
 
+/// `stage`'s stored spawn with `field` set to `value`, as a later Archon wrote it.
+pub async fn amend_spawn(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    field: &str,
+    value: serde_json::Value,
+) {
+    let mut store = ctx.store.lock().await;
+    let key = format!("spawn_request:{}", stage.id);
+    let raw = store.kv_get(&key).unwrap().expect("a stored spawn");
+    let mut spawn: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert!(
+        spawn.get("request").is_some(),
+        "a stored spawn holds its request"
+    );
+    spawn[field] = value;
+    store.kv_set(&key, &spawn.to_string()).unwrap();
+}
+
+/// `earlier`'s agent kept for its next attempt: `earlier` failed, and the
+/// running attempt that resumes the agent stored a spawn whose `resume`
+/// holds it, rendered with `instructions` and recording no rule, as 1.6.3 did.
+pub async fn resumed_stage(
+    ctx: &DaemonContext,
+    earlier: &StageRun,
+    instructions: &str,
+) -> StageRun {
+    let agent = earlier
+        .aether_agent
+        .clone()
+        .expect("a running stage holds its agent");
+    let mut store = ctx.store.lock().await;
+    let mut failed = earlier.clone();
+    failed.state = StageState::Failed {
+        error: "review asked for changes".into(),
+    };
+    failed.finished_at = Some(earlier.started_at + chrono::Duration::milliseconds(500));
+    store.upsert_stage_run(&failed).unwrap();
+    let mut later = stage_run(&earlier.run, StageState::Running);
+    later.attempt = earlier.attempt + 1;
+    later.started_at = earlier.started_at + chrono::Duration::seconds(1);
+    later.aether_agent = Some(agent.clone());
+    later.aether_task = earlier.aether_task.clone();
+    store.upsert_stage_run(&later).unwrap();
+    let held = store
+        .stage_run_by_agent(&agent)
+        .unwrap()
+        .expect("handed over");
+    assert_eq!(held.id, later.id, "the later attempt holds the agent");
+    let run = store.run(&later.run).unwrap();
+    let mut request = spawn_request(&later, &run.workspace, None);
+    request.instructions = instructions.to_owned();
+    let resume = serde_json::json!({"agent": agent, "message": "fix it"});
+    let spawn = serde_json::json!({
+        "request": request, "timeout_minutes": 30, "parent": "bound", "resume": resume,
+    });
+    store
+        .kv_set(&format!("spawn_request:{}", later.id), &spawn.to_string())
+        .unwrap();
+    later
+}
+
 /// A queued item of the repository at `path`, registered unless it is.
 pub async fn queued_item(ctx: &DaemonContext, path: &Path) -> QueueItemId {
     let mut store = ctx.store.lock().await;

@@ -107,7 +107,6 @@ pub(super) fn takeover(
         agent,
         message,
         asked_record: None,
-        effort_contract: None,
     }))
 }
 
@@ -568,7 +567,6 @@ pub(super) fn wake_for(failed: &StageRun, error: &str) -> Option<KeptAgent> {
         agent,
         message: woken_note(error),
         asked_record: None,
-        effort_contract: None,
     })
 }
 
@@ -585,7 +583,6 @@ pub(super) fn wake_at_deadline(failed: &StageRun) -> Option<KeptAgent> {
         agent,
         message: deadline_note(),
         asked_record: None,
-        effort_contract: None,
     })
 }
 

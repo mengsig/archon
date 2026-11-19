@@ -66,7 +66,11 @@ const QUICK_SHIP_PROMPT: &str =
     "Ship {{task.title}} unreviewed: {{previous.implement.summary}}\n\n{{task.brief}}\n";
 
 async fn harness() -> Harness {
-    let h = Harness::new().await;
+    harness_with(archon_core::config::Config::default()).await
+}
+
+async fn harness_with(config: archon_core::config::Config) -> Harness {
+    let h = Harness::with_config(config).await;
     let pipelines = h.repo.join(".archon/pipelines");
     h.add_pipeline("steer-extra", EXTRA);
     std::fs::write(pipelines.join("steer-extra/verify.md"), VERIFY_PROMPT).expect("prompt");
@@ -659,6 +663,51 @@ async fn a_stage_that_has_not_started_is_removed_and_a_started_one_is_not() {
     assert!(not_yet.contains("has not started"), "{not_yet}");
     let unknown = refused(&h, &second.id, abort(Some("deploy"), Then::Skip)).await;
     assert!(unknown.contains("implement, review, ship"), "{unknown}");
+}
+
+/// A pipeline whose one stage asks for less thought than the item's work.
+const LIGHT: &str = r#"[pipeline]
+name = "steer-light"
+description = "a light stage to borrow"
+version = 1
+workspace = "worktree"
+requires_repo = true
+
+[[stage]]
+id = "verify"
+kind = "work"
+prompt = "verify.md"
+effort = "low"
+timeout_minutes = 30
+"#;
+
+/// An inserted stage borrows the item's first model: under the effort rubric
+/// at its own effort, rolled back at that choice's, as 1.6.3 did.
+#[tokio::test]
+async fn an_inserted_stage_takes_its_own_effort_under_the_rubric() {
+    for (sizing, expected) in [(None, Effort::Low), (Some(false), Effort::Medium)] {
+        let mut config = archon_core::config::Config::default();
+        config.models.effort_sizing = sizing;
+        let h = harness_with(config).await;
+        h.add_pipeline("steer-light", LIGHT);
+        let prompt = h.repo.join(".archon/pipelines/steer-light/verify.md");
+        std::fs::write(prompt, VERIFY_PROMPT).expect("prompt");
+        let (item, _) = reviewing(&h, "verify lightly").await;
+        let light = Steer {
+            insert_stage: Some(InsertStage {
+                stage: "verify".into(),
+                from: Some("steer-light".into()),
+                after: None,
+            }),
+            ..Steer::default()
+        };
+        let steered = steer(&h, &item.id, light).await.expect("inserted");
+        let first = &steered.model_plan.choices_for("implement").unwrap()[0];
+        assert_eq!(first.effort, Effort::Medium, "the work's own choice");
+        let verify = &steered.model_plan.choices_for("verify").unwrap()[0];
+        assert_eq!(verify.model, first.model, "the item's first model");
+        assert_eq!(verify.effort, expected, "sizing {sizing:?}");
+    }
 }
 
 #[tokio::test]

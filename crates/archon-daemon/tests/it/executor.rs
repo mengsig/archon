@@ -2736,6 +2736,8 @@ async fn a_lead_sizes_its_children_and_reviewers_by_the_rubric_by_default() {
     );
     assert!(build.instructions.contains(&own), "{}", build.instructions);
     assert_eq!(h.issued_effort_contract(&build).await, "rubric");
+    let reviewers = &h.stored_spawn(&build).await["issued_reviewers"];
+    assert_eq!(*reviewers, serde_json::json!([]), "left to the policy");
 }
 
 /// A pass is the lead's word until Aether shows the reviewer: an agent it

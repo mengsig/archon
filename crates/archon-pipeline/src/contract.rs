@@ -644,13 +644,39 @@ pub(crate) fn reviewer_effort_rule(cap: Option<Effort>) -> String {
 const SIZED_CHILDREN: &str = "Size each child's effort to its own task";
 const SIZED_REVIEWERS: &str = "That effort is the default, for a diff the rubric leaves open";
 const FLOORED_REVIEWERS: &str = "Each effort is a floor, never a ceiling";
+/// Where those words sit in a rendered contract, and the rule lines they open.
+const REVIEWER_RULE: &str = "- Delegate every reviewer with role `reviewer`";
+const DEADLINE_HEADING: &str = "\n## Deadline\n";
+const DELEGATION_HEADING: &str = "\n## Delegation\n";
 
 /// The effort rule contract `instructions` states, as rendered here: `None`
 /// when it states none, such as a contract that names no reviewer or child.
+/// Only its own rule lines tell, never text it quotes: the reviewer rule
+/// precedes the deadline and every quoting section, and the children's rule
+/// opens a line of the last section, the delegation rules.
 pub fn stated_effort_contract(instructions: &str) -> Option<EffortContract> {
-    let sized = instructions.contains(SIZED_REVIEWERS) || instructions.contains(SIZED_CHILDREN);
-    let floored = instructions.contains(FLOORED_REVIEWERS);
-    match (sized, floored) {
+    let before_quotes = instructions
+        .split_once(DEADLINE_HEADING)
+        .map_or(instructions, |(own, _)| own);
+    let delegation = instructions
+        .rsplit_once(DELEGATION_HEADING)
+        .map_or("", |(_, own)| own);
+    let reviewer_rules = || {
+        before_quotes
+            .lines()
+            .filter(|line| line.starts_with(REVIEWER_RULE))
+    };
+    let floored = reviewer_rules()
+        .any(|line| line.contains(&format!(". {FLOORED_REVIEWERS}: Archon cancels a ")));
+    let sized_reviewers = reviewer_rules().any(|line| {
+        line.contains(&format!(
+            "{SIZED_REVIEWERS}; otherwise the rubric decides: "
+        ))
+    });
+    let sized_children = delegation
+        .lines()
+        .any(|line| line.starts_with(&format!("- {SIZED_CHILDREN}, whatever yours is: ")));
+    match (sized_reviewers || sized_children, floored) {
         (true, false) => Some(EffortContract::Rubric),
         (false, true) => Some(EffortContract::Floor),
         // Both is no contract rendered here: the reader holds it to neither.
@@ -1876,6 +1902,39 @@ mod tests {
         assert_eq!(stated_effort_contract(&plain), None, "it names no rule");
         let unnamed = reviewer_model_rules(None, &own, &open, false);
         assert_eq!(stated_effort_contract(&unnamed), None, "{unnamed}");
+    }
+
+    /// Words a contract quotes (a dependency's summary, a lesson, a pipeline
+    /// note) tell nothing: only the contract's own rule lines, where it renders them.
+    #[test]
+    fn quoted_rule_words_never_tell_a_contract_s_effort_rule() {
+        use archon_core::model::Effort::Medium;
+        let named = [ModelChoice {
+            model: "codex/m".parse().unwrap(),
+            effort: Medium,
+            tier: None,
+        }];
+        let own = model("claude-code/opus");
+        let open = ModelPolicy::default();
+        let deadline = "\n## Deadline\n\n- Archon stops you at noon.\n";
+        for sizing in [false, true] {
+            let reviewers = reviewer_model_rules(Some(&named), &own, &open, sizing);
+            let other = reviewer_model_rules(Some(&named), &own, &open, !sizing);
+            let children = delegation_rules(WorkspaceMode::Worktree, "a/one", 2, None, sizing);
+            let quoted = format!("\n## Dependencies\n\n> {other}\n{other}");
+            let whole = format!("contract\n{reviewers}{deadline}{quoted}{children}");
+            let expected = Some(EffortContract::of(sizing));
+            assert_eq!(stated_effort_contract(&whole), expected, "{whole}");
+        }
+        let floored = reviewer_model_rules(Some(&named), &own, &open, false);
+        let sized = delegation_rules(WorkspaceMode::Worktree, "a/one", 2, None, true);
+        let quoting = format!("contract\n{deadline}\n## Lessons\n\n{floored}{sized}");
+        let plain = delegation_rules(WorkspaceMode::Worktree, "a/one", 2, None, false);
+        assert_eq!(
+            stated_effort_contract(&format!("{quoting}{plain}")),
+            None,
+            "the words sit only in quoting sections"
+        );
     }
 
     /// The rubric sets a reviewer's effort from the diff, lower or higher than

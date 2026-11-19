@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::common::{self, Harness, MODEL, REVIEW_MODEL, choice};
 use archon_core::autonomy::{AutonomyPatch, ReviewLevel};
+use archon_core::catalog::{CatalogListing, PipelineSource};
 use archon_core::config::Config;
 use archon_core::model::{Effort, ModelPlan};
 use archon_core::ports::SpawnRequest;
@@ -107,10 +108,9 @@ async fn the_orchestrator_prompt_is_1_6_3_s_with_sizing_off() {
     }
 }
 
-/// Every built-in pipeline as `list_pipelines` serves it, nudges included.
-#[tokio::test]
-async fn the_served_catalog_is_1_6_3_s_with_sizing_off() {
-    let h = Harness::with_config(rolled_back()).await;
+/// The built-in pipelines `list_pipelines` serves: the operator's own
+/// pipelines under the real config directory are not this file's to pin.
+async fn served_builtins(h: &Harness) -> CatalogListing {
     let listed = h
         .orchestrator(Request::ListPipelines {
             repo: None,
@@ -118,10 +118,24 @@ async fn the_served_catalog_is_1_6_3_s_with_sizing_off() {
         })
         .await
         .unwrap();
-    let Reply::Catalog(listing) = listed else {
+    let Reply::Catalog(mut listing) = listed else {
         panic!("a catalog: {listed:?}");
     };
+    listing
+        .pipelines
+        .retain(|p| p.source == PipelineSource::Builtin);
+    listing
+        .problems
+        .retain(|p| p.source == PipelineSource::Builtin);
     assert!(listing.pipelines.iter().any(|p| p.name == "adaptive"));
+    listing
+}
+
+/// Every built-in pipeline as `list_pipelines` serves it, nudges included.
+#[tokio::test]
+async fn the_served_catalog_is_1_6_3_s_with_sizing_off() {
+    let h = Harness::with_config(rolled_back()).await;
+    let listing = served_builtins(&h).await;
     let text = serde_json::to_string_pretty(&listing).unwrap();
     same_as_1_6_3("catalog.json", &stable(&h, &text, None));
 }
@@ -133,16 +147,7 @@ async fn the_served_catalog_differs_from_1_6_3_s_only_by_reworded_nudges() {
     let mut config = Config::default();
     config.review.auto_repair = false;
     let h = Harness::with_config(config).await;
-    let listed = h
-        .orchestrator(Request::ListPipelines {
-            repo: None,
-            pipeline: None,
-        })
-        .await
-        .unwrap();
-    let Reply::Catalog(listing) = listed else {
-        panic!("a catalog: {listed:?}");
-    };
+    let listing = served_builtins(&h).await;
     let text = stable(&h, &serde_json::to_string_pretty(&listing).unwrap(), None);
     let mut served: serde_json::Value = serde_json::from_str(&text).unwrap();
     let written = std::fs::read_to_string(fixture("catalog.json")).unwrap();
@@ -207,6 +212,10 @@ async fn a_named_reviewer_contract_is_1_6_3_s_with_sizing_off() {
         "contract-named.txt",
         &stable(&h, &build.instructions, Some(&build)),
     );
+    let spawn = h.stored_spawn(&build).await;
+    let named = serde_json::json!([choice(REVIEW_MODEL, Effort::Medium)]);
+    assert_eq!(spawn["issued_reviewers"], named, "what the contract named");
+    assert_eq!(spawn["effort_contract"], "floor");
 }
 
 /// A lead's contract with reviewers from `[review]`, which asks for low.

@@ -482,6 +482,14 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
         &self,
         request: &archon_core::ports::SpawnRequest,
     ) -> serde_json::Value {
+        self.stored_spawn(request).await["effort_contract"].clone()
+    }
+
+    /// `request`'s spawn as Archon stored it.
+    pub async fn stored_spawn(
+        &self,
+        request: &archon_core::ports::SpawnRequest,
+    ) -> serde_json::Value {
         let store = self.ctx.store.lock().await;
         let key = format!("spawn_request:{}", request.idempotency_key);
         let raw = store.kv_get(&key).expect("kv").expect("a stored spawn");
@@ -490,7 +498,7 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
             spawn["request"]["idempotency_key"],
             request.idempotency_key.as_str()
         );
-        spawn["effort_contract"].clone()
+        spawn
     }
 
     /// Set what the fake disk has free.

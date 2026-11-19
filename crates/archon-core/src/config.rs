@@ -1292,7 +1292,7 @@ impl RepoConfig {
         config.models.check_weights()?;
         if config.models.reserve_percent.is_some()
             || !config.models.interactive_providers.is_empty()
-            || config.models.effort_sizing.is_some()
+            || config.models.effort_sizing == Some(true)
         {
             return Err(ArchonError::Config(format!(
                 "{}: models.reserve_percent, models.interactive_providers and \
@@ -1605,11 +1605,13 @@ mod tests {
         let file = crate::paths::repo_archon_dir(dir.path()).join(CONFIG_FILE_NAME);
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         RepoConfig::load(dir.path()).expect("a repository that leaves it unset loads");
-        for set in ["true", "false"] {
-            std::fs::write(&file, format!("[models]\neffort_sizing = {set}\n")).unwrap();
-            let refused = RepoConfig::load(dir.path()).unwrap_err().to_string();
-            assert!(refused.contains("global config only"), "{refused}");
-        }
+        std::fs::write(&file, "[models]\neffort_sizing = true\n").unwrap();
+        let refused = RepoConfig::load(dir.path()).unwrap_err().to_string();
+        assert!(refused.contains("global config only"), "{refused}");
+        // 1.6.3 loaded a repository's `false`; it stays loadable and inert.
+        std::fs::write(&file, "[models]\neffort_sizing = false\n").unwrap();
+        let inert = RepoConfig::load(dir.path()).expect("a repository's false still loads");
+        assert_eq!(inert.models.effort_sizing, Some(false));
     }
 
     #[test]

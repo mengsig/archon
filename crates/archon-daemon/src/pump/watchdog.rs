@@ -25,6 +25,7 @@ use serde_json::Value;
 
 use super::fleet;
 use crate::context::DaemonContext;
+use crate::executor::StoredSpawn;
 use crate::mirror::{self, Reach};
 use crate::triggers::{self, TriggerEvent};
 use crate::{executor, feed};
@@ -256,8 +257,8 @@ async fn violation(
         return Ok(refusal);
     };
     let policy = item_policy(ctx, item).await?;
-    let reviewers = ctx.store.lock().await.item(item)?.model_plan;
-    let Some(named) = reviewers.reviewer_choices() else {
+    let lead = contract_reviewers::lead_spawn(ctx, parent).await?;
+    let Some(named) = issued_reviewers(ctx, item, lead.as_ref()).await? else {
         if let Some(refusal) = policy_violation(ctx, agent, model, &policy).await? {
             return Ok(Some(refusal));
         }
@@ -281,11 +282,31 @@ async fn violation(
         return Ok(None);
     };
     // The rule the lead was issued, never the one in force now (A10).
-    let issued = contract_reviewers::issued_effort_contract(ctx, parent).await?;
-    if let Some(refusal) = reviewer_refusal(named, model, &held, issued) {
+    let issued = lead.as_ref().and_then(StoredSpawn::issued_effort_contract);
+    if let Some(refusal) = reviewer_refusal(&named, model, &held, issued) {
         return Ok(Some(refusal));
     }
     contract_reviewers::alone_violation(ctx, parent, &held).await
+}
+
+/// The reviewers the lead's contract named, as its issuing spawn recorded
+/// them; `None` when it left them to the policy. A spawn that recorded none
+/// (1.6.3's, or one owing no reviewers) is held to the item's plan as it is now.
+async fn issued_reviewers(
+    ctx: &DaemonContext,
+    item: &QueueItemId,
+    lead: Option<&StoredSpawn>,
+) -> Result<Option<Vec<ModelChoice>>, ArchonError> {
+    if let Some(issued) = lead.and_then(|spawn| spawn.issued_reviewers.as_ref()) {
+        return Ok(Some(issued.clone()).filter(|named| !named.is_empty()));
+    }
+    let plan = ctx.store.lock().await.item(item)?.model_plan;
+    let named = plan.reviewer_choices().map(<[ModelChoice]>::to_vec);
+    assert!(
+        named.as_ref().is_none_or(|named| !named.is_empty()),
+        "a plan names its reviewers or leaves the key out"
+    );
+    Ok(named)
 }
 
 /// Why a child of an item with no reviewer plan breaks the model policy.

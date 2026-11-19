@@ -1173,9 +1173,10 @@ pub(super) async fn filled_plan(
     let tiers = knobs::TierScope::new(&ctx.config, &policy, &catalog).routed(route);
     let max_tier = env.max_default_tier(&ctx.config);
     let fallback = knobs::default_choice(&ctx.config, tiers, max_tier, spec);
-    let fallback = fallback
-        .as_ref()
-        .map(|choice| knobs::Fallback::of(choice, &ctx.config, &policy));
+    let fallback = (
+        fallback.as_ref(),
+        knobs::EffortFill::of(&ctx.config, &policy),
+    );
     let store = ctx.store.lock().await;
     store.configure_learning(&ctx.config.learning)?;
     let repo = env.repo.as_ref().map(|repo| &repo.id);

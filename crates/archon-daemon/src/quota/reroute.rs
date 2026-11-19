@@ -122,6 +122,8 @@ pub(crate) fn route_replacement(
         resume: None,
         ..plan.clone()
     };
+    // A pending attempt still waits behind this note: the replacement skips that hold.
+    let waiting = (item.provider_switch.clone()).filter(|note| note.contains(WAITS_NOTE));
     let plans = std::slice::from_mut(&mut fresh);
     route_plans(
         ctx,
@@ -135,7 +137,11 @@ pub(crate) fn route_replacement(
         "routing moves no effort"
     );
     plan.choice = fresh.choice;
-    Ok(())
+    let Some(waiting) = waiting.filter(|note| item.provider_switch.as_ref() != Some(note)) else {
+        return Ok(());
+    };
+    item.provider_switch = Some(waiting);
+    store.update_item(item)
 }
 
 /// Move `plans` off spent providers or onto the item's held one, follow the
@@ -570,6 +576,9 @@ fn plan_hold(
 }
 
 /// Note on `item` that `hold`'s stage waits for quota, once per stage.
+/// What follows a stage in the note [`record_wait`] writes, and only there.
+const WAITS_NOTE: &str = "waits for provider quota: ";
+
 fn record_wait(
     store: &mut Store,
     item: &mut QueueItem,
@@ -585,9 +594,9 @@ fn record_wait(
     }
     let now = minute(archon_core::now());
     let reset = reset_text(hold.until);
-    item.provider_switch = Some(format!(
-        "{now}: {waits}: every provider meeting its floor is out ({reset})"
-    ));
+    let note = format!("{now}: {waits}: every provider meeting its floor is out ({reset})");
+    assert!(note.contains(WAITS_NOTE), "a wait note reads as one");
+    item.provider_switch = Some(note);
     tracing::info!(item = %item.id, stage = %hold.stage, until = ?hold.until, "a stage waits for provider quota");
     item.updated_at = archon_core::now();
     store.update_item(item)

@@ -1940,9 +1940,15 @@ async fn a_cold_retry_of_a_resumed_implementer_moves_off_a_spent_provider() {
 }
 
 /// A cold replacement skips the quota wait, so it never ends a note that a
-/// pending attempt of its stage waits for quota.
+/// pending attempt of its stage waits for quota, moved by quota or not.
 #[tokio::test]
 async fn a_cold_replacement_leaves_its_stage_s_quota_wait_note() {
+    for moved in [false, true] {
+        cold_replacement_beside_a_wait(moved).await;
+    }
+}
+
+async fn cold_replacement_beside_a_wait(moved: bool) {
     let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
     claude_then_codex(&h, 90, 0);
     let item = enqueue(&h, ROUTED, "a sibling waits", tier_plan()).await;
@@ -1950,6 +1956,9 @@ async fn a_cold_replacement_leaves_its_stage_s_quota_wait_note() {
     claude_then_codex(&h, 10, 90);
     h.settle_running(|_| completed("implemented")).await;
     h.dispatch().await;
+    if moved {
+        claude_then_codex(&h, 90, 0);
+    }
     let waits = "stage review waits for provider quota";
     {
         let mut store = h.ctx.store.lock().await;
@@ -1972,8 +1981,17 @@ async fn a_cold_replacement_leaves_its_stage_s_quota_wait_note() {
         .filter(|s| s.stage_id == "review" && s.fan_index == 0)
         .collect();
     assert_eq!(first.len(), 2, "a cold replacement: {first:?}");
+    let to = if moved { "claude-code/" } else { "codex/" };
+    let on = first[1].choice.model.to_string();
+    assert!(
+        on.starts_with(to),
+        "moved {moved}: the replacement runs on {on}"
+    );
     let note = h.item(&item.id).await.provider_switch.unwrap_or_default();
-    assert!(note.contains(waits), "the wait still stands: {note}");
+    assert!(
+        note.contains(waits),
+        "moved {moved}: the wait still stands: {note}"
+    );
 }
 
 /// A daemon choice the catalog supersedes while still listing it, with no

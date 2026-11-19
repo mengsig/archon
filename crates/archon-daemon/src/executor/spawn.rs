@@ -1562,7 +1562,7 @@ async fn policy_refusal(
     error: ArchonError,
 ) -> Result<FollowUp, ArchonError> {
     assert!(matches!(error, ArchonError::Policy(_)));
-    let message = format!("stage {} refused at spawn: {error}", stage.stage_id);
+    let message = archon_core::run::refused_at_spawn(&stage.stage_id, &error);
     fail_stage_and_run(ctx, table, stage, message, false).await
 }
 

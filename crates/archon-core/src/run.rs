@@ -1323,6 +1323,12 @@ impl TryFrom<String> for ReadCommit {
 /// rows may be gone, so the store stopped it and no stage record explains it.
 pub const UNRESUMABLE_RUN: &str = "cannot resume the run: ";
 
+/// The error archond fails a stage and its run with when it refused the
+/// stage's spawn before any agent existed.
+pub fn refused_at_spawn(stage_id: &str, error: &ArchonError) -> String {
+    format!("stage {stage_id} refused at spawn: {error}")
+}
+
 /// The stage id a run stopped by its item's dollar budget fails under; no
 /// stage of that id runs.
 pub const BUDGET_STAGE: &str = "budget";

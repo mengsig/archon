@@ -1,11 +1,13 @@
 //! A failed run's class comes from its stage records, never its error's words.
 mod common;
 use archon_core::catalog::StageKind;
+use archon_core::cost::STAGE_BUDGET_UNENFORCEABLE;
+use archon_core::error::ArchonError;
 use archon_core::outcome::{ClassSource, FailureClass, Outcome};
 use archon_core::queue::QueueState;
 use archon_core::run::{
     BUDGET_STAGE, PipelineRun, RunState, StageOutcome, StageRun, StageState, Verdict,
-    review_tally_key,
+    refused_at_spawn, review_tally_key,
 };
 use archon_queue::Store;
 use common::*;
@@ -824,6 +826,48 @@ fn a_spawn_failure_is_the_daemons_only_where_no_agent_ran() {
         assert_eq!(quoted.failure, Some(FailureClass::Other), "{gave_up}");
         assert!(quoted.is_scored(), "the agent failed its own task");
     }
+}
+
+/// archond's spawn preflight refuses a stage whose dollar budget it cannot
+/// enforce before any agent exists: the budget stopped it, not the model.
+#[test]
+fn a_spawn_refused_for_an_unenforceable_stage_budget_is_a_budget_stop() {
+    let refusal = ArchonError::Policy(format!(
+        "{STAGE_BUDGET_UNENFORCEABLE}codex/gpt: Aether cost reporting is unavailable"
+    ));
+    let error = refused_at_spawn("implement", &refusal);
+    let refused = |attached: bool| {
+        let error = error.clone();
+        failed_with("implement", &error.clone(), move |run| {
+            let state = StageState::Failed {
+                error: error.clone(),
+            };
+            let mut stage = settled(run, "implement", StageKind::Work, state);
+            stage.aether_agent = attached.then(|| agent(7));
+            vec![stage]
+        })
+    };
+    let preflight = refused(false);
+    assert_eq!(preflight.failure, Some(FailureClass::Budget));
+    assert!(!preflight.is_scored(), "no model ran");
+    let quoted = refused(true);
+    assert_eq!(
+        quoted.failure,
+        Some(FailureClass::Other),
+        "an agent's own words"
+    );
+    let other = ArchonError::Policy("codex/gpt is outside the model policy".into());
+    let outside = refused_at_spawn("implement", &other);
+    let policy = failed_with("implement", &outside.clone(), move |run| {
+        let error = outside.clone();
+        vec![settled(
+            run,
+            "implement",
+            StageKind::Work,
+            StageState::Failed { error },
+        )]
+    });
+    assert_eq!(policy.failure, Some(FailureClass::Other));
 }
 
 /// Recovery fails a run it cannot resume after dropping the stage rows it

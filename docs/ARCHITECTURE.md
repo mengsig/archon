@@ -5880,6 +5880,10 @@ every slot's record is read, in this order:
   the cost stop read in a sibling's words, unless the run failed in that
   sibling's words. The flag also stays on a spawn that kept failing when its
   workspace went meanwhile: the failure then opens `workspace missing:`.
+- archond's spawn preflight refusing an unflagged stage run with no agent
+  because it cannot enforce that stage's dollar budget (`stage <id> refused at
+  spawn: model policy: cannot enforce the dollar budget for …`, written by
+  `run::refused_at_spawn`) gives `budget`: no model ran, so it scores no loss.
 
 Only when no record names the stop is the run's error read, and only for the
 prefixes the daemon writes on purpose. The budget guards' blockers (`BLOCKED:

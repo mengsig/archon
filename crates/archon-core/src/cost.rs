@@ -75,6 +75,10 @@ pub const BUDGET_USED_UP: &str = "BLOCKED: the item's budget is used up";
 /// How the blocker opens when Aether's usage cannot be priced against the cap.
 pub const BUDGET_UNENFORCEABLE: &str = "BLOCKED: cannot enforce the item's dollar budget";
 
+/// How archond's spawn preflight refuses a stage whose own dollar budget it
+/// cannot enforce, before any agent exists: a budget failure, not the model's.
+pub const STAGE_BUDGET_UNENFORCEABLE: &str = "cannot enforce the dollar budget for ";
+
 impl ItemBudget {
     pub fn left(self) -> f64 {
         self.cap_usd - self.spent_usd

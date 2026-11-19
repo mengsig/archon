@@ -4,13 +4,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use archon_core::catalog::StageKind;
-use archon_core::cost::{BUDGET_UNENFORCEABLE, BUDGET_USED_UP};
+use archon_core::cost::{BUDGET_UNENFORCEABLE, BUDGET_USED_UP, STAGE_BUDGET_UNENFORCEABLE};
 use archon_core::error::ArchonError;
 use archon_core::id::StageRunId;
 use archon_core::outcome::FailureClass;
 use archon_core::run::{
     PipelineRun, REVIEW_NOT_ON_RECORD, RunState, SHIP_STEP, STATED_FAILURE, StageOutcome, StageRun,
-    StageState, TalliedFails, UNRESUMABLE_RUN, Verdict, review_field, review_tally_key,
+    StageState, TalliedFails, UNRESUMABLE_RUN, Verdict, refused_at_spawn, review_field,
+    review_tally_key,
 };
 use rusqlite::{Connection, OptionalExtension};
 
@@ -296,18 +297,31 @@ fn stopped_class(ending: &[&StageRun]) -> Option<FailureClass> {
 
 /// How the stage run was stopped before it judged the work, by its own
 /// record. The daemon flags every failed agent, so Aether's cost stop, which
-/// has no other mark, is read in the stopped run before that flag.
+/// has no other mark, is read in the stopped run before that flag; archond's
+/// budget preflight refusal of an unflagged spawn after it.
 fn stop_of(stage: &StageRun) -> Option<FailureClass> {
     match &stage.state {
         StageState::TimedOut => Some(FailureClass::Timeout),
         StageState::Failed { error } if StageOutcome::is_cost_budget_stop(error) => {
             Some(FailureClass::Budget)
         }
-        _ => {
-            let infra = stage.infrastructure_failure || never_spawned(stage);
-            infra.then_some(FailureClass::Infrastructure)
+        _ if stage.infrastructure_failure || never_spawned(stage) => {
+            Some(FailureClass::Infrastructure)
         }
+        StageState::Failed { error } if budget_refused_at_spawn(stage, error) => {
+            Some(FailureClass::Budget)
+        }
+        _ => None,
     }
+}
+
+/// Whether archond's preflight refused the stage run's spawn, before any
+/// agent, because it cannot enforce the stage's dollar budget (1.6.3 and on).
+fn budget_refused_at_spawn(stage: &StageRun, error: &str) -> bool {
+    let refusal = ArchonError::Policy(STAGE_BUDGET_UNENFORCEABLE.to_string());
+    let opening = refused_at_spawn(&stage.stage_id, &refusal);
+    assert!(opening.ends_with(STAGE_BUDGET_UNENFORCEABLE));
+    stage.aether_agent.is_none() && error.starts_with(&opening)
 }
 
 /// A stage run from before the daemon flagged its own spawn failures (1.6.3):

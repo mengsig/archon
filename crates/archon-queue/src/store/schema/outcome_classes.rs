@@ -1045,3 +1045,30 @@ fn v24_reads_a_worker_unprepared_for_a_run_tree_gone() {
     assert_eq!(class(&denied), some("other"), "the tree is there");
     assert_eq!(class(&dirty), some("other"), "the plan left it dirty");
 }
+
+/// A 1.6.3 run archond's spawn preflight refused, before any agent, for a
+/// stage budget it could not enforce stays the unscored budget stop it was.
+#[test]
+fn v24_reads_a_spawn_refused_for_an_unenforceable_stage_budget() {
+    let mut conn = v23_store();
+    let error = "stage implement refused at spawn: model policy: cannot enforce the dollar \
+        budget for codex/gpt: Aether cost reporting is unavailable or unconfirmed and \
+        limits.count_estimated_cost is disabled; enable subscription estimates or choose a \
+        cost-reporting model";
+    let refused = failed_run("implement", error);
+    let preflight = failed_stage(&refused, StageKind::Work, error, false);
+    seed(
+        &conn,
+        &refused,
+        &[preflight],
+        Some(FailureClass::Budget),
+        false,
+    );
+
+    assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+
+    assert_eq!(
+        columns(&conn, &refused),
+        (some("budget"), some("recomputed"), some("budget"))
+    );
+}

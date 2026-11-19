@@ -19,6 +19,7 @@ use archon_aether::fake::{self, FakeAether, Scripted};
 use archon_core::aether_ids::{AetherAgentId, AetherTaskId};
 use archon_core::config::Config;
 use archon_core::model::Effort;
+use archon_core::outcome::FailureClass;
 use archon_core::queue::QueueState;
 use archon_core::run::{PipelineRun, StageRun, StageState};
 use archon_daemon::executor;
@@ -805,7 +806,11 @@ async fn a_budgeted_codex_stage_is_refused_when_estimates_are_disabled() {
     plan.0.get_mut("implement").unwrap()[0] = common::choice(REVIEW_MODEL, Effort::Low);
     let item = h.enqueue_with("no estimates", plan).await.unwrap();
     h.dispatch().await;
-    let QueueState::Failed { error, .. } = h.state(&item.id).await else {
+    let QueueState::Failed {
+        error,
+        run: Some(run),
+    } = h.state(&item.id).await
+    else {
         panic!("unenforceable budget accepted")
     };
     assert!(
@@ -813,6 +818,10 @@ async fn a_budgeted_codex_stage_is_refused_when_estimates_are_disabled() {
         "{error}"
     );
     assert!(aether.received_named("create_agent").is_empty());
+    let outcome = h.ctx.store.lock().await.outcome(&run).unwrap();
+    let outcome = outcome.expect("captured at finish");
+    assert_eq!(outcome.failure, Some(FailureClass::Budget), "{error}");
+    assert!(!outcome.is_scored(), "no model ran");
 }
 
 /// Aether prices a turn at list price while it streams and reports the

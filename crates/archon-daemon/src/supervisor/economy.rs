@@ -298,7 +298,7 @@ pub(super) async fn refresh_delay(
         return Ok(None);
     }
     let (unfinished, tried) = {
-        let store = ctx.store.lock().await;
+        let store = ctx.read_store().await?;
         let unfinished = unfinished_refresh(&store, generation)?;
         let tried = parse_kv::<RefreshTried>(&store, REFRESH_TRIED_KEY)?;
         (unfinished, tried)
@@ -329,7 +329,7 @@ fn delay_reason(tried: Option<&RefreshTried>) -> String {
 pub(super) async fn unrecorded_refresh_delay(
     ctx: &DaemonContext,
 ) -> Result<Option<String>, ArchonError> {
-    let store = ctx.store.lock().await;
+    let store = ctx.read_store().await?;
     let generation = super::parse_generation(store.kv_get(keys::ORCHESTRATOR_GENERATION)?)?;
     if unfinished_refresh(&store, generation)?.is_none() {
         return Ok(None);

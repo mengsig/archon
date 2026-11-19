@@ -9,6 +9,7 @@ use archon_core::cost::format_usd;
 use archon_core::error::ArchonError;
 use archon_core::id::StageRunId;
 use archon_core::model::ModelChoice;
+use archon_core::policy::ModelPolicy;
 use archon_core::run::{PipelineRun, RunState, StageRun};
 use archon_core::steer::{RunEdit, Steer, Then};
 use archon_pipeline::spec::StageSpec;
@@ -50,6 +51,22 @@ pub(super) struct Change {
     pub rebuild: bool,
 }
 
+impl Change {
+    /// Nothing changed yet of the run `blueprint` describes.
+    fn of(blueprint: Blueprint) -> Self {
+        Self {
+            blueprint,
+            edits: Vec::new(),
+            reshaped: false,
+            cancel: Vec::new(),
+            live: BTreeMap::new(),
+            note: None,
+            what: Vec::new(),
+            rebuild: false,
+        }
+    }
+}
+
 /// Where the run is while it is steered.
 struct At<'a> {
     run: &'a PipelineRun,
@@ -77,7 +94,7 @@ fn no_stage(spec: &PipelineSpec, stage: &str) -> ArchonError {
 }
 
 /// A steer whose result no driver can run is the steer's mistake.
-fn not_runnable(error: ArchonError) -> ArchonError {
+pub(super) fn not_runnable(error: ArchonError) -> ArchonError {
     match error {
         ArchonError::Pipeline(why) | ArchonError::Invalid(why) => {
             ArchonError::Invalid(format!("the run could not continue with this steer: {why}"))
@@ -110,21 +127,13 @@ pub(super) async fn plan(
         target,
         delivering,
     };
-    let mut change = Change {
-        blueprint: recover::blueprint(ctx, run).await?,
-        edits: Vec::new(),
-        reshaped: false,
-        cancel: Vec::new(),
-        live: BTreeMap::new(),
-        note: None,
-        what: Vec::new(),
-        rebuild: false,
-    };
+    let mut change = Change::of(recover::blueprint(ctx, run).await?);
+    let before = crate::sizing::Inputs::of(&change.blueprint.item);
     let carried = asked
         .catalog
         .map(|_| change.blueprint.item.model_plan.plan().clone());
     amend(&mut change, asked.steer, &at)?;
-    replan(&mut change, asked, &at);
+    replan(&mut change, asked, &at, &before);
     reshape_run(ctx, asked, &mut change, &at).await?;
     crate::handlers::check_stage_timeouts(
         ctx,
@@ -151,10 +160,41 @@ pub(super) async fn plan(
     rebudget(&mut change, asked.steer, &at, per_item_cap);
     extend(&mut change, asked.steer, &at)?;
     abort(ctx, asked, &mut change, &at)?;
+    resize(
+        ctx,
+        &asked.env.resolved_policy(ctx),
+        &mut change,
+        (&at, &before),
+    );
     let dry = recover::driver_of(ctx, run, change.blueprint.clone()).await;
     dry.map_err(not_runnable)?;
     assert!(!change.what.is_empty(), "a checked steer changes something");
     Ok(change)
+}
+
+/// The steer may have changed what the sizer reads of the item from
+/// `before` (a note amends its brief; a removed review changes its level):
+/// the stages not yet started are sized again, the started ones keep theirs.
+fn resize(
+    ctx: &DaemonContext,
+    policy: &ModelPolicy,
+    change: &mut Change,
+    (at, before): (&At<'_>, &crate::sizing::Inputs),
+) {
+    let started = started_stages(at.stages);
+    let item = &mut change.blueprint.item;
+    if crate::sizing::resize((&ctx.config, policy), item, &started, before) {
+        change.what.push(crate::sizing::RESIZED.to_owned());
+        change.rebuild = true;
+    }
+}
+
+/// The stages of a run that have started: those with a stage run. A stage
+/// whose spawn still awaits a slot has none, and is issued as it is sized now.
+pub(crate) fn started_stages(stages: &[StageRun]) -> BTreeSet<String> {
+    let started: BTreeSet<String> = stages.iter().map(|s| s.stage_id.clone()).collect();
+    debug_assert!(started.len() <= stages.len());
+    started
 }
 
 /// The note amends the brief every later prompt reads, and reaches the
@@ -182,11 +222,23 @@ fn amend(change: &mut Change, steer: &Steer, at: &At<'_>) -> Result<(), ArchonEr
 }
 
 /// A whole new model plan (`update_item`): for the agents started from now,
-/// and on each live agent whose slot it gives another model or effort.
-fn replan(change: &mut Change, asked: &Asked<'_>, at: &At<'_>) {
+/// and on each live agent whose slot it gives another model or effort. It is
+/// sized as the item stood `before` the steer; `resize` then gives the steer's
+/// own note or tags to the stages not yet started.
+fn replan(change: &mut Change, asked: &Asked<'_>, at: &At<'_>, before: &crate::sizing::Inputs) {
     let Some((plan, reasons)) = &asked.plan else {
         return;
     };
+    let item = &mut change.blueprint.item;
+    item.model_plan = plan.clone();
+    item.model_reasons = reasons.clone();
+    // Sized before a live agent is retuned: it gets the effort the plan is stored with.
+    crate::sizing::settle_as(item, before, archon_core::now());
+    let plan = &item.model_plan;
+    assert!(
+        !plan.has_unsized(),
+        "a live agent is retuned to a sized plan"
+    );
     for stage in at.live() {
         // A plan that leaves a stage out is refused when the driver is built.
         let Some(choices) = plan.choices_for(&stage.stage_id).filter(|c| !c.is_empty()) else {
@@ -197,9 +249,6 @@ fn replan(change: &mut Change, asked: &Asked<'_>, at: &At<'_>) {
             change.live.entry(stage.id.clone()).or_default().choice = Some(choice.clone());
         }
     }
-    let item = &mut change.blueprint.item;
-    item.model_plan = plan.clone();
-    item.model_reasons = reasons.clone();
     change.what.push("replaced the model plan".to_owned());
     change.rebuild = true;
 }
@@ -386,7 +435,10 @@ fn retune(
     item.model_plan
         .check_request_policy(&asked.env.resolved_policy(ctx))?;
     for stage in at.live().filter(|stage| stage.stage_id == at.target) {
-        let choice = retuned(stage.current_choice(), steer);
+        let mut choice = retuned(stage.current_choice(), steer);
+        // A model moved under an effort the daemon sized: the new engine may run no x_high.
+        let slot = (at.target, stage.fan_index);
+        choice.effort = crate::sizing::engine_effort(item, slot, &choice);
         if &choice != stage.current_choice() {
             change.live.entry(stage.id.clone()).or_default().choice = Some(choice);
         }

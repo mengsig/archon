@@ -7,7 +7,7 @@ use archon_core::id::RepoId;
 use archon_core::lesson::{Lesson, LessonKind, LessonScope, LessonSource, LessonState};
 use archon_core::model::{Effort, ModelChoice, ModelPlan, ModelRef};
 use archon_core::outcome::Outcome;
-use archon_core::plan_origin::{PlanSource, PlanWriter};
+use archon_core::plan_origin::{PlanSource, PlanWriter, Sizing};
 use archon_core::queue::{Priority, QueueItem, QueueState};
 use archon_core::run::{PipelineRun, RunState};
 use std::sync::Arc;
@@ -299,7 +299,8 @@ fn errand(
         priority: Priority::Low,
         dependencies: Vec::new(),
         tags: vec!["archon:distillation".into()],
-        model_plan: plan.finish(),
+        // The daemon chose its errand's model and effort itself: not sized.
+        model_plan: plan.finish(Sizing::Off { policy_cap: None }),
         model_reasons: None,
         budget_usd: Some(1.0),
         autonomy: Default::default(),

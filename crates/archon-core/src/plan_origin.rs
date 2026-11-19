@@ -3,7 +3,7 @@
 //! it is built by a [`PlanWriter`] and changed only by methods that name who
 //! changes it, so a writer that forgets to say why does not compile.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::ops::Deref;
 
@@ -15,6 +15,11 @@ use crate::id::QueueItemId;
 use crate::model::{Effort, ModelChoice, ModelChoiceDraft, ModelPlan, ModelPlanDraft, ModelRef};
 use crate::model_tier::TierChoice;
 use crate::steer::SteeredBy;
+
+#[path = "plan_origin/sizing.rs"]
+mod sizing;
+
+pub use sizing::{EffortSizer, KeySizing, PlanSizing, Sizing, SlotSizing};
 
 /// How a plan field got its value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
@@ -28,7 +33,7 @@ pub enum PlanSource {
     Tier,
     /// The stage's or the pipeline's default.
     Fallback,
-    /// Sized by the daemon for an effort nobody pinned. No writer sets it yet.
+    /// Sized by the daemon for an effort nobody pinned.
     Sizer,
     /// Raised by the daemon after a failure. No writer sets it yet.
     Escalation,
@@ -317,9 +322,9 @@ impl std::fmt::Display for CatalogCheck {
     }
 }
 
-/// An item's model plan with where each field came from. Serialized as the
-/// item's `model_plan` and `model_origins` keys, so stored items and older
-/// readers see the plan as before.
+/// An item's model plan with where each field came from and how its efforts
+/// were sized. Serialized as the item's `model_plan`, `model_origins` and
+/// `effort_sizing` keys, so stored items and older readers see the plan as before.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PlannedPlan {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -332,6 +337,14 @@ pub struct PlannedPlan {
         deserialize_with = "lenient_origins"
     )]
     model_origins: Option<Box<PlanOrigins>>,
+    /// The sizing decisions frozen into this plan; absent on a plan no key
+    /// of which was ever sized, which is every plan of 1.6.3.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "sizing::lenient"
+    )]
+    effort_sizing: Option<Box<PlanSizing>>,
 }
 
 impl Deref for PlannedPlan {
@@ -426,6 +439,7 @@ impl PlannedPlan {
                 item: Some(item.clone()),
                 entries,
             })),
+            effort_sizing: None,
         }
     }
 
@@ -437,6 +451,7 @@ impl PlannedPlan {
             catalog_check: None,
             model_plan: plan,
             model_origins: None,
+            effort_sizing: None,
         }
     }
 
@@ -445,6 +460,7 @@ impl PlannedPlan {
     #[cfg(any(test, feature = "testing"))]
     pub fn legacy_mut(&mut self) -> &mut ModelPlan {
         self.model_origins = None;
+        self.effort_sizing = None;
         &mut self.model_plan
     }
 
@@ -528,7 +544,8 @@ impl PlannedPlan {
     }
 
     /// This plan with origins that do not describe it replaced by
-    /// unattributed ones; `None` when nothing needs replacing.
+    /// unattributed ones, which no sizing record describes either; `None`
+    /// when nothing needs replacing.
     pub fn reconciled(&self, item: &QueueItemId) -> Option<Self> {
         self.fault(item)?;
         let reconciled = Self::unattributed(item, self.model_plan.clone());
@@ -537,8 +554,8 @@ impl PlannedPlan {
     }
 
     /// The same plan for the new item `to`, cloned from `from`: each field
-    /// keeps its source, authority and time, with `note` added when given.
-    /// A plan without origins stays without them.
+    /// keeps its source, authority and time, with `note` added when given,
+    /// and each key the sizing it has. A plan without origins stays without them.
     pub fn copy_for(&self, from: &QueueItemId, to: &QueueItemId, note: Option<&str>) -> Self {
         assert_ne!(from, to, "a copy is for another item");
         if self.model_origins.is_none() {
@@ -551,7 +568,7 @@ impl PlannedPlan {
                 *entry = entry.clone().noted(note);
             }
         }
-        writer.finish()
+        writer.seal()
     }
 
     /// Drop `key` and its origins together; `true` when the plan had it.
@@ -562,6 +579,7 @@ impl PlannedPlan {
             return false;
         };
         let Some(origins) = &mut self.model_origins else {
+            self.forget_sizing(key);
             return true;
         };
         let slots = origins.entries.remove(key);
@@ -569,6 +587,7 @@ impl PlannedPlan {
             **origins = PlanOrigins::of_no_item();
         }
         debug_assert!(!origins.entries.contains_key(key), "dropped with its key");
+        self.forget_sizing(key);
         true
     }
 
@@ -585,7 +604,7 @@ impl PlannedPlan {
         self.model_plan.0.get(key)?;
         let mut writer = PlanWriter::editing(self, item, at);
         writer.steer(key, named, by);
-        *self = writer.finish();
+        *self = writer.seal();
         self.model_plan.0.get(key).map(Vec::as_slice)
     }
 
@@ -675,7 +694,7 @@ impl PlannedPlan {
         let mut repaired = if writer.plan == self.model_plan {
             self.clone()
         } else {
-            writer.finish()
+            writer.seal()
         };
         repaired.record_catalog(catalog);
         debug_assert_eq!(repaired.origins(item).len(), self.model_plan.0.len());
@@ -714,7 +733,7 @@ impl PlannedPlan {
         if writer.plan == self.model_plan && writer.entries == before {
             return Ok(());
         }
-        *self = writer.finish();
+        *self = writer.seal();
         Ok(())
     }
 }
@@ -756,6 +775,10 @@ pub struct PlanWriter {
     at: Timestamp,
     plan: ModelPlan,
     entries: BTreeMap<String, Vec<EntryOrigin>>,
+    /// The keys this writer resolved or filled itself: the ones to size.
+    fresh: BTreeSet<String>,
+    /// The sizing its carried keys came with.
+    sizing: PlanSizing,
 }
 
 impl PlanWriter {
@@ -766,6 +789,8 @@ impl PlanWriter {
             at,
             plan: ModelPlan::default(),
             entries: BTreeMap::new(),
+            fresh: BTreeSet::new(),
+            sizing: PlanSizing::default(),
         }
     }
 
@@ -795,6 +820,7 @@ impl PlanWriter {
                 .zip(&choices)
                 .map(|(d, c)| self.requested(d, c, by))
                 .collect();
+            self.fresh.insert(key.clone());
             self.insert(key, choices, slots);
         }
     }
@@ -830,11 +856,15 @@ impl PlanWriter {
     }
 
     /// The entries of `kept` (a plan of `item`, which `limit` keeps a key of
-    /// with at most that many choices) carried with the origins they have.
+    /// with at most that many choices) carried with the origins and the
+    /// sizing they have: a carried key is never sized again here. An effort
+    /// the daemon sized is held to `cap` as it is carried, with the reason,
+    /// so a later fill step borrows nothing above it.
     pub fn carry(
         &mut self,
         kept: &PlannedPlan,
         item: &QueueItemId,
+        cap: Option<Effort>,
         limit: impl Fn(&str) -> Option<usize>,
     ) {
         assert_eq!(*item, self.item, "an earlier plan of the same item");
@@ -845,8 +875,11 @@ impl PlanWriter {
             let slots = (0..choices.len())
                 .map(|s| kept.origin(item, key, s))
                 .collect();
+            self.sizing.carry(kept.sizing(), key, choices.len());
             self.insert(key.clone(), choices, slots);
         }
+        self.clip(cap);
+        debug_assert!(cap.is_none_or(|cap| self.sized_within(cap)));
     }
 
     /// The plan a fill step returned, which keeps every entry so far: each
@@ -885,6 +918,7 @@ impl PlanWriter {
                     }),
                 })
                 .collect();
+            self.fresh.insert(key.clone());
             self.insert(key, choices, slots);
         }
     }
@@ -909,6 +943,8 @@ impl PlanWriter {
             at,
             plan: planned.model_plan.clone(),
             entries: planned.origins(item),
+            fresh: BTreeSet::new(),
+            sizing: planned.sizing().cloned().unwrap_or_default(),
         };
         debug_assert!(editing.entries.keys().eq(editing.plan.0.keys()));
         editing
@@ -984,18 +1020,27 @@ impl PlanWriter {
         Ok(())
     }
 
-    /// The plan and its origins as one value: the only place either is set.
-    pub fn finish(self) -> PlannedPlan {
+    /// The plan, its origins and its sizing as one value: the only place any
+    /// of them is set. Private, so a plan a writer built leaves through
+    /// [`PlanWriter::finish`], which says how its new keys are sized.
+    fn seal(mut self) -> PlannedPlan {
+        // No sized effort leaves on an engine that does not run it, whoever moved its model.
+        self.clip(None);
         let origins = PlanOrigins {
             item: Some(self.item.clone()),
             entries: self.entries,
         };
         let fault = origins.fault(&self.item, &self.plan);
         assert_eq!(fault, None, "one whole origin per field");
+        assert!(
+            self.sizing.fits(&self.plan),
+            "sizing of the plan's own keys"
+        );
         PlannedPlan {
             catalog_check: self.catalog_check,
             model_plan: self.plan,
             model_origins: Some(Box::new(origins)),
+            effort_sizing: self.sizing.stored(),
         }
     }
 }

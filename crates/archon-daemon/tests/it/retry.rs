@@ -414,7 +414,7 @@ async fn a_plain_retry_repicks_a_removed_daemon_choice() {
         item.model_plan.plan().clone(),
         (PlanSource::Fallback, PlanSource::Fallback),
     );
-    item.model_plan = writer.finish();
+    item.model_plan = writer.finish(archon_core::plan_origin::Sizing::Off { policy_cap: None });
     h.ctx.store.lock().await.update_item(&item).unwrap();
     cancel(&h, &item).await;
     h.set_learning_models(vec![common::REVIEW_MODEL.parse().unwrap()])

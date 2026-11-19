@@ -293,6 +293,24 @@ fn origin_text(
     }
 }
 
+/// How the sizer classed the item and why each sized plan entry has its
+/// effort; nothing for an item no key of which was sized.
+fn sizing_text(text: &mut String, item: &archon_core::queue::QueueItem) {
+    let Some(sizing) = item.model_plan.sizing() else {
+        return;
+    };
+    let Some(class) = sizing.risk_class else {
+        return;
+    };
+    let signals = sizing.risk_signals.join(", ");
+    let _ = write!(text, "\nEffort sizing: risk class {class} ({signals})");
+    for (key, reasons) in item.model_plan.effort_reasons(&item.id) {
+        for (slot, reason) in reasons.iter().enumerate() {
+            let _ = write!(text, "\n  {key}[{slot}]: {reason}");
+        }
+    }
+}
+
 fn item_detail(detail: &ItemDetail) -> String {
     let item = &detail.item;
     let budget = item
@@ -325,6 +343,7 @@ fn item_detail(detail: &ItemDetail) -> String {
         item.autonomy.describe()
     );
     origin_text(&mut text, &detail.plan_origins);
+    sizing_text(&mut text, item);
     if let Some(provider) = &item.routed_provider {
         let _ = write!(
             text,

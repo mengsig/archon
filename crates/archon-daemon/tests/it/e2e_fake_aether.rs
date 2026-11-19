@@ -1319,7 +1319,7 @@ async fn frozen_daemon_creates_recover_when_the_original_model_stays_retired() {
             item.model_plan.plan().clone(),
             (PlanSource::Fallback, PlanSource::Fallback),
         );
-        item.model_plan = writer.finish();
+        item.model_plan = writer.finish(archon_core::plan_origin::Sizing::Off { policy_cap: None });
         h.ctx.store.lock().await.update_item(&item).unwrap();
         let before = aether.received_named("create_agent").len();
         aether.set_features(vec!["retired_models".into()]);

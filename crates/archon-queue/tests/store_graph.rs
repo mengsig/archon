@@ -278,6 +278,59 @@ fn a_fingerprint_of_a_named_alias_matches_its_retry_resolved_to_a_canonical_id()
     assert_eq!(count(&store), 1);
 }
 
+/// A fingerprint of 1.6.3 holds the plan as the request filled it. A retry
+/// whose plan the sizer will change as it is stored still matches it.
+#[test]
+fn a_fingerprint_of_the_filled_plan_matches_a_retry_whose_plan_is_still_to_size() {
+    use archon_core::effort_sizing::StageFacts;
+    use archon_core::model::Effort;
+    use archon_core::plan_origin::{EffortSizer, PlanSource, PlanWriter, Sizing};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.db");
+    let mut store = Store::open(&path).unwrap();
+    let repo = common::repo("alpha");
+    store.insert_repo(&repo).unwrap();
+    let facts = |_: &str| {
+        let kind = archon_core::catalog::StageKind::Work;
+        Some(StageFacts::new(Effort::Medium, kind, false))
+    };
+    let to_size = |title: &str| {
+        let mut made = item(Some(&repo), title);
+        made.tags = vec!["risk:critical".into()];
+        let mut writer = PlanWriter::new(&made.id, t(1));
+        let filled = made.model_plan.plan().clone();
+        writer.filled(filled, (PlanSource::Fallback, PlanSource::Fallback));
+        let (cap, size) = (Effort::XHigh, None);
+        let facts = &facts;
+        made.model_plan = writer.finish(Sizing::On(EffortSizer { cap, size, facts }));
+        assert!(made.model_plan.has_unsized());
+        made
+    };
+    let first = to_size("fix");
+    let filled = serde_json::to_string(first.model_plan.plan()).unwrap();
+    let stored = store
+        .insert_enqueued(&first, Some("old"), &Asked::default())
+        .unwrap();
+    assert_ne!(
+        serde_json::to_string(stored.model_plan.plan()).unwrap(),
+        filled,
+        "stored at the sized effort"
+    );
+    // The fingerprint as 1.6.3 wrote it: the filled plan, no `asked_plan`.
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let changed = conn.execute(
+        "UPDATE items SET request = json_set(json_remove(request, '$.asked_plan'),
+                                             '$.model_plan', json(?1))",
+        [filled],
+    );
+    assert_eq!(changed.unwrap(), 1);
+    let retry = to_size("fix");
+    assert_ne!(retry.id, first.id, "a retry mints its own id");
+    let again = store.insert_enqueued(&retry, Some("old"), &Asked::default());
+    assert_eq!(again.unwrap().id, stored.id, "the same request");
+    assert_eq!(count(&store), 1);
+}
+
 fn thread() -> GithubThread {
     serde_json::from_value(serde_json::json!({"repository": "o/r", "number": 7})).unwrap()
 }

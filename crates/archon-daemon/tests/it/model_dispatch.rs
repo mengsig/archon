@@ -32,13 +32,13 @@ async fn queued(h: &Harness, model: &str, daemon: bool) -> archon_core::id::Queu
     item.model_plan = if daemon {
         let mut writer = PlanWriter::new(&id, archon_core::now());
         writer.filled(plan, (PlanSource::Fallback, PlanSource::Fallback));
-        writer.finish()
+        writer.finish(archon_core::plan_origin::Sizing::Off { policy_cap: None })
     } else {
         let draft =
             serde_json::from_value(serde_json::json!({"implement": [{"model": model}]})).unwrap();
         let mut writer = PlanWriter::new(&id, archon_core::now());
         writer.request(&draft, plan, Authority::Operator);
-        writer.finish()
+        writer.finish(archon_core::plan_origin::Sizing::Off { policy_cap: None })
     };
     store.update_item(&item).unwrap();
     id
@@ -165,7 +165,7 @@ async fn a_removed_tier_resolution_moves_within_the_requested_tier() {
         .unwrap();
         let mut writer = PlanWriter::new(&id, archon_core::now());
         writer.request(&draft, plan, Authority::Operator);
-        item.model_plan = writer.finish();
+        item.model_plan = writer.finish(archon_core::plan_origin::Sizing::Off { policy_cap: None });
         store.update_item(&item).unwrap();
     }
     executor::start_item(&h.ctx, &id).await.unwrap();

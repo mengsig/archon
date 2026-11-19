@@ -665,3 +665,83 @@ fn disputed_passes_stored_before_notes_are_counted_apart() {
         (9, 0, 0, 9)
     );
 }
+
+/// The sizer's attempts are pooled by risk class and effort source for
+/// display. The grouping changes no other row, and the outcome that routing
+/// learns from records nothing of it.
+#[test]
+fn sized_attempts_are_grouped_for_display_and_routing_reads_none_of_it() {
+    use archon_core::effort_sizing::RiskClass;
+    use archon_core::plan_origin::PlanSource;
+    use archon_core::queue::QueueState;
+    use archon_core::run::AttemptSizing;
+    let sized = |class, source| AttemptSizing {
+        risk_class: Some(class),
+        effort_source: Some(source),
+        effort_reasons: Some(format!("sizer: {class} -> high")),
+    };
+    let build = |with_sizing: bool| {
+        let mut store = store();
+        let item = store.insert_item(&item(None, "fixture"), None).unwrap();
+        let run = start(&mut store, &item.id);
+        let recorded = [
+            Some(sized(RiskClass::Critical, PlanSource::Sizer)),
+            Some(sized(RiskClass::Critical, PlanSource::Sizer)),
+            Some(sized(RiskClass::Ordinary, PlanSource::Explicit)),
+            None,
+        ];
+        for (n, sizing) in recorded.into_iter().enumerate() {
+            let mut stage = running_stage(&run, n as u32, n as u32);
+            stage.started_at = t(100);
+            stage.finished_at = Some(t(160));
+            stage.state = StageState::Completed;
+            stage.cost_usd = 1.0 + n as f64;
+            stage.sizing = sizing.filter(|_| with_sizing).unwrap_or_default();
+            store.upsert_stage_run(&stage).unwrap();
+        }
+        let done = QueueState::Succeeded {
+            run: run.id.clone(),
+            summary: "done".into(),
+        };
+        common::settle_run(&mut store, &run, done, t(200));
+        let finished = store.run(&run.id).unwrap();
+        store.capture_outcome(&finished, None, true).unwrap();
+        let routes = store
+            .route_evidence(None, "direct", "implement", None)
+            .unwrap();
+        let outcome = store.outcome(&run.id).unwrap().unwrap();
+        let learned = serde_json::json!({ "routes": routes, "stages": outcome.stages });
+        (
+            report(&store, ModelEvidenceQuery::default(), range(0, 1000)),
+            learned,
+        )
+    };
+    let (plain, plain_learned) = build(false);
+    let (grouped, learned) = build(true);
+    assert!(plain.sizing.is_empty(), "{:?}", plain.sizing);
+    assert!(!plain.text().contains("Sized "), "{}", plain.text());
+    let rows: Vec<_> = grouped
+        .sizing
+        .iter()
+        .map(|r| (r.risk_class, r.effort_source, r.attempts, r.median_cost_usd))
+        .collect();
+    let expected = [
+        (RiskClass::Ordinary, PlanSource::Explicit, 1, Some(3.0)),
+        (RiskClass::Critical, PlanSource::Sizer, 2, Some(1.5)),
+    ];
+    assert_eq!(rows, expected);
+    let text = grouped.text();
+    assert!(
+        text.contains("Sized critical by sizer n=2 completed=2"),
+        "{text}"
+    );
+    assert!(text.contains("Sized ordinary by explicit n=1"), "{text}");
+    assert_eq!((&grouped.rows, &grouped.tiers), (&plain.rows, &plain.tiers));
+    assert_eq!(grouped.providers, plain.providers);
+    assert_eq!(
+        learned, plain_learned,
+        "routing learns nothing from a sizing"
+    );
+    let unsized_report: serde_json::Value = serde_json::to_value(&plain).unwrap();
+    assert!(unsized_report.get("sizing").is_none(), "{unsized_report}");
+}

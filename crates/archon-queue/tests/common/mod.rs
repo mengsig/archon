@@ -189,6 +189,7 @@ pub fn stage(run: &PipelineRun, fan_index: u32) -> StageRun {
         state: StageState::Spawning,
         verdict: None,
         verdict_note: None,
+        sizing: Default::default(),
         restatement: None,
         summary: None,
         structured: None,

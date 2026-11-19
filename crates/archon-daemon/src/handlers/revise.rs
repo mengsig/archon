@@ -204,7 +204,8 @@ async fn restage(
     crate::learned::request_catalog(ctx).await?;
     let current = &item.model_plan;
     let mut kept = PlanWriter::new(&item.id, archon_core::now());
-    kept.carry(current, &item.id, |key| {
+    let cap = crate::sizing::carried_cap(&ctx.config, &env.resolved_policy(ctx));
+    kept.carry(current, &item.id, cap, |key| {
         spec.is_plan_key(key).then_some(usize::MAX)
     });
     let route = crate::knobs::ItemRoute::new(item);

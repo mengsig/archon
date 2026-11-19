@@ -203,6 +203,7 @@ pub fn item_detail(detail: &ItemDetail, names: &RepoNames, full: bool) -> String
     }
     plan_lines(&mut out, item);
     origin_lines(&mut out, &detail.plan_origins);
+    sizing_lines(&mut out, item);
     worker_lines(&mut out, &detail.worker_policies);
     for run in &detail.runs {
         run_lines(&mut out, detail, run, full);
@@ -266,6 +267,29 @@ fn origin_lines(
                 sanitize_line(&origin.model.to_string()),
                 sanitize_line(&origin.effort.to_string())
             );
+        }
+    }
+}
+
+/// `risk class: critical (...)`, then `sized build: sizer: critical -> x_high`
+/// per plan entry the sizer decided; nothing for an item it never sized.
+fn sizing_lines(out: &mut String, item: &QueueItem) {
+    let Some(sizing) = item.model_plan.sizing() else {
+        return;
+    };
+    let Some(class) = sizing.risk_class else {
+        return;
+    };
+    let signals = sanitize_line(&sizing.risk_signals.join(", "));
+    let _ = writeln!(out, "risk class: {class} ({signals})");
+    for (key, reasons) in item.model_plan.effort_reasons(&item.id) {
+        for (slot, reason) in reasons.iter().enumerate() {
+            let slot = match reasons.len() {
+                1 => String::new(),
+                _ => format!("[{slot}]"),
+            };
+            let (key, reason) = (sanitize_line(&key), sanitize_line(reason));
+            let _ = writeln!(out, "sized {key}{slot}: {reason}");
         }
     }
 }
@@ -621,6 +645,7 @@ mod tests {
             state: StageState::Completed,
             verdict: None,
             verdict_note: None,
+            sizing: Default::default(),
             restatement: None,
             summary: Some(summary.into()),
             structured: None,
@@ -793,6 +818,53 @@ mod tests {
             ),
             "{text}"
         );
+    }
+
+    /// Give `item` a plan the sizer finished: `build` pinned at medium, `plan`
+    /// named without an effort, for an item tagged critical.
+    fn size_critical(item: &mut QueueItem) {
+        use archon_core::catalog::StageKind;
+        use archon_core::effort_sizing::StageFacts;
+        use archon_core::plan_origin::{Authority, EffortSizer, PlanWriter, Sizing};
+        const MODEL: &str = "claude-code/claude-opus-5-5";
+        let asked = serde_json::json!({"build": [{"model": MODEL, "effort": "medium"}],
+            "plan": [{"model": MODEL}]});
+        let resolved = serde_json::json!({"build": [{"model": MODEL, "effort": "medium"}],
+            "plan": [{"model": MODEL, "effort": "high"}]});
+        let facts = |_: &str| Some(StageFacts::new(Effort::High, StageKind::Work, false));
+        let sizer = EffortSizer {
+            cap: Effort::XHigh,
+            size: None,
+            facts: &facts,
+        };
+        let mut writer = PlanWriter::new(&item.id, archon_core::now());
+        let asked = serde_json::from_value(asked).unwrap();
+        writer.request(
+            &asked,
+            serde_json::from_value(resolved).unwrap(),
+            Authority::Operator,
+        );
+        item.model_plan = writer.finish(Sizing::On(sizer));
+        item.tags = vec!["risk:critical".into()];
+        assert!(
+            item.settle_sizing(archon_core::now()),
+            "the item's own tags size it"
+        );
+    }
+
+    /// A11: the item's detail names its risk class and why each plan entry
+    /// has its effort; an item the sizer never sized shows neither line.
+    #[test]
+    fn a_sized_item_shows_its_risk_class_and_each_effort_s_reason() {
+        let mut detail = detail_with_stages();
+        let before = item_detail(&detail, &RepoNames::new(), false);
+        assert!(!before.contains("risk class:"), "{before}");
+        size_critical(&mut detail.item);
+        let text = item_detail(&detail, &RepoNames::new(), false);
+        let shown = "risk class: critical (risk:critical)\n\
+                     sized build: sizer: critical -> x_high; the plan pins medium\n\
+                     sized plan: sizer: critical -> x_high\n";
+        assert!(text.contains(shown), "{text}");
     }
 
     fn detail_with_stages() -> ItemDetail {

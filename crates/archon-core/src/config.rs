@@ -419,6 +419,9 @@ pub struct ModelsConfig {
     /// Size every agent's effort by the effort rubric (unset: on, since
     /// 1.6.4); `false` restores 1.6.3's prompts and reviewer floors. Global only.
     pub effort_sizing: Option<bool>,
+    /// The highest effort the daemon's sizer sets by itself (`x_high` when
+    /// unset); the policy's `max_effort` still caps it. Global only.
+    pub sizer_max_effort: Option<Effort>,
 }
 
 /// Percent of each quota window held back from tier-only stage routing.
@@ -447,6 +450,11 @@ impl ModelsConfig {
     /// Whether agents size efforts by the rubric: on unless set to `false`.
     pub fn effort_sizing(&self) -> bool {
         self.effort_sizing.unwrap_or(true)
+    }
+
+    /// The highest effort the sizer sets by itself: `x_high` unless set.
+    pub fn sizer_max_effort(&self) -> Effort {
+        self.sizer_max_effort.unwrap_or(Effort::XHigh)
     }
 
     pub fn policy(&self) -> ModelPolicy {
@@ -1299,6 +1307,12 @@ impl RepoConfig {
                 path.display()
             )));
         }
+        if config.models.sizer_max_effort.is_some() {
+            return Err(ArchonError::Config(format!(
+                "{}: models.sizer_max_effort is set in Archon's global config only",
+                path.display()
+            )));
+        }
         Ok(config)
     }
 
@@ -1606,11 +1620,31 @@ mod tests {
         RepoConfig::load(dir.path()).expect("a repository that leaves it unset loads");
         std::fs::write(&file, "[models]\neffort_sizing = true\n").unwrap();
         let refused = RepoConfig::load(dir.path()).unwrap_err().to_string();
-        assert!(refused.contains("global config only"), "{refused}");
+        // 1.6.3's refusal of its own global-only keys reads as it did.
+        let why = "models.reserve_percent, models.interactive_providers and \
+                   models.effort_sizing are set in Archon's global config only";
+        assert!(refused.ends_with(why), "{refused}");
         // 1.6.3 loaded a repository's `false`; it stays loadable and inert.
         std::fs::write(&file, "[models]\neffort_sizing = false\n").unwrap();
         let inert = RepoConfig::load(dir.path()).expect("a repository's false still loads");
         assert_eq!(inert.models.effort_sizing, Some(false));
+    }
+
+    /// The sizer's own ceiling is `x_high` unless the global config lowers
+    /// it; a repository may not set it.
+    #[test]
+    fn sizer_max_effort_defaults_to_x_high_and_stays_global() {
+        assert_eq!(Config::default().models.sizer_max_effort(), Effort::XHigh);
+        let set: Config = toml::from_str("[models]\nsizer_max_effort = 'high'").unwrap();
+        set.validate().unwrap();
+        assert_eq!(set.models.sizer_max_effort(), Effort::High);
+        let dir = tempfile::tempdir().unwrap();
+        let file = crate::paths::repo_archon_dir(dir.path()).join(CONFIG_FILE_NAME);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "[models]\nsizer_max_effort = \"high\"\n").unwrap();
+        let refused = RepoConfig::load(dir.path()).unwrap_err().to_string();
+        let why = "models.sizer_max_effort is set in Archon's global config only";
+        assert!(refused.ends_with(why), "{refused}");
     }
 
     #[test]

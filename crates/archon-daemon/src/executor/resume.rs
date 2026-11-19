@@ -12,6 +12,7 @@ use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, StageRunId};
+use archon_core::model::ModelChoice;
 use archon_core::ports::{AgentUpdate, SpawnRequest};
 use archon_core::run::{RecordRepair, StageOutcome, StageRun, StageState};
 use archon_pipeline::contract::SHIP_RECORD_JSON;
@@ -166,14 +167,19 @@ async fn takes_over(
     }
 }
 
-/// Give the kept agent its deadline, new grant and findings, keyed by the stage run;
-/// `false` when it cannot go on and a fresh agent takes the attempt (`request` is never spawned).
+/// Give the kept agent its deadline, new grant, the choice a woken one is
+/// `retune`d to, and its findings, keyed by the stage run; `false` when it
+/// cannot go on and a fresh agent takes the attempt (`request` is never spawned).
 pub(super) async fn hand_over(
     ctx: &DaemonContext,
     stage: &StageRun,
     kept: &KeptAgent,
-    request: &SpawnRequest,
+    (request, retune): (&SpawnRequest, Option<ModelChoice>),
 ) -> Result<bool, ArchonError> {
+    assert!(
+        retune.as_ref().is_none_or(|choice| *choice == stage.choice),
+        "a woken agent is retuned to what its attempt records"
+    );
     assert_eq!(stage.state, StageState::Spawning, "a reserved attempt");
     assert!(!kept.message.trim().is_empty(), "resumed with findings");
     let agent = &kept.agent;
@@ -188,9 +194,9 @@ pub(super) async fn hand_over(
         regranted_cap(&store, stage, agent, request.cost_budget_usd)?
     };
     let update = AgentUpdate {
+        choice: retune,
         deadline: request.deadline,
         cost_budget_usd,
-        ..AgentUpdate::default()
     };
     let key = stage.id.as_str();
     let handed = match ctx.backend.update_agent(agent, update).await {

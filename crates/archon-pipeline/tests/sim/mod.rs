@@ -608,6 +608,7 @@ impl Sim {
             state: StageState::Running,
             verdict: None,
             verdict_note: None,
+            sizing: Default::default(),
             restatement: None,
             summary: None,
             structured: None,

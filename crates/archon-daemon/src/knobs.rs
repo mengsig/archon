@@ -255,6 +255,9 @@ pub(crate) struct TierScope<'a> {
     pub prefer: &'a str,
     /// Set while `[models] provider_weights` routes tier-only choices.
     pub route: Option<ProviderRoute<'a>>,
+    /// `[models] effort_sizing`: an effort a request leaves out starts
+    /// within the policy's cap, where the sizer then decides it.
+    sized: bool,
 }
 
 impl<'a> TierScope<'a> {
@@ -264,7 +267,20 @@ impl<'a> TierScope<'a> {
             policy,
             prefer: &config.orchestrator.model.provider,
             route: None,
+            sized: config.models.effort_sizing(),
         }
+    }
+
+    /// The effort a request that names none starts `key` of `spec` at: the
+    /// stage's default, within the policy's cap while the sizer decides it.
+    /// With sizing off it is the default alone, refused over the cap (1.6.3).
+    fn unnamed_effort(&self, spec: &PipelineSpec, key: &str) -> Option<Effort> {
+        let default = spec.default_effort(key)?;
+        let cap = self.policy.max_effort.filter(|_| self.sized);
+        let effort = cap.map_or(default, |cap| default.min(cap));
+        assert!(effort <= default, "a cap only lowers the default");
+        assert!(self.sized || effort == default, "1.6.3 keeps the default");
+        Some(effort)
     }
 
     /// This scope with tier-only choices routed by `route`, when there is one.
@@ -587,7 +603,10 @@ pub(crate) fn fill_plan(
     (fallback, fill): (Option<&ModelChoice>, EffortFill),
 ) -> Result<(), ArchonError> {
     let mut plan = writer.plan().clone();
-    let learned = learned::default_plan(store, repo, spec, policy, max_tier)?;
+    let sizing = matches!(fill, EffortFill::Sized { .. });
+    let advice = learned::advice_policy(policy, sizing);
+    let learned = learned::default_plan(store, repo, spec, &advice, max_tier)?;
+    let learned = learned::held_to(learned, policy.max_effort);
     for (stage, choices) in learned.0 {
         // A default learned on an earlier version of the pipeline may name a stage it dropped.
         if spec.stage(&stage).is_none() || choices.is_empty() {
@@ -660,7 +679,7 @@ pub(crate) fn resolve_tiers(
 ) -> Result<ModelPlan, ArchonError> {
     let stages = draft.0.len();
     let mut plan = draft.resolve(
-        |key| spec.default_effort(key),
+        |key| tiers.unnamed_effort(spec, key),
         |key, tier, provider| tiers.resolve((tier, spec.tier_floor(key, tier)), provider),
     )?;
     if tiers.catalog.not_ready_reason().is_none() {
@@ -778,7 +797,7 @@ mod tests {
         let bounds = (&policy, Tier::Strong);
         let nudged = (None, EffortFill::Nudged);
         fill_plan(&store, None, (&base, &spec), &mut writer, bounds, nudged).unwrap();
-        let filled = writer.finish();
+        let filled = writer.finish(archon_core::plan_origin::Sizing::Off { policy_cap: None });
         assert_eq!(filled.choices_for("propose"), Some(&[choice.clone()][..]));
         assert_eq!(filled.choices_for("report"), Some(&[choice][..]));
         assert_eq!(filled.0.len(), plan.0.len() + 2);
@@ -859,7 +878,7 @@ mod tests {
             (Some(&default), EffortFill::of(&config, &policy)),
         )
         .unwrap();
-        let filled = writer.finish();
+        let filled = writer.finish(archon_core::plan_origin::Sizing::Off { policy_cap: None });
         let origin = filled.origin(&id, "verify", 0);
         assert_eq!(origin.effort.source, PlanSource::Fallback, "{origin:?}");
         assert_eq!(filled.choices_for("review"), Some(&[named][..]), "kept");

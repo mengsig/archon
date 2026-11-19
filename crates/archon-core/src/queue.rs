@@ -7,10 +7,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::Timestamp;
 use crate::autonomy::Autonomy;
+use crate::effort_sizing::{self, RiskInput};
 use crate::error::ArchonError;
 use crate::github::GithubThread;
 use crate::id::{InitiativeId, PipelineRunId, QueueItemId, RepoId};
-use crate::model::ModelReasons;
+use crate::model::{Effort, ModelReasons};
 use crate::pull_request::OntoPullRequest;
 
 /// The longest brief an enqueue accepts, well under the protocol frame cap.
@@ -316,6 +317,42 @@ impl QueueItem {
         );
         self.brief = brief;
         Ok(())
+    }
+
+    /// Size every plan key recorded for sizing and not yet sized, from this
+    /// item's own title, brief, tags and review level. `true` when one was.
+    pub fn settle_sizing(&mut self, at: Timestamp) -> bool {
+        let input = RiskInput {
+            title: &self.title,
+            brief: &self.brief,
+            tags: &self.tags,
+            review: self.autonomy.review,
+            size: effort_sizing::tagged_size(&self.tags),
+        };
+        let settled = self.model_plan.settle(&self.id, input, at);
+        assert!(!self.model_plan.has_unsized(), "a settled plan is sized");
+        settled
+    }
+
+    /// Size again, within `cap`, the sized plan keys `started` does not name
+    /// when this item's title, brief, tags or review level now class it
+    /// otherwise. `true` when a key was sized again.
+    pub fn resize_unstarted(
+        &mut self,
+        (cap, at): (Effort, Timestamp),
+        started: &dyn Fn(&str) -> bool,
+    ) -> bool {
+        self.settle_sizing(at);
+        let input = RiskInput {
+            title: &self.title,
+            brief: &self.brief,
+            tags: &self.tags,
+            review: self.autonomy.review,
+            size: effort_sizing::tagged_size(&self.tags),
+        };
+        let resized = self.model_plan.resize(&self.id, input, (cap, at), started);
+        assert!(!self.model_plan.has_unsized(), "a sized plan stays sized");
+        resized
     }
 }
 

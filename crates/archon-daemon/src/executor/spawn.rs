@@ -102,6 +102,11 @@ pub(crate) struct StoredSpawn {
     /// stored the spawn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issued_reviewers: Option<Vec<ModelChoice>>,
+    /// What a woken agent is retuned to before its findings: its slot held to
+    /// the stored plan and the policy's cap, where that differs from what it
+    /// ran. `None` when it runs on as it is, or 1.6.3 stored the spawn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wake_retune: Option<ModelChoice>,
 }
 
 impl StoredSpawn {
@@ -900,6 +905,45 @@ fn reviewer_rules(
     rules
 }
 
+/// Hold a new agent's effort, fresh or a replacement, to its item's stored
+/// plan as it is now and, ruling (a), to the policy's cap if the daemon sized it.
+fn hold_new_agent(target: &Target<'_>, plan: &mut SpawnPlan) {
+    crate::sizing::hold_to_plan(target.item, plan);
+    // An unreadable repository policy is refused when the spawn is claimed.
+    if let Ok(env) = RepoEnv::new(target.repo.cloned()) {
+        // The cap is no model id, so no alias changes it.
+        let cap = env.policy_in(target.config, &Default::default()).max_effort;
+        crate::sizing::hold_to_policy(target.item, cap, plan);
+    }
+}
+
+/// A woken agent of a slot the daemon sized starts from what its latest
+/// attempt on `kept`'s agent runs now, its model included; that choice is
+/// returned. Any other slot keeps the driver's plan, as in 1.6.3.
+fn hold_woken(
+    store: &Store,
+    target: &Target<'_>,
+    kept: &KeptAgent,
+    plan: &mut SpawnPlan,
+) -> Result<Option<ModelChoice>, ArchonError> {
+    let runs = store.stage_runs(&target.run.id)?;
+    let woken = runs
+        .iter()
+        .filter(|s| s.stage_id == plan.stage_id && s.fan_index == plan.fan_index)
+        .filter(|s| s.aether_agent.as_ref() == Some(&kept.agent))
+        .max_by_key(|s| s.started_at);
+    let Some(woken) = woken else {
+        return Err(ArchonError::Invalid(format!(
+            "agent {} to wake ran no attempt of {}",
+            kept.agent, plan.stage_id
+        )));
+    };
+    assert_eq!(woken.run, target.run.id, "the woken agent is of this run");
+    let ran = woken.current_choice();
+    let taken = crate::sizing::hold_to_woken(target.item, ran, plan);
+    Ok(taken.then(|| ran.clone()))
+}
+
 /// Persist the exact request, then the `spawning` stage run that owns it,
 /// with the slot's `budget`. `retry` numbers an infrastructure replacement
 /// of the slot.
@@ -911,6 +955,17 @@ fn reserve_one(
     now: Timestamp,
     retry: Option<Retry>,
 ) -> Result<StageRunId, ArchonError> {
+    let mut held = plan.clone();
+    let ran = match retry.as_ref().and_then(|r| r.wake.as_ref()) {
+        Some(kept) => hold_woken(store, target, kept, &mut held)?,
+        None => None,
+    };
+    // Woken or fresh, the agent runs what a new one of its slot would.
+    hold_new_agent(target, &mut held);
+    let wake_retune = ran
+        .filter(|ran| *ran != held.choice)
+        .map(|_| held.choice.clone());
+    let plan = &held;
     let id = StageRunId::new();
     let nth = retry.as_ref().map(|r| r.nth);
     let workers = delegation_policy(target, plan);
@@ -975,8 +1030,10 @@ fn reserve_one(
         deadline_warned: false,
         effort_contract: Some(effort),
         issued_reviewers: plan.reviewers.clone(),
+        wake_retune,
     };
     save_spawn(store, &id, &spawn)?;
+    let sizing = crate::sizing::attempt(target.item, plan);
     let stage = StageRun {
         id: id.clone(),
         run: target.run.id.clone(),
@@ -995,6 +1052,7 @@ fn reserve_one(
         state: StageState::Spawning,
         verdict: None,
         verdict_note: None,
+        sizing,
         restatement: None,
         summary: None,
         structured: None,
@@ -1477,7 +1535,8 @@ async fn resume_or_spawn(
             ParentBinding::Pending,
             "a resume sends no create"
         );
-        if resume::hand_over(ctx, stage, &kept, &spawn.request).await? {
+        let retune = spawn.wake_retune.clone().filter(|_| spawn.woken);
+        if resume::hand_over(ctx, stage, &kept, (&spawn.request, retune)).await? {
             return Ok(Issued::Resumed(kept.agent));
         }
         if spawn.deadline_wake {

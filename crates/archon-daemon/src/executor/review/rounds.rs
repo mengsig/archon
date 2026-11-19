@@ -568,41 +568,50 @@ fn recorded_continuations(
 }
 
 /// Take out of `item`'s brief the continuation notes earlier retries added. Only the exact
-/// sections Archon recorded go, each once, and the record goes with them: a copy the
-/// operator quoted is theirs. Should the item then not be saved, a note lingers, never lost text.
+/// sections Archon recorded go, so a copy the operator quoted is theirs. The record changes
+/// only once the retry is queued, by [`save_continuations`], so a refused retry keeps it.
 pub(crate) fn drop_continuations(
-    store: &mut archon_queue::Store,
+    store: &archon_queue::Store,
     item: &mut QueueItem,
 ) -> Result<(), ArchonError> {
     let added = recorded_continuations(store, &item.id)?;
-    if added.is_empty() {
-        return Ok(());
-    }
+    let before = item.brief.len();
     item.brief = without_sections(&item.brief, &added);
-    store.kv_delete(&continuations_key(&item.id))?;
     assert!(
-        recorded_continuations(store, &item.id)?.is_empty(),
-        "each recorded note is taken out once"
+        !added.is_empty() || item.brief.len() == before,
+        "nothing recorded, nothing taken out"
     );
     Ok(())
 }
 
-/// Add `note` to `item`'s brief as a dated amendment, and record its section so a later
-/// retry can take it out again. Recorded before the item is saved: a section the saved
-/// brief never held matches nothing.
-pub(crate) fn add_continuation(
-    store: &mut archon_queue::Store,
-    item: &mut QueueItem,
-    note: &str,
-) -> Result<(), ArchonError> {
+/// Add `note` to `item`'s brief as a dated amendment. The section it added, which a
+/// later retry takes out again once [`save_continuations`] records it.
+pub(crate) fn add_continuation(item: &mut QueueItem, note: &str) -> Result<String, ArchonError> {
     let start = item.brief.trim_end().len();
     item.amend_brief(note, archon_core::now())?;
     let section = item.brief[start..].trim_end().to_owned();
     assert!(section.ends_with(note.trim()), "the section is the note's");
-    let mut added = recorded_continuations(store, &item.id)?;
-    added.push(section);
-    let value = serde_json::to_string(&added).expect("a list of strings serializes");
-    store.kv_set(&continuations_key(&item.id), &value)
+    assert!(item.brief.contains(&section), "the section is in the brief");
+    Ok(section)
+}
+
+/// Record `section`, the note a queued retry of `item` added, in place of the notes it
+/// took out, each of which is then never taken out again; `None` when it added none.
+pub(crate) fn save_continuations(
+    store: &mut archon_queue::Store,
+    item: &QueueItemId,
+    section: Option<&str>,
+) -> Result<(), ArchonError> {
+    let key = continuations_key(item);
+    let Some(section) = section else {
+        return store.kv_delete(&key);
+    };
+    assert!(
+        !section.trim().is_empty(),
+        "a recorded section holds a note"
+    );
+    let value = serde_json::to_string(&[section]).expect("a list of strings serializes");
+    store.kv_set(&key, &value)
 }
 
 /// `brief` without each of the recorded `sections` it holds.

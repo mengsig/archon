@@ -1105,7 +1105,7 @@ pub(super) async fn retry(
         }
         spec.drop_retired_ship(&mut item.model_plan, item.model_reasons.as_mut());
         let append = retry.brief_append.as_deref();
-        let continued = amend_retry(&mut *ctx.store.lock().await, &mut item, retry.fresh, append)?;
+        let amended = amend_retry(&*ctx.store.lock().await, &mut item, retry.fresh, append)?;
         // Git runs under the run table on purpose, so run starts and gc passes wait for this one
         // move; without it a gc pass could remove the worktree mid-move, or a second retry move it.
         let fresh = match &reserved {
@@ -1118,7 +1118,13 @@ pub(super) async fn retry(
             Some(kept) => error.with_detail(&format!("the retry was not queued, but: {kept}")),
             None => error,
         })?;
-        (queued, fresh.map(|f| f.note), continued)
+        // Only a queued retry changes the record, so a refused one leaves it as it was.
+        if let Some(section) = &amended.record {
+            executor::save_continuations(&mut store, id, section.as_deref()).map_err(|error| {
+                error.with_detail("the retry was queued, but its review-cap note was not recorded")
+            })?;
+        }
+        (queued, fresh.map(|f| f.note), amended.continued)
     };
     // Queued under the table: dispatch starts it once the mark goes.
     drop(reserved);
@@ -1147,15 +1153,24 @@ async fn post_retry_notes<'a>(
     }
 }
 
+/// What a retry's amendments did to the record of its item's continuation notes.
+struct Amended {
+    /// Whether a continuation of a review the round cap stopped was added.
+    continued: bool,
+    /// The record to save once the retry is queued: `Some(section)` of the note added,
+    /// or `Some(None)` when only earlier notes were taken out; `None` leaves it.
+    record: Option<Option<String>>,
+}
+
 /// Add a retry's amendments to `item`'s brief: unless the retry is `fresh`, the continuation
 /// of a review the round cap stopped, then `append`. A fresh retry or a new continuation
-/// drops the notes earlier ones added, which no longer hold. Whether a continuation was added.
+/// drops the notes earlier ones added, which no longer hold.
 fn amend_retry(
-    store: &mut archon_queue::Store,
+    store: &archon_queue::Store,
     item: &mut QueueItem,
     fresh: bool,
     append: Option<&str>,
-) -> Result<bool, ArchonError> {
+) -> Result<Amended, ArchonError> {
     assert!(item.state.is_terminal(), "only a finished item is retried");
     // A fresh retry starts over on a new branch, and owes the whole review again.
     let continued = match fresh {
@@ -1165,23 +1180,28 @@ fn amend_retry(
     if fresh || continued.is_some() {
         executor::drop_continuations(store, item)?;
     }
-    if let Some(note) = &continued {
-        executor::add_continuation(store, item, note)?;
-    }
+    let section = match &continued {
+        Some(note) => Some(executor::add_continuation(item, note)?),
+        None => None,
+    };
     if let Some(text) = append {
         item.amend_brief(text, archon_core::now())?;
     }
     assert!(
-        continued
-            .as_ref()
-            .is_none_or(|note| item.brief.contains(note.as_str())),
-        "a continuation is in the brief"
-    );
-    assert!(
         append.is_none_or(|text| item.brief.trim_end().ends_with(text.trim())),
         "the retry's own amendment comes last"
     );
-    Ok(continued.is_some())
+    let record = (fresh || continued.is_some()).then_some(section);
+    assert!(
+        record
+            .as_ref()
+            .is_none_or(|s| s.is_some() == continued.is_some()),
+        "a continuation's section is recorded"
+    );
+    Ok(Amended {
+        continued: continued.is_some(),
+        record,
+    })
 }
 
 /// A finished item whose restack fix, which works on its branch, is not

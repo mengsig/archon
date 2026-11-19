@@ -4119,6 +4119,38 @@ async fn a_verbatim_quote_of_the_continuation_note_survives_fresh_retries() {
     }
 }
 
+/// A fresh retry refused for its blank amendment changes nothing: the corrected one
+/// still finds the note it must take out.
+#[tokio::test]
+async fn a_refused_fresh_retry_leaves_the_continuation_note_to_the_next() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    for n in 1..=3 {
+        review_round_fails(&h, &lead, n).await;
+    }
+    assert!(escalated(&h, &lead).await.is_some(), "the cap stopped it");
+    h.dispatch().await;
+    let mark = "[Archon review-cap continuation]";
+    assert!(retry_brief(&h, &item.id, false, None).await.contains(mark));
+    fail_the_run(&h, "ESCALATE: stuck").await;
+    let blank = Request::RetryItem {
+        item: item.id.clone(),
+        model_plan: None,
+        model_reasons: None,
+        fresh: true,
+        brief_append: Some(" ".into()),
+        stage_timeouts: Default::default(),
+    };
+    let refused = h
+        .cli(blank)
+        .await
+        .expect_err("a blank amendment is refused");
+    assert!(refused.to_string().contains("empty"), "{refused}");
+    let fresh = retry_brief(&h, &item.id, true, None).await;
+    assert!(!fresh.contains(mark), "{fresh}");
+}
+
 /// Start the queued run and fail its stage with `error`, which ends the run.
 async fn fail_the_run(h: &Harness, error: &str) {
     h.dispatch().await;

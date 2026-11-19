@@ -10,7 +10,9 @@ mod coverage;
 mod restate;
 mod rounds;
 
-pub(crate) use rounds::{add_continuation, capped_continuation, drop_continuations};
+pub(crate) use rounds::{
+    add_continuation, capped_continuation, drop_continuations, save_continuations,
+};
 
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::delegation::REVIEWER_ROLE;

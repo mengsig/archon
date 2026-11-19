@@ -219,6 +219,18 @@ pub enum TriggerEvent {
     DirectivesRestated {
         reason: String,
     },
+    /// A provider's quota window is projected to run out before it resets;
+    /// told once per window. The orchestrator chooses what runs.
+    QuotaPace {
+        provider: String,
+        #[serde(flatten)]
+        pace: archon_core::quota::pace::WindowPace,
+        /// What the orchestrator may do about it.
+        note: String,
+        /// Every provider's window pace at the time, to choose by.
+        #[serde(default)]
+        providers: BTreeMap<String, Vec<archon_core::quota::pace::WindowPace>>,
+    },
     /// A watched repository's open pull requests changed (A18). News only:
     /// `operator` is always false, and `trust` says why.
     GithubWatch {
@@ -296,6 +308,7 @@ impl TriggerEvent {
             Self::DirectivesRestated { .. } => "directives_restated",
             Self::PrChecks { .. } => "pr_checks",
             Self::GithubWatch { .. } => "github_watch",
+            Self::QuotaPace { .. } => "quota_pace",
         }
     }
 
@@ -327,6 +340,7 @@ impl TriggerEvent {
             | Self::Mirror { .. }
             | Self::PrChecks { .. }
             | Self::GithubWatch { .. }
+            | Self::QuotaPace { .. }
             | Self::DirectivesRestated { .. } => false,
         }
     }
@@ -708,6 +722,33 @@ pub(crate) fn record_cap(
     store.append_feed_with_kv(entry, at, &[(key, &raw_cap), (OUTBOX_KEY, &raw)])
 }
 
+/// Hold a `quota_pace` warning for the orchestrator with the operator's
+/// `notice` and the `receipt` that it was told, in one store write.
+pub(crate) fn record_quota_pace(
+    store: &mut Store,
+    event: TriggerEvent,
+    notice: archon_core::notify::Notification,
+    receipt: (&str, &str),
+) -> Result<archon_core::notify::FeedItem, ArchonError> {
+    assert!(
+        matches!(event, TriggerEvent::QuotaPace { .. }),
+        "only a pace warning"
+    );
+    assert!(
+        !receipt.0.is_empty() && receipt.0 != OUTBOX_KEY,
+        "a receipt has its own key"
+    );
+    let at = notice.at;
+    let mut outbox = read_outbox(store)?;
+    outbox.pending.push(Held::new(event, at, false));
+    if outbox.pending.len() > MAX_PENDING {
+        compact_pending(store, &mut outbox)?;
+    }
+    let raw = serde_json::to_string(&outbox)?;
+    let entry = archon_core::notify::FeedEntry::Notification(notice);
+    store.append_feed_with_kv(entry, at, &[receipt, (OUTBOX_KEY, &raw)])
+}
+
 pub(crate) fn wake(ctx: &DaemonContext) {
     ctx.triggers.news.notify_one();
 }
@@ -903,7 +944,13 @@ fn batch_events(
         .map(|news| facts.with_settled_cost(news.event))
         .collect();
     events.extend(finished);
+    // A pace warning whose window reset while it waited advises nothing.
+    events.retain(|event| !is_reset_pace(event, now));
     Ok(events)
+}
+
+fn is_reset_pace(event: &TriggerEvent, now: Timestamp) -> bool {
+    matches!(event, TriggerEvent::QuotaPace { pace, .. } if pace.resets_at <= now)
 }
 
 /// A new generation lacks its predecessor's context: compact the pending news
@@ -1338,6 +1385,37 @@ mod tests {
         let mut huge = vec![news(&message), news(&message)];
         let rest = split_past_bytes(&mut huge, 1).unwrap();
         assert_eq!((huge.len(), rest.len()), (1, 1), "one event always goes");
+    }
+
+    /// A lone pace warning is keyed without compaction; once its window reset
+    /// while it coalesced, it is dropped rather than told as current.
+    #[test]
+    fn a_lone_pace_warning_whose_window_reset_is_not_told() {
+        let mut store = Store::open_in_memory().unwrap();
+        let now = archon_core::now();
+        let warning = |resets_at| TriggerEvent::QuotaPace {
+            provider: "codex".into(),
+            pace: archon_core::quota::pace::WindowPace {
+                window: "5h".into(),
+                window_minutes: 300,
+                used_percent: 100,
+                elapsed_percent: 99,
+                resets_at,
+                empty_at: None,
+                short: true,
+            },
+            note: "choose".into(),
+            providers: BTreeMap::new(),
+        };
+        let reset = vec![Held::new(
+            warning(now - chrono::TimeDelta::seconds(1)),
+            now,
+            false,
+        )];
+        assert!(batch_events(&mut store, reset, false).unwrap().is_empty());
+        let ahead = warning(now + chrono::TimeDelta::hours(1));
+        let running = vec![Held::new(ahead.clone(), now, false)];
+        assert_eq!(batch_events(&mut store, running, false).unwrap(), [ahead]);
     }
 
     /// Watch news is news, not an `info`: it wakes the orchestrator past the

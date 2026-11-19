@@ -1051,3 +1051,34 @@ async fn status_shows_a_refresh_owed_by_records_that_disagree() {
     let delayed = status.orchestrator_refresh_delayed.expect("the delay");
     assert!(delayed.contains("idle"), "what it waits for: {delayed}");
 }
+
+/// Every creation of a refresh fails past the retry cap: the feed announces
+/// the third failure once, and status keeps showing the delay and the latest
+/// reason with no orchestrator stored.
+#[tokio::test]
+async fn a_refresh_whose_successor_never_starts_is_announced_and_stays_delayed() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    let agents = agent_table(&harness);
+    create(&harness, &agents, ORCH).await;
+    as_if_created_by_an_older_build(&harness).await;
+    set_state(&agents, ORCH, "waiting");
+    let down = Scripted::refuse("internal", "still down");
+    harness.fake.set_default("create_agent", down);
+    let now = archon_core::now();
+    for attempt in 0..5 {
+        let at = now + TimeDelta::minutes(11 * attempt);
+        let failed = supervisor::economize(&harness.ctx, at).await;
+        failed.expect_err("the successor was not created");
+    }
+    let status = cli_status(&harness).await;
+    assert!(status.orchestrator.is_none(), "no agent is stored");
+    let delayed = status.orchestrator_refresh_delayed.expect("the delay");
+    assert!(delayed.contains("still down"), "{delayed}");
+    let notes = harness.system_notes().await;
+    let announced = notes
+        .iter()
+        .filter(|n| n.contains("failed 3 times"))
+        .count();
+    assert_eq!(announced, 1, "{notes:?}");
+}

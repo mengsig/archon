@@ -441,7 +441,11 @@ async fn ensure_locked(ctx: &DaemonContext) -> Result<AetherAgentId, ArchonError
     let client = ctx.aether.client()?;
     let Some(stored) = current_orchestrator(ctx).await? else {
         let _switch = switching(ctx).await;
-        let id = create_generation(ctx, &client).await?;
+        let id = if records_ahead_of_counter(ctx).await? {
+            replace_generation(ctx, &client).await?
+        } else {
+            create_generation(ctx, &client).await?
+        };
         adopt(ctx, &id, Revival::Recreated).await?;
         return Ok(id);
     };
@@ -1414,6 +1418,23 @@ fn frozen_threshold(
         )));
     }
     Ok(Some(frozen).filter(|frozen| frozen.key == key))
+}
+
+/// Whether, with no agent stored, the records name a creation the counter has
+/// not reached: its key may be used, so the next one must follow every key recorded.
+async fn records_ahead_of_counter(ctx: &DaemonContext) -> Result<bool, ArchonError> {
+    let store = ctx.store.lock().await;
+    let generation = parse_generation(store.kv_get(keys::ORCHESTRATOR_GENERATION)?)?;
+    assert!(
+        store.kv_get(keys::ORCHESTRATOR_AGENT)?.is_none(),
+        "only an unstored agent is compared with the counter"
+    );
+    ahead_of(&store, generation)
+}
+
+pub(super) fn ahead_of(store: &archon_queue::Store, generation: u64) -> Result<bool, ArchonError> {
+    let created = origin::recorded_generation(store)?.is_some_and(|created| created > generation);
+    Ok(created || frozen_for_another(store, generation)?)
 }
 
 /// Whether the settings stored beside generation `generation`'s agent were frozen

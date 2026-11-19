@@ -122,7 +122,12 @@ pub async fn economize(ctx: &DaemonContext, now: Timestamp) -> Result<Economy, A
     };
     let client = ctx.aether.client()?;
     let agent = match super::current_orchestrator(ctx).await? {
-        Some(id) => Some(client.get_agent(&id).await?),
+        Some(id) => match client.get_agent(&id).await {
+            Ok(agent) => Some(agent),
+            // Aether forgot it (its store was reset): none lives.
+            Err(ArchonError::NotFound(_)) if unfinished.is_some() => None,
+            Err(error) => return Err(error),
+        },
         None => None,
     };
     if refresh_left_behind(unfinished, agent.as_ref()) {
@@ -205,7 +210,7 @@ pub(super) fn unfinished_refresh(
         return Ok(Some(marker));
     }
     if store.kv_get(keys::ORCHESTRATOR_AGENT)?.is_none() {
-        return Ok(None);
+        return Ok(super::ahead_of(store, generation)?.then_some(generation));
     }
     let created_as = super::origin::recorded_generation(store)?;
     if let Some(created_as) = created_as.filter(|created_as| *created_as != generation) {
@@ -229,6 +234,9 @@ async fn keep_failure(
         ..attempt
     };
     write_kv(ctx, REFRESH_TRIED_KEY, &failed).await?;
+    if failed.tries == REFRESH_TRIES {
+        announce_failures(ctx).await?;
+    }
     Ok(error)
 }
 
@@ -387,7 +395,7 @@ async fn refresh_if_owed(
 
 /// Record that a refresh of generation `generation` starts: the attempt and the
 /// marker in one transaction, or nothing (`None`) when news is due once the store
-/// is held. The operator is told once [`REFRESH_TRIES`] attempts failed.
+/// is held.
 async fn begin_refresh(
     ctx: &DaemonContext,
     generation: u64,
@@ -411,14 +419,17 @@ async fn begin_refresh(
         }
         store.kv_update(&set, &[])?;
     }
-    if tries == REFRESH_TRIES + 1 {
-        let text = format!(
-            "The orchestrator's refresh after the upgrade failed {REFRESH_TRIES} times; Archon keeps trying every {} minutes while it is idle, or `archon orchestrator restart` refreshes it now.",
-            REFRESH_RETRY.num_minutes()
-        );
-        crate::feed::system(ctx, text).await?;
-    }
     Ok(Some(attempt))
+}
+
+/// Tell the operator the refresh failed [`REFRESH_TRIES`] times.
+async fn announce_failures(ctx: &DaemonContext) -> Result<(), ArchonError> {
+    let text = format!(
+        "The orchestrator's refresh after the upgrade failed {REFRESH_TRIES} times; Archon keeps trying every {} minutes while it is idle, or `archon orchestrator restart` refreshes it now.",
+        REFRESH_RETRY.num_minutes()
+    );
+    crate::feed::system(ctx, text).await?;
+    Ok(())
 }
 
 /// Whether held news is due at the time it is now that the caller holds `store`,

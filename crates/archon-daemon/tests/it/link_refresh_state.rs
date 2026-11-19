@@ -641,3 +641,80 @@ async fn an_answer_outlives_a_successor_creation_aether_refuses() {
         .await;
     delivery.abort();
 }
+
+/// No agent is stored, the counter says generation 1 and the settings were
+/// frozen for generation 2's creation: that key was used, so the creation
+/// follows it, and the refresh the records imply stays owed if it is refused.
+#[tokio::test]
+async fn no_stored_agent_beside_settings_frozen_ahead_gets_an_unused_key_and_keeps_the_debt() {
+    let (harness, _agents) = outdated_on_disk().await;
+    let raw = harness.kv(THRESHOLD).await.expect("frozen at creation");
+    let mut frozen: Value = serde_json::from_str(&raw).unwrap();
+    let own = frozen["key"].as_str().expect("its creation key").to_owned();
+    let ahead = format!("{}-2", own.strip_suffix("-1").expect("generation 1's key"));
+    frozen["key"] = json!(ahead);
+    harness.set_kv(THRESHOLD, &frozen.to_string()).await;
+    let db = rusqlite::Connection::open(&harness.ctx.paths.store).unwrap();
+    db.execute("DELETE FROM kv WHERE key = ?1", [keys::ORCHESTRATOR_AGENT])
+        .unwrap();
+    let busy = Scripted::refuse("invalid_argument", "refused");
+    harness.fake.set_default("create_agent", busy);
+
+    supervisor::ensure_orchestrator(&harness.ctx)
+        .await
+        .expect_err("the successor was refused");
+    let owed = stored(&harness).await;
+    assert_eq!(owed.generation.as_deref(), Some("3"), "past the used key");
+    assert_eq!(
+        owed.marker.as_deref(),
+        Some("1"),
+        "the inferred refresh stays owed"
+    );
+    let creates = harness.fake.received_named("create_agent");
+    let sent = creates.last().expect("a creation")["idempotency_key"].as_str();
+    assert_ne!(sent, Some(ahead.as_str()), "the used key again");
+    assert!(
+        cli_status(&harness)
+            .await
+            .orchestrator_refresh_delayed
+            .is_some(),
+        "status shows the delay with no stored agent"
+    );
+}
+
+/// A zero counter with no agent beside a recorded creation: the creation's key
+/// is used, so the fresh generation follows it.
+#[tokio::test]
+async fn a_zero_counter_and_no_agent_beside_a_recorded_creation_reuses_no_key() {
+    let (harness, agents) = outdated_on_disk().await;
+    harness.set_kv(keys::ORCHESTRATOR_GENERATION, "0").await;
+    let db = rusqlite::Connection::open(&harness.ctx.paths.store).unwrap();
+    db.execute("DELETE FROM kv WHERE key = ?1", [keys::ORCHESTRATOR_AGENT])
+        .unwrap();
+    script_successor(&harness, &agents);
+
+    let id = supervisor::ensure_orchestrator(&harness.ctx).await.unwrap();
+    assert_eq!(id.as_str(), ORCH_2);
+    let after = stored(&harness).await;
+    assert_eq!(after.generation.as_deref(), Some("2"));
+    assert_eq!(after.marker, None);
+    let creates = harness.fake.received_named("create_agent");
+    assert_ne!(creates[0]["idempotency_key"], creates[1]["idempotency_key"]);
+}
+
+/// Aether forgot the stored agent while a refresh was unfinished: the next
+/// economy check finishes it with a fresh generation instead of failing.
+#[tokio::test]
+async fn an_unfinished_refresh_beside_an_agent_aether_forgot_is_finished_by_the_economy_check() {
+    let (harness, agents) = outdated_on_disk().await;
+    harness.set_kv(MARKER, "1").await;
+    agents.lock().unwrap().remove(ORCH);
+    script_successor(&harness, &agents);
+
+    let done = supervisor::economize(&harness.ctx, archon_core::now()).await;
+    assert_eq!(done.unwrap(), Economy::Refreshed);
+    let after = stored(&harness).await;
+    assert_eq!(after.agent.as_deref(), Some(ORCH_2));
+    assert_eq!(after.marker, None);
+    no_checkpoint_restart(&harness);
+}

@@ -122,7 +122,7 @@ pub fn provider_pace(
 }
 
 impl WindowPace {
-    /// `7d used 70% at 30% elapsed, empty ~2026-11-21 04:00 UTC before its
+    /// `7d used 70% at 30% elapsed, empty ~2026-11-20 12:00 UTC before its
     /// reset 2026-11-24 12:00 UTC`, as `status` and `queue_status` show it.
     pub fn describe(&self) -> String {
         assert!(self.used_percent <= 100 && self.elapsed_percent <= 100);

@@ -31,7 +31,7 @@ the orchestrator can choose between providers.
 
 `archon status` and `queue_status` show each window's pace after its
 remaining percent, for example
-`pace 7d used 78% at 29% elapsed, empty ~2026-11-20 06:27 UTC, before its reset 2026-11-24 12:00 UTC`
+`pace 7d used 78% at 29% elapsed, empty ~2026-11-20 02:27 UTC, before its reset 2026-11-24 12:00 UTC`
 for a short window, or `5h used 20% at 60% elapsed, empty ~… , resets …`
 for one on pace (`no rate yet` while nothing is spent).
 

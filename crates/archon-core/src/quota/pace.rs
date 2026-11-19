@@ -32,30 +32,33 @@ pub struct WindowPace {
 /// recently Archon received it.
 pub const MAX_OBSERVATION_AGE_SECONDS: i64 = 600;
 
+const NANOS_PER_SECOND: i128 = 1_000_000_000;
+
 /// `window`'s pace as aetherd reported it at `read_at`; `None` when it names
-/// no length or absolute reset, or has already reset.
+/// no length or absolute reset, or has already reset. Time counts in
+/// nanoseconds, so no rounding moves a window across the margin.
 pub fn window_pace(window: &QuotaWindow, read_at: Timestamp, margin: u8) -> Option<WindowPace> {
     assert!(margin <= 100, "a margin is a percentage");
     let minutes = window.window_minutes.filter(|m| *m > 0)?;
     let resets_at = window.resets_at?;
-    let length = i64::try_from(minutes.checked_mul(60)?).ok()?;
-    let until = (resets_at - read_at).num_seconds();
-    if until <= 0 {
+    if resets_at <= read_at {
         return None;
     }
-    let elapsed_seconds = (length - until).clamp(0, length);
+    let length = i128::from(minutes) * 60 * NANOS_PER_SECOND;
+    let until = i128::from((resets_at - read_at).num_nanoseconds()?);
+    debug_assert!(until > 0 && length > 0);
+    let elapsed = (length - until).clamp(0, length);
     let used = 100 - window.remaining_percent.min(100);
     // Exact: (used − margin) / 100 > elapsed / length, cross-multiplied.
-    let short = (i128::from(used) - i128::from(margin)) * i128::from(length)
-        > 100 * i128::from(elapsed_seconds);
-    let elapsed_percent = (elapsed_seconds as f64 * 100.0 / length as f64).round() as u8;
+    let short = (i128::from(used) - i128::from(margin)) * length > 100 * elapsed;
+    let elapsed_percent = (elapsed as f64 * 100.0 / length as f64).round() as u8;
     let pace = WindowPace {
         window: window.name.clone(),
         window_minutes: minutes,
         used_percent: u8::try_from(used).expect("used is at most 100"),
         elapsed_percent,
         resets_at,
-        empty_at: empty_at(used, elapsed_seconds, read_at),
+        empty_at: empty_at(used, elapsed, read_at),
         short,
     };
     debug_assert!(pace.used_percent <= 100 && pace.elapsed_percent <= 100);
@@ -64,16 +67,16 @@ pub fn window_pace(window: &QuotaWindow, read_at: Timestamp, margin: u8) -> Opti
 }
 
 /// When the rest runs out if it keeps going at the rate `used` percent took
-/// over `elapsed_seconds`; `None` with no rate to go by.
-fn empty_at(used: u64, elapsed_seconds: i64, read_at: Timestamp) -> Option<Timestamp> {
-    assert!(used <= 100 && elapsed_seconds >= 0);
-    if used == 0 || elapsed_seconds == 0 {
+/// over `elapsed` nanoseconds; `None` with no rate to go by.
+fn empty_at(used: u64, elapsed: i128, read_at: Timestamp) -> Option<Timestamp> {
+    assert!(used <= 100 && elapsed >= 0);
+    if used == 0 || elapsed == 0 {
         return None;
     }
-    let seconds = i128::from(100 - used) * i128::from(elapsed_seconds) / i128::from(used);
-    debug_assert!(seconds >= 0);
-    let seconds = i64::try_from(seconds.min(i128::from(i32::MAX))).ok()?;
-    read_at.checked_add_signed(chrono::TimeDelta::try_seconds(seconds)?)
+    let nanos = i128::from(100 - used) * elapsed / i128::from(used);
+    debug_assert!(nanos >= 0);
+    let nanos = nanos.min(i128::from(i32::MAX) * NANOS_PER_SECOND);
+    read_at.checked_add_signed(chrono::TimeDelta::nanoseconds(i64::try_from(nanos).ok()?))
 }
 
 /// Seconds `reading`'s usage observation is old at `now`, by its age when
@@ -185,6 +188,23 @@ mod tests {
             zero_margin.short,
             "41% used at 40% elapsed passes a 0 margin"
         );
+    }
+
+    #[test]
+    fn a_fraction_of_a_second_never_rounds_across_the_margin_or_the_reset() {
+        let read = at("2026-11-19T12:00:00Z");
+        let half = chrono::TimeDelta::milliseconds(500);
+        // 30% used at 19m59.5s of 100 minutes is just past a 10-point margin.
+        let mut just_past = window(70, 80, read);
+        just_past.resets_at = Some(read + chrono::TimeDelta::minutes(80) + half);
+        assert!(window_pace(&just_past, read, 10).unwrap().short);
+        let at_margin = window_pace(&window(70, 80, read), read, 10).unwrap();
+        assert!(!at_margin.short, "{at_margin:?}");
+        // Half a second before its reset a window still has a pace.
+        let mut ending = window(10, 0, read);
+        ending.resets_at = Some(read + half);
+        let pace = window_pace(&ending, read, 10).expect("not reset yet");
+        assert_eq!(pace.elapsed_percent, 100);
     }
 
     #[test]

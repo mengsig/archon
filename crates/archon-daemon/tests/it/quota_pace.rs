@@ -219,3 +219,71 @@ async fn stale_old_or_partial_readings_never_warn() {
     assert!(warnings(&h).await.is_empty());
     assert!(pace_news(&h).await.is_empty());
 }
+
+#[tokio::test]
+async fn a_sample_that_ages_out_while_waiting_for_the_store_warns_of_nothing() {
+    let h = Harness::with_config(Config::default()).await;
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![("codex", week(5, TimeDelta::days(5), false))],
+    );
+    let store = h.ctx.store.lock().await;
+    let ctx = h.ctx.clone();
+    let warn = tokio::spawn(async move { archon_daemon::quota::warn_short(&ctx).await });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(!warn.is_finished(), "the warning waits for the store");
+    read(
+        &h,
+        TimeDelta::minutes(11),
+        vec![("codex", week(5, TimeDelta::days(5), false))],
+    );
+    drop(store);
+    warn.await.expect("joins").expect("warns");
+    assert!(warnings(&h).await.is_empty());
+    assert!(pace_news(&h).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_caller_waiting_on_a_failed_ask_takes_its_failure_instead_of_asking_again() {
+    use archon_aether::client::{AetherClient, ClientOptions};
+    use archon_aether::fake::{FakeAether, Scripted};
+    use archon_daemon::quota::{Asker, refresh};
+    use std::time::{Duration, Instant};
+
+    let h = Harness::with_config(Config::default()).await;
+    let aether = FakeAether::start(&h.dir.path().join("aetherd.sock"))
+        .await
+        .expect("fake aetherd");
+    aether.set_default("providers", Scripted::Silent);
+    let options = ClientOptions {
+        request_timeout: Duration::from_millis(500),
+        ..ClientOptions::default()
+    };
+    let client = AetherClient::connect_with(&aether.endpoint(), options)
+        .await
+        .expect("connect");
+    h.ctx
+        .aether
+        .replace(Some(std::sync::Arc::new(client)))
+        .expect("link");
+
+    let started = Instant::now();
+    let ctx = h.ctx.clone();
+    let poll = tokio::spawn(async move { refresh(&ctx, Asker::PacePoll).await });
+    aether
+        .wait_for("providers", 1, Duration::from_secs(5))
+        .await;
+    let routed = refresh(&h.ctx, Asker::Routing).await;
+    assert!(routed.is_err(), "routing takes the poll's failure");
+    assert!(poll.await.expect("joins").is_err());
+    assert!(
+        started.elapsed() < Duration::from_millis(900),
+        "one timeout, not two"
+    );
+    assert_eq!(aether.received_named("providers").len(), 1);
+
+    // A later pass asks afresh.
+    assert!(refresh(&h.ctx, Asker::Routing).await.is_err());
+    assert_eq!(aether.received_named("providers").len(), 2);
+}

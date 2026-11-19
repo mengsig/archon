@@ -21,18 +21,20 @@ const WARNED_KEY: &str = "quota_pace_warned";
 /// Tell both, once per provider window, of each short window the last
 /// trusted reading shows. Each warning, its feed notice and its receipt
 /// commit together, so a crash loses none and repeats none.
-pub(crate) async fn warn_short(ctx: &DaemonContext) -> Result<(), ArchonError> {
-    let paces = super::paces(ctx);
-    let short: Vec<(&String, &WindowPace)> = (paces.iter())
-        .flat_map(|(provider, windows)| windows.iter().map(move |pace| (provider, pace)))
-        .filter(|(_, pace)| pace.short)
-        .collect();
-    if short.is_empty() {
+pub async fn warn_short(ctx: &DaemonContext) -> Result<(), ArchonError> {
+    if !any_short(&super::paces(ctx)) {
         return Ok(());
     }
     let mut told = Vec::new();
     {
         let mut store = ctx.store.lock().await;
+        // Judged again under the writer lock: a sample that aged out or a
+        // window that reset while this waited warns of nothing.
+        let paces = super::paces(ctx);
+        let short: Vec<(&String, &WindowPace)> = (paces.iter())
+            .flat_map(|(provider, windows)| windows.iter().map(move |pace| (provider, pace)))
+            .filter(|(_, pace)| pace.short)
+            .collect();
         let mut warned = read_warned(&store)?;
         for (provider, pace) in short {
             if !is_new_window(warned.get(&key(provider, pace)), pace) {
@@ -48,6 +50,10 @@ pub(crate) async fn warn_short(ctx: &DaemonContext) -> Result<(), ArchonError> {
     crate::feed::publish(ctx, told);
     triggers::wake(ctx);
     Ok(())
+}
+
+fn any_short(paces: &BTreeMap<String, Vec<WindowPace>>) -> bool {
+    paces.values().flatten().any(|pace| pace.short)
 }
 
 /// The warned record; an unreadable one only costs a repeated warning.

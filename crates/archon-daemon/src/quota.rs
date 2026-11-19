@@ -7,7 +7,7 @@ mod pace;
 mod reroute;
 
 pub(crate) use holds::{item_hold, spawn_hold};
-pub(crate) use pace::warn_short;
+pub use pace::warn_short;
 pub(crate) use reroute::{Reserve, note_waits, record_moves, reroute_spawns, switch_note};
 
 use std::collections::BTreeMap;
@@ -41,17 +41,27 @@ pub struct Reading {
 #[derive(Debug, Default)]
 pub struct QuotaCache {
     reading: std::sync::Mutex<Option<Reading>>,
-    /// Held across each ask, so routing waits for one in flight and shares
-    /// its answer; holds when the pace poll last asked, answered or not.
-    asking: tokio::sync::Mutex<Option<Timestamp>>,
+    /// Held across each ask, so a caller waits for one in flight and shares
+    /// its answer, failure included.
+    asking: tokio::sync::Mutex<Asking>,
     /// A background pace poll is running.
     in_flight: AtomicBool,
+}
+
+/// What the last holder of [`QuotaCache::asking`] did.
+#[derive(Debug, Default)]
+struct Asking {
+    /// When the pace poll last asked, answered or not.
+    polled: Option<Timestamp>,
+    /// The failure of the ask the last holder made; `None` when it made
+    /// none or it answered.
+    failed: Option<String>,
 }
 
 /// Who asks Aether: routing retries a failed ask on its next pass, as it
 /// always has; the pace poll asks at most every [`REFRESH_EVERY`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Asker {
+pub enum Asker {
     Routing,
     PacePoll,
 }
@@ -88,21 +98,44 @@ impl Drop for InFlight<'_> {
 
 /// Ask Aether for its providers' usage unless the last reading is recent.
 /// An aetherd that predates headroom answers none, which routes by weight.
-/// One ask runs at a time; a caller that waited for one uses its answer.
-pub(crate) async fn refresh(ctx: &DaemonContext, asker: Asker) -> Result<(), ArchonError> {
-    let mut polled = ctx.quota.asking.lock().await;
+/// One ask runs at a time; a caller that waited for one takes its outcome,
+/// so a silent aetherd costs each pass one request timeout, as in 1.6.3.
+pub async fn refresh(ctx: &DaemonContext, asker: Asker) -> Result<(), ArchonError> {
+    let mut asking = match ctx.quota.asking.try_lock() {
+        Ok(idle) => idle,
+        Err(_) => {
+            let joined = ctx.quota.asking.lock().await;
+            if let Some(why) = &joined.failed {
+                return Err(ArchonError::Aether(format!(
+                    "the providers ask in flight failed: {why}"
+                )));
+            }
+            joined
+        }
+    };
+    asking.failed = None;
     let now = archon_core::now();
     let recent = ctx
         .quota
         .reading()
         .is_some_and(|r| now - r.read_at < REFRESH_EVERY);
-    let polled_recently = polled.is_some_and(|at| now >= at && now - at < REFRESH_EVERY);
+    let polled_recently = (asking.polled).is_some_and(|at| now >= at && now - at < REFRESH_EVERY);
     if recent || !ctx.aether.is_connected() || (asker == Asker::PacePoll && polled_recently) {
         return Ok(());
     }
     if asker == Asker::PacePoll {
-        *polled = Some(now);
+        asking.polled = Some(now);
     }
+    let asked = ask(ctx).await;
+    if let Err(error) = &asked {
+        asking.failed = Some(error.to_string());
+    }
+    debug_assert_eq!(asked.is_err(), asking.failed.is_some());
+    asked
+}
+
+/// One `providers` ask, its answer stored as the reading.
+async fn ask(ctx: &DaemonContext) -> Result<(), ArchonError> {
     let providers = ctx.aether.client()?.providers().await?;
     let reported: Vec<(String, ProviderHeadroom)> = providers
         .into_iter()

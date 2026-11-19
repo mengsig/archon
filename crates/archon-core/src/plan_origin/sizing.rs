@@ -176,10 +176,9 @@ fn decide(
     if origin.is_pin() {
         return (None, sized.reason);
     }
-    // A learned effort is kept as it is; the sizer origin lets dispatch clip it to the policy.
     if origin.source == PlanSource::Learned {
         let kept = format!("{}; unchanged: the learned route's effort", sized.reason);
-        return (Some(choice.effort), kept);
+        return (None, kept);
     }
     if origin.source == PlanSource::Escalation {
         return (None, sized.reason);
@@ -246,7 +245,8 @@ impl PlanWriter {
             assert_eq!(slots.len(), choices.len(), "origins fit the plan");
             for (slot, (choice, origin)) in choices.iter_mut().zip(slots).enumerate() {
                 let source = origin.effort.source;
-                let sized = matches!(source, PlanSource::Sizer | PlanSource::Escalation);
+                let learned = source == PlanSource::Learned && self.sizing.keys.contains_key(key);
+                let sized = learned || matches!(source, PlanSource::Sizer | PlanSource::Escalation);
                 if !sized || origin.effort.is_pin() {
                     continue;
                 }

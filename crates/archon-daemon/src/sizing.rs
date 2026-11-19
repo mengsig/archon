@@ -178,7 +178,7 @@ fn daemon_sized(item: &QueueItem, (stage, fan_index): (&str, u32)) -> Option<(Ef
     let sized = item.model_plan.slot_sizing(&item.id, stage, slot)?;
     let by_daemon = matches!(
         sized.effort_source,
-        PlanSource::Sizer | PlanSource::Escalation
+        PlanSource::Sizer | PlanSource::Escalation | PlanSource::Learned
     );
     by_daemon.then(|| (choices[slot].effort, sized))
 }

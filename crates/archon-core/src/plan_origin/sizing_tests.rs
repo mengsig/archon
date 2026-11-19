@@ -190,7 +190,7 @@ fn a_learned_route_supplies_the_model_and_its_effort_stays() {
         PlanSource::Learned,
         "the route's model"
     );
-    assert_eq!(origin.effort.source, PlanSource::Sizer);
+    assert_eq!(origin.effort.source, PlanSource::Learned);
     let why = "sizer: ordinary -> medium; unchanged: the learned route's effort";
     assert_eq!(reason(&planned, &item, "build"), why);
 }
@@ -723,4 +723,21 @@ fn a_default_effort_is_lowered_when_mechanical_and_raised_only_with_the_opt_in()
     assert!(reason(&held, &item, "build").ends_with("unchanged"));
     let raised = build(on(Effort::XHigh), "x", &tagged);
     assert_eq!(effort(&raised, "build"), Effort::XHigh);
+}
+
+#[test]
+fn a_learned_effort_survives_a_resize_and_is_still_clipped_to_the_policy() {
+    let item = QueueItemId::new();
+    let writer = filled(&item, &["build"], Effort::Low, PlanSource::Learned);
+    let mut planned = writer.finish(without_raising());
+    planned.settle(&item, input("x", &[]), crate::now());
+    let risky = tags(&["risk:critical"]);
+    let now = (Effort::XHigh, false, crate::now());
+    assert!(planned.resize(&item, input("x", &risky), now, &|_| false));
+    assert_eq!(effort(&planned, "build"), Effort::Low, "never changed");
+    let held = filled(&item, &["build"], Effort::High, PlanSource::Learned);
+    let mut high = held.finish(without_raising());
+    high.settle(&item, input("x", &[]), crate::now());
+    assert!(high.clip_sized(&item, Some(Effort::Medium), crate::now()));
+    assert_eq!(effort(&high, "build"), Effort::Medium);
 }

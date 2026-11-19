@@ -159,7 +159,11 @@ async fn steer_catalog(
         && catalog.not_ready_reason().is_none()
     {
         *model = catalog.check(model)?;
-        assert_eq!(model, catalog.canonical_alias(model), "a checked model is canonical");
+        assert_eq!(
+            model,
+            catalog.canonical_alias(model),
+            "a checked model is canonical"
+        );
     }
     Ok(Some(catalog))
 }
@@ -284,7 +288,7 @@ async fn running_plan(
     let reasons = patch.model_reasons.take();
     let route = crate::knobs::ItemRoute::new(&item);
     let asked = (plan, reasons.as_ref());
-    let given = items::resolve_draft(ctx, (env, route), &spec, asked, by.into()).await?;
+    let given = items::resolve_draft(ctx, (env, route), &spec, asked, (by.into(), None)).await?;
     let plan = items::filled_plan(ctx, route, env, &spec, &spec, given, None).await?;
     items::check_plan(ctx, env, &spec, &plan)?;
     items::check_reasons(&spec, reasons.as_ref())?;

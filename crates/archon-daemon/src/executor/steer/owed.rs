@@ -43,6 +43,10 @@ pub(super) struct Delivery {
     pub interrupt: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lead: Option<String>,
+    /// The operator's note alone: what the lead is told instead of `lead`
+    /// when its model step is refused, since its model did not change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub helpers: Option<String>,
 }
@@ -195,19 +199,23 @@ async fn make(
     }
     // A resumed attempt settles on its turn's last word, so the turn is left to end (§6.7).
     let resumed = stage.aether_task.is_none();
-    // A model the catalog or policy refuses is reported; the rest of the step still goes on.
+    // A refused model is reported; the lead keeps its turn and model and hears the note alone.
     let told = async {
         let refused_model = update_choice(ctx, stage, agent, delivery).await?;
-        if delivery.interrupt && !resumed {
+        let lead = match refused_model {
+            Some(_) => delivery.note.as_deref(),
+            None => delivery.lead.as_deref(),
+        };
+        if delivery.interrupt && !resumed && refused_model.is_none() {
             ctx.backend.interrupt(agent).await?;
         }
-        if let Some(text) = &delivery.lead {
+        if let Some(text) = lead {
             ctx.backend.send_message(agent, text, &delivery.key).await?;
         }
-        Ok(refused_model)
+        Ok((refused_model, lead))
     };
-    let refused_model = match told.await {
-        Ok(refused_model) => refused_model,
+    let (refused_model, lead) = match told.await {
+        Ok(told) => told,
         Err(error) if resume::unanswered(&error) => {
             tracing::info!(stage = %stage.id, %agent, %error, "steer not delivered; the next sweep retries");
             return Ok(false);
@@ -215,7 +223,11 @@ async fn make(
         Err(error) if error.is_store() => return Err(error),
         Err(refusal) => return refused(ctx, stage, &refusal).await.map(|()| true),
     };
-    if let Some(text) = delivery.lead.as_deref().filter(|_| resumed) {
+    assert!(
+        refused_model.is_none() || delivery.choice.is_some(),
+        "only a model step has its model refused"
+    );
+    if let Some(text) = lead.filter(|_| resumed) {
         resume::told(&mut *ctx.store.lock().await, &stage.id, text)?;
     }
     if let Some(refusal) = refused_model {
@@ -224,8 +236,8 @@ async fn make(
     Ok(true)
 }
 
-/// Send `delivery`'s model and limits; the model's refusal when the catalog
-/// or policy refuses it for good, its limits then sent alone.
+/// Send `delivery`'s model and limits; the model's refusal when the catalog,
+/// policy or Aether refuses it for good, its limits then sent alone.
 async fn update_choice(
     ctx: &DaemonContext,
     stage: &StageRun,
@@ -245,30 +257,55 @@ async fn update_choice(
         if resume::unanswered(&error) || error.is_store() {
             return Err(error);
         }
-        let limits = Delivery {
-            choice: None,
-            ..delivery
-        };
-        if !limits.patch().is_empty() {
-            patch_lead(ctx, agent, &limits).await?;
-        }
-        return Ok(Some(error));
+        return limits_alone(ctx, agent, &delivery)
+            .await
+            .map(|()| Some(error));
     }
     let delivery = &delivery;
-    let patch = delivery.patch();
-    if !patch.is_empty() {
-        patch_lead(ctx, agent, delivery).await?;
-        if let Some(choice) = &delivery.choice {
-            ctx.store.lock().await.record_model_segment(
-                &stage.id,
-                &delivery.key,
-                choice,
-                archon_core::now(),
-                archon_core::cost::API_EQUIVALENT,
-            )?;
+    if delivery.patch().is_empty() {
+        return Ok(None);
+    }
+    match patch_lead(ctx, agent, delivery).await {
+        Err(error) if delivery.choice.is_some() && is_refusal(&error) => {
+            return limits_alone(ctx, agent, delivery)
+                .await
+                .map(|()| Some(error));
         }
+        sent => sent?,
+    }
+    if let Some(choice) = &delivery.choice {
+        ctx.store.lock().await.record_model_segment(
+            &stage.id,
+            &delivery.key,
+            choice,
+            archon_core::now(),
+            archon_core::cost::API_EQUIVALENT,
+        )?;
     }
     Ok(None)
+}
+
+/// An answer that refuses for good, neither unanswered nor the store's own failure.
+fn is_refusal(error: &ArchonError) -> bool {
+    !resume::unanswered(error) && !error.is_store()
+}
+
+/// Patch the lead with `delivery`'s deadline and budget, its refused model left out.
+async fn limits_alone(
+    ctx: &DaemonContext,
+    agent: &AetherAgentId,
+    delivery: &Delivery,
+) -> Result<(), ArchonError> {
+    assert!(delivery.choice.is_some(), "only a model step is split");
+    let limits = Delivery {
+        choice: None,
+        ..delivery.clone()
+    };
+    assert!(limits.patch().choice.is_none(), "the model is left out");
+    if limits.patch().is_empty() {
+        return Ok(());
+    }
+    patch_lead(ctx, agent, &limits).await
 }
 
 /// `delivery` carrying the deadline and budget stored for `stage` now: a later

@@ -7,7 +7,6 @@ use archon_core::autonomy::AutonomyPatch;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId, RepoId};
 use archon_core::model::{ModelPlan, ModelPlanDraft};
-use archon_core::plan_origin::PlannedPlan;
 use archon_core::protocol::ItemQuery;
 use archon_core::pull_request::OntoTarget;
 use archon_core::queue::{QueueItem, QueueState};
@@ -380,41 +379,6 @@ fn plan_as_asked(plan: &ModelPlan, asked: &ModelPlanDraft) -> ModelPlan {
     named
 }
 
-/// How a request's `model_plan` draft sits against a stored resolved plan.
-#[derive(Debug, PartialEq)]
-enum DraftFit {
-    Agrees,
-    /// A named model differs: an alias of the stored canonical id, or another model.
-    Renamed,
-    /// Shape, effort or tier differ, so it is another request.
-    Differs,
-}
-
-fn draft_fit(plan: &ModelPlan, asked: &ModelPlanDraft) -> DraftFit {
-    let mut fit = DraftFit::Agrees;
-    for (stage, drafts) in &asked.0 {
-        let Some(choices) = plan.0.get(stage).filter(|c| c.len() == drafts.len()) else {
-            return DraftFit::Differs;
-        };
-        for (choice, draft) in choices.iter().zip(drafts) {
-            let tier = choice.tier.as_ref();
-            let tier_agrees = match &draft.tier {
-                Some(asked) => {
-                    tier.is_some_and(|t| t.requested == *asked && t.provider == draft.provider)
-                }
-                None => tier.is_none(),
-            };
-            if !tier_agrees || draft.effort.is_some_and(|e| e != choice.effort) {
-                return DraftFit::Differs;
-            }
-            if draft.model.as_ref().is_some_and(|m| *m != choice.model) {
-                fit = DraftFit::Renamed;
-            }
-        }
-    }
-    fit
-}
-
 fn different_request(key: &str, first: &QueueItemId) -> ArchonError {
     ArchonError::Invalid(format!(
         "idempotency key {key:?} was already used for a different request ({first})"
@@ -423,9 +387,8 @@ fn different_request(key: &str, first: &QueueItemId) -> ArchonError {
 
 /// The item an earlier enqueue stored under `key` when `item` asks for the
 /// same request, without inserting; `None` when the key is unused. A
-/// fingerprint that filled `model_plan` is matched against that stored plan,
-/// not the live catalog, so a model retired since still replays; it gives
-/// `None` only when a named model differs, which may be an alias.
+/// fingerprint that filled `model_plan` is matched by `item`'s filled plan,
+/// so it gives `None` while that plan is still unfilled.
 pub(super) fn replayed(
     conn: &Connection,
     item: &QueueItem,
@@ -437,19 +400,12 @@ pub(super) fn replayed(
         return Ok(None);
     };
     let stored: serde_json::Value = from_json(&stored, "enqueue request")?;
-    let mut item = std::borrow::Cow::Borrowed(item);
-    if let Some(plan) = stored.get("model_plan") {
-        let plan: ModelPlan = serde_json::from_value(plan.clone())
-            .map_err(|e| ArchonError::Corrupt(format!("decode stored model_plan: {e}")))?;
-        match draft_fit(&plan, &asked.model_plan) {
-            DraftFit::Renamed => return Ok(None),
-            DraftFit::Differs => return Err(different_request(key, &first)),
-            DraftFit::Agrees => {}
-        }
-        let planned = PlannedPlan::unattributed(&item.id, plan);
-        item.to_mut().model_plan = planned;
+    let filled = !item.model_plan.plan().0.is_empty();
+    if stored.get("model_plan").is_some() && !filled {
+        return Ok(None);
     }
-    let item = item.as_ref();
+    // As the request filled it, before sizing, as an insert under the key compares it.
+    let item = &*attributed(item);
     let mut request = request_value(item, asked);
     if let Some(target) = target {
         assert!(
@@ -460,6 +416,23 @@ pub(super) fn replayed(
     }
     check_replay(key, (&first, &stored), item, request, asked)?;
     load(conn, &first).map(Some)
+}
+
+/// The plan a fingerprint from before `asked_plan` filled for `key`; `None`
+/// when the key is unused or its fingerprint keeps the request as asked.
+pub(super) fn legacy_plan(conn: &Connection, key: &str) -> Result<Option<ModelPlan>, ArchonError> {
+    assert!(!key.trim().is_empty(), "a replay needs a key");
+    let Some((first, stored)) = find_by_key(conn, key)? else {
+        return Ok(None);
+    };
+    let stored: serde_json::Value = from_json(&stored, "enqueue request")?;
+    let Some(plan) = stored.get("model_plan") else {
+        return Ok(None);
+    };
+    let plan: ModelPlan = serde_json::from_value(plan.clone()).map_err(|e| {
+        ArchonError::Corrupt(format!("decode the stored model_plan of {first}: {e}"))
+    })?;
+    Ok(Some(plan))
 }
 
 /// `asked` is what the enqueue named, before resolution.

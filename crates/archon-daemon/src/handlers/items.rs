@@ -55,6 +55,7 @@ pub(super) async fn enqueue(
         model_plan: req.model_plan.clone(),
     };
     let mut item = unplanned_item(&req, (&env, &resolved), onto);
+    let mut legacy = None;
     if let Some(key) = key {
         let local = local_onto(&env, target.0);
         let replay = ctx.store.lock().await;
@@ -62,6 +63,7 @@ pub(super) async fn enqueue(
             drop(replay);
             return Ok(item_reply(ctx, stored, req.budget_usd.is_some()).await);
         }
+        legacy = replay.legacy_replay_plan(key)?;
     }
     crate::learned::prepare_routing(ctx, &item.id, &resolved, &req.tags).await?;
     let unrouted = ItemRoute {
@@ -73,7 +75,12 @@ pub(super) async fn enqueue(
         held: item.routed_provider.as_deref(),
         ..unrouted
     };
-    item.model_plan = enqueue_plan(ctx, &req, &env, &resolved, (route, by)).await?;
+    let plan = enqueue_plan(ctx, &req, (&env, &resolved), (route, by), legacy.as_ref()).await?;
+    item.model_plan = plan;
+    if let (Some(key), Some(_)) = (key, &legacy) {
+        let stored = legacy_replay(ctx, (&env, target.0), &item, (key, &asked)).await?;
+        return Ok(item_reply(ctx, stored, req.budget_usd.is_some()).await);
+    }
     let stored = store_enqueued(ctx, (&env, &resolved.spec), target, &item, (key, &asked)).await?;
     assert!(
         stored.id == item.id || key.is_some(),
@@ -123,18 +130,22 @@ fn unplanned_item(
     }
 }
 
+/// The plan `req` asks for, filled and checked. A model `legacy`, the plan a
+/// fingerprint from before `asked_plan` keeps, holds at the same place is not
+/// checked against the catalog again: that plan is only replayed, never stored.
 async fn enqueue_plan(
     ctx: &DaemonContext,
     req: &EnqueueRequest,
-    env: &RepoEnv,
-    resolved: &knobs::Resolved,
+    (env, resolved): (&RepoEnv, &knobs::Resolved),
     (route, by): (ItemRoute<'_>, Authority),
+    legacy: Option<&ModelPlan>,
 ) -> Result<PlannedPlan, ArchonError> {
     let draft = req.model_plan.clone();
     let reasons = req.model_reasons.as_ref();
-    let given = resolve_draft(ctx, (env, route), &resolved.spec, (draft, reasons), by).await?;
+    let spec = &resolved.spec;
+    let given = resolve_draft(ctx, (env, route), spec, (draft, reasons), (by, legacy)).await?;
     check_stage_timeouts(ctx, &resolved.spec, &req.stage_timeouts)?;
-    let plan = filled_plan(ctx, route, env, &resolved.base, &resolved.spec, given, None).await?;
+    let plan = filled_plan(ctx, route, env, &resolved.base, spec, given, legacy).await?;
     check_plan(ctx, env, &resolved.spec, &plan)?;
     let budgeted = Budgeted {
         budget_usd: req.budget_usd,
@@ -297,6 +308,34 @@ async fn store_enqueued(
         "a local repository freezes no pull request"
     );
     executor::onto::local::enqueue(ctx, repo, item, target, (key, asked)).await
+}
+
+/// The item a fingerprint from before `asked_plan` keeps under `key`, matched by
+/// `item`'s filled plan. Never an insert: that plan skipped the catalog check
+/// for the models the fingerprint holds, so it is only compared.
+async fn legacy_replay(
+    ctx: &DaemonContext,
+    (env, target): (&RepoEnv, Option<&OntoTarget>),
+    item: &QueueItem,
+    (key, asked): (&str, &Asked),
+) -> Result<QueueItem, ArchonError> {
+    assert!(
+        !item.model_plan.plan().0.is_empty(),
+        "matched by its filled plan"
+    );
+    let local = local_onto(env, target);
+    let stored = ctx
+        .store
+        .lock()
+        .await
+        .replayed_enqueue(item, key, (asked, local))?;
+    let stored = stored.ok_or_else(|| {
+        ArchonError::Unavailable(format!(
+            "idempotency key {key:?} was released while its request was checked; send it again"
+        ))
+    })?;
+    assert_ne!(stored.id, item.id, "a replay returns the earlier item");
+    Ok(stored)
 }
 
 /// The `onto` record an earlier enqueue with idempotency `key` froze for
@@ -662,7 +701,7 @@ async fn check_update_plan(
     if let Some(draft) = patch.model_plan.take() {
         let route = ItemRoute::new(current);
         let reasons = patch.model_reasons.as_ref();
-        let given = resolve_draft(ctx, (&env, route), &spec, (draft, reasons), by).await?;
+        let given = resolve_draft(ctx, (&env, route), &spec, (draft, reasons), (by, None)).await?;
         let filled = filled_plan(ctx, route, &env, &base, &spec, given, None).await?;
         check_plan(ctx, &env, &spec, &filled)?;
         plan = Some(filled);
@@ -1084,7 +1123,8 @@ pub(super) async fn retry(
     let (plan, repaired) = match retry.model_plan {
         Some(draft) => {
             let reasons = retry.model_reasons.as_ref();
-            let resolved = resolve_draft(ctx, (&env, route), &spec, (draft, reasons), by).await?;
+            let resolved =
+                resolve_draft(ctx, (&env, route), &spec, (draft, reasons), (by, None)).await?;
             (resolved, Vec::new())
         }
         None => {
@@ -1486,9 +1526,9 @@ pub(super) async fn resolve_draft(
     (env, item): (&RepoEnv, ItemRoute<'_>),
     spec: &PipelineSpec,
     (draft, reasons): (ModelPlanDraft, Option<&ModelReasons>),
-    by: Authority,
+    (by, carried): (Authority, Option<&ModelPlan>),
 ) -> Result<PlanWriter, ArchonError> {
-    let plan = resolve_tiers(ctx, (env, item), spec, draft.clone()).await?;
+    let plan = resolve_tiers(ctx, (env, item), spec, draft.clone(), carried).await?;
     knobs::check_plan_reasons(spec, &plan, reasons)?;
     let mut writer = PlanWriter::new(item.id, archon_core::now());
     if !draft.0.is_empty() {
@@ -1504,6 +1544,7 @@ pub(super) async fn resolve_tiers(
     (env, item): (&RepoEnv, ItemRoute<'_>),
     spec: &PipelineSpec,
     draft: ModelPlanDraft,
+    carried: Option<&ModelPlan>,
 ) -> Result<ModelPlan, ArchonError> {
     let catalog = learned::request_catalog(ctx).await?;
     let policy = env.resolved_policy(ctx);
@@ -1511,7 +1552,7 @@ pub(super) async fn resolve_tiers(
     let quota = crate::quota::current(ctx, weights.as_ref()).await;
     let route = item.by(weights.as_ref(), quota.as_ref());
     let tiers = knobs::TierScope::new(&ctx.config, &policy, &catalog).routed(route);
-    let plan = knobs::resolve_tiers(spec, draft, tiers)?;
+    let plan = knobs::resolve_tiers(spec, draft, tiers, carried)?;
     if catalog.not_ready_reason().is_some() {
         for choice in plan.0.values().flatten() {
             policy.check_pending_model(choice)?;

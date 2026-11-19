@@ -1507,6 +1507,15 @@ async fn a_refused_deferred_model_still_tells_the_lead_its_note() {
     assert_eq!(messages.len(), 1, "{messages:?}");
     assert_eq!(messages[0].0, agent(&working));
     assert!(messages[0].1.contains(NOTE), "{}", messages[0].1);
+    assert!(
+        !messages[0].1.contains("you now run on"),
+        "no model change is claimed: {}",
+        messages[0].1
+    );
+    assert!(
+        h.backend.interrupts().is_empty(),
+        "the lead keeps its turn on its model"
+    );
     let updates = h.backend.updates();
     assert!(
         updates.iter().all(|(_, u)| u.choice.is_none()),
@@ -1514,6 +1523,50 @@ async fn a_refused_deferred_model_still_tells_the_lead_its_note() {
     );
     let owed = h.kv(&format!("steer_owed:{}", working.id)).await;
     assert_eq!(owed, None, "nothing is left owed");
+}
+
+/// A model update Aether refuses for good still sends the step's extension and
+/// note; the lead keeps its turn, and the refusal is reported.
+#[tokio::test]
+async fn a_model_aether_refuses_still_sends_the_steps_note_and_extension() {
+    const NOTE: &str = "the note beside the refused model";
+    let h = harness().await;
+    let (item, working) = implementing(&h, "a refused model update").await;
+    let soon = archon_core::now() + chrono::Duration::minutes(30);
+    common::set_deadline(&h, &working, soon).await;
+    h.backend.fail_next_update(ArchonError::Invalid(
+        "aether: model not allowed here".into(),
+    ));
+    let asked = Steer {
+        effort: Some(Effort::Low),
+        extend_minutes: Some(10),
+        note: Some(NOTE.into()),
+        ..Steer::default()
+    };
+    steer(&h, &item.id, asked).await.expect("steered");
+
+    let updates = h.backend.updates();
+    assert_eq!(updates.len(), 1, "{updates:?}");
+    assert_eq!(updates[0].1.choice, None, "the refused model is left out");
+    assert!(
+        updates[0].1.deadline.is_some_and(|d| d > soon),
+        "{updates:?}"
+    );
+    let messages = h.backend.messages();
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert!(messages[0].1.contains(NOTE), "{}", messages[0].1);
+    assert!(
+        !messages[0].1.contains("you now run on"),
+        "{}",
+        messages[0].1
+    );
+    assert!(h.backend.interrupts().is_empty(), "no turn ends");
+    let feed = h.notices(NotificationKind::Progress).await;
+    let told = feed
+        .iter()
+        .any(|n| n.contains("did not reach the running agent"));
+    assert!(told, "{feed:?}");
+    assert_eq!(h.kv(&format!("steer_owed:{}", working.id)).await, None);
 }
 
 /// As when Aether enforces the cost budget `stage` was sent.

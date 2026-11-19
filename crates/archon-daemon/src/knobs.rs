@@ -665,17 +665,19 @@ pub(crate) fn resolve_plan(
     reasons: Option<&ModelReasons>,
     tiers: TierScope<'_>,
 ) -> Result<ModelPlan, ArchonError> {
-    let plan = resolve_tiers(spec, draft, tiers)?;
+    let plan = resolve_tiers(spec, draft, tiers, None)?;
     check_plan_reasons(spec, &plan, reasons)?;
     Ok(plan)
 }
 
 /// [`resolve_plan`] without its effort check, for a caller that checks the
-/// reasons itself.
+/// reasons itself. A slot whose model `carried` holds at the same place is
+/// not checked against the catalog again.
 pub(crate) fn resolve_tiers(
     spec: &PipelineSpec,
     draft: ModelPlanDraft,
     tiers: TierScope<'_>,
+    carried: Option<&ModelPlan>,
 ) -> Result<ModelPlan, ArchonError> {
     let stages = draft.0.len();
     let mut plan = draft.resolve(
@@ -683,8 +685,16 @@ pub(crate) fn resolve_tiers(
         |key, tier, provider| tiers.resolve((tier, spec.tier_floor(key, tier)), provider),
     )?;
     if tiers.catalog.not_ready_reason().is_none() {
-        for choice in plan.0.values_mut().flatten() {
-            choice.model = tiers.catalog.check(&choice.model)?;
+        for (key, choices) in &mut plan.0 {
+            let kept = carried.and_then(|plan| plan.choices_for(key));
+            for (slot, choice) in choices.iter_mut().enumerate() {
+                let untouched = kept
+                    .and_then(|kept| kept.get(slot))
+                    .is_some_and(|old| old.model == choice.model);
+                if !untouched {
+                    choice.model = tiers.catalog.check(&choice.model)?;
+                }
+            }
         }
     }
     assert_eq!(plan.0.len(), stages, "every drafted key is resolved");

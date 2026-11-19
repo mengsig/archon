@@ -172,10 +172,10 @@ fn legacy_keyed_store(repo: &Repo, first: &QueueItem) -> (tempfile::TempDir, Sto
     (dir, store)
 }
 
-/// The enqueue handler asks for a replay before any live model check, so a
-/// legacy fingerprint must match from the stored plan alone.
+/// The enqueue handler asks for a replay before any live model check; a
+/// legacy fingerprint matches only once the retry's plan is filled.
 #[test]
-fn a_legacy_fingerprint_replays_by_its_stored_plan_without_a_live_model_check() {
+fn a_legacy_fingerprint_replays_by_its_filled_plan_alone() {
     let repo = common::repo("alpha");
     let first = item(Some(&repo), "fix");
     let (_dir, store) = legacy_keyed_store(&repo, &first);
@@ -183,14 +183,27 @@ fn a_legacy_fingerprint_replays_by_its_stored_plan_without_a_live_model_check() 
         model_plan: ModelPlanDraft::from(first.model_plan.plan().clone()),
         ..Asked::default()
     };
-    let retry = QueueItem {
+    let unfilled = QueueItem {
         intent: None,
         id: QueueItemId::new(),
         model_plan: PlannedPlan::unattributed(&QueueItemId::new(), ModelPlan::default()),
         ..first.clone()
     };
-    let again = store.replayed_enqueue(&retry, "old", (&named, None));
+    let early = store.replayed_enqueue(&unfilled, "old", (&named, None));
+    assert_eq!(
+        early.unwrap(),
+        None,
+        "an unfilled plan waits for the stored one"
+    );
+    let stored = store.legacy_replay_plan("old").unwrap();
+    assert_eq!(stored.as_ref(), Some(first.model_plan.plan()));
+    let filled = QueueItem {
+        model_plan: PlannedPlan::unattributed(&unfilled.id, stored.unwrap()),
+        ..unfilled
+    };
+    let again = store.replayed_enqueue(&filled, "old", (&named, None));
     assert_eq!(again.unwrap().map(|i| i.id), Some(first.id.clone()));
+    assert_eq!(store.legacy_replay_plan("unused").unwrap(), None);
 }
 
 #[test]
@@ -198,29 +211,35 @@ fn a_changed_request_under_a_legacy_fingerprint_key_is_refused() {
     let repo = common::repo("alpha");
     let first = item(Some(&repo), "fix");
     let (_dir, store) = legacy_keyed_store(&repo, &first);
-    let mut other_effort = ModelPlanDraft::from(first.model_plan.plan().clone());
-    let stage = other_effort.0.get_mut("implement").unwrap();
+    let named = Asked {
+        model_plan: ModelPlanDraft::from(first.model_plan.plan().clone()),
+        ..Asked::default()
+    };
     assert_eq!(
         first.model_plan.plan().0["implement"][0].effort,
         Effort::High
     );
-    stage[0].effort = Some(Effort::Low);
-    let asks = [
-        Asked {
-            model_plan: other_effort,
-            ..Asked::default()
-        },
-        Asked {
-            model_plan: ModelPlanDraft::from(first.model_plan.plan().clone()),
-            ..Asked::default()
-        },
-    ];
+    let mut lower = first.model_plan.plan().clone();
+    lower.0.get_mut("implement").unwrap()[0].effort = Effort::Low;
+    let id = QueueItemId::new();
+    let other_effort = QueueItem {
+        model_plan: PlannedPlan::unattributed(&id, lower),
+        id,
+        ..first.clone()
+    };
     let retitled = QueueItem {
         title: "another".into(),
         id: QueueItemId::new(),
         ..first.clone()
     };
-    for (retry, asked) in [(&first, &asks[0]), (&retitled, &asks[1])] {
+    // Routing that fills the plan otherwise is another request too.
+    let unnamed = Asked::default();
+    let retries = [
+        (&other_effort, &named),
+        (&retitled, &named),
+        (&rerouted(&first), &unnamed),
+    ];
+    for (retry, asked) in retries {
         let err = store.replayed_enqueue(retry, "old", (asked, None));
         assert!(matches!(err, Err(ArchonError::Invalid(_))), "{err:?}");
     }

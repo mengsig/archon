@@ -376,6 +376,14 @@ impl Store {
         }
         Ok(stored)
     }
+    /// The plan a fingerprint from before `asked_plan` filled for idempotency
+    /// `key`, which a replay of it is matched by (see `items::legacy_plan`).
+    pub fn legacy_replay_plan(
+        &self,
+        key: &str,
+    ) -> Result<Option<archon_core::model::ModelPlan>, ArchonError> {
+        items::legacy_plan(&self.conn, key)
+    }
     pub fn item(&self, id: &QueueItemId) -> Result<QueueItem, ArchonError> {
         let mut item = items::load(&self.conn, id)?;
         self.canonicalize_items(std::slice::from_mut(&mut item));

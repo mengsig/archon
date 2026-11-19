@@ -2228,25 +2228,30 @@ async fn a_reviewer_off_the_contract_s_named_models_is_cancelled() {
 /// The alias a contract issued before an upgrade may name for `ALLOWED`.
 const ALIAS: (&str, &str) = ("claude-code", "opus");
 
-/// The link's catalog reads `ALIAS` as `ALLOWED`, as after a catalog read.
-fn alias_allowed(harness: &Harness) {
-    let alias = ModelRef::new(ALIAS.0, ALIAS.1);
-    let canonical = ModelRef::new(ALLOWED.0, ALLOWED.1);
-    let generation = harness.ctx.aether.generation().unwrap();
-    let aliases = [(alias.clone(), canonical.clone())].into();
-    harness
-        .ctx
-        .aether
-        .install_aliases(generation, aliases)
-        .unwrap();
-    assert_eq!(harness.ctx.aether.aliases().get(&alias), Some(&canonical));
+/// The catalog Aether lists reads `ALIAS` as `ALLOWED`.
+fn alias_listed(harness: &Harness) {
+    let rows: Vec<Value> = crate::common::catalog::default_models()
+        .models()
+        .iter()
+        .map(|entry| {
+            let model = entry.model.to_string();
+            let aliases = match model == format!("{}/{}", ALLOWED.0, ALLOWED.1) {
+                true => json!([ALIAS.1]),
+                false => json!([]),
+            };
+            json!({"model": model, "configured": true, "aliases": aliases})
+        })
+        .collect();
+    assert!(rows.iter().any(|row| row["aliases"] == json!([ALIAS.1])));
+    let rows = Scripted::reply("models", json!(rows));
+    harness.fake.set_default("list_models", rows);
 }
 
 /// The reviewers of `STAGE` the watchdog cancelled, of one created under the
 /// contract's alias, one under its canonical id and one on another model.
 async fn alias_reviewers_cancelled(harness: &Harness) -> Vec<String> {
+    alias_listed(harness);
     let (agents, pump) = running_pump(harness).await;
-    alias_allowed(harness);
     harness.fake.set_default("cancel", Scripted::ok());
     for (id, model) in [(CHILD, ALIAS), (CHILD_2, ALLOWED), (GRANDCHILD, DENIED)] {
         let mut agent = agents.set(id, "running");
@@ -2256,6 +2261,11 @@ async fn alias_reviewers_cancelled(harness: &Harness) -> Vec<String> {
         push(harness, created(id, STAGE, model), keys::CURSOR_FLEET).await;
     }
     pump.abort();
+    let (alias, canonical) = (
+        ModelRef::new(ALIAS.0, ALIAS.1),
+        ModelRef::new(ALLOWED.0, ALLOWED.1),
+    );
+    assert_eq!(harness.ctx.aether.aliases().get(&alias), Some(&canonical));
     let cancels = harness.fake.received_named("cancel");
     assert!(cancels.len() <= 3, "at most every reviewer is cancelled");
     let agent = |cancel: &Value| cancel["agent"].as_str().unwrap().to_owned();
@@ -2582,8 +2592,8 @@ async fn a_child_on_an_allowed_alias_runs_though_the_aliases_clear_mid_check() {
     let harness = Harness::with(config, None).await;
     let repo = tempfile::tempdir().unwrap();
     running_stage(&harness.ctx, repo.path(), STAGE, STAGE_TASK).await;
+    alias_listed(&harness);
     let (agents, pump) = running_pump(&harness).await;
-    alias_allowed(&harness);
     harness.fake.set_default("cancel", Scripted::ok());
     let mut agent = agents.set(CHILD, "running");
     agent["role"] = json!("worker");
@@ -2610,4 +2620,49 @@ async fn a_child_on_an_allowed_alias_runs_though_the_aliases_clear_mid_check() {
         "the aliases cleared"
     );
     assert_eq!(cancelled(&harness), [], "the allowed child runs");
+}
+
+/// A child created while this connection has read no catalog waits for one:
+/// no verdict rests on aliases an earlier connection read.
+#[tokio::test]
+async fn a_child_created_during_a_catalog_outage_is_judged_once_the_catalog_returns() {
+    let mut config = Config::default();
+    deny_model(&mut config);
+    let harness = Harness::with(config, None).await;
+    let (_agents, pump) = running_pump(&harness).await;
+    harness.fake.set_default("cancel", Scripted::ok());
+    let outage = Scripted::refuse("unavailable", "the catalog does not answer");
+    harness.fake.set_default("list_models", outage);
+    let before = harness.fake.connections_accepted();
+    harness.fake.hangup(None);
+    wait_for_streams(&harness, before + 1).await;
+
+    let reads = harness.fake.received_named("list_models").len();
+    let seq = harness.fake.push_event(created(CHILD, ORCH, DENIED));
+    harness
+        .eventually("the watchdog asked for the catalog", || async {
+            harness.fake.received_named("list_models").len() > reads
+        })
+        .await;
+    let cursor = harness.kv(keys::CURSOR_FLEET).await;
+    let cursor: u64 = cursor.and_then(|c| c.parse().ok()).unwrap_or(0);
+    assert!(
+        cursor < seq,
+        "the event is held while the catalog is unavailable"
+    );
+    assert_eq!(cancelled(&harness), [], "no verdict without a catalog");
+
+    crate::common::catalog::answer(&harness.fake, &crate::common::catalog::default_models());
+    harness
+        .eventually("the held event is handled", || async {
+            let saved = harness.kv(keys::CURSOR_FLEET).await;
+            saved
+                .and_then(|s| s.parse::<u64>().ok())
+                .is_some_and(|s| s >= seq)
+        })
+        .await;
+    pump.abort();
+    let cancels = cancelled(&harness);
+    assert_eq!(cancels.len(), 1, "{cancels:?}");
+    assert_eq!(cancels[0].0, CHILD);
 }

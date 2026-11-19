@@ -425,3 +425,48 @@ async fn a_keyed_replay_returns_its_item_after_the_pinned_model_left_the_catalog
         "{conflict}"
     );
 }
+
+/// A fingerprint from before `asked_plan` kept the plan the enqueue filled;
+/// its replay is matched by that plan, not by the catalog of now.
+#[tokio::test]
+async fn a_legacy_keyed_replay_returns_its_item_after_the_pinned_model_left_the_catalog() {
+    let h = harness().await;
+    let pin = serde_json::from_value(serde_json::json!({"implement": [{"model": FAST}]}));
+    let mut asked = request("direct", pin.unwrap(), "review=none");
+    asked.idempotency_key = Some("legacy".into());
+    let Ok(Reply::Item(first)) = h.cli(Request::Enqueue(asked.clone())).await else {
+        panic!("the first enqueue is stored");
+    };
+    let filled = serde_json::to_string(first.model_plan.plan()).unwrap();
+    let conn = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    let changed = conn.execute(
+        "UPDATE items SET request = json_set(json_remove(request, '$.asked_plan'),
+                                             '$.model_plan', json(?1))",
+        [filled],
+    );
+    assert_eq!(
+        changed.unwrap(),
+        1,
+        "the fingerprint as an older store wrote it"
+    );
+
+    h.set_catalog(common::catalog::untiered(["codex/sol".parse().unwrap()]))
+        .await;
+    let Ok(Reply::Item(again)) = h.cli(Request::Enqueue(asked.clone())).await else {
+        panic!("the replay returns the stored item");
+    };
+    assert_eq!(again.id, first.id);
+
+    asked.brief = "another brief".into();
+    let conflict = h
+        .cli(Request::Enqueue(asked))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        conflict.contains("already used for a different request"),
+        "{conflict}"
+    );
+    let items = h.ctx.store.lock().await.items(&Default::default()).unwrap();
+    assert_eq!(items.len(), 1, "no second item");
+}

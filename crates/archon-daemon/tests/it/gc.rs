@@ -585,7 +585,7 @@ version = 1
 workspace = "{workspace}"
 requires_repo = true
 [[stage]]
-id = "ship"
+id = "publish"
 kind = "report"
 prompt = "implement.md"
 "#
@@ -596,7 +596,7 @@ prompt = "implement.md"
                 "report-only",
                 "report",
                 archon_core::model::ModelPlan(std::collections::BTreeMap::from([(
-                    "ship".into(),
+                    "publish".into(),
                     common::plan().0["ship"].clone(),
                 )])),
             )

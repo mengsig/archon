@@ -57,6 +57,10 @@ pub(super) async fn report(
     }
     let catalog = ctx.store.lock().await.model_catalog();
     let mut report = snapshot.report(&catalog, |_, stage| {
+        // A review-only lead records its run's review verdict; one recorded before 1.6.4 has none.
+        if stage.only_reviews == Some(true) {
+            return Ok(true);
+        }
         Ok(runs
             .get(&stage.run)
             .and_then(Option::as_ref)

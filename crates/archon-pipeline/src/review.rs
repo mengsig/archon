@@ -724,14 +724,17 @@ mod tests {
     const ONE: ReviewDuty = ReviewDuty {
         reviewers: 1,
         may_skip: false,
+        records_verdict: false,
     };
     const ONE_OR_SKIP: ReviewDuty = ReviewDuty {
         reviewers: 1,
         may_skip: true,
+        records_verdict: false,
     };
     const THREE: ReviewDuty = ReviewDuty {
         reviewers: 3,
         may_skip: false,
+        records_verdict: false,
     };
 
     fn read(structured: Value) -> Result<Evidence, String> {

@@ -57,7 +57,9 @@ worktree is dirty, characterization tests changed or did not run, a
 pre-existing test modification lacks a sound preservation justification, a
 public-surface difference is not explicitly allowed, or there is any
 unexplained behaviour difference. Otherwise **pass**. Missing evidence is
-not a pass, even when the refactorer's report claims success.
+not a pass, even when the refactorer's report claims success. Mark each
+finding that fails the verdict `"blocking": true` and any note
+`"blocking": false`.
 
 ## Report
 

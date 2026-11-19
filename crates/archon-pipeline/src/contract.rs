@@ -70,6 +70,9 @@ pub fn instructions(
     if needs_verdict(stage) {
         out.push_str(VERDICT_RULES);
     }
+    if owed.review.is_some_and(|duty| duty.records_verdict) {
+        out.push_str(LEAD_VERDICT_RULES);
+    }
     if stage.scenarios == Scenarios::Strict {
         out.push_str(STRICT_SCENARIO_RULES);
     }
@@ -499,17 +502,34 @@ fn review_rules(duty: ReviewDuty) -> String {
         true => REVIEW_SKIP_RULE,
         false => "",
     };
+    // A review-only lead changes nothing: its findings are its verdict, never fixed.
+    let (follow_ups, rests_on, rounds, coverage, open) = match duty.records_verdict {
+        true => (
+            ".\n",
+            "each reviewer that read it",
+            REVIEW_ONLY_ROUNDS_RULE,
+            REVIEW_ONLY_COVERAGE_RULE,
+            REVIEW_ONLY_OPEN_RULE,
+        ),
+        false => (
+            " and `pr.body`.\n",
+            "each reviewer the pass rests on, a failed one whose findings you fixed included",
+            REVIEW_ROUNDS_RULE,
+            REVIEW_COVERAGE_RULE,
+            "with a blocking finding open, call `fail_task` and say which.",
+        ),
+    };
     let rules = format!(
         "\n## Review on record\n\n\
          - Your stage holds this run's review: the change as it finally stands is reviewed \
          by {who}.\n\
-         {REVIEWER_VERDICT_RULES}\
+         {REVIEWER_VERDICT_RULES}{follow_ups}\
          - Record it in `complete_task`'s `structured` data, beside any other keys, naming \
-         the agent id `delegate` returned for each reviewer the pass rests on, a failed \
-         one whose findings you fixed included:\n\n\
+         the agent id `delegate` returned for {rests_on}:\n\n\
          ```json\n{{\"review\": {{\"verdict\": \"pass\", \"reviewers\": [{named}]}}}}\n```\n\n\
          {skip}\
-         {REVIEW_CHECK_RULES}"
+         {rounds}{coverage}{open}\n\
+         {REVIEW_LINE_RULE}"
     );
     debug_assert!(rules.ends_with('\n'), "sections end with a newline");
     rules
@@ -791,8 +811,7 @@ before or after it.\n\n\
 - Blocking findings are correctness bugs, security or safety issues, failing or missing \
 tests for changed behaviour, and broken documented behaviour, as the brief narrows or \
 extends them. Tell reviewers so, and to mark every finding `\"blocking\": true` or \
-`false`: only blocking ones fail. List the rest as follow-ups in your summary and \
-`pr.body`.\n";
+`false`: only blocking ones fail. List the rest as follow-ups in your summary";
 
 /// Failing review rounds of one stage attempt after which Archon stops the stage.
 /// A round is one commit that at least one of the lead's reviewers failed with a
@@ -801,7 +820,7 @@ extends them. Tell reviewers so, and to mark every finding `\"blocking\": true` 
 /// which ends the run and hands the item to the orchestrator.
 pub const REVIEW_ROUND_CAP: usize = 3;
 
-const REVIEW_CHECK_RULES: &str = "\
+const REVIEW_ROUNDS_RULE: &str = "\
 - Delegate with `wait: false`, then use `wait_for`. On a blocking fail, edit nothing \
 until the reviewers still reading finish (they share your workspace); one you cancel \
 counts for nothing and needs a whole-change replacement. Fix every blocking finding \
@@ -810,7 +829,25 @@ asked again, so delegate a new one with `base` at the head the failed review rea
 given the fix commits and the open findings, to verify each is fixed and the fix \
 regresses nothing. No new whole-change read is needed. A commit after passes needs \
 only a delta read from the head they passed; an amend or rebase needs whole-change \
-reads. After 3 failed rounds Archon stops the stage and escalates.\n\
+reads. After 3 failed rounds Archon stops the stage and escalates.\n";
+
+/// A review-only lead's rounds: one, whose findings it records rather than fixes.
+const REVIEW_ONLY_ROUNDS_RULE: &str = "\
+- Delegate with `wait: false`, then use `wait_for`. This run changes nothing: on a \
+blocking fail, fix and commit nothing, and wait for the reviewers still reading (one \
+you cancel counts for nothing). Their blocking findings make your verdict `fail`.\n";
+
+/// A review-only lead's coverage: its head is frozen, so every read is whole and of it.
+const REVIEW_ONLY_COVERAGE_RULE: &str = "\
+- Archon checks a pass against Aether and the branch: each agent named must be a \
+different one you delegated to yourself that passed the whole change at this head, \
+as many as the review asks. Anything else fails the run. Never report `pass` for a \
+review that did not run or did not pass: ";
+
+const REVIEW_ONLY_OPEN_RULE: &str =
+    "with a blocking finding open, record `fail` as the Verdict section says.";
+
+const REVIEW_COVERAGE_RULE: &str = "\
 - Archon checks a pass against Aether and the branch. Each agent named must be a \
 different one you delegated to yourself that completed with that verdict. As many as \
 the review asks must have read the whole change, passing or with findings fixed, and \
@@ -820,8 +857,9 @@ anchors such a delta. A fail stands until a pass read past it, or after an amend
 rebase until a pass of the whole change. Name every reviewer that coverage rests on, \
 earlier whole-change reads included, passed or failed. Anything else fails the run, \
 and nothing ships. \
-Never report `pass` for a review that did not run or did not pass: with a blocking \
-finding open, call `fail_task` and say which.\n\
+Never report `pass` for a review that did not run or did not pass: ";
+
+const REVIEW_LINE_RULE: &str = "\
 - Archon adds the review as the last line of your summary: write no `REVIEW:` line \
 yourself.\n";
 
@@ -1090,15 +1128,34 @@ const VERDICT_RULES: &str = "\n## Verdict\n\n\
 - Put this in `complete_task`'s `structured` data, beside any other keys:\n\n\
 ```json\n\
 {\"verdict\": \"pass\" | \"fail\",\n \
-\"findings\": [{\"severity\": \"critical|high|medium|low\", \"title\": \"…\", \
-\"detail\": \"…\", \"path\": \"relative/path:line\"}]}\n\
+\"findings\": [{\"severity\": \"critical|high|medium|low\", \"blocking\": true | false, \
+\"title\": \"…\", \"detail\": \"…\", \"path\": \"relative/path:line\"}]}\n\
 ```\n\n\
 - The `verdict` is exactly `\"pass\"` or `\"fail\"`, no other word. The stage prompt \
 defines which findings make it `fail`; apply its rule exactly. A `fail` lists a \
 finding and always fails; a review with only advice is a `pass`.\n\
+- Mark each finding `\"blocking\": true` when that rule makes it fail the verdict, \
+else `false`: a pass beside a blocking finding counts as a fail, and an unmarked \
+finding blocks when its severity is critical or high.\n\
 - End the `summary` with a final line that is exactly `VERDICT: PASS` or \
 `VERDICT: FAIL`, matching the structured verdict. A missing or unreadable verdict \
 counts as a fail.\n";
+
+/// The verdict of a review-only run's lead: the review is the run's whole
+/// outcome, so a fail is recorded, not reported as a stage failure.
+const LEAD_VERDICT_RULES: &str = "\n## Verdict\n\n\
+- The review is this run's whole outcome: record its verdict with `complete_task`, \
+a fail included. `fail_task` means only that the review could not be done.\n\
+- Put this in `structured`, beside the review record:\n\n\
+```json\n\
+{\"verdict\": \"pass\" | \"fail\",\n \
+\"findings\": [{\"severity\": \"critical|high|medium|low\", \"blocking\": true | false, \
+\"title\": \"…\", \"detail\": \"issue, impact, remedy\", \"path\": \"relative/path:line\"}]}\n\
+```\n\n\
+- A blocking finding or a failed check makes it `fail`, which never merges. Mark each \
+finding `\"blocking\"`; an unmarked one blocks when its severity is critical or high.\n\
+- End the `summary` with a final line that is exactly `VERDICT: PASS` or \
+`VERDICT: FAIL`, matching the structured verdict.\n";
 
 const STRICT_SCENARIO_RULES: &str = "\n## Strict scenario gate\n\n\
 - Each scenario lists `required_steps` ids and `steps` {id,required,status}; \
@@ -1230,6 +1287,8 @@ mod tests {
             assert!(text.contains("stage prompt defines which findings"));
             assert!(text.contains("exactly `\"pass\"` or `\"fail\"`, no other word"));
             assert!(text.contains("a review with only advice is a `pass`"));
+            assert!(text.contains("\"blocking\": true | false"), "{kind:?}");
+            assert!(text.contains("finding blocks when its severity is critical or high"));
         }
         let work = instructions(
             &stage(StageKind::Work, Gate::None, 1),
@@ -1809,9 +1868,40 @@ mod tests {
             review: Some(ReviewDuty {
                 reviewers,
                 may_skip,
+                records_verdict: false,
             }),
             ship_record: false,
         }
+    }
+
+    /// A review-only lead records its verdict, a fail included, with
+    /// `complete_task`; a lead that builds the change keeps `fail_task`.
+    #[test]
+    fn only_a_review_only_lead_records_a_fail_with_complete_task() {
+        let mut lead = owing(1, false);
+        lead.review = lead.review.map(|duty| ReviewDuty {
+            records_verdict: true,
+            ..duty
+        });
+        let reviewing = work_contract(lead);
+        assert!(reviewing.contains("record its verdict with `complete_task`, a fail included"));
+        assert!(reviewing.contains("\"blocking\": true | false"));
+        assert!(reviewing.contains("VERDICT: FAIL"));
+        assert!(reviewing.contains("with a blocking finding open, record `fail`"));
+        assert!(!reviewing.contains("call `fail_task` and say which"));
+        assert!(reviewing.contains("fix and commit nothing"));
+        assert!(!reviewing.contains("Fix every blocking finding"));
+        assert!(!reviewing.contains("pr.body") && !reviewing.contains("findings you fixed"));
+        assert!(!reviewing.contains("a failed one") && !reviewing.contains("delta"));
+        assert!(reviewing.contains("passed the whole change at this head"));
+        assert_eq!(reviewing.matches("## Verdict").count(), 1);
+        let building = work_contract(owing(1, false));
+        assert!(building.contains("with a blocking finding open, call `fail_task` and say which."));
+        assert!(building.contains("Fix every blocking finding and commit"));
+        assert!(building.contains("a failed one whose findings you fixed included:"));
+        assert!(building.contains("follow-ups in your summary and `pr.body`.\n"));
+        assert!(!building.contains("## Verdict"));
+        assert!(building.ends_with("write no `REVIEW:` line yourself.\n"));
     }
 
     fn work_contract(owed: Owed) -> String {

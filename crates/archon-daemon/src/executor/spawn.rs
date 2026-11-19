@@ -899,6 +899,7 @@ fn reserve_one(
         aether_task: None,
         state: StageState::Spawning,
         verdict: None,
+        verdict_note: None,
         summary: None,
         structured: None,
         cost_usd: 0.0,

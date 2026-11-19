@@ -10,6 +10,7 @@ use archon_core::catalog::{
 };
 use archon_core::error::ArchonError;
 use archon_core::model::{Effort, ModelPlan, ModelReasons};
+use archon_core::run::{BUDGET_STAGE, RECOVERY_STAGE, SHIP_STEP};
 use serde::{Deserialize, Serialize};
 
 use crate::template;
@@ -17,6 +18,8 @@ use crate::template;
 pub const SCHEMA_VERSION: u32 = 1;
 /// The stage the 1.0 built-ins ran their ship agent as; archond ships them now.
 pub const RETIRED_SHIP_STAGE: &str = "ship";
+/// Stage ids archond fails runs under for its own stops, which no stage may take.
+pub const RESERVED_STAGE_IDS: [&str; 3] = [BUDGET_STAGE, SHIP_STEP, RECOVERY_STAGE];
 pub const MAX_FAN_OUT: u32 = 16;
 pub const MAX_LOOPS: u32 = 10;
 /// 30 days. Stage agents get exactly the configured timeout; a larger one
@@ -107,6 +110,9 @@ pub struct ReviewDuty {
     /// Whether a reasoned `skipped` stands in for the one reviewer: only where
     /// a ship agent still judges it, as pipelines with a ship stage have.
     pub may_skip: bool,
+    /// Whether the review is all its run does (a review-only run's lead, with
+    /// reviewers): its result records the verdict, a fail included, through `complete_task`.
+    pub records_verdict: bool,
 }
 
 /// What a stage owes on its result besides passing its gate.
@@ -367,10 +373,17 @@ impl PipelineSpec {
         }
         let reviewers = reviewers(review.level);
         let ship_agent = self.file.stages.iter().any(|s| s.kind == StageKind::Ship);
-        Some(ReviewDuty {
+        let duty = ReviewDuty {
             reviewers,
             may_skip: ship_agent && reviewers == 1,
-        })
+            // At level `none` nothing is reviewed, so there is no verdict to record.
+            records_verdict: !self.delivers() && reviewers > 0,
+        };
+        assert!(
+            !(duty.may_skip && duty.records_verdict),
+            "a ship agent delivers"
+        );
+        Some(duty)
     }
 
     /// The effort a plan key gets when it names none: a stage's, or, for the
@@ -587,6 +600,9 @@ impl PipelineSpec {
         if self.stage_index(&stage.id) != Some(index) {
             return Err("id is used by more than one stage".into());
         }
+        if takes_reserved_id(stage) {
+            return Err(reserved_stage_id(&stage.id));
+        }
         validate_roles(stage)?;
         self.validate_roles_from(index, stage)?;
         if let (Some(tier), Some(min)) = (stage.tier, stage.min_tier)
@@ -799,6 +815,22 @@ pub(crate) fn check_stage_count(count: usize) -> Result<(), ArchonError> {
 
 fn invalid(message: impl Into<String>) -> ArchonError {
     ArchonError::Pipeline(message.into())
+}
+
+/// Whether `stage` takes an id archond fails runs under for its own stops. A
+/// `ship` stage is the pipeline's own ship agent: `validate_daemon_ship` keeps
+/// it from sharing a run with the daemon's ship step, so the id is its own.
+fn takes_reserved_id(stage: &StageSpec) -> bool {
+    let ship_agent = stage.id == SHIP_STEP && stage.kind == StageKind::Ship;
+    RESERVED_STAGE_IDS.contains(&stage.id.as_str()) && !ship_agent
+}
+
+fn reserved_stage_id(id: &str) -> String {
+    format!(
+        "id {id:?} is reserved for archond's own stops ({}); rename the stage, for example to {:?}",
+        RESERVED_STAGE_IDS.join(", "),
+        format!("{id}-stage"),
+    )
 }
 
 /// Stage ids and pipeline names: `[a-z0-9-]+`, safe in roles, labels and

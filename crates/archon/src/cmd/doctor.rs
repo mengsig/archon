@@ -22,6 +22,7 @@ use archon_core::mcp_tools::SERVER_NAME;
 use archon_core::protocol::{McpHealth, gib};
 use archon_daemon::context::DaemonPaths;
 use archon_daemon::disk::{self, DiskReading};
+use archon_pipeline::{Catalog, CatalogSources};
 
 use super::update::version::Version;
 use crate::connect::{archon_bin, connect_existing, print_json};
@@ -95,6 +96,9 @@ pub async fn run(json: bool) -> anyhow::Result<ExitCode> {
         checks.push(check_links(&operator_config_dir()?, &instance));
         checks.push(check_calm(&instance));
     }
+    checks.push(check_pipelines(
+        &archon_core::paths::config_dir().join("pipelines"),
+    ));
     checks.push(check_mcp_health(aether.as_ref().ok()).await);
     checks.extend(mcp_tools::check_mcp_tools(aether.as_ref().ok(), config.aether.mode).await);
     checks.push(check_locations(&archon_client::default_socket()));
@@ -288,6 +292,37 @@ fn check_calm(instance: &Instance) -> Check {
         ),
         Err(error) => check("calm mode", Level::Fail, format!("{error:#}")),
     }
+}
+
+/// The user's pipelines that do not load: each name is unavailable, and its
+/// error says what to change (a reserved stage id names its rename).
+fn check_pipelines(user_dir: &Path) -> Check {
+    let sources = CatalogSources {
+        user_dir: Some(user_dir.to_path_buf()),
+        repo_root: None,
+        disabled: Vec::new(),
+    };
+    let catalog = match Catalog::discover(&sources) {
+        Ok(catalog) => catalog,
+        Err(error) => return check("pipelines", Level::Fail, format!("{error:#}")),
+    };
+    let problems = catalog.problems();
+    if problems.is_empty() {
+        return check("pipelines", Level::Ok, "every pipeline loads");
+    }
+    let listed: Vec<String> = problems
+        .iter()
+        .map(|p| format!("{}: {}", p.name, p.error))
+        .collect();
+    check(
+        "pipelines",
+        Level::Warn,
+        format!(
+            "{} do not load, so their names are unavailable: {}",
+            problems.len(),
+            listed.join("; ")
+        ),
+    )
 }
 
 fn worst(a: Level, b: Level) -> Level {
@@ -826,6 +861,30 @@ fn release_verdict(current: &Version, latest: anyhow::Result<Version>) -> Check 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_user_pipeline_that_takes_a_reserved_stage_id_is_reported_with_its_rename() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipeline = dir.path().join("demo");
+        std::fs::create_dir(&pipeline).unwrap();
+        let manifest = "[pipeline]\nname = \"demo\"\ndescription = \"d\"\nversion = 1\n\n\
+            [[stage]]\nid = \"budget\"\nkind = \"work\"\nprompt = \"budget.md\"\n";
+        std::fs::write(pipeline.join("pipeline.toml"), manifest).unwrap();
+        std::fs::write(pipeline.join("budget.md"), "Do the task.").unwrap();
+        let check = check_pipelines(dir.path());
+        assert_eq!(check.level, Level::Warn);
+        assert!(
+            check.detail.contains("\"budget-stage\""),
+            "{}",
+            check.detail
+        );
+    }
+
+    #[test]
+    fn an_empty_user_pipeline_directory_loads_every_pipeline() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(check_pipelines(dir.path()).level, Level::Ok);
+    }
 
     #[test]
     fn mcp_states_map_to_levels() {

@@ -1184,7 +1184,10 @@ lead has the whole pull request, from its merge base with the base branch,
 reviewed at the item's `review` level (`standard`, one reviewer, by
 default) while it runs the checks. It commits nothing; a review whose
 branch moved off the frozen head is refused. A pass records the exact head
-its reviewers passed, which `queue show` and `get_item` show.
+its reviewers passed, which `queue show` and `get_item` show. A fail is a
+recorded verdict too: the lead completes with `VERDICT: FAIL` and its
+findings, the item fails with them, and `archon model-evidence --pipeline
+review` counts it in the lead's pass share.
 
 `archon merge`, `/merge` and `request_merge` of that item then merge the
 pull request, under the usual confirmation or `grant_merge`, only:

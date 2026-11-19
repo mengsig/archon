@@ -8559,6 +8559,13 @@
           "minimum": 0,
           "type": "integer"
         },
+        "disputed": {
+          "default": 0,
+          "description": "Completed attempts whose pass their own findings dispute: a format clash\nkept out of `verdicts`, so it is no fail of the model.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
         "host_context": {
           "$ref": "#/$defs/HostContext",
           "default": "full"
@@ -15556,6 +15563,17 @@
               "type": "null"
             }
           ]
+        },
+        "verdict_note": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VerdictNote"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Why `verdict` is `Unknown`; `None` for any other verdict, and on stage\nruns recorded before Archon kept it."
         }
       },
       "required": [
@@ -16597,6 +16615,12 @@
           "minimum": 0,
           "type": "integer"
         },
+        "disputed": {
+          "default": 0,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
         "effort": {
           "$ref": "#/$defs/Effort"
         },
@@ -16818,6 +16842,26 @@
         "unknown"
       ],
       "type": "string"
+    },
+    "VerdictNote": {
+      "description": "Why a stage's verdict is `Unknown`.",
+      "oneOf": [
+        {
+          "const": "disputed_pass",
+          "description": "A worded pass beside a finding that blocks it (marked `\"blocking\": true`,\nor unmarked at a blocking severity), and nothing else against it.",
+          "type": "string"
+        },
+        {
+          "const": "missing_verdict_line",
+          "description": "No verdict where a result may give one: no `structured` verdict and no\n`VERDICT:` line.",
+          "type": "string"
+        },
+        {
+          "const": "hedged_verdict",
+          "description": "A verdict given in words that read as no verdict: a choice, a condition,\na pass taken back, or a structured verdict its summary contradicts.",
+          "type": "string"
+        }
+      ]
     },
     "Versions": {
       "description": "Archon's and Aether's versions, for `status` and `queue_status`.",

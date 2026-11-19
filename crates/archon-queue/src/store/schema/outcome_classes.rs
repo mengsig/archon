@@ -986,16 +986,15 @@ fn v24_reads_the_wrapper_at_the_end_of_the_runs_own_path() {
     assert_eq!(class(&bare_elsewhere), some("other"), "not the run's tree");
 }
 
-/// 1.6.3 could not prepare a worker when the run's tree was gone, and wrapped
-/// that in the worker's missing tree: the machine's. A worker never made
+/// 1.6.3 could not prepare a worker when the run's tree was gone, wrapped in the
+/// worker's missing tree or bare when a redispatch kept it: the machine's. A worker never made
 /// because the plan left the run's tree dirty is the work's, and stays scored.
 #[test]
 fn v24_reads_a_worker_unprepared_for_a_run_tree_gone() {
     let mut conn = v23_store();
     let root = "/wt/team";
     let tree = format!("{root}/main");
-    let seeded = |conn: &Connection, said: String| {
-        let error = format!("workspace missing: {root}/build-api; the engine said: {said}");
+    let seeded_bare = |conn: &Connection, error: String| {
         let mut run = failed_run("build", &error);
         run.workspace = tree.as_str().into();
         run.team_root = Some(root.into());
@@ -1003,10 +1002,22 @@ fn v24_reads_a_worker_unprepared_for_a_run_tree_gone() {
         seed(conn, &run, &[failed], Some(FailureClass::Other), false);
         run
     };
+    let seeded = |conn: &Connection, said: String| {
+        let error = format!("workspace missing: {root}/build-api; the engine said: {said}");
+        seeded_bare(conn, error)
+    };
     let prepare = "preparing the role's worktree failed: io: inspecting";
     let gone = seeded(
         &conn,
         format!("{prepare} {tree}: No such file or directory (os error 2)"),
+    );
+    let kept_worker = seeded_bare(
+        &conn,
+        format!("{prepare} {tree}: No such file or directory (os error 2)"),
+    );
+    let other_tree = seeded_bare(
+        &conn,
+        format!("{prepare} /wt/elsewhere: No such file or directory (os error 2)"),
     );
     let denied = seeded(
         &conn,
@@ -1025,6 +1036,12 @@ fn v24_reads_a_worker_unprepared_for_a_run_tree_gone() {
 
     let class = |run: &PipelineRun| columns(&conn, run).0;
     assert_eq!(class(&gone), some("infrastructure"), "the run's tree went");
+    assert_eq!(
+        class(&kept_worker),
+        some("infrastructure"),
+        "unwrapped, the worker's tree kept for a redispatch"
+    );
+    assert_eq!(class(&other_tree), some("other"), "not the run's tree");
     assert_eq!(class(&denied), some("other"), "the tree is there");
     assert_eq!(class(&dirty), some("other"), "the plan left it dirty");
 }

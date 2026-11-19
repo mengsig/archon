@@ -339,6 +339,7 @@ fn flag_wrapped_spawns(run: &PipelineRun, stages: &[StageRun]) -> Vec<StageRun> 
             StageState::Failed { error } => {
                 let said = engine_said(run, error);
                 said.is_some_and(|said| gave_up_spawn(said) || run_tree_not_found(run, said))
+                    || run_tree_not_found(run, error)
                     || bare_missing(run, error)
             }
             _ => false,
@@ -353,8 +354,8 @@ fn flag_wrapped_spawns(run: &PipelineRun, stages: &[StageRun]) -> Vec<StageRun> 
     flagged
 }
 
-/// Whether `said` is the error 1.6.3 gave a worker it could not prepare
-/// because the run's own tree was gone, as `std::io` words it on Linux.
+/// Whether `said` is the error 1.6.3 gave a worker it could not prepare because
+/// the run's own tree was gone (wrapped or, with the worker's kept, bare).
 fn run_tree_not_found(run: &PipelineRun, said: &str) -> bool {
     let expected = format!(
         "preparing the role's worktree failed: io: inspecting {}: \

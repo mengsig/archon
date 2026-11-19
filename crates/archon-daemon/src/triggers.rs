@@ -219,6 +219,26 @@ pub enum TriggerEvent {
     DirectivesRestated {
         reason: String,
     },
+    /// A watched repository's open pull requests changed (A18). News only:
+    /// `operator` is always false, and `trust` says why.
+    GithubWatch {
+        /// The registered repository.
+        repo: String,
+        /// Its GitHub `owner/name`.
+        repository: String,
+        changes: Vec<crate::github_sync::watch::WatchedChange>,
+        /// The changes past those told in `changes`: each kind's pull request numbers.
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        rest: BTreeMap<String, Vec<u64>>,
+        /// Whether `rest` was cut at its cap: more pull requests changed than it names.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        truncated: bool,
+        /// What to do about a cut `rest`, when `truncated`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+        operator: bool,
+        trust: String,
+    },
 }
 
 /// One finished member of an `initiative_finished` event.
@@ -275,6 +295,7 @@ impl TriggerEvent {
             Self::Mirror { .. } => "mirror",
             Self::DirectivesRestated { .. } => "directives_restated",
             Self::PrChecks { .. } => "pr_checks",
+            Self::GithubWatch { .. } => "github_watch",
         }
     }
 
@@ -305,6 +326,7 @@ impl TriggerEvent {
             | Self::ItemsFinished { .. }
             | Self::Mirror { .. }
             | Self::PrChecks { .. }
+            | Self::GithubWatch { .. }
             | Self::DirectivesRestated { .. } => false,
         }
     }
@@ -518,6 +540,27 @@ pub(crate) async fn push_once(
 /// the caller then calls [`wake`].
 pub(crate) fn hold(store: &mut Store, event: TriggerEvent) -> Result<(), ArchonError> {
     hold_as(store, Held::new(event, archon_core::now(), false))
+}
+
+/// Save a repository watch's news under the caller's store lock, folded into
+/// that repository's watch news still held; the caller then calls [`wake`].
+pub(crate) fn hold_watch(store: &mut Store, event: TriggerEvent) -> Result<(), ArchonError> {
+    assert!(
+        matches!(event, TriggerEvent::GithubWatch { .. }),
+        "only watch news folds"
+    );
+    let mut outbox = read_outbox(store)?;
+    let before = outbox.pending.len();
+    let held = outbox
+        .pending
+        .iter_mut()
+        .find(|news| crate::github_sync::watch_fold::same_watch(&news.event, &event));
+    let Some(held) = held else {
+        return hold(store, event);
+    };
+    crate::github_sync::watch_fold::fold(&mut held.event, event);
+    assert_eq!(outbox.pending.len(), before, "folding adds no event");
+    write_outbox(store, &outbox)
 }
 
 /// Save an item's success under the caller's store lock, to wake the
@@ -771,9 +814,10 @@ async fn wait_until_due(ctx: &DaemonContext) -> Result<(), ArchonError> {
     }
 }
 
-/// Move every pending event into one keyed batch, compacted when it is
-/// due; a no-op while only quiet news waits. A batch already keyed is never
-/// touched.
+/// Move the pending events into one keyed batch, compacted when it is due; a
+/// no-op while only quiet news waits. A batch already keyed is never touched.
+/// News past one batch's [`BATCH_MAX_BYTES`] stays pending, in order, and is
+/// keyed next on the same terms.
 async fn key_pending(ctx: &DaemonContext) -> Result<(), ArchonError> {
     let store_id = supervisor::store_id(ctx).await?;
     let generation = supervisor::generation(ctx).await?;
@@ -813,14 +857,15 @@ async fn key_pending(ctx: &DaemonContext) -> Result<(), ArchonError> {
     write_outbox(&mut store, &outbox)
 }
 
-/// Split off the news past the first `budget` encoded bytes of `held`,
-/// keeping at least one event: one too large alone is refused and noted.
+/// Split off the news past the first `budget` bytes of `held` encoded as a
+/// list, keeping at least one event: one too large alone is refused and noted.
 fn split_past_bytes(held: &mut Vec<Held>, budget: usize) -> Result<Vec<Held>, ArchonError> {
     assert!(!held.is_empty(), "only held news is split");
     assert!(budget > 0, "a batch has room");
-    let mut bytes = 0;
+    // The opening bracket, then each event with the comma or bracket after it.
+    let mut bytes = 1;
     for (at, news) in held.iter().enumerate() {
-        bytes += serde_json::to_string(&news.event)?.len();
+        bytes += serde_json::to_string(&news.event)?.len() + 1;
         if at > 0 && bytes > budget {
             return Ok(held.split_off(at));
         }
@@ -1113,8 +1158,8 @@ async fn attempt(
     let orchestrator = supervisor::ensure_orchestrator(ctx)
         .await
         .map_err(not_started)?;
-    // Held while the trigger is submitted, so no switch and no idle
-    // compaction comes between this check and Aether accepting the trigger.
+    // Held while the trigger is submitted, so a refresh never replaces the
+    // agent between this check and Aether accepting the trigger.
     let _steady = supervisor::steady(ctx).await;
     if supervisor::current_orchestrator(ctx).await?.as_ref() != Some(&orchestrator) {
         return Err(ArchonError::Unavailable(format!(
@@ -1293,6 +1338,125 @@ mod tests {
         let mut huge = vec![news(&message), news(&message)];
         let rest = split_past_bytes(&mut huge, 1).unwrap();
         assert_eq!((huge.len(), rest.len()), (1, 1), "one event always goes");
+    }
+
+    /// Watch news is news, not an `info`: it wakes the orchestrator past the
+    /// quiet-info hold, and the quiet info rides along with it.
+    #[test]
+    fn watch_news_wakes_the_orchestrator_past_a_quiet_info() {
+        use archon_core::agent_message::MessageKind;
+        let mut store = Store::open_in_memory().unwrap();
+        record_message(&mut store, stage_message(MessageKind::Info), &[], true).unwrap();
+        let now = archon_core::now();
+        assert!(!read_outbox(&store).unwrap().is_due(now), "the info waits");
+        let watch = TriggerEvent::GithubWatch {
+            repo: "ccso".into(),
+            repository: "owner/ccso".into(),
+            changes: vec![],
+            rest: [("new_pull_request".to_owned(), vec![7])].into(),
+            truncated: false,
+            note: None,
+            operator: false,
+            trust: crate::github_sync::watch::WATCH_TRUST.to_owned(),
+        };
+        hold_watch(&mut store, watch.clone()).unwrap();
+        let outbox = read_outbox(&store).unwrap();
+        assert_eq!(outbox.pending.len(), 2, "both are held");
+        assert!(outbox.is_due(now), "the watch wakes it");
+        let events = batch_events(&mut store, outbox.pending, false).unwrap();
+        assert_eq!(events.len(), 2, "the info rides along");
+        assert!(events.contains(&watch), "the watch is delivered in full");
+    }
+
+    /// A repository's held watch news is bounded: `MAX_HELD_NUMBERS` names, each
+    /// at most a read bounds it to, so even at its cap two such events share a batch.
+    #[test]
+    fn a_repositorys_watch_news_at_its_cap_fits_a_batch() {
+        use crate::github_sync::watch::{
+            MAX_CHANGES, MAX_NAME_BYTES, MAX_URL_BYTES, WATCH_TRUST, WatchedChange,
+        };
+        use crate::github_sync::watch_fold::{MAX_HELD_NUMBERS, TRUNCATED_NOTE};
+        let longest_reviewer = format!("team:{}", "s".repeat(MAX_NAME_BYTES));
+        let change = |number: u64| WatchedChange {
+            number,
+            change: "review_requested".into(),
+            also: vec!["new_head".into(), "new_comment".into(), "new_review".into()],
+            title: "\u{1F600}".repeat(200) + "…",
+            author: Some("a".repeat(MAX_NAME_BYTES)),
+            url: "u".repeat(MAX_URL_BYTES),
+            reviewers: vec![longest_reviewer.clone(); MAX_HELD_NUMBERS / MAX_CHANGES],
+        };
+        let all_reviewers = TriggerEvent::GithubWatch {
+            repo: "r".repeat(100),
+            repository: "o".repeat(140),
+            changes: (1..=MAX_CHANGES as u64).map(change).collect(),
+            rest: BTreeMap::new(),
+            truncated: true,
+            note: Some(TRUNCATED_NOTE.to_owned()),
+            operator: false,
+            trust: WATCH_TRUST.to_owned(),
+        };
+        let all_numbers = TriggerEvent::GithubWatch {
+            repo: "r".repeat(100),
+            repository: "o".repeat(140),
+            changes: vec![],
+            rest: [(
+                "seen_pull_request".to_owned(),
+                vec![u64::MAX; MAX_HELD_NUMBERS],
+            )]
+            .into(),
+            truncated: true,
+            note: Some(TRUNCATED_NOTE.to_owned()),
+            operator: false,
+            trust: WATCH_TRUST.to_owned(),
+        };
+        for event in [all_reviewers, all_numbers] {
+            let mut held = vec![Held::new(event, archon_core::now(), false)];
+            let encoded = serde_json::to_string(&held[0].event).unwrap().len();
+            assert!(encoded > 200_000, "a watch at its cap: {encoded} bytes");
+            assert!(encoded * 2 < BATCH_MAX_BYTES, "{encoded} bytes of news");
+            held.push(held[0].clone());
+            let rest = split_past_bytes(&mut held, BATCH_MAX_BYTES).unwrap();
+            assert!(rest.is_empty(), "two capped watches share one batch");
+        }
+    }
+
+    #[test]
+    fn a_batch_budget_counts_the_encoded_list_to_the_byte() {
+        let now = archon_core::now();
+        let watch = TriggerEvent::GithubWatch {
+            repo: "ccso".into(),
+            repository: "owner/ccso".into(),
+            changes: vec![],
+            rest: [("new_pull_request".to_owned(), vec![7])].into(),
+            truncated: false,
+            note: None,
+            operator: false,
+            trust: crate::github_sync::watch::WATCH_TRUST.to_owned(),
+        };
+        let two = vec![
+            Held::new(watch, now, false),
+            Held::new(
+                TriggerEvent::Budget {
+                    scope: "daily".into(),
+                    spent_usd: 51.0,
+                    limit_usd: 50.0,
+                },
+                now,
+                false,
+            ),
+        ];
+        let events: Vec<&TriggerEvent> = two.iter().map(|news| &news.event).collect();
+        let list = serde_json::to_string(&events).unwrap().len();
+        let mut fits = two.clone();
+        assert!(
+            split_past_bytes(&mut fits, list).unwrap().is_empty(),
+            "exactly fits"
+        );
+        let mut over = two.clone();
+        let rest = split_past_bytes(&mut over, list - 1).unwrap();
+        assert_eq!((over.len(), rest.len()), (1, 1), "a byte short splits it");
+        assert_eq!(rest[0], two[1], "the rest stays pending, in order");
     }
 
     #[test]

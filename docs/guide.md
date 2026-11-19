@@ -137,10 +137,10 @@ work goes to Aether's memory.
 ### After upgrading
 
 A running orchestrator keeps the prompt, tools and workspace it was created
-with, also across Aether's `restart`. Run `archon orchestrator restart` once
-after upgrading so that a new orchestrator starts with the current ones;
-until then `archon status` says `prompt outdated since upgrade` when the
-upgrade changed its prompt.
+with, also across Aether's `restart`. When an upgrade changes its prompt
+or tools, `archond` starts a fresh generation at its next idle moment, as
+`archon orchestrator restart` would; run that yourself to change the
+workspace or to catch up sooner.
 
 Archon's tools that change something answer only the current orchestrator,
 and `archond` knows who is calling only when Aether names the agent behind

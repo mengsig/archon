@@ -25,8 +25,13 @@ use common::{Harness, REPO_NAME};
 
 /// Answers `gh api --method GET … repos/o/r/issues/N` from `issue-N.json`
 /// and `etag-N` beside it: a 304 when `If-None-Match` sends the current ETag,
-/// a 404 for a number it has no file for. Any other call is a violation.
-/// While `hold-N` exists a read of #N marks `started-N` and waits.
+/// a 404 for a number it has no file for. Page P of the open pull requests
+/// reads as `pulls-P`, and #N's comments and reviews, one to a page, as
+/// `comments-N` and `reviews-N`, which list none without a file;
+/// `link-<name>` makes its 200 name that page as the last. Any other call is a
+/// violation. While `hold-N` exists a read of N marks `started-N` and waits;
+/// while `retry-after` exists a 200 asks for that many seconds' backoff, and
+/// while `not-modified-N` exists N answers 304 whatever was asked.
 /// `gh pr view <url> --json reviewDecision,statusCheckRollup` answers from
 /// `pr-state-N.json`, else no review and no checks.
 const STUB_GH: &str = r#"#!/bin/sh
@@ -53,32 +58,44 @@ for arg in "$@"; do
   prev=$arg endpoint=$arg
 done
 [ "$method" = GET ] || violate "method '$method'"
-number=${endpoint##*/}
+case "$endpoint" in
+  *"/pulls?state=open&sort=created&direction=desc&per_page=100&page="*)
+    number=pulls-${endpoint##*page=} ;;
+  *"/comments?per_page=1") n=${endpoint%%/comments*}; number=comments-${n##*/} ;;
+  *"/reviews?per_page=1") n=${endpoint%%/reviews*}; number=reviews-${n##*/} ;;
+  *) number=${endpoint##*/} ;;
+esac
 if [ -f "$dir/hold-$number" ]; then
   : > "$dir/started-$number"
   while [ -f "$dir/hold-$number" ]; do sleep 0.02; done
 fi
 current=$(cat "$dir/etag-$number" 2>/dev/null)
-if [ -n "$etag" ] && [ "$etag" = "$current" ]; then
+if [ -f "$dir/not-modified-$number" ] || { [ -n "$etag" ] && [ "$etag" = "$current" ]; }; then
   printf 'HTTP/2.0 304 Not Modified\r\nEtag: %s\r\n\r\n' "$etag"
   echo "gh: HTTP 304" >&2
   exit 1
 fi
+case "$number" in comments-*|reviews-*)
+  [ -f "$dir/issue-$number.json" ] || echo '[]' > "$dir/issue-$number.json" ;;
+esac
 if [ ! -f "$dir/issue-$number.json" ]; then
   printf 'HTTP/2.0 404 Not Found\r\n\r\n{"message":"Not Found"}'
   exit 1
 fi
-printf 'HTTP/2.0 200 OK\r\nEtag: %s\r\nX-Ratelimit-Remaining: 4999\r\n\r\n' "$current"
+printf 'HTTP/2.0 200 OK\r\nEtag: %s\r\nX-Ratelimit-Remaining: 4999\r\n' "$current"
+[ -f "$dir/retry-after" ] && printf 'Retry-After: %s\r\n' "$(cat "$dir/retry-after")"
+[ -f "$dir/link-$number" ] && printf 'Link: <https://api.github.com/x?per_page=1&page=%s>; rel="last"\r\n' "$(cat "$dir/link-$number")"
+printf '\r\n'
 cat "$dir/issue-$number.json"
 "#;
 
 /// The stub's directory: its issues, ETags and the calls it saw.
-struct Github {
+pub(crate) struct Github {
     dir: tempfile::TempDir,
 }
 
 impl Github {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let gh = dir.path().join("gh");
         std::fs::write(&gh, STUB_GH).unwrap();
@@ -86,7 +103,7 @@ impl Github {
         Self { dir }
     }
 
-    fn binary(&self) -> PathBuf {
+    pub(crate) fn binary(&self) -> PathBuf {
         self.dir.path().join("gh")
     }
 
@@ -136,14 +153,47 @@ impl Github {
         views.lines().map(str::to_owned).collect()
     }
 
+    /// GitHub now lists `pulls` (the pulls API's JSON) as the open pull requests, at `etag`.
+    pub(crate) fn serve_list(&self, pulls: serde_json::Value, etag: &str) {
+        self.serve_named("pulls-1", pulls, etag);
+    }
+
+    /// GitHub now counts `count` items of the stub's file `name`
+    /// (`comments-7`, `reviews-7`): one to a page, the last page named past one.
+    pub(crate) fn serve_count(&self, name: &str, count: u64) {
+        let page = match count {
+            0 => serde_json::json!([]),
+            _ => serde_json::json!([{"id": count}]),
+        };
+        self.serve_named(name, page, "");
+        let link = self.path(&format!("link-{name}"));
+        if count > 1 {
+            std::fs::write(link, count.to_string()).unwrap();
+        } else if link.exists() {
+            std::fs::remove_file(link).unwrap();
+        }
+    }
+
+    /// GitHub now answers the stub's file `name` (`pulls-2`) with `json`, at `etag`.
+    pub(crate) fn serve_named(&self, name: &str, json: serde_json::Value, etag: &str) {
+        let at = self.dir.path();
+        std::fs::write(at.join(format!("issue-{name}.json")), json.to_string()).unwrap();
+        std::fs::write(at.join(format!("etag-{name}")), etag).unwrap();
+    }
+
+    /// A file in the stub's directory: `hold-…`, `started-…`, `retry-after`.
+    pub(crate) fn path(&self, name: &str) -> PathBuf {
+        self.dir.path().join(name)
+    }
+
     /// The `gh api` calls, in order.
-    fn calls(&self) -> Vec<String> {
+    pub(crate) fn calls(&self) -> Vec<String> {
         let calls = std::fs::read_to_string(self.dir.path().join("gh-calls")).unwrap_or_default();
         calls.lines().map(str::to_owned).collect()
     }
 
     /// Every call was a `GET`, and the stub saw no other kind.
-    fn assert_only_reads(&self) {
+    pub(crate) fn assert_only_reads(&self) {
         let violations = self.dir.path().join("gh-violations");
         assert!(
             !violations.exists(),
@@ -173,7 +223,7 @@ fn pr_json(number: u64, merged: bool) -> serde_json::Value {
     })
 }
 
-fn reference(number: u64, kind: GithubKind) -> GithubRef {
+pub(crate) fn reference(number: u64, kind: GithubKind) -> GithubRef {
     GithubRef {
         host: "github.com".into(),
         repo: "o/r".into(),
@@ -183,7 +233,7 @@ fn reference(number: u64, kind: GithubKind) -> GithubRef {
 }
 
 /// A harness on the stub `gh`, whose repository's `origin` is github.com/o/r.
-async fn harness(github: &Github) -> Harness {
+pub(crate) async fn harness(github: &Github) -> Harness {
     let mut config = Config::default();
     config.review.auto_repair = false;
     config.github.binary = github.binary();
@@ -195,7 +245,7 @@ async fn harness(github: &Github) -> Harness {
     h
 }
 
-fn git(repo: &Path, args: &[&str]) {
+pub(crate) fn git(repo: &Path, args: &[&str]) {
     let status = std::process::Command::new("git")
         .arg("-C")
         .arg(repo)
@@ -305,7 +355,7 @@ async fn the_sync_only_reads_and_a_304_writes_nothing() {
 
 /// `future`, with the runtime kept busy meanwhile: a paused clock then moves
 /// only when the test advances it, never on to a `gh` timeout.
-async fn busy<T>(future: impl std::future::Future<Output = T>) -> T {
+pub(crate) async fn busy<T>(future: impl std::future::Future<Output = T>) -> T {
     let done = std::cell::Cell::new(false);
     let finish = async {
         let out = future.await;

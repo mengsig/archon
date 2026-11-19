@@ -1166,7 +1166,8 @@ Aether's successor or waking the agent in place keeps its context, so
 neither forces compaction. Compaction:
 
 - always keeps every `operator_answer`, `agent_message`, `message_cap_reached`, `chat_answer`,
-  `chat_merge_refused` and `merge_finished`,
+  `chat_merge_refused`, `merge_finished` and `github_watch` (its walk stored
+  the baseline, so no later walk tells its news again),
   every `lavish_feedback` whose report is still `open` in Lavish, every
   `gate_opened` whose question is still open, and every current
   `item_finished` with an `origin`, whose GitHub thread awaits the outcome;
@@ -1190,6 +1191,14 @@ News held behind a stuck batch is also compacted by the same rules when a
 push takes it past 40 events, so the outbox stays bounded however long the
 batch in flight is retried. A later compaction folds that digest's counts
 into its own, so one batch never carries two digests.
+
+Aether refuses a trigger whose payload encodes to more than 2 MiB, and a
+batch it refuses is dropped with a `System` note. So a batch is keyed from at
+most 1 MiB of held events, the oldest that fit, the other half being room for
+its directives and wrapping. Held news larger than that stays pending in
+order and is keyed in the batches after it, on the same terms (compacted for
+a new generation, quiet news with a flush). An event over 1 MiB by itself
+goes alone.
 
 An `operator_answer` includes the stored question context, with `question_text`
 clipped to 512 characters (including an ellipsis). Its summary starts with
@@ -3736,6 +3745,7 @@ can reach the socket (§5.5).
 | `autonomy_policy` | `{repo?}` | `Autonomy` |
 | `set_directive` | `{text, expires_in_hours?}` | `SetDirective` |
 | `clear_directive` | `{directive?, all?}` | `ClearDirective` |
+| `watch_repo` | `{repo, interval_minutes?, remove?}` | `WatchRepo` (a registered repository with a github.com `origin` only; the GitHub sync walks its open pull requests with one conditional `GET` per page of 100 per interval, at least 5 minutes, and two count `GET`s for each pull request that is new or moved, all within the pass's request budget; it compares the walk with the stored snapshot and raises a `github_watch` trigger, `operator: false`, only on a new or first-seen pull request, head, review request, comment or review; eventually consistent, with the limits in `docs/vnext/ARCHITECTURE.md` §f; it inherits the registration's trust, as registering stays the operator's (the orchestrator only on the operator's word, never GitHub's) and the watch never registers; refused through GitHub-borne authority; removing the repository drops it) |
 | `github_reply` | `{repository, number, body}` | `GithubReply` (Archon's watched repositories only; see `docs/github-watcher.md`) |
 | `record_lesson` | `{kind: routing\|practice\|pitfall\|pipeline, text, repo?, pipeline?, item?}` | `RecordLesson` (§19; active at once, advice only) |
 | `request_merge` | `{item, reason?}` | `RequestMerge` (the orchestrator only, for the operator's own request; archond asks the operator to confirm unless `grant_merge` covers it; §18.6) |

@@ -67,6 +67,7 @@ fn reads(request: &Request) -> bool {
         R::Hello { .. }
             | R::Status(_)
             | R::RepoList
+            | R::RepoWatches
             | R::ListItems(_)
             | R::ListItemSummaries(_)
             | R::GetItem { .. }
@@ -124,6 +125,7 @@ fn operator_changes(request: &Request) -> bool {
             | R::LinkIssue { .. }
             | R::UnlinkIssue { .. }
             | R::ImportIssue { .. }
+            | R::WatchRepo { .. }
     )
 }
 
@@ -187,6 +189,7 @@ mod tests {
             serde_json::json!({"cmd": "link_issue", "item": ITEM, "ref": github_ref(), "relation": "closes"}),
             serde_json::json!({"cmd": "unlink_issue", "item": ITEM, "ref": github_ref(), "relation": "closes"}),
             serde_json::json!({"cmd": "import_issue", "ref": github_ref()}),
+            serde_json::json!({"cmd": "watch_repo", "repo": "archon", "interval_minutes": 10}),
         ]
         .into_iter()
         .map(parse)
@@ -206,7 +209,7 @@ mod tests {
             );
         }
         let changes = operator_changes();
-        assert_eq!(changes.len(), 25, "every change parsed");
+        assert_eq!(changes.len(), 26, "every change parsed");
         for request in &changes {
             assert!(allowed(DeviceRole::Operator, request), "{request:?}");
         }
@@ -228,6 +231,7 @@ mod tests {
         }
         for json in [
             serde_json::json!({"cmd": "repo_list"}),
+            serde_json::json!({"cmd": "repo_watches"}),
             serde_json::json!({"cmd": "subscribe_feed", "after": null, "verbose": false}),
             serde_json::json!({"cmd": "item_history", "item": ITEM}),
             serde_json::json!({"cmd": "item_agent_states", "item": ITEM}),

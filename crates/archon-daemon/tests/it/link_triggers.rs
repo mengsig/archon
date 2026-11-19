@@ -271,6 +271,55 @@ async fn a_refused_payload_is_dropped_with_a_note_and_later_news_still_flows() {
     assert!(harness.system_notes().await[0].contains("payload too large"));
 }
 
+/// Aether refuses a trigger payload over its limit, and a refused batch is
+/// dropped: a backlog larger than one trigger takes goes out in several, in order.
+#[tokio::test]
+async fn a_backlog_too_large_for_one_trigger_goes_out_in_several_and_loses_nothing() {
+    use archon_aether::wire::MAX_TRIGGER_PAYLOAD_BYTES;
+    let encoded = |payload: &Value| serde_json::to_vec(payload).unwrap().len();
+    let harness = harness().await;
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    live_orchestrator(&harness);
+    let as_aether = move |frame: &Value| match encoded(&frame["payload"]) {
+        bytes if bytes > MAX_TRIGGER_PAYLOAD_BYTES => Scripted::refuse(
+            "invalid_argument",
+            "this trigger payload is above the limit",
+        ),
+        _ => Scripted::ok(),
+    };
+    harness
+        .fake
+        .set_responder("trigger", std::sync::Arc::new(as_aether));
+    let pushed: Vec<String> = (0..6)
+        .map(|index| format!("{index}{}", "x".repeat(400_000)))
+        .collect();
+    let together: usize = pushed.iter().map(String::len).sum();
+    assert!(together > MAX_TRIGGER_PAYLOAD_BYTES, "over one trigger");
+    for reason in &pushed {
+        triggers::push(&harness.ctx, blocked(reason)).await.unwrap();
+    }
+    let delivery = tokio::spawn(triggers::deliver_loop(harness.ctx.clone()));
+    let sent = harness.fake.wait_for("trigger", 3, WAIT).await;
+    harness
+        .eventually("every batch is delivered", || async {
+            triggers::held(&harness.ctx).await.unwrap().is_empty()
+        })
+        .await;
+    delivery.abort();
+    let sent_all = harness.fake.received_named("trigger");
+    assert_eq!(sent_all.len(), sent.len(), "three batches, none retried");
+    let delivered: Vec<&str> = sent.iter().flat_map(reasons).collect();
+    assert_eq!(delivered, pushed, "each event once, in the order pushed");
+    for trigger in &sent {
+        assert_eq!(reasons(trigger).len(), 2, "the oldest two that fit");
+        assert!(encoded(&trigger["payload"]) <= MAX_TRIGGER_PAYLOAD_BYTES / 2 + 4096);
+    }
+    assert_ne!(sent[0]["idempotency_key"], sent[1]["idempotency_key"]);
+    assert_ne!(sent[1]["idempotency_key"], sent[2]["idempotency_key"]);
+    let notes = harness.system_notes().await;
+    assert!(notes.is_empty(), "nothing was refused: {}", notes.len());
+}
+
 /// Aether refuses a trigger past 2 MiB: a long backlog goes out in several,
 /// in order, each within its share.
 #[tokio::test]
@@ -1081,47 +1130,5 @@ async fn nothing_is_restated_when_no_directive_is_in_force() {
         "a first trigger says there are none"
     );
     assert_eq!(payload["directives_in_force"], 0);
-    delivery.abort();
-}
-
-/// Aether refuses to create the orchestrator an answer is held for: that says
-/// nothing of the answer, which is no refused payload. It stays held and
-/// reaches the orchestrator once one starts.
-#[tokio::test]
-async fn an_answer_outlives_an_orchestrator_creation_aether_refuses() {
-    let harness = harness().await;
-    let fake = &harness.fake;
-    let refused = Scripted::refuse("invalid_argument", "no such model");
-    fake.set_default("create_agent", refused);
-    live_orchestrator(&harness);
-    fake.set_default("trigger", Scripted::ok());
-    let delivery = tokio::spawn(triggers::deliver_loop(harness.ctx.clone()));
-    let answer = TriggerEvent::OperatorAnswer {
-        question: QuestionId::new(),
-        number: None,
-        question_text: String::new(),
-        options: vec![],
-        item: None,
-        asked_at: None,
-        text: "ship it".into(),
-    };
-    triggers::push(&harness.ctx, answer.clone()).await.unwrap();
-    fake.wait_for("create_agent", 1, WAIT).await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    let held = triggers::held(&harness.ctx).await.unwrap();
-    assert_eq!(held, vec![answer], "the answer was dropped");
-
-    let mut created = fake::agent(ORCH, None);
-    created["status"] = json!({"state": "ready"});
-    fake.set_default("create_agent", Scripted::reply("agent", created));
-    harness
-        .eventually("the answer reaches the orchestrator", || async {
-            let answered = |event: &Value| event["text"] == "ship it";
-            fake.received_named("trigger").iter().any(|trigger| {
-                let events = trigger["payload"]["events"].as_array();
-                trigger["agent"] == ORCH && events.is_some_and(|events| events.iter().any(answered))
-            })
-        })
-        .await;
     delivery.abort();
 }

@@ -188,6 +188,7 @@ validate_before_handoff = true # validate a user-facing build before calling it 
 compaction_tokens = 160000     # compact at this context size; 0: the model's own threshold
 idle_compact_after_minutes = 50 # compact an idle, large context before its cache expires; 0: never
 quiet_info = true              # stage `info` messages ride with the next wake, at most 30 min late plus the coalescing window
+refresh_on_upgrade = true      # replace a generation an upgrade outdated at its next idle moment
 
 [models]
 # deny = ["codex/gpt-6.1-terra"] # never used, whatever `allow` says
@@ -371,12 +372,22 @@ so a change reaches the next generation. When it has been idle for
 `idle_compact_after_minutes` with more than half that threshold in context
 (half of 160,000 when `compaction_tokens = 0`), Archon asks Aether to
 compact it once, before the hour-long prompt cache expires, so the next wake
-does not rewrite the whole context. 0 turns either part off. Archon asks
-only while the orchestrator has waited for mail, unpaused, for two minutes
-with no news due, and never while a message or a trigger is being sent to
-it. An upgrade that changes the orchestrator's prompt does not replace the
-running generation: until you run `archon orchestrator restart`, `archon
-status` ends its line with "prompt outdated since upgrade" and that command.
+does not rewrite the whole context. 0 turns either part off. After an upgrade
+that changes the orchestrator's prompt or tools, Archon starts a fresh
+generation at its next idle moment, with the same hand-off as `archon
+orchestrator restart`: it waits until the orchestrator has waited for mail,
+unpaused, for two minutes with no news due. A failed refresh is retried
+every ten minutes while the orchestrator stays idle, and the feed says so
+after three failures; a refresh stopped halfway is finished with a fresh
+generation, never a checkpoint restart of the outdated one. Until it
+happens, `archon status` shows `upgrade refresh (prompt) delayed:` and the
+reason (the idle moment it waits for, or the latest failure) where it used to
+show `prompt outdated`; if the refresh stopped the old generation and its
+successor cannot start, it shows `not running; upgrade refresh delayed:` and
+the latest failure. Stored records that disagree about the orchestrator's
+generation count as a refresh stopped halfway. `refresh_on_upgrade = false`
+turns it off. Like a manual restart, it can still meet a wake Aether starts
+in the same instant.
 
 The helper agents the orchestrator delegates to
 ([guide](guide.md#what-the-orchestrator-does-without-queueing)) work in a

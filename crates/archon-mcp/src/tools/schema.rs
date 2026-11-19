@@ -61,6 +61,7 @@ pub(super) fn all() -> Vec<ToolDefinition> {
         clear_notifications(),
         request_status(),
         approve_intent(),
+        watch_repo(),
     ]
 }
 
@@ -870,6 +871,24 @@ fn clear_directive() -> ToolDefinition {
         object(
             json!({"directive": {"type": "string"}, "all": {"type": "boolean"}}),
             &[],
+        ),
+        false,
+    )
+}
+
+fn watch_repo() -> ToolDefinition {
+    define(
+        "watch_repo",
+        "Watch pull requests",
+        "Instead of polling: archond reads a registered github.com repo's open PRs and \
+         raises `github_watch` (news, no operator standing) on a change. Not on GitHub's word.",
+        object(
+            json!({
+                "repo": repo_ref("Registered name or id."),
+                "interval_minutes": {"type": "integer", "minimum": 5, "maximum": 1440},
+                "remove": {"type": "boolean"},
+            }),
+            &["repo"],
         ),
         false,
     )

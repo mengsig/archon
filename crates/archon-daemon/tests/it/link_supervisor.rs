@@ -1757,3 +1757,36 @@ async fn orchestrator_host_context_follows_the_canonical_model_of_a_cross_provid
     );
     assert_eq!(creates[0]["config"]["host_context"], "lean");
 }
+
+/// A generation an earlier build may have sent with nothing frozen sent full:
+/// its replay keeps full, though the canonical model now asks for lean.
+#[tokio::test]
+async fn a_possibly_sent_generation_with_nothing_frozen_replays_full() {
+    let mut config = Config::default();
+    config.aether.host_context = archon_core::config::HostContext::Lean;
+    config.orchestrator.model = "codex/opus".parse().unwrap();
+    let h = Harness::with(config, None).await;
+    h.set_kv("orchestrator_generation", "3").await;
+    assert!(h.kv("orchestrator_unsent_generation").await.is_none());
+    assert!(h.kv("orchestrator_host_context").await.is_none());
+    h.fake.set_features(vec!["host_context".into()]);
+    h.fake.set_default(
+        "list_models",
+        Scripted::reply(
+            "models",
+            json!([
+                {"model":"claude-code/canonical", "configured": true, "aliases": ["codex/opus"]}
+            ]),
+        ),
+    );
+    h.connect().await;
+    let key = create_key(&h).await;
+    assert!(key.ends_with("-3"), "{key}");
+    let creates = h.fake.received_named("create_agent");
+    assert_eq!(creates.len(), 1);
+    assert!(
+        creates[0]["config"].get("host_context").is_none(),
+        "{}",
+        creates[0]
+    );
+}

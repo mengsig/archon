@@ -1297,7 +1297,12 @@ fn freeze_settings(
         ),
         None => None,
     };
-    let requested = frozen.unwrap_or(configured);
+    // Lean is always frozen, so a possibly sent key with nothing frozen sent full.
+    let requested = match frozen {
+        Some(frozen) => frozen,
+        None if creation.first => configured,
+        None => HostContext::Full,
+    };
     let host_context = client.welcome().effective_host_context(requested);
     if requested != host_context {
         tracing::warn!("Aether lacks host_context; orchestrator creation falls back to full");

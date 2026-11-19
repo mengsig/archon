@@ -251,25 +251,49 @@ pub(super) fn retry_plan(
     if repaired.model_plan != item.model_plan {
         repaired.updated_at = archon_core::now().max(item.updated_at);
         store.update_item(&repaired)?;
-        follow_models(
-            table,
-            &run.id,
-            item.model_plan.plan(),
-            repaired.model_plan.plan(),
-        );
+        let followed = (item.model_plan.plan(), repaired.model_plan.plan());
+        follow_models(table, &run.id, followed, catalog);
     }
     assert_eq!(plans.len(), 1, "one retry plan");
-    Ok(plans.pop().expect("checked above"))
+    let mut plan = plans.pop().expect("checked above");
+    onto_stored_slot(&mut plan, repaired.model_plan.plan(), catalog);
+    Ok(plan)
+}
+
+/// Move a retry still on a superseded model onto the model the stored plan
+/// names for its slot instead, as its create would be refused for.
+fn onto_stored_slot(plan: &mut SpawnPlan, stored: &ModelPlan, catalog: &ModelCatalog) {
+    if plan.stage_id == archon_pipeline::acceptance::STAGE
+        || catalog.superseded_by(&plan.choice.model).is_none()
+    {
+        return;
+    }
+    let Some(choices) = stored.choices_for(&plan.stage_id).filter(|c| !c.is_empty()) else {
+        return;
+    };
+    let slot = &choices[plan.fan_index as usize % choices.len()];
+    if slot.model == plan.choice.model || catalog.check(&slot.model).is_err() {
+        return;
+    }
+    let was = plan.choice.clone();
+    plan.choice.follow(&was, slot);
+    assert_eq!(
+        plan.choice.model, slot.model,
+        "the retry runs the stored slot's model"
+    );
+    assert_eq!(plan.choice.effort, was.effort, "a move keeps the effort");
 }
 
 pub(super) fn follow_models(
     table: &mut super::RunTable,
     run: &archon_core::id::PipelineRunId,
-    before: &ModelPlan,
-    after: &ModelPlan,
+    (before, after): (&ModelPlan, &ModelPlan),
+    catalog: &ModelCatalog,
 ) {
+    // The stored plan is read with aliases resolved: a driver's deferred alias is too.
+    let canonical = |model: &archon_core::model::ModelRef| catalog.canonical_alias(model).clone();
     if let Some(driver) = table.drivers.get_mut(run) {
-        driver.follow_models(before, after);
+        driver.follow_models((before, after), canonical);
     }
     if let Some(pending) = table.pending.get_mut(run) {
         for plan in pending {

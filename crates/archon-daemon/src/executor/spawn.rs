@@ -441,7 +441,7 @@ pub(super) async fn reserve(
         (reserved, before, after)
     };
     if before != after {
-        super::model_catalog::follow_models(table, run, &before, &after);
+        super::model_catalog::follow_models(table, run, (&before, &after), catalog);
     }
     match reserved {
         Reserved::Spawned(ids) => Ok(FollowUp {

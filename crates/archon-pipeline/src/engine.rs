@@ -10,7 +10,7 @@ use std::sync::Arc;
 use archon_core::catalog::{StageKind, WorkspaceMode};
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, StageRunId};
-use archon_core::model::{ModelChoice, ModelPlan};
+use archon_core::model::{ModelChoice, ModelPlan, ModelRef};
 use archon_core::run::{
     GateDecision, GateSubject, PipelineRun, RecordRepair, RunState, StageOutcome, StageRun,
     StageState,
@@ -372,8 +372,13 @@ impl RunDriver {
     }
 
     /// Follow models repaired in the stored plan without overwriting a
-    /// choice that this driver has independently changed.
-    pub fn follow_models(&mut self, before: &ModelPlan, after: &ModelPlan) {
+    /// choice that this driver has independently changed. Each of this
+    /// driver's models is read by its `canonical` id, as the stored plan names it.
+    pub fn follow_models(
+        &mut self,
+        (before, after): (&ModelPlan, &ModelPlan),
+        canonical: impl Fn(&ModelRef) -> ModelRef,
+    ) {
         assert!(
             before.0.keys().eq(after.0.keys()),
             "repair preserves plan keys"
@@ -384,6 +389,7 @@ impl RunDriver {
             };
             assert_eq!(old.len(), new.len(), "repair preserves plan slots");
             for ((choice, was), now) in choices.iter_mut().zip(old).zip(new) {
+                choice.model = canonical(&choice.model);
                 choice.follow(was, now);
             }
         }

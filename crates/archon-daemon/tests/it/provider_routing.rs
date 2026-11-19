@@ -1567,3 +1567,56 @@ async fn a_recovered_run_from_before_origins_resumes_its_kept_tiered_implementer
     assert_eq!(again[1].1, first[0].1, "the kept agent takes the findings");
     assert_eq!(h.backend.requests().len(), spawned, "nothing respawned");
 }
+
+/// A retry the run still plans on a superseded model, while the stored plan
+/// already names another for its slot, runs that one: its create is never
+/// refused over and over for the stale choice.
+#[tokio::test]
+async fn a_retry_on_a_superseded_model_runs_the_stored_slots_model() {
+    let h = harness(untiered_fallback()).await;
+    let (item, old) = with_untiered_fallback(&h, "implement").await;
+    h.dispatch().await;
+    assert_eq!(spawned_on(&h, &item, "implement").await, [old.as_str()]);
+    let next = format!("{old}-next");
+    list_beside(&h, (&old, &next), true).await;
+    // The stored slot moved on; the run's own copy of the plan did not.
+    {
+        let mut store = h.ctx.store.lock().await;
+        let mut stored = store.item(&item.id).unwrap();
+        let plan = stored.model_plan.legacy_mut();
+        plan.0.get_mut("implement").unwrap()[0].model = next.parse().unwrap();
+        store.update_item(&stored).unwrap();
+    }
+    // The endless replacement never yields, so only another thread can end it.
+    let (done, finished) = std::sync::mpsc::channel::<()>();
+    let watchdog = std::thread::spawn(move || {
+        if finished
+            .recv_timeout(std::time::Duration::from_secs(20))
+            .is_err()
+        {
+            eprintln!("the stale choice is replaced without end");
+            std::process::exit(101);
+        }
+    });
+    h.settle_running(|_| archon_core::run::StageOutcome::Failed {
+        error: "aetherd lost the agent".into(),
+        infra: true,
+    })
+    .await;
+    for _ in 0..3 {
+        h.dispatch().await;
+    }
+    done.send(()).unwrap();
+    watchdog.join().unwrap();
+
+    let attempts = spawned_on(&h, &item, "implement").await;
+    assert_eq!(
+        attempts,
+        [old.as_str(), next.as_str()],
+        "one retry, on {next}"
+    );
+    let running: Vec<_> = (h.running().await.into_iter())
+        .map(|s| s.choice.model.to_string())
+        .collect();
+    assert_eq!(running, [next.as_str()]);
+}

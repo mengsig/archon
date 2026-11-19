@@ -332,6 +332,8 @@ async fn carried_reads(
         }
     }
     let mut carried = Carried::default();
+    // Listed children of another role, a worker say: their fails are no review to carry.
+    let mut not_reviewers: Vec<String> = Vec::new();
     for &earlier in &leads {
         let beneath = match ctx.backend.descendants(earlier).await {
             Ok(beneath) => beneath,
@@ -341,10 +343,13 @@ async fn carried_reads(
                 continue;
             }
         };
-        let done = beneath
-            .iter()
-            .filter(|d| d.parent == *earlier && d.state == DescendantState::Completed)
-            .filter(|d| d.task.is_some() && d.role.eq_ignore_ascii_case(REVIEWER_ROLE));
+        let children = beneath.iter().filter(|d| d.parent == *earlier);
+        let (reviewers, others): (Vec<&Descendant>, Vec<&Descendant>) =
+            children.partition(|d| d.role.eq_ignore_ascii_case(REVIEWER_ROLE));
+        not_reviewers.extend(others.iter().map(|d| d.agent.to_string()));
+        let done = reviewers
+            .into_iter()
+            .filter(|d| d.state == DescendantState::Completed && d.task.is_some());
         for child in done {
             // What cannot be read carries nothing: the run needs its own review instead.
             let verdict = match result_of(ctx, child).await?.and_then(verdict_in) {
@@ -366,7 +371,7 @@ async fn carried_reads(
         carried.reviewers.len(),
         "one reviewer per read"
     );
-    if let Some(lost) = lost_fail(ctx, &stages, &carried.reads).await? {
+    if let Some(lost) = lost_fail(ctx, &stages, &carried.reads, &not_reviewers).await? {
         tracing::warn!(stage = %stage.id, reviewer = %lost, "an earlier run's recorded fail is no longer readable, so nothing is carried");
         return Ok(Carried::default());
     }
@@ -377,20 +382,30 @@ async fn carried_reads(
 }
 
 /// A reviewer whose fail an earlier attempt in `stages` recorded but whose verdict is not
-/// among the `carried` reads: carrying the rest would let that fail go unanswered.
+/// among the `carried` reads: carrying the rest would let that fail go unanswered. A fail
+/// of a child Aether still lists in another role, `not_reviewers`, was never a review.
 async fn lost_fail(
     ctx: &DaemonContext,
     stages: &[StageRun],
     carried: &[Read],
+    not_reviewers: &[String],
 ) -> Result<Option<String>, ArchonError> {
+    assert!(
+        not_reviewers
+            .iter()
+            .all(|a| carried.iter().all(|(c, _)| c != a)),
+        "a child is carried as a reviewer or listed in another role, not both"
+    );
     for earlier in stages {
         let tallied = rounds::attempt_children(ctx, &earlier.id).await?;
         let mut failed = tallied
             .children
             .into_iter()
             .filter(|(_, head)| head.is_some());
-        if let Some((agent, _)) = failed.find(|(agent, _)| carried.iter().all(|(a, _)| a != agent))
-        {
+        let unread = |agent: &String| {
+            carried.iter().all(|(a, _)| a != agent) && !not_reviewers.contains(agent)
+        };
+        if let Some((agent, _)) = failed.find(|(agent, _)| unread(agent)) {
             assert!(!agent.is_empty(), "a recorded fail names its reviewer");
             return Ok(Some(agent));
         }

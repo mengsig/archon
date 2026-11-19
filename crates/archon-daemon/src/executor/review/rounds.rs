@@ -468,7 +468,8 @@ fn escalation(stage: &StageRun, rounds: usize, open: &Open) -> String {
          `{}`, each a commit a reviewer failed with a blocking finding, so Archon stopped it instead of another round. You \
          decide: continue with `retry_item` (not `fresh`) and a `brief_append` that names \
          this head and the open findings, so its new lead fixes them and delta-reviews only \
-         the commits after this head, since earlier reviews still count; accept this head with `retry_item` and a `brief_append` that moves the \
+         the commits after this head, since earlier reviews still count, adding only the \
+         whole-change reads they lack; accept this head with `retry_item` and a `brief_append` that moves the \
          open findings to follow-ups, whose new lead has the head read whole again by as many \
          reviewers as the review level needs; or stop by leaving the item failed. {latest}{earlier} The \
          reviewers' results ({}) hold every finding in full.",

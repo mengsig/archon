@@ -306,6 +306,37 @@ async fn a_recorded_fail_aether_forgot_stops_the_carry() {
     assert!(error.contains("names 1 reviewer"), "{error}");
 }
 
+/// A worker's fail the first run's tally recorded is no lost review while Aether still
+/// lists the worker: the three whole passes carry, and one delta pass ships the fix.
+#[tokio::test]
+async fn a_listed_workers_recorded_fail_keeps_the_carry() {
+    let h = Harness::new().await;
+    let item = strict_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let agent = lead_agent(&lead);
+    let reviewers: Vec<AetherAgentId> = (0..3)
+        .map(|_| h.backend.delegate(&agent, REVIEW_MODEL))
+        .collect();
+    let worker = h.backend.delegate_as(&agent, REVIEW_MODEL, "worker");
+    let read = shipped_by(&h, &lead, "the first head", json!({})).await;
+    let mut failing = verdict_on(&read, "fail");
+    failing["findings"] = json!([{"title": "its own check failed", "blocking": true}]);
+    h.backend.complete_delegated(&worker, failing);
+    archon_daemon::executor::reviewer_settled(&h.ctx, &agent, &worker)
+        .await
+        .unwrap();
+    for passing in &reviewers {
+        h.backend
+            .complete_delegated(passing, verdict_on(&read, "pass"));
+    }
+    escalate(&h, &item).await;
+    let lead = retried(&h, &item, false).await;
+    let head = verdict_on(&read, "pass")["head"].clone();
+    one_delta_pass(&h, &lead, &head).await;
+    let state = h.state(&item.id).await;
+    assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+}
+
 /// The orchestrator accepts the escalated head: its retry moves the open findings
 /// to follow-ups, and the new lead's own whole review of that head stands alone.
 #[tokio::test]

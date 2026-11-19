@@ -1080,8 +1080,8 @@ pub(crate) mod tests {
         let text = status(&up, &RepoNames::new(), false);
         assert!(
             text.contains(
-                "restarted 6 times; generation 7, created by 1.2.3; prompt outdated; \
-                 tools outdated; 1 new lesson\n"
+                "restarted 6 times; generation 7, created by 1.2.3; tools outdated; 1 new \
+                 lesson; prompt outdated since upgrade; run `archon orchestrator restart`\n"
             ),
             "{text}"
         );

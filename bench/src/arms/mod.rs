@@ -285,6 +285,7 @@ pub fn aether_request(input: &TrialInput<'_>, deadline: Timestamp) -> CreateAgen
             long_lived: false,
             leaf: true,
             delegation_policy: None,
+            compaction_tokens: None,
         }),
         approval: Some(ApprovalPolicy::none()),
         run: None,

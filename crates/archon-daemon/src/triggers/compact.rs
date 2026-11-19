@@ -46,6 +46,21 @@ pub(super) struct Held {
     /// coalescing window. A digest drops this, and waits the window.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub at_once: bool,
+    /// Its place in the order a flush numbers held news in, from 1; 0 for
+    /// news held since the last flush, which no flush waits for.
+    #[serde(default, skip_serializing_if = "is_unnumbered")]
+    pub seq: u64,
+}
+
+fn is_unnumbered(seq: &u64) -> bool {
+    *seq == 0
+}
+
+/// The lowest number among `held`, 0 when none is numbered: a digest or a
+/// batch of it is as early as its earliest news for a waiting flush.
+pub(super) fn first_seq(held: &[Held]) -> u64 {
+    let numbered = held.iter().map(|news| news.seq).filter(|seq| *seq > 0);
+    numbered.min().unwrap_or(0)
 }
 
 impl Held {
@@ -57,6 +72,7 @@ impl Held {
             quiet,
             defer_until: None,
             at_once: false,
+            seq: 0,
         }
     }
 
@@ -194,6 +210,13 @@ pub(super) fn compact(held: Vec<Held>, facts: &Facts, now: Timestamp) -> Vec<Hel
             Relevance::Current | Relevance::Stale => false,
         };
     }
+    // The digest stands for its earliest dropped news.
+    let dropped_seqs = held.iter().zip(&keep).filter(|(_, kept)| !**kept);
+    let seq = dropped_seqs
+        .map(|(news, _)| news.seq)
+        .filter(|seq| *seq > 0)
+        .min()
+        .unwrap_or(0);
     let (dropped, kept) = split_kept(held, &keep);
     if dropped.is_empty() {
         return kept;
@@ -204,6 +227,7 @@ pub(super) fn compact(held: Vec<Held>, facts: &Facts, now: Timestamp) -> Vec<Hel
         quiet,
         defer_until,
         at_once: false,
+        seq,
     }];
     events.extend(kept);
     events
@@ -422,6 +446,29 @@ mod tests {
         };
         assert!(note.contains("list_queue") && note.contains("archon log"));
         dropped.clone()
+    }
+
+    /// A flush waits for a digest as long as for the earliest news it folds.
+    #[test]
+    fn a_digest_takes_the_earliest_number_of_the_news_it_drops() {
+        let now = archon_core::now();
+        let backlog = || -> Vec<Held> {
+            (0..MAX_BATCH_EVENTS + 2)
+                .map(|n| at(budget(&n.to_string()), now))
+                .collect()
+        };
+        let mut held = backlog();
+        held[0].seq = 5;
+        held[1].seq = 3;
+        held[2].seq = 7;
+        let kept = compact(held, &Facts::default(), now);
+        assert!(matches!(kept[0].event, TriggerEvent::NewsDigest { .. }));
+        assert_eq!(kept[0].seq, 3, "the earliest of the dropped two");
+        assert_eq!(kept[1].seq, 7, "kept news keeps its number");
+        assert_eq!(first_seq(&kept), 3);
+        let unnumbered = compact(backlog(), &Facts::default(), now);
+        assert_eq!(unnumbered[0].seq, 0, "no flush waits for it");
+        assert_eq!(first_seq(&unnumbered), 0);
     }
 
     #[test]

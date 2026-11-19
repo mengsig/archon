@@ -49,6 +49,8 @@ pub const SUBTREE_UPDATE_FEATURE: &str = "subtree_update";
 /// Both sides handle the `history_expired` code; Archon lists it in its hello,
 /// and an aetherd that lists it back reports expired history by that code.
 pub const HISTORY_EXPIRED_FEATURE: &str = "history_expired";
+/// `create_agent` honours `config.compaction_tokens` (Aether 1.4.2).
+pub const COMPACTION_TOKENS_FEATURE: &str = "compaction_tokens";
 /// What every aetherd's refusal says about expired history, with or without
 /// the `history_expired` code: `...within sequence range 1..=2; ...`.
 const HISTORY_EXPIRED_TEXT: &str = "event history expired within sequence range ";
@@ -168,6 +170,10 @@ pub enum Command {
     Cancel {
         agent: AetherAgentId,
         reason: Option<String>,
+    },
+    /// Compact the agent's context before its next turn.
+    Compact {
+        agent: AetherAgentId,
     },
     /// Stops the running turn only; the agent waits for its next message.
     Interrupt {
@@ -445,6 +451,10 @@ pub struct AgentConfig {
     /// child outside it. An aetherd that predates it ignores the field.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delegation_policy: Option<archon_core::delegation::WorkerPolicy>,
+    /// Context size at which the agent compacts; send it only to an aetherd
+    /// that lists [`COMPACTION_TOKENS_FEATURE`], as an older one ignores it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compaction_tokens: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -644,6 +654,19 @@ pub struct Agent {
     /// When the agent last logged an event; absent or null when unknown.
     #[serde(default)]
     pub last_event_at: Option<Timestamp>,
+    #[serde(default)]
+    pub stats: AgentStats,
+}
+
+/// The fields of an agent's `stats` Archon reads.
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct AgentStats {
+    /// The context its latest model request carried; absent when unknown.
+    #[serde(default)]
+    pub context_tokens: Option<u64>,
+    /// When its latest turn ended.
+    #[serde(default)]
+    pub last_turn_at: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
@@ -666,6 +689,10 @@ pub struct AgentSettings {
     /// As Aether wrote it; it may name an effort Archon does not know.
     #[serde(default)]
     pub effort: Option<String>,
+    /// The agent's own compaction threshold; absent from an aetherd that
+    /// predates it, or when the agent keeps its model's.
+    #[serde(default)]
+    pub compaction_tokens: Option<u32>,
     /// Aether's hard cap in dollars; `None` when it has none.
     #[serde(default)]
     pub cost_budget: Option<f64>,

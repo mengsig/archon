@@ -185,6 +185,9 @@ name = "Archon"                # the orchestrator's name in Aether
 # instructions_file = "~/orchestrator.md"   # appended to the built-in prompt
 trigger_coalesce_ms = 2000     # triggers within this window wake it once
 validate_before_handoff = true # validate a user-facing build before calling it ready
+compaction_tokens = 160000     # compact at this context size; 0: the model's own threshold
+idle_compact_after_minutes = 50 # compact an idle, large context before its cache expires; 0: never
+quiet_info = true              # stage `info` messages ride with the next wake, at most 30 min late plus the coalescing window
 
 [models]
 # deny = ["codex/gpt-6.1-terra"] # never used, whatever `allow` says
@@ -354,6 +357,26 @@ independent validation item and reports that item's outcome
 ([product journeys](journeys.md#before-a-hand-off)). Set
 `validate_before_handoff = false` under `[orchestrator]` to have it relay
 the build's success as is.
+
+A stage's `info` message does not wake the orchestrator: it rides with the
+next wake, or wakes it by itself once it has waited 30 minutes and then the
+`trigger_coalesce_ms` window. A relay still wakes it after that window
+alone; an escalation or a question is urgent and wakes it at once, skipping
+the window. `quiet_info = false` makes every message wake it. News too large for one trigger goes out in several, in order. The
+orchestrator compacts its context at `compaction_tokens` (from 100,000 to
+200,000, within every orchestrator model's window) when the connected Aether serves a
+per-agent threshold (its `compaction_tokens` feature); an older Aether keeps
+the model's own threshold. The threshold is set when a generation is created,
+so a change reaches the next generation. When it has been idle for
+`idle_compact_after_minutes` with more than half that threshold in context
+(half of 160,000 when `compaction_tokens = 0`), Archon asks Aether to
+compact it once, before the hour-long prompt cache expires, so the next wake
+does not rewrite the whole context. 0 turns either part off. Archon asks
+only while the orchestrator has waited for mail, unpaused, for two minutes
+with no news due, and never while a message or a trigger is being sent to
+it. An upgrade that changes the orchestrator's prompt does not replace the
+running generation: until you run `archon orchestrator restart`, `archon
+status` ends its line with "prompt outdated since upgrade" and that command.
 
 The helper agents the orchestrator delegates to
 ([guide](guide.md#what-the-orchestrator-does-without-queueing)) work in a

@@ -7,7 +7,6 @@
 pub(crate) mod briefing;
 mod compact;
 mod directives;
-mod fit;
 mod flush;
 mod routine;
 mod summary;
@@ -48,6 +47,9 @@ const TRIGGER_SEQ_KEY: &str = "trigger_seq";
 /// `kv`: the [`Outbox`], so an `archond` restart neither loses held news
 /// nor re-keys a batch Aether may already have.
 const OUTBOX_KEY: &str = "trigger_outbox";
+/// Most encoded bytes of the events one trigger carries; the rest wait for
+/// the next. Aether refuses a payload past 2 MiB, directives included.
+const BATCH_MAX_BYTES: usize = 1024 * 1024;
 /// Most bytes of `lavish-axi poll` output a `lavish_feedback` event carries
 /// once its DOM snapshot is dropped. The prompts table precedes `next_step`,
 /// so a cut takes lavish-axi's instructions before any prompt row.
@@ -422,6 +424,9 @@ struct Outbox {
     /// The orchestrator is starting a turn anyway: quiet news goes out now.
     #[serde(default)]
     flush: bool,
+    /// The last [`Held::seq`] a flush gave out.
+    #[serde(default)]
+    last_seq: u64,
 }
 
 impl Outbox {
@@ -455,6 +460,9 @@ struct Batch {
     events: Vec<TriggerEvent>,
     #[serde(flatten)]
     directives: DirectiveNews,
+    /// The lowest [`Held::seq`] it carries; 0 when none had one.
+    #[serde(default)]
+    first_seq: u64,
 }
 
 /// Wakes the delivery task; the news itself waits in the outbox.
@@ -612,10 +620,13 @@ fn hold_as(store: &mut Store, news: Held) -> Result<(), ArchonError> {
 
 /// Record a stage's or run node's message as one feed entry and the
 /// orchestrator's news together; only an escalation shows in the conversation.
+/// With `quiet_info`, an `info` waits for the next wake, at most
+/// [`QUIET_INFO_MAX_WAIT_MINUTES`](archon_core::config::QUIET_INFO_MAX_WAIT_MINUTES).
 pub(crate) fn record_message(
     store: &mut Store,
     message: archon_core::agent_message::AgentMessage,
     updates: &[(&str, &str)],
+    quiet_info: bool,
 ) -> Result<archon_core::notify::FeedItem, ArchonError> {
     use archon_core::agent_message::MessageKind;
     use archon_core::notify::{FeedEntry, Notification, NotificationKind};
@@ -633,10 +644,8 @@ pub(crate) fn record_message(
         at,
     });
     let mut outbox = read_outbox(store)?;
-    let event = TriggerEvent::AgentMessage {
-        message: Box::new(message),
-    };
-    outbox.pending.push(Held::new(event, at, false));
+    let held = message_news(message, at, quiet_info);
+    outbox.pending.push(held);
     if outbox.pending.len() > MAX_PENDING {
         compact_pending(store, &mut outbox)?;
     }
@@ -644,6 +653,26 @@ pub(crate) fn record_message(
     let mut updates = updates.to_vec();
     updates.push((OUTBOX_KEY, &raw));
     store.append_feed_with_kv(entry, at, &updates)
+}
+
+/// `message` as held news: an `info` under `quiet_info` wakes the
+/// orchestrator only once it has waited the longest a quiet `info` may.
+fn message_news(
+    message: archon_core::agent_message::AgentMessage,
+    at: Timestamp,
+    quiet_info: bool,
+) -> Held {
+    use archon_core::agent_message::MessageKind;
+    let quiet = quiet_info && message.kind == MessageKind::Info;
+    let event = TriggerEvent::AgentMessage {
+        message: Box::new(message),
+    };
+    assert!(!event.is_urgent() || !quiet, "urgent news never waits");
+    let wait = chrono::TimeDelta::minutes(archon_core::config::QUIET_INFO_MAX_WAIT_MINUTES);
+    Held {
+        defer_until: quiet.then_some(at + wait),
+        ..Held::new(event, at, false)
+    }
 }
 
 /// Record a stage agent reaching its message cap as one feed entry and the
@@ -787,8 +816,8 @@ async fn wait_until_due(ctx: &DaemonContext) -> Result<(), ArchonError> {
 
 /// Move the pending events into one keyed batch, compacted when it is due; a
 /// no-op while only quiet news waits. A batch already keyed is never touched.
-/// News too large for one batch ([`fit::MAX_BATCH_BYTES`]) stays pending past
-/// the oldest that fits, in order, and is keyed next on the same terms.
+/// News past one batch's [`BATCH_MAX_BYTES`] stays pending, in order, and is
+/// keyed next on the same terms.
 async fn key_pending(ctx: &DaemonContext) -> Result<(), ArchonError> {
     let store_id = supervisor::store_id(ctx).await?;
     let generation = supervisor::generation(ctx).await?;
@@ -801,16 +830,14 @@ async fn key_pending(ctx: &DaemonContext) -> Result<(), ArchonError> {
     if !outbox.is_due(archon_core::now()) {
         return Ok(());
     }
-    let before = outbox.pending.len();
-    let fits = fit::fitting(&outbox.pending, fit::MAX_BATCH_BYTES)?;
-    let later = outbox.pending.split_off(fits);
-    let held = std::mem::replace(&mut outbox.pending, later);
-    assert_eq!(held.len() + outbox.pending.len(), before, "none is lost");
-    let collapse = outbox.collapse;
-    if outbox.pending.is_empty() {
-        outbox.collapse = false;
-        outbox.flush = false;
-    }
+    let mut held = std::mem::take(&mut outbox.pending);
+    let rest = split_past_bytes(&mut held, BATCH_MAX_BYTES)?;
+    let first_seq = compact::first_seq(&held);
+    let collapse = std::mem::take(&mut outbox.collapse);
+    // What did not fit goes out next, to the generation this batch reaches.
+    outbox.flush = !rest.is_empty();
+    outbox.collapse = collapse && !rest.is_empty();
+    outbox.pending = rest;
     let events = batch_events(&mut store, held, collapse)?;
     if events.is_empty() {
         // Every outcome held was superseded since: nothing is left to tell.
@@ -825,8 +852,24 @@ async fn key_pending(ctx: &DaemonContext) -> Result<(), ArchonError> {
         key,
         events,
         directives,
+        first_seq,
     });
     write_outbox(&mut store, &outbox)
+}
+
+/// Split off the news past the first `budget` encoded bytes of `held`,
+/// keeping at least one event: one too large alone is refused and noted.
+fn split_past_bytes(held: &mut Vec<Held>, budget: usize) -> Result<Vec<Held>, ArchonError> {
+    assert!(!held.is_empty(), "only held news is split");
+    assert!(budget > 0, "a batch has room");
+    let mut bytes = 0;
+    for (at, news) in held.iter().enumerate() {
+        bytes += serde_json::to_string(&news.event)?.len();
+        if at > 0 && bytes > budget {
+            return Ok(held.split_off(at));
+        }
+    }
+    Ok(Vec::new())
 }
 
 /// `held` as a batch: its quiet item outcomes as one short list behind the
@@ -889,21 +932,54 @@ pub async fn collapse_for_new_orchestrator(ctx: &DaemonContext) -> Result<(), Ar
 /// The orchestrator lost the directives (new, or compacted): the next trigger
 /// states all in force, and is sent now when any is.
 pub async fn restate_directives(ctx: &DaemonContext, reason: &str) -> Result<(), ArchonError> {
+    restate(ctx, reason, false).await
+}
+
+/// [`restate_directives`] with the next wake, not one of its own: after a
+/// fold the orchestrator needs them before it acts, not at once.
+pub async fn restate_directives_later(
+    ctx: &DaemonContext,
+    reason: &str,
+) -> Result<(), ArchonError> {
+    restate(ctx, reason, true).await
+}
+
+async fn restate(ctx: &DaemonContext, reason: &str, quiet: bool) -> Result<(), ArchonError> {
     assert!(!reason.is_empty(), "the orchestrator is told why");
     {
         let mut store = ctx.store.lock().await;
         if !directives::forget_told(&mut store, archon_core::now())? {
             return Ok(());
         }
-        let restated = |news: &Held| matches!(news.event, TriggerEvent::DirectivesRestated { .. });
+        let restated =
+            |news: &&mut Held| matches!(news.event, TriggerEvent::DirectivesRestated { .. });
+        let mut outbox = read_outbox(&store)?;
         // One already waits: the trigger it leaves in states them all.
-        if !read_outbox(&store)?.pending.iter().any(restated) {
-            let reason = reason.to_owned();
-            hold(&mut store, TriggerEvent::DirectivesRestated { reason })?;
+        match outbox.pending.iter_mut().find(restated) {
+            None => {
+                let reason = reason.to_owned();
+                let event = TriggerEvent::DirectivesRestated { reason };
+                hold_as(&mut store, Held::new(event, archon_core::now(), quiet))?;
+            }
+            Some(held) if held.quiet && !quiet => {
+                // A flush that waits for it still does.
+                let seq = held.seq;
+                *held = Held::new(held.event.clone(), archon_core::now(), false);
+                held.seq = seq;
+                write_outbox(&mut store, &outbox)?;
+            }
+            Some(_) => {}
         }
     }
     ctx.triggers.news.notify_one();
     Ok(())
+}
+
+/// Whether a trigger is being delivered or held news is due to make one:
+/// the orchestrator is about to start a turn.
+pub(crate) fn delivering(store: &Store, now: Timestamp) -> Result<bool, ArchonError> {
+    let outbox = read_outbox(store)?;
+    Ok(outbox.in_flight.is_some() || outbox.is_due(now))
 }
 
 /// Drop the batch the orchestrator now has; news pushed meanwhile stays.
@@ -932,6 +1008,11 @@ fn read_outbox(store: &Store) -> Result<Outbox, ArchonError> {
         keyed.is_none_or(|batch| !batch.events.is_empty() && !batch.key.is_empty()),
         "only a keyed, non-empty batch is ever in flight"
     );
+    if outbox.pending.iter().any(|news| news.seq > outbox.last_seq) {
+        return Err(ArchonError::Corrupt(format!(
+            "kv {OUTBOX_KEY}: held news is numbered past the last number given"
+        )));
+    }
     Ok(outbox)
 }
 
@@ -1073,7 +1154,17 @@ async fn attempt(
     key: &str,
     payload: &serde_json::Value,
 ) -> Result<(), ArchonError> {
-    let orchestrator = supervisor::ensure_orchestrator(ctx).await?;
+    let orchestrator = supervisor::ensure_orchestrator(ctx)
+        .await
+        .map_err(not_started)?;
+    // Held while the trigger is submitted, so no switch and no idle
+    // compaction comes between this check and Aether accepting the trigger.
+    let _steady = supervisor::steady(ctx).await;
+    if supervisor::current_orchestrator(ctx).await?.as_ref() != Some(&orchestrator) {
+        return Err(ArchonError::Unavailable(format!(
+            "orchestrator {orchestrator} was replaced before trigger {key} reached it"
+        )));
+    }
     let client = ctx.aether.client()?;
     let keyed = sent_key(key, &orchestrator);
     let refusal = match client.trigger(&orchestrator, payload.clone(), &keyed).await {
@@ -1086,6 +1177,17 @@ async fn attempt(
     Err(ArchonError::Unavailable(format!(
         "orchestrator {orchestrator} stopped before trigger {key} reached it ({refusal})"
     )))
+}
+
+/// No orchestrator to deliver to: a refused creation says nothing about the
+/// batch, which stays held and is retried, never dropped as a refused payload.
+fn not_started(error: ArchonError) -> ArchonError {
+    match error {
+        ArchonError::Invalid(refusal) => {
+            ArchonError::Unavailable(format!("the orchestrator could not be started: {refusal}"))
+        }
+        other => other,
+    }
 }
 
 #[cfg(test)]
@@ -1126,6 +1228,181 @@ mod tests {
         outbox.pending.truncate(2);
         outbox.flush = true;
         assert!(outbox.is_now(now), "a turn starting takes it at once");
+    }
+
+    fn stage_message(
+        kind: archon_core::agent_message::MessageKind,
+    ) -> archon_core::agent_message::AgentMessage {
+        archon_core::agent_message::AgentMessage {
+            item: QueueItemId::new(),
+            run: archon_core::id::PipelineRunId::new(),
+            stage: Some("build".into()),
+            stage_run: None,
+            attempt: Some(1),
+            agent: None,
+            kind,
+            text: "progress".into(),
+            original_sender: archon_core::agent_message::MessageSender::System,
+            addressed_to_run_node: None,
+        }
+    }
+
+    /// What `record_message` holds for one message of `kind` in a fresh store.
+    fn recorded(kind: archon_core::agent_message::MessageKind, quiet_info: bool) -> Outbox {
+        let mut store = Store::open_in_memory().unwrap();
+        record_message(&mut store, stage_message(kind), &[], quiet_info).unwrap();
+        let outbox = read_outbox(&store).unwrap();
+        assert_eq!(outbox.pending.len(), 1, "one message, one piece of news");
+        outbox
+    }
+
+    #[test]
+    fn a_quiet_info_waits_for_the_next_wake_at_most_thirty_minutes() {
+        use archon_core::agent_message::MessageKind;
+        let now = archon_core::now();
+        let info = recorded(MessageKind::Info, true);
+        assert!(!info.is_due(now), "an info alone does not wake it");
+        let cap = info.next_due().expect("a lone info still goes out");
+        let wait = cap - info.pending[0].pushed_at.unwrap();
+        assert_eq!(wait, chrono::TimeDelta::minutes(30));
+        assert!(info.is_due(cap), "it wakes the orchestrator at the cap");
+        let mut joined = info;
+        joined.pending.push(Held::new(success(), now, false));
+        assert!(joined.is_due(now), "it rides with the next wake");
+
+        let question = recorded(MessageKind::Question, true);
+        assert!(
+            question.is_due(now) && question.is_now(now),
+            "a question wakes at once"
+        );
+        for kind in [MessageKind::Relay, MessageKind::Escalation] {
+            assert!(recorded(kind, true).is_due(now), "{kind:?} wakes at once");
+        }
+        let loud = recorded(MessageKind::Info, false);
+        assert!(loud.is_due(now), "quiet_info = false: an info wakes it");
+    }
+
+    #[test]
+    fn quiet_infos_past_max_pending_are_all_kept_and_due_at_the_first_cap() {
+        use archon_core::agent_message::MessageKind;
+        let mut store = Store::open_in_memory().unwrap();
+        for _ in 0..=MAX_PENDING {
+            let message = stage_message(MessageKind::Info);
+            record_message(&mut store, message, &[], true).unwrap();
+        }
+        let outbox = read_outbox(&store).unwrap();
+        assert_eq!(
+            outbox.pending.len(),
+            MAX_PENDING + 1,
+            "messages are never dropped"
+        );
+        let now = archon_core::now();
+        assert!(!outbox.is_due(now), "a backlog of info wakes nothing early");
+        let first = outbox.pending[0].defer_until.expect("each info is capped");
+        assert_eq!(
+            outbox.next_due(),
+            Some(first),
+            "the oldest cap wakes them all"
+        );
+    }
+
+    #[test]
+    fn a_batch_past_its_byte_budget_leaves_the_rest_for_the_next() {
+        use archon_core::agent_message::MessageKind;
+        let mut message = stage_message(MessageKind::Info);
+        message.text = "\u{1}".repeat(4096);
+        let now = archon_core::now();
+        let news = |message: &archon_core::agent_message::AgentMessage| {
+            message_news(message.clone(), now, true)
+        };
+        let mut held: Vec<Held> = (0..100).map(|_| news(&message)).collect();
+        let rest = split_past_bytes(&mut held, BATCH_MAX_BYTES).unwrap();
+        assert!(
+            !held.is_empty() && !rest.is_empty(),
+            "escaped text fills it early"
+        );
+        assert_eq!(held.len() + rest.len(), 100, "nothing is lost");
+        let sent: usize = held
+            .iter()
+            .map(|news| serde_json::to_string(&news.event).unwrap().len())
+            .sum();
+        assert!(sent <= BATCH_MAX_BYTES, "{sent} bytes in one batch");
+        message.text = "x".repeat(10);
+        let mut small = vec![news(&message), news(&message)];
+        assert!(
+            split_past_bytes(&mut small, BATCH_MAX_BYTES)
+                .unwrap()
+                .is_empty()
+        );
+        let mut huge = vec![news(&message), news(&message)];
+        let rest = split_past_bytes(&mut huge, 1).unwrap();
+        assert_eq!((huge.len(), rest.len()), (1, 1), "one event always goes");
+    }
+
+    /// Watch news is news, not an `info`: it wakes the orchestrator past the
+    /// quiet-info hold, and the quiet info rides along with it.
+    #[test]
+    fn watch_news_wakes_the_orchestrator_past_a_quiet_info() {
+        use archon_core::agent_message::MessageKind;
+        let mut store = Store::open_in_memory().unwrap();
+        record_message(&mut store, stage_message(MessageKind::Info), &[], true).unwrap();
+        let now = archon_core::now();
+        assert!(!read_outbox(&store).unwrap().is_due(now), "the info waits");
+        let watch = TriggerEvent::GithubWatch {
+            repo: "ccso".into(),
+            repository: "owner/ccso".into(),
+            changes: vec![],
+            rest: [("new_pull_request".to_owned(), vec![7])].into(),
+            truncated: false,
+            note: None,
+            operator: false,
+            trust: crate::github_sync::watch::WATCH_TRUST.to_owned(),
+        };
+        hold_watch(&mut store, watch.clone()).unwrap();
+        let outbox = read_outbox(&store).unwrap();
+        assert_eq!(outbox.pending.len(), 2, "both are held");
+        assert!(outbox.is_due(now), "the watch wakes it");
+        let events = batch_events(&mut store, outbox.pending, false).unwrap();
+        assert_eq!(events.len(), 2, "the info rides along");
+        assert!(events.contains(&watch), "the watch is delivered in full");
+    }
+
+    /// A repository's held watch news is bounded (`MAX_HELD_NUMBERS`), so even at
+    /// its cap, with the longest numbers and logins, it leaves a batch room to spare.
+    #[test]
+    fn a_repositorys_watch_news_at_its_cap_fits_a_batch() {
+        use crate::github_sync::watch::{MAX_CHANGES, WATCH_TRUST, WatchedChange};
+        use crate::github_sync::watch_fold::{MAX_HELD_NUMBERS, TRUNCATED_NOTE};
+        let reviewers = MAX_HELD_NUMBERS / 2 / MAX_CHANGES;
+        let change = |number: u64| WatchedChange {
+            number,
+            change: "review_requested".into(),
+            also: vec!["new_head".into(), "new_comment".into(), "new_review".into()],
+            title: "t".repeat(201),
+            author: Some("a".repeat(39)),
+            url: format!("https://github.com/{}/pull/{number}", "o".repeat(140)),
+            reviewers: (0..reviewers).map(|r| format!("{r:039}")).collect(),
+        };
+        let numbers: Vec<u64> = (0..MAX_HELD_NUMBERS as u64 / 2)
+            .map(|n| u64::MAX - n)
+            .collect();
+        let event = TriggerEvent::GithubWatch {
+            repo: "r".repeat(100),
+            repository: "o".repeat(140),
+            changes: (1..=MAX_CHANGES as u64).map(change).collect(),
+            rest: [("seen_pull_request".to_owned(), numbers)].into(),
+            truncated: true,
+            note: Some(TRUNCATED_NOTE.to_owned()),
+            operator: false,
+            trust: WATCH_TRUST.to_owned(),
+        };
+        let mut held = vec![Held::new(event, archon_core::now(), false)];
+        let encoded = serde_json::to_string(&held[0].event).unwrap().len();
+        assert!(encoded > 100_000, "a watch at its cap: {encoded} bytes");
+        assert!(encoded * 2 < BATCH_MAX_BYTES, "{encoded} bytes of news");
+        held.push(held[0].clone());
+        let rest = split_past_bytes(&mut held, BATCH_MAX_BYTES).unwrap();
+        assert!(rest.is_empty(), "two capped watches share one batch");
     }
 
     #[test]

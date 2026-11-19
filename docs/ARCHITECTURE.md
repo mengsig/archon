@@ -5867,6 +5867,14 @@ another `BLOCKED:` or `ESCALATE:` prefix gives `blocked` or `escalated`. So a
 recorded timeout or infrastructure failure of that stage's last attempt
 outranks the guard's words, and a stage that fails its own task in those words
 is `blocked`. Otherwise the same stage runs decide:
+- the daemon's own `ship` step, which fails a run under the id `ship`, gives
+  `ship` even when the pipeline names a stage `ship` too: that stage's runs all
+  completed, and the error is not the driver's word on the stage itself
+  (`stage `ship` failed`, `was aborted` or `: …`);
+- a completed stage run the gate failed for stating a failure (the gate's own
+  headline, `its agent stated a failure`) gives `escalated` or `blocked` when
+  its summary opens `ESCALATE:` or `BLOCKED:`, as the same words through
+  `fail_task` do; a stated fail verdict is read by the rules below;
 - a review-kind stage, a review-only run's lead (`only_reviews`), one whose
   result holds a `review` whose verdict reads pass or fail, or one whose review
   tally (kv `review_rounds:<stage run>`, kept by archond as reviewers settle)

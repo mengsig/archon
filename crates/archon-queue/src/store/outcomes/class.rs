@@ -9,8 +9,8 @@ use archon_core::error::ArchonError;
 use archon_core::id::StageRunId;
 use archon_core::outcome::FailureClass;
 use archon_core::run::{
-    REVIEW_NOT_ON_RECORD, SHIP_STEP, StageOutcome, StageRun, StageState, TalliedFails,
-    UNRESUMABLE_RUN, Verdict, review_field, review_tally_key,
+    REVIEW_NOT_ON_RECORD, SHIP_STEP, STATED_FAILURE, StageOutcome, StageRun, StageState,
+    TalliedFails, UNRESUMABLE_RUN, Verdict, review_field, review_tally_key,
 };
 use rusqlite::{Connection, OptionalExtension};
 
@@ -46,10 +46,49 @@ pub(in crate::store) fn failure_class(
             _ => FailureClass::Other,
         };
     }
-    if gate_refused_review(error) {
+    if ship_step_failed(stage_id, error, &ending) {
+        return FailureClass::Ship;
+    }
+    if let Some(class) = stated_stop(error, &ending) {
+        return class;
+    }
+    if gate_said(error, REVIEW_NOT_ON_RECORD) {
         return FailureClass::Review;
     }
     judged_class(stage_id, &ending, failed_reviews)
+}
+
+/// Whether the daemon's own ship step failed the run though a stage is named
+/// `ship` too: that stage completed, and `error` is not the driver's word on it.
+fn ship_step_failed(stage_id: &str, error: &str, ending: &[&StageRun]) -> bool {
+    assert!(
+        !ending.is_empty(),
+        "a run with no such stage is classed before"
+    );
+    if stage_id != SHIP_STEP {
+        return false;
+    }
+    // The driver fails a stage as "stage `id` failed", "… was aborted" or "…: why".
+    let of_stage = error
+        .strip_prefix("stage `")
+        .and_then(|rest| rest.strip_prefix(stage_id))
+        .and_then(|rest| rest.strip_prefix('`'))
+        .is_some_and(|rest| rest.starts_with([' ', ':']));
+    let completed = ending.iter().all(|s| s.state == StageState::Completed);
+    completed && !of_stage
+}
+
+/// The stop a completed stage run stated in the result the gate failed it
+/// for ([`STATED_FAILURE`]): a blocker or an escalation, in its agent's words.
+fn stated_stop(error: &str, ending: &[&StageRun]) -> Option<FailureClass> {
+    if !gate_said(error, STATED_FAILURE) {
+        return None;
+    }
+    let stated = |s: &&StageRun| match (&s.state, &s.summary) {
+        (StageState::Completed, Some(summary)) => ends_run_class(summary.trim_start()),
+        _ => None,
+    };
+    ending.iter().find_map(stated)
 }
 
 /// The stage run of the `ending` attempt whose own failure the run failed in
@@ -121,11 +160,11 @@ pub(in crate::store) fn classed_without_its_stage(stage_id: &str, error: &str) -
     stage_id == SHIP_STEP || daemon_prefixed_class(error).is_some()
 }
 
-/// Whether the gate failed the stage because the review its pipeline
-/// declares is not on record: `stage `id` failed[..]: {REVIEW_NOT_ON_RECORD}`.
-fn gate_refused_review(error: &str) -> bool {
+/// Whether the gate failed the stage under a headline opening with `said`, as
+/// the driver writes it into the run: `stage `id` failed[..]: {said}`.
+fn gate_said(error: &str, said: &str) -> bool {
     let headline = error.split("\n\n").next().unwrap_or(error);
-    let Some(at) = headline.find(REVIEW_NOT_ON_RECORD) else {
+    let Some(at) = headline.find(said) else {
         return false;
     };
     let prefix = &headline[..at];

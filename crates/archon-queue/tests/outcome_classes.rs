@@ -841,6 +841,75 @@ fn a_run_recovery_could_not_resume_is_an_infrastructure_failure() {
     assert_eq!(rowless.failure, Some(FailureClass::Infrastructure));
 }
 
+/// A record stage's agent that completes its task with a summary opening
+/// `ESCALATE:` or `BLOCKED:` is failed by the gate for stating it: the run
+/// is classed by those words of its own stage run, as a `fail_task` one is.
+#[test]
+fn a_completed_stage_that_states_a_stop_is_classed_by_its_own_words() {
+    let stated = |summary: &'static str, headline: &str| {
+        let error = format!(
+            "stage `implement` failed: {headline}\n\n**Stage `implement` attempt 1: \
+             {headline}**\n\n{summary}\n"
+        );
+        failed_with("implement", &error, |run| {
+            let mut stage = settled(run, "implement", StageKind::Work, StageState::Completed);
+            stage.summary = Some(summary.into());
+            stage.verdict = Some(Verdict::Unknown);
+            vec![stage]
+        })
+    };
+    let said = archon_core::run::STATED_FAILURE;
+    let escalated = stated("ESCALATE: this needs another pipeline", said);
+    assert_eq!(escalated.failure, Some(FailureClass::Escalated));
+    assert_eq!(escalated.failure_source, Some(ClassSource::Structure));
+    let blocked = stated("  BLOCKED: the operator must grant access", said);
+    assert_eq!(blocked.failure, Some(FailureClass::Blocked));
+    let failed = stated("The work is wrong.\n\nVERDICT: FAIL", said);
+    assert_eq!(failed.failure, Some(FailureClass::Other), "a stated fail");
+    // Only the gate's own decision makes the summary's opening a stop.
+    let passed_by = stated("ESCALATE: or so it says", "its scenario failed");
+    assert_eq!(passed_by.failure, Some(FailureClass::Other));
+}
+
+/// A pipeline may name a stage `ship`, the id the daemon's own ship step fails
+/// a run under: a delivery that failed after that stage completed is `ship`.
+#[test]
+fn the_daemons_ship_step_is_read_past_a_completed_stage_named_ship() {
+    let after = |state: StageState, error: &str| {
+        failed_with("ship", error, |run| {
+            vec![settled(run, "ship", StageKind::Work, state.clone())]
+        })
+        .failure
+    };
+    let refused = "the remote refused the push: the branch has diverged";
+    assert_eq!(
+        after(StageState::Completed, refused),
+        Some(FailureClass::Ship)
+    );
+    let unproved = "stage `ship`, which writes the ship record, never passed in this run, so \
+                    there is nothing Archon can ship";
+    assert_eq!(
+        after(StageState::Completed, unproved),
+        Some(FailureClass::Ship)
+    );
+    // The driver's word on the stage itself is the stage's failure.
+    for of_stage in [
+        "stage `ship` failed: its scenario failed",
+        "stage `ship` was aborted by a steer, and the stage to continue with no longer exists",
+        "stage `ship`: the operator asked for another revision of the plan, but 5 is the limit",
+    ] {
+        assert_eq!(
+            after(StageState::Completed, of_stage),
+            Some(FailureClass::Other),
+            "{of_stage}"
+        );
+    }
+    let broke = StageState::Failed {
+        error: "it broke".into(),
+    };
+    assert_eq!(after(broke, refused), Some(FailureClass::Other));
+}
+
 /// No daemon writes a stage run without a name. Capture reads one by its
 /// records alone, then refuses the outcome it cannot key by stage.
 #[test]

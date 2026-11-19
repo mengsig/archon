@@ -146,7 +146,7 @@ fn recorded(stage: &StageSpec, attempt: u32, members: &[&StageRun], owed: Owed) 
     let structured = member.structured.as_ref();
     // A stated failure is refused on its merits, whatever its gate or record.
     if decided_since_repairs(member) && states_failure(member) {
-        let headline = "its agent stated a failure".to_owned();
+        let headline = archon_core::run::STATED_FAILURE.to_owned();
         let report = format!(
             "**Stage `{}` attempt {attempt}: {headline}**\n\n{summary}\n",
             stage.id

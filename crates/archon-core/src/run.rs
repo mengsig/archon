@@ -1110,6 +1110,10 @@ pub const REVIEW_REFUSED_KEY: &str = "unverified";
 /// declares is not on record, e.g. a skip the pipeline does not allow.
 pub const REVIEW_NOT_ON_RECORD: &str = "the review this pipeline declares is not on record";
 
+/// The headline a gate fails a completed stage with when its own result
+/// states a failure: a fail verdict, or a summary opening as a run stop.
+pub const STATED_FAILURE: &str = "its agent stated a failure";
+
 impl StageRun {
     /// Whether its agent failed on its engine's login: an infrastructure
     /// failure, never evidence about the model.

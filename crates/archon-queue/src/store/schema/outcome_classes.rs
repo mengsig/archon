@@ -760,6 +760,32 @@ fn v24_keeps_the_old_class_of_a_run_whose_ending_stage_left_no_record() {
     );
 }
 
+/// A delivery that failed after a work stage named `ship` completed stays the
+/// ship step's failure, and a completed stage's stated escalation is read.
+#[test]
+fn v24_reads_the_ship_step_and_a_stated_stop_past_a_completed_stage() {
+    let mut conn = v23_store();
+    let refused = failed_run(archon_core::run::SHIP_STEP, "the push was refused");
+    let wrote = stage(&refused, "ship", StageKind::Work, StageState::Completed);
+    seed(&conn, &refused, &[wrote], Some(FailureClass::Ship), false);
+    let said = archon_core::run::STATED_FAILURE;
+    let stated = failed_run("implement", &format!("stage `implement` failed: {said}"));
+    let mut gave_up = stage(&stated, "implement", StageKind::Work, StageState::Completed);
+    gave_up.summary = Some("ESCALATE: this needs another pipeline".into());
+    seed(&conn, &stated, &[gave_up], Some(FailureClass::Other), false);
+
+    assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+
+    assert_eq!(
+        columns(&conn, &refused),
+        (some("ship"), some("recomputed"), some("ship"))
+    );
+    assert_eq!(
+        columns(&conn, &stated),
+        (some("escalated"), some("recomputed"), some("other"))
+    );
+}
+
 /// The `won` of the lesson use of `run`, and the uses its lesson counts.
 pub(super) fn lesson_score(conn: &Connection, run: &PipelineRun) -> (Option<bool>, u32) {
     conn.query_row(

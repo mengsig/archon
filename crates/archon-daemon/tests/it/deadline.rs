@@ -436,3 +436,37 @@ async fn a_late_child_raise_never_lowers_a_concurrent_extension() {
         "the child ends at the extension: {sent:?}"
     );
 }
+
+/// A refused wake's timed-out stage records the effort it ran at, and its
+/// failure reaches the orchestrator as structural, naming that effort.
+#[tokio::test]
+async fn a_refused_deadline_wake_reports_the_effort_it_ran_at() {
+    use archon_daemon::triggers::{self, TriggerEvent};
+
+    let h = Harness::new().await;
+    let item = h.enqueue("ran out of time, advised").await;
+    h.dispatch().await;
+    let first = h.running().await.remove(0);
+    stop_at_deadline(&h, &first, false).await;
+
+    let ran = h.backend.requests()[0].choice.clone();
+    let stages = h.stages(&item.id).await;
+    assert!(!stages.is_empty());
+    for stage in &stages {
+        assert_eq!(stage.state, StageState::TimedOut, "{stage:?}");
+        assert_eq!(stage.choice, ran, "the record holds what ran: {stage:?}");
+    }
+    let held = triggers::held(&h.ctx).await.unwrap();
+    let summary = held
+        .iter()
+        .find_map(|event| match event {
+            TriggerEvent::ItemFinished {
+                item: id, summary, ..
+            } if id == &item.id => Some(summary.clone()),
+            _ => None,
+        })
+        .expect("the failure is reported");
+    assert!(summary.contains("Failure class: structural"), "{summary}");
+    let step = format!("one effort step up from {} on {}", ran.effort, ran.model);
+    assert!(summary.contains(&step), "{summary}");
+}

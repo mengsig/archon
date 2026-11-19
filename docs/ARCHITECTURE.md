@@ -826,6 +826,15 @@ orchestrator sees all of Archon's tools. Guarded stages now expose only
    `get_stage` with its run, which reads every stage's output in full (§11);
    a cancelled item's is its cancel reason, so it names nothing. A compacted batch keeps at most ten events besides
    pinned ones (§5.4), so its summaries stay near 40,000 characters.
+   A failed or cancelled item's summary ends with a line, kept past that
+   clip, giving its failure class, read from its failing stage's record:
+   *structural* (a failed verdict or check, the review cap, a timeout, a
+   missing workspace), *environmental* (quota, an engine crash, the catalog)
+   or *external* (a cancel, an operator blocker), and a suggested next
+   attempt naming the model and effort that ran: the same, one effort step
+   up, or a stronger model. It is advice only: archond never raises an
+   effort or changes a model after a failure, and a retry without a
+   `model_plan` runs the stored plan; the orchestrator chooses (A12).
 
 ### 5.2 Questions
 

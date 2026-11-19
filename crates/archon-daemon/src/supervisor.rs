@@ -1107,9 +1107,10 @@ async fn create_generation(
     if !delegation {
         instructions.push_str(callers::NO_DELEGATION_NOTE);
     }
+    // Read before the freeze: a key frozen is one the create alone may follow.
+    let network = client.daemon_defaults().await?.network_default;
     let (generation, frozen) =
         settle_generation(ctx, client, config, &store, &mut instructions).await?;
-    let network = client.daemon_defaults().await?.network_default;
     let sent = instructions.clone();
     let request = orchestrator_create_agent(
         config,

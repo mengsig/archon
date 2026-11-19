@@ -1864,3 +1864,25 @@ async fn a_possibly_sent_generation_replays_though_its_alias_is_retired() {
         json!({"provider":"claude-code","model":"opus"})
     );
 }
+
+/// A request that fails before the freeze leaves the key unsent: the retry
+/// checks the model again rather than replaying one Aether never received.
+#[tokio::test]
+async fn a_creation_failing_before_its_freeze_checks_the_model_again() {
+    let h = aliased_harness("claude-code/opus", "claude-code/first").await;
+    h.fake
+        .script("status", Scripted::refuse("internal", "status unavailable"));
+    supervisor::ensure_orchestrator(&h.ctx).await.unwrap_err();
+    assert!(
+        h.fake.received_named("create_agent").is_empty(),
+        "no create sent"
+    );
+    assert!(h.kv("orchestrator_model").await.is_none(), "nothing frozen");
+    h.fake
+        .set_default("list_models", catalog_of("claude-code/second", "opus"));
+    create_key(&h).await;
+    let creates = h.fake.received_named("create_agent");
+    assert_eq!(creates.len(), 1);
+    let second = json!({"provider":"claude-code","model":"second"});
+    assert_eq!(creates[0]["model"], second, "the first send is checked");
+}

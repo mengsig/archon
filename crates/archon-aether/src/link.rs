@@ -37,6 +37,26 @@ impl AetherLink {
             .current
             .read()
             .map_err(|_| ArchonError::Unavailable("aether link lock poisoned".into()))?;
+        Self::installed(&guard)
+    }
+
+    /// The client of connection `generation` only: a reconnect since then is
+    /// refused, so a request checked on one connection is not sent on another.
+    pub fn client_on(&self, generation: u64) -> Result<Arc<AetherClient>, ArchonError> {
+        let guard = self
+            .current
+            .read()
+            .map_err(|_| ArchonError::Unavailable("aether link lock poisoned".into()))?;
+        if guard.generation != generation {
+            return Err(ArchonError::Unavailable(format!(
+                "aether connection {} replaced connection {generation} since the check",
+                guard.generation
+            )));
+        }
+        Self::installed(&guard)
+    }
+
+    fn installed(guard: &Slot) -> Result<Arc<AetherClient>, ArchonError> {
         let Some(client) = guard.client.clone() else {
             let why = guard.down.as_deref().unwrap_or("not connected to aetherd");
             return Err(ArchonError::Unavailable(why.to_owned()));

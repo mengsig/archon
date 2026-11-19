@@ -15,8 +15,8 @@ use archon_core::error::ArchonError;
 use archon_core::model::{Effort, ModelChoice};
 use archon_core::policy::ModelPolicy;
 use archon_core::ports::{
-    AgentBackend, AgentUpdate, CostBilling, DescendantState, NetworkPolicy, RunNodeRequest,
-    SpawnRequest,
+    AgentBackend, AgentUpdate, CheckedOn, CostBilling, DescendantState, NetworkPolicy,
+    RunNodeRequest, SpawnRequest,
 };
 use archon_core::run::StageOutcome;
 use common::{AGENT, RUN, TASK, WAIT, completed, connect};
@@ -248,6 +248,57 @@ async fn a_request_without_a_persisted_network_states_aethers_default() {
     let create = &fake.received_named("create_agent")[0];
     assert_eq!(create["scope"]["network"], "denied");
     assert_eq!(fake.received_named("status").len(), 1);
+}
+
+/// A create checked on one connection is sent on that one only: after a
+/// reconnect it is refused before any frame, and nothing but the create is
+/// awaited, a legacy request stating the default read before its check.
+#[tokio::test]
+async fn a_checked_create_goes_out_only_on_its_connection() {
+    let (_dir, fake) = fake_aether().await;
+    fake.set_default(
+        "create_agent",
+        Scripted::reply("agent", fake::agent(AGENT, Some(TASK))),
+    );
+    let task = fake::task(TASK, Some(AGENT), RUN, json!({"state": "assigned"}));
+    fake.set_default("get_task", Scripted::reply("task", task));
+    let link = Arc::new(AetherLink::new());
+    link.replace(Some(Arc::new(connect(&fake).await))).unwrap();
+    let stale = link.generation().unwrap();
+    link.replace(Some(Arc::new(connect(&fake).await))).unwrap();
+    let backend = AetherBackend::new(Arc::clone(&link), any_model());
+    let on = |connection| CheckedOn {
+        connection,
+        network_default: NetworkPolicy::Allowed,
+    };
+    let legacy = || SpawnRequest {
+        aether_cost_budget: Some(true),
+        network: None,
+        ..spawn_request()
+    };
+
+    let refused = backend.spawn_on(legacy(), on(stale)).await;
+    assert!(
+        matches!(refused, Err(ArchonError::Unavailable(_))),
+        "{refused:?}"
+    );
+    let current = on(link.generation().unwrap());
+    let unpriced = backend.spawn_on(spawn_request(), current).await;
+    assert!(
+        matches!(unpriced, Err(ArchonError::Invalid(_))),
+        "{unpriced:?}"
+    );
+    assert!(
+        fake.received_named("create_agent").is_empty(),
+        "no frame sent"
+    );
+
+    backend.spawn_on(legacy(), current).await.unwrap();
+    let creates = fake.received_named("create_agent");
+    assert_eq!(creates.len(), 1);
+    assert_eq!(creates[0]["scope"]["network"], "allowed");
+    let asked = ["status", "list_models", "providers"].map(|c| fake.received_named(c).len());
+    assert_eq!(asked, [0, 0, 0], "nothing awaited after a check");
 }
 
 #[tokio::test]

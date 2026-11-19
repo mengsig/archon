@@ -797,6 +797,8 @@ struct FakeState {
     /// Stage agents a test holds in their turn after their task settled.
     in_turn: BTreeSet<AetherAgentId>,
     requests: Vec<SpawnRequest>,
+    /// What each checked create was checked on, in order.
+    checked: Vec<archon_core::ports::CheckedOn>,
     by_key: BTreeMap<String, SpawnedAgent>,
     failures: VecDeque<ArchonError>,
     cancel_failures: VecDeque<ArchonError>,
@@ -1019,6 +1021,11 @@ impl FakeBackend {
     /// Every `spawn` call, including repeats and refused ones.
     pub fn requests(&self) -> Vec<SpawnRequest> {
         self.state().requests.clone()
+    }
+
+    /// What each checked create was checked on (`AgentBackend::spawn_on`).
+    pub fn checked(&self) -> Vec<archon_core::ports::CheckedOn> {
+        self.state().checked.clone()
     }
 
     /// Distinct agents created (one per idempotency key).
@@ -1479,6 +1486,15 @@ impl AgentBackend for FakeBackend {
         } else {
             archon_core::config::HostContext::Full
         })
+    }
+
+    async fn spawn_on(
+        &self,
+        request: SpawnRequest,
+        checked: archon_core::ports::CheckedOn,
+    ) -> Result<SpawnedAgent, ArchonError> {
+        self.state().checked.push(checked);
+        self.spawn(request).await
     }
 
     async fn spawn(&self, request: SpawnRequest) -> Result<SpawnedAgent, ArchonError> {

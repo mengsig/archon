@@ -129,9 +129,12 @@ pub(crate) fn repair_pending(
             ]
         })
         .collect();
-    // A finished stage's pins no longer run: only the pending stages' keys are repaired.
-    let in_scope =
-        |key: &str| keys.contains(key) || key.ends_with(archon_core::model::REVIEWERS_KEY_SUFFIX);
+    // A finished stage's pins no longer run: only the pending stages' keys are
+    // repaired, and the review key only while a pending stage names reviewers.
+    let reviews = plans.iter().any(names_reviewers);
+    let in_scope = |key: &str| {
+        keys.contains(key) || (reviews && key.ends_with(archon_core::model::REVIEWERS_KEY_SUFFIX))
+    };
     let repaired = repair_item_in(ctx, store, item, catalog, env, (spec, &in_scope))?;
     let before = item.model_plan.plan();
     let after = repaired.model_plan.plan();
@@ -263,6 +266,16 @@ pub(super) fn repair_stage(plan: &mut SpawnPlan, before: &ModelPlan, after: &Mod
             }
         }
     }
+}
+
+/// `plan` delegates to the reviewers the review key names, directly or as
+/// workers exempt from its worker allowlist.
+fn names_reviewers(plan: &SpawnPlan) -> bool {
+    plan.reviewers.is_some()
+        || plan
+            .workers
+            .as_ref()
+            .is_some_and(|workers| !workers.exempt_models.is_empty())
 }
 
 /// Move one emitted plan with its stored entries, matched by canonical id, and

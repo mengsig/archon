@@ -9,8 +9,8 @@ use archon_core::model::ModelRef;
 use archon_core::model::{Effort, ModelChoice};
 use archon_core::policy::ModelPolicy;
 use archon_core::ports::{
-    AgentBackend, AgentUpdate, CostBilling, CreatedNode, Descendant, DescendantState, OpenToolCall,
-    RunNodeRequest, SpawnRequest, SpawnedAgent, TreePulse,
+    AgentBackend, AgentUpdate, CheckedOn, CostBilling, CreatedNode, Descendant, DescendantState,
+    OpenToolCall, RunNodeRequest, SpawnRequest, SpawnedAgent, TreePulse,
 };
 use archon_core::run::StageOutcome;
 use async_trait::async_trait;
@@ -571,6 +571,32 @@ fn agent_patch(update: AgentUpdate) -> AgentPatch {
     }
 }
 
+/// Send a stage's create on `client`, the connection already chosen, stating
+/// `network`: the request's own, or Aether's default for one that has none.
+async fn spawn_with(
+    client: &AetherClient,
+    request: SpawnRequest,
+    network: NetworkPolicy,
+) -> Result<SpawnedAgent, ArchonError> {
+    assert!(!request.idempotency_key.is_empty(), "a keyed create");
+    assert!(
+        request.network.is_none_or(|stated| stated == network),
+        "a stated network is the one sent"
+    );
+    require_host_context(client, request.host_context)?;
+    if !request.references.is_empty()
+        && !client.welcome().features.iter().any(|f| f == "references")
+    {
+        return Err(ArchonError::Unavailable(
+            "Aether lacks references required by the frozen creation request".into(),
+        ));
+    }
+    let agent = client
+        .create_agent(stage_create_agent(&request, network))
+        .await?;
+    spawned_from(client, agent, &request.idempotency_key).await
+}
+
 #[async_trait]
 impl AgentBackend for AetherBackend {
     async fn spawn(&self, mut request: SpawnRequest) -> Result<SpawnedAgent, ArchonError> {
@@ -585,18 +611,24 @@ impl AgentBackend for AetherBackend {
             // daemon sent it, with Aether's default of the moment.
             None => client.daemon_defaults().await?.network_default,
         };
-        require_host_context(&client, request.host_context)?;
-        if !request.references.is_empty()
-            && !client.welcome().features.iter().any(|f| f == "references")
-        {
-            return Err(ArchonError::Unavailable(
-                "Aether lacks references required by the frozen creation request".into(),
+        spawn_with(&client, request, network).await
+    }
+
+    async fn spawn_on(
+        &self,
+        request: SpawnRequest,
+        checked: CheckedOn,
+    ) -> Result<SpawnedAgent, ArchonError> {
+        self.check_choice(&request.choice)?;
+        // Resolving it would await Aether after the caller's check.
+        if request.cost_budget_usd.is_some() && request.aether_cost_budget.is_none() {
+            return Err(ArchonError::Invalid(
+                "a checked create resolves its cost budget before its check".into(),
             ));
         }
-        let agent = client
-            .create_agent(stage_create_agent(&request, network))
-            .await?;
-        spawned_from(&client, agent, &request.idempotency_key).await
+        let client = self.link.client_on(checked.connection)?;
+        let network = request.network.unwrap_or(checked.network_default);
+        spawn_with(&client, request, network).await
     }
 
     async fn find_spawn(

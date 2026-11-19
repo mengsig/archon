@@ -17,7 +17,7 @@ use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
 use archon_core::lesson::CONTRACT_LESSONS;
 use archon_core::policy::ModelPolicy;
-use archon_core::ports::{SpawnRequest, SpawnedAgent};
+use archon_core::ports::{CheckedOn, SpawnRequest, SpawnedAgent};
 use archon_core::queue::QueueItem;
 use archon_core::repo::affected::{Affected, selects};
 use archon_core::repo::{Repo, RepoTiers};
@@ -1396,19 +1396,22 @@ async fn check_frozen_request(
     Ok(catalog)
 }
 
-/// The create goes out only on the connection whose catalog `checked` is:
-/// a reconnect or catalog change since the check waits for the next issue.
+/// The connection the create may go out on: the one whose cached catalog is
+/// still `checked`. A reconnect or catalog change waits for the next issue.
 fn still_checked(
     ctx: &DaemonContext,
     store: &archon_queue::Store,
     checked: &archon_core::model_tier::ModelCatalog,
-) -> Result<(), ArchonError> {
+) -> Result<u64, ArchonError> {
     assert!(
         checked.not_ready_reason().is_none(),
         "only a ready catalog checks a create"
     );
     match learned::cached_catalog(ctx, store)? {
-        Some(current) if current == *checked => Ok(()),
+        Some(current) if current == *checked => {
+            let connection = store.catalog_generation();
+            Ok(connection.expect("a cached catalog names its connection"))
+        }
         _ => Err(ArchonError::Unavailable(
             "the model catalog changed before the stage's create was sent; it is checked again"
                 .into(),
@@ -1452,6 +1455,12 @@ async fn spawn_bound(
         spawn.parent = ParentBinding::Bound;
         save_spawn(&mut *ctx.store.lock().await, &stage.id, &spawn)?;
     }
+    // A record from before networks were frozen states Aether's default of
+    // the moment, read here so nothing but the create awaits after the check.
+    let network_default = match spawn.request.network {
+        Some(stated) => stated,
+        None => ctx.backend.network_default().await?,
+    };
     let effective = ctx
         .backend
         .host_context(
@@ -1468,9 +1477,13 @@ async fn spawn_bound(
         save_spawn(&mut store, &stage.id, &spawn)?;
         tracing::warn!(stage = %stage.id, "lean host context unavailable for this engine or Aether; frozen stage request falls back to full");
     }
-    still_checked(ctx, &store, checked)?;
+    let connection = still_checked(ctx, &store, checked)?;
     drop(store);
-    ctx.backend.spawn(spawn.request).await
+    let checked = CheckedOn {
+        connection,
+        network_default,
+    };
+    ctx.backend.spawn_on(spawn.request, checked).await
 }
 
 /// A `spawning` stage of a finished run with no agent: its create was

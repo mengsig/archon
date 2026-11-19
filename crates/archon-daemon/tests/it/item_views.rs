@@ -1113,3 +1113,108 @@ fn serve_until_retired(h: &Harness, retired: std::sync::Arc<std::sync::atomic::A
         ),
     );
 }
+
+/// A create frozen before its network was stored is sent as stored, with
+/// Aether's default read before the catalog check, so only the create follows.
+#[tokio::test]
+async fn a_legacy_create_without_a_network_reads_the_default_before_its_check() {
+    let h = Harness::new().await;
+    h.backend
+        .fail_next(ArchonError::Unavailable("aetherd busy".into()));
+    let item = h.enqueue("a create from before networks were stored").await;
+    h.dispatch().await;
+    let stages = h.live_stages().await;
+    assert_eq!(stages.len(), 1, "{:?}", h.state(&item.id).await);
+    let key = format!("spawn_request:{}", stages[0].id);
+    let mut stored: serde_json::Value = serde_json::from_str(&h.kv(&key).await.unwrap()).unwrap();
+    stored["request"]
+        .as_object_mut()
+        .expect("a stored request")
+        .remove("network")
+        .expect("a network was stored");
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(&key, &stored.to_string())
+        .unwrap();
+    h.backend
+        .set_network_default(archon_core::ports::NetworkPolicy::Denied);
+
+    h.dispatch().await;
+    let requests = h.backend.requests();
+    assert_eq!(requests.len(), 2, "the create is issued again");
+    assert_eq!(requests[1].network, None, "sent as stored");
+    let checked = h.backend.checked();
+    assert_eq!(
+        checked.last().map(|on| on.network_default),
+        Some(archon_core::ports::NetworkPolicy::Denied),
+        "Aether's default of the moment, read before the check"
+    );
+}
+
+const REVIEWED_THEN_POLISHED: &str = r#"[pipeline]
+name = "reviewed-then-polished"
+description = "A change whose review key no stage owes at this level, then a pass"
+version = 1
+workspace = "worktree"
+requires_repo = true
+
+[pipeline.review]
+level = "none"
+stage = "implement"
+
+[[stage]]
+id = "implement"
+kind = "work"
+prompt = "implement.md"
+timeout_minutes = 60
+
+[[stage]]
+id = "polish"
+kind = "work"
+prompt = "implement.md"
+timeout_minutes = 60
+"#;
+
+#[tokio::test]
+async fn a_review_key_no_pending_stage_owes_holds_nothing() {
+    let h = Harness::new().await;
+    h.add_pipeline("reviewed-then-polished", REVIEWED_THEN_POLISHED);
+    let medium = archon_core::model::Effort::Medium;
+    let plan = archon_core::model::ModelPlan(std::collections::BTreeMap::from([
+        (
+            "implement".into(),
+            vec![common::choice(common::MODEL, medium)],
+        ),
+        (
+            "implement.review".into(),
+            vec![common::choice(HAIKU, medium)],
+        ),
+        ("polish".into(), vec![common::choice(common::MODEL, medium)]),
+    ]));
+    let item = h
+        .enqueue_in("reviewed-then-polished", "retire a finished reviewer", plan)
+        .await
+        .unwrap();
+    h.dispatch().await;
+    let running = h.running().await;
+    assert_eq!(running.len(), 1, "{:?}", h.state(&item.id).await);
+    assert_eq!(running[0].stage_id, "implement");
+    assert!(
+        !h.backend.requests()[0].instructions.contains(HAIKU),
+        "no review is owed"
+    );
+    serve_catalog_without(&h, HAIKU).await;
+    h.settle_running(passing).await;
+    h.dispatch().await;
+    let running = h.running().await;
+    assert_eq!(
+        running.len(),
+        1,
+        "the next stage starts: {:?}",
+        h.state(&item.id).await
+    );
+    assert_eq!(running[0].stage_id, "polish");
+    assert!(detail(&h, &item.id).await.waiting_reason.is_none());
+}

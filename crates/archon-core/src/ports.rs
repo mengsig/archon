@@ -299,11 +299,32 @@ impl AgentUpdate {
     }
 }
 
+/// What a stage's create was checked on, read before the check so that only
+/// the create itself is awaited after it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CheckedOn {
+    /// The link connection whose model catalog the create was checked against.
+    pub connection: u64,
+    /// Aether's default, stated by a request frozen before networks were.
+    pub network_default: NetworkPolicy,
+}
+
 #[async_trait]
 pub trait AgentBackend: Send + Sync {
     /// Create and start a stage agent. Safe to retry with the same
     /// `idempotency_key`; implementations re-check the model policy.
     async fn spawn(&self, request: SpawnRequest) -> Result<SpawnedAgent, ArchonError>;
+
+    /// [`spawn`](Self::spawn) sent only on the connection its model catalog
+    /// was checked on, awaiting nothing more than the create; another is
+    /// `Unavailable`.
+    async fn spawn_on(
+        &self,
+        request: SpawnRequest,
+        _checked: CheckedOn,
+    ) -> Result<SpawnedAgent, ArchonError> {
+        self.spawn(request).await
+    }
 
     /// Look up a previously issued create without creating an agent.
     async fn find_spawn(

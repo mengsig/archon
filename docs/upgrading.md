@@ -93,15 +93,18 @@ when it writes the plan ([configuration](configuration.md)): it classes the
 item `mechanical`, `ordinary`, `elevated` or `critical` from its tags, title,
 brief, review level and known diff size, and sets each unnamed effort from
 that class and the stage's own default. An unnamed effort that 1.6.3 filled
-with the stage default may therefore be `low` for documentation work, `high`
-for work that names a risk, and `x_high` for work tagged `risk:critical`. An
+with the stage default may therefore be `low` for documentation work (and, with
+`sizer_max_effort` set, `high` for work that names a risk and `x_high` for
+work tagged `risk:critical`). An
 effort the plan names is kept as before. `get_item` and `archon queue show`
 list the class and the reason for every entry, and each attempt records its
 `risk_class`, `effort_source` and `effort_reasons`.
 
-`[models] sizer_max_effort` (default `x_high`, global only) holds what the
-sizer sets by itself; `max_effort` still caps everything. Set
-`sizer_max_effort = "high"` to keep the sizer from planning `x_high`.
+Effort is the orchestrator's choice: the sizer never changes an effort a plan
+sets, and by default it only lowers default-effort stages of mechanical
+items. `[models] sizer_max_effort` (unset by default, global only) opts into
+raising default-effort stages of elevated and critical items up to that
+effort; `max_effort` still caps everything.
 
 The sizing is stored with the plan. Items queued or running across the
 upgrade keep the plan they have: nothing is sized at recovery, and in a plan

@@ -232,33 +232,29 @@ pub fn sizer_cap(policy_cap: Option<Effort>, sizer_max: Effort) -> Effort {
     cap
 }
 
+/// The ceiling for one stage: `cap` where the operator let the sizer raise
+/// effort, else the stage's own default, so it only ever lowers.
+pub fn key_cap(cap: Effort, raises: bool, base: Effort) -> Effort {
+    let ceiling = if raises { cap } else { cap.min(base) };
+    assert!(ceiling <= cap, "a stage ceiling never exceeds the cap");
+    ceiling
+}
+
 /// Whether `model`'s engine honours `x_high`: Claude Code and Codex do; the
 /// API-dialect adapters run `high` instead.
 pub fn supports_x_high(model: &ModelRef) -> bool {
     matches!(model.provider.as_str(), "claude-code" | "codex")
 }
 
-/// The effort one step below `effort`; `low` stays `low`.
-fn step_down(effort: Effort) -> Effort {
-    match effort {
-        Effort::Low | Effort::Medium => Effort::Low,
-        Effort::High => Effort::Medium,
-        Effort::XHigh => Effort::High,
-        Effort::Max => Effort::XHigh,
-    }
-}
-
-/// What the class asks of a stage before any cap: the class floor, then the
-/// size step and the mechanical class, then the stage default.
+/// What the class asks of a stage before any cap: the class floor, the
+/// mechanical class, then the stage default.
 fn class_target(facts: StageFacts, risk: &ItemRisk, review: ReviewLevel) -> Effort {
-    let small = risk.signals.iter().any(|s| s == SMALL_SIGNAL);
     match risk.class {
         RiskClass::Mechanical if facts.checks && review == ReviewLevel::Strict => Effort::Medium,
         RiskClass::Mechanical => Effort::Low,
-        RiskClass::Ordinary if small => step_down(facts.base),
         RiskClass::Ordinary => facts.base,
         RiskClass::Elevated => facts.base.max(Effort::High),
-        RiskClass::Critical => Effort::XHigh,
+        RiskClass::Critical => facts.base.max(Effort::XHigh),
     }
 }
 
@@ -279,11 +275,7 @@ pub fn size_effort(
     model: &ModelRef,
 ) -> SizedEffort {
     let target = class_target(facts, risk, review);
-    let small = risk.class == RiskClass::Ordinary && target < facts.base;
     let mut reason = format!("sizer: {} -> {target}", risk.class);
-    if small {
-        reason.push_str(" (small)");
-    }
     let mut effort = target;
     if effort > cap {
         effort = cap;

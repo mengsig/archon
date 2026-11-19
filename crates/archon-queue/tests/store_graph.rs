@@ -173,7 +173,12 @@ fn a_fingerprint_of_the_filled_plan_matches_a_retry_whose_plan_is_still_to_size(
         writer.filled(filled, (PlanSource::Fallback, PlanSource::Fallback));
         let (cap, size) = (Effort::XHigh, None);
         let facts = &facts;
-        made.model_plan = writer.finish(Sizing::On(EffortSizer { cap, size, facts }));
+        made.model_plan = writer.finish(Sizing::On(EffortSizer {
+            cap,
+            raises: true,
+            size,
+            facts,
+        }));
         assert!(made.model_plan.has_unsized());
         made
     };

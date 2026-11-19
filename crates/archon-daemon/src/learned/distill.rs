@@ -103,9 +103,9 @@ async fn queue(ctx: &DaemonContext, repo: &RepoId) -> Result<(), ArchonError> {
             let orchestrator = &ctx.config.orchestrator.model;
             let checks = (&policy, &catalog);
             let draft = current_draft(&store, &draft_key, repo, &window, checks, orchestrator)?;
-            let inserted = store.insert_item(&draft, Some(&enqueue_key))?;
-            assert!(inserted.budget_usd.is_some_and(|b| b <= 1.0));
-            inserted
+            // The draft's bound: a replay of its request keeps its own budget.
+            assert!(draft.budget_usd.is_some_and(|b| b <= 1.0));
+            store.insert_item(&draft, Some(&enqueue_key))?
         }
     };
     assert_eq!(

@@ -941,6 +941,42 @@ async fn an_unrelated_item_under_an_errands_key_is_not_taken_for_the_errand() {
     assert!(errand_models(&items).is_empty(), "no errand was inserted");
 }
 
+/// An item that replays the draft's own request under the errand's key is
+/// taken for it as before, whatever budget it has since been given.
+#[tokio::test]
+async fn a_replay_of_the_drafts_request_is_the_errand_whatever_its_budget() {
+    let mut config = archon_core::config::Config::default();
+    config.learning.distill_every = 2;
+    config.learning.distill_daily_budget_usd = 10.0;
+    let h = Harness::with_config(config).await;
+    samples(&h, "codex/cheap", 0.1, 2).await;
+    let mut draft = h.enqueue("the draft's request").await;
+    draft.id = archon_core::id::QueueItemId::new();
+    draft.budget_usd = Some(1.0);
+    let asked = draft.model_plan.plan().clone();
+    draft.model_plan = archon_core::plan_origin::PlannedPlan::legacy(asked);
+    let mut twin = draft.clone();
+    twin.id = archon_core::id::QueueItemId::new();
+    let repo = draft.repo.clone().expect("the test repository");
+    {
+        let mut store = h.ctx.store.lock().await;
+        let key = format!("learning:{repo}:0");
+        store.insert_item(&twin, Some(&key)).unwrap();
+        twin.budget_usd = Some(2.0);
+        store.update_item(&twin).unwrap();
+        let saved = serde_json::to_string(&draft).unwrap();
+        let draft_key = format!("learning/distill-draft/{repo}/0");
+        store.save_learning_value(&draft_key, &saved).unwrap();
+    }
+    archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    let store = h.ctx.store.lock().await;
+    let cursor = store.kv_get(&format!("learning/distilled-v2/{repo}"));
+    assert_eq!(cursor.unwrap().as_deref(), Some("2"), "the window is used");
+    let tagged = store.kv_get(&format!("learning/distillation/{}", twin.id));
+    assert_eq!(tagged.unwrap().as_deref(), Some(repo.as_str()));
+    assert!(store.item(&draft.id).is_err(), "the draft was not inserted");
+}
+
 #[tokio::test]
 async fn a_learned_model_removed_from_the_catalog_cannot_be_chosen_again() {
     let mut config = archon_core::config::Config::default();

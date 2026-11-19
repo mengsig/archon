@@ -978,3 +978,30 @@ async fn a_cost_stop_of_unknown_billing_is_labelled_notional_cost() {
         );
     }
 }
+
+/// An attempt 1.6.3 recorded names its model by the alias it was asked with;
+/// the plan names it canonical. The kept agent is the same model, so it fixes.
+#[tokio::test]
+async fn a_kept_agent_recorded_by_an_alias_resumes_for_its_findings() {
+    let h = harness().await;
+    let alias: archon_core::model::ModelRef = "claude-code/sonnet".parse().unwrap();
+    let mut catalog = common::catalog::default_models();
+    catalog.add_alias(alias.clone(), MODEL.parse().unwrap());
+    h.set_catalog(catalog).await;
+    let (_item, first) = implemented(&h, "add a greeting").await;
+    let implementer = agent(&first);
+    let recorded = h.ctx.store.lock().await.stage_run(&first.id).unwrap();
+    assert!(recorded.model_segments.is_empty(), "never retuned");
+    let conn = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    let changed = conn.execute(
+        "UPDATE stage_runs SET data = json_set(data, '$.choice.model', json(?1)) WHERE id = ?2",
+        [serde_json::to_string(&alias).unwrap(), first.id.to_string()],
+    );
+    assert_eq!(changed.unwrap(), 1, "the attempt as 1.6.3 recorded it");
+    let reread = h.ctx.store.lock().await.stage_run(&first.id).unwrap();
+    assert_eq!(reread.choice.model, alias);
+
+    let fix = sent_back(&h).await;
+    assert_eq!(agent(&fix), implementer, "the kept agent fixes its work");
+    assert_eq!(fix.aether_task, None, "resumed by message, not spawned");
+}

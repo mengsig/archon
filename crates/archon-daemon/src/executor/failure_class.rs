@@ -73,7 +73,7 @@ pub(crate) fn of_error(error: &str) -> FailureClass {
 fn marked(error: &str) -> Option<FailureClass> {
     let lead = error.trim_start();
     if lead.starts_with(StageOutcome::ESCALATE_PREFIX)
-        || error.contains(StageOutcome::WORKSPACE_MISSING)
+        || lead.starts_with(StageOutcome::WORKSPACE_MISSING)
     {
         return Some(FailureClass::Structural);
     }

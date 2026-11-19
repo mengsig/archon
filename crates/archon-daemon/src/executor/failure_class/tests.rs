@@ -120,6 +120,10 @@ fn a_recorded_marker_outranks_the_flag_and_free_text() {
          rate limit tests fail",
     );
     assert_eq!(of_stage(&capped), Some(FailureClass::Structural));
+    let blocked = failed(
+        "BLOCKED: restore the deployment configuration; remote log says workspace missing: /deploy",
+    );
+    assert_eq!(of_stage(&blocked), Some(FailureClass::External));
     let quoting = failed("make ci failed: test expected `BLOCKED: x` in the reply");
     assert_eq!(of_stage(&quoting), Some(FailureClass::Structural));
 }

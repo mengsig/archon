@@ -586,15 +586,18 @@ fn failing_stage<'a>(
         // Infrastructure retries replace a slot within the same attempt.
         .filter(|s| slots.insert(s.fan_index))
         .collect();
-    // The slot whose own error stopped the run comes first; then a slot that
-    // says why it failed explains the stage better than a cancelled one.
-    let stopped_it = |s: &&&StageRun| {
-        matches!(&s.state, StageState::Failed { error }
-            if !error.trim().is_empty() && fallback.is_some_and(|f| f.contains(error.as_str())))
-    };
-    let failed = last
+    // The slot whose BLOCKED or ESCALATE stopped the run comes first, as the
+    // driver picks it: lowest fan index, its error as the run records it.
+    let stopped_it = last
         .iter()
-        .find(stopped_it)
+        .filter(|s| {
+            matches!(&s.state, StageState::Failed { error }
+            if StageOutcome::ends_run(error)
+                && fallback == Some(StageOutcome::run_stop_error(error).as_str()))
+        })
+        .min_by_key(|s| s.fan_index);
+    // Then a slot that says why it failed explains the stage better than a cancelled one.
+    let failed = stopped_it
         .or_else(|| last.iter().find(|s| stage_cause(s).is_some()))
         .or_else(|| last.iter().find(|s| failure_class::of_stage(s).is_some()))
         .copied();
@@ -868,7 +871,7 @@ pub(super) async fn cancel_item(
 #[cfg(test)]
 mod tests {
     use archon_core::model::{Effort, ModelChoice};
-    use archon_core::run::{ModelSegment, PipelineRun, RunState, StageState};
+    use archon_core::run::{ModelSegment, PipelineRun, RunState, StageOutcome, StageState};
 
     use super::super::failure_class::tests::stage;
     use super::{failing_stage, ran_choice};
@@ -902,14 +905,28 @@ mod tests {
 
     #[test]
     fn the_slot_that_stopped_the_run_is_the_failure_reported() {
-        let blocked = failed("BLOCKED: the deploy key is missing", 0);
-        let mut later = failed("make ci failed", 1);
+        let blocked = failed("BLOCKED: operator action needed\n", 0);
+        // A later sibling whose short error is quoted inside the real stop.
+        let mut later = failed("operator action", 1);
         later.run = blocked.run.clone();
         later.started_at = blocked.started_at + chrono::Duration::seconds(5);
-        let run = run_failed(&blocked, "BLOCKED: the deploy key is missing");
+        let stop = StageOutcome::run_stop_error("BLOCKED: operator action needed\n");
+        let run = run_failed(&blocked, &stop);
         let stages = vec![blocked.clone(), later];
         let (_, _, picked) = failing_stage(Some(&run), &stages);
         assert_eq!(picked.map(|s| &s.id), Some(&blocked.id));
+    }
+
+    #[test]
+    fn of_two_stops_the_lowest_fan_index_is_the_drivers() {
+        let first = failed("ESCALATE: split it", 0);
+        let mut second = failed("ESCALATE: split it", 1);
+        second.run = first.run.clone();
+        second.started_at = first.started_at - chrono::Duration::seconds(5);
+        let run = run_failed(&first, "ESCALATE: split it");
+        let stages = vec![second, first.clone()];
+        let (_, _, picked) = failing_stage(Some(&run), &stages);
+        assert_eq!(picked.map(|s| s.fan_index), Some(0));
     }
 
     #[test]

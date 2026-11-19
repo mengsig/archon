@@ -1615,8 +1615,11 @@ async fn superseded_pick(
     };
     let slot = stage.fan_index as usize % planned.len();
     let origin = item.model_plan.origin(&item.id, &stage.stage_id, slot);
-    let pinned = catalog.canonical_alias(&planned[slot].model) == model && origin.model.is_pin();
-    Ok((!pinned).then(|| format!("model {model} is superseded by {successor}")))
+    // A pin runs as asked; a daemon choice runs once a repair that saw the
+    // supersession kept it, for want of an eligible model to move to.
+    let decided = origin.model.is_pin() || item.model_plan.kept_superseded(model, successor);
+    let kept = catalog.canonical_alias(&planned[slot].model) == model && decided;
+    Ok((!kept).then(|| format!("model {model} is superseded by {successor}")))
 }
 
 /// Count a deadline wake's minutes from now when it waited to be asked, as for

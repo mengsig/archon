@@ -415,9 +415,8 @@ impl PlannedPlan {
                 .values()
                 .flatten()
                 .filter_map(|choice| {
-                    catalog
-                        .superseded_by(&choice.model)
-                        .map(|successor| format!("{} is superseded by {successor}", choice.model))
+                    let successor = catalog.superseded_by(&choice.model)?;
+                    Some(superseded_warning(&choice.model, successor))
                 })
                 .collect();
             (!warnings.is_empty()).then(|| {
@@ -426,6 +425,21 @@ impl PlannedPlan {
                 })
             })
         };
+    }
+
+    /// Whether the plan's last catalog check kept `model` though the catalog
+    /// named its `successor`: the repair saw the supersession and left it.
+    pub fn kept_superseded(
+        &self,
+        model: &crate::model::ModelRef,
+        successor: &crate::model::ModelRef,
+    ) -> bool {
+        assert_ne!(model, successor, "a successor is another model");
+        let warning = superseded_warning(model, successor);
+        match self.catalog_check.as_deref() {
+            Some(CatalogCheck::Warnings { warnings }) => warnings.contains(&warning),
+            Some(CatalogCheck::Deferred { .. }) | None => false,
+        }
     }
 
     /// `plan` with no writer to vouch for it: every field reads as a pin and
@@ -739,6 +753,14 @@ impl PlannedPlan {
         *self = writer.seal();
         Ok(())
     }
+}
+
+/// The catalog check's warning that `model` is superseded by `successor`.
+fn superseded_warning(
+    model: &crate::model::ModelRef,
+    successor: &crate::model::ModelRef,
+) -> String {
+    format!("{model} is superseded by {successor}")
 }
 
 /// `model` as `catalog` lists it; a choice the daemon made is listed no longer

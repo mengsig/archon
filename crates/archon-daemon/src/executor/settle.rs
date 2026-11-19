@@ -1043,7 +1043,7 @@ fn retry_choice(
     if plan.choice.model != *kept {
         retry.wake = None;
     }
-    if retry.wake.is_none() && plan.resume.is_none() {
+    if retry.wake.is_none() {
         route_fresh(ctx, (store, table), (run, spec), &mut plan, catalog)?;
     }
     Ok(plan)
@@ -1058,7 +1058,6 @@ fn route_fresh(
     plan: &mut SpawnPlan,
     catalog: &ModelCatalog,
 ) -> Result<(), ArchonError> {
-    assert!(plan.resume.is_none(), "a resume keeps its agent's model");
     let mut item = store.item(&run.item)?;
     assert_eq!(item.id, run.item, "the run works for the item");
     let repo = item
@@ -1067,7 +1066,12 @@ fn route_fresh(
         .map(|id| store.repo(&crate::resolve::repo_ref(id)))
         .transpose()?;
     let before = item.model_plan.plan().clone();
+    let resume = plan.resume.clone();
     crate::quota::route_replacement(ctx, store, (&mut item, spec), plan, repo.as_ref())?;
+    assert_eq!(
+        plan.resume, resume,
+        "routing leaves what the attempt is told"
+    );
     let after = item.model_plan.plan();
     if before != *after {
         super::model_catalog::follow_models(table, &run.id, (&before, after), catalog);

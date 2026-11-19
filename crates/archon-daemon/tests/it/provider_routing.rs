@@ -1878,20 +1878,33 @@ fn lost_agent() -> archon_core::run::StageOutcome {
 #[tokio::test]
 async fn a_resumed_kept_implementer_lost_after_a_quota_move_is_woken_on_its_model() {
     let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
-    claude_then_codex(&h, 90, 0);
-    let item = enqueue(&h, ROUTED, "woken after a move", tier_plan()).await;
+    kept_implementer_woken_after_a_quota_move(&h).await;
+}
+
+/// The implements of `stages`, each with its model and agent, in order.
+fn implementers(
+    stages: Vec<archon_core::run::StageRun>,
+) -> Vec<(
+    archon_core::model::ModelRef,
+    Option<archon_core::aether_ids::AetherAgentId>,
+)> {
+    let of_implement = stages.into_iter().filter(|s| s.stage_id == "implement");
+    of_implement
+        .map(|s| (s.choice.model, s.aether_agent))
+        .collect()
+}
+
+/// An item whose kept implementer, resumed on its own model after a quota
+/// move took the stored plan to codex, was lost and woken in place.
+async fn kept_implementer_woken_after_a_quota_move(h: &Harness) -> QueueItem {
+    claude_then_codex(h, 90, 0);
+    let item = enqueue(h, ROUTED, "woken after a move", tier_plan()).await;
     h.dispatch().await;
     h.settle_running(|_| completed("implemented")).await;
     h.dispatch().await;
-    claude_then_codex(&h, 10, 90);
+    claude_then_codex(h, 10, 90);
     h.settle_running(|_| common::verdict(false)).await;
     h.dispatch().await;
-    let implementers = |stages: Vec<archon_core::run::StageRun>| -> Vec<_> {
-        let of_implement = stages.into_iter().filter(|s| s.stage_id == "implement");
-        of_implement
-            .map(|s| (s.choice.model, s.aether_agent))
-            .collect()
-    };
     let resumed = implementers(h.stages(&item.id).await);
     assert_eq!(resumed.len(), 2, "the fix resumes: {resumed:?}");
     assert_eq!(resumed[1], resumed[0], "on the agent's own model");
@@ -1905,6 +1918,110 @@ async fn a_resumed_kept_implementer_lost_after_a_quota_move_is_woken_on_its_mode
     assert_eq!(woken[2], woken[0], "the same agent on the model it ran");
     let agent = woken[0].1.clone().expect("an agent");
     assert_eq!(h.backend.woken(), [agent], "woken, not replaced");
+    item
+}
+
+/// The cold retry of a resumed implementer whose wake was spent is a fresh
+/// agent, routed by quota as any fresh attempt is: off a spent provider.
+#[tokio::test]
+async fn a_cold_retry_of_a_resumed_implementer_moves_off_a_spent_provider() {
+    let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+    let item = kept_implementer_woken_after_a_quota_move(&h).await;
+    claude_then_codex(&h, 90, 0);
+    h.settle_running(|_| lost_agent()).await;
+    h.dispatch().await;
+    let cold = implementers(h.stages(&item.id).await);
+    assert_eq!(cold.len(), 4, "the woken attempt is replaced: {cold:?}");
+    assert_ne!(cold[3].1, cold[0].1, "a fresh agent");
+    assert_eq!(
+        cold[3].0.provider, "claude-code",
+        "the fresh agent leaves spent codex: {cold:?}"
+    );
+}
+
+/// A cold replacement skips the quota wait, so it never ends a note that a
+/// pending attempt of its stage waits for quota.
+#[tokio::test]
+async fn a_cold_replacement_leaves_its_stage_s_quota_wait_note() {
+    let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+    claude_then_codex(&h, 90, 0);
+    let item = enqueue(&h, ROUTED, "a sibling waits", tier_plan()).await;
+    h.dispatch().await;
+    claude_then_codex(&h, 10, 90);
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    let waits = "stage review waits for provider quota";
+    {
+        let mut store = h.ctx.store.lock().await;
+        let mut held = store.item(&item.id).unwrap();
+        let note =
+            format!("2026-11-19 18:00 UTC: {waits}: every provider meeting its floor is out");
+        held.provider_switch = Some(note);
+        store.update_item(&held).unwrap();
+    }
+    h.settle_running(|s| match s.fan_index {
+        0 => archon_core::run::StageOutcome::Failed {
+            error: "agent stalled: no events for 30 min (engine state not reported)".into(),
+            infra: true,
+        },
+        _ => common::verdict(true),
+    })
+    .await;
+    h.dispatch().await;
+    let first: Vec<_> = (h.stages(&item.id).await.into_iter())
+        .filter(|s| s.stage_id == "review" && s.fan_index == 0)
+        .collect();
+    assert_eq!(first.len(), 2, "a cold replacement: {first:?}");
+    let note = h.item(&item.id).await.provider_switch.unwrap_or_default();
+    assert!(note.contains(waits), "the wait still stands: {note}");
+}
+
+/// A daemon choice the catalog supersedes while still listing it, with no
+/// eligible model to move to, runs: no refused create, no loop.
+#[tokio::test]
+async fn a_superseded_daemon_choice_with_no_successor_allowed_runs() {
+    let mut config = untiered_fallback();
+    let old = common::MODEL.to_owned();
+    let next = format!("{old}-next");
+    config.models.allow = vec![old.parse().unwrap()];
+    let h = harness(config).await;
+    let pins = serde_json::json!({
+        "review": [{"model": old}, {"model": old}],
+        "ship": [{"model": old}],
+    });
+    let item = enqueue(
+        &h,
+        ROUTED,
+        "one model allowed",
+        serde_json::from_value(pins).unwrap(),
+    )
+    .await;
+    let filled = &crate::plan_origins::shown(&h, &item).await["implement"][0].model;
+    assert_eq!(
+        (filled.source, filled.by),
+        (PlanSource::Fallback, Authority::Daemon)
+    );
+    assert_eq!(item.model_plan.0["implement"][0].model.to_string(), old);
+    list_beside(&h, (&old, &next), true).await;
+    // A create refused on the kept model, reserved again, would never end.
+    for _ in 0..2 {
+        let bounded = tokio::time::timeout(std::time::Duration::from_secs(10), h.dispatch());
+        bounded.await.expect("dispatch settles");
+    }
+
+    let implements: Vec<_> = (h.stages(&item.id).await.into_iter())
+        .filter(|s| s.stage_id == "implement")
+        .collect();
+    assert_eq!(implements.len(), 1, "one attempt: {implements:?}");
+    assert_eq!(implements[0].choice.model.to_string(), old);
+    assert_eq!(
+        implements[0].state,
+        archon_core::run::StageState::Running,
+        "{implements:?}"
+    );
+    let created = h.backend.requests();
+    assert_eq!(created.len(), 1, "one create");
+    assert_eq!(created[0].choice.model.to_string(), old);
 }
 
 /// A fresh retry is routed by quota as a fresh stage is: once the provider a

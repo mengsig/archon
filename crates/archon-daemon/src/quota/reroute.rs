@@ -140,6 +140,13 @@ pub(crate) fn route_replacement(
     Ok(())
 }
 
+/// The routing, the plan a catalog repair replaced and the quota view.
+type RoutingRead<'a> = (
+    &'a (ProviderWeights, ModelPolicy, ModelCatalog),
+    Option<&'a ModelPlan>,
+    Option<&'a QuotaView>,
+);
+
 /// Move `plans` off spent providers or onto the item's held one, follow the
 /// stored plan with them, and note every move (the note `keep` stands in the
 /// same write) with any catalog repair that
@@ -150,14 +157,7 @@ fn route_plans(
     store: &mut Store,
     (item, spec): (&mut QueueItem, &PipelineSpec),
     plans: &mut [SpawnPlan],
-    (((weights, policy, catalog), replaced, view), keep): (
-        (
-            &(ProviderWeights, ModelPolicy, ModelCatalog),
-            Option<&ModelPlan>,
-            Option<&QuotaView>,
-        ),
-        Option<&str>,
-    ),
+    (((weights, policy, catalog), replaced, view), keep): (RoutingRead<'_>, Option<&str>),
 ) -> Result<bool, ArchonError> {
     let quota = (Some(weights), view);
     let held = knobs::item_provider(quota, catalog, policy, ItemRoute::new(item));

@@ -286,7 +286,7 @@ fn classify(held: &[Held], facts: &Facts, now: Timestamp) -> Vec<Relevance> {
         .iter()
         .rev()
         .map(
-            |news| match relevance_of(&news.event, facts, &mut finished_later) {
+            |news| match relevance_of(&news.event, facts, now, &mut finished_later) {
                 Relevance::Current if news.is_old(now) => Relevance::Stale,
                 verdict => verdict,
             },
@@ -305,12 +305,18 @@ fn classify(held: &[Held], facts: &Facts, now: Timestamp) -> Vec<Relevance> {
 /// digest is folded into the new one. A `mirror` change is rare and says what
 /// the orchestrator reads is stale, so it is always kept. A `github_watch` is
 /// kept too: its walk stored the baseline, so no later walk tells it again.
+/// A `quota_pace` is told once per window, so it is kept until that resets.
 fn relevance_of(
     event: &TriggerEvent,
     facts: &Facts,
+    now: Timestamp,
     finished_later: &mut HashSet<QueueItemId>,
 ) -> Relevance {
     match event {
+        TriggerEvent::QuotaPace { pace, .. } => match pace.resets_at > now {
+            true => Relevance::Pinned,
+            false => Relevance::Stale,
+        },
         TriggerEvent::OrchestratorBriefing { .. }
         | TriggerEvent::OperatorAnswer { .. }
         | TriggerEvent::AgentMessage { .. }
@@ -398,6 +404,43 @@ mod tests {
             lesson_hint: None,
             origin: None,
         }
+    }
+
+    fn pace(resets_at: Timestamp) -> TriggerEvent {
+        TriggerEvent::QuotaPace {
+            provider: "codex".into(),
+            pace: archon_core::quota::pace::WindowPace {
+                window: "7d".into(),
+                window_minutes: 10080,
+                used_percent: 78,
+                elapsed_percent: 29,
+                resets_at,
+                empty_at: None,
+                short: true,
+            },
+            note: "choose".into(),
+            providers: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn a_pace_warning_outlives_a_full_batch_until_its_window_resets() {
+        let now = archon_core::now();
+        let ahead = now + chrono::TimeDelta::days(5);
+        let mut held = vec![at(pace(ahead), now), at(pace(now), now)];
+        held.extend((0..MAX_BATCH_EVENTS).map(|n| at(budget(&n.to_string()), now)));
+        let events = compacted(held, &Facts::default(), now);
+        let kept: Vec<_> = (events.iter())
+            .filter_map(|event| match event {
+                TriggerEvent::QuotaPace { pace, .. } => Some(pace.resets_at),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            kept,
+            [ahead],
+            "kept while its window runs, dropped once it reset"
+        );
     }
 
     fn blocked(item: &QueueItemId) -> TriggerEvent {

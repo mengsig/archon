@@ -1229,6 +1229,7 @@ pub(crate) mod tests {
                 reserve_percent: 0,
                 next_reset: Some(reset),
                 windows: vec![],
+                pace: vec![],
             }],
         });
         let text = status(&up, &RepoNames::new(), false);
@@ -1238,6 +1239,20 @@ pub(crate) mod tests {
             ),
             "{text}"
         );
+        let quota = up.quota.as_mut().unwrap();
+        quota.providers[0].pace = vec![archon_core::quota::pace::WindowPace {
+            window: "7d".into(),
+            window_minutes: 10080,
+            used_percent: 70,
+            elapsed_percent: 30,
+            resets_at: reset,
+            empty_at: Some("2026-10-14T06:00:00Z".parse().unwrap()),
+            short: true,
+        }];
+        let text = status(&up, &RepoNames::new(), false);
+        let pace = "; pace 7d used 70% at 30% elapsed, empty ~2026-10-14 06:00 UTC, \
+                    before its reset 2026-10-16 18:30 UTC\n";
+        assert!(text.contains(pace), "{text}");
     }
 
     #[test]

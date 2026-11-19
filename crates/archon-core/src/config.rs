@@ -422,6 +422,9 @@ pub struct ModelsConfig {
     /// Lets the daemon's sizer raise efforts up to this; unset, it only
     /// lowers them. The policy's `max_effort` still caps it. Global only.
     pub sizer_max_effort: Option<Effort>,
+    /// Points a window's used share may run ahead of its elapsed share
+    /// before Archon warns it runs out early (unset: 10). Global only.
+    pub pacing_margin_percent: Option<u8>,
 }
 
 /// Percent of each quota window held back from tier-only stage routing.
@@ -462,6 +465,16 @@ impl ModelsConfig {
     /// sized efforts are clipped to: `x_high` unless set.
     pub fn sizer_max_effort(&self) -> Effort {
         self.sizer_max_effort.unwrap_or(Effort::XHigh)
+    }
+
+    /// The pacing margin in force:
+    /// [`crate::quota::pace::DEFAULT_MARGIN_PERCENT`] unless set.
+    pub fn pacing_margin_percent(&self) -> u8 {
+        let margin = self
+            .pacing_margin_percent
+            .unwrap_or(crate::quota::pace::DEFAULT_MARGIN_PERCENT);
+        debug_assert!(margin <= 100, "check_weights validates the margin");
+        margin
     }
 
     pub fn policy(&self) -> ModelPolicy {
@@ -518,6 +531,11 @@ impl ModelsConfig {
         if reserve.orchestrator > 100 || reserve.interactive > 100 {
             return Err(ArchonError::Config(
                 "models.reserve_percent values are percentages, 0 to 100".into(),
+            ));
+        }
+        if self.pacing_margin_percent.is_some_and(|m| m > 100) {
+            return Err(ArchonError::Config(
+                "models.pacing_margin_percent is a percentage, 0 to 100".into(),
             ));
         }
         Ok(())
@@ -1319,6 +1337,12 @@ impl RepoConfig {
                 path.display()
             )));
         }
+        if config.models.pacing_margin_percent.is_some() {
+            return Err(ArchonError::Config(format!(
+                "{}: models.pacing_margin_percent is set in Archon's global config only",
+                path.display()
+            )));
+        }
         if config.models.sizer_max_effort.is_some() {
             return Err(ArchonError::Config(format!(
                 "{}: models.sizer_max_effort is set in Archon's global config only",
@@ -1658,6 +1682,22 @@ mod tests {
         let refused = RepoConfig::load(dir.path()).unwrap_err().to_string();
         let why = "models.sizer_max_effort is set in Archon's global config only";
         assert!(refused.ends_with(why), "{refused}");
+    }
+
+    #[test]
+    fn pacing_margin_defaults_to_ten_is_a_percentage_and_stays_global() {
+        assert_eq!(Config::default().models.pacing_margin_percent(), 10);
+        let set: Config = toml::from_str("[models]\npacing_margin_percent = 0").unwrap();
+        set.validate().unwrap();
+        assert_eq!(set.models.pacing_margin_percent(), 0);
+        let over: Config = toml::from_str("[models]\npacing_margin_percent = 101").unwrap();
+        assert!(over.validate().is_err(), "a margin is a percentage");
+        let dir = tempfile::tempdir().unwrap();
+        let file = crate::paths::repo_archon_dir(dir.path()).join(CONFIG_FILE_NAME);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "[models]\npacing_margin_percent = 5\n").unwrap();
+        let refused = RepoConfig::load(dir.path()).unwrap_err().to_string();
+        assert!(refused.contains("global config only"), "{refused}");
     }
 
     #[test]

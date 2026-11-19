@@ -36,6 +36,7 @@ pub const STARTER_CONFIG: &str = r#"# Archon's configuration. Every key is optio
 # interactive_providers = ["claude-code"]   # providers also used by hand
 # effort_sizing = true    # false: 1.6.3's effort rules and reviewer floors (rollback)
 # sizer_max_effort = "x_high"   # unset: the sizer only lowers; set: it may raise default efforts
+# pacing_margin_percent = 10   # warn once a window's used % runs this far past its elapsed %
 
 # Reviewers without an explicit <stage>.review model plan. The tier is a
 # preference: with no permitted model at it, the best permitted one is used.

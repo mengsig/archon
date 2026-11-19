@@ -1679,6 +1679,10 @@ pub struct ProviderQuotaStatus {
     /// The earliest reset among its windows still ahead.
     pub next_reset: Option<Timestamp>,
     pub windows: Vec<crate::quota::QuotaWindow>,
+    /// Each trusted window's spend against its time passed; empty while the
+    /// reading is stale or names no window length and reset.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pace: Vec<crate::quota::pace::WindowPace>,
 }
 
 impl ProviderQuotaStatus {
@@ -1709,6 +1713,10 @@ impl ProviderQuotaStatus {
                 "{lead}{} {}% left",
                 window.name, window.remaining_percent
             );
+        }
+        if !self.pace.is_empty() {
+            let paces: Vec<String> = self.pace.iter().map(|p| p.describe()).collect();
+            let _ = write!(line, "; pace {}", paces.join(", "));
         }
         line
     }

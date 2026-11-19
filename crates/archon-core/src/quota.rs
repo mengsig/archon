@@ -1,6 +1,8 @@
 //! Live quota headroom for tier-only routing: the paced headroom of each
 //! provider's tightest usage window scales its routing weight.
 
+pub mod pace;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};

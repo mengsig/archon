@@ -95,6 +95,7 @@ mod provider_routing;
 mod prune;
 mod push;
 mod quiet_outcomes;
+mod quota_pace;
 mod quota_wait;
 mod recovery;
 mod recovery_serving;

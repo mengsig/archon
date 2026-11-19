@@ -57,9 +57,10 @@ pub(in crate::store) fn failure_class(
     judged_class(stage_id, &ending, failed_reviews)
 }
 
-/// Whether the daemon's own ship step failed the run, whatever a stage named
-/// `ship` too recorded (`ending`): unless the run failed in that stage's own
-/// words, or in the driver's word on it, the failure is the delivery's.
+/// Whether the daemon's own ship step failed the run, whatever a stage of
+/// another kind named `ship` too recorded (`ending`): unless the run failed in
+/// that stage's own words, or in the driver's word on it, the failure is the
+/// delivery's. A ship stage of that name is read by its records, as any stage.
 fn ship_step_failed(stage_id: &str, error: &str, ending: &[&StageRun]) -> bool {
     if stage_id != SHIP_STEP {
         return false;
@@ -68,6 +69,11 @@ fn ship_step_failed(stage_id: &str, error: &str, ending: &[&StageRun]) -> bool {
         ending.iter().all(|s| s.stage_id == SHIP_STEP),
         "the ending attempt is the named stage's"
     );
+    // The pipeline's own ship agent, by its kind or (1.4.x) its id: its records decide.
+    let kind = ending.iter().find_map(|s| s.kind);
+    if !ending.is_empty() && matches!(kind, None | Some(StageKind::Ship)) {
+        return false;
+    }
     let own_words = ending
         .iter()
         .any(|s| failed_in_words(s, error) && ends_a_run(s));

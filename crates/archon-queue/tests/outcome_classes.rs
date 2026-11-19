@@ -957,6 +957,34 @@ fn a_stage_named_ship_that_failed_itself_is_no_ship_step() {
     );
 }
 
+/// A ship stage named `ship` is the pipeline's own ship agent, by its kind or,
+/// from before kinds were kept, by its id: its records class the run, as ever.
+#[test]
+fn a_ship_agent_named_ship_is_read_by_its_records() {
+    let unstopped = "Archon could not stop the agents stage `ship` delegated to, so the run does \
+                     not go on beside them: refused";
+    for kind in [Some(StageKind::Ship), None] {
+        let after = |state: StageState| {
+            let wrote = |run: &PipelineRun| {
+                let mut stage = settled(run, "ship", StageKind::Ship, state.clone());
+                stage.kind = kind;
+                vec![stage]
+            };
+            failed_with("ship", unstopped, wrote).failure
+        };
+        assert_eq!(
+            after(StageState::TimedOut),
+            Some(FailureClass::Timeout),
+            "{kind:?}"
+        );
+        assert_eq!(
+            after(StageState::Completed),
+            Some(FailureClass::Ship),
+            "{kind:?}"
+        );
+    }
+}
+
 /// One slot of a test stage named `ship` whose gate passes on any slot, as its
 /// agent left it.
 fn ship_slot(run: &PipelineRun, fan_index: u32, state: StageState) -> StageRun {

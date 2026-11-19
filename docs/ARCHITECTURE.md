@@ -5823,7 +5823,10 @@ can make segment cost allocation approximate; the run's ledger total remains cur
 error's words. The daemon's own `ship` step runs no stage and fails a run under
 the id `ship`: such a run is `ship`, or `budget`, `blocked` or `escalated` when
 the delivery's error opens with the daemon's own prefix for one. A pipeline may
-name a stage `ship` too. Its records are read instead, by the rules below, only
+name a stage `ship` too. A ship stage of that name (by its recorded kind, or by
+its id for a 1.4.x stage run that kept none) is the pipeline's own ship agent,
+and its records are read by the rules below as any stage's. For a stage of
+another kind they are read instead only
 when that stage failed the run itself: the run failed in the very words of one
 of its stage runs that the daemon ends a run on (one that failed with a
 `BLOCKED:` or `ESCALATE:` prefix, or a spawn the daemon gave up on, which has no

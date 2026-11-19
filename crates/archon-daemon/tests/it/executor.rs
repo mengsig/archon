@@ -2730,9 +2730,9 @@ async fn a_lead_sizes_its_children_and_reviewers_by_the_rubric_by_default() {
     assert!(rules.contains(&sizing), "{rules}");
     let own = format!(
         "on {MODEL} at tier balanced and effort medium. That effort is the default, for a diff \
-         the rubric leaves open; otherwise the rubric decides: `low` for a trivial diff, \
-         `medium` for a small or low-risk diff, `high` for a risky diff or shared code; never \
-         above high, the model policy's cap."
+         the rubric leaves open; otherwise the rubric decides: `low` for a trivial or small \
+         low-risk diff, `medium` for an ordinary diff, `high` for a risky diff or shared code; \
+         never above high, the model policy's cap."
     );
     assert!(build.instructions.contains(&own), "{}", build.instructions);
     assert_eq!(h.issued_effort_contract(&build).await, "rubric");

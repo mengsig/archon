@@ -93,9 +93,7 @@ mod tests {
     /// names what the rubric does, and every other piece of guidance stays.
     #[test]
     fn the_served_nudges_agree_with_the_rubric() {
-        assert!(
-            EFFORT_RUBRIC.contains("`low` for lookups, listing, formatting and mechanical edits")
-        );
+        assert!(EFFORT_RUBRIC.contains("`low` for lookups, listing, formatting, mechanical edits"));
         assert!(
             EFFORT_RUBRIC
                 .contains("`x_high` for hard reasoning, such as root-causing a regression")

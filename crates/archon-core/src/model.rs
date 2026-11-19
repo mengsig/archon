@@ -155,11 +155,11 @@ impl fmt::Display for Effort {
 
 /// How every agent Archon prompts sizes an effort, from the cheapest up. The
 /// orchestrator prompt and every stage contract carry it word for word.
-pub const EFFORT_RUBRIC: &str = "`low` for lookups, listing, formatting and mechanical \
-edits; `medium` for routine changes and reviews of small or low-risk diffs; `high` for \
-non-trivial design, risky diffs and reviews of shared code; `x_high` for hard reasoning, \
-such as root-causing a regression, concurrency or security analysis, or a fix that \
-failed twice. Take the cheapest that fits.";
+pub const EFFORT_RUBRIC: &str = "`low` for lookups, listing, formatting, mechanical edits \
+and reviews of trivial or small low-risk diffs; `medium` for routine changes and reviews of \
+ordinary diffs; `high` for non-trivial design, risky diffs and reviews of shared code; `x_high` \
+for hard reasoning, such as root-causing a regression, concurrency or security analysis, or \
+a fix that failed twice. Take the cheapest that fits.";
 
 /// How a lead's contract states efforts. Decided as its spawn is reserved,
 /// from `[models] effort_sizing`, and stored with the request it shapes.

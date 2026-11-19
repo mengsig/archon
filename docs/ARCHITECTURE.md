@@ -2200,18 +2200,21 @@ which available model and effort are the cheapest plausible choices. With
 `[models] effort_sizing` (on unless the global config sets it `false`) one
 effort rubric (`archon_core::model::EFFORT_RUBRIC`) sizes every effort Archon
 asks an agent to choose, word for word in the orchestrator prompt and in every
-stage contract that may delegate: `low` for lookups, listing, formatting and
-mechanical edits; `medium` for routine changes and reviews of small or low-risk
-diffs; `high` for non-trivial design, risky diffs and reviews of shared code;
+stage contract that may delegate: `low` for lookups, listing, formatting,
+mechanical edits and reviews of trivial or small low-risk diffs; `medium` for
+routine changes and reviews of ordinary diffs; `high` for non-trivial design, risky diffs and reviews of shared code;
 `x_high` for hard reasoning, such as root-causing a regression, concurrency or
 security analysis, or a fix that failed twice. Take the cheapest that fits.
 With it off (1.6.3's rules), the highest effort (`x_high`) is for a reasoning
 problem the orchestrator can name that inspecting the work left unresolved;
 that the operator prefers strong models is not one. Each spawn records which
-rule its contract was rendered with (`effort_contract`), and the watchdog holds
-a lead's reviewers to that record, never to the config in force; a spawn
-stored by 1.6.3 is read by its contract's words, and one whose words tell
-nothing holds no reviewer to a floor.
+rule its contract was rendered with (`effort_contract`) and the reviewers it
+named (`issued_reviewers`), and the watchdog holds a lead's reviewers to that
+record, never to the config in force or the item's plan as edited since. A
+resumed or woken lead is held to the spawn that created its agent, found
+through its run's stage runs. A spawn stored by 1.6.3 is read by its own
+reviewer and delegation rule lines, never text its contract quotes; one that
+tells nothing holds no reviewer to a floor.
 Reviewers need independent discovery: another provider at the same tier counts, and several fast-tier reviewers, or a fast-tier team checked by
 one stronger-tier judge at low effort, can beat one balanced reviewer for far
 less. A failed stage prompts reconsideration through `retry_item`'s
@@ -2329,8 +2332,8 @@ on another model or below its model's effort as it spawns, before it does
 any work, and the contract states the floor so the lead delegates at it, when
 the lead was issued 1.6.3's rule (`effort_sizing = false`). Under the rubric,
 the default, each effort is instead the default for its reviewer, kept where the rubric leaves the diff open. Otherwise the rubric
-decides the review's level (`low` for a trivial diff, `medium` for a small or
-low-risk one, `high` for a risky diff or shared code, `x_high` for concurrency
+decides the review's level (`low` for a trivial or small low-risk diff,
+`medium` for an ordinary one, `high` for a risky diff or shared code, `x_high` for concurrency
 or security analysis), and the lead states the reason in one line in its result,
 lower or higher; the watchdog then cancels only a reviewer on another model. This check relies on the lead using
 the required reviewer role; children with other roles follow the general model

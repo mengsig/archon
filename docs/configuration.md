@@ -75,28 +75,33 @@ reviewer only on a model the plan does not name, or above the policy's cap.
 
 `[models] effort_sizing` (default `true` since 1.6.4, global only) sizes every
 effort by one rubric. The orchestrator sizes each stage's effort, and every
-delegating contract each child's: `low` for lookups, listing, formatting and
-mechanical edits; `medium` for routine changes and reviews of small or
-low-risk diffs; `high` for non-trivial design, risky diffs and reviews of
-shared code; `x_high` for hard reasoning, such as root-causing a regression,
+delegating contract each child's: `low` for lookups, listing, formatting,
+mechanical edits and reviews of trivial or small low-risk diffs; `medium` for
+routine changes and reviews of ordinary diffs; `high` for non-trivial design,
+risky diffs and reviews of shared code; `x_high` for hard reasoning, such as root-causing a regression,
 concurrency or security analysis, or a fix that failed twice. A reviewer's
 effort moves with it, and the lead states the reason in one line. A stage the
-plan leaves out takes its own effort from its pipeline, within the policy's
-cap, rather than the pipeline tier's, and the built-in stage nudges are served
+plan leaves out, or that a knob or a steer inserts, takes its own effort from
+its pipeline, within the policy's cap, rather than the pipeline tier's or the
+first stage's, and the built-in stage nudges are served
 worded by the rubric. The stage prompts keep 1.4.12's wording, effort floors
 included; the contract's reviewer rule says it replaces any floor a stage
 prompt names.
 
 To roll back, set `effort_sizing = false` in the global `[models]` and restart
-archond. New spawns then get 1.6.3's effort rules, byte for byte: agents see
+archond (and `archon orchestrator restart`, as a running orchestrator keeps
+its prompt across a restart of the same build). New spawns then get 1.6.3's
+effort rules, byte for byte: agents see
 1.4.12's effort wording, `default_effort` is a floor raised to at least medium
 (at least high when the lead rates the change's risk medium or high), and a
 `<stage>.review` plan's effort is a floor, so a reviewer below it is cancelled
 as it spawns. In-flight spawns keep the rule they were issued: archond records
 it with each spawn, so a lead spawned before the switch, and one resumed,
 woken or replayed after the restart, is held to its own rule, never the one in
-force now. A spawn stored by 1.6.3 is read by its contract's words; where they
-tell nothing, no reviewer is cancelled for its effort. `max_effort` caps every
+force now, and to the reviewers its contract named, not the item's plan as
+edited since. A spawn stored by 1.6.3 is read by its own reviewer and
+delegation rule lines; where they tell nothing, no reviewer is cancelled for
+its effort. `max_effort` caps every
 effort either way. The default cap is `x_high`; set global
 `[models] max_effort = "max"` explicitly to allow `max`.
 A repository may only narrow the global cap.

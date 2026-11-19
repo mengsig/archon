@@ -40,7 +40,7 @@ pub const STARTER_CONFIG: &str = r#"# Archon's configuration. Every key is optio
 # preference: with no permitted model at it, the best permitted one is used.
 # [review]
 # default_tier = "balanced"
-# default_effort = "medium"   # a default the lead may lower to low for a trivial diff
+# default_effort = "medium"   # a default the lead may lower to low for a small low-risk diff
 # prefer_other_provider = true
 # auto_repair = true   # one automatic retry when the review, ship record or requirement results are refused
 # independent_acceptance = false   # true: refuse intent acceptance with no vision model apart from every builder

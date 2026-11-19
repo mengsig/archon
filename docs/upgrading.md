@@ -36,18 +36,28 @@ off ([configuration](configuration.md)). The orchestrator and every
 delegating lead size each effort by one rubric, `low` included; a reviewer's
 effort, from `[review] default_effort` (now `medium`) or a `<stage>.review`
 plan, is a default the lead may lower for a small, low-risk diff rather than a
-floor; a stage the plan leaves out takes its own effort rather than the
-pipeline tier's; and the built-in stage nudges are served worded by the
-rubric. A config that already set `effort_sizing = true` sees no change.
+floor; a stage the plan leaves out, or that a knob or a steer inserts, takes
+its own effort within the policy's cap rather than the pipeline tier's or the
+first stage's; and the built-in stage nudges are served worded by the rubric.
+A config that already set `effort_sizing = true` gets 1.6.4's rubric too:
+reviews of small low-risk diffs move to `low`, and inserted stages and the
+default `[review] default_effort` change as above.
 
 To keep 1.6.3's effort rules, set `effort_sizing = false` under the global
 `[models]` and restart archond; new spawns then get exactly what 1.6.3 issued.
+A running orchestrator keeps the prompt it was created with until
+`archon orchestrator restart`; archond refreshes it by itself only after an
+upgrade to another build. A repository config may still say `effort_sizing =
+false`, which 1.6.3 accepted, but it changes nothing; `true` there is refused.
 Each spawn records the rule it was issued, so in-flight spawns keep theirs
 across the switch: a lead spawned before it, and one resumed, woken or
 replayed after the restart, is held to its own rule, and a reviewer its rule
-allows is never cancelled. A spawn stored by 1.6.3 records no rule; archond
-reads it from that spawn's contract, and where the contract tells nothing it
-cancels no reviewer for its effort. Nothing here migrates the store, but going
+allows is never cancelled. Each spawn records the reviewers its contract
+named as well, and the watchdog holds a lead's reviewers to those, not to the
+item's plan as edited since. A spawn stored by 1.6.3 records neither: archond
+reads its rule from that spawn's own reviewer and delegation rule lines, never
+text the contract quotes, and where they tell nothing it cancels no reviewer
+for its effort; its reviewers are held to the item's plan as 1.6.3 held them. Nothing here migrates the store, but going
 back to a 1.6.3 binary is not supported once any release's store migration has
 run: use the switch instead.
 

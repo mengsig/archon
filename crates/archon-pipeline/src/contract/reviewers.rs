@@ -408,7 +408,8 @@ mod tests {
             "{sized}"
         );
         assert!(
-            sized.contains("`low` for a trivial diff") && sized.contains(super::super::REASON_RULE)
+            sized.contains("`low` for a trivial or small low-risk diff")
+                && sized.contains(super::super::REASON_RULE)
         );
         assert!(
             !sized.contains("medium or higher"),

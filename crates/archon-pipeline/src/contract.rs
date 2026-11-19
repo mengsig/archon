@@ -605,10 +605,11 @@ pub(crate) fn unnamed_reviewer_effort(floor: Effort, cap: Option<Effort>) -> Str
     )
 }
 
-/// The rubric's efforts for a review, cheapest first, with the diff each fits.
+/// The rubric's efforts for a review, cheapest first, with the diff each fits:
+/// [`EFFORT_RUBRIC`]'s reviews, level for level.
 const REVIEW_EFFORTS: [(Effort, &str); 4] = [
-    (Effort::Low, "for a trivial diff"),
-    (Effort::Medium, "for a small or low-risk diff"),
+    (Effort::Low, "for a trivial or small low-risk diff"),
+    (Effort::Medium, "for an ordinary diff"),
     (Effort::High, "for a risky diff or shared code"),
     (Effort::XHigh, "for concurrency or security analysis"),
 ];
@@ -1866,7 +1867,7 @@ mod tests {
         let capped = ModelPolicy::from_lists(&[], &[], Some(archon_core::model::Effort::Medium));
         let rules = reviewer_model_rules(Some(&named), &own, &capped, true);
         assert!(rules.contains("opus at effort medium; claude-code/haiku at effort low."));
-        assert!(rules.contains("`medium` for a small or low-risk diff; never above medium"));
+        assert!(rules.contains("`medium` for an ordinary diff; never above medium"));
         assert!(
             !rules.contains("x_high"),
             "the cap rules x_high out: {rules}"
@@ -1946,8 +1947,8 @@ mod tests {
         assert_eq!(
             open,
             "That effort is the default, for a diff the rubric leaves open; otherwise the \
-             rubric decides: `low` for a trivial diff, `medium` for a small or low-risk diff, \
-             `high` for a risky diff or shared code, `x_high` for concurrency or security \
+             rubric decides: `low` for a trivial or small low-risk diff, `medium` for an \
+             ordinary diff, `high` for a risky diff or shared code, `x_high` for concurrency or security \
              analysis. This replaces any \
              effort floor the stage prompt names. Off the default, lower or higher, state the \
              reason in one line in your result."
@@ -1958,12 +1959,13 @@ mod tests {
         assert!(!below_max.contains("`max`"), "{below_max}");
         let capped = reviewer_effort_rule(Some(Medium));
         assert!(
-            capped.contains("`medium` for a small or low-risk diff; never above medium"),
+            capped.contains("`medium` for an ordinary diff; never above medium"),
             "{capped}"
         );
         assert!(!capped.contains("`high`"), "{capped}");
         assert!(
-            reviewer_effort_rule(Some(Low)).contains("`low` for a trivial diff; never above low")
+            reviewer_effort_rule(Some(Low))
+                .contains("`low` for a trivial or small low-risk diff; never above low")
         );
         let choice = |effort| ModelChoice {
             model: "codex/m".parse().unwrap(),
@@ -1976,7 +1978,10 @@ mod tests {
             assert!(rules.contains(&format!(
                 "codex/m at effort {effort}. That effort is the default"
             )));
-            assert!(rules.contains("`low` for a trivial diff"), "{rules}");
+            assert!(
+                rules.contains("`low` for a trivial or small low-risk diff"),
+                "{rules}"
+            );
             assert!(rules.contains(REASON_RULE), "{rules}");
             assert!(!rules.contains(&format!("{effort} or higher")), "{rules}");
         }

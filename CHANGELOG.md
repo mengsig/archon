@@ -25,6 +25,13 @@
 
 ### Changed
 
+- Pipeline validation refuses a stage whose id is `budget`, `ship`,
+  `recovery` or `intent-acceptance`: the ids archond fails runs under for its
+  own stops, which a stage of the same id would blur with its own failure.
+  The refusal names the reserved ids and a rename. A `ship` stage of kind
+  `ship`, the pipeline's own ship agent, keeps its id. `archon doctor` lists
+  each user pipeline that does not load, with its error, and a pipeline that
+  does not load is reported by `archon pipelines` as a problem.
 - A completed stage whose delivery record is broken gets one repair turn
   before the run fails. A record is broken when the result has no
   `structured`, or names no reviewer although a review is owed. The stage is
@@ -96,6 +103,12 @@
   delegation links for the orchestrator's helpers too.
 
 ### Upgrading
+
+A pipeline with a stage named `budget`, `ship`, `recovery` or
+`intent-acceptance` no longer loads, unless the stage is a `ship` agent of kind
+`ship`. Rename the stage (for example `budget` to `budget-stage`), and rename
+its `model_plan` key and any `[pipeline.review]` or `[pipeline.ship]` naming
+it, as `archon doctor` reports. The pipeline's name is unavailable until then.
 
 Items stored by 1.6.3 or earlier have no origins. Each of their fields reads
 as `legacy_unknown` and is treated as a pin; nothing is backfilled. Stored

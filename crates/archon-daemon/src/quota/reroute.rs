@@ -117,17 +117,62 @@ pub(crate) fn reroute_spawns(
     Ok(Reserve::Go)
 }
 
-/// One stage slot a reroute moved from model `from` to model `to`.
+/// One stage slot a reroute moved from model `from` to model `to`; `dropped`
+/// says why when the model catalog no longer offers `from`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Moved {
     stage: String,
     from: ModelRef,
     to: ModelRef,
+    dropped: Option<String>,
+}
+
+impl Moved {
+    fn same_swap(&self, other: &Moved) -> bool {
+        self.stage == other.stage && self.from == other.from && self.to == other.to
+    }
+}
+
+/// The moves from the plan a catalog repair `replaced` to the plan as it is
+/// `now`, in the slots that repair changed (to `repaired`): the catalog
+/// dropped their model, whatever tier or quota moved them further.
+pub(crate) fn catalog_moves(
+    (replaced, repaired): (&ModelPlan, &ModelPlan),
+    now: &ModelPlan,
+    catalog: &ModelCatalog,
+) -> Vec<Moved> {
+    assert!(
+        catalog.not_ready_reason().is_none(),
+        "only a ready catalog repairs a plan"
+    );
+    let by_repair = plan_moves(replaced, repaired);
+    let mut moves = plan_moves(replaced, now);
+    moves.retain(|m| (by_repair.iter()).any(|r| r.stage == m.stage && r.from == m.from));
+    for moved in &mut moves {
+        moved.dropped = Some(dropped_reason(catalog, &moved.from));
+    }
+    assert!(
+        moves.iter().all(|m| m.dropped.is_some() && m.from != m.to),
+        "each says why its model was dropped"
+    );
+    moves
+}
+
+/// Why `catalog` no longer offers `model` to a stage the daemon chose it for.
+fn dropped_reason(catalog: &ModelCatalog, model: &ModelRef) -> String {
+    if catalog.is_retired(model) {
+        return format!("{model} is retired");
+    }
+    if let Some(successor) = catalog.superseded_by(model) {
+        return format!("{model} is superseded by {successor}");
+    }
+    format!("the model catalog no longer lists {model}")
 }
 
 /// Note on `item`, and post to its feed, every model its `pending` spawns
 /// moved to and every choice of its stored plan that differs from `before`;
-/// nothing when no model moved. The caller stores `item`.
+/// nothing when no model moved. A move among `pending` keeps its own reason
+/// over the same swap read from the plan. The caller stores `item`.
 pub(crate) fn record_moves(
     ctx: &DaemonContext,
     store: &mut Store,
@@ -157,11 +202,14 @@ pub(crate) fn record_moves(
 fn distinct_moves(pending: &[Moved], followed: &[Moved]) -> Vec<Moved> {
     let mut moves = pending.to_vec();
     for moved in followed {
-        if !moves.contains(moved) {
+        if !moves.iter().any(|m| m.same_swap(moved)) {
             moves.push(moved.clone());
         }
     }
-    debug_assert!(followed.iter().all(|m| moves.contains(m)), "none dropped");
+    debug_assert!(
+        (followed.iter()).all(|f| moves.iter().any(|m| m.same_swap(f))),
+        "none dropped"
+    );
     assert!(
         moves.iter().all(|m| m.from != m.to),
         "a move changes the model"
@@ -169,11 +217,20 @@ fn distinct_moves(pending: &[Moved], followed: &[Moved]) -> Vec<Moved> {
     moves
 }
 
-/// Why `first` of a reroute's moves moved: it left a provider out of quota,
-/// moved onto the item's `held` provider, or its tier resolves elsewhere now.
+/// Why `first` of a reroute's moves moved: the catalog dropped its model, it
+/// left a provider out of quota, moved onto the item's `held` provider, or
+/// its tier resolves elsewhere now.
 fn move_reason(first: &Moved, held: Option<&str>, view: Option<&QuotaView>) -> String {
     let (from, to) = (first.from.provider.as_str(), first.to.provider.as_str());
     let scope = format!("stage {}", first.stage);
+    if let Some(dropped) = &first.dropped {
+        let reason = format!(
+            "{scope} moved from {} to {}: {dropped}",
+            first.from, first.to
+        );
+        debug_assert!(!reason.contains('\n'), "one line");
+        return reason;
+    }
     if let Some(note) = switch_note((Some(from), Some(to)), view, &scope) {
         let (_, reason) = note
             .split_once(": ")
@@ -192,18 +249,26 @@ fn move_reason(first: &Moved, held: Option<&str>, view: Option<&QuotaView>) -> S
     reason
 }
 
-/// Every model `moves` swapped, by stage, old and new: one clause each.
+/// Every model `moves` swapped, by stage, old and new: one clause each. A
+/// later move the catalog made says so, as the reason before the list tells
+/// of the first move alone.
 fn swap_list(moves: &[Moved]) -> String {
     assert!(!moves.is_empty(), "a list is made only for a move");
     let swaps: Vec<String> = moves
         .iter()
-        .map(|m| {
-            format!(
+        .enumerate()
+        .map(|(index, m)| {
+            let swap = format!(
                 "stage {} now runs on {} instead of {}",
                 m.stage, m.to, m.from
-            )
+            );
+            match m.dropped.as_ref().filter(|_| index > 0) {
+                Some(dropped) => format!("{swap} ({dropped})"),
+                None => swap,
+            }
         })
         .collect();
+    assert_eq!(swaps.len(), moves.len(), "one clause a move");
     swaps.join("; ")
 }
 
@@ -249,6 +314,7 @@ fn plan_moves(before: &ModelPlan, after: &ModelPlan) -> Vec<Moved> {
             stage: stage.clone(),
             from: was.model.clone(),
             to: now.model.clone(),
+            dropped: None,
         }));
     }
     moved
@@ -402,6 +468,7 @@ fn move_plans(
             stage: plan.stage_id.clone(),
             from,
             to: plan.choice.model.clone(),
+            dropped: None,
         });
     }
     moved
@@ -452,6 +519,7 @@ mod tests {
             stage: stage.into(),
             from: from.parse().unwrap(),
             to: to.parse().unwrap(),
+            dropped: None,
         }
     }
 
@@ -471,6 +539,73 @@ mod tests {
         );
         assert_eq!(moves[1], moved("review", "a/z", "b/w"));
         assert_eq!(distinct_moves(&[], &followed[2..]), followed[2..]);
+    }
+
+    fn plan(choices: &[(&str, &[&str])]) -> ModelPlan {
+        let choice = |model: &&str| {
+            let effort = archon_core::model::Effort::Medium;
+            archon_core::model::ModelChoice::pinned(model.parse().unwrap(), effort)
+        };
+        let entries =
+            (choices.iter()).map(|(k, m)| ((*k).to_owned(), m.iter().map(choice).collect()));
+        ModelPlan(entries.collect())
+    }
+
+    /// Only the slots the repair changed move for the catalog's reason, from
+    /// the model it replaced to the one that runs, whatever came between.
+    #[test]
+    fn a_catalog_move_is_a_slot_the_repair_changed_with_why_its_model_was_dropped() {
+        let listed = archon_core::model_tier::CatalogModel {
+            model: "a/new".parse().unwrap(),
+            tier: None,
+            is_default: false,
+        };
+        let mut catalog = ModelCatalog::new(vec![listed]);
+        catalog.add_retired("a/old".parse().unwrap(), None);
+        catalog.add_superseded("a/aging".parse().unwrap(), "a/new".parse().unwrap());
+        let stages: [&str; 4] = ["build", "check", "review", "ship"];
+        let of = |models: [&[&str]; 4]| plan(&[0, 1, 2, 3].map(|i| (stages[i], models[i])));
+        let replaced = of([&["a/old"], &["a/gone"], &["a/aging", "b/kept"], &["b/tier"]]);
+        let repaired = of([&["a/mid"], &["a/next"], &["a/new", "b/kept"], &["b/tier"]]);
+        let now = of([&["a/last"], &["a/next"], &["a/new", "b/kept"], &["b/moved"]]);
+
+        let moves = catalog_moves((&replaced, &repaired), &now, &catalog);
+        let told: Vec<_> = (moves.iter())
+            .map(|m| {
+                (
+                    m.stage.as_str(),
+                    m.to.to_string(),
+                    m.dropped.clone().unwrap(),
+                )
+            })
+            .collect();
+        let expected = [
+            ("build", "a/last", "a/old is retired"),
+            (
+                "check",
+                "a/next",
+                "the model catalog no longer lists a/gone",
+            ),
+            ("review", "a/new", "a/aging is superseded by a/new"),
+        ];
+        assert_eq!(
+            told,
+            expected.map(|(s, to, why)| (s, to.to_owned(), why.to_owned()))
+        );
+        assert!(catalog_moves((&repaired, &repaired), &now, &catalog).is_empty());
+
+        let all = distinct_moves(&moves, &plan_moves(&replaced, &now));
+        assert_eq!(all.len(), 4, "each swap once: {all:?}");
+        assert_eq!((all[3].stage.as_str(), &all[3].dropped), ("ship", &None));
+        let reason = move_reason(&all[0], Some("a"), None);
+        assert_eq!(
+            reason,
+            "stage build moved from a/old to a/last: a/old is retired"
+        );
+        let swaps = swap_list(&all);
+        assert!(swaps.starts_with("stage build now runs on a/last instead of a/old; "));
+        assert!(swaps.contains("instead of a/gone (the model catalog no longer lists a/gone)"));
+        assert!(swaps.ends_with("stage ship now runs on b/moved instead of b/tier"));
     }
 
     #[test]

@@ -926,8 +926,26 @@ async fn a_queued_pinned_tier_resolves_again_on_another_weighted_provider() {
     }
 }
 
+/// The one "changed models" notice of `item`, which its `provider_switch`
+/// note repeats after the minute it was written.
+async fn changed_models(h: &Harness, item: &QueueItem) -> String {
+    let notices = h
+        .notices(archon_core::notify::NotificationKind::Progress)
+        .await;
+    let swapped: Vec<&String> = notices
+        .iter()
+        .filter(|n| n.contains("changed models"))
+        .collect();
+    assert_eq!(swapped.len(), 1, "one notice: {notices:?}");
+    let (_, told) = swapped[0].split_once("changed models: ").unwrap();
+    let switch = h.item(&item.id).await.provider_switch;
+    let switch = switch.expect("the move is noted on the item");
+    assert!(switch.ends_with(told), "{switch} repeats {told}");
+    told.to_owned()
+}
+
 /// The move is told as any other at dispatch, though the catalog repair of
-/// the claimed item stored the new model first.
+/// the claimed item stored the new model first, and for the catalog's reason.
 #[tokio::test]
 async fn a_tier_the_catalog_repair_moved_is_still_noted_at_dispatch() {
     for source in PINS {
@@ -935,20 +953,176 @@ async fn a_tier_the_catalog_repair_moved_is_still_noted_at_dispatch() {
         let item = pinned_tier_left_codex(&h, source).await;
         h.dispatch().await;
 
-        let notices = h
-            .notices(archon_core::notify::NotificationKind::Progress)
-            .await;
-        let swapped: Vec<&String> = notices
-            .iter()
-            .filter(|n| n.contains("changed models"))
-            .collect();
-        assert_eq!(swapped.len(), 1, "{source:?}: one notice: {notices:?}");
-        let moved = "stage implement now runs on claude-code/sonnet instead of codex/sol";
-        assert!(swapped[0].contains(moved), "{source:?}: {}", swapped[0]);
-        let switch = h.item(&item.id).await.provider_switch;
-        let switch = switch.unwrap_or_else(|| panic!("{source:?}: the move is noted"));
-        assert!(switch.contains(moved), "{source:?}: {switch}");
+        let told = changed_models(&h, &item).await;
+        let moved = "stage implement moved from codex/sol to claude-code/sonnet: \
+            the model catalog no longer lists codex/sol; \
+            stage implement now runs on claude-code/sonnet instead of codex/sol";
+        assert!(told.starts_with(moved), "{source:?}: {told}");
+        assert!(!told.contains("tier resolves"), "{source:?}: {told}");
+        assert!(!told.contains("item's provider"), "{source:?}: {told}");
     }
+}
+
+/// `catalog()` and a new model `next` of `old`'s tier, as Aether lists them
+/// and archond holds them: `old` superseded by `next` when `superseded`,
+/// else `next` the default of its tier.
+async fn list_beside(h: &Harness, (old, next): (&str, &str), superseded: bool) {
+    use serde_json::json;
+    let old: archon_core::model::ModelRef = old.parse().unwrap();
+    let next: archon_core::model::ModelRef = next.parse().unwrap();
+    assert_eq!(old.provider, next.provider, "a successor of its provider");
+    let mut held = h.ctx.store.lock().await.model_catalog();
+    let mut listed = held.models().to_vec();
+    let tier = listed.iter().find(|e| e.model == old).expect("listed").tier;
+    listed.push(CatalogModel {
+        model: next.clone(),
+        tier,
+        is_default: !superseded,
+    });
+    let rows: Vec<_> = (listed.iter())
+        .map(|e| {
+            let successor = held.superseded_by(&e.model).map(|m| &m.model);
+            let successor = successor.or((superseded && e.model == old).then_some(&next.model));
+            json!({
+                "model": e.model, "configured": true, "tier": e.tier,
+                "is_default": e.is_default, "superseded_by": successor,
+            })
+        })
+        .collect();
+    let reply = archon_aether::fake::Scripted::reply("models", json!(rows));
+    h.catalog_server.set_default("list_models", reply);
+    let was: Vec<_> = (held.models().iter())
+        .filter_map(|e| Some((e.model.clone(), held.superseded_by(&e.model)?.clone())))
+        .collect();
+    held = ModelCatalog::new(listed);
+    for (model, successor) in was {
+        held.add_superseded(model, successor);
+    }
+    if superseded {
+        held.add_superseded(old, next);
+    }
+    h.ctx.store.lock().await.set_model_catalog(held);
+}
+
+/// No weights and no exploring: a stage a plan leaves out is filled with the
+/// orchestrator's model, which `catalog()` lists without a tier.
+fn untiered_fallback() -> Config {
+    let mut config = Config::default();
+    config.orchestrator.model = common::MODEL.parse().unwrap();
+    config.learning.explore_rate = 0.0;
+    config
+}
+
+/// A queued item whose `fallback` stage the plan left to the daemon, which
+/// filled it with the orchestrator's untiered model; answers that model.
+async fn with_untiered_fallback(h: &Harness, fallback: &str) -> (QueueItem, String) {
+    let mut plan = serde_json::to_value(tier_plan()).unwrap();
+    plan.as_object_mut().unwrap().remove(fallback).unwrap();
+    let plan = serde_json::from_value(plan).unwrap();
+    let item = enqueue(h, ROUTED, "a stage left to the daemon", plan).await;
+    let filled = &item.model_plan.0[fallback][0];
+    assert!(filled.tier.is_none(), "an untiered fallback: {filled:?}");
+    let shown = crate::plan_origins::shown(h, &item).await;
+    let origin = &shown[fallback][0].model;
+    let filled_by = (origin.source, origin.by);
+    assert_eq!(filled_by, (PlanSource::Fallback, Authority::Daemon));
+    assert_eq!(filled.model.to_string(), common::MODEL);
+    (item.clone(), filled.model.to_string())
+}
+
+/// An untiered fallback the catalog superseded moves for that reason: the
+/// note never says a tier resolved, as the stage has none.
+#[tokio::test]
+async fn a_superseded_fallback_the_repair_moved_is_noted_as_the_catalog_s_move() {
+    let h = harness(untiered_fallback()).await;
+    let (item, old) = with_untiered_fallback(&h, "implement").await;
+    let next = format!("{old}-next");
+    list_beside(&h, (&old, &next), true).await;
+    h.dispatch().await;
+
+    assert_eq!(spawned_on(&h, &item, "implement").await, [next.as_str()]);
+    let told = changed_models(&h, &item).await;
+    let moved = format!(
+        "stage implement moved from {old} to {next}: {old} is superseded by {next}; \
+         stage implement now runs on {next} instead of {old}"
+    );
+    assert_eq!(told, moved, "the only move, for the catalog's reason");
+}
+
+/// A plan without any tier is repaired and noted too, though dispatch has no
+/// tier of it to resolve.
+#[tokio::test]
+async fn a_repair_of_a_plan_without_tiers_is_noted_at_dispatch() {
+    let h = harness(untiered_fallback()).await;
+    let pins = serde_json::json!({
+        "review": [{"model": "claude-code/opus"}, {"model": "claude-code/sonnet"}],
+        "ship": [{"model": "claude-code/haiku"}],
+    });
+    let pins = serde_json::from_value(pins).unwrap();
+    let item = enqueue(&h, ROUTED, "no tier at all", pins).await;
+    let choices: Vec<_> = item.model_plan.0.values().flatten().collect();
+    assert!(choices.iter().all(|c| c.tier.is_none()), "{choices:?}");
+    let old = item.model_plan.0["implement"][0].model.to_string();
+    let next = format!("{old}-next");
+    list_beside(&h, (&old, &next), true).await;
+    h.dispatch().await;
+
+    assert_eq!(spawned_on(&h, &item, "implement").await, [next.as_str()]);
+    let told = changed_models(&h, &item).await;
+    let moved = format!(
+        "stage implement moved from {old} to {next}: {old} is superseded by {next}; \
+         stage implement now runs on {next} instead of {old}"
+    );
+    assert_eq!(told, moved, "the only move, for the catalog's reason");
+}
+
+/// A tier that resolves to another model at dispatch, with no catalog repair,
+/// is told as a tier's move, as it was before the catalog was checked.
+#[tokio::test]
+async fn a_tier_dispatch_moved_with_no_repair_keeps_the_tier_s_reason() {
+    let h = harness(Config::default()).await;
+    let item = enqueue(&h, ROUTED, "a tier that moves", tier_plan()).await;
+    let old = item.model_plan.0["implement"][0].model.to_string();
+    let next = format!("{old}-next");
+    list_beside(&h, (&old, &next), false).await;
+    h.dispatch().await;
+
+    assert_eq!(spawned_on(&h, &item, "implement").await, [next.as_str()]);
+    let told = changed_models(&h, &item).await;
+    let moved = format!(
+        "stage implement moved from {old} to {next}: its tier resolves to {next} now; \
+         stage implement now runs on {next} instead of {old}"
+    );
+    assert_eq!(told, moved, "the only move, for the tier's reason");
+}
+
+/// One dispatch that moves a tier and repairs an untiered fallback tells the
+/// catalog's move first, for its own reason, and gives the tier's move none
+/// of the catalog's.
+#[tokio::test]
+async fn a_catalog_repair_beside_a_tier_move_is_told_first_for_its_own_reason() {
+    let h = harness(untiered_fallback()).await;
+    let (item, fallback) = with_untiered_fallback(&h, "ship").await;
+    let old = item.model_plan.0["implement"][0].model.to_string();
+    let (next, successor) = (format!("{old}-next"), format!("{fallback}-next"));
+    list_beside(&h, (&old, &next), false).await;
+    list_beside(&h, (&fallback, &successor), true).await;
+    h.dispatch().await;
+
+    assert_eq!(spawned_on(&h, &item, "implement").await, [next.as_str()]);
+    let told = changed_models(&h, &item).await;
+    let moved = format!(
+        "stage ship moved from {fallback} to {successor}: \
+         {fallback} is superseded by {successor}; \
+         stage ship now runs on {successor} instead of {fallback}; \
+         stage implement now runs on {next} instead of {old}"
+    );
+    assert_eq!(
+        told, moved,
+        "the catalog's move first, the tier's unexplained"
+    );
+    let stored = h.item(&item.id).await.model_plan;
+    assert_eq!(stored.0["ship"][0].model.to_string(), successor);
 }
 
 /// A retry keeping such a plan is accepted on the other weighted provider.

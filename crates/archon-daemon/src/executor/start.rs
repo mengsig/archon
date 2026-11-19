@@ -270,10 +270,60 @@ fn notice_baseline<'a>(replaced: Option<&'a ModelPlan>, stored: &'a ModelPlan) -
     replaced.filter(same_shape).unwrap_or(stored)
 }
 
+/// Note on `stored`, and in its feed, each model that moved since the plan a
+/// catalog repair `replaced`, or else since the `repaired` plan dispatch read:
+/// a slot that repair changed moved for the catalog's reason, never a tier's.
+fn note_moves(
+    ctx: &DaemonContext,
+    store: &mut archon_queue::Store,
+    stored: &mut QueueItem,
+    (replaced, repaired): (Option<&ModelPlan>, &ModelPlan),
+    (catalog, quota): (
+        &archon_core::model_tier::ModelCatalog,
+        Option<&archon_core::quota::QuotaView>,
+    ),
+) -> Result<(), ArchonError> {
+    let before = notice_baseline(replaced, repaired);
+    let now = stored.model_plan.plan();
+    let dropped = crate::quota::catalog_moves((before, repaired), now, catalog);
+    assert!(
+        replaced.is_some() || dropped.is_empty(),
+        "only a catalog repair gives a move the catalog's reason"
+    );
+    crate::quota::record_moves(ctx, store, stored, (&dropped, before), quota)
+}
+
+/// `item`, whose plan names no tier for dispatch to resolve, with the moves
+/// the catalog repair made from the plan it `replaced` noted and stored.
+async fn note_untiered_repair(
+    ctx: &DaemonContext,
+    item: &QueueItem,
+    replaced: &ModelPlan,
+    catalog: &archon_core::model_tier::ModelCatalog,
+) -> Result<QueueItem, ArchonError> {
+    let mut store = ctx.store.lock().await;
+    let mut stored = store.item(&item.id)?;
+    assert_eq!(stored.id, item.id, "the dispatched item's own record");
+    let repaired = stored.model_plan.plan().clone();
+    let noted = stored.provider_switch.clone();
+    let plans = (Some(replaced), &repaired);
+    note_moves(ctx, &mut store, &mut stored, plans, (catalog, None))?;
+    assert_eq!(stored.model_plan.plan(), &repaired, "a note moves no model");
+    if stored.provider_switch != noted {
+        stored.updated_at = archon_core::now();
+        store.update_item(&stored)?;
+    }
+    Ok(QueueItem {
+        provider_switch: stored.provider_switch,
+        ..item.clone()
+    })
+}
+
 /// `item` with each tiered choice resolved again from Aether's catalog as it
 /// is now, for `spec`'s floors and routed to the provider the item holds, and
 /// stored so a recovered run keeps it. A model that moved, since the plan a
-/// catalog repair `replaced` too, is noted on the item and in its feed.
+/// catalog repair `replaced` too, is noted on the item and in its feed: a
+/// move that repair made as the catalog's, never as a tier's.
 async fn tiers_at_dispatch(
     ctx: &DaemonContext,
     env: &RepoEnv,
@@ -291,7 +341,10 @@ async fn tiers_at_dispatch(
         return Err(ArchonError::Unavailable(reason.to_owned()));
     }
     if !tiered {
-        return Ok(item.clone());
+        return match replaced {
+            Some(replaced) => note_untiered_repair(ctx, item, replaced, catalog).await,
+            None => Ok(item.clone()),
+        };
     }
     let policy = env.policy_in(&ctx.config, &catalog.aliases());
     let weights = env.provider_weights(&ctx.config);
@@ -327,9 +380,14 @@ async fn tiers_at_dispatch(
     if let Some(note) = crate::quota::switch_note(moved, quota.as_ref(), "its run") {
         stored.provider_switch = Some(note);
     }
-    let before = notice_baseline(replaced.as_ref(), unchanged.model_plan.plan());
-    let unstarted = (&[][..], before);
-    crate::quota::record_moves(ctx, &mut store, &mut stored, unstarted, quota.as_ref())?;
+    let plans = (replaced.as_ref(), unchanged.model_plan.plan());
+    note_moves(
+        ctx,
+        &mut store,
+        &mut stored,
+        plans,
+        (catalog, quota.as_ref()),
+    )?;
     if stored != unchanged {
         tracing::info!(item = %item.id, provider = ?held, "re-resolved tiered model choices at dispatch");
         stored.updated_at = archon_core::now();

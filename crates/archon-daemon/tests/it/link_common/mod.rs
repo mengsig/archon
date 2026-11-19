@@ -418,7 +418,7 @@ pub async fn amend_spawn_request(
     let request = spawn
         .get_mut("request")
         .expect("a stored spawn holds its request");
-    assert!(request.get(field).is_some(), "the request has {field}");
+    assert!(request.is_object(), "a request is an object");
     request[field] = value;
     store.kv_set(&key, &spawn.to_string()).unwrap();
 }

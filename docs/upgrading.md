@@ -58,7 +58,8 @@ item's plan as edited since. A spawn stored by 1.6.3 records neither: archond
 reads its rule and its reviewers from that spawn's own reviewer and delegation
 rule lines, never text the contract quotes. Where they tell nothing, it
 cancels no reviewer for its effort, and only the model policy bounds the
-reviewer's model. Nothing here migrates the store, but going
+reviewer's model. A model policy change the operator makes (`max_effort`,
+allow or deny lists) still applies to running leads. Nothing here migrates the store, but going
 back to a 1.6.3 binary is not supported once any release's store migration has
 run: use the switch instead.
 

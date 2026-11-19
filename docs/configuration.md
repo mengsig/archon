@@ -101,8 +101,9 @@ woken or replayed after the restart, is held to its own rule, never the one in
 force now, and to the reviewers its contract named, not the item's plan as
 edited since. A spawn stored by 1.6.3 is read by its own reviewer and
 delegation rule lines, reviewers included; where they tell nothing, no
-reviewer is cancelled for its effort or held to a plan's models. `max_effort` caps every
-effort either way. The default cap is `x_high`; set global
+reviewer is cancelled for its effort or held to a plan's models. A model
+policy change the operator makes (`max_effort`, allow or deny lists) still
+applies to running leads. `max_effort` caps every effort either way. The default cap is `x_high`; set global
 `[models] max_effort = "max"` explicitly to allow `max`.
 A repository may only narrow the global cap.
 

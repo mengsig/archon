@@ -459,7 +459,12 @@ mod tests {
         let profile = ReviewConfig::default();
         let only_fast = ModelPolicy::from_lists(&["third/fast".parse().unwrap()], &[], None);
         let capped = ModelPolicy::from_lists(&[], &[], Some(Effort::Medium));
-        let empty = ModelCatalog::new(Vec::new());
+        // A rule names only a model the catalog lists: the lead's own, untiered.
+        let untiered = ModelCatalog::new(vec![CatalogModel {
+            model: own.clone(),
+            tier: None,
+            is_default: false,
+        }]);
         let forms = [
             (
                 ModelPolicy::default(),
@@ -470,7 +475,7 @@ mod tests {
             (capped, catalog(), "and effort medium."),
             (
                 ModelPolicy::default(),
-                empty,
+                untiered,
                 "Archon's cached catalog places no",
             ),
         ];

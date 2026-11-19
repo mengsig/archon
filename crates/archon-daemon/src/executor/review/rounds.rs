@@ -570,11 +570,15 @@ pub(crate) fn without_continuations(brief: &str) -> String {
 /// Refuse an amendment `text` that holds a continuation note's opening words, which
 /// [`without_continuations`] would later take for Archon's own and drop.
 pub(crate) fn check_amendment(text: &str) -> Result<(), ArchonError> {
-    let mark = CONTINUES.split(']').next().expect("the mark leads");
-    assert!(mark.starts_with('[') && mark.len() > 1, "a bracketed mark");
+    let end = CONTINUES.find(']').expect("the mark leads");
+    let mark = &CONTINUES[..=end];
+    assert!(
+        mark.starts_with('[') && mark.ends_with(']'),
+        "a bracketed mark"
+    );
     if text.contains(mark) {
         return Err(ArchonError::Invalid(format!(
-            "brief_append may not contain `{mark}]`: Archon marks its own review-cap notes so"
+            "brief_append may not contain `{mark}`: Archon marks its own review-cap notes so"
         )));
     }
     Ok(())

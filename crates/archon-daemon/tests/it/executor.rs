@@ -4036,7 +4036,8 @@ async fn a_retry_after_the_review_cap_tells_the_new_lead_to_review_only_new_comm
     }
     let quoting = "ESCALATE: it failed 3 rounds, so Archon stopped it instead of another round";
     fail_the_run(&h, quoting).await;
-    let mine = "This run continues stage `build` with the docs kept";
+    let mine =
+        "This run continues stage `build` with the docs kept [Archon review-cap continuation";
     let again = retry_brief(&h, &item.id, false, Some(mine)).await;
     let mark = "[Archon review-cap continuation]";
     assert_eq!(again.matches(mark).count(), 1, "{again}");

@@ -50,6 +50,8 @@ pub const ORCHESTRATOR_EVENT_TYPES: &[&str] = &[
     "agent.restarted",
     // Its older context became a summary: the directives are stated again.
     "compaction.completed",
+    // The engine folded it (Claude Code): restated with the next wake.
+    "compaction.native",
 ];
 
 pub const FLEET_EVENT_TYPES: &[&str] = &[

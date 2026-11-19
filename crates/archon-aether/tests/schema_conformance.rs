@@ -58,6 +58,7 @@ fn variant_name(command: &Command) -> &'static str {
         Command::Interrupt { .. } => "interrupt",
         Command::Wake { .. } => "wake",
         Command::Restart { .. } => "restart",
+        Command::Compact { .. } => "compact",
         Command::Archive { .. } => "archive",
         Command::Pause { .. } => "pause",
         Command::Resume { .. } => "resume",
@@ -111,6 +112,7 @@ fn full_create_agent() -> CreateAgent {
             long_lived: false,
             leaf: true,
             delegation_policy: None,
+            compaction_tokens: None,
         }),
         approval: Some(ApprovalPolicy::none()),
         run: Some(run()),
@@ -257,6 +259,7 @@ fn control_samples() -> Vec<Command> {
     vec![
         Command::Wake { agent: agent() },
         Command::Restart { agent: agent() },
+        Command::Compact { agent: agent() },
         Command::Archive {
             target: ArchiveTarget::Agent(agent()),
             archived: true,
@@ -454,7 +457,7 @@ fn every_command_archon_emits_matches_the_schema() {
     );
     assert_eq!(
         seen.len(),
-        30,
+        31,
         "every Command variant has a sample: {seen:?}"
     );
 }

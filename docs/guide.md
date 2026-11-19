@@ -138,7 +138,9 @@ work goes to Aether's memory.
 
 A running orchestrator keeps the prompt, tools and workspace it was created
 with, also across Aether's `restart`. Run `archon orchestrator restart` once
-after upgrading so that a new orchestrator starts with the current ones.
+after upgrading so that a new orchestrator starts with the current ones;
+until then `archon status` says `prompt outdated since upgrade` when the
+upgrade changed its prompt.
 
 Archon's tools that change something answer only the current orchestrator,
 and `archond` knows who is calling only when Aether names the agent behind
@@ -629,8 +631,14 @@ every outcome to the feed itself and wakes the orchestrator for:
   with a blocking finding) in one stage attempt: Archon stops the stage with an
   `ESCALATE:` failure that lists the open blocking findings, which ends the run,
   so the orchestrator reshapes the work or retries the item with a steer note;
-- a stage agent's message, a gate that opened, your answer to its question,
-  feedback on a report, a budget that was reached, a cancelled helper.
+- a stage agent's relay, escalation or question, a gate that opened, your
+  answer to its question, feedback on a report, a budget that was reached, a
+  cancelled helper.
+
+A stage's `info` message waits for the next wake, and wakes the
+orchestrator by itself only after 30 minutes and the usual coalescing
+window (`quiet_info = false` under `[orchestrator]` makes it wake as other
+messages do).
 
 A cancelled item waits. So does a routine success when you turn success
 wakes off, which saves a turn per item; the outcome is still posted to the

@@ -1128,7 +1128,10 @@ mod storage_tests {
         .unwrap();
         let text = orchestrator_text(&info);
         assert!(
-            text.ends_with("generation 7, created by 1.2.3; prompt outdated; 3 new lessons"),
+            text.ends_with(
+                "generation 7, created by 1.2.3; 3 new lessons; prompt outdated since upgrade; \
+                 run `archon orchestrator restart`"
+            ),
             "{text}"
         );
         info.freshness = None;

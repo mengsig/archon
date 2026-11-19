@@ -255,6 +255,9 @@ pub(crate) struct TierScope<'a> {
     pub prefer: &'a str,
     /// Set while `[models] provider_weights` routes tier-only choices.
     pub route: Option<ProviderRoute<'a>>,
+    /// `[models] effort_sizing`: an effort a request leaves out starts
+    /// within the policy's cap, where the sizer then decides it.
+    sized: bool,
 }
 
 impl<'a> TierScope<'a> {
@@ -264,7 +267,20 @@ impl<'a> TierScope<'a> {
             policy,
             prefer: &config.orchestrator.model.provider,
             route: None,
+            sized: config.models.effort_sizing(),
         }
+    }
+
+    /// The effort a request that names none starts `key` of `spec` at: the
+    /// stage's default, within the policy's cap while the sizer decides it.
+    /// With sizing off it is the default alone, refused over the cap (1.6.3).
+    fn unnamed_effort(&self, spec: &PipelineSpec, key: &str) -> Option<Effort> {
+        let default = spec.default_effort(key)?;
+        let cap = self.policy.max_effort.filter(|_| self.sized);
+        let effort = cap.map_or(default, |cap| default.min(cap));
+        assert!(effort <= default, "a cap only lowers the default");
+        assert!(self.sized || effort == default, "1.6.3 keeps the default");
+        Some(effort)
     }
 
     /// This scope with tier-only choices routed by `route`, when there is one.
@@ -641,7 +657,7 @@ pub(crate) fn resolve_tiers(
 ) -> Result<ModelPlan, ArchonError> {
     let stages = draft.0.len();
     let plan = draft.resolve(
-        |key| spec.default_effort(key),
+        |key| tiers.unnamed_effort(spec, key),
         |key, tier, provider| tiers.resolve((tier, spec.tier_floor(key, tier)), provider),
     )?;
     assert_eq!(plan.0.len(), stages, "every drafted key is resolved");

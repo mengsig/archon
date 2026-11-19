@@ -260,7 +260,8 @@ fn refresh_owner(
     let fallen = knobs::fill_static_stages(&base, &spec, writer.plan().clone(), fallback)?;
     writer.filled(fallen, (PlanSource::Fallback, PlanSource::Fallback));
     // No diff size: a refresh is sized from what it records itself.
-    item.model_plan = crate::sizing::finish((&ctx.config, &policy), &spec, None, writer);
+    let sizer = (&ctx.config, &policy);
+    item.model_plan = crate::sizing::finish(sizer, &spec, || Ok(None), writer)?;
     item.model_reasons = asked.model_reasons;
     item.stage_timeouts = refresh_timeouts(&ctx.config.limits, &spec, asked.stage_timeouts);
     for stage in &spec.file.stages {

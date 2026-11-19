@@ -6,12 +6,16 @@ use std::collections::BTreeSet;
 
 use archon_core::config::Config;
 use archon_core::effort_sizing::{self, StageFacts};
-use archon_core::model::{Effort, REVIEWERS_KEY_SUFFIX, WORKERS_KEY_SUFFIX};
+use archon_core::error::ArchonError;
+use archon_core::model::{Effort, ModelChoice, REVIEWERS_KEY_SUFFIX, WORKERS_KEY_SUFFIX};
 use archon_core::outcome::DiffSize;
-use archon_core::plan_origin::{EffortSizer, PlanWriter, PlannedPlan, Sizing};
+use archon_core::plan_origin::{
+    EffortSizer, PlanSource, PlanWriter, PlannedPlan, Sizing, SlotSizing,
+};
 use archon_core::policy::ModelPolicy;
 use archon_core::queue::QueueItem;
-use archon_pipeline::PipelineSpec;
+use archon_core::run::AttemptSizing;
+use archon_pipeline::{PipelineSpec, SpawnPlan};
 
 /// What plan key `key` of `spec` is sized from: its own stage's declared
 /// default effort and kind, never those of a choice it was filled from.
@@ -40,19 +44,34 @@ fn cap(config: &Config, policy: &ModelPolicy) -> Effort {
     effort_sizing::sizer_cap(policy.max_effort, config.models.sizer_max_effort())
 }
 
+/// The cap an effort the daemon sized is held to as a re-plan carries it:
+/// the sizer's while `[models] effort_sizing` is on, else the policy's alone.
+pub(crate) fn carried_cap(config: &Config, policy: &ModelPolicy) -> Option<Effort> {
+    match config.models.effort_sizing() {
+        true => Some(cap(config, policy)),
+        false => policy.max_effort,
+    }
+}
+
 /// The plan `writer` built for an item of `spec`. With `[models]
 /// effort_sizing` on, each key written here is recorded with its own stage's
 /// facts and sized as its item is stored; off, it stays as 1.6.3 fills it.
+/// `measured` reads the diff size of the item's last run, and is asked only
+/// for a plan sized for the first time.
 pub(crate) fn finish(
     (config, policy): (&Config, &ModelPolicy),
     spec: &PipelineSpec,
-    size: Option<DiffSize>,
+    measured: impl FnOnce() -> Result<Option<DiffSize>, ArchonError>,
     writer: PlanWriter,
-) -> PlannedPlan {
+) -> Result<PlannedPlan, ArchonError> {
     if !config.models.effort_sizing() {
         let policy_cap = policy.max_effort;
-        return writer.finish(Sizing::Off { policy_cap });
+        return Ok(writer.finish(Sizing::Off { policy_cap }));
     }
+    let size = match writer.sizes_first() {
+        true => measured()?,
+        false => None,
+    };
     let facts = |key: &str| stage_facts(spec, key);
     let sizer = EffortSizer {
         cap: cap(config, policy),
@@ -60,7 +79,8 @@ pub(crate) fn finish(
         facts: &facts,
     };
     assert!(policy.max_effort.is_none_or(|policy| sizer.cap <= policy));
-    writer.finish(Sizing::On(sizer))
+    assert_eq!(Some(sizer.cap), carried_cap(config, policy));
+    Ok(writer.finish(Sizing::On(sizer)))
 }
 
 /// What an item's history says when a steer sized its efforts again.
@@ -98,6 +118,68 @@ pub(crate) fn clip_to_policy(policy: &ModelPolicy, item: &mut QueueItem) -> bool
     let clipped = item.model_plan.clip_sized(&item.id, policy.max_effort, at);
     debug_assert!(item.model_plan.fault(&item.id).is_none());
     clipped
+}
+
+/// The effort `item`'s stored plan holds for slot `fan_index` of `stage`,
+/// with how the daemon sized it; `None` when it did not: a pin, or a key
+/// never sized.
+fn daemon_sized(item: &QueueItem, (stage, fan_index): (&str, u32)) -> Option<(Effort, SlotSizing)> {
+    let choices = item.model_plan.choices_for(stage)?;
+    let slot = (fan_index as usize).checked_rem(choices.len())?;
+    let sized = item.model_plan.slot_sizing(&item.id, stage, slot)?;
+    let by_daemon = matches!(
+        sized.effort_source,
+        PlanSource::Sizer | PlanSource::Escalation
+    );
+    by_daemon.then(|| (choices[slot].effort, sized))
+}
+
+/// The effort an agent of `slot` runs `choice` at: `high` for an `x_high`
+/// the daemon sized whose model moved to an engine that runs none. A pinned
+/// effort stays as 1.6.3 leaves it.
+pub(crate) fn engine_effort(item: &QueueItem, slot: (&str, u32), choice: &ModelChoice) -> Effort {
+    let runs = effort_sizing::supports_x_high(&choice.model);
+    if choice.effort != Effort::XHigh || runs || daemon_sized(item, slot).is_none() {
+        return choice.effort;
+    }
+    Effort::High
+}
+
+/// Spawns moved to another model after their plan was read (a quota reroute,
+/// the acceptance judge) are held to what the new engine runs.
+pub(crate) fn hold_to_engine(item: &QueueItem, plans: &mut [SpawnPlan]) {
+    for plan in plans.iter_mut() {
+        let slot = (plan.stage_id.as_str(), plan.fan_index);
+        plan.choice.effort = engine_effort(item, slot, &plan.choice);
+    }
+}
+
+/// How the effort `plan`'s slot runs at was chosen, read from the item's
+/// stored plan: nothing when the sizer never decided the stage's key. A slot
+/// the daemon sized that runs lower than its plan holds says why.
+pub(crate) fn attempt(item: &QueueItem, plan: &SpawnPlan) -> AttemptSizing {
+    let choices = item.model_plan.choices_for(&plan.stage_id);
+    let Some(choices) = choices.filter(|choices| !choices.is_empty()) else {
+        return AttemptSizing::default();
+    };
+    let slot = plan.fan_index as usize % choices.len();
+    let ran = plan.choice.effort;
+    if choices[slot].effort == ran {
+        let sized = item.model_plan.slot_sizing(&item.id, &plan.stage_id, slot);
+        return sized.map(Into::into).unwrap_or_default();
+    }
+    let lowered = daemon_sized(item, (&plan.stage_id, plan.fan_index));
+    let Some((planned, mut sized)) = lowered.filter(|(planned, _)| ran < *planned) else {
+        return AttemptSizing::default();
+    };
+    let engine = &plan.choice.model;
+    let why = match ran == Effort::High && !effort_sizing::supports_x_high(engine) {
+        true => format!("{} runs no more than high, so high", engine.provider),
+        false => format!("clipped from {planned} to the cap {ran}"),
+    };
+    sized.reason.push_str(&format!("; this attempt: {why}"));
+    assert!(ran < planned, "only a slot run lower says why");
+    sized.into()
 }
 
 #[cfg(test)]

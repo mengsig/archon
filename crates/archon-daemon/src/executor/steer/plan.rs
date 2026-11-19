@@ -94,7 +94,7 @@ fn no_stage(spec: &PipelineSpec, stage: &str) -> ArchonError {
 }
 
 /// A steer whose result no driver can run is the steer's mistake.
-fn not_runnable(error: ArchonError) -> ArchonError {
+pub(super) fn not_runnable(error: ArchonError) -> ArchonError {
     match error {
         ArchonError::Pipeline(why) | ArchonError::Invalid(why) => {
             ArchonError::Invalid(format!("the run could not continue with this steer: {why}"))
@@ -162,12 +162,7 @@ pub(super) async fn plan(
 /// amends its brief; a removed review changes its level): the stages not
 /// yet started are sized again, the started ones keep the effort they have.
 fn resize(ctx: &DaemonContext, policy: &ModelPolicy, change: &mut Change, at: &At<'_>) {
-    let ran = at.stages.iter().map(|stage| stage.stage_id.as_str());
-    let started: BTreeSet<String> = ran
-        .chain(at.run.state.live_stage())
-        .map(str::to_owned)
-        .collect();
-    assert!(!started.is_empty(), "a steered run is at a stage");
+    let started = started_stages(at.stages);
     let item = &mut change.blueprint.item;
     if crate::sizing::resize((&ctx.config, policy), item, &started) {
         change.what.push(crate::sizing::RESIZED.to_owned());
@@ -175,33 +170,12 @@ fn resize(ctx: &DaemonContext, policy: &ModelPolicy, change: &mut Change, at: &A
     }
 }
 
-/// `run` with the stages it has not started sized again from its item as
-/// stored now, checked like a steer. `None` when no effort moves.
-pub(super) async fn resized(
-    ctx: &DaemonContext,
-    policy: &ModelPolicy,
-    run: &PipelineRun,
-    stages: &[StageRun],
-) -> Result<Option<Change>, ArchonError> {
-    assert!(stages.iter().all(|stage| stage.run == run.id));
-    let Some(target) = run.state.live_stage() else {
-        return Ok(None);
-    };
-    let at = At {
-        run,
-        stages,
-        target,
-        delivering: false,
-    };
-    let mut change = Change::of(recover::blueprint(ctx, run).await?);
-    resize(ctx, policy, &mut change, &at);
-    if change.what.is_empty() {
-        return Ok(None);
-    }
-    let dry = recover::driver_of(ctx, run, change.blueprint.clone()).await;
-    dry.map_err(not_runnable)?;
-    assert!(change.rebuild, "a sized plan is read by a rebuilt driver");
-    Ok(Some(change))
+/// The stages of a run that have started: those with a stage run. A stage
+/// whose spawn still awaits a slot has none, and is issued as it is sized now.
+pub(crate) fn started_stages(stages: &[StageRun]) -> BTreeSet<String> {
+    let started: BTreeSet<String> = stages.iter().map(|s| s.stage_id.clone()).collect();
+    debug_assert!(started.len() <= stages.len());
+    started
 }
 
 /// The note amends the brief every later prompt reads, and reaches the
@@ -234,6 +208,13 @@ fn replan(change: &mut Change, asked: &Asked<'_>, at: &At<'_>) {
     let Some((plan, reasons)) = &asked.plan else {
         return;
     };
+    let item = &mut change.blueprint.item;
+    item.model_plan = plan.clone();
+    item.model_reasons = reasons.clone();
+    // Sized before a live agent is retuned: it gets the effort the plan is stored with.
+    item.settle_sizing(archon_core::now());
+    let plan = &item.model_plan;
+    assert!(!plan.has_unsized(), "a live agent is retuned to a sized plan");
     for stage in at.live() {
         // A plan that leaves a stage out is refused when the driver is built.
         let Some(choices) = plan.choices_for(&stage.stage_id).filter(|c| !c.is_empty()) else {
@@ -244,9 +225,6 @@ fn replan(change: &mut Change, asked: &Asked<'_>, at: &At<'_>) {
             change.live.entry(stage.id.clone()).or_default().choice = Some(choice.clone());
         }
     }
-    let item = &mut change.blueprint.item;
-    item.model_plan = plan.clone();
-    item.model_reasons = reasons.clone();
     change.what.push("replaced the model plan".to_owned());
     change.rebuild = true;
 }
@@ -430,7 +408,10 @@ fn retune(
     );
     asked.env.policy(&ctx.config).check_plan(plan)?;
     for stage in at.live().filter(|stage| stage.stage_id == at.target) {
-        let choice = retuned(stage.current_choice(), steer);
+        let mut choice = retuned(stage.current_choice(), steer);
+        // A model moved under an effort the daemon sized: the new engine may run no x_high.
+        let slot = (at.target, stage.fan_index);
+        choice.effort = crate::sizing::engine_effort(item, slot, &choice);
         if &choice != stage.current_choice() {
             change.live.entry(stage.id.clone()).or_default().choice = Some(choice);
         }

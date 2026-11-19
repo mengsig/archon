@@ -78,7 +78,8 @@ fn the_switch_and_the_caps_decide_how_a_written_plan_is_finished() {
     let effort_of = |item: &QueueItem| item.model_plan.choices_for("implement").unwrap()[0].effort;
     let finished = |config: &Config, policy: &ModelPolicy| {
         let mut item = item.clone();
-        item.model_plan = finish((config, policy), &direct, None, written(&item, &direct));
+        let writer = written(&item, &direct);
+        item.model_plan = finish((config, policy), &direct, || Ok(None), writer).unwrap();
         item.settle_sizing(archon_core::now());
         item
     };
@@ -108,4 +109,120 @@ fn the_switch_and_the_caps_decide_how_a_written_plan_is_finished() {
         "already within the cap"
     );
     assert!(!clip_to_policy(&open, &mut held), "no cap clips nothing");
+}
+
+/// The measured diff size is read for a plan's first sizing only: never with
+/// sizing off, and never for a plan that carries a sizing already, so a
+/// retry cannot size again from a size learned since.
+#[test]
+fn the_measured_size_is_read_only_when_a_plan_is_first_sized() {
+    let direct = spec("direct");
+    let item = critical_item();
+    let open = ModelPolicy::default();
+    let unreadable = || Err(ArchonError::Corrupt("diff-size hint".into()));
+    let on = Config::default();
+    let first = finish((&on, &open), &direct, unreadable, written(&item, &direct));
+    assert!(
+        matches!(first, Err(ArchonError::Corrupt(_))),
+        "a first sizing reads it"
+    );
+    let mut off = Config::default();
+    off.models.effort_sizing = Some(false);
+    let as_1_6_3 = finish((&off, &open), &direct, unreadable, written(&item, &direct));
+    assert!(as_1_6_3.expect("never read").sizing().is_none());
+
+    let mut sized = item.clone();
+    let writer = written(&item, &direct);
+    sized.model_plan = finish((&on, &open), &direct, || Ok(None), writer).unwrap();
+    sized.settle_sizing(archon_core::now());
+    let mut retry = PlanWriter::new(&item.id, archon_core::now());
+    let cap = carried_cap(&on, &open);
+    retry.carry(&sized.model_plan, &item.id, cap, |_| Some(usize::MAX));
+    let carried = finish((&on, &open), &direct, unreadable, retry).expect("never read");
+    assert_eq!(carried, sized.model_plan, "carried as it was sized");
+}
+
+fn spawn_of(model: &str, effort: Effort) -> SpawnPlan {
+    SpawnPlan {
+        only_reviews: false,
+        stage_id: "implement".into(),
+        kind: archon_core::catalog::StageKind::Work,
+        attempt: 1,
+        fan_index: 0,
+        fan_count: 1,
+        choice: ModelChoice::pinned(model.parse().unwrap(), effort),
+        prompt: "do it".into(),
+        instructions: "contract".into(),
+        timeout_minutes: 30,
+        allow_delegation: false,
+        workspace: archon_core::catalog::WorkspaceMode::Worktree,
+        team: None,
+        keep: false,
+        resume: None,
+        reviewers: None,
+        workers: None,
+        reports_requirements: false,
+        record_repair: archon_core::run::RecordRepair::Open,
+    }
+}
+
+/// A spawn whose model moved after its plan was read runs what the new
+/// engine runs when the daemon sized its slot, and its attempt says why.
+#[test]
+fn a_sized_spawn_moved_to_an_engine_without_x_high_runs_high_and_says_why() {
+    let direct = spec("direct");
+    let mut item = critical_item();
+    let (on, open) = (Config::default(), ModelPolicy::default());
+    let writer = written(&item, &direct);
+    item.model_plan = finish((&on, &open), &direct, || Ok(None), writer).unwrap();
+    item.settle_sizing(archon_core::now());
+    let mut plans = vec![
+        spawn_of("claude-code/claude-opus-5-5", Effort::XHigh),
+        spawn_of("gemini/gemini-pro", Effort::XHigh),
+    ];
+    hold_to_engine(&item, &mut plans);
+    let ran: Vec<Effort> = plans.iter().map(|plan| plan.choice.effort).collect();
+    assert_eq!(ran, [Effort::XHigh, Effort::High]);
+    let as_planned = attempt(&item, &plans[0]);
+    assert_eq!(
+        as_planned.effort_reasons.as_deref(),
+        Some("sizer: critical -> x_high")
+    );
+    let moved = attempt(&item, &plans[1]);
+    assert_eq!(moved.risk_class, Some(effort_sizing::RiskClass::Critical));
+    assert_eq!(moved.effort_source, Some(PlanSource::Sizer));
+    let why = "sizer: critical -> x_high; this attempt: gemini runs no more than high, so high";
+    assert_eq!(moved.effort_reasons.as_deref(), Some(why));
+
+    // The acceptance judge is held to the policy's cap as its spawn is reserved.
+    let capped = attempt(&item, &spawn_of("codex/gpt-6.1-sol", Effort::Medium));
+    let why = "sizer: critical -> x_high; this attempt: clipped from x_high to the cap medium";
+    assert_eq!(capped.effort_reasons.as_deref(), Some(why));
+    assert_eq!(capped.risk_class, moved.risk_class, "its class is kept");
+}
+
+/// A pinned `x_high` is the operator's on any engine, as 1.6.3 leaves it.
+#[test]
+fn a_pinned_x_high_is_left_alone_on_any_engine() {
+    let direct = spec("direct");
+    let mut item = critical_item();
+    let (on, open) = (Config::default(), ModelPolicy::default());
+    let writer = written(&item, &direct);
+    item.model_plan = finish((&on, &open), &direct, || Ok(None), writer).unwrap();
+    item.settle_sizing(archon_core::now());
+    let by = (
+        archon_core::plan_origin::Authority::Operator,
+        archon_core::now(),
+    );
+    let pin = (None, Some(Effort::XHigh));
+    item.model_plan.steer(&item.id, "implement", pin, by);
+    let mut plans = vec![spawn_of("gemini/gemini-pro", Effort::XHigh)];
+    hold_to_engine(&item, &mut plans);
+    assert_eq!(plans[0].choice.effort, Effort::XHigh);
+    let slot = ("implement", 0);
+    assert_eq!(engine_effort(&item, slot, &plans[0].choice), Effort::XHigh);
+    let mut unsized_item = critical_item();
+    unsized_item.model_plan = written(&item, &direct).finish(Sizing::Off { policy_cap: None });
+    hold_to_engine(&unsized_item, &mut plans);
+    assert_eq!(plans[0].choice.effort, Effort::XHigh, "never sized");
 }

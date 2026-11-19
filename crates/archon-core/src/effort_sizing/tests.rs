@@ -123,6 +123,26 @@ fn a_version_bump_s_title_does_not_make_it_release_work_but_a_tag_does() {
     );
 }
 
+/// A mechanical title hides the word "release" alone: CI, workflow and API
+/// words in it are scope signals as in any other title.
+#[test]
+fn a_mechanical_title_still_names_ci_workflow_and_api_work() {
+    use ReviewLevel::Standard;
+    for title in [
+        "chore(deps): change the CI workflow",
+        "docs: describe the public API",
+        "chore(release): fix the release workflow",
+    ] {
+        let found = risk(title, &[], Standard, None);
+        assert_eq!(found.class, RiskClass::Elevated, "{title}");
+        assert!(found.signals.iter().any(|s| s.starts_with("scope:")));
+        assert!(!found.signals.iter().any(|s| s == "scope:release"));
+    }
+    let notes = risk("docs: release notes for 1.6.4", &[], Standard, None);
+    assert_eq!(notes.class, RiskClass::Mechanical);
+    assert_eq!(notes.signals, ["mechanical"]);
+}
+
 #[test]
 fn a_small_ordinary_item_says_so_and_the_tag_names_the_size() {
     let small = risk(

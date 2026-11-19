@@ -7011,6 +7011,13 @@
             }
           ],
           "description": "The class the key was sized with; `None` until its item's own title,\nbrief, tags and review level decide it, as the item is stored."
+        },
+        "risk_signals": {
+          "description": "The signals of that class, so a key sized before they moved shows it.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "required": [
@@ -9846,7 +9853,7 @@
       "type": "object"
     },
     "PlanSizing": {
-      "description": "The sizing record of a plan: its item's class when last sized, and every\nkey the sizer decided. A key without an entry was never sized.",
+      "description": "The sizing record of a plan: its item's class when a key was last sized,\nand every key the sizer decided. A key without an entry was never sized.",
       "properties": {
         "keys": {
           "additionalProperties": {
@@ -9879,7 +9886,7 @@
               "type": "null"
             }
           ],
-          "description": "The diff size known when the plan was first sized. A size learned\nlater never changes it; only a `diff:` tag overrides it."
+          "description": "The diff size the item's last run measured when the plan was first\nsized. A size learned later never changes it; a `diff:` tag overrides it."
         }
       },
       "type": "object"

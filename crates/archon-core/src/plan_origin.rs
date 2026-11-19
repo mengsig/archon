@@ -625,11 +625,14 @@ impl PlanWriter {
 
     /// The entries of `kept` (a plan of `item`, which `limit` keeps a key of
     /// with at most that many choices) carried with the origins and the
-    /// sizing they have: a carried key is never sized again here.
+    /// sizing they have: a carried key is never sized again here. An effort
+    /// the daemon sized is held to `cap` as it is carried, with the reason,
+    /// so a later fill step borrows nothing above it.
     pub fn carry(
         &mut self,
         kept: &PlannedPlan,
         item: &QueueItemId,
+        cap: Option<Effort>,
         limit: impl Fn(&str) -> Option<usize>,
     ) {
         assert_eq!(*item, self.item, "an earlier plan of the same item");
@@ -643,6 +646,8 @@ impl PlanWriter {
             self.sizing.carry(kept.sizing(), key, choices.len());
             self.insert(key.clone(), choices, slots);
         }
+        self.clip(cap);
+        debug_assert!(cap.is_none_or(|cap| self.sized_within(cap)));
     }
 
     /// The plan a fill step returned, which keeps every entry so far: each
@@ -781,7 +786,9 @@ impl PlanWriter {
     /// The plan, its origins and its sizing as one value: the only place any
     /// of them is set. Private, so a plan a writer built leaves through
     /// [`PlanWriter::finish`], which says how its new keys are sized.
-    fn seal(self) -> PlannedPlan {
+    fn seal(mut self) -> PlannedPlan {
+        // No sized effort leaves on an engine that does not run it, whoever moved its model.
+        self.clip(None);
         let origins = PlanOrigins {
             item: Some(self.item.clone()),
             entries: self.entries,

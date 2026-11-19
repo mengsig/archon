@@ -212,7 +212,7 @@ fn a_kept_plan_carries_its_origins_and_a_copy_keeps_them_with_a_note() {
     let item = QueueItemId::new();
     let planned = enqueued(&item);
     let mut retry = PlanWriter::new(&item, crate::now());
-    retry.carry(&planned, &item, |key| (key != "ship").then_some(usize::MAX));
+    retry.carry(&planned, &item, None, |key| (key != "ship").then_some(usize::MAX));
     let retried = retry.finish(Sizing::Off { policy_cap: None });
     for key in ["build", "plan", "review"] {
         assert_eq!(
@@ -292,7 +292,7 @@ fn a_retier_that_fails_part_way_leaves_the_plan_and_its_origins_as_they_were() {
         .0
         .insert("verify".into(), vec![tiered("b/sol", Effort::Low)]);
     let mut writer = PlanWriter::new(&item, crate::now());
-    writer.carry(&planned, &item, |_| Some(usize::MAX));
+    writer.carry(&planned, &item, None, |_| Some(usize::MAX));
     writer.filled(tiers, (PlanSource::Tier, PlanSource::Fallback));
     planned = writer.finish(Sizing::Off { policy_cap: None });
     let before = planned.clone();

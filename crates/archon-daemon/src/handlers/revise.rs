@@ -202,7 +202,8 @@ async fn restage(
     };
     let spec = executor::steer::shaped(ctx, &revised, spec).await?;
     let mut kept = PlanWriter::new(&item.id, archon_core::now());
-    kept.carry(&item.model_plan, &item.id, |key| {
+    let cap = crate::sizing::carried_cap(&ctx.config, &env.policy(&ctx.config));
+    kept.carry(&item.model_plan, &item.id, cap, |key| {
         spec.is_plan_key(key).then_some(usize::MAX)
     });
     let route = crate::knobs::ItemRoute::new(item);

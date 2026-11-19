@@ -21,6 +21,9 @@ pub struct KeySizing {
     /// brief, tags and review level decide it, as the item is stored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub risk_class: Option<RiskClass>,
+    /// The signals of that class, so a key sized before they moved shows it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub risk_signals: Vec<String>,
     /// The key's own stage facts, so no later reader borrows another's.
     pub facts: StageFacts,
     /// The cap in force when the key was sized.
@@ -30,16 +33,16 @@ pub struct KeySizing {
     pub reasons: Vec<String>,
 }
 
-/// The sizing record of a plan: its item's class when last sized, and every
-/// key the sizer decided. A key without an entry was never sized.
+/// The sizing record of a plan: its item's class when a key was last sized,
+/// and every key the sizer decided. A key without an entry was never sized.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PlanSizing {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub risk_class: Option<RiskClass>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub risk_signals: Vec<String>,
-    /// The diff size known when the plan was first sized. A size learned
-    /// later never changes it; only a `diff:` tag overrides it.
+    /// The diff size the item's last run measured when the plan was first
+    /// sized. A size learned later never changes it; a `diff:` tag overrides it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<DiffSize>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -123,7 +126,8 @@ pub enum Sizing<'a> {
 pub struct EffortSizer<'a> {
     /// The lower of the policy's cap and `[models] sizer_max_effort`.
     pub cap: Effort,
-    /// The diff size known for the item now; frozen with its first sizing.
+    /// The diff size the item's last run measured; frozen with its first
+    /// sizing, and read after the item's own `diff:` tag.
     pub size: Option<DiffSize>,
     /// A plan key's own stage facts; `None` for a key of no stage.
     pub facts: &'a dyn Fn(&str) -> Option<StageFacts>,
@@ -189,6 +193,12 @@ impl PlanWriter {
         self.seal()
     }
 
+    /// Whether sizing this writer's new keys is its plan's first sizing, the
+    /// only one that reads and freezes the item's measured diff size.
+    pub fn sizes_first(&self) -> bool {
+        self.sizing.keys.is_empty() && !self.fresh.is_empty()
+    }
+
     fn record_fresh(&mut self, sizer: &EffortSizer<'_>) {
         if self.sizing.keys.is_empty() {
             self.sizing.size = sizer.size;
@@ -200,6 +210,7 @@ impl PlanWriter {
             };
             let unsized_yet = KeySizing {
                 risk_class: None,
+                risk_signals: Vec::new(),
                 facts,
                 cap: sizer.cap,
                 reasons: Vec::new(),
@@ -212,7 +223,7 @@ impl PlanWriter {
     /// Lower every effort the daemon sized or escalated to `cap` and to what
     /// its model's engine runs, with the reason. A pin is never lowered: the
     /// policy check refuses it.
-    fn clip(&mut self, cap: Option<Effort>) -> bool {
+    pub(super) fn clip(&mut self, cap: Option<Effort>) -> bool {
         let mut clipped = false;
         for (key, choices) in self.plan.0.iter_mut() {
             let slots = self.entries.get_mut(key).expect("an origin per entry");
@@ -233,6 +244,18 @@ impl PlanWriter {
             }
         }
         clipped
+    }
+
+    /// Whether every effort the daemon sized is at or below `cap`.
+    pub(super) fn sized_within(&self, cap: Effort) -> bool {
+        let slots = self.plan.0.iter().flat_map(|(key, choices)| {
+            let origins = self.entries.get(key).expect("an origin per entry");
+            choices.iter().zip(origins)
+        });
+        slots.into_iter().all(|(choice, origin)| {
+            let effort = &origin.effort;
+            choice.effort <= cap || effort.is_pin() || effort.source != PlanSource::Sizer
+        })
     }
 
     /// Decide every choice of the recorded `key` for an item of class `risk`.
@@ -257,6 +280,7 @@ impl PlanWriter {
             choice.effort = effort;
         }
         sized.risk_class = Some(risk.0.class);
+        sized.risk_signals.clone_from(&risk.0.signals);
     }
 }
 
@@ -382,9 +406,9 @@ impl PlannedPlan {
             return false;
         };
         let risk = self.risk(input);
-        let signals_moved = sizing.risk_signals != risk.signals;
+        // Each key by what it was sized with: sizing one key vouches for no other.
         let stale = |sized: &KeySizing| match sized.risk_class {
-            Some(class) => class != risk.class || signals_moved,
+            Some(class) => class != risk.class || sized.risk_signals != risk.signals,
             None => false,
         };
         let keys = sizing.keys.iter().filter(|(_, sized)| stale(sized));

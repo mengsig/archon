@@ -201,7 +201,7 @@ fn a_carried_plan_keeps_its_frozen_sizing() {
     let item = QueueItemId::new();
     let first = sized(&item, &["plan", "build"], Effort::Medium, "Add a button");
     let mut retry = PlanWriter::new(&item, crate::now());
-    retry.carry(&first, &item, |_| Some(usize::MAX));
+    retry.carry(&first, &item, None, |_| Some(usize::MAX));
     let larger = EffortSizer {
         cap: Effort::XHigh,
         size: Some(DiffSize::Large),
@@ -239,11 +239,11 @@ fn a_stage_added_to_a_carried_plan_is_the_only_one_sized() {
     );
     let never_sized = writer.finish(Sizing::Off { policy_cap: None });
     let mut kept = PlanWriter::new(&item, crate::now());
-    kept.carry(&never_sized, &item, |_| Some(usize::MAX));
+    kept.carry(&never_sized, &item, None, |_| Some(usize::MAX));
     let whole = kept.finish(on(Effort::XHigh));
     assert!(whole.sizing().is_none(), "carried whole: never sized");
     let mut kept = PlanWriter::new(&item, crate::now());
-    kept.carry(&never_sized, &item, |_| Some(usize::MAX));
+    kept.carry(&never_sized, &item, None, |_| Some(usize::MAX));
     // The new stage borrows the donor's choice, as the fill does.
     add(&mut kept, &["check"], Effort::XHigh, PlanSource::Fallback);
     let mut grown = kept.finish(on(Effort::XHigh));
@@ -267,7 +267,7 @@ fn with_sizing_off_a_new_stage_gets_no_record_beside_frozen_ones() {
     let first = sized(&item, &["build"], Effort::Medium, "Fix the mutex");
     assert_eq!(effort(&first, "build"), Effort::High);
     let mut kept = PlanWriter::new(&item, crate::now());
-    kept.carry(&first, &item, |_| Some(usize::MAX));
+    kept.carry(&first, &item, None, |_| Some(usize::MAX));
     add(&mut kept, &["check"], Effort::XHigh, PlanSource::Fallback);
     let mut grown = kept.finish(Sizing::Off { policy_cap: None });
     assert!(!grown.settle(&item, input("Fix the mutex", &[]), crate::now()));
@@ -296,7 +296,7 @@ fn a_carried_sized_effort_is_clipped_to_the_cap_and_a_pin_is_not() {
     let first = critical_build(&item);
     let carry = |sizing: Sizing<'_>| {
         let mut retry = PlanWriter::new(&item, crate::now());
-        retry.carry(&first, &item, |_| Some(usize::MAX));
+        retry.carry(&first, &item, None, |_| Some(usize::MAX));
         retry.finish(sizing)
     };
     for lowered in [
@@ -324,50 +324,13 @@ fn a_carried_sized_effort_is_clipped_to_the_cap_and_a_pin_is_not() {
     let by = (Authority::Operator, crate::now());
     pinned.steer(&item, "build", (None, Some(Effort::XHigh)), by);
     let mut retry = PlanWriter::new(&item, crate::now());
-    retry.carry(&pinned, &item, |_| Some(usize::MAX));
+    retry.carry(&pinned, &item, None, |_| Some(usize::MAX));
     let kept = retry.finish(on(Effort::High));
     assert_eq!(
         effort(&kept, "build"),
         Effort::XHigh,
         "a pin is never clipped"
     );
-}
-
-/// A sized `x_high` whose model moved to an engine that runs none is held to
-/// `high` wherever a plan is clipped, with or without a cap; a pin is not.
-#[test]
-fn a_sized_x_high_moved_to_another_engine_is_lowered_to_high_with_the_reason() {
-    let item = QueueItemId::new();
-    let other: crate::model::ModelRef = "openrouter/some-model".parse().unwrap();
-    let by = (Authority::Operator, crate::now());
-    let mut moved = critical_build(&item);
-    moved.steer(&item, "build", (Some(&other), None), by);
-    assert_eq!(
-        effort(&moved, "build"),
-        Effort::XHigh,
-        "the steer names no effort"
-    );
-    let why = "sizer: critical -> x_high; openrouter runs no more than high, so high";
-    let mut stored = moved.clone();
-    assert!(stored.clip_sized(&item, None, crate::now()));
-    assert_eq!(effort(&stored, "build"), Effort::High);
-    assert_eq!(reason(&stored, &item, "build"), why);
-    assert!(
-        !stored.clip_sized(&item, None, crate::now()),
-        "lowered once"
-    );
-    let mut retry = PlanWriter::new(&item, crate::now());
-    retry.carry(&moved, &item, |_| Some(usize::MAX));
-    let carried = retry.finish(Sizing::Off { policy_cap: None });
-    assert_eq!(effort(&carried, "build"), Effort::High);
-    assert_eq!(reason(&carried, &item, "build"), why);
-    let mut pinned = critical_build(&item);
-    pinned.steer(&item, "build", (Some(&other), Some(Effort::XHigh)), by);
-    assert!(
-        !pinned.clip_sized(&item, None, crate::now()),
-        "a pin is the operator's"
-    );
-    assert_eq!(effort(&pinned, "build"), Effort::XHigh);
 }
 
 #[test]
@@ -433,7 +396,7 @@ fn a_resize_leaves_a_pin_and_a_key_never_sized_alone() {
     let writer = filled(&item, &["plan"], Effort::Max, PlanSource::Fallback);
     let never_sized = writer.finish(Sizing::Off { policy_cap: None });
     let mut kept = PlanWriter::new(&item, crate::now());
-    kept.carry(&never_sized, &item, |_| Some(usize::MAX));
+    kept.carry(&never_sized, &item, None, |_| Some(usize::MAX));
     add(
         &mut kept,
         &["build", "check"],
@@ -575,7 +538,7 @@ fn the_diff_size_known_at_the_first_sizing_is_the_one_every_later_key_reads() {
         "sizer: ordinary -> low (small)"
     );
     let mut kept = PlanWriter::new(&item, crate::now());
-    kept.carry(&first, &item, |_| Some(usize::MAX));
+    kept.carry(&first, &item, None, |_| Some(usize::MAX));
     add(&mut kept, &["plan"], Effort::Medium, PlanSource::Fallback);
     let mut grown = kept.finish(sizer(Some(DiffSize::Large)));
     grown.settle(&item, input("Add a button", &[]), crate::now());
@@ -584,4 +547,83 @@ fn the_diff_size_known_at_the_first_sizing_is_the_one_every_later_key_reads() {
         "sizer: ordinary -> medium (small)"
     );
     assert_eq!(effort(&grown, "build"), Effort::Low, "not sized again");
+}
+
+/// Each key is stale by what it was sized with: sizing a stage added later
+/// under new signals does not make the carried stages look current.
+#[test]
+fn sizing_a_new_key_hides_no_moved_signal_from_the_keys_sized_before() {
+    let item = QueueItemId::new();
+    let small = tags(&["diff:small"]);
+    let small_input = RiskInput {
+        size: Some(DiffSize::Small),
+        ..input("Add a button", &small)
+    };
+    let writer = filled(&item, &["build"], Effort::Medium, PlanSource::Fallback);
+    let mut first = writer.finish(on(Effort::XHigh));
+    first.settle(&item, small_input, crate::now());
+    assert_eq!(effort(&first, "build"), Effort::Low, "one step down");
+
+    // The tag is gone and a stage is added: the new key is sized first.
+    let mut kept = PlanWriter::new(&item, crate::now());
+    kept.carry(&first, &item, None, |_| Some(usize::MAX));
+    add(&mut kept, &["plan"], Effort::Medium, PlanSource::Fallback);
+    let mut grown = kept.finish(on(Effort::XHigh));
+    let plain = input("Add a button", &[]);
+    assert!(grown.settle(&item, plain, crate::now()));
+    assert_eq!(effort(&grown, "plan"), Effort::High, "its own default");
+    assert_eq!(effort(&grown, "build"), Effort::Low, "settling sizes no other");
+    let now = (Effort::XHigh, crate::now());
+    assert!(grown.resize(&item, plain, now, &|_| false));
+    assert_eq!(effort(&grown, "build"), Effort::Medium, "no longer small");
+    assert_eq!(reason(&grown, &item, "build"), "sizer: ordinary -> medium");
+    assert!(!grown.resize(&item, plain, now, &|_| false), "all current");
+}
+
+/// Whoever moves the model of a sized `x_high` (a steer naming a model, a
+/// provider the item follows), the stored plan holds what the engine runs.
+#[test]
+fn a_sized_x_high_whose_model_moves_to_another_engine_is_stored_at_high() {
+    let item = QueueItemId::new();
+    let other: crate::model::ModelRef = "gemini/gemini-pro".parse().unwrap();
+    let by = (Authority::Operator, crate::now());
+    let mut steered = critical_build(&item);
+    steered.steer(&item, "build", (Some(&other), None), by);
+    assert_eq!(effort(&steered, "build"), Effort::High);
+    let why = "sizer: critical -> x_high; gemini runs no more than high, so high";
+    assert_eq!(reason(&steered, &item, "build"), why);
+    assert_eq!(
+        steered.origin(&item, "build", 0).effort.source,
+        PlanSource::Sizer,
+        "still the daemon's effort"
+    );
+
+    // An effort the steer names is a pin: it stays what was asked.
+    let mut pinned = critical_build(&item);
+    pinned.steer(&item, "build", (Some(&other), Some(Effort::XHigh)), by);
+    assert_eq!(effort(&pinned, "build"), Effort::XHigh);
+    assert!(pinned.origin(&item, "build", 0).effort.is_pin());
+    assert!(!pinned.clip_sized(&item, None, crate::now()), "never a pin");
+    assert!(!steered.clip_sized(&item, None, crate::now()), "said once");
+}
+
+/// A carried sized effort is held to the cap as it is carried, so the fill
+/// step that borrows it for a new stage borrows nothing above the cap.
+#[test]
+fn a_carried_sized_effort_is_within_the_cap_before_any_fill_step_reads_it() {
+    let item = QueueItemId::new();
+    let first = critical_build(&item);
+    let mut kept = PlanWriter::new(&item, crate::now());
+    kept.carry(&first, &item, Some(Effort::High), |_| Some(usize::MAX));
+    let borrowed = kept.plan().choices_for("build").unwrap()[0].clone();
+    assert_eq!(borrowed.effort, Effort::High, "what a donor fill reads");
+    let mut plan = kept.plan().clone();
+    plan.0.insert("extra".to_owned(), vec![borrowed]);
+    kept.filled(plan, (PlanSource::Fallback, PlanSource::Fallback));
+    let grown = kept.finish(Sizing::Off {
+        policy_cap: Some(Effort::High),
+    });
+    assert_eq!(effort(&grown, "extra"), Effort::High);
+    let why = "sizer: critical -> x_high; clipped from x_high to the cap high";
+    assert_eq!(reason(&grown, &item, "build"), why, "said once");
 }

@@ -402,7 +402,6 @@ fn insert_requested_in(
 ) -> Result<QueueItem, ArchonError> {
     validate_new(item, key)?;
     assert_eq!(item.state, QueueState::Queued);
-    let item = &*as_stored(item);
     assert!(
         !tx.is_autocommit(),
         "item insertion belongs to a transaction"
@@ -410,10 +409,13 @@ fn insert_requested_in(
     if let Some(key) = key
         && let Some((first, stored)) = find_by_key(tx, key)?
     {
+        // As the request filled it, before sizing: a fingerprint of 1.6.3 holds that plan.
+        let asked_item = &*attributed(item);
         let stored: serde_json::Value = from_json(&stored, "enqueue request")?;
-        check_replay(key, (&first, &stored), item, request, &asked.autonomy)?;
+        check_replay(key, (&first, &stored), asked_item, request, &asked.autonomy)?;
         return load(tx, &first);
     }
+    let item = &*as_stored(item);
     if exists(tx, &item.id)? {
         return Err(ArchonError::Invalid(format!(
             "queue item {} already exists",

@@ -21,6 +21,7 @@ use crate::executor::steer::{self as live, Asked, Current, Sources};
 use crate::executor::{frozen, revived};
 use crate::knobs;
 use crate::resolve::RepoEnv;
+use crate::sizing;
 
 /// An item can start or end between reading its state and taking the run
 /// table; a steer follows it this often before it gives up.
@@ -289,8 +290,8 @@ async fn changed_item(
     what.extend(retune(steer, stages, (&mut item, asked.by))?);
     // Nothing of a waiting item has started: every sized stage follows its new class.
     let policy = asked.env.policy(&ctx.config);
-    if crate::sizing::resize((&ctx.config, &policy), &mut item, &Default::default()) {
-        what.push(crate::sizing::RESIZED.to_owned());
+    if sizing::resize((&ctx.config, &policy), &mut item, &Default::default()) {
+        what.push(sizing::RESIZED.to_owned());
     }
     items::check_plan(ctx, asked.env, stages, &item.model_plan)?;
     assert!(!what.is_empty(), "a checked steer changes something");
@@ -352,6 +353,12 @@ async fn store_steer(
             revive = true;
             if let Some(run) = run {
                 item = revived(&store.run(run)?, edit, item)?;
+                // Its brief now names the failure, and is what the sizer reads as it is stored.
+                let policy = asked.env.policy(&ctx.config);
+                let resized = sizing::resize((&ctx.config, &policy), &mut item, &Default::default());
+                if resized && !what.iter().any(|done| done == sizing::RESIZED) {
+                    what.push(sizing::RESIZED.to_owned());
+                }
             }
             revived_run = run.clone();
             what.push("queued it again on its branch".to_owned());

@@ -175,10 +175,13 @@ pub fn classify(input: RiskInput<'_>) -> ItemRisk {
     if large {
         signals.push("size:large".to_owned());
     }
-    // A version bump's title names its release; only a tag makes it release work.
+    // A mechanical title names its release ("chore(release)"): the word alone makes it
+    // no release work, a tag does. Its other scope words count as in any title.
     let mechanical_named = mechanical_title(input.title);
-    let titled = || words(input.title).find(|w| ELEVATED_WORDS.contains(&w.as_str()));
-    let scope = tagged(&ELEVATED_WORDS).or_else(|| titled().filter(|_| !mechanical_named));
+    let scoped = |w: &String| {
+        ELEVATED_WORDS.contains(&w.as_str()) && !(mechanical_named && w == "release")
+    };
+    let scope = tagged(&ELEVATED_WORDS).or_else(|| words(input.title).find(scoped));
     signals.extend(scope.iter().map(|word| format!("scope:{word}")));
     let tagged_critical = tags.iter().any(|t| t == CRITICAL_TAG);
     if tagged_critical {

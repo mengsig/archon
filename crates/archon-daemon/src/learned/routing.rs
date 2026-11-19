@@ -107,7 +107,22 @@ pub(crate) fn item_size(
             _ => {}
         }
     }
-    let runs = store.runs_for_item(&item.id)?;
+    measured_size(store, &item.id)
+}
+
+/// The diff size `item`'s last run measured: what the effort sizer freezes
+/// with a plan's first sizing. The item's `diff:` tag is the sizer's to read.
+/// An item being enqueued is not stored yet and has run nothing.
+pub(crate) fn measured_size(
+    store: &Store,
+    item: &QueueItemId,
+) -> Result<Option<DiffSize>, ArchonError> {
+    let runs = match store.runs_for_item(item) {
+        Ok(runs) => runs,
+        Err(ArchonError::NotFound(_)) => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    debug_assert!(runs.iter().all(|run| run.item == *item));
     runs.last()
         .map(|r| store.outcome(&r.id))
         .transpose()

@@ -505,12 +505,19 @@ fn review_rules(duty: ReviewDuty) -> String {
         false => "",
     };
     // A review-only lead changes nothing: its findings are its verdict, never fixed.
-    let (follow_ups, fixed, rounds, open) = match duty.records_verdict {
-        true => (".\n", "", REVIEW_ONLY_ROUNDS_RULE, REVIEW_ONLY_OPEN_RULE),
+    let (follow_ups, rests_on, rounds, coverage, open) = match duty.records_verdict {
+        true => (
+            ".\n",
+            "each reviewer that read it",
+            REVIEW_ONLY_ROUNDS_RULE,
+            REVIEW_ONLY_COVERAGE_RULE,
+            REVIEW_ONLY_OPEN_RULE,
+        ),
         false => (
             " and `pr.body`.\n",
-            " whose findings you fixed",
+            "each reviewer the pass rests on, a failed one whose findings you fixed included",
             REVIEW_ROUNDS_RULE,
+            REVIEW_COVERAGE_RULE,
             "with a blocking finding open, call `fail_task` and say which.",
         ),
     };
@@ -520,11 +527,10 @@ fn review_rules(duty: ReviewDuty) -> String {
          by {who}.\n\
          {REVIEWER_VERDICT_RULES}{follow_ups}\
          - Record it in `complete_task`'s `structured` data, beside any other keys, naming \
-         the agent id `delegate` returned for each reviewer the pass rests on, a failed \
-         one{fixed} included:\n\n\
+         the agent id `delegate` returned for {rests_on}:\n\n\
          ```json\n{{\"review\": {{\"verdict\": \"pass\", \"reviewers\": [{named}]}}}}\n```\n\n\
          {skip}\
-         {rounds}{REVIEW_COVERAGE_RULE}{open}\n\
+         {rounds}{coverage}{open}\n\
          {REVIEW_LINE_RULE}"
     );
     debug_assert!(rules.ends_with('\n'), "sections end with a newline");
@@ -752,6 +758,13 @@ const REVIEW_ONLY_ROUNDS_RULE: &str = "\
 - Delegate with `wait: false`, then use `wait_for`. This run changes nothing: on a \
 blocking fail, fix and commit nothing, and wait for the reviewers still reading (one \
 you cancel counts for nothing). Their blocking findings make your verdict `fail`.\n";
+
+/// A review-only lead's coverage: its head is frozen, so every read is whole and of it.
+const REVIEW_ONLY_COVERAGE_RULE: &str = "\
+- Archon checks a pass against Aether and the branch: each agent named must be a \
+different one you delegated to yourself that passed the whole change at this head, \
+as many as the review asks. Anything else fails the run. Never report `pass` for a \
+review that did not run or did not pass: ";
 
 const REVIEW_ONLY_OPEN_RULE: &str =
     "with a blocking finding open, record `fail` as the Verdict section says.";
@@ -1801,10 +1814,13 @@ mod tests {
         assert!(reviewing.contains("fix and commit nothing"));
         assert!(!reviewing.contains("Fix every blocking finding"));
         assert!(!reviewing.contains("pr.body") && !reviewing.contains("findings you fixed"));
+        assert!(!reviewing.contains("a failed one") && !reviewing.contains("delta"));
+        assert!(reviewing.contains("passed the whole change at this head"));
         assert_eq!(reviewing.matches("## Verdict").count(), 1);
         let building = work_contract(owing(1, false));
         assert!(building.contains("with a blocking finding open, call `fail_task` and say which."));
         assert!(building.contains("Fix every blocking finding and commit"));
+        assert!(building.contains("a failed one whose findings you fixed included:"));
         assert!(building.contains("follow-ups in your summary and `pr.body`.\n"));
         assert!(!building.contains("## Verdict"));
         assert!(building.ends_with("write no `REVIEW:` line yourself.\n"));

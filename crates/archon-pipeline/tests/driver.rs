@@ -2722,14 +2722,17 @@ fn a_recorded_review_fail_completes_the_lead_and_fails_the_run() {
     result["verdict"] = "fail".into();
     result["findings"] = serde_json::json!([{"severity": "high", "blocking": true,
         "title": "unchecked overflow", "detail": "saturate the add", "path": "src/lib.rs:1"}]);
-    let summary = "Reviewed the head: one blocking finding.\nVERDICT: FAIL";
+    let checks = "test output line\n".repeat(2_500);
+    let summary = format!("Reviewed the head: one blocking finding.\n{checks}VERDICT: FAIL");
+    let summary: &'static str = Box::leak(summary.into_boxed_str());
     let actions = sim.settle("review", 0, Agent::Recorded(summary, result));
     let (stage, error) = failed(&actions);
     assert_eq!(stage, "review");
     assert!(error.contains(archon_core::run::STATED_FAILURE), "{error}");
     assert!(
         error.contains("unchecked overflow (src/lib.rs:1)") && error.contains("saturate the add"),
-        "the structured findings reach the item: {error}"
+        "the structured findings reach the item: {}",
+        error.chars().take(400).collect::<String>()
     );
     assert!(ship_plans(&actions).is_empty(), "a fail never ships");
     let lead = sim.stages.last().expect("the lead ran");

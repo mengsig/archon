@@ -43,7 +43,11 @@ fn stage_of(key: &str) -> &str {
 /// The most the sizer sets now: the lower of the policy's cap and
 /// `[models] sizer_max_effort`.
 fn cap(config: &Config, policy: &ModelPolicy) -> Effort {
-    effort_sizing::sizer_cap(policy.max_effort, config.models.sizer_max_effort())
+    let ceiling = match config.models.sizer_raises() {
+        true => config.models.sizer_max_effort(),
+        false => Effort::Max,
+    };
+    effort_sizing::sizer_cap(policy.max_effort, ceiling)
 }
 
 /// The cap an effort the daemon sized is held to as a re-plan carries it:
@@ -77,6 +81,7 @@ pub(crate) fn finish(
     let facts = |key: &str| stage_facts(spec, key);
     let sizer = EffortSizer {
         cap: cap(config, policy),
+        raises: config.models.sizer_raises(),
         size,
         facts: &facts,
     };
@@ -145,7 +150,10 @@ pub(crate) fn resize(
         return false;
     }
     let is_started = |key: &str| started.contains(stage_of(key));
-    let resized = item.resize_unstarted((cap(config, policy), at), &is_started);
+    let resized = item.resize_unstarted(
+        (cap(config, policy), config.models.sizer_raises(), at),
+        &is_started,
+    );
     debug_assert!(item.model_plan.fault(&item.id).is_none());
     resized
 }
@@ -170,7 +178,7 @@ fn daemon_sized(item: &QueueItem, (stage, fan_index): (&str, u32)) -> Option<(Ef
     let sized = item.model_plan.slot_sizing(&item.id, stage, slot)?;
     let by_daemon = matches!(
         sized.effort_source,
-        PlanSource::Sizer | PlanSource::Escalation
+        PlanSource::Sizer | PlanSource::Escalation | PlanSource::Learned
     );
     by_daemon.then(|| (choices[slot].effort, sized))
 }

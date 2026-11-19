@@ -285,7 +285,7 @@ async fn a_restack_fix_keeps_its_child_s_frozen_sizing() {
     finish_item(&h, &child.id).await;
     let mut risky = h.item(&child.id).await;
     risky.title = "Fix the deadlock in the pump".into();
-    assert!(risky.resize_unstarted((Effort::XHigh, archon_core::now()), &|_| false));
+    assert!(risky.resize_unstarted((Effort::XHigh, true, archon_core::now()), &|_| false));
     h.ctx.store.lock().await.update_item(&risky).unwrap();
     let child = h.item(&child.id).await;
     let frozen = child

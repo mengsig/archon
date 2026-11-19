@@ -419,8 +419,8 @@ pub struct ModelsConfig {
     /// Size every agent's effort by the effort rubric (unset: on, since
     /// 1.6.4); `false` restores 1.6.3's prompts and reviewer floors. Global only.
     pub effort_sizing: Option<bool>,
-    /// The highest effort the daemon's sizer sets by itself (`x_high` when
-    /// unset); the policy's `max_effort` still caps it. Global only.
+    /// Lets the daemon's sizer raise efforts up to this; unset, it only
+    /// lowers them. The policy's `max_effort` still caps it. Global only.
     pub sizer_max_effort: Option<Effort>,
 }
 
@@ -452,7 +452,14 @@ impl ModelsConfig {
         self.effort_sizing.unwrap_or(true)
     }
 
-    /// The highest effort the sizer sets by itself: `x_high` unless set.
+    /// Whether the sizer may raise a stage above its default: only when
+    /// `sizer_max_effort` is set; unset, it only lowers.
+    pub fn sizer_raises(&self) -> bool {
+        self.sizer_max_effort.is_some()
+    }
+
+    /// The most the sizer sets when it may raise, and the ceiling carried
+    /// sized efforts are clipped to: `x_high` unless set.
     pub fn sizer_max_effort(&self) -> Effort {
         self.sizer_max_effort.unwrap_or(Effort::XHigh)
     }
@@ -1640,6 +1647,7 @@ mod tests {
     #[test]
     fn sizer_max_effort_defaults_to_x_high_and_stays_global() {
         assert_eq!(Config::default().models.sizer_max_effort(), Effort::XHigh);
+        assert!(!Config::default().models.sizer_raises());
         let set: Config = toml::from_str("[models]\nsizer_max_effort = 'high'").unwrap();
         set.validate().unwrap();
         assert_eq!(set.models.sizer_max_effort(), Effort::High);

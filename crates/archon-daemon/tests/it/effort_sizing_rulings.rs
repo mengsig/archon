@@ -20,7 +20,7 @@ const ALL_HIGH: [(&str, Effort); 3] = [("implement", High), ("review", High), ("
 const ALL_XHIGH: [(&str, Effort); 3] = [("implement", XHigh), ("review", XHigh), ("ship", XHigh)];
 
 fn policy_cap(effort: Effort) -> Config {
-    let mut config = Config::default();
+    let mut config = raising();
     config.models.max_effort = Some(effort);
     config
 }
@@ -60,7 +60,7 @@ async fn recovery_reads_a_live_run_s_stored_plan_unchanged_under_a_lowered_cap()
         both
     }];
     for config in lowered {
-        let mut h = harness(Config::default()).await;
+        let mut h = harness(raising()).await;
         let queued = enqueue(&h, "Add a button", &["risk:critical"]).await;
         h.dispatch().await;
         let before = stored_run(&h, &queued.id).await;
@@ -115,7 +115,7 @@ async fn a_recovered_run_s_next_stage_is_held_to_the_policy_s_cap_alone() {
         ),
     ];
     for (config, repo_cap, runs, why) in cases {
-        let mut h = harness(Config::default()).await;
+        let mut h = harness(raising()).await;
         let queued = enqueue(&h, "Add a button", &["risk:critical"]).await;
         h.dispatch().await;
         if let Some(toml) = repo_cap {
@@ -147,7 +147,7 @@ async fn a_recovered_run_s_next_stage_is_held_to_the_policy_s_cap_alone() {
 /// on, and its attempt records the `high` it was sent.
 #[tokio::test]
 async fn a_woken_agent_over_a_lowered_cap_is_retuned_to_it_and_recorded_so() {
-    let mut h = harness(Config::default()).await;
+    let mut h = harness(raising()).await;
     let queued = enqueue(&h, "Add a button", &["risk:critical"]).await;
     h.dispatch().await;
     let first = attempt(&h, &queued.id, "implement").await;
@@ -180,7 +180,7 @@ async fn a_woken_agent_over_a_lowered_cap_is_retuned_to_it_and_recorded_so() {
 /// recorded at the effort it runs, not the driver's frozen x_high.
 #[tokio::test]
 async fn a_stage_held_to_the_cap_is_woken_at_the_effort_it_runs() {
-    let mut h = harness(Config::default()).await;
+    let mut h = harness(raising()).await;
     let queued = enqueue(&h, "Add a button", &["risk:critical"]).await;
     h.dispatch().await;
     h.restart_with(policy_cap(High));
@@ -208,7 +208,7 @@ async fn a_stage_held_to_the_cap_is_woken_at_the_effort_it_runs() {
 /// was admitted is refused as 1.6.3 refuses it, never clipped.
 #[tokio::test]
 async fn a_pin_over_a_lowered_policy_cap_is_refused_when_its_stage_is_sent() {
-    let mut h = harness(Config::default()).await;
+    let mut h = harness(raising()).await;
     let mut asked = request("Add a button", &[], pinned("review", XHigh));
     asked.model_reasons = Some([("review".to_owned(), "a hard review".to_owned())].into());
     let queued = item(h.cli(Request::Enqueue(asked)).await).await;
@@ -236,7 +236,7 @@ async fn a_pin_over_a_lowered_policy_cap_is_refused_when_its_stage_is_sent() {
 #[tokio::test]
 async fn a_restaging_revision_clips_carried_sized_efforts_to_the_cap() {
     for config in [sizer_max(High), policy_cap(High)] {
-        let mut h = harness(Config::default()).await;
+        let mut h = harness(raising()).await;
         let queued = enqueue(&h, "Add a button", &["risk:critical"]).await;
         assert_eq!(efforts(&queued), ALL_XHIGH);
         h.restart_with(config);
@@ -252,7 +252,7 @@ async fn a_restaging_revision_clips_carried_sized_efforts_to_the_cap() {
 #[tokio::test]
 async fn a_reshape_clips_carried_sized_efforts_to_the_cap() {
     for config in [sizer_max(High), policy_cap(High)] {
-        let mut h = harness(Config::default()).await;
+        let mut h = harness(raising()).await;
         let queued = enqueue(&h, "Add a button", &["risk:critical"]).await;
         h.restart_with(config);
         let shaped = steer(&h, &queued.id, insert_verify()).await;
@@ -279,7 +279,7 @@ async fn with_sizing_off_revise_and_reshape_clip_only_to_the_policy_s_cap() {
             ALL_HIGH,
         ),
     ] {
-        let mut h = harness(Config::default()).await;
+        let mut h = harness(raising()).await;
         let revised = enqueue(&h, "Add a button", &["risk:critical"]).await;
         let shaped = enqueue(&h, "Add a button", &["risk:critical"]).await;
         h.restart_with(config);
@@ -309,7 +309,7 @@ async fn lower_stored_slot(h: &Harness, id: &QueueItemId, key: &str) {
 /// what the stored plan holds for its slot now, and recorded as it is sent.
 #[tokio::test]
 async fn a_refused_wake_s_fresh_agent_is_held_to_the_stored_plan() {
-    let h = harness(Config::default()).await;
+    let h = harness(raising()).await;
     let queued = enqueue(&h, "Add a button", &["risk:critical"]).await;
     h.dispatch().await;
     let (first, sent) = issued(&h, &queued.id, "implement").await;
@@ -334,7 +334,7 @@ async fn a_refused_wake_s_fresh_agent_is_held_to_the_stored_plan() {
 /// plan holds now, which its attempt records.
 #[tokio::test]
 async fn a_woken_agent_is_retuned_to_the_stored_plan_it_records() {
-    let h = harness(Config::default()).await;
+    let h = harness(raising()).await;
     let queued = enqueue(&h, "Add a button", &["risk:critical"]).await;
     h.dispatch().await;
     let (first, _) = issued(&h, &queued.id, "implement").await;

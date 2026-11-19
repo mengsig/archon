@@ -334,12 +334,12 @@ impl QueueItem {
         settled
     }
 
-    /// Size again, within `cap`, the sized plan keys `started` does not name
+    /// Size again, within `cap` (a stage's own default unless `raises`), the sized plan keys `started` does not name
     /// when this item's title, brief, tags or review level now class it
     /// otherwise. `true` when a key was sized again.
     pub fn resize_unstarted(
         &mut self,
-        (cap, at): (Effort, Timestamp),
+        (cap, raises, at): (Effort, bool, Timestamp),
         started: &dyn Fn(&str) -> bool,
     ) -> bool {
         self.settle_sizing(at);
@@ -350,7 +350,9 @@ impl QueueItem {
             review: self.autonomy.review,
             size: effort_sizing::tagged_size(&self.tags),
         };
-        let resized = self.model_plan.resize(&self.id, input, (cap, at), started);
+        let resized = self
+            .model_plan
+            .resize(&self.id, input, (cap, raises, at), started);
         assert!(!self.model_plan.has_unsized(), "a sized plan stays sized");
         resized
     }

@@ -107,32 +107,39 @@ applies to running leads. `max_effort` caps every effort either way. The default
 `[models] max_effort = "max"` explicitly to allow `max`.
 A repository may only narrow the global cap.
 
-With `effort_sizing` on, archond also sizes every effort nobody named, as it
-writes an item's plan. It first gives the item a risk class from what the item
+With `effort_sizing` on, archond also sizes the efforts nobody named, as it
+writes an item's plan. Effort is the orchestrator's choice: the sizer never
+changes an effort a plan sets (a request, retry, `update_item` or steer, or a
+`<stage>.review` or workers entry), and never raises one unless
+`[models] sizer_max_effort` is set. By default it only lowers the
+default-effort stages of mechanical items. It first gives the item a risk class from what the item
 records, and nothing else: its tags, its title and brief, its review level and
 a known diff size (a `diff:small`, `diff:medium` or `diff:large` tag, or the
 size learned from an earlier run of the item).
 
-| Class | The item has | Each unnamed effort becomes |
+| Class | The item has | An unnamed effort (default-effort stage) becomes |
 | --- | --- | --- |
 | `mechanical` | a `docs:`, `style:`, `chore(release)` or `chore(deps)` title, a version bump, or a tag or title word such as `docs`, `changelog`, `lint`, `typo` or `formatting`, and nothing riskier | `low` |
-| `ordinary` | none of the others | the stage's own default effort, one step lower for a small diff |
-| `elevated` | a security, concurrency, locking or migration word in the title or brief; `review = strict`; a large diff; or a `release`, `ci`, `api`, `public-api` or `workflow` tag or title word | at least `high` |
-| `critical` | the `risk:critical` tag, or one of those risk words together with a strict review or a large diff | `x_high` |
+| `ordinary` | none of the others | the stage's own default effort |
+| `elevated` | a security, concurrency, locking or migration word in the title or brief; `review = strict`; a large diff; or a `release`, `ci`, `api`, `public-api` or `workflow` tag or title word | the stage's default; at least `high` with `sizer_max_effort` set |
+| `critical` | the `risk:critical` tag, or one of those risk words together with a strict review or a large diff | the stage's default; `x_high` with `sizer_max_effort` set |
 
 Each plan key is sized from its own stage: a stage that `insert_stage`, a
 refresh or a re-shaped pipeline adds starts from the default effort that stage
 declares, never from the entry it was filled from. The order of precedence is:
-the cap, then an effort the plan names (a pin), then the class, then the size
-step, then the stage's default. A learned route supplies the model only; the
-effort it learned is recorded as advice, so an effort above `max_effort` does
+an effort the plan names (a pin) or a learned route's effort is kept; only a
+stage default is sized, by the class and the cap. A learned route supplies the
+model and its effort stays, so an effort above `max_effort` does
 not rule its model out (with sizing off it does, as in 1.6.3). `x_high` is
 planned only for Claude Code and Codex models, which run it; any other
 provider gets `high`, and the reason says so.
 
-`sizer_max_effort` (default `x_high`, global only) is the most the sizer sets
-by itself; the policy's `max_effort` caps it too, so the sizer's cap is the
-lower of the two. An effort held down by it reads `sizer: critical -> x_high;
+`sizer_max_effort` (global only) is unset by default, and then the sizer
+never raises an effort: each stage's ceiling is its own default. Set it, for
+example to `"x_high"`, to let the sizer raise default-effort stages of
+elevated and critical items up to that effort; the policy's `max_effort` caps
+it too, so the cap is the lower of the two. Each entry's reason says which
+rule applied (`unchanged`, `default-lowered`, or the raised target). An effort held down by it reads `sizer: critical -> x_high;
 capped at high; consider a stronger tier`.
 
 The decision is stored with the plan and never made twice. Each item keeps the
@@ -239,7 +246,7 @@ max_effort = "high"            # default x_high; max must be explicitly allowed
 # reserve_percent = { orchestrator = 15, interactive = 10 }   # quota stages leave (the defaults)
 # interactive_providers = ["claude-code"]   # providers someone uses by hand; global only
 # effort_sizing = true         # the default; false: 1.6.3's effort rules and reviewer floors; global only
-# sizer_max_effort = "x_high"  # the default; the most archond's effort sizer sets by itself; global only
+# sizer_max_effort = "x_high"  # unset: the sizer only lowers; set: it may raise default efforts up to this; global only
 
 [limits]
 max_parallel_agents = 8        # running stage agents (default 8); 0 = unlimited

@@ -225,11 +225,12 @@ pub(crate) async fn current(
 /// from one copy of the last reading.
 pub(crate) fn status(ctx: &DaemonContext) -> Option<QuotaStatus> {
     let reading = ctx.quota.reading()?;
-    let (view, mut paces) = match judged(reading.clone()) {
-        Some((trusted, at)) => (view_of(ctx, &trusted, at), paces_of(ctx, &trusted, at)),
-        None => (QuotaView::default(), BTreeMap::new()),
+    let now = archon_core::now().max(reading.read_at);
+    let trusted = now - reading.read_at <= TRUSTED_FOR;
+    let (view, mut paces) = match trusted {
+        true => (view_of(ctx, &reading, now), paces_of(ctx, &reading, now)),
+        false => (QuotaView::default(), BTreeMap::new()),
     };
-    let now = archon_core::now();
     let config = &ctx.config;
     let reserves = config.models.reserves(&config.orchestrator.model.provider);
     let providers: Vec<ProviderQuotaStatus> = reading

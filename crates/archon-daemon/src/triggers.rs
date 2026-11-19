@@ -857,14 +857,15 @@ async fn key_pending(ctx: &DaemonContext) -> Result<(), ArchonError> {
     write_outbox(&mut store, &outbox)
 }
 
-/// Split off the news past the first `budget` encoded bytes of `held`,
-/// keeping at least one event: one too large alone is refused and noted.
+/// Split off the news past the first `budget` bytes of `held` encoded as a
+/// list, keeping at least one event: one too large alone is refused and noted.
 fn split_past_bytes(held: &mut Vec<Held>, budget: usize) -> Result<Vec<Held>, ArchonError> {
     assert!(!held.is_empty(), "only held news is split");
     assert!(budget > 0, "a batch has room");
-    let mut bytes = 0;
+    // The opening bracket, then each event with the comma or bracket after it.
+    let mut bytes = 1;
     for (at, news) in held.iter().enumerate() {
-        bytes += serde_json::to_string(&news.event)?.len();
+        bytes += serde_json::to_string(&news.event)?.len() + 1;
         if at > 0 && bytes > budget {
             return Ok(held.split_off(at));
         }
@@ -1403,6 +1404,46 @@ mod tests {
         held.push(held[0].clone());
         let rest = split_past_bytes(&mut held, BATCH_MAX_BYTES).unwrap();
         assert!(rest.is_empty(), "two capped watches share one batch");
+    }
+
+    /// The budget is the list's encoded size, separators included: a prefix
+    /// whose bare events fit but whose list does not is split.
+    #[test]
+    fn a_batch_budget_counts_the_encoded_list_to_the_byte() {
+        let now = archon_core::now();
+        let watch = TriggerEvent::GithubWatch {
+            repo: "ccso".into(),
+            repository: "owner/ccso".into(),
+            changes: vec![],
+            rest: [("new_pull_request".to_owned(), vec![7])].into(),
+            truncated: false,
+            note: None,
+            operator: false,
+            trust: crate::github_sync::watch::WATCH_TRUST.to_owned(),
+        };
+        let two = vec![
+            Held::new(watch, now, false),
+            Held::new(
+                TriggerEvent::Budget {
+                    scope: "daily".into(),
+                    spent_usd: 51.0,
+                    limit_usd: 50.0,
+                },
+                now,
+                false,
+            ),
+        ];
+        let events: Vec<&TriggerEvent> = two.iter().map(|news| &news.event).collect();
+        let list = serde_json::to_string(&events).unwrap().len();
+        let mut fits = two.clone();
+        assert!(
+            split_past_bytes(&mut fits, list).unwrap().is_empty(),
+            "exactly fits"
+        );
+        let mut over = two.clone();
+        let rest = split_past_bytes(&mut over, list - 1).unwrap();
+        assert_eq!((over.len(), rest.len()), (1, 1), "a byte short splits it");
+        assert_eq!(rest[0], two[1], "the rest stays pending, in order");
     }
 
     #[test]

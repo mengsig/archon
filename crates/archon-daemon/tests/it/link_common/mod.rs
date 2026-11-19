@@ -360,7 +360,8 @@ pub async fn sent_policy(
 }
 
 /// `stage`'s spawn as it was stored: its contract `instructions` and the
-/// effort contract recorded with it, absent as 1.6.3 stored none.
+/// effort contract recorded with it, absent as 1.6.3 stored none. One that
+/// records a mode records the reviewers the item plans now, as 1.6.4 does.
 pub async fn issued_spawn(
     ctx: &DaemonContext,
     stage: &StageRun,
@@ -374,7 +375,10 @@ pub async fn issued_spawn(
     let mut spawn =
         serde_json::json!({"request": request, "timeout_minutes": 30, "parent": "bound"});
     if let Some(mode) = mode {
+        let plan = store.item(&run.item).unwrap().model_plan;
+        let named = plan.reviewer_choices().unwrap_or_default();
         spawn["effort_contract"] = serde_json::json!(mode);
+        spawn["issued_reviewers"] = serde_json::json!(named);
     }
     store
         .kv_set(&format!("spawn_request:{}", stage.id), &spawn.to_string())

@@ -2213,8 +2213,9 @@ named (`issued_reviewers`), and the watchdog holds a lead's reviewers to that
 record, never to the config in force or the item's plan as edited since. A
 resumed or woken lead is held to the spawn that created its agent, found
 through its run's stage runs. A spawn stored by 1.6.3 is read by its own
-reviewer and delegation rule lines, never text its contract quotes; one that
-tells nothing holds no reviewer to a floor.
+reviewer and delegation rule lines, never text its contract quotes, for its
+rule and the reviewers it named; one that tells nothing holds no reviewer to
+a floor or a plan's models, only to the model policy.
 Reviewers need independent discovery: another provider at the same tier counts, and several fast-tier reviewers, or a fast-tier team checked by
 one stronger-tier judge at low effort, can beat one balanced reviewer for far
 less. A failed stage prompts reconsideration through `retry_item`'s

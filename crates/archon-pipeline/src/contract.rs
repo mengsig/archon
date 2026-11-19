@@ -647,6 +647,7 @@ const SIZED_REVIEWERS: &str = "That effort is the default, for a diff the rubric
 const FLOORED_REVIEWERS: &str = "Each effort is a floor, never a ceiling";
 /// Where those words sit in a rendered contract, and the rule lines they open.
 const REVIEWER_RULE: &str = "- Delegate every reviewer with role `reviewer`";
+const NAMED_REVIEWERS: &str = ", each on one of these models, taken in turn: ";
 const DEADLINE_HEADING: &str = "\n## Deadline\n";
 const DELEGATION_HEADING: &str = "\n## Delegation\n";
 
@@ -656,17 +657,10 @@ const DELEGATION_HEADING: &str = "\n## Delegation\n";
 /// precedes the deadline and every quoting section, and the children's rule
 /// opens a line of the last section, the delegation rules.
 pub fn stated_effort_contract(instructions: &str) -> Option<EffortContract> {
-    let before_quotes = instructions
-        .split_once(DEADLINE_HEADING)
-        .map_or(instructions, |(own, _)| own);
     let delegation = instructions
         .rsplit_once(DELEGATION_HEADING)
         .map_or("", |(_, own)| own);
-    let reviewer_rules = || {
-        before_quotes
-            .lines()
-            .filter(|line| line.starts_with(REVIEWER_RULE))
-    };
+    let reviewer_rules = || own_reviewer_rules(instructions);
     let floored = reviewer_rules()
         .any(|line| line.contains(&format!(". {FLOORED_REVIEWERS}: Archon cancels a ")));
     let sized_reviewers = reviewer_rules().any(|line| {
@@ -683,6 +677,46 @@ pub fn stated_effort_contract(instructions: &str) -> Option<EffortContract> {
         // Both is no contract rendered here: the reader holds it to neither.
         (true, true) | (false, false) => None,
     }
+}
+
+/// The reviewer rule lines of contract `instructions`: those before the
+/// deadline, which every section that quotes text follows.
+fn own_reviewer_rules(instructions: &str) -> impl Iterator<Item = &str> {
+    let before_quotes = instructions
+        .split_once(DEADLINE_HEADING)
+        .map_or(instructions, |(own, _)| own);
+    before_quotes
+        .lines()
+        .filter(|line| line.starts_with(REVIEWER_RULE))
+}
+
+/// The reviewers contract `instructions` names, as rendered here, each at
+/// its stated effort: empty when its rule leaves them to the model policy,
+/// `None` when it states no reviewer rule or one this cannot read.
+pub fn stated_reviewers(instructions: &str) -> Option<Vec<ModelChoice>> {
+    // The reviewer section is the last before the deadline.
+    let rule = own_reviewer_rules(instructions).last()?;
+    let after_role = rule.strip_prefix(REVIEWER_RULE)?;
+    let Some(listed) = after_role.strip_prefix(NAMED_REVIEWERS) else {
+        return Some(Vec::new());
+    };
+    let (listed, _) = listed.split_once(". ")?;
+    let named: Option<Vec<ModelChoice>> = listed.split("; ").map(stated_reviewer).collect();
+    assert!(
+        named.as_ref().is_none_or(|named| !named.is_empty()),
+        "a split yields at least one item"
+    );
+    named
+}
+
+/// One `{model} at effort {floor}[ up to {cap}| or higher]` of a reviewer rule.
+fn stated_reviewer(item: &str) -> Option<ModelChoice> {
+    let (model, efforts) = item.rsplit_once(" at effort ")?;
+    let floor = efforts.split(' ').next()?;
+    Some(ModelChoice::pinned(
+        model.parse().ok()?,
+        floor.parse().ok()?,
+    ))
 }
 
 /// What a lead owes whenever it moves a reviewer off the plan's effort.
@@ -1936,6 +1970,54 @@ mod tests {
             None,
             "the words sit only in quoting sections"
         );
+    }
+
+    /// A contract's reviewers read back from its own rule, as either effort
+    /// rule renders them under any cap, never from a section that quotes one.
+    #[test]
+    fn a_contract_states_the_reviewers_it_names() {
+        use archon_core::model::Effort::{High, Medium, XHigh};
+        let named = [
+            ModelChoice::pinned("codex/gpt-5.5".parse().unwrap(), Medium),
+            ModelChoice::pinned("claude-code/opus".parse().unwrap(), High),
+        ];
+        let own = model("claude-code/opus");
+        let deadline = "\n## Deadline\n\n- Archon stops you at noon.\n";
+        for cap in [None, Some(High), Some(XHigh)] {
+            let policy = ModelPolicy {
+                max_effort: cap,
+                ..ModelPolicy::default()
+            };
+            for sizing in [false, true] {
+                let rules = reviewer_model_rules(Some(&named), &own, &policy, sizing);
+                let whole = format!("contract\n{rules}{deadline}");
+                assert_eq!(stated_reviewers(&whole), Some(named.to_vec()), "{whole}");
+            }
+        }
+        let open = ModelPolicy::default();
+        let fallback = reviewer_model_rules(None, &own, &open, false);
+        let left = format!("contract\n{fallback}{deadline}");
+        assert_eq!(
+            stated_reviewers(&left),
+            Some(Vec::new()),
+            "the policy bounds them"
+        );
+        let quoted = reviewer_model_rules(Some(&named), &own, &open, false);
+        let quoting = format!("contract\n{deadline}\n## Lessons\n\n{quoted}");
+        assert_eq!(stated_reviewers(&quoting), None, "quoted words never tell");
+        let mangled = "- Delegate every reviewer with role `reviewer`, each on one of these \
+                       models, taken in turn: codex at effort lowish. Each effort is a floor\n";
+        assert_eq!(
+            stated_reviewers(mangled),
+            None,
+            "an unreadable rule tells nothing"
+        );
+        let a_1_6_3_line = "- Delegate every reviewer with role `reviewer`, each on one of \
+             these models, taken in turn: codex/gpt-5 at effort medium up to x_high. Each \
+             effort is a floor, never a ceiling: Archon cancels a child labelled `reviewer` \
+             on any other model, or below its model's effort, as it spawns.\n";
+        let floor = ModelChoice::pinned("codex/gpt-5".parse().unwrap(), Medium);
+        assert_eq!(stated_reviewers(a_1_6_3_line), Some(vec![floor]));
     }
 
     /// The rubric sets a reviewer's effort from the diff, lower or higher than

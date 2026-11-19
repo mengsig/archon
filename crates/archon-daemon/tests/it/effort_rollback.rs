@@ -43,6 +43,36 @@ fn same_as_1_6_3(name: &str, actual: &str) {
     );
 }
 
+/// Set in the child process a pinned test reruns itself in.
+const HERMETIC: &str = "ARCHON_TEST_EMPTY_CONFIG_DIR";
+
+/// Whether this process may run pinned `test`: one with an empty config
+/// directory may. Any other reruns it in such a child and asserts it passed,
+/// since the operator's own pipelines there would override built-ins.
+fn in_empty_config_dir(test: &str) -> bool {
+    let config = archon_core::paths::config_dir();
+    if std::env::var_os(HERMETIC).is_some() {
+        let mut entries = std::fs::read_dir(&config).unwrap();
+        assert!(entries.next().is_none(), "{} is empty", config.display());
+        return true;
+    }
+    let empty = tempfile::tempdir().unwrap();
+    let name = format!("effort_rollback::{test}");
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", &name, "--test-threads=1", "--nocapture"])
+        .env(HERMETIC, "1")
+        .env(archon_core::paths::CONFIG_DIR_VAR, empty.path())
+        .output()
+        .unwrap();
+    let (out, err) = (
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(output.status.success(), "{name} failed:\n{out}\n{err}");
+    assert!(out.contains("1 passed"), "{name} ran once:\n{out}");
+    false
+}
+
 /// `text` with what differs between runs named instead: paths, ids, times.
 fn stable(h: &Harness, text: &str, request: Option<&SpawnRequest>) -> String {
     let root = h.dir.path().canonicalize().unwrap();
@@ -98,6 +128,9 @@ async fn enqueue(
 /// The orchestrator's prompt, without and with the GitHub section.
 #[tokio::test]
 async fn the_orchestrator_prompt_is_1_6_3_s_with_sizing_off() {
+    if !in_empty_config_dir("the_orchestrator_prompt_is_1_6_3_s_with_sizing_off") {
+        return;
+    }
     let h = Harness::with_config(rolled_back()).await;
     let workspace = h.dir.path().canonicalize().unwrap().join("orchestrator");
     for (github, name) in [(false, "prompt.txt"), (true, "prompt-github.txt")] {
@@ -108,8 +141,7 @@ async fn the_orchestrator_prompt_is_1_6_3_s_with_sizing_off() {
     }
 }
 
-/// The built-in pipelines `list_pipelines` serves: the operator's own
-/// pipelines under the real config directory are not this file's to pin.
+/// The pipelines `list_pipelines` serves, all built in.
 async fn served_builtins(h: &Harness) -> CatalogListing {
     let listed = h
         .orchestrator(Request::ListPipelines {
@@ -118,15 +150,12 @@ async fn served_builtins(h: &Harness) -> CatalogListing {
         })
         .await
         .unwrap();
-    let Reply::Catalog(mut listing) = listed else {
+    let Reply::Catalog(listing) = listed else {
         panic!("a catalog: {listed:?}");
     };
-    listing
-        .pipelines
-        .retain(|p| p.source == PipelineSource::Builtin);
-    listing
-        .problems
-        .retain(|p| p.source == PipelineSource::Builtin);
+    let builtin = |source: &PipelineSource| *source == PipelineSource::Builtin;
+    assert!(listing.pipelines.iter().all(|p| builtin(&p.source)));
+    assert!(listing.problems.iter().all(|p| builtin(&p.source)));
     assert!(listing.pipelines.iter().any(|p| p.name == "adaptive"));
     listing
 }
@@ -134,6 +163,9 @@ async fn served_builtins(h: &Harness) -> CatalogListing {
 /// Every built-in pipeline as `list_pipelines` serves it, nudges included.
 #[tokio::test]
 async fn the_served_catalog_is_1_6_3_s_with_sizing_off() {
+    if !in_empty_config_dir("the_served_catalog_is_1_6_3_s_with_sizing_off") {
+        return;
+    }
     let h = Harness::with_config(rolled_back()).await;
     let listing = served_builtins(&h).await;
     let text = serde_json::to_string_pretty(&listing).unwrap();
@@ -144,6 +176,9 @@ async fn the_served_catalog_is_1_6_3_s_with_sizing_off() {
 /// rubric rewords, so none contradicts it.
 #[tokio::test]
 async fn the_served_catalog_differs_from_1_6_3_s_only_by_reworded_nudges() {
+    if !in_empty_config_dir("the_served_catalog_differs_from_1_6_3_s_only_by_reworded_nudges") {
+        return;
+    }
     let mut config = Config::default();
     config.review.auto_repair = false;
     let h = Harness::with_config(config).await;
@@ -178,6 +213,9 @@ async fn the_served_catalog_differs_from_1_6_3_s_only_by_reworded_nudges() {
 /// What an enqueue naming no model stores for the built-in pipelines.
 #[tokio::test]
 async fn filled_plans_are_1_6_3_s_with_sizing_off() {
+    if !in_empty_config_dir("filled_plans_are_1_6_3_s_with_sizing_off") {
+        return;
+    }
     let h = Harness::with_config(rolled_back()).await;
     let mut plans = String::new();
     for pipeline in ["adaptive", "direct", "swarm", "refactor", "review"] {
@@ -191,6 +229,9 @@ async fn filled_plans_are_1_6_3_s_with_sizing_off() {
 /// A lead's contract with the plan naming its reviewers (a floor in 1.6.3).
 #[tokio::test]
 async fn a_named_reviewer_contract_is_1_6_3_s_with_sizing_off() {
+    if !in_empty_config_dir("a_named_reviewer_contract_is_1_6_3_s_with_sizing_off") {
+        return;
+    }
     let mut config = rolled_back();
     config.models.max_effort = Some(Effort::XHigh);
     let h = Harness::with_config(config).await;
@@ -221,6 +262,9 @@ async fn a_named_reviewer_contract_is_1_6_3_s_with_sizing_off() {
 /// A lead's contract with reviewers from `[review]`, which asks for low.
 #[tokio::test]
 async fn a_profile_reviewer_contract_is_1_6_3_s_with_sizing_off() {
+    if !in_empty_config_dir("a_profile_reviewer_contract_is_1_6_3_s_with_sizing_off") {
+        return;
+    }
     let mut config = rolled_back();
     config.review.default_effort = Effort::Low;
     let h = Harness::with_config(config).await;
@@ -233,4 +277,32 @@ async fn a_profile_reviewer_contract_is_1_6_3_s_with_sizing_off() {
         "contract-profile.txt",
         &stable(&h, &build.instructions, Some(&build)),
     );
+}
+
+/// An operator's own `direct` overrides the built-in one where they run
+/// Archon; the pinned catalog is still the built-ins 1.6.3 served.
+#[test]
+fn an_operator_s_pipeline_never_reaches_the_pinned_catalog() {
+    if std::env::var_os(HERMETIC).is_some() {
+        return;
+    }
+    let config = tempfile::tempdir().unwrap();
+    let ours = config.path().join("pipelines/direct");
+    std::fs::create_dir_all(&ours).unwrap();
+    let builtin = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pipelines/direct");
+    for file in ["pipeline.toml", "implement.md"] {
+        let text = std::fs::read_to_string(builtin.join(file)).unwrap();
+        let text = text.replace("description = \"", "description = \"Ours: ");
+        std::fs::write(ours.join(file), text).unwrap();
+    }
+    let name = "effort_rollback::the_served_catalog_is_1_6_3_s_with_sizing_off";
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", name, "--test-threads=1"])
+        .env(archon_core::paths::CONFIG_DIR_VAR, config.path())
+        .env_remove("ARCHON_BLESS")
+        .output()
+        .unwrap();
+    let out = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{out}");
+    assert!(out.contains("1 passed"), "{out}");
 }

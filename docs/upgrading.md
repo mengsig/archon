@@ -55,9 +55,10 @@ replayed after the restart, is held to its own rule, and a reviewer its rule
 allows is never cancelled. Each spawn records the reviewers its contract
 named as well, and the watchdog holds a lead's reviewers to those, not to the
 item's plan as edited since. A spawn stored by 1.6.3 records neither: archond
-reads its rule from that spawn's own reviewer and delegation rule lines, never
-text the contract quotes, and where they tell nothing it cancels no reviewer
-for its effort; its reviewers are held to the item's plan as 1.6.3 held them. Nothing here migrates the store, but going
+reads its rule and its reviewers from that spawn's own reviewer and delegation
+rule lines, never text the contract quotes. Where they tell nothing, it
+cancels no reviewer for its effort, and only the model policy bounds the
+reviewer's model. Nothing here migrates the store, but going
 back to a 1.6.3 binary is not supported once any release's store migration has
 run: use the switch instead.
 

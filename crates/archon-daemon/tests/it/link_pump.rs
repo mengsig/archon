@@ -2129,18 +2129,15 @@ async fn a_resumed_1_6_3_lead_is_held_to_the_contract_it_was_created_with() {
     }
 }
 
-/// A woken lead whose first spawn is gone tells nothing: no floor holds it.
+/// A woken lead whose first spawn is gone tells nothing: no floor and no
+/// plan holds it, only the model policy.
 #[tokio::test]
 async fn a_resumed_lead_whose_first_spawn_is_gone_is_held_to_no_floor() {
     let (harness, first, _repo) = reviewed_stage(false, ALLOWED).await;
     let resumed = link_common::resumed_stage(&harness.ctx, &first, FLOORED_1_6_3).await;
     link_common::amend_spawn(&harness.ctx, &resumed, "effort_contract", json!("floor")).await;
     let cancelled = agents_of(reviewers_cancelled(&harness).await);
-    assert_eq!(
-        cancelled,
-        ["agt_0103", "agt_0105"],
-        "permissive, never stricter"
-    );
+    assert_eq!(cancelled, ["agt_0105"], "only the policy, never stricter");
 }
 
 /// The reviewers a lead's contract named are those its spawn recorded: a
@@ -2158,6 +2155,21 @@ async fn a_lead_s_reviewers_are_those_its_contract_named_not_the_plan_s_now() {
         ["agt_0103", "agt_0104", "agt_0105"],
         "the issued model at its floor"
     );
+}
+
+/// A 1.6.3 lead recorded no reviewers: those its own rule line names hold
+/// it, not a plan edited since to name others.
+#[tokio::test]
+async fn a_1_6_3_lead_s_reviewers_are_those_its_rule_names_not_the_plan_s_now() {
+    let floored = ["agt_0103", "agt_0104", "agt_0105"];
+    let sized = ["agt_0103", "agt_0105"];
+    for (rule, expected) in [(FLOORED_1_6_3, &floored[..]), (SIZED_1_6_3, &sized[..])] {
+        let (harness, stage, _repo) = reviewed_stage(true, DENIED).await;
+        let instructions = format!("contract\n{rule}\n## Deadline\n\n- noon\n");
+        link_common::issued_spawn(&harness.ctx, &stage, &instructions, None).await;
+        let cancelled = agents_of(reviewers_cancelled(&harness).await);
+        assert_eq!(cancelled, expected, "issued {rule:?}");
+    }
 }
 
 /// A contract that left the reviewers to the policy holds them to no
@@ -2323,7 +2335,7 @@ async fn a_sized_reviewer_spawn_is_checked_against_the_named_model_and_the_cap()
 }
 
 /// A spawn 1.6.3 stored records no mode: its contract's words tell what it
-/// was issued, and where nothing tells no reviewer is held to a floor.
+/// was issued, and where nothing tells only the model policy holds a reviewer.
 #[tokio::test]
 async fn a_1_6_3_spawn_is_held_to_the_contract_its_words_state() {
     let cancelled = agents_of;
@@ -2335,7 +2347,11 @@ async fn a_1_6_3_spawn_is_held_to_the_contract_its_words_state() {
     assert_eq!(cancelled(rubric), sized, "1.6.3 issued the rubric");
     for (sizing, issued) in [(false, Some(("contract", None))), (false, None)] {
         let unknown = reviewer_cancels(sizing, issued).await;
-        assert_eq!(cancelled(unknown), sized, "nothing tells: {issued:?}");
+        assert_eq!(
+            cancelled(unknown),
+            ["agt_0105"],
+            "nothing tells: {issued:?}"
+        );
     }
     let both = format!("{FLOORED_1_6_3}{SIZED_1_6_3}");
     let ambiguous = reviewer_cancels(false, Some((&both, None))).await;
@@ -2356,7 +2372,6 @@ async fn a_delegate_s_reviewer_is_held_to_its_lead_s_issued_contract() {
     let harness = Harness::with(config, None).await;
     let repo = tempfile::tempdir().unwrap();
     let stage = running_stage(&harness.ctx, repo.path(), STAGE, STAGE_TASK).await;
-    link_common::issued_spawn(&harness.ctx, &stage, "contract", Some("floor")).await;
     {
         let mut store = harness.ctx.store.lock().await;
         let run = store.run(&stage.run).unwrap();
@@ -2371,6 +2386,7 @@ async fn a_delegate_s_reviewer_is_held_to_its_lead_s_issued_contract() {
         );
         store.update_item(&item).unwrap();
     }
+    link_common::issued_spawn(&harness.ctx, &stage, "contract", Some("floor")).await;
     let (agents, pump) = running_pump(&harness).await;
     harness.fake.set_default("cancel", Scripted::ok());
     for (id, parent, role, effort) in [

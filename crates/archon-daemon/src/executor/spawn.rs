@@ -113,6 +113,16 @@ impl StoredSpawn {
         self.effort_contract
             .or_else(|| contract::stated_effort_contract(&self.request.instructions))
     }
+
+    /// The reviewers `request` named, each at the effort it stated; `None`
+    /// when it left them to the model policy or nothing recorded tells.
+    pub(crate) fn named_reviewers(&self) -> Option<Vec<ModelChoice>> {
+        let named = match &self.issued_reviewers {
+            Some(recorded) => recorded.clone(),
+            None => contract::stated_reviewers(&self.request.instructions)?,
+        };
+        Some(named).filter(|named| !named.is_empty())
+    }
 }
 
 /// The spawn whose request created the agent stage run `id` holds: its own,

@@ -567,3 +567,59 @@ async fn retired_run(h: &Harness, like: &archon_core::queue::QueueItem) {
         "an outcome 60 days old"
     );
 }
+
+/// A review-only run's lead records a fail with `complete_task`: the stage
+/// completes, the run and item fail, nothing ships, and evidence scores it.
+#[tokio::test]
+async fn a_review_only_lead_s_recorded_fail_fails_the_item_and_counts_as_a_verdict() {
+    use archon_core::model::{Effort, ModelPlan};
+    use archon_core::queue::QueueState;
+    use common::{MODEL, choice};
+    let h = Harness::new().await;
+    h.add_pipeline(
+        "review-only",
+        r#"[pipeline]
+name = "review-only"
+description = "review a change, ship nothing"
+version = 1
+workspace = "worktree"
+requires_repo = true
+[pipeline.review]
+level = "standard"
+stage = "review"
+[[stage]]
+id = "review"
+kind = "work"
+prompt = "implement.md"
+allow_delegation = true
+"#,
+    );
+    let plan = ModelPlan([("review".into(), vec![choice(MODEL, Effort::Low)])].into());
+    let item = h
+        .enqueue_in("review-only", "review it", plan)
+        .await
+        .unwrap();
+    h.dispatch().await;
+    let fail = archon_core::run::StageOutcome::Completed {
+        summary: "Reviewed.\nVERDICT: FAIL".into(),
+        structured: Some(serde_json::json!({
+            "verdict": "fail",
+            "findings": [{"severity": "high", "blocking": true, "title": "t", "detail": "d"}],
+        })),
+    };
+    assert_eq!(h.settle_running(|_| fail.clone()).await.len(), 1);
+    let lead = h.stages(&item.id).await.remove(0);
+    assert_eq!(lead.state, StageState::Completed);
+    assert_eq!(
+        (lead.verdict, lead.only_reviews),
+        (Some(Verdict::Fail), Some(true))
+    );
+    let QueueState::Failed { error, .. } = h.item(&item.id).await.state else {
+        panic!("a recorded fail fails the item");
+    };
+    assert!(error.contains("FAIL"), "{error}");
+    assert_eq!(h.stages(&item.id).await.len(), 1, "nothing ran after it");
+    let report = evidence(&h).await;
+    let row = report.rows.iter().find(|r| r.stage == "review").unwrap();
+    assert_eq!((row.completed, row.passed, row.verdicts), (1, 0, 1));
+}

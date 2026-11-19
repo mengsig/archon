@@ -317,6 +317,7 @@ mod tests {
             aether_task: None,
             state: StageState::Running,
             verdict: None,
+            verdict_note: None,
             summary: None,
             structured: None,
             cost_usd: 0.0,

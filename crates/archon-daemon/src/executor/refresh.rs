@@ -811,6 +811,7 @@ mod tests {
             aether_task: None,
             state: archon_core::run::StageState::Completed,
             verdict: None,
+            verdict_note: None,
             summary: None,
             structured: Some(serde_json::json!({"commit": commit, "tree": "b".repeat(40),
                 "pr": {"title": "t", "body": "b"},

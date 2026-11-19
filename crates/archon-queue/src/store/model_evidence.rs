@@ -17,7 +17,7 @@ use archon_core::outcome::{
     CorrectionCause, DiffSize, FailureClass, Outcome, OutcomeResult, RouteContext,
 };
 use archon_core::queue::QueueItem;
-use archon_core::run::{StageRun, StageState, Verdict};
+use archon_core::run::{StageRun, StageState, Verdict, VerdictNote};
 use rusqlite::{Connection, params};
 
 use super::codec::{SqlContext, from_json};
@@ -31,6 +31,7 @@ struct Samples {
     minutes: Vec<f64>,
     verdicts: usize,
     passed: usize,
+    disputed: usize,
 }
 
 /// Owned observations, so classification can read files without a store lock.
@@ -211,7 +212,30 @@ struct Sample {
 struct Completed {
     cost: f64,
     minutes: Option<f64>,
-    verdict: Option<bool>,
+    verdict: Option<Scored>,
+}
+
+/// How a verdict stage's completed attempt counts toward its pass share.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Scored {
+    Passed,
+    Failed,
+    /// A pass its own findings dispute: a format clash, not a fail of the model.
+    Disputed,
+}
+
+impl Scored {
+    fn of(verdict: Verdict, note: Option<VerdictNote>) -> Self {
+        assert!(
+            note.is_none() || verdict == Verdict::Unknown,
+            "a note explains only unknown"
+        );
+        match (verdict, note) {
+            (Verdict::Pass, _) => Self::Passed,
+            (Verdict::Unknown, Some(VerdictNote::DisputedPass)) => Self::Disputed,
+            _ => Self::Failed,
+        }
+    }
 }
 
 impl Samples {
@@ -222,10 +246,15 @@ impl Samples {
         };
         self.costs.push(done.cost);
         self.minutes.extend(done.minutes);
-        if let Some(passed) = done.verdict {
-            self.verdicts += 1;
-            self.passed += usize::from(passed);
+        match done.verdict {
+            None => {}
+            Some(Scored::Disputed) => self.disputed += 1,
+            Some(scored) => {
+                self.verdicts += 1;
+                self.passed += usize::from(scored == Scored::Passed);
+            }
         }
+        debug_assert!(self.passed <= self.verdicts);
     }
 
     /// Sorted, with the summary every evidence row shows.
@@ -244,6 +273,7 @@ impl Samples {
             median_minutes: median(&self.minutes),
             verdicts: self.verdicts,
             passed: self.passed,
+            disputed: self.disputed,
         }
     }
 }
@@ -256,6 +286,7 @@ struct Summary {
     median_minutes: Option<f64>,
     verdicts: usize,
     passed: usize,
+    disputed: usize,
 }
 
 fn sample(
@@ -298,7 +329,9 @@ fn sample(
         None => None,
     };
     let verdict = match is_verdict_stage(&attempt.item, stage)? {
-        true => stage.verdict.map(|v| v == Verdict::Pass),
+        true => stage
+            .verdict_reading()
+            .map(|(verdict, note)| Scored::of(verdict, note)),
         false => None,
     };
     Ok(Sample {
@@ -331,6 +364,7 @@ fn finish(
                 median_minutes: s.median_minutes,
                 verdicts: s.verdicts,
                 passed: s.passed,
+                disputed: s.disputed,
             }
         })
         .collect();
@@ -368,6 +402,7 @@ fn finish(
                 median_minutes: s.median_minutes,
                 verdicts: s.verdicts,
                 passed: s.passed,
+                disputed: s.disputed,
             }
         })
         .collect();

@@ -617,6 +617,7 @@ mod tests {
             aether_task: None,
             state: StageState::Completed,
             verdict: None,
+            verdict_note: None,
             summary: Some(summary.into()),
             structured: None,
             cost_usd: 0.5,

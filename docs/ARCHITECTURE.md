@@ -2357,7 +2357,12 @@ sorted by stage then median completed cost, with model/effort tie breakers and
 uncompleted groups last within a stage. Each line shows attempts, completed
 attempts, median and nearest-rank p90 cost per completed attempt, median minutes
 of completed attempts with finish times, and review/test recorded verdict pass
-share (unknown verdicts do not pass). Costs are API-equivalent totals from the
+share (unknown verdicts do not pass). A review-only run's lead counts as a
+verdict stage once it is spawned as one (`only_reviews`); its attempts from
+before stay out of the share. A pass its own findings dispute
+(`verdict_note = disputed_pass`) is shown as `disputed=` and left out of the
+share: a format clash, not a fail of the model. An unknown verdict stored
+before notes is read again from its stored result, a lead's by its review record. Costs are API-equivalent totals from the
 latest agent ledger totals, whatever the budgets count, falling back to stored stage cost when there is
 no ledger row. Completed n below five is marked as a small sample. Output is
 limited to 60 groups and states the omitted count. This evidence recommends
@@ -2693,7 +2698,7 @@ its contract carries no delegation section.
 > an error starting `BLOCKED:`; if the task does not fit this pipeline, with
 > one starting `ESCALATE:`. When done, call `complete_task` with a concise
 > `summary`. Review and test stages must include structured
-> `{"verdict":"pass"|"fail","findings":[{"severity":"…","title":"…","detail":"…","path":"…"}]}`
+> `{"verdict":"pass"|"fail","findings":[{"severity":"…","blocking":true|false,"title":"…","detail":"…","path":"…"}]}`
 > and must end the summary with `VERDICT: PASS` or `VERDICT: FAIL`. Ship
 > stages include `{"pr_url":"…"}` or `{"commit":"…"}` in structured data, and
 > never amend, rebase, squash or reset the commits they are given: only a

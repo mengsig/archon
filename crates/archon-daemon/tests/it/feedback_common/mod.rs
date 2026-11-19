@@ -94,6 +94,7 @@ async fn recorded_sample(
             aether_task: None,
             state: StageState::Completed,
             verdict: None,
+            verdict_note: None,
             summary: Some("done".into()),
             structured: None,
             cost_usd: cost,

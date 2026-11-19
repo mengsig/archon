@@ -627,6 +627,7 @@ mod tests {
             finished_at: state.is_terminal().then_some(started_at),
             state,
             verdict: None,
+            verdict_note: None,
             summary: None,
             structured: None,
             cost_usd: 0.0,

@@ -60,7 +60,8 @@ is preserved and the measured gain justifies the readability cost.
 the measured gain does not justify the readability cost, the performance
 acceptance criteria are not met or the working tree is dirty. Otherwise
 **pass**; medium and low findings are advice. Do not fail for personal taste
-or unrelated work.
+or unrelated work. Mark each finding that fails the verdict `"blocking":
+true` and each piece of advice `"blocking": false`.
 
 Call `complete_task` with the structured verdict and findings. Each finding
 names the path and line when known, problem, impact and concrete remedy.

@@ -3,7 +3,7 @@
 //! default, and the decision is frozen in the stored plan (ruling E3').
 use std::collections::BTreeMap;
 
-use crate::common::{Harness, MODEL, REPO_NAME, REVIEW_MODEL, completed};
+pub(crate) use crate::common::{Harness, MODEL, REPO_NAME, REVIEW_MODEL, completed};
 use archon_core::autonomy::{AutonomyPatch, ReviewLevel};
 use archon_core::config::Config;
 use archon_core::effort_sizing::RiskClass;
@@ -19,7 +19,7 @@ use archon_daemon::executor;
 
 /// Stage defaults that differ, so a borrowed effort shows: `implement` and
 /// `review` at medium, `ship` at low.
-const SIZED: &str = "sized";
+pub(crate) const SIZED: &str = "sized";
 const SIZED_TOML: &str = r#"[pipeline]
 name = "sized"
 description = "stages with defaults of their own"
@@ -53,7 +53,7 @@ timeout_minutes = 90
 
 /// The pipeline a steer borrows `verify` from: its default is high, which no
 /// stage of [`SIZED`] has.
-const DONOR: &str = "sized-donor";
+pub(crate) const DONOR: &str = "sized-donor";
 const DONOR_TOML: &str = r#"[pipeline]
 name = "sized-donor"
 description = "a stage to borrow"
@@ -69,27 +69,27 @@ effort = "high"
 timeout_minutes = 30
 "#;
 
-async fn harness(config: Config) -> Harness {
+pub(crate) async fn harness(config: Config) -> Harness {
     let h = Harness::with_config(config).await;
     h.add_pipeline(SIZED, SIZED_TOML);
     h.add_pipeline(DONOR, DONOR_TOML);
     h
 }
 
-fn sizer_max(effort: Effort) -> Config {
+pub(crate) fn sizer_max(effort: Effort) -> Config {
     let mut config = Config::default();
     config.models.sizer_max_effort = Some(effort);
     config
 }
 
-fn sizing_off() -> Config {
+pub(crate) fn sizing_off() -> Config {
     let mut config = Config::default();
     config.models.effort_sizing = Some(false);
     config
 }
 
 /// A model for every stage and an effort for none, so every effort is the daemon's.
-fn models() -> ModelPlanDraft {
+pub(crate) fn models() -> ModelPlanDraft {
     let named = |model: &str| ModelChoiceDraft {
         model: Some(model.parse().unwrap()),
         ..Default::default()
@@ -108,13 +108,13 @@ fn models() -> ModelPlanDraft {
 }
 
 /// [`models`] with `effort` pinned on `stage`.
-fn pinned(stage: &str, effort: Effort) -> ModelPlanDraft {
+pub(crate) fn pinned(stage: &str, effort: Effort) -> ModelPlanDraft {
     let mut plan = models();
     plan.0.get_mut(stage).unwrap()[0].effort = Some(effort);
     plan
 }
 
-fn request(title: &str, tags: &[&str], plan: ModelPlanDraft) -> EnqueueRequest {
+pub(crate) fn request(title: &str, tags: &[&str], plan: ModelPlanDraft) -> EnqueueRequest {
     EnqueueRequest {
         intent: None,
         onto: None,
@@ -136,19 +136,19 @@ fn request(title: &str, tags: &[&str], plan: ModelPlanDraft) -> EnqueueRequest {
 }
 
 /// `asked` with the reason an effort above `implement`'s default needs.
-fn reasoned(mut asked: EnqueueRequest) -> EnqueueRequest {
+pub(crate) fn reasoned(mut asked: EnqueueRequest) -> EnqueueRequest {
     asked.model_reasons = Some([("implement".to_owned(), "a hard change".to_owned())].into());
     asked
 }
 
-async fn item(reply: Result<Reply, ArchonError>) -> QueueItem {
+pub(crate) async fn item(reply: Result<Reply, ArchonError>) -> QueueItem {
     match reply.expect("accepted") {
         Reply::Item(item) => item,
         other => panic!("replied {other:?}"),
     }
 }
 
-async fn enqueue(h: &Harness, title: &str, tags: &[&str]) -> QueueItem {
+pub(crate) async fn enqueue(h: &Harness, title: &str, tags: &[&str]) -> QueueItem {
     let queued = item(
         h.cli(Request::Enqueue(request(title, tags, models())))
             .await,
@@ -162,7 +162,7 @@ async fn enqueue(h: &Harness, title: &str, tags: &[&str]) -> QueueItem {
     queued
 }
 
-fn efforts(item: &QueueItem) -> Vec<(&str, Effort)> {
+pub(crate) fn efforts(item: &QueueItem) -> Vec<(&str, Effort)> {
     let plan = &item.model_plan;
     plan.0
         .iter()
@@ -170,24 +170,24 @@ fn efforts(item: &QueueItem) -> Vec<(&str, Effort)> {
         .collect()
 }
 
-fn class(item: &QueueItem) -> Option<RiskClass> {
+pub(crate) fn class(item: &QueueItem) -> Option<RiskClass> {
     item.model_plan
         .sizing()
         .and_then(|sizing| sizing.risk_class)
 }
 
-fn reason(item: &QueueItem, key: &str) -> String {
+pub(crate) fn reason(item: &QueueItem, key: &str) -> String {
     let reasons = item.model_plan.effort_reasons(&item.id);
     reasons
         .get(key)
         .map_or(String::new(), |slots| slots[0].clone())
 }
 
-fn effort_source(item: &QueueItem, key: &str) -> PlanSource {
+pub(crate) fn effort_source(item: &QueueItem, key: &str) -> PlanSource {
     item.model_plan.origin(&item.id, key, 0).effort.source
 }
 
-async fn update(h: &Harness, id: &QueueItemId, patch: ItemPatch) -> QueueItem {
+pub(crate) async fn update(h: &Harness, id: &QueueItemId, patch: ItemPatch) -> QueueItem {
     let request = Request::UpdateItem {
         item: id.clone(),
         patch,
@@ -197,7 +197,7 @@ async fn update(h: &Harness, id: &QueueItemId, patch: ItemPatch) -> QueueItem {
     updated
 }
 
-async fn steer(h: &Harness, id: &QueueItemId, steer: Steer) -> QueueItem {
+pub(crate) async fn steer(h: &Harness, id: &QueueItemId, steer: Steer) -> QueueItem {
     let request = Request::SteerItem {
         item: id.clone(),
         steer,
@@ -205,14 +205,14 @@ async fn steer(h: &Harness, id: &QueueItemId, steer: Steer) -> QueueItem {
     item(h.orchestrator(request).await).await
 }
 
-fn note(text: &str) -> Steer {
+pub(crate) fn note(text: &str) -> Steer {
     Steer {
         note: Some(text.into()),
         ..Steer::default()
     }
 }
 
-fn insert_verify() -> Steer {
+pub(crate) fn insert_verify() -> Steer {
     Steer {
         insert_stage: Some(InsertStage {
             stage: "verify".into(),
@@ -223,7 +223,7 @@ fn insert_verify() -> Steer {
     }
 }
 
-async fn cancel(h: &Harness, id: &QueueItemId) {
+pub(crate) async fn cancel(h: &Harness, id: &QueueItemId) {
     let request = Request::CancelItem {
         item: id.clone(),
         reason: None,
@@ -231,7 +231,7 @@ async fn cancel(h: &Harness, id: &QueueItemId) {
     h.cli(request).await.expect("cancel");
 }
 
-async fn retry(h: &Harness, id: &QueueItemId) -> Result<QueueItem, ArchonError> {
+pub(crate) async fn retry(h: &Harness, id: &QueueItemId) -> Result<QueueItem, ArchonError> {
     let request = Request::RetryItem {
         item: id.clone(),
         model_plan: None,
@@ -247,13 +247,13 @@ async fn retry(h: &Harness, id: &QueueItemId) -> Result<QueueItem, ArchonError> 
 }
 
 /// The running attempt of `stage` of item `id`.
-async fn attempt(h: &Harness, id: &QueueItemId, stage: &str) -> StageRun {
+pub(crate) async fn attempt(h: &Harness, id: &QueueItemId, stage: &str) -> StageRun {
     let stages = h.stages(id).await;
     let found = stages.into_iter().rfind(|s| s.stage_id == stage);
     found.unwrap_or_else(|| panic!("no attempt of {stage}"))
 }
 
-fn recorded(stage: &StageRun) -> (Option<RiskClass>, Option<PlanSource>, &str) {
+pub(crate) fn recorded(stage: &StageRun) -> (Option<RiskClass>, Option<PlanSource>, &str) {
     let AttemptSizing {
         risk_class,
         effort_source,

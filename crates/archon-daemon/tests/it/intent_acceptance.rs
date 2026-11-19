@@ -646,3 +646,57 @@ async fn a_stage_cannot_file_an_intent_even_with_the_operator_quote() {
             .is_none()
     );
 }
+
+/// The acceptance judge is chosen at reservation, apart from its plan: one
+/// superseded before its create is sent still judges, as the catalog lists it.
+#[tokio::test]
+async fn a_judge_superseded_before_its_create_is_sent_still_judges() {
+    const JUDGE: &str = "codex/sol";
+    let mut config = archon_core::config::Config::default();
+    config.review.auto_repair = false;
+    // The plan's placeholder judge, REVIEW_MODEL, lacks vision: JUDGE is chosen.
+    let vision = [common::MODEL, JUDGE];
+    let (h, fake, item) = fixture_on(config, false, &vision).await;
+    settle(&h, evidence(&h, &item, "implemented").await).await;
+    let busy = archon_core::error::ArchonError::Unavailable("aetherd busy".into());
+    h.backend.fail_next(busy);
+    settle(&h, json!({"verdict":"pass","findings":[]})).await;
+    let sent = |h: &Harness| {
+        h.backend
+            .requests()
+            .last()
+            .map(|r| r.choice.model.to_string())
+    };
+    assert_eq!(
+        sent(&h).as_deref(),
+        Some(JUDGE),
+        "the judge's create failed"
+    );
+    assert!(h.running().await.is_empty(), "its create is held");
+
+    let mut models: Vec<Value> = vision
+        .iter()
+        .map(|model| {
+            let superseded = (*model == JUDGE).then_some("sol-next");
+            json!({"model": model, "configured": true, "tier": "strong",
+               "capabilities": {"vision": true}, "superseded_by": superseded})
+        })
+        .collect();
+    for model in [common::REVIEW_MODEL, "codex/sol-next"] {
+        models.push(json!({"model": model, "configured": true, "tier": "strong"}));
+    }
+    fake.set_default("list_models", Scripted::reply("models", json!(models)));
+    let store = h.ctx.store.lock().await;
+    store.invalidate_model_catalog("catalog changed".into());
+    drop(store);
+    h.dispatch().await;
+    h.dispatch().await;
+
+    assert_eq!(sent(&h).as_deref(), Some(JUDGE), "sent again on the judge");
+    let running = h.running().await;
+    let judging: Vec<_> = running
+        .iter()
+        .map(|s| (s.stage_id.as_str(), s.choice.model.to_string()))
+        .collect();
+    assert_eq!(judging, [("intent-acceptance", JUDGE.to_owned())]);
+}

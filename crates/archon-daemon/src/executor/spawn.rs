@@ -1473,6 +1473,10 @@ async fn superseded_pick(
     catalog: &archon_core::model_tier::ModelCatalog,
 ) -> Result<Option<String>, ArchonError> {
     assert_eq!(stage.state, StageState::Spawning, "a reserved attempt");
+    // The acceptance judge is chosen at reservation, never from the plan.
+    if stage.stage_id == archon_pipeline::acceptance::STAGE {
+        return Ok(None);
+    }
     let model = catalog.canonical_alias(&request.choice.model);
     let Some(successor) = catalog.superseded_by(model) else {
         return Ok(None);

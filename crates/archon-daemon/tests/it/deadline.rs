@@ -236,6 +236,63 @@ async fn a_deadline_wake_through_a_catalog_outage_wakes_once_the_catalog_answers
     );
 }
 
+/// The first stage's agent, running and steered alone onto `model`; its plan
+/// keeps `common::MODEL`.
+async fn steered_alone(h: &Harness, model: &str) -> StageRun {
+    use archon_core::model::Effort;
+    h.enqueue("runs beside its plan's model").await;
+    h.dispatch().await;
+    let first = h.running().await.remove(0);
+    assert_eq!(first.choice.model.to_string(), common::MODEL);
+    let store = h.ctx.store.lock().await;
+    let steered = common::choice(model, Effort::Medium);
+    let at = archon_core::now();
+    store
+        .record_model_segment(&first.id, "steered", &steered, at, false)
+        .unwrap();
+    let first = store.stage_run(&first.id).unwrap();
+    assert_eq!(first.current_choice().model.to_string(), model);
+    first
+}
+
+/// A deadline wake records the model its stopped agent runs, never the plan's.
+#[tokio::test]
+async fn a_deadline_wake_records_the_stopped_agent_s_model() {
+    let h = Harness::new().await;
+    let first = steered_alone(&h, common::REVIEW_MODEL).await;
+    stop_at_deadline(&h, &first, true).await;
+
+    let agent = first.aether_agent.clone().expect("an agent");
+    assert_eq!(h.backend.woken(), [agent], "its agent is woken");
+    let woken = h.running().await.remove(0);
+    assert_ne!(woken.id, first.id);
+    let recorded = woken.choice.model.to_string();
+    assert_eq!(
+        recorded,
+        common::REVIEW_MODEL,
+        "recorded on the agent's model"
+    );
+}
+
+/// A deadline wake checks the model its stopped agent runs: one the catalog
+/// does not list is not woken, though the plan's model is listed.
+#[tokio::test]
+async fn a_deadline_wake_of_an_agent_on_an_unlisted_model_times_out() {
+    let h = Harness::new().await;
+    let first = steered_alone(&h, "codex/unlisted").await;
+    stop_at_deadline(&h, &first, true).await;
+
+    assert!(
+        h.backend.woken().is_empty(),
+        "an unlisted model is not woken"
+    );
+    let stages = h.ctx.store.lock().await.stage_runs(&first.run).unwrap();
+    assert!(
+        stages.iter().all(|s| s.state == StageState::TimedOut),
+        "{stages:?}"
+    );
+}
+
 async fn sweep(h: &Harness) {
     dispatcher::dispatch_once(&h.ctx)
         .await

@@ -989,6 +989,12 @@ async fn replace(
     // is chosen here, and issuing it waits for a catalog that lists that model.
     let mut store = if retry.extension.is_some() {
         assert!(retry.wake.is_some(), "only a wake is extended");
+        // The plan's choice may since have moved, or never been the agent's.
+        assert!(
+            failed.aether_agent.is_some(),
+            "a wake keeps the stopped agent"
+        );
+        plan.choice = failed.current_choice().clone();
         ctx.store.lock().await
     } else {
         let catalog = crate::learned::catalog(ctx).await?;

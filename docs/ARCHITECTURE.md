@@ -2679,16 +2679,9 @@ record lists the carried reviewers after the named ones. An earlier review
 Aether cannot return is logged and carries nothing. Aether 1.4.1 and 1.4.2
 cannot wake a lead whose run ended (`wake` and `restart` need a live parent,
 and the run node is retired with the run), so a retry never resumes the
-escalated lead. Instead a non-fresh `retry_item` after the cap amends the brief
-(`capped_continuation`) with the escalation, the head the last round failed,
-and the rule that the new lead delta-reviews only the commits after it and does
-not re-review or re-read the whole change. Only a stage whose own round tally
-reached the cap adds the note, not an error that quotes one. A fresh retry, or
-a later note, replaces the earlier note in the brief: archond records the
-exact section each note added under `review_continuations:<item>` and takes
-out only those, each once; the record changes only once the retry is queued, so no text of the operator's, however it reached the brief, is
-taken for one. If the branch no longer holds the escalated head, the note asks for the
-whole change to be read again. Each delta reviewer is told to fail
+escalated lead. Archon does not edit the brief for it: the orchestrator's
+`brief_append` on the non-fresh `retry_item` gives the new lead the head, the
+open findings and the delta-only review. Each delta reviewer is told to fail
 only on a defect in its commits or an open finding left unfixed; a new finding
 in code a pass already read is advisory, `"blocking": false`, and goes to the
 orchestrator as a follow-up. The verdict carries no finding locations, so the

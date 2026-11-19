@@ -10,10 +10,9 @@
 
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
-use archon_core::id::{QueueItemId, StageRunId};
+use archon_core::id::StageRunId;
 use archon_core::ports::{Descendant, DescendantState};
-use archon_core::queue::{QueueItem, QueueState};
-use archon_core::run::{RunState, StageOutcome, StageRun, review_tally_key};
+use archon_core::run::{StageOutcome, StageRun, review_tally_key};
 use archon_pipeline::contract::REVIEW_ROUND_CAP;
 use archon_pipeline::review::Verdict;
 use serde::{Deserialize, Serialize};
@@ -23,16 +22,6 @@ use crate::context::DaemonContext;
 
 /// Finding lines an escalation lists before it points to the reviewers' results.
 const MAX_LISTED: usize = 20;
-
-/// The words that mark a stage the round cap stopped, in its escalation.
-const CAP_STOP: &str = "so Archon stopped it instead of another round";
-
-/// How a continuation note begins, so a lead knows Archon wrote it. A later retry finds
-/// the note by the section [`add_continuation`] recorded, never by these words.
-const CONTINUES: &str = "[Archon review-cap continuation] This run continues stage `";
-
-/// How much of the cap's escalation a continuing run's brief repeats.
-const ESCALATION_CHARS: usize = 2400;
 
 /// A stage whose review failed [`REVIEW_ROUND_CAP`] rounds: archond stops it,
 /// or settles its completion, with `reason`, an `ESCALATE:` failure that ends its run.
@@ -476,10 +465,10 @@ fn escalation(stage: &StageRun, rounds: usize, open: &Open) -> String {
     // The choices lead, so a clipped summary of the failure still holds them.
     format!(
         "{} the review of stage `{}` (attempt {}) failed {rounds} rounds, the last at head \
-         `{}`, each a commit a reviewer failed with a blocking finding, {CAP_STOP}. You \
-         decide: continue with `retry_item` (not `fresh`), whose new lead fixes the open \
-         findings and delta-reviews only the commits after this head, since earlier reviews \
-         still count; accept this head with `retry_item` and a `brief_append` that moves the \
+         `{}`, each a commit a reviewer failed with a blocking finding, so Archon stopped it instead of another round. You \
+         decide: continue with `retry_item` (not `fresh`) and a `brief_append` that names \
+         this head and the open findings, so its new lead fixes them and delta-reviews only \
+         the commits after this head, since earlier reviews still count; accept this head with `retry_item` and a `brief_append` that moves the \
          open findings to follow-ups, whose new lead has the head read whole again by as many \
          reviewers as the review level needs; or stop by leaving the item failed. {latest}{earlier} The \
          reviewers' results ({}) hold every finding in full.",
@@ -489,168 +478,6 @@ fn escalation(stage: &StageRun, rounds: usize, open: &Open) -> String {
         open.head,
         open.reviewers.join(", ")
     )
-}
-
-/// The note a non-fresh retry of `item` adds to its brief when its last run stopped at the
-/// review-round cap, by its stage's tally: the escalation, its head, and that earlier reviews count.
-pub(crate) fn capped_continuation(
-    store: &archon_queue::Store,
-    item: &QueueItem,
-) -> Result<Option<String>, ArchonError> {
-    let QueueState::Failed {
-        run: Some(run),
-        error,
-    } = &item.state
-    else {
-        return Ok(None);
-    };
-    if !error.contains(CAP_STOP) {
-        return Ok(None);
-    }
-    let failed = store.run(run)?;
-    assert_eq!(failed.item, item.id, "the item's own run");
-    let RunState::Failed { stage_id, .. } = &failed.state else {
-        return Err(ArchonError::Corrupt(format!(
-            "item {} failed with run {run}, which did not fail",
-            item.id
-        )));
-    };
-    let capped = store
-        .stage_runs(run)?
-        .into_iter()
-        .filter(|s| s.stage_id == *stage_id)
-        .max_by_key(|s| s.attempt);
-    assert!(
-        capped.as_ref().is_none_or(|s| s.run == *run),
-        "a stage of the failed run"
-    );
-    // An error that only quotes an earlier cap is no cap: the stage's own tally must reach it.
-    let Some(head) = capped
-        .map(|s| capped_head(store, &s.id))
-        .transpose()?
-        .flatten()
-    else {
-        return Ok(None);
-    };
-    let escalation = crate::executor::clip(error.trim(), ESCALATION_CHARS);
-    let note = format!(
-        "{CONTINUES}{stage_id}` after its review reached the round cap at head `{head}`. \
-         Aether cannot resume the lead that escalated, so a new lead takes over its branch. \
-         The escalation: {escalation} Earlier runs' reviews still count while this branch \
-         holds the commits they read, each whole-change read toward the review level, so do \
-         not re-review or re-read the whole change: fix what is open, then delegate one \
-         delta reviewer with `base` `{head}`, given the open findings, and tell it to fail \
-         only on a defect in the new commits or an open finding left unfixed. Add \
-         whole-change reviewers only where earlier runs had fewer than the level needs, or \
-         for the whole change if the branch no longer holds that head. If \
-         a later amendment accepts this head instead, have it read whole again by as many \
-         reviewers as the level needs, told the open findings are follow-ups."
-    );
-    // One line: a dated amendment of it is found and replaced whole.
-    Ok(Some(note.split_whitespace().collect::<Vec<_>>().join(" ")))
-}
-
-/// The kv key of the brief sections continuation notes added to `item`, as a JSON list.
-fn continuations_key(item: &QueueItemId) -> String {
-    format!("review_continuations:{item}")
-}
-
-/// The brief sections continuation notes added to `item`, oldest first.
-fn recorded_continuations(
-    store: &archon_queue::Store,
-    item: &QueueItemId,
-) -> Result<Vec<String>, ArchonError> {
-    let key = continuations_key(item);
-    let Some(raw) = store.kv_get(&key)? else {
-        return Ok(Vec::new());
-    };
-    serde_json::from_str(&raw).map_err(|e| ArchonError::Corrupt(format!("kv {key} = {raw:?}: {e}")))
-}
-
-/// Take out of `item`'s brief the continuation notes earlier retries added. Only the exact
-/// sections Archon recorded go, so a copy the operator quoted is theirs. The record changes
-/// only once the retry is queued, by [`save_continuations`], so a refused retry keeps it.
-pub(crate) fn drop_continuations(
-    store: &archon_queue::Store,
-    item: &mut QueueItem,
-) -> Result<(), ArchonError> {
-    let added = recorded_continuations(store, &item.id)?;
-    let before = item.brief.len();
-    item.brief = without_sections(&item.brief, &added);
-    assert!(
-        !added.is_empty() || item.brief.len() == before,
-        "nothing recorded, nothing taken out"
-    );
-    Ok(())
-}
-
-/// Add `note` to `item`'s brief as a dated amendment. The section it added, which a
-/// later retry takes out again once [`save_continuations`] records it.
-pub(crate) fn add_continuation(item: &mut QueueItem, note: &str) -> Result<String, ArchonError> {
-    let start = item.brief.trim_end().len();
-    item.amend_brief(note, archon_core::now())?;
-    let section = item.brief[start..].trim_end().to_owned();
-    assert!(section.ends_with(note.trim()), "the section is the note's");
-    assert!(item.brief.contains(&section), "the section is in the brief");
-    Ok(section)
-}
-
-/// Record `section`, the note a queued retry of `item` added, in place of the notes it
-/// took out, each of which is then never taken out again; `None` when it added none.
-pub(crate) fn save_continuations(
-    store: &mut archon_queue::Store,
-    item: &QueueItemId,
-    section: Option<&str>,
-) -> Result<(), ArchonError> {
-    let key = continuations_key(item);
-    let Some(section) = section else {
-        return store.kv_delete(&key);
-    };
-    assert!(
-        !section.trim().is_empty(),
-        "a recorded section holds a note"
-    );
-    let value = serde_json::to_string(&[section]).expect("a list of strings serializes");
-    store.kv_set(&key, &value)
-}
-
-/// `brief` without each of the recorded `sections` it holds.
-fn without_sections(brief: &str, sections: &[String]) -> String {
-    let mut cleaned = brief.to_owned();
-    for section in sections {
-        assert!(
-            !section.trim().is_empty(),
-            "a recorded section holds a note"
-        );
-        if let Some(at) = cleaned.find(section.as_str()) {
-            cleaned.replace_range(at..at + section.len(), "");
-        }
-    }
-    assert!(cleaned.len() <= brief.len(), "only notes are taken out");
-    cleaned
-}
-
-/// The head of the last blocking fail of `stage`'s tally, once that tally reached the cap.
-fn capped_head(
-    store: &archon_queue::Store,
-    stage: &StageRunId,
-) -> Result<Option<String>, ArchonError> {
-    let key = review_tally_key(stage);
-    let Some(raw) = store.kv_get(&key)? else {
-        return Ok(None);
-    };
-    let tally: Tally = serde_json::from_str(&raw)
-        .map_err(|e| ArchonError::Corrupt(format!("kv {key} = {raw:?}: {e}")))?;
-    if rounds_of(&tally.fails) < REVIEW_ROUND_CAP {
-        return Ok(None);
-    }
-    let head = tally.fails.last().map(|f| f.head.clone());
-    assert!(head.is_some(), "a capped tally counted fails");
-    assert!(
-        head.as_ref().is_none_or(|h| !h.is_empty()),
-        "a counted fail names its head"
-    );
-    Ok(head)
 }
 
 /// Up to `room` of `lines` joined, saying how many more there are.

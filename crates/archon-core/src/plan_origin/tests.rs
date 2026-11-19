@@ -506,8 +506,8 @@ fn a_plan_stored_without_origins_reads_every_field_as_legacy() {
 fn only_a_field_the_daemon_filled_itself_is_movable() {
     use Authority::{Daemon, Operator, Orchestrator, Unknown};
     use PlanSource::*;
-    let fills = [Learned, Tier, Fallback, Sizer, Escalation];
-    let pins = [Explicit, Migrated, LegacyUnknown, Unattributed];
+    let fills = [Learned, Tier, Fallback, Sizer, Escalation, Migrated];
+    let pins = [Explicit, LegacyUnknown, Unattributed];
     for source in fills.into_iter().chain(pins) {
         for by in [Daemon, Operator, Orchestrator, Unknown] {
             let field = FieldOrigin {
@@ -697,4 +697,144 @@ fn every_source_is_stored_under_the_name_it_is_shown_with() {
         assert_eq!(read, source);
     }
     assert!(serde_json::from_str::<PlanSource>("\"comparison\"").is_err());
+}
+
+#[test]
+fn catalog_repair_moves_daemon_entries_and_keeps_pins_atomic() {
+    use crate::model_tier::{CatalogModel, ModelCatalog};
+    let item = QueueItemId::new();
+    let mut planned = enqueued(&item);
+    let row = |model: &str| CatalogModel {
+        model: model.parse().unwrap(),
+        tier: Some(Tier::Strong),
+        is_default: false,
+    };
+    let mut catalog = ModelCatalog::new(vec![row("a/opus"), row("b/new"), row("b/sol")]);
+    catalog.add_retired("b/terra".parse().unwrap(), Some("b/new".parse().unwrap()));
+    planned
+        .repair_catalog(&item, &catalog, crate::now())
+        .unwrap();
+    assert_eq!(planned.0["plan"][0].model, "b/new".parse().unwrap());
+    assert_eq!(
+        planned.origin(&item, "plan", 0).model.source,
+        PlanSource::Migrated
+    );
+    let before = planned.clone();
+    catalog = {
+        let mut only_new = ModelCatalog::new(vec![row("b/new"), row("b/sol")]);
+        only_new.add_retired("a/opus".parse().unwrap(), Some("b/new".parse().unwrap()));
+        only_new
+    };
+    assert!(
+        planned
+            .repair_catalog(&item, &catalog, crate::now())
+            .is_err()
+    );
+    assert_eq!(
+        planned, before,
+        "a pinned missing model leaves every entry unchanged"
+    );
+    assert!(
+        planned
+            .repair_catalog(&item, &ModelCatalog::unavailable("offline"), crate::now())
+            .is_err()
+    );
+    assert_eq!(planned, before);
+}
+
+#[test]
+fn an_empty_or_unavailable_catalog_never_admits_even_an_empty_plan() {
+    use crate::model_tier::ModelCatalog;
+    let item = QueueItemId::new();
+    let mut planned = PlannedPlan::unattributed(&item, ModelPlan::default());
+    let before = planned.clone();
+    for catalog in [
+        ModelCatalog::new(Vec::new()),
+        ModelCatalog::unavailable("offline"),
+    ] {
+        assert!(
+            planned
+                .repair_catalog(&item, &catalog, crate::now())
+                .is_err()
+        );
+        assert_eq!(planned, before);
+    }
+}
+
+#[test]
+fn migrated_entries_remain_daemon_owned_and_can_move_again() {
+    use crate::model_tier::{CatalogModel, ModelCatalog};
+    let id = QueueItemId::new();
+    let mut writer = PlanWriter::new(&id, crate::now());
+    writer.filled(
+        plan(&[("build", choice("p/old", Effort::High))]),
+        (PlanSource::Fallback, PlanSource::Fallback),
+    );
+    let mut planned = writer.finish(Sizing::Off { policy_cap: None });
+    let model = |id: &str| CatalogModel {
+        model: id.parse().unwrap(),
+        tier: Some(Tier::Strong),
+        is_default: false,
+    };
+    let mut first = ModelCatalog::new(vec![model("p/next")]);
+    first.add_retired("p/old".parse().unwrap(), Some("p/next".parse().unwrap()));
+    planned.repair_catalog(&id, &first, crate::now()).unwrap();
+    assert_eq!(
+        planned.origin(&id, "build", 0).model.source,
+        PlanSource::Migrated
+    );
+    assert!(planned.origin(&id, "build", 0).model.is_movable());
+    let mut second = ModelCatalog::new(vec![model("p/final")]);
+    second.add_retired("p/next".parse().unwrap(), Some("p/final".parse().unwrap()));
+    planned.repair_catalog(&id, &second, crate::now()).unwrap();
+    assert_eq!(planned.0["build"][0].model.to_string(), "p/final");
+    assert_eq!(planned.0["build"][0].effort, Effort::High);
+}
+
+/// A daemon choice the catalog supersedes yet still lists keeps its model
+/// even with a successor at hand (I3); a retired one with none still refuses.
+#[test]
+fn a_listed_superseded_daemon_choice_is_kept_by_the_repair() {
+    use crate::model_tier::{CatalogModel, ModelCatalog};
+    let id = QueueItemId::new();
+    let mut writer = PlanWriter::new(&id, crate::now());
+    writer.filled(
+        plan(&[("report", choice("p/old", Effort::High))]),
+        (PlanSource::Fallback, PlanSource::Fallback),
+    );
+    let mut planned = writer.finish(Sizing::Off { policy_cap: None });
+    let model = |id: &str| CatalogModel {
+        model: id.parse().unwrap(),
+        tier: Some(Tier::Strong),
+        is_default: false,
+    };
+    let mut listed = ModelCatalog::new(vec![model("p/old"), model("p/next")]);
+    listed.add_superseded("p/old".parse().unwrap(), "p/next".parse().unwrap());
+    assert!(!planned.needs_catalog_repair(&id, &listed));
+    let before = planned.clone();
+    let successor = |_: &str, _: usize, choice: &crate::model::ModelChoice, _: &EntryOrigin| {
+        Ok(listed
+            .superseded_by(&choice.model)
+            .cloned()
+            .map(|m| (m, None)))
+    };
+    planned
+        .repair_catalog_with(&id, &listed, crate::now(), successor)
+        .expect("a listed superseded model still runs");
+    assert_eq!(planned.0["report"][0].model.to_string(), "p/old");
+    assert_eq!(planned.0, before.0, "nothing moved");
+    planned.repair_catalog(&id, &listed, crate::now()).unwrap();
+    assert_eq!(
+        planned.0, before.0,
+        "nor to the successor the catalog names"
+    );
+
+    let mut retired = ModelCatalog::new(vec![model("p/next")]);
+    retired.add_retired("p/old".parse().unwrap(), None);
+    let refused = planned.repair_catalog_with(&id, &retired, crate::now(), |_, _, _, _| Ok(None));
+    assert!(
+        refused.is_err(),
+        "a retired model with no replacement waits"
+    );
+    assert_eq!(planned.0, before.0, "a refused repair changes nothing");
 }

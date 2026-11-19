@@ -125,7 +125,7 @@ pub enum QueueState {
     Running {
         run: PipelineRunId,
     },
-    /// A dependency failed or was cancelled; needs an operator decision.
+    /// A failed dependency or an invalid model pin needs an operator decision.
     Blocked {
         reason: String,
     },
@@ -143,6 +143,18 @@ pub enum QueueState {
 }
 
 impl QueueState {
+    const MODEL_PIN_PREFIX: &'static str = "model pin: ";
+
+    pub fn model_pin_block(reason: &str) -> Self {
+        Self::Blocked {
+            reason: format!("{}{reason}", Self::MODEL_PIN_PREFIX),
+        }
+    }
+
+    pub fn is_model_pin_block(&self) -> bool {
+        matches!(self, Self::Blocked { reason } if reason.starts_with(Self::MODEL_PIN_PREFIX))
+    }
+
     /// Every [`kind`](Self::kind), in lifecycle order: the names state
     /// filters accept.
     pub const KINDS: [&'static str; 7] = [

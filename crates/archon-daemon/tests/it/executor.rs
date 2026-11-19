@@ -669,6 +669,26 @@ async fn model_denied_after_enqueue_is_refused_at_spawn() {
 }
 
 #[tokio::test]
+async fn an_infrastructure_retry_waits_for_a_catalog_before_reserving_its_attempt() {
+    let h = Harness::new().await;
+    let item = h.enqueue("retry after catalog recovery").await;
+    h.dispatch().await;
+    let link = h.ctx.aether.client().unwrap();
+    h.ctx.aether.replace(None).unwrap();
+    let infra = || StageOutcome::Failed {
+        error: "engine died".into(),
+        infra: true,
+    };
+    h.settle_running(|_| infra()).await;
+    assert_eq!(h.stages(&item.id).await.len(), 1);
+    assert_eq!(h.backend.requests().len(), 1);
+    h.ctx.aether.replace(Some(link)).unwrap();
+    h.settle_running(|_| infra()).await;
+    assert_eq!(h.stages(&item.id).await.len(), 2);
+    assert_eq!(h.backend.requests().len(), 2);
+}
+
+#[tokio::test]
 async fn infra_failure_respawns_the_slot_once() {
     let h = Harness::new().await;
     let item = h.enqueue("flaky engine").await;
@@ -1708,15 +1728,12 @@ fn worktree_of(h: &Harness, item: &archon_core::queue::QueueItem) -> std::path::
     h.ctx.paths.worktrees.join(REPO_NAME).join(item.id.as_str())
 }
 
-/// The worktree is gone and git no longer lists it, but the start did
-/// add it: its branch, which removal keeps, exists.
+/// The worktree is absent from both disk and Git.
 fn assert_worktree_removed(h: &Harness, tree: &std::path::Path) {
     assert!(!tree.exists(), "{} is left behind", tree.display());
     let listed = git(&h.repo, &["worktree", "list", "--porcelain"]);
     let name = tree.file_name().unwrap().to_str().unwrap();
     assert!(!listed.contains(name), "git still lists it: {listed}");
-    let branches = git(&h.repo, &["branch", "--list", "archon/*"]);
-    assert!(!branches.is_empty(), "the start never added a worktree");
 }
 
 /// Edit the test pipeline after enqueue: its new `docs` stage is in no
@@ -1749,6 +1766,8 @@ async fn a_start_refused_after_its_worktree_was_added_removes_it() {
     };
     assert!(error.contains("docs"), "{error}");
     assert_worktree_removed(&h, &worktree_of(&h, &item));
+    let branches = git(&h.repo, &["branch", "--list", "archon/*"]);
+    assert!(!branches.is_empty(), "the start never added a worktree");
     let notes = h.notices(NotificationKind::Blocker).await;
     assert_eq!(notes.len(), 1, "{notes:?}");
 }
@@ -2578,11 +2597,7 @@ pub(crate) async fn seed_review_catalog(h: &Harness) {
             is_default: false,
         })
         .collect();
-    h.ctx
-        .store
-        .lock()
-        .await
-        .set_model_catalog(ModelCatalog::new(models));
+    h.set_catalog(ModelCatalog::new(models)).await;
 }
 
 /// The repository narrows its policy mid-run: the later lead is advised the

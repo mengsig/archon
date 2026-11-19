@@ -19,7 +19,7 @@ use crate::memory::MemoryQuery;
 
 /// Archon asks for this first, and falls back to the newest protocol an
 /// older aetherd serves, down to [`MIN_PROTOCOL_VERSION`].
-pub const PROTOCOL_VERSION: u32 = 24;
+pub const PROTOCOL_VERSION: u32 = 26;
 /// Aether's own floor: no supported aetherd serves an older protocol, and
 /// from 17 on its GitHub watcher stores `allowed_users` and `operator_users`.
 pub const MIN_PROTOCOL_VERSION: u32 = 17;
@@ -215,6 +215,7 @@ pub enum Command {
         query: EventQuery,
     },
     ListModels,
+    ListRetiredModels,
     AuthStatus,
     Providers,
     McpServers {
@@ -765,11 +766,20 @@ pub struct ModelInfo {
     #[serde(default)]
     pub aliases: Vec<String>,
     #[serde(default)]
+    pub superseded_by: Option<serde_json::Value>,
+    #[serde(default)]
     pub capabilities: ModelCapabilities,
     /// Aether's capability tier; `None` when it places the model in none or
     /// names a tier this Archon does not know.
     #[serde(default, deserialize_with = "known_tier")]
     pub tier: Option<Tier>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct RetiredModel {
+    pub model: ModelRef,
+    #[serde(default)]
+    pub successor: Option<serde_json::Value>,
 }
 
 fn known_tier<'de, D: serde::Deserializer<'de>>(de: D) -> Result<Option<Tier>, D::Error> {

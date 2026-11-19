@@ -202,7 +202,7 @@ enum Handshake {
 }
 
 impl AetherClient {
-    /// Handshake at protocol 24, falling back to the newest served version down to 17.
+    /// Handshake at the preferred protocol, falling back to the newest served version down to 17.
     /// Incompatible refusals report both protocol windows.
     pub async fn connect(endpoint: &Endpoint) -> Result<Self, ArchonError> {
         Self::connect_with(endpoint, ClientOptions::default()).await
@@ -882,6 +882,11 @@ impl AetherClient {
         self.typed(Command::ListModels, "models").await
     }
 
+    pub async fn list_retired_models(&self) -> Result<Vec<crate::wire::RetiredModel>, ArchonError> {
+        self.typed(Command::ListRetiredModels, "retired_models")
+            .await
+    }
+
     /// Each enabled provider's login state, as `aether auth --json` prints it.
     pub async fn auth_status(&self) -> Result<Vec<crate::auth::AuthInfo>, ArchonError> {
         self.typed(Command::AuthStatus, "auth").await
@@ -1138,10 +1143,10 @@ mod tests {
         let text = "client protocol 17 is not served: this daemon speaks 25 to 26";
         assert_eq!(
             incompatible_message(text),
-            "Archon speaks Aether protocol 17..24; the daemon serves 25..26"
+            "Archon speaks Aether protocol 17..26; the daemon serves 25..26"
         );
         let odd = incompatible_message("go away");
-        assert!(odd.starts_with("Archon speaks Aether protocol 17..24"));
+        assert!(odd.starts_with("Archon speaks Aether protocol 17..26"));
         assert!(odd.ends_with("go away"));
     }
 
@@ -1157,7 +1162,8 @@ mod tests {
         assert_eq!(serving(16, 17), Some(17), "Aether's floor is still spoken");
         assert_eq!(serving(15, 16), None, "older than Aether's own floor");
         assert_eq!(serving(14, 15), None);
-        assert_eq!(serving(24, 25), None, "newer: retrying older cannot help");
+        assert_eq!(serving(24, 25), Some(25));
+        assert_eq!(serving(27, 28), None, "newer: retrying older cannot help");
         assert_eq!(fallback_version("unauthorized"), None);
     }
 

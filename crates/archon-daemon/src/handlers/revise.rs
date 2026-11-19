@@ -201,13 +201,15 @@ async fn restage(
         spec
     };
     let spec = executor::steer::shaped(ctx, &revised, spec).await?;
+    crate::learned::request_catalog(ctx).await?;
+    let current = &item.model_plan;
     let mut kept = PlanWriter::new(&item.id, archon_core::now());
-    let cap = crate::sizing::carried_cap(&ctx.config, &env.policy(&ctx.config));
-    kept.carry(&item.model_plan, &item.id, cap, |key| {
+    let cap = crate::sizing::carried_cap(&ctx.config, &env.resolved_policy(ctx));
+    kept.carry(current, &item.id, cap, |key| {
         spec.is_plan_key(key).then_some(usize::MAX)
     });
     let route = crate::knobs::ItemRoute::new(item);
-    let plan = items::filled_plan(ctx, route, env, base, &spec, kept).await?;
+    let plan = items::filled_plan(ctx, route, env, base, &spec, kept, Some(current.plan())).await?;
     items::check_plan(ctx, env, &spec, &plan)?;
     let reasons = item.model_reasons.clone().map(|mut reasons| {
         reasons.retain(|key, _| spec.is_plan_key(key));

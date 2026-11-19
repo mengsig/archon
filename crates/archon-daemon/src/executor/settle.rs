@@ -6,12 +6,13 @@ use std::time::{Duration, Instant};
 use archon_core::Timestamp;
 use archon_core::error::ArchonError;
 use archon_core::id::StageRunId;
+use archon_core::model_tier::ModelCatalog;
 use archon_core::notify::{FeedEntry, Notification, NotificationKind};
 use archon_core::run::{
     PipelineRun, RecordRepair, RunState, StageOutcome, StageRun, StageState, Verdict,
 };
 use archon_core::steer::RunEdit;
-use archon_pipeline::{EngineAction, SpawnPlan};
+use archon_pipeline::{EngineAction, PipelineSpec, SpawnPlan};
 
 use super::{
     FollowUp, RunTable, SettleRetry, descendants, engine_wait, finish, gates, notional, pages,
@@ -44,7 +45,19 @@ pub(super) async fn settle(
         None
     };
     match settle_verified(ctx, id, outcome).await {
-        Err(error) if super::gh::is_failure(&error) => hold_for_retry(ctx, id, error).await,
+        Err(error) if super::gh::is_failure(&error) => {
+            hold_for_retry(
+                ctx,
+                id,
+                "verifying the completed stage against GitHub",
+                error,
+            )
+            .await
+        }
+        Err(ArchonError::Unavailable(why)) if why.starts_with(super::model_catalog::RETRY_WAIT) => {
+            let error = ArchonError::Unavailable(why);
+            hold_for_retry(ctx, id, "settling the stage", error).await
+        }
         Err(error) => Err(error),
         Ok(follow) => {
             let cleared = super::coordination::clear_stage(ctx, &id.to_string()).await?;
@@ -88,6 +101,7 @@ async fn claim_verification(
 async fn hold_for_retry(
     ctx: &DaemonContext,
     id: &StageRunId,
+    operation: &str,
     error: ArchonError,
 ) -> Result<FollowUp, ArchonError> {
     let item = {
@@ -99,8 +113,8 @@ async fn hold_for_retry(
         let mut table = ctx.runs.lock().await;
         schedule_retry(&mut table, id)
     };
-    tracing::warn!(stage = %id, %item, %error, failures, "verifying a completed stage failed on GitHub; retrying");
-    let what = format!("Item {item}: verifying the completed stage {id} against GitHub");
+    tracing::warn!(stage = %id, %item, %error, failures, operation, "stage settlement will retry");
+    let what = format!("Item {item}: {operation} ({id})");
     let subject = format!("stage:{id}");
     super::coordination::isolate(ctx, &subject, Some(&item), &what, Err(error)).await?;
     Ok(FollowUp::default())
@@ -255,7 +269,8 @@ async fn settle_verified(
         (current_stage, current_run, all)
     };
     if refused
-        && let Some(follow) = infra_retry(ctx, &table, &stage, &run, &all, &outcome, true).await?
+        && let Some(follow) =
+            infra_retry(ctx, &mut table, &stage, &run, &all, &outcome, true).await?
     {
         return Ok(follow);
     }
@@ -671,7 +686,7 @@ impl RetryKind {
 /// agent in place, and only a refused wake spawns a fresh agent, the cold retry.
 async fn infra_retry(
     ctx: &DaemonContext,
-    table: &RunTable,
+    table: &mut RunTable,
     stage: &StageRun,
     run: &PipelineRun,
     all: &[StageRun],
@@ -722,7 +737,7 @@ pub(super) async fn deadline_stopped(
     if outcome == StageOutcome::TimedOut {
         let woken = respawn(
             ctx,
-            &table,
+            &mut table,
             (&stage, &run, &all),
             &outcome,
             DEADLINE_PASSED,
@@ -741,7 +756,7 @@ pub(super) async fn deadline_stopped(
 /// A run that took a deadline wake is the slot's last: what ends it is final.
 async fn respawn(
     ctx: &DaemonContext,
-    table: &RunTable,
+    table: &mut RunTable,
     (stage, run, all): (&StageRun, &PipelineRun, &[StageRun]),
     outcome: &StageOutcome,
     error: &str,
@@ -787,18 +802,12 @@ async fn respawn(
         extension,
         engine_login: kind == RetryKind::EngineLogin,
     };
-    let Some(replacement) = replace(ctx, table, run, all, &failed, reserved, refusal).await? else {
+    let replaced = replace(ctx, table, run, all, &failed, reserved, refusal).await?;
+    let Some((replacement, woken)) = replaced else {
         return Ok(None);
     };
-    let text = retry_text(
-        stage,
-        run,
-        error,
-        kind,
-        wake.is_some(),
-        waits,
-        (retry, limit),
-    );
+    assert!(!woken || wake.is_some(), "only a planned wake is kept");
+    let text = retry_text(stage, run, error, kind, woken, waits, (retry, limit));
     progress(ctx, run, text).await?;
     // Issued at once, or by the sweep once a disk hold ends; in either
     // case after what the failed agent delegated is stopped and reaped.
@@ -936,16 +945,17 @@ async fn disk_nearly_full(ctx: &DaemonContext) -> bool {
 }
 
 /// Reserve the replacement of `failed`, the `retry` of its slot, and then
-/// persist the failure; `None` when the driver or the budget allows none.
+/// persist the failure; with whether it still wakes the failed agent, or
+/// `None` when the driver or the budget allows none.
 async fn replace(
     ctx: &DaemonContext,
-    table: &RunTable,
+    table: &mut RunTable,
     run: &PipelineRun,
     all: &[StageRun],
     failed: &StageRun,
     retry: spawn::Retry,
     refusal: Option<(&str, usize)>,
-) -> Result<Option<StageRunId>, ArchonError> {
+) -> Result<Option<(StageRunId, bool)>, ArchonError> {
     assert!(
         failed.state.is_terminal(),
         "only a failed stage run is replaced"
@@ -969,9 +979,29 @@ async fn replace(
             archon_pipeline::swarm::MAX_CORRECTIONS,
         ));
     }
-    let mut store = ctx.store.lock().await;
+    let spec = driver.spec().clone();
+    let mut retry = retry;
+    // A deadline wake goes on in the stopped agent, on the model it runs: nothing
+    // is chosen here, and issuing it waits for a catalog that lists that model.
+    let mut store = if retry.extension.is_some() {
+        assert!(retry.wake.is_some(), "only a wake is extended");
+        // The plan's choice may since have moved, or never been the agent's.
+        assert!(
+            failed.aether_agent.is_some(),
+            "a wake keeps the stopped agent"
+        );
+        plan.choice = failed.current_choice().clone();
+        ctx.store.lock().await
+    } else {
+        let catalog = crate::learned::catalog(ctx).await?;
+        let mut store = ctx.store.lock().await;
+        let read = ((run, &*spec), &catalog);
+        plan = retry_choice(ctx, (&mut store, table), read, (failed, plan), &mut retry)?;
+        store
+    };
     // Owed before the replacement exists, so it never starts beside them.
-    descendants::owe(&mut store, failed, retry.wake.is_some())?;
+    let woken = retry.wake.is_some();
+    descendants::owe(&mut store, failed, woken)?;
     let Some(id) = spawn::reserve_replacement(ctx, &mut store, failed, &plan, retry)? else {
         return Ok(None);
     };
@@ -980,7 +1010,163 @@ async fn replace(
     // The attempt goes on, so its restatement is kept for the replacement too.
     let failed = restatement::bound(&store, failed.clone())?;
     store.upsert_stage_run(&failed)?;
-    Ok(Some(id))
+    Ok(Some((id, woken)))
+}
+
+/// The plan `failed`'s retry runs: a wake keeps the stopped agent on the
+/// model it ran (I1) unless a steer, retirement or judge moves it; a fresh
+/// retry is routed by quota as a fresh stage is (I2).
+fn retry_choice(
+    ctx: &DaemonContext,
+    (store, table): (&mut archon_queue::Store, &mut RunTable),
+    ((run, spec), catalog): ((&PipelineRun, &PipelineSpec), &ModelCatalog),
+    (failed, chosen): (&StageRun, SpawnPlan),
+    retry: &mut spawn::Retry,
+) -> Result<SpawnPlan, ArchonError> {
+    assert_eq!(failed.run, run.id, "the failed attempt is the run's");
+    assert_eq!(
+        failed.stage_id, chosen.stage_id,
+        "the retry is the failed slot's"
+    );
+    let mut plan = super::model_catalog::retry_plan(ctx, store, table, run, chosen, catalog, spec)?;
+    let ran = failed.current_choice();
+    if retry.wake.is_some() {
+        let item = store.item(&run.item)?;
+        if let Some(held) = super::resume::held_on_agent(&item, &plan, ran, catalog) {
+            plan.choice = held;
+        }
+    }
+    // The agent a wake keeps runs the model it was last steered to.
+    let kept = catalog.canonical_alias(&ran.model);
+    let woken = retry.wake.is_some().then_some(kept);
+    retry_judge(ctx, store, run, &mut plan, woken)?;
+    if plan.choice.model != *kept {
+        retry.wake = None;
+    }
+    if retry.wake.is_none() {
+        route_fresh(ctx, (store, table), (run, spec), &mut plan, catalog)?;
+    }
+    Ok(plan)
+}
+
+/// Route fresh retry `plan` by quota, letting the run's driver follow a
+/// stored plan the move changed, as a reserved stage's move is followed.
+fn route_fresh(
+    ctx: &DaemonContext,
+    (store, table): (&mut archon_queue::Store, &mut RunTable),
+    (run, spec): (&PipelineRun, &PipelineSpec),
+    plan: &mut SpawnPlan,
+    catalog: &ModelCatalog,
+) -> Result<(), ArchonError> {
+    let mut item = store.item(&run.item)?;
+    assert_eq!(item.id, run.item, "the run works for the item");
+    let repo = item
+        .repo
+        .as_ref()
+        .map(|id| store.repo(&crate::resolve::repo_ref(id)))
+        .transpose()?;
+    let before = item.model_plan.plan().clone();
+    let resume = plan.resume.clone();
+    crate::quota::route_replacement(ctx, store, (&mut item, spec), plan, repo.as_ref())?;
+    assert_eq!(
+        plan.resume, resume,
+        "routing leaves what the attempt is told"
+    );
+    let after = item.model_plan.plan();
+    if before != *after {
+        super::model_catalog::follow_models(table, &run.id, (&before, after), catalog);
+    }
+    Ok(())
+}
+
+/// An acceptance retry is judged by the `woken` judge while it is still
+/// eligible, else by one selected as its first attempt was, never the placeholder.
+fn retry_judge(
+    ctx: &DaemonContext,
+    store: &mut archon_queue::Store,
+    run: &PipelineRun,
+    plan: &mut SpawnPlan,
+    woken: Option<&archon_core::model::ModelRef>,
+) -> Result<(), ArchonError> {
+    if plan.stage_id != archon_pipeline::acceptance::STAGE {
+        return Ok(());
+    }
+    let item = store.item(&run.item)?;
+    let plans = std::slice::from_mut(plan);
+    let selected = super::acceptance::select_model(ctx, store, &item, run, plans, woken);
+    match selected {
+        Ok(()) => {
+            assert_eq!(plan.choice.tier, None, "a judge is selected, never tiered");
+            Ok(())
+        }
+        Err(error) if error.is_store() => Err(error),
+        Err(error) => Err(ArchonError::Unavailable(format!(
+            "{}: {error}",
+            super::model_catalog::RETRY_WAIT
+        ))),
+    }
+}
+
+pub(super) async fn replace_refused_model(
+    ctx: &DaemonContext,
+    table: &mut RunTable,
+    stage: &StageRun,
+    reason: String,
+) -> Result<FollowUp, ArchonError> {
+    let (run, all) = {
+        let store = ctx.store.lock().await;
+        (store.run(&stage.run)?, store.stage_runs(&stage.run)?)
+    };
+    let error = format!("cannot create agent: {reason}");
+    if run.state.is_terminal() {
+        return settle_locked(
+            ctx,
+            table,
+            &stage.id,
+            StageOutcome::Cancelled {
+                reason: Some(error),
+            },
+        )
+        .await;
+    }
+    let outcome = StageOutcome::Failed {
+        error: error.clone(),
+        infra: true,
+    };
+    let failed = settled_stage(stage.clone(), outcome, archon_core::now());
+    let retry = spawn::Retry {
+        nth: all.iter().filter(|s| spawn::same_slot_as(s, stage)).count(),
+        wake: None,
+        not_before: None,
+        extension: None,
+        engine_login: false,
+    };
+    match replace(ctx, table, &run, &all, &failed, retry, None).await {
+        Ok(Some((id, _))) => Ok(FollowUp {
+            issue: vec![id],
+            descendant_stops: vec![stage.id.clone()],
+            ..FollowUp::default()
+        }),
+        // The model was refused, not the machine: no infrastructure failure.
+        Ok(None) => spawn::fail_stage_and_run(ctx, table, stage, error, false).await,
+        Err(ArchonError::Unavailable(why)) => {
+            let subject = format!("stage:{}", stage.id);
+            let what = format!(
+                "Stage {} waits for a model; re-plan item {}",
+                stage.stage_id, run.item
+            );
+            super::coordination::isolate(
+                ctx,
+                &subject,
+                Some(&run.item),
+                &what,
+                Err(ArchonError::Invalid(why)),
+            )
+            .await?;
+            Ok(FollowUp::default())
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// The agent cap a replaced planner is told, from the repository as it is now.

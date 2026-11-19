@@ -86,6 +86,21 @@ allow or deny lists) still applies to running leads. Nothing here migrates the s
 back to a 1.6.3 binary is not supported once any release's store migration has
 run: use the switch instead.
 
+### Model catalog availability
+
+Archon holds queued work with `model_catalog_unavailable` until Aether lists
+a configured model. Start or reconnect Aether, or configure a provider when
+its catalog is empty. Dispatch resumes automatically. Aether 1.4.1 supports
+catalog checks. With retirement metadata, a refusal can also name a successor.
+An enqueue that names only a tier also needs the catalog to resolve it, so
+during an outage it is refused with the outage named, as 1.6.3 refused it. Retry
+it once Aether lists models again. An explicit pin is accepted and checked at
+dispatch, and a keyed replay returns its stored item.
+
+After a store migration, the schema guard refuses to open the newer store
+with an older daemon. Binary downgrade is unsupported. Use the documented
+feature switches for rollback. The dispatch catalog check has no bypass.
+
 ### Efforts sized by risk class
 
 With `effort_sizing` on, archond now sizes every effort a plan does not name

@@ -155,8 +155,8 @@ async fn member_plan(
     by: Authority,
 ) -> Result<PlannedPlan, ArchonError> {
     let spec = &resolved.spec;
-    let given = items::resolve_draft(ctx, (env, route), spec, (draft, reasons), by).await?;
-    let plan = items::filled_plan(ctx, route, env, &resolved.base, spec, given).await?;
+    let given = items::resolve_draft(ctx, (env, route), spec, (draft, reasons), (by, None)).await?;
+    let plan = items::filled_plan(ctx, route, env, &resolved.base, spec, given, None).await?;
     items::check_plan(ctx, env, spec, &plan)?;
     items::check_reasons(spec, reasons)?;
     Ok(plan)

@@ -6,12 +6,12 @@ use std::sync::Arc;
 use archon_core::aether_ids::{AetherAgentId, AetherTaskId};
 use archon_core::cost::STAGE_BUDGET_UNENFORCEABLE;
 use archon_core::error::ArchonError;
-use archon_core::model::Effort;
 use archon_core::model::ModelRef;
+use archon_core::model::{Effort, ModelChoice};
 use archon_core::policy::ModelPolicy;
 use archon_core::ports::{
-    AgentBackend, AgentUpdate, CostBilling, CreatedNode, Descendant, DescendantState, OpenToolCall,
-    RunNodeRequest, SpawnRequest, SpawnedAgent, TreePulse,
+    AgentBackend, AgentUpdate, CheckedOn, CostBilling, CreatedNode, Descendant, DescendantState,
+    OpenToolCall, RunNodeRequest, SpawnRequest, SpawnedAgent, TreePulse,
 };
 use archon_core::run::StageOutcome;
 use async_trait::async_trait;
@@ -43,6 +43,64 @@ pub struct AetherBackend {
 impl AetherBackend {
     pub fn new(link: Arc<AetherLink>, policy: ModelPolicy) -> Self {
         Self { link, policy }
+    }
+
+    /// Check a choice on canonical IDs when the link holds catalog aliases;
+    /// without them the configured policy applies unchanged.
+    fn check_choice(&self, choice: &ModelChoice) -> Result<(), ArchonError> {
+        self.check_choice_in(choice, &self.link.aliases())
+    }
+
+    /// Check a choice with both sides of the policy read in `aliases`.
+    fn check_choice_in(
+        &self,
+        choice: &ModelChoice,
+        aliases: &std::collections::BTreeMap<ModelRef, ModelRef>,
+    ) -> Result<(), ArchonError> {
+        let mut resolved = choice.clone();
+        if let Some(canonical) = aliases.get(&choice.model) {
+            resolved.model = canonical.clone();
+        }
+        self.policy.canonicalized(aliases).check(&resolved)
+    }
+
+    /// The one agent a frozen create left: of `role` under `parent`, carrying
+    /// every one of `labels`, and none of the `earlier` creates' agents.
+    async fn find_creation(
+        client: &AetherClient,
+        labels: &BTreeMap<String, String>,
+        (role, parent): (&str, Option<&AetherAgentId>),
+        earlier: &[AetherAgentId],
+    ) -> Result<Option<Agent>, ArchonError> {
+        if labels.is_empty() {
+            return Err(ArchonError::Unavailable(
+                "cannot identify a frozen create without labels".into(),
+            ));
+        }
+        let query = AgentQuery {
+            parent: parent.cloned(),
+            include_archived: true,
+            ..Default::default()
+        };
+        let agents = client.list_agents(query).await.map_err(|error| {
+            ArchonError::Unavailable(format!("could not verify frozen create: {error}"))
+        })?;
+        let mut matches = agents.into_iter().filter(|agent| {
+            agent.role == role
+                && agent.parent.as_ref() == parent
+                && !earlier.contains(&agent.id)
+                && agent
+                    .scope
+                    .as_ref()
+                    .is_some_and(|scope| labels.iter().all(|(k, v)| scope.labels.get(k) == Some(v)))
+        });
+        let found = matches.next();
+        if matches.next().is_some() {
+            return Err(ArchonError::Unavailable(
+                "multiple agents match the frozen creation labels".into(),
+            ));
+        }
+        Ok(found)
     }
 }
 
@@ -465,6 +523,22 @@ pub fn task_outcome(task: &Task) -> Option<StageOutcome> {
 
 /// Task from `agent.current_task`, run from `get_task`, which also proves
 /// the task exists and belongs to this agent.
+fn node_from(agent: Agent, key: &str) -> Result<CreatedNode, ArchonError> {
+    if agent.current_task.is_some() {
+        return Err(ArchonError::Protocol(format!(
+            "run node {} (key {key}) was given a task; it must stay passive",
+            agent.id
+        )));
+    }
+    let run = agent.run.ok_or_else(|| {
+        ArchonError::Protocol(format!("run node {} (key {key}) has no run", agent.id))
+    })?;
+    Ok(CreatedNode {
+        agent: agent.id,
+        run,
+    })
+}
+
 async fn spawned_from(
     client: &AetherClient,
     agent: Agent,
@@ -509,10 +583,36 @@ fn agent_patch(update: AgentUpdate) -> AgentPatch {
     }
 }
 
+/// Send a stage's create on `client`, the connection already chosen, stating
+/// `network`: the request's own, or Aether's default for one that has none.
+async fn spawn_with(
+    client: &AetherClient,
+    request: SpawnRequest,
+    network: NetworkPolicy,
+) -> Result<SpawnedAgent, ArchonError> {
+    assert!(!request.idempotency_key.is_empty(), "a keyed create");
+    assert!(
+        request.network.is_none_or(|stated| stated == network),
+        "a stated network is the one sent"
+    );
+    require_host_context(client, request.host_context)?;
+    if !request.references.is_empty()
+        && !client.welcome().features.iter().any(|f| f == "references")
+    {
+        return Err(ArchonError::Unavailable(
+            "Aether lacks references required by the frozen creation request".into(),
+        ));
+    }
+    let agent = client
+        .create_agent(stage_create_agent(&request, network))
+        .await?;
+    spawned_from(client, agent, &request.idempotency_key).await
+}
+
 #[async_trait]
 impl AgentBackend for AetherBackend {
     async fn spawn(&self, mut request: SpawnRequest) -> Result<SpawnedAgent, ArchonError> {
-        self.policy.check(&request.choice)?;
+        self.check_choice(&request.choice)?;
         if request.cost_budget_usd.is_some() && request.aether_cost_budget.is_none() {
             self.prepare_spawn(&mut request, true).await?;
         }
@@ -523,18 +623,58 @@ impl AgentBackend for AetherBackend {
             // daemon sent it, with Aether's default of the moment.
             None => client.daemon_defaults().await?.network_default,
         };
-        require_host_context(&client, request.host_context)?;
-        if !request.references.is_empty()
-            && !client.welcome().features.iter().any(|f| f == "references")
-        {
-            return Err(ArchonError::Unavailable(
-                "Aether lacks references required by the frozen creation request".into(),
+        spawn_with(&client, request, network).await
+    }
+
+    async fn spawn_on(
+        &self,
+        request: SpawnRequest,
+        checked: CheckedOn,
+    ) -> Result<SpawnedAgent, ArchonError> {
+        // The link's own aliases may be gone since the caller's check.
+        self.check_choice_in(&request.choice, &checked.aliases)?;
+        // Resolving it would await Aether after the caller's check.
+        if request.cost_budget_usd.is_some() && request.aether_cost_budget.is_none() {
+            return Err(ArchonError::Invalid(
+                "a checked create resolves its cost budget before its check".into(),
             ));
         }
-        let agent = client
-            .create_agent(stage_create_agent(&request, network))
-            .await?;
-        spawned_from(&client, agent, &request.idempotency_key).await
+        let client = self.link.client_on(checked.connection)?;
+        let network = request.network.unwrap_or(checked.network_default);
+        spawn_with(&client, request, network).await
+    }
+
+    async fn find_spawn(
+        &self,
+        request: &SpawnRequest,
+    ) -> Result<Option<SpawnedAgent>, ArchonError> {
+        let client = self.link.client()?;
+        let under = (request.role.as_str(), request.parent.as_ref());
+        let agent = Self::find_creation(&client, &request.labels, under, &[]).await?;
+        match agent {
+            Some(agent) => spawned_from(&client, agent, &request.idempotency_key)
+                .await
+                .map(Some)
+                .map_err(|error| {
+                    ArchonError::Unavailable(format!(
+                        "could not recover frozen stage task: {error}"
+                    ))
+                }),
+            None => Ok(None),
+        }
+    }
+
+    async fn find_run_node(
+        &self,
+        request: &RunNodeRequest,
+        earlier: &[AetherAgentId],
+    ) -> Result<Option<CreatedNode>, ArchonError> {
+        let client = self.link.client()?;
+        let root = (request.role.as_str(), None);
+        Self::find_creation(&client, &request.labels, root, earlier)
+            .await?
+            .map(|agent| node_from(agent, &request.idempotency_key))
+            .transpose()
     }
 
     async fn host_context(
@@ -565,7 +705,7 @@ impl AgentBackend for AetherBackend {
         if request.cost_budget_usd.is_none() {
             return Ok(());
         }
-        self.policy.check(&request.choice)?;
+        self.check_choice(&request.choice)?;
         let (hard_cap, billing) = match request.aether_cost_budget {
             Some(stored) => (stored, request.cost_billing),
             None => {
@@ -594,20 +734,7 @@ impl AgentBackend for AetherBackend {
         let client = self.link.client()?;
         require_host_context(&client, request.host_context)?;
         let agent = client.create_agent(run_node_create_agent(&request)).await?;
-        let key = &request.idempotency_key;
-        if agent.current_task.is_some() {
-            return Err(ArchonError::Protocol(format!(
-                "run node {} (key {key}) was given a task; it must stay passive",
-                agent.id
-            )));
-        }
-        let run = agent.run.ok_or_else(|| {
-            ArchonError::Protocol(format!("run node {} (key {key}) has no run", agent.id))
-        })?;
-        Ok(CreatedNode {
-            agent: agent.id,
-            run,
-        })
+        node_from(agent, &request.idempotency_key)
     }
 
     async fn network_default(&self) -> Result<NetworkPolicy, ArchonError> {
@@ -656,7 +783,7 @@ impl AgentBackend for AetherBackend {
     ) -> Result<(), ArchonError> {
         assert!(!update.is_empty(), "an update changes something");
         if let Some(choice) = &update.choice {
-            self.policy.check(choice)?;
+            self.check_choice(choice)?;
         }
         let patch = agent_patch(update);
         self.link.client()?.update_agent(agent, patch).await?;
@@ -671,7 +798,7 @@ impl AgentBackend for AetherBackend {
     ) -> Result<(), ArchonError> {
         assert!(!update.is_empty(), "an update changes something");
         if let Some(choice) = &update.choice {
-            self.policy.check(choice)?;
+            self.check_choice(choice)?;
         }
         let patch = agent_patch(update);
         let client = self.link.client()?;
@@ -693,7 +820,7 @@ impl AgentBackend for AetherBackend {
             "a subtree update raises a deadline or a budget"
         );
         if let Some(choice) = &update.choice {
-            self.policy.check(choice)?;
+            self.check_choice(choice)?;
         }
         let patch = agent_patch(update);
         self.link.client()?.update_subtree(agent, patch).await?;

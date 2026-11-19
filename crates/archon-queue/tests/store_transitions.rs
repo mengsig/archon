@@ -589,3 +589,27 @@ fn random_transition_walks_match_the_domain_model() {
         assert_eq!(reached.len(), 7, "seed {seed} only reached {reached:?}");
     }
 }
+
+#[test]
+fn releasing_a_claim_never_requeues_another_item_or_a_live_run() {
+    let (mut store, _repo, items) = seeded(3);
+    for item in &items {
+        store
+            .transition_item(&item.id, QueueState::Dispatching, t(2))
+            .unwrap();
+    }
+    let with_run = store.item(&items[1].id).unwrap();
+    store.insert_run(&run_for(&with_run)).unwrap();
+    assert!(store.release_dispatching(&items[0].id, t(3)).unwrap());
+    assert_eq!(store.item(&items[0].id).unwrap().state, QueueState::Queued);
+    assert!(!store.release_dispatching(&items[0].id, t(4)).unwrap());
+    assert!(store.release_dispatching(&items[1].id, t(4)).is_err());
+    assert_eq!(
+        store.item(&items[1].id).unwrap().state,
+        QueueState::Dispatching
+    );
+    assert_eq!(
+        store.item(&items[2].id).unwrap().state,
+        QueueState::Dispatching
+    );
+}

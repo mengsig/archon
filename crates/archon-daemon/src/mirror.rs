@@ -250,6 +250,9 @@ struct Plan {
     repo: Repo,
     mirror: git::Mirror,
     global: ModelPolicy,
+    aliases: std::sync::Arc<
+        std::collections::BTreeMap<archon_core::model::ModelRef, archon_core::model::ModelRef>,
+    >,
     orchestrator: ModelChoice,
 }
 
@@ -267,6 +270,7 @@ enum Outcome {
 impl Plan {
     fn new(ctx: &DaemonContext, layout: &Layout, repo: &Repo) -> Self {
         assert!(Repo::valid_name(&repo.name), "registered names are valid");
+        let aliases = ctx.aether.aliases();
         Self {
             repo: repo.clone(),
             mirror: git::Mirror {
@@ -274,9 +278,13 @@ impl Plan {
                 git_dir: layout.git_dirs.join(&repo.name),
                 hooks: layout.hooks.clone(),
             },
-            global: ctx.config.models.policy(),
+            global: ctx.config.models.policy().canonicalized(&aliases),
+            aliases: aliases.clone(),
             orchestrator: ModelChoice {
-                model: ctx.config.orchestrator.model.clone(),
+                model: aliases
+                    .get(&ctx.config.orchestrator.model)
+                    .unwrap_or(&ctx.config.orchestrator.model)
+                    .clone(),
                 effort: ctx.config.orchestrator.effort,
                 tier: None,
             },
@@ -290,7 +298,9 @@ impl Plan {
             Ok(config) => config,
             Err(error) => return (Outcome::Stale(error.to_string()), None),
         };
-        let policy = self.global.narrowed_by(&config.models.policy_overlay());
+        let policy = self
+            .global
+            .narrowed_by(&config.models.policy_overlay().canonicalized(&self.aliases));
         if let Err(refusal) = policy.check(&self.orchestrator) {
             let removed = lock::open(&self.mirror.work)
                 .and_then(|()| git::remove_entry(&self.mirror.work))
@@ -537,12 +547,18 @@ async fn forget_unregistered(
 pub(crate) async fn helper_policy(
     ctx: &DaemonContext,
     reach: &Reach,
+    aliases: &std::collections::BTreeMap<
+        archon_core::model::ModelRef,
+        archon_core::model::ModelRef,
+    >,
 ) -> Result<ModelPolicy, ArchonError> {
     let repos = ctx.store.lock().await.repos()?;
-    let mut policy = ctx.config.models.policy();
+    let mut policy = ctx.config.models.policy().canonicalized(aliases);
     for repo in repos.iter().filter(|repo| reach.includes(&repo.name)) {
         match RepoConfig::load(&repo.path) {
-            Ok(config) => policy = policy.narrowed_by(&config.models.policy_overlay()),
+            Ok(config) => {
+                policy = policy.narrowed_by(&config.models.policy_overlay().canonicalized(aliases))
+            }
             // The dispatcher refuses such a repo's new work, and it has no
             // mirror; keep watching without its narrowing.
             Err(error) => {

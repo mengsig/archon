@@ -88,6 +88,7 @@ impl Harness {
         let fake = FakeAether::start(&dir.path().join("aetherd.sock"))
             .await
             .expect("fake aetherd binds");
+        crate::common::catalog::answer(&fake, &crate::common::catalog::default_models());
         fake.set_default("trigger", archon_aether::fake::Scripted::ok());
         let link = Arc::new(AetherLink::new());
         let backend = Arc::new(AetherBackend::new(link.clone(), config.models.policy()));

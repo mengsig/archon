@@ -6,7 +6,7 @@ use archon_core::Timestamp;
 use archon_core::autonomy::AutonomyPatch;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId, RepoId};
-use archon_core::model::ModelPlanDraft;
+use archon_core::model::{ModelPlan, ModelPlanDraft};
 use archon_core::protocol::ItemQuery;
 use archon_core::pull_request::OntoTarget;
 use archon_core::queue::{QueueItem, QueueState};
@@ -314,7 +314,10 @@ fn check_replay(
     (first, stored): (&QueueItemId, &serde_json::Value),
     item: &QueueItem,
     mut request: serde_json::Value,
-    asked: &AutonomyPatch,
+    Asked {
+        autonomy: asked,
+        model_plan: asked_plan,
+    }: &Asked,
 ) -> Result<(), ArchonError> {
     let Some(stored_fields) = stored.as_object() else {
         return Err(ArchonError::Store(format!(
@@ -324,15 +327,18 @@ fn check_replay(
     let fields = request
         .as_object_mut()
         .expect("request_value builds an object");
-    if stored_fields.contains_key("model_plan") {
+    if let Some(stored_plan) = stored_fields.get("model_plan") {
         assert!(
             fields.remove("asked_plan").is_some(),
             "request_value has asked_plan"
         );
-        fields.insert(
-            "model_plan".into(),
-            serde_json::json!(item.model_plan.plan()),
-        );
+        // That store kept a named model as asked; the plan now holds its canonical id.
+        let as_asked = serde_json::json!(plan_as_asked(item.model_plan.plan(), asked_plan));
+        let filled = match *stored_plan == as_asked {
+            true => as_asked,
+            false => serde_json::json!(item.model_plan.plan()),
+        };
+        fields.insert("model_plan".into(), filled);
     }
     let legacy = !stored_fields.contains_key("autonomy");
     if legacy {
@@ -342,9 +348,7 @@ fn check_replay(
         );
     }
     if *stored != request {
-        return Err(ArchonError::Invalid(format!(
-            "idempotency key {key:?} was already used for a different request ({first})"
-        )));
+        return Err(different_request(key, first));
     }
     if legacy && !asked.is_empty() {
         return Err(ArchonError::Invalid(format!(
@@ -354,6 +358,81 @@ fn check_replay(
         )));
     }
     Ok(())
+}
+
+/// `plan` with each model the request named put back as it was `asked`: the
+/// plan a store from before canonical ids filled for the same request.
+fn plan_as_asked(plan: &ModelPlan, asked: &ModelPlanDraft) -> ModelPlan {
+    let mut named = plan.clone();
+    for (key, drafts) in &asked.0 {
+        let Some(choices) = named.0.get_mut(key) else {
+            continue;
+        };
+        for (choice, draft) in choices.iter_mut().zip(drafts) {
+            if let Some(model) = &draft.model {
+                choice.model = model.clone();
+            }
+        }
+    }
+    assert_eq!(named.0.len(), plan.0.len(), "only models are put back");
+    assert!(named.0.keys().eq(plan.0.keys()), "no key is added or lost");
+    named
+}
+
+fn different_request(key: &str, first: &QueueItemId) -> ArchonError {
+    ArchonError::Invalid(format!(
+        "idempotency key {key:?} was already used for a different request ({first})"
+    ))
+}
+
+/// The item an earlier enqueue stored under `key` when `item` asks for the
+/// same request, without inserting; `None` when the key is unused. A
+/// fingerprint that filled `model_plan` is matched by `item`'s filled plan,
+/// so it gives `None` while that plan is still unfilled.
+pub(super) fn replayed(
+    conn: &Connection,
+    item: &QueueItem,
+    key: &str,
+    (asked, target): (&Asked, Option<&OntoTarget>),
+) -> Result<Option<QueueItem>, ArchonError> {
+    assert!(!key.trim().is_empty(), "a replay needs a key");
+    let Some((first, stored)) = find_by_key(conn, key)? else {
+        return Ok(None);
+    };
+    let stored: serde_json::Value = from_json(&stored, "enqueue request")?;
+    let filled = !item.model_plan.plan().0.is_empty();
+    if stored.get("model_plan").is_some() && !filled {
+        return Ok(None);
+    }
+    // As the request filled it, before sizing, as an insert under the key compares it.
+    let item = &*attributed(item);
+    let mut request = request_value(item, asked);
+    if let Some(target) = target {
+        assert!(
+            item.onto.is_none(),
+            "a local target freezes no pull request"
+        );
+        request["onto"] = serde_json::json!(target);
+    }
+    check_replay(key, (&first, &stored), item, request, asked)?;
+    load(conn, &first).map(Some)
+}
+
+/// The plan a fingerprint from before `asked_plan` filled for `key`; `None`
+/// when the key is unused or its fingerprint keeps the request as asked.
+pub(super) fn legacy_plan(conn: &Connection, key: &str) -> Result<Option<ModelPlan>, ArchonError> {
+    assert!(!key.trim().is_empty(), "a replay needs a key");
+    let Some((first, stored)) = find_by_key(conn, key)? else {
+        return Ok(None);
+    };
+    let stored: serde_json::Value = from_json(&stored, "enqueue request")?;
+    let Some(plan) = stored.get("model_plan") else {
+        return Ok(None);
+    };
+    let plan: ModelPlan = serde_json::from_value(plan.clone()).map_err(|e| {
+        ArchonError::Corrupt(format!("decode the stored model_plan of {first}: {e}"))
+    })?;
+    Ok(Some(plan))
 }
 
 /// `asked` is what the enqueue named, before resolution.
@@ -412,7 +491,7 @@ fn insert_requested_in(
         // As the request filled it, before sizing: a fingerprint of 1.6.3 holds that plan.
         let asked_item = &*attributed(item);
         let stored: serde_json::Value = from_json(&stored, "enqueue request")?;
-        check_replay(key, (&first, &stored), asked_item, request, &asked.autonomy)?;
+        check_replay(key, (&first, &stored), asked_item, request, asked)?;
         return load(tx, &first);
     }
     let item = &*as_stored(item);
@@ -695,6 +774,37 @@ pub(super) fn requeue_orphaned_dispatching(
     }
     tx.commit().ctx("commit recovery")?;
     Ok(requeued)
+}
+
+pub(super) fn release_dispatching(
+    conn: &mut Connection,
+    id: &QueueItemId,
+    at: Timestamp,
+) -> Result<bool, ArchonError> {
+    let tx = write_tx(conn)?;
+    let mut item = load(&tx, id)?;
+    if item.state != QueueState::Dispatching {
+        return Ok(false);
+    }
+    let live: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM runs WHERE item = ?1 AND terminal = 0)",
+            [id.as_str()],
+            |row| row.get(0),
+        )
+        .ctx("check live runs before releasing dispatch")?;
+    if live {
+        return Err(ArchonError::InvalidTransition(format!(
+            "cannot release {id}: it has a live run"
+        )));
+    }
+    item.state = QueueState::Queued;
+    item.updated_at = at.max(item.updated_at);
+    write_columns(&tx, &item)?;
+    super::changes::record_item(&tx, &item, Some(&QueueState::Dispatching))?;
+    tx.commit().ctx("release dispatching item")?;
+    assert_eq!(item.state, QueueState::Queued);
+    Ok(true)
 }
 
 fn query_filters(

@@ -46,7 +46,7 @@ pub(crate) async fn refresh_item(
         Some(onto) => onto.head_ref.clone(),
         None => base_for(ctx, &owner, &run, &env).await?,
     };
-    let catalog = crate::learned::catalog(ctx).await?;
+    let catalog = crate::learned::request_catalog(ctx).await?;
     let (mut prepared, daemon_ships) = refresh_owner(ctx, &owner, &env, &catalog, (asked, by))?;
     let child_head = match repo.ship == ShipMode::Pr && run.shipped {
         true => check_pr_open(ctx, &repo, &run).await?,
@@ -237,7 +237,7 @@ fn refresh_owner(
     knobs::check_ceiling(&env.autonomy(ctx), env, &base, item.autonomy)?;
     crate::handlers::check_reasons(&spec, asked.model_reasons.as_ref())?;
     crate::handlers::check_stage_timeouts(ctx, &spec, &asked.stage_timeouts)?;
-    let policy = env.policy(&ctx.config);
+    let policy = env.resolved_policy(ctx);
     let weights = env.provider_weights(&ctx.config);
     let quota = crate::quota::view(ctx);
     let route = knobs::ItemRoute::new(owner).by(weights.as_ref(), quota.as_ref());
@@ -262,6 +262,7 @@ fn refresh_owner(
     // No diff size: a refresh is sized from what it records itself.
     let sizer = (&ctx.config, &policy);
     item.model_plan = crate::sizing::finish(sizer, &spec, || Ok(None), writer)?;
+    item.model_plan.record_catalog(catalog);
     item.model_reasons = asked.model_reasons;
     item.stage_timeouts = refresh_timeouts(&ctx.config.limits, &spec, asked.stage_timeouts);
     for stage in &spec.file.stages {

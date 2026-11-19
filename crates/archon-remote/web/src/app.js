@@ -142,7 +142,7 @@ function openTransport({ session, feed, changes, store, onReady }) {
   return createTransport({
     url: `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${BASE}/ws`,
     hello: { protocol_version: session.protocol_version, client: 'archon-web', client_version: APP_VERSION,
-      features: ['onto_edges'] },
+      features: ['onto_edges', 'model_catalog_wait'] },
     onFeed: (item) => feed.push(item),
     onChange: (change) => changes.push(change),
     onReady,

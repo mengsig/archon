@@ -236,3 +236,95 @@ fn a_reader_shares_its_writer_s_learning_config_and_model_catalog() {
     assert_eq!(reader.learning_models(), vec![model]);
     assert!(!reader.learning_models_stale());
 }
+
+#[test]
+fn stored_aliases_read_canonical_without_rewriting_or_changing_origins() {
+    use archon_core::model_tier::{CatalogModel, ModelCatalog};
+    use archon_core::plan_origin::{PlanSource, PlannedPlan};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("archon.db");
+    let mut writer = Store::open(&path).unwrap();
+    let mut legacy = item(None, "legacy");
+    legacy
+        .model_plan
+        .legacy_mut()
+        .0
+        .get_mut("implement")
+        .unwrap()[0]
+        .model = "codex/alias".parse().unwrap();
+    let mut unattributed = item(None, "unattributed");
+    unattributed.model_plan =
+        PlannedPlan::unattributed(&unattributed.id, legacy.model_plan.plan().clone());
+    writer.insert_item(&legacy, Some("legacy-key")).unwrap();
+    writer.insert_item(&unattributed, None).unwrap();
+    let reader = writer.open_reader(&path).unwrap();
+    let mut catalog = ModelCatalog::new(vec![CatalogModel {
+        model: "codex/canonical".parse().unwrap(),
+        tier: None,
+        is_default: false,
+    }]);
+    catalog.add_alias(
+        "codex/alias".parse().unwrap(),
+        "codex/canonical".parse().unwrap(),
+    );
+    writer.set_model_catalog(catalog);
+    for (id, source) in [
+        (&legacy.id, PlanSource::LegacyUnknown),
+        (&unattributed.id, PlanSource::Unattributed),
+    ] {
+        let loaded = reader.item(id).unwrap();
+        assert_eq!(
+            loaded.model_plan.0["implement"][0].model.to_string(),
+            "codex/canonical"
+        );
+        assert_eq!(
+            loaded.model_plan.origins(id)["implement"][0].model.source,
+            source
+        );
+        assert!(loaded.model_plan.origins(id)["implement"][0].model.is_pin());
+    }
+    assert_eq!(
+        reader
+            .item_by_key("legacy-key")
+            .unwrap()
+            .unwrap()
+            .model_plan
+            .0["implement"][0]
+            .model
+            .to_string(),
+        "codex/canonical"
+    );
+    assert!(
+        reader
+            .items(&Default::default())
+            .unwrap()
+            .iter()
+            .all(|i| i.model_plan.0["implement"][0].model.to_string() == "codex/canonical")
+    );
+    assert_eq!(
+        reader.items_with_id_prefix(legacy.id.as_str(), 1).unwrap()[0]
+            .model_plan
+            .0["implement"][0]
+            .model
+            .to_string(),
+        "codex/canonical"
+    );
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let stored: String = conn
+        .query_row(
+            "SELECT data FROM items WHERE id = ?1",
+            [legacy.id.as_str()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let stored: archon_core::queue::QueueItem = serde_json::from_str(&stored).unwrap();
+    assert_eq!(stored.model_plan, legacy.model_plan);
+    writer.invalidate_model_catalog("offline".into());
+    assert_eq!(
+        reader.item(&legacy.id).unwrap().model_plan.0["implement"][0]
+            .model
+            .to_string(),
+        "codex/alias"
+    );
+}

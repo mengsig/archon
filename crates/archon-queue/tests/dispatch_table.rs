@@ -63,6 +63,7 @@ impl Fx {
             first_stage_agents: 1,
             gang: false,
             quota_hold: None,
+            model_hold: None,
         }
     }
 
@@ -86,6 +87,7 @@ impl Fx {
             wanted,
             gang: false,
             quota_hold: None,
+            model_hold: None,
         }
     }
 
@@ -1078,4 +1080,55 @@ fn operator_repo_cap_can_raise_the_default_but_the_file_can_still_lower_it() {
     let plan = plan_dispatch(&snapshot);
     assert_eq!(plan.start, vec![fx.items[0].clone()]);
     assert!(plan.never_fits.is_empty());
+}
+
+#[test]
+fn model_holds_skip_work_and_clear_when_the_catalog_recovers() {
+    use archon_core::protocol::WaitingReasonCode as Code;
+    let fx = Fx::new();
+    let mut s = fx.base();
+    s.queued = vec![fx.item(0, 0, High, 0), fx.item(1, 1, Normal, 1)];
+    s.queued[0].model_hold = Some(archon_queue::dispatch::ModelHold {
+        reason: "model unavailable".into(),
+        kind: archon_queue::dispatch::ModelHoldKind::CatalogUnavailable,
+    });
+    s.pending_spawns = vec![fx.pending(0, 7, 0, High, 0, 1)];
+    s.pending_spawns[0].model_hold = Some(archon_queue::dispatch::ModelHold {
+        reason: "catalog unavailable".into(),
+        kind: archon_queue::dispatch::ModelHoldKind::CatalogUnavailable,
+    });
+    let plan = plan_dispatch(&s);
+    assert!(plan.spawn.is_empty());
+    assert_eq!(plan.start, vec![fx.items[1].clone()]);
+    assert_eq!(plan.held_by, Some(Hold::ModelCatalogUnavailable));
+    assert_eq!(
+        archon_queue::dispatch::waiting_reasons(&s)[&fx.items[0]],
+        Code::ModelCatalogUnavailable
+    );
+    s.queued[0].model_hold = None;
+    s.pending_spawns[0].model_hold = None;
+    let resumed = plan_dispatch(&s);
+    assert_eq!(resumed.start.len(), 2);
+    assert_eq!(resumed.spawn, vec![(fx.runs[0].clone(), 1)]);
+    assert_eq!(resumed.held_by, None);
+}
+
+#[test]
+fn invalid_pin_is_not_reported_as_a_catalog_outage() {
+    use archon_core::protocol::WaitingReasonCode as Code;
+    use archon_queue::dispatch::{ModelHold, ModelHoldKind};
+    let fx = Fx::new();
+    let mut snapshot = fx.base();
+    snapshot.queued.push(fx.item(0, 0, High, 0));
+    snapshot.queued[0].model_hold = Some(ModelHold {
+        reason: "model p/removed is retired; re-plan".into(),
+        kind: ModelHoldKind::InvalidPin,
+    });
+    let plan = plan_dispatch(&snapshot);
+    assert!(plan.start.is_empty());
+    assert_eq!(plan.held_by, None);
+    assert_eq!(
+        archon_queue::dispatch::waiting_reasons(&snapshot)[&fx.items[0]],
+        Code::Blocked
+    );
 }

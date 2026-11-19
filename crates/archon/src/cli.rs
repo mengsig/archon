@@ -814,6 +814,12 @@ pub enum QueueCommand {
     Retry {
         /// The item's qi_… id, or enough of its start to name one item.
         item: String,
+        /// Replace the stage choices from a JSON or TOML model plan.
+        #[arg(long)]
+        model_plan_file: Option<PathBuf>,
+        /// Supply reasons for efforts above the stage default.
+        #[arg(long, requires = "model_plan_file")]
+        model_reasons_file: Option<PathBuf>,
         /// Start again from the base branch's head on a new branch; the old
         /// worktree is moved aside with everything in it and the old branch
         /// is kept, as is any pull request open from it. Worktree gc deletes

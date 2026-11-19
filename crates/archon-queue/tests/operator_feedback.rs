@@ -27,6 +27,53 @@ fn model(name: &str) -> ModelChoice {
     }
 }
 
+#[test]
+fn routing_keeps_a_recorded_alias_apart_from_its_current_target() {
+    use archon_core::model_tier::{CatalogModel, ModelCatalog};
+    let mut store = store();
+    let repo = repo("alias-routing");
+    store.insert_repo(&repo).unwrap();
+    let context = context("review");
+    let opus = |name: &str| ModelChoice {
+        model: format!("claude-code/{name}").parse().unwrap(),
+        effort: Effort::Low,
+        tier: None,
+    };
+    finished_run(&mut store, &repo, &opus("opus"), 1.0, &context);
+    finished_run(&mut store, &repo, &opus("claude-opus-5-5"), 3.0, &context);
+    let mut catalog = ModelCatalog::new(vec![CatalogModel {
+        model: "claude-code/claude-opus-5-5".parse().unwrap(),
+        tier: None,
+        is_default: false,
+    }]);
+    catalog.add_alias(
+        "claude-code/opus".parse().unwrap(),
+        "claude-code/claude-opus-5-5".parse().unwrap(),
+    );
+    store.set_model_catalog(catalog);
+    let evidence = store
+        .route_evidence(Some(&repo.id), "direct", "implement", None)
+        .unwrap();
+    let mut rows: Vec<_> = evidence
+        .iter()
+        .map(|e| {
+            (
+                e.route.choice.model.to_string(),
+                e.route.runs,
+                e.median_cost_usd,
+            )
+        })
+        .collect();
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(
+        rows,
+        vec![
+            ("claude-code/claude-opus-5-5".to_string(), 1, 3.0),
+            ("claude-code/opus".to_string(), 1, 1.0),
+        ]
+    );
+}
+
 fn context(review: &str) -> RouteContext {
     RouteContext {
         revision: "rev-1".into(),

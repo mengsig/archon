@@ -58,6 +58,8 @@ pub struct PendingSpawn {
     pub gang: bool,
     /// Every provider some wanted stage may use is out of quota: no slot.
     pub quota_hold: Option<QuotaHold>,
+    /// Model catalog or choice prevents admission until it is resolved.
+    pub model_hold: Option<ModelHold>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -76,6 +78,21 @@ pub struct QueuedCandidate {
     /// Set when every provider one of its tier-only stages may use is out
     /// of quota: it waits, like an unmet dependency, until one has quota.
     pub quota_hold: Option<QuotaHold>,
+    /// Model catalog or choice prevents admission until it is resolved.
+    pub model_hold: Option<ModelHold>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelHold {
+    pub reason: String,
+    pub kind: ModelHoldKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelHoldKind {
+    CatalogUnavailable,
+    InvalidPin,
+    NoReplacement,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,6 +149,7 @@ pub enum Hold {
     Capacity,
     /// Items that would start wait for a provider's quota to come back.
     ProviderQuota,
+    ModelCatalogUnavailable,
 }
 
 /// Decide what to admit now (ARCHITECTURE §7.3):
@@ -203,6 +221,19 @@ pub fn plan_dispatch(snapshot: &DispatchSnapshot) -> DispatchPlan {
     if plan.held_by.is_none() && (spawn_waits || quota_held(snapshot).next().is_some()) {
         plan.held_by = Some(Hold::ProviderQuota);
     }
+    if plan.held_by.is_none()
+        && (snapshot.queued.iter().any(|c| {
+            c.model_hold
+                .as_ref()
+                .is_some_and(|h| h.kind == ModelHoldKind::CatalogUnavailable)
+        }) || snapshot.pending_spawns.iter().any(|p| {
+            p.model_hold
+                .as_ref()
+                .is_some_and(|h| h.kind == ModelHoldKind::CatalogUnavailable)
+        }))
+    {
+        plan.held_by = Some(Hold::ModelCatalogUnavailable);
+    }
     debug_assert!(plan.start.iter().all(|id| !plan.block.contains(id)));
     debug_assert!(plan.spawn.iter().all(|(_, n)| *n > 0));
     plan
@@ -231,11 +262,21 @@ pub fn waiting_reasons(snapshot: &DispatchSnapshot) -> BTreeMap<QueueItemId, Wai
                         Hold::HostLoad => WaitingReasonCode::HostLoad,
                         Hold::TotalBudget => WaitingReasonCode::TotalBudget,
                         Hold::DailyBudget => WaitingReasonCode::DailyBudget,
-                        Hold::Capacity | Hold::ProviderQuota => {
+                        Hold::Capacity | Hold::ProviderQuota | Hold::ModelCatalogUnavailable => {
                             unreachable!("decided per item by the admission plan")
                         }
                     })
                     .or_else(|| slice_pause(snapshot, item))
+                    .or_else(|| {
+                        item.model_hold.as_ref().map(|hold| match hold.kind {
+                            ModelHoldKind::CatalogUnavailable => {
+                                WaitingReasonCode::ModelCatalogUnavailable
+                            }
+                            ModelHoldKind::InvalidPin | ModelHoldKind::NoReplacement => {
+                                WaitingReasonCode::Blocked
+                            }
+                        })
+                    })
                     .or_else(|| {
                         item.quota_hold
                             .as_ref()
@@ -527,7 +568,7 @@ fn grant_pending_spawns(
 ) -> bool {
     let mut order: Vec<&PendingSpawn> = pending
         .iter()
-        .filter(|p| p.wanted > 0 && p.quota_hold.is_none())
+        .filter(|p| p.wanted > 0 && p.quota_hold.is_none() && p.model_hold.is_none())
         .filter(|p| admission_hold(slots.snapshot, p.repo.as_ref()).is_none())
         .collect();
     order.sort_by(|a, b| {
@@ -581,7 +622,7 @@ fn eligible(snapshot: &DispatchSnapshot) -> Vec<&QueuedCandidate> {
         .queued
         .iter()
         .filter(|c| c.deps == DependencyState::AllSucceeded)
-        .filter(|c| c.quota_hold.is_none())
+        .filter(|c| c.quota_hold.is_none() && c.model_hold.is_none())
         .filter(|c| slice_pause(snapshot, c).is_none())
         .collect();
     order.sort_by(|a, b| {

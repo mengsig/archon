@@ -87,15 +87,18 @@ async fn steer_running_then_update(
     steer: &Steer,
     patch: ItemPatch,
 ) -> Result<Option<Reply>, ArchonError> {
+    let mut steer = steer.clone();
+    let catalog = steer_catalog(ctx, &mut steer).await?;
     let item = ctx.store.lock().await.item(id)?;
     let env = RepoEnv::load(ctx, item.repo.as_ref()).await?;
-    let sources = Sources::read(&env, &item, steer)?;
+    let sources = Sources::read(&env, &item, &steer)?;
     let asked = Asked {
         by,
         env: &env,
         sources: &sources,
-        steer,
+        steer: &steer,
         plan: None,
+        catalog: catalog.as_ref(),
     };
     let Some((steered, revised)) = steer_and_update(ctx, &asked, id, patch).await? else {
         return Ok(None);
@@ -140,12 +143,41 @@ async fn steer_and_update(
     Ok(Some((steered, revised)))
 }
 
+/// The catalog a steer that changes the plan is checked in, its named model
+/// put by its canonical id once the catalog is ready; `None` for any other steer.
+/// An effort-only steer counts: its agent update waits on the catalog too.
+async fn steer_catalog(
+    ctx: &DaemonContext,
+    steer: &mut Steer,
+) -> Result<Option<archon_core::model_tier::ModelCatalog>, ArchonError> {
+    let changes_plan = steer.model.is_some()
+        || steer.effort.is_some()
+        || steer.switch_pipeline.is_some()
+        || steer.insert_stage.is_some();
+    if !changes_plan {
+        return Ok(None);
+    }
+    let catalog = crate::learned::request_catalog(ctx).await?;
+    if let Some(model) = &mut steer.model
+        && catalog.not_ready_reason().is_none()
+    {
+        *model = catalog.check(model)?;
+        assert_eq!(
+            model,
+            catalog.canonical_alias(model),
+            "a checked model is canonical"
+        );
+    }
+    Ok(Some(catalog))
+}
+
 async fn steer_run_or_waiting(
     ctx: &DaemonContext,
     by: SteeredBy,
     id: &QueueItemId,
-    steer: Steer,
+    mut steer: Steer,
 ) -> Result<Reply, ArchonError> {
+    let catalog = steer_catalog(ctx, &mut steer).await?;
     let item = ctx.store.lock().await.item(id)?;
     let env = RepoEnv::load(ctx, item.repo.as_ref()).await?;
     let sources = Sources::read(&env, &item, &steer)?;
@@ -155,6 +187,7 @@ async fn steer_run_or_waiting(
         sources: &sources,
         steer: &steer,
         plan: None,
+        catalog: catalog.as_ref(),
     };
     let item = steer_as(ctx, &asked, id).await?;
     Ok(super::items::item_reply(ctx, item, steer.budget_usd.is_some()).await)
@@ -218,6 +251,7 @@ pub(super) async fn update(
         env: &env,
         sources: &Sources::default(),
         steer: &steer,
+        catalog: None,
         plan: running_plan(ctx, (&env, by), run, &mut patch).await?,
     };
     assert!(patch.brief_append.is_none() && patch.model_plan.is_none());
@@ -257,8 +291,8 @@ async fn running_plan(
     let reasons = patch.model_reasons.take();
     let route = crate::knobs::ItemRoute::new(&item);
     let asked = (plan, reasons.as_ref());
-    let given = items::resolve_draft(ctx, (env, route), &spec, asked, by.into()).await?;
-    let plan = items::filled_plan(ctx, route, env, &spec, &spec, given).await?;
+    let given = items::resolve_draft(ctx, (env, route), &spec, asked, (by.into(), None)).await?;
+    let plan = items::filled_plan(ctx, route, env, &spec, &spec, given, None).await?;
     items::check_plan(ctx, env, &spec, &plan)?;
     items::check_reasons(&spec, reasons.as_ref())?;
     assert!(plan.0.len() >= spec.file.stages.len(), "a choice per stage");
@@ -375,11 +409,16 @@ async fn changed_item(
         what.push("updated stage timeouts for future spawns".to_owned());
     }
     if let Some(effort) = steer.effort {
-        asked.env.policy(&ctx.config).check_effort(effort)?;
+        asked.env.resolved_policy(ctx).check_effort(effort)?;
     }
     what.extend(retune(steer, stages, (&mut item, asked.by))?);
+    if let Some(catalog) = asked.catalog {
+        item.model_plan = item
+            .model_plan
+            .checked_request_catalog(catalog, Some(loaded.model_plan.plan()))?;
+    }
     // Nothing of a waiting item has started: every sized stage follows its new class.
-    let policy = asked.env.policy(&ctx.config);
+    let policy = asked.env.resolved_policy(ctx);
     let before = sizing::Inputs::of(loaded);
     if sizing::resize(
         (&ctx.config, &policy),
@@ -451,7 +490,7 @@ async fn store_steer(
                 let before = sizing::Inputs::of(&item);
                 item = revived(&store.run(run)?, edit, item)?;
                 // Its brief now names the failure, and is what the sizer reads as it is stored.
-                let policy = asked.env.policy(&ctx.config);
+                let policy = asked.env.resolved_policy(ctx);
                 let unstarted = Default::default();
                 let resized =
                     sizing::resize((&ctx.config, &policy), &mut item, &unstarted, &before);

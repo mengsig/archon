@@ -166,7 +166,7 @@ pub(crate) fn reshape(
     let autonomy = within_ceiling(ctx, env, &reshaped, &removed, item.autonomy, knobs)?;
     let what = noting_review(what, item.autonomy.review, autonomy.review);
     let repo = env.repo.as_ref().map(|repo| &repo.id);
-    let policy = env.policy(&ctx.config);
+    let policy = env.resolved_policy(ctx);
     let learning = Learning {
         store,
         repo,
@@ -175,8 +175,9 @@ pub(crate) fn reshape(
         fill: knobs::EffortFill::of(&ctx.config, &policy),
         config: &ctx.config,
     };
-    let plan = projected_plan(&learning, spec, &reshaped, item)?;
-    policy.check_plan(&plan)?;
+    let plan = projected_plan(&learning, spec, &reshaped, item)?
+        .checked_request_catalog(&store.model_catalog(), Some(item.model_plan.plan()))?;
+    plan.check_request_policy(&policy)?;
     Ok(Some(Reshaped {
         edit,
         spec: reshaped,
@@ -377,8 +378,17 @@ pub(crate) async fn shaped(
     item: &QueueItem,
     spec: PipelineSpec,
 ) -> Result<PipelineSpec, ArchonError> {
+    let store = ctx.read_store().await?;
+    shaped_in(&store, item, spec)
+}
+
+pub(crate) fn shaped_in(
+    store: &Store,
+    item: &QueueItem,
+    spec: PipelineSpec,
+) -> Result<PipelineSpec, ArchonError> {
     assert_eq!(spec.name(), item.pipeline, "the item's own pipeline");
-    let Some(raw) = ctx.read_store().await?.kv_get(&key(&item.id))? else {
+    let Some(raw) = store.kv_get(&key(&item.id))? else {
         return Ok(spec);
     };
     let whole: RunEdit = serde_json::from_str(&raw)

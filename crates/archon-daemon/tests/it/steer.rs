@@ -1305,3 +1305,326 @@ async fn an_owed_extension_never_lowers_a_held_stages_moved_deadline() {
         "the steer sends the later one"
     );
 }
+
+/// A catalog outage holds a steered model back, never the extension beside it.
+#[tokio::test]
+async fn more_time_reaches_the_agent_while_its_new_effort_waits_for_the_catalog() {
+    let h = harness().await;
+    let (item, working) = implementing(&h, "add a greeting").await;
+    h.catalog_server.set_default(
+        "list_models",
+        archon_aether::fake::Scripted::refuse("unavailable", "catalog offline"),
+    );
+    let store = h.ctx.store.lock().await;
+    store.invalidate_model_catalog("catalog offline".into());
+    drop(store);
+
+    let asked = Steer {
+        effort: Some(Effort::Low),
+        extend_minutes: Some(45),
+        ..Steer::default()
+    };
+    steer(&h, &item.id, asked).await.expect("steered");
+    let updates = h.backend.updates();
+    assert_eq!(updates.len(), 1, "{updates:?}");
+    assert_eq!(updates[0].0, agent(&working));
+    assert!(updates[0].1.deadline.is_some(), "the extension is sent");
+    assert_eq!(
+        updates[0].1.choice, None,
+        "the effort waits for the catalog"
+    );
+}
+
+/// An extension steered after a model change still waiting for the catalog
+/// is sent at once, though the steps go on in order.
+#[tokio::test]
+async fn an_extension_after_an_effort_waiting_for_the_catalog_is_sent_at_once() {
+    let h = harness().await;
+    let (item, working) = implementing(&h, "add a greeting").await;
+    h.catalog_server.set_default(
+        "list_models",
+        archon_aether::fake::Scripted::refuse("unavailable", "catalog offline"),
+    );
+    let store = h.ctx.store.lock().await;
+    store.invalidate_model_catalog("catalog offline".into());
+    drop(store);
+
+    let effort = Steer {
+        effort: Some(Effort::Low),
+        ..Steer::default()
+    };
+    let replied = steer(&h, &item.id, effort).await.expect("steered");
+    assert!(h.backend.updates().is_empty(), "the effort waits");
+    let deferred = replied
+        .model_plan
+        .catalog_check
+        .as_ref()
+        .expect("the reply says it waits");
+    assert!(
+        deferred.to_string().contains("catalog offline"),
+        "{deferred}"
+    );
+    assert_eq!(
+        h.item(&item.id).await.model_plan.catalog_check.as_ref(),
+        Some(deferred),
+        "queue show says it waits"
+    );
+    let more_time = Steer {
+        extend_minutes: Some(45),
+        ..Steer::default()
+    };
+    steer(&h, &item.id, more_time).await.expect("steered");
+
+    let updates = h.backend.updates();
+    let sent: Vec<_> = updates.iter().filter_map(|(_, u)| u.deadline).collect();
+    assert!(!sent.is_empty(), "the extension is sent: {updates:?}");
+    assert!(
+        updates
+            .iter()
+            .all(|(to, u)| *to == agent(&working) && u.choice.is_none())
+    );
+    let stored = common::stored_deadline(&h, &working)
+        .await
+        .expect("a deadline");
+    assert_eq!(
+        sent.last(),
+        Some(&stored),
+        "Aether holds the extended deadline"
+    );
+}
+
+/// Aether stops answering `list_models` and archond drops its catalog.
+async fn catalog_offline(h: &Harness) {
+    h.catalog_server.set_default(
+        "list_models",
+        archon_aether::fake::Scripted::refuse("unavailable", "catalog offline"),
+    );
+    let store = h.ctx.store.lock().await;
+    store.invalidate_model_catalog("catalog offline".into());
+}
+
+/// Each extension sent while a model step waits for the catalog reaches a
+/// helper Aether cannot raise with its lead: a second is never taken for a repeat.
+#[tokio::test]
+async fn a_second_extension_reaches_a_helper_while_an_effort_waits_for_the_catalog() {
+    let h = harness().await;
+    let (item, working) = implementing(&h, "with a helper").await;
+    let helper = h.backend.delegate(&agent(&working), MODEL);
+    let soon = archon_core::now() + chrono::Duration::minutes(5);
+    h.backend.limit_delegated(&helper, soon);
+    catalog_offline(&h).await;
+
+    let effort = Steer {
+        effort: Some(Effort::Low),
+        ..Steer::default()
+    };
+    steer(&h, &item.id, effort).await.expect("steered");
+    for minutes in [30, 60] {
+        let more_time = Steer {
+            extend_minutes: Some(minutes),
+            ..Steer::default()
+        };
+        steer(&h, &item.id, more_time).await.expect("steered");
+    }
+
+    let stored = common::stored_deadline(&h, &working)
+        .await
+        .expect("a deadline");
+    let raised: Vec<_> = h
+        .backend
+        .updates()
+        .into_iter()
+        .filter(|(to, _)| *to == helper)
+        .filter_map(|(_, update)| update.deadline)
+        .collect();
+    assert_eq!(raised.len(), 2, "one raise per extension: {raised:?}");
+    assert_eq!(raised.last(), Some(&stored), "the helper holds the second");
+}
+
+/// A model step that waited for the catalog carries the budget stored now
+/// when it goes on: a later, larger grant is never replaced by its own.
+#[tokio::test]
+async fn a_replayed_effort_never_sends_a_budget_a_later_steer_replaced() {
+    let h = harness().await;
+    let item = h.enqueue("capped").await;
+    let capped = Request::UpdateItem {
+        item: item.id.clone(),
+        patch: ItemPatch {
+            budget_usd: Some(10.0),
+            ..ItemPatch::default()
+        },
+    };
+    h.cli(capped).await.expect("a budget before the run");
+    h.dispatch().await;
+    let working = running(&h, "implement").await.remove(0);
+    enforce_budget(&h, &working).await;
+    catalog_offline(&h).await;
+
+    let effort_and_budget = Steer {
+        effort: Some(Effort::Low),
+        budget_usd: Some(25.0),
+        ..Steer::default()
+    };
+    steer(&h, &item.id, effort_and_budget)
+        .await
+        .expect("steered");
+    let more = Steer {
+        budget_usd: Some(40.0),
+        ..Steer::default()
+    };
+    steer(&h, &item.id, more).await.expect("steered");
+    common::catalog::answer(&h.catalog_server, &common::catalog::default_models());
+    h.dispatch().await;
+
+    let updates = h.backend.updates();
+    assert!(
+        updates.iter().any(|(_, u)| u.choice.is_some()),
+        "the effort goes on once the catalog answers: {updates:?}"
+    );
+    let budgets: Vec<f64> = updates
+        .iter()
+        .filter_map(|(_, u)| u.cost_budget_usd)
+        .collect();
+    let newest = budgets.iter().position(|usd| *usd == 40.0);
+    let newest = newest.expect("the newest budget is sent");
+    assert!(
+        budgets[newest..].iter().all(|usd| *usd == 40.0),
+        "no earlier budget after the newest: {budgets:?}"
+    );
+}
+
+/// A model step that waited for the catalog and is then refused still tells
+/// the lead its note: only the model is dropped, and the refusal is reported.
+#[tokio::test]
+async fn a_refused_deferred_model_still_tells_the_lead_its_note() {
+    const NOTE: &str = "the note the lead is owed";
+    let h = harness().await;
+    let (item, working) = implementing(&h, "a deferred model").await;
+    catalog_offline(&h).await;
+    let to_reviewer = Steer {
+        model: Some(REVIEW_MODEL.parse().unwrap()),
+        note: Some(NOTE.into()),
+        ..Steer::default()
+    };
+    steer(&h, &item.id, to_reviewer).await.expect("steered");
+    assert!(
+        h.backend.messages().is_empty(),
+        "the step waits for the catalog"
+    );
+    let catalog = common::catalog::default_models();
+    let listed = catalog.models().iter().map(|m| m.model.clone());
+    let unlisted: Vec<_> = listed.filter(|m| m.to_string() != REVIEW_MODEL).collect();
+    common::catalog::answer(&h.catalog_server, &common::catalog::untiered(unlisted));
+    h.dispatch().await;
+
+    let messages = h.backend.messages();
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert_eq!(messages[0].0, agent(&working));
+    assert!(messages[0].1.contains(NOTE), "{}", messages[0].1);
+    assert!(
+        !messages[0].1.contains("you now run on"),
+        "no model change is claimed: {}",
+        messages[0].1
+    );
+    assert!(
+        h.backend.interrupts().is_empty(),
+        "the lead keeps its turn on its model"
+    );
+    let updates = h.backend.updates();
+    assert!(
+        updates.iter().all(|(_, u)| u.choice.is_none()),
+        "{updates:?}"
+    );
+    let owed = h.kv(&format!("steer_owed:{}", working.id)).await;
+    assert_eq!(owed, None, "nothing is left owed");
+}
+
+/// A model update Aether refuses for good still sends the step's extension and
+/// note; the lead keeps its turn, and the refusal is reported.
+#[tokio::test]
+async fn a_model_aether_refuses_still_sends_the_steps_note_and_extension() {
+    const NOTE: &str = "the note beside the refused model";
+    let h = harness().await;
+    let (item, working) = implementing(&h, "a refused model update").await;
+    let soon = archon_core::now() + chrono::Duration::minutes(30);
+    common::set_deadline(&h, &working, soon).await;
+    h.backend.fail_next_update(ArchonError::Invalid(
+        "aether: model not allowed here".into(),
+    ));
+    let asked = Steer {
+        effort: Some(Effort::Low),
+        extend_minutes: Some(10),
+        note: Some(NOTE.into()),
+        ..Steer::default()
+    };
+    steer(&h, &item.id, asked).await.expect("steered");
+
+    let updates = h.backend.updates();
+    assert_eq!(updates.len(), 1, "{updates:?}");
+    assert_eq!(updates[0].1.choice, None, "the refused model is left out");
+    assert!(
+        updates[0].1.deadline.is_some_and(|d| d > soon),
+        "{updates:?}"
+    );
+    let messages = h.backend.messages();
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert!(messages[0].1.contains(NOTE), "{}", messages[0].1);
+    assert!(
+        !messages[0].1.contains("you now run on"),
+        "{}",
+        messages[0].1
+    );
+    assert!(h.backend.interrupts().is_empty(), "no turn ends");
+    let feed = h.notices(NotificationKind::Progress).await;
+    let told = feed.iter().find(|n| n.contains("model was refused"));
+    let told = told.expect("the refusal is reported");
+    assert!(
+        told.contains("note and deadline extension reached the agent"),
+        "{told}"
+    );
+    assert!(!told.contains("did not reach"), "{told}");
+    assert_eq!(h.kv(&format!("steer_owed:{}", working.id)).await, None);
+}
+
+/// A model step owed before its note was split from the lead's message keeps
+/// the old delivery when refused: the lead's message is told and its turn ends.
+#[tokio::test]
+async fn a_refused_model_step_owed_before_split_notes_tells_its_lead_message() {
+    const LEAD: &str = "the lead message an older daemon owed";
+    let h = harness().await;
+    let (_item, working) = implementing(&h, "an owed legacy step").await;
+    let owed = format!("steer_owed:{}", working.id);
+    let legacy = serde_json::json!([{
+        "key": "legacy-step",
+        "choice": choice(MODEL, Effort::Low),
+        "interrupt": true,
+        "lead": LEAD,
+    }]);
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(&owed, &legacy.to_string())
+        .expect("kv");
+    h.backend.fail_next_update(ArchonError::Invalid(
+        "aether: model not allowed here".into(),
+    ));
+
+    h.dispatch().await;
+    let messages = h.backend.messages();
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert_eq!(messages[0], (agent(&working), LEAD.to_owned()));
+    assert_eq!(h.backend.interrupts(), [agent(&working)]);
+    assert_eq!(h.kv(&owed).await, None, "nothing is left owed");
+}
+
+/// As when Aether enforces the cost budget `stage` was sent.
+async fn enforce_budget(h: &Harness, stage: &StageRun) {
+    let key = format!("spawn_request:{}", stage.id);
+    let raw = h.kv(&key).await.expect("a stored spawn");
+    let mut spawn: serde_json::Value = serde_json::from_str(&raw).expect("json");
+    assert!(spawn["request"]["cost_budget_usd"].is_number(), "{spawn}");
+    spawn["request"]["aether_cost_budget"] = true.into();
+    let mut store = h.ctx.store.lock().await;
+    store.kv_set(&key, &spawn.to_string()).expect("kv");
+}

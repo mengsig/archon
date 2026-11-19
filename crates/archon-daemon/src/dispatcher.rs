@@ -10,16 +10,17 @@ mod engine_hold;
 mod snapshot;
 
 pub(crate) use disk_hold::{check as check_disk, read as read_disk};
+pub(crate) use snapshot::invalid_pin;
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 use archon_core::notify::NotificationKind;
 use archon_core::queue::{Caps, QueueState};
 use archon_queue::DispatchPlan;
-use archon_queue::dispatch::{GangWaiter, Hold, NeverFits};
+use archon_queue::dispatch::{GangWaiter, Hold, ModelHoldKind, NeverFits};
 
 use crate::context::DaemonContext;
 use crate::executor::{self, FollowUp};
@@ -38,6 +39,7 @@ pub(crate) async fn read_snapshot(
     ctx: &DaemonContext,
 ) -> Result<archon_queue::DispatchSnapshot, ArchonError> {
     let caps = resolve::caps(ctx).await;
+    let catalog = catalog_for_view(ctx).await?;
     let envs = snapshot::Envs::prefetch(ctx, ReadOn::Reader).await?;
     // Recovery holds the run table while it rebuilds the drivers; no spawn is
     // pending before they are, so an empty table reads the same without waiting.
@@ -55,9 +57,32 @@ pub(crate) async fn read_snapshot(
         }
         let unseen = executor::RunTable::default();
         assert!(unseen.pending.is_empty(), "an empty table owes no spawn");
-        return snapshot::build(ctx, ReadOn::Reader, &unseen, caps, envs).await;
+        return snapshot::build(ctx, ReadOn::Reader, &unseen, caps, envs, &catalog).await;
     };
-    snapshot::build(ctx, ReadOn::Reader, &table, caps, envs).await
+    snapshot::build(ctx, ReadOn::Reader, &table, caps, envs, &catalog).await
+}
+
+pub(crate) async fn catalog_for_view(
+    ctx: &DaemonContext,
+) -> Result<archon_core::model_tier::ModelCatalog, ArchonError> {
+    use archon_core::model_tier::ModelCatalog;
+    let store = ctx.read_store().await?;
+    if let Some(catalog) = crate::learned::cached_catalog(ctx, &store)? {
+        return Ok(catalog);
+    }
+    if !ctx.aether.is_connected() {
+        return Ok(ModelCatalog::unavailable("Aether disconnected".to_owned()));
+    }
+    let catalog = store.model_catalog();
+    if let Some(reason) = catalog.unavailable_reason() {
+        return Ok(ModelCatalog::unavailable(reason.to_owned()));
+    }
+    if store.catalog_generation() == Some(ctx.aether.generation()?) && catalog.is_empty() {
+        return Ok(catalog);
+    }
+    Ok(ModelCatalog::unavailable(
+        "waiting for a fresh catalog read".to_owned(),
+    ))
 }
 
 /// Remembers the budget hold last announced, so each is posted once.
@@ -73,11 +98,24 @@ const MAX_PASSES: usize = 8;
 pub async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
     let tick = Duration::from_secs(ctx.config.dispatcher.tick_secs);
     assert!(!tick.is_zero(), "config validation refuses tick_secs = 0");
+    let mut catalog_outage = CatalogOutage::default();
     loop {
+        let catalog = crate::learned::catalog(&ctx).await?;
+        if catalog_outage.observe(Instant::now(), catalog.not_ready_reason().is_some()) {
+            let reason = catalog
+                .not_ready_reason()
+                .expect("only an unavailable catalog is announced");
+            let text = format!(
+                "Model catalog has been unavailable for 30 minutes: {reason}. Work remains queued until it recovers."
+            );
+            executor::notify(&ctx, NotificationKind::Blocker, &text, None, None).await?;
+        }
         if ctx.aether.is_connected() {
             crate::quota::refresh_in_background(&ctx);
-            let pass =
-                crate::executor::coordination::guarded("a dispatch pass", dispatch_once(&ctx));
+            let pass = crate::executor::coordination::guarded(
+                "a dispatch pass",
+                dispatch_with_catalog(&ctx, &catalog),
+            );
             match pass.await {
                 Ok(_) => {}
                 Err(error) if error.is_store() => return Err(error),
@@ -91,12 +129,46 @@ pub async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
     }
 }
 
+/// One notice per continuous catalog outage, after 30 minutes.
+#[derive(Default)]
+struct CatalogOutage {
+    since: Option<Instant>,
+    announced: bool,
+}
+
+impl CatalogOutage {
+    fn observe(&mut self, now: Instant, unavailable: bool) -> bool {
+        if !unavailable {
+            self.since = None;
+            self.announced = false;
+            return false;
+        }
+        let since = *self.since.get_or_insert(now);
+        if self.announced || now.saturating_duration_since(since) < Duration::from_secs(30 * 60) {
+            return false;
+        }
+        self.announced = true;
+        true
+    }
+}
+
 /// One planning pass; returns the plan it executed (for tests and Status).
 /// A failing stage or item never holds back the rest of the pass: items
 /// admitted as `dispatching` are always started. Its first error is
 /// returned at the end; a store error ends the pass at once. Nothing is
 /// planned until start-up recovery is done.
 pub async fn dispatch_once(ctx: &DaemonContext) -> Result<DispatchPlan, ArchonError> {
+    if !ctx.recovery.is_recovered() {
+        return Ok(DispatchPlan::default());
+    }
+    let catalog = crate::learned::catalog(ctx).await?;
+    dispatch_with_catalog(ctx, &catalog).await
+}
+
+async fn dispatch_with_catalog(
+    ctx: &DaemonContext,
+    catalog: &archon_core::model_tier::ModelCatalog,
+) -> Result<DispatchPlan, ArchonError> {
     if !ctx.recovery.is_recovered() {
         let phase = ctx.recovery.phase();
         tracing::debug!(?phase, "dispatch held until recovery is done");
@@ -121,7 +193,7 @@ pub async fn dispatch_once(ctx: &DaemonContext) -> Result<DispatchPlan, ArchonEr
     let mut merged = DispatchPlan::default();
     let mut last = None;
     for _ in 0..MAX_PASSES {
-        let admission = admit(ctx).await?;
+        let admission = admit(ctx, catalog).await?;
         let started = admission.plan.start.clone();
         merged.spawn.extend(admission.plan.spawn.iter().cloned());
         merged.start.extend(started.iter().cloned());
@@ -179,7 +251,10 @@ struct Admission {
 /// Snapshot, plan and reserve under the run table, so no settle or other
 /// pass changes capacity between the plan and its reservations. Repository
 /// files are read before the table is taken.
-async fn admit(ctx: &DaemonContext) -> Result<Admission, ArchonError> {
+async fn admit(
+    ctx: &DaemonContext,
+    catalog: &archon_core::model_tier::ModelCatalog,
+) -> Result<Admission, ArchonError> {
     let caps = resolve::caps(ctx).await;
     let envs = snapshot::Envs::prefetch(ctx, ReadOn::Writer).await?;
     if envs.weighted(&ctx.config)
@@ -189,20 +264,23 @@ async fn admit(ctx: &DaemonContext) -> Result<Admission, ArchonError> {
     }
     ctx.host.check(ctx.config.limits.host_limits());
     let mut table = ctx.runs.lock().await;
-    let snapshot = snapshot::build(ctx, ReadOn::Writer, &table, caps.clone(), envs).await?;
-    let plan = archon_queue::plan_dispatch(&snapshot);
+    let snapshot =
+        snapshot::build(ctx, ReadOn::Writer, &table, caps.clone(), envs, catalog).await?;
+    let mut plan = archon_queue::plan_dispatch(&snapshot);
     let budget = BudgetView {
         caps,
         today_usd: snapshot.spend_today_usd,
         total_usd: snapshot.spend_total_usd,
     };
     block_items(ctx, &plan.block).await?;
+    plan.block
+        .extend(block_invalid_models(ctx, &snapshot, catalog).await?);
     crate::quota::note_waits(ctx, &snapshot.pending_spawns).await?;
+    note_model_waits(ctx, &snapshot.pending_spawns).await?;
     let mut follow = FollowUp::default();
     for (run, slots) in &plan.spawn {
-        follow.merge(executor::reserve(ctx, &mut table, run, *slots).await?);
+        follow.merge(executor::reserve(ctx, &mut table, run, *slots, catalog).await?);
     }
-    let mut plan = plan;
     plan.start = mark_dispatching(ctx, &plan.start).await?;
     drop(table);
     Ok(Admission {
@@ -210,6 +288,93 @@ async fn admit(ctx: &DaemonContext) -> Result<Admission, ArchonError> {
         follow,
         budget,
     })
+}
+
+/// Tell the operator once why a live run cannot start its next stage.
+async fn note_model_waits(
+    ctx: &DaemonContext,
+    spawns: &[archon_queue::dispatch::PendingSpawn],
+) -> Result<(), ArchonError> {
+    for spawn in spawns {
+        let key = format!("dispatch_model_wait/{}", spawn.run);
+        let message = spawn.model_hold.as_ref()
+            .filter(|hold| hold.kind != ModelHoldKind::CatalogUnavailable)
+            .map(|hold| format!("Run {} waits for a valid model: {}. Re-plan the item before retrying the stage.", spawn.run, hold.reason))
+            .unwrap_or_default();
+        let previous = ctx.store.lock().await.kv_get(&key)?.unwrap_or_default();
+        if message == previous {
+            continue;
+        }
+        if message.is_empty() {
+            ctx.store.lock().await.kv_delete(&key)?;
+            continue;
+        }
+        executor::notify(
+            ctx,
+            NotificationKind::Blocker,
+            &message,
+            Some(&spawn.item),
+            Some(&spawn.run),
+        )
+        .await?;
+        ctx.store.lock().await.kv_set(&key, &message)?;
+    }
+    Ok(())
+}
+
+/// Recheck invalid immutable pins before persisting an actionable block.
+async fn block_invalid_models(
+    ctx: &DaemonContext,
+    snapshot: &archon_queue::DispatchSnapshot,
+    catalog: &archon_core::model_tier::ModelCatalog,
+) -> Result<Vec<QueueItemId>, ArchonError> {
+    let mut blocked = Vec::new();
+    for candidate in &snapshot.queued {
+        if !candidate
+            .model_hold
+            .as_ref()
+            .is_some_and(|hold| hold.kind == ModelHoldKind::InvalidPin)
+        {
+            continue;
+        }
+        let item = {
+            let mut store = ctx.store.lock().await;
+            let item = store.item(&candidate.item)?;
+            if item.state != QueueState::Queued
+                || crate::learned::cached_catalog(ctx, &store)?.as_ref() != Some(catalog)
+            {
+                continue;
+            }
+            let when = archon_core::plan_origin::TierMove::Dispatch;
+            let Some(reason) = snapshot::invalid_pin(&item, catalog, when) else {
+                continue;
+            };
+            let reason = format!("{reason}; re-plan this item and retry");
+            store.transition_item(
+                &item.id,
+                QueueState::model_pin_block(&reason),
+                archon_core::now(),
+            )?
+        };
+        let QueueState::Blocked { reason } = &item.state else {
+            unreachable!("just blocked")
+        };
+        executor::notify(
+            ctx,
+            NotificationKind::Blocker,
+            &format!("Blocked: {}. {reason}", item.title),
+            Some(&item.id),
+            None,
+        )
+        .await?;
+        let news = TriggerEvent::ItemBlocked {
+            item: item.id.clone(),
+            reason: reason.clone(),
+        };
+        triggers::push(ctx, news).await?;
+        blocked.push(item.id);
+    }
+    Ok(blocked)
 }
 
 /// `queued → dispatching` for admitted items; the snapshot counts them as
@@ -400,4 +565,22 @@ async fn post_never_fits(ctx: &DaemonContext, team: &NeverFits) -> Result<(), Ar
         run.as_ref(),
     )
     .await
+}
+
+#[cfg(test)]
+mod catalog_outage_tests {
+    use super::*;
+
+    #[test]
+    fn announces_once_after_thirty_minutes_and_resets_after_recovery() {
+        let mut outage = CatalogOutage::default();
+        let start = Instant::now();
+        assert!(!outage.observe(start, true));
+        assert!(!outage.observe(start + Duration::from_secs(1799), true));
+        assert!(outage.observe(start + Duration::from_secs(1800), true));
+        assert!(!outage.observe(start + Duration::from_secs(7200), true));
+        assert!(!outage.observe(start + Duration::from_secs(7201), false));
+        assert!(!outage.observe(start + Duration::from_secs(7202), true));
+        assert!(outage.observe(start + Duration::from_secs(9002), true));
+    }
 }

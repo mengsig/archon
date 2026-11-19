@@ -129,6 +129,9 @@ pub(super) async fn plan(
     };
     let mut change = Change::of(recover::blueprint(ctx, run).await?);
     let before = crate::sizing::Inputs::of(&change.blueprint.item);
+    let carried = asked
+        .catalog
+        .map(|_| change.blueprint.item.model_plan.plan().clone());
     amend(&mut change, asked.steer, &at)?;
     replan(&mut change, asked, &at, &before);
     reshape_run(ctx, asked, &mut change, &at).await?;
@@ -149,12 +152,17 @@ pub(super) async fn plan(
         change.rebuild = true;
     }
     retune(ctx, asked, &mut change, &at)?;
+    if let Some(catalog) = asked.catalog {
+        let plan = change.blueprint.item.model_plan;
+        change.blueprint.item.model_plan =
+            plan.checked_request_catalog(catalog, carried.as_ref())?;
+    }
     rebudget(&mut change, asked.steer, &at, per_item_cap);
     extend(&mut change, asked.steer, &at)?;
     abort(ctx, asked, &mut change, &at)?;
     resize(
         ctx,
-        &asked.env.policy(&ctx.config),
+        &asked.env.resolved_policy(ctx),
         &mut change,
         (&at, &before),
     );
@@ -399,7 +407,7 @@ fn retune(
         return Err(no_stage(&blueprint.spec, at.target));
     }
     if let Some(effort) = steer.effort {
-        asked.env.policy(&ctx.config).check_effort(effort)?;
+        asked.env.resolved_policy(ctx).check_effort(effort)?;
     }
     if let (Some(effort), Some(default)) = (steer.effort, blueprint.spec.default_effort(at.target))
     {
@@ -416,13 +424,16 @@ fn retune(
             at.target
         )));
     };
-    let plan = &item.model_plan;
     let model_named = steer.model.as_ref().is_none_or(|model| *model == now.model);
     assert!(
         model_named && steer.effort.is_none_or(|e| e == now.effort),
         "the plan runs the steer"
     );
-    asked.env.policy(&ctx.config).check_plan(plan)?;
+    if let Some(catalog) = asked.catalog {
+        item.model_plan.record_catalog(catalog);
+    }
+    item.model_plan
+        .check_request_policy(&asked.env.resolved_policy(ctx))?;
     for stage in at.live().filter(|stage| stage.stage_id == at.target) {
         let mut choice = retuned(stage.current_choice(), steer);
         // A model moved under an effort the daemon sized: the new engine may run no x_high.

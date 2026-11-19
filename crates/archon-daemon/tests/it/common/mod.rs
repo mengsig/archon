@@ -2,6 +2,7 @@
 //! agent backend, and a temp git repository carrying a test pipeline.
 #![allow(dead_code)]
 
+pub mod catalog;
 pub mod delivery;
 pub mod fake_ops;
 pub mod team;
@@ -128,6 +129,13 @@ pub async fn connect_aether_for_delegations(h: &Harness) -> archon_aether::fake:
     let fake = archon_aether::fake::FakeAether::start(&h.dir.path().join("aetherd.sock"))
         .await
         .expect("fake aetherd binds");
+    let catalog = h.ctx.store.lock().await.model_catalog();
+    let catalog = if catalog.unavailable_reason().is_some() {
+        catalog::default_models()
+    } else {
+        catalog
+    };
+    catalog::answer(&fake, &catalog);
     fake.set_default(
         "get_agent",
         archon_aether::fake::Scripted::refuse("not_found", "agent already ended"),
@@ -145,6 +153,7 @@ pub async fn connect_aether_for_delegations(h: &Harness) -> archon_aether::fake:
 /// A daemon context over a temp directory with a registered repository.
 pub struct Harness {
     pub ctx: Arc<DaemonContext>,
+    pub catalog_server: archon_aether::fake::FakeAether,
     pub backend: Arc<FakeBackend>,
     pub repo: PathBuf,
     pub dir: tempfile::TempDir,
@@ -188,6 +197,7 @@ impl Harness {
     pub async fn new() -> Self {
         let mut config = Config::default();
         config.review.auto_repair = false;
+        config.learning.explore_rate = 0.0;
         Self::with_config(config).await
     }
 
@@ -249,6 +259,14 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
         }
         let repo = init_repo(&root.join("repo"));
         let aether = Arc::new(AetherLink::new());
+        let catalog_server = archon_aether::fake::FakeAether::start(&root.join("catalog.sock"))
+            .await
+            .expect("fake catalog");
+        catalog::answer(&catalog_server, &catalog::default_models());
+        let client = archon_aether::AetherClient::connect(&catalog_server.endpoint())
+            .await
+            .expect("catalog connection");
+        aether.replace(Some(Arc::new(client))).unwrap();
         let backend = make(aether.clone());
         let free_bytes = Arc::new(AtomicU64::new(u64::MAX));
         let disk = fake_disk(&free_bytes);
@@ -257,6 +275,7 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
         let harness = Self {
             ctx: Arc::new(ctx),
             backend: fake,
+            catalog_server,
             repo,
             dir,
             free_bytes,
@@ -347,24 +366,7 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
         title: &str,
         model_plan: ModelPlan,
     ) -> Result<QueueItem, ArchonError> {
-        let request = EnqueueRequest {
-            intent: None,
-            onto: None,
-            stage_timeouts: Default::default(),
-            repo: Some(RepoRef(repo.into())),
-            pipeline: Some(pipeline.into()),
-            title: title.into(),
-            brief: format!("brief for {title}"),
-            priority: Default::default(),
-            depends_on: Vec::new(),
-            tags: Vec::new(),
-            model_plan: model_plan.into(),
-            model_reasons: None,
-            budget_usd: None,
-            idempotency_key: None,
-            autonomy: Default::default(),
-            origin: None,
-        };
+        let request = enqueue_request(repo, pipeline, title, model_plan);
         match self.cli(Request::Enqueue(request)).await? {
             Reply::Item(item) => Ok(item),
             other => panic!("enqueue replied {other:?}"),
@@ -473,6 +475,9 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
         let lavish = self.ctx.lavish.clone();
         let disk = fake_disk(&self.free_bytes);
         let link = Arc::new(AetherLink::new());
+        if let Ok(client) = self.ctx.aether.client() {
+            link.replace(Some(client)).unwrap();
+        }
         let ctx = context(&root, config, link, backend, lavish, disk, &self.ops);
         self.ctx = Arc::new(ctx);
     }
@@ -804,6 +809,8 @@ struct FakeState {
     /// Stage agents a test holds in their turn after their task settled.
     in_turn: BTreeSet<AetherAgentId>,
     requests: Vec<SpawnRequest>,
+    /// What each checked create was checked on, in order.
+    checked: Vec<archon_core::ports::CheckedOn>,
     by_key: BTreeMap<String, SpawnedAgent>,
     failures: VecDeque<ArchonError>,
     cancel_failures: VecDeque<ArchonError>,
@@ -836,6 +843,8 @@ struct FakeState {
     /// Every accepted `update_agent`, in order.
     updates: Vec<(AetherAgentId, AgentUpdate)>,
     update_failures: VecDeque<ArchonError>,
+    /// The key of every accepted keyed update: Aether makes a repeat once.
+    update_keys: BTreeSet<String>,
     /// Every `interrupt` call, in order.
     interrupts: Vec<AetherAgentId>,
     next: u32,
@@ -843,6 +852,8 @@ struct FakeState {
     recorded: BTreeMap<String, SpawnRequest>,
     /// Every `create_run_node` call, including repeats.
     node_requests: Vec<RunNodeRequest>,
+    /// The earlier nodes each run-node lookup was told to leave out.
+    node_lookups: Vec<Vec<AetherAgentId>>,
     node_by_key: BTreeMap<String, CreatedNode>,
     node_recorded: BTreeMap<String, RunNodeRequest>,
     node_failures: VecDeque<ArchonError>,
@@ -900,6 +911,9 @@ struct FakeState {
     update_hook: Option<Box<dyn FnOnce() + Send>>,
     /// Runs once, as the next `interrupt` is made.
     interrupt_hook: Option<Box<dyn FnOnce() + Send>>,
+    /// Runs once, as the next `network_default` is read.
+    host_context_hook: Option<(usize, Box<dyn FnOnce() + Send>)>,
+    network_hook: Option<Box<dyn FnOnce() + Send>>,
 }
 
 impl FakeState {
@@ -1027,6 +1041,11 @@ impl FakeBackend {
     /// Every `spawn` call, including repeats and refused ones.
     pub fn requests(&self) -> Vec<SpawnRequest> {
         self.state().requests.clone()
+    }
+
+    /// What each checked create was checked on (`AgentBackend::spawn_on`).
+    pub fn checked(&self) -> Vec<archon_core::ports::CheckedOn> {
+        self.state().checked.clone()
     }
 
     /// Distinct agents created (one per idempotency key).
@@ -1161,6 +1180,11 @@ impl FakeBackend {
         self.state().node_requests.clone()
     }
 
+    /// The earlier nodes each run-node lookup left out, oldest lookup first.
+    pub fn node_lookups(&self) -> Vec<Vec<AetherAgentId>> {
+        self.state().node_lookups.clone()
+    }
+
     /// Distinct run nodes created (one per idempotency key).
     pub fn nodes_created(&self) -> usize {
         self.state().node_by_key.len()
@@ -1234,6 +1258,17 @@ impl FakeBackend {
     /// Run `hook` once, right after the next `update_agent` is recorded.
     pub fn on_next_update(&self, hook: impl FnOnce() + Send + 'static) {
         self.state().update_hook = Some(Box::new(hook));
+    }
+
+    /// Run `hook` once, as Aether's network default is next read.
+    pub fn on_next_network_default(&self, hook: impl FnOnce() + Send + 'static) {
+        self.state().network_hook = Some(Box::new(hook));
+    }
+
+    /// Run `hook` once, as the host context is resolved after `skip` more
+    /// lookups: the last lookup comes after the run node, before the create.
+    pub fn on_host_context(&self, skip: usize, hook: impl FnOnce() + Send + 'static) {
+        self.state().host_context_hook = Some((skip, Box::new(hook)));
     }
 
     /// Run `hook` once, as the next `interrupt` is made.
@@ -1461,17 +1496,83 @@ impl FakeBackend {
     }
 }
 
+/// A plain enqueue of `title` into `pipeline` of the repository `repo`.
+pub fn enqueue_request(
+    repo: &str,
+    pipeline: &str,
+    title: &str,
+    model_plan: ModelPlan,
+) -> EnqueueRequest {
+    EnqueueRequest {
+        intent: None,
+        onto: None,
+        stage_timeouts: Default::default(),
+        repo: Some(RepoRef(repo.into())),
+        pipeline: Some(pipeline.into()),
+        title: title.into(),
+        brief: format!("brief for {title}"),
+        priority: Default::default(),
+        depends_on: Vec::new(),
+        tags: Vec::new(),
+        model_plan: model_plan.into(),
+        model_reasons: None,
+        budget_usd: None,
+        idempotency_key: None,
+        autonomy: Default::default(),
+        origin: None,
+    }
+}
+
 #[async_trait]
 impl AgentBackend for FakeBackend {
+    async fn find_spawn(
+        &self,
+        request: &SpawnRequest,
+    ) -> Result<Option<SpawnedAgent>, ArchonError> {
+        Ok(self.state().by_key.get(&request.idempotency_key).cloned())
+    }
+    async fn find_run_node(
+        &self,
+        request: &RunNodeRequest,
+        earlier: &[AetherAgentId],
+    ) -> Result<Option<CreatedNode>, ArchonError> {
+        let mut state = self.state();
+        state.node_lookups.push(earlier.to_vec());
+        Ok(state.node_by_key.get(&request.idempotency_key).cloned())
+    }
+
     async fn host_context(
         &self,
         requested: archon_core::config::HostContext,
     ) -> Result<archon_core::config::HostContext, ArchonError> {
+        let hook = {
+            let mut state = self.state();
+            match state.host_context_hook.take() {
+                Some((0, hook)) => Some(hook),
+                Some((skip, hook)) => {
+                    state.host_context_hook = Some((skip - 1, hook));
+                    None
+                }
+                None => None,
+            }
+        };
+        if let Some(hook) = hook {
+            hook();
+        }
         Ok(if self.state().host_context_supported {
             requested
         } else {
             archon_core::config::HostContext::Full
         })
+    }
+
+    async fn spawn_on(
+        &self,
+        request: SpawnRequest,
+        checked: archon_core::ports::CheckedOn,
+    ) -> Result<SpawnedAgent, ArchonError> {
+        self.state().checked.push(checked);
+        self.spawn(request).await
     }
 
     async fn spawn(&self, request: SpawnRequest) -> Result<SpawnedAgent, ArchonError> {
@@ -1563,6 +1664,10 @@ impl AgentBackend for FakeBackend {
     }
 
     async fn network_default(&self) -> Result<NetworkPolicy, ArchonError> {
+        let hook = self.state().network_hook.take();
+        if let Some(hook) = hook {
+            hook();
+        }
         Ok(self.state().network_default())
     }
 
@@ -1703,7 +1808,12 @@ impl AgentBackend for FakeBackend {
         key: &str,
     ) -> Result<(), ArchonError> {
         assert!(!key.is_empty(), "a keyed update has a key");
-        self.update_agent(agent, update).await
+        if self.state().update_keys.contains(key) {
+            return Ok(());
+        }
+        self.update_agent(agent, update).await?;
+        self.state().update_keys.insert(key.to_owned());
+        Ok(())
     }
 
     /// Ends a held turn, as Aether's interrupt does.

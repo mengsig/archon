@@ -2722,6 +2722,39 @@ fn a_swarm_integrator_ships_its_reviewed_change() {
     assert!(succeeded(&done).contains(&format!("SHIPPED: {PR}")));
 }
 
+/// A repair that moves a tiered entry to a model of another tier moves the
+/// driver's copy too, tier and all; a copy steered to its own tier keeps it.
+#[test]
+fn followed_models_carry_their_replacement_tier() {
+    use archon_core::model_tier::{Tier as ModelTier, TierChoice};
+    let tiered = |model: &str, requested, resolved| ModelChoice {
+        tier: Some(TierChoice {
+            requested,
+            provider: None,
+            resolved,
+        }),
+        ..support::choice(model)
+    };
+    let spec = support::builtin("direct");
+    let old = tiered("p/old", ModelTier::Strong, ModelTier::Strong);
+    let new = tiered("p/new", ModelTier::Strong, ModelTier::Balanced);
+    let plan_of = |choice: &ModelChoice| {
+        ModelPlan(BTreeMap::from([("implement".into(), vec![choice.clone()])]))
+    };
+    let mut driver = RunDriver::new(spec.clone(), plan_of(&old), vars()).unwrap();
+    driver.follow_models((&plan_of(&old), &plan_of(&new)), Clone::clone);
+    let started = driver.start();
+    assert_eq!(spawn_plans(&started)[0].choice, new, "the tier follows");
+
+    let steered = tiered("p/old", ModelTier::Fast, ModelTier::Fast);
+    let mut own = RunDriver::new(spec, plan_of(&steered), vars()).unwrap();
+    own.follow_models((&plan_of(&old), &plan_of(&new)), Clone::clone);
+    let restarted = own.start();
+    let choice = &spawn_plans(&restarted)[0].choice;
+    assert_eq!(choice.model, new.model, "the retired model is replaced");
+    assert_eq!(choice.tier, steered.tier, "an own tier is kept");
+}
+
 /// A review-only lead records a fail with `complete_task`: the stage
 /// completes with its verdict, and the run fails on it with nothing shipped.
 #[test]
@@ -2814,4 +2847,28 @@ fn a_review_lead_recorded_before_notes_is_read_by_its_review_record() {
         "as stored then"
     );
     assert_eq!(lead.verdict_note, None);
+}
+
+/// A driver that still names a stored entry by an alias follows its repair:
+/// the alias is read as the canonical id the stored plan holds.
+#[test]
+fn a_driver_naming_an_alias_follows_the_repair_of_its_canonical_id() {
+    let spec = support::builtin("direct");
+    let plan_of = |model: &str| {
+        let choice = support::choice(model);
+        ModelPlan(BTreeMap::from([("implement".into(), vec![choice])]))
+    };
+    let alias: archon_core::model::ModelRef = "p/alias".parse().unwrap();
+    let old: archon_core::model::ModelRef = "p/old".parse().unwrap();
+    let mut driver = RunDriver::new(spec, plan_of("p/alias"), vars()).unwrap();
+    let canonical = |model: &archon_core::model::ModelRef| {
+        if *model == alias {
+            old.clone()
+        } else {
+            model.clone()
+        }
+    };
+    driver.follow_models((&plan_of("p/old"), &plan_of("p/new")), canonical);
+    let started = driver.start();
+    assert_eq!(spawn_plans(&started)[0].choice.model.to_string(), "p/new");
 }

@@ -37,12 +37,18 @@ async fn set_catalog(h: &Harness, models: &[(&str, Tier)]) {
             tier: Some(*tier),
             is_default: false,
         })
+        .chain(
+            [MODEL, REVIEW_MODEL]
+                .into_iter()
+                .filter(|id| !models.iter().any(|(name, _)| name == id))
+                .map(|id| CatalogModel {
+                    model: id.parse().unwrap(),
+                    tier: None,
+                    is_default: false,
+                }),
+        )
         .collect();
-    h.ctx
-        .store
-        .lock()
-        .await
-        .set_model_catalog(ModelCatalog::new(models));
+    h.set_catalog(ModelCatalog::new(models)).await;
 }
 
 fn allowing(models: &[&str]) -> Config {
@@ -136,7 +142,7 @@ async fn a_worker_fallback_keeps_the_lead_s_reviewer_exemptions() {
         is_default: false,
     };
     let catalog = ModelCatalog::new(vec![strong(MODEL), strong(REVIEW_MODEL)]);
-    h.ctx.store.lock().await.set_model_catalog(catalog);
+    h.set_catalog(catalog).await;
     adaptive_item(&h).await;
     let build = h.backend.requests()[0].clone();
     let policy = build
@@ -290,9 +296,9 @@ async fn a_low_effort_cap_clamps_the_medium_worker_default_in_policy_and_contrac
 /// models: no worker is permitted, yet the lead still spawns, exempting its
 /// planned reviewer, and its contract and `get_item` say it works alone.
 #[tokio::test]
-async fn an_empty_catalog_under_an_allowlist_leaves_the_lead_alone_with_its_reviewers() {
+async fn an_untiered_catalog_under_an_allowlist_leaves_the_lead_alone_with_its_reviewers() {
     let h = Harness::with_config(allowing(&[MODEL, REVIEW_MODEL])).await;
-    assert!(h.ctx.store.lock().await.model_catalog().is_empty());
+    set_catalog(&h, &[]).await;
     let plan = plan_of(&[("build", MODEL), ("build.review", REVIEW_MODEL)]);
     let (item, build) = build_lead(&h, plan).await;
     let policy = build
@@ -313,14 +319,14 @@ async fn an_empty_catalog_under_an_allowlist_leaves_the_lead_alone_with_its_revi
     let line = worker_line(&build);
     assert!(line.contains("): none. Do the work yourself"), "{line}");
     assert!(
-        line.contains("(the model catalog is empty; planned: "),
+        line.contains("(the model policy permits none of: "),
         "{line}"
     );
     let shown = detail(&h, &item).await;
     let build_run = shown.stages.iter().find(|s| s.stage_id == "build").unwrap();
     let note = &shown.stage_notes[&build_run.id];
     assert!(
-        note.starts_with("no permitted worker model resolved (the model catalog is empty"),
+        note.starts_with("no permitted worker model resolved (the model policy permits none of"),
         "{note}"
     );
     assert!(note.ends_with("; the lead works alone"), "{note}");
@@ -444,4 +450,32 @@ async fn a_lead_that_is_the_only_permitted_catalog_model_works_alone() {
         .next()
         .expect("the fallback is noted");
     assert!(note.ends_with("; the lead works alone"), "{note}");
+}
+
+/// A stage whose agent cannot delegate never uses its `<stage>.workers`
+/// choice: a worker pin that left the catalog mid-run never holds it.
+#[tokio::test]
+async fn a_leaf_stage_runs_though_its_unused_worker_pin_left_the_catalog() {
+    const RETIRING: &str = "codex/retiring";
+    let h = Harness::new().await;
+    set_catalog(&h, &[(RETIRING, Tier::Balanced)]).await;
+    let mut plan = crate::common::plan();
+    let low = choice(RETIRING, Effort::Low);
+    plan.0
+        .insert(archon_core::model::workers_key("review"), vec![low]);
+    let item = h.enqueue_with("a leaf review", plan).await.unwrap();
+    h.dispatch().await;
+    assert_eq!(h.running().await.len(), 1, "implement runs");
+    set_catalog(&h, &[]).await;
+
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    let reviews = h.running().await;
+    assert_eq!(reviews.len(), 2, "{:?}", h.state(&item.id).await);
+    assert!(reviews.iter().all(|stage| stage.stage_id == "review"));
+    let requests = h.backend.requests();
+    assert!(
+        requests.iter().all(|request| request.leaf),
+        "no review delegates"
+    );
 }

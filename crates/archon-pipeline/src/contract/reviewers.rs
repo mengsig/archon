@@ -435,6 +435,41 @@ mod tests {
         assert!(at(true).contains("claude-code/sonnet at effort high. That effort is the default"));
     }
 
+    /// Every form of the profile's reviewer rule tells the effort rule it was
+    /// rendered with, placed or not and capped or not, as 1.6.3 rendered it.
+    #[test]
+    fn a_profile_reviewer_rule_states_the_effort_rule_it_was_rendered_with() {
+        use archon_core::model::EffortContract;
+        let own: ModelRef = "claude-code/sonnet".parse().unwrap();
+        let profile = ReviewConfig::default();
+        let only_fast = ModelPolicy::from_lists(&["third/fast".parse().unwrap()], &[], None);
+        let capped = ModelPolicy::from_lists(&[], &[], Some(Effort::Medium));
+        let empty = ModelCatalog::new(Vec::new());
+        let forms = [
+            (
+                ModelPolicy::default(),
+                catalog(),
+                "at tier balanced and effort",
+            ),
+            (only_fast, catalog(), ": balanced unavailable under policy"),
+            (capped, catalog(), "and effort medium."),
+            (
+                ModelPolicy::default(),
+                empty,
+                "Archon's cached catalog places no",
+            ),
+        ];
+        for (policy, catalog, form) in &forms {
+            for sizing in [false, true] {
+                let rules =
+                    governed_reviewer_rules(None, &own, policy, (&profile, catalog), false, sizing);
+                assert!(rules.contains(form), "{form:?} in {rules}");
+                let stated = super::super::stated_effort_contract(&rules);
+                assert_eq!(stated, Some(EffortContract::of(sizing)), "{rules}");
+            }
+        }
+    }
+
     /// `[review] default_effort = "low"` is the unnamed reviewers' default
     /// under the rubric; 1.6.3's floors still raise it to medium, and a cap
     /// below the configured effort lowers it either way.

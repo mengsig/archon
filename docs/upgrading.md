@@ -38,7 +38,8 @@ effort, from `[review] default_effort` (now `medium`) or a `<stage>.review`
 plan, is a default the lead may lower for a small, low-risk diff rather than a
 floor; a stage the plan leaves out, or that a knob or a steer inserts, takes
 its own effort within the policy's cap rather than the pipeline tier's or the
-first stage's; and the built-in stage nudges are served worded by the rubric.
+first stage's; and the built-in stage nudges are served (by `list_pipelines`
+and `archon pipelines list`) worded by the rubric.
 A config that already set `effort_sizing = true` gets 1.6.4's rubric too:
 reviews of small low-risk diffs move to `low`, and inserted stages and the
 default `[review] default_effort` change as above.

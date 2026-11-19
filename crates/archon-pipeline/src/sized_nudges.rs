@@ -1,7 +1,7 @@
 //! The built-in stage nudges that name efforts, as the effort rubric words
-//! them: served while `[models] effort_sizing` is on, so the catalog never
-//! contradicts the rubric the orchestrator and its leads read. Off, the
-//! catalog is served as written, as 1.6.3 served it.
+//! them: served by archond and `archon pipelines list` while `[models]
+//! effort_sizing` is on, so no catalog contradicts the rubric the
+//! orchestrator and its leads read. Off, both serve it as 1.6.3 did.
 use archon_core::catalog::{CatalogListing, PipelineSource};
 
 /// (pipeline, stage, nudge) for the built-ins whose written nudge contradicts
@@ -10,8 +10,9 @@ const SIZED_STAGE_NUDGES: [(&str, &str, &str); 3] = [
     (
         "direct",
         "implement",
-        "The balanced tier at medium effort, high for a larger or subtle change; low for \
-         lookups, docs, config, formatting and other mechanical edits. The agent escalates a \
+        "The balanced tier at medium effort for a routine change; high for non-trivial \
+         design, a subtle change or a risky diff; low for lookups, docs, config, formatting \
+         and other mechanical edits. The agent escalates a \
          change that turns out risky: concurrency, locking, security or a migration; re-queue \
          that on adaptive.",
     ),
@@ -37,7 +38,7 @@ const SIZED_STAGE_NUDGES: [(&str, &str, &str); 3] = [
 
 /// `listing` with the built-in stage nudges worded by the rubric. A
 /// pipeline a user or repository defines under a built-in's name is theirs.
-pub(super) fn sized_nudges(listing: &mut CatalogListing) {
+pub fn sized_nudges(listing: &mut CatalogListing) {
     let builtins = listing
         .pipelines
         .iter_mut()
@@ -73,7 +74,7 @@ mod tests {
     /// rubric: low only for a trivial edit, x_high only for a named problem.
     #[test]
     fn the_written_nudges_are_the_ones_the_rubric_replaces() {
-        let written = archon_pipeline::Catalog::builtin().listing();
+        let written = crate::Catalog::builtin().listing();
         assert!(nudge(&written, "direct", "implement").contains("low only for docs"));
         let build = nudge(&written, "adaptive", "build");
         assert!(
@@ -98,7 +99,7 @@ mod tests {
             EFFORT_RUBRIC
                 .contains("`x_high` for hard reasoning, such as root-causing a regression")
         );
-        let mut sized = archon_pipeline::Catalog::builtin().listing();
+        let mut sized = crate::Catalog::builtin().listing();
         sized_nudges(&mut sized);
         for pipeline in &sized.pipelines {
             for stage in &pipeline.stages {
@@ -121,6 +122,15 @@ mod tests {
             }
         }
         let implement = nudge(&sized, "direct", "implement");
+        assert!(
+            EFFORT_RUBRIC.contains("`medium` for routine changes")
+                && EFFORT_RUBRIC.contains("`high` for non-trivial design, risky diffs")
+        );
+        assert!(
+            implement.contains("medium effort for a routine change; high for non-trivial design"),
+            "high by reasoning and risk, as the rubric: {implement}"
+        );
+        assert!(!implement.contains("larger"), "never by size alone");
         assert!(
             implement
                 .contains("low for lookups, docs, config, formatting and other mechanical edits")
@@ -146,7 +156,7 @@ mod tests {
     /// written.
     #[test]
     fn a_pipeline_of_the_user_s_own_is_served_as_written() {
-        let mut listing = archon_pipeline::Catalog::builtin().listing();
+        let mut listing = crate::Catalog::builtin().listing();
         for pipeline in &mut listing.pipelines {
             pipeline.source = PipelineSource::Repo;
         }

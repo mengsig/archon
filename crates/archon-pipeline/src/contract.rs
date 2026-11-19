@@ -668,6 +668,7 @@ const FLOORED_REVIEWERS: &str = "Each effort is a floor, never a ceiling";
 /// Where those words sit in a rendered contract, and the rule lines they open.
 const REVIEWER_RULE: &str = "- Delegate every reviewer with role `reviewer`";
 const NAMED_REVIEWERS: &str = ", each on one of these models, taken in turn: ";
+const PROFILE_REVIEWERS: &str = ", on ";
 const DEADLINE_HEADING: &str = "\n## Deadline\n";
 const DELEGATION_HEADING: &str = "\n## Delegation\n";
 
@@ -681,8 +682,7 @@ pub fn stated_effort_contract(instructions: &str) -> Option<EffortContract> {
         .rsplit_once(DELEGATION_HEADING)
         .map_or("", |(_, own)| own);
     let reviewer_rules = || own_reviewer_rules(instructions);
-    let floored = reviewer_rules()
-        .any(|line| line.contains(&format!(". {FLOORED_REVIEWERS}: Archon cancels a ")));
+    let floored = reviewer_rules().any(floored_reviewer_rule);
     let sized_reviewers = reviewer_rules().any(|line| {
         line.contains(&format!(
             "{SIZED_REVIEWERS}; otherwise the rubric decides: "
@@ -697,6 +697,22 @@ pub fn stated_effort_contract(instructions: &str) -> Option<EffortContract> {
         // Both is no contract rendered here: the reader holds it to neither.
         (true, true) | (false, false) => None,
     }
+}
+
+/// Whether reviewer rule `line` holds its reviewers to 1.6.3's floors: the
+/// plan's named floor, or the profile's effort stated with no rubric beside it.
+fn floored_reviewer_rule(line: &str) -> bool {
+    assert!(line.starts_with(REVIEWER_RULE), "a reviewer rule line");
+    if line.contains(&format!(". {FLOORED_REVIEWERS}: Archon cancels a ")) {
+        return true;
+    }
+    let Some(profile) = line[REVIEWER_RULE.len()..].strip_prefix(PROFILE_REVIEWERS) else {
+        return false;
+    };
+    let states_effort = [" at effort ", " and effort "]
+        .iter()
+        .any(|words| profile.contains(words));
+    states_effort && !profile.contains(SIZED_REVIEWERS)
 }
 
 /// The reviewer rule lines of contract `instructions`: those before the

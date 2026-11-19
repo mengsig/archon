@@ -83,8 +83,8 @@ concurrency or security analysis, or a fix that failed twice. A reviewer's
 effort moves with it, and the lead states the reason in one line. A stage the
 plan leaves out, or that a knob or a steer inserts, takes its own effort from
 its pipeline, within the policy's cap, rather than the pipeline tier's or the
-first stage's, and the built-in stage nudges are served
-worded by the rubric. The stage prompts keep 1.4.12's wording, effort floors
+first stage's, and the built-in stage nudges are served (by `list_pipelines`
+and `archon pipelines list`) worded by the rubric. The stage prompts keep 1.4.12's wording, effort floors
 included; the contract's reviewer rule says it replaces any floor a stage
 prompt names.
 

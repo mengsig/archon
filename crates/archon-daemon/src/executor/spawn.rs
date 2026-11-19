@@ -1783,6 +1783,20 @@ mod effort_contract_tests {
         assert!(read.effort_contract.is_none());
     }
 
+    /// The contracts 1.6.3's own code rendered with sizing off (the rollback
+    /// test's golden files) read as floors, the profile's as the plan's.
+    #[test]
+    fn contracts_1_6_3_rendered_read_as_the_floors_they_issued() {
+        for contract in [
+            include_str!("../../tests/it/effort_rollback/contract-named.txt"),
+            include_str!("../../tests/it/effort_rollback/contract-profile.txt"),
+        ] {
+            assert!(contract.contains("- Delegate every reviewer with role `reviewer`"));
+            let issued = issued(stored_by_1_6_3(contract));
+            assert_eq!(issued, Some(EffortContract::Floor), "{contract}");
+        }
+    }
+
     /// The rule recorded as the spawn was reserved wins over any words.
     #[test]
     fn a_recorded_rule_wins_over_the_words() {

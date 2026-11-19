@@ -306,3 +306,49 @@ fn an_operator_s_pipeline_never_reaches_the_pinned_catalog() {
     assert!(output.status.success(), "{out}");
     assert!(out.contains("1 passed"), "{out}");
 }
+
+/// A lead's create whose reply was lost is replayed, after a restart that
+/// flipped `effort_sizing`, exactly as it was issued: the same request under
+/// the same key, its contract and its recorded rule the issuing config's.
+#[tokio::test]
+async fn a_lost_spawn_is_replayed_as_issued_across_the_switch() {
+    use archon_core::model::EffortContract;
+    for sizing in [true, false] {
+        let mut config = Config::default();
+        config.review.auto_repair = false;
+        config.models.max_effort = Some(Effort::XHigh);
+        config.models.effort_sizing = Some(sizing);
+        let mut h = Harness::with_config(config.clone()).await;
+        h.backend.lose_next_reply();
+        let plan = ModelPlan(
+            [
+                ("build".to_owned(), vec![choice(MODEL, Effort::Medium)]),
+                (
+                    "build.review".to_owned(),
+                    vec![choice(REVIEW_MODEL, Effort::Medium)],
+                ),
+            ]
+            .into(),
+        );
+        enqueue(&h, "adaptive", plan, Some(ReviewLevel::Strict)).await;
+        h.dispatch().await;
+        let issued = h.backend.requests()[0].clone();
+        assert_eq!(issued.labels["archon.stage"], "build");
+        let mode = EffortContract::of(sizing);
+        let stated = archon_pipeline::contract::stated_effort_contract(&issued.instructions);
+        assert_eq!(stated, Some(mode), "issued under sizing {sizing}");
+
+        config.models.effort_sizing = Some(!sizing);
+        h.restart_with(config);
+        archon_daemon::executor::recover(&h.ctx)
+            .await
+            .expect("recover");
+        h.dispatch().await;
+        let requests = h.backend.requests();
+        assert_eq!(requests.len(), 2, "the lost create is replayed once");
+        assert_eq!(requests[1], issued, "byte-identical, under the same key");
+        assert_eq!(h.backend.created(), 1, "no second agent");
+        let spawn = h.stored_spawn(&issued).await;
+        assert_eq!(spawn["effort_contract"], serde_json::json!(mode));
+    }
+}

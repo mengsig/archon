@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::ArchonError;
 use crate::model::{Effort, ModelChoice, ModelRef};
-use crate::model_tier::{CatalogModel, ModelCatalog, Tier};
+use crate::model_tier::{ModelCatalog, Tier};
 use crate::policy::ModelPolicy;
 
 /// Most parallel workers a pipeline or plan may allow one lead.
@@ -182,14 +182,11 @@ impl WorkerPolicy {
         cause: &str,
     ) -> Narrowed {
         assert!(!cause.is_empty(), "a fallback says why");
-        let serves = |m: &CatalogModel| {
-            m.tier.is_some() && policy.permits_model(&m.model) && Some(&m.model) != lead
-        };
         let cheapest = catalog
             .models()
             .iter()
-            .filter(|m| !catalog.is_retired(&m.model) && serves(m))
-            .filter(|m| !catalog.replaced_for(&m.model, serves))
+            .filter(|m| !catalog.is_retired(&m.model) && m.tier.is_some())
+            .filter(|m| policy.permits_model(&m.model) && Some(&m.model) != lead)
             .min_by_key(|m| m.tier)
             .map(|m| m.model.clone());
         let (workers, default_tier, rest) = match cheapest {
@@ -354,8 +351,8 @@ mod tests {
     }
 
     #[test]
-    fn a_fallback_worker_keeps_a_superseded_model_whose_successor_is_denied() {
-        let entry = |model: &str| CatalogModel {
+    fn a_fallback_worker_keeps_a_superseded_model() {
+        let entry = |model: &str| crate::model_tier::CatalogModel {
             model: model.parse().unwrap(),
             tier: Some(Tier::Strong),
             is_default: false,
@@ -373,8 +370,8 @@ mod tests {
         let narrowed = base.fallback(&open, (&catalog, Some(&lead)), "no balanced model");
         let wire = serde_json::to_value(&narrowed.policy).unwrap().to_string();
         assert!(
-            wire.contains("\"new\"") && !wire.contains("\"old\""),
-            "{wire}"
+            wire.contains("\"old\""),
+            "the cheapest listed model: {wire}"
         );
     }
 

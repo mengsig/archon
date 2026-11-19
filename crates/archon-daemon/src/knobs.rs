@@ -10,7 +10,7 @@ use archon_core::config::Config;
 use archon_core::error::ArchonError;
 use archon_core::id::{QueueItemId, RepoId};
 use archon_core::model::{Effort, ModelChoice, ModelPlan, ModelPlanDraft, ModelReasons, ModelRef};
-use archon_core::model_tier::{CatalogModel, ModelCatalog, TierChoice};
+use archon_core::model_tier::{ModelCatalog, TierChoice};
 use archon_core::plan_origin::{PlanSource, PlanWriter};
 use archon_core::policy::ModelPolicy;
 use archon_core::provider_route::{ProviderRoute, ProviderWeights, Routed};
@@ -467,11 +467,8 @@ pub(crate) fn default_choice(
         let canonical = if catalog.not_ready_reason().is_some() {
             model.clone()
         } else {
-            let serves = |m: &CatalogModel| {
-                policy.permits_model(&m.model) && m.tier.is_none_or(|tier| tier <= max_tier)
-            };
             match catalog.check(model) {
-                Ok(id) if !catalog.replaced_for(&id, serves) => id,
+                Ok(id) => id,
                 result => {
                     tracing::info!(%model, ?result, "skipping catalog-ineligible model default");
                     return None;
@@ -1081,13 +1078,13 @@ mod tests {
         );
     }
 
-    /// A superseded orchestrator pin stays the default while its successor
-    /// cannot serve it, here because the policy denies the successor.
+    /// A pinned fallback keeps the model named: a superseded but listed
+    /// orchestrator pin stays the default, whether or not its successor serves.
     #[test]
-    fn a_superseded_pin_with_a_denied_successor_is_still_a_default() {
+    fn a_superseded_pin_is_still_a_default() {
         let mut config = Config::default();
         config.orchestrator.model = "codex/old".parse().unwrap();
-        let entry = |model: &str| CatalogModel {
+        let entry = |model: &str| archon_core::model_tier::CatalogModel {
             model: model.parse().unwrap(),
             tier: Some(Tier::Strong),
             is_default: false,
@@ -1103,8 +1100,8 @@ mod tests {
         let choice = default_choice(&config, tiers, Tier::Strong, &builtin("direct")).unwrap();
         assert_eq!(
             choice.model.to_string(),
-            "codex/new",
-            "a serving successor wins"
+            "codex/old",
+            "a pin keeps the model named"
         );
     }
 

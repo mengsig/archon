@@ -1127,7 +1127,8 @@ async fn create_generation(
         instructions.push_str(callers::NO_DELEGATION_NOTE);
     }
     let store = store_id(ctx).await?;
-    let (generation, frozen) = settle_generation(ctx, client, &store, &mut instructions).await?;
+    let (generation, frozen) =
+        settle_generation(ctx, client, config, &store, &mut instructions).await?;
     let network = client.daemon_defaults().await?.network_default;
     let sent = instructions.clone();
     let request = orchestrator_create_agent(
@@ -1153,10 +1154,12 @@ async fn create_generation(
 
 /// Settle, under one store lock and before any request, what the stored
 /// generation's creation sends on every attempt: its number, the lessons its
-/// first attempt chose (appended to `instructions`) and its frozen settings.
+/// first attempt chose (appended to `instructions`) and its frozen settings,
+/// read from `config` with its orchestrator model already canonical.
 async fn settle_generation(
     ctx: &DaemonContext,
     client: &AetherClient,
+    config: &Config,
     store_id: &StoreId,
     instructions: &mut String,
 ) -> Result<(u64, FrozenSettings), ArchonError> {
@@ -1164,7 +1167,6 @@ async fn settle_generation(
         !instructions.trim().is_empty(),
         "the lessons follow a prompt"
     );
-    let config = &ctx.config;
     let mut store = ctx.store.lock().await;
     let generation = allocated_generation(&mut store)?;
     origin::record_lessons(&mut store, generation)?;

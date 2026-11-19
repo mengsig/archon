@@ -683,6 +683,32 @@ async fn disconnected_aether_has_a_visible_dispatch_hold() {
 }
 
 #[tokio::test]
+async fn a_running_items_next_stage_names_the_catalog_hold() {
+    let h = Harness::new().await;
+    let item = h.enqueue("two stages through an outage").await;
+    h.dispatch().await;
+    assert_eq!(h.running().await.len(), 1);
+    crate::refresh::catalog_outage(&h).await;
+    h.settle_running(passing).await;
+    h.dispatch().await;
+    assert!(
+        h.running().await.is_empty(),
+        "the held stage creates no agent"
+    );
+    assert!(detail(&h, &item.id).await.item.state.is_active());
+    let wait = reason(&h, &item.id, Code::ModelCatalogUnavailable).await;
+    assert!(wait.message.contains("catalog"), "{}", wait.message);
+
+    crate::refresh::catalog_back(&h);
+    h.dispatch().await;
+    assert!(
+        !h.running().await.is_empty(),
+        "the next stage starts by itself"
+    );
+    assert!(detail(&h, &item.id).await.waiting_reason.is_none());
+}
+
+#[tokio::test]
 async fn subcent_budget_holds_remain_visible() {
     let h = Harness::new().await;
     let active = h.enqueue("active").await;

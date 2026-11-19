@@ -1730,3 +1730,30 @@ async fn orchestrator_creation_checks_the_configured_alias_against_the_live_cata
         json!({"provider":"claude-code","model":"canonical"})
     );
 }
+
+#[tokio::test]
+async fn orchestrator_host_context_follows_the_canonical_model_of_a_cross_provider_alias() {
+    let mut config = Config::default();
+    config.aether.host_context = archon_core::config::HostContext::Lean;
+    config.orchestrator.model = "codex/opus".parse().unwrap();
+    let h = Harness::with(config, None).await;
+    h.fake.set_features(vec!["host_context".into()]);
+    h.fake.set_default(
+        "list_models",
+        Scripted::reply(
+            "models",
+            json!([
+                {"model":"claude-code/canonical", "configured": true, "aliases": ["codex/opus"]}
+            ]),
+        ),
+    );
+    h.connect().await;
+    create_key(&h).await;
+    let creates = h.fake.received_named("create_agent");
+    assert_eq!(creates.len(), 1);
+    assert_eq!(
+        creates[0]["model"],
+        json!({"provider":"claude-code","model":"canonical"})
+    );
+    assert_eq!(creates[0]["config"]["host_context"], "lean");
+}

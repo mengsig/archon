@@ -7,6 +7,7 @@ use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 use archon_core::protocol::{WaitingOn, WaitingReason, WaitingReasonCode as Code};
 use archon_core::queue::{QueueItem, QueueState};
+use archon_queue::dispatch::ModelHoldKind;
 use archon_queue::{DispatchSnapshot, Store};
 
 use crate::context::DaemonContext;
@@ -16,6 +17,8 @@ pub(super) struct WaitingView {
     snapshot: DispatchSnapshot,
     connected: bool,
     reasons: BTreeMap<QueueItemId, (Code, usize)>,
+    /// Running items whose next stage waits for a ready model catalog.
+    held_stages: BTreeMap<QueueItemId, String>,
 }
 
 impl WaitingView {
@@ -28,9 +31,11 @@ impl WaitingView {
             .enumerate()
             .map(|(index, candidate)| (candidate.item.clone(), (codes[&candidate.item], index)))
             .collect();
+        let held_stages = catalog_held_stages(&snapshot);
         Ok(Self {
             snapshot,
             reasons,
+            held_stages,
             connected: ctx.aether.is_connected(),
         })
     }
@@ -61,6 +66,9 @@ impl WaitingView {
                 }
             }
             QueueState::Blocked { .. } => blocked_code(store, item)?,
+            _ if item.state.is_active() && self.held_stages.contains_key(&item.id) => {
+                Code::ModelCatalogUnavailable
+            }
             _ => return Ok(None),
         };
         let (message, next_action) = self.describe(store, item, code)?;
@@ -138,12 +146,7 @@ impl WaitingView {
             Code::Capacity => self.capacity(store, item)?,
             Code::ProviderQuota => self.provider_quota(item),
             Code::ModelCatalogUnavailable => {
-                let (_, index) = self.reasons[&item.id];
-                let reason = self.snapshot.queued[index]
-                    .model_hold
-                    .as_ref()
-                    .map(|hold| hold.reason.as_str())
-                    .expect("model hold has a reason");
+                let reason = self.catalog_hold(item);
                 let action = if reason.contains("configure a provider") {
                     "configure a provider in Aether"
                 } else {
@@ -184,6 +187,26 @@ impl WaitingView {
                 unreachable!("operator waits are handled before dispatch reasons")
             }
         })
+    }
+
+    /// Why the model catalog holds `item`: its queued admission or, once it
+    /// runs, the creation of its next stage.
+    fn catalog_hold(&self, item: &QueueItem) -> &str {
+        if let Some(reason) = self.held_stages.get(&item.id) {
+            assert!(item.state.is_active(), "a held stage belongs to a run");
+            return reason;
+        }
+        let (_, index) = self.reasons[&item.id];
+        let candidate = &self.snapshot.queued[index];
+        assert_eq!(
+            candidate.item, item.id,
+            "the reason indexes the item's candidate"
+        );
+        candidate
+            .model_hold
+            .as_ref()
+            .map(|hold| hold.reason.as_str())
+            .expect("model hold has a reason")
     }
 
     /// The stage no provider has quota for, and the earliest reset.
@@ -330,6 +353,19 @@ fn dependency(
     ))
 }
 
+/// Each item whose pending stage spawn the model catalog holds, with why.
+fn catalog_held_stages(snapshot: &DispatchSnapshot) -> BTreeMap<QueueItemId, String> {
+    snapshot
+        .pending_spawns
+        .iter()
+        .filter_map(|spawn| {
+            let hold = spawn.model_hold.as_ref()?;
+            (hold.kind == ModelHoldKind::CatalogUnavailable)
+                .then(|| (spawn.item.clone(), hold.reason.clone()))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -341,6 +377,7 @@ mod tests {
         let view = WaitingView {
             snapshot: store.dispatch_snapshot(now).unwrap(),
             reasons: BTreeMap::new(),
+            held_stages: BTreeMap::new(),
             connected: true,
         };
         let item = QueueItem {

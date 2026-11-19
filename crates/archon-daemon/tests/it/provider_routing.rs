@@ -1779,49 +1779,124 @@ async fn a_kept_implementer_takes_its_findings_after_a_quota_move() {
     }
 }
 
-/// A parked implementer whose effort is steered after a quota move moved its
-/// slot is replaced, not resumed: the fresh agent is routed as any fresh
-/// attempt is (I2), never held on the parked agent's spent provider.
+/// A parked implementer whose effort is steered after a quota move, before its
+/// reviewers were reserved or after, is replaced, not resumed: the fresh agent
+/// is routed as any fresh attempt is (I2), never held on the spent provider.
 #[tokio::test]
 async fn an_effort_steered_kept_implementer_is_replaced_on_the_routed_provider() {
-    let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
-    claude_then_codex(&h, 90, 0);
-    let item = enqueue(&h, ROUTED, "effort steered after a quota move", tier_plan()).await;
-    h.dispatch().await;
-    let implementers = |stages: Vec<archon_core::run::StageRun>| -> Vec<_> {
-        let of_implement = stages.into_iter().filter(|s| s.stage_id == "implement");
-        of_implement.map(|s| (s.choice, s.aether_agent)).collect()
-    };
-    let first = implementers(h.stages(&item.id).await);
-    assert_eq!(first[0].0.model.provider, "claude-code", "{first:?}");
-    let effort = archon_core::model::Effort::Low;
-    assert_ne!(first[0].0.effort, effort, "the steer changes the effort");
-    claude_then_codex(&h, 10, 90);
-    h.settle_running(|_| completed("implemented")).await;
-    h.dispatch().await;
-    let steer = archon_core::steer::Steer {
-        stage: Some("implement".into()),
-        effort: Some(effort),
-        ..Default::default()
-    };
-    let request = Request::SteerItem {
-        item: item.id.clone(),
-        steer,
-    };
-    h.cli(request).await.expect("the steer is taken");
-    let failed = archon_core::run::StageOutcome::Completed {
-        summary: "the greeting is never tested\nVERDICT: fail".into(),
-        structured: Some(serde_json::json!({"verdict": "fail", "findings": []})),
-    };
-    h.settle_running(|_| failed.clone()).await;
-    h.dispatch().await;
+    for before_reviews in [true, false] {
+        let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+        claude_then_codex(&h, 90, 0);
+        let item = enqueue(&h, ROUTED, "effort steered after a quota move", tier_plan()).await;
+        h.dispatch().await;
+        let implementers = |stages: Vec<archon_core::run::StageRun>| -> Vec<_> {
+            let of_implement = stages.into_iter().filter(|s| s.stage_id == "implement");
+            of_implement.map(|s| (s.choice, s.aether_agent)).collect()
+        };
+        let first = implementers(h.stages(&item.id).await);
+        assert_eq!(first[0].0.model.provider, "claude-code", "{first:?}");
+        let parked = first[0].1.clone().expect("the implementer's agent");
+        let effort = archon_core::model::Effort::Low;
+        assert_ne!(first[0].0.effort, effort, "the steer changes the effort");
+        if before_reviews {
+            claude_then_codex(&h, 10, 90);
+        }
+        h.settle_running(|_| completed("implemented")).await;
+        h.dispatch().await;
+        claude_then_codex(&h, 10, 90);
+        let steer = archon_core::steer::Steer {
+            stage: Some("implement".into()),
+            effort: Some(effort),
+            ..Default::default()
+        };
+        let request = Request::SteerItem {
+            item: item.id.clone(),
+            steer,
+        };
+        h.cli(request).await.expect("the steer is taken");
+        let failed = archon_core::run::StageOutcome::Completed {
+            summary: "the greeting is never tested\nVERDICT: fail".into(),
+            structured: Some(serde_json::json!({"verdict": "fail", "findings": []})),
+        };
+        h.settle_running(|_| failed.clone()).await;
+        h.dispatch().await;
+        h.dispatch().await;
 
-    let again = implementers(h.stages(&item.id).await);
-    assert_eq!(again.len(), 2, "a second attempt: {again:?}");
-    let (choice, agent) = &again[1];
-    assert_ne!(agent, &first[0].1, "a fresh agent");
-    assert_eq!(choice.effort, effort, "the steered effort");
-    assert_eq!(choice.model.provider, "codex", "routed by quota: {again:?}");
+        let case = format!("quota moved before reviews: {before_reviews}");
+        let again = implementers(h.stages(&item.id).await);
+        let (choice, agent) = again.last().expect("a later attempt");
+        assert!(again.len() >= 2, "{case}: a later attempt: {again:?}");
+        assert!(
+            agent.is_some() && agent.as_ref() != Some(&parked),
+            "{case}: a fresh agent: {again:?}"
+        );
+        assert_eq!(choice.effort, effort, "{case}: the steered effort");
+        assert_eq!(
+            choice.model.provider, "codex",
+            "{case}: routed by quota: {again:?}"
+        );
+        let created = h.backend.requests().pop().expect("the fresh implementer");
+        assert_eq!(&created.choice, choice, "{case}: created as recorded");
+        assert!(
+            h.backend.cancelled().contains(&parked),
+            "{case}: the parked agent is stopped"
+        );
+    }
+}
+
+/// A repository effort cap set before the implementer ran leaves its parked
+/// agent fit to resume after a quota move (I1); one set after makes takeover
+/// replace it, and the fresh agent is routed by quota (I2).
+#[tokio::test]
+async fn a_capped_kept_implementer_resumes_or_is_routed_after_a_quota_move() {
+    for capped_first in [true, false] {
+        let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+        claude_then_codex(&h, 90, 0);
+        let cap = "[models]\nmax_effort = \"low\"\n";
+        if capped_first {
+            h.repo_config(cap);
+        }
+        let item = enqueue(&h, ROUTED, "capped through a quota move", tier_plan()).await;
+        h.dispatch().await;
+        let implementers = |stages: Vec<archon_core::run::StageRun>| -> Vec<_> {
+            let of_implement = stages.into_iter().filter(|s| s.stage_id == "implement");
+            of_implement.map(|s| (s.choice, s.aether_agent)).collect()
+        };
+        let first = implementers(h.stages(&item.id).await);
+        assert_eq!(first[0].0.model.provider, "claude-code", "{first:?}");
+        let parked = first[0].1.clone().expect("the implementer's agent");
+        let low = archon_core::model::Effort::Low;
+        assert_eq!(first[0].0.effort == low, capped_first, "{first:?}");
+        claude_then_codex(&h, 10, 90);
+        h.settle_running(|_| completed("implemented")).await;
+        h.dispatch().await;
+        if !capped_first {
+            h.repo_config(cap);
+        }
+        let failed = archon_core::run::StageOutcome::Completed {
+            summary: "the greeting is never tested\nVERDICT: fail".into(),
+            structured: Some(serde_json::json!({"verdict": "fail", "findings": []})),
+        };
+        h.settle_running(|_| failed.clone()).await;
+        h.dispatch().await;
+        h.dispatch().await;
+
+        let case = format!("capped first: {capped_first}");
+        let again = implementers(h.stages(&item.id).await);
+        let (choice, agent) = again.last().expect("a later attempt");
+        assert_eq!(choice.effort, low, "{case}: capped: {again:?}");
+        if capped_first {
+            assert_eq!(again.len(), 2, "{case}: {again:?}");
+            assert_eq!(choice.model, first[0].0.model, "{case}: the kept model");
+            assert_eq!(agent.as_ref(), Some(&parked), "{case}: the kept agent");
+        } else {
+            assert_eq!(choice.model.provider, "codex", "{case}: routed: {again:?}");
+            assert!(
+                agent.is_some() && agent.as_ref() != Some(&parked),
+                "{case}: fresh"
+            );
+        }
+    }
 }
 
 /// A kept implementer that cannot go on after a quota move, for findings or

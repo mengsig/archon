@@ -146,12 +146,7 @@ pub(super) fn kept_model(
         return Ok(None);
     };
     assert_eq!(last.stage_id, plan.stage_id, "the slot's own attempt");
-    let ran = last.current_choice();
-    // A steered effort makes `takeover` replace the agent: a fresh attempt is routed (I2).
-    if ran.effort != plan.choice.effort {
-        return Ok(None);
-    }
-    Ok(held_on_agent(item, plan, ran, catalog))
+    Ok(held_on_agent(item, plan, last.current_choice(), catalog))
 }
 
 /// `plan` on the model and tier its agent `ran` (I1), keeping the plan's

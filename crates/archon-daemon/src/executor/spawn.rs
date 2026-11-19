@@ -1566,8 +1566,14 @@ async fn resume_or_spawn(
         }
     }
     if let Some(agent) = spawn.replaces.take() {
+        // Takeover found the kept agent unfit to resume (an effort steer or cap):
+        // its replacement is a fresh attempt, routed as one (I2).
+        let rerouted = resume::moves_unkept(ctx, stage, &spawn.request).await?;
         resume::replace(ctx, &agent).await?;
         save_spawn(&mut *ctx.store.lock().await, &stage.id, &spawn)?;
+        if rerouted {
+            return Ok(Issued::Rerouted);
+        }
     }
     spawn_bound(ctx, stage, spawn, &checked)
         .await

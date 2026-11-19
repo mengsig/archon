@@ -2860,9 +2860,11 @@ pass. When the restatement stands over the result
 `environment`, never the result's findings, so the verdict and the
 evidence that routes it come from one submission. An ask never answered,
 and a stage that never calls the tool, leave the result's reading as it
-is. The record is deleted once the attempt ends (`restatement::forget`; a
-stage run a replacement follows keeps it), and the stall sweep deletes any
-whose attempt has no live stage run (`forget_ended`). The tool is one of
+is. The record is deleted when a stage run of the attempt ends and no other
+one is live (`restatement::forget`): a stage run a replacement follows keeps
+it, and so does a superseded one that settles late after a crash between
+reserving its replacement and recording its own end (§6.4). The stall sweep
+deletes any whose attempt has no live stage run (`forget_ended`). The tool is one of
 `STAGE_TOOLS`, so stage agents keep it in every `tools` mode; an Aether
 whose `archon` server entry has no class for it treats it as `external`,
 which a headless stage agent's approval policy does not gate, so no Aether

@@ -1105,10 +1105,10 @@ fn strict_fail_route(stage: &StageSpec) -> String {
         Some(on_fail) => {
             assert!(!on_fail.goto.is_empty(), "validated: on_fail names a stage");
             match on_fail.when {
-                None => format!("`fail` re-runs `{}`", on_fail.goto),
+                None => format!("`fail` re-runs `{}` while a loop remains", on_fail.goto),
                 Some(LoopWhen::EnvironmentFinding) => format!(
-                    "`fail` re-runs `{}` only with a finding whose `fault` is `environment`, \
-                     and fails the run otherwise",
+                    "`fail` re-runs `{}` only with a finding whose `fault` is `environment` \
+                     while a loop remains, else fails the run",
                     on_fail.goto
                 ),
             }

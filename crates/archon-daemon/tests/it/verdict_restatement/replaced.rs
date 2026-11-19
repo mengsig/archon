@@ -12,10 +12,10 @@ use archon_core::steer::{Steer, Then};
 use archon_daemon::{executor, pump};
 
 use super::{
-    FAIL, PASS, at_e2e, disputed, failing, failure, kept, key, marked, only_running, restate,
-    result, setup_runs, stored, submit,
+    FAIL, PASS, at_e2e, disputed, failing, failure, kept, key, marked, only_running, restarted,
+    restate, result, setup_runs, stored, submit,
 };
-use crate::common::{self, Harness};
+use crate::common::{self, Harness, completed};
 
 /// Aether stops `stage`'s agent at its deadline and Archon wakes it once;
 /// returns the stage run the woken agent now runs.
@@ -242,4 +242,86 @@ async fn an_aborted_attempt_keeps_its_restatement_on_record() {
         h.state(&item.id).await,
         QueueState::Running { .. }
     ));
+}
+
+/// A crash mid-replacement leaves the superseded stage run live beside its
+/// replacement. Its late settlement ends no attempt, so it forgets nothing.
+#[tokio::test]
+async fn a_superseded_stage_run_settling_late_leaves_its_replacement_bound() {
+    let mut h = Harness::new().await;
+    let (item, e2e) = at_e2e(&h).await;
+    submit(&h, &e2e, PASS, disputed()).await;
+    restate(&h, &e2e, FAIL, failing("product")).await;
+    let restated = kept(&h, &e2e).await.expect("the final restatement");
+    crate::recovery::reserve_replacement_by_hand(&h, &e2e).await;
+
+    restarted(&mut h).await;
+    h.dispatch().await;
+    let agent = e2e.aether_agent.clone().expect("an agent");
+    let lost = StageOutcome::Failed {
+        error: "host lost".into(),
+        infra: true,
+    };
+    executor::stage_settled(&h.ctx, &agent, lost)
+        .await
+        .expect("late settle");
+    h.dispatch().await;
+
+    let fresh = only_running(&h, "e2e").await;
+    assert_ne!(fresh.id, e2e.id, "only the replacement runs");
+    assert_eq!(key(&fresh), key(&e2e), "in the superseded run's attempt");
+    assert_eq!(
+        kept(&h, &fresh).await,
+        Some(restated),
+        "kept while it lives"
+    );
+    let superseded = stored(&h, &item, &e2e).await;
+    assert_eq!(
+        superseded.restatement,
+        Some(restated),
+        "on record there too"
+    );
+    let later = submit(&h, &fresh, PASS, marked()).await;
+    assert_eq!(later.decision, CheckDecision::Final, "no fresh ask");
+    assert_eq!(later.reading.verdict, Verdict::Fail);
+
+    assert_eq!(h.settle_running(|_| result(PASS, marked())).await.len(), 1);
+    h.dispatch().await;
+    assert_eq!(stored(&h, &item, &fresh).await.verdict, Some(Verdict::Fail));
+    assert!(failure(&h, &item).await.contains("stage `e2e` failed"));
+    assert_eq!(setup_runs(&h, &item).await, 1);
+    assert_eq!(kept(&h, &fresh).await, None, "forgotten with the attempt");
+}
+
+/// A crash between storing an outcome and forgetting its attempt's record
+/// leaves the record behind: the sweep deletes it, and no live attempt's.
+#[tokio::test]
+async fn the_sweep_forgets_only_the_records_of_ended_attempts() {
+    let h = Harness::new().await;
+    let (ended, first) = at_e2e(&h).await;
+    submit(&h, &first, PASS, disputed()).await;
+    let left = h.kv(&key(&first)).await.expect("the ask is kept");
+    assert_eq!(h.settle_running(|_| result(PASS, marked())).await.len(), 1);
+    let mut store = h.ctx.store.lock().await;
+    store.kv_set(&key(&first), &left).expect("left behind");
+    drop(store);
+    assert!(kept(&h, &first).await.is_some(), "as a crash leaves it");
+
+    h.dispatch().await;
+    assert_eq!(kept(&h, &first).await, None, "swept");
+    only_running(&h, "report").await;
+    assert_eq!(h.settle_running(|_| completed("reported")).await.len(), 1);
+    h.dispatch().await;
+    assert!(matches!(
+        h.state(&ended.id).await,
+        QueueState::Succeeded { .. }
+    ));
+
+    let (_, live) = at_e2e(&h).await;
+    submit(&h, &live, PASS, disputed()).await;
+    h.dispatch().await;
+    assert!(
+        kept(&h, &live).await.is_some(),
+        "a live attempt keeps its ask"
+    );
 }

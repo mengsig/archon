@@ -142,26 +142,27 @@ pub(super) fn bound(store: &Store, mut settled: StageRun) -> Result<StageRun, Ar
 }
 
 /// Forget the restatement of the attempt `settled` ended, once it is stored
-/// on that stage run. A stage run a replacement follows keeps it instead.
+/// on that stage run. An attempt another stage run still holds keeps it: a
+/// replacement, or after a crash mid-replacement the stage run it superseded.
 pub(super) fn forget(store: &mut Store, settled: &StageRun) -> Result<(), ArchonError> {
     assert!(
         settled.state.is_terminal(),
         "a running attempt keeps its ask"
     );
     let key = key(settled);
-    if store.kv_get(&key)?.is_some() {
-        store.kv_delete(&key)?;
+    if store.kv_get(&key)?.is_none() {
+        return Ok(());
     }
-    Ok(())
+    if Attempt::of(settled).lives_beside(store, Some(settled))? {
+        return Ok(());
+    }
+    store.kv_delete(&key)
 }
 
 /// Delete the restatements of stage attempts none of whose stage runs is live.
 pub(super) fn forget_ended(store: &mut Store) -> Result<(), ArchonError> {
     for (key, _) in store.kv_prefix(KEY_PREFIX)? {
-        let attempt = Attempt::of_key(&key)?;
-        let stages = store.stage_runs(&attempt.run)?;
-        let mut held = stages.iter().filter(|stage| attempt.holds(stage));
-        if held.all(|stage| stage.state.is_terminal()) {
+        if !Attempt::of_key(&key)?.lives_beside(store, None)? {
             store.kv_delete(&key)?;
         }
     }
@@ -178,6 +179,15 @@ struct Attempt {
 }
 
 impl Attempt {
+    fn of(stage: &StageRun) -> Self {
+        Self {
+            run: stage.run.clone(),
+            attempt: stage.attempt,
+            fan_index: stage.fan_index,
+            stage_id: stage.stage_id.clone(),
+        }
+    }
+
     /// The attempt a [`key`] names; the stage id comes last, as it may hold a `:`.
     fn of_key(key: &str) -> Result<Self, ArchonError> {
         let corrupt = || ArchonError::Corrupt(format!("restatement key {key}"));
@@ -205,6 +215,20 @@ impl Attempt {
             && stage.attempt == self.attempt
             && stage.fan_index == self.fan_index
             && stage.stage_id == self.stage_id
+    }
+
+    /// Whether a stage run of this attempt other than `ended` is still live.
+    fn lives_beside(&self, store: &Store, ended: Option<&StageRun>) -> Result<bool, ArchonError> {
+        assert!(
+            ended.is_none_or(|ended| self.holds(ended)),
+            "one of its own"
+        );
+        let ended = ended.map(|ended| &ended.id);
+        let stages = store.stage_runs(&self.run)?;
+        let mut others = stages
+            .iter()
+            .filter(|stage| self.holds(stage) && Some(&stage.id) != ended);
+        Ok(others.any(|stage| !stage.state.is_terminal()))
     }
 }
 

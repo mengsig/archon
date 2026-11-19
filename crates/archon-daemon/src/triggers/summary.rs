@@ -127,6 +127,10 @@ fn label(event: &TriggerEvent) -> String {
             None => format!("report feedback: {report}"),
         },
         TriggerEvent::Budget { scope, .. } => format!("budget limit reached: {scope}"),
+        TriggerEvent::QuotaPace { provider, pace, .. } => format!(
+            "quota pace: {provider} {} {}% used at {}% elapsed",
+            pace.window, pace.used_percent, pace.elapsed_percent
+        ),
         TriggerEvent::PolicyViolation {
             agent,
             model,

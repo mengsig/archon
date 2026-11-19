@@ -75,6 +75,7 @@ pub async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
     assert!(!tick.is_zero(), "config validation refuses tick_secs = 0");
     loop {
         if ctx.aether.is_connected() {
+            crate::quota::refresh_in_background(&ctx);
             let pass =
                 crate::executor::coordination::guarded("a dispatch pass", dispatch_once(&ctx));
             match pass.await {
@@ -106,6 +107,11 @@ pub async fn dispatch_once(ctx: &DaemonContext) -> Result<DispatchPlan, ArchonEr
         &mut first_error,
         crate::clarifications::expire(ctx, archon_core::now()).await,
     )?;
+    // A warning is advisory and committed with its receipt, so one that
+    // failed to record is retried next pass without holding dispatch back.
+    if let Err(error) = crate::quota::warn_short(ctx).await {
+        tracing::warn!(%error, "quota pace warning not recorded; retrying next pass");
+    }
     disk_hold::check(ctx).await?;
     if crate::gc::before_dispatch(ctx).await? {
         disk_hold::check(ctx).await?;
@@ -177,7 +183,7 @@ async fn admit(ctx: &DaemonContext) -> Result<Admission, ArchonError> {
     let caps = resolve::caps(ctx).await;
     let envs = snapshot::Envs::prefetch(ctx, ReadOn::Writer).await?;
     if envs.weighted(&ctx.config)
-        && let Err(error) = crate::quota::refresh(ctx).await
+        && let Err(error) = crate::quota::refresh(ctx, crate::quota::Asker::Routing).await
     {
         tracing::warn!(%error, "provider quota refresh failed; using the last reading");
     }

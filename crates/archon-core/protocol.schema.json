@@ -10290,6 +10290,13 @@
             "null"
           ]
         },
+        "pace": {
+          "description": "Each trusted window's spend against its time passed; empty while the\nreading is stale or names no window length and reset.",
+          "items": {
+            "$ref": "#/$defs/WindowPace"
+          },
+          "type": "array"
+        },
         "provider": {
           "type": "string"
         },
@@ -17788,6 +17795,59 @@
         "id",
         "name",
         "role"
+      ],
+      "type": "object"
+    },
+    "WindowPace": {
+      "description": "One window's pace, as of the reading it was computed from.",
+      "properties": {
+        "elapsed_percent": {
+          "description": "Percent of the window's time passed, 0 to 100.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "empty_at": {
+          "default": null,
+          "description": "When it runs out at its rate so far; `None` while nothing is spent.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resets_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "short": {
+          "description": "Used runs ahead of elapsed by more than the margin, so at this rate\nthe window runs out before it resets.",
+          "type": "boolean"
+        },
+        "used_percent": {
+          "description": "Percent of the window's quota spent, 0 to 100.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "window": {
+          "type": "string"
+        },
+        "window_minutes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "window",
+        "window_minutes",
+        "used_percent",
+        "elapsed_percent",
+        "resets_at",
+        "short"
       ],
       "type": "object"
     },

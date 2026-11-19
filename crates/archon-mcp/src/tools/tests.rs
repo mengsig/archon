@@ -904,6 +904,7 @@ fn provider_quota(
             resets_at: Some(reset),
             resets_in_seconds: None,
         }],
+        pace: vec![],
     }
 }
 

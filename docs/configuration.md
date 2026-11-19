@@ -61,6 +61,13 @@ stays on its provider. `status` and `queue_status`
 show each provider's headroom, reserve and next reset. Reserves and interactive
 providers are global settings only.
 
+Whatever the weights, `status` and `queue_status` also show each window's pace:
+its used percent against its elapsed percent. When a window is projected to run
+out before it resets (used ahead of elapsed by more than
+`pacing_margin_percent`, default 10, global only), Archon tells the operator and
+the orchestrator once per window and throttles nothing. See
+[Quota pace](quota-pacing.md).
+
 Unnamed reviewers use the global `[review]` profile. `default_tier` is a
 preference, not a floor: Archon picks the best model the effective model policy
 (global and repository) permits at or below it, preferring a different provider
@@ -247,6 +254,7 @@ max_effort = "high"            # default x_high; max must be explicitly allowed
 # interactive_providers = ["claude-code"]   # providers someone uses by hand; global only
 # effort_sizing = true         # the default; false: 1.6.3's effort rules and reviewer floors; global only
 # sizer_max_effort = "x_high"  # unset: the sizer only lowers; set: it may raise default efforts up to this; global only
+# pacing_margin_percent = 10   # warn once a window's used % runs this far past its elapsed % (the default); global only
 
 [limits]
 max_parallel_agents = 8        # running stage agents (default 8); 0 = unlimited

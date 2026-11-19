@@ -69,6 +69,13 @@ fn written(item: &QueueItem, spec: &PipelineSpec) -> PlanWriter {
     writer
 }
 
+/// A config that opts into raising: the sizer may reach `x_high`.
+fn raising_config() -> Config {
+    let mut config = Config::default();
+    config.models.sizer_max_effort = Some(Effort::XHigh);
+    config
+}
+
 /// `[models] effort_sizing` and the two caps are read here and nowhere else.
 #[test]
 fn the_switch_and_the_caps_decide_how_a_written_plan_is_finished() {
@@ -84,10 +91,10 @@ fn the_switch_and_the_caps_decide_how_a_written_plan_is_finished() {
         item
     };
     let open = ModelPolicy::default();
-    assert_eq!(
-        effort_of(&finished(&Config::default(), &open)),
-        Effort::XHigh
-    );
+    assert_eq!(effort_of(&finished(&Config::default(), &open)), base);
+    let mut raising = Config::default();
+    raising.models.sizer_max_effort = Some(Effort::XHigh);
+    assert_eq!(effort_of(&finished(&raising, &open)), Effort::XHigh);
     let mut off = Config::default();
     off.models.effort_sizing = Some(false);
     let unsized_item = finished(&off, &open);
@@ -101,7 +108,7 @@ fn the_switch_and_the_caps_decide_how_a_written_plan_is_finished() {
         ..ModelPolicy::default()
     };
     assert_eq!(cap(&low, &capped), Effort::Medium);
-    let mut held = finished(&Config::default(), &open);
+    let mut held = finished(&raising, &open);
     assert!(clip_to_policy(&capped, &mut held));
     assert_eq!(effort_of(&held), Effort::Medium);
     assert!(
@@ -179,7 +186,7 @@ fn hold_all(item: &QueueItem, plans: &mut [SpawnPlan]) {
 fn a_spawn_never_runs_above_the_effort_its_stored_plan_holds_now() {
     let direct = spec("direct");
     let mut item = critical_item();
-    let (on, open) = (Config::default(), ModelPolicy::default());
+    let (on, open) = (raising_config(), ModelPolicy::default());
     let writer = written(&item, &direct);
     item.model_plan = finish((&on, &open), &direct, || Ok(None), writer).unwrap();
     item.settle_sizing(archon_core::now());
@@ -236,7 +243,7 @@ fn a_spawn_never_runs_above_the_effort_its_stored_plan_holds_now() {
 fn a_sized_spawn_moved_to_an_engine_without_x_high_runs_high_and_says_why() {
     let direct = spec("direct");
     let mut item = critical_item();
-    let (on, open) = (Config::default(), ModelPolicy::default());
+    let (on, open) = (raising_config(), ModelPolicy::default());
     let writer = written(&item, &direct);
     item.model_plan = finish((&on, &open), &direct, || Ok(None), writer).unwrap();
     item.settle_sizing(archon_core::now());
@@ -270,7 +277,7 @@ fn a_sized_spawn_moved_to_an_engine_without_x_high_runs_high_and_says_why() {
 fn a_pinned_x_high_is_left_alone_on_any_engine() {
     let direct = spec("direct");
     let mut item = critical_item();
-    let (on, open) = (Config::default(), ModelPolicy::default());
+    let (on, open) = (raising_config(), ModelPolicy::default());
     let writer = written(&item, &direct);
     item.model_plan = finish((&on, &open), &direct, || Ok(None), writer).unwrap();
     item.settle_sizing(archon_core::now());
@@ -298,7 +305,7 @@ fn a_pinned_x_high_is_left_alone_on_any_engine() {
 fn a_woken_sized_slot_is_recorded_as_its_agent_runs_on_any_model() {
     let direct = spec("direct");
     let mut item = critical_item();
-    let (on, open) = (Config::default(), ModelPolicy::default());
+    let (on, open) = (raising_config(), ModelPolicy::default());
     let writer = written(&item, &direct);
     item.model_plan = finish((&on, &open), &direct, || Ok(None), writer).unwrap();
     item.settle_sizing(archon_core::now());

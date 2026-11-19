@@ -2324,16 +2324,16 @@ Aether's tier for its model now), so evidence survives a model replaced within
 its tier.
 
 **Effort sizer.** With `[models] effort_sizing` on, every effort a plan does
-not name is sized by the daemon (`archon_core::effort_sizing`, pure functions
+not name is sized (lowered only, unless `sizer_max_effort` is set) by the daemon (`archon_core::effort_sizing`, pure functions
 over what the item records). `classify` gives the item a risk class,
 `mechanical`, `ordinary`, `elevated` or `critical`, from its tags, title
 prefix and words, brief, review level and known diff size; `size_effort` maps
 the class to an effort from the stage's own declared default (`low` for
-mechanical work, the default for ordinary work and one step lower for a small
-diff, at least `high` for elevated, `x_high` for critical), within the lower
-of the policy's `max_effort` and `[models] sizer_max_effort`. `x_high` is
+mechanical work, the default otherwise; with `sizer_max_effort` set, at least
+`high` for elevated and `x_high` for critical), within the policy's
+`max_effort` and that setting, never above the stage default when it is unset. `x_high` is
 planned only for the providers that run it (`claude-code`, `codex`). The
-precedence is cap, pin, class floor, size step, stage default; it is decided
+precedence is pin and non-default efforts kept, then cap, class, stage default; it is decided
 in one function, `plan_origin::sizing::decide`, which is where an escalation
 would enter between the pin and the class.
 
@@ -3500,7 +3500,7 @@ provider_weights = {}          # e.g. { "claude-code" = 7, codex = 3 }; {} = orc
 # reserve_percent = { orchestrator = 15, interactive = 10 }   # quota stages leave; global only
 interactive_providers = []     # providers also used by hand; they keep the interactive reserve
 effort_sizing = true           # false: 1.6.3's effort rules and reviewer floors; global only
-# sizer_max_effort = "x_high"  # the most the daemon's effort sizer sets by itself; global only
+# sizer_max_effort = "x_high"  # unset: the sizer only lowers; set: it may raise default efforts; global only
 
 [limits]
 budgets_enabled = true         # false: no dollar budget is enforced; spend still recorded

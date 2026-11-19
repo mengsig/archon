@@ -568,13 +568,22 @@ fn recorded_continuations(
 }
 
 /// Take out of `item`'s brief the continuation notes earlier retries added. Only the exact
-/// sections Archon recorded go, so no text of the operator's is taken for one.
+/// sections Archon recorded go, each once, and the record goes with them: a copy the
+/// operator quoted is theirs. Should the item then not be saved, a note lingers, never lost text.
 pub(crate) fn drop_continuations(
-    store: &archon_queue::Store,
+    store: &mut archon_queue::Store,
     item: &mut QueueItem,
 ) -> Result<(), ArchonError> {
     let added = recorded_continuations(store, &item.id)?;
+    if added.is_empty() {
+        return Ok(());
+    }
     item.brief = without_sections(&item.brief, &added);
+    store.kv_delete(&continuations_key(&item.id))?;
+    assert!(
+        recorded_continuations(store, &item.id)?.is_empty(),
+        "each recorded note is taken out once"
+    );
     Ok(())
 }
 

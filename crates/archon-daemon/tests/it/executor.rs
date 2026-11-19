@@ -4085,6 +4085,40 @@ async fn retry_brief(
     brief.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// An operator who quotes Archon's whole dated note, heading and all, keeps the quote
+/// through any number of fresh retries: each recorded note is taken out once.
+#[tokio::test]
+async fn a_verbatim_quote_of_the_continuation_note_survives_fresh_retries() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    for n in 1..=3 {
+        review_round_fails(&h, &lead, n).await;
+    }
+    assert!(escalated(&h, &lead).await.is_some(), "the cap stopped it");
+    h.dispatch().await;
+    retry_brief(&h, &item.id, false, None).await;
+    let brief = h.ctx.store.lock().await.item(&item.id).unwrap().brief;
+    let heading = brief.find("## Amendment (").expect("the note's heading");
+    let quote = brief[heading..].trim().to_owned();
+    assert!(
+        quote.contains("[Archon review-cap continuation]"),
+        "{quote}"
+    );
+    fail_the_run(&h, "ESCALATE: stuck").await;
+    retry_brief(&h, &item.id, false, Some(&quote)).await;
+    let collapsed = quote.split_whitespace().collect::<Vec<_>>().join(" ");
+    for _ in 0..2 {
+        fail_the_run(&h, "ESCALATE: stuck").await;
+        let fresh = retry_brief(&h, &item.id, true, None).await;
+        assert_eq!(
+            fresh.matches(&collapsed).count(),
+            1,
+            "the operator's quote is kept: {fresh}"
+        );
+    }
+}
+
 /// Start the queued run and fail its stage with `error`, which ends the run.
 async fn fail_the_run(h: &Harness, error: &str) {
     h.dispatch().await;

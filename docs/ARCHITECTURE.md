@@ -2686,7 +2686,7 @@ not re-review or re-read the whole change. Only a stage whose own round tally
 reached the cap adds the note, not an error that quotes one. A fresh retry, or
 a later note, replaces the earlier note in the brief: archond records the
 exact section each note added under `review_continuations:<item>` and takes
-out only those, so no text of the operator's, however it reached the brief, is
+out only those, each once, clearing the record, so no text of the operator's, however it reached the brief, is
 taken for one. If the branch no longer holds the escalated head, the note asks for the
 whole change to be read again. Each delta reviewer is told to fail
 only on a defect in its commits or an open finding left unfixed; a new finding

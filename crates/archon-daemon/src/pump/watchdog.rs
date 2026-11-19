@@ -92,7 +92,7 @@ pub(super) async fn agent_created(
         return Ok(());
     };
     // One read of the aliases: the model and every policy it meets use the same ids.
-    let aliases = ctx.aether.aliases();
+    let aliases = current_aliases(ctx).await?;
     let model = aliases.get(model).unwrap_or(model);
     let belongs_to_run = {
         let mut store = ctx.store.lock().await;
@@ -126,6 +126,24 @@ pub(super) async fn agent_created(
 
 /// The catalog's aliases, each to its canonical id, as one read of them holds them.
 pub(super) type Aliases = std::collections::BTreeMap<ModelRef, ModelRef>;
+
+/// The aliases of a catalog read in the last few minutes: the link has none
+/// before a start's first read. While Aether gives no catalog, the link's last ones.
+async fn current_aliases(ctx: &DaemonContext) -> Result<std::sync::Arc<Aliases>, ArchonError> {
+    let catalog = crate::learned::catalog(ctx).await?;
+    if catalog.unavailable_reason().is_some() {
+        tracing::debug!(reason = ?catalog.unavailable_reason(), "child checked with the link's aliases");
+        return Ok(ctx.aether.aliases());
+    }
+    let aliases = catalog.aliases();
+    debug_assert!(
+        aliases
+            .values()
+            .all(|canonical| !aliases.contains_key(canonical)),
+        "an alias names a canonical id"
+    );
+    Ok(std::sync::Arc::new(aliases))
+}
 
 /// Record the effort Aether created the delegated `agent` with, so a stage
 /// still running shows it. Unread, it stays unknown until the stage ends and

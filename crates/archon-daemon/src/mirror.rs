@@ -547,14 +547,17 @@ async fn forget_unregistered(
 pub(crate) async fn helper_policy(
     ctx: &DaemonContext,
     reach: &Reach,
+    aliases: &std::collections::BTreeMap<
+        archon_core::model::ModelRef,
+        archon_core::model::ModelRef,
+    >,
 ) -> Result<ModelPolicy, ArchonError> {
     let repos = ctx.store.lock().await.repos()?;
-    let aliases = ctx.aether.aliases();
-    let mut policy = ctx.config.models.policy().canonicalized(&aliases);
+    let mut policy = ctx.config.models.policy().canonicalized(aliases);
     for repo in repos.iter().filter(|repo| reach.includes(&repo.name)) {
         match RepoConfig::load(&repo.path) {
             Ok(config) => {
-                policy = policy.narrowed_by(&config.models.policy_overlay().canonicalized(&aliases))
+                policy = policy.narrowed_by(&config.models.policy_overlay().canonicalized(aliases))
             }
             // The dispatcher refuses such a repo's new work, and it has no
             // mirror; keep watching without its narrowing.

@@ -2572,3 +2572,42 @@ async fn an_orchestrator_turn_end_undoes_a_write_into_a_mirror() {
         "{notes:?}"
     );
 }
+
+/// A catalog read that fails while a child is checked clears the link's
+/// aliases: the child's model and the policy it meets keep one read of them.
+#[tokio::test]
+async fn a_child_on_an_allowed_alias_runs_though_the_aliases_clear_mid_check() {
+    let mut config = Config::default();
+    config.models.allow = vec![ModelRef::new(ALIAS.0, ALIAS.1)];
+    let harness = Harness::with(config, None).await;
+    let repo = tempfile::tempdir().unwrap();
+    running_stage(&harness.ctx, repo.path(), STAGE, STAGE_TASK).await;
+    let (agents, pump) = running_pump(&harness).await;
+    alias_allowed(&harness);
+    harness.fake.set_default("cancel", Scripted::ok());
+    let mut agent = agents.set(CHILD, "running");
+    agent["role"] = json!("worker");
+    agent["config"] = json!({"effort": "medium"});
+    agents.0.lock().unwrap().insert(CHILD.to_owned(), agent);
+    let (link, table) = (Arc::clone(&harness.ctx.aether), agents.clone());
+    harness.fake.set_responder(
+        "get_agent",
+        Arc::new(move |cmd| {
+            let generation = link.generation().unwrap();
+            link.install_aliases(generation, Default::default())
+                .unwrap();
+            match table.get(cmd["id"].as_str().unwrap_or_default()) {
+                Some(agent) => Scripted::reply("agent", agent),
+                None => Scripted::refuse("not_found", "no such agent"),
+            }
+        }),
+    );
+    push(&harness, created(CHILD, STAGE, ALIAS), keys::CURSOR_FLEET).await;
+    pump.abort();
+
+    assert!(
+        harness.ctx.aether.aliases().is_empty(),
+        "the aliases cleared"
+    );
+    assert_eq!(cancelled(&harness), [], "the allowed child runs");
+}

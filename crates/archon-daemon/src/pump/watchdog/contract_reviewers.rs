@@ -21,14 +21,14 @@ use crate::executor::{self, StoredSpawn};
 pub(super) async fn violation(
     ctx: &DaemonContext,
     parent: &AetherAgentId,
-    model: &ModelRef,
+    (model, aliases): (&ModelRef, &super::Aliases),
     held: &Value,
 ) -> Result<Option<String>, ArchonError> {
     let role = role_of(held);
     if !role.eq_ignore_ascii_case(archon_core::delegation::REVIEWER_ROLE) {
         return Ok(None);
     }
-    let Some(named) = named_models(ctx, parent).await? else {
+    let Some(named) = named_models(ctx, parent, aliases).await? else {
         return Ok(None);
     };
     assert!(!named.is_empty(), "named_models gives a list or none");
@@ -100,10 +100,10 @@ fn alone_refusal(policy: &WorkerPolicy, role: &str) -> Option<String> {
 async fn named_models(
     ctx: &DaemonContext,
     parent: &AetherAgentId,
+    aliases: &super::Aliases,
 ) -> Result<Option<Vec<ModelRef>>, ArchonError> {
     let models = sent_policy(ctx, parent).await?.map(|p| p.exempt_models);
     // Read as the child's model is: a policy sent before aliases were resolved may name one.
-    let aliases = ctx.aether.aliases();
     let canonical = |model: ModelRef| aliases.get(&model).cloned().unwrap_or(model);
     let models = models.map(|models| models.into_iter().map(canonical).collect::<Vec<_>>());
     Ok(models.filter(|models| !models.is_empty()))

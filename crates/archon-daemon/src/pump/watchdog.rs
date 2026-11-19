@@ -91,6 +91,7 @@ pub(super) async fn agent_created(
     let Some(item) = parent_item(ctx, parent).await? else {
         return Ok(());
     };
+    // One read of the aliases: the model and every policy it meets use the same ids.
     let aliases = ctx.aether.aliases();
     let model = aliases.get(model).unwrap_or(model);
     let belongs_to_run = {
@@ -115,13 +116,16 @@ pub(super) async fn agent_created(
     let most = ctx.config.limits.max_delegation_depth;
     let refusal = match depth_refusal(depth, most, item.is_none()) {
         Some(refusal) => Some(refusal),
-        None => violation(ctx, (agent, parent), model, item.as_ref()).await?,
+        None => violation(ctx, (agent, parent), (model, &aliases), item.as_ref()).await?,
     };
     match refusal {
         Some(refusal) => cancel_child(ctx, agent, model, item, &refusal).await,
         None => ctx.store.lock().await.kv_delete(&unchecked_key(agent)),
     }
 }
+
+/// The catalog's aliases, each to its canonical id, as one read of them holds them.
+pub(super) type Aliases = std::collections::BTreeMap<ModelRef, ModelRef>;
 
 /// Record the effort Aether created the delegated `agent` with, so a stage
 /// still running shows it. Unread, it stays unknown until the stage ends and
@@ -245,31 +249,39 @@ fn depth_refusal(depth: u32, most: u32, helper: bool) -> Option<String> {
 async fn violation(
     ctx: &DaemonContext,
     (agent, parent): (&AetherAgentId, &AetherAgentId),
-    model: &ModelRef,
+    (model, aliases): (&ModelRef, &Aliases),
     item: Option<&QueueItemId>,
 ) -> Result<Option<String>, ArchonError> {
     assert_ne!(agent, parent, "an agent is not its own parent");
+    assert!(
+        aliases
+            .get(model)
+            .is_none_or(|canonical| canonical == model),
+        "the child's model is read under these aliases"
+    );
     let Some(item) = item else {
         let held = held_by_aether(ctx, agent).await?;
-        let refusal = helper_violation(ctx, model, held.as_ref()).await?;
+        let refusal = helper_violation(ctx, (model, aliases), held.as_ref()).await?;
         if let Some(ChildEffort::Known(effort)) = held.as_ref().map(child_effort) {
             let mut store = ctx.store.lock().await;
             store.record_delegated(agent, parent, model, Some(effort))?;
         }
         return Ok(refusal);
     };
-    let policy = item_policy(ctx, item).await?;
+    let policy = item_policy(ctx, item, aliases).await?;
     let lead = contract_reviewers::lead_spawn(ctx, parent).await?;
     // The reviewers the lead's contract named, never the plan's now (A10).
     let named = lead.as_ref().and_then(StoredSpawn::named_reviewers);
-    let Some(named) = named.map(|named| canonical_reviewers(named, &ctx.aether.aliases())) else {
+    let Some(named) = named.map(|named| canonical_reviewers(named, aliases)) else {
         if let Some(refusal) = policy_violation(ctx, agent, model, &policy).await? {
             return Ok(Some(refusal));
         }
         let Some(held) = held_by_aether(ctx, agent).await? else {
             return Ok(None);
         };
-        if let Some(refusal) = contract_reviewers::violation(ctx, parent, model, &held).await? {
+        if let Some(refusal) =
+            contract_reviewers::violation(ctx, parent, (model, aliases), &held).await?
+        {
             return Ok(Some(refusal));
         }
         return contract_reviewers::alone_violation(ctx, parent, &held).await;
@@ -295,10 +307,7 @@ async fn violation(
 
 /// `named` under the ids the catalog gives them, as the child's model is read:
 /// a contract issued before aliases were resolved may name one.
-fn canonical_reviewers(
-    mut named: Vec<ModelChoice>,
-    aliases: &std::collections::BTreeMap<ModelRef, ModelRef>,
-) -> Vec<ModelChoice> {
+fn canonical_reviewers(mut named: Vec<ModelChoice>, aliases: &Aliases) -> Vec<ModelChoice> {
     assert!(
         !named.is_empty(),
         "a contract that names reviewers names one"
@@ -403,7 +412,11 @@ fn floored_reviewer_refusal(
 }
 
 /// Global policy narrowed by the item's repository, as for its stages.
-async fn item_policy(ctx: &DaemonContext, item: &QueueItemId) -> Result<ModelPolicy, ArchonError> {
+async fn item_policy(
+    ctx: &DaemonContext,
+    item: &QueueItemId,
+    aliases: &Aliases,
+) -> Result<ModelPolicy, ArchonError> {
     let repo = {
         let store = ctx.store.lock().await;
         match store.item(item)?.repo {
@@ -411,14 +424,13 @@ async fn item_policy(ctx: &DaemonContext, item: &QueueItemId) -> Result<ModelPol
             None => None,
         }
     };
-    let aliases = ctx.aether.aliases();
-    let global = ctx.config.models.policy().canonicalized(&aliases);
+    let global = ctx.config.models.policy().canonicalized(aliases);
     let Some(repo) = repo else {
         return Ok(global);
     };
     match RepoConfig::load(&repo.path) {
         Ok(config) => {
-            Ok(global.narrowed_by(&config.models.policy_overlay().canonicalized(&aliases)))
+            Ok(global.narrowed_by(&config.models.policy_overlay().canonicalized(aliases)))
         }
         // The dispatcher refuses such a repo's new work; keep watching
         // without its narrowing rather than stop watching.
@@ -433,12 +445,12 @@ async fn item_policy(ctx: &DaemonContext, item: &QueueItemId) -> Result<ModelPol
 /// or worktree, or it breaks the policy as the repositories it reads narrow it.
 async fn helper_violation(
     ctx: &DaemonContext,
-    model: &ModelRef,
+    (model, aliases): (&ModelRef, &Aliases),
     held: Option<&Value>,
 ) -> Result<Option<String>, ArchonError> {
     let roots = held.map(scope_roots).unwrap_or_default();
     let reach = mirror_reach(ctx, roots.clone()).await?;
-    let policy = mirror::helper_policy(ctx, &reach).await?;
+    let policy = mirror::helper_policy(ctx, &reach, aliases).await?;
     let refusal = match held {
         Some(held) => policy_refusal(&policy, model, held),
         None => model_refusal(&policy, model),

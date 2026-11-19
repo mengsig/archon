@@ -266,6 +266,20 @@ impl ModelCatalog {
             .join(", ")
     }
 
+    /// This catalog with only the models `keep` accepts, keeping its
+    /// aliases, retirements and supersessions.
+    pub fn restricted(&self, keep: impl Fn(&CatalogModel) -> bool) -> ModelCatalog {
+        let models: Vec<CatalogModel> = self.models.iter().filter(|m| keep(m)).cloned().collect();
+        debug_assert!(models.len() <= self.models.len());
+        ModelCatalog {
+            models,
+            aliases: self.aliases.clone(),
+            retired: self.retired.clone(),
+            superseded: self.superseded.clone(),
+            unavailable: self.unavailable.clone(),
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.models.is_empty()
     }
@@ -281,14 +295,32 @@ impl ModelCatalog {
         })
     }
 
-    /// Models that can serve a pick of `requested` on `provider` under
-    /// `policy`: a superseded one stays while its successor cannot serve it.
+    /// Whether `model` is superseded by a listed, non-retired successor
+    /// that passes `serves`: only such a successor replaces it in a pick.
+    pub fn replaced_for(&self, model: &ModelRef, serves: impl Fn(&CatalogModel) -> bool) -> bool {
+        let Some(successor) = self.superseded_by(model) else {
+            return false;
+        };
+        let canonical = self.canonical_alias(successor);
+        self.models
+            .iter()
+            .find(|m| &m.model == canonical)
+            .is_some_and(|m| !self.is_retired(&m.model) && serves(m))
+    }
+
+    /// Models that can serve a pick between `floor` and `requested` on
+    /// `provider` under `policy`. A superseded one stays unless a successor
+    /// on its own provider serves the same pick, at the floor where it did.
     pub fn tier_candidates<'a, 'p>(
         &'a self,
-        requested: Tier,
+        (requested, floor): (Tier, Tier),
         provider: Option<&'p str>,
         policy: &'p ModelPolicy,
     ) -> impl Iterator<Item = &'a CatalogModel> + use<'a, 'p> {
+        debug_assert!(
+            floor <= requested,
+            "a floor never exceeds the tier asked for"
+        );
         let serves = move |m: &CatalogModel| {
             !self.is_retired(&m.model)
                 && m.tier.is_some_and(|t| t <= requested)
@@ -296,12 +328,11 @@ impl ModelCatalog {
                 && policy.permits_model(&m.model)
         };
         self.models.iter().filter(move |entry| {
-            let replaced = self.superseded_by(&entry.model).is_some_and(|successor| {
-                let canonical = self.canonical_alias(successor);
-                self.models
-                    .iter()
-                    .find(|m| &m.model == canonical)
-                    .is_some_and(serves)
+            let meets_floor = entry.tier >= Some(floor);
+            let replaced = self.replaced_for(&entry.model, |s| {
+                s.model.provider == entry.model.provider
+                    && serves(s)
+                    && (!meets_floor || s.tier >= Some(floor))
             });
             serves(entry) && !replaced
         })
@@ -326,8 +357,21 @@ impl ModelCatalog {
         prefer: Option<&str>,
         policy: &ModelPolicy,
     ) -> Result<(ModelRef, TierChoice), ArchonError> {
-        let candidates: Vec<&CatalogModel> =
-            self.tier_candidates(requested, provider, policy).collect();
+        self.resolve_above((requested, Tier::Fast), provider, prefer, policy)
+    }
+
+    /// [`Self::resolve`] where a successor below `floor` never replaces a
+    /// superseded model that meets it.
+    pub fn resolve_above(
+        &self,
+        (requested, floor): (Tier, Tier),
+        provider: Option<&str>,
+        prefer: Option<&str>,
+        policy: &ModelPolicy,
+    ) -> Result<(ModelRef, TierChoice), ArchonError> {
+        let candidates: Vec<&CatalogModel> = self
+            .tier_candidates((requested, floor), provider, policy)
+            .collect();
         let on = |p: &str| candidates.iter().any(|m| m.model.provider == p);
         let chosen_provider = match prefer.filter(|p| on(p)) {
             Some(p) => Some(p),
@@ -367,7 +411,7 @@ impl ModelCatalog {
         policy: &ModelPolicy,
     ) -> ArchonError {
         let mut tiers: BTreeMap<&str, BTreeSet<Tier>> = BTreeMap::new();
-        for m in self.tier_candidates(Tier::Frontier, None, policy) {
+        for m in self.tier_candidates((Tier::Frontier, Tier::Fast), None, policy) {
             if let Some(tier) = m.tier {
                 tiers.entry(&m.model.provider).or_default().insert(tier);
             }
@@ -617,6 +661,43 @@ mod tests {
             .resolve(Tier::Frontier, Some("claude-code"), None, &open())
             .unwrap();
         assert_eq!(model.to_string(), "claude-code/opus", "it serves frontier");
+    }
+
+    #[test]
+    fn a_successor_below_the_floor_or_on_another_provider_keeps_the_superseded_model() {
+        let mut catalog = ModelCatalog::new(vec![
+            entry("p/old", Some(Tier::Strong)),
+            entry("p/new", Some(Tier::Balanced)),
+            entry("q/new", Some(Tier::Strong)),
+        ]);
+        catalog.add_superseded("p/old".parse().unwrap(), "p/new".parse().unwrap());
+        let floored = (Tier::Strong, Tier::Strong);
+        assert_eq!(
+            catalog.best_tiers_above(floored, &open()).get("p"),
+            Some(&Tier::Strong)
+        );
+        let (model, _) = catalog
+            .resolve_above(floored, None, Some("p"), &open())
+            .unwrap();
+        assert_eq!(model.to_string(), "p/old");
+        assert_eq!(
+            catalog.best_tiers(Tier::Strong, &open()).get("p"),
+            Some(&Tier::Balanced),
+            "without a floor the successor serves"
+        );
+        let mut across = ModelCatalog::new(vec![
+            entry("p/old", Some(Tier::Strong)),
+            entry("q/new", Some(Tier::Strong)),
+        ]);
+        across.add_superseded("p/old".parse().unwrap(), "q/new".parse().unwrap());
+        let (model, _) = across
+            .resolve(Tier::Strong, None, Some("p"), &open())
+            .unwrap();
+        assert_eq!(
+            model.to_string(),
+            "p/old",
+            "a routed provider keeps its model"
+        );
     }
 
     #[test]

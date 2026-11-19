@@ -301,8 +301,8 @@ impl<'a> TierScope<'a> {
             (None, Some(route)) => Some(self.weighted_provider(tier, floor, route)?),
             _ => None,
         };
-        let resolved = self.catalog.resolve(
-            tier,
+        let resolved = self.catalog.resolve_above(
+            (tier, if routed.is_some() { floor } else { Tier::Fast }),
             provider,
             Some(routed.unwrap_or(self.prefer)),
             self.policy,

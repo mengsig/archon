@@ -159,13 +159,7 @@ pub fn governed_review_refusal(
 }
 
 fn cost_reporting(catalog: &ModelCatalog) -> ModelCatalog {
-    ModelCatalog::new(
-        catalog
-            .candidates()
-            .filter(|entry| provider_reports_cost(&entry.model.provider))
-            .cloned()
-            .collect(),
-    )
+    catalog.restricted(|entry| provider_reports_cost(&entry.model.provider))
 }
 
 /// The permitted model nearest the tier from below: the strongest tier first,
@@ -211,10 +205,11 @@ fn unplaced_model(
         )
         .find_map(|model| {
             let canonical = catalog.check(model).ok()?;
-            (policy.permits_model(&canonical)
-                && catalog.superseded_by(&canonical).is_none()
-                && (!governed || provider_reports_cost(&canonical.provider)))
-            .then_some(canonical)
+            let eligible = |m: &ModelRef| {
+                policy.permits_model(m) && (!governed || provider_reports_cost(&m.provider))
+            };
+            let replaced = catalog.replaced_for(&canonical, |s| eligible(&s.model));
+            (eligible(&canonical) && !replaced).then_some(canonical)
         })
 }
 
@@ -308,6 +303,34 @@ mod tests {
         assert!(governed_review_refusal(None, &own, &both, (&config, &none)).is_none());
         let rules = governed_reviewer_rules(None, &own, &both, (&config, &none), true, false);
         assert!(rules.contains("claude-code/opus"), "{rules}");
+    }
+
+    #[test]
+    fn a_budget_keeps_a_superseded_reviewer_whose_successor_cannot_serve() {
+        let own: ModelRef = "codex/balanced".parse().unwrap();
+        let config = ReviewConfig::default();
+        for successor in ["codex/strong", "claude-code/denied"] {
+            let denied = CatalogModel {
+                model: "claude-code/denied".parse().unwrap(),
+                tier: Some(Tier::Balanced),
+                is_default: false,
+            };
+            let models = catalog().models().iter().cloned().chain([denied]).collect();
+            let mut listed = ModelCatalog::new(models);
+            listed.add_superseded(
+                "claude-code/sonnet".parse().unwrap(),
+                successor.parse().unwrap(),
+            );
+            let policy =
+                ModelPolicy::from_lists(&[], &["claude-code/denied".parse().unwrap()], None);
+            let args = (&config, &listed);
+            assert!(
+                governed_review_refusal(None, &own, &policy, args).is_none(),
+                "{successor}"
+            );
+            let rules = governed_reviewer_rules(None, &own, &policy, args, true, false);
+            assert!(rules.contains("claude-code/sonnet"), "{successor}: {rules}");
+        }
     }
 
     #[test]

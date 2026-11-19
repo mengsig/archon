@@ -297,9 +297,15 @@ async fn a_long_cancel_reason_is_clipped_without_a_get_stage_hint() {
         summary.chars().count() > 3_900,
         "about 4000 characters are kept"
     );
+    // The clipped reason, then the failure class kept past the clip (A12).
+    let (clipped, advice) = summary.rsplit_once('\n').expect("an advice line");
     assert!(
-        summary.ends_with(" chars in full]") && !summary.contains("get_stage"),
+        clipped.ends_with(" chars in full]") && !summary.contains("get_stage"),
         "a cancelled item has no stage output to point to: {summary}"
+    );
+    assert!(
+        advice.starts_with("Failure class: external."),
+        "a cancel is external: {advice}"
     );
     let outcomes = h.notices(NotificationKind::Outcome).await;
     assert!(

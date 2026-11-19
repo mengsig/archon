@@ -107,7 +107,11 @@ pub async fn dispatch_once(ctx: &DaemonContext) -> Result<DispatchPlan, ArchonEr
         &mut first_error,
         crate::clarifications::expire(ctx, archon_core::now()).await,
     )?;
-    keep_error(&mut first_error, crate::quota::warn_short(ctx).await)?;
+    // A warning is advisory and committed with its receipt, so one that
+    // failed to record is retried next pass without holding dispatch back.
+    if let Err(error) = crate::quota::warn_short(ctx).await {
+        tracing::warn!(%error, "quota pace warning not recorded; retrying next pass");
+    }
     disk_hold::check(ctx).await?;
     if crate::gc::before_dispatch(ctx).await? {
         disk_hold::check(ctx).await?;

@@ -26,6 +26,7 @@ pub async fn warn_short(ctx: &DaemonContext) -> Result<(), ArchonError> {
         return Ok(());
     }
     let mut told = Vec::new();
+    let mut failed = None;
     {
         let mut store = ctx.store.lock().await;
         // Judged again under the writer lock: a sample that aged out or a
@@ -41,15 +42,21 @@ pub async fn warn_short(ctx: &DaemonContext) -> Result<(), ArchonError> {
                 continue;
             }
             warned.insert(key(provider, pace), pace.resets_at);
-            told.push(record(&mut store, provider, pace, &paces, &warned)?);
+            match record(&mut store, provider, pace, &paces, &warned) {
+                Ok(item) => told.push(item),
+                Err(error) => {
+                    failed = Some(error);
+                    break;
+                }
+            }
         }
     }
-    if told.is_empty() {
-        return Ok(());
+    // Those already committed are told now, whatever a later write did.
+    if !told.is_empty() {
+        crate::feed::publish(ctx, told);
+        triggers::wake(ctx);
     }
-    crate::feed::publish(ctx, told);
-    triggers::wake(ctx);
-    Ok(())
+    failed.map_or(Ok(()), Err)
 }
 
 fn any_short(paces: &BTreeMap<String, Vec<WindowPace>>) -> bool {

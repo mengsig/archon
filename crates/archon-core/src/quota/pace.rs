@@ -79,19 +79,24 @@ fn empty_at(used: u64, elapsed: i128, read_at: Timestamp) -> Option<Timestamp> {
     read_at.checked_add_signed(chrono::TimeDelta::nanoseconds(i64::try_from(nanos).ok()?))
 }
 
-/// Seconds `reading`'s usage observation is old at `now`, by its age when
-/// aetherd answered at `read_at`, else its timestamp; `None` when it names neither.
-fn observation_age(reading: &ProviderHeadroom, read_at: Timestamp, now: Timestamp) -> Option<i64> {
+/// How old `reading`'s usage observation is at `now`: the older of its
+/// exact timestamp and its age when aetherd answered at `read_at`.
+fn observation_age(
+    reading: &ProviderHeadroom,
+    read_at: Timestamp,
+    now: Timestamp,
+) -> Option<chrono::TimeDelta> {
     assert!(now >= read_at, "a reading is never from the future");
-    let since_read = (now - read_at).num_seconds();
-    if let Some(age) = reading.age_seconds {
-        return Some(
-            i64::try_from(age)
-                .unwrap_or(i64::MAX)
-                .saturating_add(since_read),
-        );
-    }
-    reading.observed_at.map(|at| (now - at).num_seconds())
+    let by_timestamp = reading.observed_at.map(|at| now - at);
+    let by_age = (reading.age_seconds)
+        .and_then(|age| i64::try_from(age).ok())
+        .map(chrono::TimeDelta::seconds)
+        .map(|age| {
+            age.checked_add(&(now - read_at))
+                .unwrap_or(chrono::TimeDelta::MAX)
+        });
+    debug_assert!(by_age.is_none_or(|age| age >= chrono::TimeDelta::zero()));
+    by_timestamp.max(by_age)
 }
 
 /// The pace of each of `reading`'s windows still ahead of `now`; none for a
@@ -103,8 +108,8 @@ pub fn provider_pace(
     margin: u8,
 ) -> Vec<WindowPace> {
     assert!(now >= read_at, "a reading is never from the future");
-    let too_old =
-        observation_age(reading, read_at, now).is_some_and(|age| age > MAX_OBSERVATION_AGE_SECONDS);
+    let max_age = chrono::TimeDelta::seconds(MAX_OBSERVATION_AGE_SECONDS);
+    let too_old = observation_age(reading, read_at, now).is_some_and(|age| age > max_age);
     if reading.stale || too_old {
         return Vec::new();
     }
@@ -263,8 +268,13 @@ mod tests {
             1,
             "ten minutes old"
         );
-        let past = soon + chrono::TimeDelta::seconds(1);
+        let past = soon + chrono::TimeDelta::milliseconds(1);
         assert!(provider_pace(&headroom, read, past, 10).is_empty());
+        // An exact timestamp counts to the nanosecond beside a rounded age.
+        headroom.observed_at = Some(read - chrono::TimeDelta::minutes(10));
+        assert_eq!(provider_pace(&headroom, read, read, 10).len(), 1);
+        let just_past = read + chrono::TimeDelta::milliseconds(250);
+        assert!(provider_pace(&headroom, read, just_past, 10).is_empty());
         headroom.age_seconds = None;
         headroom.observed_at = Some(read - chrono::TimeDelta::minutes(11));
         assert!(provider_pace(&headroom, read, read, 10).is_empty());

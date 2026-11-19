@@ -944,7 +944,13 @@ fn batch_events(
         .map(|news| facts.with_settled_cost(news.event))
         .collect();
     events.extend(finished);
+    // A pace warning whose window reset while it waited advises nothing.
+    events.retain(|event| !is_reset_pace(event, now));
     Ok(events)
+}
+
+fn is_reset_pace(event: &TriggerEvent, now: Timestamp) -> bool {
+    matches!(event, TriggerEvent::QuotaPace { pace, .. } if pace.resets_at <= now)
 }
 
 /// A new generation lacks its predecessor's context: compact the pending news
@@ -1379,6 +1385,37 @@ mod tests {
         let mut huge = vec![news(&message), news(&message)];
         let rest = split_past_bytes(&mut huge, 1).unwrap();
         assert_eq!((huge.len(), rest.len()), (1, 1), "one event always goes");
+    }
+
+    /// A lone pace warning is keyed without compaction; once its window reset
+    /// while it coalesced, it is dropped rather than told as current.
+    #[test]
+    fn a_lone_pace_warning_whose_window_reset_is_not_told() {
+        let mut store = Store::open_in_memory().unwrap();
+        let now = archon_core::now();
+        let warning = |resets_at| TriggerEvent::QuotaPace {
+            provider: "codex".into(),
+            pace: archon_core::quota::pace::WindowPace {
+                window: "5h".into(),
+                window_minutes: 300,
+                used_percent: 100,
+                elapsed_percent: 99,
+                resets_at,
+                empty_at: None,
+                short: true,
+            },
+            note: "choose".into(),
+            providers: BTreeMap::new(),
+        };
+        let reset = vec![Held::new(
+            warning(now - chrono::TimeDelta::seconds(1)),
+            now,
+            false,
+        )];
+        assert!(batch_events(&mut store, reset, false).unwrap().is_empty());
+        let ahead = warning(now + chrono::TimeDelta::hours(1));
+        let running = vec![Held::new(ahead.clone(), now, false)];
+        assert_eq!(batch_events(&mut store, running, false).unwrap(), [ahead]);
     }
 
     /// Watch news is news, not an `info`: it wakes the orchestrator past the

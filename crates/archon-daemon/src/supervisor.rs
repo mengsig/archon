@@ -17,8 +17,7 @@ use std::time::Duration;
 use archon_aether::AetherClient;
 use archon_aether::backend::LIVE_STATES;
 use archon_aether::wire::{
-    Agent, AgentConfig, AgentQuery, ApprovalPolicy, CreateAgent, NetworkPolicy, Scope,
-    ToolExposure,
+    Agent, AgentConfig, AgentQuery, ApprovalPolicy, CreateAgent, NetworkPolicy, Scope, ToolExposure,
 };
 use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;

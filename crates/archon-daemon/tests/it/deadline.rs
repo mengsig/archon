@@ -220,12 +220,20 @@ async fn a_deadline_wake_through_a_catalog_outage_wakes_once_the_catalog_answers
     assert_eq!(h.backend.requests().len(), 1, "no fresh agent");
     let woken = h.ctx.store.lock().await.stage_run(&waiting.id).unwrap();
     assert_eq!(woken.state, StageState::Running);
-    let until = common::stored_deadline(&h, &woken).await.expect("a deadline");
+    let until = common::stored_deadline(&h, &woken)
+        .await
+        .expect("a deadline");
     let left = until - archon_core::now();
-    assert!(left > chrono::Duration::minutes(9), "a full extension: {left}");
+    assert!(
+        left > chrono::Duration::minutes(9),
+        "a full extension: {left}"
+    );
     let told = h.backend.resumed_with(&woken);
     let at = until.format("%Y-%m-%d %H:%M UTC").to_string();
-    assert!(told.contains(&at), "told the restarted deadline {at}: {told}");
+    assert!(
+        told.contains(&at),
+        "told the restarted deadline {at}: {told}"
+    );
 }
 
 async fn sweep(h: &Harness) {

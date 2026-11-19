@@ -299,7 +299,10 @@ fn canonical_reviewers(
     mut named: Vec<ModelChoice>,
     aliases: &std::collections::BTreeMap<ModelRef, ModelRef>,
 ) -> Vec<ModelChoice> {
-    assert!(!named.is_empty(), "a contract that names reviewers names one");
+    assert!(
+        !named.is_empty(),
+        "a contract that names reviewers names one"
+    );
     let count = named.len();
     for choice in &mut named {
         if let Some(canonical) = aliases.get(&choice.model) {

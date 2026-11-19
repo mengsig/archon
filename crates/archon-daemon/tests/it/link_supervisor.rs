@@ -1932,7 +1932,10 @@ async fn a_frozen_model_outside_the_policy_is_not_sent_again() {
     let allowed = json!({"provider": "codex", "model": "allowed"});
     assert_eq!(creates[1]["model"], allowed, "the configured model");
     let frozen = h.kv("orchestrator_model").await.expect("frozen again");
-    assert!(frozen.contains("allowed") && frozen.contains(&fresh), "{frozen}");
+    assert!(
+        frozen.contains("allowed") && frozen.contains(&fresh),
+        "{frozen}"
+    );
 }
 
 /// The same key had landed before its reply was lost: the orchestrator it

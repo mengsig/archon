@@ -1497,7 +1497,10 @@ async fn restart_wake_clock(
     stage: &StageRun,
     spawn: &mut StoredSpawn,
 ) -> Result<(), ArchonError> {
-    assert!(spawn.deadline_wake && !spawn.wake_asked, "a wake not yet asked");
+    assert!(
+        spawn.deadline_wake && !spawn.wake_asked,
+        "a wake not yet asked"
+    );
     let fresh = archon_core::now() + chrono::Duration::minutes(settle::DEADLINE_WAKE_MINUTES);
     // The told deadline is exact to the minute: a shorter wait moves nothing.
     let waited = |told: &Timestamp| fresh - *told >= chrono::Duration::minutes(1);

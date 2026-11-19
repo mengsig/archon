@@ -991,9 +991,8 @@ async fn replace(
         let catalog = crate::learned::catalog(ctx).await?;
         let mut store = ctx.store.lock().await;
         let chosen = plan.clone();
-        plan = super::model_catalog::retry_plan(
-            ctx, &mut store, table, run, chosen, &catalog, &spec,
-        )?;
+        plan =
+            super::model_catalog::retry_plan(ctx, &mut store, table, run, chosen, &catalog, &spec)?;
         // The agent a wake keeps runs the model it was last steered to.
         let kept = catalog.canonical_alias(&failed.current_choice().model);
         if plan.choice.model != *kept {

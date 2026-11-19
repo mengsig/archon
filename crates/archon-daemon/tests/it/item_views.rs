@@ -1041,7 +1041,10 @@ async fn a_finished_slots_retired_pin_holds_no_retry_of_another_slot() {
         common::choice(common::MODEL, Effort::Low),
     ];
     plan.0.insert("review".into(), review);
-    let item = h.enqueue_with("retire a finished slot's pin", plan).await.unwrap();
+    let item = h
+        .enqueue_with("retire a finished slot's pin", plan)
+        .await
+        .unwrap();
     h.dispatch().await;
     h.settle_running(passing).await;
     h.dispatch().await;
@@ -1063,9 +1066,20 @@ async fn a_finished_slots_retired_pin_holds_no_retry_of_another_slot() {
     .await;
     h.dispatch().await;
     let failed = h.ctx.store.lock().await.stage_run(&failing).unwrap();
-    assert!(failed.state.is_terminal(), "the slot settled: {:?}", failed.state);
+    assert!(
+        failed.state.is_terminal(),
+        "the slot settled: {:?}",
+        failed.state
+    );
     let retried: Vec<_> = (h.running().await.into_iter())
-        .map(|s| (s.stage_id, s.fan_index, s.attempt, s.choice.model.to_string()))
+        .map(|s| {
+            (
+                s.stage_id,
+                s.fan_index,
+                s.attempt,
+                s.choice.model.to_string(),
+            )
+        })
         .collect();
     assert_eq!(retried, [("review".into(), 1, 1, common::MODEL.into())]);
     assert!(detail(&h, &item.id).await.waiting_reason.is_none());

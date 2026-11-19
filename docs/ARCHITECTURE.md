@@ -5820,7 +5820,22 @@ segments retain cost without being labeled failures. Late corrections to estimat
 can make segment cost allocation approximate; the run's ledger total remains current.
 
 **Failure class.** A failed run's class is read from structure, never from its
-error's words. The records come first: the newest stage run of each slot of
+error's words. The daemon's own `ship` step runs no stage and fails a run under
+the id `ship`: such a run is `ship`, or `budget`, `blocked` or `escalated` when
+the delivery's error opens with the daemon's own prefix for one. A pipeline may
+name a stage `ship` too. Its records are read instead, by the rules below, only
+when that stage failed the run itself: the run failed in the very words of one
+of its stage runs, the error opens `BLOCKED:` or `ESCALATE:` and a slot of its
+last attempt failed with such a prefix, or the error is the driver's word on
+the stage, which opens with the stage's quoted id (`stage `ship` failed…`,
+`stage `ship` was aborted…`, `stage `ship`: the operator asked…`, `team stage
+`ship` has no roles…`). Otherwise that stage explains nothing, however it
+ended: completed, skipped by a steer, or with a failed slot its gate passed.
+One limit: archond's own failure of a live stage named `ship`, written in other
+words (a team merge that failed, say), is labelled `ship` where `other` would be
+exact; both are scored classes.
+
+For every other run the records come first: the newest stage run of each slot of
 the failing stage's last attempt, lowest slot first, as the driver reads
 them. When the run failed in the very words of one of them, whole or as the
 driver clips a long error (`StageOutcome::run_stop_error`), that stage run
@@ -5867,10 +5882,6 @@ another `BLOCKED:` or `ESCALATE:` prefix gives `blocked` or `escalated`. So a
 recorded timeout or infrastructure failure of that stage's last attempt
 outranks the guard's words, and a stage that fails its own task in those words
 is `blocked`. Otherwise the same stage runs decide:
-- the daemon's own `ship` step, which fails a run under the id `ship`, gives
-  `ship` even when the pipeline names a stage `ship` too: that stage's runs all
-  completed, and the error is not the driver's word on the stage itself
-  (`stage `ship` failed`, `was aborted` or `: …`);
 - a completed stage run the gate failed for stating a failure (the gate's own
   headline, `its agent stated a failure`) gives `escalated` or `blocked` when
   its summary opens `ESCALATE:` or `BLOCKED:`, as the same words through
@@ -5883,7 +5894,6 @@ is `blocked`. Otherwise the same stage runs decide:
   A gate failure that names the declared review as not on record (the gate's own
   headline) also gives `review`;
 - a test stage gives `verification`, and a ship stage `ship`;
-- a daemon `ship` step with no stage run also gives `ship`;
 - anything else is `other`.
 
 A run recovery could not resume (`cannot resume the run: `) is `infrastructure`:

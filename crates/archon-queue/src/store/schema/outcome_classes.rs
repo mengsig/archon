@@ -740,8 +740,18 @@ fn v24_keeps_the_old_class_of_a_run_whose_ending_stage_left_no_record() {
     seed(&conn, &unstarted, &[], Some(FailureClass::Blocked), false);
     let shipped = failed_run(archon_core::run::SHIP_STEP, "the push was refused");
     seed(&conn, &shipped, &[], Some(FailureClass::Other), false);
+    let aborted = "stage `ship` was aborted by a steer, and the stage to continue with no longer \
+                   exists";
+    let skipped = failed_run(archon_core::run::SHIP_STEP, aborted);
+    seed(&conn, &skipped, &[], Some(FailureClass::Ship), false);
 
     assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+
+    assert_eq!(
+        columns(&conn, &skipped),
+        (some("ship"), some("legacy_163"), some("ship")),
+        "the driver's word on a stage named `ship` is no ship step"
+    );
 
     assert_eq!(
         columns(&conn, &lost),
@@ -760,14 +770,18 @@ fn v24_keeps_the_old_class_of_a_run_whose_ending_stage_left_no_record() {
     );
 }
 
-/// A delivery that failed after a work stage named `ship` completed stays the
-/// ship step's failure, and a completed stage's stated escalation is read.
+/// A delivery that failed after a work stage named `ship` completed or was
+/// skipped stays the ship step's failure, and a completed stage's stated
+/// escalation is read.
 #[test]
-fn v24_reads_the_ship_step_and_a_stated_stop_past_a_completed_stage() {
+fn v24_reads_the_ship_step_and_a_stated_stop_past_a_settled_stage() {
     let mut conn = v23_store();
     let refused = failed_run(archon_core::run::SHIP_STEP, "the push was refused");
     let wrote = stage(&refused, "ship", StageKind::Work, StageState::Completed);
     seed(&conn, &refused, &[wrote], Some(FailureClass::Ship), false);
+    let late = failed_run(archon_core::run::SHIP_STEP, "the fast check failed");
+    let skipped = stage(&late, "ship", StageKind::Work, StageState::Cancelled);
+    seed(&conn, &late, &[skipped], Some(FailureClass::Ship), false);
     let said = archon_core::run::STATED_FAILURE;
     let stated = failed_run("implement", &format!("stage `implement` failed: {said}"));
     let mut gave_up = stage(&stated, "implement", StageKind::Work, StageState::Completed);
@@ -779,6 +793,11 @@ fn v24_reads_the_ship_step_and_a_stated_stop_past_a_completed_stage() {
     assert_eq!(
         columns(&conn, &refused),
         (some("ship"), some("recomputed"), some("ship"))
+    );
+    assert_eq!(
+        columns(&conn, &late),
+        (some("ship"), some("recomputed"), some("ship")),
+        "a stage a steer skipped explains no later delivery"
     );
     assert_eq!(
         columns(&conn, &stated),

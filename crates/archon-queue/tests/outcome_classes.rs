@@ -871,43 +871,90 @@ fn a_completed_stage_that_states_a_stop_is_classed_by_its_own_words() {
     assert_eq!(passed_by.failure, Some(FailureClass::Other));
 }
 
-/// A pipeline may name a stage `ship`, the id the daemon's own ship step fails
-/// a run under: a delivery that failed after that stage completed is `ship`.
-#[test]
-fn the_daemons_ship_step_is_read_past_a_completed_stage_named_ship() {
-    let after = |state: StageState, error: &str| {
-        failed_with("ship", error, |run| {
-            vec![settled(run, "ship", StageKind::Work, state.clone())]
-        })
-        .failure
+/// The class of a run that failed under `ship` with `error` after a work stage
+/// of that name, the id the daemon's own ship step fails a run under, ended in `state`.
+fn after_a_stage_named_ship(state: StageState, infra: bool, error: &str) -> Option<FailureClass> {
+    let wrote = |run: &PipelineRun| {
+        let mut stage = settled(run, "ship", StageKind::Work, state.clone());
+        stage.infrastructure_failure = infra;
+        vec![stage]
     };
+    failed_with("ship", error, wrote).failure
+}
+
+/// A delivery that failed is `ship` however a stage named `ship` ended before
+/// it: completed, skipped by a steer, or one slot of a group its gate passed.
+#[test]
+fn the_daemons_ship_step_is_read_past_a_stage_named_ship() {
     let refused = "the remote refused the push: the branch has diverged";
-    assert_eq!(
-        after(StageState::Completed, refused),
-        Some(FailureClass::Ship)
-    );
     let unproved = "stage `ship`, which writes the ship record, never passed in this run, so \
                     there is nothing Archon can ship";
-    assert_eq!(
-        after(StageState::Completed, unproved),
-        Some(FailureClass::Ship)
-    );
-    // The driver's word on the stage itself is the stage's failure.
+    let broke = || StageState::Failed {
+        error: "it broke".into(),
+    };
+    let ended = [
+        (StageState::Completed, false),
+        (StageState::Cancelled, false),
+        (StageState::TimedOut, false),
+        (broke(), false),
+        (broke(), true),
+    ];
+    for (state, infra) in ended {
+        for error in [refused, unproved] {
+            assert_eq!(
+                after_a_stage_named_ship(state.clone(), infra, error),
+                Some(FailureClass::Ship),
+                "{state:?}, flagged {infra}: {error}"
+            );
+        }
+        // The delivery names its own blocker: the stage's stop does not outrank it.
+        let blocked = "BLOCKED: `origin` refused the push of `b`: protected branch";
+        assert_eq!(
+            after_a_stage_named_ship(state.clone(), infra, blocked),
+            Some(FailureClass::Blocked),
+            "{state:?}, flagged {infra}"
+        );
+    }
+}
+
+/// The stage named `ship` failed the run itself where the driver says so of
+/// it, or the run failed in that stage run's own words: its records class it.
+#[test]
+fn a_stage_named_ship_that_failed_itself_is_no_ship_step() {
     for of_stage in [
         "stage `ship` failed: its scenario failed",
         "stage `ship` was aborted by a steer, and the stage to continue with no longer exists",
         "stage `ship`: the operator asked for another revision of the plan, but 5 is the limit",
+        "team stage `ship` has no roles: stage `plan` passed without the swarm plan assigning them",
     ] {
-        assert_eq!(
-            after(StageState::Completed, of_stage),
-            Some(FailureClass::Other),
-            "{of_stage}"
-        );
+        let completed = after_a_stage_named_ship(StageState::Completed, false, of_stage);
+        assert_eq!(completed, Some(FailureClass::Other), "{of_stage}");
+        let unrecorded = failed_with("ship", of_stage, |_| Vec::new()).failure;
+        assert_eq!(unrecorded, Some(FailureClass::Other), "{of_stage}");
     }
-    let broke = StageState::Failed {
-        error: "it broke".into(),
+    let timed_out = "stage `ship` failed: its agent ran out of time";
+    assert_eq!(
+        after_a_stage_named_ship(StageState::TimedOut, false, timed_out),
+        Some(FailureClass::Timeout)
+    );
+    let said = |error: &str| StageState::Failed {
+        error: error.into(),
     };
-    assert_eq!(after(broke, refused), Some(FailureClass::Other));
+    let blocker = "BLOCKED: the deploy key is missing";
+    assert_eq!(
+        after_a_stage_named_ship(said(blocker), false, blocker),
+        Some(FailureClass::Blocked)
+    );
+    // A backend that died in a blocker's words is the backend's failure still.
+    assert_eq!(
+        after_a_stage_named_ship(said(blocker), true, blocker),
+        Some(FailureClass::Infrastructure)
+    );
+    let spawn = "could not start the stage's agent: the engine refused";
+    assert_eq!(
+        after_a_stage_named_ship(said(spawn), true, spawn),
+        Some(FailureClass::Infrastructure)
+    );
 }
 
 /// No daemon writes a stage run without a name. Capture reads one by its

@@ -16,10 +16,11 @@ use rusqlite::{Connection, OptionalExtension};
 
 use super::super::codec::{SqlContext, from_json, text_column};
 
-/// Why the run that failed under `stage_id` with `error` failed. The records
-/// of the attempt that ended it come first: the stage run the run failed in the
-/// words of, then the blocker or escalation the driver stops a run on, then
-/// how a stage was stopped. Only then is `error` read, and only for the
+/// Why the run that failed under `stage_id` with `error` failed. The daemon's
+/// ship step runs no stage, so it is told first ([`ship_step_failed`]). Then
+/// the records of the attempt that ended the run: the stage run the run failed
+/// in the words of, then the blocker or escalation the driver stops a run on,
+/// then how a stage was stopped. Only then is `error` read, and only for the
 /// prefixes the daemon writes on purpose. `failed_reviews` is
 /// [`failed_reviews`] of `stages`, which may come in any order.
 pub(in crate::store) fn failure_class(
@@ -33,6 +34,10 @@ pub(in crate::store) fn failure_class(
         return FailureClass::Infrastructure;
     }
     let ending = ending_attempt(stage_id, stages);
+    // The ship step ends a run past every stage: one named `ship` explains nothing.
+    if ship_step_failed(stage_id, error, &ending) {
+        return daemon_prefixed_class(error).unwrap_or(FailureClass::Ship);
+    }
     let recorded = ended_by(error, &ending)
         .and_then(own_stop)
         .or_else(|| driver_stop(&ending).and_then(own_stop))
@@ -41,13 +46,7 @@ pub(in crate::store) fn failure_class(
         return class;
     }
     if ending.is_empty() {
-        return match stage_id {
-            SHIP_STEP => FailureClass::Ship,
-            _ => FailureClass::Other,
-        };
-    }
-    if ship_step_failed(stage_id, error, &ending) {
-        return FailureClass::Ship;
+        return FailureClass::Other;
     }
     if let Some(class) = stated_stop(error, &ending) {
         return class;
@@ -58,24 +57,35 @@ pub(in crate::store) fn failure_class(
     judged_class(stage_id, &ending, failed_reviews)
 }
 
-/// Whether the daemon's own ship step failed the run though a stage is named
-/// `ship` too: that stage completed, and `error` is not the driver's word on it.
+/// Whether the daemon's own ship step failed the run, whatever a stage named
+/// `ship` too recorded (`ending`): unless the run failed in that stage's own
+/// words, or in the driver's word on it, the failure is the delivery's.
 fn ship_step_failed(stage_id: &str, error: &str, ending: &[&StageRun]) -> bool {
-    assert!(
-        !ending.is_empty(),
-        "a run with no such stage is classed before"
-    );
     if stage_id != SHIP_STEP {
         return false;
     }
-    // The driver fails a stage as "stage `id` failed", "… was aborted" or "…: why".
-    let of_stage = error
+    assert!(
+        ending.iter().all(|s| s.stage_id == SHIP_STEP),
+        "the ending attempt is the named stage's"
+    );
+    let own_words = ended_by(error, ending).is_some();
+    // A blocker the driver clipped out of a slot opens as the slot's error does.
+    let clipped_stop = ends_run_class(error).is_some() && driver_stop(ending).is_some();
+    !own_words && !clipped_stop && !driver_names_stage(error, stage_id)
+}
+
+/// Whether `error` is the driver's word on the stage `stage_id` itself, which
+/// it opens with the stage's quoted id: "stage `id` failed…", "stage `id` was
+/// aborted…", "stage `id`: the operator asked…", "team stage `id` has no roles…".
+fn driver_names_stage(error: &str, stage_id: &str) -> bool {
+    assert!(!stage_id.is_empty(), "the driver names a stage by its id");
+    let named = error.strip_prefix("team ").unwrap_or(error);
+    // The ship step names the record stage it missed with a comma after the id.
+    named
         .strip_prefix("stage `")
         .and_then(|rest| rest.strip_prefix(stage_id))
         .and_then(|rest| rest.strip_prefix('`'))
-        .is_some_and(|rest| rest.starts_with([' ', ':']));
-    let completed = ending.iter().all(|s| s.state == StageState::Completed);
-    completed && !of_stage
+        .is_some_and(|rest| rest.starts_with([' ', ':']))
 }
 
 /// The stop a completed stage run stated in the result the gate failed it
@@ -157,7 +167,7 @@ fn ends_run_class(error: &str) -> Option<FailureClass> {
 /// Whether a run that failed under `stage_id` with `error` can be classed
 /// without a record of that stage: the ship step, or a stop its prefix names.
 pub(in crate::store) fn classed_without_its_stage(stage_id: &str, error: &str) -> bool {
-    stage_id == SHIP_STEP || daemon_prefixed_class(error).is_some()
+    ship_step_failed(stage_id, error, &[]) || daemon_prefixed_class(error).is_some()
 }
 
 /// Whether the gate failed the stage under a headline opening with `said`, as

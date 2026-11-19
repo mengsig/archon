@@ -68,6 +68,7 @@ use archon_core::id::{
 use archon_core::merge::MergeRequest;
 use archon_core::notify::{FeedEntry, FeedItem, Question};
 use archon_core::protocol::{ItemQuery, RepoRef, RunPlan};
+use archon_core::pull_request::OntoTarget;
 use archon_core::queue::{PauseState, QueueItem, QueueState};
 use archon_core::repo::Repo;
 use archon_core::run::{OperatorGate, PipelineRun, StageRun};
@@ -360,6 +361,20 @@ impl Store {
         asked: &Asked,
     ) -> Result<QueueItem, ArchonError> {
         items::insert(&mut self.conn, item, idempotency_key, asked)
+    }
+    /// The stored item when `item` replays idempotency `key` (see
+    /// [`items::replayed`]); a different request under the key is refused.
+    pub fn replayed_enqueue(
+        &self,
+        item: &QueueItem,
+        key: &str,
+        asked: (&Asked, Option<&OntoTarget>),
+    ) -> Result<Option<QueueItem>, ArchonError> {
+        let mut stored = items::replayed(&self.conn, item, key, asked)?;
+        if let Some(stored) = &mut stored {
+            self.canonicalize_items(std::slice::from_mut(stored));
+        }
+        Ok(stored)
     }
     pub fn item(&self, id: &QueueItemId) -> Result<QueueItem, ArchonError> {
         let mut item = items::load(&self.conn, id)?;

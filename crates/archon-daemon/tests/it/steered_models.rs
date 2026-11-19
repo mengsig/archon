@@ -383,3 +383,45 @@ async fn a_policy_denying_an_alias_refuses_the_canonical_pin() {
     );
     assert!(h.backend.requests().is_empty());
 }
+
+#[tokio::test]
+async fn a_keyed_replay_returns_its_item_after_the_pinned_model_left_the_catalog() {
+    let h = harness().await;
+    let pin =
+        |model: &str| serde_json::from_value(serde_json::json!({"implement": [{"model": model}]}));
+    let mut asked = request("direct", pin(FAST).unwrap(), "review=none");
+    asked.idempotency_key = Some("lost-reply".into());
+    let Ok(Reply::Item(first)) = h.cli(Request::Enqueue(asked.clone())).await else {
+        panic!("the first enqueue is stored");
+    };
+
+    h.set_catalog(common::catalog::untiered(["codex/sol".parse().unwrap()]))
+        .await;
+    let refused = h
+        .cli(Request::Enqueue(request(
+            "direct",
+            pin(FAST).unwrap(),
+            "review=none",
+        )))
+        .await;
+    assert!(
+        refused.is_err(),
+        "an unkeyed enqueue of the retired pin is refused"
+    );
+
+    let Ok(Reply::Item(again)) = h.cli(Request::Enqueue(asked.clone())).await else {
+        panic!("the replay returns the stored item");
+    };
+    assert_eq!(again.id, first.id);
+
+    asked.brief = "another brief".into();
+    let conflict = h
+        .cli(Request::Enqueue(asked))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        conflict.contains("already used for a different request"),
+        "{conflict}"
+    );
+}

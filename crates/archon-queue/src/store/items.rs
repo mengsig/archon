@@ -341,6 +341,36 @@ fn check_replay(
     Ok(())
 }
 
+/// The item an earlier enqueue stored under `key` when `item` asks for the
+/// same request, without inserting; `None` when the key is unused. A
+/// fingerprint that filled `model_plan` needs the resolved plan, so it gives
+/// `None` here and the insert decides.
+pub(super) fn replayed(
+    conn: &Connection,
+    item: &QueueItem,
+    key: &str,
+    (asked, target): (&Asked, Option<&OntoTarget>),
+) -> Result<Option<QueueItem>, ArchonError> {
+    assert!(!key.trim().is_empty(), "a replay needs a key");
+    let Some((first, stored)) = find_by_key(conn, key)? else {
+        return Ok(None);
+    };
+    let stored: serde_json::Value = from_json(&stored, "enqueue request")?;
+    if stored.get("model_plan").is_some() {
+        return Ok(None);
+    }
+    let mut request = request_value(item, asked);
+    if let Some(target) = target {
+        assert!(
+            item.onto.is_none(),
+            "a local target freezes no pull request"
+        );
+        request["onto"] = serde_json::json!(target);
+    }
+    check_replay(key, (&first, &stored), item, request, &asked.autonomy)?;
+    load(conn, &first).map(Some)
+}
+
 /// `asked` is what the enqueue named, before resolution.
 pub(super) fn insert(
     conn: &mut Connection,

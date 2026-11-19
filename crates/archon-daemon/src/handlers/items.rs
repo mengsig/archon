@@ -36,7 +36,6 @@ pub(super) async fn enqueue(
     by: Authority,
 ) -> Result<Reply, ArchonError> {
     req.intent = resolve_intent(ctx, req.intent.as_ref(), req.onto.as_ref()).await?;
-    let title = req.title.trim().to_owned();
     check_enqueue(&req.title, &req.brief, &req.tags, req.budget_usd)?;
     let (env, mut resolved) = enqueue_context(ctx, &req).await?;
     let key = req
@@ -55,45 +54,26 @@ pub(super) async fn enqueue(
         autonomy: req.autonomy,
         model_plan: req.model_plan.clone(),
     };
-    let id = QueueItemId::new();
-    crate::learned::prepare_routing(ctx, &id, &resolved, &req.tags).await?;
+    let mut item = unplanned_item(&req, (&env, &resolved), onto);
+    if let Some(key) = key {
+        let local = local_onto(&env, target.0);
+        let replay = ctx.store.lock().await;
+        if let Some(stored) = replay.replayed_enqueue(&item, key, (&asked, local))? {
+            drop(replay);
+            return Ok(item_reply(ctx, stored, req.budget_usd.is_some()).await);
+        }
+    }
+    crate::learned::prepare_routing(ctx, &item.id, &resolved, &req.tags).await?;
     let unrouted = ItemRoute {
-        id: &id,
+        id: &item.id,
         held: None,
     };
-    let routed_provider = routed_provider(ctx, &env, unrouted).await?;
+    item.routed_provider = routed_provider(ctx, &env, unrouted).await?;
     let route = ItemRoute {
-        held: routed_provider.as_deref(),
+        held: item.routed_provider.as_deref(),
         ..unrouted
     };
-    let plan = enqueue_plan(ctx, &req, &env, &resolved, (route, by)).await?;
-    let now = archon_core::now();
-    let item = QueueItem {
-        intent: req.intent.clone().map(Box::new),
-        onto: onto.map(Box::new),
-        id,
-        repo: env.repo.as_ref().map(|r| r.id.clone()),
-        pipeline: resolved.pipeline,
-        title,
-        brief: req.brief,
-        priority: req.priority,
-        dependencies: req.depends_on,
-        tags: req.tags,
-        model_plan: plan,
-        model_reasons: req.model_reasons,
-        budget_usd: req.budget_usd,
-        stage_timeouts: req.stage_timeouts,
-        autonomy: resolved.autonomy,
-        origin: req.origin.clone(),
-        fresh_retries: 0,
-        routed_provider,
-        provider_switch: None,
-        initiative: None,
-        risk: None,
-        state: QueueState::Queued,
-        created_at: now,
-        updated_at: now,
-    };
+    item.model_plan = enqueue_plan(ctx, &req, &env, &resolved, (route, by)).await?;
     let stored = store_enqueued(ctx, (&env, &resolved.spec), target, &item, (key, &asked)).await?;
     assert!(
         stored.id == item.id || key.is_some(),
@@ -101,6 +81,46 @@ pub(super) async fn enqueue(
     );
     ctx.dispatch.notify_one();
     Ok(item_reply(ctx, stored, req.budget_usd.is_some()).await)
+}
+
+/// The item `req` asks for, before routing and the model plan: what a
+/// replay of its idempotency key is compared by.
+fn unplanned_item(
+    req: &EnqueueRequest,
+    (env, resolved): (&RepoEnv, &knobs::Resolved),
+    onto: Option<OntoPullRequest>,
+) -> QueueItem {
+    assert!(
+        !req.title.trim().is_empty(),
+        "check_enqueue refused a blank title"
+    );
+    let now = archon_core::now();
+    QueueItem {
+        intent: req.intent.clone().map(Box::new),
+        onto: onto.map(Box::new),
+        id: QueueItemId::new(),
+        repo: env.repo.as_ref().map(|r| r.id.clone()),
+        pipeline: resolved.pipeline.clone(),
+        title: req.title.trim().to_owned(),
+        brief: req.brief.clone(),
+        priority: req.priority,
+        dependencies: req.depends_on.clone(),
+        tags: req.tags.clone(),
+        model_plan: PlannedPlan::default(),
+        model_reasons: req.model_reasons.clone(),
+        budget_usd: req.budget_usd,
+        stage_timeouts: req.stage_timeouts.clone(),
+        autonomy: resolved.autonomy,
+        origin: req.origin.clone(),
+        fresh_retries: 0,
+        routed_provider: None,
+        provider_switch: None,
+        initiative: None,
+        risk: None,
+        state: QueueState::Queued,
+        created_at: now,
+        updated_at: now,
+    }
 }
 
 async fn enqueue_plan(

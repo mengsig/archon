@@ -134,7 +134,12 @@ pub(super) async fn escalate_held(
         original_sender: MessageSender::System,
         addressed_to_run_node: None,
     };
-    let saved = crate::triggers::record_message(&mut store, message, &[(&key, "told")])?;
+    let saved = crate::triggers::record_message(
+        &mut store,
+        message,
+        &[(&key, "told")],
+        ctx.config.orchestrator.quiet_info,
+    )?;
     drop(store);
     tracing::warn!(stage = %stage.id, %lead, "held with no named cause; orchestrator told");
     crate::feed::publish(ctx, vec![saved]);

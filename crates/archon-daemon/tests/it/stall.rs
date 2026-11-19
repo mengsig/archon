@@ -22,6 +22,7 @@ const DEAD: TreePulse = TreePulse {
     held_for_cause: false,
     inspection: false,
     running: true,
+    quota_blocked: false,
 };
 
 /// The tree after an older aetherd restarted under a running command: the

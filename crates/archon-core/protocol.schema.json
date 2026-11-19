@@ -3715,13 +3715,14 @@
             "pipeline",
             "model",
             "item",
-            "stage"
+            "stage",
+            "effort"
           ],
           "type": "string"
         },
         {
           "const": "provider",
-          "description": "The provider of the model a stage ran, as provider weights route it.",
+          "description": "The provider of each spending agent's recorded model.",
           "type": "string"
         }
       ]
@@ -3777,6 +3778,16 @@
           },
           "type": "array"
         },
+        "split": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CostSplit"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "total": {
           "$ref": "#/$defs/CostAmounts"
         }
@@ -3808,10 +3819,20 @@
           "type": "number"
         },
         "key": {
-          "description": "The day, repository name, pipeline, `provider/model`, item id or\nstage id. `None` gathers spend with no such owner: the\norchestrator's, and agents outside a stage for model and stage.",
+          "description": "The grouping key, including an explicit orchestrator bucket where applicable.\n`None` gathers spend without a key in this grouping.",
           "type": [
             "string",
             "null"
+          ]
+        },
+        "split": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CostSplit"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "unclassified_cost_usd": {
@@ -3825,6 +3846,24 @@
         "counted_usd",
         "cost_usd",
         "estimated_cost_usd"
+      ],
+      "type": "object"
+    },
+    "CostSplit": {
+      "description": "Budget-counted spend from stage leads and the orchestrator, and from\nrecorded delegates. The rest of `counted_usd` lacks attribution.",
+      "properties": {
+        "delegated_usd": {
+          "format": "double",
+          "type": "number"
+        },
+        "lead_usd": {
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "lead_usd",
+        "delegated_usd"
       ],
       "type": "object"
     },
@@ -10604,6 +10643,21 @@
       ],
       "type": "object"
     },
+    "RecordRepair": {
+      "description": "Whether a stage's one record repair turn is still to give when an attempt\nof it completes with a broken delivery record.",
+      "oneOf": [
+        {
+          "const": "open",
+          "description": "A broken record of this attempt gets the repair turn.",
+          "type": "string"
+        },
+        {
+          "const": "spent",
+          "description": "The attempt is the repair turn or follows it: a broken record of it\nfails the run, and its agent is not asked for the record again.",
+          "type": "string"
+        }
+      ]
+    },
     "RecoveryProgress": {
       "description": "`DaemonStatus::recovery`: how far archond is in recovering its runs.\nUntil it is done, changes are refused and nothing is dispatched.",
       "properties": {
@@ -15292,6 +15346,17 @@
             "$ref": "#/$defs/ModelSegment"
           },
           "type": "array"
+        },
+        "record_repair": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RecordRepair"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the attempt stands to its stage's one record repair turn; `None`\non a stage run from before Archon gave one, which is replayed as then."
         },
         "run": {
           "$ref": "#/$defs/PipelineRunId"

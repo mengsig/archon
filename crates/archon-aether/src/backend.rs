@@ -166,6 +166,7 @@ fn tree_pulse(root: &Agent, beneath: &[Agent]) -> TreePulse {
         held_for_cause: tree().any(is_held_for_cause),
         inspection: tree().any(is_blocked_for_inspection),
         running: tree().any(|a| agent_state(a) == "running"),
+        quota_blocked: is_quota_blocked(root),
     };
     assert!(
         pulse.held || !pulse.held_for_cause,
@@ -208,6 +209,17 @@ fn is_held_for_cause(agent: &Agent) -> bool {
         "waiting" => agent.status.get("condition").is_some_and(names_approval),
         _ => false,
     }
+}
+
+/// Whether Aether blocked `agent` because its provider's quota or usage
+/// limit is spent, not for credentials or any other reason.
+fn is_quota_blocked(agent: &Agent) -> bool {
+    if block_reason(agent) != Some("exhausted") {
+        return false;
+    }
+    let class = agent.status.get("reason").and_then(|r| r.get("class"));
+    let class = class.and_then(serde_json::Value::as_str);
+    matches!(class, Some("quota_exhausted" | "usage_limit"))
 }
 
 /// Whether a wait condition, or any it combines, is `{"on": "approval"}`.
@@ -812,6 +824,15 @@ impl AgentBackend for AetherBackend {
         Ok(tree.map(|(root, beneath)| tree_pulse(&root, &beneath)))
     }
 
+    /// One `get_agent`, so the answer is as fresh as a single round trip.
+    async fn quota_blocked(&self, agent: &AetherAgentId) -> Result<Option<bool>, ArchonError> {
+        match self.link.client()?.get_agent(agent).await {
+            Ok(found) => Ok(Some(is_quota_blocked(&found))),
+            Err(ArchonError::NotFound(_)) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
     async fn open_tool_call(
         &self,
         agent: &AetherAgentId,
@@ -1190,6 +1211,17 @@ mod tests {
         child.status = serde_json::json!({"state": "blocked", "reason":
             {"block": "exhausted", "class": "usage_limit", "detail": "x"}});
         assert!(read(&child).held && read(&child).held_for_cause);
+        assert!(
+            !read(&child).quota_blocked,
+            "only the agent asked about counts"
+        );
+        assert!(tree_pulse(&child, &[]).quota_blocked);
+        child.status = serde_json::json!({"state": "blocked", "reason":
+            {"block": "exhausted", "class": "credentials", "detail": "x"}});
+        assert!(
+            !tree_pulse(&child, &[]).quota_blocked,
+            "credentials are no quota"
+        );
         child.status =
             serde_json::json!({"state": "waiting", "condition": {"on": "approval", "id": "apr_1"}});
         assert!(read(&child).held && read(&child).held_for_cause);

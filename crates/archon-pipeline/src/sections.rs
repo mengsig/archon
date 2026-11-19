@@ -67,6 +67,44 @@ pub(crate) fn resume_message(
     )
 }
 
+/// Opens the feedback of a stage re-entered to repair its delivery record.
+pub(crate) const RECORD_REPAIR_OPENING: &str = "Archon record repair:";
+
+/// The feedback of `stage` re-entered once after attempt `attempt` completed
+/// with a broken delivery record, which `report` quotes.
+pub(crate) fn record_repair(stage: &StageSpec, attempt: u32, owed: Owed, report: &str) -> String {
+    assert!(attempt >= 1, "attempts are 1-based");
+    assert!(owed != Owed::default(), "only an owed record is repaired");
+    let report = report.trim();
+    assert!(!report.is_empty(), "a repair quotes what was refused");
+    let record = match owed.ship_record {
+        true => {
+            " Read `git rev-parse HEAD` and `git rev-parse HEAD^{tree}` after your last \
+                 commit and hand in the ship record with those full hashes."
+        }
+        false => "",
+    };
+    let review = match owed.review.is_some_and(|duty| duty.reviewers > 0) {
+        true => {
+            " Archon counts only reviewers the agent handing in the record delegated \
+                 itself, and checks every agent id against Aether: name in \
+                 `review.reviewers` each one you delegated that passed the change, copying \
+                 its agent id exactly. If you delegated none, delegate one over the whole \
+                 change from the merge base and name it."
+        }
+        false => "",
+    };
+    format!(
+        "{RECORD_REPAIR_OPENING} attempt {attempt} of stage `{id}` finished its work, but \
+         the record it handed in is broken, so Archon gives it this one repair turn. The \
+         committed work on the branch stands: redo nothing that is done and change no code \
+         unless a reviewer finds a defect. End with the result your contract asks for, its \
+         `structured` object included.{record}{review} A second broken record fails the \
+         run.\n\n{report}",
+        id = stage.id,
+    )
+}
+
 /// The `{{feedback}}` a stage re-entered from an operator gate receives.
 pub(crate) fn operator_feedback(subject: GateSubject, feedback: &str) -> String {
     let feedback = feedback.trim();

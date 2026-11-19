@@ -7,6 +7,8 @@ mod reroute;
 pub(crate) use holds::{item_hold, spawn_hold};
 pub(crate) use reroute::{Reserve, note_waits, record_moves, reroute_spawns, switch_note};
 
+use std::collections::BTreeMap;
+
 use archon_core::Timestamp;
 use archon_core::error::ArchonError;
 use archon_core::protocol::{ProviderQuotaStatus, QuotaStatus};
@@ -92,6 +94,24 @@ pub(crate) fn view(ctx: &DaemonContext) -> Option<QuotaView> {
     let reserves = config.models.reserves(&config.orchestrator.model.provider);
     let providers = reading.providers.iter().map(|(p, h)| (p.as_str(), h));
     Some(QuotaView::new(providers, &reserves, reading.read_at, now))
+}
+
+/// Each provider the last trusted reading shows with no usage left at all,
+/// reserves aside, and when it frees up; `None` without a trusted reading.
+pub(crate) fn spent(ctx: &DaemonContext) -> Option<BTreeMap<String, Option<Timestamp>>> {
+    let reading = ctx.quota.reading()?;
+    let now = archon_core::now().max(reading.read_at);
+    if now - reading.read_at > TRUSTED_FOR {
+        return None;
+    }
+    let spent: BTreeMap<String, Option<Timestamp>> = (reading.providers.iter())
+        .filter_map(|(provider, headroom)| {
+            let left = archon_core::quota::provider_headroom(headroom, 0, reading.read_at, now)?;
+            left.exhausted().then(|| (provider.clone(), left.resets_at))
+        })
+        .collect();
+    debug_assert!(spent.keys().all(|p| !p.is_empty()));
+    Some(spent)
 }
 
 /// [`view`] after a refresh, only where `weights` route. A failed refresh

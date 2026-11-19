@@ -1066,6 +1066,7 @@ mod tests {
             fan_index: 0,
             model_segments: Vec::new(),
             infrastructure_failure: false,
+            record_repair: None,
             host_context: Default::default(),
             choice: archon_core::model::ModelChoice {
                 model: "claude-code/claude-sonnet-5".parse().unwrap(),

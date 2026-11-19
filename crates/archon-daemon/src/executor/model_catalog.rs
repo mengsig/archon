@@ -311,6 +311,7 @@ mod tests {
                     .with_reviewers(vec![old.model.clone()]),
             ),
             reports_requirements: false,
+            record_repair: archon_core::run::RecordRepair::Open,
         };
         repair_stage(&mut spawn, &before, &after);
         let expected: ModelRef = "p/new".parse().unwrap();

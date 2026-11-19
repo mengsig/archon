@@ -863,6 +863,7 @@ fn reserve_one(
         model_segments: Vec::new(),
         infrastructure_failure: false,
         host_context: Default::default(),
+        record_repair: Some(plan.record_repair),
         choice: plan.choice.clone(),
         aether_agent: None,
         aether_task: None,

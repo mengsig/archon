@@ -12,7 +12,8 @@ use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, StageRunId};
 use archon_core::model::{ModelChoice, ModelPlan};
 use archon_core::run::{
-    GateDecision, GateSubject, PipelineRun, RunState, StageOutcome, StageRun, StageState,
+    GateDecision, GateSubject, PipelineRun, RecordRepair, RunState, StageOutcome, StageRun,
+    StageState,
 };
 use archon_core::steer::Then;
 use serde::{Deserialize, Serialize};
@@ -93,6 +94,9 @@ pub struct SpawnPlan {
     /// The stage finishes the build: an item bound to approved intent owes
     /// `requirement_results` in its result ([`crate::acceptance::reports_requirements`]).
     pub reports_requirements: bool,
+    /// Whether the stage's one record repair turn is still to give, which
+    /// the daemon persists on the attempt's stage run.
+    pub record_repair: RecordRepair,
 }
 
 /// A proposal the operator approved in an earlier run of the item, for the
@@ -194,6 +198,8 @@ struct Position {
     entered: BTreeSet<(usize, u32)>,
     /// Gate stages the operator approved, with the operator's note.
     approved: BTreeMap<String, Option<String>>,
+    /// Stages given their record repair turn: at most one each per run.
+    repaired: BTreeSet<usize>,
     /// What the record stage's latest pass left for the delivery.
     record: Option<Recorded>,
     /// Why the record stage's latest pass left nothing to deliver.
@@ -224,6 +230,7 @@ impl Position {
             previous: BTreeMap::new(),
             entered: BTreeSet::new(),
             approved: BTreeMap::new(),
+            repaired: BTreeSet::new(),
             record: None,
             no_change: None,
         };
@@ -547,6 +554,20 @@ impl RunDriver {
     pub fn records_ship(&self, stage_id: &str) -> bool {
         let records = self.spec.ship_record_stage();
         records.is_some_and(|stage| stage.id == stage_id)
+    }
+
+    /// Whether stage `stage_id` owes a record and its reply states a failure
+    /// or has no `structured`: the gate then decides the reply as sent.
+    pub fn decides_as_sent(
+        &self,
+        stage_id: &str,
+        summary: &str,
+        structured: Option<&serde_json::Value>,
+    ) -> bool {
+        let Some(stage) = self.spec.stage(stage_id) else {
+            return false;
+        };
+        gate::decided_as_sent(self.spec.owed(stage), summary, structured)
     }
 
     /// How many independent reviewers stage `stage_id` owes this run as the
@@ -965,6 +986,22 @@ impl RunDriver {
         let owed = self.spec.owed(stage);
         let (headline, report) = match gate::evaluate(stage, at.attempt, members, owed) {
             GroupResult::Fail { headline, report } => (headline, report),
+            // Keyed on the marker its stage run was created with, so a
+            // replay decides a persisted broken record as it was decided.
+            GroupResult::Unrecorded { headline, report } => match members[0].record_repair {
+                Some(RecordRepair::Open) => {
+                    at.repaired.insert(at.stage);
+                    let feedback = sections::record_repair(stage, at.attempt, owed, &report);
+                    at.enter(at.stage, &mut counts.entries, feedback);
+                    return None;
+                }
+                // A second broken record: no fix loop can hand it in either.
+                Some(RecordRepair::Spent) => {
+                    return Some(self.stop_failed(at.stage, "", &headline, &report));
+                }
+                // From before repair turns: it failed its stage, as then.
+                None => (headline, report),
+            },
             GroupResult::Defect { headline, report } => {
                 return Some(self.stop_failed(at.stage, "", &headline, &report));
             }
@@ -1313,6 +1350,10 @@ impl RunDriver {
             .then(|| self.plan.reviewer_choices().unwrap_or_default().to_vec());
         let workers = self.spec.worker_policy(stage, &self.plan);
         let reports_requirements = crate::acceptance::reports_requirements(&self.spec, &stage.id);
+        let record_repair = match at.repaired.contains(&at.stage) {
+            true => RecordRepair::Spent,
+            false => RecordRepair::Open,
+        };
         fans.iter()
             .map(|&fan| {
                 assert!(fan < stage.fan_out, "slot {fan} outside fan_out");
@@ -1348,6 +1389,7 @@ impl RunDriver {
                     reviewers: reviewers.clone(),
                     workers: workers.clone(),
                     reports_requirements,
+                    record_repair,
                 })
             })
             .collect()
@@ -1465,6 +1507,7 @@ impl RunDriver {
             previous: BTreeMap::new(),
             entered: BTreeSet::new(),
             approved: BTreeMap::new(),
+            repaired: BTreeSet::new(),
             record: None,
             no_change: None,
         };

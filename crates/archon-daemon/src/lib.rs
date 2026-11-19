@@ -464,6 +464,7 @@ fn spawn_workers(
         "mergeability waits",
         executor::coordination::watch_mergeability
     );
+    worker!("quota waits", executor::quota_wait::watch);
     worker!("trigger delivery", triggers::deliver_loop);
     worker!("store pruning", prune::run);
     worker!("wal checkpoints", readers::checkpoint);
@@ -483,7 +484,7 @@ fn spawn_workers(
     }
     assert_eq!(
         workers.len(),
-        22 + usize::from(auto_gc) + usize::from(verifies),
+        23 + usize::from(auto_gc) + usize::from(verifies),
         "every daemon worker is supervised"
     );
 }

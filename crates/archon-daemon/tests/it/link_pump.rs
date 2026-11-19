@@ -14,6 +14,7 @@ use archon_aether::fake::{self, Scripted};
 use archon_core::aether_ids::AetherTaskId;
 use archon_core::autonomy::{Directive, DirectiveSource};
 use archon_core::config::Config;
+use archon_core::cost::{CostGroup, CostQuery, CostSplit};
 use archon_core::error::ArchonError;
 use archon_core::id::{FeedItemId, QueueItemId, RepoId};
 use archon_core::model::{Effort, ModelRef};
@@ -789,6 +790,78 @@ async fn a_replaced_orchestrators_late_children_and_spend_are_still_archons() {
 
 fn deny_model(config: &mut Config) {
     config.models.deny = vec![ModelRef::new(DENIED.0, DENIED.1)];
+}
+
+async fn book_orchestrator_spend(harness: &Harness) {
+    let (agents, pump) = running_pump(harness).await;
+    agents.set_effort(CHILD, "low");
+    agents.set(GRANDCHILD, "running");
+    let fleet = keys::CURSOR_FLEET;
+    for (child, parent, cost) in [(CHILD, ORCH, 0.5), (GRANDCHILD, CHILD, 0.125)] {
+        push(harness, created(child, parent, ALLOWED), fleet).await;
+        push(harness, usage_of(child, cost), fleet).await;
+    }
+    orch(
+        harness,
+        json!({"type": "agent.usage_updated", "total": {"cost_usd": 0.25}}),
+    )
+    .await;
+    pump.abort();
+}
+
+#[tokio::test]
+async fn cost_reports_split_orchestrator_spend_from_its_helpers() {
+    let harness = Harness::new().await;
+    book_orchestrator_spend(&harness).await;
+    let effort_rows = [
+        (Some("low"), 0.5),
+        (Some("(orchestrator)"), 0.25),
+        (None, 0.125),
+    ];
+    for by in [CostGroup::Stage, CostGroup::Model, CostGroup::Effort] {
+        let query = CostQuery {
+            by,
+            ..CostQuery::default()
+        };
+        let reply = handlers::handle(
+            &harness.ctx,
+            ClientKind::ArchonMcp,
+            Request::CostReport(query),
+        )
+        .await
+        .unwrap();
+        let Reply::CostReport(report) = reply else {
+            panic!("cost report: {reply:?}");
+        };
+        assert_eq!(report.total.counted_usd, 0.875);
+        assert_eq!(
+            report.split,
+            Some(CostSplit {
+                lead_usd: 0.25,
+                delegated_usd: 0.625
+            })
+        );
+        let rows: Vec<_> = report
+            .rows
+            .iter()
+            .map(|row| (row.key.as_deref(), row.amounts.counted_usd))
+            .collect();
+        match by {
+            CostGroup::Stage => {
+                assert_eq!(rows, [(Some("(orchestrator)"), 0.875)]);
+                assert_eq!(report.rows[0].split, report.split);
+            }
+            CostGroup::Model => assert_eq!(
+                rows,
+                [
+                    (Some("claude-code/claude-opus-5-5"), 0.625),
+                    (Some("(orchestrator)"), 0.25)
+                ]
+            ),
+            CostGroup::Effort => assert_eq!(rows, effort_rows),
+            _ => unreachable!("only stage, model and effort are tested"),
+        }
+    }
 }
 
 #[tokio::test]

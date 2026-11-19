@@ -281,25 +281,30 @@ impl ModelCatalog {
         })
     }
 
-    /// [`Self::candidates`] for tier picks under `policy`: a superseded model
-    /// stays one while no listed successor is permitted to replace it.
+    /// Models that can serve a pick of `requested` on `provider` under
+    /// `policy`: a superseded one stays while its successor cannot serve it.
     pub fn tier_candidates<'a, 'p>(
         &'a self,
+        requested: Tier,
+        provider: Option<&'p str>,
         policy: &'p ModelPolicy,
     ) -> impl Iterator<Item = &'a CatalogModel> + use<'a, 'p> {
+        let serves = move |m: &CatalogModel| {
+            !self.is_retired(&m.model)
+                && m.tier.is_some_and(|t| t <= requested)
+                && provider.is_none_or(|p| m.model.provider == p)
+                && policy.permits_model(&m.model)
+        };
         self.models.iter().filter(move |entry| {
-            let replaced = self
-                .superseded_by(&entry.model)
-                .is_some_and(|successor| self.replaces(successor, policy));
-            !self.is_retired(&entry.model) && !replaced
+            let replaced = self.superseded_by(&entry.model).is_some_and(|successor| {
+                let canonical = self.canonical_alias(successor);
+                self.models
+                    .iter()
+                    .find(|m| &m.model == canonical)
+                    .is_some_and(serves)
+            });
+            serves(entry) && !replaced
         })
-    }
-
-    /// Whether `successor` is listed, not retired and permitted by `policy`.
-    fn replaces(&self, successor: &ModelRef, policy: &ModelPolicy) -> bool {
-        let canonical = self.canonical_alias(successor);
-        let listed = self.models.iter().any(|m| &m.model == canonical);
-        listed && !self.is_retired(canonical) && policy.permits_model(canonical)
     }
 
     pub fn tier_of(&self, model: &ModelRef) -> Option<Tier> {
@@ -321,12 +326,8 @@ impl ModelCatalog {
         prefer: Option<&str>,
         policy: &ModelPolicy,
     ) -> Result<(ModelRef, TierChoice), ArchonError> {
-        let usable = |m: &&CatalogModel| {
-            m.tier.is_some_and(|t| t <= requested)
-                && provider.is_none_or(|p| m.model.provider == p)
-                && policy.permits_model(&m.model)
-        };
-        let candidates: Vec<&CatalogModel> = self.tier_candidates(policy).filter(usable).collect();
+        let candidates: Vec<&CatalogModel> =
+            self.tier_candidates(requested, provider, policy).collect();
         let on = |p: &str| candidates.iter().any(|m| m.model.provider == p);
         let chosen_provider = match prefer.filter(|p| on(p)) {
             Some(p) => Some(p),
@@ -366,10 +367,7 @@ impl ModelCatalog {
         policy: &ModelPolicy,
     ) -> ArchonError {
         let mut tiers: BTreeMap<&str, BTreeSet<Tier>> = BTreeMap::new();
-        for m in self
-            .tier_candidates(policy)
-            .filter(|m| policy.permits_model(&m.model))
-        {
+        for m in self.tier_candidates(Tier::Frontier, None, policy) {
             if let Some(tier) = m.tier {
                 tiers.entry(&m.model.provider).or_default().insert(tier);
             }
@@ -592,6 +590,33 @@ mod tests {
             "p/new",
             "a permitted successor replaces it"
         );
+    }
+
+    #[test]
+    fn a_successor_above_the_requested_tier_does_not_replace_a_superseded_model() {
+        let mut catalog = ModelCatalog::new(vec![
+            entry("claude-code/sonnet", Some(Tier::Strong)),
+            entry("claude-code/opus", Some(Tier::Frontier)),
+        ]);
+        catalog.add_superseded(
+            "claude-code/sonnet".parse().unwrap(),
+            "claude-code/opus".parse().unwrap(),
+        );
+        let (model, tier) = catalog
+            .resolve(Tier::Strong, Some("claude-code"), None, &open())
+            .unwrap();
+        assert_eq!(
+            (model.to_string(), tier.resolved),
+            ("claude-code/sonnet".into(), Tier::Strong)
+        );
+        assert_eq!(
+            catalog.best_tiers(Tier::Strong, &open()).get("claude-code"),
+            Some(&Tier::Strong)
+        );
+        let (model, _) = catalog
+            .resolve(Tier::Frontier, Some("claude-code"), None, &open())
+            .unwrap();
+        assert_eq!(model.to_string(), "claude-code/opus", "it serves frontier");
     }
 
     #[test]

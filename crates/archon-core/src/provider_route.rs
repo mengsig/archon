@@ -1,7 +1,7 @@
 //! Provider weights for tier-only choices: each item holds one provider,
 //! picked by weight × quota headroom, until a floor or its quota rules it out.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Timestamp;
 use crate::model_tier::{ModelCatalog, Tier};
@@ -115,14 +115,19 @@ fn best<'a>(scored: &[(&'a str, f64)]) -> &'a str {
 impl ModelCatalog {
     /// Each provider's best allowed tier at or below `requested`.
     pub fn best_tiers(&self, requested: Tier, policy: &ModelPolicy) -> BTreeMap<&str, Tier> {
+        let providers: BTreeSet<&str> = self
+            .models()
+            .iter()
+            .map(|m| m.model.provider.as_str())
+            .collect();
         let mut best = BTreeMap::new();
-        for m in self.tier_candidates(policy) {
-            let Some(tier) = m.tier.filter(|t| *t <= requested) else {
-                continue;
-            };
-            if policy.permits_model(&m.model) {
-                let held = best.entry(m.model.provider.as_str()).or_insert(tier);
-                *held = (*held).max(tier);
+        for provider in providers {
+            let top = self
+                .tier_candidates(requested, Some(provider), policy)
+                .filter_map(|m| m.tier)
+                .max();
+            if let Some(tier) = top {
+                best.insert(provider, tier);
             }
         }
         debug_assert!(best.values().all(|t| *t <= requested));

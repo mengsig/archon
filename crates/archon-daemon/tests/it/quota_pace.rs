@@ -47,11 +47,20 @@ async fn warnings(h: &Harness) -> Vec<String> {
         .collect()
 }
 
-async fn pace_news(h: &Harness) -> Vec<(String, String, u8)> {
+/// Each held `quota_pace`: provider, window, used %, and the providers it shows.
+async fn pace_news(h: &Harness) -> Vec<(String, String, u8, Vec<String>)> {
     let held = triggers::held(&h.ctx).await.expect("held news");
     let news = held.into_iter().filter_map(|event| match event {
-        TriggerEvent::QuotaPace { provider, pace, .. } => {
-            Some((provider, pace.window, pace.used_percent))
+        TriggerEvent::QuotaPace {
+            provider,
+            pace,
+            providers,
+            ..
+        } => {
+            // A window just opened has no rate yet; one under way runs out before it resets.
+            assert!(pace.short && pace.empty_at.is_none_or(|at| at < pace.resets_at));
+            let shown = providers.into_keys().collect();
+            Some((provider, pace.window, pace.used_percent, shown))
         }
         _ => None,
     });
@@ -60,7 +69,7 @@ async fn pace_news(h: &Harness) -> Vec<(String, String, u8)> {
 
 #[tokio::test]
 async fn a_short_window_warns_once_per_window_and_shows_in_status() {
-    let h = Harness::with_config(Config::default()).await;
+    let mut h = Harness::with_config(Config::default()).await;
     // Codex: 78% used two days into seven; Claude: 20% used five days in.
     let codex = || week(22, TimeDelta::days(5), false);
     let claude = week(80, TimeDelta::days(2), false);
@@ -79,7 +88,12 @@ async fn a_short_window_warns_once_per_window_and_shows_in_status() {
     assert!(told[0].contains("before it resets at"), "{told:?}");
     assert_eq!(
         pace_news(&h).await,
-        [("codex".to_owned(), "7d".to_owned(), 78)]
+        [(
+            "codex".to_owned(),
+            "7d".to_owned(),
+            78,
+            vec!["claude-code".to_owned(), "codex".to_owned()]
+        )]
     );
 
     let status = match h.cli(Request::Status(Default::default())).await {
@@ -92,11 +106,27 @@ async fn a_short_window_warns_once_per_window_and_shows_in_status() {
         provider.describe()
     };
     assert!(
-        line("codex").contains("; pace 7d used 78% at 29% elapsed, runs out ~"),
+        line("codex").contains("; pace 7d used 78% at 29% elapsed, empty ~"),
         "{}",
         line("codex")
     );
-    assert!(line("claude-code").ends_with("; pace 7d used 20% at 71% elapsed"));
+    assert!(
+        line("codex").contains(", before its reset "),
+        "{}",
+        line("codex")
+    );
+    let claude = line("claude-code");
+    assert!(
+        claude.contains("; pace 7d used 20% at 71% elapsed, empty ~"),
+        "{claude}"
+    );
+    assert!(claude.contains(", resets "), "{claude}");
+
+    // The receipt outlives a restart.
+    h.restart();
+    read(&h, TimeDelta::zero(), vec![("codex", codex())]);
+    h.dispatch().await;
+    assert_eq!(warnings(&h).await.len(), 1, "a restart does not warn again");
 
     // A later reading of the same window, its reset a few seconds off, says nothing new.
     read(
@@ -132,6 +162,28 @@ async fn a_short_window_warns_once_per_window_and_shows_in_status() {
 }
 
 #[tokio::test]
+async fn the_configured_margin_decides_what_is_short() {
+    let mut config = Config::default();
+    config.models.pacing_margin_percent = Some(50);
+    let h = Harness::with_config(config).await;
+    // 78% used at 29% elapsed is 49 points ahead: within a 50-point margin.
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![("codex", week(22, TimeDelta::days(5), false))],
+    );
+    h.dispatch().await;
+    assert!(warnings(&h).await.is_empty());
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![("codex", week(20, TimeDelta::days(5), false))],
+    );
+    h.dispatch().await;
+    assert_eq!(warnings(&h).await.len(), 1, "80% used is 51 points ahead");
+}
+
+#[tokio::test]
 async fn stale_old_or_partial_readings_never_warn() {
     let h = Harness::with_config(Config::default()).await;
     read(
@@ -147,11 +199,17 @@ async fn stale_old_or_partial_readings_never_warn() {
         vec![("codex", week(5, TimeDelta::days(5), false))],
     );
     h.dispatch().await;
+    // A reply received just now that carries an 11-minute-old observation.
+    let mut old = week(5, TimeDelta::days(5), false);
+    old.age_seconds = Some(660);
+    read(&h, TimeDelta::zero(), vec![("codex", old)]);
+    h.dispatch().await;
     // Aether 1.4.1 may report a window without its length or reset.
     let mut partial = week(5, TimeDelta::days(5), false);
     partial.windows[0].window_minutes = None;
     let mut no_reset = week(5, TimeDelta::days(5), false);
     no_reset.windows[0].resets_at = None;
+    no_reset.windows[0].resets_in_seconds = Some(5 * 24 * 3600);
     read(
         &h,
         TimeDelta::zero(),

@@ -1250,7 +1250,7 @@ pub(crate) mod tests {
             short: true,
         }];
         let text = status(&up, &RepoNames::new(), false);
-        let pace = "; pace 7d used 70% at 30% elapsed, runs out ~2026-10-14 06:00 UTC, \
+        let pace = "; pace 7d used 70% at 30% elapsed, empty ~2026-10-14 06:00 UTC, \
                     before its reset 2026-10-16 18:30 UTC\n";
         assert!(text.contains(pace), "{text}");
     }

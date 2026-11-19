@@ -1,7 +1,7 @@
 # Quota pace
 
 Archon reads each provider's quota windows from Aether (at most every 30
-seconds) and compares, for every window, how much of the quota is spent with
+seconds, beside dispatch, so no dispatch pass waits for it) and compares, for every window, how much of the quota is spent with
 how much of the window's time has passed:
 
 - used `u = 100 − remaining_percent`;
@@ -21,17 +21,23 @@ projected empty time and the reset time. The orchestrator then chooses what
 to run: fewer items at once, lower efforts, or another provider. The same
 window is not told again. The next one is told again if it also runs short.
 
+The trigger also carries every provider's window pace at that moment, so
+the orchestrator can choose between providers.
+
 `archon status` and `queue_status` show each window's pace after its
 remaining percent, for example
-`pace 7d used 78% at 29% elapsed, runs out ~2026-11-21 04:00 UTC, before its reset 2026-11-24 12:00 UTC`.
+`pace 7d used 78% at 29% elapsed, empty ~2026-11-21 04:00 UTC, before its reset 2026-11-24 12:00 UTC`
+for a short window, or `5h used 20% at 60% elapsed, empty ~… , resets …`
+for one on pace (`no rate yet` while nothing is spent).
 
 ## When there is no pace
 
 A window has no pace, and is never warned of, when:
 
-- Aether's report is stale, or Archon's reading is over 10 minutes old;
-- the window does not give its length or its reset (Aether 1.4.1 may leave
-  either out);
+- Aether's report is stale, its usage observation is over 10 minutes old,
+  or Archon's reading is;
+- the window does not give its length or its absolute reset time (Aether
+  1.4.1 may leave either out; a countdown alone is not enough);
 - the window has already reset.
 
 ## Configuration

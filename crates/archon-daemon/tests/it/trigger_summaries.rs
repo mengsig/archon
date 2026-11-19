@@ -143,7 +143,7 @@ fn all_other_event_types_have_human_labels() {
         (
             json!({"type": "quota_pace", "provider": "codex", "window": "7d", "window_minutes": 10080,
                    "used_percent": 78, "elapsed_percent": 30, "resets_at": "2026-11-26T00:00:00Z",
-                   "empty_at": null, "short": true, "note": "choose"}),
+                   "empty_at": null, "short": true, "note": "choose", "providers": {}}),
             "quota pace: codex 7d 78% used at 30% elapsed".into(),
         ),
         (

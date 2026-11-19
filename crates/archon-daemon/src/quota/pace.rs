@@ -6,8 +6,10 @@ use std::collections::BTreeMap;
 
 use archon_core::Timestamp;
 use archon_core::error::ArchonError;
-use archon_core::notify::NotificationKind;
+use archon_core::id::NotificationId;
+use archon_core::notify::{Notification, NotificationKind};
 use archon_core::quota::pace::WindowPace;
+use archon_queue::Store;
 use chrono::TimeDelta;
 
 use crate::context::DaemonContext;
@@ -17,72 +19,85 @@ use crate::triggers::{self, TriggerEvent};
 const WARNED_KEY: &str = "quota_pace_warned";
 
 /// Tell both, once per provider window, of each short window the last
-/// trusted reading shows.
+/// trusted reading shows. Each warning, its feed notice and its receipt
+/// commit together, so a crash loses none and repeats none.
 pub(crate) async fn warn_short(ctx: &DaemonContext) -> Result<(), ArchonError> {
-    let short: Vec<(String, WindowPace)> = (super::paces(ctx).into_iter())
-        .flat_map(|(provider, paces)| {
-            (paces.into_iter().filter(|pace| pace.short)).map(move |pace| (provider.clone(), pace))
-        })
+    let paces = super::paces(ctx);
+    let short: Vec<(&String, &WindowPace)> = (paces.iter())
+        .flat_map(|(provider, windows)| windows.iter().map(move |pace| (provider, pace)))
+        .filter(|(_, pace)| pace.short)
         .collect();
     if short.is_empty() {
         return Ok(());
     }
-    for (provider, pace) in claim(ctx, short).await? {
-        let text = warning_text(&provider, &pace);
-        crate::executor::notify(ctx, NotificationKind::Decision, &text, None, None).await?;
-        let note = format!(
-            "At this rate {provider} runs out before its reset. Archon throttles nothing: \
-             choose what runs there (fewer items at once, lower efforts, another provider) \
-             and tell the operator."
-        );
-        let event = TriggerEvent::QuotaPace {
-            provider,
-            pace,
-            note,
-        };
-        triggers::push(ctx, event).await?;
+    let mut told = Vec::new();
+    {
+        let mut store = ctx.store.lock().await;
+        let mut warned = read_warned(&store)?;
+        for (provider, pace) in short {
+            if !is_new_window(warned.get(&key(provider, pace)), pace) {
+                continue;
+            }
+            warned.insert(key(provider, pace), pace.resets_at);
+            told.push(record(&mut store, provider, pace, &paces, &warned)?);
+        }
     }
+    if told.is_empty() {
+        return Ok(());
+    }
+    crate::feed::publish(ctx, told);
+    triggers::wake(ctx);
     Ok(())
 }
 
-/// The windows of `short` not yet warned of in their current window, now
-/// recorded as warned.
-async fn claim(
-    ctx: &DaemonContext,
-    short: Vec<(String, WindowPace)>,
-) -> Result<Vec<(String, WindowPace)>, ArchonError> {
-    assert!(
-        short
-            .iter()
-            .all(|(provider, pace)| !provider.is_empty() && pace.short)
-    );
-    let mut store = ctx.store.lock().await;
+/// The warned record; an unreadable one only costs a repeated warning.
+fn read_warned(store: &Store) -> Result<BTreeMap<String, Timestamp>, ArchonError> {
     let raw = store.kv_get(WARNED_KEY)?.unwrap_or_default();
-    // An unreadable record only costs a repeated warning, never dispatch.
-    let mut warned: BTreeMap<String, Timestamp> = match serde_json::from_str(&raw) {
-        Ok(warned) => warned,
-        Err(_) if raw.is_empty() => BTreeMap::new(),
+    match serde_json::from_str(&raw) {
+        Ok(warned) => Ok(warned),
+        Err(_) if raw.is_empty() => Ok(BTreeMap::new()),
         Err(error) => {
             tracing::warn!(%error, "kv {WARNED_KEY} is unreadable; warning afresh");
-            BTreeMap::new()
+            Ok(BTreeMap::new())
         }
-    };
-    let fresh: Vec<(String, WindowPace)> = (short.into_iter())
-        .filter(|(provider, pace)| is_new_window(warned.get(&key(provider, pace)), pace))
-        .collect();
-    if fresh.is_empty() {
-        return Ok(fresh);
     }
-    for (provider, pace) in &fresh {
-        warned.insert(key(provider, pace), pace.resets_at);
-    }
-    store.kv_set(WARNED_KEY, &serde_json::to_string(&warned)?)?;
-    debug_assert!(
-        fresh
-            .iter()
-            .all(|(p, pace)| warned.get(&key(p, pace)) == Some(&pace.resets_at))
+}
+
+/// Hold one window's warning for both audiences with `warned` as its receipt.
+fn record(
+    store: &mut Store,
+    provider: &str,
+    pace: &WindowPace,
+    paces: &BTreeMap<String, Vec<WindowPace>>,
+    warned: &BTreeMap<String, Timestamp>,
+) -> Result<archon_core::notify::FeedItem, ArchonError> {
+    assert!(pace.short, "only a short window is warned of");
+    assert_eq!(
+        warned.get(&key(provider, pace)),
+        Some(&pace.resets_at),
+        "receipt first"
     );
-    Ok(fresh)
+    let notice = Notification {
+        id: NotificationId::new(),
+        kind: NotificationKind::Decision,
+        text: warning_text(provider, pace),
+        item: None,
+        run: None,
+        at: archon_core::now(),
+    };
+    let note = format!(
+        "At this rate {provider} runs out before its reset. Archon throttles nothing: \
+         choose what runs there (fewer items at once, lower efforts, another provider) \
+         and tell the operator."
+    );
+    let event = TriggerEvent::QuotaPace {
+        provider: provider.to_owned(),
+        pace: pace.clone(),
+        note,
+        providers: paces.clone(),
+    };
+    let receipt = serde_json::to_string(warned)?;
+    triggers::record_quota_pace(store, event, notice, (WARNED_KEY, &receipt))
 }
 
 fn key(provider: &str, pace: &WindowPace) -> String {

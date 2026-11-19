@@ -227,6 +227,9 @@ pub enum TriggerEvent {
         pace: archon_core::quota::pace::WindowPace,
         /// What the orchestrator may do about it.
         note: String,
+        /// Every provider's window pace at the time, to choose by.
+        #[serde(default)]
+        providers: BTreeMap<String, Vec<archon_core::quota::pace::WindowPace>>,
     },
     /// A watched repository's open pull requests changed (A18). News only:
     /// `operator` is always false, and `trust` says why.
@@ -717,6 +720,33 @@ pub(crate) fn record_cap(
     }
     let raw = serde_json::to_string(&outbox)?;
     store.append_feed_with_kv(entry, at, &[(key, &raw_cap), (OUTBOX_KEY, &raw)])
+}
+
+/// Hold a `quota_pace` warning for the orchestrator with the operator's
+/// `notice` and the `receipt` that it was told, in one store write.
+pub(crate) fn record_quota_pace(
+    store: &mut Store,
+    event: TriggerEvent,
+    notice: archon_core::notify::Notification,
+    receipt: (&str, &str),
+) -> Result<archon_core::notify::FeedItem, ArchonError> {
+    assert!(
+        matches!(event, TriggerEvent::QuotaPace { .. }),
+        "only a pace warning"
+    );
+    assert!(
+        !receipt.0.is_empty() && receipt.0 != OUTBOX_KEY,
+        "a receipt has its own key"
+    );
+    let at = notice.at;
+    let mut outbox = read_outbox(store)?;
+    outbox.pending.push(Held::new(event, at, false));
+    if outbox.pending.len() > MAX_PENDING {
+        compact_pending(store, &mut outbox)?;
+    }
+    let raw = serde_json::to_string(&outbox)?;
+    let entry = archon_core::notify::FeedEntry::Notification(notice);
+    store.append_feed_with_kv(entry, at, &[receipt, (OUTBOX_KEY, &raw)])
 }
 
 pub(crate) fn wake(ctx: &DaemonContext) {

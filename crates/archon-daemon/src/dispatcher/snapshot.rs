@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 
 use archon_core::catalog::StageKind;
+use archon_core::config::Config;
 use archon_core::error::ArchonError;
 use archon_core::id::{QueueItemId, RepoId};
 use archon_core::model_tier::ModelCatalog;
@@ -316,6 +317,14 @@ impl Envs {
                 (1, false)
             }
         }
+    }
+
+    /// Whether provider weights route any item this pass reads, so its
+    /// routing wants a quota reading.
+    pub(super) fn weighted(&self, config: &Config) -> bool {
+        let none = Default::default();
+        config.models.provider_weights(&none).is_some()
+            || (self.configs.values().flatten()).any(|env| env.provider_weights(config).is_some())
     }
 
     /// `max_per_repo` from each repository's config (0 = no override).

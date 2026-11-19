@@ -75,6 +75,7 @@ pub async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
     assert!(!tick.is_zero(), "config validation refuses tick_secs = 0");
     loop {
         if ctx.aether.is_connected() {
+            crate::quota::refresh_in_background(&ctx);
             let pass =
                 crate::executor::coordination::guarded("a dispatch pass", dispatch_once(&ctx));
             match pass.await {
@@ -106,6 +107,7 @@ pub async fn dispatch_once(ctx: &DaemonContext) -> Result<DispatchPlan, ArchonEr
         &mut first_error,
         crate::clarifications::expire(ctx, archon_core::now()).await,
     )?;
+    keep_error(&mut first_error, crate::quota::warn_short(ctx).await)?;
     disk_hold::check(ctx).await?;
     if crate::gc::before_dispatch(ctx).await? {
         disk_hold::check(ctx).await?;
@@ -176,10 +178,11 @@ struct Admission {
 async fn admit(ctx: &DaemonContext) -> Result<Admission, ArchonError> {
     let caps = resolve::caps(ctx).await;
     let envs = snapshot::Envs::prefetch(ctx, ReadOn::Writer).await?;
-    if let Err(error) = crate::quota::refresh(ctx).await {
+    if envs.weighted(&ctx.config)
+        && let Err(error) = crate::quota::refresh(ctx).await
+    {
         tracing::warn!(%error, "provider quota refresh failed; using the last reading");
     }
-    crate::quota::warn_short(ctx).await?;
     ctx.host.check(ctx.config.limits.host_limits());
     let mut table = ctx.runs.lock().await;
     let snapshot = snapshot::build(ctx, ReadOn::Writer, &table, caps.clone(), envs).await?;

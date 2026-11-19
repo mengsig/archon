@@ -11,6 +11,8 @@ pub(crate) use pace::warn_short;
 pub(crate) use reroute::{Reserve, note_waits, record_moves, reroute_spawns, switch_note};
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use archon_core::Timestamp;
 use archon_core::error::ArchonError;
@@ -39,6 +41,10 @@ pub struct Reading {
 #[derive(Debug, Default)]
 pub struct QuotaCache {
     reading: std::sync::Mutex<Option<Reading>>,
+    /// When archond last asked Aether, answered or not.
+    asked_at: std::sync::Mutex<Option<Timestamp>>,
+    /// A background refresh is running.
+    in_flight: AtomicBool,
 }
 
 impl QuotaCache {
@@ -60,6 +66,26 @@ impl QuotaCache {
         );
         *self.lock() = Some(reading);
     }
+
+    /// Record an ask at `now` unless one was made within [`REFRESH_EVERY`];
+    /// whether this caller may ask.
+    fn claim_ask(&self, now: Timestamp) -> bool {
+        let mut asked = (self.asked_at.lock()).unwrap_or_else(std::sync::PoisonError::into_inner);
+        if asked.is_some_and(|at| now - at < REFRESH_EVERY && now >= at) {
+            return false;
+        }
+        *asked = Some(now);
+        true
+    }
+}
+
+/// Clears [`QuotaCache::in_flight`] however the refresh ends.
+struct InFlight<'a>(&'a AtomicBool);
+
+impl Drop for InFlight<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 /// Ask Aether for its providers' usage unless the last reading is recent.
@@ -70,7 +96,7 @@ pub(crate) async fn refresh(ctx: &DaemonContext) -> Result<(), ArchonError> {
         .quota
         .reading()
         .is_some_and(|r| now - r.read_at < REFRESH_EVERY);
-    if recent || !ctx.aether.is_connected() {
+    if recent || !ctx.aether.is_connected() || !ctx.quota.claim_ask(now) {
         return Ok(());
     }
     let providers = ctx.aether.client()?.providers().await?;
@@ -96,6 +122,21 @@ fn trusted(ctx: &DaemonContext) -> Option<(Reading, Timestamp)> {
     }
     debug_assert!(now >= reading.read_at);
     Some((reading, now))
+}
+
+/// [`refresh`] in a task of its own, one at a time, so pace stays current
+/// without provider weights and no dispatch pass waits on Aether for it.
+pub(crate) fn refresh_in_background(ctx: &Arc<DaemonContext>) {
+    if ctx.quota.in_flight.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let ctx = Arc::clone(ctx);
+    tokio::spawn(async move {
+        let _done = InFlight(&ctx.quota.in_flight);
+        if let Err(error) = refresh(&ctx).await {
+            tracing::warn!(%error, "provider quota refresh failed; using the last reading");
+        }
+    });
 }
 
 /// The headroom routing uses now, with the configured reserves; `None`

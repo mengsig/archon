@@ -173,6 +173,7 @@ pub(crate) fn reshape(
         policy: &policy,
         max_tier: env.max_default_tier(&ctx.config),
         fill: knobs::EffortFill::of(&ctx.config, &policy),
+        config: &ctx.config,
     };
     let plan = projected_plan(&learning, spec, &reshaped, item)?;
     policy.check_plan(&plan)?;
@@ -246,6 +247,7 @@ struct Learning<'a> {
     max_tier: archon_core::model_tier::Tier,
     /// The effort a stage the plan leaves out takes from the choice it borrows.
     fill: knobs::EffortFill,
+    config: &'a archon_core::config::Config,
 }
 
 /// `item`'s plan for the stages of `new`: the choices of the stages it keeps,
@@ -275,6 +277,7 @@ fn projected_plan(
         policy,
         max_tier,
         fill,
+        config,
     } = *learning;
     let bounds = (policy, max_tier);
     knobs::fill_plan(
@@ -285,7 +288,8 @@ fn projected_plan(
         bounds,
         (fallback.as_ref(), fill),
     )?;
-    let filled = kept.finish();
+    let size = crate::learned::item_size(store, &item.id)?;
+    let filled = crate::sizing::finish((config, policy), new, size, kept);
     let unfilled = new.file.stages.iter();
     if let Some(stage) = unfilled
         .into_iter()

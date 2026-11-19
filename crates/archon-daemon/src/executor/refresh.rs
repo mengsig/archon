@@ -259,7 +259,8 @@ fn refresh_owner(
     writer.filled(tiered, (PlanSource::Tier, PlanSource::Fallback));
     let fallen = knobs::fill_static_stages(&base, &spec, writer.plan().clone(), fallback)?;
     writer.filled(fallen, (PlanSource::Fallback, PlanSource::Fallback));
-    item.model_plan = writer.finish();
+    // No diff size: a refresh is sized from what it records itself.
+    item.model_plan = crate::sizing::finish((&ctx.config, &policy), &spec, None, writer);
     item.model_reasons = asked.model_reasons;
     item.stage_timeouts = refresh_timeouts(&ctx.config.limits, &spec, asked.stage_timeouts);
     for stage in &spec.file.stages {
@@ -816,6 +817,7 @@ mod tests {
             state: archon_core::run::StageState::Completed,
             verdict: None,
             verdict_note: None,
+            sizing: Default::default(),
             summary: None,
             structured: Some(serde_json::json!({"commit": commit, "tree": "b".repeat(40),
                 "pr": {"title": "t", "body": "b"},

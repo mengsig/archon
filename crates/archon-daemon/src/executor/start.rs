@@ -150,6 +150,7 @@ async fn prepare(
     )?;
     knobs::check_ceiling(&policy, &env, &base, checked)?;
     let item = &tiers_at_dispatch(ctx, &env, item, &current).await?;
+    let item = &sized_within_policy(ctx, &env, item).await?;
     let item = &without_retired_ship(item, &current);
     let spec = Arc::new(frozen::freeze(&ctx.paths.data_dir, &run_id, &current).await?);
     crate::learned::freeze_context(ctx, &run_id, item, &spec).await?;
@@ -254,6 +255,31 @@ async fn tiers_at_dispatch(
         provider_switch: stored.provider_switch,
         ..item.clone()
     })
+}
+
+/// `item` with every effort the daemon sized held to the policy's cap as it
+/// is now, stored with the reason so a recovered run reads the same plan. A
+/// pinned effort over the cap is left for the policy check to refuse.
+async fn sized_within_policy(
+    ctx: &DaemonContext,
+    env: &RepoEnv,
+    item: &QueueItem,
+) -> Result<QueueItem, ArchonError> {
+    let policy = env.policy(&ctx.config);
+    let mut clipped = item.clone();
+    if !crate::sizing::clip_to_policy(&policy, &mut clipped) {
+        return Ok(clipped);
+    }
+    let mut store = ctx.store.lock().await;
+    let mut stored = store.item(&item.id)?;
+    assert_eq!(stored.id, item.id, "the dispatched item's own record");
+    if crate::sizing::clip_to_policy(&policy, &mut stored) {
+        tracing::info!(item = %item.id, cap = ?policy.max_effort, "clipped sized efforts to the policy cap at dispatch");
+        stored.updated_at = archon_core::now();
+        store.update_item(&stored)?;
+    }
+    clipped.model_plan = stored.model_plan;
+    Ok(clipped)
 }
 
 /// `item` as its run reads it: a 1.0 item queued for a built-in keeps no

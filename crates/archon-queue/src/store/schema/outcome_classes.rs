@@ -74,6 +74,7 @@ pub(super) fn stage(
         aether_task: None,
         verdict: None,
         verdict_note: None,
+        sizing: Default::default(),
         summary: None,
         structured: None,
         state,

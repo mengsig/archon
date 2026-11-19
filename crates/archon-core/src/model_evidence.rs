@@ -8,9 +8,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::ArchonError;
 use crate::cost::{CostQuery, DayBound, DayRange};
+use crate::effort_sizing::RiskClass;
 use crate::id::RepoId;
 use crate::model::{Effort, ModelChoice};
 use crate::model_tier::Tier;
+use crate::plan_origin::PlanSource;
 use crate::protocol::RepoRef;
 
 pub const DEFAULT_DAYS: u32 = 30;
@@ -73,6 +75,23 @@ pub struct TierEvidenceRow {
     pub disputed: usize,
 }
 
+/// The attempts whose effort the sizer decided or advised, pooled by the
+/// item's risk class and where the effort came from. For display only:
+/// no route and no later sizing reads it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SizingEvidenceRow {
+    pub risk_class: RiskClass,
+    pub effort_source: PlanSource,
+    pub attempts: usize,
+    pub completed: usize,
+    pub median_cost_usd: Option<f64>,
+    pub p90_cost_usd: Option<f64>,
+    pub median_minutes: Option<f64>,
+    pub verdicts: usize,
+    pub passed: usize,
+    pub disputed: usize,
+}
+
 /// One provider's attempts and completed cost: the split provider weights
 /// achieved over the range.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -95,6 +114,10 @@ pub struct ModelEvidenceReport {
     /// By provider, most attempts first.
     #[serde(default)]
     pub providers: Vec<ProviderEvidenceRow>,
+    /// By (risk class, effort source), lowest class first; attempts with no
+    /// sizing record are left out. Advisory display only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sizing: Vec<SizingEvidenceRow>,
     #[serde(default)]
     pub pipelines: Vec<crate::lesson::PipelineEvidence>,
     /// Names of the repositories `pipelines` cite, as `cost` names them.
@@ -183,6 +206,7 @@ impl ModelEvidenceReport {
             );
         }
         self.provider_text(&mut text);
+        self.sizing_text(&mut text);
         self.pipeline_text(&mut text);
         text.trim_end().to_owned()
     }
@@ -207,6 +231,21 @@ impl ModelEvidenceReport {
             );
         }
     }
+    fn sizing_text(&self, text: &mut String) {
+        for row in &self.sizing {
+            let measures = measures(
+                row.completed,
+                (row.median_cost_usd, row.p90_cost_usd, row.median_minutes),
+                (row.passed, row.verdicts, row.disputed),
+            );
+            let _ = writeln!(
+                text,
+                "Sized {} by {} n={} {measures}",
+                row.risk_class, row.effort_source, row.attempts,
+            );
+        }
+    }
+
     fn pipeline_text(&self, text: &mut String) {
         for p in &self.pipelines {
             let repo = p.repo.as_ref().map_or("global", |repo| {

@@ -602,6 +602,7 @@ impl Sim {
             state: StageState::Running,
             verdict: None,
             verdict_note: None,
+            sizing: Default::default(),
             summary: None,
             structured: None,
             cost_usd: 0.0,

@@ -143,10 +143,29 @@ pub(super) async fn plan(
     rebudget(&mut change, asked.steer, &at, per_item_cap);
     extend(&mut change, asked.steer, &at)?;
     abort(ctx, asked, &mut change, &at)?;
+    resize(ctx, asked, &mut change, &at);
     let dry = recover::driver_of(ctx, run, change.blueprint.clone()).await;
     dry.map_err(not_runnable)?;
     assert!(!change.what.is_empty(), "a checked steer changes something");
     Ok(change)
+}
+
+/// The steer may have changed what the sizer reads of the item (a note
+/// amends its brief; a removed review changes its level): the stages not
+/// yet started are sized again, the started ones keep the effort they have.
+fn resize(ctx: &DaemonContext, asked: &Asked<'_>, change: &mut Change, at: &At<'_>) {
+    let ran = at.stages.iter().map(|stage| stage.stage_id.as_str());
+    let started: BTreeSet<String> = ran
+        .chain(at.run.state.live_stage())
+        .map(str::to_owned)
+        .collect();
+    assert!(!started.is_empty(), "a steered run is at a stage");
+    let policy = asked.env.policy(&ctx.config);
+    let item = &mut change.blueprint.item;
+    if crate::sizing::resize((&ctx.config, &policy), item, &started) {
+        change.what.push(crate::sizing::RESIZED.to_owned());
+        change.rebuild = true;
+    }
 }
 
 /// The note amends the brief every later prompt reads, and reaches the

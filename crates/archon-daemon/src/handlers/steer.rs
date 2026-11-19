@@ -287,6 +287,11 @@ async fn changed_item(
         asked.env.policy(&ctx.config).check_effort(effort)?;
     }
     what.extend(retune(steer, stages, (&mut item, asked.by))?);
+    // Nothing of a waiting item has started: every sized stage follows its new class.
+    let policy = asked.env.policy(&ctx.config);
+    if crate::sizing::resize((&ctx.config, &policy), &mut item, &Default::default()) {
+        what.push(crate::sizing::RESIZED.to_owned());
+    }
     items::check_plan(ctx, asked.env, stages, &item.model_plan)?;
     assert!(!what.is_empty(), "a checked steer changes something");
     Ok(Changed { item, what, shape })

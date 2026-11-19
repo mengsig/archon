@@ -5,7 +5,7 @@
 mod common;
 
 use archon_core::id::QueueItemId;
-use archon_core::plan_origin::{PlanSource, PlanWriter};
+use archon_core::plan_origin::{PlanSource, PlanWriter, Sizing};
 use archon_core::queue::QueueItem;
 use archon_queue::store::Store;
 use common::{item, repo, t};
@@ -16,7 +16,7 @@ fn planned(repo: &archon_core::repo::Repo, title: &str) -> QueueItem {
     let mut writer = PlanWriter::new(&made.id, t(1));
     let plan = made.model_plan.plan().clone();
     writer.filled(plan, (PlanSource::Fallback, PlanSource::Fallback));
-    made.model_plan = writer.finish();
+    made.model_plan = writer.finish(Sizing::Off { policy_cap: None });
     assert_eq!(made.model_plan.unattributed_fields(&made.id), 0);
     made
 }

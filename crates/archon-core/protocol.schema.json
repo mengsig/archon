@@ -6699,6 +6699,17 @@
           },
           "type": "array"
         },
+        "effort_sizing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanSizing"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The sizing decisions frozen into this plan; absent on a plan no key\nof which was ever sized, which is every plan of 1.6.3."
+        },
         "fresh_retries": {
           "default": 0,
           "description": "Fresh retries so far; each started the item again from the base\nbranch, on a branch of its own (ARCHITECTURE §13).",
@@ -6969,6 +6980,42 @@
         "at",
         "to",
         "by"
+      ],
+      "type": "object"
+    },
+    "KeySizing": {
+      "description": "How one plan key was sized.",
+      "properties": {
+        "cap": {
+          "$ref": "#/$defs/Effort",
+          "description": "The cap in force when the key was sized."
+        },
+        "facts": {
+          "$ref": "#/$defs/StageFacts",
+          "description": "The key's own stage facts, so no later reader borrows another's."
+        },
+        "reasons": {
+          "description": "What the sizer said of each choice, one per choice once sized.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "risk_class": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RiskClass"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The class the key was sized with; `None` until its item's own title,\nbrief, tags and review level decide it, as the item is stored."
+        }
+      },
+      "required": [
+        "facts",
+        "cap"
       ],
       "type": "object"
     },
@@ -8526,6 +8573,13 @@
           },
           "type": "array"
         },
+        "sizing": {
+          "description": "By (risk class, effort source), lowest class first; attempts with no\nsizing record are left out. Advisory display only.",
+          "items": {
+            "$ref": "#/$defs/SizingEvidenceRow"
+          },
+          "type": "array"
+        },
         "tiers": {
           "default": [],
           "description": "By (stage, tier, effort); attempts on a model Aether places in no tier are left out.",
@@ -9791,6 +9845,45 @@
       ],
       "type": "object"
     },
+    "PlanSizing": {
+      "description": "The sizing record of a plan: its item's class when last sized, and every\nkey the sizer decided. A key without an entry was never sized.",
+      "properties": {
+        "keys": {
+          "additionalProperties": {
+            "$ref": "#/$defs/KeySizing"
+          },
+          "type": "object"
+        },
+        "risk_class": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RiskClass"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "risk_signals": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "size": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiffSize"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The diff size known when the plan was first sized. A size learned\nlater never changes it; only a `diff:` tag overrides it."
+        }
+      },
+      "type": "object"
+    },
     "PlanSource": {
       "description": "How a plan field got its value.",
       "oneOf": [
@@ -9816,7 +9909,7 @@
         },
         {
           "const": "sizer",
-          "description": "Sized by the daemon for an effort nobody pinned. No writer sets it yet.",
+          "description": "Sized by the daemon for an effort nobody pinned.",
           "type": "string"
         },
         {
@@ -10246,7 +10339,7 @@
       "type": "string"
     },
     "QueueItem": {
-      "description": "An item's model plan with where each field came from. Serialized as the\nitem's `model_plan` and `model_origins` keys, so stored items and older\nreaders see the plan as before.",
+      "description": "An item's model plan with where each field came from and how its efforts\nwere sized. Serialized as the item's `model_plan`, `model_origins` and\n`effort_sizing` keys, so stored items and older readers see the plan as before.",
       "properties": {
         "autonomy": {
           "$ref": "#/$defs/Autonomy",
@@ -10281,6 +10374,17 @@
             "$ref": "#/$defs/QueueItemId"
           },
           "type": "array"
+        },
+        "effort_sizing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanSizing"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The sizing decisions frozen into this plan; absent on a plan no key\nof which was ever sized, which is every plan of 1.6.3."
         },
         "fresh_retries": {
           "default": 0,
@@ -14922,6 +15026,16 @@
       ],
       "type": "object"
     },
+    "RiskClass": {
+      "description": "How risky an item's work is, settled before any effort is chosen.",
+      "enum": [
+        "mechanical",
+        "ordinary",
+        "elevated",
+        "critical"
+      ],
+      "type": "string"
+    },
     "RiskLevel": {
       "description": "How much human attention a pull request asks for before it merges.\nOrdered: `Low < Medium < High`, so the higher of two calls is their `max`.",
       "enum": [
@@ -15294,6 +15408,73 @@
         }
       ]
     },
+    "SizingEvidenceRow": {
+      "description": "The attempts whose effort the sizer decided or advised, pooled by the\nitem's risk class and where the effort came from. For display only:\nno route and no later sizing reads it.",
+      "properties": {
+        "attempts": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "completed": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "disputed": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "effort_source": {
+          "$ref": "#/$defs/PlanSource"
+        },
+        "median_cost_usd": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "median_minutes": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "p90_cost_usd": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "passed": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "risk_class": {
+          "$ref": "#/$defs/RiskClass"
+        },
+        "verdicts": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "risk_class",
+        "effort_source",
+        "attempts",
+        "completed",
+        "verdicts",
+        "passed",
+        "disputed"
+      ],
+      "type": "object"
+    },
     "StageDelegation": {
       "description": "How the cost of a stage run that delegated splits; the two amounts add up\nto the stage run's `cost_usd`.",
       "properties": {
@@ -15348,6 +15529,24 @@
         "item",
         "run",
         "stages"
+      ],
+      "type": "object"
+    },
+    "StageFacts": {
+      "description": "The stage facts one plan key is sized from: its own, never another key's.",
+      "properties": {
+        "base": {
+          "$ref": "#/$defs/Effort",
+          "description": "The stage's own declared default effort for this key."
+        },
+        "checks": {
+          "default": false,
+          "description": "Whether the key's agents check work: a review or test stage, or reviewers.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "base"
       ],
       "type": "object"
     },
@@ -15475,6 +15674,23 @@
           "format": "double",
           "type": "number"
         },
+        "effort_reasons": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "effort_source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanSource"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where the effort it ran at came from: the sizer, or the pin it advised."
+        },
         "fan_index": {
           "description": "0-based slot within a fan-out stage; 0 for single-agent stages.",
           "format": "uint32",
@@ -15533,6 +15749,17 @@
             }
           ],
           "description": "How the attempt stands to its stage's one record repair turn; `None`\non a stage run from before Archon gave one, which is replayed as then."
+        },
+        "risk_class": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RiskClass"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The class the attempt's plan key was sized with."
         },
         "run": {
           "$ref": "#/$defs/PipelineRunId"

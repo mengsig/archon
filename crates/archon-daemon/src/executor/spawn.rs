@@ -22,7 +22,7 @@ use archon_core::ports::{SpawnRequest, SpawnedAgent};
 use archon_core::queue::QueueItem;
 use archon_core::repo::affected::{Affected, selects};
 use archon_core::repo::{Repo, RepoTiers};
-use archon_core::run::{PipelineRun, StageOutcome, StageRun, StageState};
+use archon_core::run::{AttemptSizing, PipelineRun, StageOutcome, StageRun, StageState};
 use archon_pipeline::contract;
 use archon_pipeline::spec::MAX_TIMEOUT_MINUTES;
 use archon_pipeline::{PipelineSpec, SpawnPlan};
@@ -805,6 +805,24 @@ fn reviewer_rules(
     rules
 }
 
+/// How the effort `plan`'s slot runs at was chosen, read from the item's
+/// stored plan: nothing when the sizer never decided the stage's key, or
+/// when the slot runs another effort than the plan holds for it.
+fn attempt_sizing(item: &QueueItem, plan: &SpawnPlan) -> AttemptSizing {
+    let choices = item.model_plan.choices_for(&plan.stage_id);
+    let Some(choices) = choices.filter(|choices| !choices.is_empty()) else {
+        return AttemptSizing::default();
+    };
+    let slot = plan.fan_index as usize % choices.len();
+    if choices[slot].effort != plan.choice.effort {
+        return AttemptSizing::default();
+    }
+    let sized = item.model_plan.slot_sizing(&item.id, &plan.stage_id, slot);
+    let sizing: AttemptSizing = sized.map(Into::into).unwrap_or_default();
+    debug_assert_eq!(sizing.risk_class.is_some(), sizing.effort_source.is_some());
+    sizing
+}
+
 /// Persist the exact request, then the `spawning` stage run that owns it,
 /// with the slot's `budget`. `retry` numbers an infrastructure replacement
 /// of the slot.
@@ -882,6 +900,7 @@ fn reserve_one(
         issued_reviewers: plan.reviewers.clone(),
     };
     save_spawn(store, &id, &spawn)?;
+    let sizing = attempt_sizing(target.item, plan);
     let stage = StageRun {
         id: id.clone(),
         run: target.run.id.clone(),
@@ -900,6 +919,7 @@ fn reserve_one(
         state: StageState::Spawning,
         verdict: None,
         verdict_note: None,
+        sizing,
         summary: None,
         structured: None,
         cost_usd: 0.0,

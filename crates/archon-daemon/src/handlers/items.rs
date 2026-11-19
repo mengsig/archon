@@ -27,7 +27,7 @@ use crate::executor::operator_merge;
 use crate::knobs::ItemRoute;
 use crate::resolve::{self, RepoEnv};
 use crate::worktree::WorktreeManager;
-use crate::{executor, knobs, learned};
+use crate::{executor, knobs, learned, sizing};
 use archon_core::autonomy::MergeMode;
 
 pub(super) async fn enqueue(
@@ -574,6 +574,7 @@ pub(super) async fn update_within(
     }
     let amendment = patch.brief_append.clone();
     let set_budget = patch.budget_usd.is_some();
+    let resizing = resizing_policy(ctx, &current, &patch, review).await?;
     let item = {
         // Under the run table, so the dispatcher cannot start the item meanwhile.
         let table = ctx.runs.lock().await;
@@ -585,6 +586,10 @@ pub(super) async fn update_within(
             revise::apply(&mut store, &table, &mut item, revision)?;
         }
         apply_patch(&mut item, patch, plan)?;
+        // A running item is sized again by the steer that rebuilds its driver.
+        if let Some(policy) = resizing.as_ref().filter(|_| !item.state.is_active()) {
+            sizing::resize((&ctx.config, policy), &mut item, &Default::default());
+        }
         item.updated_at = archon_core::now().max(item.updated_at);
         match &revision {
             Some(revision) => revision.save(&mut store, &item)?,
@@ -601,6 +606,26 @@ pub(super) async fn update_within(
     }
     ctx.dispatch.notify_one();
     Ok(item_reply(ctx, item, set_budget).await)
+}
+
+/// The model policy `current` is sized again under when `patch` changes what
+/// the sizer reads of it: its title, tags, brief or review level (`review`
+/// is the level the patch leaves it with). `None` when nothing does.
+async fn resizing_policy(
+    ctx: &DaemonContext,
+    current: &QueueItem,
+    patch: &ItemPatch,
+    review: archon_core::autonomy::ReviewLevel,
+) -> Result<Option<archon_core::policy::ModelPolicy>, ArchonError> {
+    let words = patch.title.is_some() || patch.tags.is_some() || patch.brief_append.is_some();
+    if !words && review == current.autonomy.review {
+        return Ok(None);
+    }
+    if !ctx.config.models.effort_sizing() || current.model_plan.sizing().is_none() {
+        return Ok(None);
+    }
+    let env = RepoEnv::load(ctx, current.repo.as_ref()).await?;
+    Ok(Some(env.policy(&ctx.config)))
 }
 
 /// A succeeded item takes an autonomy-only patch. `merge = auto` turns on
@@ -1193,7 +1218,8 @@ pub(super) async fn filled_plan(
     writer.filled(tiered, (PlanSource::Tier, PlanSource::Fallback));
     let fallen = knobs::fill_static_stages(base, spec, writer.plan().clone(), fallback)?;
     writer.filled(fallen, (PlanSource::Fallback, PlanSource::Fallback));
-    Ok(writer.finish())
+    let size = learned::item_size(&store, id)?;
+    Ok(sizing::finish((&ctx.config, &policy), spec, size, writer))
 }
 
 /// Every stage has 1 to `choice_limit` choices, no unknown stage is named, and
@@ -1337,6 +1363,7 @@ fn check_plan_unchanged(
 mod tests {
     use super::*;
     use archon_core::model::{Effort, ModelChoice, ModelPlan};
+    use archon_core::plan_origin::Sizing;
     use archon_pipeline::Catalog;
 
     #[test]
@@ -1346,7 +1373,7 @@ mod tests {
         let choice = ModelChoice::pinned("a/opus".parse().unwrap(), Effort::Medium);
         let plan = ModelPlan([("implement".to_owned(), vec![choice])].into());
         writer.filled(plan, (PlanSource::Fallback, PlanSource::Fallback));
-        let read = writer.finish();
+        let read = writer.finish(Sizing::Off { policy_cap: None });
         let mut steered = read.clone();
         let named = (None, Some(Effort::Medium));
         let by = (Authority::Operator, archon_core::now());

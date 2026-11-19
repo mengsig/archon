@@ -55,6 +55,7 @@ mod knobs;
 pub mod learned;
 mod resolve;
 pub mod settings;
+mod sizing;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

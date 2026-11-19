@@ -754,7 +754,7 @@ mod tests {
         let bounds = (&policy, Tier::Strong);
         let nudged = (None, EffortFill::Nudged);
         fill_plan(&store, None, (&base, &spec), &mut writer, bounds, nudged).unwrap();
-        let filled = writer.finish();
+        let filled = writer.finish(archon_core::plan_origin::Sizing::Off { policy_cap: None });
         assert_eq!(filled.choices_for("propose"), Some(&[choice.clone()][..]));
         assert_eq!(filled.choices_for("report"), Some(&[choice][..]));
         assert_eq!(filled.0.len(), plan.0.len() + 2);
@@ -835,7 +835,7 @@ mod tests {
             (Some(&default), EffortFill::of(&config, &policy)),
         )
         .unwrap();
-        let filled = writer.finish();
+        let filled = writer.finish(archon_core::plan_origin::Sizing::Off { policy_cap: None });
         let origin = filled.origin(&id, "verify", 0);
         assert_eq!(origin.effort.source, PlanSource::Fallback, "{origin:?}");
         assert_eq!(filled.choices_for("review"), Some(&[named][..]), "kept");

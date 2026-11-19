@@ -200,6 +200,7 @@ pub fn item_detail(detail: &ItemDetail, names: &RepoNames, full: bool) -> String
     }
     plan_lines(&mut out, item);
     origin_lines(&mut out, &detail.plan_origins);
+    sizing_lines(&mut out, item);
     worker_lines(&mut out, &detail.worker_policies);
     for run in &detail.runs {
         run_lines(&mut out, detail, run, full);
@@ -263,6 +264,29 @@ fn origin_lines(
                 sanitize_line(&origin.model.to_string()),
                 sanitize_line(&origin.effort.to_string())
             );
+        }
+    }
+}
+
+/// `risk class: critical (...)`, then `sized build: sizer: critical -> x_high`
+/// per plan entry the sizer decided; nothing for an item it never sized.
+fn sizing_lines(out: &mut String, item: &QueueItem) {
+    let Some(sizing) = item.model_plan.sizing() else {
+        return;
+    };
+    let Some(class) = sizing.risk_class else {
+        return;
+    };
+    let signals = sanitize_line(&sizing.risk_signals.join(", "));
+    let _ = writeln!(out, "risk class: {class} ({signals})");
+    for (key, reasons) in item.model_plan.effort_reasons(&item.id) {
+        for (slot, reason) in reasons.iter().enumerate() {
+            let slot = match reasons.len() {
+                1 => String::new(),
+                _ => format!("[{slot}]"),
+            };
+            let (key, reason) = (sanitize_line(&key), sanitize_line(reason));
+            let _ = writeln!(out, "sized {key}{slot}: {reason}");
         }
     }
 }
@@ -618,6 +642,7 @@ mod tests {
             state: StageState::Completed,
             verdict: None,
             verdict_note: None,
+            sizing: Default::default(),
             summary: Some(summary.into()),
             structured: None,
             cost_usd: 0.5,

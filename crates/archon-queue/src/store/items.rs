@@ -154,7 +154,19 @@ fn replace_deps(conn: &Connection, item: &QueueItem) -> Result<(), ArchonError> 
 }
 
 /// `item` as it is stored: plan origins that do not describe its plan, such
-/// as those a clone kept from the item it was cloned from, become unattributed.
+/// as those a clone kept from the item it was cloned from, become
+/// unattributed, and every plan key recorded for sizing is sized from the
+/// title, brief, tags and review level the item is stored with.
+fn as_stored(item: &QueueItem) -> std::borrow::Cow<'_, QueueItem> {
+    let mut item = attributed(item);
+    if item.model_plan.has_unsized() {
+        let settled = item.to_mut().settle_sizing(archon_core::now());
+        assert!(settled, "a plan with keys to size was sized");
+    }
+    debug_assert!(!item.model_plan.has_unsized(), "no stored plan awaits sizing");
+    item
+}
+
 fn attributed(item: &QueueItem) -> std::borrow::Cow<'_, QueueItem> {
     let Some(plan) = item.model_plan.reconciled(&item.id) else {
         return std::borrow::Cow::Borrowed(item);
@@ -225,7 +237,7 @@ pub(super) fn plan_field_count(conn: &Connection) -> Result<PlanFieldCount, Arch
 
 /// Rewrites every derived column from `item`, so columns and `data` agree.
 pub(super) fn write_columns(conn: &Connection, item: &QueueItem) -> Result<(), ArchonError> {
-    let item = &*attributed(item);
+    let item = &*as_stored(item);
     let changed = conn
         .execute(
             "UPDATE items SET repo = ?2, pipeline = ?3, priority = ?4, state = ?5, tags = ?6,
@@ -387,7 +399,7 @@ fn insert_requested_in(
 ) -> Result<QueueItem, ArchonError> {
     validate_new(item, key)?;
     assert_eq!(item.state, QueueState::Queued);
-    let item = &*attributed(item);
+    let item = &*as_stored(item);
     assert!(
         !tx.is_autocommit(),
         "item insertion belongs to a transaction"

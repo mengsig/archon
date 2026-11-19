@@ -689,12 +689,15 @@ pub(crate) fn resolve_tiers(
         for (key, choices) in &mut plan.0 {
             let kept = carried.and_then(|plan| plan.choices_for(key));
             for (slot, choice) in choices.iter_mut().enumerate() {
+                // An alias is judged as its canonical id, as the policy lists it.
+                let canonical = tiers.catalog.canonical_alias(&choice.model).clone();
                 let untouched = kept
                     .and_then(|kept| kept.get(slot))
-                    .is_some_and(|old| old.model == choice.model);
-                if !untouched {
-                    choice.model = tiers.catalog.check(&choice.model)?;
-                }
+                    .is_some_and(|old| tiers.catalog.canonical_alias(&old.model) == &canonical);
+                choice.model = match untouched {
+                    true => canonical,
+                    false => tiers.catalog.check(&choice.model)?,
+                };
             }
         }
     }

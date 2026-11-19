@@ -514,3 +514,44 @@ async fn a_legacy_key_with_another_plan_gets_no_catalog_exemption() {
     let items = h.ctx.store.lock().await.items(&Default::default()).unwrap();
     assert_eq!(items.len(), 1, "no second item");
 }
+
+/// A fingerprint 1.6.3 stored holds the alias it was asked with; its replay
+/// judges that alias as its canonical id, as the allowlist names it.
+#[tokio::test]
+async fn a_legacy_keyed_alias_replay_passes_a_canonical_allowlist() {
+    use archon_aether::fake::Scripted;
+    use serde_json::json;
+    let h = Harness::new().await;
+    let (canonical, alias) = ("claude-code/claude-opus-5-5", "claude-code/opus");
+    let rows = json!([{"model": canonical, "configured": true, "aliases": ["opus"]}]);
+    h.catalog_server
+        .set_default("list_models", Scripted::reply("models", rows));
+    h.repo_config(&format!("[models]\nallow = [\"{canonical}\"]\n"));
+    let pin = serde_json::from_value(json!({"implement": [{"model": alias}]}));
+    let mut asked = request("direct", pin.unwrap(), "review=none");
+    asked.idempotency_key = Some("legacy-alias".into());
+    let first = h.cli(Request::Enqueue(asked.clone())).await;
+    let Ok(Reply::Item(first)) = first else {
+        panic!("the first enqueue is stored: {first:?}");
+    };
+    let mut legacy = first.model_plan.plan().clone();
+    for choice in legacy.0.values_mut().flatten() {
+        assert_eq!(choice.model.to_string(), canonical, "stored canonical");
+        choice.model = alias.parse().unwrap();
+    }
+    let conn = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    let changed = conn.execute(
+        "UPDATE items SET request = json_set(json_remove(request, '$.asked_plan'),
+                                             '$.model_plan', json(?1))",
+        [serde_json::to_string(&legacy).unwrap()],
+    );
+    assert_eq!(changed.unwrap(), 1, "the alias as 1.6.3 stored it");
+
+    let again = h.cli(Request::Enqueue(asked)).await;
+    let Ok(Reply::Item(again)) = again else {
+        panic!("the replay returns the stored item: {again:?}");
+    };
+    assert_eq!(again.id, first.id);
+    let items = h.ctx.store.lock().await.items(&Default::default()).unwrap();
+    assert_eq!(items.len(), 1, "no second item");
+}

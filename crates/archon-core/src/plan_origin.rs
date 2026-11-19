@@ -390,12 +390,14 @@ impl PlannedPlan {
             for (key, choices) in &mut self.model_plan.0 {
                 let previous = carried.and_then(|plan| plan.choices_for(key));
                 for (slot, choice) in choices.iter_mut().enumerate() {
+                    let canonical = catalog.canonical_alias(&choice.model).clone();
                     let untouched = previous
                         .and_then(|slots| slots.get(slot))
-                        .is_some_and(|old| old.model == choice.model);
-                    if !untouched {
-                        choice.model = catalog.check(&choice.model)?;
-                    }
+                        .is_some_and(|old| catalog.canonical_alias(&old.model) == &canonical);
+                    choice.model = match untouched {
+                        true => canonical,
+                        false => catalog.check(&choice.model)?,
+                    };
                 }
             }
         }

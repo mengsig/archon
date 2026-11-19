@@ -65,6 +65,45 @@ async fn reconnect_and_outage_invalidate_a_fresh_catalog() {
     );
 }
 
+/// A failed catalog read or a reconnect keeps the last read's aliases: an
+/// alias policy is never read without them until a new read replaces them.
+#[tokio::test]
+async fn a_failed_read_and_a_reconnect_keep_the_last_aliases() {
+    let h = Harness::new().await;
+    h.fake.set_default(
+        "list_models",
+        Scripted::reply(
+            "models",
+            serde_json::json!([
+                {"model": "claude-code/claude-opus-5-5", "configured": true, "aliases": ["opus"]}
+            ]),
+        ),
+    );
+    h.connect().await;
+    archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    let alias: archon_core::model::ModelRef = "claude-code/opus".parse().unwrap();
+    let canonical: archon_core::model::ModelRef = "claude-code/claude-opus-5-5".parse().unwrap();
+    assert_eq!(h.ctx.aether.aliases().get(&alias), Some(&canonical));
+    h.fake
+        .set_default("list_models", Scripted::refuse("internal", "offline"));
+    let generation = h.ctx.aether.generation().unwrap();
+    let old = archon_core::now() - chrono::Duration::minutes(5);
+    let store = h.ctx.store.lock().await;
+    store.record_model_catalog(store.model_catalog(), old, Some(generation));
+    drop(store);
+
+    archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    let store = h.ctx.store.lock().await;
+    assert!(
+        store.model_catalog().unavailable_reason().is_some(),
+        "the read failed"
+    );
+    drop(store);
+    assert_eq!(h.ctx.aether.aliases().get(&alias), Some(&canonical));
+    h.connect().await;
+    assert_eq!(h.ctx.aether.aliases().get(&alias), Some(&canonical));
+}
+
 #[tokio::test]
 async fn a_failed_refresh_cannot_use_a_catalog_older_than_five_minutes() {
     let h = Harness::new().await;

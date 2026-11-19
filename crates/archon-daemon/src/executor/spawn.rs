@@ -505,7 +505,7 @@ fn reserve_plans(
     }
     // A reroute that followed the stored plan moves the drained plans with it.
     let followed = (&stored, item.model_plan.plan());
-    if let Err(error) = super::model_catalog::follow_stored(&mut plans, followed, catalog) {
+    if let Err(error) = super::model_catalog::follow_stored(&mut plans, followed, catalog, &item) {
         if error.is_store() {
             return Err(error);
         }
@@ -817,7 +817,7 @@ impl Target<'_> {
     /// Whether the agent of `plan` gets Aether's `delegate`: its stage
     /// allows it, or the item's `tools = yolo` withholds nothing.
     fn delegates(&self, plan: &SpawnPlan) -> bool {
-        plan.allow_delegation || self.item.autonomy.tools == ToolsMode::Yolo
+        super::model_catalog::delegates(plan, self.item)
     }
 
     /// Minutes the stage of `plan` may run: the item's override, else the pipeline's.
@@ -1440,7 +1440,13 @@ async fn resume_or_spawn(
     stage: &StageRun,
     mut spawn: StoredSpawn,
 ) -> Result<Issued, ArchonError> {
-    let checked = match check_frozen_request(ctx, &spawn.request, stage).await {
+    // A resume sends no delegation policy: only its agent's own model is checked.
+    let named = if spawn.resume.is_some() {
+        1
+    } else {
+        usize::MAX
+    };
+    let checked = match check_frozen_request(ctx, &spawn.request, stage, named).await {
         Ok(catalog) => catalog,
         // A wake goes on in its own agent or not at all: no other model takes it.
         Err(ArchonError::Invalid(_)) if spawn.deadline_wake => return Ok(Issued::NotWoken),
@@ -1478,6 +1484,13 @@ async fn resume_or_spawn(
             return Ok(Issued::NotWoken);
         }
         save_spawn(&mut *ctx.store.lock().await, &stage.id, &spawn)?;
+        match check_frozen_request(ctx, &spawn.request, stage, usize::MAX).await {
+            Ok(_) => {}
+            Err(ArchonError::Invalid(reason)) => {
+                return landed_or_refused(ctx, &spawn, reason).await;
+            }
+            Err(error) => return Err(error),
+        }
     }
     if let Some(reason) = superseded_pick(ctx, stage, &spawn.request, &checked).await? {
         return landed_or_refused(ctx, &spawn, reason).await;
@@ -1570,7 +1583,9 @@ async fn check_frozen_request(
     ctx: &DaemonContext,
     request: &SpawnRequest,
     stage: &StageRun,
+    named: usize,
 ) -> Result<archon_core::model_tier::ModelCatalog, ArchonError> {
+    assert!(named >= 1, "the request's own model is always checked");
     let catalog = learned::catalog(ctx).await?;
     let repo = {
         let store = ctx.store.lock().await;
@@ -1580,7 +1595,7 @@ async fn check_frozen_request(
     let env = RepoEnv::load(ctx, repo.as_ref()).await?;
     // Both sides of the policy read one catalog: the model's id and the lists'.
     let policy = env.policy_in(&ctx.config, &catalog.aliases());
-    for model in frozen_models(request) {
+    for model in frozen_models(request).take(named) {
         let canonical = catalog.check(model)?;
         if !policy.permits_model(&canonical) {
             return Err(ArchonError::Policy(format!(

@@ -10,6 +10,7 @@ use archon_core::Timestamp;
 use archon_core::config::Config;
 use archon_core::model::{ModelPlan, ModelPlanDraft};
 use archon_core::model_tier::{CatalogModel, ModelCatalog, Tier};
+use archon_core::notify::NotificationKind;
 use archon_core::plan_origin::{Authority, PlanSource, PlannedPlan};
 use archon_core::protocol::{
     DaemonStatus, EnqueueRequest, Reply, RepoRef, Request, WaitingReason, WaitingReasonCode,
@@ -1568,6 +1569,33 @@ async fn a_recovered_run_from_before_origins_resumes_its_kept_tiered_implementer
     assert_eq!(h.backend.requests().len(), spawned, "nothing respawned");
 }
 
+/// A retry the catalog repair moves off a superseded daemon pick is noted on
+/// the item and in its feed, as a move the repair makes at dispatch is.
+#[tokio::test]
+async fn a_retry_the_catalog_repair_moved_is_noted() {
+    let h = harness(untiered_fallback()).await;
+    let (item, old) = with_untiered_fallback(&h, "implement").await;
+    h.dispatch().await;
+    assert_eq!(spawned_on(&h, &item, "implement").await, [old.as_str()]);
+    let next = format!("{old}-next");
+    list_beside(&h, (&old, &next), true).await;
+    h.settle_running(|_| archon_core::run::StageOutcome::Failed {
+        error: "aetherd lost the agent".into(),
+        infra: true,
+    })
+    .await;
+    h.dispatch().await;
+
+    assert_eq!(
+        spawned_on(&h, &item, "implement").await,
+        [old.as_str(), next.as_str()]
+    );
+    let told = changed_models(&h, &item).await;
+    let moved =
+        format!("stage implement moved from {old} to {next}: {old} is superseded by {next}");
+    assert!(told.starts_with(&moved), "{told}");
+}
+
 /// A retry the run still plans on a superseded model, while the stored plan
 /// already names another for its slot, runs that one: its create is never
 /// refused over and over for the stale choice.
@@ -1619,4 +1647,10 @@ async fn a_retry_on_a_superseded_model_runs_the_stored_slots_model() {
         .map(|s| s.choice.model.to_string())
         .collect();
     assert_eq!(running, [next.as_str()]);
+    let notices = h.notices(NotificationKind::Progress).await;
+    let told = notices
+        .iter()
+        .find(|text| text.contains("aetherd lost the agent"));
+    let told = told.expect("the retry is told");
+    assert!(!told.contains("in the same agent"), "a fresh agent: {told}");
 }

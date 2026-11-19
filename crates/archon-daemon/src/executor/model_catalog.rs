@@ -161,12 +161,14 @@ pub(crate) fn repair_pending(
             Some((plan.stage_id.as_str(), plan.fan_index as usize % choices))
         })
         .collect();
-    let workers: std::collections::BTreeSet<String> = plans
+    // Worker and reviewer choices bind only a stage whose agent can delegate.
+    let delegating: Vec<&SpawnPlan> = plans.iter().filter(|plan| delegates(plan, item)).collect();
+    let workers: std::collections::BTreeSet<String> = delegating
         .iter()
         .map(|plan| archon_core::model::workers_key(&plan.stage_id))
         .collect();
     // The review key is repaired only while a pending stage names reviewers.
-    let reviews = plans.iter().any(names_reviewers);
+    let reviews = delegating.iter().any(|plan| names_reviewers(plan));
     let in_scope = |key: &str, slot: usize| {
         own.contains(&(key, slot))
             || workers.contains(key)
@@ -182,7 +184,8 @@ pub(crate) fn repair_pending(
     let after = repaired.model_plan.plan();
     let mut pending = plans.to_vec();
     for plan in &mut pending {
-        repair_spawn(plan, (before, after), catalog)?;
+        let delegates = delegates(plan, item);
+        repair_spawn(plan, (before, after), catalog, delegates)?;
     }
     assert_eq!(pending.len(), plans.len());
     assert_eq!(repaired.id, item.id);
@@ -195,6 +198,7 @@ pub(crate) fn follow_stored(
     plans: &mut [SpawnPlan],
     (before, after): (&ModelPlan, &ModelPlan),
     catalog: &ModelCatalog,
+    item: &QueueItem,
 ) -> Result<(), ArchonError> {
     if before == after {
         return Ok(());
@@ -204,7 +208,8 @@ pub(crate) fn follow_stored(
         "following a provider changes only models"
     );
     for plan in plans.iter_mut() {
-        repair_spawn(plan, (before, after), catalog)?;
+        let delegates = delegates(plan, item);
+        repair_spawn(plan, (before, after), catalog, delegates)?;
     }
     Ok(())
 }
@@ -249,6 +254,11 @@ pub(super) fn retry_plan(
         }
     })?;
     if repaired.model_plan != item.model_plan {
+        // Noted as admission notes a catalog repair: the moved slots and why.
+        let (before, after) = (item.model_plan.plan(), repaired.model_plan.plan().clone());
+        let moved = crate::quota::catalog_moves((before, &after), &after, catalog);
+        crate::quota::record_moves(ctx, store, &mut repaired, (&moved, before), None)?;
+        assert_eq!(repaired.model_plan.plan(), &after, "a note moves no model");
         repaired.updated_at = archon_core::now().max(item.updated_at);
         store.update_item(&repaired)?;
         let followed = (item.model_plan.plan(), repaired.model_plan.plan());
@@ -364,26 +374,40 @@ fn names_reviewers(plan: &SpawnPlan) -> bool {
             .is_some_and(|workers| !workers.exempt_models.is_empty())
 }
 
+/// Whether the agent of `plan` gets Aether's `delegate`: its stage allows it,
+/// or the item's `tools = yolo` withholds nothing.
+pub(crate) fn delegates(plan: &SpawnPlan, item: &QueueItem) -> bool {
+    plan.allow_delegation || item.autonomy.tools == archon_core::autonomy::ToolsMode::Yolo
+}
+
 /// Move one emitted plan with its stored entries, matched by canonical id, and
 /// refuse it if a model it names is still not listed.
 fn repair_spawn(
     plan: &mut SpawnPlan,
     (before, after): (&ModelPlan, &ModelPlan),
     catalog: &ModelCatalog,
+    delegates: bool,
 ) -> Result<(), ArchonError> {
     canonicalize_spawn(plan, catalog);
+    // An agent that cannot delegate never uses its reviewer or worker models.
+    let named = if delegates { usize::MAX } else { 1 };
     if plan.stage_id == archon_pipeline::acceptance::STAGE {
-        return validate_judge(plan, catalog);
+        return validate_judge(plan, catalog, named);
     }
     repair_stage(plan, before, after);
-    validate_spawn(plan, catalog)
+    validate_spawn(plan, catalog, named)
 }
 
-/// Refuse an acceptance plan's unlisted reviewers or workers. Its own choice is
-/// a placeholder the judge selection replaces with one of the catalog's candidates.
-fn validate_judge(plan: &mut SpawnPlan, catalog: &ModelCatalog) -> Result<(), ArchonError> {
+/// Refuse an acceptance plan's unlisted reviewers or workers among its first
+/// `named` models. Its own choice is a placeholder the judge selection replaces.
+fn validate_judge(
+    plan: &mut SpawnPlan,
+    catalog: &ModelCatalog,
+    named: usize,
+) -> Result<(), ArchonError> {
     assert_eq!(plan.stage_id, archon_pipeline::acceptance::STAGE);
-    for model in spawn_models(plan).skip(1) {
+    assert!(named >= 1, "a plan names its own model first");
+    for model in spawn_models(plan).take(named).skip(1) {
         let canonical = catalog.check(model)?;
         assert_eq!(&canonical, catalog.canonical_alias(&canonical));
         *model = canonical;
@@ -421,9 +445,15 @@ fn canonicalize_spawn(plan: &mut SpawnPlan, catalog: &ModelCatalog) {
     }
 }
 
-/// Refuse a model the catalog does not list, keeping each canonical id it returns.
-fn validate_spawn(plan: &mut SpawnPlan, catalog: &ModelCatalog) -> Result<(), ArchonError> {
-    for model in spawn_models(plan) {
+/// Refuse a model among the first `named` of `plan` the catalog does not
+/// list, keeping each canonical id it returns.
+fn validate_spawn(
+    plan: &mut SpawnPlan,
+    catalog: &ModelCatalog,
+    named: usize,
+) -> Result<(), ArchonError> {
+    assert!(named >= 1, "the plan's own model is always checked");
+    for model in spawn_models(plan).take(named) {
         let canonical = catalog.check(model)?;
         assert_eq!(
             &canonical,
@@ -572,13 +602,13 @@ mod tests {
         );
         catalog.add_alias("p/alias".parse().unwrap(), old.model.clone());
         let mut pending = spawn(choice("p/alias"));
-        repair_spawn(&mut pending, (&plan(&old), &plan(&new)), &catalog).unwrap();
+        repair_spawn(&mut pending, (&plan(&old), &plan(&new)), &catalog, true).unwrap();
         assert_eq!(
             pending.choice.model, new.model,
             "the alias follows its entry"
         );
         let mut kept = spawn(choice("p/alias"));
-        repair_spawn(&mut kept, (&plan(&new), &plan(&new)), &catalog).unwrap();
+        repair_spawn(&mut kept, (&plan(&new), &plan(&new)), &catalog, true).unwrap();
         assert_eq!(
             kept.choice.model, old.model,
             "a kept alias is sent canonical"

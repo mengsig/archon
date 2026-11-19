@@ -451,3 +451,31 @@ async fn a_lead_that_is_the_only_permitted_catalog_model_works_alone() {
         .expect("the fallback is noted");
     assert!(note.ends_with("; the lead works alone"), "{note}");
 }
+
+/// A stage whose agent cannot delegate never uses its `<stage>.workers`
+/// choice: a worker pin that left the catalog mid-run never holds it.
+#[tokio::test]
+async fn a_leaf_stage_runs_though_its_unused_worker_pin_left_the_catalog() {
+    const RETIRING: &str = "codex/retiring";
+    let h = Harness::new().await;
+    set_catalog(&h, &[(RETIRING, Tier::Balanced)]).await;
+    let mut plan = crate::common::plan();
+    let low = choice(RETIRING, Effort::Low);
+    plan.0
+        .insert(archon_core::model::workers_key("review"), vec![low]);
+    let item = h.enqueue_with("a leaf review", plan).await.unwrap();
+    h.dispatch().await;
+    assert_eq!(h.running().await.len(), 1, "implement runs");
+    set_catalog(&h, &[]).await;
+
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    let reviews = h.running().await;
+    assert_eq!(reviews.len(), 2, "{:?}", h.state(&item.id).await);
+    assert!(reviews.iter().all(|stage| stage.stage_id == "review"));
+    let requests = h.backend.requests();
+    assert!(
+        requests.iter().all(|request| request.leaf),
+        "no review delegates"
+    );
+}

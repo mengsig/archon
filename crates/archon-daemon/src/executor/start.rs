@@ -203,6 +203,11 @@ async fn prepare(
     catalog: &archon_core::model_tier::ModelCatalog,
 ) -> Result<Option<Prepared>, ArchonError> {
     assert_eq!(item.state, QueueState::Dispatching, "prepare follows claim");
+    // A refresh with nothing to merge ends before its pipeline or models are read.
+    if let Some(reason) = super::refresh::nothing_to_merge(ctx, item).await? {
+        finish_unstarted(ctx, &item.id, reason).await?;
+        return Ok(None);
+    }
     let env = RepoEnv::load(ctx, item.repo.as_ref()).await?;
     let (base, current) = knobs::item_specs(&env, item)?;
     // A steer may have given the item a stage list of its own (§6.6).
@@ -218,10 +223,6 @@ async fn prepare(
     let Some(claimed) = repair_claimed(ctx, &item.id, catalog, &env, &current).await? else {
         return Ok(None);
     };
-    if let Some(reason) = super::refresh::nothing_to_merge(ctx, &claimed.item).await? {
-        finish_unstarted(ctx, &claimed.item.id, reason).await?;
-        return Ok(None);
-    }
     let item = &tiers_at_dispatch(ctx, &env, &claimed, &current, catalog).await?;
     let item = &without_retired_ship(item, &current);
     let spec = Arc::new(frozen::freeze(&ctx.paths.data_dir, &run_id, &current).await?);

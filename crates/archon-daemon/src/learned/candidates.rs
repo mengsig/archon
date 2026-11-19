@@ -51,7 +51,6 @@ async fn read(ctx: &DaemonContext, force: bool) -> Result<ModelCatalog, ArchonEr
 async fn read_and_cache(ctx: &DaemonContext, generation: u64) -> Result<ModelCatalog, ArchonError> {
     let result = read_catalog(ctx, generation).await;
     if let Err(error) = &result {
-        ctx.aether.clear_aliases(generation);
         ctx.store
             .lock()
             .await

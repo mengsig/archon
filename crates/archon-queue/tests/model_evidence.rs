@@ -46,46 +46,45 @@ fn report(store: &Store, query: ModelEvidenceQuery, range: DayRange) -> ModelEvi
 }
 
 #[test]
-fn model_evidence_pools_alias_costs_and_verdicts() {
+fn model_evidence_keeps_a_recorded_alias_apart_from_its_current_target() {
     use archon_core::model_tier::{CatalogModel, ModelCatalog};
     let mut store = store();
     let item = store.insert_item(&item(None, "alias"), None).unwrap();
     let run = start(&mut store, &item.id);
-    for (n, name, cost, verdict) in [
-        (0, "alias", 1.0, Verdict::Pass),
-        (1, "canonical", 3.0, Verdict::Fail),
-    ] {
+    for (n, name, cost) in [(0, "opus", 1.0), (1, "claude-opus-5-5", 3.0)] {
         let mut stage = running_stage(&run, n, n);
         stage.stage_id = "review".into();
-        stage.choice.model = format!("codex/{name}").parse().unwrap();
+        stage.choice.model = format!("claude-code/{name}").parse().unwrap();
         stage.state = StageState::Completed;
         stage.finished_at = Some(t(120));
         stage.cost_usd = cost;
-        stage.verdict = Some(verdict);
+        stage.verdict = Some(Verdict::Pass);
         store.upsert_stage_run(&stage).unwrap();
     }
     let mut catalog = ModelCatalog::new(vec![CatalogModel {
-        model: "codex/canonical".parse().unwrap(),
+        model: "claude-code/claude-opus-5-5".parse().unwrap(),
         tier: None,
         is_default: false,
     }]);
     catalog.add_alias(
-        "codex/alias".parse().unwrap(),
-        "codex/canonical".parse().unwrap(),
+        "claude-code/opus".parse().unwrap(),
+        "claude-code/claude-opus-5-5".parse().unwrap(),
     );
     store.set_model_catalog(catalog);
     let report = report(&store, Default::default(), range(0, 1000));
-    assert_eq!(report.rows.len(), 1);
-    assert_eq!(report.rows[0].choice.model.to_string(), "codex/canonical");
+    let mut rows: Vec<_> = report
+        .rows
+        .iter()
+        .map(|r| (r.choice.model.to_string(), r.attempts, r.median_cost_usd))
+        .collect();
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
     assert_eq!(
-        (
-            report.rows[0].attempts,
-            report.rows[0].passed,
-            report.rows[0].verdicts
-        ),
-        (2, 1, 2)
+        rows,
+        vec![
+            ("claude-code/claude-opus-5-5".to_string(), 1, Some(3.0)),
+            ("claude-code/opus".to_string(), 1, Some(1.0)),
+        ]
     );
-    assert_eq!(report.rows[0].median_cost_usd, Some(2.0));
 }
 
 #[test]

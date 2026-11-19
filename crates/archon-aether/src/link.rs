@@ -23,7 +23,7 @@ struct Slot {
     /// Why the link is down, as callers are told; `None` says only that.
     down: Option<String>,
     generation: u64,
-    /// Catalog aliases read on this connection; dropped with it.
+    /// Catalog aliases of the last successful read; a later read replaces them.
     aliases: Arc<BTreeMap<ModelRef, ModelRef>>,
 }
 
@@ -142,21 +142,14 @@ impl AetherLink {
         Ok(())
     }
 
-    /// Forget the aliases after a failed catalog read on `generation`.
-    pub fn clear_aliases(&self, generation: u64) {
-        if let Ok(mut guard) = self.current.write()
-            && guard.generation == generation
-        {
-            guard.aliases = Arc::default();
-        }
-    }
-
     fn set(&self, mut slot: Slot) -> Result<(), ArchonError> {
         let mut guard = self
             .current
             .write()
             .map_err(|_| ArchonError::Unavailable("aether link lock poisoned".into()))?;
         slot.generation = guard.generation.wrapping_add(1);
+        // An outage or reconnect keeps the last catalog's aliases until a read replaces them.
+        slot.aliases = Arc::clone(&guard.aliases);
         *guard = slot;
         Ok(())
     }

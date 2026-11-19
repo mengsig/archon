@@ -891,13 +891,7 @@ impl Store {
         range: &DayRange,
         estimates: bool,
     ) -> Result<ModelEvidenceSnapshot, ArchonError> {
-        model_evidence::read(
-            &self.conn,
-            query,
-            range,
-            estimates,
-            self.fresh_model_catalog(),
-        )
+        model_evidence::read(&self.conn, query, range, estimates)
     }
 
     /// Spend over the local days of `range` grouped `by`, counted as the

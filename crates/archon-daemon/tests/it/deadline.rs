@@ -293,6 +293,41 @@ async fn a_deadline_wake_of_an_agent_on_an_unlisted_model_times_out() {
     );
 }
 
+/// A wake resumes its agent and sends no delegation policy: a named reviewer
+/// the catalog no longer lists never stops the wake of a listed lead.
+#[tokio::test]
+async fn a_deadline_wake_goes_on_though_its_named_reviewer_left_the_catalog() {
+    use archon_core::model::{Effort, ModelPlan};
+    let h = Harness::new().await;
+    common::delivery::add_origin(&h);
+    let lead_choice = common::choice(common::MODEL, Effort::Medium);
+    let reviewer = common::choice(common::REVIEW_MODEL, Effort::Medium);
+    let plan = ModelPlan(
+        [
+            ("build".to_owned(), vec![lead_choice]),
+            ("build.review".to_owned(), vec![reviewer.clone()]),
+        ]
+        .into(),
+    );
+    h.enqueue_in("adaptive", "a reviewed change", plan)
+        .await
+        .unwrap();
+    h.dispatch().await;
+    let lead = h.running().await.remove(0);
+    let sent = h.backend.requests()[0].clone();
+    let bounds = sent.delegation_policy.expect("a delegating lead");
+    assert!(bounds.exempt_models.contains(&reviewer.model), "{bounds:?}");
+    let catalog = common::catalog::default_models();
+    let listed = catalog.models().iter().map(|m| m.model.clone());
+    let without_reviewer: Vec<_> = listed.filter(|model| *model != reviewer.model).collect();
+    h.set_catalog(common::catalog::untiered(without_reviewer))
+        .await;
+
+    stop_at_deadline(&h, &lead, true).await;
+    let agent = lead.aether_agent.clone().expect("an agent");
+    assert_eq!(h.backend.woken(), [agent], "the listed lead is woken");
+}
+
 async fn sweep(h: &Harness) {
     dispatcher::dispatch_once(&h.ctx)
         .await

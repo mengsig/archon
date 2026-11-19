@@ -195,37 +195,43 @@ async fn make(
     }
     // A resumed attempt settles on its turn's last word, so the turn is left to end (§6.7).
     let resumed = stage.aether_task.is_none();
+    // A model the catalog or policy refuses is reported; the rest of the step still goes on.
     let told = async {
-        update_choice(ctx, stage, agent, delivery).await?;
+        let refused_model = update_choice(ctx, stage, agent, delivery).await?;
         if delivery.interrupt && !resumed {
             ctx.backend.interrupt(agent).await?;
         }
-        match &delivery.lead {
-            Some(text) => ctx.backend.send_message(agent, text, &delivery.key).await,
-            None => Ok(()),
+        if let Some(text) = &delivery.lead {
+            ctx.backend.send_message(agent, text, &delivery.key).await?;
         }
+        Ok(refused_model)
     };
-    match told.await {
-        Ok(()) => {}
+    let refused_model = match told.await {
+        Ok(refused_model) => refused_model,
         Err(error) if resume::unanswered(&error) => {
             tracing::info!(stage = %stage.id, %agent, %error, "steer not delivered; the next sweep retries");
             return Ok(false);
         }
         Err(error) if error.is_store() => return Err(error),
         Err(refusal) => return refused(ctx, stage, &refusal).await.map(|()| true),
-    }
+    };
     if let Some(text) = delivery.lead.as_deref().filter(|_| resumed) {
         resume::told(&mut *ctx.store.lock().await, &stage.id, text)?;
+    }
+    if let Some(refusal) = refused_model {
+        refused(ctx, stage, &refusal).await?;
     }
     Ok(true)
 }
 
+/// Send `delivery`'s model and limits; the model's refusal when the catalog
+/// or policy refuses it for good, its limits then sent alone.
 async fn update_choice(
     ctx: &DaemonContext,
     stage: &StageRun,
     agent: &AetherAgentId,
     delivery: &Delivery,
-) -> Result<(), ArchonError> {
+) -> Result<Option<ArchonError>, ArchonError> {
     assert_eq!(stage.aether_agent.as_ref(), Some(agent));
     assert!(!stage.state.is_terminal());
     let mut delivery = current_limits(&*ctx.store.lock().await, &stage.id, delivery)?;
@@ -236,7 +242,17 @@ async fn update_choice(
         if resume::unanswered(&error) {
             send_limits(ctx, stage, agent, &delivery).await?;
         }
-        return Err(error);
+        if resume::unanswered(&error) || error.is_store() {
+            return Err(error);
+        }
+        let limits = Delivery {
+            choice: None,
+            ..delivery
+        };
+        if !limits.patch().is_empty() {
+            patch_lead(ctx, agent, &limits).await?;
+        }
+        return Ok(Some(error));
     }
     let delivery = &delivery;
     let patch = delivery.patch();
@@ -252,7 +268,7 @@ async fn update_choice(
             )?;
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 /// `delivery` carrying the deadline and budget stored for `stage` now: a later
@@ -308,7 +324,7 @@ async fn check_choice(
         store.item(&store.run(&stage.run)?.item)?
     };
     let env = crate::resolve::RepoEnv::load(ctx, item.repo.as_ref()).await?;
-    env.resolved_policy(ctx).check(choice)
+    env.policy_in(&ctx.config, &catalog.aliases()).check(choice)
 }
 
 /// While model step `delivery` waits, send the stored deadline and budget

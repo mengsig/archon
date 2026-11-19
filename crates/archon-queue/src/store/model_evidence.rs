@@ -40,7 +40,6 @@ pub struct ModelEvidenceSnapshot {
     attempts: Vec<Attempt>,
     range: DayRange,
     estimates: bool,
-    aliases: Option<ModelCatalog>,
 }
 
 #[derive(Debug)]
@@ -60,7 +59,6 @@ pub(super) fn read(
     query: &ModelEvidenceQuery,
     range: &DayRange,
     estimates: bool,
-    aliases: Option<ModelCatalog>,
 ) -> Result<ModelEvidenceSnapshot, ArchonError> {
     if range.since > range.until {
         return Err(ArchonError::Invalid(
@@ -101,10 +99,7 @@ pub(super) fn read(
         .ctx("query model evidence")?;
     let mut attempts = Vec::new();
     while let Some(row) = rows.next().ctx("read model evidence")? {
-        let mut attempt = attempt(row)?;
-        if let Some(catalog) = &aliases {
-            attempt.item.model_plan.canonicalize_aliases(catalog);
-        }
+        let attempt = attempt(row)?;
         // A failed engine login says nothing of the model: it is no attempt.
         if !attempt.stage.failed_on_engine_login() && !attempt.stage.zero_cost_create_refusal() {
             attempts.push(attempt);
@@ -114,7 +109,6 @@ pub(super) fn read(
         attempts,
         range: *range,
         estimates,
-        aliases,
     })
 }
 
@@ -154,10 +148,7 @@ impl ModelEvidenceSnapshot {
         let mut providers: BTreeMap<String, ProviderEvidenceRow> = BTreeMap::new();
         for attempt in self.attempts {
             let stage = &attempt.stage;
-            let mut choice = stage.current_choice().clone();
-            if let Some(catalog) = &self.aliases {
-                choice.model = catalog.canonical_alias(&choice.model).clone();
-            }
+            let choice = stage.current_choice();
             let sample = sample(&attempt, self.estimates, &mut is_verdict_stage)?;
             add_provider(&mut providers, &choice.model.provider, sample);
             let key = (
@@ -573,12 +564,7 @@ impl super::Store {
         };
         let masked: HashSet<(&PipelineRunId, &ModelChoice)> =
             masks.iter().map(|m| (&m.run, &m.choice)).collect();
-        let groups = route_samples(
-            &outcomes,
-            query,
-            &masked,
-            self.fresh_model_catalog().as_ref(),
-        );
+        let groups = route_samples(&outcomes, query, &masked);
         assert!(history || masked.is_empty(), "no mask without feedback");
         let corrected =
             !masks.is_empty() || (history && feedback::cohort_corrected(&self.conn, query, as_of)?);
@@ -598,7 +584,6 @@ fn route_samples(
     outcomes: &[Outcome],
     query: &RouteQuery<'_>,
     masks: &HashSet<(&PipelineRunId, &ModelChoice)>,
-    catalog: Option<&ModelCatalog>,
 ) -> BTreeMap<(String, String), (Vec<f64>, u32)> {
     let mut groups = BTreeMap::new();
     for outcome in outcomes {
@@ -617,11 +602,7 @@ fn route_samples(
         {
             let (costs, wins) = groups
                 .entry((
-                    catalog
-                        .map_or(&observed.choice.model, |c| {
-                            c.canonical_alias(&observed.choice.model)
-                        })
-                        .to_string(),
+                    observed.choice.model.to_string(),
                     observed.choice.effort.to_string(),
                 ))
                 .or_insert((Vec::new(), 0u32));
@@ -714,7 +695,6 @@ impl super::Store {
             return Ok(None);
         };
         let plan: archon_core::model::ModelPlan = from_json(&raw, "static model baseline")?;
-        let catalog = self.fresh_model_catalog();
         let mut saving = 0.0;
         let mut measured = false;
         for (stage, choices) in plan.0 {
@@ -723,10 +703,7 @@ impl super::Store {
             let Some(selected) = preferred_route(&evidence) else {
                 continue;
             };
-            for mut choice in choices {
-                if let Some(catalog) = &catalog {
-                    choice.model = catalog.canonical_alias(&choice.model).clone();
-                }
+            for choice in choices {
                 let Some(baseline) = evidence
                     .iter()
                     .find(|e| e.route.runs >= 5 && e.route.choice == choice)

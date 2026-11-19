@@ -1479,6 +1479,43 @@ async fn a_replayed_effort_never_sends_a_budget_a_later_steer_replaced() {
     );
 }
 
+/// A model step that waited for the catalog and is then refused still tells
+/// the lead its note: only the model is dropped, and the refusal is reported.
+#[tokio::test]
+async fn a_refused_deferred_model_still_tells_the_lead_its_note() {
+    const NOTE: &str = "the note the lead is owed";
+    let h = harness().await;
+    let (item, working) = implementing(&h, "a deferred model").await;
+    catalog_offline(&h).await;
+    let to_reviewer = Steer {
+        model: Some(REVIEW_MODEL.parse().unwrap()),
+        note: Some(NOTE.into()),
+        ..Steer::default()
+    };
+    steer(&h, &item.id, to_reviewer).await.expect("steered");
+    assert!(
+        h.backend.messages().is_empty(),
+        "the step waits for the catalog"
+    );
+    let catalog = common::catalog::default_models();
+    let listed = catalog.models().iter().map(|m| m.model.clone());
+    let unlisted: Vec<_> = listed.filter(|m| m.to_string() != REVIEW_MODEL).collect();
+    common::catalog::answer(&h.catalog_server, &common::catalog::untiered(unlisted));
+    h.dispatch().await;
+
+    let messages = h.backend.messages();
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert_eq!(messages[0].0, agent(&working));
+    assert!(messages[0].1.contains(NOTE), "{}", messages[0].1);
+    let updates = h.backend.updates();
+    assert!(
+        updates.iter().all(|(_, u)| u.choice.is_none()),
+        "{updates:?}"
+    );
+    let owed = h.kv(&format!("steer_owed:{}", working.id)).await;
+    assert_eq!(owed, None, "nothing is left owed");
+}
+
 /// As when Aether enforces the cost budget `stage` was sent.
 async fn enforce_budget(h: &Harness, stage: &StageRun) {
     let key = format!("spawn_request:{}", stage.id);

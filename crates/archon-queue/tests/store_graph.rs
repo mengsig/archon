@@ -5,9 +5,11 @@ mod common;
 use archon_core::error::ArchonError;
 use archon_core::github::GithubThread;
 use archon_core::id::QueueItemId;
-use archon_core::model::{ModelChoice, ModelPlanDraft};
+use archon_core::model::{Effort, ModelChoice, ModelPlan, ModelPlanDraft};
+use archon_core::plan_origin::PlannedPlan;
 use archon_core::protocol::ItemQuery;
 use archon_core::queue::{PauseState, Priority, QueueItem, QueueState};
+use archon_core::repo::Repo;
 use archon_core::run::StageState;
 use archon_queue::Store;
 use archon_queue::dispatch::DependencyState;
@@ -147,6 +149,81 @@ fn a_fingerprint_of_the_filled_plan_still_matches_a_retry_filled_alike() {
     let err = store.insert_enqueued(&rerouted(&first), Some("old"), &Asked::default());
     assert!(matches!(err, Err(ArchonError::Invalid(_))), "{err:?}");
     assert_eq!(count(&store), 1);
+}
+
+fn legacy_keyed_store(repo: &Repo, first: &QueueItem) -> (tempfile::TempDir, Store) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.db");
+    let mut store = Store::open(&path).unwrap();
+    store.insert_repo(repo).unwrap();
+    let named = Asked {
+        model_plan: ModelPlanDraft::from(first.model_plan.plan().clone()),
+        ..Asked::default()
+    };
+    store.insert_enqueued(first, Some("old"), &named).unwrap();
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let plan = serde_json::to_string(first.model_plan.plan()).unwrap();
+    let changed = conn.execute(
+        "UPDATE items SET request = json_set(json_remove(request, '$.asked_plan'),
+                                             '$.model_plan', json(?1))",
+        [plan],
+    );
+    assert_eq!(changed.unwrap(), 1);
+    (dir, store)
+}
+
+/// The enqueue handler asks for a replay before any live model check, so a
+/// legacy fingerprint must match from the stored plan alone.
+#[test]
+fn a_legacy_fingerprint_replays_by_its_stored_plan_without_a_live_model_check() {
+    let repo = common::repo("alpha");
+    let first = item(Some(&repo), "fix");
+    let (_dir, store) = legacy_keyed_store(&repo, &first);
+    let named = Asked {
+        model_plan: ModelPlanDraft::from(first.model_plan.plan().clone()),
+        ..Asked::default()
+    };
+    let retry = QueueItem {
+        intent: None,
+        id: QueueItemId::new(),
+        model_plan: PlannedPlan::unattributed(&QueueItemId::new(), ModelPlan::default()),
+        ..first.clone()
+    };
+    let again = store.replayed_enqueue(&retry, "old", (&named, None));
+    assert_eq!(again.unwrap().map(|i| i.id), Some(first.id.clone()));
+}
+
+#[test]
+fn a_changed_request_under_a_legacy_fingerprint_key_is_refused() {
+    let repo = common::repo("alpha");
+    let first = item(Some(&repo), "fix");
+    let (_dir, store) = legacy_keyed_store(&repo, &first);
+    let mut other_effort = ModelPlanDraft::from(first.model_plan.plan().clone());
+    let stage = other_effort.0.get_mut("implement").unwrap();
+    assert_eq!(
+        first.model_plan.plan().0["implement"][0].effort,
+        Effort::High
+    );
+    stage[0].effort = Some(Effort::Low);
+    let asks = [
+        Asked {
+            model_plan: other_effort,
+            ..Asked::default()
+        },
+        Asked {
+            model_plan: ModelPlanDraft::from(first.model_plan.plan().clone()),
+            ..Asked::default()
+        },
+    ];
+    let retitled = QueueItem {
+        title: "another".into(),
+        id: QueueItemId::new(),
+        ..first.clone()
+    };
+    for (retry, asked) in [(&first, &asks[0]), (&retitled, &asks[1])] {
+        let err = store.replayed_enqueue(retry, "old", (asked, None));
+        assert!(matches!(err, Err(ArchonError::Invalid(_))), "{err:?}");
+    }
 }
 
 /// A store from before canonical ids kept a named alias as asked: the same

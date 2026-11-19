@@ -801,18 +801,12 @@ async fn respawn(
         extension,
         engine_login: kind == RetryKind::EngineLogin,
     };
-    let Some(replacement) = replace(ctx, table, run, all, &failed, reserved, refusal).await? else {
+    let replaced = replace(ctx, table, run, all, &failed, reserved, refusal).await?;
+    let Some((replacement, woken)) = replaced else {
         return Ok(None);
     };
-    let text = retry_text(
-        stage,
-        run,
-        error,
-        kind,
-        wake.is_some(),
-        waits,
-        (retry, limit),
-    );
+    assert!(!woken || wake.is_some(), "only a planned wake is kept");
+    let text = retry_text(stage, run, error, kind, woken, waits, (retry, limit));
     progress(ctx, run, text).await?;
     // Issued at once, or by the sweep once a disk hold ends; in either
     // case after what the failed agent delegated is stopped and reaped.
@@ -950,7 +944,8 @@ async fn disk_nearly_full(ctx: &DaemonContext) -> bool {
 }
 
 /// Reserve the replacement of `failed`, the `retry` of its slot, and then
-/// persist the failure; `None` when the driver or the budget allows none.
+/// persist the failure; with whether it still wakes the failed agent, or
+/// `None` when the driver or the budget allows none.
 async fn replace(
     ctx: &DaemonContext,
     table: &mut RunTable,
@@ -959,7 +954,7 @@ async fn replace(
     failed: &StageRun,
     retry: spawn::Retry,
     refusal: Option<(&str, usize)>,
-) -> Result<Option<StageRunId>, ArchonError> {
+) -> Result<Option<(StageRunId, bool)>, ArchonError> {
     assert!(
         failed.state.is_terminal(),
         "only a failed stage run is replaced"
@@ -1012,7 +1007,8 @@ async fn replace(
         store
     };
     // Owed before the replacement exists, so it never starts beside them.
-    descendants::owe(&mut store, failed, retry.wake.is_some())?;
+    let woken = retry.wake.is_some();
+    descendants::owe(&mut store, failed, woken)?;
     let Some(id) = spawn::reserve_replacement(ctx, &mut store, failed, &plan, retry)? else {
         return Ok(None);
     };
@@ -1021,7 +1017,7 @@ async fn replace(
     // The attempt goes on, so its restatement is kept for the replacement too.
     let failed = restatement::bound(&store, failed.clone())?;
     store.upsert_stage_run(&failed)?;
-    Ok(Some(id))
+    Ok(Some((id, woken)))
 }
 
 /// An acceptance retry is judged by the `woken` judge while it is still
@@ -1087,7 +1083,7 @@ pub(super) async fn replace_refused_model(
         engine_login: false,
     };
     match replace(ctx, table, &run, &all, &failed, retry, None).await {
-        Ok(Some(id)) => Ok(FollowUp {
+        Ok(Some((id, _))) => Ok(FollowUp {
             issue: vec![id],
             descendant_stops: vec![stage.id.clone()],
             ..FollowUp::default()

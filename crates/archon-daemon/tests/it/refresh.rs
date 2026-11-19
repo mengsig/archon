@@ -1446,6 +1446,33 @@ async fn a_refresh_with_nothing_to_merge_ends_at_once() {
     assert!(h.running().await.is_empty(), "no agent");
 }
 
+/// A refresh whose pipelines no longer load still has nothing to merge once
+/// its branch took the base in: it ends at once, as before the model catalog.
+#[tokio::test]
+async fn a_refresh_with_nothing_to_merge_ends_though_its_pipelines_no_longer_load() {
+    let (h, _gh) = delivering().await;
+    let (owner, run) = shipped(&h, "the change").await;
+    let upstream = advance_origin(&h, "upstream.txt", "elsewhere\n");
+    let fix = refresh(&h, &owner).await.expect("queued");
+    let merging = ["merge", "--quiet", "--no-edit", upstream.as_str()];
+    on_branch(&h, &run.branch, |tree| {
+        git(tree, &merging);
+    });
+    let broken = h.repo.join(".archon/pipelines").join(&fix.pipeline);
+    std::fs::create_dir_all(&broken).unwrap();
+    std::fs::write(broken.join("pipeline.toml"), "not a pipeline").unwrap();
+
+    h.dispatch().await;
+    let reason = match h.state(&fix.id).await {
+        QueueState::Cancelled {
+            reason: Some(reason),
+        } => reason,
+        other => panic!("the refresh ends: {other:?}"),
+    };
+    assert!(reason.starts_with("nothing to merge"), "{reason}");
+    assert!(h.running().await.is_empty(), "no agent");
+}
+
 /// Aether stops answering `list_models` and archond drops its catalog.
 pub(crate) async fn catalog_outage(h: &Harness) {
     h.catalog_server.set_default(

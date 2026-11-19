@@ -1433,7 +1433,9 @@ async fn an_alias_allowed_item_starts_while_the_link_holds_no_aliases() {
     let item = h.enqueue_with("an alias allowlist", plan).await.unwrap();
     let link = &h.ctx.aether;
     assert!(!link.aliases().is_empty(), "the enqueue read the catalog");
-    link.clear_aliases(link.generation().unwrap());
+    let generation = link.generation().unwrap();
+    link.install_aliases(generation, Default::default())
+        .unwrap();
     assert!(link.aliases().is_empty());
     h.dispatch().await;
 

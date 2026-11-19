@@ -1148,7 +1148,8 @@ async fn post_retry_notes<'a>(
 }
 
 /// Add a retry's amendments to `item`'s brief: unless the retry is `fresh`, the continuation
-/// of a review the round cap stopped, then `append`. Whether a continuation was added.
+/// of a review the round cap stopped, then `append`. A fresh retry or a new continuation
+/// drops the notes earlier ones added, which no longer hold. Whether a continuation was added.
 fn amend_retry(
     store: &archon_queue::Store,
     item: &mut QueueItem,
@@ -1161,15 +1162,21 @@ fn amend_retry(
         true => None,
         false => executor::capped_continuation(store, item)?,
     };
-    let before = item.brief.len();
+    if fresh || continued.is_some() {
+        item.brief = executor::without_continuations(&item.brief);
+    }
     for text in continued.iter().map(String::as_str).chain(append) {
         item.amend_brief(text, archon_core::now())?;
     }
-    let amended = continued.is_some() || append.is_some();
-    assert_eq!(
-        amended,
-        item.brief.len() > before,
-        "each amendment adds to the brief"
+    assert!(
+        continued
+            .as_ref()
+            .is_none_or(|note| item.brief.contains(note.as_str())),
+        "a continuation is in the brief"
+    );
+    assert!(
+        append.is_none_or(|text| item.brief.trim_end().ends_with(text.trim())),
+        "the retry's own amendment comes last"
     );
     Ok(continued.is_some())
 }

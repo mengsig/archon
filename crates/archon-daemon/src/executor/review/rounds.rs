@@ -27,6 +27,9 @@ const MAX_LISTED: usize = 20;
 /// The words that mark a stage the round cap stopped, in its escalation.
 const CAP_STOP: &str = "so Archon stopped it instead of another round";
 
+/// How a continuation note begins, so a later retry can find and replace it.
+const CONTINUES: &str = "This run continues stage `";
+
 /// How much of the cap's escalation a continuing run's brief repeats.
 const ESCALATION_CHARS: usize = 2400;
 
@@ -469,14 +472,16 @@ fn escalation(stage: &StageRun, rounds: usize, open: &Open) -> String {
         ),
     };
     assert!(!open.head.is_empty(), "the last round failed a head");
+    // The choices lead, so a clipped summary of the failure still holds them.
     format!(
         "{} the review of stage `{}` (attempt {}) failed {rounds} rounds, the last at head \
-         `{}`, each a commit a reviewer failed with a blocking finding, {CAP_STOP}. \
-         {latest}{earlier} The reviewers' results ({}) hold every finding in full. You \
+         `{}`, each a commit a reviewer failed with a blocking finding, {CAP_STOP}. You \
          decide: continue with `retry_item` (not `fresh`), whose new lead fixes the open \
          findings and delta-reviews only the commits after this head, since earlier reviews \
          still count; accept this head with `retry_item` and a `brief_append` that moves the \
-         open findings to follow-ups; or stop with `cancel_item`.",
+         open findings to follow-ups, whose new lead has the head read whole again by as many \
+         reviewers as the review level needs; or stop by leaving the item failed. {latest}{earlier} The \
+         reviewers' results ({}) hold every finding in full.",
         StageOutcome::ESCALATE_PREFIX,
         stage.stage_id,
         stage.attempt,
@@ -486,7 +491,7 @@ fn escalation(stage: &StageRun, rounds: usize, open: &Open) -> String {
 }
 
 /// The note a non-fresh retry of `item` adds to its brief when its last run stopped at the
-/// review-round cap: the escalation, its head, and that earlier reviews still count.
+/// review-round cap, by its stage's tally: the escalation, its head, and that earlier reviews count.
 pub(crate) fn capped_continuation(
     store: &archon_queue::Store,
     item: &QueueItem,
@@ -518,35 +523,64 @@ pub(crate) fn capped_continuation(
         capped.as_ref().is_none_or(|s| s.run == *run),
         "a stage of the failed run"
     );
-    let head = match &capped {
-        Some(stage) => last_failed_head(store, &stage.id)?,
-        None => None,
+    // An error that only quotes an earlier cap is no cap: the stage's own tally must reach it.
+    let Some(head) = capped
+        .map(|s| capped_head(store, &s.id))
+        .transpose()?
+        .flatten()
+    else {
+        return Ok(None);
     };
-    let head = head.map_or("the last head it names".to_owned(), |h| format!("`{h}`"));
-    Ok(Some(format!(
-        "This run continues stage `{stage_id}` after its review reached the round cap. \
+    let escalation = crate::executor::clip(error.trim(), ESCALATION_CHARS);
+    let note = format!(
+        "{CONTINUES}{stage_id}` after its review reached the round cap at head `{head}`. \
          Aether cannot resume the lead that escalated, so a new lead takes over its branch. \
-         Its escalation: {}\nThe escalated head is {head}. Earlier runs' reviews of this \
-         branch still count: fix what is open, then delegate one delta reviewer whose base \
-         is that head, and give it the open findings to verify. Do not re-review or re-read \
-         the whole change.",
-        crate::executor::clip(error.trim(), ESCALATION_CHARS)
-    )))
+         The escalation: {escalation} Earlier runs' reviews still count while this branch \
+         holds the commits they read, each whole-change read toward the review level, so do \
+         not re-review or re-read the whole change: fix what is open, then delegate one \
+         delta reviewer with `base` `{head}`, given the open findings, and tell it to fail \
+         only on a defect in the new commits or an open finding left unfixed. Add \
+         whole-change reviewers only where earlier runs had fewer than the level needs. If \
+         a later amendment accepts this head instead, have it read whole again by as many \
+         reviewers as the level needs, told the open findings are follow-ups."
+    );
+    // One line: a dated amendment of it is found and replaced whole.
+    Ok(Some(note.split_whitespace().collect::<Vec<_>>().join(" ")))
 }
 
-/// The head of the last blocking fail `stage`'s tally counted, if it kept one.
-fn last_failed_head(
+/// `brief` without the continuation notes earlier retries added, each a dated amendment.
+pub(crate) fn without_continuations(brief: &str) -> String {
+    const HEADING: &str = "\n\n## Amendment (";
+    let parts: Vec<&str> = brief.split(HEADING).collect();
+    let note = |part: &&str| {
+        part.split_once(")\n\n")
+            .is_some_and(|(_, text)| text.starts_with(CONTINUES))
+    };
+    let kept: Vec<&str> = std::iter::once(parts[0])
+        .chain(parts[1..].iter().copied().filter(|part| !note(part)))
+        .collect();
+    let cleaned = kept.join(HEADING);
+    assert!(cleaned.len() <= brief.len(), "only notes are taken out");
+    assert!(cleaned.starts_with(parts[0]), "the brief itself is kept");
+    cleaned
+}
+
+/// The head of the last blocking fail of `stage`'s tally, once that tally reached the cap.
+fn capped_head(
     store: &archon_queue::Store,
     stage: &StageRunId,
 ) -> Result<Option<String>, ArchonError> {
     let key = review_tally_key(stage);
     let Some(raw) = store.kv_get(&key)? else {
-        tracing::warn!(%stage, "a capped stage kept no round tally; its head is not repeated");
         return Ok(None);
     };
     let tally: Tally = serde_json::from_str(&raw)
         .map_err(|e| ArchonError::Corrupt(format!("kv {key} = {raw:?}: {e}")))?;
+    if rounds_of(&tally.fails) < REVIEW_ROUND_CAP {
+        return Ok(None);
+    }
     let head = tally.fails.last().map(|f| f.head.clone());
+    assert!(head.is_some(), "a capped tally counted fails");
     assert!(
         head.as_ref().is_none_or(|h| !h.is_empty()),
         "a counted fail names its head"

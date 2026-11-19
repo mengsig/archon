@@ -2646,13 +2646,15 @@ review rounds of `executor/review/rounds.rs` count only blocking fails: at
 `ESCALATE:` error, marked first like a stall (§16) so its cancel does not
 settle it as cancelled, and retried by the next sweep when the cancel goes
 unanswered. The error names the last failed head and the orchestrator's three
-choices: continue with a non-fresh `retry_item`, accept the head with a
-`retry_item` whose `brief_append` moves the open findings to follow-ups, or
-stop with `cancel_item`. The cap is per stage attempt, so the retry's run gets
+choices, ahead of the findings so a clipped summary keeps them: continue with
+a non-fresh `retry_item`; accept the head with a `retry_item` whose
+`brief_append` moves the open findings to follow-ups, and whose new lead has
+the head read whole again by as many reviewers as the level needs; or stop by
+leaving the item failed. The cap is per stage attempt, so the retry's run gets
 three rounds of its own.
 
 Reviews carry across runs on one branch. When it checks a stage, archond also
-reads the completed direct children of the same stage's leads in the item's
+reads the completed `reviewer` children of the same stage's leads in the item's
 earlier runs with the same branch and worktree (`carried_reads`), and places
 their verdicts like the lead's own. A carried read whose head the branch no
 longer holds, after an amend or rebase, is dropped; a fresh retry is on a new
@@ -2660,14 +2662,19 @@ branch and carries nothing; a `review` item's frozen head carries nothing. A
 carried read anchors the lead's deltas, and every carried whole-change read
 counts toward the level, so a lead with carried reads owes one named
 reviewer: a delta of its own commits from the last reviewed head. A carried
-fail stands only where a named reviewer's read does not pass past it. The
-record lists the carried reviewers after the named ones. Aether 1.4.1 and 1.4.2
+fail stands as one of the run's own would, until a pass reads past it. A run
+whose own named reads make the level by themselves is judged without the
+carried ones, as on a fresh branch: that is how an accepted head ships. The
+record lists the carried reviewers after the named ones. An earlier review
+Aether cannot return is logged and carries nothing. Aether 1.4.1 and 1.4.2
 cannot wake a lead whose run ended (`wake` and `restart` need a live parent,
 and the run node is retired with the run), so a retry never resumes the
 escalated lead. Instead a non-fresh `retry_item` after the cap amends the brief
 (`capped_continuation`) with the escalation, the head the last round failed,
 and the rule that the new lead delta-reviews only the commits after it and does
-not re-review or re-read the whole change. Each delta reviewer is told to fail
+not re-review or re-read the whole change. Only a stage whose own round tally
+reached the cap adds the note, not an error that quotes one. A fresh retry, or
+a later note, replaces the earlier note in the brief. Each delta reviewer is told to fail
 only on a defect in its commits or an open finding left unfixed; a new finding
 in code a pass already read is advisory, `"blocking": false`, and goes to the
 orchestrator as a follow-up. The verdict carries no finding locations, so the

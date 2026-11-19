@@ -504,8 +504,8 @@ fn review_rules(duty: ReviewDuty) -> String {
             format!(
                 "{many} agents you delegate to, each working alone and none of which \
                  wrote any of it. Delegate all {many} yourself; naming fewer fails the \
-                 run, unless an earlier run reviewed this branch: its reviews still count, \
-                 so one delta reviewer of the commits after its last reviewed head will do"
+                 run, unless an earlier run reviewed this branch: its reviews count, \
+                 unnamed, so one delta reviewer of the commits after its last reviewed head will do"
             ),
             format!("\"<agent id>\", … {many} or more"),
         ),
@@ -855,11 +855,10 @@ counts for nothing and needs a whole-change replacement. Fix every blocking find
 and commit, then re-review only the fix with one reviewer: a finished one cannot be \
 asked again, so delegate a new one with `base` at the head the failed review read, \
 given the fix commits and the open findings, to verify each is fixed and the fix \
-regresses nothing. Tell it to fail only on a defect in those commits or an open \
-finding unfixed: a new finding in code a pass already read is `\"blocking\": false`. \
-No new whole-change read is needed. A commit after passes needs \
+regresses nothing. No new whole-change read is needed. A commit after passes needs \
 only a delta read from the head they passed; an amend or rebase needs whole-change \
-reads. After 3 failed rounds Archon stops the stage and escalates.\n";
+reads. Tell every delta reviewer to fail only on a defect in its commits or an open \
+finding unfixed: a new finding in code a pass already read is `\"blocking\": false`. After 3 failed rounds Archon stops the stage and escalates.\n";
 
 /// A review-only lead's rounds: one, whose findings it records rather than fixes.
 const REVIEW_ONLY_ROUNDS_RULE: &str = "\
@@ -1453,7 +1452,8 @@ mod tests {
                 "Fix every blocking finding and commit, then re-review only the fix with one reviewer",
                 "delegate a new one with `base` at the head the failed review read",
                 "given the fix commits and the open findings",
-                "Tell it to fail only on a defect in those commits or an open finding unfixed",
+                "Tell every delta reviewer to fail only on a defect in its commits or an open \
+                 finding unfixed",
                 "a new finding in code a pass already read is `\"blocking\": false`",
                 "No new whole-change read is needed",
                 "A commit after passes needs only a delta read from the head they passed",
@@ -2395,7 +2395,7 @@ mod tests {
             "\"reviewers\": [\"<agent id>\", … 3 or more]",
             "Delegate all 3 yourself; naming fewer fails the run",
             // A run continuing a capped review owes only a delta read of its own commits.
-            "unless an earlier run reviewed this branch: its reviews still count, so one delta reviewer",
+            "unless an earlier run reviewed this branch: its reviews count, unnamed, so one delta reviewer",
         ] {
             assert!(strict.contains(said), "missing {said:?} in {strict}");
         }

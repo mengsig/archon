@@ -8,7 +8,8 @@
 //! one anchors may rest on the lead's earlier reviewers, which Archon adds itself.
 //! A fail of the attempt the record leaves out stands as a named one would.
 //! Reads carried from earlier stage runs of the item on this branch anchor and
-//! count as whole-change reviewers while the branch still holds their commits.
+//! count as whole-change reviewers while the branch still holds their commits;
+//! a carried fail, anchored or not, stands as one of this attempt would.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -599,7 +600,7 @@ fn holding_passes(
     Ok(current)
 }
 
-/// Why a left-out fail outside play still stands beside the `in_play` reads of
+/// Why a left-out or carried fail outside play still stands beside the `in_play` reads of
 /// `placed`, which [`judged`] found answered; `None` when every one is answered.
 fn open_left_out(
     history: &mut impl Ancestry,
@@ -608,7 +609,8 @@ fn open_left_out(
     head: &str,
 ) -> Result<Option<String>, ArchonError> {
     let mut reads: Vec<Placed> = in_play.iter().map(|i| placed[*i].clone()).collect();
-    let outside = (0..placed.len()).filter(|i| placed[*i].left_out && !in_play.contains(i));
+    let judged_fail = |read: &Placed| read.left_out || (read.carried && !read.pass);
+    let outside = (0..placed.len()).filter(|i| judged_fail(&placed[*i]) && !in_play.contains(i));
     reads.extend(outside.map(|i| placed[i].clone()));
     if reads.len() == in_play.len() {
         return Ok(None);
@@ -616,8 +618,8 @@ fn open_left_out(
     assert!(
         reads[in_play.len()..]
             .iter()
-            .all(|read| read.left_out && !read.pass),
-        "only left-out fails are judged beside the review"
+            .all(|read| (read.left_out || read.carried) && !read.pass),
+        "only left-out and carried fails are judged beside the review"
     );
     // The in-play fails are answered: a fail that stands is a left-out one.
     let current = holding_passes(history, &reads, head)?;
@@ -625,13 +627,13 @@ fn open_left_out(
         return Ok(None);
     };
     Ok(Some(format!(
-        "{why}: the record leaves that reviewer out, but a fail of this attempt stands \
-         until a pass reads past it"
+        "{why}: the record leaves that reviewer out, but a fail of this attempt or an \
+         earlier run stands until a pass reads past it"
     )))
 }
 
 /// Indexes of the `reads` that read the whole change on the branch: a pass
-/// that holds, or a fail, which [`open_fail`] has already found answered or carried.
+/// that holds, or a fail, which [`open_fail`] has already found answered.
 fn whole_reads(reads: &[Placed], current: &[bool]) -> Vec<usize> {
     assert_eq!(reads.len(), current.len(), "one mark per read");
     let whole: Vec<usize> = (0..reads.len())
@@ -709,9 +711,7 @@ fn spread(
 }
 
 /// Why a fail of this run still stands: no counted pass read past its head and
-/// the commits after it, nor a later fail that read past it and was answered. A
-/// carried fail never stands alone: its delta reviewer verifies its findings, or the
-/// orchestrator accepted them as follow-ups.
+/// the commits after it, nor a later fail that read past it and was answered.
 fn open_fail(
     history: &mut impl Ancestry,
     placed: &[Placed],
@@ -734,7 +734,7 @@ fn open_fail(
     let Some(fail) = placed
         .iter()
         .zip(&answered)
-        .find(|(read, held)| !read.pass && !read.carried && !**held)
+        .find(|(read, held)| !read.pass && !**held)
         .map(|(read, _)| read)
     else {
         return Ok(None);
@@ -949,6 +949,38 @@ mod tests {
         assert!(refused.contains("review level needs 3"), "{refused}");
         let unread = count(&continued[..2], "c5", 3).unwrap_err();
         assert!(unread.contains("passed the branch head c5"), "{unread}");
+    }
+
+    /// A carried fail is no waiver: a new pass of the head it failed reads
+    /// nothing past it, whole or as a delta, so it still stands.
+    #[test]
+    fn an_earlier_runs_fail_stands_until_a_pass_reads_past_it() {
+        let same_head = [
+            read("agt_d", true, "c3", None),
+            carried("agt_x", false, "c3"),
+            carried("agt_y", true, "c3"),
+            carried("agt_z", true, "c3"),
+        ];
+        let refused = count(&same_head, "c3", 3).unwrap_err();
+        assert!(
+            refused.contains("agt_x failed the change at c3"),
+            "{refused}"
+        );
+        let delta_failed = [
+            read("agt_d", true, "c4", Some("c3")),
+            carried("agt_x", true, "c3"),
+            carried("agt_y", true, "c3"),
+            carried("agt_z", true, "c3"),
+            Placed {
+                base: Some("c3".into()),
+                ..carried("agt_w", false, "c4")
+            },
+        ];
+        let refused = count(&delta_failed, "c4", 3).unwrap_err();
+        assert!(
+            refused.contains("agt_w failed the change at c4"),
+            "{refused}"
+        );
     }
 
     /// The verdicts of reviewers the lead named, and no other.

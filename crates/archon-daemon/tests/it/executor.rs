@@ -3993,53 +3993,87 @@ async fn the_third_failing_review_round_stops_the_stage_and_escalates() {
         "the last at head `0000003abcdef`",
         "continue with `retry_item` (not `fresh`)",
         "delta-reviews only the commits after this head, since earlier reviews still count",
-        "accept this head with `retry_item` and a `brief_append` that moves the open findings to follow-ups",
-        "or stop with `cancel_item`",
+        "accept this head with `retry_item` and a `brief_append` that moves the open findings \
+         to follow-ups, whose new lead has the head read whole again by as many reviewers as \
+         the review level needs",
+        "or stop by leaving the item failed",
     ] {
         assert!(error.contains(said), "missing {said:?} in {error}");
     }
+    let choices = error.find("You decide").expect("the choices");
+    assert!(
+        choices < error.find("Open blocking findings").expect("the findings"),
+        "the choices lead, so a clipped summary keeps them: {error}"
+    );
 }
 
 /// A retry after the cap continues: the new lead's brief repeats the escalation and
-/// its head, and says earlier reviews count. A fresh retry starts over without it.
+/// its head, and says earlier reviews count. A failure that only quotes the cap adds no
+/// second note, and a fresh retry, which owes the whole review again, drops the note.
 #[tokio::test]
 async fn a_retry_after_the_review_cap_tells_the_new_lead_to_review_only_new_commits() {
-    for fresh in [false, true] {
-        let h = Harness::new().await;
-        let item = adaptive_item(&h).await;
-        let lead = h.running().await.remove(0);
-        for n in 1..=3 {
-            review_round_fails(&h, &lead, n).await;
-        }
-        assert!(escalated(&h, &lead).await.is_some(), "the cap stopped it");
-        h.dispatch().await;
-        let retry = Request::RetryItem {
-            item: item.id.clone(),
-            model_plan: None,
-            model_reasons: None,
-            fresh,
-            brief_append: None,
-            stage_timeouts: Default::default(),
-        };
-        h.cli(retry).await.expect("retry");
-        let brief = h.ctx.store.lock().await.item(&item.id).unwrap().brief;
-        let brief = brief.split_whitespace().collect::<Vec<_>>().join(" ");
-        let continued = [
-            "Aether cannot resume the lead that escalated, so a new lead takes over its branch",
-            "Its escalation: stage build: ESCALATE: the review of stage `build`",
-            "The escalated head is `0000003abcdef`",
-            "Earlier runs' reviews of this branch still count",
-            "delegate one delta reviewer whose base is that head",
-            "Do not re-review or re-read the whole change",
-        ];
-        for said in continued {
-            assert_eq!(
-                brief.contains(said),
-                !fresh,
-                "{said:?} (fresh: {fresh}) in {brief}"
-            );
-        }
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    for n in 1..=3 {
+        review_round_fails(&h, &lead, n).await;
     }
+    assert!(escalated(&h, &lead).await.is_some(), "the cap stopped it");
+    h.dispatch().await;
+    let brief = retry_brief(&h, &item.id, false).await;
+    for said in [
+        "Aether cannot resume the lead that escalated, so a new lead takes over its branch",
+        "at head `0000003abcdef`",
+        "The escalation: stage build: ESCALATE: the review of stage `build`",
+        "Earlier runs' reviews still count while this branch holds the commits they read",
+        "delegate one delta reviewer with `base` `0000003abcdef`",
+        "fail only on a defect in the new commits or an open finding left unfixed",
+        "do not re-review or re-read the whole change",
+    ] {
+        assert!(brief.contains(said), "missing {said:?} in {brief}");
+    }
+    let quoting = "ESCALATE: it failed 3 rounds, so Archon stopped it instead of another round";
+    fail_the_run(&h, quoting).await;
+    let again = retry_brief(&h, &item.id, false).await;
+    assert_eq!(
+        again.matches("This run continues stage").count(),
+        1,
+        "{again}"
+    );
+    fail_the_run(&h, "ESCALATE: stuck").await;
+    let fresh = retry_brief(&h, &item.id, true).await;
+    assert!(!fresh.contains("This run continues stage"), "{fresh}");
+    let original = item.brief.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        fresh.starts_with(&original),
+        "the brief itself is kept: {fresh}"
+    );
+}
+
+/// Retry `item`, `fresh` or not, and return its brief with its whitespace collapsed.
+async fn retry_brief(h: &Harness, item: &archon_core::id::QueueItemId, fresh: bool) -> String {
+    let retry = Request::RetryItem {
+        item: item.clone(),
+        model_plan: None,
+        model_reasons: None,
+        fresh,
+        brief_append: None,
+        stage_timeouts: Default::default(),
+    };
+    h.cli(retry).await.expect("retry");
+    let brief = h.ctx.store.lock().await.item(item).unwrap().brief;
+    brief.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Start the queued run and fail its stage with `error`, which ends the run.
+async fn fail_the_run(h: &Harness, error: &str) {
+    h.dispatch().await;
+    h.settle_running(|_| StageOutcome::Failed {
+        error: error.into(),
+        infra: false,
+    })
+    .await;
+    h.dispatch().await;
 }
 
 /// An earlier archond read a `changes_requested` fail as no verdict and kept

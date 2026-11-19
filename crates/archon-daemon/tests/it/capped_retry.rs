@@ -10,7 +10,7 @@ use archon_core::autonomy::{AutonomyPatch, ReviewLevel};
 use archon_core::protocol::{EnqueueRequest, Reply, RepoRef, Request};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::run::{StageOutcome, StageRun};
-use common::delivery::{add_origin, origin_of, pass_by, pushed, shipped_by, verdict_on};
+use common::delivery::{add_origin, origin_of, pass_by, pushed, record, shipped_by, verdict_on};
 use common::{Harness, REVIEW_MODEL, git};
 use serde_json::{Value, json};
 
@@ -49,15 +49,26 @@ fn lead_agent(lead: &StageRun) -> AetherAgentId {
     lead.aether_agent.clone().expect("a lead agent")
 }
 
+/// What the first run left: its lead, its three whole-change reviewers and the head.
+struct FirstRun {
+    lead: AetherAgentId,
+    reviewers: Vec<AetherAgentId>,
+    head: Value,
+}
+
 /// The first run: three whole-change reviewers of the lead's commit, one failing
-/// it with a blocking finding, then the lead escalates. Returns them and the head.
-async fn first_run_escalates(h: &Harness, item: &QueueItem) -> (Vec<AetherAgentId>, Value) {
+/// it with a blocking finding, and a worker whose own check passed it; then the
+/// lead escalates. Any failure ends a run alike; the cap's own is in `executor`.
+async fn first_run_escalates(h: &Harness, item: &QueueItem) -> FirstRun {
     let lead = h.running().await.remove(0);
     let agent = lead_agent(&lead);
     let reviewers: Vec<AetherAgentId> = (0..3)
         .map(|_| h.backend.delegate(&agent, REVIEW_MODEL))
         .collect();
+    let worker = h.backend.delegate_as(&agent, REVIEW_MODEL, "worker");
     let read = shipped_by(h, &lead, "the first head", json!({})).await;
+    h.backend
+        .complete_delegated(&worker, verdict_on(&read, "pass"));
     let mut failing = verdict_on(&read, "fail");
     failing["findings"] = json!([{"title": "drops the tail", "blocking": true}]);
     h.backend.complete_delegated(&reviewers[0], failing);
@@ -72,7 +83,11 @@ async fn first_run_escalates(h: &Harness, item: &QueueItem) -> (Vec<AetherAgentI
     .await;
     h.dispatch().await;
     assert!(matches!(h.state(&item.id).await, QueueState::Failed { .. }));
-    (reviewers, verdict_on(&read, "pass")["head"].clone())
+    FirstRun {
+        lead: agent,
+        reviewers,
+        head: verdict_on(&read, "pass")["head"].clone(),
+    }
 }
 
 /// Retry `item`, `fresh` or not, and return the new run's lead.
@@ -118,15 +133,16 @@ async fn refused(h: &Harness, item: &QueueItem) -> String {
 }
 
 /// The first run's three whole reads count for the second run's lead, which
-/// delegated one delta reviewer of its fix: the record names all four.
+/// delegated one delta reviewer of its fix: the record names all four, and not
+/// the worker, whose pass is no review.
 #[tokio::test]
 async fn a_retry_on_the_branch_ships_on_one_delta_pass_of_the_new_commits() {
     let h = Harness::new().await;
     let item = strict_item(&h).await;
-    let (first, head) = first_run_escalates(&h, &item).await;
+    let first = first_run_escalates(&h, &item).await;
     let lead = retried(&h, &item, false).await;
-    assert!(!first.contains(&lead_agent(&lead)), "a new lead");
-    let delta = one_delta_pass(&h, &lead, &head).await;
+    assert_ne!(first.lead, lead_agent(&lead), "a new lead");
+    let delta = one_delta_pass(&h, &lead, &first.head).await;
     assert!(
         matches!(h.state(&item.id).await, QueueState::Succeeded { .. }),
         "{:?}",
@@ -138,6 +154,7 @@ async fn a_retry_on_the_branch_ships_on_one_delta_pass_of_the_new_commits() {
         .unwrap_or_else(|e| panic!("{e}: {review}"));
     found.sort();
     let mut expected: Vec<String> = first
+        .reviewers
         .iter()
         .chain([&delta])
         .map(ToString::to_string)
@@ -155,9 +172,9 @@ async fn a_retry_on_the_branch_ships_on_one_delta_pass_of_the_new_commits() {
 async fn a_fresh_retry_owes_the_whole_review_again() {
     let h = Harness::new().await;
     let item = strict_item(&h).await;
-    let (_, head) = first_run_escalates(&h, &item).await;
+    let first = first_run_escalates(&h, &item).await;
     let lead = retried(&h, &item, true).await;
-    one_delta_pass(&h, &lead, &head).await;
+    one_delta_pass(&h, &lead, &first.head).await;
     let error = refused(&h, &item).await;
     assert!(error.contains("names 1 reviewer"), "{error}");
 }
@@ -168,7 +185,7 @@ async fn a_fresh_retry_owes_the_whole_review_again() {
 async fn a_rewritten_history_drops_the_earlier_runs_reviews() {
     let h = Harness::new().await;
     let item = strict_item(&h).await;
-    let (_, head) = first_run_escalates(&h, &item).await;
+    let first = first_run_escalates(&h, &item).await;
     let lead = retried(&h, &item, false).await;
     let workspace = h.ctx.store.lock().await.run(&lead.run).unwrap().workspace;
     git(&workspace, &["reset", "--quiet", "--hard", "HEAD~1"]);
@@ -178,8 +195,74 @@ async fn a_rewritten_history_drops_the_earlier_runs_reviews() {
         &workspace,
         &["commit", "--quiet", "--allow-empty", "-m", "Start over"],
     );
-    assert_ne!(fork, head, "the reviewed commit is gone");
+    assert_ne!(fork, first.head, "the reviewed commit is gone");
     one_delta_pass(&h, &lead, &fork).await;
     let error = refused(&h, &item).await;
     assert!(error.contains("1 of the reviewers"), "{error}");
+}
+
+/// The first run's fail is no waiver: a new pass of the head it failed reads
+/// nothing past it, so the carried fail still stands and nothing ships.
+#[tokio::test]
+async fn an_earlier_runs_fail_stands_against_a_pass_of_the_same_head() {
+    let h = Harness::new().await;
+    let item = strict_item(&h).await;
+    let first = first_run_escalates(&h, &item).await;
+    let lead = retried(&h, &item, false).await;
+    let workspace = h.ctx.store.lock().await.run(&lead.run).unwrap().workspace;
+    assert_eq!(json!(git(&workspace, &["rev-parse", "HEAD"])), first.head);
+    let again = h.backend.delegate(&lead_agent(&lead), REVIEW_MODEL);
+    let mut unchanged = record(&workspace);
+    unchanged["review"] = pass_by(std::slice::from_ref(&again))["review"].clone();
+    let verdict = json!({"verdict": "pass", "head": first.head, "findings": []});
+    h.backend.complete_delegated(&again, verdict);
+    h.settle_running(|_| StageOutcome::Completed {
+        summary: "nothing to fix".into(),
+        structured: Some(unchanged.clone()),
+    })
+    .await;
+    h.dispatch().await;
+    let error = refused(&h, &item).await;
+    let failed = first.reviewers[0].to_string();
+    assert!(
+        error.contains(&format!("{failed} failed the change")),
+        "{error}"
+    );
+}
+
+/// The orchestrator accepts the escalated head: its retry moves the open findings
+/// to follow-ups, and the new lead's own whole review of that head stands alone.
+#[tokio::test]
+async fn accepting_the_escalated_head_ships_it_on_a_whole_review_of_its_own() {
+    let h = Harness::new().await;
+    let item = strict_item(&h).await;
+    let first = first_run_escalates(&h, &item).await;
+    let lead = retried(&h, &item, false).await;
+    let workspace = h.ctx.store.lock().await.run(&lead.run).unwrap().workspace;
+    let agent = lead_agent(&lead);
+    let again: Vec<AetherAgentId> = (0..3)
+        .map(|_| h.backend.delegate(&agent, REVIEW_MODEL))
+        .collect();
+    let mut accepted = record(&workspace);
+    assert_eq!(accepted["commit"], first.head, "the escalated head itself");
+    accepted["review"] = pass_by(&again)["review"].clone();
+    for reviewer in &again {
+        let verdict = json!({"verdict": "pass", "head": first.head, "findings": []});
+        h.backend.complete_delegated(reviewer, verdict);
+    }
+    h.settle_running(|_| StageOutcome::Completed {
+        summary: "accepted; the open findings are follow-ups".into(),
+        structured: Some(accepted.clone()),
+    })
+    .await;
+    h.dispatch().await;
+    let state = h.state(&item.id).await;
+    assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+    let branch = h.ctx.store.lock().await.run(&lead.run).unwrap().branch;
+    let head = first.head.as_str().map(str::to_owned);
+    assert_eq!(
+        pushed(&origin_of(&h), &branch),
+        head,
+        "the head is delivered"
+    );
 }

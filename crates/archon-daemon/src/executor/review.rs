@@ -10,9 +10,10 @@ mod coverage;
 mod restate;
 mod rounds;
 
-pub(crate) use rounds::capped_continuation;
+pub(crate) use rounds::{capped_continuation, without_continuations};
 
 use archon_core::aether_ids::AetherAgentId;
+use archon_core::delegation::REVIEWER_ROLE;
 use archon_core::error::ArchonError;
 use archon_core::ports::{Descendant, DescendantState};
 use archon_core::pull_request::OntoPullRequest;
@@ -265,10 +266,19 @@ async fn check_chosen(
         Ok(left_out) => left_out,
         Err(why) => return Ok(Checked::Refused(why)),
     };
-    let check = |earlier: Option<Vec<Read>>| {
+    let check_with = |earlier: Option<Vec<Read>>, carrying: bool| {
         let read = (verdicts.clone(), left_out.clone(), earlier);
-        holding(ctx, run, read, &carried.reads, owed, shipped.clone())
+        let carried: &[Read] = if carrying { &carried.reads } else { &[] };
+        holding(ctx, run, read, carried, owed, shipped.clone())
     };
+    // A run whose own reads make the review judges the head afresh, as one carrying none would.
+    if !carried.reads.is_empty() && picked.len() >= owed as usize {
+        let alone = check_with(None, false).await?;
+        if matches!(alone, Checked::Held(..)) {
+            return Ok(alone);
+        }
+    }
+    let check = |earlier: Option<Vec<Read>>| check_with(earlier, true);
     Ok(match check(None).await? {
         Checked::Unanchored(stray) => match earlier_reads(ctx, stage, lead, beneath, picked).await?
         {
@@ -307,8 +317,8 @@ async fn earlier_reads(
     earlier_verdicts(ctx, &earlier).await
 }
 
-/// The verdicts of the reviewers that this stage's leads in the item's earlier runs on
-/// `run`'s branch delegated to. A `fresh` retry works on a new branch, so it carries none.
+/// The verdicts of the `reviewer` children of this stage's leads in the item's earlier runs on
+/// `run`'s branch. A `fresh` retry works on a new branch, so it carries none.
 async fn carried_reads(
     ctx: &DaemonContext,
     run: &PipelineRun,
@@ -323,18 +333,22 @@ async fn carried_reads(
             Ok(beneath) => beneath,
             Err(error) if transient(&error) => return Err(error),
             Err(error) => {
-                tracing::debug!(%earlier, %error, "an earlier lead's reviewers are not carried");
+                tracing::warn!(%earlier, %error, "an earlier lead's reviewers are not carried");
                 continue;
             }
         };
         let done = beneath
             .iter()
             .filter(|d| d.parent == *earlier && d.state == DescendantState::Completed)
-            .filter(|d| d.task.is_some());
+            .filter(|d| d.task.is_some() && d.role.eq_ignore_ascii_case(REVIEWER_ROLE));
         for child in done {
             // What cannot be read carries nothing: the run needs its own review instead.
-            let Ok(verdict) = result_of(ctx, child).await?.and_then(verdict_in) else {
-                continue;
+            let verdict = match result_of(ctx, child).await?.and_then(verdict_in) {
+                Ok(verdict) => verdict,
+                Err(why) => {
+                    tracing::warn!(agent = %child.agent, %why, "an earlier run's review is not carried");
+                    continue;
+                }
             };
             carried.reads.push((child.agent.to_string(), verdict));
             carried.reviewers.push(Reviewer {
@@ -875,38 +889,27 @@ async fn holding(
             .all(|(agent, _)| verdicts.iter().all(|(named, _)| named != agent)),
         "a carried reviewer is another lead's, never named"
     );
-    let ReviewBase {
-        branch: base_branch,
-        onto_head,
-        reviewed_pr,
-        repo,
-        merged_from,
-    } = base_of(ctx, run).await?;
-    let (base_branch, onto_head, merged_from, fork) = match (&reviewed_pr, repo) {
-        (Some(reviewed), Some(repo)) => match trusted_fork(ctx, run, repo, reviewed).await? {
-            // No local ref names the start, nor a refresh's: only GitHub's base.
-            Ok(fork) => (String::new(), Some(fork.clone()), None, Some(fork)),
-            Err(why) => return Ok(Checked::Refused(why)),
-        },
-        _ => (base_branch, onto_head, merged_from, None),
+    let resolved = match resolved_base(ctx, run).await? {
+        Ok(resolved) => resolved,
+        Err(why) => return Ok(Checked::Refused(why)),
     };
-    if fork.is_some()
+    if resolved.fork.is_some()
         && let Some(why) = unbased_pass(&verdicts, earlier.as_deref())
     {
         return Ok(Checked::Refused(why));
     }
     // A review item reads a frozen pull request whole: `earlier_leads` carries it nothing.
     assert!(
-        reviewed_pr.is_none() || carried.is_empty(),
+        resolved.reviewed_pr.is_none() || carried.is_empty(),
         "a review item carries nothing"
     );
     let carried = carried.to_vec();
     let workspace = run.workspace.clone();
     let checked = tokio::task::spawn_blocking(move || {
         let base = Base {
-            branch: &base_branch,
-            onto_head: onto_head.as_deref(),
-            merged_from: merged_from.as_deref(),
+            branch: &resolved.branch,
+            onto_head: resolved.onto_head.as_deref(),
+            merged_from: resolved.merged_from.as_deref(),
         };
         let read = Verdicts {
             named: &verdicts,
@@ -916,19 +919,64 @@ async fn holding(
         };
         let expect = Expected {
             shipped: shipped.as_deref(),
-            reviewed_pr: reviewed_pr.as_ref(),
+            reviewed_pr: resolved.reviewed_pr.as_ref(),
             owed,
             anchors_named: earlier.is_none(),
         };
         let checked = on_branch(&workspace, base, read, expect)?;
         Ok(match checked {
-            Checked::Held(held, head, None) => Checked::Held(held, head, fork),
+            Checked::Held(held, head, None) => Checked::Held(held, head, resolved.fork.clone()),
             other => other,
         })
     });
     checked
         .await
         .map_err(|e| ArchonError::io("reviewed commits task", std::io::Error::other(e)))?
+}
+
+/// Where `run`'s review starts: its base branch, or a reviewed pull request's trusted fork.
+struct Resolved {
+    branch: String,
+    onto_head: Option<String>,
+    merged_from: Option<String>,
+    fork: Option<String>,
+    reviewed_pr: Option<OntoPullRequest>,
+}
+
+/// The base `run`'s review reads from, or why a reviewed pull request's fork is not trusted.
+async fn resolved_base(
+    ctx: &DaemonContext,
+    run: &PipelineRun,
+) -> Result<Result<Resolved, String>, ArchonError> {
+    let ReviewBase {
+        branch,
+        onto_head,
+        reviewed_pr,
+        repo,
+        merged_from,
+    } = base_of(ctx, run).await?;
+    let (Some(reviewed), Some(repo)) = (&reviewed_pr, repo) else {
+        return Ok(Ok(Resolved {
+            branch,
+            onto_head,
+            merged_from,
+            fork: None,
+            reviewed_pr,
+        }));
+    };
+    // No local ref names the start, nor a refresh's: only GitHub's base.
+    let fork = match trusted_fork(ctx, run, repo, reviewed).await? {
+        Ok(fork) => fork,
+        Err(why) => return Ok(Err(why)),
+    };
+    assert!(!fork.is_empty(), "a trusted fork names its commit");
+    Ok(Ok(Resolved {
+        branch: String::new(),
+        onto_head: Some(fork.clone()),
+        merged_from: None,
+        fork: Some(fork),
+        reviewed_pr,
+    }))
 }
 
 /// What [`on_branch`] holds the placed verdicts to.

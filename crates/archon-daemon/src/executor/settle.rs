@@ -15,7 +15,7 @@ use archon_pipeline::{EngineAction, SpawnPlan};
 
 use super::{
     FollowUp, RunTable, SettleRetry, descendants, engine_wait, finish, gates, notional, pages,
-    recover, resume, ship, siblings, spawn, stall, swarm, team,
+    recover, restatement, resume, ship, siblings, spawn, stall, swarm, team,
 };
 use crate::context::DaemonContext;
 use crate::disk::{self, FullDisk};
@@ -464,12 +464,15 @@ async fn persist(
     outcome: StageOutcome,
 ) -> Result<FollowUp, ArchonError> {
     let settled = settled_stage(stage, outcome, archon_core::now());
-    let (owes_stop, kept) = {
+    let (settled, owes_stop, kept) = {
         let mut store = ctx.store.lock().await;
+        // A final restated verdict that is no pass stands over the result.
+        let settled = restatement::bound(&store, settled)?;
         let kept = resume::after_settle(&store, &settled)?;
         let owes_stop = descendants::owe(&mut store, &settled, false)?;
         store.upsert_stage_run(&settled)?;
-        (owes_stop, kept)
+        restatement::forget(&mut store, &settled)?;
+        (settled, owes_stop, kept)
     };
     table.spawn_errors.remove(&settled.id);
     let mut follow = decide(ctx, table, run, &settled, all).await?;
@@ -974,7 +977,9 @@ async fn replace(
     };
     // Replacement first: a crash in between leaves a superseded live
     // stage run, never a failure that looks final on resume.
-    store.upsert_stage_run(failed)?;
+    // The attempt goes on, so its restatement is kept for the replacement too.
+    let failed = restatement::bound(&store, failed.clone())?;
+    store.upsert_stage_run(&failed)?;
     Ok(Some(id))
 }
 
@@ -1101,8 +1106,9 @@ async fn cancel_siblings(
             let outcome = StageOutcome::Cancelled {
                 reason: Some(reason.clone()),
             };
-            let settled = settled_stage(stage, outcome, now);
+            let settled = restatement::bound(&store, settled_stage(stage, outcome, now))?;
             store.upsert_stage_run(&settled)?;
+            restatement::forget(&mut store, &settled)?;
             table.spawn_errors.remove(&id);
             cancelled.push((settled, reason));
         }

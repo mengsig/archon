@@ -305,7 +305,10 @@ fn cancel_group(
         let outcome = StageOutcome::Cancelled {
             reason: Some(reason.clone()),
         };
-        store.upsert_stage_run(&settle::settled_stage(stage, outcome, now))?;
+        let settled = settle::settled_stage(stage, outcome, now);
+        let settled = super::restatement::bound(store, settled)?;
+        store.upsert_stage_run(&settled)?;
+        super::restatement::forget(store, &settled)?;
         table.spawn_errors.remove(id);
     }
     let mut stops = follow.sibling_stops.iter();

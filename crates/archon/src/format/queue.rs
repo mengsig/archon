@@ -643,6 +643,7 @@ mod tests {
             verdict: None,
             verdict_note: None,
             sizing: Default::default(),
+            restatement: None,
             summary: Some(summary.into()),
             structured: None,
             cost_usd: 0.5,

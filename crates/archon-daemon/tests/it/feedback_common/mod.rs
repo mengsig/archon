@@ -96,6 +96,7 @@ async fn recorded_sample(
             verdict: None,
             verdict_note: None,
             sizing: Default::default(),
+            restatement: None,
             summary: Some("done".into()),
             structured: None,
             cost_usd: cost,

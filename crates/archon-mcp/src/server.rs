@@ -380,6 +380,7 @@ fn name_caller(
     let (named, required) = match request {
         Request::MessageOrchestrator { caller, .. }
         | Request::PublishArtifact { caller, .. }
+        | Request::SubmitVerdict { caller, .. }
         | Request::RecordChatAnswer { caller, .. }
         | Request::RequestAuthority { caller, .. } => (caller, true),
         // Without it the question is still asked, with no recorded asker.
@@ -537,6 +538,7 @@ fn how_to_check(request: &Request) -> String {
         }
         Request::MessageOrchestrator { .. } => "the message may already be recorded; check the item's archon log before repeating it, and keep working on your stage".into(),
         Request::PublishArtifact { .. } => "the files may already be stored; list_artifacts for your item shows them, and publishing a name again replaces it".into(),
+        Request::SubmitVerdict { .. } => "the submission may already be read; repeat it as you sent it, which answers it again and never counts an unmarked unreadable verdict as your restatement".into(),
         Request::GithubReply { thread, .. } => thread.check_before_retry(),
         Request::RecordChatAnswer { .. } => "the answer may already be recorded; a repeat is then refused as already answered, which is the confirmation".into(),
         Request::Promote { repo } => format!("the promotion may have merged; queue_status shows `{}`'s integration branch, and promote again is safe: it merges nothing twice", repo.0),
@@ -643,6 +645,23 @@ mod tests {
         let request = request_with_caller("publish_artifact", args, &params).unwrap();
         assert!(
             matches!(for_agent_1(request), Request::PublishArtifact { caller: Some(id), .. } if id.as_str() == "agt_1")
+        );
+    }
+
+    #[test]
+    fn submitting_a_verdict_needs_the_out_of_band_caller() {
+        let args = json!({"summary": "Ran it.\nVERDICT: PASS", "structured": {"verdict": "pass"}});
+        let refused = request_with_caller("submit_verdict", args.clone(), &json!({}));
+        assert!(
+            refused
+                .unwrap_err()
+                .0
+                .contains("submit_verdict requires Aether caller")
+        );
+        let params = json!({"_meta": {"aether/agent_id": "agt_1"}});
+        let request = request_with_caller("submit_verdict", args, &params).unwrap();
+        assert!(
+            matches!(for_agent_1(request), Request::SubmitVerdict { caller: Some(id), .. } if id.as_str() == "agt_1")
         );
     }
 

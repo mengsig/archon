@@ -2681,6 +2681,9 @@ async fn adaptive_guarded_build_delegates_within_the_stated_policy_and_archond_s
     assert_eq!(build.labels["archon.stage"], "build");
     assert!(!build.leaf);
     assert_eq!(build.hidden_tools, guarded_hidden());
+    let submit = "mcp__archon__submit_verdict".to_owned();
+    assert!(archon_core::mcp_tools::qualified_names().contains(&submit));
+    assert!(!build.hidden_tools.contains(&submit), "a stage can submit");
     let rules = &build.instructions[build.instructions.find("## Delegation").unwrap()..];
     let policy = format!("policy for this item: {MODEL}; effort at most high. Archon cancels");
     assert!(rules.contains(&policy), "{rules}");

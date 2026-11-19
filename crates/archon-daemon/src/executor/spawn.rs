@@ -909,6 +909,7 @@ fn reserve_one(
         verdict: None,
         verdict_note: None,
         sizing,
+        restatement: None,
         summary: None,
         structured: None,
         cost_usd: 0.0,
@@ -1682,7 +1683,10 @@ async fn fail_stage_and_run(
         };
         failed.infrastructure_failure = infra;
         failed.finished_at = Some(archon_core::now());
+        // A replacement that cannot spawn ends the attempt a restatement was asked in.
+        let failed = super::restatement::bound(&store, failed)?;
         store.upsert_stage_run(&failed)?;
+        super::restatement::forget(&mut store, &failed)?;
         store.run(&stage.run)?
     };
     assert_eq!(run.id, stage.run, "the stage run belongs to its run");

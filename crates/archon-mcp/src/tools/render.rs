@@ -88,6 +88,7 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
         Reply::Settings(view) => view.describe(),
         Reply::Artifacts(listing) => artifacts::listing(listing),
         Reply::ArtifactPage(page) => artifacts::page(page),
+        Reply::VerdictCheck(check) => check.message(),
         Reply::RequestStatus(status) => tracked::status(status),
         // Replies without a prose view retain their complete wire representation.
         _ => serde_json::to_string(reply)

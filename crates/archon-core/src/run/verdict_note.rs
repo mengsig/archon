@@ -262,6 +262,7 @@ mod tests {
             verdict: Some(Verdict::extract(summary, Some(&structured))),
             verdict_note: None,
             sizing: Default::default(),
+            restatement: None,
             summary: Some(summary.to_owned()),
             structured: Some(structured),
             cost_usd: 0.0,

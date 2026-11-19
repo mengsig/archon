@@ -290,6 +290,7 @@ fn long_review(run: PipelineRunId) -> StageRun {
         verdict: Some(Verdict::Fail),
         verdict_note: None,
         sizing: Default::default(),
+        restatement: None,
         summary: Some("s".repeat(3_000)),
         structured: Some(json!({"findings": []})),
         cost_usd: 0.0,

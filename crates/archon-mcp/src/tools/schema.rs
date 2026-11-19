@@ -51,6 +51,7 @@ pub(super) fn all() -> Vec<ToolDefinition> {
         lessons::record_lesson(),
         refresh_item(),
         publish_artifact(),
+        submit_verdict(),
         list_artifacts(),
         read_artifact(),
         request_merge(),
@@ -167,6 +168,24 @@ fn publish_artifact() -> ToolDefinition {
                 "name": {"type": "string", "minLength": 1, "description": "Name in the store. Default: the path's last component."}
             }),
             &["path"],
+        ),
+        false,
+    )
+}
+
+fn submit_verdict() -> ToolDefinition {
+    define(
+        "submit_verdict",
+        "Submit verdict",
+        "Stage agents with a Verdict section: have the result you will finish with read \
+         first. An unreadable verdict is asked back; the `restating` one is final.",
+        object(
+            json!({
+                "summary": {"type": "string", "minLength": 1, "description": "The `summary` you will finish with."},
+                "structured": {"type": "object"},
+                "restating": {"type": "boolean", "description": "Only when asked to restate."}
+            }),
+            &["summary"],
         ),
         false,
     )

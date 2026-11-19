@@ -819,6 +819,7 @@ mod tests {
             verdict: None,
             verdict_note: None,
             sizing: Default::default(),
+            restatement: None,
             summary: None,
             structured: Some(serde_json::json!({"commit": commit, "tree": "b".repeat(40),
                 "pr": {"title": "t", "body": "b"},

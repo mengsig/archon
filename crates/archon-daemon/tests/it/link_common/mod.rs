@@ -560,6 +560,7 @@ fn stage_run(run: &PipelineRunId, state: StageState) -> StageRun {
         verdict: None,
         verdict_note: None,
         sizing: Default::default(),
+        restatement: None,
         summary: None,
         structured: None,
         cost_usd: 0.0,

@@ -195,6 +195,11 @@ fn adaptive_samples() -> Vec<(&'static str, Value)> {
             "publish_artifact",
             json!({"path": "bench/out.json", "name": "evidence/out.json"}),
         ),
+        (
+            "submit_verdict",
+            json!({"summary": "Ran it.\nVERDICT: PASS", "restating": true,
+                "structured": {"verdict": "pass", "findings": []}}),
+        ),
         ("list_artifacts", json!({"item": qi()})),
         (
             "read_artifact",
@@ -208,6 +213,81 @@ fn refusal(tool: &str, arguments: Value) -> String {
         Err(ToolError(text)) => text,
         Ok(request) => panic!("{tool} accepted invalid arguments as {request:?}"),
     }
+}
+
+/// A stage agent hands over the result it is about to finish with, and is
+/// told in words whether to finish, restate, or that it is final.
+#[test]
+fn submit_verdict_carries_the_result_and_its_answer_says_what_to_do_next() {
+    use archon_core::run::{CheckDecision, Verdict, VerdictCheck, VerdictNote, VerdictReading};
+    let structured = json!({"verdict": "pass", "findings": [{"severity": "high"}]});
+    let args = json!({"summary": "Ran it.\nVERDICT: PASS", "structured": structured});
+    match to_request("submit_verdict", args.clone()).expect("valid arguments") {
+        Request::SubmitVerdict {
+            summary,
+            structured: Some(sent),
+            restating: false,
+            caller: None,
+        } => {
+            assert_eq!(summary, "Ran it.\nVERDICT: PASS");
+            assert_eq!(sent, structured);
+        }
+        other => panic!("mapped to {other:?}"),
+    }
+    let mut marked = args;
+    marked["restating"] = json!(true);
+    let restated = to_request("submit_verdict", marked).expect("valid arguments");
+    assert!(
+        matches!(
+            restated,
+            Request::SubmitVerdict {
+                restating: true,
+                ..
+            }
+        ),
+        "{restated:?}"
+    );
+    assert!(refusal("submit_verdict", json!({"structured": {}})).contains("summary"));
+    // `complete_task` takes an object, so nothing else is read as a result.
+    for not_an_object in [json!([{"verdict": "pass"}]), json!("pass"), json!(1)] {
+        let args = json!({"summary": "VERDICT: PASS", "structured": not_an_object});
+        let refused = refusal("submit_verdict", args);
+        assert!(refused.contains("`structured` is invalid"), "{refused}");
+    }
+    let definition = definition("submit_verdict").expect("defined");
+    assert!(!definition.read_only, "it records the one ask");
+    assert!(
+        definition
+            .description
+            .contains("the `restating` one is final")
+    );
+    assert!(
+        !definition.description.contains("complete_task"),
+        "a woken agent finishes without it"
+    );
+
+    let disputed = VerdictReading::new((Verdict::Unknown, Some(VerdictNote::DisputedPass)));
+    let answer = |decision, reading| {
+        render(
+            "submit_verdict",
+            &Reply::VerdictCheck(VerdictCheck { decision, reading }),
+        )
+    };
+    let asked = answer(CheckDecision::Restate, disputed);
+    assert!(
+        asked.contains("a pass beside a blocking finding"),
+        "{asked}"
+    );
+    assert!(asked.contains("`\"restating\": true`"), "{asked}");
+    let last = answer(CheckDecision::Final, disputed);
+    assert!(last.starts_with("Final: "), "{last}");
+    assert!(
+        last.contains("Finish now as your instructions say"),
+        "{last}"
+    );
+    let pass = VerdictReading::new((Verdict::Pass, None));
+    let accepted = answer(CheckDecision::Accepted, pass);
+    assert!(accepted.contains("reads this as a pass"), "{accepted}");
 }
 
 #[test]
@@ -1426,10 +1506,15 @@ fn the_tool_list_stays_within_its_budget() {
     const INTENT_BINDING_BYTES: usize = 2 * 1024;
     const INTENT_RECORD_BYTES: usize = 2 * 1024;
     const FROM_1_0_BUDGET_BYTES: usize = 20_000 + INTENT_BINDING_BYTES;
+    // `submit_verdict`, which every verdict-holding stage calls before it completes.
+    const VERDICT_CHECK_BYTES: usize = 512;
     // Each effort's note that `max` needs `[models] max_effort` (1.6.4).
     const EFFORT_CAP_NOTE_BYTES: usize = 256;
-    const BUDGET_BYTES: usize =
-        33 * 1024 + INTENT_BINDING_BYTES + INTENT_RECORD_BYTES + EFFORT_CAP_NOTE_BYTES;
+    const BUDGET_BYTES: usize = 33 * 1024
+        + INTENT_BINDING_BYTES
+        + INTENT_RECORD_BYTES
+        + VERDICT_CHECK_BYTES
+        + EFFORT_CAP_NOTE_BYTES;
     let definitions = definitions();
     assert_eq!(definitions[FROM_1_0 - 1].name, "message_orchestrator");
     let carried: usize = definitions[..FROM_1_0].iter().map(shown_bytes).sum();
@@ -1448,6 +1533,12 @@ fn the_tool_list_stays_within_its_budget() {
             definition.name
         );
     }
+    let verdict_check = definitions.iter().find(|d| d.name == "submit_verdict");
+    let verdict_check = shown_bytes(verdict_check.expect("defined"));
+    assert!(
+        verdict_check <= VERDICT_CHECK_BYTES,
+        "submit_verdict exceeds its allocation at {verdict_check} bytes"
+    );
     assert!(all <= BUDGET_BYTES, "the tool list grew to {all} bytes");
 }
 

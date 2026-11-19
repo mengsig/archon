@@ -35,7 +35,7 @@ impl Store {
             .ok_or_else(|| ArchonError::Invalid("outcome requires a finished run".into()))?;
         let stages = self.stage_runs(&run.id)?;
         let failed_reviews = super::class::failed_reviews(&self.conn, &stages)?;
-        let (result, failure) = result(&run.state, &stages, &failed_reviews)?;
+        let (result, failure) = result(run, &stages, &failed_reviews)?;
         assert!(run.state.is_terminal());
         assert_eq!(item.id, run.item);
         let observations = stage_observations(self, &stages, estimates)?;
@@ -141,21 +141,16 @@ fn elapsed(start: archon_core::Timestamp, end: archon_core::Timestamp) -> Result
 }
 
 fn result(
-    state: &RunState,
+    run: &PipelineRun,
     stages: &[StageRun],
     failed_reviews: &BTreeSet<StageRunId>,
 ) -> Result<(OutcomeResult, Option<FailureClass>), ArchonError> {
-    match state {
+    match &run.state {
         RunState::Succeeded { .. } => Ok((OutcomeResult::Succeeded, None)),
         RunState::Cancelled { .. } => Ok((OutcomeResult::Cancelled, None)),
-        RunState::Failed { stage_id, error } => Ok((
+        RunState::Failed { .. } => Ok((
             OutcomeResult::Failed,
-            Some(super::class::failure_class(
-                stage_id,
-                error,
-                stages,
-                failed_reviews,
-            )),
+            Some(super::class::failure_class(run, stages, failed_reviews)),
         )),
         _ => Err(ArchonError::Invalid("a live run has no outcome".into())),
     }

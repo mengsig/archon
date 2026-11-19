@@ -177,7 +177,7 @@ fn recomputed(conn: &Connection, run: &str) -> Result<Option<FailureClass>, Arch
     let Some(failed) = kept(run, failed_reviews(conn, &stages))? else {
         return Ok(None);
     };
-    Ok(Some(failure_class(stage_id, error, &stages, &failed)))
+    Ok(Some(failure_class(&stored, &stages, &failed)))
 }
 
 /// The stage whose runs the outcome observed more of than are still stored,

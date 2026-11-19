@@ -9,8 +9,8 @@ use archon_core::error::ArchonError;
 use archon_core::id::StageRunId;
 use archon_core::outcome::FailureClass;
 use archon_core::run::{
-    REVIEW_NOT_ON_RECORD, SHIP_STEP, STATED_FAILURE, StageOutcome, StageRun, StageState,
-    TalliedFails, UNRESUMABLE_RUN, Verdict, review_field, review_tally_key,
+    PipelineRun, REVIEW_NOT_ON_RECORD, RunState, SHIP_STEP, STATED_FAILURE, StageOutcome, StageRun,
+    StageState, TalliedFails, UNRESUMABLE_RUN, Verdict, review_field, review_tally_key,
 };
 use rusqlite::{Connection, OptionalExtension};
 
@@ -24,16 +24,23 @@ use super::super::codec::{SqlContext, from_json, text_column};
 /// prefixes the daemon writes on purpose. `failed_reviews` is
 /// [`failed_reviews`] of `stages`, which may come in any order.
 pub(in crate::store) fn failure_class(
-    stage_id: &str,
-    error: &str,
+    run: &PipelineRun,
     stages: &[StageRun],
     failed_reviews: &BTreeSet<StageRunId>,
 ) -> FailureClass {
+    let RunState::Failed { stage_id, error } = &run.state else {
+        unreachable!("only a failed run has a failure class");
+    };
+    assert!(
+        stages.iter().all(|s| s.run == run.id),
+        "the run's own stage runs"
+    );
     // Recovery dropped the rows it could not read: the rest explain nothing.
     if error.starts_with(UNRESUMABLE_RUN) {
         return FailureClass::Infrastructure;
     }
-    let ending = ending_attempt(stage_id, stages);
+    let stages = flag_wrapped_spawns(run, stages);
+    let ending = ending_attempt(stage_id, &stages);
     // The ship step ends a run past every stage: one named `ship` explains nothing.
     if ship_step_failed(stage_id, error, &ending) {
         return daemon_prefixed_class(error).unwrap_or(FailureClass::Ship);
@@ -128,15 +135,21 @@ fn stated_stop(stage_id: &str, error: &str, ending: &[&StageRun]) -> Option<Fail
 /// the words of, whole or as the driver clips them: the one that ended it,
 /// whatever its siblings recorded. The driver read the lowest slot first.
 fn ended_by<'a>(error: &str, ending: &[&'a StageRun]) -> Option<&'a StageRun> {
-    ending.iter().copied().find(|s| failed_in_words(s, error))
+    ending.iter().copied().find(|s| ended_in_words(s, error))
 }
 
-/// The stage runs of the `ending` attempt that failed in the run's words.
+/// Whether the run ended in this stage run's own words: it failed in them,
+/// and the daemon ends a run in a slot's words ([`ends_a_run`]).
+fn ended_in_words(stage: &StageRun, error: &str) -> bool {
+    failed_in_words(stage, error) && ends_a_run(stage)
+}
+
+/// The stage runs of the `ending` attempt the run ended in the words of.
 fn in_words<'a>(error: &str, ending: &[&'a StageRun]) -> Vec<&'a StageRun> {
     let said: Vec<&StageRun> = ending
         .iter()
         .copied()
-        .filter(|s| failed_in_words(s, error))
+        .filter(|s| ended_in_words(s, error))
         .collect();
     assert!(
         !said.is_empty(),
@@ -299,26 +312,66 @@ fn stop_of(stage: &StageRun) -> Option<FailureClass> {
 
 /// A stage run from before the daemon flagged its own spawn failures (1.6.3):
 /// it has no agent, so the error is the daemon's, and opens as the daemon
-/// opens the spawn it gave up on, bare or wrapped by a workspace gone missing.
+/// opens the spawn it gave up on ([`flag_wrapped_spawns`] reads it wrapped).
 fn never_spawned(stage: &StageRun) -> bool {
     let StageState::Failed { error } = &stage.state else {
         return false;
     };
-    if stage.aether_agent.is_some() {
-        return false;
-    }
-    // A workspace gone by then wrapped the spawn's error: `workspace missing: <path>; the engine said: …`.
-    let engine_said = error
-        .strip_prefix(StageOutcome::WORKSPACE_MISSING)
-        .and_then(|rest| rest.split_once(StageOutcome::ENGINE_SAID))
-        .map_or(error.as_str(), |(_, said)| said);
-    let gave_up = [
+    stage.aether_agent.is_none() && gave_up_spawn(error)
+}
+
+/// Whether `error` opens as the daemon opens a spawn it gave up on.
+fn gave_up_spawn(error: &str) -> bool {
+    let openings = [
         StageOutcome::DISK_FULL_SPAWN,
         StageOutcome::SPAWN_KEPT_FAILING,
     ];
-    gave_up
-        .iter()
-        .any(|opening| engine_said.starts_with(opening))
+    openings.iter().any(|opening| error.starts_with(opening))
+}
+
+/// `stages`, each agentless spawn 1.6.3 gave up on in a workspace gone missing
+/// flagged as 1.6.4 flags it. Its error wraps the spawn's: `workspace missing:
+/// <path>; the engine said: …`, `<path>` being the run's or a worker's tree.
+fn flag_wrapped_spawns(run: &PipelineRun, stages: &[StageRun]) -> Vec<StageRun> {
+    let mut flagged = stages.to_vec();
+    for stage in flagged.iter_mut().filter(|s| s.aether_agent.is_none()) {
+        let wrapped = match &stage.state {
+            StageState::Failed { error } => engine_said(run, error).is_some_and(gave_up_spawn),
+            _ => false,
+        };
+        stage.infrastructure_failure |= wrapped;
+    }
+    assert_eq!(
+        flagged.len(),
+        stages.len(),
+        "flags, never drops, a stage run"
+    );
+    flagged
+}
+
+/// The error the daemon wrapped in its missing-workspace error, where the
+/// path it names is the run's worktree or a worker's under its team root.
+fn engine_said<'a>(run: &PipelineRun, error: &'a str) -> Option<&'a str> {
+    let path_on = error
+        .strip_prefix(StageOutcome::WORKSPACE_MISSING)?
+        .strip_prefix(' ')?;
+    let run_tree = run.workspace.display().to_string();
+    let in_run_tree = path_on
+        .strip_prefix(run_tree.as_str())
+        .and_then(|rest| rest.strip_prefix(StageOutcome::ENGINE_SAID));
+    if in_run_tree.is_some() {
+        return in_run_tree;
+    }
+    let root = format!("{}/", run.team_root.as_ref()?.display());
+    let (worker, said) = path_on
+        .strip_prefix(root.as_str())?
+        .split_once(StageOutcome::ENGINE_SAID)?;
+    // A worker's directory is `<stage>-<role>`, both of `[a-z0-9-]`.
+    let named = !worker.is_empty()
+        && worker
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+    named.then_some(said)
 }
 
 /// What the stage that ended the run was for. A review that passed did not

@@ -925,3 +925,49 @@ fn v24_reads_a_spawn_failure_wrapped_by_a_missing_workspace() {
         "a scenario's id is no gate reason"
     );
 }
+
+/// The wrapper is read at the end of the path the run's records name, never at
+/// a separator inside a configured path: a bare preflight refusal stays scored.
+#[test]
+fn v24_reads_the_wrapper_at_the_end_of_the_runs_own_path() {
+    let mut conn = v23_store();
+    let odd_root = "/tmp/trees; the engine said: create_agent kept failing: archive";
+    let gave_up = "create_agent kept failing: aether: internal: storage temporarily unavailable";
+    let seeded = |conn: &Connection, workspace: &str, team_root: Option<&str>, error: String| {
+        let mut run = failed_run("implement", &error);
+        run.workspace = workspace.into();
+        run.team_root = team_root.map(Into::into);
+        let failed = failed_stage(&run, StageKind::Work, &error, false);
+        seed(conn, &run, &[failed], Some(FailureClass::Other), false);
+        run
+    };
+    let tree = format!("{odd_root}/run");
+    let bare = seeded(&conn, &tree, None, format!("workspace missing: {tree}"));
+    let wrapped = seeded(
+        &conn,
+        &tree,
+        None,
+        format!("workspace missing: {tree}; the engine said: {gave_up}"),
+    );
+    let root = format!("{odd_root}/team");
+    let worker = seeded(
+        &conn,
+        &format!("{root}/main"),
+        Some(&root),
+        format!("workspace missing: {root}/build-api; the engine said: {gave_up}"),
+    );
+    let elsewhere = seeded(
+        &conn,
+        "/wt/x",
+        None,
+        format!("workspace missing: /wt/y; the engine said: {gave_up}"),
+    );
+
+    assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+
+    let class = |run: &PipelineRun| columns(&conn, run).0;
+    assert_eq!(class(&bare), some("other"), "no spawn was tried");
+    assert_eq!(class(&wrapped), some("infrastructure"));
+    assert_eq!(class(&worker), some("infrastructure"), "a worker's tree");
+    assert_eq!(class(&elsewhere), some("other"), "a path the run never had");
+}

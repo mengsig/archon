@@ -1225,7 +1225,7 @@ fn a_gate_reason_is_read_only_where_the_driver_writes_it() {
 /// flagged nothing: with no agent, that is still the daemon's spawn failure.
 #[test]
 fn a_spawn_failure_wrapped_by_a_missing_workspace_is_the_daemons() {
-    const WRAPPED: &str = "workspace missing: /wt/x; the engine said: \
+    const WRAPPED: &str = "workspace missing: /wt/alpha/x; the engine said: \
         create_agent kept failing: aether: internal: storage temporarily unavailable";
     let spawn = |attached: bool| {
         failed_with("implement", WRAPPED, move |run| {
@@ -1245,8 +1245,8 @@ fn a_spawn_failure_wrapped_by_a_missing_workspace_is_the_daemons() {
     assert!(!unspawned.is_scored(), "no agent judged the work");
     let attached = spawn(true);
     assert_eq!(attached.failure, Some(FailureClass::Other), "an agent ran");
-    let gone = failed_with("implement", "workspace missing: /wt/x", |run| {
-        let error = "workspace missing: /wt/x; the engine said: tests failed".into();
+    let gone = failed_with("implement", "workspace missing: /wt/alpha/x", |run| {
+        let error = "workspace missing: /wt/alpha/x; the engine said: tests failed".into();
         vec![settled(
             run,
             "implement",
@@ -1258,5 +1258,30 @@ fn a_spawn_failure_wrapped_by_a_missing_workspace_is_the_daemons() {
         gone.failure,
         Some(FailureClass::Other),
         "the engine's own failure"
+    );
+}
+
+/// An agent's plain task failure is the gate's to judge, never the run's
+/// words, even where it repeats them: a sibling's recorded timeout stands.
+#[test]
+fn an_agents_task_failure_in_the_runs_words_does_not_end_the_run() {
+    let report = format!(
+        "stage `test` failed: gate all_pass failed: 0 of 3 passed\n\n{}",
+        "x".repeat(9_000)
+    );
+    let clipped = StageOutcome::run_stop_error(&report);
+    let ended = failed_with("test", &clipped, |run| {
+        let mut long = slot(run, 0, &report, false);
+        long.aether_agent = Some(agent(1));
+        let mut copied = slot(run, 1, &clipped, false);
+        copied.aether_agent = Some(agent(2));
+        let mut timed_out = settled(run, "test", StageKind::Test, StageState::TimedOut);
+        timed_out.fan_index = 2;
+        vec![long, copied, timed_out]
+    });
+    assert_eq!(ended.failure, Some(FailureClass::Timeout));
+    assert!(
+        !ended.is_scored(),
+        "the deadline stopped a slot of the group"
     );
 }

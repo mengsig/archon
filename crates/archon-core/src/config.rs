@@ -467,7 +467,8 @@ impl ModelsConfig {
         self.sizer_max_effort.unwrap_or(Effort::XHigh)
     }
 
-    /// The pacing margin in force: [`DEFAULT_MARGIN_PERCENT`] unless set.
+    /// The pacing margin in force:
+    /// [`crate::quota::pace::DEFAULT_MARGIN_PERCENT`] unless set.
     pub fn pacing_margin_percent(&self) -> u8 {
         let margin = self
             .pacing_margin_percent

@@ -41,10 +41,19 @@ pub struct Reading {
 #[derive(Debug, Default)]
 pub struct QuotaCache {
     reading: std::sync::Mutex<Option<Reading>>,
-    /// When archond last asked Aether, answered or not.
-    asked_at: std::sync::Mutex<Option<Timestamp>>,
-    /// A background refresh is running.
+    /// Held across each ask, so routing waits for one in flight and shares
+    /// its answer; holds when the pace poll last asked, answered or not.
+    asking: tokio::sync::Mutex<Option<Timestamp>>,
+    /// A background pace poll is running.
     in_flight: AtomicBool,
+}
+
+/// Who asks Aether: routing retries a failed ask on its next pass, as it
+/// always has; the pace poll asks at most every [`REFRESH_EVERY`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Asker {
+    Routing,
+    PacePoll,
 }
 
 impl QuotaCache {
@@ -66,17 +75,6 @@ impl QuotaCache {
         );
         *self.lock() = Some(reading);
     }
-
-    /// Record an ask at `now` unless one was made within [`REFRESH_EVERY`];
-    /// whether this caller may ask.
-    fn claim_ask(&self, now: Timestamp) -> bool {
-        let mut asked = (self.asked_at.lock()).unwrap_or_else(std::sync::PoisonError::into_inner);
-        if asked.is_some_and(|at| now - at < REFRESH_EVERY && now >= at) {
-            return false;
-        }
-        *asked = Some(now);
-        true
-    }
 }
 
 /// Clears [`QuotaCache::in_flight`] however the refresh ends.
@@ -90,14 +88,20 @@ impl Drop for InFlight<'_> {
 
 /// Ask Aether for its providers' usage unless the last reading is recent.
 /// An aetherd that predates headroom answers none, which routes by weight.
-pub(crate) async fn refresh(ctx: &DaemonContext) -> Result<(), ArchonError> {
+/// One ask runs at a time; a caller that waited for one uses its answer.
+pub(crate) async fn refresh(ctx: &DaemonContext, asker: Asker) -> Result<(), ArchonError> {
+    let mut polled = ctx.quota.asking.lock().await;
     let now = archon_core::now();
     let recent = ctx
         .quota
         .reading()
         .is_some_and(|r| now - r.read_at < REFRESH_EVERY);
-    if recent || !ctx.aether.is_connected() || !ctx.quota.claim_ask(now) {
+    let polled_recently = polled.is_some_and(|at| now >= at && now - at < REFRESH_EVERY);
+    if recent || !ctx.aether.is_connected() || (asker == Asker::PacePoll && polled_recently) {
         return Ok(());
+    }
+    if asker == Asker::PacePoll {
+        *polled = Some(now);
     }
     let providers = ctx.aether.client()?.providers().await?;
     let reported: Vec<(String, ProviderHeadroom)> = providers
@@ -115,7 +119,11 @@ pub(crate) async fn refresh(ctx: &DaemonContext) -> Result<(), ArchonError> {
 /// The last reading and the moment to judge it at; `None` before a reading
 /// or once it is too old to trust.
 fn trusted(ctx: &DaemonContext) -> Option<(Reading, Timestamp)> {
-    let reading = ctx.quota.reading()?;
+    judged(ctx.quota.reading()?)
+}
+
+/// `reading` and the moment to judge it at, while it can be trusted.
+fn judged(reading: Reading) -> Option<(Reading, Timestamp)> {
     let now = archon_core::now().max(reading.read_at);
     if now - reading.read_at > TRUSTED_FOR {
         return None;
@@ -124,8 +132,9 @@ fn trusted(ctx: &DaemonContext) -> Option<(Reading, Timestamp)> {
     Some((reading, now))
 }
 
-/// [`refresh`] in a task of its own, one at a time, so pace stays current
-/// without provider weights and no dispatch pass waits on Aether for it.
+/// [`refresh`] in a task of its own, one at a time, then warn of any window
+/// running short, so pace stays current without provider weights and no
+/// unweighted dispatch pass waits on Aether for it.
 pub(crate) fn refresh_in_background(ctx: &Arc<DaemonContext>) {
     if ctx.quota.in_flight.swap(true, Ordering::AcqRel) {
         return;
@@ -133,8 +142,11 @@ pub(crate) fn refresh_in_background(ctx: &Arc<DaemonContext>) {
     let ctx = Arc::clone(ctx);
     tokio::spawn(async move {
         let _done = InFlight(&ctx.quota.in_flight);
-        if let Err(error) = refresh(&ctx).await {
+        if let Err(error) = refresh(&ctx, Asker::PacePoll).await {
             tracing::warn!(%error, "provider quota refresh failed; using the last reading");
+        }
+        if let Err(error) = warn_short(&ctx).await {
+            tracing::error!(%error, "quota pace warning failed; the next pass tries again");
         }
     });
 }
@@ -143,10 +155,15 @@ pub(crate) fn refresh_in_background(ctx: &Arc<DaemonContext>) {
 /// before a reading or once it is too old to trust.
 pub(crate) fn view(ctx: &DaemonContext) -> Option<QuotaView> {
     let (reading, now) = trusted(ctx)?;
+    Some(view_of(ctx, &reading, now))
+}
+
+fn view_of(ctx: &DaemonContext, reading: &Reading, now: Timestamp) -> QuotaView {
+    assert!(now >= reading.read_at, "a reading is never from the future");
     let config = &ctx.config;
     let reserves = config.models.reserves(&config.orchestrator.model.provider);
     let providers = reading.providers.iter().map(|(p, h)| (p.as_str(), h));
-    Some(QuotaView::new(providers, &reserves, reading.read_at, now))
+    QuotaView::new(providers, &reserves, reading.read_at, now)
 }
 
 /// Each provider the last trusted reading shows with no usage left at all,
@@ -169,6 +186,15 @@ pub(crate) fn paces(ctx: &DaemonContext) -> BTreeMap<String, Vec<WindowPace>> {
     let Some((reading, now)) = trusted(ctx) else {
         return BTreeMap::new();
     };
+    paces_of(ctx, &reading, now)
+}
+
+fn paces_of(
+    ctx: &DaemonContext,
+    reading: &Reading,
+    now: Timestamp,
+) -> BTreeMap<String, Vec<WindowPace>> {
+    assert!(now >= reading.read_at, "a reading is never from the future");
     let margin = ctx.config.models.pacing_margin_percent();
     let paces: BTreeMap<String, Vec<WindowPace>> = (reading.providers.iter())
         .map(|(provider, headroom)| {
@@ -189,18 +215,20 @@ pub(crate) async fn current(
     weights: Option<&ProviderWeights>,
 ) -> Option<QuotaView> {
     weights?;
-    if let Err(error) = refresh(ctx).await {
+    if let Err(error) = refresh(ctx, Asker::Routing).await {
         tracing::warn!(%error, "provider quota refresh failed; using the last reading");
     }
     view(ctx)
 }
 
-/// Each provider's headroom, reserve and next reset for `status`, from the
-/// last reading alone.
+/// Each provider's headroom, reserve, next reset and pace for `status`, all
+/// from one copy of the last reading.
 pub(crate) fn status(ctx: &DaemonContext) -> Option<QuotaStatus> {
     let reading = ctx.quota.reading()?;
-    let view = view(ctx).unwrap_or_default();
-    let mut paces = paces(ctx);
+    let (view, mut paces) = match judged(reading.clone()) {
+        Some((trusted, at)) => (view_of(ctx, &trusted, at), paces_of(ctx, &trusted, at)),
+        None => (QuotaView::default(), BTreeMap::new()),
+    };
     let now = archon_core::now();
     let config = &ctx.config;
     let reserves = config.models.reserves(&config.orchestrator.model.provider);

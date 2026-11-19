@@ -179,7 +179,7 @@ async fn admit(ctx: &DaemonContext) -> Result<Admission, ArchonError> {
     let caps = resolve::caps(ctx).await;
     let envs = snapshot::Envs::prefetch(ctx, ReadOn::Writer).await?;
     if envs.weighted(&ctx.config)
-        && let Err(error) = crate::quota::refresh(ctx).await
+        && let Err(error) = crate::quota::refresh(ctx, crate::quota::Asker::Routing).await
     {
         tracing::warn!(%error, "provider quota refresh failed; using the last reading");
     }

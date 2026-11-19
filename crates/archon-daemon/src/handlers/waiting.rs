@@ -5,13 +5,16 @@ use std::collections::BTreeMap;
 
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
+use archon_core::model_tier::ModelCatalog;
 use archon_core::protocol::{WaitingOn, WaitingReason, WaitingReasonCode as Code};
 use archon_core::queue::{QueueItem, QueueState};
+use archon_core::run::{StageRun, StageState};
 use archon_queue::dispatch::ModelHoldKind;
 use archon_queue::{DispatchSnapshot, Store};
 
 use crate::context::DaemonContext;
 use crate::dispatcher;
+use crate::executor;
 
 pub(super) struct WaitingView {
     snapshot: DispatchSnapshot,
@@ -33,10 +36,7 @@ impl WaitingView {
             .collect();
         let mut held_stages = model_held_stages(&snapshot);
         let catalog = dispatcher::catalog_for_view(ctx).await?;
-        if let Some(reason) = catalog.not_ready_reason() {
-            let store = ctx.read_store().await?;
-            held_by_outage(&store, reason, &mut held_stages)?;
-        }
+        held_reserved(&*ctx.read_store().await?, &catalog, &mut held_stages)?;
         Ok(Self {
             snapshot,
             reasons,
@@ -200,9 +200,10 @@ impl WaitingView {
     /// Why the model catalog holds `item`: its queued admission or, once it
     /// runs, the creation of its next stage.
     fn catalog_hold(&self, item: &QueueItem) -> &str {
-        if let Some((kind, reason)) = self.held_stages.get(&item.id) {
-            assert!(item.state.is_active(), "a held stage belongs to a run");
+        let held = self.held_stages.get(&item.id);
+        if let Some((kind, reason)) = held.filter(|_| item.state.is_active()) {
             assert_eq!(*kind, ModelHoldKind::CatalogUnavailable, "a catalog hold");
+            assert!(!reason.is_empty(), "a catalog hold says why");
             return reason;
         }
         let (_, index) = self.reasons[&item.id];
@@ -391,23 +392,58 @@ fn model_held_stages(
         .collect()
 }
 
-/// Reserved stage creations wait for a ready catalog as well (`check_frozen_request`),
-/// though the run table no longer lists them as pending.
-fn held_by_outage(
+/// Reserved stage creations are checked like pending ones (`check_frozen_request`),
+/// though the run table no longer lists them: each is held by an outage or by
+/// a frozen model the ready catalog refuses.
+fn held_reserved(
     store: &Store,
-    reason: &str,
+    catalog: &ModelCatalog,
     held: &mut BTreeMap<QueueItemId, (ModelHoldKind, String)>,
 ) -> Result<(), ArchonError> {
-    assert!(!reason.is_empty(), "an outage says why");
     for stage in store.live_stage_runs()? {
-        if stage.state != archon_core::run::StageState::Spawning {
+        if stage.state != StageState::Spawning {
             continue;
         }
-        let item = store.run(&stage.run)?.item;
-        held.entry(item)
-            .or_insert_with(|| (ModelHoldKind::CatalogUnavailable, reason.to_owned()));
+        let run = store.run(&stage.run)?;
+        // A finished run's unsent creation is cancelled, not held.
+        if run.state.is_terminal() {
+            continue;
+        }
+        let item = store.item(&run.item)?;
+        let Some(hold) = reserved_hold(store, catalog, &item, &stage)? else {
+            continue;
+        };
+        assert!(!hold.1.is_empty(), "a model hold says why");
+        held.entry(item.id).or_insert(hold);
     }
     Ok(())
+}
+
+/// Why the catalog stops the reserved creation of `stage`, if it does: an
+/// unsettled pin the operator re-plans, or a choice with no replacement yet.
+fn reserved_hold(
+    store: &Store,
+    catalog: &ModelCatalog,
+    item: &QueueItem,
+    stage: &StageRun,
+) -> Result<Option<(ModelHoldKind, String)>, ArchonError> {
+    assert_eq!(stage.state, StageState::Spawning, "a reserved creation");
+    if let Some(reason) = catalog.not_ready_reason() {
+        return Ok(Some((ModelHoldKind::CatalogUnavailable, reason.to_owned())));
+    }
+    let models = match executor::reserved_models(store, &stage.id) {
+        Ok(models) => models,
+        Err(error) if error.is_store() => return Err(error),
+        // Its claim fails a stage whose request cannot be read; no model holds it.
+        Err(_) => return Ok(None),
+    };
+    let Some(refused) = models.iter().find_map(|m| catalog.check(m).err()) else {
+        return Ok(None);
+    };
+    Ok(Some(match dispatcher::invalid_pin(item, catalog) {
+        Some(pin) => (ModelHoldKind::InvalidPin, pin),
+        None => (ModelHoldKind::NoReplacement, refused.to_string()),
+    }))
 }
 
 #[cfg(test)]

@@ -89,6 +89,7 @@ pub(crate) use roster::prune_settled_rosters;
 pub(crate) use run_node::recover_message_node;
 pub(crate) use run_node::{is_node_agent, node_run, prune_retired_node_agents};
 pub(crate) use ship::{prune_finished_ships, shipped_commit, withdraw_owed_merge};
+pub(crate) use spawn::reserved_models;
 pub(crate) use spawn::{load_spawn, prune_settled_requests, runs_awaiting_spawn};
 pub use stall::Activity;
 pub(crate) use start::held_by_stack;

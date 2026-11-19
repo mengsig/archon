@@ -1377,17 +1377,9 @@ async fn check_frozen_request(
         store.item(&run.item)?.repo
     };
     let env = RepoEnv::load(ctx, repo.as_ref()).await?;
-    let policy = env.resolved_policy(ctx);
-    let models = std::iter::once(&request.choice.model).chain(
-        request.delegation_policy.iter().flat_map(|bounds| {
-            bounds
-                .workers
-                .iter()
-                .filter_map(|w| w.model.as_ref())
-                .chain(&bounds.exempt_models)
-        }),
-    );
-    for model in models {
+    // Both sides of the policy read one catalog: the model's id and the lists'.
+    let policy = env.policy_in(&ctx.config, &catalog.aliases());
+    for model in frozen_models(request) {
         let canonical = catalog.check(model)?;
         if !policy.permits_model(&canonical) {
             return Err(ArchonError::Policy(format!(
@@ -1396,6 +1388,29 @@ async fn check_frozen_request(
         }
     }
     Ok(catalog)
+}
+
+/// Every model a frozen request names: its own, its workers' and the
+/// reviewers its worker allowlist exempts.
+fn frozen_models(request: &SpawnRequest) -> impl Iterator<Item = &archon_core::model::ModelRef> {
+    std::iter::once(&request.choice.model).chain(request.delegation_policy.iter().flat_map(
+        |bounds| {
+            bounds
+                .workers
+                .iter()
+                .filter_map(|w| w.model.as_ref())
+                .chain(&bounds.exempt_models)
+        },
+    ))
+}
+
+/// Every model the frozen request of reserved stage run `id` names.
+pub(crate) fn reserved_models(
+    store: &Store,
+    id: &StageRunId,
+) -> Result<Vec<archon_core::model::ModelRef>, ArchonError> {
+    let spawn = load_spawn(store, id)?;
+    Ok(frozen_models(&spawn.request).cloned().collect())
 }
 
 /// The network a request frozen before networks were states: Aether's default
@@ -1408,6 +1423,15 @@ async fn legacy_network_default(
     if let Some(stated) = request.network {
         return Ok((stated, None));
     }
+    let (default, read_on) = network_default_on(ctx).await?;
+    Ok((default, Some(read_on)))
+}
+
+/// Aether's network default with the connection it was read on. A reconnect
+/// during the read is refused: the default would be nobody's.
+async fn network_default_on(
+    ctx: &DaemonContext,
+) -> Result<(archon_core::ports::NetworkPolicy, u64), ArchonError> {
     let before = ctx.aether.generation()?;
     let default = ctx.backend.network_default().await?;
     if ctx.aether.generation()? != before {
@@ -1416,7 +1440,7 @@ async fn legacy_network_default(
                 .into(),
         ));
     }
-    Ok((default, Some(before)))
+    Ok((default, before))
 }
 
 /// The connection the create may go out on: the one whose cached catalog is
@@ -1460,23 +1484,7 @@ async fn spawn_bound(
         }
     }
     if spawn.parent == ParentBinding::Pending {
-        assert!(
-            spawn.request.parent.is_none() && spawn.request.network.is_none(),
-            "a pending binding names no parent and no network"
-        );
-        let default = ctx.backend.network_default().await?;
-        let model = &spawn.request.choice.model;
-        let node = run_node::ensure(ctx, &stage.run, model, default).await?;
-        let network = node.network.narrower(default);
-        spawn.request.host_context = ctx
-            .backend
-            .host_context(ctx.config.aether.host_context.for_model(model))
-            .await?;
-        (spawn.request.repository, spawn.request.repository_root) = node.repository.parts();
-        spawn.request.parent = Some(node.agent);
-        spawn.request.network = Some(network);
-        spawn.parent = ParentBinding::Bound;
-        save_spawn(&mut *ctx.store.lock().await, &stage.id, &spawn)?;
+        bind_pending(ctx, stage, &mut spawn, checked).await?;
     }
     let (network_default, default_on) = legacy_network_default(ctx, &spawn.request).await?;
     let connection = settle_host_context(ctx, stage, &mut spawn, checked).await?;
@@ -1491,6 +1499,41 @@ async fn spawn_bound(
         network_default,
     };
     ctx.backend.spawn_on(spawn.request, checked).await
+}
+
+/// Bind a new stage to its run node and freeze its parent, network and
+/// context, only while `checked` is still the catalog of the connection the
+/// network default was read on: a reconnect or catalog change freezes nothing.
+async fn bind_pending(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    spawn: &mut StoredSpawn,
+    checked: &archon_core::model_tier::ModelCatalog,
+) -> Result<(), ArchonError> {
+    assert_eq!(spawn.parent, ParentBinding::Pending, "bound only once");
+    assert!(
+        spawn.request.parent.is_none() && spawn.request.network.is_none(),
+        "a pending binding names no parent and no network"
+    );
+    let (default, read_on) = network_default_on(ctx).await?;
+    let model = &spawn.request.choice.model;
+    let node = run_node::ensure(ctx, &stage.run, model, default).await?;
+    let host_context = ctx
+        .backend
+        .host_context(ctx.config.aether.host_context.for_model(model))
+        .await?;
+    let mut store = ctx.store.lock().await;
+    if still_checked(ctx, &store, checked)? != read_on {
+        return Err(ArchonError::Unavailable(
+            "aether reconnected while the stage was bound to its run; it is bound again".into(),
+        ));
+    }
+    spawn.request.host_context = host_context;
+    (spawn.request.repository, spawn.request.repository_root) = node.repository.parts();
+    spawn.request.parent = Some(node.agent);
+    spawn.request.network = Some(node.network.narrower(default));
+    spawn.parent = ParentBinding::Bound;
+    save_spawn(&mut store, &stage.id, spawn)
 }
 
 /// Freeze the host context the create sends, then return the connection it
@@ -1552,12 +1595,13 @@ async fn claim(ctx: &DaemonContext, id: &StageRunId) -> Result<Claimed, ArchonEr
     if table.in_flight.contains(id) {
         return Ok(Claimed::Skip);
     }
-    let (stage, spawn, repo, run) = {
+    let (stage, spawn, repo, run, ready) = {
         let store = ctx.store.lock().await;
         let stage = store.stage_run(id)?;
         if stage.state != StageState::Spawning {
             return Ok(Claimed::Skip);
         }
+        let ready = learned::cached_catalog(ctx, &store)?;
         let run = store.run(&stage.run)?;
         // What an earlier stage agent of the run delegated is stopped first.
         if !run.state.is_terminal() && descendants::holds(&store, &run.id)? {
@@ -1569,7 +1613,7 @@ async fn claim(ctx: &DaemonContext, id: &StageRunId) -> Result<Claimed, ArchonEr
             .as_ref()
             .map(|r| store.repo(&resolve::repo_ref(r)))
             .transpose()?;
-        (stage, load_spawn(&store, id), repo, run)
+        (stage, load_spawn(&store, id), repo, run, ready)
     };
     let spawn = match spawn {
         Ok(spawn) => spawn,
@@ -1595,7 +1639,9 @@ async fn claim(ctx: &DaemonContext, id: &StageRunId) -> Result<Claimed, ArchonEr
     });
     let allowed = RepoEnv::new(repo)
         .map_err(|e| ArchonError::Policy(format!("repository model policy unreadable: {e}")))
-        .and_then(|env| claim_policy_check(ctx, &env, &spawn.request.choice));
+        .and_then(|env| {
+            claim_policy_check(&ctx.config, &env, ready.as_ref(), &spawn.request.choice)
+        });
     table.in_flight.insert(id.clone());
     Ok(Claimed::Issue(Box::new(Claim {
         stage,
@@ -1607,27 +1653,34 @@ async fn claim(ctx: &DaemonContext, id: &StageRunId) -> Result<Claimed, ArchonEr
     })))
 }
 
-/// The policy decision a claim can make. Without aliases read on this
-/// connection, the model waits for `check_frozen_request`'s catalog read.
+/// The policy decision a claim can make: the effort always, the model only
+/// against a `ready` catalog, as canonical ids on both sides. With none ready
+/// the model waits for `check_frozen_request`'s read, never refused here.
 fn claim_policy_check(
-    ctx: &DaemonContext,
+    config: &Config,
     env: &RepoEnv,
+    ready: Option<&archon_core::model_tier::ModelCatalog>,
     choice: &archon_core::model::ModelChoice,
 ) -> Result<(), ArchonError> {
-    let aliases = ctx.aether.aliases();
-    let policy = env.policy_in(&ctx.config, &aliases);
-    if aliases.is_empty() {
-        return policy.check_effort(choice.effort);
-    }
+    let Some(catalog) = ready else {
+        let unresolved = BTreeMap::new();
+        return env
+            .policy_in(config, &unresolved)
+            .check_effort(choice.effort);
+    };
+    assert!(
+        catalog.not_ready_reason().is_none(),
+        "only a ready catalog decides a model's policy"
+    );
     let canonical = archon_core::model::ModelChoice {
-        model: aliases.get(&choice.model).unwrap_or(&choice.model).clone(),
+        model: catalog.canonical_alias(&choice.model).clone(),
         ..choice.clone()
     };
     assert_eq!(
         canonical.effort, choice.effort,
         "only the model is canonicalized"
     );
-    policy.check(&canonical)
+    env.policy_in(config, &catalog.aliases()).check(&canonical)
 }
 
 async fn record(
@@ -1853,4 +1906,61 @@ async fn spawned_ok(
         roster: vec![run.id],
         ..FollowUp::default()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use archon_core::model::{Effort, ModelChoice, ModelRef};
+    use archon_core::model_tier::{CatalogModel, ModelCatalog};
+
+    const HAIKU: &str = "claude-code/claude-haiku-5-5";
+    const OTHER: &str = "claude-code/claude-sonnet-5-5";
+
+    fn model(id: &str) -> ModelRef {
+        id.parse().expect("a model id")
+    }
+
+    /// An allowlist naming `claude-code/haiku`, and a catalog resolving it.
+    fn alias_allowlist() -> (Config, ModelCatalog) {
+        let mut config = Config::default();
+        config.models.allow = vec![model("claude-code/haiku")];
+        config.models.max_effort = Some(Effort::High);
+        let listed = [HAIKU, OTHER].map(|id| CatalogModel {
+            model: model(id),
+            tier: None,
+            is_default: false,
+        });
+        let mut catalog = ModelCatalog::new(listed.into());
+        catalog.add_alias(model("claude-code/haiku"), model(HAIKU));
+        (config, catalog)
+    }
+
+    #[test]
+    fn a_claim_without_a_ready_catalog_decides_the_effort_only() {
+        let (config, _) = alias_allowlist();
+        let env = RepoEnv::new(None).unwrap();
+        for id in [HAIKU, OTHER, "claude-code/haiku"] {
+            let choice = ModelChoice::pinned(model(id), Effort::Medium);
+            claim_policy_check(&config, &env, None, &choice)
+                .expect("no model is refused before the catalog names it");
+        }
+        let over = ModelChoice::pinned(model(HAIKU), Effort::Max);
+        let refused = claim_policy_check(&config, &env, None, &over).unwrap_err();
+        assert!(matches!(refused, ArchonError::Policy(_)), "{refused}");
+    }
+
+    #[test]
+    fn a_claim_with_a_ready_catalog_compares_canonical_ids() {
+        let (config, catalog) = alias_allowlist();
+        let env = RepoEnv::new(None).unwrap();
+        for id in [HAIKU, "claude-code/haiku"] {
+            let choice = ModelChoice::pinned(model(id), Effort::Medium);
+            claim_policy_check(&config, &env, Some(&catalog), &choice)
+                .expect("the alias and its target are one allowed model");
+        }
+        let other = ModelChoice::pinned(model(OTHER), Effort::Medium);
+        let refused = claim_policy_check(&config, &env, Some(&catalog), &other).unwrap_err();
+        assert!(matches!(refused, ArchonError::Policy(_)), "{refused}");
+    }
 }

@@ -1198,15 +1198,8 @@ async fn a_reconnect_after_a_legacy_default_is_read_sends_nothing() {
     let h = Harness::new().await;
     legacy_unsent_stage(&h).await;
     let ctx = h.ctx.clone();
-    h.backend.on_host_context(0, move || {
-        let client = ctx.aether.client().expect("connected");
-        ctx.aether.replace(Some(client)).expect("reconnected");
-        let connection = ctx.aether.generation().expect("a generation");
-        let store = ctx.store.try_lock().expect("no store lock is held");
-        let same = store.model_catalog();
-        assert!(!same.is_empty(), "the catalog read before");
-        store.record_model_catalog(same, archon_core::now(), Some(connection));
-    });
+    h.backend
+        .on_host_context(0, move || reconnect_with_the_same_catalog(&ctx));
     h.dispatch().await;
     assert_eq!(
         h.backend.checked().len(),
@@ -1217,6 +1210,115 @@ async fn a_reconnect_after_a_legacy_default_is_read_sends_nothing() {
         h.backend.requests().len(),
         1,
         "only the first, failed create"
+    );
+}
+
+/// Reconnect to Aether, which lists the catalog read before.
+fn reconnect_with_the_same_catalog(ctx: &archon_daemon::context::DaemonContext) {
+    let client = ctx.aether.client().expect("connected");
+    ctx.aether.replace(Some(client)).expect("reconnected");
+    let connection = ctx.aether.generation().expect("a generation");
+    let store = ctx.store.try_lock().expect("no store lock is held");
+    let same = store.model_catalog();
+    assert!(!same.is_empty(), "the catalog read before");
+    store.record_model_catalog(same, archon_core::now(), Some(connection));
+}
+
+/// The stored request of the one reserved stage, which was never sent.
+async fn unsent_request(h: &Harness) -> serde_json::Value {
+    assert!(h.backend.requests().is_empty(), "no create was sent");
+    let stages = h.live_stages().await;
+    assert_eq!(stages.len(), 1, "the stage stays reserved");
+    assert_eq!(stages[0].state, archon_core::run::StageState::Spawning);
+    let key = format!("spawn_request:{}", stages[0].id);
+    let stored: serde_json::Value = serde_json::from_str(&h.kv(&key).await.unwrap()).unwrap();
+    stored["request"].clone()
+}
+
+/// A new stage's network is the default of the connection it is checked on:
+/// a reconnect while that default is read freezes and sends nothing.
+#[tokio::test]
+async fn a_reconnect_while_a_new_stages_default_is_read_freezes_nothing() {
+    use archon_core::ports::NetworkPolicy;
+    let h = Harness::new().await;
+    let ctx = h.ctx.clone();
+    h.backend
+        .on_next_network_default(move || reconnect_with_the_same_catalog(&ctx));
+    h.enqueue("reconnect while a default is read").await;
+    h.dispatch().await;
+    let request = unsent_request(&h).await;
+    assert!(request["network"].is_null(), "no network is frozen");
+    assert!(request["parent"].is_null(), "no parent is frozen");
+
+    h.backend.set_network_default(NetworkPolicy::Denied);
+    h.dispatch().await;
+    let requests = h.backend.requests();
+    assert_eq!(
+        requests.len(),
+        1,
+        "created on the connection it is checked on"
+    );
+    assert_eq!(requests[0].network, Some(NetworkPolicy::Denied));
+}
+
+/// A reconnect after the default was read, before the binding is stored,
+/// freezes nothing either: the default read belongs to the old connection.
+#[tokio::test]
+async fn a_reconnect_before_a_new_stage_is_bound_freezes_nothing() {
+    use archon_core::ports::NetworkPolicy;
+    let h = Harness::new().await;
+    let ctx = h.ctx.clone();
+    h.backend
+        .on_host_context(1, move || reconnect_with_the_same_catalog(&ctx));
+    h.enqueue("reconnect before a binding").await;
+    h.dispatch().await;
+    let request = unsent_request(&h).await;
+    assert!(request["network"].is_null(), "no network is frozen");
+
+    h.backend.set_network_default(NetworkPolicy::Denied);
+    h.dispatch().await;
+    let requests = h.backend.requests();
+    assert_eq!(
+        requests.len(),
+        1,
+        "created on the connection it is checked on"
+    );
+    assert_eq!(requests[0].network, Some(NetworkPolicy::Denied));
+}
+
+/// A reserved create whose pin left the catalog is named like a pending one.
+#[tokio::test]
+async fn a_reserved_creates_retired_pin_is_named_with_a_re_plan_hint() {
+    let h = Harness::new().await;
+    let mut plan = common::plan();
+    plan.0.insert(
+        "implement".into(),
+        vec![common::choice(HAIKU, archon_core::model::Effort::Medium)],
+    );
+    h.backend
+        .fail_next(ArchonError::Unavailable("aetherd busy".into()));
+    let item = h.enqueue_with("retire a reserved pin", plan).await.unwrap();
+    h.dispatch().await;
+    assert_eq!(h.backend.requests().len(), 1, "the create that failed");
+    assert!(detail(&h, &item.id).await.waiting_reason.is_none());
+
+    serve_catalog_without(&h, HAIKU).await;
+    h.dispatch().await;
+    assert_eq!(
+        h.backend.requests().len(),
+        1,
+        "no create under a retired pin"
+    );
+    let stages = h.live_stages().await;
+    assert_eq!(stages.len(), 1, "{:?}", h.state(&item.id).await);
+    assert_eq!(stages[0].state, archon_core::run::StageState::Spawning);
+    let wait = reason(&h, &item.id, Code::Blocked).await;
+    assert!(wait.message.contains("valid model"), "{}", wait.message);
+    assert!(wait.message.contains(HAIKU), "{}", wait.message);
+    assert!(
+        wait.next_action.contains("update_item"),
+        "{}",
+        wait.next_action
     );
 }
 

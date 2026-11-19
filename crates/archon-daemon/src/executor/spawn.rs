@@ -437,15 +437,19 @@ pub(super) async fn reserve(
         table.pending.remove(run);
     }
     let spec = table.drivers.get(run).map(|driver| driver.spec().clone());
-    let (reserved, before, after) = {
+    let mut repair = None;
+    let reserved = {
         let mut store = ctx.store.lock().await;
-        let item_id = store.run(run)?.item;
-        let before = store.item(&item_id)?.model_plan.into_plan();
-        let reserved = reserve_plans(ctx, &mut store, (run, spec.as_deref()), plans, catalog)?;
-        let after = store.item(&item_id)?.model_plan.into_plan();
-        (reserved, before, after)
+        let read = (run, spec.as_deref());
+        reserve_plans(ctx, &mut store, read, plans, (catalog, &mut repair))?
     };
-    if before != after {
+    // Only a catalog repair reaches the driver: a quota move leaves its parked
+    // choices, so a kept agent's resume keeps its model, as quota routing intends.
+    if let Some((before, after)) = repair {
+        assert_ne!(
+            before, after,
+            "a repair that changed nothing is not followed"
+        );
         super::model_catalog::follow_models(table, run, (&before, &after), catalog);
     }
     match reserved {
@@ -466,13 +470,17 @@ pub(super) async fn reserve(
 }
 
 /// `spec` is the run's pipeline, `None` once its driver is gone; with it,
-/// stages are routed by quota first (`quota::reroute_spawns`).
+/// stages are routed by quota first (`quota::reroute_spawns`). `repair` gets
+/// the stored plan a catalog repair replaced and the plan it stored instead.
 fn reserve_plans(
     ctx: &DaemonContext,
     store: &mut Store,
     (run_id, spec): (&PipelineRunId, Option<&PipelineSpec>),
     mut plans: Vec<SpawnPlan>,
-    catalog: &archon_core::model_tier::ModelCatalog,
+    (catalog, repair): (
+        &archon_core::model_tier::ModelCatalog,
+        &mut Option<(ModelPlan, ModelPlan)>,
+    ),
 ) -> Result<Reserved, ArchonError> {
     if crate::learned::cached_catalog(ctx, store)?.as_ref() != Some(catalog)
         || catalog.not_ready_reason().is_some()
@@ -500,6 +508,7 @@ fn reserve_plans(
     plans = repaired.pending;
     let replaced = repaired.replaced;
     let stored = item.model_plan.plan().clone();
+    *repair = replaced.clone().map(|before| (before, stored.clone()));
     {
         let target = (&mut item, spec);
         let read = (repo.as_ref(), replaced.as_ref());

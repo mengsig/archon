@@ -142,10 +142,11 @@ async fn a_recovered_run_s_next_stage_is_held_to_the_policy_s_cap_alone() {
 }
 
 /// Ruling (a) beside an in-place wake: a recovered x_high agent that fails
-/// for infrastructure under a lowered policy cap is not woken recorded at
-/// `high` while it runs x_high. Its wake is refused as 1.6.3 refuses it.
+/// for infrastructure under a lowered policy cap is woken held to the cap, as
+/// a new agent of its slot would be: it is retuned to `high` before it goes
+/// on, and its attempt records the `high` it was sent.
 #[tokio::test]
-async fn a_woken_agent_is_never_recorded_below_the_effort_it_runs() {
+async fn a_woken_agent_over_a_lowered_cap_is_retuned_to_it_and_recorded_so() {
     let mut h = harness(Config::default()).await;
     let queued = enqueue(&h, "Add a button", &["risk:critical"]).await;
     h.dispatch().await;
@@ -160,10 +161,18 @@ async fn a_woken_agent_is_never_recorded_below_the_effort_it_runs() {
     })
     .await;
     h.dispatch().await;
+    assert_eq!(h.backend.woken(), std::slice::from_ref(&agent));
     let replacement = attempt(&h, &queued.id, "implement").await;
     assert_ne!(replacement.id, first.id, "a replacement was reserved");
-    assert_eq!(replacement.choice.effort, XHigh, "what the agent runs");
-    assert!(h.backend.woken().is_empty(), "not woken past the cap");
+    assert_eq!(replacement.state, StageState::Running, "not refused");
+    assert_eq!(replacement.choice.effort, High, "held to the cap");
+    let retuned = h
+        .backend
+        .updates()
+        .into_iter()
+        .rfind(|(to, _)| *to == agent);
+    let retuned = retuned.and_then(|(_, update)| update.choice);
+    assert_eq!(retuned, Some(replacement.choice.clone()), "what it records");
 }
 
 /// Ruling (a) beside an in-place wake: a stage held to the policy's cap as it
@@ -279,4 +288,75 @@ async fn with_sizing_off_revise_and_reshape_clip_only_to_the_policy_s_cap() {
         let shaped = steer(&h, &shaped.id, insert_verify()).await;
         assert_eq!(efforts(&shaped)[..3], expected, "reshape");
     }
+}
+
+/// The stored plan's slot moved to an engine with no x_high and back, as a
+/// quota move does, so it holds `high` while its agent still runs x_high.
+async fn lower_stored_slot(h: &Harness, id: &QueueItemId, key: &str) {
+    use archon_core::plan_origin::Authority;
+    let mut store = h.ctx.store.lock().await;
+    let mut item = store.item(id).unwrap();
+    for model in ["gemini/gemini-pro", crate::common::MODEL] {
+        let model: archon_core::model::ModelRef = model.parse().unwrap();
+        let by = (Authority::Operator, archon_core::now());
+        item.model_plan.steer(id, key, (Some(&model), None), by);
+    }
+    assert_eq!(item.model_plan.choices_for(key).unwrap()[0].effort, High);
+    store.update_item(&item).unwrap();
+}
+
+/// A wake Aether refuses leaves a fresh agent, held as any new agent is: to
+/// what the stored plan holds for its slot now, and recorded as it is sent.
+#[tokio::test]
+async fn a_refused_wake_s_fresh_agent_is_held_to_the_stored_plan() {
+    let h = harness(Config::default()).await;
+    let queued = enqueue(&h, "Add a button", &["risk:critical"]).await;
+    h.dispatch().await;
+    let (first, sent) = issued(&h, &queued.id, "implement").await;
+    assert_eq!(sent, XHigh, "sized for a critical item");
+    lower_stored_slot(&h, &queued.id, "implement").await;
+    // Aether never marked the agent failed, so it refuses to wake it.
+    h.settle_running(|_| archon_core::run::StageOutcome::Failed {
+        error: "engine died".into(),
+        infra: true,
+    })
+    .await;
+    h.dispatch().await;
+    assert!(h.backend.woken().is_empty(), "the wake was refused");
+    let (fresh, sent) = issued(&h, &queued.id, "implement").await;
+    assert_ne!(fresh.id, first.id, "a replacement");
+    assert_ne!(fresh.aether_agent, first.aether_agent, "a fresh agent");
+    assert_eq!(sent, High, "held to the stored plan, recorded as sent");
+    assert_eq!(recorded(&fresh).0, Some(RiskClass::Critical));
+}
+
+/// The same slot woken in place: the agent is retuned to what the stored
+/// plan holds now, which its attempt records.
+#[tokio::test]
+async fn a_woken_agent_is_retuned_to_the_stored_plan_it_records() {
+    let h = harness(Config::default()).await;
+    let queued = enqueue(&h, "Add a button", &["risk:critical"]).await;
+    h.dispatch().await;
+    let (first, _) = issued(&h, &queued.id, "implement").await;
+    let agent = first.aether_agent.clone().expect("spawned");
+    lower_stored_slot(&h, &queued.id, "implement").await;
+    h.backend.fail_agent(&agent);
+    h.settle_running(|_| archon_core::run::StageOutcome::Failed {
+        error: "engine died".into(),
+        infra: true,
+    })
+    .await;
+    h.dispatch().await;
+    assert_eq!(h.backend.woken(), std::slice::from_ref(&agent));
+    let woken = attempt(&h, &queued.id, "implement").await;
+    assert_eq!(woken.state, StageState::Running, "woken in place");
+    assert_eq!(woken.choice.effort, High, "held to the stored plan");
+    let retuned = h
+        .backend
+        .updates()
+        .into_iter()
+        .rfind(|(to, _)| *to == agent);
+    let retuned = retuned.and_then(|(_, update)| update.choice);
+    assert_eq!(retuned, Some(woken.choice.clone()), "what it records");
+    assert_eq!(recorded(&woken).0, Some(RiskClass::Critical));
 }

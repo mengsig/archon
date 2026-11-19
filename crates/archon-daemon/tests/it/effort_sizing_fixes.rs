@@ -341,3 +341,31 @@ async fn a_steer_that_ends_its_run_still_applies_its_autonomy_and_replies() {
         assert!(h.running().await.is_empty(), "the planner was stopped");
     }
 }
+
+/// Check 1 with a plan in the same update: a running update that repeats the
+/// unpinned plan and appends a note that raises the class sizes the started
+/// stage as the item stood before the note, and only the others from it.
+#[tokio::test]
+async fn a_running_update_s_plan_and_note_size_only_the_stages_not_started() {
+    let h = harness(Config::default()).await;
+    let queued = enqueue(&h, "Add a button", &[]).await;
+    h.dispatch().await;
+    assert_eq!(
+        attempt(&h, &queued.id, "implement").await.choice.effort,
+        Medium
+    );
+    let patch = ItemPatch {
+        brief_append: Some("It changes how a credential is stored.".into()),
+        model_plan: Some(models()),
+        ..ItemPatch::default()
+    };
+    let updated = update(&h, &queued.id, patch).await;
+    assert_eq!(
+        efforts(&updated),
+        [("implement", Medium), ("review", High), ("ship", High)]
+    );
+    assert_eq!(reason(&updated, "implement"), "sizer: ordinary -> medium");
+    assert_eq!(reason(&updated, "review"), "sizer: elevated -> high");
+    let running = attempt(&h, &queued.id, "implement").await;
+    assert_eq!(running.current_choice().effort, Medium, "not retuned");
+}

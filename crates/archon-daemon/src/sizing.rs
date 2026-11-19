@@ -4,9 +4,10 @@
 
 use std::collections::BTreeSet;
 
+use archon_core::Timestamp;
 use archon_core::autonomy::ReviewLevel;
 use archon_core::config::Config;
-use archon_core::effort_sizing::{self, StageFacts};
+use archon_core::effort_sizing::{self, RiskInput, StageFacts};
 use archon_core::error::ArchonError;
 use archon_core::model::{Effort, ModelChoice, REVIEWERS_KEY_SUFFIX, WORKERS_KEY_SUFFIX};
 use archon_core::outcome::DiffSize;
@@ -108,6 +109,21 @@ impl Inputs {
     }
 }
 
+/// Size every key of `item`'s plan not yet sized as the item stood `before`
+/// an operation that also changes its title, brief, tags or review level.
+pub(crate) fn settle_as(item: &mut QueueItem, before: &Inputs, at: Timestamp) -> bool {
+    let input = RiskInput {
+        title: &before.title,
+        brief: &before.brief,
+        tags: &before.tags,
+        review: before.review,
+        size: effort_sizing::tagged_size(&before.tags),
+    };
+    let settled = item.model_plan.settle(&item.id, input, at);
+    assert!(!item.model_plan.has_unsized(), "a settled plan is sized");
+    settled
+}
+
 /// Size `item` again after an operation changed its title, brief, tags or
 /// review level from `before`: only the keys of stages not in `started`, and
 /// only while sizing is on. Keys the operation added are sized first, moved
@@ -204,16 +220,17 @@ pub(crate) fn hold_to_policy(item: &QueueItem, cap: Option<Effort>, plan: &mut S
     plan.choice.effort = cap;
 }
 
-/// A wake of `plan`'s slot keeps the agent, so a slot the daemon sized is
-/// requested and recorded as the agent runs (`ran`): its model may have moved
-/// since the driver read it (a quota move, an acceptance judge). Any other slot
-/// keeps its plan, as in 1.6.3.
-pub(crate) fn hold_to_woken(item: &QueueItem, ran: &ModelChoice, plan: &mut SpawnPlan) {
+/// A wake of `plan`'s slot keeps the agent, so a slot the daemon sized starts
+/// from what the agent runs (`ran`): its model may have moved since the driver
+/// read it (a quota move, an acceptance judge). Any other slot
+/// keeps its plan, as in 1.6.3. `true` when the agent's choice was taken.
+pub(crate) fn hold_to_woken(item: &QueueItem, ran: &ModelChoice, plan: &mut SpawnPlan) -> bool {
     let slot = (plan.stage_id.as_str(), plan.fan_index);
     if daemon_sized(item, slot).is_none() {
-        return;
+        return false;
     }
     plan.choice = ran.clone();
+    true
 }
 
 /// How the effort `plan`'s slot runs at was chosen, read from the item's

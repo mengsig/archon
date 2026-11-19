@@ -102,6 +102,11 @@ pub(crate) struct StoredSpawn {
     /// stored the spawn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issued_reviewers: Option<Vec<ModelChoice>>,
+    /// What a woken agent is retuned to before its findings: its slot held to
+    /// the stored plan and the policy's cap, where that differs from what it
+    /// ran. `None` when it runs on as it is, or 1.6.3 stored the spawn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wake_retune: Option<ModelChoice>,
 }
 
 impl StoredSpawn {
@@ -816,14 +821,15 @@ fn hold_new_agent(target: &Target<'_>, plan: &mut SpawnPlan) {
     }
 }
 
-/// A woken agent runs on at the effort it has: a slot the daemon sized is
-/// requested at what its latest attempt on `kept`'s agent runs now.
+/// A woken agent of a slot the daemon sized starts from what its latest
+/// attempt on `kept`'s agent runs now, its model included; that choice is
+/// returned. Any other slot keeps the driver's plan, as in 1.6.3.
 fn hold_woken(
     store: &Store,
     target: &Target<'_>,
     kept: &KeptAgent,
     plan: &mut SpawnPlan,
-) -> Result<(), ArchonError> {
+) -> Result<Option<ModelChoice>, ArchonError> {
     let runs = store.stage_runs(&target.run.id)?;
     let woken = runs
         .iter()
@@ -836,9 +842,10 @@ fn hold_woken(
             kept.agent, plan.stage_id
         )));
     };
-    crate::sizing::hold_to_woken(target.item, woken.current_choice(), plan);
     assert_eq!(woken.run, target.run.id, "the woken agent is of this run");
-    Ok(())
+    let ran = woken.current_choice();
+    let taken = crate::sizing::hold_to_woken(target.item, ran, plan);
+    Ok(taken.then(|| ran.clone()))
 }
 
 /// Persist the exact request, then the `spawning` stage run that owns it,
@@ -853,10 +860,15 @@ fn reserve_one(
     retry: Option<Retry>,
 ) -> Result<StageRunId, ArchonError> {
     let mut held = plan.clone();
-    match retry.as_ref().and_then(|r| r.wake.as_ref()) {
+    let ran = match retry.as_ref().and_then(|r| r.wake.as_ref()) {
         Some(kept) => hold_woken(store, target, kept, &mut held)?,
-        None => hold_new_agent(target, &mut held),
-    }
+        None => None,
+    };
+    // Woken or fresh, the agent runs what a new one of its slot would.
+    hold_new_agent(target, &mut held);
+    let wake_retune = ran
+        .filter(|ran| *ran != held.choice)
+        .map(|_| held.choice.clone());
     let plan = &held;
     let id = StageRunId::new();
     let nth = retry.as_ref().map(|r| r.nth);
@@ -922,6 +934,7 @@ fn reserve_one(
         deadline_warned: false,
         effort_contract: Some(effort),
         issued_reviewers: plan.reviewers.clone(),
+        wake_retune,
     };
     save_spawn(store, &id, &spawn)?;
     let sizing = crate::sizing::attempt(target.item, plan);
@@ -1407,7 +1420,8 @@ async fn resume_or_spawn(
             ParentBinding::Pending,
             "a resume sends no create"
         );
-        if resume::hand_over(ctx, stage, &kept, &spawn.request).await? {
+        let retune = spawn.wake_retune.clone().filter(|_| spawn.woken);
+        if resume::hand_over(ctx, stage, &kept, (&spawn.request, retune)).await? {
             return Ok(Issued::Resumed(kept.agent));
         }
         if spawn.deadline_wake {

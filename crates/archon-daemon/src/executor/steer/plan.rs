@@ -130,7 +130,7 @@ pub(super) async fn plan(
     let mut change = Change::of(recover::blueprint(ctx, run).await?);
     let before = crate::sizing::Inputs::of(&change.blueprint.item);
     amend(&mut change, asked.steer, &at)?;
-    replan(&mut change, asked, &at);
+    replan(&mut change, asked, &at, &before);
     reshape_run(ctx, asked, &mut change, &at).await?;
     crate::handlers::check_stage_timeouts(
         ctx,
@@ -214,8 +214,10 @@ fn amend(change: &mut Change, steer: &Steer, at: &At<'_>) -> Result<(), ArchonEr
 }
 
 /// A whole new model plan (`update_item`): for the agents started from now,
-/// and on each live agent whose slot it gives another model or effort.
-fn replan(change: &mut Change, asked: &Asked<'_>, at: &At<'_>) {
+/// and on each live agent whose slot it gives another model or effort. It is
+/// sized as the item stood `before` the steer; `resize` then gives the steer's
+/// own note or tags to the stages not yet started.
+fn replan(change: &mut Change, asked: &Asked<'_>, at: &At<'_>, before: &crate::sizing::Inputs) {
     let Some((plan, reasons)) = &asked.plan else {
         return;
     };
@@ -223,7 +225,7 @@ fn replan(change: &mut Change, asked: &Asked<'_>, at: &At<'_>) {
     item.model_plan = plan.clone();
     item.model_reasons = reasons.clone();
     // Sized before a live agent is retuned: it gets the effort the plan is stored with.
-    item.settle_sizing(archon_core::now());
+    crate::sizing::settle_as(item, before, archon_core::now());
     let plan = &item.model_plan;
     assert!(
         !plan.has_unsized(),

@@ -304,7 +304,7 @@ fn a_woken_sized_slot_is_recorded_as_its_agent_runs_on_any_model() {
     item.settle_sizing(archon_core::now());
     let ran = ModelChoice::pinned("gemini/gemini-pro".parse().unwrap(), Effort::High);
     let mut woken = spawn_of("claude-code/claude-opus-5-5", Effort::XHigh);
-    hold_to_woken(&item, &ran, &mut woken);
+    assert!(hold_to_woken(&item, &ran, &mut woken));
     assert_eq!(woken.choice, ran, "the agent's model and effort");
     let sized = attempt(&item, &woken);
     let why = "sizer: critical -> x_high; this attempt: gemini runs no more than high, so high";
@@ -314,7 +314,7 @@ fn a_woken_sized_slot_is_recorded_as_its_agent_runs_on_any_model() {
     unsized_item.model_plan = written(&item, &direct).finish(Sizing::Off { policy_cap: None });
     let driver = spawn_of("claude-code/claude-opus-5-5", Effort::XHigh);
     let mut kept = driver.clone();
-    hold_to_woken(&unsized_item, &ran, &mut kept);
+    assert!(!hold_to_woken(&unsized_item, &ran, &mut kept));
     assert_eq!(
         kept.choice, driver.choice,
         "never sized: the driver's choice"

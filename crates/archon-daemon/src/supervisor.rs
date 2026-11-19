@@ -17,7 +17,8 @@ use std::time::Duration;
 use archon_aether::AetherClient;
 use archon_aether::backend::LIVE_STATES;
 use archon_aether::wire::{
-    Agent, AgentConfig, ApprovalPolicy, CreateAgent, NetworkPolicy, Scope, ToolExposure,
+    Agent, AgentConfig, AgentQuery, ApprovalPolicy, CreateAgent, NetworkPolicy, Scope,
+    ToolExposure,
 };
 use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
@@ -1189,8 +1190,12 @@ async fn create_generation(
     client: &AetherClient,
 ) -> Result<AetherAgentId, ArchonError> {
     let store = store_id(ctx).await?;
+    let (model, landed) = match creation_model(ctx, client, &store).await? {
+        Creating::On(model) => (model, None),
+        Creating::Landed { model, agent } => (model, Some(*agent)),
+    };
     let mut config = ctx.config.clone();
-    config.orchestrator.model = creation_model(ctx, &store).await?;
+    config.orchestrator.model = model;
     let config = &config;
     let workspace = &ctx.paths.orchestrator_workspace;
     std::fs::create_dir_all(workspace)
@@ -1216,7 +1221,13 @@ async fn create_generation(
         network,
         delegation,
     );
-    let agent = create_orchestrator(ctx, client, request, frozen).await?;
+    let agent = match landed {
+        Some(agent) => {
+            callers::record_delegation(ctx, &agent).await?;
+            agent
+        }
+        None => create_orchestrator(ctx, client, request, frozen).await?,
+    };
     let created = agent.config.instructions.as_deref();
     let mut store = ctx.store.lock().await;
     let settings = configured_settings(&ctx.config);
@@ -1228,30 +1239,103 @@ async fn create_generation(
     Ok(agent.id)
 }
 
+/// How the stored generation's creation goes on.
+enum Creating {
+    /// A create is sent, or sent again, on this model.
+    On(ModelRef),
+    /// An earlier send froze `model`, which the policy allows no longer, and
+    /// left `agent`: it is taken as it is and nothing is sent.
+    Landed { model: ModelRef, agent: Box<Agent> },
+}
+
 /// The model the stored generation's creation sends. A key that may have been
 /// sent repeats its frozen model, else the raw configured one an older build
 /// sent: no catalog refusal, so the replay reaches Aether, but the model policy
 /// still holds. A first send is checked against both (§7.4, point 3).
-async fn creation_model(ctx: &DaemonContext, store_id: &StoreId) -> Result<ModelRef, ArchonError> {
+async fn creation_model(
+    ctx: &DaemonContext,
+    client: &AetherClient,
+    store_id: &StoreId,
+) -> Result<Creating, ArchonError> {
     let configured = ctx.config.orchestrator.model.clone();
     assert!(!configured.model.is_empty(), "the config was validated");
-    let creation = {
+    let (creation, frozen) = {
         let mut store = ctx.store.lock().await;
         let generation = allocated_generation(&mut store)?;
         let first = store.kv_get(UNSENT_GENERATION_KEY)? == Some(generation.to_string());
         let key = creation_key(store_id, generation);
-        if let Some(frozen) = frozen_model(&store, &key)? {
-            return Ok(frozen.model);
-        }
-        Creation { key, first }
+        let frozen = frozen_model(&store, &key)?;
+        (Creation { key, first }, frozen)
     };
+    assert!(!creation.key.is_empty(), "a keyed creation");
+    if let Some(frozen) = frozen {
+        if let Some(replay) = frozen_replay(ctx, client, frozen.model).await? {
+            return Ok(replay);
+        }
+        // The key was left behind: its successor is a first send.
+        return checked_model(ctx, &configured).await.map(Creating::On);
+    }
     if !creation.first {
         let aliases = crate::learned::catalog(ctx).await?.aliases();
         let named = aliases.get(&configured).unwrap_or(&configured);
         check_policy(ctx, named, &aliases).await?;
-        return Ok(configured);
+        return Ok(Creating::On(configured));
     }
-    checked_model(ctx, &configured).await
+    checked_model(ctx, &configured).await.map(Creating::On)
+}
+
+/// The replay of a possibly sent key that froze `model`. A model the policy
+/// allows no longer is never sent again: the agent the key left is taken, else
+/// the key is left behind for a fresh generation (`None`).
+async fn frozen_replay(
+    ctx: &DaemonContext,
+    client: &AetherClient,
+    model: ModelRef,
+) -> Result<Option<Creating>, ArchonError> {
+    assert!(!model.model.is_empty(), "a frozen model names a model");
+    let aliases = crate::learned::catalog(ctx).await?.aliases();
+    let named = aliases.get(&model).unwrap_or(&model).clone();
+    let Some(refusal) = policy_refusal(ctx, &named, &aliases) else {
+        return Ok(Some(Creating::On(model)));
+    };
+    if let Some(agent) = landed_orchestrator(client, &named, &aliases).await? {
+        tracing::warn!(agent = %agent.id, %refusal, "the orchestrator a creation left runs a model the policy allows no longer; taken as it is");
+        let agent = Box::new(agent);
+        return Ok(Some(Creating::Landed { model, agent }));
+    }
+    tracing::warn!(%model, %refusal, "an orchestrator creation that never landed froze a model the policy allows no longer; a fresh generation replaces it");
+    advance_generation(ctx).await?;
+    let left = ctx.store.lock().await.kv_get(ORCHESTRATOR_MODEL_KEY)?;
+    assert!(left.is_none(), "a fresh generation froze no model");
+    Ok(None)
+}
+
+/// The live orchestrator a creation on `model` left in Aether, read under
+/// `aliases`; `None` when the creation never landed or its agent is gone.
+async fn landed_orchestrator(
+    client: &AetherClient,
+    model: &ModelRef,
+    aliases: &std::collections::BTreeMap<ModelRef, ModelRef>,
+) -> Result<Option<Agent>, ArchonError> {
+    assert!(!model.model.is_empty(), "a frozen model names a model");
+    let agents = client.list_agents(AgentQuery::default()).await?;
+    let mut landed = agents.into_iter().filter(|agent| {
+        let labelled = agent.scope.as_ref().is_some_and(|scope| {
+            scope.labels.get("archon").map(String::as_str) == Some("orchestrator")
+        });
+        agent.parent.is_none()
+            && agent.role == ORCHESTRATOR_ROLE
+            && labelled
+            && LIVE_STATES.contains(&state_of(agent).as_str())
+            && aliases.get(&agent.model).unwrap_or(&agent.model) == model
+    });
+    let found = landed.next();
+    if landed.next().is_some() {
+        return Err(ArchonError::Unavailable(format!(
+            "several live orchestrators run {model}; cannot tell which one a creation left"
+        )));
+    }
+    Ok(found)
 }
 
 /// The configured model canonicalised by the catalog and accepted by the
@@ -1290,17 +1374,30 @@ async fn check_policy(
         !model.provider.is_empty() && !model.model.is_empty(),
         "the orchestrator names a provider's model"
     );
+    let Some(refusal) = policy_refusal(ctx, model, aliases) else {
+        return Ok(());
+    };
+    blocker_once(ctx, &format!("Archon will not start the orchestrator: {refusal}. Change [orchestrator] model or [models] in the config.")).await?;
+    Err(refusal)
+}
+
+/// Why `[models]` refuses the orchestrator `model`, both read in `aliases`.
+fn policy_refusal(
+    ctx: &DaemonContext,
+    model: &ModelRef,
+    aliases: &std::collections::BTreeMap<ModelRef, ModelRef>,
+) -> Option<ArchonError> {
+    assert!(
+        !model.provider.is_empty() && !model.model.is_empty(),
+        "the orchestrator names a provider's model"
+    );
     let choice = ModelChoice {
         model: model.clone(),
         effort: ctx.config.orchestrator.effort,
         tier: None,
     };
     let policy = ctx.config.models.policy().canonicalized(aliases);
-    let Err(refusal) = policy.check(&choice) else {
-        return Ok(());
-    };
-    blocker_once(ctx, &format!("Archon will not start the orchestrator: {refusal}. Change [orchestrator] model or [models] in the config.")).await?;
-    Err(refusal)
+    policy.check(&choice).err()
 }
 
 /// Settle, under one store lock and before any request, what the stored

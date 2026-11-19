@@ -102,6 +102,10 @@ async fn named_models(
     parent: &AetherAgentId,
 ) -> Result<Option<Vec<ModelRef>>, ArchonError> {
     let models = sent_policy(ctx, parent).await?.map(|p| p.exempt_models);
+    // Read as the child's model is: a policy sent before aliases were resolved may name one.
+    let aliases = ctx.aether.aliases();
+    let canonical = |model: ModelRef| aliases.get(&model).cloned().unwrap_or(model);
+    let models = models.map(|models| models.into_iter().map(canonical).collect::<Vec<_>>());
     Ok(models.filter(|models| !models.is_empty()))
 }
 

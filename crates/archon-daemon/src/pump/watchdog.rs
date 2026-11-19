@@ -261,7 +261,8 @@ async fn violation(
     let policy = item_policy(ctx, item).await?;
     let lead = contract_reviewers::lead_spawn(ctx, parent).await?;
     // The reviewers the lead's contract named, never the plan's now (A10).
-    let Some(named) = lead.as_ref().and_then(StoredSpawn::named_reviewers) else {
+    let named = lead.as_ref().and_then(StoredSpawn::named_reviewers);
+    let Some(named) = named.map(|named| canonical_reviewers(named, &ctx.aether.aliases())) else {
         if let Some(refusal) = policy_violation(ctx, agent, model, &policy).await? {
             return Ok(Some(refusal));
         }
@@ -290,6 +291,23 @@ async fn violation(
         return Ok(Some(refusal));
     }
     contract_reviewers::alone_violation(ctx, parent, &held).await
+}
+
+/// `named` under the ids the catalog gives them, as the child's model is read:
+/// a contract issued before aliases were resolved may name one.
+fn canonical_reviewers(
+    mut named: Vec<ModelChoice>,
+    aliases: &std::collections::BTreeMap<ModelRef, ModelRef>,
+) -> Vec<ModelChoice> {
+    assert!(!named.is_empty(), "a contract that names reviewers names one");
+    let count = named.len();
+    for choice in &mut named {
+        if let Some(canonical) = aliases.get(&choice.model) {
+            choice.model = canonical.clone();
+        }
+    }
+    assert_eq!(named.len(), count, "each reviewer keeps its place");
+    named
 }
 
 /// Why a child of an item with no reviewer plan breaks the model policy.

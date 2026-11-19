@@ -1135,3 +1135,21 @@ fn strict_scenarios_need_a_test_stage_with_one_agent() {
     let lenient = stage("build", "work", "scenarios = \"lenient\"");
     validate(&lenient, &[]).expect("lenient is the default anywhere");
 }
+
+#[test]
+fn direct_routes_risky_work_to_adaptive() {
+    let catalog = Catalog::builtin();
+    let spec = catalog.get("direct").expect("direct loads");
+    let notes = spec.file.nudges.notes.as_deref().expect("direct has notes");
+    assert!(notes.contains("use adaptive"), "{notes}");
+    assert!(notes.contains("concurrency, locking, security or a migration"));
+    let nudge = spec.stage("implement").unwrap().nudge.as_deref().unwrap();
+    assert!(nudge.contains("re-queue that on adaptive"), "{nudge}");
+    let prompt = &spec.prompts["implement.md"];
+    for risk in ["concurrency", "locking", "security", "a migration"] {
+        assert!(nudge.contains(risk), "nudge lacks {risk}");
+        assert!(prompt.contains(risk), "prompt lacks {risk}");
+    }
+    let prompt = &spec.prompts["implement.md"];
+    assert!(prompt.contains("re-queue on adaptive"), "{prompt}");
+}

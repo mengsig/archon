@@ -273,11 +273,19 @@ fn worker_lines(
     policies: &std::collections::BTreeMap<String, archon_core::delegation::WorkerPolicy>,
 ) {
     for (stage, policy) in policies {
+        let exempt = match policy.exempt_roles.is_empty() {
+            true => String::new(),
+            false => format!(
+                "; {} exempt from this policy, bounded by the review models",
+                policy.exempt_roles.join(", ")
+            ),
+        };
         let _ = writeln!(
             out,
-            "workers {}: {}",
+            "workers {}: {}{}",
             sanitize_line(stage),
-            sanitize_line(&policy.describe())
+            sanitize_line(&policy.describe()),
+            sanitize_line(&exempt)
         );
     }
 }
@@ -614,6 +622,29 @@ mod tests {
             started_at: at(9, 0),
             finished_at: None,
         }
+    }
+
+    #[test]
+    fn worker_lines_print_the_reviewer_exemption() {
+        use archon_core::delegation::WorkerPolicy;
+        let policy = WorkerPolicy {
+            workers: Vec::new(),
+            default_tier: None,
+            max_effort: None,
+            max_parallel: None,
+            exempt_roles: vec!["reviewer".into()],
+            exempt_models: Vec::new(),
+        };
+        let mut out = String::new();
+        worker_lines(&mut out, &[("review".to_owned(), policy.clone())].into());
+        assert!(out.contains("reviewer exempt from this policy"), "{out}");
+        let plain = WorkerPolicy {
+            exempt_roles: Vec::new(),
+            ..policy
+        };
+        let mut out = String::new();
+        worker_lines(&mut out, &[("review".to_owned(), plain)].into());
+        assert!(!out.contains("exempt"), "{out}");
     }
 
     #[test]

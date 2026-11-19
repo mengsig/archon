@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 use archon_core::catalog::{StageKind, is_snapshot_of};
 use archon_core::error::ArchonError;
 use archon_core::id::{NotificationId, PipelineRunId, QueueItemId};
+use archon_core::model::ModelChoice;
 use archon_core::notify::{FeedEntry, Notification, NotificationKind};
 use archon_core::protocol::ItemQuery;
 use archon_core::protocol::gib;
@@ -15,6 +16,7 @@ use archon_core::run::{PipelineRun, RunState, StageOutcome, StageRun, StageState
 use archon_queue::Store;
 use chrono::TimeDelta;
 
+use super::failure_class::{self, FailureClass};
 use super::repair::{self, Decision, Repair};
 use super::{Cleanup, FollowUp, ItemBuild, RunTable, Teardown, clip, frozen};
 use crate::context::DaemonContext;
@@ -28,6 +30,8 @@ const MAX_NOTICE_CHARS: usize = 2_000;
 /// An `item_finished` summary is clipped to this. A batch holds at most
 /// `compact::MAX_BATCH_EVENTS` news events, besides pinned ones.
 const MAX_FINISHED_CHARS: usize = 4_000;
+/// A failure's advice line, appended after that clip.
+const MAX_ADVICE_CHARS: usize = 400;
 /// Longest a routine success waits for the rest of the work in flight before
 /// it wakes the orchestrator; the feed shows the outcome at once.
 const MAX_SUCCESS_DEFER: TimeDelta = TimeDelta::minutes(5);
@@ -435,17 +439,20 @@ pub(super) async fn announce(
     } else {
         outcome_text(item)
     };
-    let notice = if matches!(item.state, QueueState::Failed { .. }) {
-        let stages = match run {
-            Some(run) => match ctx.store.lock().await.stage_runs(&run.id) {
+    let stages = match run {
+        Some(run) if !matches!(item.state, QueueState::Succeeded { .. }) => {
+            match ctx.store.lock().await.stage_runs(&run.id) {
                 Err(error) if !error.is_store() => {
                     tracing::warn!(run = %run.id, %error, "stage rows unreadable; notice without them");
                     Vec::new()
                 }
                 other => other?,
-            },
-            None => Vec::new(),
-        };
+            }
+        }
+        _ => Vec::new(),
+    };
+    let advice = failure_advice(item, run, &stages);
+    let notice = if matches!(item.state, QueueState::Failed { .. }) {
         failure_notice(item, run, &stages)
     } else {
         let clipped = clip(&summary, MAX_NOTICE_CHARS);
@@ -478,7 +485,7 @@ pub(super) async fn announce(
         item: item.id.clone(),
         title: item.title.clone(),
         state: item.state.kind().to_owned(),
-        summary: finished_summary(&summary, item),
+        summary: with_advice(finished_summary(&summary, item), advice.as_deref()),
         pr_url,
         cost_usd,
         origin: item.origin.clone(),
@@ -557,6 +564,116 @@ fn wakes_orchestrator(item: &QueueItem, wake_on_success: bool) -> bool {
     failed || (succeeded && wake_on_success) || item.origin.is_some() || item.wants_notice()
 }
 
+/// The stage `run` failed on, or `startup`, with the error the run recorded,
+/// and the stage run of its last attempt that holds the cause, if any.
+fn failing_stage<'a>(
+    run: Option<&'a PipelineRun>,
+    stages: &'a [StageRun],
+) -> (&'a str, Option<&'a str>, Option<&'a StageRun>) {
+    let (stage, fallback) = match run.map(|r| &r.state) {
+        Some(RunState::Failed { stage_id, error }) => (stage_id.as_str(), Some(error.as_str())),
+        _ => ("startup", None),
+    };
+    let attempt = stages
+        .iter()
+        .filter(|s| s.stage_id == stage)
+        .map(|s| s.attempt)
+        .max();
+    let mut slots = BTreeSet::new();
+    let last: Vec<&StageRun> = stages
+        .iter()
+        .rev()
+        .filter(|s| s.stage_id == stage && Some(s.attempt) == attempt)
+        // Infrastructure retries replace a slot within the same attempt.
+        .filter(|s| slots.insert(s.fan_index))
+        .collect();
+    // The slot whose BLOCKED or ESCALATE stopped the run comes first, as the
+    // driver picks it: lowest fan index, its error as the run records it.
+    let stopped_it = last
+        .iter()
+        .filter(|s| {
+            matches!(&s.state, StageState::Failed { error }
+            if StageOutcome::ends_run(error)
+                && fallback == Some(StageOutcome::run_stop_error(error).as_str()))
+        })
+        .min_by_key(|s| s.fan_index);
+    // Then a slot that says why it failed explains the stage better than a cancelled one.
+    let failed = stopped_it
+        .or_else(|| last.iter().find(|s| stage_cause(s).is_some()))
+        .or_else(|| last.iter().find(|s| failure_class::of_stage(s).is_some()))
+        .copied();
+    assert!(
+        failed.is_none_or(|s| s.stage_id == stage),
+        "the cause is the failing stage's"
+    );
+    (stage, fallback, failed)
+}
+
+/// What a stage run that failed says of why, as its notice words it.
+fn stage_cause(stage: &StageRun) -> Option<&str> {
+    match &stage.state {
+        StageState::Failed { error } => Some(error.as_str()),
+        StageState::TimedOut => Some("The stage timed out."),
+        StageState::Completed if stage.verdict == Some(Verdict::Fail) => stage
+            .structured
+            .as_ref()
+            .and_then(|v| v.get("findings"))
+            .and_then(|v| v.as_array())
+            .and_then(|v| v.first())
+            .and_then(|v| v.get("title"))
+            .and_then(|v| v.as_str())
+            .or(stage.summary.as_deref()),
+        _ => None,
+    }
+}
+
+/// The failure class of a finished `item` and its suggested next attempt,
+/// read from its failing stage (A12); `None` for an item that did not fail.
+fn failure_advice(
+    item: &QueueItem,
+    run: Option<&PipelineRun>,
+    stages: &[StageRun],
+) -> Option<String> {
+    let error = match &item.state {
+        QueueState::Failed { error, .. } => error.as_str(),
+        QueueState::Cancelled { .. } => {
+            return Some(failure_class::advice(FailureClass::External, None));
+        }
+        _ => return None,
+    };
+    let (_, fallback, failed) = failing_stage(run, stages);
+    let line = match failed {
+        Some(stage) => {
+            let class = failure_class::of_stage(stage).expect("a failing stage has a class");
+            failure_class::advice(class, ran_choice(stage, stages))
+        }
+        None => failure_class::advice(failure_class::of_error(fallback.unwrap_or(error)), None),
+    };
+    Some(line)
+}
+
+/// The choice the last agent of `failed`'s slot ran with, retunes included:
+/// a reservation that never got an agent, as a refused wake leaves, ran nothing.
+fn ran_choice<'a>(failed: &'a StageRun, stages: &'a [StageRun]) -> Option<&'a ModelChoice> {
+    if failed.aether_agent.is_some() {
+        return Some(failed.current_choice());
+    }
+    let ran = stages
+        .iter()
+        .filter(|s| super::spawn::same_slot_as(s, failed) && s.aether_agent.is_some())
+        .filter(|s| s.started_at <= failed.started_at)
+        .max_by_key(|s| s.started_at)?;
+    assert!(
+        ran.id != failed.id,
+        "a reservation without an agent is not what ran"
+    );
+    assert!(
+        ran.stage_id == failed.stage_id,
+        "the agent ran in the failed slot"
+    );
+    Some(ran.current_choice())
+}
+
 /// Keep the notification small; the queue, stages and orchestrator retain the
 /// full error. Read the failing member instead of the engine's nested report.
 fn failure_notice(item: &QueueItem, run: Option<&PipelineRun>, stages: &[StageRun]) -> String {
@@ -566,37 +683,11 @@ fn failure_notice(item: &QueueItem, run: Option<&PipelineRun>, stages: &[StageRu
             item.title, item.id
         );
     };
-    let (stage, fallback) = match run.map(|r| &r.state) {
-        Some(RunState::Failed { stage_id, error }) => (stage_id.as_str(), error.as_str()),
-        _ => ("startup", error.as_str()),
-    };
-    let attempt = stages
-        .iter()
-        .filter(|s| s.stage_id == stage)
-        .map(|s| s.attempt)
-        .max();
-    let mut slots = BTreeSet::new();
-    let cause = stages
-        .iter()
-        .rev()
-        .filter(|s| s.stage_id == stage && Some(s.attempt) == attempt)
-        // Infrastructure retries replace a slot within the same attempt.
-        .filter(|s| slots.insert(s.fan_index))
-        .find_map(|s| match &s.state {
-            StageState::Failed { error } => Some(error.as_str()),
-            StageState::TimedOut => Some("The stage timed out."),
-            StageState::Completed if s.verdict == Some(Verdict::Fail) => s
-                .structured
-                .as_ref()
-                .and_then(|v| v.get("findings"))
-                .and_then(|v| v.as_array())
-                .and_then(|v| v.first())
-                .and_then(|v| v.get("title"))
-                .and_then(|v| v.as_str())
-                .or(s.summary.as_deref()),
-            _ => None,
-        })
-        .unwrap_or(fallback);
+    let (stage, fallback, failed) = failing_stage(run, stages);
+    let cause = failed
+        .and_then(stage_cause)
+        .or(fallback)
+        .unwrap_or(error.as_str());
     let title = item.title.split_whitespace().collect::<Vec<_>>().join(" ");
     let cause = notice_sentence(cause);
     let punctuation = if cause.ends_with(['.', '!', '?', '…']) {
@@ -690,6 +781,18 @@ pub(super) fn finished_summary(text: &str, item: &QueueItem) -> String {
     }
 }
 
+/// The orchestrator's `summary` with a failure's class and suggested next
+/// step on a line of its own, kept whatever clipping `summary` had.
+fn with_advice(summary: String, advice: Option<&str>) -> String {
+    let Some(advice) = advice else {
+        return summary;
+    };
+    let line = clip(advice, MAX_ADVICE_CHARS);
+    assert!(!line.contains('\n'), "the advice is one line");
+    assert!(!line.is_empty(), "advice says something");
+    format!("{summary}\n{line}")
+}
+
 /// Where a finished run's stages tell the whole story. A cancelled item's
 /// text is its cancel reason, and it may have no run, so it gets none.
 fn stage_hint(item: &QueueItem) -> Option<String> {
@@ -764,4 +867,86 @@ pub(super) async fn cancel_item(
         .transition_item(id, next, archon_core::now())?;
     announce(ctx, &item, None, false, None).await?;
     Ok(FollowUp::poke())
+}
+
+#[cfg(test)]
+mod tests {
+    use archon_core::model::{Effort, ModelChoice};
+    use archon_core::run::{ModelSegment, PipelineRun, RunState, StageOutcome, StageState};
+
+    use super::super::failure_class::tests::stage;
+    use super::{failing_stage, ran_choice};
+
+    fn failed(error: &str, fan_index: u32) -> archon_core::run::StageRun {
+        let error = error.to_owned();
+        let mut row = stage(StageState::Failed { error }, Effort::Medium);
+        row.fan_index = fan_index;
+        row
+    }
+
+    fn run_failed(of: &archon_core::run::StageRun, error: &str) -> PipelineRun {
+        PipelineRun {
+            id: of.run.clone(),
+            item: archon_core::id::QueueItemId::new(),
+            pipeline: "direct".into(),
+            shipped: false,
+            aether_run: None,
+            workspace: "/archon/worktrees/demo".into(),
+            team_root: None,
+            branch: String::new(),
+            state: RunState::Failed {
+                stage_id: of.stage_id.clone(),
+                error: error.to_owned(),
+            },
+            cost_usd: 0.0,
+            started_at: of.started_at,
+            finished_at: None,
+        }
+    }
+
+    #[test]
+    fn the_slot_that_stopped_the_run_is_the_failure_reported() {
+        let blocked = failed("BLOCKED: operator action needed\n", 0);
+        // A later sibling whose short error is quoted inside the real stop.
+        let mut later = failed("operator action", 1);
+        later.run = blocked.run.clone();
+        later.started_at = blocked.started_at + chrono::Duration::seconds(5);
+        let stop = StageOutcome::run_stop_error("BLOCKED: operator action needed\n");
+        let run = run_failed(&blocked, &stop);
+        let stages = vec![blocked.clone(), later];
+        let (_, _, picked) = failing_stage(Some(&run), &stages);
+        assert_eq!(picked.map(|s| &s.id), Some(&blocked.id));
+    }
+
+    #[test]
+    fn of_two_stops_the_lowest_fan_index_is_the_drivers() {
+        let first = failed("ESCALATE: split it", 0);
+        let mut second = failed("ESCALATE: split it", 1);
+        second.run = first.run.clone();
+        second.started_at = first.started_at - chrono::Duration::seconds(5);
+        let run = run_failed(&first, "ESCALATE: split it");
+        let stages = vec![second, first.clone()];
+        let (_, _, picked) = failing_stage(Some(&run), &stages);
+        assert_eq!(picked.map(|s| s.fan_index), Some(0));
+    }
+
+    #[test]
+    fn advice_names_the_retuned_choice_of_the_last_agent_that_ran() {
+        let mut ran = stage(StageState::TimedOut, Effort::Medium);
+        ran.aether_agent =
+            Some(archon_core::aether_ids::AetherAgentId::parse("agt_0001").expect("an agent id"));
+        let retuned = ModelChoice::pinned("b/strong".parse().unwrap(), Effort::High);
+        ran.model_segments.push(ModelSegment {
+            delivery: "steer".into(),
+            choice: retuned.clone(),
+            started_at: ran.started_at,
+            cost_before_usd: 0.0,
+        });
+        let mut reserved = stage(StageState::TimedOut, Effort::Low);
+        reserved.run = ran.run.clone();
+        reserved.started_at = ran.started_at + chrono::Duration::seconds(5);
+        let stages = vec![ran.clone(), reserved.clone()];
+        assert_eq!(ran_choice(&reserved, &stages), Some(&retuned));
+        assert_eq!(ran_choice(&ran, &stages), Some(&retuned));
+    }
 }

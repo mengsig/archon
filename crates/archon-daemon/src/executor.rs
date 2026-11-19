@@ -14,6 +14,7 @@ mod dependencies;
 mod descendants;
 mod discard;
 pub(crate) mod engine_wait;
+mod failure_class;
 pub(crate) mod fast_check;
 mod finish;
 mod forewarn;

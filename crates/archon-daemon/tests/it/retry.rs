@@ -462,3 +462,42 @@ async fn steers_repair_multiple_removed_pins_before_a_plain_retry() {
         QueueState::Running { .. }
     ));
 }
+
+/// A failure only advises: the reported failure suggests a step up, and a
+/// retry without a `model_plan` runs the stored plan's model and effort.
+#[tokio::test]
+async fn a_retry_without_a_model_plan_keeps_the_stored_plan_after_a_failure() {
+    use archon_core::run::StageOutcome;
+    use archon_daemon::triggers::{self, TriggerEvent};
+
+    let h = Harness::new().await;
+    let (item, _) = started(&h, "checks fail").await;
+    let ran = h.backend.requests()[0].choice.clone();
+    assert_eq!(ran, choice(MODEL, Effort::Medium), "the stored plan ran");
+    h.settle_running(|_| StageOutcome::Failed {
+        error: "make ci failed: 2 tests failed".into(),
+        infra: false,
+    })
+    .await;
+    assert!(matches!(h.state(&item.id).await, QueueState::Failed { .. }));
+    let held = triggers::held(&h.ctx).await.unwrap();
+    assert!(
+        held.iter().any(|event| matches!(event,
+            TriggerEvent::ItemFinished { item: id, summary, .. } if id == &item.id
+                && summary.contains("Failure class: structural")
+                && summary.contains("consider one effort step up from medium"))),
+        "{held:?}"
+    );
+
+    h.cli(retry(&item, false, None)).await.expect("retry");
+    h.dispatch().await;
+    let requests = h.backend.requests();
+    assert_eq!(requests.len(), 2, "the retry spawned once");
+    assert_eq!(requests[1].choice, ran, "nothing escalates");
+    let stored = h.ctx.store.lock().await.item(&item.id).unwrap().model_plan;
+    assert_eq!(
+        stored.plan().0["implement"],
+        vec![ran],
+        "the stored plan is unchanged"
+    );
+}

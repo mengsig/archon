@@ -1186,6 +1186,85 @@ async fn a_pending_pinned_tier_resolves_again_on_another_weighted_provider() {
     }
 }
 
+/// Once a run's catalog repair was noted, a fan-out the reroute moves in part
+/// and follows onto a new default runs every slot on its stored model.
+#[tokio::test]
+async fn a_fan_out_the_reroute_follows_after_a_noted_repair_runs_its_stored_models() {
+    let h = harness(codex_first()).await;
+    claude_then_codex(&h, 0, 80);
+    let item = enqueue(&h, ROUTED, "noted, then followed", tier_plan()).await;
+    h.dispatch().await;
+    let mut listed: Vec<CatalogModel> = catalog().models().to_vec();
+    listed.retain(|entry| entry.model.to_string() != "codex/sol");
+    h.set_catalog(ModelCatalog::new(listed.clone())).await;
+    claude_then_codex(&h, 80, 80);
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    assert!(h.item(&item.id).await.provider_switch.is_some(), "noted");
+    let entry = |model: &str, tier, is_default| CatalogModel {
+        model: model.parse().unwrap(),
+        tier: Some(tier),
+        is_default,
+    };
+    listed.push(entry("codex/sol-next", Tier::Strong, false));
+    listed.push(entry("codex/mini-next", Tier::Fast, true));
+    h.set_catalog(ModelCatalog::new(listed)).await;
+    h.settle_running(|_| common::verdict(false)).await;
+    h.dispatch().await;
+    h.settle_running(|_| completed("implemented again")).await;
+    h.dispatch().await;
+
+    let stages = h.stages(&item.id).await;
+    let reviews: Vec<_> = stages.iter().filter(|s| s.stage_id == "review").collect();
+    assert_eq!(reviews.len(), 4, "two rounds of two reviewers");
+    let stored = h.item(&item.id).await.model_plan;
+    let planned = stored.choices_for("review").unwrap();
+    for review in &reviews[2..] {
+        let slot = review.fan_index as usize % planned.len();
+        let model = &planned[slot].model;
+        assert_eq!(
+            &review.choice.model, model,
+            "slot {slot} runs its stored model"
+        );
+    }
+    let fast = planned[1].model.to_string();
+    assert_eq!(fast, "codex/mini-next", "followed onto the new default");
+}
+
+/// A retry whose pipeline gained a stage since its last run still notes the
+/// move its kept plan's catalog repair made, though the plan grew a key.
+#[tokio::test]
+async fn a_retry_after_its_pipeline_gained_a_stage_notes_the_catalog_move() {
+    let h = harness(codex_first()).await;
+    let item = pinned_tier_left_codex(&h, PlanSource::Unattributed).await;
+    let cancel = Request::CancelItem {
+        item: item.id.clone(),
+        reason: None,
+    };
+    h.cli(cancel).await.expect("cancel");
+    let polish = "[[stage]]\nid = \"polish\"\nkind = \"work\"\nprompt = \"implement.md\"\n\
+        timeout_minutes = 30\n\n[[stage]]\nid = \"ship\"";
+    let grown = ROUTED_TOML.replacen("[[stage]]\nid = \"ship\"", polish, 1);
+    assert_ne!(grown, ROUTED_TOML, "a stage is added");
+    h.add_pipeline(ROUTED, &grown);
+    let retry = Request::RetryItem {
+        item: item.id.clone(),
+        model_plan: None,
+        model_reasons: None,
+        fresh: false,
+        brief_append: None,
+        stage_timeouts: Default::default(),
+    };
+    h.cli(retry).await.expect("retry");
+
+    let retried = h.item(&item.id).await;
+    assert!(retried.model_plan.choices_for("polish").is_some(), "filled");
+    let told = changed_models(&h, &item).await;
+    let moved = "stage implement moved from codex/sol to claude-code/sonnet: \
+        the model catalog no longer lists codex/sol";
+    assert!(told.starts_with(moved), "{told}");
+}
+
 /// A retry keeping such a plan is accepted on the other weighted provider.
 #[tokio::test]
 async fn a_retry_keeps_a_pinned_tier_that_resolves_on_another_weighted_provider() {

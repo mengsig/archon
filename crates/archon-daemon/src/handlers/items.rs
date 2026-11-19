@@ -800,11 +800,11 @@ pub(super) async fn retry(
         id,
         held: provider.as_deref(),
     };
-    let (plan, repaired_from) = match retry.model_plan {
+    let (plan, repaired) = match retry.model_plan {
         Some(draft) => {
             let reasons = retry.model_reasons.as_ref();
             let resolved = resolve_draft(ctx, (&env, route), &spec, (draft, reasons), by).await?;
-            (resolved, None)
+            (resolved, Vec::new())
         }
         None => {
             let catalog = kept_catalog
@@ -866,9 +866,7 @@ pub(super) async fn retry(
             Some(kept) => error.with_detail(&format!("the retry was not queued, but: {kept}")),
             None => error,
         })?;
-        if let (Some(before), Some(catalog)) = (&repaired_from, &kept_catalog) {
-            note_kept_repair(ctx, &mut store, &mut queued, before, catalog)?;
-        }
+        note_kept_repair(ctx, &mut store, &mut queued, &repaired)?;
         (queued, fresh.map(|f| f.note))
     };
     // Queued under the table: dispatch starts it once the mark goes.
@@ -884,17 +882,17 @@ pub(super) async fn retry(
 }
 
 /// The plan a retry of `current` keeps, repaired in `catalog` when it is
-/// ready, and the plan that repair replaced when it changed one.
+/// ready, and the moves that repair made, read before new stages are filled.
 async fn kept_plan_writer(
     ctx: &DaemonContext,
     current: &QueueItem,
     catalog: &archon_core::model_tier::ModelCatalog,
     (env, spec): (&RepoEnv, &PipelineSpec),
-) -> Result<(PlanWriter, Option<ModelPlan>), ArchonError> {
+) -> Result<(PlanWriter, Vec<crate::quota::Moved>), ArchonError> {
     let mut kept = current.clone();
     // A 1.0 item names the ship agent its built-in no longer has; the retry stores the repair.
     spec.drop_retired_ship(&mut kept.model_plan, None);
-    let mut replaced = None;
+    let mut moves = Vec::new();
     let plan = if catalog.not_ready_reason().is_some() {
         kept.model_plan.checked_request_catalog(catalog, None)?
     } else {
@@ -905,33 +903,32 @@ async fn kept_plan_writer(
         if repaired.model_plan != kept.model_plan {
             let mut before = kept.model_plan.clone();
             before.canonicalize_aliases(catalog);
-            replaced = Some(before.plan().clone());
+            let now = repaired.model_plan.plan();
+            let before = crate::quota::notice_baseline(Some(before.plan()), now);
+            moves = crate::quota::catalog_moves((before, now), now, catalog);
         }
         repaired.model_plan
     };
     let mut writer = PlanWriter::new(&kept.id, archon_core::now());
     writer.carry(&plan, &kept.id, |_| Some(usize::MAX));
-    Ok((writer, replaced))
+    Ok((writer, moves))
 }
 
-/// Note on the `queued` retry, and in its feed, each model its kept plan's
-/// catalog repair moved from the plan `before`; dispatch reads the repaired one.
+/// Note on the `queued` retry, and in its feed, the `moves` its kept plan's
+/// catalog repair made; dispatch reads the repaired plan and tells nothing.
 fn note_kept_repair(
     ctx: &DaemonContext,
     store: &mut archon_queue::Store,
     queued: &mut QueueItem,
-    before: &ModelPlan,
-    catalog: &archon_core::model_tier::ModelCatalog,
+    moves: &[crate::quota::Moved],
 ) -> Result<(), ArchonError> {
-    assert_eq!(queued.state.kind(), "queued", "noted once queued again");
-    let now = queued.model_plan.plan().clone();
-    let before = crate::quota::notice_baseline(Some(before), &now);
-    let dropped = crate::quota::catalog_moves((before, &now), &now, catalog);
-    let noted = queued.provider_switch.clone();
-    crate::quota::record_moves(ctx, store, queued, (&dropped, before), None)?;
-    if queued.provider_switch == noted {
+    if moves.is_empty() {
         return Ok(());
     }
+    assert_eq!(queued.state.kind(), "queued", "noted once queued again");
+    let now = queued.model_plan.plan().clone();
+    crate::quota::record_moves(ctx, store, queued, (moves, &now), None)?;
+    assert!(queued.provider_switch.is_some(), "a move is noted");
     queued.updated_at = archon_core::now().max(queued.updated_at);
     store.update_item(queued)
 }

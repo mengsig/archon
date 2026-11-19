@@ -16,7 +16,7 @@ use archon_core::delegation::Narrowed;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
 use archon_core::lesson::CONTRACT_LESSONS;
-use archon_core::model::{EffortContract, ModelChoice};
+use archon_core::model::{EffortContract, ModelChoice, ModelPlan};
 use archon_core::policy::ModelPolicy;
 use archon_core::ports::{CheckedOn, SpawnRequest, SpawnedAgent};
 use archon_core::queue::QueueItem;
@@ -488,25 +488,13 @@ fn reserve_plans(
         .map(|id| store.repo(&resolve::repo_ref(id)))
         .transpose()?;
     let env = RepoEnv::new(repo.clone())?;
-    let (repaired, pending) = match super::model_catalog::repair_pending(
-        ctx, store, &item, &plans, catalog, &env, spec,
-    ) {
-        Ok(repaired) => repaired,
-        Err(error) if error.is_store() => return Err(error),
-        Err(error) => {
-            tracing::info!(item = %item.id, %error, "pending stages wait for a usable model");
-            return Ok(Reserved::Waiting(plans));
-        }
+    let read = (&env, spec, catalog);
+    let Some(repaired) = repair_reserved(ctx, store, &mut item, &plans, read)? else {
+        return Ok(Reserved::Waiting(plans));
     };
-    // The plan the repair replaced: its moves are noted with the reroute's.
-    let mut replaced = None;
-    if repaired.model_plan != item.model_plan {
-        replaced = Some(item.model_plan.plan().clone());
-        item = repaired;
-        item.updated_at = archon_core::now().max(item.updated_at);
-        store.update_item(&item)?;
-    }
-    plans = pending;
+    plans = repaired.pending;
+    let replaced = repaired.replaced;
+    let stored = item.model_plan.plan().clone();
     {
         let target = (&mut item, spec);
         let read = (repo.as_ref(), replaced.as_ref());
@@ -515,7 +503,60 @@ fn reserve_plans(
             return Ok(Reserved::Waiting(plans));
         }
     }
+    // A reroute that followed the stored plan moves the drained plans with it.
+    let followed = (&stored, item.model_plan.plan());
+    if let Err(error) = super::model_catalog::follow_stored(&mut plans, followed, catalog) {
+        if error.is_store() {
+            return Err(error);
+        }
+        tracing::info!(item = %item.id, %error, "pending stages wait for a usable model");
+        return Ok(Reserved::Waiting(plans));
+    }
     reserve_checked(ctx, store, &run, spec, item, plans, (&env, catalog))
+}
+
+/// Pending plans repaired in the catalog, and the stored plan the repair
+/// `replaced` when it changed one.
+struct RepairedPending {
+    pending: Vec<SpawnPlan>,
+    replaced: Option<ModelPlan>,
+}
+
+/// `item`'s pending `plans` repaired in the catalog, storing the item when its
+/// plan changed; `None` while they wait.
+fn repair_reserved(
+    ctx: &DaemonContext,
+    store: &mut Store,
+    item: &mut QueueItem,
+    plans: &[SpawnPlan],
+    (env, spec, catalog): (
+        &RepoEnv,
+        &PipelineSpec,
+        &archon_core::model_tier::ModelCatalog,
+    ),
+) -> Result<Option<RepairedPending>, ArchonError> {
+    assert!(!plans.is_empty(), "only pending stages are repaired");
+    let (repaired, pending) =
+        match super::model_catalog::repair_pending(ctx, store, item, plans, catalog, env, spec) {
+            Ok(repaired) => repaired,
+            Err(error) if error.is_store() => return Err(error),
+            Err(error) => {
+                tracing::info!(item = %item.id, %error, "pending stages wait for a usable model");
+                return Ok(None);
+            }
+        };
+    assert_eq!(pending.len(), plans.len(), "every pending stage is kept");
+    if repaired.model_plan == item.model_plan {
+        let replaced = None;
+        return Ok(Some(RepairedPending { pending, replaced }));
+    }
+    // The plan the repair replaced: its moves are noted with the reroute's.
+    let replaced = item.model_plan.plan().clone();
+    *item = repaired;
+    item.updated_at = archon_core::now().max(item.updated_at);
+    store.update_item(item)?;
+    let replaced = Some(replaced);
+    Ok(Some(RepairedPending { pending, replaced }))
 }
 
 fn reserve_checked(

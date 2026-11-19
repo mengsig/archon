@@ -187,6 +187,26 @@ pub(crate) fn repair_pending(
     Ok((repaired, pending))
 }
 
+/// Move each of `plans` still on a stored choice the plan moved from `before`
+/// to `after` onto its new model, as a reroute that followed the item moves them.
+pub(crate) fn follow_stored(
+    plans: &mut [SpawnPlan],
+    (before, after): (&ModelPlan, &ModelPlan),
+    catalog: &ModelCatalog,
+) -> Result<(), ArchonError> {
+    if before == after {
+        return Ok(());
+    }
+    assert!(
+        before.0.keys().eq(after.0.keys()),
+        "following a provider changes only models"
+    );
+    for plan in plans.iter_mut() {
+        repair_spawn(plan, (before, after), catalog)?;
+    }
+    Ok(())
+}
+
 pub(super) const RETRY_WAIT: &str = "model catalog holds stage replacement";
 
 pub(super) fn retry_plan(

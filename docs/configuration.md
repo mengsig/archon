@@ -172,7 +172,8 @@ Three rules decide what a cap lowered later does to a stored effort:
    each later stage of the run is held to the policy's cap as it is when that
    stage's agent is reserved. An agent already reserved or sent is issued as
    it was stored, and an agent woken in place after an infrastructure failure
-   runs on at the effort it has, so a cap below it refuses the wake as in 1.6.3.
+   is requested and recorded at the effort it runs; a cap below that refuses
+   the wake, as in 1.6.3.
 2. When a retry, a revision or a re-shape writes the plan again with carried
    entries, each carried effort the sizer set is lowered to the lower of
    `max_effort` and `sizer_max_effort`, with the same recorded reason. With

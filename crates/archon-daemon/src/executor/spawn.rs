@@ -816,6 +816,31 @@ fn hold_new_agent(target: &Target<'_>, plan: &mut SpawnPlan) {
     }
 }
 
+/// A woken agent runs on at the effort it has: a slot the daemon sized is
+/// requested at what its latest attempt on `kept`'s agent runs now.
+fn hold_woken(
+    store: &Store,
+    target: &Target<'_>,
+    kept: &KeptAgent,
+    plan: &mut SpawnPlan,
+) -> Result<(), ArchonError> {
+    let runs = store.stage_runs(&target.run.id)?;
+    let woken = runs
+        .iter()
+        .filter(|s| s.stage_id == plan.stage_id && s.fan_index == plan.fan_index)
+        .filter(|s| s.aether_agent.as_ref() == Some(&kept.agent))
+        .max_by_key(|s| s.started_at);
+    let Some(woken) = woken else {
+        return Err(ArchonError::Invalid(format!(
+            "agent {} to wake ran no attempt of {}",
+            kept.agent, plan.stage_id
+        )));
+    };
+    crate::sizing::hold_to_woken(target.item, woken.current_choice(), plan);
+    assert_eq!(woken.run, target.run.id, "the woken agent is of this run");
+    Ok(())
+}
+
 /// Persist the exact request, then the `spawning` stage run that owns it,
 /// with the slot's `budget`. `retry` numbers an infrastructure replacement
 /// of the slot.
@@ -828,12 +853,10 @@ fn reserve_one(
     retry: Option<Retry>,
 ) -> Result<StageRunId, ArchonError> {
     let mut held = plan.clone();
-    // A woken agent runs on at the effort it has, so its request stays as planned, as in 1.6.3.
-    let wakes = retry.as_ref().is_some_and(|r| r.wake.is_some());
-    if !wakes {
-        hold_new_agent(target, &mut held);
+    match retry.as_ref().and_then(|r| r.wake.as_ref()) {
+        Some(kept) => hold_woken(store, target, kept, &mut held)?,
+        None => hold_new_agent(target, &mut held),
     }
-    assert!(wakes || held.choice.effort <= plan.choice.effort);
     let plan = &held;
     let id = StageRunId::new();
     let nth = retry.as_ref().map(|r| r.nth);

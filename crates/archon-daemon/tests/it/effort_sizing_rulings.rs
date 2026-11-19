@@ -166,6 +166,35 @@ async fn a_woken_agent_is_never_recorded_below_the_effort_it_runs() {
     assert!(h.backend.woken().is_empty(), "not woken past the cap");
 }
 
+/// Ruling (a) beside an in-place wake: a stage held to the policy's cap as it
+/// was reserved, then woken after an infrastructure failure, is woken and
+/// recorded at the effort it runs, not the driver's frozen x_high.
+#[tokio::test]
+async fn a_stage_held_to_the_cap_is_woken_at_the_effort_it_runs() {
+    let mut h = harness(Config::default()).await;
+    let queued = enqueue(&h, "Add a button", &["risk:critical"]).await;
+    h.dispatch().await;
+    h.restart_with(policy_cap(High));
+    executor::recover(&h.ctx).await.expect("recover");
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    let (review, sent) = issued(&h, &queued.id, "review").await;
+    assert_eq!(sent, High, "held to the cap");
+    let agent = review.aether_agent.clone().expect("spawned");
+    h.backend.fail_agent(&agent);
+    h.settle_running(|_| archon_core::run::StageOutcome::Failed {
+        error: "engine died".into(),
+        infra: true,
+    })
+    .await;
+    h.dispatch().await;
+    assert_eq!(h.backend.woken(), std::slice::from_ref(&agent));
+    let woken = attempt(&h, &queued.id, "review").await;
+    assert_ne!(woken.id, review.id, "a replacement");
+    assert_eq!(woken.state, StageState::Running, "not refused");
+    assert_eq!(woken.choice.effort, High, "what the agent runs");
+}
+
 /// Ruling (c) at dispatch: a pinned effort over a policy cap lowered after it
 /// was admitted is refused as 1.6.3 refuses it, never clipped.
 #[tokio::test]

@@ -1029,6 +1029,25 @@ fn a_ship_agent_named_ship_is_read_by_its_records() {
     }
 }
 
+/// A run of a pipeline whose first stage is a ship agent named `ship` that
+/// failed to start left no stage run: the ship step never ran, so it is no delivery.
+#[test]
+fn a_run_that_failed_to_start_before_a_ship_agent_named_ship_is_no_ship_step() {
+    let unstarted = failed_with("ship", "could not start the run: disk I/O error", |_| {
+        Vec::new()
+    });
+    assert_eq!(unstarted.failure, Some(FailureClass::Other));
+    let delivered = failed_with("ship", "the remote refused the push", |run| {
+        vec![settled(
+            run,
+            "build",
+            StageKind::Work,
+            StageState::Completed,
+        )]
+    });
+    assert_eq!(delivered.failure, Some(FailureClass::Ship));
+}
+
 /// One slot of a test stage named `ship` whose gate passes on any slot, as its
 /// agent left it.
 fn ship_slot(run: &PipelineRun, fan_index: u32, state: StageState) -> StageRun {

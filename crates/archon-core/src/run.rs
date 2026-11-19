@@ -1336,6 +1336,10 @@ pub const BUDGET_STAGE: &str = "budget";
 /// The stage id a failed delivery is reported under; no agent runs it.
 pub const SHIP_STEP: &str = "ship";
 
+/// The stage id a run that recovery could not resume fails under when no stage
+/// was live; no agent runs it.
+pub const RECOVERY_STAGE: &str = "recovery";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum RunState {

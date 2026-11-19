@@ -87,6 +87,23 @@ fn stage_ids_are_unique_and_well_formed() {
 }
 
 #[test]
+fn stage_ids_archond_fails_runs_under_are_reserved() {
+    for id in ["budget", "ship", "recovery"] {
+        let stages = stage(id, "work", "");
+        let error = validate(&stages, &[(&format!("{id}.md"), "Do it.")]).expect_err(id);
+        assert!(error.contains("is reserved"), "{error}");
+        assert!(error.contains("budget, ship, recovery"), "{error}");
+        assert!(error.contains(&format!("\"{id}-stage\"")), "{error}");
+    }
+}
+
+#[test]
+fn a_ship_agent_named_ship_is_not_reserved() {
+    let stages = stage("ship", "ship", "");
+    validate(&stages, &[("ship.md", "Ship it.")]).expect("the pipeline's own ship agent");
+}
+
+#[test]
 fn prompt_files_must_exist_and_stay_in_the_directory() {
     let mut spec = support::spec_from(&format!("{HEADER}{}", stage("a", "work", "")), &[]);
     spec.prompts.clear();

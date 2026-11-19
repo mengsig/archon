@@ -739,7 +739,8 @@ fn v24_keeps_the_old_class_of_a_run_whose_ending_stage_left_no_record() {
     let unstarted = failed_run("budget", "BLOCKED: the item's budget is used up: $1 of $1");
     seed(&conn, &unstarted, &[], Some(FailureClass::Blocked), false);
     let shipped = failed_run(archon_core::run::SHIP_STEP, "the push was refused");
-    seed(&conn, &shipped, &[], Some(FailureClass::Other), false);
+    let built = stage(&shipped, "build", StageKind::Work, StageState::Completed);
+    seed(&conn, &shipped, &[built], Some(FailureClass::Other), false);
     let aborted = "stage `ship` was aborted by a steer, and the stage to continue with no longer \
                    exists";
     let skipped = failed_run(archon_core::run::SHIP_STEP, aborted);

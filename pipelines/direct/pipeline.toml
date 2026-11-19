@@ -16,11 +16,11 @@ stage = "implement"
 
 [nudges]
 tier = "balanced"
-notes = "The cheapest path to a shipped change: one agent, and no review unless the item's review level asks for one. For any change one author can make and check, whatever its size: a fix, a feature, tests, docs, a dependency upgrade, a mechanical sweep. Raise the review level by risk; use adaptive when parts must be integrated."
+notes = "The cheapest path to a shipped change: one agent, and no review unless the item's review level asks for one. For any change one author can make and check, whatever its size: a fix, a feature, tests, docs, a dependency upgrade, a mechanical sweep. Raise the review level by risk; use adaptive when parts must be integrated, and for work that names concurrency, locking, security or a migration."
 
 [[stage]]
 id = "implement"
 kind = "work"
 prompt = "implement.md"
 timeout_minutes = 180
-nudge = "The balanced tier at medium effort, high for a larger or subtle change; low only for docs, config or another trivial edit. The agent escalates a change that turns out risky."
+nudge = "The balanced tier at medium effort, high for a larger or subtle change; low only for docs, config or another trivial edit. The agent escalates a change that turns out risky: concurrency, locking, security or a migration; re-queue that on adaptive."

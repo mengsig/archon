@@ -1806,6 +1806,8 @@ mod tests {
              daemon ships.",
             "`adaptive`: one lead that keeps its context through real fixes, or integrates parts \
              that split.",
+            "Send work that names concurrency, locking, security or a migration here, never to \
+             `direct`.",
             "Never bundle unrelated changes into it.",
             "`swarm`: 3 or more independent parts in disjoint files, built at once by cheap \
              workers.",
@@ -2210,9 +2212,10 @@ mod tests {
     }
 
     /// The prompt is paid for on every turn; the tools describe themselves.
-    /// Includes 1 KiB for approved-intent and clarification guidance, and
-    /// 64 bytes for the rule against polling GitHub from a schedule.
-    const BUDGET_BYTES: usize = 14 * 1024 + 768 + 64;
+    /// Includes 1 KiB for approved-intent and clarification guidance, 128 B
+    /// for routing risky work to `adaptive`, and 64 B for the rule against
+    /// polling GitHub from a schedule.
+    const BUDGET_BYTES: usize = 14 * 1024 + 768 + 128 + 64;
 
     #[test]
     fn builtin_prompt_stays_within_its_budget() {

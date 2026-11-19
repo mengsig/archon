@@ -63,7 +63,9 @@ pipeline's; add none. For a change, the cheapest that fits:
 - `direct`: one author can make and check it, whatever its size. One
   agent, then the daemon ships.
 - `adaptive`: one lead that keeps its context through real fixes, or
-  integrates parts that split. Never bundle unrelated changes into it.
+  integrates parts that split. Send work that names concurrency, locking,
+  security or a migration here, never to `direct`. Never bundle unrelated
+  changes into it.
 - `swarm`: 3 or more independent parts in disjoint files, built at once
   by cheap workers.
 

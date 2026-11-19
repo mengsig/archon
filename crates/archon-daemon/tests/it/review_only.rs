@@ -474,6 +474,11 @@ async fn a_review_whose_branch_moved_off_the_frozen_head_is_refused() {
     };
     assert!(error.contains("a review item commits nothing"), "{error}");
     assert!(error.contains(&head), "{error}");
+    let moved = made["commit"].as_str().unwrap();
+    assert!(
+        error.contains(&format!("queue a new review item at {moved}")),
+        "{error}"
+    );
     nothing_pushed_to_the_fork(&h, &gh, &head);
 }
 
@@ -1441,4 +1446,89 @@ async fn gh_failure_recovers(restarted: bool) {
     })
     .await
     .expect("settlement and sweep must not deadlock");
+}
+
+fn amend(item: &QueueItem, text: &str) -> Request {
+    Request::UpdateItem {
+        item: item.id.clone(),
+        patch: archon_core::protocol::ItemPatch {
+            brief_append: Some(text.into()),
+            ..Default::default()
+        },
+    }
+}
+
+fn retry_with(item: &QueueItem, text: Option<&str>) -> Request {
+    Request::RetryItem {
+        item: item.id.clone(),
+        model_plan: None,
+        model_reasons: None,
+        fresh: false,
+        brief_append: text.map(str::to_owned),
+        stage_timeouts: Default::default(),
+    }
+}
+
+/// A review item of #200 that has not run, so it takes an amendment.
+async fn queued_review(h: &Harness) -> QueueItem {
+    let mut asked = enqueue_request("review #200", "review", ReviewLevel::Standard);
+    asked.onto = Some(OntoTarget::Pr(200));
+    enqueue(h, asked).await.expect("a fork's pull request")
+}
+
+async fn frozen_head(h: &Harness, item: &QueueItem) -> String {
+    h.item(&item.id).await.onto.expect("onto").head_sha
+}
+
+#[tokio::test]
+async fn no_amendment_retry_or_steer_moves_the_frozen_head_of_a_review_item() {
+    let (h, _gh, head) = fork_pull_request().await;
+    let item = queued_review(&h).await;
+    assert_eq!(frozen_head(&h, &item).await, head);
+    let other = "0123456789abcdef0123456789abcdef01234567";
+
+    h.cli(amend(&item, &format!("review {other} instead")))
+        .await
+        .expect("free text is only text");
+    h.cli(Request::SteerItem {
+        item: item.id.clone(),
+        steer: archon_core::steer::Steer {
+            note: Some(format!("review {other} instead")),
+            ..Default::default()
+        },
+    })
+    .await
+    .expect("a steer note is only text");
+    assert_eq!(frozen_head(&h, &item).await, head, "amended and steered");
+
+    h.cli(Request::CancelItem {
+        item: item.id.clone(),
+        reason: None,
+    })
+    .await
+    .expect("a queued item cancels");
+    h.cli(retry_with(&item, Some(&format!("try {other}"))))
+        .await
+        .expect("a retry");
+    assert_eq!(frozen_head(&h, &item).await, head, "retried");
+}
+
+#[tokio::test]
+async fn steering_a_running_review_item_leaves_its_frozen_head() {
+    let (h, _gh, head) = fork_pull_request().await;
+    let item = review_item(&h, &head, ReviewLevel::Standard).await;
+    let other = "0123456789abcdef0123456789abcdef01234567";
+    h.cli(Request::SteerItem {
+        item: item.id.clone(),
+        steer: archon_core::steer::Steer {
+            note: Some(format!("review {other} instead")),
+            ..Default::default()
+        },
+    })
+    .await
+    .expect("a steer note is only text");
+    h.cli(amend(&item, &format!("review {other} instead")))
+        .await
+        .expect("free text is only text");
+    assert_eq!(frozen_head(&h, &item).await, head);
 }

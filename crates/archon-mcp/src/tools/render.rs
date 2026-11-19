@@ -74,6 +74,9 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
         Reply::Directive(directive) => directive_recorded(directive),
         Reply::Cleared(count) => format!("Cleared {count} directive(s)."),
         Reply::GithubComment { url } => format!("Posted {url}"),
+        Reply::RepoWatches(watches) => {
+            listing("watched repositories", watches.iter().map(watch_line))
+        }
         Reply::CostReport(report) => cost::report(report),
         Reply::ModelEvidence(report) => report.text(),
         Reply::Initiatives(all) => initiatives::list(all),
@@ -169,6 +172,24 @@ fn listing(noun: &str, lines: impl ExactSizeIterator<Item = String>) -> String {
         let _ = write!(text, "\n- {line}");
     }
     text
+}
+
+fn watch_line(watch: &archon_core::protocol::github_links::RepoWatchView) -> String {
+    let repository = watch
+        .repository
+        .as_deref()
+        .unwrap_or("no github.com origin now");
+    let open = match watch.tracked_pull_requests {
+        Some(count) if watch.truncated => {
+            format!("{count} pull requests tracked, all a walk reads: older ones are not watched")
+        }
+        Some(count) => format!("{count} pull requests tracked"),
+        None => "not read yet".to_owned(),
+    };
+    format!(
+        "{} ({repository}): every {} min, {open}",
+        watch.repo, watch.interval_minutes
+    )
 }
 
 fn repo_line(repo: &Repo) -> String {

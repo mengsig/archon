@@ -24,8 +24,10 @@ pub(super) async fn check_channel(
         ));
     }
     if message.channel.is_github()
-        && (matches!(action, Request::ConfigureGithubWatcher { .. })
-            || matches!(action, Request::RepoAdd(add) if add.github_watch))
+        && (matches!(
+            action,
+            Request::ConfigureGithubWatcher { .. } | Request::WatchRepo { .. }
+        ) || matches!(action, Request::RepoAdd(add) if add.github_watch))
     {
         return Err(ArchonError::Forbidden(
             "GitHub cannot change watcher repositories, allowlists or operators; use operator chat"

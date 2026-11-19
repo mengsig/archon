@@ -143,6 +143,10 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
         ),
         ("promote", json!({"repo": "web"})),
         (
+            "watch_repo",
+            json!({"repo": "web", "interval_minutes": 10, "remove": false}),
+        ),
+        (
             "github_reply",
             json!({"repository": "Acme/Web", "number": 42, "body": "Queued as qi_1.", "idempotency_key": "reply-1"}),
         ),

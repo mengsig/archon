@@ -30,6 +30,9 @@ pub const NOTES_PROTOCOL_VERSION: u32 = 23;
 /// The first protocol whose notes carry a `level`.
 pub const NOTE_LEVEL_PROTOCOL_VERSION: u32 = 24;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
+/// Aether refuses a trigger whose payload encodes to more than this, far below a
+/// frame: an eighth of its engine's 16 MiB input line (`aether_core::limits`).
+pub const MAX_TRIGGER_PAYLOAD_BYTES: usize = 2 * 1024 * 1024;
 pub const CLIENT_NAME: &str = "archon";
 pub const HOST_CONTEXT_FEATURE: &str = "host_context";
 pub const REPOSITORY_ROOT_FEATURE: &str = "repository_root";

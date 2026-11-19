@@ -27,8 +27,9 @@ const MAX_LISTED: usize = 20;
 /// The words that mark a stage the round cap stopped, in its escalation.
 const CAP_STOP: &str = "so Archon stopped it instead of another round";
 
-/// How a continuation note begins, so a later retry can find and replace it.
-const CONTINUES: &str = "This run continues stage `";
+/// How a continuation note begins, so a later retry can find and replace it. No
+/// amendment of the operator's may hold it ([`check_amendment`]), so none is taken for one.
+const CONTINUES: &str = "[Archon review-cap continuation] This run continues stage `";
 
 /// How much of the cap's escalation a continuing run's brief repeats.
 const ESCALATION_CHARS: usize = 2400;
@@ -540,7 +541,8 @@ pub(crate) fn capped_continuation(
          not re-review or re-read the whole change: fix what is open, then delegate one \
          delta reviewer with `base` `{head}`, given the open findings, and tell it to fail \
          only on a defect in the new commits or an open finding left unfixed. Add \
-         whole-change reviewers only where earlier runs had fewer than the level needs. If \
+         whole-change reviewers only where earlier runs had fewer than the level needs, or \
+         for the whole change if the branch no longer holds that head. If \
          a later amendment accepts this head instead, have it read whole again by as many \
          reviewers as the level needs, told the open findings are follow-ups."
     );
@@ -563,6 +565,19 @@ pub(crate) fn without_continuations(brief: &str) -> String {
     assert!(cleaned.len() <= brief.len(), "only notes are taken out");
     assert!(cleaned.starts_with(parts[0]), "the brief itself is kept");
     cleaned
+}
+
+/// Refuse an amendment `text` that holds a continuation note's opening words, which
+/// [`without_continuations`] would later take for Archon's own and drop.
+pub(crate) fn check_amendment(text: &str) -> Result<(), ArchonError> {
+    let mark = CONTINUES.split(']').next().expect("the mark leads");
+    assert!(mark.starts_with('[') && mark.len() > 1, "a bracketed mark");
+    if text.contains(mark) {
+        return Err(ArchonError::Invalid(format!(
+            "brief_append may not contain `{mark}]`: Archon marks its own review-cap notes so"
+        )));
+    }
+    Ok(())
 }
 
 /// The head of the last blocking fail of `stage`'s tally, once that tally reached the cap.

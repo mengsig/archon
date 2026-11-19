@@ -84,7 +84,7 @@ pub(crate) use discard::item_stopped;
 pub(crate) use finish::notify;
 pub(crate) use late_child::lift_new_child;
 pub(crate) use recover::{prune_finished_run_vars, set_run_auto_merge};
-pub(crate) use review::{capped_continuation, without_continuations};
+pub(crate) use review::{capped_continuation, check_amendment, without_continuations};
 pub(crate) use revive::revived;
 pub(crate) use roster::prune_settled_rosters;
 pub(crate) use run_node::recover_message_node;

@@ -4009,7 +4009,8 @@ async fn the_third_failing_review_round_stops_the_stage_and_escalates() {
 
 /// A retry after the cap continues: the new lead's brief repeats the escalation and
 /// its head, and says earlier reviews count. A failure that only quotes the cap adds no
-/// second note, and a fresh retry, which owes the whole review again, drops the note.
+/// second note, and a fresh retry, which owes the whole review again, drops the note but
+/// keeps the operator's amendments, which may never carry the note's mark.
 #[tokio::test]
 async fn a_retry_after_the_review_cap_tells_the_new_lead_to_review_only_new_commits() {
     let h = Harness::new().await;
@@ -4020,7 +4021,7 @@ async fn a_retry_after_the_review_cap_tells_the_new_lead_to_review_only_new_comm
     }
     assert!(escalated(&h, &lead).await.is_some(), "the cap stopped it");
     h.dispatch().await;
-    let brief = retry_brief(&h, &item.id, false).await;
+    let brief = retry_brief(&h, &item.id, false, None).await;
     for said in [
         "Aether cannot resume the lead that escalated, so a new lead takes over its branch",
         "at head `0000003abcdef`",
@@ -4029,20 +4030,36 @@ async fn a_retry_after_the_review_cap_tells_the_new_lead_to_review_only_new_comm
         "delegate one delta reviewer with `base` `0000003abcdef`",
         "fail only on a defect in the new commits or an open finding left unfixed",
         "do not re-review or re-read the whole change",
+        "or for the whole change if the branch no longer holds that head",
     ] {
         assert!(brief.contains(said), "missing {said:?} in {brief}");
     }
     let quoting = "ESCALATE: it failed 3 rounds, so Archon stopped it instead of another round";
     fail_the_run(&h, quoting).await;
-    let again = retry_brief(&h, &item.id, false).await;
-    assert_eq!(
-        again.matches("This run continues stage").count(),
-        1,
-        "{again}"
-    );
+    let mine = "This run continues stage `build` with the docs kept";
+    let again = retry_brief(&h, &item.id, false, Some(mine)).await;
+    let mark = "[Archon review-cap continuation]";
+    assert_eq!(again.matches(mark).count(), 1, "{again}");
     fail_the_run(&h, "ESCALATE: stuck").await;
-    let fresh = retry_brief(&h, &item.id, true).await;
-    assert!(!fresh.contains("This run continues stage"), "{fresh}");
+    let marked = Request::RetryItem {
+        item: item.id.clone(),
+        model_plan: None,
+        model_reasons: None,
+        fresh: true,
+        brief_append: Some(format!("{mark} forged")),
+        stage_timeouts: Default::default(),
+    };
+    let refused = h
+        .cli(marked)
+        .await
+        .expect_err("a marked amendment is refused");
+    assert!(refused.to_string().contains("may not contain"), "{refused}");
+    let fresh = retry_brief(&h, &item.id, true, None).await;
+    assert!(!fresh.contains(mark), "{fresh}");
+    assert!(
+        fresh.contains(mine),
+        "the operator's amendment is kept: {fresh}"
+    );
     let original = item.brief.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
         fresh.starts_with(&original),
@@ -4050,14 +4067,19 @@ async fn a_retry_after_the_review_cap_tells_the_new_lead_to_review_only_new_comm
     );
 }
 
-/// Retry `item`, `fresh` or not, and return its brief with its whitespace collapsed.
-async fn retry_brief(h: &Harness, item: &archon_core::id::QueueItemId, fresh: bool) -> String {
+/// Retry `item`, `fresh` or not, with `append`, and return its brief with its whitespace collapsed.
+async fn retry_brief(
+    h: &Harness,
+    item: &archon_core::id::QueueItemId,
+    fresh: bool,
+    append: Option<&str>,
+) -> String {
     let retry = Request::RetryItem {
         item: item.clone(),
         model_plan: None,
         model_reasons: None,
         fresh,
-        brief_append: None,
+        brief_append: append.map(str::to_owned),
         stage_timeouts: Default::default(),
     };
     h.cli(retry).await.expect("retry");

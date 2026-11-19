@@ -505,7 +505,7 @@ fn review_rules(duty: ReviewDuty) -> String {
                 "{many} agents you delegate to, each working alone and none of which \
                  wrote any of it. Delegate all {many} yourself; naming fewer fails the \
                  run, unless an earlier run reviewed this branch: its reviews count, \
-                 unnamed, so one delta reviewer of the commits after its last reviewed head will do"
+                 so one delta reviewer of the commits after its last reviewed head will do"
             ),
             format!("\"<agent id>\", … {many} or more"),
         ),
@@ -881,10 +881,10 @@ const REVIEW_COVERAGE_RULE: &str = "\
 different one you delegated to yourself that completed with that verdict. As many as \
 the review asks must have read the whole change, passing or with findings fixed, and \
 one must have passed the branch head itself: whole, or as a delta whose `base` a \
-named reviewer read the change up to. A pass of an earlier head only \
+reviewer read the change up to. A pass of an earlier head only \
 anchors such a delta. A fail stands until a pass read past it, or after an amend or \
-rebase until a pass of the whole change. Name every reviewer that coverage rests on, \
-earlier whole-change reads included, passed or failed. Anything else fails the run, \
+rebase until a pass of the whole change. Name every reviewer of yours that \
+coverage rests on, earlier whole-change reads included, passed or failed. Anything else fails the run, \
 and nothing ships. \
 Never report `pass` for a review that did not run or did not pass: ";
 
@@ -2346,7 +2346,7 @@ mod tests {
             "no `complete_task` or YAML, nothing before or after it",
             "Each agent named must be a different one you delegated to yourself",
             "must have passed the branch head itself",
-            "Name every reviewer that coverage rests on, earlier whole-change reads included",
+            "Name every reviewer of yours that coverage rests on, earlier whole-change reads included",
             "Blocking findings are correctness bugs, security or safety issues",
             "mark every finding `\"blocking\": true` or `false`",
             "List the rest as follow-ups",
@@ -2395,7 +2395,7 @@ mod tests {
             "\"reviewers\": [\"<agent id>\", … 3 or more]",
             "Delegate all 3 yourself; naming fewer fails the run",
             // A run continuing a capped review owes only a delta read of its own commits.
-            "unless an earlier run reviewed this branch: its reviews count, unnamed, so one delta reviewer",
+            "unless an earlier run reviewed this branch: its reviews count, so one delta reviewer",
         ] {
             assert!(strict.contains(said), "missing {said:?} in {strict}");
         }

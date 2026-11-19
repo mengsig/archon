@@ -979,6 +979,7 @@ fn apply_patch(
         return Err(onto_with_dependencies());
     }
     if let Some(text) = &patch.brief_append {
+        executor::check_amendment(text)?;
         item.amend_brief(text, archon_core::now())?;
     }
     if let Some(title) = patch.title {
@@ -1157,6 +1158,9 @@ fn amend_retry(
     append: Option<&str>,
 ) -> Result<bool, ArchonError> {
     assert!(item.state.is_terminal(), "only a finished item is retried");
+    if let Some(text) = append {
+        executor::check_amendment(text)?;
+    }
     // A fresh retry starts over on a new branch, and owes the whole review again.
     let continued = match fresh {
         true => None,

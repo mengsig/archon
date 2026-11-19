@@ -2674,7 +2674,10 @@ escalated lead. Instead a non-fresh `retry_item` after the cap amends the brief
 and the rule that the new lead delta-reviews only the commits after it and does
 not re-review or re-read the whole change. Only a stage whose own round tally
 reached the cap adds the note, not an error that quotes one. A fresh retry, or
-a later note, replaces the earlier note in the brief. Each delta reviewer is told to fail
+a later note, replaces the earlier note in the brief; the note opens with a mark
+no `brief_append` may contain, so an operator's amendment is never taken for
+one. If the branch no longer holds the escalated head, the note asks for the
+whole change to be read again. Each delta reviewer is told to fail
 only on a defect in its commits or an open finding left unfixed; a new finding
 in code a pass already read is advisory, `"blocking": false`, and goes to the
 orchestrator as a follow-up. The verdict carries no finding locations, so the

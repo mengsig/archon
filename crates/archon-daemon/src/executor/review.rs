@@ -324,9 +324,15 @@ async fn carried_reads(
     lead: &AetherAgentId,
 ) -> Result<Carried, ArchonError> {
     assert_eq!(stage.run, run.id, "a stage's own run");
-    let leads = earlier_leads(&*ctx.store.lock().await, run, stage, lead)?;
+    let stages = earlier_stages(&*ctx.store.lock().await, run, stage, lead)?;
+    let mut leads: Vec<&AetherAgentId> = Vec::new();
+    for agent in stages.iter().filter_map(|s| s.aether_agent.as_ref()) {
+        if !leads.contains(&agent) {
+            leads.push(agent);
+        }
+    }
     let mut carried = Carried::default();
-    for earlier in &leads {
+    for &earlier in &leads {
         let beneath = match ctx.backend.descendants(earlier).await {
             Ok(beneath) => beneath,
             Err(error) if transient(&error) => return Err(error),
@@ -360,20 +366,46 @@ async fn carried_reads(
         carried.reviewers.len(),
         "one reviewer per read"
     );
+    if let Some(lost) = lost_fail(ctx, &stages, &carried.reads).await? {
+        tracing::warn!(stage = %stage.id, reviewer = %lost, "an earlier run's recorded fail is no longer readable, so nothing is carried");
+        return Ok(Carried::default());
+    }
     if !carried.reads.is_empty() {
         tracing::info!(stage = %stage.id, reads = carried.reads.len(), "carrying earlier runs' reviews");
     }
     Ok(carried)
 }
 
-/// The leads of `stage` in the item's earlier runs on `run`'s branch and in its worktree,
-/// other than `lead`, each once. A review item's frozen head carries none.
-fn earlier_leads(
+/// A reviewer whose fail an earlier attempt in `stages` recorded but whose verdict is not
+/// among the `carried` reads: carrying the rest would let that fail go unanswered.
+async fn lost_fail(
+    ctx: &DaemonContext,
+    stages: &[StageRun],
+    carried: &[Read],
+) -> Result<Option<String>, ArchonError> {
+    for earlier in stages {
+        let tallied = rounds::attempt_children(ctx, &earlier.id).await?;
+        let mut failed = tallied
+            .children
+            .into_iter()
+            .filter(|(_, head)| head.is_some());
+        if let Some((agent, _)) = failed.find(|(agent, _)| carried.iter().all(|(a, _)| a != agent))
+        {
+            assert!(!agent.is_empty(), "a recorded fail names its reviewer");
+            return Ok(Some(agent));
+        }
+    }
+    Ok(None)
+}
+
+/// The attempts of `stage` in the item's earlier runs on `run`'s branch and in its worktree
+/// whose lead is not `lead`. A review item's frozen head carries none.
+fn earlier_stages(
     store: &archon_queue::Store,
     run: &PipelineRun,
     stage: &StageRun,
     lead: &AetherAgentId,
-) -> Result<Vec<AetherAgentId>, ArchonError> {
+) -> Result<Vec<StageRun>, ArchonError> {
     assert_eq!(stage.run, run.id, "the stage is of the run");
     if store
         .item(&run.item)?
@@ -382,31 +414,24 @@ fn earlier_leads(
     {
         return Ok(Vec::new());
     }
-    let mut leads: Vec<AetherAgentId> = Vec::new();
     let same_branch =
         |r: &PipelineRun| r.id != run.id && r.branch == run.branch && r.workspace == run.workspace;
+    let mut stages = Vec::new();
     for earlier in store
         .runs_for_item(&run.item)?
         .iter()
         .filter(|r| same_branch(r))
     {
-        let stages = store.stage_runs(&earlier.id)?;
-        let agents = stages
-            .into_iter()
-            .filter(|s| s.stage_id == stage.stage_id)
-            .filter_map(|s| s.aether_agent);
-        for agent in agents.filter(|a| a != lead) {
-            if !leads.contains(&agent) {
-                leads.push(agent);
-            }
-        }
+        let attempts = store.stage_runs(&earlier.id)?.into_iter();
+        stages.extend(attempts.filter(|s| {
+            s.stage_id == stage.stage_id && s.aether_agent.as_ref().is_some_and(|a| a != lead)
+        }));
     }
     assert!(
-        leads.iter().all(|a| a != lead),
-        "the stage's own lead is not carried"
+        stages.iter().all(|s| s.run != run.id),
+        "the stage's own run is not carried"
     );
-
-    Ok(leads)
+    Ok(stages)
 }
 
 /// The fails of `stage`'s attempt by its reviewers other than the `picked` ones, or why one

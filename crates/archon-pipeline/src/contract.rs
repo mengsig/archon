@@ -488,6 +488,29 @@ project, and never kill by name or pattern;\n  \
 - read only, with no edits, commits, stashes or branch switches: for a reviewer \
 always, and for every child when your own workspace is READ-ONLY.\n";
 
+/// Who delegates the `many` reviewers a review asks for. A frozen review carries no
+/// earlier run's reads; a branch's earlier whole-change reads count toward `many`.
+fn delegate_all(many: u32, records_verdict: bool) -> String {
+    assert!(many > 1, "one reviewer needs no rule of all");
+    if records_verdict {
+        return format!(
+            "Delegate all {many} yourself, even in a repair: an earlier run's reviewers \
+             count for nothing, and naming fewer fails the run"
+        );
+    }
+    let rule = format!(
+        "Delegate all {many} yourself; naming fewer fails the run. Where earlier runs of \
+         this item reviewed this branch, each whole-change read they made still counts \
+         toward the {many}: delegate only the whole-change reviewers they lack, and one \
+         delta reviewer of the commits after their last reviewed head"
+    );
+    assert!(
+        rule.contains("only the whole-change reviewers they lack"),
+        "partial carry"
+    );
+    rule
+}
+
 /// What the stage holding its run's review does and records, for `duty`.
 fn review_rules(duty: ReviewDuty) -> String {
     assert!(
@@ -503,9 +526,8 @@ fn review_rules(duty: ReviewDuty) -> String {
         many => (
             format!(
                 "{many} agents you delegate to, each working alone and none of which \
-                 wrote any of it. Delegate all {many} yourself; naming fewer fails the \
-                 run, unless an earlier run reviewed this branch: its reviews count, \
-                 so one delta reviewer of the commits after its last reviewed head will do"
+                 wrote any of it. {}",
+                delegate_all(many, duty.records_verdict)
             ),
             format!("\"<agent id>\", … {many} or more"),
         ),
@@ -2394,11 +2416,31 @@ mod tests {
             "reviewed by 3 agents you delegate to, each working alone and none of which wrote any of it",
             "\"reviewers\": [\"<agent id>\", … 3 or more]",
             "Delegate all 3 yourself; naming fewer fails the run",
-            // A run continuing a capped review owes only a delta read of its own commits.
-            "unless an earlier run reviewed this branch: its reviews count, so one delta reviewer",
+            // A run continuing a capped review owes the whole reads earlier runs lack, and a delta.
+            "each whole-change read they made still counts toward the 3: delegate only the \
+             whole-change reviewers they lack, and one delta reviewer of the commits after \
+             their last reviewed head",
         ] {
             assert!(strict.contains(said), "missing {said:?} in {strict}");
         }
+        // A frozen review carries nothing, so it owes all three whole reads again.
+        let mut frozen = owing(3, false);
+        frozen.review = frozen.review.map(|duty| ReviewDuty {
+            records_verdict: true,
+            ..duty
+        });
+        let frozen = work_contract(frozen);
+        assert!(
+            frozen.contains(
+                "Delegate all 3 yourself, even in a repair: an earlier run's \
+                             reviewers count for nothing"
+            ),
+            "{frozen}"
+        );
+        assert!(
+            !frozen.contains("whole-change reviewers they lack"),
+            "{frozen}"
+        );
         assert_eq!(strict.matches("skipped").count(), 0);
     }
 

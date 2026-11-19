@@ -1392,7 +1392,8 @@ verifies and fixes the change. Its prompt has it spend where spending pays:
   after three failed rounds and escalates; only an unresolved blocking
   finding, a failed check or a review that did not run fails the stage. A
   retry on the same branch keeps the earlier runs' reviews while the branch
-  holds their heads, so its new lead delta-reviews only its own commits; a
+  holds their heads, so its new lead owes only the whole reads they lack and
+  a delta review of its own commits; a
   fresh retry or a rewritten history owes the whole review again.
 
 That review is the pipeline's: `adaptive` declares

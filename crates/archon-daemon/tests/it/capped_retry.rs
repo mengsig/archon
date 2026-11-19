@@ -275,6 +275,37 @@ async fn an_earlier_runs_fail_stands_against_a_pass_of_the_same_head() {
     );
 }
 
+/// Aether no longer lists the reviewer whose fail the first run recorded: the
+/// other reads carry no longer, so one pass of that head is no review.
+#[tokio::test]
+async fn a_recorded_fail_aether_forgot_stops_the_carry() {
+    let h = Harness::new().await;
+    let item = strict_item(&h).await;
+    let first = first_run_reviews(&h).await;
+    // Aether's event of the failing reviewer: the first run's tally records its fail.
+    archon_daemon::executor::reviewer_settled(&h.ctx, &first.lead, &first.reviewers[0])
+        .await
+        .unwrap();
+    escalate(&h, &item).await;
+    let lead = retried(&h, &item, false).await;
+    let workspace = h.ctx.store.lock().await.run(&lead.run).unwrap().workspace;
+    let again = h.backend.delegate(&lead_agent(&lead), REVIEW_MODEL);
+    h.backend.forget_delegated(&first.reviewers[0]);
+    let mut unchanged = record(&workspace);
+    assert_eq!(unchanged["commit"], first.head, "the failed head itself");
+    unchanged["review"] = pass_by(std::slice::from_ref(&again))["review"].clone();
+    let verdict = json!({"verdict": "pass", "head": first.head, "findings": []});
+    h.backend.complete_delegated(&again, verdict);
+    h.settle_running(|_| StageOutcome::Completed {
+        summary: "nothing to fix".into(),
+        structured: Some(unchanged.clone()),
+    })
+    .await;
+    h.dispatch().await;
+    let error = refused(&h, &item).await;
+    assert!(error.contains("names 1 reviewer"), "{error}");
+}
+
 /// The orchestrator accepts the escalated head: its retry moves the open findings
 /// to follow-ups, and the new lead's own whole review of that head stands alone.
 #[tokio::test]

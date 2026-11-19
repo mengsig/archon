@@ -2670,13 +2670,17 @@ branch no longer holds, after an amend or rebase, the history is rewritten and
 nothing is carried, so the run owes the whole review again; a fresh retry is on a new
 branch and carries nothing; a `review` item's frozen head carries nothing. A
 carried read anchors the lead's deltas, and every carried whole-change read
-counts toward the level, so a lead with carried reads owes one named
-reviewer: a delta of its own commits from the last reviewed head. A carried
+counts toward the level, so a lead whose carried whole reads make the level
+owes one named reviewer, a delta of its own commits from the last reviewed
+head, and one whose carried reads fall short owes the whole reads they lack
+as well; the contract says so. A carried
 fail stands as one of the run's own would, until a pass reads past it. A run
 whose own named reads make the level by themselves is judged without the
 carried ones, as on a fresh branch: that is how an accepted head ships. The
 record lists the carried reviewers after the named ones. An earlier review
-Aether cannot return is logged and carries nothing. Aether 1.4.1 and 1.4.2
+Aether cannot return is logged and carries nothing; when it is a fail an
+earlier attempt's round tally recorded, nothing at all is carried, so that
+fail cannot go unanswered. Aether 1.4.1 and 1.4.2
 cannot wake a lead whose run ended (`wake` and `restart` need a live parent,
 and the run node is retired with the run), so a retry never resumes the
 escalated lead. Archon does not edit the brief for it: the orchestrator's

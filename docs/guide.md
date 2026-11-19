@@ -633,7 +633,8 @@ every outcome to the feed itself and wakes the orchestrator for:
   head, which ends the run. The orchestrator decides: it continues with
   `retry_item`, accepts the head with a `brief_append` that moves the open
   findings to follow-ups and has it read whole again, or leaves it failed. A retry on the branch keeps the
-  earlier reviews, so its new lead reviews only the new commits. Aether cannot
+  earlier reviews, so its new lead reviews only the new commits once those
+  reviews make the level. Aether cannot
   resume the lead that escalated, so the orchestrator's `brief_append` gives the
   new lead the head and the open findings;
 - a stage agent's relay, escalation or question, a gate that opened, your

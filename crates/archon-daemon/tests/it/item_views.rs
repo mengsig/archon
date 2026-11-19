@@ -1045,10 +1045,12 @@ async fn a_finished_slots_retired_pin_holds_no_retry_of_another_slot() {
     h.dispatch().await;
     h.settle_running(passing).await;
     h.dispatch().await;
-    let slots: Vec<_> = (h.running().await.into_iter())
+    let reviewers = h.running().await;
+    let slots: Vec<_> = (reviewers.iter())
         .map(|s| (s.fan_index, s.choice.model.to_string()))
         .collect();
     assert_eq!(slots, [(0, HAIKU.into()), (1, common::MODEL.into())]);
+    let failing = reviewers[1].id.clone();
 
     serve_catalog_without(&h, HAIKU).await;
     h.settle_running(|s| match s.fan_index {
@@ -1060,10 +1062,12 @@ async fn a_finished_slots_retired_pin_holds_no_retry_of_another_slot() {
     })
     .await;
     h.dispatch().await;
+    let failed = h.ctx.store.lock().await.stage_run(&failing).unwrap();
+    assert!(failed.state.is_terminal(), "the slot settled: {:?}", failed.state);
     let retried: Vec<_> = (h.running().await.into_iter())
-        .map(|s| (s.stage_id, s.fan_index, s.choice.model.to_string()))
+        .map(|s| (s.stage_id, s.fan_index, s.attempt, s.choice.model.to_string()))
         .collect();
-    assert_eq!(retried, [("review".into(), 1, common::MODEL.into())]);
+    assert_eq!(retried, [("review".into(), 1, 1, common::MODEL.into())]);
     assert!(detail(&h, &item.id).await.waiting_reason.is_none());
 }
 

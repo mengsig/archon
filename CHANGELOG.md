@@ -4,32 +4,6 @@
 
 ### Added
 
-- Repository watches: the orchestrator's `watch_repo` tool has the GitHub sync
-  watch a registered repository's open pull requests, with one conditional
-  `GET` per page of 100 per interval (at least 5 minutes) and no model cost
-  while nothing changes. Each walk of the list is compared with the stored
-  snapshot (head, `updated_at`, requested reviewers, comment and review
-  counts), and a new pull request, head or review request (a user or a team),
-  or a new comment or review, raises one `github_watch` trigger, which is news
-  with no operator standing; a label or edit alone does not. A watch is
-  eventually consistent: a walk the request budget cuts short stores nothing
-  and resumes five minutes later, and a pull request a page shift hides is
-  told by the next walk, so news can be an interval late but is not lost
-  (`docs/vnext/ARCHITECTURE.md` §f lists the accepted limits). A trigger
-  tells 20 changes in full and names every other by kind and number; a
-  change names every difference of its pull request (`also`). Watch news is
-  kept through news compaction and folded into one event per repository
-  while it is held, which names at most 10,000 pull request numbers and
-  reviewers and says `truncated` past that. A
-  restarted archond asks no watch in its first five minutes, and
-  `repo_watches` marks a watch `truncated` when its list fills the 1,000
-  newest open pull requests a walk reads. Only a
-  registered repository with a github.com `origin` can be watched, so a watch
-  inherits the registration's trust and reads nothing the sync of linked
-  issues could not; `watch_repo` never registers one. GitHub requests cannot
-  set or remove a watch; removing the repository drops it, whoever removes
-  it. The orchestrator prompt
-  now forbids polling GitHub from a schedule.
 - Every item records where each field of its model plan came from, beside
   the plan as `model_origins`: for each stage entry, separately for the model
   and the effort, the source (`explicit`, `learned`, `tier`, `fallback`,
@@ -94,11 +68,6 @@
 
 ### Fixed
 
-- A trigger larger than Aether takes is no longer lost. Aether refuses a
-  trigger payload over 2 MiB and archond dropped the refused batch with a
-  note, so a long enough backlog of held news went undelivered. A batch is
-  now keyed from at most 1 MiB of held events, and the rest goes out in the
-  batches after it, in order.
 - A child delegated after a stage's deadline was extended gets the extended
   deadline, and so does a nested child. Before, a child created from the
   lead's row before the move landed kept the old deadline and stopped early,

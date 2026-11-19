@@ -1549,7 +1549,17 @@ async fn a_refresh_with_sizing_off_is_not_sized_and_borrows_nothing_of_its_owner
 /// Record `count` finished `direct` runs whose `implement` ran `model`, so the
 /// model is a learned route for the repository.
 async fn learn_implement_route(h: &Harness, model: &str, cost: f64, count: usize) {
-    use archon_core::model::Effort;
+    let low = archon_core::model::Effort::Low;
+    learn_implement_route_at(h, (model, low), cost, count).await;
+}
+
+/// [`learn_implement_route`] of `model` run at `effort`.
+async fn learn_implement_route_at(
+    h: &Harness,
+    (model, effort): (&str, archon_core::model::Effort),
+    cost: f64,
+    count: usize,
+) {
     use archon_core::outcome::{Outcome, OutcomeResult, OutcomeStage};
     use archon_core::run::RunState;
     for n in 0..count {
@@ -1594,7 +1604,7 @@ async fn learn_implement_route(h: &Harness, model: &str, cost: f64, count: usize
         store.finish_run(&run, done, now).unwrap();
         let stage = OutcomeStage {
             stage: "implement".into(),
-            choice: common::choice(model, Effort::Low),
+            choice: common::choice(model, effort),
             cost_usd: cost,
             wall_secs: 30,
             attempts: 1,
@@ -1623,6 +1633,27 @@ async fn learn_implement_route(h: &Harness, model: &str, cost: f64, count: usize
             finished_at: now,
         };
         store.record_outcome(&outcome).unwrap();
+    }
+}
+
+/// A11: with sizing on, a learned route's effort is advice: a model learned
+/// at x_high is still taken under a policy cap of high, run within the cap.
+/// With sizing off the cap rules the route out, as in 1.6.3.
+#[tokio::test]
+async fn a_learned_model_is_taken_under_a_cap_below_its_advised_effort_only_with_sizing_on() {
+    use archon_core::model::Effort::{High, XHigh};
+    for sizing in [true, false] {
+        let (mut h, _gh) = delivering().await;
+        let mut capped = h.ctx.config.clone();
+        capped.models.max_effort = Some(High);
+        capped.models.effort_sizing = Some(sizing);
+        h.restart_with(capped);
+        learn_implement_route_at(&h, ("codex/cheap", XHigh), 0.2, 5).await;
+        let fresh = enqueue(&h, "learned").await;
+        let chosen = &fresh.model_plan.0["implement"][0];
+        let learned = chosen.model.to_string() == "codex/cheap";
+        assert_eq!(learned, sizing, "sizing {sizing}: {chosen:?}");
+        assert!(chosen.effort <= High, "within the cap: {chosen:?}");
     }
 }
 

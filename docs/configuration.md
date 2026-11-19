@@ -125,9 +125,10 @@ refresh or a re-shaped pipeline adds starts from the default effort that stage
 declares, never from the entry it was filled from. The order of precedence is:
 the cap, then an effort the plan names (a pin), then the class, then the size
 step, then the stage's default. A learned route supplies the model only; the
-effort it learned is recorded as advice. `x_high` is planned only for Claude
-Code and Codex models, which run it; any other provider gets `high`, and the
-reason says so.
+effort it learned is recorded as advice, so an effort above `max_effort` does
+not rule its model out (with sizing off it does, as in 1.6.3). `x_high` is
+planned only for Claude Code and Codex models, which run it; any other
+provider gets `high`, and the reason says so.
 
 `sizer_max_effort` (default `x_high`, global only) is the most the sizer sets
 by itself; the policy's `max_effort` caps it too, so the sizer's cap is the
@@ -151,7 +152,8 @@ routing never reads the grouping.
   `brief_append` leaves the carried sizing as it is until one does. An
   update of a running item that steers a note or a plan and changes its tags
   or review level stores both parts at once, before the note is delivered,
-  so no stage starts sized for one part alone.
+  so no stage starts sized for one part alone. With sizing off, the note is
+  delivered first and the rest stored after, as in 1.6.3.
 - An update of a plan written by 1.6.3 or while sizing was off sizes
   nothing, so it is taken as 1.6.3 takes it.
 - A plan written while sizing was off, or by 1.6.3, has no sizing and gets
@@ -163,11 +165,13 @@ routing never reads the grouping.
 Three rules decide what a cap lowered later does to a stored effort:
 
 1. At dispatch, with no new plan, only the policy's `max_effort` lowers an
-   effort the sizer set, and the reason is recorded (`; clipped from x_high
-   to the cap high`). A lower `sizer_max_effort` alone leaves a stored plan
-   as it is. Recovery of a live run reads its stored plan unchanged and loads
-   no repository config: nothing is clipped there, and the run's later
-   stages start at what the plan holds, as a pin does in 1.6.3.
+   effort the sizer set, and the attempt records the reason (`; this attempt:
+   clipped from x_high to the cap high`); the item's stored plan keeps what
+   it holds. A lower `sizer_max_effort` alone leaves it as it is. Recovery of
+   a live run reads its stored plan unchanged and loads no repository config;
+   each later stage of the run is held to the policy's cap as it is when that
+   stage's agent is reserved. An agent already reserved or sent is issued as
+   it was stored.
 2. When a retry, a revision or a re-shape writes the plan again with carried
    entries, each carried effort the sizer set is lowered to the lower of
    `max_effort` and `sizer_max_effort`, with the same recorded reason. With

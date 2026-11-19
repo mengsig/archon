@@ -1467,7 +1467,9 @@ pub(super) async fn filled_plan(
     let baseline = knobs::fill_static_stages(base, spec, unnamed, fallback)?;
     store.record_static_plan(repo, spec.name(), &baseline)?;
     let asked = writer.plan();
-    let learned = learned::plan_for_item(&store, id, repo, spec, (&policy, max_tier), asked)?;
+    let advice = learned::advice_policy(&policy, ctx.config.models.effort_sizing());
+    let learned = learned::plan_for_item(&store, id, repo, spec, (&advice, max_tier), asked)?;
+    let learned = learned::held_to(learned, policy.max_effort);
     let mut plan = asked.clone();
     plan.0.extend(learned.0);
     writer.filled(plan, (PlanSource::Learned, PlanSource::Learned));

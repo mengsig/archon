@@ -584,7 +584,10 @@ pub(crate) fn fill_plan(
     (fallback, fill): (Option<&ModelChoice>, EffortFill),
 ) -> Result<(), ArchonError> {
     let mut plan = writer.plan().clone();
-    let learned = learned::default_plan(store, repo, spec, policy, max_tier)?;
+    let sizing = matches!(fill, EffortFill::Sized { .. });
+    let advice = learned::advice_policy(policy, sizing);
+    let learned = learned::default_plan(store, repo, spec, &advice, max_tier)?;
+    let learned = learned::held_to(learned, policy.max_effort);
     for (stage, choices) in learned.0 {
         // A default learned on an earlier version of the pipeline may name a stage it dropped.
         if spec.stage(&stage).is_none() || choices.is_empty() {

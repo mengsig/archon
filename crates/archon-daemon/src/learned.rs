@@ -8,7 +8,9 @@ pub(crate) use routing_context::{freeze_context, prepare_routing};
 
 pub use distill::maintenance;
 pub(crate) use distill::{finished, run};
-pub(crate) use routing::{default_plan, measured_size, plan_for_item, standings};
+pub(crate) use routing::{
+    advice_policy, default_plan, held_to, measured_size, plan_for_item, standings,
+};
 
 use archon_core::error::ArchonError;
 use archon_core::lesson::{Lesson, ORCHESTRATOR_LESSONS};

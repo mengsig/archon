@@ -2452,8 +2452,8 @@ mod tests {
             .unwrap()
         };
         assert_eq!(
-            info("1.6.3", true).describe_freshness(),
-            "generation 7, created by 1.6.3; tools outdated; 2 new lessons; prompt outdated \
+            info("0.0.1", true).describe_freshness(),
+            "generation 7, created by 0.0.1; tools outdated; 2 new lessons; prompt outdated \
              since upgrade; run `archon orchestrator restart`"
         );
         let running = env!("CARGO_PKG_VERSION");
@@ -2465,10 +2465,10 @@ mod tests {
             ),
             "an edited instructions file is no upgrade"
         );
-        let current = info("1.6.3", false).describe_freshness();
+        let current = info("0.0.1", false).describe_freshness();
         assert_eq!(
             current,
-            "generation 7, created by 1.6.3; tools outdated; 2 new lessons"
+            "generation 7, created by 0.0.1; tools outdated; 2 new lessons"
         );
     }
 

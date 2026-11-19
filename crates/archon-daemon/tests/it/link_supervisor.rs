@@ -1790,3 +1790,77 @@ async fn a_possibly_sent_generation_with_nothing_frozen_replays_full() {
         creates[0]
     );
 }
+
+fn catalog_of(canonical: &str, alias: &str) -> Scripted {
+    Scripted::reply(
+        "models",
+        json!([{"model": canonical, "configured": true, "aliases": [alias]}]),
+    )
+}
+
+async fn aliased_harness(alias: &str, canonical: &str) -> Harness {
+    let mut config = Config::default();
+    config.orchestrator.model = alias.parse().unwrap();
+    let h = Harness::with(config, None).await;
+    h.fake.set_default(
+        "list_models",
+        catalog_of(canonical, alias.split('/').next_back().unwrap()),
+    );
+    h.connect().await;
+    h
+}
+
+/// A lost reply replays the key with the model it froze, though the alias
+/// now names another model: Aether refuses a frame that differs per key.
+#[tokio::test]
+async fn a_replayed_creation_sends_the_model_frozen_for_its_key() {
+    let h = aliased_harness("claude-code/opus", "claude-code/first").await;
+    h.fake
+        .script("create_agent", Scripted::refuse("internal", "reply lost"));
+    supervisor::ensure_orchestrator(&h.ctx).await.unwrap_err();
+    let frozen = h.kv("orchestrator_model").await.expect("a frozen model");
+    assert!(frozen.contains("first"), "{frozen}");
+    h.fake
+        .set_default("list_models", catalog_of("claude-code/second", "opus"));
+    create_key(&h).await;
+    let creates = h.fake.received_named("create_agent");
+    assert_eq!(creates.len(), 2);
+    let first = json!({"provider":"claude-code","model":"first"});
+    assert_eq!(creates[0]["model"], first);
+    assert_eq!(creates[1]["model"], first);
+    assert_eq!(creates[0]["idempotency_key"], creates[1]["idempotency_key"]);
+}
+
+/// A key an older build may have sent carried the configured model raw.
+#[tokio::test]
+async fn a_possibly_sent_generation_with_no_frozen_model_replays_the_raw_model() {
+    let h = aliased_harness("claude-code/opus", "claude-code/canonical").await;
+    h.set_kv("orchestrator_generation", "3").await;
+    assert!(h.kv("orchestrator_unsent_generation").await.is_none());
+    create_key(&h).await;
+    let creates = h.fake.received_named("create_agent");
+    assert_eq!(creates.len(), 1);
+    assert_eq!(
+        creates[0]["model"],
+        json!({"provider":"claude-code","model":"opus"})
+    );
+    let frozen = h.kv("orchestrator_model").await.expect("frozen now");
+    assert!(frozen.contains("opus"), "{frozen}");
+}
+
+/// The configured alias may have been retired since the key was sent: the
+/// replay must still reach Aether so an agent it created is returned.
+#[tokio::test]
+async fn a_possibly_sent_generation_replays_though_its_alias_is_retired() {
+    let h = aliased_harness("claude-code/opus", "claude-code/canonical").await;
+    h.fake
+        .set_default("list_models", Scripted::reply("models", json!([])));
+    h.set_kv("orchestrator_generation", "3").await;
+    create_key(&h).await;
+    let creates = h.fake.received_named("create_agent");
+    assert_eq!(creates.len(), 1);
+    assert_eq!(
+        creates[0]["model"],
+        json!({"provider":"claude-code","model":"opus"})
+    );
+}

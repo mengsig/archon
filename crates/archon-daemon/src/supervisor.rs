@@ -26,7 +26,7 @@ use archon_core::autonomy::{AutonomyPolicy, ToolsMode};
 use archon_core::config::{AetherMode, Config, HostContext, OrchestratorConfig};
 use archon_core::error::ArchonError;
 use archon_core::id::{FeedItemId, StoreId};
-use archon_core::model::ModelChoice;
+use archon_core::model::{ModelChoice, ModelRef};
 use archon_core::notify::{AnswerVia, NotificationKind, Question};
 use archon_core::protocol::{OrchestratorFreshness, OrchestratorInfo};
 use archon_core::run::GateDecision;
@@ -94,6 +94,9 @@ const HOST_CONTEXT_KEY: &str = "orchestrator_host_context";
 /// `kv`: the [`FrozenThreshold`] of the generation's creation, written before
 /// its first request, so every retry under its key sends the same one.
 const COMPACTION_TOKENS_KEY: &str = "orchestrator_compaction_tokens";
+/// `kv`: the [`FrozenModel`] of the generation's creation, written with its
+/// other frozen settings, so every retry under its key sends the same model.
+const ORCHESTRATOR_MODEL_KEY: &str = "orchestrator_model";
 /// `kv`: the generation this build allocated whose creation key no request
 /// has used yet. Absent for a generation an older build may have sent.
 const UNSENT_GENERATION_KEY: &str = "orchestrator_unsent_generation";
@@ -1070,6 +1073,7 @@ async fn advance_generation(ctx: &DaemonContext) -> Result<(), ArchonError> {
         keys::ORCHESTRATOR_AGENT,
         HOST_CONTEXT_KEY,
         COMPACTION_TOKENS_KEY,
+        ORCHESTRATOR_MODEL_KEY,
     ];
     store.kv_update(&set, &cleared)
 }
@@ -1089,33 +1093,10 @@ async fn create_generation(
     ctx: &DaemonContext,
     client: &AetherClient,
 ) -> Result<AetherAgentId, ArchonError> {
-    let catalog = crate::learned::request_catalog(ctx).await?;
+    let store = store_id(ctx).await?;
     let mut config = ctx.config.clone();
-    config.orchestrator.model = match catalog.check(&config.orchestrator.model) {
-        Ok(model) => model,
-        Err(error) => {
-            blocker_once(ctx, &format!("Orchestrator model: {error}")).await?;
-            return Err(error);
-        }
-    };
-    if let Some(successor) = catalog.superseded_by(&config.orchestrator.model) {
-        tracing::warn!(model = %config.orchestrator.model, %successor, "configured orchestrator model is superseded");
-    }
+    config.orchestrator.model = creation_model(ctx, &store).await?;
     let config = &config;
-    let choice = ModelChoice {
-        model: config.orchestrator.model.clone(),
-        effort: config.orchestrator.effort,
-        tier: None,
-    };
-    if let Err(refusal) = config
-        .models
-        .policy()
-        .canonicalized(&catalog.aliases())
-        .check(&choice)
-    {
-        blocker_once(ctx, &format!("Archon will not start the orchestrator: {refusal}. Change [orchestrator] model or [models] in the config.")).await?;
-        return Err(refusal);
-    }
     let workspace = &ctx.paths.orchestrator_workspace;
     std::fs::create_dir_all(workspace)
         .map_err(|e| ArchonError::io(format!("creating {}", workspace.display()), e))?;
@@ -1126,7 +1107,6 @@ async fn create_generation(
     if !delegation {
         instructions.push_str(callers::NO_DELEGATION_NOTE);
     }
-    let store = store_id(ctx).await?;
     let (generation, frozen) =
         settle_generation(ctx, client, config, &store, &mut instructions).await?;
     let network = client.daemon_defaults().await?.network_default;
@@ -1150,6 +1130,68 @@ async fn create_generation(
     brief_created_orchestrator(ctx, client, &agent.id, generation).await?;
     crate::triggers::collapse_for_new_orchestrator(ctx).await?;
     Ok(agent.id)
+}
+
+/// The model the stored generation's creation sends. A key that may have been
+/// sent repeats its frozen model, else the raw configured one an older build
+/// sent, without the catalog refusal, so the replay reaches Aether. A first
+/// send is checked against the catalog and the model policy (§7.4, point 3).
+async fn creation_model(ctx: &DaemonContext, store_id: &StoreId) -> Result<ModelRef, ArchonError> {
+    let configured = ctx.config.orchestrator.model.clone();
+    assert!(!configured.model.is_empty(), "the config was validated");
+    let creation = {
+        let mut store = ctx.store.lock().await;
+        let generation = allocated_generation(&mut store)?;
+        let first = store.kv_get(UNSENT_GENERATION_KEY)? == Some(generation.to_string());
+        let key = creation_key(store_id, generation);
+        if let Some(frozen) = frozen_model(&store, &key)? {
+            return Ok(frozen.model);
+        }
+        Creation { key, first }
+    };
+    if !creation.first {
+        return Ok(configured);
+    }
+    checked_model(ctx, &configured).await
+}
+
+/// The configured model canonicalised by the catalog and accepted by the
+/// model policy; a refusal leaves a blocker and is returned.
+async fn checked_model(
+    ctx: &DaemonContext,
+    configured: &ModelRef,
+) -> Result<ModelRef, ArchonError> {
+    let catalog = crate::learned::request_catalog(ctx).await?;
+    let model = match catalog.check(configured) {
+        Ok(model) => model,
+        Err(error) => {
+            blocker_once(ctx, &format!("Orchestrator model: {error}")).await?;
+            return Err(error);
+        }
+    };
+    assert!(
+        !model.model.is_empty(),
+        "the catalog returns a listed model"
+    );
+    if let Some(successor) = catalog.superseded_by(&model) {
+        tracing::warn!(%model, %successor, "configured orchestrator model is superseded");
+    }
+    let choice = ModelChoice {
+        model: model.clone(),
+        effort: ctx.config.orchestrator.effort,
+        tier: None,
+    };
+    if let Err(refusal) = ctx
+        .config
+        .models
+        .policy()
+        .canonicalized(&catalog.aliases())
+        .check(&choice)
+    {
+        blocker_once(ctx, &format!("Archon will not start the orchestrator: {refusal}. Change [orchestrator] model or [models] in the config.")).await?;
+        return Err(refusal);
+    }
+    Ok(model)
 }
 
 /// Settle, under one store lock and before any request, what the stored
@@ -1265,6 +1307,13 @@ struct FrozenThreshold {
     tokens: Option<u32>,
 }
 
+/// The orchestrator model a creation key sends.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct FrozenModel {
+    key: String,
+    model: ModelRef,
+}
+
 /// What every attempt of one creation key sends.
 struct FrozenSettings {
     host_context: HostContext,
@@ -1317,7 +1366,18 @@ fn freeze_settings(
     };
     let threshold_raw = serde_json::to_string(&threshold)?;
     let host_raw = serde_json::to_string(&host_context)?;
-    let mut set = vec![(COMPACTION_TOKENS_KEY, threshold_raw.as_str())];
+    let model = FrozenModel {
+        key: key.to_owned(),
+        model: config.model.clone(),
+    };
+    if let Some(frozen) = frozen_model(store, key)? {
+        assert_eq!(frozen, model, "a frozen model is the one sent");
+    }
+    let model_raw = serde_json::to_string(&model)?;
+    let mut set = vec![
+        (COMPACTION_TOKENS_KEY, threshold_raw.as_str()),
+        (ORCHESTRATOR_MODEL_KEY, model_raw.as_str()),
+    ];
     // A full fallback is frozen too, so a retry under this key never turns lean.
     if frozen.is_some() || !requested.is_full() {
         set.push((HOST_CONTEXT_KEY, host_raw.as_str()));
@@ -1327,6 +1387,26 @@ fn freeze_settings(
         host_context,
         compaction_tokens: threshold.tokens,
     })
+}
+
+/// The model frozen for creation `key`; `None` when none was, or the one
+/// stored belongs to another creation and is replaced.
+fn frozen_model(
+    store: &archon_queue::Store,
+    key: &str,
+) -> Result<Option<FrozenModel>, ArchonError> {
+    let Some(raw) = store.kv_get(ORCHESTRATOR_MODEL_KEY)? else {
+        return Ok(None);
+    };
+    let frozen: FrozenModel = serde_json::from_str(&raw).map_err(|error| {
+        ArchonError::Corrupt(format!("kv {ORCHESTRATOR_MODEL_KEY} = {raw:?}: {error}"))
+    })?;
+    if frozen.model.model.is_empty() {
+        return Err(ArchonError::Corrupt(format!(
+            "kv {ORCHESTRATOR_MODEL_KEY}: an empty model is never sent"
+        )));
+    }
+    Ok(Some(frozen).filter(|frozen| frozen.key == key))
 }
 
 /// The threshold frozen for creation `key`; `None` when none was, or the one

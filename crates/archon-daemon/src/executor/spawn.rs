@@ -1396,6 +1396,27 @@ async fn check_frozen_request(
     Ok(catalog)
 }
 
+/// The network a request frozen before networks were states: Aether's default
+/// of the moment, read before the check on the connection it returns, so only
+/// the create awaits after it. A stated network is returned with no connection.
+async fn legacy_network_default(
+    ctx: &DaemonContext,
+    request: &SpawnRequest,
+) -> Result<(archon_core::ports::NetworkPolicy, Option<u64>), ArchonError> {
+    if let Some(stated) = request.network {
+        return Ok((stated, None));
+    }
+    let before = ctx.aether.generation()?;
+    let default = ctx.backend.network_default().await?;
+    if ctx.aether.generation()? != before {
+        return Err(ArchonError::Unavailable(
+            "aether reconnected while the stage's network default was read; it is read again"
+                .into(),
+        ));
+    }
+    Ok((default, Some(before)))
+}
+
 /// The connection the create may go out on: the one whose cached catalog is
 /// still `checked`. A reconnect or catalog change waits for the next issue.
 fn still_checked(
@@ -1455,12 +1476,34 @@ async fn spawn_bound(
         spawn.parent = ParentBinding::Bound;
         save_spawn(&mut *ctx.store.lock().await, &stage.id, &spawn)?;
     }
-    // A record from before networks were frozen states Aether's default of
-    // the moment, read here so nothing but the create awaits after the check.
-    let network_default = match spawn.request.network {
-        Some(stated) => stated,
-        None => ctx.backend.network_default().await?,
+    let (network_default, default_on) = legacy_network_default(ctx, &spawn.request).await?;
+    let connection = settle_host_context(ctx, stage, &mut spawn, checked).await?;
+    if default_on.is_some_and(|read_on| read_on != connection) {
+        return Err(ArchonError::Unavailable(
+            "aether reconnected after the stage's network default was read; it is read again"
+                .into(),
+        ));
+    }
+    let checked = CheckedOn {
+        connection,
+        network_default,
     };
+    ctx.backend.spawn_on(spawn.request, checked).await
+}
+
+/// Freeze the host context the create sends, then return the connection it
+/// may go out on: the one whose catalog `checked` still is (`still_checked`).
+async fn settle_host_context(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    spawn: &mut StoredSpawn,
+    checked: &archon_core::model_tier::ModelCatalog,
+) -> Result<u64, ArchonError> {
+    assert_eq!(
+        spawn.parent,
+        ParentBinding::Bound,
+        "bound before its context"
+    );
     let effective = ctx
         .backend
         .host_context(
@@ -1474,16 +1517,10 @@ async fn spawn_bound(
     record_host_context(&mut store, &stage.id, effective)?;
     if effective != spawn.request.host_context {
         spawn.request.host_context = effective;
-        save_spawn(&mut store, &stage.id, &spawn)?;
+        save_spawn(&mut store, &stage.id, spawn)?;
         tracing::warn!(stage = %stage.id, "lean host context unavailable for this engine or Aether; frozen stage request falls back to full");
     }
-    let connection = still_checked(ctx, &store, checked)?;
-    drop(store);
-    let checked = CheckedOn {
-        connection,
-        network_default,
-    };
-    ctx.backend.spawn_on(spawn.request, checked).await
+    still_checked(ctx, &store, checked)
 }
 
 /// A `spawning` stage of a finished run with no agent: its create was

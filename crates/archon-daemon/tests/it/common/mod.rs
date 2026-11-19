@@ -894,6 +894,7 @@ struct FakeState {
     interrupt_hook: Option<Box<dyn FnOnce() + Send>>,
     /// Runs once, as the next `network_default` is read.
     host_context_hook: Option<(usize, Box<dyn FnOnce() + Send>)>,
+    network_hook: Option<Box<dyn FnOnce() + Send>>,
 }
 
 impl FakeState {
@@ -1226,6 +1227,11 @@ impl FakeBackend {
     /// Run `hook` once, right after the next `update_agent` is recorded.
     pub fn on_next_update(&self, hook: impl FnOnce() + Send + 'static) {
         self.state().update_hook = Some(Box::new(hook));
+    }
+
+    /// Run `hook` once, as Aether's network default is next read.
+    pub fn on_next_network_default(&self, hook: impl FnOnce() + Send + 'static) {
+        self.state().network_hook = Some(Box::new(hook));
     }
 
     /// Run `hook` once, as the host context is resolved after `skip` more
@@ -1586,6 +1592,10 @@ impl AgentBackend for FakeBackend {
     }
 
     async fn network_default(&self) -> Result<NetworkPolicy, ArchonError> {
+        let hook = self.state().network_hook.take();
+        if let Some(hook) = hook {
+            hook();
+        }
         Ok(self.state().network_default())
     }
 

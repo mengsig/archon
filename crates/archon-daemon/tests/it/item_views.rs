@@ -1114,17 +1114,20 @@ fn serve_until_retired(h: &Harness, retired: std::sync::Arc<std::sync::atomic::A
     );
 }
 
-/// A create frozen before its network was stored is sent as stored, with
-/// Aether's default read before the catalog check, so only the create follows.
-#[tokio::test]
-async fn a_legacy_create_without_a_network_reads_the_default_before_its_check() {
-    let h = Harness::new().await;
+/// A stage left Spawning whose stored request names no network, as a
+/// daemon from before networks were frozen stored it.
+async fn legacy_unsent_stage(h: &Harness) -> QueueItem {
     h.backend
         .fail_next(ArchonError::Unavailable("aetherd busy".into()));
     let item = h.enqueue("a create from before networks were stored").await;
     h.dispatch().await;
     let stages = h.live_stages().await;
     assert_eq!(stages.len(), 1, "{:?}", h.state(&item.id).await);
+    assert_eq!(
+        h.backend.checked().len(),
+        1,
+        "the failed create was checked"
+    );
     let key = format!("spawn_request:{}", stages[0].id);
     let mut stored: serde_json::Value = serde_json::from_str(&h.kv(&key).await.unwrap()).unwrap();
     stored["request"]
@@ -1138,6 +1141,15 @@ async fn a_legacy_create_without_a_network_reads_the_default_before_its_check() 
         .await
         .kv_set(&key, &stored.to_string())
         .unwrap();
+    item
+}
+
+/// A create frozen before its network was stored is sent as stored, with
+/// Aether's default read before the catalog check, so only the create follows.
+#[tokio::test]
+async fn a_legacy_create_without_a_network_reads_the_default_before_its_check() {
+    let h = Harness::new().await;
+    legacy_unsent_stage(&h).await;
     h.backend
         .set_network_default(archon_core::ports::NetworkPolicy::Denied);
 
@@ -1146,10 +1158,65 @@ async fn a_legacy_create_without_a_network_reads_the_default_before_its_check() 
     assert_eq!(requests.len(), 2, "the create is issued again");
     assert_eq!(requests[1].network, None, "sent as stored");
     let checked = h.backend.checked();
+    assert_eq!(checked.len(), 2, "the failed create, then this one");
     assert_eq!(
         checked.last().map(|on| on.network_default),
         Some(archon_core::ports::NetworkPolicy::Denied),
-        "Aether's default of the moment, read before the check"
+        "Aether's default of the moment"
+    );
+}
+
+/// A catalog change while the default is read is seen by the check after it.
+#[tokio::test]
+async fn a_catalog_change_while_a_legacy_default_is_read_sends_nothing() {
+    let h = Harness::new().await;
+    legacy_unsent_stage(&h).await;
+    let ctx = h.ctx.clone();
+    h.backend.on_next_network_default(move || {
+        ctx.store
+            .try_lock()
+            .expect("no store lock is held while the default is read")
+            .invalidate_model_catalog("catalog changed".into());
+    });
+    h.dispatch().await;
+    assert_eq!(
+        h.backend.checked().len(),
+        1,
+        "no create after a stale check, beyond the failed one"
+    );
+    assert_eq!(
+        h.backend.requests().len(),
+        1,
+        "only the first, failed create"
+    );
+}
+
+/// A reconnect after the default was read sends nothing, though the new
+/// connection lists the same catalog: its default may differ.
+#[tokio::test]
+async fn a_reconnect_after_a_legacy_default_is_read_sends_nothing() {
+    let h = Harness::new().await;
+    legacy_unsent_stage(&h).await;
+    let ctx = h.ctx.clone();
+    h.backend.on_host_context(0, move || {
+        let client = ctx.aether.client().expect("connected");
+        ctx.aether.replace(Some(client)).expect("reconnected");
+        let connection = ctx.aether.generation().expect("a generation");
+        let store = ctx.store.try_lock().expect("no store lock is held");
+        let same = store.model_catalog();
+        assert!(!same.is_empty(), "the catalog read before");
+        store.record_model_catalog(same, archon_core::now(), Some(connection));
+    });
+    h.dispatch().await;
+    assert_eq!(
+        h.backend.checked().len(),
+        1,
+        "no create on another connection, beyond the failed one"
+    );
+    assert_eq!(
+        h.backend.requests().len(),
+        1,
+        "only the first, failed create"
     );
 }
 

@@ -178,9 +178,8 @@ pub fn classify(input: RiskInput<'_>) -> ItemRisk {
     // A mechanical title names its release ("chore(release)"): the word alone makes it
     // no release work, a tag does. Its other scope words count as in any title.
     let mechanical_named = mechanical_title(input.title);
-    let scoped = |w: &String| {
-        ELEVATED_WORDS.contains(&w.as_str()) && !(mechanical_named && w == "release")
-    };
+    let scoped =
+        |w: &String| ELEVATED_WORDS.contains(&w.as_str()) && !(mechanical_named && w == "release");
     let scope = tagged(&ELEVATED_WORDS).or_else(|| words(input.title).find(scoped));
     signals.extend(scope.iter().map(|word| format!("scope:{word}")));
     let tagged_critical = tags.iter().any(|t| t == CRITICAL_TAG);

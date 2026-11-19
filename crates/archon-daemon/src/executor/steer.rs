@@ -27,8 +27,8 @@ use crate::resolve::RepoEnv;
 pub(crate) use audit::{notes_since, record, records};
 pub(super) use owed::Locks;
 pub(crate) use owed::{deliver, owed};
-pub(crate) use shape::{Current, Sources, forget as forget_shape, keep as keep_shape};
 pub(crate) use plan::started_stages;
+pub(crate) use shape::{Current, Sources, forget as forget_shape, keep as keep_shape};
 pub(crate) use shape::{correct_shaped, reshape, shaped, switched_to};
 
 use owed::Delivery;

@@ -636,7 +636,10 @@ async fn store_update(
         (item, resized)
     };
     let running = |run: &archon_core::run::PipelineRun| {
-        item.state == QueueState::Running { run: run.id.clone() }
+        item.state
+            == QueueState::Running {
+                run: run.id.clone(),
+            }
     };
     let Some(run) = live.filter(|run| resized && running(run)) else {
         return Ok((item, None));
@@ -675,9 +678,7 @@ fn write_update(
         _ => Some(Default::default()),
     };
     let resized = match (&sizer, &started) {
-        (Some(policy), Some(started)) => {
-            sizing::resize((&ctx.config, policy), &mut item, started)
-        }
+        (Some(policy), Some(started)) => sizing::resize((&ctx.config, policy), &mut item, started),
         _ => false,
     };
     item.updated_at = archon_core::now().max(item.updated_at);

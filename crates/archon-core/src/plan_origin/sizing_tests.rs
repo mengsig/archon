@@ -572,7 +572,11 @@ fn sizing_a_new_key_hides_no_moved_signal_from_the_keys_sized_before() {
     let plain = input("Add a button", &[]);
     assert!(grown.settle(&item, plain, crate::now()));
     assert_eq!(effort(&grown, "plan"), Effort::High, "its own default");
-    assert_eq!(effort(&grown, "build"), Effort::Low, "settling sizes no other");
+    assert_eq!(
+        effort(&grown, "build"),
+        Effort::Low,
+        "settling sizes no other"
+    );
     let now = (Effort::XHigh, crate::now());
     assert!(grown.resize(&item, plain, now, &|_| false));
     assert_eq!(effort(&grown, "build"), Effort::Medium, "no longer small");

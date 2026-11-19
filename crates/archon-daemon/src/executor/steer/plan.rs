@@ -214,7 +214,10 @@ fn replan(change: &mut Change, asked: &Asked<'_>, at: &At<'_>) {
     // Sized before a live agent is retuned: it gets the effort the plan is stored with.
     item.settle_sizing(archon_core::now());
     let plan = &item.model_plan;
-    assert!(!plan.has_unsized(), "a live agent is retuned to a sized plan");
+    assert!(
+        !plan.has_unsized(),
+        "a live agent is retuned to a sized plan"
+    );
     for stage in at.live() {
         // A plan that leaves a stage out is refused when the driver is built.
         let Some(choices) = plan.choices_for(&stage.stage_id).filter(|c| !c.is_empty()) else {

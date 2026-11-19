@@ -355,7 +355,8 @@ async fn store_steer(
                 item = revived(&store.run(run)?, edit, item)?;
                 // Its brief now names the failure, and is what the sizer reads as it is stored.
                 let policy = asked.env.policy(&ctx.config);
-                let resized = sizing::resize((&ctx.config, &policy), &mut item, &Default::default());
+                let resized =
+                    sizing::resize((&ctx.config, &policy), &mut item, &Default::default());
                 if resized && !what.iter().any(|done| done == sizing::RESIZED) {
                     what.push(sizing::RESIZED.to_owned());
                 }

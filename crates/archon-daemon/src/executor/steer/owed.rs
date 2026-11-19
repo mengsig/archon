@@ -234,7 +234,7 @@ async fn update_choice(
     {
         // A deadline or budget never waits for the model check; the whole step stays owed.
         if resume::unanswered(&error) {
-            send_limits(ctx, agent, &delivery).await?;
+            send_limits(ctx, stage, agent, &delivery).await?;
         }
         return Err(error);
     }
@@ -278,8 +278,6 @@ fn no_earlier(
     })
 }
 
-/// Patch the lead. A deadline or budget it sets also raises every live agent
-/// beneath it whose own is lower: a helper copied the lead's at its spawn.
 /// `choice` by its canonical id, once the catalog lists it and the policy permits it.
 async fn check_choice(
     ctx: &DaemonContext,
@@ -300,25 +298,37 @@ async fn check_choice(
     env.resolved_policy(ctx).check(choice)
 }
 
-/// Send `delivery`'s deadline and budget alone, while its model waits.
+/// While model step `delivery` waits, send the newest deadline and budget of
+/// every step `stage` is owed; each step still goes on in order once it can.
 async fn send_limits(
     ctx: &DaemonContext,
+    stage: &StageRun,
     lead: &AetherAgentId,
     delivery: &Delivery,
 ) -> Result<(), ArchonError> {
     assert!(delivery.choice.is_some(), "only a model step is split");
-    let limits = Delivery {
-        choice: None,
-        interrupt: false,
-        lead: None,
-        ..delivery.clone()
+    let owed = load(&*ctx.store.lock().await, &stage.id)?;
+    let mut limits = Delivery {
+        key: delivery.key.clone(),
+        deadline: delivery.deadline,
+        cost_budget_usd: delivery.cost_budget_usd,
+        ..Delivery::default()
     };
+    // Owed steps are kept oldest first: the last budget asked for is the newest.
+    for step in owed.iter().filter(|step| step.helpers.is_none()) {
+        limits.deadline = limits.deadline.max(step.deadline);
+        limits.cost_budget_usd = step.cost_budget_usd.or(limits.cost_budget_usd);
+    }
     if limits.patch().is_empty() {
         return Ok(());
     }
+    let limits = no_earlier(&*ctx.store.lock().await, &stage.id, &limits)?;
+    assert!(limits.choice.is_none() && limits.lead.is_none());
     patch_lead(ctx, lead, &limits).await
 }
 
+/// Patch the lead. A deadline or budget it sets also raises every live agent
+/// beneath it whose own is lower: a helper copied the lead's at its spawn.
 async fn patch_lead(
     ctx: &DaemonContext,
     lead: &AetherAgentId,

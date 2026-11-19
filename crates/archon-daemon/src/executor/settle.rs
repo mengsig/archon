@@ -1002,6 +1002,7 @@ async fn replace(
         let chosen = plan.clone();
         plan =
             super::model_catalog::retry_plan(ctx, &mut store, table, run, chosen, &catalog, &spec)?;
+        retry_judge(ctx, &mut store, run, &mut plan)?;
         // The agent a wake keeps runs the model it was last steered to.
         let kept = catalog.canonical_alias(&failed.current_choice().model);
         if plan.choice.model != *kept {
@@ -1020,6 +1021,33 @@ async fn replace(
     let failed = restatement::bound(&store, failed.clone())?;
     store.upsert_stage_run(&failed)?;
     Ok(Some(id))
+}
+
+/// A fresh acceptance retry is judged by a model selected again, as its first
+/// attempt was, never by the plan's placeholder.
+fn retry_judge(
+    ctx: &DaemonContext,
+    store: &mut archon_queue::Store,
+    run: &PipelineRun,
+    plan: &mut SpawnPlan,
+) -> Result<(), ArchonError> {
+    if plan.stage_id != archon_pipeline::acceptance::STAGE {
+        return Ok(());
+    }
+    let item = store.item(&run.item)?;
+    let selected =
+        super::acceptance::select_model(ctx, store, &item, run, std::slice::from_mut(plan));
+    match selected {
+        Ok(()) => {
+            assert_eq!(plan.choice.tier, None, "a judge is selected, never tiered");
+            Ok(())
+        }
+        Err(error) if error.is_store() => Err(error),
+        Err(error) => Err(ArchonError::Unavailable(format!(
+            "{}: {error}",
+            super::model_catalog::RETRY_WAIT
+        ))),
+    }
 }
 
 pub(super) async fn replace_refused_model(

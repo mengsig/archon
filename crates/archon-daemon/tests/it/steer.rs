@@ -1334,3 +1334,47 @@ async fn more_time_reaches_the_agent_while_its_new_effort_waits_for_the_catalog(
         "the effort waits for the catalog"
     );
 }
+
+/// An extension steered after a model change still waiting for the catalog
+/// is sent at once, though the steps go on in order.
+#[tokio::test]
+async fn an_extension_after_an_effort_waiting_for_the_catalog_is_sent_at_once() {
+    let h = harness().await;
+    let (item, working) = implementing(&h, "add a greeting").await;
+    h.catalog_server.set_default(
+        "list_models",
+        archon_aether::fake::Scripted::refuse("unavailable", "catalog offline"),
+    );
+    let store = h.ctx.store.lock().await;
+    store.invalidate_model_catalog("catalog offline".into());
+    drop(store);
+
+    let effort = Steer {
+        effort: Some(Effort::Low),
+        ..Steer::default()
+    };
+    steer(&h, &item.id, effort).await.expect("steered");
+    assert!(h.backend.updates().is_empty(), "the effort waits");
+    let more_time = Steer {
+        extend_minutes: Some(45),
+        ..Steer::default()
+    };
+    steer(&h, &item.id, more_time).await.expect("steered");
+
+    let updates = h.backend.updates();
+    let sent: Vec<_> = updates.iter().filter_map(|(_, u)| u.deadline).collect();
+    assert!(!sent.is_empty(), "the extension is sent: {updates:?}");
+    assert!(
+        updates
+            .iter()
+            .all(|(to, u)| *to == agent(&working) && u.choice.is_none())
+    );
+    let stored = common::stored_deadline(&h, &working)
+        .await
+        .expect("a deadline");
+    assert_eq!(
+        sent.last(),
+        Some(&stored),
+        "Aether holds the extended deadline"
+    );
+}

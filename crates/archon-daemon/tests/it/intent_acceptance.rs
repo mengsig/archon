@@ -739,4 +739,28 @@ async fn a_retired_acceptance_placeholder_still_reaches_its_listed_judge() {
         judging,
         [("intent-acceptance".to_owned(), JUDGE.to_owned())]
     );
+
+    // A lost judge is retried on a judge selected again, never the placeholder.
+    let (done, finished) = std::sync::mpsc::channel::<()>();
+    let watchdog = std::thread::spawn(move || {
+        if finished.recv_timeout(Duration::from_secs(20)).is_err() {
+            eprintln!("the placeholder is replaced without end");
+            std::process::exit(101);
+        }
+    });
+    h.settle_running(|_| StageOutcome::Failed {
+        error: "aetherd lost the agent".into(),
+        infra: true,
+    })
+    .await;
+    h.dispatch().await;
+    done.send(()).unwrap();
+    watchdog.join().unwrap();
+    let rejudging: Vec<_> = h
+        .running()
+        .await
+        .iter()
+        .map(|s| (s.stage_id.clone(), s.choice.model.to_string()))
+        .collect();
+    assert_eq!(rejudging, judging, "the retry runs on the selected judge");
 }

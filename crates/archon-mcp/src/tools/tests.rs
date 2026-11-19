@@ -1123,6 +1123,73 @@ fn get_item_shows_recorded_reasons_next_to_choices_and_omits_missing_reasons() {
     );
 }
 
+/// Give `item` a plan the sizer finished: `build` pinned at medium, `plan`
+/// named without an effort, for an item tagged critical.
+fn size_critical(item: &mut QueueItem) {
+    use archon_core::effort_sizing::StageFacts;
+    use archon_core::plan_origin::{Authority, EffortSizer, PlanWriter, Sizing};
+    const MODEL: &str = "claude-code/claude-opus-5-5";
+    let asked = serde_json::json!({"build": [{"model": MODEL, "effort": "medium"}],
+        "plan": [{"model": MODEL}]});
+    let resolved = serde_json::json!({"build": [{"model": MODEL, "effort": "medium"}],
+        "plan": [{"model": MODEL, "effort": "high"}]});
+    let facts = |_: &str| Some(StageFacts::new(Effort::High, StageKind::Work, false));
+    let sizer = EffortSizer {
+        cap: Effort::XHigh,
+        size: None,
+        facts: &facts,
+    };
+    let mut writer = PlanWriter::new(&item.id, archon_core::now());
+    let asked = serde_json::from_value(asked).unwrap();
+    writer.request(
+        &asked,
+        serde_json::from_value(resolved).unwrap(),
+        Authority::Operator,
+    );
+    item.model_plan = writer.finish(Sizing::On(sizer));
+    item.tags = vec!["risk:critical".into()];
+    assert!(
+        item.settle_sizing(archon_core::now()),
+        "the item's own tags size it"
+    );
+}
+
+/// A11: `get_item` shows the class the sizer gave the item and why each plan
+/// entry has its effort, the pin included; an item never sized shows neither.
+#[test]
+fn get_item_shows_the_risk_class_and_the_reason_for_each_sized_effort() {
+    use archon_core::protocol::{ItemDetail, Reply};
+    let mut detail = ItemDetail {
+        acceptance: Default::default(),
+        plan_origins: Default::default(),
+        default_efforts: Default::default(),
+        worker_policies: Default::default(),
+        stage_notes: Default::default(),
+        steers: Vec::new(),
+        waiting_on: None,
+        waiting_reason: None,
+        item: item(QueueState::Queued),
+        runs: vec![],
+        stages: vec![],
+        spent_usd: 0.0,
+        gates: vec![],
+        delegations: Default::default(),
+        switched_to: None,
+        merges: Vec::new(),
+        stage_warnings: Vec::new(),
+        message_caps: Vec::new(),
+        clarifications: Vec::new(),
+    };
+    let unsized_text = render("get_item", &Reply::ItemDetail(Box::new(detail.clone())));
+    assert!(!unsized_text.contains("Effort sizing"), "{unsized_text}");
+    size_critical(&mut detail.item);
+    let text = render("get_item", &Reply::ItemDetail(Box::new(detail)));
+    let shown = "\nEffort sizing: risk class critical (scope:ci, risk:critical)\n  \
+                 build[0]: sizer: critical -> x_high; the plan pins medium\n  \
+                 plan[0]: sizer: critical -> x_high";
+    assert!(text.contains(shown), "{text}");
+}
+
 #[test]
 fn list_queue_shows_the_risk_level_an_item_s_delivery_labelled() {
     use archon_core::protocol::{ItemSummary, Reply};

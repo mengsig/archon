@@ -94,7 +94,9 @@ fn a_draft_naming_a_tier_leaves_the_model_to_the_daemon_and_names_who_asked() {
     let asked = draft(serde_json::json!({"review": [{"tier": "strong", "effort": "high"}]}));
     let resolved = plan(&[("review", tiered("b/sol", Effort::High))]);
     writer.request(&asked, resolved, Authority::Orchestrator);
-    let origin = writer.finish(Sizing::Off { policy_cap: None }).origin(&item, "review", 0);
+    let origin = writer
+        .finish(Sizing::Off { policy_cap: None })
+        .origin(&item, "review", 0);
     assert_eq!(
         (origin.model.source, origin.model.by),
         (PlanSource::Tier, Authority::Daemon)
@@ -543,7 +545,11 @@ fn pinned_tiers(item: &QueueItemId, tiers: &ModelPlan) -> [(&'static str, Planne
     [
         ("legacy", PlannedPlan::legacy(tiers.clone()), false),
         ("unattributed", unattributed, false),
-        ("explicit", asked.finish(Sizing::Off { policy_cap: None }), true),
+        (
+            "explicit",
+            asked.finish(Sizing::Off { policy_cap: None }),
+            true,
+        ),
     ]
 }
 

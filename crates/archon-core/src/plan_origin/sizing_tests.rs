@@ -66,7 +66,10 @@ fn effort(planned: &PlannedPlan, key: &str) -> Effort {
 }
 
 fn reason(planned: &PlannedPlan, item: &QueueItemId, key: &str) -> String {
-    planned.slot_sizing(item, key, 0).expect("a sized key").reason
+    planned
+        .slot_sizing(item, key, 0)
+        .expect("a sized key")
+        .reason
 }
 
 /// `keys` filled at `effort` and sized for an item titled `title`.
@@ -82,14 +85,25 @@ fn sized(item: &QueueItemId, keys: &[&str], effort: Effort, title: &str) -> Plan
 fn each_new_key_is_sized_from_its_own_stage_default_whatever_filled_it() {
     let item = QueueItemId::new();
     // Every key was filled at x_high, as a donor slot or a pipeline fallback would.
-    let planned = sized(&item, &["plan", "build", "check"], Effort::XHigh, "Add a button");
+    let planned = sized(
+        &item,
+        &["plan", "build", "check"],
+        Effort::XHigh,
+        "Add a button",
+    );
     assert_eq!(effort(&planned, "plan"), Effort::High);
     assert_eq!(effort(&planned, "build"), Effort::Medium);
     assert_eq!(effort(&planned, "check"), Effort::Low);
     let origin = planned.origin(&item, "build", 0).effort;
-    assert_eq!((origin.source, origin.by), (PlanSource::Sizer, Authority::Daemon));
+    assert_eq!(
+        (origin.source, origin.by),
+        (PlanSource::Sizer, Authority::Daemon)
+    );
     assert_eq!(origin.note.as_deref(), Some("was fallback: x_high"));
-    assert_eq!(reason(&planned, &item, "build"), "sizer: ordinary -> medium");
+    assert_eq!(
+        reason(&planned, &item, "build"),
+        "sizer: ordinary -> medium"
+    );
     let sizing = planned.sizing().expect("a record");
     assert_eq!(sizing.risk_class, Some(RiskClass::Ordinary));
     assert!(!planned.has_unsized());
@@ -132,10 +146,11 @@ fn with_sizing_off_a_plan_is_stored_exactly_as_before() {
 #[test]
 fn a_named_effort_stays_and_its_reason_carries_the_advice() {
     let item = QueueItemId::new();
-    let asked: ModelPlanDraft =
-        serde_json::from_value(serde_json::json!({"build": [{"model": CLAUDE, "effort": "medium"}],
-            "plan": [{"model": CLAUDE}]}))
-        .unwrap();
+    let asked: ModelPlanDraft = serde_json::from_value(
+        serde_json::json!({"build": [{"model": CLAUDE, "effort": "medium"}],
+            "plan": [{"model": CLAUDE}]}),
+    )
+    .unwrap();
     let resolved = ModelPlan(
         [
             ("build".to_owned(), vec![choice(Effort::Medium)]),
@@ -150,7 +165,10 @@ fn a_named_effort_stays_and_its_reason_carries_the_advice() {
     assert_eq!(effort(&planned, "build"), Effort::Medium, "the pin stands");
     let build = planned.slot_sizing(&item, "build", 0).unwrap();
     assert_eq!(build.effort_source, PlanSource::Explicit);
-    assert_eq!(build.reason, "sizer: critical -> x_high; the plan pins medium");
+    assert_eq!(
+        build.reason,
+        "sizer: critical -> x_high; the plan pins medium"
+    );
     // A model named without an effort is a pinned model with a sized effort.
     assert_eq!(effort(&planned, "plan"), Effort::XHigh);
     let plan = planned.origin(&item, "plan", 0);
@@ -166,7 +184,11 @@ fn a_learned_route_supplies_the_model_and_its_effort_is_advice() {
     planned.settle(&item, input("Add a button", &[]), crate::now());
     assert_eq!(effort(&planned, "build"), Effort::Medium);
     let origin = planned.origin(&item, "build", 0);
-    assert_eq!(origin.model.source, PlanSource::Learned, "the route's model");
+    assert_eq!(
+        origin.model.source,
+        PlanSource::Learned,
+        "the route's model"
+    );
     assert_eq!(origin.effort.source, PlanSource::Sizer);
     let why = "sizer: ordinary -> medium; the learned route advised high";
     assert_eq!(reason(&planned, &item, "build"), why);
@@ -186,10 +208,21 @@ fn a_carried_plan_keeps_its_frozen_sizing() {
         facts: &|_| Some(StageFacts::new(Effort::Max, StageKind::Work, false)),
     };
     let mut carried = retry.finish(Sizing::On(larger));
-    assert!(!carried.has_unsized(), "a carried key is not recorded again");
-    assert!(!carried.settle(&item, input("Fix the mutex", &tags(&["risk:critical"])), crate::now()));
+    assert!(
+        !carried.has_unsized(),
+        "a carried key is not recorded again"
+    );
+    assert!(!carried.settle(
+        &item,
+        input("Fix the mutex", &tags(&["risk:critical"])),
+        crate::now()
+    ));
     assert_eq!(carried.plan(), first.plan());
-    assert_eq!(carried.sizing(), first.sizing(), "the size it froze included");
+    assert_eq!(
+        carried.sizing(),
+        first.sizing(),
+        "the size it froze included"
+    );
     assert_eq!(carried.origins(&item), first.origins(&item));
 }
 
@@ -198,7 +231,12 @@ fn a_carried_plan_keeps_its_frozen_sizing() {
 #[test]
 fn a_stage_added_to_a_carried_plan_is_the_only_one_sized() {
     let item = QueueItemId::new();
-    let writer = filled(&item, &["plan", "build"], Effort::XHigh, PlanSource::Fallback);
+    let writer = filled(
+        &item,
+        &["plan", "build"],
+        Effort::XHigh,
+        PlanSource::Fallback,
+    );
     let never_sized = writer.finish(Sizing::Off { policy_cap: None });
     let mut kept = PlanWriter::new(&item, crate::now());
     kept.carry(&never_sized, &item, |_| Some(usize::MAX));
@@ -211,7 +249,11 @@ fn a_stage_added_to_a_carried_plan_is_the_only_one_sized() {
     let mut grown = kept.finish(on(Effort::XHigh));
     grown.settle(&item, input("Add a button", &[]), crate::now());
     assert_eq!(effort(&grown, "check"), Effort::Low, "its own default");
-    assert_eq!(effort(&grown, "build"), Effort::XHigh, "carried, never sized");
+    assert_eq!(
+        effort(&grown, "build"),
+        Effort::XHigh,
+        "carried, never sized"
+    );
     assert!(grown.slot_sizing(&item, "build", 0).is_none());
     let keys: Vec<&String> = grown.sizing().unwrap().keys.keys().collect();
     assert_eq!(keys, ["check"]);
@@ -230,7 +272,10 @@ fn with_sizing_off_a_new_stage_gets_no_record_beside_frozen_ones() {
     let mut grown = kept.finish(Sizing::Off { policy_cap: None });
     assert!(!grown.settle(&item, input("Fix the mutex", &[]), crate::now()));
     assert_eq!(effort(&grown, "check"), Effort::XHigh, "as 1.6.3 filled it");
-    assert!(grown.slot_sizing(&item, "check", 0).is_none(), "no stale class");
+    assert!(
+        grown.slot_sizing(&item, "check", 0).is_none(),
+        "no stale class"
+    );
     assert_eq!(effort(&grown, "build"), Effort::High, "frozen");
     assert_eq!(reason(&grown, &item, "build"), "sizer: elevated -> high");
 }
@@ -254,22 +299,38 @@ fn a_carried_sized_effort_is_clipped_to_the_cap_and_a_pin_is_not() {
         retry.carry(&first, &item, |_| Some(usize::MAX));
         retry.finish(sizing)
     };
-    for lowered in [on(Effort::High), Sizing::Off { policy_cap: Some(Effort::High) }] {
+    for lowered in [
+        on(Effort::High),
+        Sizing::Off {
+            policy_cap: Some(Effort::High),
+        },
+    ] {
         let clipped = carry(lowered);
         assert_eq!(effort(&clipped, "build"), Effort::High);
         let why = "sizer: critical -> x_high; clipped from x_high to the cap high";
         assert_eq!(reason(&clipped, &item, "build"), why);
-        assert_eq!(clipped.origin(&item, "build", 0).effort.source, PlanSource::Sizer);
+        assert_eq!(
+            clipped.origin(&item, "build", 0).effort.source,
+            PlanSource::Sizer
+        );
     }
     let unbounded = carry(Sizing::Off { policy_cap: None });
-    assert_eq!(effort(&unbounded, "build"), Effort::XHigh, "no cap, no clip");
+    assert_eq!(
+        effort(&unbounded, "build"),
+        Effort::XHigh,
+        "no cap, no clip"
+    );
     let mut pinned = first.clone();
     let by = (Authority::Operator, crate::now());
     pinned.steer(&item, "build", (None, Some(Effort::XHigh)), by);
     let mut retry = PlanWriter::new(&item, crate::now());
     retry.carry(&pinned, &item, |_| Some(usize::MAX));
     let kept = retry.finish(on(Effort::High));
-    assert_eq!(effort(&kept, "build"), Effort::XHigh, "a pin is never clipped");
+    assert_eq!(
+        effort(&kept, "build"),
+        Effort::XHigh,
+        "a pin is never clipped"
+    );
 }
 
 #[test]
@@ -298,7 +359,12 @@ fn clipping_a_stored_plan_lowers_only_sized_efforts_and_records_why() {
 #[test]
 fn a_changed_class_sizes_again_only_the_stages_not_started() {
     let item = QueueItemId::new();
-    let mut planned = sized(&item, &["plan", "build", "check"], Effort::Medium, "Add a button");
+    let mut planned = sized(
+        &item,
+        &["plan", "build", "check"],
+        Effort::Medium,
+        "Add a button",
+    );
     let before = planned.clone();
     let now = (Effort::XHigh, crate::now());
     let none = |_: &str| false;
@@ -307,14 +373,21 @@ fn a_changed_class_sizes_again_only_the_stages_not_started() {
     let started = |key: &str| key == "plan";
     let risky = tags(&["risk:critical"]);
     assert!(planned.resize(&item, input("Add a button", &risky), now, &started));
-    assert_eq!(effort(&planned, "plan"), Effort::High, "started: as it was sized");
+    assert_eq!(
+        effort(&planned, "plan"),
+        Effort::High,
+        "started: as it was sized"
+    );
     assert_eq!(reason(&planned, &item, "plan"), "sizer: ordinary -> high");
     assert_eq!(effort(&planned, "build"), Effort::XHigh);
     assert_eq!(effort(&planned, "check"), Effort::XHigh);
     let classes = |key: &str| planned.slot_sizing(&item, key, 0).unwrap().risk_class;
     assert_eq!(classes("plan"), RiskClass::Ordinary);
     assert_eq!(classes("build"), RiskClass::Critical);
-    assert_eq!(planned.sizing().unwrap().risk_class, Some(RiskClass::Critical));
+    assert_eq!(
+        planned.sizing().unwrap().risk_class,
+        Some(RiskClass::Critical)
+    );
 }
 
 #[test]
@@ -324,7 +397,12 @@ fn a_resize_leaves_a_pin_and_a_key_never_sized_alone() {
     let never_sized = writer.finish(Sizing::Off { policy_cap: None });
     let mut kept = PlanWriter::new(&item, crate::now());
     kept.carry(&never_sized, &item, |_| Some(usize::MAX));
-    add(&mut kept, &["build", "check"], Effort::Medium, PlanSource::Fallback);
+    add(
+        &mut kept,
+        &["build", "check"],
+        Effort::Medium,
+        PlanSource::Fallback,
+    );
     let mut planned = kept.finish(on(Effort::XHigh));
     planned.settle(&item, input("Add a button", &[]), crate::now());
     let by = (Authority::Operator, crate::now());
@@ -334,9 +412,14 @@ fn a_resize_leaves_a_pin_and_a_key_never_sized_alone() {
     assert!(planned.resize(&item, input("x", &risky), now, &|_| false));
     assert_eq!(effort(&planned, "plan"), Effort::Max, "never sized");
     assert_eq!(effort(&planned, "check"), Effort::Low, "pinned");
-    let pinned = "sizer: critical -> x_high; capped at high; consider a stronger tier; the plan pins low";
+    let pinned =
+        "sizer: critical -> x_high; capped at high; consider a stronger tier; the plan pins low";
     assert_eq!(reason(&planned, &item, "check"), pinned);
-    assert_eq!(effort(&planned, "build"), Effort::High, "sized under the cap of now");
+    assert_eq!(
+        effort(&planned, "build"),
+        Effort::High,
+        "sized under the cap of now"
+    );
 }
 
 /// A steer of the effort pins it from then on, and the record says so.
@@ -348,7 +431,10 @@ fn an_operator_steer_pins_a_sized_effort_from_then_on() {
     planned.steer(&item, "build", (None, Some(Effort::Medium)), by);
     let slot = planned.slot_sizing(&item, "build", 0).unwrap();
     assert_eq!(slot.effort_source, PlanSource::Explicit);
-    assert_eq!(slot.reason, "sizer: critical -> x_high; the plan pins medium");
+    assert_eq!(
+        slot.reason,
+        "sizer: critical -> x_high; the plan pins medium"
+    );
     let reasons = planned.effort_reasons(&item);
     assert_eq!(reasons["build"], [slot.reason]);
 }
@@ -365,10 +451,16 @@ fn a_copy_keeps_frozen_keys_and_sizes_pending_ones_for_its_own_item() {
     let mut again = copied.clone();
     assert!(!again.settle(&copy, input("Add a button", &[]), crate::now()));
     let pending = filled(&owner, &["build"], Effort::Medium, PlanSource::Fallback);
-    let mut copied = pending.finish(on(Effort::XHigh)).copy_for(&owner, &copy, None);
+    let mut copied = pending
+        .finish(on(Effort::XHigh))
+        .copy_for(&owner, &copy, None);
     assert!(copied.has_unsized());
     assert!(copied.settle(&copy, input("docs: tidy", &[]), crate::now()));
-    assert_eq!(effort(&copied, "build"), Effort::Low, "the copy's own title");
+    assert_eq!(
+        effort(&copied, "build"),
+        Effort::Low,
+        "the copy's own title"
+    );
 }
 
 /// The sizer keeps what a key's writer said of it, and says what the effort
@@ -378,7 +470,9 @@ fn a_sized_effort_s_origin_keeps_its_writer_s_note_and_one_was() {
     let (owner, copy) = (QueueItemId::new(), QueueItemId::new());
     let pending = filled(&owner, &["build"], Effort::Medium, PlanSource::Fallback);
     let said = Some("for the refresh");
-    let mut copied = pending.finish(on(Effort::XHigh)).copy_for(&owner, &copy, said);
+    let mut copied = pending
+        .finish(on(Effort::XHigh))
+        .copy_for(&owner, &copy, said);
     let note = |planned: &PlannedPlan| planned.origin(&copy, "build", 0).effort.note.unwrap();
     assert!(copied.settle(&copy, input("Fix the mutex", &[]), crate::now()));
     assert_eq!(note(&copied), "for the refresh; was fallback: medium");
@@ -387,9 +481,15 @@ fn a_sized_effort_s_origin_keeps_its_writer_s_note_and_one_was() {
     assert!(copied.resize(&copy, input("Fix the mutex", &risky), now, &|_| false));
     assert_eq!(note(&copied), "for the refresh; was sizer: high");
     let mut plain = sized(&owner, &["build"], Effort::Medium, "Fix the mutex");
-    assert_eq!(plain.origin(&owner, "build", 0).effort.note.unwrap(), "was fallback: medium");
+    assert_eq!(
+        plain.origin(&owner, "build", 0).effort.note.unwrap(),
+        "was fallback: medium"
+    );
     assert!(plain.resize(&owner, input("Fix the mutex", &risky), now, &|_| false));
-    assert_eq!(plain.origin(&owner, "build", 0).effort.note.unwrap(), "was sizer: high");
+    assert_eq!(
+        plain.origin(&owner, "build", 0).effort.note.unwrap(),
+        "was sizer: high"
+    );
 }
 
 #[test]
@@ -403,10 +503,16 @@ fn removing_a_key_drops_its_sizing_and_a_record_that_does_not_fit_reads_as_none(
     assert!(planned.sizing().is_none());
     let whole = sized(&item, &["build"], Effort::Medium, "Add a button");
     let mut stored = serde_json::to_value(&whole).unwrap();
-    assert_eq!(serde_json::from_value::<PlannedPlan>(stored.clone()).unwrap(), whole);
+    assert_eq!(
+        serde_json::from_value::<PlannedPlan>(stored.clone()).unwrap(),
+        whole
+    );
     stored["effort_sizing"]["keys"]["gone"] = stored["effort_sizing"]["keys"]["build"].clone();
     let misfit: PlannedPlan = serde_json::from_value(stored.clone()).unwrap();
-    assert!(misfit.sizing().is_none(), "a record of another plan describes none");
+    assert!(
+        misfit.sizing().is_none(),
+        "a record of another plan describes none"
+    );
     stored["effort_sizing"] = serde_json::json!("garbled");
     let garbled: PlannedPlan = serde_json::from_value(stored).unwrap();
     assert!(garbled.sizing().is_none());
@@ -427,12 +533,18 @@ fn the_diff_size_known_at_the_first_sizing_is_the_one_every_later_key_reads() {
     let writer = filled(&item, &["build"], Effort::Medium, PlanSource::Fallback);
     let mut first = writer.finish(sizer(Some(DiffSize::Small)));
     first.settle(&item, input("Add a button", &[]), crate::now());
-    assert_eq!(reason(&first, &item, "build"), "sizer: ordinary -> low (small)");
+    assert_eq!(
+        reason(&first, &item, "build"),
+        "sizer: ordinary -> low (small)"
+    );
     let mut kept = PlanWriter::new(&item, crate::now());
     kept.carry(&first, &item, |_| Some(usize::MAX));
     add(&mut kept, &["plan"], Effort::Medium, PlanSource::Fallback);
     let mut grown = kept.finish(sizer(Some(DiffSize::Large)));
     grown.settle(&item, input("Add a button", &[]), crate::now());
-    assert_eq!(reason(&grown, &item, "plan"), "sizer: ordinary -> medium (small)");
+    assert_eq!(
+        reason(&grown, &item, "plan"),
+        "sizer: ordinary -> medium (small)"
+    );
     assert_eq!(effort(&grown, "build"), Effort::Low, "not sized again");
 }

@@ -112,7 +112,9 @@ impl PlanSizing {
 pub enum Sizing<'a> {
     /// Sizing is off: new keys keep what 1.6.3 gives them and get no record.
     /// Sized efforts carried from an earlier plan still stay within the policy.
-    Off { policy_cap: Option<Effort> },
+    Off {
+        policy_cap: Option<Effort>,
+    },
     On(EffortSizer<'a>),
 }
 
@@ -326,7 +328,10 @@ impl PlannedPlan {
         writer.sizing.risk_class = Some(risk.0.class);
         writer.sizing.risk_signals.clone_from(&risk.0.signals);
         *self = writer.seal();
-        debug_assert!(keys.iter().all(|key| self.slot_sizing(item, key, 0).is_some()));
+        debug_assert!(
+            keys.iter()
+                .all(|key| self.slot_sizing(item, key, 0).is_some())
+        );
     }
 
     /// Size every key recorded and not yet sized, from `input`: the stored
@@ -381,7 +386,13 @@ impl PlannedPlan {
     /// one was lowered.
     pub fn clip_sized(&mut self, item: &QueueItemId, cap: Option<Effort>, at: Timestamp) -> bool {
         let Some(limit) = cap else { return false };
-        if self.model_plan.0.values().flatten().all(|c| c.effort <= limit) {
+        if self
+            .model_plan
+            .0
+            .values()
+            .flatten()
+            .all(|c| c.effort <= limit)
+        {
             return false;
         }
         let mut writer = PlanWriter::editing(self, item, at);

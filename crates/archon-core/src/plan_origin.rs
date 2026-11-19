@@ -788,7 +788,10 @@ impl PlanWriter {
         };
         let fault = origins.fault(&self.item, &self.plan);
         assert_eq!(fault, None, "one whole origin per field");
-        assert!(self.sizing.fits(&self.plan), "sizing of the plan's own keys");
+        assert!(
+            self.sizing.fits(&self.plan),
+            "sizing of the plan's own keys"
+        );
         PlannedPlan {
             model_plan: self.plan,
             model_origins: Some(Box::new(origins)),

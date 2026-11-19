@@ -1478,15 +1478,30 @@ async fn a_waived_refresh_is_sized_for_the_review_it_gets() {
     let fix = refresh(&h, &owner).await.expect("queued");
     assert_eq!(fix.autonomy.review, ReviewLevel::None, "a clean merge");
     let sizing = fix.model_plan.sizing().expect("a refresh is sized");
-    assert_eq!(sizing.risk_class, Some(RiskClass::Ordinary), "{:?}", sizing.risk_signals);
-    let spec = archon_pipeline::Catalog::builtin().get("direct").unwrap().clone();
+    assert_eq!(
+        sizing.risk_class,
+        Some(RiskClass::Ordinary),
+        "{:?}",
+        sizing.risk_signals
+    );
+    let spec = archon_pipeline::Catalog::builtin()
+        .get("direct")
+        .unwrap()
+        .clone();
     for (key, choices) in &fix.model_plan.0 {
         let own = spec.default_effort(key).expect("a key of direct");
         assert_eq!(choices[0].effort, own, "{key}: its own stage default");
         let origin = fix.model_plan.origin(&fix.id, key, 0).effort;
-        assert_eq!((origin.source, origin.by), (PlanSource::Sizer, Authority::Daemon));
+        assert_eq!(
+            (origin.source, origin.by),
+            (PlanSource::Sizer, Authority::Daemon)
+        );
     }
-    assert_eq!(fix, h.item(&fix.id).await, "the reply is the refresh as stored");
+    assert_eq!(
+        fix,
+        h.item(&fix.id).await,
+        "the reply is the refresh as stored"
+    );
 }
 
 /// A11 check 4: with sizing off a refresh's plan is the one routing decision
@@ -1509,9 +1524,20 @@ async fn a_refresh_with_sizing_off_is_not_sized_and_borrows_nothing_of_its_owner
     executor::recover(&h.ctx).await.unwrap();
     advance_origin(&h, "upstream.txt", "elsewhere\n");
     let fix = refresh(&h, &owner).await.expect("queued");
-    assert_eq!(fix.tags, ["risk:critical"], "the sizer would make it critical");
-    assert!(fix.model_plan.sizing().is_none(), "nothing is sized with sizing off");
-    assert_eq!(*fix.model_plan.plan(), defaults, "the stage defaults, as 1.6.3 fills them");
+    assert_eq!(
+        fix.tags,
+        ["risk:critical"],
+        "the sizer would make it critical"
+    );
+    assert!(
+        fix.model_plan.sizing().is_none(),
+        "nothing is sized with sizing off"
+    );
+    assert_eq!(
+        *fix.model_plan.plan(),
+        defaults,
+        "the stage defaults, as 1.6.3 fills them"
+    );
     for key in fix.model_plan.0.keys() {
         let origin = fix.model_plan.origin(&fix.id, key, 0).effort;
         assert_eq!(origin.source, PlanSource::Fallback, "{key}");

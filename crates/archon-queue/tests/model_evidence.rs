@@ -649,7 +649,10 @@ fn sized_attempts_are_grouped_for_display_and_routing_reads_none_of_it() {
             .unwrap();
         let outcome = store.outcome(&run.id).unwrap().unwrap();
         let learned = serde_json::json!({ "routes": routes, "stages": outcome.stages });
-        (report(&store, ModelEvidenceQuery::default(), range(0, 1000)), learned)
+        (
+            report(&store, ModelEvidenceQuery::default(), range(0, 1000)),
+            learned,
+        )
     };
     let (plain, plain_learned) = build(false);
     let (grouped, learned) = build(true);
@@ -666,11 +669,17 @@ fn sized_attempts_are_grouped_for_display_and_routing_reads_none_of_it() {
     ];
     assert_eq!(rows, expected);
     let text = grouped.text();
-    assert!(text.contains("Sized critical by sizer n=2 completed=2"), "{text}");
+    assert!(
+        text.contains("Sized critical by sizer n=2 completed=2"),
+        "{text}"
+    );
     assert!(text.contains("Sized ordinary by explicit n=1"), "{text}");
     assert_eq!((&grouped.rows, &grouped.tiers), (&plain.rows, &plain.tiers));
     assert_eq!(grouped.providers, plain.providers);
-    assert_eq!(learned, plain_learned, "routing learns nothing from a sizing");
+    assert_eq!(
+        learned, plain_learned,
+        "routing learns nothing from a sizing"
+    );
     let unsized_report: serde_json::Value = serde_json::to_value(&plain).unwrap();
     assert!(unsized_report.get("sizing").is_none(), "{unsized_report}");
 }

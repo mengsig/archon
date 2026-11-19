@@ -76,7 +76,10 @@ pub(crate) fn resize(
 ) -> bool {
     let at = archon_core::now();
     item.settle_sizing(at);
-    assert!(!item.model_plan.has_unsized(), "every recorded key is sized");
+    assert!(
+        !item.model_plan.has_unsized(),
+        "every recorded key is sized"
+    );
     if !config.models.effort_sizing() {
         return false;
     }

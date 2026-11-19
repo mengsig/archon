@@ -104,7 +104,8 @@ const MECHANICAL_WORDS: [&str; 9] = [
 ];
 
 /// Title prefixes of mechanical work, as Conventional Commits writes them.
-const MECHANICAL_PREFIXES: [&str; 5] = ["docs:", "docs(", "style:", "chore(release)", "chore(deps)"];
+const MECHANICAL_PREFIXES: [&str; 5] =
+    ["docs:", "docs(", "style:", "chore(release)", "chore(deps)"];
 
 /// Tags and title words naming release, CI or public-API work.
 const ELEVATED_WORDS: [&str; 5] = ["release", "ci", "public-api", "api", "workflow"];
@@ -292,7 +293,10 @@ pub fn size_effort(
         reason.push_str(&format!("; {engine} runs no more than high, so high"));
     }
     assert!(effort <= cap, "no sized effort exceeds the cap");
-    assert!(effort <= target, "a cap or an engine only lowers the target");
+    assert!(
+        effort <= target,
+        "a cap or an engine only lowers the target"
+    );
     SizedEffort { effort, reason }
 }
 

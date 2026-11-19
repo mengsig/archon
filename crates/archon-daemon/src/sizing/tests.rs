@@ -83,7 +83,10 @@ fn the_switch_and_the_caps_decide_how_a_written_plan_is_finished() {
         item
     };
     let open = ModelPolicy::default();
-    assert_eq!(effort_of(&finished(&Config::default(), &open)), Effort::XHigh);
+    assert_eq!(
+        effort_of(&finished(&Config::default(), &open)),
+        Effort::XHigh
+    );
     let mut off = Config::default();
     off.models.effort_sizing = Some(false);
     let unsized_item = finished(&off, &open);
@@ -100,6 +103,9 @@ fn the_switch_and_the_caps_decide_how_a_written_plan_is_finished() {
     let mut held = finished(&Config::default(), &open);
     assert!(clip_to_policy(&capped, &mut held));
     assert_eq!(effort_of(&held), Effort::Medium);
-    assert!(!clip_to_policy(&capped, &mut held), "already within the cap");
+    assert!(
+        !clip_to_policy(&capped, &mut held),
+        "already within the cap"
+    );
     assert!(!clip_to_policy(&open, &mut held), "no cap clips nothing");
 }

@@ -107,6 +107,66 @@ applies to running leads. `max_effort` caps every effort either way. The default
 `[models] max_effort = "max"` explicitly to allow `max`.
 A repository may only narrow the global cap.
 
+With `effort_sizing` on, archond also sizes every effort nobody named, as it
+writes an item's plan. It first gives the item a risk class from what the item
+records, and nothing else: its tags, its title and brief, its review level and
+a known diff size (a `diff:small`, `diff:medium` or `diff:large` tag, or the
+size learned from an earlier run of the item).
+
+| Class | The item has | Each unnamed effort becomes |
+| --- | --- | --- |
+| `mechanical` | a `docs:`, `style:`, `chore(release)` or `chore(deps)` title, a version bump, or a tag or title word such as `docs`, `changelog`, `lint`, `typo` or `formatting`, and nothing riskier | `low` |
+| `ordinary` | none of the others | the stage's own default effort, one step lower for a small diff |
+| `elevated` | a security, concurrency, locking or migration word in the title or brief; `review = strict`; a large diff; or a `release`, `ci`, `api`, `public-api` or `workflow` tag or title word | at least `high` |
+| `critical` | the `risk:critical` tag, or one of those risk words together with a strict review or a large diff | `x_high` |
+
+Each plan key is sized from its own stage: a stage that `insert_stage`, a
+refresh or a re-shaped pipeline adds starts from the default effort that stage
+declares, never from the entry it was filled from. The order of precedence is:
+the cap, then an effort the plan names (a pin), then the class, then the size
+step, then the stage's default. A learned route supplies the model only; the
+effort it learned is recorded as advice. `x_high` is planned only for Claude
+Code and Codex models, which run it; any other provider gets `high`, and the
+reason says so.
+
+`sizer_max_effort` (default `x_high`, global only) is the most the sizer sets
+by itself; the policy's `max_effort` caps it too, so the sizer's cap is the
+lower of the two. An effort held down by it reads `sizer: critical -> x_high;
+capped at high; consider a stronger tier`.
+
+The decision is stored with the plan and never made twice. Each item keeps the
+class, the signals that gave it and one reason per plan entry (`get_item` and
+`archon queue show` list them; a pinned entry reads `sizer: critical ->
+x_high; the plan pins medium`), and each attempt records its `risk_class`,
+`effort_source` and `effort_reasons`. `archon model-evidence` and the
+`model_evidence` tool group attempts by class and source for reading only:
+routing never reads the grouping.
+
+- A retry keeps the sizing its item already has. It is not sized again from a
+  diff size or a route learned since.
+- A steer or an update that changes the title, the brief (a steer note
+  included), the tags or the review level sizes again only the stages that
+  have not started. A stage that ran keeps its effort and its reason.
+- A plan written while sizing was off, or by 1.6.3, has no sizing and gets
+  none when it is carried whole, as a restack fix carries its item's plan.
+- Changing `effort_sizing` or `sizer_max_effort` and restarting affects only
+  plans sized from then on. With sizing off, a stage added to a sized plan
+  gets 1.6.3's effort and its attempt records no class.
+
+Three rules decide what a cap lowered later does to a stored effort:
+
+1. At dispatch, with no new plan, only the policy's `max_effort` lowers an
+   effort the sizer set, and the reason is recorded (`; clipped from x_high
+   to the cap high`). A lower `sizer_max_effort` alone leaves a stored plan
+   as it is. Recovery of a live run reads its stored plan unchanged and loads
+   no repository config: nothing is clipped there.
+2. When a retry, a revision or a re-shape writes the plan again with carried
+   entries, each carried effort the sizer set is lowered to the lower of
+   `max_effort` and `sizer_max_effort`, with the same recorded reason. With
+   `effort_sizing = false`, only `max_effort` lowers it.
+3. A pinned effort above `max_effort` is refused, as in 1.6.3, in every case.
+   A pin is never lowered silently.
+
 `auto_repair` (default `true`) covers a run that fails only because the gate
 refused the review or the ship record it owes (a delta read not anchored, a
 mistyped reviewer id, no review object, an unreadable verdict, an invalid ship
@@ -152,6 +212,7 @@ max_effort = "high"            # default x_high; max must be explicitly allowed
 # reserve_percent = { orchestrator = 15, interactive = 10 }   # quota stages leave (the defaults)
 # interactive_providers = ["claude-code"]   # providers someone uses by hand; global only
 # effort_sizing = true         # the default; false: 1.6.3's effort rules and reviewer floors; global only
+# sizer_max_effort = "x_high"  # the default; the most archond's effort sizer sets by itself; global only
 
 [limits]
 max_parallel_agents = 8        # running stage agents (default 8); 0 = unlimited

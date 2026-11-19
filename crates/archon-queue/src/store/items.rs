@@ -163,7 +163,10 @@ fn as_stored(item: &QueueItem) -> std::borrow::Cow<'_, QueueItem> {
         let settled = item.to_mut().settle_sizing(archon_core::now());
         assert!(settled, "a plan with keys to size was sized");
     }
-    debug_assert!(!item.model_plan.has_unsized(), "no stored plan awaits sizing");
+    debug_assert!(
+        !item.model_plan.has_unsized(),
+        "no stored plan awaits sizing"
+    );
     item
 }
 

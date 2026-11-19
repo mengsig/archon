@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use archon_core::Timestamp;
 use archon_core::cost::DayRange;
+use archon_core::effort_sizing::RiskClass;
 use archon_core::error::ArchonError;
 use archon_core::feedback::feedback_window;
 use archon_core::id::{FeedbackId, PipelineRunId, RepoId};
@@ -13,7 +14,6 @@ use archon_core::model_evidence::{
     SizingEvidenceRow, TierEvidenceRow,
 };
 use archon_core::model_tier::{ModelCatalog, Tier};
-use archon_core::effort_sizing::RiskClass;
 use archon_core::outcome::{
     CorrectionCause, DiffSize, FailureClass, Outcome, OutcomeResult, RouteContext,
 };
@@ -160,7 +160,9 @@ impl ModelEvidenceSnapshot {
                 stage.host_context,
             );
             groups.entry(key).or_default().add(sample);
-            if let (Some(class), Some(source)) = (stage.sizing.risk_class, stage.sizing.effort_source) {
+            if let (Some(class), Some(source)) =
+                (stage.sizing.risk_class, stage.sizing.effort_source)
+            {
                 sized.entry((class, source)).or_default().add(sample);
             }
             let tier = match &choice.tier {

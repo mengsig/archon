@@ -816,6 +816,53 @@ mod tests {
         );
     }
 
+    /// Give `item` a plan the sizer finished: `build` pinned at medium, `plan`
+    /// named without an effort, for an item tagged critical.
+    fn size_critical(item: &mut QueueItem) {
+        use archon_core::catalog::StageKind;
+        use archon_core::effort_sizing::StageFacts;
+        use archon_core::plan_origin::{Authority, EffortSizer, PlanWriter, Sizing};
+        const MODEL: &str = "claude-code/claude-opus-5-5";
+        let asked = serde_json::json!({"build": [{"model": MODEL, "effort": "medium"}],
+            "plan": [{"model": MODEL}]});
+        let resolved = serde_json::json!({"build": [{"model": MODEL, "effort": "medium"}],
+            "plan": [{"model": MODEL, "effort": "high"}]});
+        let facts = |_: &str| Some(StageFacts::new(Effort::High, StageKind::Work, false));
+        let sizer = EffortSizer {
+            cap: Effort::XHigh,
+            size: None,
+            facts: &facts,
+        };
+        let mut writer = PlanWriter::new(&item.id, archon_core::now());
+        let asked = serde_json::from_value(asked).unwrap();
+        writer.request(
+            &asked,
+            serde_json::from_value(resolved).unwrap(),
+            Authority::Operator,
+        );
+        item.model_plan = writer.finish(Sizing::On(sizer));
+        item.tags = vec!["risk:critical".into()];
+        assert!(
+            item.settle_sizing(archon_core::now()),
+            "the item's own tags size it"
+        );
+    }
+
+    /// A11: the item's detail names its risk class and why each plan entry
+    /// has its effort; an item the sizer never sized shows neither line.
+    #[test]
+    fn a_sized_item_shows_its_risk_class_and_each_effort_s_reason() {
+        let mut detail = detail_with_stages();
+        let before = item_detail(&detail, &RepoNames::new(), false);
+        assert!(!before.contains("risk class:"), "{before}");
+        size_critical(&mut detail.item);
+        let text = item_detail(&detail, &RepoNames::new(), false);
+        let shown = "risk class: critical (risk:critical)\n\
+                     sized build: sizer: critical -> x_high; the plan pins medium\n\
+                     sized plan: sizer: critical -> x_high\n";
+        assert!(text.contains(shown), "{text}");
+    }
+
     fn detail_with_stages() -> ItemDetail {
         let item = queue_item(None, "add a greeting", "direct");
         let run = pipeline_run(

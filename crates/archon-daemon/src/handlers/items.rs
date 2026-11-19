@@ -582,6 +582,10 @@ pub(super) async fn update_within(
         let mut item = store.item(id)?;
         let ran = !store.runs_for_item(id)?.is_empty();
         check_patchable(&item, &patch, (replaces_plan, ran))?;
+        if let Some(env) = resizing.as_ref() {
+            let sizer = (&ctx.config, &env.policy(&ctx.config));
+            check_sized_while_starting(sizer, &item, patch.tags.as_deref())?;
+        }
         if let Some(revision) = &revision {
             revise::apply(&mut store, &table, &mut item, revision)?;
         }
@@ -644,8 +648,37 @@ async fn resizing_env(
         return Ok(None);
     }
     let env = RepoEnv::load(ctx, current.repo.as_ref()).await?;
-    assert_eq!(env.repo.as_ref().map(|repo| &repo.id), current.repo.as_ref());
+    assert_eq!(
+        env.repo.as_ref().map(|repo| &repo.id),
+        current.repo.as_ref()
+    );
     Ok(Some(env))
+}
+
+/// The run starting a dispatching item has read its plan already, so new
+/// `tags` that would size its efforts otherwise are refused until it runs.
+fn check_sized_while_starting(
+    sizer: (
+        &archon_core::config::Config,
+        &archon_core::policy::ModelPolicy,
+    ),
+    item: &QueueItem,
+    tags: Option<&[String]>,
+) -> Result<(), ArchonError> {
+    let Some(tags) = tags.filter(|_| item.state == QueueState::Dispatching) else {
+        return Ok(());
+    };
+    let mut probe = item.clone();
+    probe.tags = tags.to_vec();
+    if !sizing::resize(sizer, &mut probe, &Default::default()) {
+        return Ok(());
+    }
+    assert_ne!(probe.model_plan.sizing(), item.model_plan.sizing());
+    Err(ArchonError::InvalidTransition(format!(
+        "the run of item {} is just starting; send its new tags again in a moment, and the \
+         stages it has not started are sized for them",
+        item.id
+    )))
 }
 
 /// A succeeded item takes an autonomy-only patch. `merge = auto` turns on

@@ -261,8 +261,14 @@ async fn a_restack_fix_is_issued_its_own_effort_rule() {
     assert_eq!(h.issued_effort_contract(of_fix).await, "rubric", "its own");
     let fix = h.item(&QueueItemId::parse(&fix).unwrap()).await;
     let child = h.item(&child.id).await;
-    assert!(child.model_plan.sizing().is_none(), "enqueued with sizing off");
-    assert!(fix.model_plan.sizing().is_none(), "carried whole: never sized");
+    assert!(
+        child.model_plan.sizing().is_none(),
+        "enqueued with sizing off"
+    );
+    assert!(
+        fix.model_plan.sizing().is_none(),
+        "carried whole: never sized"
+    );
     assert_eq!(*fix.model_plan.plan(), *child.model_plan.plan());
 }
 
@@ -282,7 +288,11 @@ async fn a_restack_fix_keeps_its_child_s_frozen_sizing() {
     assert!(risky.resize_unstarted((Effort::XHigh, archon_core::now()), &|_| false));
     h.ctx.store.lock().await.update_item(&risky).unwrap();
     let child = h.item(&child.id).await;
-    let frozen = child.model_plan.sizing().expect("the child was sized").clone();
+    let frozen = child
+        .model_plan
+        .sizing()
+        .expect("the child was sized")
+        .clone();
     assert_eq!(frozen.risk_class, Some(RiskClass::Elevated));
     advance_branch(&h, &parent_run.branch, "parent.txt", "parent edits\n");
     h.dispatch().await;

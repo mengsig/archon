@@ -70,24 +70,9 @@ pub(super) fn takeover(
         plan.resume.is_none() || (plan.keep && plan.attempt > 1),
         "only the kept agent of an earlier attempt is resumed"
     );
-    let before = if lost { plan.attempt } else { plan.attempt - 1 };
-    let runs = store.stage_runs(run)?;
-    let last = runs
-        .iter()
-        .filter(|s| s.stage_id == plan.stage_id && s.fan_index == plan.fan_index)
-        .filter(|s| s.attempt == before)
-        .max_by_key(|s| s.started_at);
-    let Some(last) = last else {
+    let Some((last, agent)) = kept_attempt(store, run, plan, lost)? else {
         return Ok(Takeover::Fresh);
     };
-    // An attempt that ended any other way had its agent stopped as it settled.
-    let waits = lost || last.state == StageState::Completed;
-    let Some(agent) = last.aether_agent.clone().filter(|_| waits) else {
-        return Ok(Takeover::Fresh);
-    };
-    if !is_kept(store, &last.id)? {
-        return Ok(Takeover::Fresh);
-    }
     // A steer that planned another model wants it from the start; a live retune
     // already moved the agent to its current choice. A tier is not the agent.
     let current = last.current_choice();
@@ -109,6 +94,80 @@ pub(super) fn takeover(
         message,
         asked_record: None,
     }))
+}
+
+/// The earlier attempt of `plan`'s slot whose kept agent still waits for it,
+/// with that agent; `lost`: see [`takeover`].
+fn kept_attempt(
+    store: &Store,
+    run: &PipelineRunId,
+    plan: &SpawnPlan,
+    lost: bool,
+) -> Result<Option<(StageRun, AetherAgentId)>, ArchonError> {
+    assert!(plan.attempt >= 1, "attempts are 1-based");
+    let before = if lost { plan.attempt } else { plan.attempt - 1 };
+    let runs = store.stage_runs(run)?;
+    let last = runs
+        .into_iter()
+        .filter(|s| s.stage_id == plan.stage_id && s.fan_index == plan.fan_index)
+        .filter(|s| s.attempt == before)
+        .max_by_key(|s| s.started_at);
+    let Some(last) = last else {
+        return Ok(None);
+    };
+    assert_eq!(&last.run, run, "the slot's attempts are of this run");
+    // An attempt that ended any other way had its agent stopped as it settled.
+    let waits = lost || last.state == StageState::Completed;
+    let Some(agent) = last.aether_agent.clone().filter(|_| waits) else {
+        return Ok(None);
+    };
+    if !is_kept(store, &last.id)? {
+        return Ok(None);
+    }
+    Ok(Some((last, agent)))
+}
+
+/// The model the kept agent `plan` resumes last ran, when the daemon alone moved
+/// its slot since and the catalog still lists that model (I1, I3): a steer
+/// that pinned another model, or an unusable one, still replaces the agent.
+pub(super) fn kept_model(
+    store: &Store,
+    (run, item): (
+        &archon_core::run::PipelineRun,
+        &archon_core::queue::QueueItem,
+    ),
+    plan: &SpawnPlan,
+    catalog: &archon_core::model_tier::ModelCatalog,
+) -> Result<Option<ModelChoice>, ArchonError> {
+    assert_eq!(run.item, item.id, "the run works for the item");
+    if plan.resume.is_none() || plan.stage_id == archon_pipeline::acceptance::STAGE {
+        return Ok(None);
+    }
+    let slots = item
+        .model_plan
+        .choices_for(&plan.stage_id)
+        .map_or(0, <[_]>::len);
+    let Some((last, _)) = kept_attempt(store, &run.id, plan, false)? else {
+        return Ok(None);
+    };
+    let ran = last.current_choice();
+    // An unknown or retired model is the catalog repair's to replace.
+    let Ok(model) = catalog.check(&ran.model) else {
+        return Ok(None);
+    };
+    if model == plan.choice.model || slots == 0 {
+        return Ok(None);
+    }
+    let slot = plan.fan_index as usize % slots;
+    let origin = item.model_plan.origin(&item.id, &plan.stage_id, slot);
+    // As a quota follow moves it: the model and its tier, never the effort.
+    let kept = ModelChoice {
+        model,
+        tier: ran.tier.clone(),
+        ..plan.choice.clone()
+    };
+    assert_ne!(kept.model, plan.choice.model, "only a moved slot is held");
+    Ok(origin.model.is_movable().then_some(kept))
 }
 
 /// Record that the agent of resumed attempt `stage` was told `text` after

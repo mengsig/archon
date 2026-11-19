@@ -437,19 +437,16 @@ pub(super) async fn reserve(
         table.pending.remove(run);
     }
     let spec = table.drivers.get(run).map(|driver| driver.spec().clone());
-    let mut repair = None;
-    let reserved = {
+    let (reserved, before, after) = {
         let mut store = ctx.store.lock().await;
-        let read = (run, spec.as_deref());
-        reserve_plans(ctx, &mut store, read, plans, (catalog, &mut repair))?
+        let item_id = store.run(run)?.item;
+        let before = store.item(&item_id)?.model_plan.into_plan();
+        let reserved = reserve_plans(ctx, &mut store, (run, spec.as_deref()), plans, catalog)?;
+        let after = store.item(&item_id)?.model_plan.into_plan();
+        (reserved, before, after)
     };
-    // Only a catalog repair reaches the driver: a quota move leaves its parked
-    // choices, so a kept agent's resume keeps its model, as quota routing intends.
-    if let Some((before, after)) = repair {
-        assert_ne!(
-            before, after,
-            "a repair that changed nothing is not followed"
-        );
+    // A repair or quota move that left the plan as it was has nothing to follow.
+    if before != after {
         super::model_catalog::follow_models(table, run, (&before, &after), catalog);
     }
     match reserved {
@@ -470,17 +467,13 @@ pub(super) async fn reserve(
 }
 
 /// `spec` is the run's pipeline, `None` once its driver is gone; with it,
-/// stages are routed by quota first (`quota::reroute_spawns`). `repair` gets
-/// the stored plan a catalog repair replaced and the plan it stored instead.
+/// stages are routed by quota first (`quota::reroute_spawns`).
 fn reserve_plans(
     ctx: &DaemonContext,
     store: &mut Store,
     (run_id, spec): (&PipelineRunId, Option<&PipelineSpec>),
     mut plans: Vec<SpawnPlan>,
-    (catalog, repair): (
-        &archon_core::model_tier::ModelCatalog,
-        &mut Option<(ModelPlan, ModelPlan)>,
-    ),
+    catalog: &archon_core::model_tier::ModelCatalog,
 ) -> Result<Reserved, ArchonError> {
     if crate::learned::cached_catalog(ctx, store)?.as_ref() != Some(catalog)
         || catalog.not_ready_reason().is_some()
@@ -506,9 +499,14 @@ fn reserve_plans(
         return Ok(Reserved::Waiting(plans));
     };
     plans = repaired.pending;
+    // Before quota reads them: a kept agent's resume waits for its own provider.
+    for plan in &mut plans {
+        if let Some(kept) = super::resume::kept_model(store, (&run, &item), plan, catalog)? {
+            plan.choice = kept;
+        }
+    }
     let replaced = repaired.replaced;
     let stored = item.model_plan.plan().clone();
-    *repair = replaced.clone().map(|before| (before, stored.clone()));
     {
         let target = (&mut item, spec);
         let read = (repo.as_ref(), replaced.as_ref());

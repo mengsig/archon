@@ -1694,3 +1694,174 @@ async fn a_kept_implementer_takes_its_findings_after_a_quota_move() {
         );
     }
 }
+
+/// A pin superseded while the run waits for it, though Aether still lists it,
+/// leaves the stored models as they were: its reviewers start on their pins.
+#[tokio::test]
+async fn a_repair_that_moves_no_model_reserves_the_pending_stages() {
+    let h = harness(untiered_fallback()).await;
+    let pins = serde_json::json!({
+        "implement": [{"model": "claude-code/sonnet"}],
+        "review": [{"model": "claude-code/opus"}, {"model": "claude-code/sonnet"}],
+        "ship": [{"model": "claude-code/haiku"}],
+    });
+    let item = enqueue(
+        &h,
+        ROUTED,
+        "pins only",
+        serde_json::from_value(pins).unwrap(),
+    )
+    .await;
+    h.dispatch().await;
+    assert_eq!(
+        spawned_on(&h, &item, "implement").await,
+        ["claude-code/sonnet"]
+    );
+    list_beside(&h, ("claude-code/opus", "claude-code/opus-next"), true).await;
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+
+    let reviews = spawned_on(&h, &item, "review").await;
+    assert_eq!(reviews, ["claude-code/opus", "claude-code/sonnet"]);
+    let stored = h.item(&item.id).await;
+    assert_eq!(
+        stored.model_plan.0["review"][0].model.to_string(),
+        "claude-code/opus",
+        "a pin is never rewritten"
+    );
+}
+
+const PLANNED: &str = "planned";
+const PLANNED_TOML: &str = r#"[pipeline]
+name = "planned"
+description = "a planner before a kept implementer and its reviewer"
+version = 1
+workspace = "worktree"
+requires_repo = true
+
+[[stage]]
+id = "plan"
+kind = "work"
+prompt = "implement.md"
+timeout_minutes = 30
+
+[[stage]]
+id = "implement"
+kind = "work"
+prompt = "implement.md"
+timeout_minutes = 30
+
+[[stage]]
+id = "review"
+kind = "review"
+prompt = "review.md"
+gate = "all_pass"
+timeout_minutes = 30
+on_fail = { goto = "implement", max_loops = 1 }
+
+[[stage]]
+id = "ship"
+kind = "ship"
+prompt = "ship.md"
+timeout_minutes = 90
+"#;
+
+/// A quota move while a stage before the implementer runs starts the
+/// implementer on the provider it moved to; the review's findings then go to
+/// that same agent, on the model it ran, never to a replacement on another.
+#[tokio::test]
+async fn a_quota_move_before_the_implementer_keeps_its_agent_through_the_fix() {
+    let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+    h.add_pipeline(PLANNED, PLANNED_TOML);
+    claude_then_codex(&h, 90, 0);
+    let plan = serde_json::json!({
+        "plan": [{"tier": "strong"}],
+        "implement": [{"tier": "strong"}],
+        "review": [{"tier": "strong"}],
+        "ship": [{"tier": "fast"}],
+    });
+    let item = enqueue(
+        &h,
+        PLANNED,
+        "moved mid-plan",
+        serde_json::from_value(plan).unwrap(),
+    )
+    .await;
+    h.dispatch().await;
+    assert_eq!(spawned_on(&h, &item, "plan").await, ["claude-code/sonnet"]);
+    claude_then_codex(&h, 10, 90);
+    h.settle_running(|_| completed("planned")).await;
+    h.dispatch().await;
+    let first: Vec<_> = (h.stages(&item.id).await.into_iter())
+        .filter(|s| s.stage_id == "implement")
+        .collect();
+    assert_eq!(first.len(), 1, "{first:?}");
+    assert_eq!(
+        first[0].choice.model.to_string(),
+        "codex/sol",
+        "routed by quota"
+    );
+
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    h.settle_running(|_| common::verdict(false)).await;
+    h.dispatch().await;
+
+    let again: Vec<_> = (h.stages(&item.id).await.into_iter())
+        .filter(|s| s.stage_id == "implement")
+        .collect();
+    assert_eq!(again.len(), 2, "the fix is a second attempt: {again:?}");
+    assert_eq!(
+        again[1].choice.model, first[0].choice.model,
+        "the agent's model"
+    );
+    assert_eq!(
+        again[1].aether_agent, first[0].aether_agent,
+        "the same agent"
+    );
+    assert!(
+        again.iter().all(|s| s.choice.model.provider == "codex"),
+        "no replacement on a model the agent never ran: {again:?}"
+    );
+}
+
+/// A fresh infrastructure retry of a stage a quota move routed elsewhere runs
+/// where the move took it, as every fresh attempt is routed.
+#[tokio::test]
+async fn a_fresh_infra_retry_of_a_quota_moved_stage_follows_the_move() {
+    let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+    claude_then_codex(&h, 90, 0);
+    let item = enqueue(&h, ROUTED, "retried after a move", tier_plan()).await;
+    h.dispatch().await;
+    assert_eq!(
+        spawned_on(&h, &item, "implement").await,
+        ["claude-code/sonnet"]
+    );
+    claude_then_codex(&h, 10, 90);
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    let reviews = spawned_on(&h, &item, "review").await;
+    assert!(
+        reviews.iter().all(|m| m.starts_with("codex/")),
+        "{reviews:?}"
+    );
+
+    h.settle_running(|s| match s.fan_index {
+        0 => archon_core::run::StageOutcome::Failed {
+            error: "aetherd lost the agent".into(),
+            infra: true,
+        },
+        _ => common::verdict(true),
+    })
+    .await;
+    h.dispatch().await;
+    let retried: Vec<_> = (h.stages(&item.id).await.into_iter())
+        .filter(|s| s.stage_id == "review" && s.fan_index == 0)
+        .map(|s| s.choice.model.to_string())
+        .collect();
+    assert_eq!(retried.len(), 2, "the slot is retried: {retried:?}");
+    assert_eq!(
+        retried[1], retried[0],
+        "the retry runs where the move took it"
+    );
+}

@@ -281,6 +281,27 @@ impl ModelCatalog {
         })
     }
 
+    /// [`Self::candidates`] for tier picks under `policy`: a superseded model
+    /// stays one while no listed successor is permitted to replace it.
+    pub fn tier_candidates<'a, 'p>(
+        &'a self,
+        policy: &'p ModelPolicy,
+    ) -> impl Iterator<Item = &'a CatalogModel> + use<'a, 'p> {
+        self.models.iter().filter(move |entry| {
+            let replaced = self
+                .superseded_by(&entry.model)
+                .is_some_and(|successor| self.replaces(successor, policy));
+            !self.is_retired(&entry.model) && !replaced
+        })
+    }
+
+    /// Whether `successor` is listed, not retired and permitted by `policy`.
+    fn replaces(&self, successor: &ModelRef, policy: &ModelPolicy) -> bool {
+        let canonical = self.canonical_alias(successor);
+        let listed = self.models.iter().any(|m| &m.model == canonical);
+        listed && !self.is_retired(canonical) && policy.permits_model(canonical)
+    }
+
     pub fn tier_of(&self, model: &ModelRef) -> Option<Tier> {
         self.models
             .iter()
@@ -305,7 +326,7 @@ impl ModelCatalog {
                 && provider.is_none_or(|p| m.model.provider == p)
                 && policy.permits_model(&m.model)
         };
-        let candidates: Vec<&CatalogModel> = self.candidates().filter(usable).collect();
+        let candidates: Vec<&CatalogModel> = self.tier_candidates(policy).filter(usable).collect();
         let on = |p: &str| candidates.iter().any(|m| m.model.provider == p);
         let chosen_provider = match prefer.filter(|p| on(p)) {
             Some(p) => Some(p),
@@ -345,7 +366,10 @@ impl ModelCatalog {
         policy: &ModelPolicy,
     ) -> ArchonError {
         let mut tiers: BTreeMap<&str, BTreeSet<Tier>> = BTreeMap::new();
-        for m in self.candidates().filter(|m| policy.permits_model(&m.model)) {
+        for m in self
+            .tier_candidates(policy)
+            .filter(|m| policy.permits_model(&m.model))
+        {
             if let Some(tier) = m.tier {
                 tiers.entry(&m.model.provider).or_default().insert(tier);
             }
@@ -538,6 +562,35 @@ mod tests {
         assert_eq!(
             catalog.best_tiers(Tier::Strong, &open()).get("p"),
             Some(&Tier::Fast)
+        );
+    }
+
+    #[test]
+    fn a_superseded_model_with_no_permitted_successor_stays_a_tier_candidate() {
+        let mut catalog = ModelCatalog::new(vec![
+            entry("p/old", Some(Tier::Strong)),
+            entry("p/new", Some(Tier::Strong)),
+            entry("p/low", Some(Tier::Fast)),
+        ]);
+        catalog.add_superseded("p/old".parse().unwrap(), "p/new".parse().unwrap());
+        let denied = ModelPolicy {
+            deny: ["p/new".parse().unwrap()].into(),
+            ..open()
+        };
+        let (model, tier) = catalog.resolve(Tier::Strong, None, None, &denied).unwrap();
+        assert_eq!(
+            (model.to_string(), tier.resolved),
+            ("p/old".into(), Tier::Strong)
+        );
+        assert_eq!(
+            catalog.best_tiers(Tier::Strong, &denied).get("p"),
+            Some(&Tier::Strong)
+        );
+        let (model, _) = catalog.resolve(Tier::Strong, None, None, &open()).unwrap();
+        assert_eq!(
+            model.to_string(),
+            "p/new",
+            "a permitted successor replaces it"
         );
     }
 

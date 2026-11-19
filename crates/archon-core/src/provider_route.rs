@@ -116,7 +116,7 @@ impl ModelCatalog {
     /// Each provider's best allowed tier at or below `requested`.
     pub fn best_tiers(&self, requested: Tier, policy: &ModelPolicy) -> BTreeMap<&str, Tier> {
         let mut best = BTreeMap::new();
-        for m in self.candidates() {
+        for m in self.tier_candidates(policy) {
             let Some(tier) = m.tier.filter(|t| *t <= requested) else {
                 continue;
             };

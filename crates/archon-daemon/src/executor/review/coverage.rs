@@ -7,6 +7,8 @@
 //! until the counted passes read the whole change. A named delta read no named
 //! one anchors may rest on the lead's earlier reviewers, which Archon adds itself.
 //! A fail of the attempt the record leaves out stands as a named one would.
+//! Reads carried from earlier stage runs of the item on this branch anchor and
+//! count as whole-change reviewers while the branch still holds their commits.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -28,6 +30,8 @@ pub(super) struct Placed {
     pub named: bool,
     /// An unnamed fail of this attempt: it stands until answered.
     pub left_out: bool,
+    /// Read for an earlier stage run of the item on this branch, under another lead.
+    pub carried: bool,
     pub pass: bool,
     pub head: String,
     /// Where the diff it read starts; `None` when it read the whole change.
@@ -82,12 +86,14 @@ pub(super) struct Base<'a> {
 const READ_THE_BASE: &str = "read the base branch, not the change";
 
 /// The verdicts a review is held to: the reviewers the lead `named`, its
-/// `earlier` ones that may anchor them, and the attempt's fails it `left_out`.
+/// `earlier` ones that may anchor them, the attempt's fails it `left_out`, and
+/// the reads `carried` from earlier stage runs of the item on this branch.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Verdicts<'a> {
     pub named: &'a [(String, Verdict)],
     pub earlier: &'a [(String, Verdict)],
     pub left_out: &'a [(String, Verdict)],
+    pub carried: &'a [(String, Verdict)],
 }
 
 /// The branch head and each verdict on its commits, `named` first, or why a named or
@@ -133,6 +139,7 @@ fn place_unnamed(
         named,
         earlier,
         left_out,
+        carried,
     } = verdicts;
     let is_left_out = |agent: &str| left_out.iter().any(|(a, _)| a == agent);
     assert!(
@@ -146,6 +153,20 @@ fn place_unnamed(
                 ..read
             }),
             Err(why) => tracing::debug!(%agent, %why, "an earlier reviewer anchors nothing"),
+        }
+    }
+    for (agent, verdict) in carried {
+        // A read of commits the branch no longer holds counts for nothing in a later run.
+        match place_one(history, head, forks, agent, verdict)? {
+            Ok(read) if !read.superseded => placed.push(Placed {
+                named: false,
+                carried: true,
+                ..read
+            }),
+            Ok(_) => {
+                tracing::debug!(%agent, "an earlier run's read of a rewritten history is dropped")
+            }
+            Err(why) => tracing::debug!(%agent, %why, "an earlier run's read anchors nothing"),
         }
     }
     for (agent, verdict) in left_out {
@@ -273,6 +294,7 @@ fn place_one(
         agent: agent.to_owned(),
         named: true,
         left_out: false,
+        carried: false,
         pass: verdict.pass,
         head,
         base,
@@ -319,6 +341,8 @@ pub(super) struct Held {
     /// The named whole-change reads that failed and whose findings were
     /// fixed: the record names them beside the passes, as the level counts them.
     pub answered: Vec<usize>,
+    /// The agents of the whole-change reads carried from earlier stage runs that the level counts.
+    pub carried: Vec<String>,
     pub implicit: Vec<String>,
 }
 
@@ -343,15 +367,20 @@ pub(super) fn counted(
         Err(why) => return Ok(Err(why)),
     };
     let reads: Vec<Placed> = in_play.iter().map(|i| placed[*i].clone()).collect();
-    let (passes, answered) = match judged(history, &reads, head, owed)? {
+    let (passes, answered, carried) = match judged(history, &reads, head, owed)? {
         Ok(judged) => judged,
         Err(why) => return Ok(Err(why)),
     };
     if let Some(why) = open_left_out(history, placed, &in_play, head)? {
         return Ok(Err(why));
     }
-    let passes: Vec<usize> = passes.into_iter().map(|i| in_play[i]).collect();
-    let answered: Vec<usize> = answered.into_iter().map(|i| in_play[i]).collect();
+    let implicit: Vec<String> = (0..reads.len())
+        .filter(|i| !reads[*i].named && !carried.contains(i))
+        .map(|i| reads[i].agent.clone())
+        .collect();
+    let at =
+        |picked: Vec<usize>| -> Vec<usize> { picked.into_iter().map(|i| in_play[i]).collect() };
+    let (passes, answered, carried) = (at(passes), at(answered), at(carried));
     assert!(
         passes.iter().chain(&answered).all(|i| placed[*i].named),
         "only a named read counts toward the review"
@@ -360,36 +389,66 @@ pub(super) fn counted(
         answered.iter().all(|i| !placed[*i].pass),
         "an answered read is a fail"
     );
-    let implicit = reads.into_iter().filter(|read| !read.named);
+    assert!(
+        carried
+            .iter()
+            .all(|i| placed[*i].carried && placed[*i].base.is_none()),
+        "only a carried whole-change read counts beside the named ones"
+    );
+    let carried = carried.into_iter().map(|i| placed[i].agent.clone());
     Ok(Ok(Held {
         passes,
         answered,
-        implicit: implicit.map(|read| read.agent).collect(),
+        carried: carried.collect(),
+        implicit,
     }))
 }
 
-/// Why a named read in `placed` is refused when no named read anchors it and
-/// the lead's earlier reviewers are not read; `None` when every one is anchored.
+/// Why a named read in `placed` is refused when no named or carried read anchors
+/// it and the lead's earlier reviewers are not read; `None` when every one is anchored.
 pub(super) fn unanchored_named(
     history: &mut impl Ancestry,
     placed: &[Placed],
 ) -> Result<Option<String>, ArchonError> {
     let named = named_count(placed);
-    let alone = anchored(history, &placed[..named])?;
-    let stray = alone.iter().position(|held| !held);
+    let (_, alone) = named_and_carried(history, placed)?;
+    let stray = alone[..named].iter().position(|held| !held);
     Ok(stray.map(|stray| unanchored(&placed[stray], false)))
 }
 
-/// Indexes of the reads coverage rests on: the named ones, and when one of
-/// those is unanchored, every earlier read anchored with them. `Err` says which is not.
+/// Indexes of the named and carried reads in `placed`, named first, and for
+/// each whether it read the whole change or from where another of them read up to.
+fn named_and_carried(
+    history: &mut impl Ancestry,
+    placed: &[Placed],
+) -> Result<(Vec<usize>, Vec<bool>), ArchonError> {
+    let named = named_count(placed);
+    let core: Vec<usize> = (0..placed.len())
+        .filter(|i| *i < named || placed[*i].carried)
+        .collect();
+    let reads: Vec<Placed> = core.iter().map(|i| placed[*i].clone()).collect();
+    let marks = anchored(history, &reads)?;
+    assert_eq!(marks.len(), core.len(), "one mark per read");
+    assert!(
+        core[..named].iter().enumerate().all(|(n, i)| n == *i),
+        "named reads lead"
+    );
+    Ok((core, marks))
+}
+
+/// Indexes of the reads coverage rests on: the named ones, the carried ones anchored
+/// with them, and when a named one is unanchored, every earlier read anchored with
+/// them. `Err` says which is not.
 fn in_play(
     history: &mut impl Ancestry,
     placed: &[Placed],
 ) -> Result<Result<Vec<usize>, String>, ArchonError> {
     let named = named_count(placed);
-    let alone = anchored(history, &placed[..named])?;
-    if !alone.contains(&false) {
-        return Ok(Ok((0..named).collect()));
+    let (core, alone) = named_and_carried(history, placed)?;
+    if !alone[..named].contains(&false) {
+        // A carried read nothing anchors read only part of the change: it is left out.
+        let kept = core.into_iter().zip(alone).filter(|(_, held)| *held);
+        return Ok(Ok(kept.map(|(i, _)| i).collect()));
     }
     let with_earlier = anchored(history, placed)?;
     if let Some(stray) = with_earlier[..named].iter().position(|held| !held) {
@@ -440,9 +499,9 @@ fn unanchored(read: &Placed, earlier_read: bool) -> String {
     )
 }
 
-/// Indexes of the named passes that hold, then of the named whole-change
-/// fails they answered.
-type Judged = (Vec<usize>, Vec<usize>);
+/// Indexes of the named passes that hold, of the named whole-change fails
+/// they answered, and of the carried whole-change reads the level counts.
+type Judged = (Vec<usize>, Vec<usize>, Vec<usize>);
 
 /// Indexes of the anchored `reads` whose named passes hold for the branch
 /// at `head`, and of the named whole-change fails they answered; or why none
@@ -472,19 +531,30 @@ fn judged(
     if let Some(why) = open_fail(history, reads, &current)? {
         return Ok(Err(why));
     }
-    let whole = whole_reads(reads, &current);
+    let mut whole = whole_reads(reads, &current);
+    // Later rounds read the commits since an earlier run's whole read, so it counts as on the branch.
+    let carried: Vec<usize> = (0..reads.len())
+        .filter(|i| reads[*i].carried && reads[*i].base.is_none())
+        .collect();
+    let unheld: Vec<usize> = carried
+        .iter()
+        .copied()
+        .filter(|i| !whole.contains(i))
+        .collect();
+    whole.extend(unheld);
     if whole.len() < owed as usize {
         return Ok(Err(too_few_whole(reads, &current, whole.len(), owed)));
     }
     let answered: Vec<usize> = whole
-        .into_iter()
+        .iter()
+        .copied()
         .filter(|i| reads[*i].named && !reads[*i].pass)
         .collect();
-    let on_record = passes.len() + answered.len();
+    let on_record = passes.len() + answered.len() + carried.len();
     if on_record < owed as usize {
         return Ok(Err(unnamed_whole(on_record, owed)));
     }
-    Ok(Ok((passes, answered)))
+    Ok(Ok((passes, answered, carried)))
 }
 
 /// For each of `reads`, whether it is a pass that holds for the branch at
@@ -541,7 +611,7 @@ fn open_left_out(
 }
 
 /// Indexes of the `reads` that read the whole change on the branch: a pass
-/// that holds, or a fail, which [`open_fail`] has already found answered.
+/// that holds, or a fail, which [`open_fail`] has already found answered or carried.
 fn whole_reads(reads: &[Placed], current: &[bool]) -> Vec<usize> {
     assert_eq!(reads.len(), current.len(), "one mark per read");
     let whole: Vec<usize> = (0..reads.len())
@@ -618,8 +688,10 @@ fn spread(
     Ok(marked)
 }
 
-/// Why a named fail still stands: no counted pass read past its head and
-/// the commits after it, nor a later fail that read past it and was answered.
+/// Why a fail of this run still stands: no counted pass read past its head and
+/// the commits after it, nor a later fail that read past it and was answered. A
+/// carried fail never stands alone: its delta reviewer verifies its findings, or the
+/// orchestrator accepted them as follow-ups.
 fn open_fail(
     history: &mut impl Ancestry,
     placed: &[Placed],
@@ -642,7 +714,7 @@ fn open_fail(
     let Some(fail) = placed
         .iter()
         .zip(&answered)
-        .find(|(read, held)| !read.pass && !**held)
+        .find(|(read, held)| !read.pass && !read.carried && !**held)
         .map(|(read, _)| read)
     else {
         return Ok(None);
@@ -803,6 +875,7 @@ mod tests {
             agent: agent.into(),
             named: true,
             left_out: false,
+            carried: false,
             pass,
             head: head.into(),
             base: base.map(Into::into),
@@ -832,6 +905,7 @@ mod tests {
             named,
             earlier: &[],
             left_out: &[],
+            carried: &[],
         }
     }
 

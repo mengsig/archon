@@ -1,6 +1,7 @@
 //! `[models] effort_sizing = false` is the rollback to 1.6.3: for the same
 //! inputs the daemon issues byte for byte what 1.6.3 issued. The files under
-//! `effort_rollback/` were written by 1.6.3's code (`ARCHON_BLESS=1` there).
+//! `effort_rollback/` were written by 1.6.3's code (`ARCHON_BLESS=1` there),
+//! then re-blessed for the review-carry wording (C3), which is not effort sizing.
 use std::path::{Path, PathBuf};
 
 use crate::common::{self, Harness, MODEL, REVIEW_MODEL, choice};

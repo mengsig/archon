@@ -1089,7 +1089,7 @@ pub(super) async fn retry(
         true => Some(reserve_fresh(ctx, fresh_repo(&env, &spec)?, id).await?),
         false => None,
     };
-    let (item, fresh_note) = {
+    let (item, fresh_note, continued) = {
         let _table = ctx.runs.lock().await;
         let loaded = ctx.store.lock().await.item(id)?;
         check_retryable(&*ctx.store.lock().await, &loaded)?;
@@ -1104,9 +1104,8 @@ pub(super) async fn retry(
             item.model_reasons = retry.model_reasons;
         }
         spec.drop_retired_ship(&mut item.model_plan, item.model_reasons.as_mut());
-        if let Some(text) = &retry.brief_append {
-            item.amend_brief(text, archon_core::now())?;
-        }
+        let append = retry.brief_append.as_deref();
+        let continued = amend_retry(&*ctx.store.lock().await, &mut item, retry.fresh, append)?;
         // Git runs under the run table on purpose, so run starts and gc passes wait for this one
         // move; without it a gc pass could remove the worktree mid-move, or a second retry move it.
         let fresh = match &reserved {
@@ -1119,18 +1118,51 @@ pub(super) async fn retry(
             Some(kept) => error.with_detail(&format!("the retry was not queued, but: {kept}")),
             None => error,
         })?;
-        (queued, fresh.map(|f| f.note))
+        (queued, fresh.map(|f| f.note), continued)
     };
     // Queued under the table: dispatch starts it once the mark goes.
     drop(reserved);
     if let Some(note) = &fresh_note {
         post_note(ctx, id, note).await;
     }
+    if continued {
+        post_note(ctx, id, CONTINUED_NOTE).await;
+    }
     if let Some(text) = &retry.brief_append {
         note_amendment(ctx, id, text, "retry_item").await;
     }
     ctx.dispatch.notify_one();
     Ok(Reply::Item(item))
+}
+
+const CONTINUED_NOTE: &str = "The retry continues the capped review: its brief repeats the \
+    escalation, and earlier runs' reviews of the branch still count";
+
+/// Add a retry's amendments to `item`'s brief: unless the retry is `fresh`, the continuation
+/// of a review the round cap stopped, then `append`. Whether a continuation was added.
+fn amend_retry(
+    store: &archon_queue::Store,
+    item: &mut QueueItem,
+    fresh: bool,
+    append: Option<&str>,
+) -> Result<bool, ArchonError> {
+    assert!(item.state.is_terminal(), "only a finished item is retried");
+    // A fresh retry starts over on a new branch, and owes the whole review again.
+    let continued = match fresh {
+        true => None,
+        false => executor::capped_continuation(store, item)?,
+    };
+    let before = item.brief.len();
+    for text in continued.iter().map(String::as_str).chain(append) {
+        item.amend_brief(text, archon_core::now())?;
+    }
+    let amended = continued.is_some() || append.is_some();
+    assert_eq!(
+        amended,
+        item.brief.len() > before,
+        "each amendment adds to the brief"
+    );
+    Ok(continued.is_some())
 }
 
 /// A finished item whose restack fix, which works on its branch, is not

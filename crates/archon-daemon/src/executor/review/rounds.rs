@@ -12,7 +12,8 @@ use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::id::StageRunId;
 use archon_core::ports::{Descendant, DescendantState};
-use archon_core::run::{StageOutcome, StageRun, review_tally_key};
+use archon_core::queue::{QueueItem, QueueState};
+use archon_core::run::{RunState, StageOutcome, StageRun, review_tally_key};
 use archon_pipeline::contract::REVIEW_ROUND_CAP;
 use archon_pipeline::review::Verdict;
 use serde::{Deserialize, Serialize};
@@ -22,6 +23,12 @@ use crate::context::DaemonContext;
 
 /// Finding lines an escalation lists before it points to the reviewers' results.
 const MAX_LISTED: usize = 20;
+
+/// The words that mark a stage the round cap stopped, in its escalation.
+const CAP_STOP: &str = "so Archon stopped it instead of another round";
+
+/// How much of the cap's escalation a continuing run's brief repeats.
+const ESCALATION_CHARS: usize = 2400;
 
 /// A stage whose review failed [`REVIEW_ROUND_CAP`] rounds: archond stops it,
 /// or settles its completion, with `reason`, an `ESCALATE:` failure that ends its run.
@@ -388,6 +395,8 @@ fn rounds_of(fails: &[Fail]) -> usize {
 /// open, and those only earlier rounds listed, which its reviewers verified.
 #[derive(Debug, PartialEq, Eq)]
 struct Open<'a> {
+    /// The head the last round's reviewers failed.
+    head: &'a str,
     latest: Vec<&'a str>,
     earlier: Vec<&'a str>,
     /// The reviewers whose results hold every finding in full.
@@ -398,6 +407,7 @@ impl<'a> Open<'a> {
     fn of(fails: &'a [Fail]) -> Self {
         let Some(last) = fails.last() else {
             return Self {
+                head: "",
                 latest: Vec::new(),
                 earlier: Vec::new(),
                 reviewers: Vec::new(),
@@ -417,6 +427,7 @@ impl<'a> Open<'a> {
             "each finding listed once"
         );
         Self {
+            head: &last.head,
             latest,
             earlier,
             reviewers,
@@ -457,17 +468,86 @@ fn escalation(stage: &StageRun, rounds: usize, open: &Open) -> String {
             listed(lines, room)
         ),
     };
+    assert!(!open.head.is_empty(), "the last round failed a head");
     format!(
-        "{} the review of stage `{}` (attempt {}) failed {rounds} rounds, each a commit a \
-         reviewer failed with a blocking finding, so Archon stopped it instead of another \
-         round. {latest}{earlier} The reviewers' results ({}) hold every finding in full. \
-         Reshape the work, settle the disputed point in the brief, or retry the item with a \
-         steer note.",
+        "{} the review of stage `{}` (attempt {}) failed {rounds} rounds, the last at head \
+         `{}`, each a commit a reviewer failed with a blocking finding, {CAP_STOP}. \
+         {latest}{earlier} The reviewers' results ({}) hold every finding in full. You \
+         decide: continue with `retry_item` (not `fresh`), whose new lead fixes the open \
+         findings and delta-reviews only the commits after this head, since earlier reviews \
+         still count; accept this head with `retry_item` and a `brief_append` that moves the \
+         open findings to follow-ups; or stop with `cancel_item`.",
         StageOutcome::ESCALATE_PREFIX,
         stage.stage_id,
         stage.attempt,
+        open.head,
         open.reviewers.join(", ")
     )
+}
+
+/// The note a non-fresh retry of `item` adds to its brief when its last run stopped at the
+/// review-round cap: the escalation, its head, and that earlier reviews still count.
+pub(crate) fn capped_continuation(
+    store: &archon_queue::Store,
+    item: &QueueItem,
+) -> Result<Option<String>, ArchonError> {
+    let QueueState::Failed {
+        run: Some(run),
+        error,
+    } = &item.state
+    else {
+        return Ok(None);
+    };
+    if !error.contains(CAP_STOP) {
+        return Ok(None);
+    }
+    let failed = store.run(run)?;
+    assert_eq!(failed.item, item.id, "the item's own run");
+    let RunState::Failed { stage_id, .. } = &failed.state else {
+        return Err(ArchonError::Corrupt(format!(
+            "item {} failed with run {run}, which did not fail",
+            item.id
+        )));
+    };
+    let capped = store
+        .stage_runs(run)?
+        .into_iter()
+        .filter(|s| s.stage_id == *stage_id)
+        .max_by_key(|s| s.attempt);
+    let head = match &capped {
+        Some(stage) => last_failed_head(store, &stage.id)?,
+        None => None,
+    };
+    let head = head.map_or("the last head it names".to_owned(), |h| format!("`{h}`"));
+    Ok(Some(format!(
+        "This run continues stage `{stage_id}` after its review reached the round cap. \
+         Aether cannot resume the lead that escalated, so a new lead takes over its branch. \
+         Its escalation: {}\nThe escalated head is {head}. Earlier runs' reviews of this \
+         branch still count: fix what is open, then delegate one delta reviewer whose base \
+         is that head, and give it the open findings to verify. Do not re-review or re-read \
+         the whole change.",
+        crate::executor::clip(error.trim(), ESCALATION_CHARS)
+    )))
+}
+
+/// The head of the last blocking fail `stage`'s tally counted, if it kept one.
+fn last_failed_head(
+    store: &archon_queue::Store,
+    stage: &StageRunId,
+) -> Result<Option<String>, ArchonError> {
+    let key = review_tally_key(stage);
+    let Some(raw) = store.kv_get(&key)? else {
+        tracing::warn!(%stage, "a capped stage kept no round tally; its head is not repeated");
+        return Ok(None);
+    };
+    let tally: Tally = serde_json::from_str(&raw)
+        .map_err(|e| ArchonError::Corrupt(format!("kv {key} = {raw:?}: {e}")))?;
+    let head = tally.fails.last().map(|f| f.head.clone());
+    assert!(
+        head.as_ref().is_none_or(|h| !h.is_empty()),
+        "a counted fail names its head"
+    );
+    Ok(head)
 }
 
 /// Up to `room` of `lines` joined, saying how many more there are.

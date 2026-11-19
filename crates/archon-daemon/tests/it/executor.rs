@@ -3988,6 +3988,58 @@ async fn the_third_failing_review_round_stops_the_stage_and_escalates() {
         panic!("an escalation ends the run");
     };
     assert!(error.contains("failed 3 rounds"), "{error}");
+    let error = error.split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        "the last at head `0000003abcdef`",
+        "continue with `retry_item` (not `fresh`)",
+        "delta-reviews only the commits after this head, since earlier reviews still count",
+        "accept this head with `retry_item` and a `brief_append` that moves the open findings to follow-ups",
+        "or stop with `cancel_item`",
+    ] {
+        assert!(error.contains(said), "missing {said:?} in {error}");
+    }
+}
+
+/// A retry after the cap continues: the new lead's brief repeats the escalation and
+/// its head, and says earlier reviews count. A fresh retry starts over without it.
+#[tokio::test]
+async fn a_retry_after_the_review_cap_tells_the_new_lead_to_review_only_new_commits() {
+    for fresh in [false, true] {
+        let h = Harness::new().await;
+        let item = adaptive_item(&h).await;
+        let lead = h.running().await.remove(0);
+        for n in 1..=3 {
+            review_round_fails(&h, &lead, n).await;
+        }
+        assert!(escalated(&h, &lead).await.is_some(), "the cap stopped it");
+        h.dispatch().await;
+        let retry = Request::RetryItem {
+            item: item.id.clone(),
+            model_plan: None,
+            model_reasons: None,
+            fresh,
+            brief_append: None,
+            stage_timeouts: Default::default(),
+        };
+        h.cli(retry).await.expect("retry");
+        let brief = h.ctx.store.lock().await.item(&item.id).unwrap().brief;
+        let brief = brief.split_whitespace().collect::<Vec<_>>().join(" ");
+        let continued = [
+            "Aether cannot resume the lead that escalated, so a new lead takes over its branch",
+            "Its escalation: stage build: ESCALATE: the review of stage `build`",
+            "The escalated head is `0000003abcdef`",
+            "Earlier runs' reviews of this branch still count",
+            "delegate one delta reviewer whose base is that head",
+            "Do not re-review or re-read the whole change",
+        ];
+        for said in continued {
+            assert_eq!(
+                brief.contains(said),
+                !fresh,
+                "{said:?} (fresh: {fresh}) in {brief}"
+            );
+        }
+    }
 }
 
 /// An earlier archond read a `changes_requested` fail as no verdict and kept

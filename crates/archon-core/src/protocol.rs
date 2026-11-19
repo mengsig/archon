@@ -1518,6 +1518,10 @@ pub struct DaemonStatus {
     pub started_at: Timestamp,
     pub aether: AetherLinkStatus,
     pub orchestrator: Option<OrchestratorInfo>,
+    /// Why an unfinished upgrade refresh has not happened, when `orchestrator`
+    /// cannot say: none is recorded, or its creation is not. `None` from an older archond.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orchestrator_refresh_delayed: Option<String>,
     pub caps: Caps,
     pub pause: PauseState,
     pub running_agents: u32,
@@ -1875,8 +1879,8 @@ pub struct OrchestratorInfo {
 }
 
 impl OrchestratorInfo {
-    /// `generation 7, created by 1.2.3; 3 new lessons; prompt outdated since
-    /// upgrade; run ...`, as `status`, `doctor` and `queue_status` show it.
+    /// `generation 7, created by 1.2.3; prompt outdated; 3 new lessons`, as
+    /// `status`, `doctor` and `queue_status` show it.
     pub fn describe_freshness(&self) -> String {
         let Some(fresh) = &self.freshness else {
             return format!(
@@ -1893,12 +1897,7 @@ impl OrchestratorInfo {
             "generation {}, created by {}",
             self.generation, fresh.created_by
         );
-        if fresh.prompt_outdated.is_none() {
-            line.push_str("; prompt unknown (the instructions file cannot be read)");
-        }
-        if fresh.tools_outdated {
-            line.push_str("; tools outdated");
-        }
+        line.push_str(&fresh.describe_outdated());
         if let Some(drift) = &fresh.settings_drift {
             let _ = write!(
                 line,
@@ -1912,9 +1911,6 @@ impl OrchestratorInfo {
             n => {
                 let _ = write!(line, "; {n} new lessons");
             }
-        }
-        if fresh.prompt_outdated == Some(true) {
-            line.push_str(fresh.prompt_restart_hint(env!("CARGO_PKG_VERSION")));
         }
         if !fresh.is_stale() {
             line.push_str("; up to date");
@@ -1940,6 +1936,10 @@ pub struct OrchestratorFreshness {
     /// ones it was created with; `None` when they match or were not recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settings_drift: Option<SettingsDrift>,
+    /// Why the fresh generation an upgrade owes it has not started yet;
+    /// `None` when none is owed, or `refresh_on_upgrade` is off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_delayed: Option<String>,
 }
 
 /// Model and effort as `provider/model effort`.
@@ -1950,17 +1950,29 @@ pub struct SettingsDrift {
 }
 
 impl OrchestratorFreshness {
-    /// What the status line says of an outdated prompt, last: nothing acts on
-    /// it, so the operator is told how. `running` is this build's version, and
-    /// another one in `created_by` means an upgrade outdated it.
-    fn prompt_restart_hint(&self, running: &str) -> &'static str {
-        assert!(!running.is_empty(), "this build has a version");
-        assert_eq!(self.prompt_outdated, Some(true), "only an outdated prompt");
-        if self.created_by == running {
-            "; prompt outdated; run `archon orchestrator restart`"
-        } else {
-            "; prompt outdated since upgrade; run `archon orchestrator restart`"
+    /// The prompt and tools part of the status line. A refresh Archon owes
+    /// and will make itself is shown as delayed, with why, not as outdated.
+    fn describe_outdated(&self) -> String {
+        let prompt = self.prompt_outdated == Some(true);
+        let mut line = String::new();
+        if let Some(reason) = &self.refresh_delayed {
+            let what = match (prompt, self.tools_outdated) {
+                (true, true) => " (prompt and tools)",
+                (true, false) => " (prompt)",
+                (false, true) => " (tools)",
+                (false, false) => "",
+            };
+            let _ = write!(line, "; upgrade refresh{what} delayed: {reason}");
+        } else if prompt {
+            line.push_str("; prompt outdated");
         }
+        if self.prompt_outdated.is_none() {
+            line.push_str("; prompt unknown (the instructions file cannot be read)");
+        }
+        if self.tools_outdated && self.refresh_delayed.is_none() {
+            line.push_str("; tools outdated");
+        }
+        line
     }
 
     /// Whether a restart is owed, or may be when the prompt is unknown.
@@ -1969,6 +1981,7 @@ impl OrchestratorFreshness {
             || self.tools_outdated
             || self.new_lessons > 0
             || self.settings_drift.is_some()
+            || self.refresh_delayed.is_some()
     }
 }
 
@@ -2452,39 +2465,44 @@ mod tests {
     use super::*;
     use crate::github::OperatorUsers;
 
-    /// Nothing replaces an outdated generation by itself: the line names the
-    /// upgrade when another version created it, and the restart either way.
+    /// A refresh Archon owes and will make itself is shown as delayed, with
+    /// why: "prompt outdated" is only said when the operator must restart.
     #[test]
-    fn an_outdated_prompt_is_described_last_with_the_restart_that_fixes_it() {
-        let info = |created_by: &str, prompt_outdated: bool| -> OrchestratorInfo {
+    fn an_owed_refresh_is_described_as_delayed_with_its_reason() {
+        let info = |freshness: serde_json::Value| -> OrchestratorInfo {
             serde_json::from_value(serde_json::json!({
                 "agent": "agt_01M52R3JSXYHJJA0AZX2B6MCD7", "model": "claude-code/opus",
                 "effort": "high", "status": "ready", "restarts": 0, "generation": 7,
-                "freshness": {
-                    "created_by": created_by, "prompt_outdated": prompt_outdated,
-                    "tools_outdated": true, "new_lessons": 2,
-                },
+                "freshness": freshness,
             }))
             .unwrap()
         };
+        let outdated = serde_json::json!({
+            "created_by": "1.6.3", "prompt_outdated": true, "tools_outdated": true,
+            "new_lessons": 0,
+        });
+        let unowed = info(outdated.clone());
+        assert_eq!(unowed.freshness.as_ref().unwrap().refresh_delayed, None);
         assert_eq!(
-            info("0.0.1", true).describe_freshness(),
-            "generation 7, created by 0.0.1; tools outdated; 2 new lessons; prompt outdated \
-             since upgrade; run `archon orchestrator restart`"
+            unowed.describe_freshness(),
+            "generation 7, created by 1.6.3; prompt outdated; tools outdated"
         );
-        let running = env!("CARGO_PKG_VERSION");
+        let mut delayed = outdated;
+        delayed["refresh_delayed"] = "2 attempts failed, the last with: busy".into();
+        let owed = info(delayed.clone());
         assert_eq!(
-            info(running, true).describe_freshness(),
-            format!(
-                "generation 7, created by {running}; tools outdated; 2 new lessons; prompt \
-                 outdated; run `archon orchestrator restart`"
-            ),
-            "an edited instructions file is no upgrade"
+            owed.describe_freshness(),
+            "generation 7, created by 1.6.3; upgrade refresh (prompt and tools) delayed: \
+             2 attempts failed, the last with: busy"
         );
-        let current = info("0.0.1", false).describe_freshness();
-        assert_eq!(
-            current,
-            "generation 7, created by 0.0.1; tools outdated; 2 new lessons"
+        assert!(owed.freshness.as_ref().unwrap().is_stale());
+        delayed["prompt_outdated"] = false.into();
+        delayed["tools_outdated"] = false.into();
+        let unfinished = info(delayed).describe_freshness();
+        assert!(
+            unfinished
+                .ends_with("; upgrade refresh delayed: 2 attempts failed, the last with: busy"),
+            "{unfinished}"
         );
     }
 

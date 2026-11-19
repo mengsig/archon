@@ -65,6 +65,32 @@
 - An initiative member's plan is checked as an enqueue's is: an effort above
   its stage's default needs a reason, given in the member's new
   `model_reasons`.
+- **The orchestrator costs less to keep.** A stage's `info` message no
+  longer wakes it: it rides with the next wake, or wakes it by itself after
+  30 minutes plus the coalescing window (`trigger_coalesce_ms`), while relay,
+  escalation and question still wake it as before (`[orchestrator]
+  quiet_info`, default true). A backlog too large for one trigger goes out
+  in several, in order. The orchestrator compacts at `[orchestrator]
+  compaction_tokens` (default 160,000, at most 200,000) when the
+  connected Aether announces the `compaction_tokens` feature (Aether 1.4.2);
+  Aether 1.4.1 keeps the model's threshold and is sent nothing new. The
+  threshold applies to generations created from then on. Idle for
+  `idle_compact_after_minutes` (default 50) with more than half that in
+  context, it is compacted once before its prompt cache expires. After an
+  upgrade that changes its prompt or tools, a fresh generation replaces it
+  at its next quiet idle moment, retried every ten minutes while it fails
+  and announced in the feed after three failures
+  (`[orchestrator] refresh_on_upgrade`, default true). Until then `archon
+  status` shows `upgrade refresh delayed` with the reason in place of
+  `prompt outdated`, also while no successor could be started. News held
+  for the orchestrator is kept, not dropped, while Aether refuses to create
+  it. The prompt now has long
+  multi-step work, such as report pages and statistics, queued as items.
+  Nothing migrates. The rollback is the switches: `quiet_info = false`,
+  `compaction_tokens = 0`, `idle_compact_after_minutes = 0` and
+  `refresh_on_upgrade = false`; a threshold already sent stays with that
+  generation until `archon orchestrator restart`. An older binary is not
+  supported on a store a newer release migrated.
 
 ### Fixed
 

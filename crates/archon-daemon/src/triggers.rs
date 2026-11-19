@@ -1158,8 +1158,8 @@ async fn attempt(
     let orchestrator = supervisor::ensure_orchestrator(ctx)
         .await
         .map_err(not_started)?;
-    // Held while the trigger is submitted, so no switch and no idle
-    // compaction comes between this check and Aether accepting the trigger.
+    // Held while the trigger is submitted, so a refresh never replaces the
+    // agent between this check and Aether accepting the trigger.
     let _steady = supervisor::steady(ctx).await;
     if supervisor::current_orchestrator(ctx).await?.as_ref() != Some(&orchestrator) {
         return Err(ArchonError::Unavailable(format!(

@@ -15,8 +15,8 @@ use archon_core::error::ArchonError;
 use archon_core::model::{Effort, ModelChoice};
 use archon_core::policy::ModelPolicy;
 use archon_core::ports::{
-    AgentBackend, AgentUpdate, CostBilling, DescendantState, NetworkPolicy, RunNodeRequest,
-    SpawnRequest,
+    AgentBackend, AgentUpdate, CheckedOn, CostBilling, DescendantState, NetworkPolicy,
+    RunNodeRequest, SpawnRequest,
 };
 use archon_core::run::StageOutcome;
 use common::{AGENT, RUN, TASK, WAIT, completed, connect};
@@ -248,6 +248,58 @@ async fn a_request_without_a_persisted_network_states_aethers_default() {
     let create = &fake.received_named("create_agent")[0];
     assert_eq!(create["scope"]["network"], "denied");
     assert_eq!(fake.received_named("status").len(), 1);
+}
+
+/// A create checked on one connection is sent on that one only: after a
+/// reconnect it is refused before any frame, and nothing but the create is
+/// awaited, a legacy request stating the default read before its check.
+#[tokio::test]
+async fn a_checked_create_goes_out_only_on_its_connection() {
+    let (_dir, fake) = fake_aether().await;
+    fake.set_default(
+        "create_agent",
+        Scripted::reply("agent", fake::agent(AGENT, Some(TASK))),
+    );
+    let task = fake::task(TASK, Some(AGENT), RUN, json!({"state": "assigned"}));
+    fake.set_default("get_task", Scripted::reply("task", task));
+    let link = Arc::new(AetherLink::new());
+    link.replace(Some(Arc::new(connect(&fake).await))).unwrap();
+    let stale = link.generation().unwrap();
+    link.replace(Some(Arc::new(connect(&fake).await))).unwrap();
+    let backend = AetherBackend::new(Arc::clone(&link), any_model());
+    let on = |connection| CheckedOn {
+        connection,
+        network_default: NetworkPolicy::Allowed,
+        aliases: Default::default(),
+    };
+    let legacy = || SpawnRequest {
+        aether_cost_budget: Some(true),
+        network: None,
+        ..spawn_request()
+    };
+
+    let refused = backend.spawn_on(legacy(), on(stale)).await;
+    assert!(
+        matches!(refused, Err(ArchonError::Unavailable(_))),
+        "{refused:?}"
+    );
+    let current = on(link.generation().unwrap());
+    let unpriced = backend.spawn_on(spawn_request(), current.clone()).await;
+    assert!(
+        matches!(unpriced, Err(ArchonError::Invalid(_))),
+        "{unpriced:?}"
+    );
+    assert!(
+        fake.received_named("create_agent").is_empty(),
+        "no frame sent"
+    );
+
+    backend.spawn_on(legacy(), current).await.unwrap();
+    let creates = fake.received_named("create_agent");
+    assert_eq!(creates.len(), 1);
+    assert_eq!(creates[0]["scope"]["network"], "allowed");
+    let asked = ["status", "list_models", "providers"].map(|c| fake.received_named(c).len());
+    assert_eq!(asked, [0, 0, 0], "nothing awaited after a check");
 }
 
 #[tokio::test]
@@ -772,6 +824,40 @@ async fn a_resumed_agent_that_failed_keeps_its_error() {
     );
 }
 
+/// A node request frozen before generations were labelled shares its labels
+/// with its run's earlier nodes: only the create that landed is its own.
+#[tokio::test]
+async fn a_legacy_node_lookup_leaves_out_the_runs_earlier_nodes() {
+    let (_dir, fake) = fake_aether().await;
+    let request = node_request();
+    let node = |id: &str, state: &str| {
+        let mut agent = fake::agent(id, None);
+        agent["role"] = json!(request.role);
+        agent["scope"] = json!({"labels": request.labels});
+        agent["status"] = json!({"state": state});
+        agent
+    };
+    let (dead, landed) = (node(NODE, "cancelled"), node(AGENT, "ready"));
+    let backend = backend(&fake, any_model()).await;
+    let earlier = [AetherAgentId::parse(NODE).unwrap()];
+
+    fake.script("list_agents", Scripted::reply("agents", json!([dead])));
+    let unsent = backend.find_run_node(&request, &earlier).await.unwrap();
+    assert_eq!(unsent, None, "the earlier node is not this create's");
+
+    let both = json!([dead, landed]);
+    fake.script("list_agents", Scripted::reply("agents", both.clone()));
+    let found = backend.find_run_node(&request, &earlier).await.unwrap();
+    assert_eq!(found.unwrap().agent.as_str(), AGENT);
+
+    fake.script("list_agents", Scripted::reply("agents", both));
+    let ambiguous = backend.find_run_node(&request, &[]).await;
+    assert!(
+        matches!(ambiguous, Err(ArchonError::Unavailable(_))),
+        "{ambiguous:?}"
+    );
+}
+
 /// The stop of a lead's helpers waits on this: the whole run is read once,
 /// archived agents included, and only what sits beneath the agent is returned.
 #[tokio::test]
@@ -1016,6 +1102,37 @@ async fn list_models_reads_aethers_nested_model_ref() {
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].model.to_string(), "claude-code/claude-opus-5-5");
     assert!(listed[0].configured && listed[0].is_default);
+}
+
+#[tokio::test]
+async fn catalog_metadata_and_legacy_models_decode() {
+    let (_dir, fake) = fake_aether().await;
+    fake.script(
+        "list_models",
+        Scripted::reply(
+            "models",
+            json!([
+                {"model": "codex/gpt-6.1-sol", "configured": true, "superseded_by": "gpt-6.2-sol"},
+                {"model": "codex/gpt-6.2-sol", "configured": true}
+            ]),
+        ),
+    );
+    fake.script(
+        "list_retired_models",
+        Scripted::reply(
+            "retired_models",
+            json!([
+                {"model": "codex/gpt-6-sol", "successor": "codex/gpt-6.2-sol"}
+            ]),
+        ),
+    );
+    let client = connect(&fake).await;
+    let models = client.list_models().await.unwrap();
+    assert_eq!(models[0].superseded_by.as_ref().unwrap(), "gpt-6.2-sol");
+    assert!(models[1].superseded_by.is_none());
+    let retired = client.list_retired_models().await.unwrap();
+    assert_eq!(retired[0].model.to_string(), "codex/gpt-6-sol");
+    assert_eq!(retired[0].successor.as_ref().unwrap(), "codex/gpt-6.2-sol");
 }
 
 /// `archive` names one agent and reads the `agents` it moved: that agent,

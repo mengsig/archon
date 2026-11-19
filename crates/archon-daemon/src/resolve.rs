@@ -79,11 +79,23 @@ impl RepoEnv {
     }
 
     /// The global policy narrowed by the repository's `[models]`.
-    pub fn policy(&self, config: &Config) -> ModelPolicy {
+    pub fn resolved_policy(&self, ctx: &DaemonContext) -> ModelPolicy {
+        self.policy_in(&ctx.config, &ctx.aether.aliases())
+    }
+
+    pub fn policy_in(
+        &self,
+        config: &Config,
+        aliases: &std::collections::BTreeMap<
+            archon_core::model::ModelRef,
+            archon_core::model::ModelRef,
+        >,
+    ) -> ModelPolicy {
         config
             .models
             .policy()
-            .narrowed_by(&self.config.models.policy_overlay())
+            .canonicalized(aliases)
+            .narrowed_by(&self.config.models.policy_overlay().canonicalized(aliases))
     }
 
     /// The provider weights routing this repository's tier-only choices;

@@ -211,6 +211,18 @@ impl ModelChoice {
         }
     }
 
+    /// Follow a plan entry moved from `was` to `now`: a copy still on `was`'s
+    /// model takes `now`'s, and its tier too unless the copy set its own.
+    pub fn follow(&mut self, was: &ModelChoice, now: &ModelChoice) {
+        if self.model != was.model {
+            return;
+        }
+        if self.tier == was.tier {
+            self.tier = now.tier.clone();
+        }
+        self.model = now.model.clone();
+    }
+
     /// The model and effort alone, as evidence and Aether compare them.
     pub fn without_tier(&self) -> Self {
         Self::pinned(self.model.clone(), self.effort)

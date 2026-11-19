@@ -945,6 +945,20 @@ async fn a_refresh_takes_the_plan_and_stage_timeouts_it_is_given() {
         refused.contains("stage_timeouts names stage \"ship_it\""),
         "{refused}"
     );
+    let unknown = Request::RefreshItem {
+        item: owner.id.clone(),
+        model_plan: Some(
+            serde_json::from_value(json!({
+                "implement": [{"model": "codex/gpt-6.1-astra"}]
+            }))
+            .unwrap(),
+        ),
+        model_reasons: None,
+        stage_timeouts: Default::default(),
+    };
+    let refusal = h.orchestrator(unknown).await.unwrap_err().to_string();
+    assert!(refusal.contains("codex/gpt-6.1-astra"), "{refusal}");
+    assert!(refusal.contains("nearest"), "{refusal}");
     let two = [("medium", REVIEW_MODEL), ("low", REVIEW_MODEL)]
         .map(|(effort, model)| json!({"model": model, "effort": effort}));
     let too_many = Request::RefreshItem {
@@ -1430,6 +1444,80 @@ async fn a_refresh_with_nothing_to_merge_ends_at_once() {
     let runs = h.ctx.store.lock().await.runs_for_item(&fix.id).unwrap();
     assert!(runs.is_empty(), "no run started: {runs:?}");
     assert!(h.running().await.is_empty(), "no agent");
+}
+
+/// A refresh whose pipelines no longer load still has nothing to merge once
+/// its branch took the base in: it ends at once, as before the model catalog.
+#[tokio::test]
+async fn a_refresh_with_nothing_to_merge_ends_though_its_pipelines_no_longer_load() {
+    let (h, _gh) = delivering().await;
+    let (owner, run) = shipped(&h, "the change").await;
+    let upstream = advance_origin(&h, "upstream.txt", "elsewhere\n");
+    let fix = refresh(&h, &owner).await.expect("queued");
+    let merging = ["merge", "--quiet", "--no-edit", upstream.as_str()];
+    on_branch(&h, &run.branch, |tree| {
+        git(tree, &merging);
+    });
+    let broken = h.repo.join(".archon/pipelines").join(&fix.pipeline);
+    std::fs::create_dir_all(&broken).unwrap();
+    std::fs::write(broken.join("pipeline.toml"), "not a pipeline").unwrap();
+
+    h.dispatch().await;
+    let reason = match h.state(&fix.id).await {
+        QueueState::Cancelled {
+            reason: Some(reason),
+        } => reason,
+        other => panic!("the refresh ends: {other:?}"),
+    };
+    assert!(reason.starts_with("nothing to merge"), "{reason}");
+    assert!(h.running().await.is_empty(), "no agent");
+}
+
+/// Aether stops answering `list_models` and archond drops its catalog.
+pub(crate) async fn catalog_outage(h: &Harness) {
+    h.catalog_server.set_default(
+        "list_models",
+        archon_aether::fake::Scripted::refuse("internal", "catalog unavailable"),
+    );
+    h.ctx
+        .store
+        .lock()
+        .await
+        .invalidate_model_catalog("catalog unavailable".into());
+}
+
+/// Aether answers again; the next pass must read a fresh catalog itself.
+pub(crate) fn catalog_back(h: &Harness) {
+    common::catalog::answer(&h.catalog_server, &common::catalog::default_models());
+}
+
+#[tokio::test]
+async fn a_refresh_item_waits_through_a_catalog_outage_with_no_attempt() {
+    let (h, _gh) = delivering().await;
+    let (owner, _) = shipped(&h, "the change").await;
+    advance_origin(&h, "change.txt", "upstream wording\n");
+    let fix = refresh(&h, &owner).await.expect("queued");
+    let created = h.backend.created();
+
+    catalog_outage(&h).await;
+    h.dispatch().await;
+    h.dispatch().await;
+    assert_eq!(h.state(&fix.id).await, QueueState::Queued);
+    assert_eq!(h.backend.created(), created, "no attempt during the outage");
+    assert!(
+        h.ctx
+            .store
+            .lock()
+            .await
+            .runs_for_item(&fix.id)
+            .unwrap()
+            .is_empty()
+    );
+
+    catalog_back(&h);
+    h.dispatch().await;
+    assert!(h.state(&fix.id).await.is_active());
+    assert_eq!(h.backend.created(), created + 1);
 }
 
 /// A refresh is a lead of its own: it is issued the effort rule in force as

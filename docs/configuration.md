@@ -891,7 +891,10 @@ and `codex/gpt-6-luna`. The orchestrator's own model is the one model you
 set, because it must be known before any agent runs. To use Codex alone,
 set `[orchestrator] model` to an available `codex/…` entry before starting
 Archon. If you do set `[models] allow`, include the orchestrator's model as
-well as every model the stages may use.
+well as every model the stages may use. Archon checks the orchestrator's
+model against the allowlist by its canonical id once Aether's catalog
+resolves it; a model outside it is refused with a blocker, and no
+orchestrator starts.
 
 ```toml
 [orchestrator]

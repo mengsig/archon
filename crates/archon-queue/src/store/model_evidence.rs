@@ -103,7 +103,7 @@ pub(super) fn read(
     while let Some(row) = rows.next().ctx("read model evidence")? {
         let attempt = attempt(row)?;
         // A failed engine login says nothing of the model: it is no attempt.
-        if !attempt.stage.failed_on_engine_login() {
+        if !attempt.stage.failed_on_engine_login() && !attempt.stage.zero_cost_create_refusal() {
             attempts.push(attempt);
         }
     }

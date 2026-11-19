@@ -49,7 +49,7 @@ pub(crate) fn check_budget_models(
         let why = contract::governed_review_refusal(
             Some(named),
             &named[0].model,
-            &env.policy(&ctx.config),
+            &env.resolved_policy(ctx),
             (&ctx.config.review, &catalog),
         );
         if let Some(why) = why {

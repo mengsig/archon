@@ -970,6 +970,7 @@ async fn connected_aether(h: &Harness, features: &[&str]) -> FakeAether {
     let fake = FakeAether::start(&h.dir.path().join("aetherd.sock"))
         .await
         .expect("fake aetherd binds");
+    common::catalog::answer(&fake, &common::catalog::default_models());
     fake.set_features(features.iter().map(|f| (*f).to_owned()).collect());
     let client = AetherClient::connect(&fake.endpoint())
         .await

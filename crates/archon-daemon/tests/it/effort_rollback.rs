@@ -1,6 +1,9 @@
 //! `[models] effort_sizing = false` is the rollback to 1.6.3: for the same
 //! inputs the daemon issues byte for byte what 1.6.3 issued. The files under
 //! `effort_rollback/` were written by 1.6.3's code (`ARCHON_BLESS=1` there).
+//! One input differs since: dispatch holds an item while the catalog lists no
+//! model, so the harness lists some, and the contracts' worker line reads as
+//! 1.6.3 worded it for such a catalog ("places none of", not "is empty").
 use std::path::{Path, PathBuf};
 
 use crate::common::{self, Harness, MODEL, REVIEW_MODEL, choice};
@@ -17,6 +20,8 @@ fn rolled_back() -> Config {
     let mut config = Config::default();
     config.review.auto_repair = false;
     config.models.effort_sizing = Some(false);
+    // The harness's catalog lists models an exploring fill would pick among.
+    config.learning.explore_rate = 0.0;
     config
 }
 

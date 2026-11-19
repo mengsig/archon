@@ -1183,6 +1183,9 @@ pub struct ModelSegment {
 /// why it refused the review pass the result claims.
 pub const REVIEW_REFUSED_KEY: &str = "unverified";
 
+/// How a team slot refused before any agent, its role's worktree unprepared, starts.
+pub const ROLE_WORKTREE_FAILED: &str = "preparing the role's worktree failed:";
+
 /// The headline a gate fails a stage with when the review its pipeline
 /// declares is not on record, e.g. a skip the pipeline does not allow.
 pub const REVIEW_NOT_ON_RECORD: &str = "the review this pipeline declares is not on record";
@@ -1192,6 +1195,19 @@ pub const REVIEW_NOT_ON_RECORD: &str = "the review this pipeline declares is not
 pub const STATED_FAILURE: &str = "its agent stated a failure";
 
 impl StageRun {
+    pub fn zero_cost_create_refusal(&self) -> bool {
+        self.cost_usd == 0.0
+            && self.aether_agent.is_none()
+            && matches!(&self.state, StageState::Failed { error }
+                if error.starts_with("cannot create agent:") || error.starts_with("create_agent kept failing:")
+                    || error.starts_with("create_agent failed on a full disk")
+                    || error.starts_with("workspace missing:")
+                    || error.starts_with("preparing the experiments directory failed:")
+                    || error.starts_with(ROLE_WORKTREE_FAILED)
+                    || error.strip_prefix("stage ").and_then(|s| s.strip_prefix(&self.stage_id))
+                        .is_some_and(|s| s.starts_with(" refused at spawn:")))
+    }
+
     /// Whether its agent failed on its engine's login: an infrastructure
     /// failure, never evidence about the model.
     pub fn failed_on_engine_login(&self) -> bool {

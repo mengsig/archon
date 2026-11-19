@@ -2225,6 +2225,75 @@ async fn a_reviewer_off_the_contract_s_named_models_is_cancelled() {
     assert!(reason.contains(&named), "{reason}");
 }
 
+/// The alias a contract issued before an upgrade may name for `ALLOWED`.
+const ALIAS: (&str, &str) = ("claude-code", "opus");
+
+/// The link's catalog reads `ALIAS` as `ALLOWED`, as after a catalog read.
+fn alias_allowed(harness: &Harness) {
+    let alias = ModelRef::new(ALIAS.0, ALIAS.1);
+    let canonical = ModelRef::new(ALLOWED.0, ALLOWED.1);
+    let generation = harness.ctx.aether.generation().unwrap();
+    let aliases = [(alias.clone(), canonical.clone())].into();
+    harness
+        .ctx
+        .aether
+        .install_aliases(generation, aliases)
+        .unwrap();
+    assert_eq!(harness.ctx.aether.aliases().get(&alias), Some(&canonical));
+}
+
+/// The reviewers of `STAGE` the watchdog cancelled, of one created under the
+/// contract's alias, one under its canonical id and one on another model.
+async fn alias_reviewers_cancelled(harness: &Harness) -> Vec<String> {
+    let (agents, pump) = running_pump(harness).await;
+    alias_allowed(harness);
+    harness.fake.set_default("cancel", Scripted::ok());
+    for (id, model) in [(CHILD, ALIAS), (CHILD_2, ALLOWED), (GRANDCHILD, DENIED)] {
+        let mut agent = agents.set(id, "running");
+        agent["role"] = json!("reviewer");
+        agent["config"] = json!({"effort": "medium"});
+        agents.0.lock().unwrap().insert(id.to_owned(), agent);
+        push(harness, created(id, STAGE, model), keys::CURSOR_FLEET).await;
+    }
+    pump.abort();
+    let cancels = harness.fake.received_named("cancel");
+    assert!(cancels.len() <= 3, "at most every reviewer is cancelled");
+    let agent = |cancel: &Value| cancel["agent"].as_str().unwrap().to_owned();
+    cancels.iter().map(agent).collect()
+}
+
+/// A contract issued before aliases were resolved names its reviewer by an
+/// alias: a reviewer on that model runs, whichever id Aether reports it by.
+#[tokio::test]
+async fn a_reviewer_named_by_an_alias_in_its_lead_s_contract_runs() {
+    let (harness, stage, _repo) = reviewed_stage(false, ALIAS).await;
+    link_common::issued_spawn(&harness.ctx, &stage, "contract", Some("rubric")).await;
+    let issued = harness.kv(&format!("spawn_request:{}", stage.id)).await;
+    let issued: Value = serde_json::from_str(&issued.expect("a stored spawn")).unwrap();
+    assert_eq!(issued["issued_reviewers"][0]["model"]["model"], ALIAS.1);
+    let cancelled = alias_reviewers_cancelled(&harness).await;
+    assert_eq!(cancelled, [GRANDCHILD], "only the model it never named");
+}
+
+/// The same for a lead with no reviewer plan, held to the reviewer models its
+/// sent delegation policy lists.
+#[tokio::test]
+async fn a_reviewer_exempted_by_an_alias_in_its_lead_s_policy_runs() {
+    use archon_core::delegation::{WorkerChoice, WorkerPolicy};
+    use archon_core::model_tier::Tier;
+    let harness = Harness::new().await;
+    let repo = tempfile::tempdir().unwrap();
+    let stage = running_stage(&harness.ctx, repo.path(), STAGE, STAGE_TASK).await;
+    let workers = vec![WorkerChoice::of_tier(Tier::Balanced, Effort::Medium)];
+    let policy = WorkerPolicy::new(workers, Some(Tier::Balanced), Some(2))
+        .unwrap()
+        .with_reviewers(vec![ModelRef::new(ALIAS.0, ALIAS.1)]);
+    assert_eq!(policy.exempt_models[0].model, ALIAS.1);
+    link_common::sent_policy(&harness.ctx, &stage, policy).await;
+    let cancelled = alias_reviewers_cancelled(&harness).await;
+    assert_eq!(cancelled, [GRANDCHILD], "only the model it never named");
+}
+
 /// A resumed lead whose creating spawn is gone was sent no policy Archon
 /// knows: the resuming spawn's named reviewers never reached it, so a
 /// reviewer on another model runs.
@@ -2502,4 +2571,43 @@ async fn an_orchestrator_turn_end_undoes_a_write_into_a_mirror() {
         notes.iter().any(|note| note.contains("changed README.md")),
         "{notes:?}"
     );
+}
+
+/// A catalog read that fails while a child is checked clears the link's
+/// aliases: the child's model and the policy it meets keep one read of them.
+#[tokio::test]
+async fn a_child_on_an_allowed_alias_runs_though_the_aliases_clear_mid_check() {
+    let mut config = Config::default();
+    config.models.allow = vec![ModelRef::new(ALIAS.0, ALIAS.1)];
+    let harness = Harness::with(config, None).await;
+    let repo = tempfile::tempdir().unwrap();
+    running_stage(&harness.ctx, repo.path(), STAGE, STAGE_TASK).await;
+    let (agents, pump) = running_pump(&harness).await;
+    alias_allowed(&harness);
+    harness.fake.set_default("cancel", Scripted::ok());
+    let mut agent = agents.set(CHILD, "running");
+    agent["role"] = json!("worker");
+    agent["config"] = json!({"effort": "medium"});
+    agents.0.lock().unwrap().insert(CHILD.to_owned(), agent);
+    let (link, table) = (Arc::clone(&harness.ctx.aether), agents.clone());
+    harness.fake.set_responder(
+        "get_agent",
+        Arc::new(move |cmd| {
+            let generation = link.generation().unwrap();
+            link.install_aliases(generation, Default::default())
+                .unwrap();
+            match table.get(cmd["id"].as_str().unwrap_or_default()) {
+                Some(agent) => Scripted::reply("agent", agent),
+                None => Scripted::refuse("not_found", "no such agent"),
+            }
+        }),
+    );
+    push(&harness, created(CHILD, STAGE, ALIAS), keys::CURSOR_FLEET).await;
+    pump.abort();
+
+    assert!(
+        harness.ctx.aether.aliases().is_empty(),
+        "the aliases cleared"
+    );
+    assert_eq!(cancelled(&harness), [], "the allowed child runs");
 }

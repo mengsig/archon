@@ -185,8 +185,8 @@ impl WorkerPolicy {
         let cheapest = catalog
             .models()
             .iter()
-            .filter(|m| m.tier.is_some() && policy.permits_model(&m.model))
-            .filter(|m| Some(&m.model) != lead)
+            .filter(|m| !catalog.is_retired(&m.model) && m.tier.is_some())
+            .filter(|m| policy.permits_model(&m.model) && Some(&m.model) != lead)
             .min_by_key(|m| m.tier)
             .map(|m| m.model.clone());
         let (workers, default_tier, rest) = match cheapest {
@@ -236,9 +236,14 @@ impl WorkerPolicy {
         for worker in &self.workers {
             let effort = cap(worker.effort);
             let narrowed = match (&worker.model, worker.tier) {
-                (Some(model), _) if !policy.permits_model(model) => continue,
                 (Some(model), _) => {
-                    WorkerChoice::from_plan(&ModelChoice::pinned(model.clone(), effort))
+                    let Ok(canonical) = catalog.check(model) else {
+                        continue;
+                    };
+                    if !policy.permits_model(&canonical) {
+                        continue;
+                    }
+                    WorkerChoice::from_plan(&ModelChoice::pinned(canonical, effort))
                 }
                 (None, Some(tier)) => match place_tier(tier, effort, (policy, restricted), catalog)
                 {
@@ -290,7 +295,7 @@ fn place_tier(
     (policy, restricted): (&ModelPolicy, bool),
     catalog: &ModelCatalog,
 ) -> Option<WorkerChoice> {
-    let whole = !restricted && catalog.models().iter().any(|m| m.tier == Some(tier));
+    let whole = !restricted && catalog.candidates().any(|m| m.tier == Some(tier));
     if whole {
         return Some(WorkerChoice::of_tier(tier, effort));
     }
@@ -342,6 +347,31 @@ mod tests {
             policy.describe(),
             "each worker on codex/terra at effort low or the balanced tier at effort medium, \
              at most 2 at once"
+        );
+    }
+
+    #[test]
+    fn a_fallback_worker_keeps_a_superseded_model() {
+        let entry = |model: &str| crate::model_tier::CatalogModel {
+            model: model.parse().unwrap(),
+            tier: Some(Tier::Strong),
+            is_default: false,
+        };
+        let mut catalog = ModelCatalog::new(vec![entry("p/lead"), entry("p/old"), entry("p/new")]);
+        catalog.add_superseded("p/old".parse().unwrap(), "p/new".parse().unwrap());
+        let denied = ModelPolicy::from_lists(&[], &["p/new".parse().unwrap()], None);
+        let lead: ModelRef = "p/lead".parse().unwrap();
+        let workers = vec![WorkerChoice::of_tier(Tier::Balanced, Effort::Medium)];
+        let base = WorkerPolicy::new(workers, Some(Tier::Balanced), Some(2)).unwrap();
+        let narrowed = base.fallback(&denied, (&catalog, Some(&lead)), "no balanced model");
+        let wire = serde_json::to_value(&narrowed.policy).unwrap().to_string();
+        assert!(wire.contains("\"old\""), "{wire}");
+        let open = ModelPolicy::default();
+        let narrowed = base.fallback(&open, (&catalog, Some(&lead)), "no balanced model");
+        let wire = serde_json::to_value(&narrowed.policy).unwrap().to_string();
+        assert!(
+            wire.contains("\"old\""),
+            "the cheapest listed model: {wire}"
         );
     }
 

@@ -137,7 +137,7 @@ fn assert_updates(aether: &FakeAether, subtree: bool, helper_raised: bool) {
         assert_eq!(helper["id"], HELPER);
         assert!(helper.get("subtree").is_none(), "{helper}");
         let key = helper["idempotency_key"].as_str().expect("keyed");
-        assert!(key.ends_with(&format!(":{HELPER}")), "{key}");
+        assert!(key.starts_with(&format!("limit:{HELPER}:")), "{key}");
     }
 }
 

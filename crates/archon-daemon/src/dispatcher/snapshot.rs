@@ -8,13 +8,13 @@ use archon_core::config::Config;
 use archon_core::error::ArchonError;
 use archon_core::id::{QueueItemId, RepoId};
 use archon_core::model_tier::ModelCatalog;
-use archon_core::protocol::ItemQuery;
+use archon_core::plan_origin::TierMove;
 use archon_core::queue::{Caps, QueueItem};
 use archon_core::quota::QuotaView;
 use archon_core::repo::Repo;
 use archon_pipeline::Catalog;
 use archon_queue::DispatchSnapshot;
-use archon_queue::dispatch::{PendingSpawn, QueuedCandidate};
+use archon_queue::dispatch::{ModelHold, ModelHoldKind, PendingSpawn, QueuedCandidate};
 
 use crate::context::DaemonContext;
 use crate::executor::RunTable;
@@ -29,6 +29,7 @@ pub(super) async fn build(
     table: &RunTable,
     caps: Caps,
     mut envs: Envs,
+    catalog: &ModelCatalog,
 ) -> Result<DispatchSnapshot, ArchonError> {
     let now = archon_core::now();
     let mut snapshot = {
@@ -53,7 +54,9 @@ pub(super) async fn build(
     for spawn in &snapshot.pending_spawns {
         envs.read_late(ctx, on, spawn.repo.as_ref(), false).await?;
     }
-    quota_holds(ctx, on, table, &mut snapshot, &envs).await?;
+    let items = holdable(ctx, on, &snapshot).await?;
+    model_holds(ctx, on, table, &mut snapshot, catalog, &items, &envs).await?;
+    quota_holds(ctx, table, &mut snapshot, &envs, catalog, &items)?;
     snapshot.repo_caps = envs.repo_caps();
     snapshot.repo_max_per_repo = crate::settings::mirror(ctx)
         .repos
@@ -73,25 +76,239 @@ pub(super) async fn build(
     Ok(snapshot)
 }
 
-/// Each queued candidate's and pending spawn's quota hold, from the configs
-/// and pipelines this pass read; none unless some provider is out of quota.
-async fn quota_holds(
+async fn model_holds(
     ctx: &DaemonContext,
     on: ReadOn,
     table: &RunTable,
     snapshot: &mut DispatchSnapshot,
+    catalog: &ModelCatalog,
+    items: &BTreeMap<QueueItemId, QueueItem>,
     envs: &Envs,
+) -> Result<(), ArchonError> {
+    let store = ctx.read_on(on).await?;
+    let read = ModelReads {
+        ctx,
+        store: &store,
+        catalog,
+        items,
+        envs,
+        global: RepoEnv::new(None)?,
+    };
+    for candidate in &mut snapshot.queued {
+        candidate.model_hold = read.queued(candidate)?;
+    }
+    for spawn in &mut snapshot.pending_spawns {
+        spawn.model_hold = read.pending(table, spawn)?;
+    }
+    Ok(())
+}
+
+struct ModelReads<'a> {
+    ctx: &'a DaemonContext,
+    store: &'a archon_queue::Store,
+    catalog: &'a ModelCatalog,
+    items: &'a BTreeMap<QueueItemId, QueueItem>,
+    envs: &'a Envs,
+    global: RepoEnv,
+}
+
+impl ModelReads<'_> {
+    fn env(&self, repo: Option<&RepoId>) -> Option<&RepoEnv> {
+        match repo {
+            Some(id) => self.envs.configs.get(id).and_then(Option::as_ref),
+            None => Some(&self.global),
+        }
+    }
+
+    fn queued(&self, candidate: &QueuedCandidate) -> Result<Option<ModelHold>, ArchonError> {
+        if let Some(reason) = self.catalog.not_ready_reason() {
+            return Ok(Some(ModelHold {
+                reason: reason.to_owned(),
+                kind: ModelHoldKind::CatalogUnavailable,
+            }));
+        }
+        let Some(stored) = self.items.get(&candidate.item) else {
+            return Ok(None);
+        };
+        let projected = self.as_run_reads(stored)?;
+        let item = projected.as_ref().unwrap_or(stored);
+        if let Some(reason) = invalid_pin(item, self.catalog, TierMove::Dispatch) {
+            return Ok(Some(ModelHold {
+                reason,
+                kind: ModelHoldKind::InvalidPin,
+            }));
+        }
+        if !item.model_plan.needs_catalog_repair(&item.id, self.catalog) {
+            return Ok(None);
+        }
+        let (Some(env), Some(spec)) = (self.env(item.repo.as_ref()), self.shaped_spec(item)?)
+        else {
+            return Ok(None);
+        };
+        hold_error(
+            (item, TierMove::Dispatch),
+            self.catalog,
+            crate::executor::model_catalog::repair_item(
+                self.ctx,
+                self.store,
+                item,
+                self.catalog,
+                env,
+                &spec,
+            ),
+        )
+    }
+
+    /// A 1.0 plan as its run reads it, without the retired ship entry no
+    /// stage uses; `None` for every other plan, read as stored.
+    fn as_run_reads(&self, item: &QueueItem) -> Result<Option<QueueItem>, ArchonError> {
+        let retired = archon_pipeline::spec::RETIRED_SHIP_STAGE;
+        if !item.model_plan.0.contains_key(retired) {
+            return Ok(None);
+        }
+        let Some(spec) = self.shaped_spec(item)? else {
+            return Ok(None);
+        };
+        let mut read = item.clone();
+        if !spec.drop_retired_ship(&mut read.model_plan, read.model_reasons.as_mut()) {
+            return Ok(None);
+        }
+        assert!(
+            !read.model_plan.0.contains_key(retired),
+            "the retired entry is dropped"
+        );
+        Ok(Some(read))
+    }
+
+    /// The pipeline `item` would run, as steered; `None` when it cannot be read.
+    fn shaped_spec(
+        &self,
+        item: &QueueItem,
+    ) -> Result<Option<archon_pipeline::PipelineSpec>, ArchonError> {
+        let Some(env) = self.env(item.repo.as_ref()) else {
+            return Ok(None);
+        };
+        let Ok((_, spec)) = crate::knobs::item_specs(env, item) else {
+            return Ok(None);
+        };
+        match crate::executor::steer::shaped_in(self.store, item, spec) {
+            Ok(spec) => Ok(Some(spec)),
+            Err(error) if error.is_store() => Err(error),
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn pending(
+        &self,
+        table: &RunTable,
+        spawn: &PendingSpawn,
+    ) -> Result<Option<ModelHold>, ArchonError> {
+        if let Some(reason) = self.catalog.not_ready_reason() {
+            return Ok(Some(ModelHold {
+                reason: reason.to_owned(),
+                kind: ModelHoldKind::CatalogUnavailable,
+            }));
+        }
+        let (Some(item), Some(plans), Some(driver)) = (
+            self.items.get(&spawn.item),
+            table.pending.get(&spawn.run),
+            table.drivers.get(&spawn.run),
+        ) else {
+            return Ok(None);
+        };
+        let Some(env) = self.env(item.repo.as_ref()) else {
+            return Ok(None);
+        };
+        hold_error(
+            (item, TierMove::InRun),
+            self.catalog,
+            crate::executor::model_catalog::repair_pending(
+                self.ctx,
+                self.store,
+                item,
+                plans,
+                self.catalog,
+                env,
+                driver.spec(),
+            ),
+        )
+    }
+}
+
+fn hold_error<T>(
+    (item, when): (&QueueItem, TierMove),
+    catalog: &ModelCatalog,
+    result: Result<T, ArchonError>,
+) -> Result<Option<ModelHold>, ArchonError> {
+    match result {
+        Ok(_) => Ok(None),
+        Err(error) if error.is_store() => Err(error),
+        Err(error) => {
+            let kind = if catalog.not_ready_reason().is_some() {
+                ModelHoldKind::CatalogUnavailable
+            } else if invalid_pin(item, catalog, when).is_some() {
+                ModelHoldKind::InvalidPin
+            } else {
+                ModelHoldKind::NoReplacement
+            };
+            Ok(Some(ModelHold {
+                reason: error.to_string(),
+                kind,
+            }))
+        }
+    }
+}
+
+/// The first choice of `item` the catalog refuses that the daemon may not
+/// replace at `when`: at dispatch a pinned tier's model resolves again.
+pub(crate) fn invalid_pin(
+    item: &QueueItem,
+    catalog: &ModelCatalog,
+    when: TierMove,
+) -> Option<String> {
+    if catalog.not_ready_reason().is_some() {
+        return None;
+    }
+    let origins = item.model_plan.origins(&item.id);
+    // The acceptance entry is a placeholder its judge selection replaces.
+    let executed = item
+        .model_plan
+        .0
+        .iter()
+        .filter(|(key, _)| key.as_str() != archon_pipeline::acceptance::STAGE);
+    for (key, choices) in executed {
+        let slots = &origins[key];
+        assert_eq!(choices.len(), slots.len(), "an origin per choice");
+        for (choice, origin) in choices.iter().zip(slots) {
+            if !origin.may_replace(when)
+                && let Err(error) = catalog.check(&choice.model)
+            {
+                return Some(format!("{key}: {error}"));
+            }
+        }
+    }
+    None
+}
+
+/// Each queued candidate's and pending spawn's quota hold, from the configs
+/// and pipelines this pass read; none unless some provider is out of quota.
+fn quota_holds(
+    ctx: &DaemonContext,
+    table: &RunTable,
+    snapshot: &mut DispatchSnapshot,
+    envs: &Envs,
+    catalog: &ModelCatalog,
+    items: &BTreeMap<QueueItemId, QueueItem>,
 ) -> Result<(), ArchonError> {
     let Some(view) = crate::quota::view(ctx).filter(QuotaView::any_exhausted) else {
         return Ok(());
     };
-    let (catalog, items) = holdable(ctx, on, &snapshot.pending_spawns).await?;
     let global = RepoEnv::new(None)?;
     let env_of = |repo: Option<&RepoId>| match repo {
         Some(id) => envs.configs.get(id).and_then(Option::as_ref),
         None => Some(&global),
     };
-    let read = (&catalog, &view);
+    let read = (catalog, &view);
     for candidate in &mut snapshot.queued {
         let pipelines = envs.catalogs.get(&candidate.repo).and_then(Option::as_ref);
         let item = items
@@ -132,20 +349,21 @@ async fn quota_holds(
 async fn holdable(
     ctx: &DaemonContext,
     on: ReadOn,
-    spawns: &[PendingSpawn],
-) -> Result<(ModelCatalog, BTreeMap<QueueItemId, QueueItem>), ArchonError> {
+    snapshot: &DispatchSnapshot,
+) -> Result<BTreeMap<QueueItemId, QueueItem>, ArchonError> {
     let store = ctx.read_on(on).await?;
-    let query = ItemQuery {
-        states: vec!["queued".into()],
-        ..ItemQuery::default()
-    };
-    let mut items = store.items(&query)?;
-    for spawn in spawns {
-        items.push(store.item(&spawn.item)?);
+    let ids = snapshot
+        .queued
+        .iter()
+        .map(|candidate| &candidate.item)
+        .chain(snapshot.pending_spawns.iter().map(|spawn| &spawn.item));
+    let mut items = BTreeMap::new();
+    for id in ids {
+        if let std::collections::btree_map::Entry::Vacant(entry) = items.entry(id.clone()) {
+            entry.insert(store.item(id)?);
+        }
     }
-    let by_id: BTreeMap<_, _> = items.into_iter().map(|i| (i.id.clone(), i)).collect();
-    debug_assert!(spawns.iter().all(|s| by_id.contains_key(&s.item)));
-    Ok((store.model_catalog(), by_id))
+    Ok(items)
 }
 
 /// Spawns drivers emitted that the dispatcher has not admitted yet.
@@ -181,6 +399,7 @@ fn pending_spawns(
             wanted: u32::try_from(plans.len()).expect("a fan-out fits in u32"),
             gang: plans.iter().any(|p| p.team.is_some()),
             quota_hold: None,
+            model_hold: None,
         });
     }
     Ok(out)
@@ -401,6 +620,7 @@ mod tests {
             first_stage_agents: 0,
             gang: false,
             quota_hold: None,
+            model_hold: None,
         }
     }
 

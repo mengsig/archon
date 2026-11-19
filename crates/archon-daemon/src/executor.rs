@@ -34,6 +34,7 @@ mod lanes;
 mod late_child;
 pub(crate) mod local_base;
 mod local_merge;
+pub(crate) mod model_catalog;
 mod naming;
 mod notional;
 pub(crate) mod onto;
@@ -90,6 +91,7 @@ pub(crate) use roster::prune_settled_rosters;
 pub(crate) use run_node::recover_message_node;
 pub(crate) use run_node::{is_node_agent, node_run, prune_retired_node_agents};
 pub(crate) use ship::{prune_finished_ships, shipped_commit, withdraw_owed_merge};
+pub(crate) use spawn::reserved_models;
 pub(crate) use spawn::{
     StoredSpawn, issuing_spawn, load_spawn, prune_settled_requests, runs_awaiting_spawn,
 };
@@ -359,9 +361,10 @@ pub async fn spawn_admitted(
     run: &PipelineRunId,
     slots: u32,
 ) -> Result<(), ArchonError> {
+    let catalog = crate::learned::catalog(ctx).await?;
     let follow = {
         let mut table = ctx.runs.lock().await;
-        spawn::reserve(ctx, &mut table, run, slots).await?
+        spawn::reserve(ctx, &mut table, run, slots, &catalog).await?
     };
     run_follow_up(ctx, follow).await
 }
@@ -373,8 +376,9 @@ pub(crate) async fn reserve(
     table: &mut RunTable,
     run: &PipelineRunId,
     slots: u32,
+    catalog: &archon_core::model_tier::ModelCatalog,
 ) -> Result<FollowUp, ArchonError> {
-    spawn::reserve(ctx, table, run, slots).await
+    spawn::reserve(ctx, table, run, slots, catalog).await
 }
 
 /// Called by the event pump when a stage agent's task settles. Idempotent:

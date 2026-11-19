@@ -116,6 +116,36 @@ async fn a_queued_1_0_item_starts_on_the_built_in_without_its_ship_stage() {
 }
 
 #[tokio::test]
+async fn a_1_0_items_retired_ship_model_holds_nothing() {
+    let h = Harness::new().await;
+    let item = v101_item(&h, "its ship model left the catalog").await;
+    let mut legacy = v101_plan();
+    let gone = "codex/retired-ship-model";
+    legacy
+        .0
+        .insert("ship".into(), vec![choice(gone, Effort::Low)]);
+    let mut stored = h.item(&item.id).await;
+    stored.model_plan = PlannedPlan::legacy(legacy.clone());
+    h.ctx
+        .store
+        .lock()
+        .await
+        .update_item(&stored)
+        .expect("1.0.1 shape");
+
+    h.dispatch().await;
+    let running = h.running().await;
+    assert_eq!(running.len(), 1, "{:?}", h.state(&item.id).await);
+    assert_eq!(running[0].stage_id, "baseline");
+    assert!(
+        running
+            .iter()
+            .all(|stage| stage.choice.model.to_string() != gone),
+        "no stage runs the ship agent's model"
+    );
+}
+
+#[tokio::test]
 async fn a_retried_1_0_item_keeps_its_plan_without_the_ship_stage() {
     let h = Harness::new().await;
     let item = v101_item(&h, "failed before the upgrade").await;

@@ -31,7 +31,7 @@ fn catalog() -> ModelCatalog {
 
 async fn harness() -> Harness {
     let h = Harness::with_config(Config::default()).await;
-    h.ctx.store.lock().await.set_model_catalog(catalog());
+    h.set_catalog(catalog()).await;
     h
 }
 
@@ -42,8 +42,8 @@ fn balanced(keys: &[&str]) -> ModelPlanDraft {
     serde_json::from_value(plan.into()).unwrap()
 }
 
-async fn enqueue(h: &Harness, pipeline: &str, plan: ModelPlanDraft, list: &str) -> QueueItem {
-    let request = EnqueueRequest {
+fn request(pipeline: &str, plan: ModelPlanDraft, list: &str) -> EnqueueRequest {
+    EnqueueRequest {
         intent: None,
         onto: None,
         stage_timeouts: Default::default(),
@@ -60,7 +60,11 @@ async fn enqueue(h: &Harness, pipeline: &str, plan: ModelPlanDraft, list: &str) 
         idempotency_key: None,
         autonomy: AutonomyPatch::parse_list(list).expect("knobs"),
         origin: None,
-    };
+    }
+}
+
+async fn enqueue(h: &Harness, pipeline: &str, plan: ModelPlanDraft, list: &str) -> QueueItem {
+    let request = request(pipeline, plan, list);
     match h.cli(Request::Enqueue(request)).await {
         Ok(Reply::Item(item)) => item,
         other => panic!("enqueue replied {other:?}"),
@@ -177,4 +181,336 @@ async fn an_update_item_model_plan_and_reviewer_plan_pin_their_models_through_di
     );
     let stored = h.item(&item.id).await;
     assert_eq!(stored.model_plan.0["implement.review"], [fast(Effort::Low)]);
+}
+
+#[tokio::test]
+async fn request_checks_worker_and_reviewer_pins_before_policy_and_storage() {
+    use archon_aether::fake::Scripted;
+    use serde_json::json;
+    let h = Harness::new().await;
+    let canonical = "claude-code/claude-opus-5-5";
+    let listed = json!([
+        {"model": canonical, "configured": true, "aliases": ["opus"]},
+        {"model": "codex/gpt-6-astra", "configured": true}
+    ]);
+    h.catalog_server
+        .set_default("list_models", Scripted::reply("models", listed));
+    let item = enqueue(
+        &h,
+        "direct",
+        serde_json::from_value(json!({
+            "implement": [{"model":"claude-code/opus"}]
+        }))
+        .unwrap(),
+        "review=none",
+    )
+    .await;
+    assert_eq!(
+        h.item(&item.id).await.model_plan.0["implement"][0]
+            .model
+            .to_string(),
+        canonical
+    );
+    for key in ["implement", "implement.workers", "implement.review"] {
+        let unknown = "codex/gpt-6.1-astra";
+        let patch = ItemPatch {
+            model_plan: Some(
+                serde_json::from_value(json!({ (key): [{"model": unknown}] })).unwrap(),
+            ),
+            ..Default::default()
+        };
+        let error = h
+            .cli(Request::UpdateItem {
+                item: item.id.clone(),
+                patch,
+            })
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(unknown) && error.contains("nearest: codex/gpt-6-astra"),
+            "{error}"
+        );
+    }
+    h.repo_config(&format!("[models]\ndeny = [\"{canonical}\"]\n"));
+    let steer = Steer {
+        model: Some("claude-code/opus".parse().unwrap()),
+        stage: Some("implement".into()),
+        ..Default::default()
+    };
+    let error = h
+        .cli(Request::SteerItem {
+            item: item.id.clone(),
+            steer,
+        })
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains(canonical) && error.contains("not allowed"),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn a_superseded_pin_stays_pinned_and_the_reply_names_its_successor() {
+    use archon_aether::fake::Scripted;
+    use serde_json::json;
+    let h = Harness::new().await;
+    let old = "claude-code/claude-fable-5-1";
+    let successor = "claude-code/claude-fable-5-2";
+    h.catalog_server.set_default(
+        "list_models",
+        Scripted::reply(
+            "models",
+            json!([
+                {"model": old, "configured": true, "superseded_by": "claude-fable-5-2"},
+                {"model": successor, "configured": true}
+            ]),
+        ),
+    );
+    let plan = serde_json::from_value(json!({"implement": [{"model": old}]})).unwrap();
+    let item = enqueue(&h, "direct", plan, "review=none").await;
+    assert_eq!(item.model_plan.0["implement"][0].model.to_string(), old);
+    let warning = item.model_plan.catalog_check.as_ref().unwrap().to_string();
+    assert!(
+        warning.contains(old) && warning.contains(successor),
+        "{warning}"
+    );
+    assert_eq!(
+        h.item(&item.id).await.model_plan.catalog_check,
+        item.model_plan.catalog_check
+    );
+}
+
+#[tokio::test]
+async fn an_outage_defers_an_explicit_pin_but_cannot_resolve_a_tier() {
+    use archon_aether::fake::Scripted;
+    use serde_json::json;
+    let h = Harness::new().await;
+    h.catalog_server.set_default(
+        "list_models",
+        Scripted::refuse("unavailable", "catalog offline"),
+    );
+    let plan = serde_json::from_value(json!({"implement": [{"model": FAST}]})).unwrap();
+    let item = enqueue(&h, "direct", plan, "review=none").await;
+    let deferred = item.model_plan.catalog_check.as_ref().unwrap();
+    assert!(deferred.to_string().contains("not checked"));
+    assert!(deferred.to_string().contains("catalog offline"));
+    let Reply::ItemDetail(detail) = h
+        .cli(Request::GetItem {
+            item: item.id.clone(),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("expected item detail");
+    };
+    assert_eq!(
+        detail.item.model_plan.catalog_check.as_ref(),
+        Some(deferred)
+    );
+    let patch = ItemPatch {
+        model_plan: Some(balanced(&["implement"])),
+        ..Default::default()
+    };
+    let refused = h
+        .cli(Request::UpdateItem {
+            item: item.id.clone(),
+            patch,
+        })
+        .await
+        .unwrap_err();
+    assert!(refused.to_string().contains("tier"), "{refused}");
+    h.dispatch().await;
+    assert!(h.stages(&item.id).await.is_empty());
+    h.set_learning_models(vec!["codex/gpt-6-astra".parse().unwrap()])
+        .await;
+    h.dispatch().await;
+    assert!(h.state(&item.id).await.is_model_pin_block());
+    assert_eq!(
+        h.item(&item.id).await.model_plan.0["implement"][0]
+            .model
+            .to_string(),
+        FAST
+    );
+    assert!(h.stages(&item.id).await.is_empty());
+}
+
+#[tokio::test]
+async fn enqueue_refuses_an_unknown_model_and_names_the_nearest_listed_id() {
+    let h = Harness::new().await;
+    let unknown = "codex/gpt-6.1-astra";
+    h.set_learning_models(vec!["codex/gpt-6-astra".parse().unwrap()])
+        .await;
+    let plan =
+        serde_json::from_value(serde_json::json!({"implement": [{"model": unknown}]})).unwrap();
+    let error = h
+        .cli(Request::Enqueue(request("direct", plan, "review=none")))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains(unknown), "{error}");
+    assert!(error.contains("nearest: codex/gpt-6-astra"), "{error}");
+    assert!(h.backend.requests().is_empty());
+}
+
+#[tokio::test]
+async fn a_policy_denying_an_alias_refuses_the_canonical_pin() {
+    use archon_aether::fake::Scripted;
+    use serde_json::json;
+    let h = Harness::new().await;
+    let canonical = "claude-code/claude-opus-5-5";
+    h.catalog_server.set_default(
+        "list_models",
+        Scripted::reply(
+            "models",
+            json!([
+                {"model": canonical, "configured": true, "aliases": ["opus"]}
+            ]),
+        ),
+    );
+    h.repo_config("[models]\ndeny = [\"claude-code/opus\"]\n");
+    let plan = serde_json::from_value(json!({"implement": [{"model": canonical}]})).unwrap();
+    let error = h
+        .cli(Request::Enqueue(request("direct", plan, "review=none")))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains(canonical) && error.contains("not allowed"),
+        "{error}"
+    );
+    assert!(h.backend.requests().is_empty());
+}
+
+#[tokio::test]
+async fn a_keyed_replay_returns_its_item_after_the_pinned_model_left_the_catalog() {
+    let h = harness().await;
+    let pin =
+        |model: &str| serde_json::from_value(serde_json::json!({"implement": [{"model": model}]}));
+    let mut asked = request("direct", pin(FAST).unwrap(), "review=none");
+    asked.idempotency_key = Some("lost-reply".into());
+    let Ok(Reply::Item(first)) = h.cli(Request::Enqueue(asked.clone())).await else {
+        panic!("the first enqueue is stored");
+    };
+
+    h.set_catalog(common::catalog::untiered(["codex/sol".parse().unwrap()]))
+        .await;
+    let refused = h
+        .cli(Request::Enqueue(request(
+            "direct",
+            pin(FAST).unwrap(),
+            "review=none",
+        )))
+        .await;
+    assert!(
+        refused.is_err(),
+        "an unkeyed enqueue of the retired pin is refused"
+    );
+
+    let Ok(Reply::Item(again)) = h.cli(Request::Enqueue(asked.clone())).await else {
+        panic!("the replay returns the stored item");
+    };
+    assert_eq!(again.id, first.id);
+
+    asked.brief = "another brief".into();
+    let conflict = h
+        .cli(Request::Enqueue(asked))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        conflict.contains("already used for a different request"),
+        "{conflict}"
+    );
+}
+
+/// A fingerprint from before `asked_plan` kept the plan the enqueue filled;
+/// its replay is matched by that plan, not by the catalog of now.
+#[tokio::test]
+async fn a_legacy_keyed_replay_returns_its_item_after_the_pinned_model_left_the_catalog() {
+    let h = harness().await;
+    let pin = serde_json::from_value(serde_json::json!({"implement": [{"model": FAST}]}));
+    let mut asked = request("direct", pin.unwrap(), "review=none");
+    asked.idempotency_key = Some("legacy".into());
+    let Ok(Reply::Item(first)) = h.cli(Request::Enqueue(asked.clone())).await else {
+        panic!("the first enqueue is stored");
+    };
+    let filled = serde_json::to_string(first.model_plan.plan()).unwrap();
+    let conn = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    let changed = conn.execute(
+        "UPDATE items SET request = json_set(json_remove(request, '$.asked_plan'),
+                                             '$.model_plan', json(?1))",
+        [filled],
+    );
+    assert_eq!(
+        changed.unwrap(),
+        1,
+        "the fingerprint as an older store wrote it"
+    );
+
+    h.set_catalog(common::catalog::untiered(["codex/sol".parse().unwrap()]))
+        .await;
+    let Ok(Reply::Item(again)) = h.cli(Request::Enqueue(asked.clone())).await else {
+        panic!("the replay returns the stored item");
+    };
+    assert_eq!(again.id, first.id);
+
+    asked.brief = "another brief".into();
+    let conflict = h
+        .cli(Request::Enqueue(asked))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        conflict.contains("already used for a different request"),
+        "{conflict}"
+    );
+    let items = h.ctx.store.lock().await.items(&Default::default()).unwrap();
+    assert_eq!(items.len(), 1, "no second item");
+}
+
+/// Under a fingerprint from before `asked_plan`, only the plan it stored keeps
+/// its models past the catalog check; another plan is checked as any enqueue.
+#[tokio::test]
+async fn a_legacy_key_with_another_plan_gets_no_catalog_exemption() {
+    let h = harness().await;
+    let pin = |effort: &str| {
+        let plan = serde_json::json!({"implement": [{"model": FAST, "effort": effort}]});
+        serde_json::from_value(plan).unwrap()
+    };
+    let mut asked = request("direct", pin("medium"), "review=none");
+    asked.idempotency_key = Some("legacy".into());
+    let first = h.cli(Request::Enqueue(asked.clone())).await;
+    let Ok(Reply::Item(first)) = first else {
+        panic!("the first enqueue is stored: {first:?}");
+    };
+    let filled = serde_json::to_string(first.model_plan.plan()).unwrap();
+    let conn = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    let changed = conn.execute(
+        "UPDATE items SET request = json_set(json_remove(request, '$.asked_plan'),
+                                             '$.model_plan', json(?1))",
+        [filled],
+    );
+    assert_eq!(
+        changed.unwrap(),
+        1,
+        "the fingerprint as an older store wrote it"
+    );
+
+    h.set_catalog(common::catalog::untiered(["codex/sol".parse().unwrap()]))
+        .await;
+    asked.model_plan = pin("low");
+    let refused = h
+        .cli(Request::Enqueue(asked))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        refused.contains(FAST) && refused.contains("not connected"),
+        "the catalog refuses the retired pin: {refused}"
+    );
+    let items = h.ctx.store.lock().await.items(&Default::default()).unwrap();
+    assert_eq!(items.len(), 1, "no second item");
 }

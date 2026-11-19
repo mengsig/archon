@@ -265,7 +265,8 @@ impl<'a> TierScope<'a> {
         Self {
             catalog,
             policy,
-            prefer: &config.orchestrator.model.provider,
+            // The provider the orchestrator runs on: an alias may name another one.
+            prefer: &catalog.canonical_alias(&config.orchestrator.model).provider,
             route: None,
             sized: config.models.effort_sizing(),
         }
@@ -300,8 +301,8 @@ impl<'a> TierScope<'a> {
             (None, Some(route)) => Some(self.weighted_provider(tier, floor, route)?),
             _ => None,
         };
-        let resolved = self.catalog.resolve(
-            tier,
+        let resolved = self.catalog.resolve_above(
+            (tier, if routed.is_some() { floor } else { Tier::Fast }),
             provider,
             Some(routed.unwrap_or(self.prefer)),
             self.policy,
@@ -461,17 +462,36 @@ pub(crate) fn default_choice(
             tier: Some(tier),
         })
     };
-    let pinnable = |m: &ModelRef| {
-        policy.permits_model(m) && scope.catalog.tier_of(m).is_none_or(|t| t <= max_tier)
+    let pinned = |model: &ModelRef| {
+        let catalog = scope.catalog;
+        let canonical = if catalog.not_ready_reason().is_some() {
+            model.clone()
+        } else {
+            match catalog.check(model) {
+                Ok(id) => id,
+                result => {
+                    tracing::info!(%model, ?result, "skipping catalog-ineligible model default");
+                    return None;
+                }
+            }
+        };
+        let eligible = policy.permits_model(&canonical)
+            && catalog
+                .tier_of(&canonical)
+                .is_none_or(|tier| tier <= max_tier);
+        eligible.then(|| ModelChoice::pinned(canonical, effort))
     };
-    let own = &config.orchestrator.model;
     let choice = nudged
         .and_then(tiered)
-        .or_else(|| pinnable(own).then(|| ModelChoice::pinned(own.clone(), effort)))
+        .or_else(|| pinned(&config.orchestrator.model))
         .or_else(|| tiered(Tier::Balanced))
+        .or_else(|| policy.allow.iter().flatten().find_map(pinned))
         .or_else(|| {
-            let first = policy.allow.iter().flatten().find(|m| pinnable(m))?;
-            Some(ModelChoice::pinned(first.clone(), effort))
+            scope
+                .catalog
+                .models()
+                .iter()
+                .find_map(|row| pinned(&row.model))
         })?;
     debug_assert!(
         policy.check(&choice).is_ok(),
@@ -646,23 +666,38 @@ pub(crate) fn resolve_plan(
     reasons: Option<&ModelReasons>,
     tiers: TierScope<'_>,
 ) -> Result<ModelPlan, ArchonError> {
-    let plan = resolve_tiers(spec, draft, tiers)?;
+    let plan = resolve_tiers(spec, draft, tiers, None)?;
     check_plan_reasons(spec, &plan, reasons)?;
     Ok(plan)
 }
 
 /// [`resolve_plan`] without its effort check, for a caller that checks the
-/// reasons itself.
+/// reasons itself. A slot whose model `carried` holds at the same place is
+/// not checked against the catalog again.
 pub(crate) fn resolve_tiers(
     spec: &PipelineSpec,
     draft: ModelPlanDraft,
     tiers: TierScope<'_>,
+    carried: Option<&ModelPlan>,
 ) -> Result<ModelPlan, ArchonError> {
     let stages = draft.0.len();
-    let plan = draft.resolve(
+    let mut plan = draft.resolve(
         |key| tiers.unnamed_effort(spec, key),
         |key, tier, provider| tiers.resolve((tier, spec.tier_floor(key, tier)), provider),
     )?;
+    if tiers.catalog.not_ready_reason().is_none() {
+        for (key, choices) in &mut plan.0 {
+            let kept = carried.and_then(|plan| plan.choices_for(key));
+            for (slot, choice) in choices.iter_mut().enumerate() {
+                let untouched = kept
+                    .and_then(|kept| kept.get(slot))
+                    .is_some_and(|old| old.model == choice.model);
+                if !untouched {
+                    choice.model = tiers.catalog.check(&choice.model)?;
+                }
+            }
+        }
+    }
     assert_eq!(plan.0.len(), stages, "every drafted key is resolved");
     Ok(plan)
 }
@@ -716,6 +751,29 @@ mod tests {
 
     fn policy() -> AutonomyPolicy {
         AutonomyPolicy::resolve(&Default::default(), None, None)
+    }
+
+    /// Tier-only choices prefer the provider the orchestrator runs on, which a
+    /// catalog alias may name differently from its configured spelling.
+    #[test]
+    fn tiers_prefer_the_orchestrator_s_canonical_provider() {
+        use archon_core::model_tier::CatalogModel;
+        let canonical: archon_core::model::ModelRef = "claude-code/canonical".parse().unwrap();
+        let mut catalog = ModelCatalog::new(vec![CatalogModel {
+            model: canonical.clone(),
+            tier: None,
+            is_default: false,
+        }]);
+        catalog.add_alias("codex/opus".parse().unwrap(), canonical);
+        let mut config = Config::default();
+        config.orchestrator.model = "codex/opus".parse().unwrap();
+        let policy = ModelPolicy::default();
+        assert_eq!(
+            TierScope::new(&config, &policy, &catalog).prefer,
+            "claude-code"
+        );
+        let unlisted = ModelCatalog::new(Vec::new());
+        assert_eq!(TierScope::new(&config, &policy, &unlisted).prefer, "codex");
     }
 
     #[test]
@@ -974,10 +1032,11 @@ mod tests {
         let balanced = default_choice(&config, tiers, Tier::Strong, &builtin("direct")).unwrap();
         assert_eq!(balanced.model.to_string(), "claude-code/one-balanced");
         spec.file.nudges.tier = None;
-        let own = default_choice(&config, tiers, Tier::Strong, &spec).unwrap();
-        assert_eq!(
-            (own.model, own.tier),
-            (config.orchestrator.model.clone(), None)
+        let fallback = default_choice(&config, tiers, Tier::Strong, &spec).unwrap();
+        assert_eq!(fallback.model.to_string(), "claude-code/one-balanced");
+        assert_ne!(
+            fallback.model, config.orchestrator.model,
+            "unlisted default"
         );
     }
 
@@ -1019,6 +1078,33 @@ mod tests {
         );
     }
 
+    /// A pinned fallback keeps the model named: a superseded but listed
+    /// orchestrator pin stays the default, whether or not its successor serves.
+    #[test]
+    fn a_superseded_pin_is_still_a_default() {
+        let mut config = Config::default();
+        config.orchestrator.model = "codex/old".parse().unwrap();
+        let entry = |model: &str| archon_core::model_tier::CatalogModel {
+            model: model.parse().unwrap(),
+            tier: Some(Tier::Strong),
+            is_default: false,
+        };
+        let mut catalog = ModelCatalog::new(vec![entry("codex/old"), entry("codex/new")]);
+        catalog.add_superseded("codex/old".parse().unwrap(), "codex/new".parse().unwrap());
+        let policy = ModelPolicy::from_lists(&["codex/old".parse().unwrap()], &[], None);
+        let tiers = TierScope::new(&config, &policy, &catalog);
+        let choice = default_choice(&config, tiers, Tier::Strong, &builtin("direct")).unwrap();
+        assert_eq!(choice.model.to_string(), "codex/old");
+        let open = ModelPolicy::default();
+        let tiers = TierScope::new(&config, &open, &catalog);
+        let choice = default_choice(&config, tiers, Tier::Strong, &builtin("direct")).unwrap();
+        assert_eq!(
+            choice.model.to_string(),
+            "codex/old",
+            "a pin keeps the model named"
+        );
+    }
+
     /// The pinned fallbacks keep to the ceiling too: an orchestrator or
     /// allowlisted model the catalog places above it is skipped.
     #[test]
@@ -1039,7 +1125,14 @@ mod tests {
         let raised = default_choice(&config, tiers, Tier::Frontier, &spec).unwrap();
         assert_eq!(raised.model.to_string(), "p/top", "the operator raised it");
 
-        let strong = ModelCatalog::new(vec![entry("p/top", Tier::Strong)]);
+        let strong = ModelCatalog::new(vec![
+            entry("p/top", Tier::Strong),
+            CatalogModel {
+                model: "q/untiered".parse().unwrap(),
+                tier: None,
+                is_default: false,
+            },
+        ]);
         let allowed: Vec<ModelRef> = vec!["p/top".parse().unwrap(), "q/untiered".parse().unwrap()];
         let listed = ModelPolicy::from_lists(&allowed, &[], None);
         let tiers = TierScope::new(&config, &listed, &strong);

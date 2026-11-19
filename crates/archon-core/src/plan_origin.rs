@@ -37,7 +37,7 @@ pub enum PlanSource {
     Sizer,
     /// Raised by the daemon after a failure. No writer sets it yet.
     Escalation,
-    /// Moved by the daemon off a model that can no longer run it. No writer sets it yet.
+    /// Moved by the daemon off a model that can no longer run it.
     Migrated,
     /// Stored before origins were recorded.
     LegacyUnknown,
@@ -148,7 +148,8 @@ impl FieldOrigin {
     /// The one rule for what the daemon may change by itself: a field it
     /// chose itself. Everything else is a pin.
     pub fn is_movable(&self) -> bool {
-        self.source.is_fill() && self.by == Authority::Daemon
+        (self.source.is_fill() || self.source == PlanSource::Migrated)
+            && self.by == Authority::Daemon
     }
 
     /// A pinned field is never sized, escalated or rewritten by the daemon.
@@ -217,6 +218,12 @@ impl EntryOrigin {
             TierMove::Dispatch => self.model.is_movable() || tier.is_pin(),
             TierMove::InRun => self.model.is_movable(),
         }
+    }
+
+    /// Whether the daemon may replace this entry's model at `when`: one it
+    /// chose itself, or one it may resolve again in its tier.
+    pub fn may_replace(&self, when: TierMove) -> bool {
+        self.model.is_movable() || self.may_move(when)
     }
 
     fn fields(&self) -> impl Iterator<Item = &FieldOrigin> {
@@ -295,11 +302,33 @@ where
     Ok(Some(Box::new(origins)))
 }
 
+/// A replacement model and its tier resolution, when the choice is tiered.
+pub type CatalogReplacement = (ModelRef, Option<TierChoice>);
+
+/// The result worth surfacing alongside a stored model plan.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum CatalogCheck {
+    Deferred { reason: String },
+    Warnings { warnings: Vec<String> },
+}
+
+impl std::fmt::Display for CatalogCheck {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Deferred { reason } => write!(f, "model catalog not checked: {reason}"),
+            Self::Warnings { warnings } => f.write_str(&warnings.join(", ")),
+        }
+    }
+}
+
 /// An item's model plan with where each field came from and how its efforts
 /// were sized. Serialized as the item's `model_plan`, `model_origins` and
 /// `effort_sizing` keys, so stored items and older readers see the plan as before.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PlannedPlan {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_check: Option<Box<CatalogCheck>>,
     model_plan: ModelPlan,
     // Boxed so a stored item stays about the size it was before origins.
     #[serde(
@@ -327,11 +356,83 @@ impl Deref for PlannedPlan {
 }
 
 impl PlannedPlan {
+    pub fn canonicalize_aliases(&mut self, catalog: &crate::model_tier::ModelCatalog) {
+        for choice in self.model_plan.0.values_mut().flatten() {
+            choice.model = catalog.canonical_alias(&choice.model).clone();
+        }
+    }
+
+    pub fn check_request_policy(
+        &self,
+        policy: &crate::policy::ModelPolicy,
+    ) -> Result<(), ArchonError> {
+        if matches!(
+            self.catalog_check.as_deref(),
+            Some(CatalogCheck::Deferred { .. })
+        ) {
+            for choice in self.model_plan.0.values().flatten() {
+                policy.check_pending_model(choice)?;
+            }
+            Ok(())
+        } else {
+            policy.check_plan(&self.model_plan)
+        }
+    }
+
+    /// Apply a request check to carried entries too, retaining their provenance
+    /// when the catalog supplies the canonical spelling.
+    pub fn checked_request_catalog(
+        mut self,
+        catalog: &crate::model_tier::ModelCatalog,
+        carried: Option<&ModelPlan>,
+    ) -> Result<Self, ArchonError> {
+        if catalog.not_ready_reason().is_none() {
+            for (key, choices) in &mut self.model_plan.0 {
+                let previous = carried.and_then(|plan| plan.choices_for(key));
+                for (slot, choice) in choices.iter_mut().enumerate() {
+                    let untouched = previous
+                        .and_then(|slots| slots.get(slot))
+                        .is_some_and(|old| old.model == choice.model);
+                    if !untouched {
+                        choice.model = catalog.check(&choice.model)?;
+                    }
+                }
+            }
+        }
+        self.record_catalog(catalog);
+        Ok(self)
+    }
+
+    pub fn record_catalog(&mut self, catalog: &crate::model_tier::ModelCatalog) {
+        self.catalog_check = if let Some(reason) = catalog.not_ready_reason() {
+            Some(Box::new(CatalogCheck::Deferred {
+                reason: reason.to_owned(),
+            }))
+        } else {
+            let warnings: std::collections::BTreeSet<_> = self
+                .model_plan
+                .0
+                .values()
+                .flatten()
+                .filter_map(|choice| {
+                    let successor = catalog.superseded_by(&choice.model)?;
+                    Some(superseded_warning(&choice.model, successor))
+                })
+                .collect();
+            (!warnings.is_empty()).then(|| {
+                Box::new(CatalogCheck::Warnings {
+                    warnings: warnings.into_iter().collect(),
+                })
+            })
+        };
+    }
+
     /// `plan` with no writer to vouch for it: every field reads as a pin and
     /// is counted as unattributed.
     pub fn unattributed(item: &QueueItemId, plan: ModelPlan) -> Self {
         let entries = shape_of(&plan, PlanSource::Unattributed);
         Self {
+            catalog_check: None,
             model_plan: plan,
             model_origins: Some(Box::new(PlanOrigins {
                 item: Some(item.clone()),
@@ -346,6 +447,7 @@ impl PlannedPlan {
     #[cfg(any(test, feature = "testing"))]
     pub fn legacy(plan: ModelPlan) -> Self {
         Self {
+            catalog_check: None,
             model_plan: plan,
             model_origins: None,
             effort_sizing: None,
@@ -505,6 +607,114 @@ impl PlannedPlan {
         self.model_plan.0.get(key).map(Vec::as_slice)
     }
 
+    pub fn needs_catalog_repair(
+        &self,
+        item: &QueueItemId,
+        catalog: &crate::model_tier::ModelCatalog,
+    ) -> bool {
+        // A superseded model the catalog still lists is kept: only its check warns.
+        let origins = self.origins(item);
+        debug_assert_eq!(origins.len(), self.model_plan.0.len(), "an origin per key");
+        (self.model_plan.0.values().flatten()).any(|choice| catalog.check(&choice.model).is_err())
+    }
+
+    /// Check every choice, allowing the caller to replace unavailable daemon choices.
+    pub fn repair_catalog_with(
+        &mut self,
+        item: &QueueItemId,
+        catalog: &crate::model_tier::ModelCatalog,
+        at: Timestamp,
+        replacement: impl FnMut(
+            &str,
+            usize,
+            &ModelChoice,
+            &EntryOrigin,
+        ) -> Result<Option<CatalogReplacement>, ArchonError>,
+    ) -> Result<(), ArchonError> {
+        let all = (at, TierMove::InRun, |_: &str, _: usize| true);
+        self.repair_catalog_in(item, catalog, all, replacement)
+    }
+
+    /// [`Self::repair_catalog_with`] for the slots of each key `in_scope` accepts
+    /// alone; the others, such as a finished slot's pin, are kept unchecked. At `when`
+    /// a pinned tier's model is the daemon's to replace as its own choice is.
+    pub fn repair_catalog_in(
+        &mut self,
+        item: &QueueItemId,
+        catalog: &crate::model_tier::ModelCatalog,
+        (at, when, in_scope): (Timestamp, TierMove, impl Fn(&str, usize) -> bool),
+        mut replacement: impl FnMut(
+            &str,
+            usize,
+            &ModelChoice,
+            &EntryOrigin,
+        ) -> Result<Option<CatalogReplacement>, ArchonError>,
+    ) -> Result<(), ArchonError> {
+        if let Some(reason) = catalog.not_ready_reason() {
+            return Err(ArchonError::Unavailable(reason.to_owned()));
+        }
+        if !self.needs_catalog_repair(item, catalog) {
+            self.canonicalize_aliases(catalog);
+            self.record_catalog(catalog);
+            return Ok(());
+        }
+        let mut writer = PlanWriter::editing(self, item, at);
+        for (key, choices) in &mut writer.plan.0 {
+            let slots = writer.entries.get_mut(key).expect("an origin per entry");
+            assert_eq!(choices.len(), slots.len(), "origins fit the plan");
+            for (slot, (choice, origin)) in choices.iter_mut().zip(slots).enumerate() {
+                if !in_scope(key, slot) {
+                    continue;
+                }
+                let model = match catalog.check(&choice.model) {
+                    Ok(model) => model,
+                    Err(error) if origin.may_replace(when) => {
+                        match replacement(key, slot, choice, origin)? {
+                            Some((model, tier)) => {
+                                let model = catalog.check(&model)?;
+                                choice.tier = tier;
+                                origin.model = FieldOrigin::chosen(
+                                    PlanSource::Migrated,
+                                    Authority::Daemon,
+                                    at,
+                                    Some(format!("was {}", choice.model)),
+                                );
+                                model
+                            }
+                            None => return Err(error),
+                        }
+                    }
+                    Err(error) => return Err(error),
+                };
+                choice.model = model;
+            }
+        }
+        let mut repaired = if writer.plan == self.model_plan {
+            self.clone()
+        } else {
+            writer.seal()
+        };
+        repaired.record_catalog(catalog);
+        debug_assert_eq!(repaired.origins(item).len(), self.model_plan.0.len());
+        *self = repaired;
+        Ok(())
+    }
+
+    /// Migrate unavailable daemon choices only when Aether names a successor.
+    pub fn repair_catalog(
+        &mut self,
+        item: &QueueItemId,
+        catalog: &crate::model_tier::ModelCatalog,
+        at: Timestamp,
+    ) -> Result<(), ArchonError> {
+        self.repair_catalog_with(item, catalog, at, |_, _, choice, _| {
+            Ok(catalog
+                .successor(&choice.model)
+                .cloned()
+                .map(|model| (model, choice.tier.clone())))
+        })
+    }
+
     /// Resolve each tiered choice the daemon may move at `when`: `resolve`
     /// gives its new model and tier, or `None` to keep it. A moved model is
     /// the daemon's, noted with `note` alone; the tier keeps who asked for
@@ -526,6 +736,14 @@ impl PlannedPlan {
     }
 }
 
+/// The catalog check's warning that `model` is superseded by `successor`.
+fn superseded_warning(
+    model: &crate::model::ModelRef,
+    successor: &crate::model::ModelRef,
+) -> String {
+    format!("{model} is superseded by {successor}")
+}
+
 /// `source` for every field of `plan`.
 fn shape_of(plan: &ModelPlan, source: PlanSource) -> BTreeMap<String, Vec<EntryOrigin>> {
     let origin = |choice| EntryOrigin::unknown(source, choice);
@@ -540,6 +758,7 @@ fn shape_of(plan: &ModelPlan, source: PlanSource) -> BTreeMap<String, Vec<EntryO
 /// earlier plan of the same item keeps, then each fill step's additions.
 #[derive(Debug)]
 pub struct PlanWriter {
+    catalog_check: Option<Box<CatalogCheck>>,
     item: QueueItemId,
     at: Timestamp,
     plan: ModelPlan,
@@ -553,6 +772,7 @@ pub struct PlanWriter {
 impl PlanWriter {
     pub fn new(item: &QueueItemId, at: Timestamp) -> Self {
         Self {
+            catalog_check: None,
             item: item.clone(),
             at,
             plan: ModelPlan::default(),
@@ -706,6 +926,7 @@ impl PlanWriter {
     /// with for `item`, to change in place.
     fn editing(planned: &PlannedPlan, item: &QueueItemId, at: Timestamp) -> Self {
         let editing = Self {
+            catalog_check: planned.catalog_check.clone(),
             item: item.clone(),
             at,
             plan: planned.model_plan.clone(),
@@ -772,7 +993,11 @@ impl PlanWriter {
                 };
                 debug_assert_eq!(tier.requested, asked.requested, "the tier asked for");
                 let daemons = (PlanSource::Tier, Authority::Daemon);
-                if model != choice.model || (origin.model.source, origin.model.by) != daemons {
+                let migrated = origin.model.source == PlanSource::Migrated
+                    && origin.model.by == Authority::Daemon;
+                if model != choice.model
+                    || (!migrated && (origin.model.source, origin.model.by) != daemons)
+                {
                     let note = note.map(str::to_owned);
                     origin.model = FieldOrigin::chosen(daemons.0, daemons.1, at, note);
                 }
@@ -800,6 +1025,7 @@ impl PlanWriter {
             "sizing of the plan's own keys"
         );
         PlannedPlan {
+            catalog_check: self.catalog_check,
             model_plan: self.plan,
             model_origins: Some(Box::new(origins)),
             effort_sizing: self.sizing.stored(),

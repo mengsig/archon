@@ -28,7 +28,15 @@ fn operator_says(seq: u64, text: &str) -> AetherEvent {
 }
 
 async fn harness(features: &[&str]) -> Harness {
+    harness_serving(features, None).await
+}
+
+/// A harness whose fake aetherd serves only `protocol` when one is given.
+async fn harness_serving(features: &[&str], protocol: Option<u32>) -> Harness {
     let harness = Harness::new().await;
+    if let Some(protocol) = protocol {
+        harness.fake.set_protocol_window(protocol, protocol);
+    }
     harness
         .fake
         .set_features(features.iter().map(|f| (*f).to_owned()).collect());
@@ -133,7 +141,7 @@ async fn a_second_command_mid_turn_is_shown_without_waiting_for_the_turn() {
 
 #[tokio::test]
 async fn a_protocol_24_aetherd_gets_the_level_and_no_word_prefix() {
-    let harness = harness(&["notes"]).await;
+    let harness = harness_serving(&["notes"], Some(24)).await;
     assert_eq!(
         harness
             .ctx

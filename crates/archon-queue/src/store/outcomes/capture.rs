@@ -93,6 +93,9 @@ pub(super) fn stage_observations(
         } else {
             0.0
         };
+        if stage.zero_cost_create_refusal() {
+            continue;
+        }
         for observed in super::segments::observations(stage, cost)? {
             merge_observation(&mut grouped, observed, stage.attempt);
         }

@@ -91,7 +91,9 @@ impl Fleet {
             .chain(stages)
             .map(|(key, id, task)| {
                 let mut agent = fake::agent(&id, task.as_deref());
-                agent["parent"] = self.requests[key]["parent"].clone();
+                for field in ["parent", "role", "scope"] {
+                    agent[field] = self.requests[key][field].clone();
+                }
                 agent["status"] = json!({"state": self.agent_state(&id)});
                 agent
             })
@@ -125,6 +127,7 @@ fn node_id(n: u32) -> String {
 /// its task settled and `completed` after; `get_task` the status the test
 /// set, `active` until then.
 fn script_fleet(aether: &FakeAether) -> Arc<Mutex<Fleet>> {
+    common::catalog::answer(aether, &common::catalog::default_models());
     let fleet = Arc::new(Mutex::new(Fleet::default()));
     let created = fleet.clone();
     aether.set_responder(
@@ -659,8 +662,8 @@ fn script_budget_models(aether: &FakeAether) {
         Scripted::reply(
             "models",
             json!([
-                {"model": model(REVIEW_MODEL), "capabilities": {"cost": null}},
-                {"model": model(MODEL), "capabilities": {"cost": null}},
+                {"model": model(REVIEW_MODEL), "configured": true, "capabilities": {"cost": null}},
+                {"model": model(MODEL), "configured": true, "capabilities": {"cost": null}},
             ]),
         ),
     );
@@ -1028,7 +1031,7 @@ async fn a_budget_decision_is_persisted_before_create_and_replayed_after_capabil
     h.dispatch().await;
     assert_eq!(h.stages(&item.id).await[0].state, StageState::Spawning);
     aether.set_default("providers", Scripted::reply("providers", json!([])));
-    aether.set_default("list_models", Scripted::reply("models", json!([])));
+    common::catalog::answer(&aether, &common::catalog::default_models());
     h.dispatch().await;
     let creates = aether.received_named("create_agent");
     assert_eq!(creates.len(), 3);
@@ -1262,4 +1265,197 @@ async fn downgraded_requests_stay_full_when_host_context_support_returns() {
         );
         assert_eq!(h.stages(&item.id).await[0].state, StageState::Running);
     }
+}
+
+#[tokio::test]
+async fn frozen_creates_wait_for_a_listed_model_before_replay() {
+    for stage in [false, true] {
+        let (_dir, aether, h, item) = pending_lean_creation(stage, false).await;
+        let before = aether.received_named("create_agent").len();
+        aether.set_default(
+            "list_models",
+            Scripted::reply(
+                "models",
+                json!([
+                    {"model": common::MODEL, "configured": true}
+                ]),
+            ),
+        );
+        h.dispatch().await;
+        assert_eq!(aether.received_named("create_agent").len(), before);
+        assert_eq!(h.stages(&item.id).await[0].state, StageState::Spawning);
+        h.dispatch().await;
+        let notices = h
+            .notices(archon_core::notify::NotificationKind::Blocker)
+            .await;
+        assert_eq!(
+            notices
+                .iter()
+                .filter(|note| note.contains("re-plan item"))
+                .count(),
+            1,
+            "{notices:?}"
+        );
+        assert_eq!(aether.received_named("create_agent").len(), before);
+        common::catalog::answer(&aether, &common::catalog::default_models());
+        let client = AetherClient::connect(&aether.endpoint()).await.unwrap();
+        h.ctx.aether.replace(Some(Arc::new(client))).unwrap();
+        h.dispatch().await;
+        assert!(aether.received_named("create_agent").len() > before);
+        assert_eq!(h.stages(&item.id).await[0].state, StageState::Running);
+    }
+}
+
+#[tokio::test]
+async fn frozen_daemon_creates_recover_when_the_original_model_stays_retired() {
+    use archon_core::plan_origin::{PlanSource, PlanWriter};
+    const NEXT: &str = "claude-code/claude-haiku-new";
+    const OLD: &str = "claude-code/claude-haiku-5-5";
+    for (stage_pending, landed) in [(true, false), (false, false), (true, true), (false, true)] {
+        let (_dir, aether, h, item) = pending_lean_creation(stage_pending, landed).await;
+        let mut item = h.item(&item.id).await;
+        let mut writer = PlanWriter::new(&item.id, archon_core::now());
+        writer.filled(
+            item.model_plan.plan().clone(),
+            (PlanSource::Fallback, PlanSource::Fallback),
+        );
+        item.model_plan = writer.finish(archon_core::plan_origin::Sizing::Off { policy_cap: None });
+        h.ctx.store.lock().await.update_item(&item).unwrap();
+        let before = aether.received_named("create_agent").len();
+        aether.set_features(vec!["retired_models".into()]);
+        let listed: Vec<_> = [NEXT, MODEL, REVIEW_MODEL]
+            .map(|id| json!({"model": id, "configured":true}))
+            .into();
+        aether.set_default("list_models", Scripted::reply("models", json!(listed)));
+        aether.set_default(
+            "list_retired_models",
+            Scripted::reply("retired_models", json!([{"model": OLD, "successor": NEXT}])),
+        );
+        let client = AetherClient::connect(&aether.endpoint()).await.unwrap();
+        h.ctx.aether.replace(Some(Arc::new(client))).unwrap();
+        h.dispatch().await;
+        let stages = h.stages(&item.id).await;
+        let creates = aether.received_named("create_agent");
+        assert!(
+            creates[before..].iter().all(|c| c["model"] == model(NEXT)),
+            "{creates:?}"
+        );
+        let running = stages
+            .iter()
+            .find(|s| s.state == StageState::Running)
+            .unwrap_or_else(|| panic!("stage pending={stage_pending} landed={landed}: {stages:?}"));
+        if stage_pending && landed {
+            assert_eq!(creates.len(), before);
+            assert_eq!(running.choice.model.to_string(), OLD);
+        } else {
+            assert_eq!(running.choice.model.to_string(), NEXT);
+            assert!(creates.len() > before);
+        }
+    }
+}
+
+/// A fake whose catalog lists the harness models and haiku under its alias.
+fn alias_catalog(aether: &FakeAether) {
+    let listed = json!([
+        {"model": MODEL, "configured": true},
+        {"model": REVIEW_MODEL, "configured": true},
+        {"model": "claude-code/claude-haiku-5-5", "configured": true, "aliases": ["haiku"]},
+    ]);
+    aether.set_default("list_models", Scripted::reply("models", listed));
+}
+
+#[tokio::test]
+async fn a_reserved_create_under_an_alias_allowlist_waits_through_an_outage() {
+    const HAIKU: &str = "claude-code/claude-haiku-5-5";
+    let dir = tempfile::tempdir().unwrap();
+    let aether = start_aether(dir.path()).await;
+    let _fleet = script_fleet(&aether);
+    alias_catalog(&aether);
+    aether.script("create_agent", Scripted::Silent);
+    let mut config = Config::default();
+    config.models.allow = vec!["claude-code/haiku".parse().unwrap()];
+    let options = ClientOptions {
+        request_timeout: Duration::from_millis(100),
+        ..Default::default()
+    };
+    let h = harness_with_config(&aether, options, config).await;
+    let mut plan = common::plan();
+    for choice in plan.0.values_mut().flatten() {
+        choice.model = HAIKU.parse().unwrap();
+    }
+    let item = h.enqueue_with("an alias allowlist", plan).await.unwrap();
+    h.dispatch().await;
+    assert_eq!(h.stages(&item.id).await[0].state, StageState::Spawning);
+    let sent = aether.received_named("create_agent").len();
+
+    aether.set_default(
+        "list_models",
+        Scripted::refuse("unavailable", "catalog offline"),
+    );
+    let client = AetherClient::connect_with(&aether.endpoint(), options)
+        .await
+        .unwrap();
+    h.ctx.aether.replace(Some(Arc::new(client))).unwrap();
+    h.dispatch().await;
+    let stage = &h.stages(&item.id).await[0];
+    assert_eq!(stage.state, StageState::Spawning, "{stage:?}");
+    assert_eq!(aether.received_named("create_agent").len(), sent);
+    let wait = waiting_reason(&h, &item.id)
+        .await
+        .expect("a held create is named");
+    assert_eq!(
+        wait.code,
+        archon_core::protocol::WaitingReasonCode::ModelCatalogUnavailable
+    );
+
+    alias_catalog(&aether);
+    h.dispatch().await;
+    assert!(aether.received_named("create_agent").len() > sent);
+    assert_eq!(h.stages(&item.id).await[0].state, StageState::Running);
+}
+
+/// An alias allowlist is read in the catalog the item was admitted on: aliases
+/// the link lost since, to a reconnect or a failed read, fail no canonical plan.
+#[tokio::test]
+async fn an_alias_allowed_item_starts_while_the_link_holds_no_aliases() {
+    const HAIKU: &str = "claude-code/claude-haiku-5-5";
+    let dir = tempfile::tempdir().unwrap();
+    let aether = start_aether(dir.path()).await;
+    let _fleet = script_fleet(&aether);
+    alias_catalog(&aether);
+    let mut config = Config::default();
+    config.models.allow = vec!["claude-code/haiku".parse().unwrap()];
+    let h = harness_with_config(&aether, ClientOptions::default(), config).await;
+    let mut plan = common::plan();
+    for choice in plan.0.values_mut().flatten() {
+        choice.model = HAIKU.parse().unwrap();
+    }
+    let item = h.enqueue_with("an alias allowlist", plan).await.unwrap();
+    let link = &h.ctx.aether;
+    assert!(!link.aliases().is_empty(), "the enqueue read the catalog");
+    let generation = link.generation().unwrap();
+    link.install_aliases(generation, Default::default())
+        .unwrap();
+    assert!(link.aliases().is_empty());
+    h.dispatch().await;
+
+    let state = h.state(&item.id).await;
+    assert!(
+        matches!(state, archon_core::queue::QueueState::Running { .. }),
+        "{state:?}"
+    );
+    let stages = h.stages(&item.id).await;
+    assert_eq!(stages.len(), 1, "the first stage is reserved: {stages:?}");
+    assert_eq!(stages[0].choice.model.to_string(), HAIKU);
+}
+
+async fn waiting_reason(
+    h: &Harness,
+    item: &archon_core::id::QueueItemId,
+) -> Option<archon_core::protocol::WaitingReason> {
+    let request = archon_core::protocol::Request::GetItem { item: item.clone() };
+    let Ok(archon_core::protocol::Reply::ItemDetail(detail)) = h.cli(request).await else {
+        panic!("expected item detail");
+    };
+    detail.waiting_reason
 }

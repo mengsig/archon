@@ -46,6 +46,48 @@ fn report(store: &Store, query: ModelEvidenceQuery, range: DayRange) -> ModelEvi
 }
 
 #[test]
+fn model_evidence_keeps_a_recorded_alias_apart_from_its_current_target() {
+    use archon_core::model_tier::{CatalogModel, ModelCatalog};
+    let mut store = store();
+    let item = store.insert_item(&item(None, "alias"), None).unwrap();
+    let run = start(&mut store, &item.id);
+    for (n, name, cost) in [(0, "opus", 1.0), (1, "claude-opus-5-5", 3.0)] {
+        let mut stage = running_stage(&run, n, n);
+        stage.stage_id = "review".into();
+        stage.choice.model = format!("claude-code/{name}").parse().unwrap();
+        stage.state = StageState::Completed;
+        stage.finished_at = Some(t(120));
+        stage.cost_usd = cost;
+        stage.verdict = Some(Verdict::Pass);
+        store.upsert_stage_run(&stage).unwrap();
+    }
+    let mut catalog = ModelCatalog::new(vec![CatalogModel {
+        model: "claude-code/claude-opus-5-5".parse().unwrap(),
+        tier: None,
+        is_default: false,
+    }]);
+    catalog.add_alias(
+        "claude-code/opus".parse().unwrap(),
+        "claude-code/claude-opus-5-5".parse().unwrap(),
+    );
+    store.set_model_catalog(catalog);
+    let report = report(&store, Default::default(), range(0, 1000));
+    let mut rows: Vec<_> = report
+        .rows
+        .iter()
+        .map(|r| (r.choice.model.to_string(), r.attempts, r.median_cost_usd))
+        .collect();
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(
+        rows,
+        vec![
+            ("claude-code/claude-opus-5-5".to_string(), 1, Some(3.0)),
+            ("claude-code/opus".to_string(), 1, Some(1.0)),
+        ]
+    );
+}
+
+#[test]
 fn groups_by_stage_model_effort_and_measures_completed_attempts_only() {
     let mut store = store();
     let item = store.insert_item(&item(None, "fixture"), None).unwrap();
@@ -530,6 +572,26 @@ fn evidence_also_groups_by_stage_tier_and_effort() {
         text.contains("Tier review strong medium n=3 completed=3"),
         "{text}"
     );
+}
+
+#[test]
+fn direct_evidence_excludes_an_unbilled_refusal_before_agent_creation() {
+    let mut store = store();
+    let item = store
+        .insert_item(&item(None, "model refused"), None)
+        .unwrap();
+    let run = start(&mut store, &item.id);
+    let mut stage = running_stage(&run, 0, 0);
+    stage.aether_agent = None;
+    stage.cost_usd = 0.0;
+    stage.state = StageState::Failed {
+        error: "cannot create agent: unknown model".into(),
+    };
+    stage.finished_at = Some(t(120));
+    store.upsert_stage_run(&stage).unwrap();
+    let report = report(&store, Default::default(), range(0, 1000));
+    assert!(report.rows.is_empty());
+    assert!(report.providers.is_empty());
 }
 
 /// A pass its own findings dispute is a format clash: counted apart, not as a

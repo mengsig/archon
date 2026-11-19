@@ -118,7 +118,7 @@ pub(super) async fn stats(
             .map(|id| store.repo(&crate::resolve::repo_ref(id)))
             .transpose()?;
         let env = crate::resolve::RepoEnv::new(repo)?;
-        let policy = env.policy(&ctx.config);
+        let policy = env.resolved_policy(ctx);
         pipeline.estimated_saving_usd =
             store.estimated_model_saving(pipeline.repo.as_ref(), &pipeline.pipeline, &policy)?;
         let outcomes = store.outcomes(pipeline.repo.as_ref())?;

@@ -29,7 +29,7 @@ pub(super) use owed::Locks;
 pub(crate) use owed::{deliver, owed};
 pub(crate) use plan::started_stages;
 pub(crate) use shape::{Current, Sources, forget as forget_shape, keep as keep_shape};
-pub(crate) use shape::{correct_shaped, reshape, shaped, switched_to};
+pub(crate) use shape::{correct_shaped, reshape, shaped, shaped_in, switched_to};
 
 use owed::Delivery;
 use plan::{Change, Tune};
@@ -46,6 +46,7 @@ pub(crate) struct Asked<'a> {
     pub env: &'a RepoEnv,
     pub sources: &'a Sources,
     pub steer: &'a Steer,
+    pub catalog: Option<&'a archon_core::model_tier::ModelCatalog>,
     /// A whole new, checked model plan (`update_item` on a running item).
     pub plan: Option<(PlannedPlan, Option<ModelReasons>)>,
 }
@@ -347,6 +348,12 @@ fn owe_live(
             deadline: extended(&mut stored, tune, now),
             interrupt: tune.choice.is_some(),
             lead: lead_message(change, tune, by),
+            note: owed::RefusedNote::Note(
+                tune.choice
+                    .as_ref()
+                    .and(change.note.as_deref())
+                    .map(note_message),
+            ),
             helpers: None,
         };
         spawn::save_spawn(store, id, &stored)?;

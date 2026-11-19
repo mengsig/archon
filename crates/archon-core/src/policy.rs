@@ -2,7 +2,7 @@
 //! decides whether the choice is allowed. Enforced by the daemon at enqueue,
 //! at spawn and by the fleet watchdog (ARCHITECTURE §7.4).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -55,9 +55,38 @@ impl ModelPolicy {
         narrowed
     }
 
+    /// The same policy with every listed alias replaced by its canonical ID,
+    /// so allow and deny compare against catalog-resolved choices.
+    pub fn canonicalized(&self, aliases: &BTreeMap<ModelRef, ModelRef>) -> Self {
+        let canon = |model: &ModelRef| aliases.get(model).unwrap_or(model).clone();
+        let canonical = Self {
+            allow: self
+                .allow
+                .as_ref()
+                .map(|set| set.iter().map(canon).collect()),
+            deny: self.deny.iter().map(canon).collect(),
+            max_effort: self.max_effort,
+        };
+        debug_assert!(canonical.deny.len() <= self.deny.len());
+        canonical
+    }
+
     pub fn permits_model(&self, model: &ModelRef) -> bool {
         let allowed = self.allow.as_ref().is_none_or(|set| set.contains(model));
         allowed && !self.deny.contains(model)
+    }
+
+    /// What can be enforced before a catalog resolves provider-local aliases.
+    pub fn check_pending_model(&self, choice: &ModelChoice) -> Result<(), ArchonError> {
+        if self.deny.contains(&choice.model)
+            || self
+                .allow
+                .as_ref()
+                .is_some_and(|allowed| !allowed.iter().any(|m| m.provider == choice.model.provider))
+        {
+            return self.check(choice);
+        }
+        self.check_effort(choice.effort)
     }
 
     /// Refuse a choice outside the policy with an error that names what is
@@ -147,6 +176,44 @@ mod tests {
             effort,
             tier: None,
         }
+    }
+
+    #[test]
+    fn a_deferred_alias_must_pass_the_policy_after_canonicalization() {
+        use crate::model_tier::{CatalogModel, ModelCatalog};
+        let canonical = m("claude-code/claude-opus-5-5");
+        let mut requested = choice("claude-code/opus", Effort::Medium);
+        let policy = ModelPolicy::from_lists(&[], std::slice::from_ref(&canonical), None);
+        let mut catalog = ModelCatalog::new(vec![CatalogModel {
+            model: canonical.clone(),
+            tier: None,
+            is_default: false,
+        }]);
+        catalog.add_alias(requested.model.clone(), canonical);
+        assert!(policy.check_pending_model(&requested).is_ok());
+        requested.model = catalog.check(&requested.model).unwrap();
+        assert!(policy.check(&requested).is_err());
+    }
+
+    #[test]
+    fn a_configured_alias_deny_blocks_the_canonical_id() {
+        let aliases = BTreeMap::from([(m("p/old"), m("p/new"))]);
+        let policy = ModelPolicy::from_lists(&[], &[m("p/old")], None).canonicalized(&aliases);
+        assert!(!policy.permits_model(&m("p/new")));
+        assert!(policy.permits_model(&m("p/other")));
+        assert!(policy.deny.contains(&m("p/new")));
+    }
+
+    #[test]
+    fn allowlists_naming_an_alias_and_its_canonical_id_intersect() {
+        let aliases = BTreeMap::from([(m("p/old"), m("p/new"))]);
+        let global = ModelPolicy::from_lists(&[m("p/old")], &[], None).canonicalized(&aliases);
+        let repo =
+            ModelPolicy::from_lists(&[m("p/new"), m("p/x")], &[], None).canonicalized(&aliases);
+        let effective = global.narrowed_by(&repo);
+        assert!(effective.permits_model(&m("p/new")));
+        assert!(!effective.permits_model(&m("p/x")));
+        assert_eq!(effective.allow.as_ref().map(BTreeSet::len), Some(1));
     }
 
     #[test]

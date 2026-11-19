@@ -34,7 +34,19 @@ pub async fn run(command: QueueCommand, json: bool) -> anyhow::Result<ExitCode> 
             fresh,
             append,
             stage_timeout,
-        } => retry(&item, fresh, append, stage_timeout, json).await?,
+            model_plan_file,
+            model_reasons_file,
+        } => {
+            retry(
+                &item,
+                fresh,
+                append,
+                stage_timeout,
+                (model_plan_file, model_reasons_file),
+                json,
+            )
+            .await?
+        }
         QueueCommand::Refresh { item } => refresh(&item, json).await?,
         QueueCommand::Caps {
             max_parallel_agents,
@@ -94,6 +106,7 @@ async fn retry(
     fresh: bool,
     append: Option<String>,
     stage_timeout: Vec<(String, u32)>,
+    files: (Option<std::path::PathBuf>, Option<std::path::PathBuf>),
     json: bool,
 ) -> anyhow::Result<()> {
     let client = connect_or_start().await?;
@@ -104,8 +117,8 @@ async fn retry(
     };
     let request = Request::RetryItem {
         item,
-        model_plan: None,
-        model_reasons: None,
+        model_plan: files.0.as_deref().map(crate::cmd::read_map).transpose()?,
+        model_reasons: files.1.as_deref().map(crate::cmd::read_map).transpose()?,
         fresh,
         brief_append: append,
         stage_timeouts: stage_timeout.into_iter().collect(),
@@ -127,6 +140,7 @@ async fn refresh(item: &str, json: bool) -> anyhow::Result<()> {
     let Reply::Item(refresh) = &reply else {
         return Err(unexpected(&reply, "item"));
     };
+    item_notes(&reply);
     let done = match refresh.id == item {
         true => format!("Refreshed {item} in place; nothing was queued."),
         false => format!(
@@ -148,12 +162,17 @@ async fn change(
     if !matches!(reply, Reply::Item(_) | Reply::ItemBudgetsOff(_) | Reply::Ok) {
         return Err(unexpected(&reply, "item"));
     }
-    note_budgets_off(&reply);
+    item_notes(&reply);
     emit(json, || reply_data(&reply), done)
 }
 
-/// Say on stderr that a budget just set is not enforced, as stdout is data.
-pub(super) fn note_budgets_off(reply: &Reply) {
+/// Print request notices on stderr so stdout remains machine-readable.
+pub(super) fn item_notes(reply: &Reply) {
+    if let Reply::Item(item) | Reply::ItemBudgetsOff(item) = reply
+        && let Some(check) = &item.model_plan.catalog_check
+    {
+        eprintln!("note: {}", crate::wrap::sanitize_line(&check.to_string()));
+    }
     if matches!(reply, Reply::ItemBudgetsOff(_)) {
         eprintln!("note: {}", archon_core::protocol::BUDGETS_OFF_NOTE);
     }

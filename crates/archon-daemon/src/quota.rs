@@ -8,7 +8,10 @@ mod reroute;
 
 pub(crate) use holds::{item_hold, spawn_hold};
 pub use pace::warn_short;
-pub(crate) use reroute::{Reserve, note_waits, record_moves, reroute_spawns, switch_note};
+pub(crate) use reroute::{
+    Moved, Reserve, catalog_moves, fresh_route_moves, note_waits, notice_baseline, record_moves,
+    reroute_spawns, route_replacement, switch_note,
+};
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

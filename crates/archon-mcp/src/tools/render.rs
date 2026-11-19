@@ -235,6 +235,9 @@ fn item_line(item: &QueueItem, reason_chars: usize) -> String {
     if let Some(risk) = item.risk {
         let _ = write!(line, ", risk {risk}");
     }
+    if let Some(check) = &item.model_plan.catalog_check {
+        let _ = write!(line, ", {check}");
+    }
     if let Some(detail) = state_detail(&item.state) {
         let _ = write!(line, "; {}", clip(&detail, reason_chars));
     }

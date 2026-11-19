@@ -892,7 +892,12 @@ fn profile_reviewers(
     effort_sizing: bool,
 ) -> String {
     let profile = archon_core::config::ReviewConfig::default();
-    let catalog = archon_core::model_tier::ModelCatalog::default();
+    let catalog =
+        archon_core::model_tier::ModelCatalog::new(vec![archon_core::model_tier::CatalogModel {
+            model: own.clone(),
+            tier: None,
+            is_default: true,
+        }]);
     let args = (&profile, &catalog);
     contract::governed_reviewer_rules(None, own, policy, args, false, effort_sizing)
 }

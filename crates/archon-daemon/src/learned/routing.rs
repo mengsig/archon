@@ -75,8 +75,17 @@ pub(crate) fn plan_for_item(
                 .map_err(|e| ArchonError::Corrupt(format!("stored model defaults: {e}")))
         })
         .transpose()?;
+    let catalog = store.model_catalog();
     let (mut plan, mut reasons) = match saved {
-        Some(saved) if policy.check_plan(&saved.0).is_ok() => saved,
+        Some(saved)
+            if policy.check_plan(&saved.0).is_ok()
+                && saved.0.0.values().flatten().all(|choice| {
+                    eligible_model(&catalog, &choice.model, max_tier)
+                        .is_some_and(|id| id == choice.model)
+                }) =>
+        {
+            saved
+        }
         _ => select_plan(
             store,
             repo,
@@ -237,15 +246,46 @@ fn stage_evidence(
     }
     seed(store, &mut cohort.routes, query, policy);
     let catalog = store.model_catalog();
-    let within = |m: &ModelRef| catalog.tier_of(m).is_none_or(|tier| tier <= max_tier);
     cohort
         .routes
-        .retain(|e| policy.check(&e.route.choice).is_ok() && within(&e.route.choice.model));
+        .retain(|e| applies(&catalog, (policy, max_tier), &e.route.choice));
     assert!(cohort.routes.iter().all(|e| e.route.stage == query.stage));
     assert!(cohort.routes.iter().all(|e| e.route.passed <= e.route.runs));
     let local = cohort.routes.iter().all(|e| e.route.repo.is_some());
     assert!(!cohort.feedback_history || local, "corrections never pool");
     Ok(cohort)
+}
+
+/// Whether evidence recorded on `choice` counts now: it speaks only for the
+/// model it ran, so an alias since moved to another model counts for neither.
+fn applies(
+    catalog: &archon_core::model_tier::ModelCatalog,
+    (policy, max_tier): (&ModelPolicy, Tier),
+    choice: &ModelChoice,
+) -> bool {
+    let listed = eligible_model(catalog, &choice.model, max_tier);
+    listed.is_some_and(|id| id == choice.model) && policy.check(choice).is_ok()
+}
+
+fn eligible_model(
+    catalog: &archon_core::model_tier::ModelCatalog,
+    model: &ModelRef,
+    max_tier: Tier,
+) -> Option<ModelRef> {
+    match catalog.check(model) {
+        Ok(canonical)
+            if catalog.superseded_by(&canonical).is_none()
+                && catalog
+                    .tier_of(&canonical)
+                    .is_none_or(|tier| tier <= max_tier) =>
+        {
+            Some(canonical)
+        }
+        result => {
+            tracing::info!(%model, ?result, "skipping ineligible learned model");
+            None
+        }
+    }
 }
 
 /// The corrected choice's samples in its cohort, read past the policy, and
@@ -287,9 +327,6 @@ fn seed(
 ) {
     use archon_core::{model::Effort, outcome::LearnedRoute};
     let ready = store.learning_models();
-    if !ready.is_empty() {
-        evidence.retain(|e| ready.contains(&e.route.choice.model));
-    }
     for model in ready {
         let choice = ModelChoice {
             model,
@@ -476,6 +513,25 @@ mod tests {
         assert_eq!(trial.route.choice.model.model, "tiny");
         assert!(explored);
         assert!(choose(&options[..1], false).is_none());
+    }
+    #[test]
+    fn evidence_under_an_alias_counts_for_neither_the_alias_nor_its_target() {
+        use archon_core::model_tier::{CatalogModel, ModelCatalog};
+        let current: ModelRef = "claude-code/claude-opus-5-5".parse().unwrap();
+        let alias: ModelRef = "claude-code/opus".parse().unwrap();
+        let mut catalog = ModelCatalog::new(vec![CatalogModel {
+            model: current.clone(),
+            tier: Some(Tier::Frontier),
+            is_default: false,
+        }]);
+        catalog.add_alias(alias.clone(), current.clone());
+        let read = (&ModelPolicy::default(), Tier::Frontier);
+        let ran = |model: &ModelRef| ModelChoice::pinned(model.clone(), Effort::Low);
+        assert!(applies(&catalog, read, &ran(&current)));
+        assert!(
+            !applies(&catalog, read, &ran(&alias)),
+            "it ran an older model"
+        );
     }
     #[test]
     fn exploration_is_stable_and_ten_percent_is_a_hard_configuration_ceiling() {

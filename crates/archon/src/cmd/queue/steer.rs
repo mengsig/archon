@@ -25,7 +25,7 @@ pub async fn run(args: QueueSteerArgs, json: bool) -> anyhow::Result<()> {
     let (Reply::Item(steered) | Reply::ItemBudgetsOff(steered)) = &reply else {
         return Err(unexpected(&reply, "item"));
     };
-    super::note_budgets_off(&reply);
+    super::item_notes(&reply);
     if json {
         return emit(true, || reply_data(&reply), "");
     }

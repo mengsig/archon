@@ -198,6 +198,9 @@ pub fn item_detail(detail: &ItemDetail, names: &RepoNames, full: bool) -> String
     if let Some(switch) = &item.provider_switch {
         let _ = writeln!(out, "provider switch: {}", sanitize_line(switch));
     }
+    if let Some(check) = &item.model_plan.catalog_check {
+        let _ = writeln!(out, "{}", sanitize_line(&check.to_string()));
+    }
     plan_lines(&mut out, item);
     origin_lines(&mut out, &detail.plan_origins);
     sizing_lines(&mut out, item);

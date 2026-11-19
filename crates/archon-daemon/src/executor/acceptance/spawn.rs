@@ -148,12 +148,14 @@ fn attach_references(
 /// Place the acceptance stage of `plans` on the model that judges the ledger:
 /// independent of every builder where one is permitted and connected, else,
 /// unless `[review] independent_acceptance` holds, the strongest one, labelled.
+/// A `woken` judge the catalog and policy still accept keeps judging.
 pub(in crate::executor) fn select_model(
     ctx: &DaemonContext,
     store: &mut Store,
     item: &QueueItem,
     run: &PipelineRun,
     plans: &mut [SpawnPlan],
+    woken: Option<&ModelRef>,
 ) -> Result<(), ArchonError> {
     if !plans.iter().any(|p| p.stage_id == STAGE) {
         return Ok(());
@@ -166,20 +168,25 @@ pub(in crate::executor) fn select_model(
         .as_ref()
         .map(|id| store.repo(&crate::resolve::repo_ref(id)))
         .transpose()?;
-    let policy = RepoEnv::new(repo)?.policy(&ctx.config);
+    let policy = RepoEnv::new(repo)?.resolved_policy(ctx);
     let vision = vision_models(store)?;
     let catalog = store.model_catalog();
-    let permitted: Vec<_> = catalog
-        .models()
-        .iter()
-        .filter(|m| policy.permits_model(&m.model) && (!visual || vision.contains(&m.model)))
-        .collect();
-    let model = judge_model(
-        &permitted,
-        &builders,
-        visual,
-        ctx.config.review.independent_acceptance,
-    )?;
+    let judges = |m: &ModelRef| policy.permits_model(m) && (!visual || vision.contains(m));
+    let permitted = judge_pool(&catalog, judges, &builders);
+    let still_judges = |judge: &&ModelRef| {
+        catalog.check(judge).is_ok_and(|listed| listed == **judge)
+            && policy.permits_model(judge)
+            && (!visual || vision.contains(judge))
+    };
+    let model = match woken.filter(still_judges) {
+        Some(judge) => judge.clone(),
+        None => judge_model(
+            &permitted,
+            &builders,
+            visual,
+            ctx.config.review.independent_acceptance,
+        )?,
+    };
     for plan in plans.iter_mut().filter(|p| p.stage_id == STAGE) {
         plan.choice.model = model.clone();
         if let Some(cap) = policy.max_effort {
@@ -196,6 +203,30 @@ pub(in crate::executor) fn select_model(
 
 /// The model apart from every builder that prefers another vendor and then
 /// the strongest tier; with none, the strongest permitted one unless `strict`.
+/// Listed models `judges` accepts. A superseded one is dropped only for a
+/// same-provider successor that judges too, and as independently of every builder.
+fn judge_pool<'c>(
+    catalog: &'c archon_core::model_tier::ModelCatalog,
+    judges: impl Fn(&ModelRef) -> bool,
+    builders: &[ModelRef],
+) -> Vec<&'c archon_core::model_tier::CatalogModel> {
+    let pool: Vec<_> = catalog
+        .models()
+        .iter()
+        .filter(|m| !catalog.is_retired(&m.model) && judges(&m.model))
+        .filter(|m| {
+            let independent = !builders.contains(&m.model);
+            !catalog.replaced_for(&m.model, |s| {
+                s.model.provider == m.model.provider
+                    && judges(&s.model)
+                    && (!independent || !builders.contains(&s.model))
+            })
+        })
+        .collect();
+    debug_assert!(pool.iter().all(|m| judges(&m.model)));
+    pool
+}
+
 fn judge_model(
     permitted: &[&archon_core::model_tier::CatalogModel],
     builders: &[ModelRef],
@@ -424,4 +455,92 @@ fn materialize(
     assert!(record.images.iter().all(|i| i.path.starts_with(&root)));
     assert!(record.images.iter().all(|i| i.path.is_file()));
     Ok(record)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use archon_core::model_tier::{CatalogModel, ModelCatalog, Tier};
+
+    fn listed(models: &[&str]) -> ModelCatalog {
+        ModelCatalog::new(
+            models
+                .iter()
+                .map(|m| CatalogModel {
+                    model: m.parse().unwrap(),
+                    tier: Some(Tier::Strong),
+                    is_default: false,
+                })
+                .collect(),
+        )
+    }
+
+    fn names(pool: &[&CatalogModel]) -> Vec<String> {
+        pool.iter().map(|m| m.model.to_string()).collect()
+    }
+
+    #[test]
+    fn a_superseded_judge_stays_while_its_successor_cannot_judge() {
+        let mut catalog = listed(&["codex/build", "claude-code/old", "claude-code/blind"]);
+        catalog.add_superseded(
+            "claude-code/old".parse().unwrap(),
+            "claude-code/blind".parse().unwrap(),
+        );
+        let vision: Vec<ModelRef> = [
+            "codex/build".parse().unwrap(),
+            "claude-code/old".parse().unwrap(),
+        ]
+        .into();
+        let builders: Vec<ModelRef> = vec!["codex/build".parse().unwrap()];
+        let pool = judge_pool(&catalog, |m| vision.contains(m), &builders);
+        assert_eq!(names(&pool), ["codex/build", "claude-code/old"]);
+        let model = judge_model(&pool, &builders, true, true).unwrap();
+        assert_eq!(model.to_string(), "claude-code/old");
+    }
+
+    #[test]
+    fn an_independent_judge_is_not_replaced_by_a_builder_s_model() {
+        let mut catalog = listed(&["codex/build", "claude-code/old"]);
+        catalog.add_superseded(
+            "claude-code/old".parse().unwrap(),
+            "codex/build".parse().unwrap(),
+        );
+        let builders: Vec<ModelRef> = vec!["codex/build".parse().unwrap()];
+        let pool = judge_pool(&catalog, |_| true, &builders);
+        assert_eq!(
+            judge_model(&pool, &builders, false, true)
+                .unwrap()
+                .to_string(),
+            "claude-code/old"
+        );
+        let mut plain = listed(&["claude-code/old", "claude-code/new"]);
+        plain.add_superseded(
+            "claude-code/old".parse().unwrap(),
+            "claude-code/new".parse().unwrap(),
+        );
+        let pool = judge_pool(&plain, |_| true, &builders);
+        assert_eq!(
+            names(&pool),
+            ["claude-code/new"],
+            "a judging successor replaces it"
+        );
+    }
+
+    #[test]
+    fn an_other_vendor_judge_is_not_replaced_by_a_cross_provider_successor() {
+        let mut catalog = listed(&["codex/build", "claude-code/old", "codex/new"]);
+        catalog.add_superseded(
+            "claude-code/old".parse().unwrap(),
+            "codex/new".parse().unwrap(),
+        );
+        let builders: Vec<ModelRef> = vec!["codex/build".parse().unwrap()];
+        let pool = judge_pool(&catalog, |_| true, &builders);
+        assert!(names(&pool).contains(&"claude-code/old".to_owned()));
+        let model = judge_model(&pool, &builders, false, true).unwrap();
+        assert_eq!(
+            model.to_string(),
+            "claude-code/old",
+            "the other vendor judges"
+        );
+    }
 }

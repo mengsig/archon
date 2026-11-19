@@ -407,7 +407,7 @@ async fn cohort_policy(
     repo: Option<&RepoId>,
 ) -> Result<(ModelPolicy, Tier), ArchonError> {
     match RepoEnv::load(ctx, repo).await {
-        Ok(env) => Ok((env.policy(&ctx.config), env.max_default_tier(&ctx.config))),
+        Ok(env) => Ok((env.resolved_policy(ctx), env.max_default_tier(&ctx.config))),
         Err(ArchonError::NotFound(_)) => {
             let global = &ctx.config.models;
             Ok((

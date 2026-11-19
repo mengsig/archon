@@ -605,6 +605,7 @@ mod tests {
             fan_index: 0,
             model_segments: Vec::new(),
             infrastructure_failure: false,
+            record_repair: None,
             host_context: Default::default(),
             choice: ModelChoice {
                 model: "claude-code/opus".parse().unwrap(),

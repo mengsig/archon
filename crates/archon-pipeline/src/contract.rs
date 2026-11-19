@@ -272,6 +272,8 @@ const DELEGATE_HAND_OFF: &str = "\
 hold, in a few lines: what done means, the paths that matter and what you found \
 there. Never your conversation or the project's history. Read a bounded local \
 question yourself instead of delegating it.\n\
+- Aether refuses a delegation with over 16 `references`: name others by path in the \
+objective.\n\
 - A reviewer's hand-off is the exact base and head commits, the changed paths, the \
 checks you ran with their results and the commit they ran on, the risks you know of, \
 and the repository guidance it must apply.\n";
@@ -1632,6 +1634,7 @@ mod tests {
                 "Read a bounded local question yourself instead of delegating it",
                 "A reviewer's hand-off is the exact base and head commits, the changed paths",
                 "the checks you ran with their results and the commit they ran on",
+                "Aether refuses a delegation with over 16 `references`",
             ] {
                 assert!(
                     rules.contains(said),

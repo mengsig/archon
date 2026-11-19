@@ -19,12 +19,27 @@ async fn fixture(references: bool) -> (Harness, FakeAether, QueueItem) {
 
 /// A running ledger item under `config`, Aether listing `vision` models.
 pub(crate) async fn fixture_on(
+    config: archon_core::config::Config,
+    references: bool,
+    vision: &[&str],
+) -> (Harness, FakeAether, QueueItem) {
+    let pipeline = (common::PIPELINE, None, common::plan());
+    fixture_in(config, pipeline, references, vision).await
+}
+
+/// [`fixture_on`] in a pipeline given as its name, the TOML to add it to the
+/// repository from when the harness lacks it, and its stages' model plan.
+pub(crate) async fn fixture_in(
     mut config: archon_core::config::Config,
+    (pipeline, toml, mut plan): (&str, Option<&str>, archon_core::model::ModelPlan),
     references: bool,
     vision: &[&str],
 ) -> (Harness, FakeAether, QueueItem) {
     config.worktrees.keep_on_success = true;
     let h = Harness::with_config(config).await;
+    if let Some(toml) = toml {
+        h.add_pipeline(pipeline, toml);
+    }
     let fake = models_listed(&h, vision).await;
     if references {
         fake.set_features(vec!["references".into()]);
@@ -48,7 +63,6 @@ pub(crate) async fn fixture_on(
         .await
         .save_approved_intent(&intent)
         .unwrap();
-    let mut plan = common::plan();
     plan.0.insert(
         "intent-acceptance".into(),
         vec![common::choice(
@@ -56,7 +70,7 @@ pub(crate) async fn fixture_on(
             archon_core::model::Effort::High,
         )],
     );
-    let request = serde_json::from_value(json!({"repo":common::REPO_NAME,"pipeline":common::PIPELINE,"title":"preserve approved design","brief":"Use the approved ledger","intent":binding,"model_plan":plan})).unwrap();
+    let request = serde_json::from_value(json!({"repo":common::REPO_NAME,"pipeline":pipeline,"title":"preserve approved design","brief":"Use the approved ledger","intent":binding,"model_plan":plan})).unwrap();
     let Reply::Item(item) = h.cli(Request::Enqueue(request)).await.unwrap() else {
         panic!("item")
     };

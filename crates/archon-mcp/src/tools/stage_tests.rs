@@ -280,6 +280,7 @@ fn long_review(run: PipelineRunId) -> StageRun {
         fan_index: 0,
         model_segments: Vec::new(),
         infrastructure_failure: false,
+        record_repair: None,
         host_context: Default::default(),
         choice: choice(),
         aether_agent: None,

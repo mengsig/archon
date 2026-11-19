@@ -790,3 +790,40 @@ fn migrated_entries_remain_daemon_owned_and_can_move_again() {
     assert_eq!(planned.0["build"][0].model.to_string(), "p/final");
     assert_eq!(planned.0["build"][0].effort, Effort::High);
 }
+
+/// A daemon choice the catalog supersedes yet still lists keeps running when
+/// no eligible model replaces it; a retired one with none still refuses.
+#[test]
+fn a_superseded_daemon_choice_with_no_replacement_keeps_its_model() {
+    use crate::model_tier::{CatalogModel, ModelCatalog};
+    let id = QueueItemId::new();
+    let mut writer = PlanWriter::new(&id, crate::now());
+    writer.filled(
+        plan(&[("report", choice("p/old", Effort::High))]),
+        (PlanSource::Fallback, PlanSource::Fallback),
+    );
+    let mut planned = writer.finish(Sizing::Off { policy_cap: None });
+    let model = |id: &str| CatalogModel {
+        model: id.parse().unwrap(),
+        tier: Some(Tier::Strong),
+        is_default: false,
+    };
+    let mut listed = ModelCatalog::new(vec![model("p/old"), model("p/next")]);
+    listed.add_superseded("p/old".parse().unwrap(), "p/next".parse().unwrap());
+    assert!(planned.needs_catalog_repair(&id, &listed));
+    let before = planned.clone();
+    planned
+        .repair_catalog_with(&id, &listed, crate::now(), |_, _, _, _| Ok(None))
+        .expect("a listed model with nothing to move to still runs");
+    assert_eq!(planned.0["report"][0].model.to_string(), "p/old");
+    assert_eq!(planned.0, before.0, "nothing moved");
+
+    let mut retired = ModelCatalog::new(vec![model("p/next")]);
+    retired.add_retired("p/old".parse().unwrap(), None);
+    let refused = planned.repair_catalog_with(&id, &retired, crate::now(), |_, _, _, _| Ok(None));
+    assert!(
+        refused.is_err(),
+        "a retired model with no replacement waits"
+    );
+    assert_eq!(planned.0, before.0, "a refused repair changes nothing");
+}

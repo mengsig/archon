@@ -127,9 +127,8 @@ fn kept_attempt(
     Ok(Some((last, agent)))
 }
 
-/// The model the kept agent `plan` resumes last ran, when the daemon alone moved
-/// its slot since and the catalog still lists that model (I1, I3): a steer
-/// that pinned another model, or an unusable one, still replaces the agent.
+/// The model the kept agent `plan` resumes last ran, when the daemon alone
+/// moved its slot since: see [`held_on_agent`].
 pub(super) fn kept_model(
     store: &Store,
     (run, item): (
@@ -140,34 +139,52 @@ pub(super) fn kept_model(
     catalog: &archon_core::model_tier::ModelCatalog,
 ) -> Result<Option<ModelChoice>, ArchonError> {
     assert_eq!(run.item, item.id, "the run works for the item");
-    if plan.resume.is_none() || plan.stage_id == archon_pipeline::acceptance::STAGE {
+    if plan.resume.is_none() {
         return Ok(None);
+    }
+    let Some((last, _)) = kept_attempt(store, &run.id, plan, false)? else {
+        return Ok(None);
+    };
+    assert_eq!(last.stage_id, plan.stage_id, "the slot's own attempt");
+    Ok(held_on_agent(item, plan, last.current_choice(), catalog))
+}
+
+/// `plan` on the model and tier its agent `ran` (I1), keeping the plan's
+/// effort as a quota follow does, when the daemon alone moved the slot off
+/// that model and the catalog lists it unsuperseded (I3). A steer that pinned
+/// another model, or an unusable one, leaves the plan as it is.
+pub(super) fn held_on_agent(
+    item: &archon_core::queue::QueueItem,
+    plan: &SpawnPlan,
+    ran: &ModelChoice,
+    catalog: &archon_core::model_tier::ModelCatalog,
+) -> Option<ModelChoice> {
+    if plan.stage_id == archon_pipeline::acceptance::STAGE {
+        return None;
     }
     let slots = item
         .model_plan
         .choices_for(&plan.stage_id)
         .map_or(0, <[_]>::len);
-    let Some((last, _)) = kept_attempt(store, &run.id, plan, false)? else {
-        return Ok(None);
-    };
-    let ran = last.current_choice();
-    // An unknown or retired model is the catalog repair's to replace.
-    let Ok(model) = catalog.check(&ran.model) else {
-        return Ok(None);
-    };
+    // An unknown, retired or superseded model is the catalog repair's to replace:
+    // a fresh agent is never created on one, should the agent not go on.
+    let model = catalog.check(&ran.model).ok()?;
+    if catalog.superseded_by(&model).is_some() {
+        return None;
+    }
     if model == plan.choice.model || slots == 0 {
-        return Ok(None);
+        return None;
     }
     let slot = plan.fan_index as usize % slots;
     let origin = item.model_plan.origin(&item.id, &plan.stage_id, slot);
-    // As a quota follow moves it: the model and its tier, never the effort.
-    let kept = ModelChoice {
+    let held = ModelChoice {
         model,
         tier: ran.tier.clone(),
         ..plan.choice.clone()
     };
-    assert_ne!(kept.model, plan.choice.model, "only a moved slot is held");
-    Ok(origin.model.is_movable().then_some(kept))
+    assert_ne!(held.model, plan.choice.model, "only a moved slot is held");
+    assert_eq!(held.effort, plan.choice.effort, "a hold keeps the effort");
+    origin.model.is_movable().then_some(held)
 }
 
 /// Record that the agent of resumed attempt `stage` was told `text` after

@@ -6,12 +6,13 @@ use std::time::{Duration, Instant};
 use archon_core::Timestamp;
 use archon_core::error::ArchonError;
 use archon_core::id::StageRunId;
+use archon_core::model_tier::ModelCatalog;
 use archon_core::notify::{FeedEntry, Notification, NotificationKind};
 use archon_core::run::{
     PipelineRun, RecordRepair, RunState, StageOutcome, StageRun, StageState, Verdict,
 };
 use archon_core::steer::RunEdit;
-use archon_pipeline::{EngineAction, SpawnPlan};
+use archon_pipeline::{EngineAction, PipelineSpec, SpawnPlan};
 
 use super::{
     FollowUp, RunTable, SettleRetry, descendants, engine_wait, finish, gates, notional, pages,
@@ -994,16 +995,8 @@ async fn replace(
     } else {
         let catalog = crate::learned::catalog(ctx).await?;
         let mut store = ctx.store.lock().await;
-        let chosen = plan.clone();
-        plan =
-            super::model_catalog::retry_plan(ctx, &mut store, table, run, chosen, &catalog, &spec)?;
-        // The agent a wake keeps runs the model it was last steered to.
-        let kept = catalog.canonical_alias(&failed.current_choice().model);
-        let woken = retry.wake.is_some().then_some(kept);
-        retry_judge(ctx, &mut store, run, &mut plan, woken)?;
-        if plan.choice.model != *kept {
-            retry.wake = None;
-        }
+        let read = ((run, &*spec), &catalog);
+        plan = retry_choice(ctx, (&mut store, table), read, (failed, plan), &mut retry)?;
         store
     };
     // Owed before the replacement exists, so it never starts beside them.
@@ -1018,6 +1011,68 @@ async fn replace(
     let failed = restatement::bound(&store, failed.clone())?;
     store.upsert_stage_run(&failed)?;
     Ok(Some((id, woken)))
+}
+
+/// The plan `failed`'s retry runs: a wake keeps the stopped agent on the
+/// model it ran (I1) unless a steer, retirement or judge moves it; a fresh
+/// retry is routed by quota as a fresh stage is (I2).
+fn retry_choice(
+    ctx: &DaemonContext,
+    (store, table): (&mut archon_queue::Store, &mut RunTable),
+    ((run, spec), catalog): ((&PipelineRun, &PipelineSpec), &ModelCatalog),
+    (failed, chosen): (&StageRun, SpawnPlan),
+    retry: &mut spawn::Retry,
+) -> Result<SpawnPlan, ArchonError> {
+    assert_eq!(failed.run, run.id, "the failed attempt is the run's");
+    assert_eq!(
+        failed.stage_id, chosen.stage_id,
+        "the retry is the failed slot's"
+    );
+    let mut plan = super::model_catalog::retry_plan(ctx, store, table, run, chosen, catalog, spec)?;
+    let ran = failed.current_choice();
+    if retry.wake.is_some() {
+        let item = store.item(&run.item)?;
+        if let Some(held) = super::resume::held_on_agent(&item, &plan, ran, catalog) {
+            plan.choice = held;
+        }
+    }
+    // The agent a wake keeps runs the model it was last steered to.
+    let kept = catalog.canonical_alias(&ran.model);
+    let woken = retry.wake.is_some().then_some(kept);
+    retry_judge(ctx, store, run, &mut plan, woken)?;
+    if plan.choice.model != *kept {
+        retry.wake = None;
+    }
+    if retry.wake.is_none() && plan.resume.is_none() {
+        route_fresh(ctx, (store, table), (run, spec), &mut plan, catalog)?;
+    }
+    Ok(plan)
+}
+
+/// Route fresh retry `plan` by quota, letting the run's driver follow a
+/// stored plan the move changed, as a reserved stage's move is followed.
+fn route_fresh(
+    ctx: &DaemonContext,
+    (store, table): (&mut archon_queue::Store, &mut RunTable),
+    (run, spec): (&PipelineRun, &PipelineSpec),
+    plan: &mut SpawnPlan,
+    catalog: &ModelCatalog,
+) -> Result<(), ArchonError> {
+    assert!(plan.resume.is_none(), "a resume keeps its agent's model");
+    let mut item = store.item(&run.item)?;
+    assert_eq!(item.id, run.item, "the run works for the item");
+    let repo = item
+        .repo
+        .as_ref()
+        .map(|id| store.repo(&crate::resolve::repo_ref(id)))
+        .transpose()?;
+    let before = item.model_plan.plan().clone();
+    crate::quota::route_replacement(ctx, store, (&mut item, spec), plan, repo.as_ref())?;
+    let after = item.model_plan.plan();
+    if before != *after {
+        super::model_catalog::follow_models(table, &run.id, (&before, after), catalog);
+    }
+    Ok(())
 }
 
 /// An acceptance retry is judged by the `woken` judge while it is still

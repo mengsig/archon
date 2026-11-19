@@ -673,18 +673,21 @@ impl PlannedPlan {
                 let model = match still_listed(catalog, &choice.model, origin) {
                     Ok(model) => model,
                     Err(error) if origin.may_replace(when) => {
-                        let Some((model, tier)) = replacement(key, slot, choice, origin)? else {
-                            return Err(error);
-                        };
-                        let model = catalog.check(&model)?;
-                        choice.tier = tier;
-                        origin.model = FieldOrigin::chosen(
-                            PlanSource::Migrated,
-                            Authority::Daemon,
-                            at,
-                            Some(format!("was {}", choice.model)),
-                        );
-                        model
+                        match replacement(key, slot, choice, origin)? {
+                            Some((model, tier)) => {
+                                let model = catalog.check(&model)?;
+                                choice.tier = tier;
+                                origin.model = FieldOrigin::chosen(
+                                    PlanSource::Migrated,
+                                    Authority::Daemon,
+                                    at,
+                                    Some(format!("was {}", choice.model)),
+                                );
+                                model
+                            }
+                            // Superseded alone, with no eligible model to move to: it still runs.
+                            None => catalog.check(&choice.model).map_err(|_| error)?,
+                        }
                     }
                     Err(error) => return Err(error),
                 };

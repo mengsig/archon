@@ -78,19 +78,72 @@ pub(crate) fn reroute_spawns(
         "the plans are stages of the run's pipeline"
     );
     let view = super::view(ctx);
-    let Some((weights, policy, catalog)) = quota_routing(ctx, store, item, repo, view.as_ref())
-    else {
+    let Some(routing) = quota_routing(ctx, store, item, repo, view.as_ref()) else {
         return note_repair(ctx, store, item, replaced, view.as_ref()).map(|()| Reserve::Go);
     };
+    let (weights, policy, catalog) = &routing;
     if let Some(spent) = view.as_ref().filter(|v| v.any_exhausted())
-        && let Some(hold) = first_hold(item, (spec, plans), (&weights, &policy), (&catalog, spent))
+        && let Some(hold) = first_hold(item, (spec, plans), (weights, policy), (catalog, spent))
     {
         note_repair(ctx, store, item, replaced, view.as_ref())?;
         record_wait(store, item, &hold)?;
         return Ok(Reserve::Wait);
     }
-    let quota = (Some(&weights), view.as_ref());
-    let held = knobs::item_provider(quota, &catalog, &policy, ItemRoute::new(item));
+    route_plans(
+        ctx,
+        store,
+        (item, spec),
+        plans,
+        (&routing, replaced, view.as_ref()),
+    )?;
+    Ok(Reserve::Go)
+}
+
+/// Route a fresh replacement `plan` of `item`'s run by quota as a reserved
+/// stage is routed, storing the item when it moved. It never waits for
+/// quota: a replacement is reserved at once, as in 1.6.3.
+pub(crate) fn route_replacement(
+    ctx: &DaemonContext,
+    store: &mut Store,
+    (item, spec): (&mut QueueItem, &PipelineSpec),
+    plan: &mut SpawnPlan,
+    repo: Option<&Repo>,
+) -> Result<(), ArchonError> {
+    assert!(plan.resume.is_none(), "a resume keeps its agent's model");
+    assert!(
+        spec.file.stages.iter().any(|s| s.id == plan.stage_id),
+        "the plan is a stage of the run's pipeline"
+    );
+    let view = super::view(ctx);
+    let Some(routing) = quota_routing(ctx, store, item, repo, view.as_ref()) else {
+        return Ok(());
+    };
+    let plans = std::slice::from_mut(plan);
+    route_plans(
+        ctx,
+        store,
+        (item, spec),
+        plans,
+        (&routing, None, view.as_ref()),
+    )
+}
+
+/// Move `plans` off spent providers or onto the item's held one, follow the
+/// stored plan with them, and note every move with any catalog repair that
+/// `replaced` the stored plan; with nothing moved, only that repair is noted.
+fn route_plans(
+    ctx: &DaemonContext,
+    store: &mut Store,
+    (item, spec): (&mut QueueItem, &PipelineSpec),
+    plans: &mut [SpawnPlan],
+    ((weights, policy, catalog), replaced, view): (
+        &(ProviderWeights, ModelPolicy, ModelCatalog),
+        Option<&ModelPlan>,
+        Option<&QuotaView>,
+    ),
+) -> Result<(), ArchonError> {
+    let quota = (Some(weights), view);
+    let held = knobs::item_provider(quota, catalog, policy, ItemRoute::new(item));
     let id = item.id.clone();
     let route = ItemRoute {
         id: &id,
@@ -98,21 +151,48 @@ pub(crate) fn reroute_spawns(
     }
     .by(quota.0, quota.1);
     let route = route.expect("weights route the item");
-    let tiers = TierScope::new(&ctx.config, &policy, &catalog).routed(Some(route));
-    let moved = move_plans(plans, (spec, tiers), (held.as_deref(), view.as_ref()));
+    let tiers = TierScope::new(&ctx.config, policy, catalog).routed(Some(route));
+    let moved = move_plans(plans, (spec, tiers), (held.as_deref(), view));
     if moved.is_empty() && item.routed_provider == held {
-        return note_repair(ctx, store, item, replaced, view.as_ref()).map(|()| Reserve::Go);
+        note_repair(ctx, store, item, replaced, view)?;
+        return note_started(store, item, plans);
     }
     item.routed_provider = held.clone();
     let stored = item.model_plan.plan().clone();
     follow_plan(item, spec, tiers);
     let before = notice_baseline(replaced, &stored);
-    let mut moves = repair_moves((before, &stored), item.model_plan.plan(), &catalog);
+    let mut moves = repair_moves((before, &stored), item.model_plan.plan(), catalog);
     moves.extend(moved);
-    record_moves(ctx, store, item, (&moves, before), view.as_ref())?;
+    record_moves(ctx, store, item, (&moves, before), view)?;
     item.updated_at = archon_core::now();
-    store.update_item(item)?;
-    Ok(Reserve::Go)
+    store.update_item(item)
+}
+
+/// Replace `item`'s note that one of `plans`' stages waits for quota, now
+/// that it goes on unmoved: a model an earlier move gave it has quota again.
+fn note_started(
+    store: &mut Store,
+    item: &mut QueueItem,
+    plans: &[SpawnPlan],
+) -> Result<(), ArchonError> {
+    let Some(note) = item.provider_switch.as_deref() else {
+        return Ok(());
+    };
+    let waits = |plan: &&SpawnPlan| {
+        note.contains(&format!("stage {} waits for provider quota", plan.stage_id))
+    };
+    let Some(plan) = plans.iter().find(waits) else {
+        return Ok(());
+    };
+    let now = minute(archon_core::now());
+    let started = format!(
+        "{now}: stage {} no longer waits for provider quota; it runs on {}",
+        plan.stage_id, plan.choice.model
+    );
+    assert!(!started.contains('\n'), "one line");
+    item.provider_switch = Some(started);
+    item.updated_at = archon_core::now();
+    store.update_item(item)
 }
 
 /// The weights, policy and catalog `item`'s stages are routed by quota with;

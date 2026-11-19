@@ -1865,3 +1865,125 @@ async fn a_fresh_infra_retry_of_a_quota_moved_stage_follows_the_move() {
         "the retry runs where the move took it"
     );
 }
+
+fn lost_agent() -> archon_core::run::StageOutcome {
+    archon_core::run::StageOutcome::Failed {
+        error: "aetherd lost the agent".into(),
+        infra: true,
+    }
+}
+
+/// A kept implementer resumed on its own model after a quota move, then lost
+/// by Aether, is woken in place on that model: no fresh agent on the moved one.
+#[tokio::test]
+async fn a_resumed_kept_implementer_lost_after_a_quota_move_is_woken_on_its_model() {
+    let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+    claude_then_codex(&h, 90, 0);
+    let item = enqueue(&h, ROUTED, "woken after a move", tier_plan()).await;
+    h.dispatch().await;
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    claude_then_codex(&h, 10, 90);
+    h.settle_running(|_| common::verdict(false)).await;
+    h.dispatch().await;
+    let implementers = |stages: Vec<archon_core::run::StageRun>| -> Vec<_> {
+        let of_implement = stages.into_iter().filter(|s| s.stage_id == "implement");
+        of_implement
+            .map(|s| (s.choice.model, s.aether_agent))
+            .collect()
+    };
+    let resumed = implementers(h.stages(&item.id).await);
+    assert_eq!(resumed.len(), 2, "the fix resumes: {resumed:?}");
+    assert_eq!(resumed[1], resumed[0], "on the agent's own model");
+
+    h.backend
+        .fail_agent(resumed[0].1.as_ref().expect("an agent"));
+    h.settle_running(|_| lost_agent()).await;
+    h.dispatch().await;
+    let woken = implementers(h.stages(&item.id).await);
+    assert_eq!(woken.len(), 3, "the lost attempt is replaced: {woken:?}");
+    assert_eq!(woken[2], woken[0], "the same agent on the model it ran");
+    let agent = woken[0].1.clone().expect("an agent");
+    assert_eq!(h.backend.woken(), [agent], "woken, not replaced");
+}
+
+/// A fresh retry is routed by quota as a fresh stage is: once the provider a
+/// move took a reviewer to is spent, its cold retry goes where quota is.
+#[tokio::test]
+async fn a_cold_retry_on_a_spent_provider_moves_to_one_with_quota() {
+    let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+    claude_then_codex(&h, 90, 0);
+    let item = enqueue(&h, ROUTED, "a cold retry routed", tier_plan()).await;
+    h.dispatch().await;
+    claude_then_codex(&h, 10, 90);
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    let reviews = spawned_on(&h, &item, "review").await;
+    assert!(
+        reviews.iter().all(|m| m.starts_with("codex/")),
+        "{reviews:?}"
+    );
+
+    claude_then_codex(&h, 90, 0);
+    let first_review = |s: &archon_core::run::StageRun| s.stage_id == "review" && s.fan_index == 0;
+    let reviewer = (h.stages(&item.id).await.into_iter()).find(first_review);
+    h.backend
+        .fail_agent(&reviewer.and_then(|s| s.aether_agent).expect("an agent"));
+    for _ in 0..2 {
+        h.settle_running(|s| match s.stage_id == "review" && s.fan_index == 0 {
+            true => lost_agent(),
+            false => common::verdict(true),
+        })
+        .await;
+        h.dispatch().await;
+    }
+    let retried: Vec<_> = (h.stages(&item.id).await.into_iter())
+        .filter(first_review)
+        .map(|s| s.choice.model.to_string())
+        .collect();
+    assert_eq!(retried.len(), 3, "a wake, then a cold retry: {retried:?}");
+    assert_eq!(retried[1], retried[0], "the wake keeps its agent's model");
+    assert!(
+        retried[2].starts_with("claude-code/"),
+        "the cold retry leaves the spent provider: {retried:?}"
+    );
+}
+
+/// A stage that waited for quota, then starts unmoved once its provider has
+/// quota again, no longer reads as waiting.
+#[tokio::test]
+async fn a_stage_that_stops_waiting_for_quota_drops_its_wait_note() {
+    let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+    claude_then_codex(&h, 90, 0);
+    let item = enqueue(&h, ROUTED, "waits, then starts", tier_plan()).await;
+    h.dispatch().await;
+    claude_then_codex(&h, 10, 90);
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    claude_then_codex(&h, 0, 0);
+    h.settle_running(|_| common::verdict(true)).await;
+    h.dispatch().await;
+    let waiting = h.item(&item.id).await.provider_switch.unwrap_or_default();
+    assert!(
+        waiting.contains("stage ship waits for provider quota"),
+        "{waiting}"
+    );
+    assert!(spawned_on(&h, &item, "ship").await.is_empty(), "ship waits");
+
+    claude_then_codex(&h, 0, 90);
+    h.dispatch().await;
+    let ship = spawned_on(&h, &item, "ship").await;
+    assert_eq!(ship.len(), 1, "ship starts: {ship:?}");
+    let note = h.item(&item.id).await.provider_switch.unwrap_or_default();
+    assert!(
+        !note.contains("stage ship waits for provider quota"),
+        "{note}"
+    );
+    assert!(
+        note.contains(&format!(
+            "stage ship no longer waits for provider quota; it runs on {}",
+            ship[0]
+        )),
+        "{note}"
+    );
+}

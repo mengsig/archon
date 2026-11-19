@@ -272,12 +272,12 @@ fn eligible_model(
     model: &ModelRef,
     max_tier: Tier,
 ) -> Option<ModelRef> {
+    // Listed and not retired: supersession steers only Archon's own tier picks.
     match catalog.check(model) {
         Ok(canonical)
-            if catalog.superseded_by(&canonical).is_none()
-                && catalog
-                    .tier_of(&canonical)
-                    .is_none_or(|tier| tier <= max_tier) =>
+            if catalog
+                .tier_of(&canonical)
+                .is_none_or(|tier| tier <= max_tier) =>
         {
             Some(canonical)
         }
@@ -532,6 +532,27 @@ mod tests {
             !applies(&catalog, read, &ran(&alias)),
             "it ran an older model"
         );
+    }
+    #[test]
+    fn evidence_on_a_superseded_model_counts_and_on_a_retired_one_does_not() {
+        use archon_core::model_tier::{CatalogModel, ModelCatalog};
+        let [old, new, gone]: [ModelRef; 3] =
+            ["p/old", "p/new", "p/gone"].map(|m| m.parse().unwrap());
+        let listed = |model: &ModelRef| CatalogModel {
+            model: model.clone(),
+            tier: Some(Tier::Balanced),
+            is_default: false,
+        };
+        let mut catalog = ModelCatalog::new(vec![listed(&old), listed(&new), listed(&gone)]);
+        catalog.add_superseded(old.clone(), new.clone());
+        catalog.add_retired(gone.clone(), None);
+        let read = (&ModelPolicy::default(), Tier::Frontier);
+        let ran = |model: &ModelRef| ModelChoice::pinned(model.clone(), Effort::Low);
+        assert!(
+            applies(&catalog, read, &ran(&old)),
+            "superseded, still listed"
+        );
+        assert!(!applies(&catalog, read, &ran(&gone)), "retired");
     }
     #[test]
     fn exploration_is_stable_and_ten_percent_is_a_hard_configuration_ceiling() {

@@ -1892,12 +1892,13 @@ async fn a_possibly_sent_generation_is_not_replayed_on_a_disallowed_model() {
     assert!(h.kv("orchestrator_model").await.is_none(), "nothing frozen");
 }
 
-/// A possibly sent key whose frozen model `[models]` allows no longer, as
-/// after a restart on a changed config: `codex/allowed` is configured and
-/// listed beside `codex/denied`, which the key of the returned harness froze.
-async fn frozen_on_a_denied_model() -> (Harness, String) {
+/// A possibly sent key that froze `model`, as after a restart on a changed
+/// config: `[models]` allows `codex/allowed`, configured, and `codex/gone`;
+/// the catalog lists `codex/allowed` and `codex/denied`.
+async fn frozen_on(model: &str, labelled: bool) -> (Harness, String) {
     let mut config = Config::default();
-    config.models.allow = vec!["codex/allowed".parse().unwrap()];
+    let allowed = ["codex/allowed", "codex/gone"];
+    config.models.allow = allowed.iter().map(|m| m.parse().unwrap()).collect();
     config.orchestrator.model = "codex/allowed".parse().unwrap();
     let h = Harness::with(config, None).await;
     let listed = json!([
@@ -1912,9 +1913,22 @@ async fn frozen_on_a_denied_model() -> (Harness, String) {
     supervisor::ensure_orchestrator(&h.ctx).await.unwrap_err();
     let sent = h.fake.received_named("create_agent");
     let key = sent[0]["idempotency_key"].as_str().unwrap().to_owned();
-    let denied = json!({"key": key, "model": {"provider": "codex", "model": "denied"}});
-    h.set_kv("orchestrator_model", &denied.to_string()).await;
+    let label = &sent[0]["scope"]["labels"]["archon.creation"];
+    assert_eq!(label, &json!(key), "a first send names its key");
+    let (provider, name) = model.split_once('/').unwrap();
+    let model = json!({"provider": provider, "model": name});
+    let frozen = json!({"key": key, "model": model, "labelled": labelled});
+    h.set_kv("orchestrator_model", &frozen.to_string()).await;
     (h, key)
+}
+
+/// An orchestrator the creation `key` left, on `codex/denied`, in `state`.
+fn left_by(id: &str, key: &str, state: &str) -> Value {
+    let mut agent = agent_in(id, state);
+    agent["model"] = json!({"provider": "codex", "model": "denied"});
+    let labels = json!({"archon": "orchestrator", "archon.creation": key});
+    agent["scope"] = json!({ "labels": labels });
+    agent
 }
 
 /// A creation that never landed froze a model the policy allows no longer:
@@ -1922,7 +1936,7 @@ async fn frozen_on_a_denied_model() -> (Harness, String) {
 /// configured model under its own key.
 #[tokio::test]
 async fn a_frozen_model_outside_the_policy_is_not_sent_again() {
-    let (h, key) = frozen_on_a_denied_model().await;
+    let (h, key) = frozen_on("codex/denied", true).await;
     h.fake
         .set_default("list_agents", Scripted::reply("agents", json!([])));
     let fresh = create_key(&h).await;
@@ -1938,17 +1952,28 @@ async fn a_frozen_model_outside_the_policy_is_not_sent_again() {
     );
 }
 
+/// A labelled creation froze a model the catalog lists no longer: it is not
+/// replayed into a refusal, and a fresh generation follows on the configured one.
+#[tokio::test]
+async fn a_frozen_model_the_catalog_lists_no_longer_is_not_sent_again() {
+    let (h, key) = frozen_on("codex/gone", true).await;
+    h.fake
+        .set_default("list_agents", Scripted::reply("agents", json!([])));
+    let fresh = create_key(&h).await;
+    assert_ne!(fresh, key, "the unsendable key is left behind");
+    let creates = h.fake.received_named("create_agent");
+    assert_eq!(creates.len(), 2, "{creates:?}");
+    let allowed = json!({"provider": "codex", "model": "allowed"});
+    assert_eq!(creates[1]["model"], allowed, "the configured model");
+}
+
 /// The same key had landed before its reply was lost: the orchestrator it
 /// left is taken as it is, and no create is sent on the denied model.
 #[tokio::test]
 async fn an_orchestrator_a_frozen_creation_left_is_taken_without_a_create() {
-    let (h, key) = frozen_on_a_denied_model().await;
-    let mut landed = agent_in(ORCH_2, "ready");
-    landed["model"] = json!({"provider": "codex", "model": "denied"});
-    landed["scope"] = json!({"labels": {"archon": "orchestrator"}});
-    let mut other = agent_in(ORCH_3, "cancelled");
-    other["model"] = landed["model"].clone();
-    other["scope"] = landed["scope"].clone();
+    let (h, key) = frozen_on("codex/denied", true).await;
+    let landed = left_by(ORCH_2, &key, "ready");
+    let other = left_by(ORCH_3, &key, "cancelled");
     let agents = json!([landed, other]);
     h.fake
         .set_default("list_agents", Scripted::reply("agents", agents));
@@ -1960,6 +1985,48 @@ async fn an_orchestrator_a_frozen_creation_left_is_taken_without_a_create() {
     assert!(frozen.contains(&key), "its key is kept: {frozen}");
     let stored = h.kv(keys::ORCHESTRATOR_AGENT).await;
     assert_eq!(stored.as_deref(), Some(ORCH_2));
+}
+
+/// A live orchestrator on the same model that another creation left, as
+/// another store's, is never taken for the one this key left.
+#[tokio::test]
+async fn an_orchestrator_another_creation_left_is_never_taken() {
+    let (h, key) = frozen_on("codex/denied", true).await;
+    let foreign = left_by(ORCH_2, "archon-orchestrator-another-store-1", "ready");
+    h.fake
+        .set_default("list_agents", Scripted::reply("agents", json!([foreign])));
+    let fresh = create_key(&h).await;
+    assert_ne!(fresh, key, "a fresh generation, not the foreign agent");
+    let stored = h.kv(keys::ORCHESTRATOR_AGENT).await;
+    assert_eq!(stored.as_deref(), Some(ORCH), "the created agent");
+}
+
+/// Without a catalog an alias the policy denies would pass unread: a replay
+/// waits for the catalog, sending and advancing nothing.
+#[tokio::test]
+async fn a_frozen_replay_waits_for_the_model_catalog() {
+    let (h, key) = frozen_on("codex/denied", true).await;
+    let down = Scripted::refuse("internal", "catalog down");
+    h.fake.set_default("list_models", down);
+    let reason = "catalog changed".to_owned();
+    h.ctx.store.lock().await.invalidate_model_catalog(reason);
+    let held = supervisor::ensure_orchestrator(&h.ctx).await.unwrap_err();
+    assert!(matches!(held, ArchonError::Unavailable(_)), "{held:?}");
+    assert_eq!(h.fake.received_named("create_agent").len(), 1, "no send");
+    let frozen = h.kv("orchestrator_model").await.expect("still frozen");
+    assert!(frozen.contains(&key), "its key is kept: {frozen}");
+}
+
+/// A key an older build may have sent carries no label to find its agent by:
+/// a model the policy denies is refused with a blocker, never resent.
+#[tokio::test]
+async fn an_unlabelled_creation_on_a_denied_model_is_refused() {
+    let (h, key) = frozen_on("codex/denied", false).await;
+    let refused = supervisor::ensure_orchestrator(&h.ctx).await.unwrap_err();
+    assert!(matches!(refused, ArchonError::Policy(_)), "{refused:?}");
+    assert_eq!(h.fake.received_named("create_agent").len(), 1, "no send");
+    let frozen = h.kv("orchestrator_model").await.expect("still frozen");
+    assert!(frozen.contains(&key), "its key is kept: {frozen}");
 }
 
 /// A request that fails before the freeze leaves the key unsent: the retry

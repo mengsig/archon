@@ -27,6 +27,7 @@ use archon_core::config::{AetherMode, Config, HostContext, OrchestratorConfig};
 use archon_core::error::ArchonError;
 use archon_core::id::{FeedItemId, StoreId};
 use archon_core::model::{ModelChoice, ModelRef};
+use archon_core::model_tier::ModelCatalog;
 use archon_core::notify::{AnswerVia, NotificationKind, Question};
 use archon_core::protocol::{OrchestratorFreshness, OrchestratorInfo};
 use archon_core::run::GateDecision;
@@ -1268,7 +1269,7 @@ async fn creation_model(
     };
     assert!(!creation.key.is_empty(), "a keyed creation");
     if let Some(frozen) = frozen {
-        if let Some(replay) = frozen_replay(ctx, client, frozen.model).await? {
+        if let Some(replay) = frozen_replay(ctx, client, frozen).await? {
             return Ok(replay);
         }
         // The key was left behind: its successor is a first send.
@@ -1283,55 +1284,78 @@ async fn creation_model(
     checked_model(ctx, &configured).await.map(Creating::On)
 }
 
-/// The replay of a possibly sent key that froze `model`. A model the policy
-/// allows no longer is never sent again: the agent the key left is taken, else
-/// the key is left behind for a fresh generation (`None`).
+/// The catalog a frozen replay is read in. Without one an alias the policy
+/// denies by its canonical id would pass, so the replay waits for one.
+async fn ready_catalog(ctx: &DaemonContext) -> Result<ModelCatalog, ArchonError> {
+    let catalog = crate::learned::catalog(ctx).await?;
+    if let Some(reason) = catalog.not_ready_reason() {
+        let why = format!("the orchestrator creation waits for the model catalog: {reason}");
+        return Err(ArchonError::Unavailable(why));
+    }
+    assert!(!catalog.is_empty(), "a ready catalog lists models");
+    Ok(catalog)
+}
+
+/// The replay of a possibly sent key that froze a model. One the policy allows
+/// no longer, or a labelled key's model the catalog refuses, is never sent
+/// again: the agent the key left is taken, else a fresh generation follows (`None`).
 async fn frozen_replay(
     ctx: &DaemonContext,
     client: &AetherClient,
-    model: ModelRef,
+    frozen: FrozenModel,
 ) -> Result<Option<Creating>, ArchonError> {
+    let model = frozen.model;
     assert!(!model.model.is_empty(), "a frozen model names a model");
-    let aliases = crate::learned::catalog(ctx).await?.aliases();
+    let catalog = ready_catalog(ctx).await?;
+    let aliases = catalog.aliases();
     let named = aliases.get(&model).unwrap_or(&model).clone();
-    let Some(refusal) = policy_refusal(ctx, &named, &aliases) else {
+    let policy = policy_refusal(ctx, &named, &aliases);
+    // An unlabelled key may have landed unseen: Aether alone can answer its replay.
+    let listed = || catalog.check(&named).err().filter(|_| frozen.labelled);
+    let Some(refusal) = policy.or_else(listed) else {
         return Ok(Some(Creating::On(model)));
     };
-    if let Some(agent) = landed_orchestrator(client, &named, &aliases).await? {
-        tracing::warn!(agent = %agent.id, %refusal, "the orchestrator a creation left runs a model the policy allows no longer; taken as it is");
+    if !frozen.labelled {
+        let text = format!(
+            "Archon will not resend an orchestrator creation an older build may have sent: {refusal}. Change [models] in the config."
+        );
+        blocker_once(ctx, &text).await?;
+        return Err(refusal);
+    }
+    if let Some(agent) = landed_orchestrator(client, &frozen.key).await? {
+        tracing::warn!(agent = %agent.id, %refusal, "the orchestrator a creation left runs a model Archon would not send now; taken as it is");
         let agent = Box::new(agent);
         return Ok(Some(Creating::Landed { model, agent }));
     }
-    tracing::warn!(%model, %refusal, "an orchestrator creation that never landed froze a model the policy allows no longer; a fresh generation replaces it");
+    tracing::warn!(%model, %refusal, "an orchestrator creation that never landed froze a model Archon would not send now; a fresh generation replaces it");
     advance_generation(ctx).await?;
     let left = ctx.store.lock().await.kv_get(ORCHESTRATOR_MODEL_KEY)?;
     assert!(left.is_none(), "a fresh generation froze no model");
     Ok(None)
 }
 
-/// The live orchestrator a creation on `model` left in Aether, read under
-/// `aliases`; `None` when the creation never landed or its agent is gone.
+/// The live orchestrator creation `key` left in Aether, found by the label
+/// only that creation sends; `None` when it never landed or its agent is gone.
 async fn landed_orchestrator(
     client: &AetherClient,
-    model: &ModelRef,
-    aliases: &std::collections::BTreeMap<ModelRef, ModelRef>,
+    key: &str,
 ) -> Result<Option<Agent>, ArchonError> {
-    assert!(!model.model.is_empty(), "a frozen model names a model");
+    assert!(!key.is_empty(), "a keyed creation");
     let agents = client.list_agents(AgentQuery::default()).await?;
     let mut landed = agents.into_iter().filter(|agent| {
-        let labelled = agent.scope.as_ref().is_some_and(|scope| {
-            scope.labels.get("archon").map(String::as_str) == Some("orchestrator")
-        });
+        let labelled = agent
+            .scope
+            .as_ref()
+            .is_some_and(|scope| scope.labels.get(CREATION_LABEL).map(String::as_str) == Some(key));
         agent.parent.is_none()
             && agent.role == ORCHESTRATOR_ROLE
             && labelled
             && LIVE_STATES.contains(&state_of(agent).as_str())
-            && aliases.get(&agent.model).unwrap_or(&agent.model) == model
     });
     let found = landed.next();
     if landed.next().is_some() {
-        return Err(ArchonError::Unavailable(format!(
-            "several live orchestrators run {model}; cannot tell which one a creation left"
+        return Err(ArchonError::Corrupt(format!(
+            "several live orchestrators carry creation key {key}; one key creates one agent"
         )));
     }
     Ok(found)
@@ -1499,6 +1523,11 @@ async fn create_orchestrator(
     let config = request.config.as_mut().expect("orchestrator config");
     config.host_context = frozen.host_context;
     config.compaction_tokens = frozen.compaction_tokens;
+    if frozen.labelled {
+        let key = request.idempotency_key.clone().expect("a keyed creation");
+        let scope = request.scope.as_mut().expect("an orchestrator scope");
+        scope.labels.insert(CREATION_LABEL.to_owned(), key);
+    }
     let agent = client.create_agent(request).await?;
     callers::record_delegation(ctx, &agent).await?;
     Ok(agent)
@@ -1512,17 +1541,24 @@ struct FrozenThreshold {
     tokens: Option<u32>,
 }
 
-/// The orchestrator model a creation key sends.
+/// The orchestrator model a creation key sends, and whether every send of it
+/// carries [`CREATION_LABEL`]: one a build without it may have sent does not.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct FrozenModel {
     key: String,
     model: ModelRef,
+    #[serde(default)]
+    labelled: bool,
 }
+
+/// The label naming the creation key an orchestrator was created under.
+const CREATION_LABEL: &str = "archon.creation";
 
 /// What every attempt of one creation key sends.
 struct FrozenSettings {
     host_context: HostContext,
     compaction_tokens: Option<u32>,
+    labelled: bool,
 }
 
 /// One keyed creation: `first` when this build allocated its generation and
@@ -1571,11 +1607,17 @@ fn freeze_settings(
     };
     let threshold_raw = serde_json::to_string(&threshold)?;
     let host_raw = serde_json::to_string(&host_context)?;
+    let stored = frozen_model(store, key)?;
+    // Labelled from a key's first send on, so its replays carry the same label.
+    let labelled = stored
+        .as_ref()
+        .map_or(creation.first, |frozen| frozen.labelled);
     let model = FrozenModel {
         key: key.to_owned(),
         model: config.model.clone(),
+        labelled,
     };
-    if let Some(frozen) = frozen_model(store, key)? {
+    if let Some(frozen) = stored {
         assert_eq!(frozen, model, "a frozen model is the one sent");
     }
     let model_raw = serde_json::to_string(&model)?;
@@ -1591,6 +1633,7 @@ fn freeze_settings(
     Ok(FrozenSettings {
         host_context,
         compaction_tokens: threshold.tokens,
+        labelled,
     })
 }
 

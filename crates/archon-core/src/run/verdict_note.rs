@@ -261,6 +261,7 @@ mod tests {
             state: super::super::StageState::Completed,
             verdict: Some(Verdict::extract(summary, Some(&structured))),
             verdict_note: None,
+            sizing: Default::default(),
             restatement: None,
             summary: Some(summary.to_owned()),
             structured: Some(structured),

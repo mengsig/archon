@@ -2323,6 +2323,39 @@ row pools the models that served it (the tier an attempt recorded, else
 Aether's tier for its model now), so evidence survives a model replaced within
 its tier.
 
+**Effort sizer.** With `[models] effort_sizing` on, every effort a plan does
+not name is sized by the daemon (`archon_core::effort_sizing`, pure functions
+over what the item records). `classify` gives the item a risk class,
+`mechanical`, `ordinary`, `elevated` or `critical`, from its tags, title
+prefix and words, brief, review level and known diff size; `size_effort` maps
+the class to an effort from the stage's own declared default (`low` for
+mechanical work, the default for ordinary work and one step lower for a small
+diff, at least `high` for elevated, `x_high` for critical), within the lower
+of the policy's `max_effort` and `[models] sizer_max_effort`. `x_high` is
+planned only for the providers that run it (`claude-code`, `codex`). The
+precedence is cap, pin, class floor, size step, stage default; it is decided
+in one function, `plan_origin::sizing::decide`, which is where an escalation
+would enter between the pin and the class.
+
+The decision is frozen in the stored plan. Every plan writer ends in
+`daemon::sizing::finish`, which reads the switch and the caps in one place:
+`PlanWriter::finish` records each key it wrote with that key's own stage
+facts, carried keys keep the record they have, and `QueueItem::settle_sizing`
+decides the recorded keys from the item's own stored fields where the store
+writes the item, so a refresh, a restack fix and an initiative member are
+each sized as the item they are stored as. The record (`effort_sizing` beside
+`model_plan` and `model_origins`) holds the class, its signals and, per key,
+the stage facts, the cap and one reason per entry; a sized effort's origin
+has the source `sizer`. A retry carries the record; only a steer or an update
+that changes the title, brief, tags or review level sizes again, and only the
+stages not yet started (`QueueItem::resize_unstarted`). Recovery, the
+watchdog, the dispatcher and replayed spawns read the stored plan and size
+nothing. A writer that carries a sized effort above the cap in force lowers
+it and records why; dispatch does the same against the policy's cap alone; a
+pinned effort above the policy's cap is refused. Each attempt stores its
+`risk_class`, `effort_source` and `effort_reasons`, and `model_evidence`
+groups attempts by class and source for display; routing reads neither.
+
 **Workers.** Every stage takes the key `<stage>.workers` in `model_plan` and
 `model_reasons`: up to four `{model|tier, effort}` choices for the workers its
 lead delegates to, else the pipeline's `[pipeline.workers]` default. Archon
@@ -3439,6 +3472,7 @@ provider_weights = {}          # e.g. { "claude-code" = 7, codex = 3 }; {} = orc
 # reserve_percent = { orchestrator = 15, interactive = 10 }   # quota stages leave; global only
 interactive_providers = []     # providers also used by hand; they keep the interactive reserve
 effort_sizing = true           # false: 1.6.3's effort rules and reviewer floors; global only
+# sizer_max_effort = "x_high"  # the most the daemon's effort sizer sets by itself; global only
 
 [limits]
 budgets_enabled = true         # false: no dollar budget is enforced; spend still recorded

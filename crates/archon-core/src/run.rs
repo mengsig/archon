@@ -6,9 +6,11 @@ use serde::{Deserialize, Serialize};
 use crate::Timestamp;
 use crate::aether_ids::{AetherAgentId, AetherRunId, AetherTaskId};
 use crate::catalog::StageKind;
+use crate::effort_sizing::RiskClass;
 use crate::error::ArchonError;
 use crate::id::{PipelineRunId, QuestionId, QueueItemId, ReportId, StageRunId};
 use crate::model::ModelChoice;
+use crate::plan_origin::{PlanSource, SlotSizing};
 use crate::verdict_prose::reports_problem;
 
 mod restatement;
@@ -1118,6 +1120,10 @@ pub struct StageRun {
     /// runs recorded before Archon kept it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verdict_note: Option<VerdictNote>,
+    /// How the attempt's effort was chosen: `risk_class`, `effort_source` and
+    /// `effort_reasons`, each absent when the sizer never decided its plan key.
+    #[serde(flatten)]
+    pub sizing: AttemptSizing,
     /// The one restatement of its verdict the attempt was asked for through
     /// `submit_verdict`; `None` when it was never asked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1127,6 +1133,30 @@ pub struct StageRun {
     pub cost_usd: f64,
     pub started_at: Timestamp,
     pub finished_at: Option<Timestamp>,
+}
+
+/// How an attempt's effort was chosen, copied from its item's stored plan as
+/// the attempt is reserved. Display and grouping only: nothing routes on it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AttemptSizing {
+    /// The class the attempt's plan key was sized with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub risk_class: Option<RiskClass>,
+    /// Where the effort it ran at came from: the sizer, or the pin it advised.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort_source: Option<PlanSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort_reasons: Option<String>,
+}
+
+impl From<SlotSizing> for AttemptSizing {
+    fn from(sized: SlotSizing) -> Self {
+        Self {
+            risk_class: Some(sized.risk_class),
+            effort_source: Some(sized.effort_source),
+            effort_reasons: Some(sized.reason),
+        }
+    }
 }
 
 /// Whether a stage's one record repair turn is still to give when an attempt
@@ -2799,6 +2829,7 @@ mod tests {
             state,
             verdict: None,
             verdict_note: None,
+            sizing: Default::default(),
             restatement: None,
             summary: None,
             structured,

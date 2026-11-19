@@ -259,6 +259,51 @@ async fn a_restack_fix_is_issued_its_own_effort_rule() {
     let of_fix = requests.iter().rfind(|r| r.labels["archon.item"] == fix);
     let of_fix = of_fix.expect("the fix's lead was spawned");
     assert_eq!(h.issued_effort_contract(of_fix).await, "rubric", "its own");
+    let fix = h.item(&QueueItemId::parse(&fix).unwrap()).await;
+    let child = h.item(&child.id).await;
+    assert!(
+        child.model_plan.sizing().is_none(),
+        "enqueued with sizing off"
+    );
+    assert!(
+        fix.model_plan.sizing().is_none(),
+        "carried whole: never sized"
+    );
+    assert_eq!(*fix.model_plan.plan(), *child.model_plan.plan());
+}
+
+/// A11 check 3: a restack fix carries its child's plan whole, so it keeps the
+/// child's frozen sizing: its own title would class it ordinary.
+#[tokio::test]
+async fn a_restack_fix_keeps_its_child_s_frozen_sizing() {
+    use archon_core::effort_sizing::RiskClass;
+    use archon_core::model::Effort;
+    let (h, parent, child) = stack_pair().await;
+    let parent_run = h.run(&parent.id).await;
+    let child_run = h.run(&child.id).await;
+    commit(&child_run.workspace, "parent.txt", "child edits\n");
+    finish_item(&h, &child.id).await;
+    let mut risky = h.item(&child.id).await;
+    risky.title = "Fix the deadlock in the pump".into();
+    assert!(risky.resize_unstarted((Effort::XHigh, archon_core::now()), &|_| false));
+    h.ctx.store.lock().await.update_item(&risky).unwrap();
+    let child = h.item(&child.id).await;
+    let frozen = child
+        .model_plan
+        .sizing()
+        .expect("the child was sized")
+        .clone();
+    assert_eq!(frozen.risk_class, Some(RiskClass::Elevated));
+    advance_branch(&h, &parent_run.branch, "parent.txt", "parent edits\n");
+    h.dispatch().await;
+    let fixes = restack_fixes(&h, &child.id).await;
+    assert_eq!(fixes.len(), 1, "{fixes:?}");
+    let fix = h.item(&QueueItemId::parse(&fixes[0].1).unwrap()).await;
+    assert!(fix.title.starts_with("Restack "), "{}", fix.title);
+    assert_eq!(fix.model_plan.sizing(), Some(&frozen), "not sized again");
+    assert_eq!(*fix.model_plan.plan(), *child.model_plan.plan());
+    let implement = fix.model_plan.slot_sizing(&fix.id, "implement", 0).unwrap();
+    assert_eq!(implement.risk_class, RiskClass::Elevated);
 }
 
 #[tokio::test]

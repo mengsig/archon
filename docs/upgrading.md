@@ -86,6 +86,38 @@ allow or deny lists) still applies to running leads. Nothing here migrates the s
 back to a 1.6.3 binary is not supported once any release's store migration has
 run: use the switch instead.
 
+### Efforts sized by risk class
+
+With `effort_sizing` on, archond now sizes every effort a plan does not name
+when it writes the plan ([configuration](configuration.md)): it classes the
+item `mechanical`, `ordinary`, `elevated` or `critical` from its tags, title,
+brief, review level and known diff size, and sets each unnamed effort from
+that class and the stage's own default. An unnamed effort that 1.6.3 filled
+with the stage default may therefore be `low` for documentation work, `high`
+for work that names a risk, and `x_high` for work tagged `risk:critical`. An
+effort the plan names is kept as before. `get_item` and `archon queue show`
+list the class and the reason for every entry, and each attempt records its
+`risk_class`, `effort_source` and `effort_reasons`.
+
+`[models] sizer_max_effort` (default `x_high`, global only) holds what the
+sizer sets by itself; `max_effort` still caps everything. Set
+`sizer_max_effort = "high"` to keep the sizer from planning `x_high`.
+
+The sizing is stored with the plan. Items queued or running across the
+upgrade keep the plan they have: nothing is sized at recovery, and in a plan
+1.6.3 wrote only an entry written afresh later (an inserted stage, a
+`model_plan` a retry names) is sized. Changing
+`effort_sizing` or `sizer_max_effort` and restarting affects only plans sized
+from then on. One thing moves for a stored plan: at dispatch an effort the
+sizer set above the policy's `max_effort` is lowered to it with a recorded
+reason, where a pinned effort above it is refused as in 1.6.3.
+
+To roll back, set `effort_sizing = false` under the global `[models]` and
+restart archond: new plans are then filled exactly as 1.6.3 filled them, and
+their attempts record no class. Stored plans keep the efforts they were sized
+to. Nothing here migrates the store; going back to a 1.6.3 binary is still
+not supported once any release's store migration has run, so use the switch.
+
 ### Plan origins
 
 Each item now keeps `model_origins` beside `model_plan`: where every model

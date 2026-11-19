@@ -2,7 +2,7 @@ use archon_core::Timestamp;
 use archon_core::error::ArchonError;
 use archon_core::feedback::ChoiceStanding;
 use archon_core::id::{QueueItemId, RepoId};
-use archon_core::model::{ModelChoice, ModelPlan, ModelRef};
+use archon_core::model::{Effort, ModelChoice, ModelPlan, ModelRef};
 use archon_core::model_tier::Tier;
 use archon_core::outcome::DiffSize;
 use archon_core::policy::ModelPolicy;
@@ -10,6 +10,30 @@ use archon_pipeline::PipelineSpec;
 use archon_queue::Store;
 use archon_queue::store::{CohortEvidence, RouteEvidence, RouteQuery};
 use std::collections::BTreeMap;
+
+/// The policy learned routes are chosen within. With effort sizing on, a
+/// route's effort is advice the sizer replaces, so the effort cap rules out no model.
+pub(crate) fn advice_policy(policy: &ModelPolicy, sizing: bool) -> ModelPolicy {
+    let mut advice = policy.clone();
+    if sizing {
+        advice.max_effort = None;
+    }
+    assert!(advice.max_effort.is_none() || advice == *policy);
+    advice
+}
+
+/// `plan` chosen within [`advice_policy`], each effort held to `cap`, the
+/// policy's, until the sizer decides it.
+pub(crate) fn held_to(mut plan: ModelPlan, cap: Option<Effort>) -> ModelPlan {
+    let Some(cap) = cap else {
+        return plan;
+    };
+    for choice in plan.0.values_mut().flatten() {
+        choice.effort = choice.effort.min(cap);
+    }
+    assert!(plan.0.values().flatten().all(|c| c.effort <= cap));
+    plan
+}
 
 /// What the evidence of `repo` picks for the stages of `spec` within
 /// `policy`, pooled over every diff size; empty when nothing is learned.
@@ -107,7 +131,22 @@ pub(crate) fn item_size(
             _ => {}
         }
     }
-    let runs = store.runs_for_item(&item.id)?;
+    measured_size(store, &item.id)
+}
+
+/// The diff size `item`'s last run measured: what the effort sizer freezes
+/// with a plan's first sizing. The item's `diff:` tag is the sizer's to read.
+/// An item being enqueued is not stored yet and has run nothing.
+pub(crate) fn measured_size(
+    store: &Store,
+    item: &QueueItemId,
+) -> Result<Option<DiffSize>, ArchonError> {
+    let runs = match store.runs_for_item(item) {
+        Ok(runs) => runs,
+        Err(ArchonError::NotFound(_)) => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    debug_assert!(runs.iter().all(|run| run.item == *item));
     runs.last()
         .map(|r| store.outcome(&r.id))
         .transpose()

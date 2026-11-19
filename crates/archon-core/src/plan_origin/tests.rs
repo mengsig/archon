@@ -53,7 +53,7 @@ fn enqueued(item: &QueueItemId) -> PlannedPlan {
         .0
         .insert("ship".into(), vec![choice("a/opus", Effort::Medium)]);
     writer.filled(fallen, (PlanSource::Fallback, PlanSource::Fallback));
-    writer.finish()
+    writer.finish(Sizing::Off { policy_cap: None })
 }
 
 #[test]
@@ -94,7 +94,9 @@ fn a_draft_naming_a_tier_leaves_the_model_to_the_daemon_and_names_who_asked() {
     let asked = draft(serde_json::json!({"review": [{"tier": "strong", "effort": "high"}]}));
     let resolved = plan(&[("review", tiered("b/sol", Effort::High))]);
     writer.request(&asked, resolved, Authority::Orchestrator);
-    let origin = writer.finish().origin(&item, "review", 0);
+    let origin = writer
+        .finish(Sizing::Off { policy_cap: None })
+        .origin(&item, "review", 0);
     assert_eq!(
         (origin.model.source, origin.model.by),
         (PlanSource::Tier, Authority::Daemon)
@@ -120,7 +122,7 @@ fn a_moved_tier_keeps_who_asked_for_it_however_often_it_moves() {
     let asked = draft(serde_json::json!({"review": [{"tier": "strong"}]}));
     let resolved = plan(&[("review", tiered("b/sol", Effort::High))]);
     writer.request(&asked, resolved, Authority::Orchestrator);
-    let mut planned = writer.finish();
+    let mut planned = writer.finish(Sizing::Off { policy_cap: None });
     let asked = planned.origin(&item, "review", 0).tier;
     assert!(asked.is_some());
     for (model, why) in [("c/sol", "moved off b"), ("d/sol", "moved off c")] {
@@ -210,8 +212,10 @@ fn a_kept_plan_carries_its_origins_and_a_copy_keeps_them_with_a_note() {
     let item = QueueItemId::new();
     let planned = enqueued(&item);
     let mut retry = PlanWriter::new(&item, crate::now());
-    retry.carry(&planned, &item, |key| (key != "ship").then_some(usize::MAX));
-    let retried = retry.finish();
+    retry.carry(&planned, &item, None, |key| {
+        (key != "ship").then_some(usize::MAX)
+    });
+    let retried = retry.finish(Sizing::Off { policy_cap: None });
     for key in ["build", "plan", "review"] {
         assert_eq!(
             retried.origin(&item, key, 0),
@@ -290,9 +294,9 @@ fn a_retier_that_fails_part_way_leaves_the_plan_and_its_origins_as_they_were() {
         .0
         .insert("verify".into(), vec![tiered("b/sol", Effort::Low)]);
     let mut writer = PlanWriter::new(&item, crate::now());
-    writer.carry(&planned, &item, |_| Some(usize::MAX));
+    writer.carry(&planned, &item, None, |_| Some(usize::MAX));
     writer.filled(tiers, (PlanSource::Tier, PlanSource::Fallback));
-    planned = writer.finish();
+    planned = writer.finish(Sizing::Off { policy_cap: None });
     let before = planned.clone();
     let mut calls = 0;
     let failing = |_: &str, asked: &TierChoice| {
@@ -543,7 +547,11 @@ fn pinned_tiers(item: &QueueItemId, tiers: &ModelPlan) -> [(&'static str, Planne
     [
         ("legacy", PlannedPlan::legacy(tiers.clone()), false),
         ("unattributed", unattributed, false),
-        ("explicit", asked.finish(), true),
+        (
+            "explicit",
+            asked.finish(Sizing::Off { policy_cap: None }),
+            true,
+        ),
     ]
 }
 

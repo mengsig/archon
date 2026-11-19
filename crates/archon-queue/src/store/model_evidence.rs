@@ -4,18 +4,20 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use archon_core::Timestamp;
 use archon_core::cost::DayRange;
+use archon_core::effort_sizing::RiskClass;
 use archon_core::error::ArchonError;
 use archon_core::feedback::feedback_window;
 use archon_core::id::{FeedbackId, PipelineRunId, RepoId};
 use archon_core::model::{Effort, ModelChoice};
 use archon_core::model_evidence::{
     MAX_ROWS, ModelEvidenceQuery, ModelEvidenceReport, ModelEvidenceRow, ProviderEvidenceRow,
-    TierEvidenceRow,
+    SizingEvidenceRow, TierEvidenceRow,
 };
 use archon_core::model_tier::{ModelCatalog, Tier};
 use archon_core::outcome::{
     CorrectionCause, DiffSize, FailureClass, Outcome, OutcomeResult, RouteContext,
 };
+use archon_core::plan_origin::PlanSource;
 use archon_core::queue::QueueItem;
 use archon_core::run::{StageRun, StageState, Verdict, VerdictNote};
 use rusqlite::{Connection, params};
@@ -146,6 +148,7 @@ impl ModelEvidenceSnapshot {
             HashMap::new();
         let mut tiers: HashMap<(String, Tier, Effort), Samples> = HashMap::new();
         let mut providers: BTreeMap<String, ProviderEvidenceRow> = BTreeMap::new();
+        let mut sized: HashMap<(RiskClass, PlanSource), Samples> = HashMap::new();
         for attempt in self.attempts {
             let stage = &attempt.stage;
             let choice = stage.current_choice();
@@ -157,6 +160,11 @@ impl ModelEvidenceSnapshot {
                 stage.host_context,
             );
             groups.entry(key).or_default().add(sample);
+            if let (Some(class), Some(source)) =
+                (stage.sizing.risk_class, stage.sizing.effort_source)
+            {
+                sized.entry((class, source)).or_default().add(sample);
+            }
             let tier = match &choice.tier {
                 Some(tier) => Some(tier.resolved),
                 None => catalog.tier_of(&choice.model),
@@ -168,6 +176,7 @@ impl ModelEvidenceSnapshot {
         }
         let mut report = finish(groups, tiers, self.range, self.estimates);
         report.providers = provider_rows(providers);
+        report.sizing = sizing_rows(sized);
         Ok(report)
     }
 }
@@ -199,6 +208,33 @@ fn provider_rows(rows: BTreeMap<String, ProviderEvidenceRow>) -> Vec<ProviderEvi
             .then_with(|| a.provider.cmp(&b.provider))
     });
     debug_assert!(rows.windows(2).all(|w| w[0].attempts >= w[1].attempts));
+    rows
+}
+
+/// The display-only grouping of sized attempts: lowest class first, then by
+/// source name. Nothing that routes or sizes reads these rows.
+fn sizing_rows(sized: HashMap<(RiskClass, PlanSource), Samples>) -> Vec<SizingEvidenceRow> {
+    let mut rows: Vec<_> = sized
+        .into_iter()
+        .map(|((risk_class, effort_source), samples)| {
+            let s = samples.summary();
+            SizingEvidenceRow {
+                risk_class,
+                effort_source,
+                attempts: s.attempts,
+                completed: s.completed,
+                median_cost_usd: s.median_cost_usd,
+                p90_cost_usd: s.p90_cost_usd,
+                median_minutes: s.median_minutes,
+                verdicts: s.verdicts,
+                passed: s.passed,
+                disputed: s.disputed,
+            }
+        })
+        .collect();
+    rows.sort_by_key(|row| (row.risk_class, row.effort_source.to_string()));
+    debug_assert!(rows.len() <= 4 * 9, "one row per class and source");
+    debug_assert!(rows.iter().all(|row| row.completed <= row.attempts));
     rows
 }
 
@@ -415,6 +451,7 @@ fn finish(
         omitted,
         tiers,
         providers: Vec::new(),
+        sizing: Vec::new(),
         pipelines: Vec::new(),
         repo_names: Default::default(),
     }

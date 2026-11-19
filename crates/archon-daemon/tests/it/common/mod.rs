@@ -864,6 +864,9 @@ struct FakeState {
     live_checks: Vec<AetherAgentId>,
     /// Agents whose `is_live` or `is_stopped` waits for its gate, once recorded.
     live_holds: BTreeMap<AetherAgentId, Arc<tokio::sync::Semaphore>>,
+    /// Agents whose next `send_message` waits for its gate, and the calls held.
+    message_holds: BTreeMap<AetherAgentId, Arc<tokio::sync::Semaphore>>,
+    messages_held: u32,
     next_node: u32,
     /// Messages delivered, once per key, in order: key, recipient, content.
     delivered: Vec<(String, AetherAgentId, String)>,
@@ -1277,6 +1280,20 @@ impl FakeBackend {
     /// The next `send_message` calls fail with these errors, in order.
     pub fn fail_next_message(&self, error: ArchonError) {
         self.state().message_failures.push_back(error);
+    }
+
+    /// Hold the next `send_message` to `agent` until the returned gate gets a
+    /// permit, later ones not; [`Self::messages_held`] counts the calls held.
+    pub fn hold_next_message(&self, agent: &AetherAgentId) -> Arc<tokio::sync::Semaphore> {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let earlier = (self.state().message_holds).insert(agent.clone(), gate.clone());
+        assert!(earlier.is_none(), "one hold per agent");
+        gate
+    }
+
+    /// How many `send_message` calls have reached a hold's gate.
+    pub fn messages_held(&self) -> u32 {
+        self.state().messages_held
     }
 
     /// Messages delivered, once per idempotency key, oldest first.
@@ -1858,6 +1875,15 @@ impl AgentBackend for FakeBackend {
     ) -> Result<(), ArchonError> {
         // A real call leaves the task, so deliveries to one stage interleave.
         tokio::task::yield_now().await;
+        let hold = {
+            let mut state = self.state();
+            let hold = state.message_holds.remove(to);
+            state.messages_held += u32::from(hold.is_some());
+            hold
+        };
+        if let Some(gate) = hold {
+            let _open = gate.acquire().await.expect("the hold's gate stays open");
+        }
         let delay = self.state().slow_answers.get(to).copied();
         if let Some(delay) = delay {
             tokio::time::sleep(delay).await;

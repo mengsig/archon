@@ -8,6 +8,7 @@ use archon_core::autonomy::MergeMode;
 use archon_core::catalog::{StageKind, WorkspaceMode, is_snapshot_of};
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId};
+use archon_core::model::ModelPlan;
 use archon_core::notify::NotificationKind;
 use archon_core::pull_request::OntoPullRequest;
 use archon_core::queue::{QueueItem, QueueState};
@@ -130,13 +131,20 @@ pub(crate) fn held_by_stack(
     }))
 }
 
+/// A claimed item as dispatch goes on with it, and the plan a stored catalog
+/// repair replaced: dispatch's model notice still compares with that one.
+struct Claimed {
+    item: QueueItem,
+    replaced: Option<ModelPlan>,
+}
+
 async fn repair_claimed(
     ctx: &DaemonContext,
     id: &QueueItemId,
     catalog: &archon_core::model_tier::ModelCatalog,
     env: &RepoEnv,
     spec: &PipelineSpec,
-) -> Result<Option<QueueItem>, ArchonError> {
+) -> Result<Option<Claimed>, ArchonError> {
     let _table = ctx.runs.lock().await;
     let mut store = ctx.store.lock().await;
     let item = store.item(id)?;
@@ -150,11 +158,16 @@ async fn repair_claimed(
     let item = without_retired_ship(&item, spec);
     match super::model_catalog::repair_item(ctx, &store, &item, catalog, env, spec) {
         Ok(mut repaired) => {
+            let mut replaced = None;
             if repaired.model_plan != item.model_plan {
                 repaired.updated_at = archon_core::now().max(item.updated_at);
                 store.update_item(&repaired)?;
+                let mut before = item.model_plan.clone();
+                before.canonicalize_aliases(catalog);
+                replaced = Some(before.plan().clone());
             }
-            Ok(Some(repaired))
+            let item = repaired;
+            Ok(Some(Claimed { item, replaced }))
         }
         Err(error @ ArchonError::Policy(_))
             if item
@@ -202,14 +215,14 @@ async fn prepare(
         policy.ceiling,
     )?;
     knobs::check_ceiling(&policy, &env, &base, checked)?;
-    let Some(item) = repair_claimed(ctx, &item.id, catalog, &env, &current).await? else {
+    let Some(claimed) = repair_claimed(ctx, &item.id, catalog, &env, &current).await? else {
         return Ok(None);
     };
-    if let Some(reason) = super::refresh::nothing_to_merge(ctx, &item).await? {
-        finish_unstarted(ctx, &item.id, reason).await?;
+    if let Some(reason) = super::refresh::nothing_to_merge(ctx, &claimed.item).await? {
+        finish_unstarted(ctx, &claimed.item.id, reason).await?;
         return Ok(None);
     }
-    let item = &tiers_at_dispatch(ctx, &env, &item, &current, catalog).await?;
+    let item = &tiers_at_dispatch(ctx, &env, &claimed, &current, catalog).await?;
     let item = &without_retired_ship(item, &current);
     let spec = Arc::new(frozen::freeze(&ctx.paths.data_dir, &run_id, &current).await?);
     crate::learned::freeze_context(ctx, &run_id, item, &spec).await?;
@@ -244,13 +257,27 @@ async fn prepare(
     }
 }
 
+/// The plan dispatch's model notice compares with: the one a catalog repair
+/// just `replaced`, while it still has the `stored` plan's shape.
+fn notice_baseline<'a>(replaced: Option<&'a ModelPlan>, stored: &'a ModelPlan) -> &'a ModelPlan {
+    let same_shape = |plan: &&ModelPlan| {
+        let entries = plan.0.iter().zip(&stored.0);
+        plan.0.len() == stored.0.len()
+            && entries
+                .into_iter()
+                .all(|(was, now)| was.0 == now.0 && was.1.len() == now.1.len())
+    };
+    replaced.filter(same_shape).unwrap_or(stored)
+}
+
 /// `item` with each tiered choice resolved again from Aether's catalog as it
 /// is now, for `spec`'s floors and routed to the provider the item holds, and
-/// stored so a recovered run keeps it.
+/// stored so a recovered run keeps it. A model that moved, since the plan a
+/// catalog repair `replaced` too, is noted on the item and in its feed.
 async fn tiers_at_dispatch(
     ctx: &DaemonContext,
     env: &RepoEnv,
-    item: &QueueItem,
+    Claimed { item, replaced }: &Claimed,
     spec: &PipelineSpec,
     catalog: &archon_core::model_tier::ModelCatalog,
 ) -> Result<QueueItem, ArchonError> {
@@ -272,7 +299,7 @@ async fn tiers_at_dispatch(
     let routing = (weights.as_ref(), quota.as_ref());
     let mut store = ctx.store.lock().await;
     let mut stored = store.item(&item.id)?;
-    let (plan_before, held_before) = (stored.model_plan.clone(), stored.routed_provider.clone());
+    let unchanged = stored.clone();
     let held = knobs::item_provider(routing, catalog, &policy, ItemRoute::new(&stored));
     let route = ItemRoute {
         id: &item.id,
@@ -296,13 +323,14 @@ async fn tiers_at_dispatch(
         resolve,
     )?;
     stored.routed_provider = held.clone();
-    let moved = (held_before.as_deref(), held.as_deref());
+    let moved = (unchanged.routed_provider.as_deref(), held.as_deref());
     if let Some(note) = crate::quota::switch_note(moved, quota.as_ref(), "its run") {
         stored.provider_switch = Some(note);
     }
-    let unstarted = (&[][..], plan_before.plan());
+    let before = notice_baseline(replaced.as_ref(), unchanged.model_plan.plan());
+    let unstarted = (&[][..], before);
     crate::quota::record_moves(ctx, &mut store, &mut stored, unstarted, quota.as_ref())?;
-    if stored.model_plan != plan_before || stored.routed_provider != held_before {
+    if stored != unchanged {
         tracing::info!(item = %item.id, provider = ?held, "re-resolved tiered model choices at dispatch");
         stored.updated_at = archon_core::now();
         store.update_item(&stored)?;

@@ -926,6 +926,31 @@ async fn a_queued_pinned_tier_resolves_again_on_another_weighted_provider() {
     }
 }
 
+/// The move is told as any other at dispatch, though the catalog repair of
+/// the claimed item stored the new model first.
+#[tokio::test]
+async fn a_tier_the_catalog_repair_moved_is_still_noted_at_dispatch() {
+    for source in PINS {
+        let h = harness(codex_first()).await;
+        let item = pinned_tier_left_codex(&h, source).await;
+        h.dispatch().await;
+
+        let notices = h
+            .notices(archon_core::notify::NotificationKind::Progress)
+            .await;
+        let swapped: Vec<&String> = notices
+            .iter()
+            .filter(|n| n.contains("changed models"))
+            .collect();
+        assert_eq!(swapped.len(), 1, "{source:?}: one notice: {notices:?}");
+        let moved = "stage implement now runs on claude-code/sonnet instead of codex/sol";
+        assert!(swapped[0].contains(moved), "{source:?}: {}", swapped[0]);
+        let switch = h.item(&item.id).await.provider_switch;
+        let switch = switch.unwrap_or_else(|| panic!("{source:?}: the move is noted"));
+        assert!(switch.contains(moved), "{source:?}: {switch}");
+    }
+}
+
 /// A retry keeping such a plan is accepted on the other weighted provider.
 #[tokio::test]
 async fn a_retry_keeps_a_pinned_tier_that_resolves_on_another_weighted_provider() {

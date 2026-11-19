@@ -19,12 +19,7 @@ pub const SCHEMA_VERSION: u32 = 1;
 /// The stage the 1.0 built-ins ran their ship agent as; archond ships them now.
 pub const RETIRED_SHIP_STAGE: &str = "ship";
 /// Stage ids archond fails runs under for its own stops, which no stage may take.
-pub const RESERVED_STAGE_IDS: [&str; 4] = [
-    BUDGET_STAGE,
-    SHIP_STEP,
-    RECOVERY_STAGE,
-    crate::acceptance::STAGE,
-];
+pub const RESERVED_STAGE_IDS: [&str; 3] = [BUDGET_STAGE, SHIP_STEP, RECOVERY_STAGE];
 pub const MAX_FAN_OUT: u32 = 16;
 pub const MAX_LOOPS: u32 = 10;
 /// 30 days. Stage agents get exactly the configured timeout; a larger one

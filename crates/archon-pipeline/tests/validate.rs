@@ -88,14 +88,11 @@ fn stage_ids_are_unique_and_well_formed() {
 
 #[test]
 fn stage_ids_archond_fails_runs_under_are_reserved() {
-    for id in ["budget", "ship", "recovery", "intent-acceptance"] {
+    for id in ["budget", "ship", "recovery"] {
         let stages = stage(id, "work", "");
         let error = validate(&stages, &[(&format!("{id}.md"), "Do it.")]).expect_err(id);
         assert!(error.contains("is reserved"), "{error}");
-        assert!(
-            error.contains("budget, ship, recovery, intent-acceptance"),
-            "{error}"
-        );
+        assert!(error.contains("budget, ship, recovery"), "{error}");
         assert!(error.contains(&format!("\"{id}-stage\"")), "{error}");
     }
 }

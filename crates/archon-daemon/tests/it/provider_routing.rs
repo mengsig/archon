@@ -885,6 +885,81 @@ async fn a_queued_pinned_tier_whose_model_left_the_catalog_resolves_again() {
     }
 }
 
+/// An item queued on Codex whose pinned strong tier lost its last Codex
+/// model, while Claude Code still lists one and both have quota.
+async fn pinned_tier_left_codex(h: &Harness, source: PlanSource) -> QueueItem {
+    claude_then_codex(h, 0, 80);
+    let item = enqueue(h, ROUTED, "stale tier, other provider", tier_plan()).await;
+    let plan = pinned(h, &item, source).await;
+    let gone = plan.choices_for("implement").unwrap()[0].model.clone();
+    assert_eq!(gone.to_string(), "codex/sol", "{source:?}: queued on Codex");
+    let mut listed: Vec<CatalogModel> = catalog().models().to_vec();
+    listed.retain(|entry| entry.model != gone);
+    assert_eq!(listed.len() + 1, catalog().models().len(), "one model left");
+    h.set_catalog(ModelCatalog::new(listed)).await;
+    claude_then_codex(h, 80, 80);
+    item
+}
+
+fn codex_first() -> Config {
+    let mut config = weighted(&[("claude-code", 1), ("codex", 1)]);
+    config.orchestrator.model = "codex/mini".parse().unwrap();
+    config
+}
+
+/// A queued pinned tier whose provider lists no model of that tier any more
+/// resolves on the other weighted provider, as dispatch routes it.
+#[tokio::test]
+async fn a_queued_pinned_tier_resolves_again_on_another_weighted_provider() {
+    for source in PINS {
+        let h = harness(codex_first()).await;
+        let item = pinned_tier_left_codex(&h, source).await;
+        h.dispatch().await;
+
+        let state = h.state(&item.id).await;
+        assert!(
+            matches!(state, QueueState::Running { .. }),
+            "{source:?}: {state:?}"
+        );
+        let implementers = spawned_on(&h, &item, "implement").await;
+        assert_eq!(implementers, ["claude-code/sonnet"], "{source:?}");
+    }
+}
+
+/// A retry keeping such a plan is accepted on the other weighted provider.
+#[tokio::test]
+async fn a_retry_keeps_a_pinned_tier_that_resolves_on_another_weighted_provider() {
+    for source in PINS {
+        let h = harness(codex_first()).await;
+        let item = pinned_tier_left_codex(&h, source).await;
+        let cancel = Request::CancelItem {
+            item: item.id.clone(),
+            reason: None,
+        };
+        h.cli(cancel).await.expect("cancel");
+        let retry = Request::RetryItem {
+            item: item.id.clone(),
+            model_plan: None,
+            model_reasons: None,
+            fresh: false,
+            brief_append: None,
+            stage_timeouts: Default::default(),
+        };
+        h.cli(retry)
+            .await
+            .unwrap_or_else(|e| panic!("{source:?}: {e}"));
+
+        let retried = h.item(&item.id).await;
+        assert_eq!(retried.state.kind(), "queued", "{source:?}");
+        let implement = &retried.model_plan.choices_for("implement").unwrap()[0];
+        assert_eq!(
+            implement.model.to_string(),
+            "claude-code/sonnet",
+            "{source:?}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn a_stage_waiting_for_quota_takes_no_agent_slot_from_other_work() {
     let mut config = weighted(&[("claude-code", 1), ("codex", 1)]);

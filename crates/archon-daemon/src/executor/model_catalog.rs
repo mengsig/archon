@@ -5,8 +5,11 @@ use archon_core::plan_origin::TierMove;
 use archon_core::queue::QueueItem;
 use archon_pipeline::SpawnPlan;
 
+use crate::knobs::ItemRoute;
+
 /// Repair an item's plan using its current pipeline, policy and learned
-/// defaults, as dispatch reads it: a pinned tier's model resolves again.
+/// defaults, as dispatch reads it: a pinned tier's model resolves again, on
+/// the weighted provider that meets its floor.
 pub(crate) fn repair_item(
     ctx: &crate::context::DaemonContext,
     store: &archon_queue::Store,
@@ -47,7 +50,7 @@ fn repair_item_in(
     // Both sides of the policy read `catalog`: the plan's ids and the lists'.
     let policy = env.policy_in(&ctx.config, &catalog.aliases());
     let max_tier = env.max_default_tier(&ctx.config);
-    let tiers = crate::knobs::TierScope::new(&ctx.config, &policy, catalog);
+    let unrouted = crate::knobs::TierScope::new(&ctx.config, &policy, catalog);
     if !item.model_plan.needs_catalog_repair(&item.id, catalog) {
         let mut repaired = item.clone();
         repaired
@@ -55,12 +58,20 @@ fn repair_item_in(
             .repair_catalog(&item.id, catalog, archon_core::now())?;
         return Ok(repaired);
     }
+    // Dispatch routes a tier across the weighted providers; a run keeps its own.
+    let weights = env.provider_weights(&ctx.config);
+    let quota = weights.as_ref().and_then(|_| crate::quota::view(ctx));
+    let route = match when {
+        TierMove::Dispatch => ItemRoute::new(item).by(weights.as_ref(), quota.as_ref()),
+        TierMove::InRun => None,
+    };
+    let tiers = unrouted.routed(route);
     let learned = if catalog.not_ready_reason().is_none() {
         crate::learned::default_plan(store, item.repo.as_ref(), spec, &policy, max_tier)?
     } else {
         ModelPlan::default()
     };
-    let fallback = crate::knobs::default_choice(&ctx.config, tiers, max_tier, spec);
+    let fallback = crate::knobs::default_choice(&ctx.config, unrouted, max_tier, spec);
     let selection = Replacement {
         tiers,
         spec,

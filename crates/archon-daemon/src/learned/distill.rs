@@ -97,16 +97,17 @@ async fn queue(ctx: &DaemonContext, repo: &RepoId) -> Result<(), ArchonError> {
     let draft_key = format!("learning/distill-draft/{repo}/{consumed}");
     let enqueue_key = format!("learning:{repo}:{consumed}");
     // An errand inserted before its cursor moved is kept, never drafted again.
-    let item = match store.item_by_key(&enqueue_key)? {
+    let item = match committed_errand(&store, &draft_key, &enqueue_key)? {
         Some(committed) => committed,
         None => {
             let orchestrator = &ctx.config.orchestrator.model;
             let checks = (&policy, &catalog);
             let draft = current_draft(&store, &draft_key, repo, &window, checks, orchestrator)?;
-            store.insert_item(&draft, Some(&enqueue_key))?
+            let inserted = store.insert_item(&draft, Some(&enqueue_key))?;
+            assert!(inserted.budget_usd.is_some_and(|b| b <= 1.0));
+            inserted
         }
     };
-    assert!(item.budget_usd.is_some_and(|b| b <= 1.0));
     assert_eq!(
         item.repo.as_ref(),
         Some(repo),
@@ -122,6 +123,39 @@ async fn queue(ctx: &DaemonContext, repo: &RepoId) -> Result<(), ArchonError> {
     Ok(())
 }
 
+/// The errand the saved draft was inserted as under `enqueue_key`. Another
+/// item under that key is not one: its insert meets the key's conflict.
+fn committed_errand(
+    store: &archon_queue::Store,
+    draft_key: &str,
+    enqueue_key: &str,
+) -> Result<Option<QueueItem>, ArchonError> {
+    let Some(keyed) = store.item_by_key(enqueue_key)? else {
+        return Ok(None);
+    };
+    let Some(draft) = saved_draft(store, draft_key)? else {
+        return Ok(None);
+    };
+    if draft.id != keyed.id {
+        return Ok(None);
+    }
+    assert_eq!(keyed.repo, draft.repo, "the draft's own repository");
+    assert_eq!(keyed.pipeline, draft.pipeline, "the draft's own pipeline");
+    Ok(Some(keyed))
+}
+
+fn saved_draft(
+    store: &archon_queue::Store,
+    draft_key: &str,
+) -> Result<Option<QueueItem>, ArchonError> {
+    let Some(raw) = store.kv_get(draft_key)? else {
+        return Ok(None);
+    };
+    serde_json::from_str(&raw)
+        .map(Some)
+        .map_err(|e| ArchonError::Corrupt(format!("distillation draft: {e}")))
+}
+
 fn current_draft(
     store: &archon_queue::Store,
     draft_key: &str,
@@ -133,14 +167,7 @@ fn current_draft(
     ),
     orchestrator: &ModelRef,
 ) -> Result<QueueItem, ArchonError> {
-    let saved: Option<QueueItem> = store
-        .kv_get(draft_key)?
-        .map(|raw| {
-            serde_json::from_str(&raw)
-                .map_err(|e| ArchonError::Corrupt(format!("distillation draft: {e}")))
-        })
-        .transpose()?;
-    match saved {
+    match saved_draft(store, draft_key)? {
         Some(item)
             if policy.check_plan(&item.model_plan).is_ok()
                 && item.model_plan.0.values().flatten().all(|c| {

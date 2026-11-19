@@ -366,24 +366,7 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
         title: &str,
         model_plan: ModelPlan,
     ) -> Result<QueueItem, ArchonError> {
-        let request = EnqueueRequest {
-            intent: None,
-            onto: None,
-            stage_timeouts: Default::default(),
-            repo: Some(RepoRef(repo.into())),
-            pipeline: Some(pipeline.into()),
-            title: title.into(),
-            brief: format!("brief for {title}"),
-            priority: Default::default(),
-            depends_on: Vec::new(),
-            tags: Vec::new(),
-            model_plan: model_plan.into(),
-            model_reasons: None,
-            budget_usd: None,
-            idempotency_key: None,
-            autonomy: Default::default(),
-            origin: None,
-        };
+        let request = enqueue_request(repo, pipeline, title, model_plan);
         match self.cli(Request::Enqueue(request)).await? {
             Reply::Item(item) => Ok(item),
             other => panic!("enqueue replied {other:?}"),
@@ -1455,6 +1438,33 @@ impl FakeBackend {
     /// Every agent `descendants` was asked about, in order.
     pub fn descendant_checks(&self) -> Vec<AetherAgentId> {
         self.state().descendant_checks.clone()
+    }
+}
+
+/// A plain enqueue of `title` into `pipeline` of the repository `repo`.
+pub fn enqueue_request(
+    repo: &str,
+    pipeline: &str,
+    title: &str,
+    model_plan: ModelPlan,
+) -> EnqueueRequest {
+    EnqueueRequest {
+        intent: None,
+        onto: None,
+        stage_timeouts: Default::default(),
+        repo: Some(RepoRef(repo.into())),
+        pipeline: Some(pipeline.into()),
+        title: title.into(),
+        brief: format!("brief for {title}"),
+        priority: Default::default(),
+        depends_on: Vec::new(),
+        tags: Vec::new(),
+        model_plan: model_plan.into(),
+        model_reasons: None,
+        budget_usd: None,
+        idempotency_key: None,
+        autonomy: Default::default(),
+        origin: None,
     }
 }
 

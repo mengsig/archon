@@ -913,6 +913,34 @@ async fn a_committed_distillation_is_kept_after_its_model_left_the_catalog() {
     assert_eq!(errand_models(&items), ["codex/listed"], "no second errand");
 }
 
+/// Another item may hold the key the next errand is inserted under: it is not
+/// taken for the errand, and the cursor waits behind the key's conflict.
+#[tokio::test]
+async fn an_unrelated_item_under_an_errands_key_is_not_taken_for_the_errand() {
+    let mut config = archon_core::config::Config::default();
+    config.learning.distill_every = 2;
+    config.learning.distill_daily_budget_usd = 10.0;
+    let h = Harness::with_config(config).await;
+    samples(&h, "codex/cheap", 0.1, 2).await;
+    let repo = h.ctx.store.lock().await.repos().unwrap()[0].id.clone();
+    let mut request = common::enqueue_request(common::REPO_NAME, PIPELINE, "unrelated", plan());
+    request.idempotency_key = Some(format!("learning:{repo}:0"));
+    let Reply::Item(unrelated) = h.cli(Request::Enqueue(request)).await.unwrap() else {
+        panic!("an enqueue replies with its item");
+    };
+    assert_eq!(unrelated.budget_usd, None, "no errand's budget");
+    h.set_learning_models(vec!["codex/listed".parse().unwrap()])
+        .await;
+    archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    let store = h.ctx.store.lock().await;
+    let cursor = store.kv_get(&format!("learning/distilled-v2/{repo}"));
+    assert_eq!(cursor.unwrap(), None, "the cursor did not move");
+    let tagged = store.kv_get(&format!("learning/distillation/{}", unrelated.id));
+    assert_eq!(tagged.unwrap(), None, "not marked as a distillation");
+    let items = store.items(&Default::default()).unwrap();
+    assert!(errand_models(&items).is_empty(), "no errand was inserted");
+}
+
 #[tokio::test]
 async fn a_learned_model_removed_from_the_catalog_cannot_be_chosen_again() {
     let mut config = archon_core::config::Config::default();

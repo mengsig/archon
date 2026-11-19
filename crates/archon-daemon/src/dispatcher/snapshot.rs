@@ -270,7 +270,13 @@ pub(crate) fn invalid_pin(
         return None;
     }
     let origins = item.model_plan.origins(&item.id);
-    for (key, choices) in &item.model_plan.0 {
+    // The acceptance entry is a placeholder its judge selection replaces.
+    let executed = item
+        .model_plan
+        .0
+        .iter()
+        .filter(|(key, _)| key.as_str() != archon_pipeline::acceptance::STAGE);
+    for (key, choices) in executed {
         let slots = &origins[key];
         assert_eq!(choices.len(), slots.len(), "an origin per choice");
         for (choice, origin) in choices.iter().zip(slots) {

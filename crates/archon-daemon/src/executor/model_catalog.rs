@@ -21,7 +21,7 @@ pub(crate) fn repair_item(
     let whole = RepairScope {
         spec,
         when: TierMove::Dispatch,
-        in_scope: &|_, _| true,
+        in_scope: &|key, _| key != archon_pipeline::acceptance::STAGE,
     };
     repair_item_in(ctx, store, item, catalog, env, whole)
 }
@@ -152,8 +152,10 @@ pub(crate) fn repair_pending(
     let stored = item.model_plan.plan();
     // A finished slot's pin no longer runs: of a stage's own choices only the
     // pending plans' slots are repaired, beside the worker choices they use.
+    // The acceptance stage's stored choice is a placeholder its judge selection replaces.
     let own: std::collections::BTreeSet<(&str, usize)> = plans
         .iter()
+        .filter(|plan| plan.stage_id != archon_pipeline::acceptance::STAGE)
         .filter_map(|plan| {
             let choices = stored.choices_for(&plan.stage_id)?.len().max(1);
             Some((plan.stage_id.as_str(), plan.fan_index as usize % choices))
@@ -346,8 +348,23 @@ fn repair_spawn(
     catalog: &ModelCatalog,
 ) -> Result<(), ArchonError> {
     canonicalize_spawn(plan, catalog);
+    if plan.stage_id == archon_pipeline::acceptance::STAGE {
+        return validate_judge(plan, catalog);
+    }
     repair_stage(plan, before, after);
     validate_spawn(plan, catalog)
+}
+
+/// Refuse an acceptance plan's unlisted reviewers or workers. Its own choice is
+/// a placeholder the judge selection replaces with one of the catalog's candidates.
+fn validate_judge(plan: &mut SpawnPlan, catalog: &ModelCatalog) -> Result<(), ArchonError> {
+    assert_eq!(plan.stage_id, archon_pipeline::acceptance::STAGE);
+    for model in spawn_models(plan).skip(1) {
+        let canonical = catalog.check(model)?;
+        assert_eq!(&canonical, catalog.canonical_alias(&canonical));
+        *model = canonical;
+    }
+    Ok(())
 }
 
 /// Each model `plan` names, mutably: its choice, reviewers and workers.

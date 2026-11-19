@@ -700,3 +700,43 @@ async fn a_judge_superseded_before_its_create_is_sent_still_judges() {
         .collect();
     assert_eq!(judging, [("intent-acceptance", JUDGE.to_owned())]);
 }
+
+#[tokio::test]
+async fn a_retired_acceptance_placeholder_still_reaches_its_listed_judge() {
+    const JUDGE: &str = "codex/sol";
+    let mut config = archon_core::config::Config::default();
+    config.review.auto_repair = false;
+    let vision = [common::MODEL, JUDGE];
+    let (h, fake, item) = fixture_on(config, false, &vision).await;
+    settle(&h, evidence(&h, &item, "implemented").await).await;
+    assert!(
+        h.running().await.iter().all(|s| s.stage_id == "review"),
+        "the review runs on the plan's placeholder model"
+    );
+
+    // The placeholder, REVIEW_MODEL, leaves the catalog before acceptance is reserved.
+    let models: Vec<Value> = vision
+        .iter()
+        .map(|model| {
+            json!({"model": model, "configured": true, "tier": "strong",
+               "capabilities": {"vision": true}})
+        })
+        .collect();
+    fake.set_default("list_models", Scripted::reply("models", json!(models)));
+    let store = h.ctx.store.lock().await;
+    store.invalidate_model_catalog("catalog changed".into());
+    drop(store);
+    settle(&h, json!({"verdict":"pass","findings":[]})).await;
+    h.dispatch().await;
+
+    let judging: Vec<_> = h
+        .running()
+        .await
+        .iter()
+        .map(|s| (s.stage_id.clone(), s.choice.model.to_string()))
+        .collect();
+    assert_eq!(
+        judging,
+        [("intent-acceptance".to_owned(), JUDGE.to_owned())]
+    );
+}

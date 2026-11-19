@@ -299,7 +299,7 @@ pub(super) async fn scan(
         forget_settled(&mut store, INTENT_KEY_PREFIX)?;
         forget_settled(&mut store, inspection::ESCALATED_KEY_PREFIX)?;
         forget_settled(&mut store, hung::KEY_PREFIX)?;
-        forget_settled(&mut store, super::restatement::KEY_PREFIX)?;
+        super::restatement::forget_ended(&mut store)?;
     }
     let Some(policy) = Policy::of(&ctx.config.limits) else {
         // Off: the fleet still records events, so nothing may be kept.

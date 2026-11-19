@@ -389,16 +389,7 @@ fn member_report(stage: &StageSpec, member: &StageRun) -> String {
 /// The verdict of a member whose final restatement (`submit_verdict`) stands
 /// over a result that reads otherwise; `None` when its result reads as recorded.
 fn restated_over(member: &StageRun) -> Option<&'static str> {
-    let stands = member.standing_restatement()?;
-    let summary = member.summary.as_deref().unwrap_or_default();
-    let structured = member.structured.as_ref();
-    let (own, _) = match member.only_reviews {
-        Some(true) => Verdict::read_review_lead(summary, structured),
-        _ => Verdict::read(summary, structured),
-    };
-    if Some(own) == member.verdict {
-        return None;
-    }
+    let stands = member.restated_over()?;
     assert_ne!(stands.verdict, Verdict::Pass, "only a non-pass stands");
     Some(match stands.verdict {
         Verdict::Fail => "fail, as it restated before completing (final)",

@@ -5,18 +5,21 @@
 //! that never calls the tool settles as it did before.
 
 use crate::common;
+mod callers;
+mod replaced;
 
 use std::collections::BTreeMap;
 
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
+use archon_core::id::RequestId;
 use archon_core::model::{Effort, ModelPlan};
-use archon_core::protocol::{Reply, Request};
+use archon_core::protocol::{ClientKind, Reply, Request};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::run::{
     CheckDecision, Restatement, StageOutcome, StageRun, Verdict, VerdictCheck, VerdictNote,
 };
-use archon_daemon::executor;
+use archon_daemon::{executor, handlers};
 use common::{Harness, MODEL, choice, completed};
 use serde_json::{Value, json};
 
@@ -63,28 +66,66 @@ fn marked() -> Value {
     }]})
 }
 
-async fn submit_as(
-    h: &Harness,
-    caller: Option<AetherAgentId>,
+/// The `submit_verdict` call naming `caller`, as the tool builds it.
+fn call(
+    caller: Option<&AetherAgentId>,
     summary: &str,
     structured: Value,
-) -> Result<VerdictCheck, ArchonError> {
-    let request = Request::SubmitVerdict {
+    restating: bool,
+) -> Request {
+    Request::SubmitVerdict {
         summary: summary.into(),
         structured: Some(structured),
-        caller,
+        restating,
+        caller: caller.cloned(),
+    }
+}
+
+/// `request` as `archon mcp` forwards a stage agent's tool call for `agent`.
+async fn forwarded(
+    h: &Harness,
+    agent: &AetherAgentId,
+    request: Request,
+) -> Result<VerdictCheck, ArchonError> {
+    let tracked = Request::Tracked {
+        request_id: RequestId::new(),
+        idempotency_key: None,
+        request: Box::new(request),
     };
-    match h.cli(request).await? {
+    let request = Request::ForAgent {
+        caller: agent.clone(),
+        request: Box::new(tracked),
+    };
+    match Box::pin(handlers::handle(&h.ctx, ClientKind::ArchonMcp, request)).await? {
         Reply::VerdictCheck(check) => Ok(check),
         other => panic!("submit_verdict replied {other:?}"),
     }
 }
 
-async fn submit(h: &Harness, stage: &StageRun, summary: &str, structured: Value) -> VerdictCheck {
-    let caller = stage.aether_agent.clone();
-    assert!(caller.is_some(), "a running stage has an agent");
-    let answered = submit_as(h, caller, summary, structured).await;
+async fn sent(
+    h: &Harness,
+    stage: &StageRun,
+    summary: &str,
+    structured: Value,
+    restating: bool,
+) -> VerdictCheck {
+    let agent = stage
+        .aether_agent
+        .as_ref()
+        .expect("a running stage has an agent");
+    let request = call(Some(agent), summary, structured, restating);
+    let answered = forwarded(h, agent, request).await;
     answered.expect("the stage's own agent may submit")
+}
+
+/// The stage's agent has the result it is about to finish with read.
+async fn submit(h: &Harness, stage: &StageRun, summary: &str, structured: Value) -> VerdictCheck {
+    sent(h, stage, summary, structured, false).await
+}
+
+/// The stage's agent sends the restatement it was asked for.
+async fn restate(h: &Harness, stage: &StageRun, summary: &str, structured: Value) -> VerdictCheck {
+    sent(h, stage, summary, structured, true).await
 }
 
 fn result(summary: &str, structured: Value) -> StageOutcome {
@@ -120,8 +161,30 @@ async fn failure(h: &Harness, item: &QueueItem) -> String {
     }
 }
 
+/// The store key of the stage attempt `stage` is a run of.
 fn key(stage: &StageRun) -> String {
-    format!("verdict_restatement:{}", stage.id)
+    let (run, attempt, fan) = (&stage.run, stage.attempt, stage.fan_index);
+    format!(
+        "verdict_restatement:{run}:{attempt}:{fan}:{}",
+        stage.stage_id
+    )
+}
+
+async fn kept(h: &Harness, stage: &StageRun) -> Option<Restatement> {
+    let raw = h.kv(&key(stage)).await?;
+    Some(serde_json::from_str(&raw).expect("a stored restatement"))
+}
+
+async fn restarted(h: &mut Harness) {
+    h.restart();
+    executor::recover(&h.ctx).await.expect("recovery");
+}
+
+/// A fail whose one blocking finding names `fault` as at fault.
+fn failing(fault: &str) -> Value {
+    json!({"verdict": "fail", "findings": [
+        {"severity": "high", "blocking": true, "fault": fault, "title": "the run stopped"}
+    ]})
 }
 
 #[tokio::test]
@@ -132,9 +195,10 @@ async fn a_disputed_pass_is_restated_once_and_the_gate_decides_without_re_runnin
     assert_eq!(asked.decision, CheckDecision::Restate);
     assert_eq!(asked.reading.note, Some(VerdictNote::DisputedPass));
     assert!(asked.message().contains("\"blocking\": true"), "{asked:?}");
+    assert!(asked.message().contains("\"restating\": true"), "{asked:?}");
     assert_eq!(only_running(&h, "e2e").await.id, e2e.id, "it still runs");
 
-    let restated = submit(&h, &e2e, PASS, marked()).await;
+    let restated = restate(&h, &e2e, PASS, marked()).await;
     assert_eq!(restated.decision, CheckDecision::Final);
     assert_eq!(restated.reading.verdict, Verdict::Pass);
     settle(&h, PASS, marked()).await;
@@ -150,9 +214,9 @@ async fn a_disputed_pass_is_restated_once_and_the_gate_decides_without_re_runnin
     only_running(&h, "report").await;
     assert_eq!(setup_runs(&h, &item).await, 1, "setup is not re-run");
     assert_eq!(
-        h.kv(&key(&e2e)).await,
+        kept(&h, &e2e).await,
         None,
-        "the settled stage's ask is forgotten"
+        "the ended attempt's ask is forgotten"
     );
 }
 
@@ -161,21 +225,20 @@ async fn a_restated_fail_fails_even_if_the_stage_then_completes_with_a_pass() {
     let h = Harness::new().await;
     let (item, e2e) = at_e2e(&h).await;
     submit(&h, &e2e, PASS, disputed()).await;
-    let product = json!({"verdict": "fail", "findings": [
-        {"severity": "high", "blocking": true, "fault": "product", "title": "pay button"}
-    ]});
-    let restated = submit(&h, &e2e, FAIL, product).await;
+    let restated = restate(&h, &e2e, FAIL, failing("product")).await;
     assert_eq!(restated.decision, CheckDecision::Final);
     assert_eq!(restated.reading.verdict, Verdict::Fail);
     assert!(restated.message().contains("a fail"), "{restated:?}");
 
-    let later = submit(&h, &e2e, PASS, marked()).await;
-    assert_eq!(later.decision, CheckDecision::Final);
-    assert_eq!(
-        later.reading.verdict,
-        Verdict::Fail,
-        "a third call changes nothing"
-    );
+    for restating in [false, true] {
+        let later = sent(&h, &e2e, PASS, marked(), restating).await;
+        assert_eq!(later.decision, CheckDecision::Final);
+        assert_eq!(
+            later.reading.verdict,
+            Verdict::Fail,
+            "a later call changes nothing"
+        );
+    }
     settle(&h, PASS, marked()).await;
 
     let settled = stored(&h, &item, &e2e).await;
@@ -195,7 +258,7 @@ async fn a_restatement_still_disputed_settles_as_a_disputed_pass_does() {
     let h = Harness::new().await;
     let (item, e2e) = at_e2e(&h).await;
     submit(&h, &e2e, PASS, disputed()).await;
-    let again = submit(&h, &e2e, PASS, disputed()).await;
+    let again = restate(&h, &e2e, PASS, disputed()).await;
     assert_eq!(again.decision, CheckDecision::Final);
     assert_eq!(again.reading.note, Some(VerdictNote::DisputedPass));
     assert!(again.message().contains("counts as a fail"), "{again:?}");
@@ -217,21 +280,16 @@ async fn the_one_ask_survives_a_restart() {
     let (item, e2e) = at_e2e(&h).await;
     let asked = submit(&h, &e2e, PASS, disputed()).await;
     assert_eq!(asked.decision, CheckDecision::Restate);
-    let kept: Restatement = serde_json::from_str(&h.kv(&key(&e2e)).await.unwrap()).unwrap();
-    assert_eq!(
-        (kept.asked, kept.restated),
-        (VerdictNote::DisputedPass, None)
-    );
+    let ask = kept(&h, &e2e).await.expect("the ask is kept");
+    assert_eq!((ask.asked, ask.restated), (VerdictNote::DisputedPass, None));
 
-    h.restart();
-    executor::recover(&h.ctx).await.expect("recovery");
-    let again = submit(&h, &e2e, PASS, disputed()).await;
+    restarted(&mut h).await;
+    let again = restate(&h, &e2e, PASS, disputed()).await;
     assert_eq!(again.decision, CheckDecision::Final, "never asked twice");
     assert_eq!(again.reading.note, Some(VerdictNote::DisputedPass));
 
-    h.restart();
-    executor::recover(&h.ctx).await.expect("recovery");
-    let third = submit(&h, &e2e, PASS, marked()).await;
+    restarted(&mut h).await;
+    let third = restate(&h, &e2e, PASS, marked()).await;
     assert_eq!(third.decision, CheckDecision::Final);
     assert_eq!(
         third.reading.verdict,
@@ -246,13 +304,48 @@ async fn the_one_ask_survives_a_restart() {
     assert_eq!(setup_runs(&h, &item).await, 1);
 }
 
+/// The reply to the first submission is lost with archond after the ask was
+/// stored: the agent repeats what it sent, which is no restatement.
+#[tokio::test]
+async fn an_ask_whose_answer_was_lost_is_given_again_and_spends_nothing() {
+    let mut h = Harness::new().await;
+    let (item, e2e) = at_e2e(&h).await;
+    submit(&h, &e2e, PASS, disputed()).await;
+    let ask = kept(&h, &e2e).await.expect("the ask is kept");
+
+    restarted(&mut h).await;
+    let repeated = submit(&h, &e2e, PASS, disputed()).await;
+    assert_eq!(repeated.decision, CheckDecision::Restate, "asked again");
+    assert_eq!(repeated.reading.note, Some(VerdictNote::DisputedPass));
+    assert_eq!(
+        kept(&h, &e2e).await,
+        Some(ask),
+        "the repeat restated nothing"
+    );
+
+    let restated = restate(&h, &e2e, PASS, marked()).await;
+    assert_eq!(restated.decision, CheckDecision::Final);
+    assert_eq!(restated.reading.verdict, Verdict::Pass);
+    settle(&h, PASS, marked()).await;
+    assert_eq!(stored(&h, &item, &e2e).await.verdict, Some(Verdict::Pass));
+    only_running(&h, "report").await;
+    assert_eq!(setup_runs(&h, &item).await, 1);
+}
+
 #[tokio::test]
 async fn a_readable_submission_is_accepted_and_binds_nothing() {
     let h = Harness::new().await;
     let (item, e2e) = at_e2e(&h).await;
-    let accepted = submit(&h, &e2e, FAIL, json!({"verdict": "fail", "findings": []})).await;
-    assert_eq!(accepted.decision, CheckDecision::Accepted);
-    assert_eq!(h.kv(&key(&e2e)).await, None, "no ask, nothing kept");
+    for restating in [false, true] {
+        let fail = json!({"verdict": "fail", "findings": []});
+        let accepted = sent(&h, &e2e, FAIL, fail, restating).await;
+        assert_eq!(accepted.decision, CheckDecision::Accepted);
+        assert!(
+            !accepted.message().contains("complete_task"),
+            "{accepted:?}"
+        );
+        assert_eq!(kept(&h, &e2e).await, None, "no ask, nothing kept");
+    }
     settle(&h, PASS, marked()).await;
     let settled = stored(&h, &item, &e2e).await;
     assert_eq!(
@@ -313,31 +406,53 @@ async fn a_stage_that_never_submits_settles_as_before() {
     ));
 }
 
+/// The verdict that settles and the findings that route it are one
+/// submission's: the final restatement's, not the result's.
 #[tokio::test]
-async fn only_a_running_verdict_stage_s_own_agent_may_submit() {
-    let h = Harness::new().await;
-    let item = h.enqueue_in(E2E, "journeys", e2e_plan()).await.unwrap();
-    h.dispatch().await;
-    let setup = only_running(&h, "setup").await;
-    let refused = |answer: Result<VerdictCheck, ArchonError>, why: &str| match answer {
-        Err(ArchonError::Forbidden(text)) => assert!(text.contains(why), "{text}"),
-        other => panic!("expected a refusal naming {why:?}, got {other:?}"),
-    };
-    let from_setup = submit_as(&h, setup.aether_agent.clone(), PASS, marked()).await;
-    refused(from_setup, "stage `setup` has not");
-    refused(submit_as(&h, None, PASS, marked()).await, "caller metadata");
-    let stranger = AetherAgentId::parse("agt_stranger").unwrap();
-    refused(
-        submit_as(&h, Some(stranger), PASS, marked()).await,
-        "has none on record",
+async fn a_restated_verdict_is_routed_by_the_findings_restated_with_it() {
+    let mut h = Harness::new().await;
+    let (product, e2e) = at_e2e(&h).await;
+    submit(&h, &e2e, PASS, disputed()).await;
+    restate(&h, &e2e, FAIL, failing("product")).await;
+    let noted = json!({"verdict": "pass", "findings": [
+        {"severity": "low", "blocking": false, "fault": "environment", "title": "slow start"}
+    ]});
+    settle(&h, PASS, noted).await;
+    let error = failure(&h, &product).await;
+    assert!(error.contains("`setup` was not re-run"), "{error}");
+    assert_eq!(setup_runs(&h, &product).await, 1);
+
+    let (environment, e2e) = at_e2e(&h).await;
+    submit(&h, &e2e, PASS, disputed()).await;
+    restate(&h, &e2e, FAIL, failing("environment")).await;
+    settle(&h, PASS, json!({"verdict": "pass", "findings": []})).await;
+    let settled = stored(&h, &environment, &e2e).await;
+    assert_eq!(settled.verdict, Some(Verdict::Fail));
+    assert_eq!(settled.restatement.map(|r| r.environment), Some(true));
+    let again = only_running(&h, "setup").await;
+    assert_eq!(
+        again.attempt, 2,
+        "the restated environment fail re-runs setup"
     );
 
+    restarted(&mut h).await;
+    h.dispatch().await;
+    assert_eq!(
+        only_running(&h, "setup").await.id,
+        again.id,
+        "replayed alike"
+    );
+    assert_eq!(setup_runs(&h, &environment).await, 2);
+    assert!(matches!(
+        h.state(&product.id).await,
+        QueueState::Failed { .. }
+    ));
+
+    // The next attempt of `e2e` is asked on its own account.
     h.settle_running(|_| completed("start.sh ready")).await;
     h.dispatch().await;
-    let e2e = only_running(&h, "e2e").await;
-    settle(&h, PASS, marked()).await;
-    let finished = submit_as(&h, e2e.aether_agent.clone(), PASS, disputed()).await;
-    refused(finished, "while its stage runs");
-    assert_eq!(h.kv(&key(&e2e)).await, None, "a refused call keeps nothing");
-    assert_eq!(setup_runs(&h, &item).await, 1);
+    let second = only_running(&h, "e2e").await;
+    assert_eq!(second.attempt, 2);
+    let asked = submit(&h, &second, PASS, disputed()).await;
+    assert_eq!(asked.decision, CheckDecision::Restate);
 }

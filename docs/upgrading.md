@@ -30,15 +30,20 @@ with their switches instead: `quiet_info = false`, `compaction_tokens = 0`,
 generation until `archon orchestrator restart`.
 
 From 1.6.4 a stage with a verdict calls the new `submit_verdict` tool before
-it completes, and is asked once to restate a verdict Archon cannot read
+it finishes, and is asked once to restate a verdict Archon cannot read
 ([PIPELINES.md](PIPELINES.md#the-stage-contract)). It needs no Aether change
 and works with Aether 1.4.1 and later; `archon setup` adds the tool's class
 to the `archon` server entry, and an entry without it still serves the tool.
-A stage whose agent does not have the tool yet (an `archon mcp` started
-before the upgrade) completes as before. The built-in `e2e-testing`,
-`e2e-strict` and `release-journey` now go back to `setup` only for a finding
-with `"fault": "environment"`: any other failure of their test stage fails
-the run there, where 1.6.3 re-ran setup once first. A pipeline of your own
+A stage agent sees the tool once its `archon mcp` is the upgraded binary: a
+server Aether starts per agent is, from the next stage on, and one shared
+`archon mcp` started before the upgrade is not until it is restarted. A
+stage whose agent does not have the tool finishes as before. The built-in
+`e2e-testing`, `e2e-strict` and `release-journey` now go back to `setup`
+only for a verdict that reads as `fail` with a finding whose `"fault"` is
+`"environment"`. A test stage that failed its gate any other way (a `fail`
+naming only the product, a verdict Archon could not read) fails the run
+there, where 1.6.3 re-ran setup once first; a timeout or a crash ended the
+run in 1.6.3 too. A pipeline of your own
 keeps its loop unless it sets `on_fail.when`; a copy of a built-in in
 `.archon/pipelines` keeps its old loop until you add
 `when = "environment_finding"`. This adds no store migration either: stored

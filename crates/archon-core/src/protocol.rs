@@ -296,6 +296,9 @@ pub enum Request {
         /// The `structured` data it is about to complete with.
         #[serde(default)]
         structured: Option<serde_json::Value>,
+        /// Sent as the restatement an earlier answer asked for, which is final.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        restating: bool,
         /// Aether's out-of-band MCP caller identity, never a tool argument.
         caller: Option<AetherAgentId>,
     },

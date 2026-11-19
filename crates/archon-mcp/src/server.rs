@@ -538,7 +538,7 @@ fn how_to_check(request: &Request) -> String {
         }
         Request::MessageOrchestrator { .. } => "the message may already be recorded; check the item's archon log before repeating it, and keep working on your stage".into(),
         Request::PublishArtifact { .. } => "the files may already be stored; list_artifacts for your item shows them, and publishing a name again replaces it".into(),
-        Request::SubmitVerdict { .. } => "the submission may already be read; request_status with the pending id shows its answer, and a repeat after a request to restate is taken as the final restatement".into(),
+        Request::SubmitVerdict { .. } => "the submission may already be read; repeat it as you sent it, which answers it again and never counts an unmarked unreadable verdict as your restatement".into(),
         Request::GithubReply { thread, .. } => thread.check_before_retry(),
         Request::RecordChatAnswer { .. } => "the answer may already be recorded; a repeat is then refused as already answered, which is the confirmation".into(),
         Request::Promote { repo } => format!("the promotion may have merged; queue_status shows `{}`'s integration branch, and promote again is safe: it merges nothing twice", repo.0),

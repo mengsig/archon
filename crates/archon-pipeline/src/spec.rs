@@ -293,12 +293,16 @@ pub enum LoopWhen {
 }
 
 impl LoopWhen {
-    /// Whether the failed group `failing` takes the loop.
+    /// Whether the failed group `failing` takes the loop: one of its members
+    /// settled a readable `fail` whose findings name the environment. A
+    /// verdict that reads as neither pass nor fail takes none, whatever it lists.
     pub(crate) fn applies(self, failing: &[&archon_core::run::StageRun]) -> bool {
+        use archon_core::run::{StageState, Verdict};
         match self {
             Self::EnvironmentFinding => failing.iter().any(|member| {
-                let structured = member.structured.as_ref();
-                structured.is_some_and(archon_core::run::names_environment)
+                member.state == StageState::Completed
+                    && crate::gate::verdict_of(member) == Verdict::Fail
+                    && member.verdict_names_environment()
             }),
         }
     }

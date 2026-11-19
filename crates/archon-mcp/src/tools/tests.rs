@@ -197,7 +197,8 @@ fn adaptive_samples() -> Vec<(&'static str, Value)> {
         ),
         (
             "submit_verdict",
-            json!({"summary": "Ran it.\nVERDICT: PASS", "structured": {"verdict": "pass", "findings": []}}),
+            json!({"summary": "Ran it.\nVERDICT: PASS", "restating": true,
+                "structured": {"verdict": "pass", "findings": []}}),
         ),
         ("list_artifacts", json!({"item": qi()})),
         (
@@ -214,17 +215,18 @@ fn refusal(tool: &str, arguments: Value) -> String {
     }
 }
 
-/// A stage agent hands over the result it is about to complete with, and is
-/// told in words whether to complete, restate once, or that it is final.
+/// A stage agent hands over the result it is about to finish with, and is
+/// told in words whether to finish, restate, or that it is final.
 #[test]
 fn submit_verdict_carries_the_result_and_its_answer_says_what_to_do_next() {
     use archon_core::run::{CheckDecision, Verdict, VerdictCheck, VerdictNote, VerdictReading};
     let structured = json!({"verdict": "pass", "findings": [{"severity": "high"}]});
     let args = json!({"summary": "Ran it.\nVERDICT: PASS", "structured": structured});
-    match to_request("submit_verdict", args).expect("valid arguments") {
+    match to_request("submit_verdict", args.clone()).expect("valid arguments") {
         Request::SubmitVerdict {
             summary,
             structured: Some(sent),
+            restating: false,
             caller: None,
         } => {
             assert_eq!(summary, "Ran it.\nVERDICT: PASS");
@@ -232,10 +234,37 @@ fn submit_verdict_carries_the_result_and_its_answer_says_what_to_do_next() {
         }
         other => panic!("mapped to {other:?}"),
     }
+    let mut marked = args;
+    marked["restating"] = json!(true);
+    let restated = to_request("submit_verdict", marked).expect("valid arguments");
+    assert!(
+        matches!(
+            restated,
+            Request::SubmitVerdict {
+                restating: true,
+                ..
+            }
+        ),
+        "{restated:?}"
+    );
     assert!(refusal("submit_verdict", json!({"structured": {}})).contains("summary"));
+    // `complete_task` takes an object, so nothing else is read as a result.
+    for not_an_object in [json!([{"verdict": "pass"}]), json!("pass"), json!(1)] {
+        let args = json!({"summary": "VERDICT: PASS", "structured": not_an_object});
+        let refused = refusal("submit_verdict", args);
+        assert!(refused.contains("`structured` is invalid"), "{refused}");
+    }
     let definition = definition("submit_verdict").expect("defined");
     assert!(!definition.read_only, "it records the one ask");
-    assert!(definition.description.contains("before `complete_task`"));
+    assert!(
+        definition
+            .description
+            .contains("the `restating` one is final")
+    );
+    assert!(
+        !definition.description.contains("complete_task"),
+        "a woken agent finishes without it"
+    );
 
     let disputed = VerdictReading::new((Verdict::Unknown, Some(VerdictNote::DisputedPass)));
     let answer = |decision, reading| {
@@ -249,10 +278,13 @@ fn submit_verdict_carries_the_result_and_its_answer_says_what_to_do_next() {
         asked.contains("a pass beside a blocking finding"),
         "{asked}"
     );
-    assert!(asked.contains("call `submit_verdict` once more"), "{asked}");
+    assert!(asked.contains("`\"restating\": true`"), "{asked}");
     let last = answer(CheckDecision::Final, disputed);
     assert!(last.starts_with("Final: "), "{last}");
-    assert!(last.contains("Call `complete_task` now"), "{last}");
+    assert!(
+        last.contains("Finish now as your instructions say"),
+        "{last}"
+    );
     let pass = VerdictReading::new((Verdict::Pass, None));
     let accepted = answer(CheckDecision::Accepted, pass);
     assert!(accepted.contains("reads this as a pass"), "{accepted}");

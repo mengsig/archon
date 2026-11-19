@@ -14,7 +14,7 @@ use crate::verdict_prose::reports_problem;
 mod restatement;
 mod verdict_note;
 
-pub use restatement::{CheckDecision, Restatement, VerdictCheck, VerdictReading};
+pub use restatement::{CheckDecision, Restatement, Submission, VerdictCheck, VerdictReading};
 pub use verdict_note::VerdictNote;
 
 /// What a review/test stage concluded, as [`Verdict::extract`] reads it from

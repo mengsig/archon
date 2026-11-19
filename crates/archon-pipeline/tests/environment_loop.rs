@@ -1,7 +1,8 @@
 //! `on_fail.when = "environment_finding"` and a verdict restated through
 //! `submit_verdict`, driven through `sim::Sim`: an e2e failure re-runs `setup`
-//! only for a finding that names the environment, a disputed pass never does,
-//! and a restated fail fails whatever the stage then completed with.
+//! only for a readable fail whose findings name the environment, a verdict
+//! that reads as neither pass nor fail never does, and a restated fail fails
+//! whatever the stage then completed with, by its own findings.
 
 mod sim;
 mod support;
@@ -13,7 +14,7 @@ use archon_pipeline::EngineAction;
 use serde_json::{Value, json};
 use sim::{Agent, Sim, finish_state, slots, spawn_plans, spawned};
 
-const NOT_RE_RUN: &str = "No finding names the environment as at fault (`\"fault\": \"environment\"`), so `setup` was not re-run.";
+const NOT_RE_RUN: &str = "No verdict read as `fail` with a finding that names the environment as at fault (`\"fault\": \"environment\"`), so `setup` was not re-run.";
 
 /// `e2e-testing` started and its setup done, ready for the `e2e` stage.
 fn at_e2e() -> Sim {
@@ -43,6 +44,11 @@ fn disputed_pass(fault: Option<&str>) -> Value {
     json!({"verdict": "pass", "findings": [finding]})
 }
 
+/// One blocking finding that names the environment as at fault.
+fn environment_finding() -> Value {
+    json!([{"severity": "high", "blocking": true, "fault": "environment", "title": "no display"}])
+}
+
 fn setup_runs(sim: &Sim) -> usize {
     sim.stages.iter().filter(|s| s.stage_id == "setup").count()
 }
@@ -60,6 +66,14 @@ fn a_failure_naming_no_environment_fault_fails_without_re_running_setup() {
         Agent::NoVerdict,
         Agent::TimedOut,
         Agent::Error("the browser crashed"),
+        // A verdict that reads as neither pass nor fail re-runs nothing,
+        // though it names the environment: disputed, missing, hedged.
+        Agent::Recorded("Ran it.\nVERDICT: PASS", disputed_pass(Some("environment"))),
+        Agent::Recorded("Ran it.", json!({"findings": environment_finding()})),
+        Agent::Recorded(
+            "Ran it.\nVERDICT: PASS or FAIL",
+            json!({"findings": environment_finding()}),
+        ),
     ];
     for ending in endings {
         let mut sim = at_e2e();
@@ -84,7 +98,6 @@ fn a_finding_naming_the_environment_re_runs_setup_once() {
     let endings = [
         Agent::EnvironmentFail("display :99 never came up"),
         Agent::Recorded("Ran it.\nVERDICT: FAIL", worded),
-        Agent::Recorded("Ran it.\nVERDICT: PASS", disputed_pass(Some("environment"))),
     ];
     for ending in endings {
         let mut sim = at_e2e();
@@ -120,12 +133,18 @@ fn a_failure_after_the_one_loop_says_the_loop_was_spent() {
 }
 
 /// The restatement `submit_verdict` leaves after a disputed pass was asked
-/// back and the agent restated `restated`.
-fn asked_then(restated: (Verdict, Option<VerdictNote>)) -> Restatement {
+/// back and the agent restated `restated`, naming the environment or not.
+fn asked_then(restated: (Verdict, Option<VerdictNote>), environment: bool) -> Restatement {
     Restatement {
         asked: VerdictNote::DisputedPass,
         restated: Some(VerdictReading::new(restated)),
+        environment,
     }
+}
+
+fn e2e_run(sim: &Sim) -> &archon_core::run::StageRun {
+    let e2e = sim.stages.iter().find(|s| s.stage_id == "e2e");
+    e2e.expect("the e2e stage ran")
 }
 
 #[test]
@@ -138,7 +157,7 @@ fn a_disputed_pass_restated_as_a_pass_passes_the_gate_with_one_setup_run() {
     let ending = Agent::Restated(
         "Ran it.\nVERDICT: PASS",
         restated,
-        asked_then((Verdict::Pass, None)),
+        asked_then((Verdict::Pass, None), false),
     );
     let report = sim.settle("e2e", 0, ending);
     assert_eq!(spawned(&report), slots(&[("report", 1, 0)]));
@@ -148,11 +167,14 @@ fn a_disputed_pass_restated_as_a_pass_passes_the_gate_with_one_setup_run() {
 #[test]
 fn a_restated_fail_fails_whatever_the_stage_completed_with() {
     let mut sim = at_e2e();
-    let pass = json!({"verdict": "pass", "findings": []});
+    // The later pass notes the environment, which the restated fail did not.
+    let pass = json!({"verdict": "pass", "findings": [
+        {"severity": "low", "blocking": false, "fault": "environment", "title": "slow start"}
+    ]});
     let ending = Agent::Restated(
         "All fine after all.\nVERDICT: PASS",
         pass,
-        asked_then((Verdict::Fail, None)),
+        asked_then((Verdict::Fail, None), false),
     );
     let done = sim.settle("e2e", 0, ending);
     let (stage, error) = failed(&done);
@@ -162,33 +184,71 @@ fn a_restated_fail_fails_whatever_the_stage_completed_with() {
         error.contains("verdict fail, as it restated before completing (final)"),
         "{error}"
     );
-    let e2e = sim.stages.iter().find(|s| s.stage_id == "e2e").unwrap();
-    assert_eq!(e2e.verdict, Some(Verdict::Fail));
-    assert_eq!(setup_runs(&sim), 1);
+    assert_eq!(e2e_run(&sim).verdict, Some(Verdict::Fail));
+    assert_eq!(setup_runs(&sim), 1, "its own findings named no environment");
 }
 
 #[test]
-fn a_restatement_still_disputed_counts_as_a_disputed_pass_does() {
+fn a_restated_environment_fail_re_runs_setup_though_the_result_lost_the_finding() {
+    let mut sim = at_e2e();
+    let pass = json!({"verdict": "pass", "findings": []});
+    let ending = Agent::Restated(
+        "All fine after all.\nVERDICT: PASS",
+        pass,
+        asked_then((Verdict::Fail, None), true),
+    );
+    let back = sim.settle("e2e", 0, ending);
+    assert_eq!(spawned(&back), slots(&[("setup", 2, 0)]));
+    assert_eq!(e2e_run(&sim).verdict, Some(Verdict::Fail));
+}
+
+#[test]
+fn a_result_that_fails_by_itself_is_routed_by_its_own_findings() {
+    // Both fail alike, so the result's own verdict and findings stand.
+    let own = json!({"verdict": "fail", "findings": environment_finding()});
+    let mut names_it = at_e2e();
+    let ending = Agent::Restated(
+        "Ran it.\nVERDICT: FAIL",
+        own,
+        asked_then((Verdict::Fail, None), false),
+    );
+    let back = names_it.settle("e2e", 0, ending);
+    assert_eq!(spawned(&back), slots(&[("setup", 2, 0)]));
+
+    let product = json!({"verdict": "fail", "findings": [
+        {"severity": "high", "blocking": true, "fault": "product", "title": "login 500"}
+    ]});
+    let mut names_none = at_e2e();
+    let ending = Agent::Restated(
+        "Ran it.\nVERDICT: FAIL",
+        product,
+        asked_then((Verdict::Fail, None), true),
+    );
+    let (_, error) = failed(&names_none.settle("e2e", 0, ending));
+    assert!(error.contains(NOT_RE_RUN), "{error}");
+}
+
+#[test]
+fn a_restatement_still_disputed_fails_a_result_that_reads_as_a_pass() {
     let mut sim = at_e2e();
     let still = (Verdict::Unknown, Some(VerdictNote::DisputedPass));
-    let ending = Agent::Restated(
-        "Ran it.\nVERDICT: PASS",
-        disputed_pass(None),
-        asked_then(still),
-    );
+    let pass = json!({"verdict": "pass", "findings": []});
+    // It named the environment, and still re-runs nothing: it is no fail.
+    let ending = Agent::Restated("Ran it.\nVERDICT: PASS", pass, asked_then(still, true));
     let done = sim.settle("e2e", 0, ending);
     let (stage, error) = failed(&done);
     assert_eq!(stage, "e2e");
     assert!(error.contains(NOT_RE_RUN), "{error}");
     assert!(
-        !error.contains("as it restated before completing"),
-        "its result reads as it restated: {error}"
+        error.contains("as it restated before completing (final; counts as fail)"),
+        "{error}"
     );
-    let e2e = sim.stages.iter().find(|s| s.stage_id == "e2e").unwrap();
+    let e2e = e2e_run(&sim);
     assert_eq!(
         (e2e.verdict, e2e.verdict_note),
         (Some(Verdict::Unknown), Some(VerdictNote::DisputedPass))
     );
+    assert_eq!(setup_runs(&sim), 1);
 }
 
 /// A fanned-out gated test whose loop is conditional, as a user pipeline may write it.

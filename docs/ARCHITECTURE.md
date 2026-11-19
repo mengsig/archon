@@ -1698,10 +1698,14 @@ Per stage:
    `on_fail.max_loops`, re-enter stage X with `attempt + 1` and
    `{{feedback}}` set to the failing agents' summaries and findings. With
    `on_fail.when = "environment_finding"` the loop is taken only when a
-   failing member's `structured.findings` holds one with `"fault":
-   "environment"` (`run::names_environment`); otherwise the run finishes
-   `failed` at the stage, its error saying X was not re-run
-   (`RunDriver::loop_withheld`). When the
+   completed member's settled verdict reads `Fail` and the findings that
+   verdict came with hold one with `"fault": "environment"`
+   (`StageRun::verdict_names_environment`: the result's
+   `structured.findings`, or the final restatement's when that stands over
+   the result, §8.6); a verdict that reads `Unknown` never takes it,
+   whatever its findings name. Otherwise the run finishes `failed` at the
+   stage, its error saying X was not re-run (`RunDriver::loop_withheld`).
+   When the
    loops are exhausted, or there is no `goto`, finish with
    `failed{stage_id, error}`.
 
@@ -2464,7 +2468,8 @@ Validation rules (load-time errors):
   exists inside the pipeline directory (symlinks may not lead out of it).
 - `goto` names an **earlier** stage, and `max_loops` is at most 10.
   `on_fail.when = "environment_finding"`, on a gated stage that is no team,
-  limits the loop to a failure with an environment finding (§6.4).
+  limits the loop to a verdict read as `fail` with an environment finding
+  (§6.4).
 - `timeout_minutes` is between 1 and 43200 (30 days). It is the stage
   agent's `deadline` as written: a larger value is refused, never clamped.
 - `fan_out` is between 1 and 16. A value above 1 is refused for `work` and
@@ -2818,30 +2823,51 @@ again, and archond reads the verdict when the task settles
 (`executor/settle.rs`), so the one question comes before that. A contract
 with a Verdict section (`contract::holds_verdict`: a verdict stage, or the
 lead of a review-only run) tells its agent to call `submit_verdict` with the
-`summary` and `structured` it will complete with. `executor/restatement.rs`
+`summary` and `structured` it will finish with. `executor/restatement.rs`
 answers only the agent of a live stage run whose driver says it holds a
-verdict, reads the submission as settlement will (`Verdict::read`, or
+verdict, refuses a `structured` that is no object before anything is
+stored, reads the submission as settlement will (`Verdict::read`, or
 `read_review_lead`) and applies `Restatement::submit`
-(`archon_core::run::restatement`): a pass or a fail is `accepted` and keeps
-no state; a first `Unknown` is `restate`, and its `VerdictNote` is stored
-under `kv.verdict_restatement:<stage run>`; the next submission is `final`
-and stored with its reading; every later one answers that stored reading
-unread. The record is keyed by stage run, so an attempt is asked at most
-once across archond restarts and repeated calls (a lost reply is answered
-by `request_status`, §11.1; a blind repeat after an ask is taken as the
-restatement). At settlement `restatement::bound` copies the record onto the
-stage run (`StageRun.restatement`) and, for a completed stage, records the
-weaker of the final restatement and the result's own reading (fail before
-unknown before pass). A restated fail therefore fails whatever the agent
-completed with, a restatement that still reads `Unknown` counts exactly as
-an unreadable result does, and a pass is only ever the completed result's
-own: the tool never turns a result the gate would refuse into a pass. An
-ask never answered, and a stage that never calls the tool, leave the
-result's reading as it is. The stall sweep deletes the kv record once the
-stage run is terminal. The tool is one of `STAGE_TOOLS`, so stage agents
-keep it in every `tools` mode; an Aether whose `archon` server entry has no
-class for it treats it as `external`, which a headless stage agent's
-approval policy does not gate, so no Aether change or version is needed.
+(`archon_core::run::restatement`):
+
+- With nothing asked, a pass or a fail is `accepted` and keeps no state. An
+  `Unknown` is `restate`: its `VerdictNote` is stored and the answer says
+  what to change and to send it with `"restating": true`.
+- With an ask owed, an `Unknown` sent without `restating` restates nothing:
+  it gets the same ask again and changes no state, so an answer lost
+  between the kv write and the agent (an archond crash, a dropped reply)
+  spends nothing. A submission marked `restating`, or one that reads as a
+  pass or a fail, is the restatement: `final`, stored with its reading and
+  with whether its findings name the environment (`environment`).
+- After that every submission answers the stored final reading unread.
+
+The record is keyed by stage attempt, `kv.verdict_restatement:<run>:
+<attempt>:<fan index>:<stage id>`, not by stage run: a replacement of the
+attempt's stage run (its agent woken at a deadline or after a restart, a
+fresh agent after an infrastructure failure) reads the same record, so the
+attempt is asked for one restatement across archond restarts, repeated
+calls and replacements, and a later attempt has its own. Every terminal
+path copies the record onto the stage run that ends (`restatement::bound`,
+`StageRun.restatement`): settlement, a replacement, a steer's abort, a
+cancelled sibling, a failed spawn. For a completed stage `bound` records
+the weaker of the final restatement and the result's own reading (fail
+before unknown before pass). A restated fail therefore fails whatever the
+agent finished with, a restatement that still reads `Unknown` counts
+exactly as an unreadable result does, and a pass is only ever the finished
+result's own: the tool never turns a result the gate would refuse into a
+pass. When the restatement stands over the result
+(`StageRun::restated_over`), the loop of §6.4 reads the restatement's
+`environment`, never the result's findings, so the verdict and the
+evidence that routes it come from one submission. An ask never answered,
+and a stage that never calls the tool, leave the result's reading as it
+is. The record is deleted once the attempt ends (`restatement::forget`; a
+stage run a replacement follows keeps it), and the stall sweep deletes any
+whose attempt has no live stage run (`forget_ended`). The tool is one of
+`STAGE_TOOLS`, so stage agents keep it in every `tools` mode; an Aether
+whose `archon` server entry has no class for it treats it as `external`,
+which a headless stage agent's approval policy does not gate, so no Aether
+change or version is needed. Its answers never name `complete_task`: a
+woken agent's task has ended, and it finishes as its instructions say.
 
 Two error prefixes end a run at once, with no loop, no infra retry and the
 stage's live siblings cancelled (`StageOutcome::ends_run`):
@@ -3705,8 +3731,9 @@ id.
 
 Every tool that changes Archon acts for the orchestrator, and the agents it
 delegates to inherit its tool exposure (§4.4). So a mutating tool other than
-`message_orchestrator` answers only the current orchestrator, and `archond`
-is the one that decides:
+`message_orchestrator` and a stage's own `publish_artifact` and
+`submit_verdict` answers only the current orchestrator, and `archond` is the
+one that decides:
 
 - `archon mcp` wraps such a call as `ForAgent { caller, request }` (§10),
   with the agent Aether named on the call (`send_caller_meta = true`, §5.5),
@@ -3794,7 +3821,7 @@ can reach the socket (§5.5).
 | `record_lesson` | `{kind: routing\|practice\|pitfall\|pipeline, text, repo?, pipeline?, item?}` | `RecordLesson` (§19; active at once, advice only) |
 | `request_merge` | `{item, reason?}` | `RequestMerge` (the orchestrator only, for the operator's own request; archond asks the operator to confirm unless `grant_merge` covers it; §18.6) |
 | `request_status` | `{request}` | `RequestStatus` (§11.1; the caller's own changes only) |
-| `submit_verdict` | `{summary, structured?}` | `SubmitVerdict` (the agent of a running stage whose contract has a Verdict section only; answers `accepted`, `restate` once, or `final`; §8.6) |
+| `submit_verdict` | `{summary, structured?, restating?}` | `SubmitVerdict` (the agent of a running stage whose contract has a Verdict section only; `structured` is an object; answers `accepted`, `restate`, or `final` for the one sent as `restating`; §8.6) |
 
 `refresh_item`, `retry_item`, `steer_item`, `update_item`, `cancel_item`,
 `notify`, `github_reply`, `request_merge` and `message_orchestrator` also
@@ -5521,7 +5548,7 @@ propose again.
 | --- | --- | --- |
 | Orchestrator | The operator's `[approval] default`. Hides `integrate_workspace`, and `delegate` while Aether names no callers (§11). | `approval: {"require_for": []}`. Hides the same tools. |
 | Its delegated children | Inherit its approval policy and tool exposure. `archond` refuses them Archon's mutating tools (§11). | The same, so nothing waits. |
-| Stage agents | Approval gates nothing (they are headless, §4.5). A leaf, unless the stage sets `allow_delegation` (`leaf = false`). Exposes `message_orchestrator`, hides the other Archon tools and Aether's schedule tools. | Approval gates nothing. May delegate (`leaf = false`). Exposes `message_orchestrator` and Archon's read-only tools; hides Aether's schedule tools. |
+| Stage agents | Approval gates nothing (they are headless, §4.5). A leaf, unless the stage sets `allow_delegation` (`leaf = false`). Exposes the stage tools (`message_orchestrator`, the artifact tools, `submit_verdict`, `request_status`), hides the other Archon tools and Aether's schedule tools. | Approval gates nothing. May delegate (`leaf = false`). Exposes the same stage tools and Archon's read-only tools; hides Aether's schedule tools. |
 | Their subagents | Inherit their parent's approval policy and tool exposure. | The same, so nothing waits. |
 
 A stage agent's `tools` knob is the item's. The orchestrator serves every

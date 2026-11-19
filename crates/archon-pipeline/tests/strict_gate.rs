@@ -212,6 +212,8 @@ fn a_strict_stage_contract_names_the_gate_and_the_private_stack() {
         "## Strict scenario gate",
         "\"expected\"",
         "with no loop back",
+        "`fail` re-runs `setup` only with a finding whose `fault` is `environment`, and fails \
+         the run otherwise.",
         "Never read or write the state of the daemons installed on this machine",
     ] {
         assert!(contract.contains(said), "missing {said:?} in {contract}");

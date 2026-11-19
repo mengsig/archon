@@ -177,13 +177,13 @@ fn submit_verdict() -> ToolDefinition {
     define(
         "submit_verdict",
         "Submit verdict",
-        "Stage agents with a Verdict section: have the result you will complete with read \
-         before `complete_task`. An unreadable verdict is asked back once; the restated one \
-         is final.",
+        "Stage agents with a Verdict section: have the result you will finish with read \
+         first. An unreadable verdict is asked back; the `restating` one is final.",
         object(
             json!({
-                "summary": {"type": "string", "minLength": 1, "description": "The `summary` you will complete with."},
-                "structured": {"type": "object", "description": "Its `structured` data."}
+                "summary": {"type": "string", "minLength": 1, "description": "The `summary` you will finish with."},
+                "structured": {"type": "object"},
+                "restating": {"type": "boolean", "description": "Only when asked to restate."}
             }),
             &["summary"],
         ),

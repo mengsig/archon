@@ -34,13 +34,15 @@ const RUN_TREE_BUDGET: usize = 550;
 const RISK_BUDGET: usize = 1_350;
 /// What the record stage's summary and evidence rules add.
 const EVIDENCE_BUDGET: usize = 2_100;
-/// What a strict scenario stage adds: the list it records and the private stack.
-const STRICT_SCENARIO_BUDGET: usize = 800;
+/// What a strict scenario stage adds: the list it records, where its own
+/// `fail` leads, and the private stack.
+const STRICT_SCENARIO_BUDGET: usize = 850;
 /// 131,000 before `e2e-strict` and `release-journey` added six stages of about 20.6 kB,
 /// 152,000 before the building stages' user-outcome rule (#397), 153,300 before
 /// the `blocking` mark and the review-only lead's verdict section, 156,000
-/// before every verdict section asked for `submit_verdict`.
-const TOTAL_BUDGET: usize = 157_000;
+/// before every verdict section asked for `submit_verdict`, 157,000 before a
+/// strict stage's rule named what its `fail` needs to re-run setup.
+const TOTAL_BUDGET: usize = 157_500;
 
 /// One built-in stage's fixed input, in bytes.
 struct Cost {

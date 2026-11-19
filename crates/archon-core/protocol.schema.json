@@ -1470,6 +1470,10 @@
               "const": "submit_verdict",
               "type": "string"
             },
+            "restating": {
+              "description": "Sent as the restatement an earlier answer asked for, which is final.",
+              "type": "boolean"
+            },
             "structured": {
               "default": null,
               "description": "The `structured` data it is about to complete with."
@@ -12691,6 +12695,10 @@
               "const": "submit_verdict",
               "type": "string"
             },
+            "restating": {
+              "description": "Sent as the restatement an earlier answer asked for, which is final.",
+              "type": "boolean"
+            },
             "structured": {
               "default": null,
               "description": "The `structured` data it is about to complete with."
@@ -14958,6 +14966,10 @@
         "asked": {
           "$ref": "#/$defs/VerdictNote",
           "description": "Why the first unreadable submission read as no verdict."
+        },
+        "environment": {
+          "description": "Whether the restated submission's findings name the environment as at fault.",
+          "type": "boolean"
         },
         "restated": {
           "anyOf": [

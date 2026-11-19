@@ -418,10 +418,15 @@ pub(crate) async fn route(
         Request::SubmitVerdict {
             summary,
             structured,
+            restating,
             caller,
         } => {
-            let structured = structured.as_ref();
-            crate::executor::restatement::submit(ctx, caller.as_ref(), &summary, structured).await
+            let sent = crate::executor::restatement::Submitted {
+                summary: &summary,
+                structured: structured.as_ref(),
+                restating,
+            };
+            crate::executor::restatement::submit(ctx, caller.as_ref(), sent).await
         }
         Request::ListArtifacts { item } => crate::artifacts::list_for(ctx, &item).await,
         Request::ReadArtifact {

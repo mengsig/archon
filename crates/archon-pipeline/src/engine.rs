@@ -1063,8 +1063,8 @@ impl RunDriver {
         }
         assert!(!on_fail.goto.is_empty(), "validated: on_fail names a stage");
         Some(format!(
-            "No finding names the environment as at fault (`\"fault\": \"environment\"`), so \
-             `{}` was not re-run.",
+            "No verdict read as `fail` with a finding that names the environment as at fault \
+             (`\"fault\": \"environment\"`), so `{}` was not re-run.",
             on_fail.goto
         ))
     }

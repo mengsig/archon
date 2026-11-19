@@ -10,7 +10,7 @@ use archon_core::policy::ModelPolicy;
 use archon_core::run::StageOutcome;
 use serde::Serialize;
 
-use crate::spec::{Owed, ReviewDuty, Scenarios, StageSpec};
+use crate::spec::{LoopWhen, Owed, ReviewDuty, Scenarios, StageSpec};
 use crate::team::TeamSlot;
 
 mod checks;
@@ -78,6 +78,8 @@ pub fn instructions(
     }
     if stage.scenarios == Scenarios::Strict {
         out.push_str(STRICT_SCENARIO_RULES);
+        out.push_str(&strict_fail_route(stage));
+        out.push_str(STRICT_PRIVATE_STACK_RULE);
     }
     // An agent that cannot delegate needs no telling that it reviews nothing.
     if let Some(duty) = owed
@@ -1089,11 +1091,31 @@ finding `\"blocking\"`; an unmarked one blocks when its severity is critical or 
 `VERDICT: FAIL`, matching the structured verdict.\n";
 
 /// Ends either Verdict section: a finished agent cannot be asked again, so
-/// its verdict is read, and restated once if unreadable, before it completes.
+/// its verdict is read, and restated once if unreadable, before it finishes.
 const SUBMIT_VERDICT_RULE: &str = "\
-- Before `complete_task`, call `mcp__archon__submit_verdict` with that `summary` and \
+- Before you finish, call `mcp__archon__submit_verdict` with that `summary` and \
 `structured` (skip it if you have no such tool). If it asks, restate once as it says; \
-that submission is final. Then complete with what you last submitted.\n";
+that submission is final. Then finish with what you last submitted.\n";
+
+/// Where a strict stage's own `fail` leads, which its `on_fail` decides.
+fn strict_fail_route(stage: &StageSpec) -> String {
+    assert_eq!(stage.scenarios, Scenarios::Strict, "a strict stage's rule");
+    let route = match &stage.on_fail {
+        None => "`fail` fails the run".to_owned(),
+        Some(on_fail) => {
+            assert!(!on_fail.goto.is_empty(), "validated: on_fail names a stage");
+            match on_fail.when {
+                None => format!("`fail` re-runs `{}`", on_fail.goto),
+                Some(LoopWhen::EnvironmentFinding) => format!(
+                    "`fail` re-runs `{}` only with a finding whose `fault` is `environment`, \
+                     and fails the run otherwise",
+                    on_fail.goto
+                ),
+            }
+        }
+    };
+    format!("Your verdict judges only the environment: {route}.\n")
+}
 
 const STRICT_SCENARIO_RULES: &str = "\n## Strict scenario gate\n\n\
 - Each scenario lists `required_steps` ids and `steps` {id,required,status}; \
@@ -1103,8 +1125,9 @@ every required step must be present and pass.\n\
 `\"scenarios\": [{\"id\", \"title\", \"status\": \"pass\" | \"fail\" | \"skipped\" | \
 \"blocked\", \"evidence\"}]`, every scenario you ran.\n\
 - The gate fails on any status but `pass`, on an expected id missing from `scenarios`, \
-and on an empty list. Such a product defect fails the run with no loop back. Your verdict \
-judges only the environment: `fail` sends the run back to setup.\n\
+and on an empty list. Such a product defect fails the run with no loop back. ";
+
+const STRICT_PRIVATE_STACK_RULE: &str = "\
 - The stack you test is private: temporary homes (`HOME`, `XDG_*`), private sockets and \
 ports, config copied without secrets. Never read or write the state of the daemons \
 installed on this machine, or the user's homes.\n";
@@ -1846,7 +1869,7 @@ mod tests {
     /// Verdict section, and no other, has the verdict read before completion.
     #[test]
     fn only_a_contract_with_a_verdict_section_asks_for_submit_verdict() {
-        let rule = "- Before `complete_task`, call `mcp__archon__submit_verdict`";
+        let rule = "- Before you finish, call `mcp__archon__submit_verdict`";
         let contract = |kind, gate, owed| {
             let (mode, part) = (WorkspaceMode::Worktree, TeamPart::Solo);
             instructions(&stage(kind, gate, 1), mode, "/w", part, owed, None)

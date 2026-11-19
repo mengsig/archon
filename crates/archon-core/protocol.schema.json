@@ -4070,6 +4070,13 @@
             }
           ]
         },
+        "orchestrator_refresh_delayed": {
+          "description": "Why an unfinished upgrade refresh has not happened, when `orchestrator`\ncannot say: none is recorded, or its creation is not. `None` from an older archond.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "pause": {
           "$ref": "#/$defs/PauseState"
         },
@@ -9280,6 +9287,13 @@
           "description": "Its instructions differ from today's; `None` when today's cannot be\nbuilt, as with an unreadable `[orchestrator] instructions_file`.",
           "type": [
             "boolean",
+            "null"
+          ]
+        },
+        "refresh_delayed": {
+          "description": "Why the fresh generation an upgrade owes it has not started yet;\n`None` when none is owed, or `refresh_on_upgrade` is off.",
+          "type": [
+            "string",
             "null"
           ]
         },

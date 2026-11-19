@@ -42,7 +42,8 @@ use retired::{Sweep, cancel_orphans};
 
 pub(crate) use authority::{authorize, saw_call};
 pub use economy::{
-    ECONOMY_CHECK_INTERVAL, Economy, economize, idle_compaction_due, is_idle, watch_economy,
+    ECONOMY_CHECK_INTERVAL, Economy, RefreshTried, economize, idle_compaction_due, is_idle,
+    refresh_left_behind, refresh_owed, retry_due, watch_economy,
 };
 pub use mcp::{
     HEALS_BEFORE_BLOCKER, MCP_CHECK_INTERVAL, check_mcp, check_mcp_soon, heal_status, mcp_status,
@@ -391,7 +392,12 @@ pub fn orchestrator_create_agent(
 
 /// The idempotency key every attempt to create `generation` sends.
 fn creation_key(store: &StoreId, generation: u64) -> String {
-    format!("archon-orchestrator-{store}-{generation}")
+    format!("{}{generation}", creation_key_prefix(store))
+}
+
+/// What every creation key of `store` starts with, before its generation.
+fn creation_key_prefix(store: &StoreId) -> String {
+    format!("archon-orchestrator-{store}-")
 }
 
 /// `None` keeps the operator's `[approval] default` (the orchestrator is
@@ -436,7 +442,7 @@ async fn ensure_locked(ctx: &DaemonContext) -> Result<AetherAgentId, ArchonError
     let Some(stored) = current_orchestrator(ctx).await? else {
         let _switch = switching(ctx).await;
         let id = create_generation(ctx, &client).await?;
-        adopt(ctx, &id).await?;
+        adopt(ctx, &id, Revival::Recreated).await?;
         return Ok(id);
     };
     let lineage = match newest_incarnation(&client, &stored).await {
@@ -462,7 +468,39 @@ async fn ensure_locked(ctx: &DaemonContext) -> Result<AetherAgentId, ArchonError
             .send_if_modified(|current| replace_if_changed(current, &agent.id));
         return Ok(agent.id);
     }
+    if economy::refresh_owed_by(ctx).await? {
+        return finish_refresh(ctx, &client, &agent).await;
+    }
     revive(ctx, &client, &agent).await
+}
+
+/// A refresh stopped `dead` but never started its successor: a checkpoint
+/// restart would bring back the outdated instructions, so start the fresh
+/// generation it owed instead.
+async fn finish_refresh(
+    ctx: &DaemonContext,
+    client: &AetherClient,
+    dead: &Agent,
+) -> Result<AetherAgentId, ArchonError> {
+    let state = state_of(dead);
+    assert!(
+        !LIVE_STATES.contains(&state.as_str()),
+        "{} is live",
+        dead.id
+    );
+    assert_eq!(
+        dead.role, ORCHESTRATOR_ROLE,
+        "only an orchestrator is refreshed"
+    );
+    if state != "cancelled" {
+        cancel_orphans(client, &dead.id).await?;
+    }
+    let _switch = switching(ctx).await;
+    retired::retire(ctx, std::slice::from_ref(&dead.id), Sweep::Done).await?;
+    let id = replace_generation(ctx, client).await?;
+    let why = "is a fresh generation, as an upgrade changed its prompt or tools";
+    announce_revival(ctx, &id, Revival::Recreated, why).await?;
+    Ok(id)
 }
 
 /// Adopt `to`, the agent Aether restarted the orchestrator `from` into (the
@@ -601,19 +639,30 @@ pub async fn current_orchestrator(
 pub async fn restart_orchestrator(ctx: &DaemonContext) -> Result<AetherAgentId, ArchonError> {
     let _serial = ctx.supervisor.serial.lock().await;
     let client = ctx.aether.client()?;
+    let why = "was restarted by the operator";
+    let _switch = switching(ctx).await;
+    replace_orchestrator(ctx, &client, "restarted by the operator", why, None).await
+}
+
+/// Cancel the orchestrator and start a fresh generation, briefed and handed
+/// the held news as any new generation is; the caller holds `serial` and
+/// the [`switching`] guard, so no trigger is submitted meanwhile. With
+/// `checked`, only that agent is cancelled, never a successor found since.
+async fn replace_orchestrator(
+    ctx: &DaemonContext,
+    client: &AetherClient,
+    reason: &str,
+    why: &str,
+    checked: Option<&AetherAgentId>,
+) -> Result<AetherAgentId, ArchonError> {
+    assert!(!reason.trim().is_empty(), "a cancel says why");
+    assert!(!why.trim().is_empty(), "the operator is told why");
     if let Some(stored) = current_orchestrator(ctx).await? {
-        cancel_newest(ctx, &client, &stored, "restarted by the operator").await?;
+        cancel_newest(ctx, client, &stored, reason, checked).await?;
     }
     revival::reset(ctx).await?;
-    let _switch = switching(ctx).await;
-    let id = replace_generation(ctx, &client).await?;
-    announce_revival(
-        ctx,
-        &id,
-        Revival::Recreated,
-        "was restarted by the operator",
-    )
-    .await?;
+    let id = replace_generation(ctx, client).await?;
+    announce_revival(ctx, &id, Revival::Recreated, why).await?;
     Ok(id)
 }
 
@@ -638,7 +687,7 @@ pub(crate) async fn relink_orchestrator(
     };
     let why = "lost Archon's tools when the archon MCP server failed";
     let reason = "restarted to get Archon's tools back";
-    let Some(old) = cancel_newest(ctx, &client, &stored, reason).await? else {
+    let Some(old) = cancel_newest(ctx, &client, &stored, reason, None).await? else {
         // Aether forgot it: there is no checkpoint to restart from.
         let _switch = switching(ctx).await;
         let id = replace_generation(ctx, &client).await?;
@@ -655,11 +704,13 @@ pub(crate) async fn relink_orchestrator(
 
 /// Cancel the orchestrator `stored` leads to, with all it runs, and record its
 /// restart chain. Returns that agent; `None` if Aether forgot `stored`.
+/// `Unavailable`, cancelling nothing, when it is not the `checked` agent.
 async fn cancel_newest(
     ctx: &DaemonContext,
     client: &AetherClient,
     stored: &AetherAgentId,
     reason: &str,
+    checked: Option<&AetherAgentId>,
 ) -> Result<Option<AetherAgentId>, ArchonError> {
     assert!(!reason.trim().is_empty(), "a cancel says why");
     let lineage = match newest_incarnation(client, stored).await {
@@ -668,6 +719,11 @@ async fn cancel_newest(
         Err(e) => return Err(e),
     };
     let newest = lineage.newest.id;
+    if checked.is_some_and(|checked| *checked != newest) {
+        return Err(ArchonError::Unavailable(format!(
+            "orchestrator {stored} was restarted as {newest} since it was checked; it is left running"
+        )));
+    }
     if !lineage.retired.is_empty() {
         // Each was restarted into the next: what it left running still runs.
         retired::retire(ctx, &lineage.retired, Sweep::Owed).await?;
@@ -733,9 +789,28 @@ async fn info_for(
 }
 
 /// How generation `generation` compares with one this archond would start
-/// now; `None` when an Archon that recorded no origin created it. Until the
-/// GitHub choice is recorded (an upgrade), either choice counts as current.
+/// now, and why a refresh it is owed has not happened yet; `None` when an
+/// Archon that recorded no origin created it.
 pub async fn freshness(
+    ctx: &DaemonContext,
+    generation: u64,
+) -> Result<Option<OrchestratorFreshness>, ArchonError> {
+    let Some(mut fresh) = compared_with_today(ctx, generation).await? else {
+        return Ok(None);
+    };
+    fresh.refresh_delayed = economy::refresh_delay(ctx, generation, &fresh).await?;
+    Ok(Some(fresh))
+}
+
+/// Why an unfinished upgrade refresh has not happened, for a `status` whose
+/// orchestrator cannot say; `None` when no refresh is unfinished.
+pub async fn unrecorded_refresh_delay(ctx: &DaemonContext) -> Result<Option<String>, ArchonError> {
+    economy::unrecorded_refresh_delay(ctx).await
+}
+
+/// [`freshness`] without the refresh's delay. Until the GitHub choice is
+/// recorded (an upgrade), either choice counts as current.
+async fn compared_with_today(
     ctx: &DaemonContext,
     generation: u64,
 ) -> Result<Option<OrchestratorFreshness>, ArchonError> {
@@ -940,12 +1015,17 @@ async fn revive_now(
 }
 
 /// Restart `dead` from its checkpoint. A fresh generation loses the chat, so
-/// only when Aether will never restart it; any other failure is retried.
+/// only when Aether will never restart it, or a refresh owes one: its
+/// checkpoint holds the outdated instructions. Any other failure is retried.
 async fn restart_or_replace(
     ctx: &DaemonContext,
     client: &AetherClient,
     dead: &AetherAgentId,
 ) -> Result<(AetherAgentId, Revival), ArchonError> {
+    if economy::refresh_owed_by(ctx).await? {
+        tracing::info!(%dead, "a refresh is unfinished; starting its fresh generation instead of a restart");
+        return Ok((replace_generation(ctx, client).await?, Revival::Recreated));
+    }
     match client.restart(dead).await {
         Ok(successor) => {
             callers::record_delegation(ctx, &successor).await?;
@@ -1003,7 +1083,7 @@ async fn record_revival(
     id: &AetherAgentId,
     how: Revival,
 ) -> Result<(), ArchonError> {
-    adopt(ctx, id).await?;
+    adopt(ctx, id, how).await?;
     {
         let mut store = ctx.store.lock().await;
         let restarts = store
@@ -1023,12 +1103,18 @@ async fn record_revival(
 /// Record `id` as the orchestrator and wake the pump's subscription. A new
 /// agent (not one woken in place) owes no restart for the MCP tools unless
 /// the server is down (see [`mcp::orchestrator_replaced`]).
-async fn adopt(ctx: &DaemonContext, id: &AetherAgentId) -> Result<(), ArchonError> {
+async fn adopt(ctx: &DaemonContext, id: &AetherAgentId, how: Revival) -> Result<(), ArchonError> {
     let previous = {
         let mut store = ctx.store.lock().await;
         let previous = store.kv_get(keys::ORCHESTRATOR_AGENT)?;
-        store.kv_set(keys::ORCHESTRATOR_AGENT, id.as_str())?;
-        store.kv_delete(BLOCKER_KEY)?;
+        // One transaction: a stop never leaves a fresh successor stored beside
+        // the marker of the refresh it ends. An agent woken or restarted from
+        // a checkpoint (Aether's own restart) keeps the outdated instructions.
+        let ended: &[&str] = match how {
+            Revival::Recreated => &[BLOCKER_KEY, economy::REFRESH_UNFINISHED_KEY],
+            Revival::Woken | Revival::Restarted => &[BLOCKER_KEY],
+        };
+        store.kv_update(&[(keys::ORCHESTRATOR_AGENT, id.as_str())], ended)?;
         previous
     };
     ctx.supervisor.current.send_replace(Some(id.clone()));
@@ -1056,16 +1142,21 @@ async fn replace_generation(
     create_generation(ctx, client).await
 }
 
-/// One transaction, so a stop never leaves the old agent or the settings
-/// frozen for its creation under the new generation, marked as unsent.
+/// One transaction, so a stop never leaves the old agent or its frozen settings
+/// under the new generation, marked unsent; a refresh the records only imply is
+/// marked in it.
 async fn advance_generation(ctx: &DaemonContext) -> Result<(), ArchonError> {
     let mut store = ctx.store.lock().await;
     let generation = parse_generation(store.kv_get(keys::ORCHESTRATOR_GENERATION)?)?;
-    let next = (generation + 1).to_string();
-    let set = [
+    let owed = economy::unfinished_refresh(&store, generation)?.map(|from| from.to_string());
+    let next = next_generation(&store, generation)?.to_string();
+    let mut set = vec![
         (keys::ORCHESTRATOR_GENERATION, next.as_str()),
         (UNSENT_GENERATION_KEY, next.as_str()),
     ];
+    if let Some(from) = &owed {
+        set.push((economy::REFRESH_UNFINISHED_KEY, from.as_str()));
+    }
     let cleared = [
         keys::ORCHESTRATOR_AGENT,
         HOST_CONTEXT_KEY,
@@ -1323,6 +1414,48 @@ fn frozen_threshold(
         )));
     }
     Ok(Some(frozen).filter(|frozen| frozen.key == key))
+}
+
+/// Whether the settings stored beside generation `generation`'s agent were frozen
+/// for another creation. No stored threshold is a build that froze none: no mismatch.
+fn frozen_for_another(store: &archon_queue::Store, generation: u64) -> Result<bool, ArchonError> {
+    if store.kv_get(COMPACTION_TOKENS_KEY)?.is_none() {
+        return Ok(false);
+    }
+    Ok(frozen_generation(store)? != Some(generation))
+}
+
+/// The generation whose creation key the stored threshold was frozen under;
+/// `None` when none is stored or it names no creation of this store.
+fn frozen_generation(store: &archon_queue::Store) -> Result<Option<u64>, ArchonError> {
+    let Some(raw) = store.kv_get(COMPACTION_TOKENS_KEY)? else {
+        return Ok(None);
+    };
+    let Some(store_id) = store.kv_get(STORE_ID_KEY)? else {
+        return Ok(None);
+    };
+    let prefix = creation_key_prefix(&StoreId::parse(&store_id)?);
+    // An unreadable row names no creation; the fresh generation replaces it.
+    let Ok(frozen) = serde_json::from_str::<FrozenThreshold>(&raw) else {
+        return Ok(None);
+    };
+    let Some(number) = frozen.key.strip_prefix(&prefix) else {
+        return Ok(None);
+    };
+    let generation = number.parse::<u64>().ok();
+    Ok(generation.filter(|generation| generation.to_string() == number))
+}
+
+/// The generation after every one the store records as begun: the counter, the
+/// creation last recorded and the one its settings were frozen for. No key is reused.
+fn next_generation(store: &archon_queue::Store, generation: u64) -> Result<u64, ArchonError> {
+    let created = origin::recorded_generation(store)?.unwrap_or(0);
+    let frozen = frozen_generation(store)?.unwrap_or(0);
+    let last = generation.max(created).max(frozen);
+    last.checked_add(1).ok_or_else(|| {
+        let key = keys::ORCHESTRATOR_GENERATION;
+        ArchonError::Corrupt(format!("kv {key}: no generation follows {last}"))
+    })
 }
 
 /// The orchestrator's compaction threshold to send: the configured one, and

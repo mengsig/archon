@@ -32,7 +32,7 @@ async fn store(h: &Harness, item: &QueueItem) {
 /// the next spawn runs what the stored plan holds now, as a recovered run would.
 #[tokio::test]
 async fn a_spawn_runs_the_stored_plan_s_effort_after_it_was_lowered_under_the_driver() {
-    let h = harness(Config::default()).await;
+    let h = harness(raising()).await;
     let queued = enqueue(&h, "Add a button", &["risk:critical"]).await;
     h.dispatch().await;
     assert_eq!(
@@ -111,7 +111,7 @@ fn update_in_background(
 /// starting while the note is on its way is sized for the note alone.
 #[tokio::test]
 async fn a_running_update_stores_its_note_and_tags_at_once_before_it_delivers_the_note() {
-    let h = harness(Config::default()).await;
+    let h = harness(raising()).await;
     let queued = enqueue(&h, "Add a button", &[]).await;
     h.dispatch().await;
     let gate = h
@@ -180,7 +180,7 @@ async fn with_sizing_off_a_running_update_delivers_its_note_before_it_stores_its
 /// not refused while the run's roles merge, as 1.6.3 does not refuse it.
 #[tokio::test]
 async fn a_tags_update_of_a_never_sized_running_plan_is_taken_while_roles_merge() {
-    let h = harness(Config::default()).await;
+    let h = harness(raising()).await;
     let queued = enqueue(&h, "Add a button", &[]).await;
     h.dispatch().await;
     let mut legacy = h.item(&queued.id).await;
@@ -203,7 +203,7 @@ async fn a_tags_update_of_a_never_sized_running_plan_is_taken_while_roles_merge(
 /// tags sizes the stages not yet started once, for both.
 #[tokio::test]
 async fn a_running_update_with_a_note_and_tags_sizes_the_later_stages_for_both() {
-    let h = harness(Config::default()).await;
+    let h = harness(raising()).await;
     let queued = enqueue(&h, "Add a button", &[]).await;
     h.dispatch().await;
     let patch = ItemPatch {
@@ -227,7 +227,7 @@ async fn a_running_update_with_a_note_and_tags_sizes_the_later_stages_for_both()
 /// table still sizes it for the new tags: eligibility is read under the lock.
 #[tokio::test]
 async fn an_update_sizes_a_plan_that_was_sized_while_it_waited_for_the_lock() {
-    let h = harness(Config::default()).await;
+    let h = harness(raising()).await;
     let queued = enqueue(&h, "Add a button", &[]).await;
     let mut legacy = queued.clone();
     legacy.model_plan = never_sized(&queued);
@@ -258,7 +258,7 @@ async fn an_update_sizes_a_plan_that_was_sized_while_it_waited_for_the_lock() {
 /// steer that changes no sizing input does not size it again from that brief.
 #[tokio::test]
 async fn a_steer_that_moves_no_sizing_input_leaves_a_retried_plan_frozen() {
-    let h = harness(Config::default()).await;
+    let h = harness(raising()).await;
     let queued = enqueue(&h, "Add a button", &[]).await;
     cancel(&h, &queued.id).await;
     let request = Request::RetryItem {
@@ -298,7 +298,7 @@ async fn a_steer_that_ends_its_run_still_applies_its_autonomy_and_replies() {
     use archon_core::steer::Then;
 
     // Sizing on takes the steered update; sizing off, 1.6.3's order.
-    for config in [Config::default(), sizing_off()] {
+    for config in [raising(), sizing_off()] {
         let h = harness(config).await;
         let stages = ["plan", "build", "integrate"].map(|stage| {
             let choice = crate::common::choice(crate::common::MODEL, Medium);
@@ -347,7 +347,7 @@ async fn a_steer_that_ends_its_run_still_applies_its_autonomy_and_replies() {
 /// stage as the item stood before the note, and only the others from it.
 #[tokio::test]
 async fn a_running_update_s_plan_and_note_size_only_the_stages_not_started() {
-    let h = harness(Config::default()).await;
+    let h = harness(raising()).await;
     let queued = enqueue(&h, "Add a button", &[]).await;
     h.dispatch().await;
     assert_eq!(
@@ -364,7 +364,10 @@ async fn a_running_update_s_plan_and_note_size_only_the_stages_not_started() {
         efforts(&updated),
         [("implement", Medium), ("review", High), ("ship", High)]
     );
-    assert_eq!(reason(&updated, "implement"), "sizer: ordinary -> medium");
+    assert_eq!(
+        reason(&updated, "implement"),
+        "sizer: ordinary -> medium; unchanged"
+    );
     assert_eq!(reason(&updated, "review"), "sizer: elevated -> high");
     let running = attempt(&h, &queued.id, "implement").await;
     assert_eq!(running.current_choice().effort, Medium, "not retuned");

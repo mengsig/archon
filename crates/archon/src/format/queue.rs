@@ -831,6 +831,7 @@ mod tests {
         let facts = |_: &str| Some(StageFacts::new(Effort::High, StageKind::Work, false));
         let sizer = EffortSizer {
             cap: Effort::XHigh,
+            raises: true,
             size: None,
             facts: &facts,
         };

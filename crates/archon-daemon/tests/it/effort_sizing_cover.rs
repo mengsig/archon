@@ -52,7 +52,7 @@ async fn record_large_diff(h: &Harness, queued: &QueueItem) -> PipelineRun {
 /// item's own run changes nothing, though a plan sized first would read it.
 #[tokio::test]
 async fn a_retry_ignores_the_diff_size_its_run_measured() {
-    let h = harness(Config::default()).await;
+    let h = harness(raising()).await;
     let queued = enqueue(&h, "Add a button", &[]).await;
     h.dispatch().await;
     cancel(&h, &queued.id).await;
@@ -73,7 +73,7 @@ async fn a_retry_ignores_the_diff_size_its_run_measured() {
 /// for the first time, so the test above is not vacuous.
 #[tokio::test]
 async fn a_plan_sized_for_the_first_time_reads_the_size_its_run_measured() {
-    let h = harness(Config::default()).await;
+    let h = harness(raising()).await;
     let queued = enqueue(&h, "Add a button", &[]).await;
     h.dispatch().await;
     cancel(&h, &queued.id).await;
@@ -118,7 +118,7 @@ timeout_minutes = 30
 /// from its own default (low, not implement's medium) and records that it checks.
 #[tokio::test]
 async fn an_inserted_review_stage_is_sized_and_recorded_with_its_own_kind() {
-    let h = harness(Config::default()).await;
+    let h = harness(raising()).await;
     h.add_pipeline(CHECKER, CHECKER_TOML);
     let queued = enqueue(&h, "Add a button", &[]).await;
     let insert = Steer {
@@ -135,7 +135,7 @@ async fn an_inserted_review_stage_is_sized_and_recorded_with_its_own_kind() {
     assert_eq!(carried, efforts(&queued).iter().collect::<Vec<_>>());
     let audit = all.iter().find(|(key, _)| *key == "audit");
     assert_eq!(audit, Some(&("audit", Low)), "its own default, not medium");
-    assert_eq!(reason(&added, "audit"), "sizer: ordinary -> low");
+    assert_eq!(reason(&added, "audit"), "sizer: ordinary -> low; unchanged");
     let sizing = added.model_plan.sizing().unwrap();
     let facts = sizing.keys["audit"].facts;
     assert_eq!((facts.base, facts.checks), (Low, true));
@@ -156,7 +156,7 @@ async fn an_unnamed_effort_over_the_policy_cap_is_refused_off_and_capped_on() {
         .expect_err("a default above the cap is refused with sizing off");
     assert!(refused.to_string().contains("max_effort"), "{refused}");
 
-    let on = harness(Config::default()).await;
+    let on = harness(raising()).await;
     on.repo_config("[models]\nmax_effort = \"low\"\n");
     let queued = enqueue(&on, "Add a button", &[]).await;
     let all = efforts(&queued);

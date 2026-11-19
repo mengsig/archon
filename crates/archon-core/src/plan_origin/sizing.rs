@@ -125,6 +125,9 @@ pub enum Sizing<'a> {
 pub struct EffortSizer<'a> {
     /// The lower of the policy's cap and `[models] sizer_max_effort`.
     pub cap: Effort,
+    /// Whether the sizer may set a stage above its default: `[models]
+    /// sizer_max_effort` is set. Off, each stage's ceiling is its default.
+    pub raises: bool,
     /// The diff size the item's last run measured; frozen with its first
     /// sizing, and read after the item's own `diff:` tag.
     pub size: Option<DiffSize>,
@@ -159,9 +162,10 @@ pub struct SlotSizing {
     pub reason: String,
 }
 
-/// The one decision of a choice's effort, by 7.6's precedence below the cap:
-/// a pin, then an escalation, then the class floor, the size step and the
-/// stage default. `None` keeps the effort. A12's escalation plugs in here.
+/// The one decision of a choice's effort: only an effort the stage default
+/// gave (a fill, or one the sizer set before) is sized; a pin, a learned or an
+/// escalated effort is left alone. `None` keeps the effort, and the reason says
+/// which rule applied: unchanged or default-lowered (a raise shows in the target).
 fn decide(
     (choice, origin): (&ModelChoice, &FieldOrigin),
     (facts, cap): (StageFacts, Effort),
@@ -169,13 +173,25 @@ fn decide(
 ) -> (Option<Effort>, String) {
     let sized = effort_sizing::size_effort(facts, risk, cap, &choice.model);
     assert!(sized.effort <= cap, "the sizer stays within its cap");
-    if origin.is_pin() || origin.source == PlanSource::Escalation {
+    let sizable = matches!(
+        origin.source,
+        PlanSource::Fallback | PlanSource::Tier | PlanSource::Sizer
+    );
+    if origin.is_pin() {
         return (None, sized.reason);
     }
+    if !sizable {
+        return (
+            None,
+            format!("{}; unchanged: not the stage default", sized.reason),
+        );
+    }
+    if sized.effort == choice.effort && origin.source != PlanSource::Sizer {
+        return (None, format!("{}; unchanged", sized.reason));
+    }
     let mut reason = sized.reason;
-    if origin.source == PlanSource::Learned {
-        let advised = choice.effort;
-        reason.push_str(&format!("; the learned route advised {advised}"));
+    if sized.effort < facts.base {
+        reason.push_str("; default-lowered");
     }
     (Some(sized.effort), reason)
 }
@@ -215,7 +231,7 @@ impl PlanWriter {
                 risk_class: None,
                 risk_signals: Vec::new(),
                 facts,
-                cap: sizer.cap,
+                cap: effort_sizing::key_cap(sizer.cap, sizer.raises, facts.base),
                 reasons: Vec::new(),
             };
             let was = self.sizing.keys.insert(key.clone(), unsized_yet);
@@ -360,13 +376,13 @@ impl PlannedPlan {
         item: &QueueItemId,
         keys: &[String],
         risk: (&ItemRisk, ReviewLevel),
-        (cap, at): (Option<Effort>, Timestamp),
+        (cap, at): (Option<(Effort, bool)>, Timestamp),
     ) {
         let mut writer = PlanWriter::editing(self, item, at);
         for key in keys {
-            if let Some(cap) = cap {
+            if let Some((cap, raises)) = cap {
                 let sized = writer.sizing.keys.get_mut(key).expect("a recorded key");
-                sized.cap = cap;
+                sized.cap = effort_sizing::key_cap(cap, raises, sized.facts.base);
             }
             writer.size_key(key, risk);
         }
@@ -402,7 +418,7 @@ impl PlannedPlan {
         &mut self,
         item: &QueueItemId,
         input: RiskInput<'_>,
-        (cap, at): (Effort, Timestamp),
+        (cap, raises, at): (Effort, bool, Timestamp),
         started: &dyn Fn(&str) -> bool,
     ) -> bool {
         let Some(sizing) = self.sizing() else {
@@ -422,7 +438,12 @@ impl PlannedPlan {
         if keys.is_empty() {
             return false;
         }
-        self.size_keys(item, &keys, (&risk, input.review), (Some(cap), at));
+        self.size_keys(
+            item,
+            &keys,
+            (&risk, input.review),
+            (Some((cap, raises)), at),
+        );
         true
     }
 

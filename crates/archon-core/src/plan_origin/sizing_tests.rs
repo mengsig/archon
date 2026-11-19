@@ -41,6 +41,7 @@ fn facts(key: &str) -> Option<StageFacts> {
 fn on(cap: Effort) -> Sizing<'static> {
     Sizing::On(EffortSizer {
         cap,
+        raises: true,
         size: None,
         facts: &facts,
     })
@@ -177,20 +178,20 @@ fn a_named_effort_stays_and_its_reason_carries_the_advice() {
 }
 
 #[test]
-fn a_learned_route_supplies_the_model_and_its_effort_is_advice() {
+fn a_learned_route_supplies_the_model_and_its_effort_stays() {
     let item = QueueItemId::new();
     let writer = filled(&item, &["build"], Effort::High, PlanSource::Learned);
     let mut planned = writer.finish(on(Effort::XHigh));
     planned.settle(&item, input("Add a button", &[]), crate::now());
-    assert_eq!(effort(&planned, "build"), Effort::Medium);
+    assert_eq!(effort(&planned, "build"), Effort::High, "never changed");
     let origin = planned.origin(&item, "build", 0);
     assert_eq!(
         origin.model.source,
         PlanSource::Learned,
         "the route's model"
     );
-    assert_eq!(origin.effort.source, PlanSource::Sizer);
-    let why = "sizer: ordinary -> medium; the learned route advised high";
+    assert_eq!(origin.effort.source, PlanSource::Learned);
+    let why = "sizer: ordinary -> medium; unchanged: not the stage default";
     assert_eq!(reason(&planned, &item, "build"), why);
 }
 
@@ -204,6 +205,7 @@ fn a_carried_plan_keeps_its_frozen_sizing() {
     retry.carry(&first, &item, None, |_| Some(usize::MAX));
     let larger = EffortSizer {
         cap: Effort::XHigh,
+        raises: true,
         size: Some(DiffSize::Large),
         facts: &|_| Some(StageFacts::new(Effort::Max, StageKind::Work, false)),
     };
@@ -366,7 +368,7 @@ fn a_changed_class_sizes_again_only_the_stages_not_started() {
         "Add a button",
     );
     let before = planned.clone();
-    let now = (Effort::XHigh, crate::now());
+    let now = (Effort::XHigh, true, crate::now());
     let none = |_: &str| false;
     assert!(!planned.resize(&item, input("Add a button", &[]), now, &none));
     assert_eq!(planned, before, "the same class changes nothing");
@@ -408,7 +410,7 @@ fn a_resize_leaves_a_pin_and_a_key_never_sized_alone() {
     let by = (Authority::Operator, crate::now());
     planned.steer(&item, "check", (None, Some(Effort::Low)), by);
     let risky = tags(&["risk:critical"]);
-    let now = (Effort::High, crate::now());
+    let now = (Effort::High, true, crate::now());
     assert!(planned.resize(&item, input("x", &risky), now, &|_| false));
     assert_eq!(effort(&planned, "plan"), Effort::Max, "never sized");
     assert_eq!(effort(&planned, "check"), Effort::Low, "pinned");
@@ -477,7 +479,7 @@ fn a_sized_effort_s_origin_keeps_its_writer_s_note_and_one_was() {
     assert!(copied.settle(&copy, input("Fix the mutex", &[]), crate::now()));
     assert_eq!(note(&copied), "for the refresh; was fallback: medium");
     let risky = tags(&["risk:critical"]);
-    let now = (Effort::XHigh, crate::now());
+    let now = (Effort::XHigh, true, crate::now());
     assert!(copied.resize(&copy, input("Fix the mutex", &risky), now, &|_| false));
     assert_eq!(note(&copied), "for the refresh; was sizer: high");
     let mut plain = sized(&owner, &["build"], Effort::Medium, "Fix the mutex");
@@ -526,6 +528,7 @@ fn the_diff_size_known_at_the_first_sizing_is_the_one_every_later_key_reads() {
     let sizer = |size| {
         Sizing::On(EffortSizer {
             cap: Effort::XHigh,
+            raises: true,
             size,
             facts: &facts,
         })
@@ -535,18 +538,15 @@ fn the_diff_size_known_at_the_first_sizing_is_the_one_every_later_key_reads() {
     first.settle(&item, input("Add a button", &[]), crate::now());
     assert_eq!(
         reason(&first, &item, "build"),
-        "sizer: ordinary -> low (small)"
+        "sizer: ordinary -> medium; unchanged"
     );
     let mut kept = PlanWriter::new(&item, crate::now());
     kept.carry(&first, &item, None, |_| Some(usize::MAX));
     add(&mut kept, &["plan"], Effort::Medium, PlanSource::Fallback);
     let mut grown = kept.finish(sizer(Some(DiffSize::Large)));
     grown.settle(&item, input("Add a button", &[]), crate::now());
-    assert_eq!(
-        reason(&grown, &item, "plan"),
-        "sizer: ordinary -> medium (small)"
-    );
-    assert_eq!(effort(&grown, "build"), Effort::Low, "not sized again");
+    assert_eq!(reason(&grown, &item, "plan"), "sizer: ordinary -> high");
+    assert_eq!(effort(&grown, "build"), Effort::Medium, "not sized again");
 }
 
 /// Each key is stale by what it was sized with: sizing a stage added later
@@ -562,7 +562,11 @@ fn sizing_a_new_key_hides_no_moved_signal_from_the_keys_sized_before() {
     let writer = filled(&item, &["build"], Effort::Medium, PlanSource::Fallback);
     let mut first = writer.finish(on(Effort::XHigh));
     first.settle(&item, small_input, crate::now());
-    assert_eq!(effort(&first, "build"), Effort::Low, "one step down");
+    assert_eq!(
+        effort(&first, "build"),
+        Effort::Medium,
+        "a small diff lowers nothing"
+    );
 
     // The tag is gone and a stage is added: the new key is sized first.
     let mut kept = PlanWriter::new(&item, crate::now());
@@ -574,13 +578,16 @@ fn sizing_a_new_key_hides_no_moved_signal_from_the_keys_sized_before() {
     assert_eq!(effort(&grown, "plan"), Effort::High, "its own default");
     assert_eq!(
         effort(&grown, "build"),
-        Effort::Low,
+        Effort::Medium,
         "settling sizes no other"
     );
-    let now = (Effort::XHigh, crate::now());
+    let now = (Effort::XHigh, true, crate::now());
     assert!(grown.resize(&item, plain, now, &|_| false));
     assert_eq!(effort(&grown, "build"), Effort::Medium, "no longer small");
-    assert_eq!(reason(&grown, &item, "build"), "sizer: ordinary -> medium");
+    assert_eq!(
+        reason(&grown, &item, "build"),
+        "sizer: ordinary -> medium; unchanged"
+    );
     assert!(!grown.resize(&item, plain, now, &|_| false), "all current");
 }
 
@@ -653,4 +660,70 @@ fn an_empty_key_is_left_unsized_through_settle_and_carry() {
     let carried = retry.finish(on(Effort::High));
     assert_eq!(carried.choices_for("extra"), Some(&[][..]));
     assert!(!carried.has_unsized(), "the empty key was never recorded");
+}
+
+fn without_raising() -> Sizing<'static> {
+    Sizing::On(EffortSizer {
+        cap: Effort::XHigh,
+        raises: false,
+        size: None,
+        facts: &facts,
+    })
+}
+
+/// One title per risk class, each with the tags it needs.
+const CLASS_TITLES: [(&str, &[&str]); 4] = [
+    ("docs: tidy", &[]),
+    ("Add a button", &[]),
+    ("Publish the release", &["release"]),
+    ("Add a button", &["risk:critical"]),
+];
+
+#[test]
+fn an_explicit_effort_stays_for_every_class_with_the_opt_in_or_without() {
+    for sizing in [without_raising, || on(Effort::XHigh)] {
+        for (title, named) in CLASS_TITLES {
+            for effort_set in [Effort::Low, Effort::High] {
+                let item = QueueItemId::new();
+                let plan_json =
+                    serde_json::json!({"build": [{"model": CLAUDE, "effort": effort_set}]});
+                let asked = serde_json::from_value(plan_json.clone()).unwrap();
+                let mut writer = PlanWriter::new(&item, crate::now());
+                writer.request(
+                    &asked,
+                    serde_json::from_value(plan_json).unwrap(),
+                    Authority::Operator,
+                );
+                let mut planned = writer.finish(sizing());
+                planned.settle(&item, input(title, &tags(named)), crate::now());
+                assert_eq!(effort(&planned, "build"), effort_set, "{title} {named:?}");
+                let origin = planned.origin(&item, "build", 0).effort;
+                assert_eq!(origin.source, PlanSource::Explicit);
+            }
+        }
+    }
+}
+
+#[test]
+fn a_default_effort_is_lowered_when_mechanical_and_raised_only_with_the_opt_in() {
+    let item = QueueItemId::new();
+    let tagged = tags(&["risk:critical"]);
+    let build = |sizing: Sizing<'static>, title, tags: &[String]| {
+        let writer = filled(&item, &["build"], Effort::Medium, PlanSource::Fallback);
+        let mut planned = writer.finish(sizing);
+        planned.settle(&item, input(title, tags), crate::now());
+        planned
+    };
+    let lowered = build(without_raising(), "docs: tidy", &[]);
+    assert_eq!(effort(&lowered, "build"), Effort::Low);
+    assert!(reason(&lowered, &item, "build").ends_with("default-lowered"));
+    let held = build(without_raising(), "x", &tagged);
+    assert_eq!(effort(&held, "build"), Effort::Medium);
+    assert_eq!(
+        held.origin(&item, "build", 0).effort.source,
+        PlanSource::Fallback
+    );
+    assert!(reason(&held, &item, "build").ends_with("unchanged"));
+    let raised = build(on(Effort::XHigh), "x", &tagged);
+    assert_eq!(effort(&raised, "build"), Effort::XHigh);
 }

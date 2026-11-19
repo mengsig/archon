@@ -181,11 +181,11 @@ fn the_effort_follows_the_class_table_for_each_stage_default() {
     let rows = [
         (
             Medium,
-            [Low, Low, Medium, High, High, High, XHigh, XHigh, XHigh],
+            [Low, Medium, Medium, High, High, High, XHigh, XHigh, XHigh],
         ),
         (
             High,
-            [Low, Medium, High, High, High, High, XHigh, XHigh, XHigh],
+            [Low, High, High, High, High, High, XHigh, XHigh, XHigh],
         ),
     ];
     for (base, efforts) in rows {
@@ -278,20 +278,57 @@ fn a_check_of_mechanical_work_under_a_strict_review_gets_medium() {
 }
 
 #[test]
-fn a_small_step_never_goes_below_low_and_names_itself() {
+fn a_small_diff_lowers_nothing() {
     let small = risk(
         "Add a button",
         &[],
         ReviewLevel::Standard,
         Some(DiffSize::Small),
     );
-    let stepped = sized(Effort::High, &small, Effort::XHigh, CLAUDE);
+    for base in [Effort::Low, Effort::Medium, Effort::High] {
+        assert_eq!(sized(base, &small, Effort::XHigh, CLAUDE).effort, base);
+    }
+}
+
+#[test]
+fn without_the_opt_in_no_class_goes_above_the_stage_default() {
+    let classes = [
+        risk("docs: tidy", &[], ReviewLevel::Standard, None),
+        risk("Add a button", &[], ReviewLevel::Standard, None),
+        risk("Add a button", &[], ReviewLevel::Strict, None),
+        risk("Fix the mutex", &[], ReviewLevel::Strict, None),
+    ];
+    for base in [Effort::Low, Effort::Medium, Effort::High] {
+        for risk in &classes {
+            let cap = key_cap(Effort::XHigh, false, base);
+            let got = sized(base, risk, cap, CLAUDE).effort;
+            assert!(got <= base, "{base} default, {risk:?}: {got}");
+        }
+    }
+    let docs = &classes[0];
     assert_eq!(
-        (stepped.effort, stepped.reason.as_str()),
-        (Effort::Medium, "sizer: ordinary -> medium (small)")
+        sized(
+            Effort::High,
+            docs,
+            key_cap(Effort::XHigh, false, Effort::High),
+            CLAUDE
+        )
+        .effort,
+        Effort::Low
+    );
+}
+
+#[test]
+fn the_opt_in_lets_a_critical_default_reach_the_cap() {
+    let critical = risk("Fix the mutex", &[], ReviewLevel::Strict, None);
+    let off = key_cap(Effort::XHigh, false, Effort::Medium);
+    let on = key_cap(Effort::XHigh, true, Effort::Medium);
+    assert_eq!(
+        sized(Effort::Medium, &critical, off, CLAUDE).effort,
+        Effort::Medium
     );
     assert_eq!(
-        sized(Effort::Low, &small, Effort::XHigh, CLAUDE).effort,
-        Effort::Low
+        sized(Effort::Medium, &critical, on, CLAUDE).effort,
+        Effort::XHigh
     );
 }

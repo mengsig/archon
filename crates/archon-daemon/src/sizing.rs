@@ -77,6 +77,7 @@ pub(crate) fn finish(
     let facts = |key: &str| stage_facts(spec, key);
     let sizer = EffortSizer {
         cap: cap(config, policy),
+        raises: config.models.sizer_raises(),
         size,
         facts: &facts,
     };
@@ -145,7 +146,10 @@ pub(crate) fn resize(
         return false;
     }
     let is_started = |key: &str| started.contains(stage_of(key));
-    let resized = item.resize_unstarted((cap(config, policy), at), &is_started);
+    let resized = item.resize_unstarted(
+        (cap(config, policy), config.models.sizer_raises(), at),
+        &is_started,
+    );
     debug_assert!(item.model_plan.fault(&item.id).is_none());
     resized
 }

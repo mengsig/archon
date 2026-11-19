@@ -82,6 +82,11 @@ pub(crate) fn sizer_max(effort: Effort) -> Config {
     config
 }
 
+/// The opt-in: the sizer may raise default efforts up to `x_high`.
+pub(crate) fn raising() -> Config {
+    sizer_max(Effort::XHigh)
+}
+
 pub(crate) fn sizing_off() -> Config {
     let mut config = Config::default();
     config.models.effort_sizing = Some(false);
@@ -270,15 +275,18 @@ use Effort::{High, Low, Medium, XHigh};
 
 #[tokio::test]
 async fn an_enqueue_sizes_each_stage_from_its_own_default_and_the_item_s_class() {
-    let h = harness(Config::default()).await;
+    let h = harness(raising()).await;
     let ordinary = enqueue(&h, "Add a button", &[]).await;
     assert_eq!(class(&ordinary), Some(RiskClass::Ordinary));
     assert_eq!(
         efforts(&ordinary),
         [("implement", Medium), ("review", Medium), ("ship", Low)]
     );
-    assert_eq!(reason(&ordinary, "ship"), "sizer: ordinary -> low");
-    assert_eq!(effort_source(&ordinary, "implement"), PlanSource::Sizer);
+    assert_eq!(
+        reason(&ordinary, "ship"),
+        "sizer: ordinary -> low; unchanged"
+    );
+    assert_eq!(effort_source(&ordinary, "implement"), PlanSource::Fallback);
 
     let elevated = enqueue(&h, "Fix the deadlock in the pump", &[]).await;
     assert_eq!(class(&elevated), Some(RiskClass::Elevated));
@@ -315,7 +323,7 @@ async fn the_sizer_s_own_cap_and_the_policy_s_cap_both_hold_a_sized_effort() {
     let why = "sizer: critical -> x_high; capped at high; consider a stronger tier";
     assert_eq!(reason(&capped, "implement"), why);
 
-    let h = harness(Config::default()).await;
+    let h = harness(raising()).await;
     h.repo_config("[models]\nmax_effort = \"medium\"\n");
     let held = enqueue(&h, "Add a button", &["risk:critical"]).await;
     assert_eq!(
@@ -332,7 +340,7 @@ async fn the_sizer_s_own_cap_and_the_policy_s_cap_both_hold_a_sized_effort() {
 /// Check 6: a pin keeps its effort, and the record says what the sizer advised.
 #[tokio::test]
 async fn a_pinned_effort_stays_and_records_what_the_sizer_advised() {
-    let h = harness(Config::default()).await;
+    let h = harness(raising()).await;
     let plan = pinned("implement", Medium);
     let asked = request("Add a button", &["risk:critical"], plan);
     let queued = item(h.cli(Request::Enqueue(asked)).await).await;
@@ -355,7 +363,7 @@ async fn a_pinned_effort_stays_and_records_what_the_sizer_advised() {
 /// Ruling (c): a pin over the policy's cap is refused as in 1.6.3, never clipped.
 #[tokio::test]
 async fn a_pin_over_the_policy_s_cap_is_refused_at_enqueue_and_at_a_retry() {
-    let h = harness(Config::default()).await;
+    let h = harness(raising()).await;
     let asked = reasoned(request("Add a button", &[], pinned("implement", XHigh)));
     let queued = item(h.cli(Request::Enqueue(asked.clone())).await).await;
     cancel(&h, &queued.id).await;
@@ -382,7 +390,7 @@ async fn a_pin_over_the_policy_s_cap_is_refused_at_enqueue_and_at_a_retry() {
 
 #[tokio::test]
 async fn an_attempt_records_its_class_its_effort_source_and_the_reason() {
-    let h = harness(Config::default()).await;
+    let h = harness(raising()).await;
     let queued = enqueue(&h, "Add a button", &["risk:critical"]).await;
     h.dispatch().await;
     let running = attempt(&h, &queued.id, "implement").await;
@@ -401,7 +409,7 @@ async fn an_attempt_records_its_class_its_effort_source_and_the_reason() {
 /// Check 1: sizing reads the item's current title, tags, brief and review level.
 #[tokio::test]
 async fn an_update_or_a_steer_note_sizes_a_waiting_item_again() {
-    let h = harness(Config::default()).await;
+    let h = harness(raising()).await;
     let queued = enqueue(&h, "Add a button", &[]).await;
     let titled = ItemPatch {
         title: Some("Fix the deadlock in the pump".into()),
@@ -459,7 +467,7 @@ async fn an_update_or_a_steer_note_sizes_a_waiting_item_again() {
 /// tags that would class it otherwise are refused there, not stored unsized.
 #[tokio::test]
 async fn tags_that_change_the_class_are_refused_while_the_item_is_starting() {
-    let h = harness(Config::default()).await;
+    let h = harness(raising()).await;
     let queued = enqueue(&h, "Add a button", &[]).await;
     let now = archon_core::now();
     let mut starting = h.ctx.store.lock().await;
@@ -498,7 +506,7 @@ async fn tags_that_change_the_class_are_refused_while_the_item_is_starting() {
 /// keeps the effort it was issued.
 #[tokio::test]
 async fn a_steer_of_a_running_item_sizes_only_the_stages_not_yet_started() {
-    let h = harness(Config::default()).await;
+    let h = harness(raising()).await;
     let queued = enqueue(&h, "Add a button", &[]).await;
     h.dispatch().await;
     assert_eq!(
@@ -515,7 +523,10 @@ async fn a_steer_of_a_running_item_sizes_only_the_stages_not_yet_started() {
         efforts(&steered),
         [("implement", Medium), ("review", High), ("ship", High)]
     );
-    assert_eq!(reason(&steered, "implement"), "sizer: ordinary -> medium");
+    assert_eq!(
+        reason(&steered, "implement"),
+        "sizer: ordinary -> medium; unchanged"
+    );
     assert_eq!(reason(&steered, "review"), "sizer: elevated -> high");
 
     let tagged = ItemPatch {
@@ -546,7 +557,7 @@ async fn a_steer_of_a_running_item_sizes_only_the_stages_not_yet_started() {
 /// Check 2: a retry carries the frozen sizing, whatever was learned since.
 #[tokio::test]
 async fn a_retry_keeps_the_frozen_sizing_and_ignores_a_diff_size_learned_since() {
-    let h = harness(Config::default()).await;
+    let h = harness(raising()).await;
     let queued = enqueue(&h, "Add a button", &[]).await;
     cancel(&h, &queued.id).await;
     let key = format!("learning/size/{}", queued.id);
@@ -573,7 +584,7 @@ async fn a_retry_keeps_the_frozen_sizing_and_ignores_a_diff_size_learned_since()
 /// is now, with the reason.
 #[tokio::test]
 async fn a_retry_clips_carried_sized_efforts_to_a_lowered_sizer_cap() {
-    let mut h = harness(Config::default()).await;
+    let mut h = harness(raising()).await;
     let queued = enqueue(&h, "Add a button", &["risk:critical"]).await;
     cancel(&h, &queued.id).await;
     h.restart_with(sizer_max(High));
@@ -595,7 +606,7 @@ async fn a_retry_clips_carried_sized_efforts_to_a_lowered_sizer_cap() {
 /// Ruling (b) with sizing off: only the policy's cap clips a carried sized effort.
 #[tokio::test]
 async fn with_sizing_off_a_retry_clips_only_to_the_policy_s_cap() {
-    let mut h = harness(Config::default()).await;
+    let mut h = harness(raising()).await;
     let queued = enqueue(&h, "Add a button", &["risk:critical"]).await;
     cancel(&h, &queued.id).await;
     let mut off = sizing_off();
@@ -621,7 +632,7 @@ async fn with_sizing_off_a_retry_clips_only_to_the_policy_s_cap() {
 /// plan untouched; only the policy's cap clips it at dispatch.
 #[tokio::test]
 async fn dispatch_clips_a_frozen_sized_effort_to_the_policy_s_cap_only() {
-    let mut h = harness(Config::default()).await;
+    let mut h = harness(raising()).await;
     let frozen = enqueue(&h, "Add a button", &["risk:critical"]).await;
     h.restart_with(sizer_max(High));
     h.dispatch().await;
@@ -632,7 +643,7 @@ async fn dispatch_clips_a_frozen_sized_effort_to_the_policy_s_cap_only() {
     );
     assert_eq!(h.item(&frozen.id).await.model_plan, frozen.model_plan);
 
-    let mut h = harness(Config::default()).await;
+    let mut h = harness(raising()).await;
     let queued = enqueue(&h, "Add a button", &["risk:critical"]).await;
     h.repo_config("[models]\nmax_effort = \"high\"\n");
     h.restart();
@@ -655,7 +666,7 @@ async fn dispatch_clips_a_frozen_sized_effort_to_the_policy_s_cap_only() {
 /// Ruling (c) at dispatch: a pin over a lowered policy cap is never clipped.
 #[tokio::test]
 async fn dispatch_never_clips_a_pin_over_the_policy_s_cap() {
-    let h = harness(Config::default()).await;
+    let h = harness(raising()).await;
     let asked = reasoned(request(
         "Add a button",
         &["risk:critical"],
@@ -685,7 +696,7 @@ async fn dispatch_never_clips_a_pin_over_the_policy_s_cap() {
 /// the choice it borrows its model from (medium) or the pipeline's fallback.
 #[tokio::test]
 async fn an_inserted_stage_is_sized_from_its_own_default_effort() {
-    let h = harness(Config::default()).await;
+    let h = harness(raising()).await;
     let queued = enqueue(&h, "Add a button", &[]).await;
     let waiting = steer(&h, &queued.id, insert_verify()).await;
     let ordinary = [
@@ -695,13 +706,19 @@ async fn an_inserted_stage_is_sized_from_its_own_default_effort() {
         ("verify", High),
     ];
     assert_eq!(efforts(&waiting), ordinary);
-    assert_eq!(reason(&waiting, "verify"), "sizer: ordinary -> high");
+    assert_eq!(
+        reason(&waiting, "verify"),
+        "sizer: ordinary -> high; unchanged"
+    );
 
     let live = enqueue(&h, "docs: fix a typo", &[]).await;
     h.dispatch().await;
     let live = steer(&h, &live.id, insert_verify()).await;
     assert_eq!(efforts(&live)[3], ("verify", Low), "its own class, too");
-    assert_eq!(reason(&live, "verify"), "sizer: mechanical -> low");
+    assert_eq!(
+        reason(&live, "verify"),
+        "sizer: mechanical -> low; default-lowered"
+    );
 }
 
 /// Check 3: a plan carried whole that was never sized stays unsized, and a
@@ -713,7 +730,7 @@ async fn a_plan_never_sized_stays_unsized_when_it_is_carried_whole() {
     let as_1_6_3 = [("implement", Medium), ("review", Medium), ("ship", Low)];
     assert_eq!(efforts(&queued), as_1_6_3);
     assert!(queued.model_plan.sizing().is_none());
-    h.restart_with(Config::default());
+    h.restart_with(raising());
     cancel(&h, &queued.id).await;
     let retried = retry(&h, &queued.id).await.unwrap();
     assert_eq!(
@@ -745,7 +762,7 @@ async fn a_plan_never_sized_stays_unsized_when_it_is_carried_whole() {
 /// off; a stage added afterwards is 1.6.3's, and its attempt records no class.
 #[tokio::test]
 async fn after_a_restart_with_sizing_off_the_plan_is_frozen_and_a_new_stage_is_1_6_3_s() {
-    let mut h = harness(Config::default()).await;
+    let mut h = harness(raising()).await;
     let queued = enqueue(&h, "Add a button", &["risk:critical"]).await;
     h.restart_with(sizing_off());
     executor::recover(&h.ctx).await.expect("recover");
@@ -818,7 +835,7 @@ async fn with_sizing_off_an_item_and_its_attempts_are_stored_as_1_6_3_stores_the
 #[tokio::test]
 async fn an_initiative_member_is_sized_with_its_own_title() {
     use archon_core::initiative::{EnqueueInitiative, InitiativeMember};
-    let h = harness(Config::default()).await;
+    let h = harness(raising()).await;
     let member = |title: &str| InitiativeMember {
         intent: None,
         onto: None,

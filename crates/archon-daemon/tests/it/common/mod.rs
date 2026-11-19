@@ -1048,6 +1048,13 @@ impl FakeBackend {
         self.state().by_key.len()
     }
 
+    /// The agent created under idempotency key `key`, whether or not its
+    /// reply reached Archon.
+    pub fn created_for(&self, key: &str) -> Option<AetherAgentId> {
+        let state = self.state();
+        state.by_key.get(key).map(|spawned| spawned.agent.clone())
+    }
+
     pub fn cancelled(&self) -> Vec<AetherAgentId> {
         self.state().cancelled.clone()
     }

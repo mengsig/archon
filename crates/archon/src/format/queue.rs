@@ -621,6 +621,7 @@ mod tests {
             state: StageState::Completed,
             verdict: None,
             verdict_note: None,
+            restatement: None,
             summary: Some(summary.into()),
             structured: None,
             cost_usd: 0.5,

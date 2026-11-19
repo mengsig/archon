@@ -578,6 +578,15 @@ impl RunDriver {
         duty.map_or(0, |duty| duty.reviewers)
     }
 
+    /// Whether stage `stage_id`'s result carries a verdict a gate reads, so
+    /// its agent may have it read with `submit_verdict` before it completes.
+    pub fn holds_verdict(&self, stage_id: &str) -> bool {
+        let Some(stage) = self.spec.stage(stage_id) else {
+            return false;
+        };
+        crate::contract::holds_verdict(stage, self.spec.owed(stage))
+    }
+
     /// Whether this instance cancelled `stage_run` as the live sibling of
     /// a team role that failed, rather than because the run finished.
     pub fn cancels_sibling(&self, stage_run: &StageRunId) -> bool {
@@ -1039,6 +1048,10 @@ impl RunDriver {
                 }
             }
         };
+        if let Some(withheld) = self.loop_withheld(at.stage, &counts.loops, members) {
+            let report = format!("{withheld}\n\n{report}");
+            return Some(self.failed_stop(at.stage, &counts.loops, &headline, &report));
+        }
         match self.loop_target(at.stage, &mut counts.loops) {
             Some(target) => {
                 at.enter(target, &mut counts.entries, report);
@@ -1046,6 +1059,32 @@ impl RunDriver {
             }
             None => Some(self.failed_stop(at.stage, &counts.loops, &headline, &report)),
         }
+    }
+
+    /// Why a failed group of `stage` does not take an `on_fail` loop it still
+    /// has: `on_fail.when` asks for a failure this one is not. `None` when
+    /// it loops, or has no loop left to withhold.
+    fn loop_withheld(&self, stage: usize, loops: &[u32], members: &[&StageRun]) -> Option<String> {
+        let spec = &self.spec.file.stages[stage];
+        let on_fail = spec.on_fail.as_ref()?;
+        let when = on_fail.when?;
+        if loops[stage] >= on_fail.max_loops {
+            return None;
+        }
+        let failing: Vec<&StageRun> = members
+            .iter()
+            .copied()
+            .filter(|member| !gate::member_passes(spec, member))
+            .collect();
+        if when.applies(&failing) {
+            return None;
+        }
+        assert!(!on_fail.goto.is_empty(), "validated: on_fail names a stage");
+        Some(format!(
+            "No verdict read as `fail` with a finding that names the environment as at fault \
+             (`\"fault\": \"environment\"`), so `{}` was not re-run.",
+            on_fail.goto
+        ))
     }
 
     /// The abort recorded for this attempt of the stage, or the standing

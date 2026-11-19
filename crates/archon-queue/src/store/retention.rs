@@ -435,8 +435,8 @@ fn delete_chosen(
 }
 
 /// The per-item `kv` families: an item's steers, steered stages and restack
-/// index entries, a run's applied mark, review and plan, and how a pull request only
-/// pruned runs delivered to ended. A reshaped run's outcome keeps saying so
+/// index entries, a run's applied mark, review, plan and leftover verdict
+/// restatements, and how a pull request only pruned runs delivered to ended. A reshaped run's outcome keeps saying so
 /// once its run edits are gone, as learning leaves reshaped runs out.
 fn prune_item_kv(tx: &Transaction<'_>) -> Result<usize, ArchonError> {
     tx.execute(
@@ -482,7 +482,15 @@ fn prune_item_kv(tx: &Transaction<'_>) -> Result<usize, ArchonError> {
             [],
         )
         .ctx("prune restack fix indexes")?;
-    Ok(steers + settled + restack + fixes)
+    // A crash between a stage run's settlement and its key's removal leaves one.
+    let restatements = tx
+        .execute(
+            "DELETE FROM kv WHERE key >= 'verdict_restatement:' AND key < 'verdict_restatement;'
+             AND substr(key, 21, instr(substr(key, 21), ':') - 1) IN (SELECT id FROM temp.prune_runs)",
+            [],
+        )
+        .ctx("prune verdict restatements")?;
+    Ok(steers + settled + restack + fixes + restatements)
 }
 
 /// Operator confirmations whose question closed and was asked before the

@@ -11,7 +11,8 @@ use archon_core::Timestamp;
 use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
 use archon_core::model::ModelPlan;
 use archon_core::run::{
-    GateDecision, PipelineRun, RecordRepair, RunState, StageRun, StageState, Verdict,
+    GateDecision, PipelineRun, RecordRepair, Restatement, RunState, StageRun, StageState, Verdict,
+    VerdictReading,
 };
 use archon_core::steer::Then;
 use archon_pipeline::autonomy::OperatorGates;
@@ -40,6 +41,11 @@ pub enum Agent {
     Pass,
     /// Completed with a structured `fail` carrying one finding titled so.
     Fail(&'static str),
+    /// As `Fail`, its finding naming the environment (`"fault": "environment"`).
+    EnvironmentFail(&'static str),
+    /// As `Recorded`, after `submit_verdict` left this restatement: its
+    /// verdict is bound by it as archond's settlement binds it.
+    Restated(&'static str, serde_json::Value, Restatement),
     /// Completed with only a summary `VERDICT:` line, verdict not persisted.
     SummaryVerdict(&'static str),
     /// Completed without any verdict.
@@ -602,6 +608,7 @@ impl Sim {
             state: StageState::Running,
             verdict: None,
             verdict_note: None,
+            restatement: None,
             summary: None,
             structured: None,
             cost_usd: 0.0,
@@ -699,6 +706,27 @@ fn apply_agent(stage: &mut StageRun, agent: &Agent, at: Timestamp) {
             ]})),
             true,
         ),
+        Agent::EnvironmentFail(title) => completed(
+            format!("The environment is at fault: {title}.\nVERDICT: FAIL"),
+            Some(serde_json::json!({"verdict": "fail", "findings": [{
+                "severity": "high", "blocking": true, "fault": "environment",
+                "title": title, "detail": "fix the setup scripts"
+            }]})),
+            true,
+        ),
+        Agent::Restated(text, data, restatement) => {
+            let (state, summary, structured, read) =
+                completed((*text).to_owned(), Some(data.clone()), true);
+            let read = VerdictReading::new(read.expect("persisted"));
+            let stands = restatement.bind(read);
+            stage.restatement = Some(restatement.clone());
+            (
+                state,
+                summary,
+                structured,
+                Some((stands.verdict, stands.note)),
+            )
+        }
         Agent::SummaryVerdict(text) => completed((*text).to_owned(), None, false),
         Agent::NoVerdict => completed("I looked around.".into(), None, true),
         Agent::Error(error) => (

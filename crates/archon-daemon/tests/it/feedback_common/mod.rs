@@ -95,6 +95,7 @@ async fn recorded_sample(
             state: StageState::Completed,
             verdict: None,
             verdict_note: None,
+            restatement: None,
             summary: Some("done".into()),
             structured: None,
             cost_usd: cost,

@@ -2085,10 +2085,15 @@ mod tests {
     fn builtin_prompt_teaches_every_tool_the_orchestrator_has() {
         let prompt = prompt();
         assert!(!archon_core::mcp_tools::TOOLS.is_empty());
-        // Artifact tools are the stage agents'; the prompt is at its byte limit.
-        let artifacts = ["publish_artifact", "list_artifacts", "read_artifact"];
+        // These are the stage agents' tools; the prompt is at its byte limit.
+        let stage_only = [
+            "publish_artifact",
+            "list_artifacts",
+            "read_artifact",
+            "submit_verdict",
+        ];
         for tool in archon_core::mcp_tools::TOOLS {
-            if artifacts.contains(&tool.name) {
+            if stage_only.contains(&tool.name) {
                 continue;
             }
             assert!(

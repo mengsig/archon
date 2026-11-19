@@ -428,15 +428,20 @@ fn strict_pipeline_counts_loops_per_gate_and_cycles_reviewer_choices() {
 }
 
 #[test]
-fn e2e_failure_loops_to_setup_once_then_fails() {
+fn an_e2e_environment_failure_loops_to_setup_once_then_fails() {
     let mut sim = sim("e2e-testing");
     sim.start();
     sim.settle("setup", 0, Agent::Done("start.sh ready"));
-    let back = sim.settle("e2e", 0, Agent::Fail("login page 500"));
+    let back = sim.settle("e2e", 0, Agent::EnvironmentFail("port 8080 never opened"));
     assert_eq!(spawned(&back), slots(&[("setup", 2, 0)]));
-    assert!(spawn_plans(&back)[0].prompt.contains("login page 500"));
+    assert!(
+        spawn_plans(&back)[0]
+            .prompt
+            .contains("port 8080 never opened")
+    );
     sim.settle("setup", 0, Agent::Done("fixed port"));
-    let (stage, error) = failed(&sim.settle("e2e", 0, Agent::Fail("login page 500")));
+    let again = sim.settle("e2e", 0, Agent::EnvironmentFail("port 8080 never opened"));
+    let (stage, error) = failed(&again);
     assert_eq!(stage, "e2e");
     assert!(error.contains("after 1 of 1 fix loop(s)"), "{error}");
 }
@@ -485,8 +490,13 @@ fn a_blank_structured_verdict_or_a_quoted_pass_fails_the_gate() {
         let mut sim = sim("e2e-testing");
         sim.start();
         sim.settle("setup", 0, Agent::Done("start.sh ready"));
-        let back = sim.settle("e2e", 0, Agent::DoneStructured(summary, structured));
-        assert_eq!(spawned(&back), slots(&[("setup", 2, 0)]), "{summary}");
+        let done = sim.settle("e2e", 0, Agent::DoneStructured(summary, structured));
+        let (stage, error) = failed(&done);
+        assert_eq!(stage, "e2e", "{summary}");
+        assert!(
+            error.contains("`setup` was not re-run"),
+            "{summary}: {error}"
+        );
     }
 }
 

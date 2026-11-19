@@ -1165,6 +1165,7 @@ mod tests {
             state: archon_core::run::StageState::Completed,
             verdict: None,
             verdict_note: None,
+            restatement: None,
             summary: None,
             structured: None,
             cost_usd: 0.0,

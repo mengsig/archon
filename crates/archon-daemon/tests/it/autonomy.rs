@@ -785,6 +785,15 @@ async fn yolo_stage_agents_may_delegate_and_read_archon() {
         "reads are exposed"
     );
     assert!(!yolo.leaf, "yolo stage agents may delegate");
+    let submit = "mcp__archon__submit_verdict".to_owned();
+    assert!(archon_core::mcp_tools::mutating_names().contains(&submit));
+    for request in [guarded, yolo] {
+        let hidden = &request.hidden_tools;
+        assert!(
+            !hidden.contains(&submit),
+            "either tools mode can submit a verdict"
+        );
+    }
     // The stage does not set `allow_delegation`: yolo alone brings the rules.
     let rules = &yolo.instructions[yolo.instructions.find(DELEGATION_HEADING).unwrap()..];
     assert!(

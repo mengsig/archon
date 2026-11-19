@@ -1044,6 +1044,26 @@
       ],
       "type": "object"
     },
+    "CheckDecision": {
+      "description": "What `submit_verdict` did with a submission.",
+      "oneOf": [
+        {
+          "const": "accepted",
+          "description": "It reads as a pass or a fail: the stage completes with it.",
+          "type": "string"
+        },
+        {
+          "const": "restate",
+          "description": "It reads as neither: the stage is asked, once, to restate it.",
+          "type": "string"
+        },
+        {
+          "const": "final",
+          "description": "The restated verdict, whatever it reads as: nothing later changes it.",
+          "type": "string"
+        }
+      ]
+    },
     "Checks": {
       "additionalProperties": false,
       "description": "The check tiers: `fast` runs in every item before it commits, for the\nunits the change affects where it names `{packages}` or\n`{packages:<flag>}` ([`super::affected`]); `full` is the whole suite,\nwhich items never run; `release` runs once a promotion merged the\nintegration branch into the release branch.",
@@ -1469,6 +1489,43 @@
           "required": [
             "cmd",
             "path"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A stage agent has its verdict read before it completes, and is asked\nonce to restate one Archon cannot read (ARCHITECTURE §6.4).",
+          "properties": {
+            "caller": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AetherAgentId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Aether's out-of-band MCP caller identity, never a tool argument."
+            },
+            "cmd": {
+              "const": "submit_verdict",
+              "type": "string"
+            },
+            "restating": {
+              "description": "Sent as the restatement an earlier answer asked for, which is final.",
+              "type": "boolean"
+            },
+            "structured": {
+              "default": null,
+              "description": "The `structured` data it is about to complete with."
+            },
+            "summary": {
+              "description": "The `summary` it is about to complete with.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "summary"
           ],
           "type": "object"
         },
@@ -11591,6 +11648,23 @@
           "type": "object"
         },
         {
+          "description": "How `submit_verdict` read a stage's verdict, and what it decided.",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/VerdictCheck"
+            },
+            "reply": {
+              "const": "verdict_check",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "data": {
               "$ref": "#/$defs/CostReport"
@@ -12660,6 +12734,43 @@
           "required": [
             "cmd",
             "path"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A stage agent has its verdict read before it completes, and is asked\nonce to restate one Archon cannot read (ARCHITECTURE §6.4).",
+          "properties": {
+            "caller": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AetherAgentId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Aether's out-of-band MCP caller identity, never a tool argument."
+            },
+            "cmd": {
+              "const": "submit_verdict",
+              "type": "string"
+            },
+            "restating": {
+              "description": "Sent as the restatement an earlier answer asked for, which is final.",
+              "type": "boolean"
+            },
+            "structured": {
+              "default": null,
+              "description": "The `structured` data it is about to complete with."
+            },
+            "summary": {
+              "description": "The `summary` it is about to complete with.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "summary"
           ],
           "type": "object"
         },
@@ -14909,6 +15020,41 @@
       ],
       "type": "string"
     },
+    "Restatement": {
+      "description": "What a stage attempt's one restatement stands at.",
+      "properties": {
+        "asked": {
+          "$ref": "#/$defs/VerdictNote",
+          "description": "Why the first unreadable submission read as no verdict."
+        },
+        "environment": {
+          "description": "Whether the restated submission's findings name the environment as at fault.",
+          "type": "boolean"
+        },
+        "restated": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VerdictReading"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the restated submission read as, which is final; `None` while it is owed."
+        },
+        "said": {
+          "description": "The summary and findings of a restated submission that is no pass, clipped:\na failure report shows them where it stands over the stage's result.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "asked"
+      ],
+      "type": "object"
+    },
     "Result_of_Reply_or_ErrorReply": {
       "oneOf": [
         {
@@ -15593,6 +15739,17 @@
             }
           ],
           "description": "How the attempt stands to its stage's one record repair turn; `None`\non a stage run from before Archon gave one, which is replayed as then."
+        },
+        "restatement": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Restatement"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The one restatement of its verdict the attempt was asked for through\n`submit_verdict`; `None` when it was never asked."
         },
         "run": {
           "$ref": "#/$defs/PipelineRunId"
@@ -16903,6 +17060,23 @@
       ],
       "type": "string"
     },
+    "VerdictCheck": {
+      "description": "The answer to one `submit_verdict` call.",
+      "properties": {
+        "decision": {
+          "$ref": "#/$defs/CheckDecision"
+        },
+        "reading": {
+          "$ref": "#/$defs/VerdictReading",
+          "description": "The submission's reading; for a `final` given before, that one's."
+        }
+      },
+      "required": [
+        "decision",
+        "reading"
+      ],
+      "type": "object"
+    },
     "VerdictNote": {
       "description": "Why a stage's verdict is `Unknown`.",
       "oneOf": [
@@ -16922,6 +17096,28 @@
           "type": "string"
         }
       ]
+    },
+    "VerdictReading": {
+      "description": "A verdict as Archon read it, with why when it is `Unknown`.",
+      "properties": {
+        "note": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VerdictNote"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "verdict": {
+          "$ref": "#/$defs/Verdict"
+        }
+      },
+      "required": [
+        "verdict"
+      ],
+      "type": "object"
     },
     "Versions": {
       "description": "Archon's and Aether's versions, for `status` and `queue_status`.",

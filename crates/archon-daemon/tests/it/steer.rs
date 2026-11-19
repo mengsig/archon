@@ -1305,3 +1305,32 @@ async fn an_owed_extension_never_lowers_a_held_stages_moved_deadline() {
         "the steer sends the later one"
     );
 }
+
+/// A catalog outage holds a steered model back, never the extension beside it.
+#[tokio::test]
+async fn more_time_reaches_the_agent_while_its_new_effort_waits_for_the_catalog() {
+    let h = harness().await;
+    let (item, working) = implementing(&h, "add a greeting").await;
+    h.catalog_server.set_default(
+        "list_models",
+        archon_aether::fake::Scripted::refuse("unavailable", "catalog offline"),
+    );
+    let store = h.ctx.store.lock().await;
+    store.invalidate_model_catalog("catalog offline".into());
+    drop(store);
+
+    let asked = Steer {
+        effort: Some(Effort::Low),
+        extend_minutes: Some(45),
+        ..Steer::default()
+    };
+    steer(&h, &item.id, asked).await.expect("steered");
+    let updates = h.backend.updates();
+    assert_eq!(updates.len(), 1, "{updates:?}");
+    assert_eq!(updates[0].0, agent(&working));
+    assert!(updates[0].1.deadline.is_some(), "the extension is sent");
+    assert_eq!(
+        updates[0].1.choice, None,
+        "the effort waits for the catalog"
+    );
+}

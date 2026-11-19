@@ -229,18 +229,14 @@ async fn update_choice(
     assert_eq!(stage.aether_agent.as_ref(), Some(agent));
     assert!(!stage.state.is_terminal());
     let mut delivery = no_earlier(&*ctx.store.lock().await, &stage.id, delivery)?;
-    if let Some(choice) = &mut delivery.choice {
-        let catalog = crate::learned::catalog(ctx).await?;
-        if let Some(reason) = catalog.not_ready_reason() {
-            return Err(ArchonError::Unavailable(reason.to_owned()));
+    if let Some(choice) = &mut delivery.choice
+        && let Err(error) = check_choice(ctx, stage, choice).await
+    {
+        // A deadline or budget never waits for the model check; the whole step stays owed.
+        if resume::unanswered(&error) {
+            send_limits(ctx, agent, &delivery).await?;
         }
-        choice.model = catalog.check(&choice.model)?;
-        let item = {
-            let store = ctx.store.lock().await;
-            store.item(&store.run(&stage.run)?.item)?
-        };
-        let env = crate::resolve::RepoEnv::load(ctx, item.repo.as_ref()).await?;
-        env.resolved_policy(ctx).check(choice)?;
+        return Err(error);
     }
     let delivery = &delivery;
     let patch = delivery.patch();
@@ -284,6 +280,45 @@ fn no_earlier(
 
 /// Patch the lead. A deadline or budget it sets also raises every live agent
 /// beneath it whose own is lower: a helper copied the lead's at its spawn.
+/// `choice` by its canonical id, once the catalog lists it and the policy permits it.
+async fn check_choice(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    choice: &mut ModelChoice,
+) -> Result<(), ArchonError> {
+    let catalog = crate::learned::catalog(ctx).await?;
+    if let Some(reason) = catalog.not_ready_reason() {
+        return Err(ArchonError::Unavailable(reason.to_owned()));
+    }
+    choice.model = catalog.check(&choice.model)?;
+    assert_eq!(&choice.model, catalog.canonical_alias(&choice.model));
+    let item = {
+        let store = ctx.store.lock().await;
+        store.item(&store.run(&stage.run)?.item)?
+    };
+    let env = crate::resolve::RepoEnv::load(ctx, item.repo.as_ref()).await?;
+    env.resolved_policy(ctx).check(choice)
+}
+
+/// Send `delivery`'s deadline and budget alone, while its model waits.
+async fn send_limits(
+    ctx: &DaemonContext,
+    lead: &AetherAgentId,
+    delivery: &Delivery,
+) -> Result<(), ArchonError> {
+    assert!(delivery.choice.is_some(), "only a model step is split");
+    let limits = Delivery {
+        choice: None,
+        interrupt: false,
+        lead: None,
+        ..delivery.clone()
+    };
+    if limits.patch().is_empty() {
+        return Ok(());
+    }
+    patch_lead(ctx, lead, &limits).await
+}
+
 async fn patch_lead(
     ctx: &DaemonContext,
     lead: &AetherAgentId,

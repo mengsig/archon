@@ -745,6 +745,13 @@ fn only_the_review_lead_records_its_verdict_and_its_prompt_says_so() {
     let spec = catalog.get("review").unwrap();
     let duty = spec.review_duty(spec.stage("review").unwrap()).unwrap();
     assert!(duty.records_verdict);
+    let mut unreviewed = spec.clone();
+    unreviewed.file.pipeline.review.as_mut().unwrap().level =
+        archon_core::autonomy::ReviewLevel::None;
+    let duty = unreviewed
+        .review_duty(unreviewed.stage("review").unwrap())
+        .unwrap();
+    assert!(!duty.records_verdict, "at level none nothing is reviewed");
     for building in ["adaptive", "direct", "swarm"] {
         let spec = catalog.get(building).unwrap();
         let holder = spec

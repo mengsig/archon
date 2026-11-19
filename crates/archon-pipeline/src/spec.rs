@@ -107,8 +107,8 @@ pub struct ReviewDuty {
     /// Whether a reasoned `skipped` stands in for the one reviewer: only where
     /// a ship agent still judges it, as pipelines with a ship stage have.
     pub may_skip: bool,
-    /// Whether the review is all its run does (a review-only run's lead): its
-    /// result records the review's verdict, a fail included, through `complete_task`.
+    /// Whether the review is all its run does (a review-only run's lead, with
+    /// reviewers): its result records the verdict, a fail included, through `complete_task`.
     pub records_verdict: bool,
 }
 
@@ -373,7 +373,8 @@ impl PipelineSpec {
         let duty = ReviewDuty {
             reviewers,
             may_skip: ship_agent && reviewers == 1,
-            records_verdict: !self.delivers(),
+            // At level `none` nothing is reviewed, so there is no verdict to record.
+            records_verdict: !self.delivers() && reviewers > 0,
         };
         assert!(
             !(duty.may_skip && duty.records_verdict),

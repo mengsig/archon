@@ -1,8 +1,11 @@
 # Quota pace
 
 Archon reads each provider's quota windows from Aether (at most every 30
-seconds, beside dispatch, so no dispatch pass waits for it) and compares, for every window, how much of the quota is spent with
-how much of the window's time has passed:
+seconds, beside dispatch). An unweighted dispatch pass never waits for this
+read; a weighted one that finds it in flight takes its answer, or its
+failure, so it waits no longer than its own read would. Archon then
+compares, for every window, how much of the quota is spent with how much of
+the window's time has passed:
 
 - used `u = 100 − remaining_percent`;
 - elapsed `e = 100 × (1 − time to reset / window length)`;

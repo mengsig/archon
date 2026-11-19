@@ -75,9 +75,10 @@ pub(super) async fn enqueue(
         held: item.routed_provider.as_deref(),
         ..unrouted
     };
-    let plan = enqueue_plan(ctx, &req, (&env, &resolved), (route, by), legacy.as_ref()).await?;
+    let scope = (&env, &resolved);
+    let (plan, replays) = keyed_plan(ctx, &req, scope, (route, by), legacy.as_ref()).await?;
     item.model_plan = plan;
-    if let (Some(key), Some(_)) = (key, &legacy) {
+    if let (Some(key), true) = (key, replays) {
         let stored = legacy_replay(ctx, (&env, target.0), &item, (key, &asked)).await?;
         return Ok(item_reply(ctx, stored, req.budget_usd.is_some()).await);
     }
@@ -308,6 +309,50 @@ async fn store_enqueued(
         "a local repository freezes no pull request"
     );
     executor::onto::local::enqueue(ctx, repo, item, target, (key, asked)).await
+}
+
+/// The plan `req` gets, and whether it replays `legacy`, the plan a fingerprint
+/// from before `asked_plan` stored: its models skip the catalog check only when
+/// the whole filled plan is that one; any other plan is checked as any enqueue.
+async fn keyed_plan(
+    ctx: &DaemonContext,
+    req: &EnqueueRequest,
+    scope: (&RepoEnv, &knobs::Resolved),
+    (route, by): (ItemRoute<'_>, Authority),
+    legacy: Option<&ModelPlan>,
+) -> Result<(PlannedPlan, bool), ArchonError> {
+    let Some(stored) = legacy else {
+        return Ok((
+            enqueue_plan(ctx, req, scope, (route, by), None).await?,
+            false,
+        ));
+    };
+    let carried = enqueue_plan(ctx, req, scope, (route, by), Some(stored)).await?;
+    if same_plan(ctx, carried.plan(), stored).await? {
+        return Ok((carried, true));
+    }
+    let checked = enqueue_plan(ctx, req, scope, (route, by), None).await?;
+    Ok((checked, false))
+}
+
+/// Whether `filled` is the plan a fingerprint from before `asked_plan` stored,
+/// each model read as its canonical id on both sides.
+async fn same_plan(
+    ctx: &DaemonContext,
+    filled: &ModelPlan,
+    stored: &ModelPlan,
+) -> Result<bool, ArchonError> {
+    assert!(!filled.0.is_empty(), "compared once filled");
+    assert!(!stored.0.is_empty(), "a legacy fingerprint filled its plan");
+    let catalog = learned::catalog(ctx).await?;
+    let canonical = |plan: &ModelPlan| {
+        let mut plan = plan.clone();
+        for choice in plan.0.values_mut().flatten() {
+            choice.model = catalog.canonical_alias(&choice.model).clone();
+        }
+        plan
+    };
+    Ok(canonical(filled) == canonical(stored))
 }
 
 /// The item a fingerprint from before `asked_plan` keeps under `key`, matched by

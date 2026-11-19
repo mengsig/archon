@@ -1562,11 +1562,46 @@ async fn a_model_aether_refuses_still_sends_the_steps_note_and_extension() {
     );
     assert!(h.backend.interrupts().is_empty(), "no turn ends");
     let feed = h.notices(NotificationKind::Progress).await;
-    let told = feed
-        .iter()
-        .any(|n| n.contains("did not reach the running agent"));
-    assert!(told, "{feed:?}");
+    let told = feed.iter().find(|n| n.contains("model was refused"));
+    let told = told.expect("the refusal is reported");
+    assert!(
+        told.contains("note and deadline extension reached the agent"),
+        "{told}"
+    );
+    assert!(!told.contains("did not reach"), "{told}");
     assert_eq!(h.kv(&format!("steer_owed:{}", working.id)).await, None);
+}
+
+/// A model step owed before its note was split from the lead's message keeps
+/// the old delivery when refused: the lead's message is told and its turn ends.
+#[tokio::test]
+async fn a_refused_model_step_owed_before_split_notes_tells_its_lead_message() {
+    const LEAD: &str = "the lead message an older daemon owed";
+    let h = harness().await;
+    let (_item, working) = implementing(&h, "an owed legacy step").await;
+    let owed = format!("steer_owed:{}", working.id);
+    let legacy = serde_json::json!([{
+        "key": "legacy-step",
+        "choice": choice(MODEL, Effort::Low),
+        "interrupt": true,
+        "lead": LEAD,
+    }]);
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(&owed, &legacy.to_string())
+        .expect("kv");
+    h.backend.fail_next_update(ArchonError::Invalid(
+        "aether: model not allowed here".into(),
+    ));
+
+    h.dispatch().await;
+    let messages = h.backend.messages();
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert_eq!(messages[0], (agent(&working), LEAD.to_owned()));
+    assert_eq!(h.backend.interrupts(), [agent(&working)]);
+    assert_eq!(h.kv(&owed).await, None, "nothing is left owed");
 }
 
 /// As when Aether enforces the cost budget `stage` was sent.

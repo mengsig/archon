@@ -348,11 +348,12 @@ fn owe_live(
             deadline: extended(&mut stored, tune, now),
             interrupt: tune.choice.is_some(),
             lead: lead_message(change, tune, by),
-            note: tune
-                .choice
-                .as_ref()
-                .and(change.note.as_deref())
-                .map(note_message),
+            note: owed::RefusedNote::Note(
+                tune.choice
+                    .as_ref()
+                    .and(change.note.as_deref())
+                    .map(note_message),
+            ),
             helpers: None,
         };
         spawn::save_spawn(store, id, &stored)?;

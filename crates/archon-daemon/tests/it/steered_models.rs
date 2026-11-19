@@ -470,3 +470,47 @@ async fn a_legacy_keyed_replay_returns_its_item_after_the_pinned_model_left_the_
     let items = h.ctx.store.lock().await.items(&Default::default()).unwrap();
     assert_eq!(items.len(), 1, "no second item");
 }
+
+/// Under a fingerprint from before `asked_plan`, only the plan it stored keeps
+/// its models past the catalog check; another plan is checked as any enqueue.
+#[tokio::test]
+async fn a_legacy_key_with_another_plan_gets_no_catalog_exemption() {
+    let h = harness().await;
+    let pin = |effort: &str| {
+        let plan = serde_json::json!({"implement": [{"model": FAST, "effort": effort}]});
+        serde_json::from_value(plan).unwrap()
+    };
+    let mut asked = request("direct", pin("medium"), "review=none");
+    asked.idempotency_key = Some("legacy".into());
+    let first = h.cli(Request::Enqueue(asked.clone())).await;
+    let Ok(Reply::Item(first)) = first else {
+        panic!("the first enqueue is stored: {first:?}");
+    };
+    let filled = serde_json::to_string(first.model_plan.plan()).unwrap();
+    let conn = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    let changed = conn.execute(
+        "UPDATE items SET request = json_set(json_remove(request, '$.asked_plan'),
+                                             '$.model_plan', json(?1))",
+        [filled],
+    );
+    assert_eq!(
+        changed.unwrap(),
+        1,
+        "the fingerprint as an older store wrote it"
+    );
+
+    h.set_catalog(common::catalog::untiered(["codex/sol".parse().unwrap()]))
+        .await;
+    asked.model_plan = pin("low");
+    let refused = h
+        .cli(Request::Enqueue(asked))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        refused.contains(FAST) && refused.contains("not connected"),
+        "the catalog refuses the retired pin: {refused}"
+    );
+    let items = h.ctx.store.lock().await.items(&Default::default()).unwrap();
+    assert_eq!(items.len(), 1, "no second item");
+}

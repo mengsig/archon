@@ -43,15 +43,34 @@ pub(super) struct Delivery {
     pub interrupt: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lead: Option<String>,
-    /// The operator's note alone: what the lead is told instead of `lead`
-    /// when its model step is refused, since its model did not change.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub note: Option<String>,
+    /// What the lead is told instead of `lead` when its model step is refused.
+    #[serde(default)]
+    pub note: RefusedNote,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub helpers: Option<String>,
 }
 
+/// What a refused model step tells the lead, since its model did not change.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum RefusedNote {
+    /// A step owed before notes were split from `lead`: `lead` is told as before.
+    #[default]
+    Lead,
+    /// The operator's note alone, or nothing.
+    Note(Option<String>),
+}
+
 impl Delivery {
+    /// The message the lead is told and whether its turn ends, with its model step
+    /// `refused` or not: a refused step keeps the lead's turn and claims no new model.
+    fn told_lead(&self, refused: bool) -> (Option<&str>, bool) {
+        match (&self.note, refused) {
+            (RefusedNote::Note(note), true) => (note.as_deref(), false),
+            _ => (self.lead.as_deref(), self.interrupt),
+        }
+    }
+
     fn patch(&self) -> AgentUpdate {
         AgentUpdate {
             choice: self.choice.clone(),
@@ -202,11 +221,8 @@ async fn make(
     // A refused model is reported; the lead keeps its turn and model and hears the note alone.
     let told = async {
         let refused_model = update_choice(ctx, stage, agent, delivery).await?;
-        let lead = match refused_model {
-            Some(_) => delivery.note.as_deref(),
-            None => delivery.lead.as_deref(),
-        };
-        if delivery.interrupt && !resumed && refused_model.is_none() {
+        let (lead, interrupt) = delivery.told_lead(refused_model.is_some());
+        if interrupt && !resumed {
             ctx.backend.interrupt(agent).await?;
         }
         if let Some(text) = lead {
@@ -221,7 +237,7 @@ async fn make(
             return Ok(false);
         }
         Err(error) if error.is_store() => return Err(error),
-        Err(refusal) => return refused(ctx, stage, &refusal).await.map(|()| true),
+        Err(refusal) => return refused(ctx, stage, &refusal, &[]).await.map(|()| true),
     };
     assert!(
         refused_model.is_none() || delivery.choice.is_some(),
@@ -231,7 +247,8 @@ async fn make(
         resume::told(&mut *ctx.store.lock().await, &stage.id, text)?;
     }
     if let Some(refusal) = refused_model {
-        refused(ctx, stage, &refusal).await?;
+        let arrived = arrived(delivery, lead.is_some());
+        refused(ctx, stage, &refusal, &arrived).await?;
     }
     Ok(true)
 }
@@ -468,21 +485,47 @@ fn raised<T: PartialOrd + Copy>(current: Option<T>, target: Option<T>) -> Option
     (target > current).then_some(target)
 }
 
-/// Say on the item that Aether refused a steer for a running agent; what the
-/// steer stored still applies to the stage's next agents.
+/// What of model step `delivery` reached the lead once its model was refused.
+fn arrived(delivery: &Delivery, told: bool) -> Vec<&'static str> {
+    assert!(
+        delivery.choice.is_some(),
+        "only a model step is refused alone"
+    );
+    let sent = [
+        (told, "note"),
+        (delivery.deadline.is_some(), "deadline extension"),
+        (delivery.cost_budget_usd.is_some(), "budget"),
+    ];
+    sent.into_iter()
+        .filter(|(sent, _)| *sent)
+        .map(|(_, part)| part)
+        .collect()
+}
+
+/// Say on the item that Aether refused a steer for a running agent, naming what
+/// of it `arrived` all the same; what it stored applies to the stage's next agents.
 async fn refused(
     ctx: &DaemonContext,
     stage: &StageRun,
     refusal: &ArchonError,
+    arrived: &[&str],
 ) -> Result<(), ArchonError> {
     tracing::warn!(stage = %stage.id, %refusal, "Aether refused a steer for a running agent");
     let run = ctx.store.lock().await.run(&stage.run)?;
     assert_eq!(run.id, stage.run, "the store returns the run asked for");
-    let text = format!(
-        "A steer did not reach the running agent of stage `{}` (attempt {}): {refusal}. What it \
-         stored applies to the stage's next agents.",
-        stage.stage_id, stage.attempt
-    );
+    let (stage_id, attempt) = (&stage.stage_id, stage.attempt);
+    let text = match arrived {
+        [] => format!(
+            "A steer did not reach the running agent of stage `{stage_id}` (attempt {attempt}): \
+             {refusal}. What it stored applies to the stage's next agents."
+        ),
+        parts => format!(
+            "A steer's model was refused for the running agent of stage `{stage_id}` (attempt \
+             {attempt}): {refusal}. Its {} reached the agent; the model it stored applies to \
+             the stage's next agents.",
+            parts.join(" and ")
+        ),
+    };
     notify(
         ctx,
         NotificationKind::Progress,

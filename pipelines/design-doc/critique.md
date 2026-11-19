@@ -56,7 +56,8 @@ do not run commands that rewrite files.
 - **low**: a minor improvement or presentation suggestion.
 
 Return **fail** if any critical or high finding remains; otherwise return
-**pass**. Medium and low findings are advice. Do not fail for a reasonable
+**pass**. Medium and low findings are advice: mark them `"blocking": false`
+and critical and high ones `"blocking": true`. Do not fail for a reasonable
 trade-off, an explicitly bounded assumption or work outside the brief.
 
 For each finding give severity, title, the design or repository `path:line`,
@@ -65,7 +66,7 @@ the evidence, its consequence and a concrete correction.
 ## Report
 
 Call `complete_task` with `structured` data
-`{"verdict": "pass" | "fail", "findings": [{"severity": "high", "title": "...", "detail": "...", "path": "path:line"}]}`.
+`{"verdict": "pass" | "fail", "findings": [{"severity": "high", "blocking": true, "title": "...", "detail": "...", "path": "path:line"}]}`.
 Use the actual severities and an empty findings array when there are none.
 The summary states the overall assessment, evidence checked, findings most
 severe first and any remaining limitations. End with `VERDICT: PASS` or

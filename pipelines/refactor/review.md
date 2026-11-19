@@ -61,7 +61,8 @@ maintenance problems; low findings are minor suggestions.
 prevents meeting the brief, the worktree is dirty, or behaviour preservation
 lacks the required verification evidence. Otherwise **pass**; remaining
 medium/low findings are advisory. Do not fail for taste, a reasonable design
-alternative or improvements outside the brief.
+alternative or improvements outside the brief. Mark each finding that fails
+the verdict `"blocking": true` and each advisory one `"blocking": false`.
 
 ## Report
 

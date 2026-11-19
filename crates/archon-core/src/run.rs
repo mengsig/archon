@@ -11,6 +11,10 @@ use crate::id::{PipelineRunId, QuestionId, QueueItemId, ReportId, StageRunId};
 use crate::model::ModelChoice;
 use crate::verdict_prose::reports_problem;
 
+mod verdict_note;
+
+pub use verdict_note::VerdictNote;
+
 /// What a review/test stage concluded, as [`Verdict::extract`] reads it from
 /// the stage agent's result; anything unreadable is `Unknown` and fails a gate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -53,18 +57,29 @@ impl Verdict {
     /// `VERDICT:` line or [`summary_json`] verdict reading other than pass,
     /// or a blocking finding in `structured` or that JSON.
     pub fn pass_disputed(summary: &str, structured: Option<&serde_json::Value>) -> bool {
+        Self::findings_dispute(summary, structured) || Self::words_dispute(summary)
+    }
+
+    /// Whether `structured`, the summary's JSON or a wrapped summary's JSON
+    /// lists a finding that [blocks](Self::blocks) a pass.
+    fn findings_dispute(summary: &str, structured: Option<&serde_json::Value>) -> bool {
         let json = summary_json(summary);
         // A summary written as `{summary, structured}` holds a summary of its own, read one level deep.
-        let inner = wrapped_summary(summary);
-        let inner_json = inner.as_deref().and_then(summary_json);
-        let blocking = [structured, json.as_ref(), inner_json.as_ref()]
+        let inner_json = wrapped_summary(summary).as_deref().and_then(summary_json);
+        [structured, json.as_ref(), inner_json.as_ref()]
             .into_iter()
             .flatten()
-            .any(Self::lists_blocking);
-        let inner_disagrees = inner
-            .as_deref()
-            .is_some_and(|inner| Self::summary_disagrees(inner, inner_json.as_ref()));
-        blocking || inner_disagrees || Self::summary_disagrees(summary, json.as_ref())
+            .any(Self::lists_blocking)
+    }
+
+    /// Whether the summary's words, or a wrapped summary's, read as anything but pass.
+    fn words_dispute(summary: &str) -> bool {
+        let inner = wrapped_summary(summary);
+        let inner_disagrees = inner.as_deref().is_some_and(|inner| {
+            let inner_json = summary_json(inner);
+            Self::summary_disagrees(inner, inner_json.as_ref())
+        });
+        inner_disagrees || Self::summary_disagrees(summary, summary_json(summary).as_ref())
     }
 
     /// Whether the text after a JSON verdict opening the summary takes its
@@ -1082,6 +1097,10 @@ pub struct StageRun {
     pub aether_task: Option<AetherTaskId>,
     pub state: StageState,
     pub verdict: Option<Verdict>,
+    /// Why `verdict` is `Unknown`; `None` for any other verdict, and on stage
+    /// runs recorded before Archon kept it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict_note: Option<VerdictNote>,
     pub summary: Option<String>,
     pub structured: Option<serde_json::Value>,
     pub cost_usd: f64,
@@ -2729,6 +2748,7 @@ mod tests {
             aether_task: None,
             state,
             verdict: None,
+            verdict_note: None,
             summary: None,
             structured,
             cost_usd: 0.0,

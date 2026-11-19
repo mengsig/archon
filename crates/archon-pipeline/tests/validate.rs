@@ -737,6 +737,36 @@ fn review_holds_a_review_and_delivers_nothing() {
     }
 }
 
+/// The `review` lead records its verdict, a fail included, through
+/// `complete_task`; a lead that builds the change does not.
+#[test]
+fn only_the_review_lead_records_its_verdict_and_its_prompt_says_so() {
+    let catalog = Catalog::builtin();
+    let spec = catalog.get("review").unwrap();
+    let duty = spec.review_duty(spec.stage("review").unwrap()).unwrap();
+    assert!(duty.records_verdict);
+    for building in ["adaptive", "direct", "swarm"] {
+        let spec = catalog.get(building).unwrap();
+        let holder = spec
+            .file
+            .stages
+            .iter()
+            .find(|s| spec.holds_review(s))
+            .unwrap();
+        assert!(
+            !spec.review_duty(holder).unwrap().records_verdict,
+            "{building}"
+        );
+    }
+    let prompt = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pipelines/review/review.md"),
+    )
+    .unwrap();
+    let flat = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(flat.contains("With a blocking finding or a failed check it is `fail`"));
+    assert!(flat.contains("Call `fail_task` only when the review could not be done"));
+}
+
 /// What `adaptive` tells its lead decides what a run costs and what is
 /// delivered: the lead prices each child and records what archond ships.
 #[test]

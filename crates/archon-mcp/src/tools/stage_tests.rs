@@ -288,6 +288,7 @@ fn long_review(run: PipelineRunId) -> StageRun {
         aether_task: None,
         state: StageState::Completed,
         verdict: Some(Verdict::Fail),
+        verdict_note: None,
         summary: Some("s".repeat(3_000)),
         structured: Some(json!({"findings": []})),
         cost_usd: 0.0,

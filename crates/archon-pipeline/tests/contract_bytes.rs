@@ -20,7 +20,8 @@ const POLICY: &str = "any model the policy allows";
 /// Byte budgets, a little above what the built-ins weigh today. A work
 /// stage's carries the tree-check rule and the foreground-check rule.
 const PLAIN_BUDGET: usize = 3_650;
-const REVIEW_BUDGET: usize = 3_550;
+/// 3,550 before the verdict section asked for each finding's `blocking` mark.
+const REVIEW_BUDGET: usize = 3_800;
 const RECORD_BUDGET: usize = 1_550;
 /// What holding a review adds: the record, the verdict, summary line and risk
 /// call each reviewer returns, the blocking class and the round cap.
@@ -35,8 +36,9 @@ const EVIDENCE_BUDGET: usize = 2_100;
 /// What a strict scenario stage adds: the list it records and the private stack.
 const STRICT_SCENARIO_BUDGET: usize = 800;
 /// 131,000 before `e2e-strict` and `release-journey` added six stages of about 20.6 kB,
-/// 152,000 before the building stages' user-outcome rule (#397).
-const TOTAL_BUDGET: usize = 153_300;
+/// 152,000 before the building stages' user-outcome rule (#397), 153,300 before
+/// the `blocking` mark and the review-only lead's verdict section.
+const TOTAL_BUDGET: usize = 156_000;
 
 /// One built-in stage's fixed input, in bytes.
 struct Cost {

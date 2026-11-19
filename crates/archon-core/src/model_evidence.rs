@@ -49,6 +49,10 @@ pub struct ModelEvidenceRow {
     /// Completed review/test attempts with a recorded verdict; Unknown does not pass.
     pub verdicts: usize,
     pub passed: usize,
+    /// Completed attempts whose pass their own findings dispute: a format clash
+    /// kept out of `verdicts`, so it is no fail of the model.
+    #[serde(default)]
+    pub disputed: usize,
 }
 
 /// The same observations pooled by the tier of the model that ran, so they
@@ -65,6 +69,8 @@ pub struct TierEvidenceRow {
     pub median_minutes: Option<f64>,
     pub verdicts: usize,
     pub passed: usize,
+    #[serde(default)]
+    pub disputed: usize,
 }
 
 /// One provider's attempts and completed cost: the split provider weights
@@ -96,12 +102,12 @@ pub struct ModelEvidenceReport {
     pub repo_names: BTreeMap<RepoId, String>,
 }
 
-/// `completed=… median=… p90=… median_min=…`, then any pass share and a
-/// small-sample warning.
+/// `completed=… median=… p90=… median_min=…`, then any pass share, any
+/// disputed passes and a small-sample warning.
 fn measures(
     completed: usize,
     (median, p90, minutes): (Option<f64>, Option<f64>, Option<f64>),
-    (passed, verdicts): (usize, usize),
+    (passed, verdicts, disputed): (usize, usize, usize),
 ) -> String {
     let cost = |value: Option<f64>| value.map_or("-".into(), |v| format!("${v:.4}"));
     let minutes = minutes.map_or("-".into(), |v| format!("{v:.2}"));
@@ -113,13 +119,17 @@ fn measures(
             100.0 * passed as f64 / verdicts as f64
         )
     };
+    let disputed = match disputed {
+        0 => String::new(),
+        n => format!(" disputed={n}"),
+    };
     let small = if completed < 5 {
         " [small sample: completed n < 5]"
     } else {
         ""
     };
     format!(
-        "completed={completed} median={} p90={} median_min={minutes}{pass}{small}",
+        "completed={completed} median={} p90={} median_min={minutes}{pass}{disputed}{small}",
         cost(median),
         cost(p90)
     )
@@ -142,7 +152,7 @@ impl ModelEvidenceReport {
             let measures = measures(
                 row.completed,
                 (row.median_cost_usd, row.p90_cost_usd, row.median_minutes),
-                (row.passed, row.verdicts),
+                (row.passed, row.verdicts, row.disputed),
             );
             let _ = writeln!(
                 text,
@@ -164,7 +174,7 @@ impl ModelEvidenceReport {
             let measures = measures(
                 row.completed,
                 (row.median_cost_usd, row.p90_cost_usd, row.median_minutes),
-                (row.passed, row.verdicts),
+                (row.passed, row.verdicts, row.disputed),
             );
             let _ = writeln!(
                 text,

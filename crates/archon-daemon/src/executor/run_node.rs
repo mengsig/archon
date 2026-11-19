@@ -1063,6 +1063,7 @@ mod tests {
             aether_task: None,
             state: archon_core::run::StageState::Completed,
             verdict: None,
+            verdict_note: None,
             summary: None,
             structured: None,
             cost_usd: 0.0,

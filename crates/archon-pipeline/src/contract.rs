@@ -70,6 +70,9 @@ pub fn instructions(
     if needs_verdict(stage) {
         out.push_str(VERDICT_RULES);
     }
+    if owed.review.is_some_and(|duty| duty.records_verdict) {
+        out.push_str(LEAD_VERDICT_RULES);
+    }
     if stage.scenarios == Scenarios::Strict {
         out.push_str(STRICT_SCENARIO_RULES);
     }
@@ -501,6 +504,10 @@ fn review_rules(duty: ReviewDuty) -> String {
         true => REVIEW_SKIP_RULE,
         false => "",
     };
+    let open = match duty.records_verdict {
+        true => "with a blocking finding open, record `fail` as the Verdict section says.",
+        false => "with a blocking finding open, call `fail_task` and say which.",
+    };
     let rules = format!(
         "\n## Review on record\n\n\
          - Your stage holds this run's review: the change as it finally stands is reviewed \
@@ -511,7 +518,8 @@ fn review_rules(duty: ReviewDuty) -> String {
          one whose findings you fixed included:\n\n\
          ```json\n{{\"review\": {{\"verdict\": \"pass\", \"reviewers\": [{named}]}}}}\n```\n\n\
          {skip}\
-         {REVIEW_CHECK_RULES}"
+         {REVIEW_CHECK_RULES}{open}\n\
+         {REVIEW_LINE_RULE}"
     );
     debug_assert!(rules.ends_with('\n'), "sections end with a newline");
     rules
@@ -742,8 +750,9 @@ anchors such a delta. A fail stands until a pass read past it, or after an amend
 rebase until a pass of the whole change. Name every reviewer that coverage rests on, \
 earlier whole-change reads included, passed or failed. Anything else fails the run, \
 and nothing ships. \
-Never report `pass` for a review that did not run or did not pass: with a blocking \
-finding open, call `fail_task` and say which.\n\
+Never report `pass` for a review that did not run or did not pass: ";
+
+const REVIEW_LINE_RULE: &str = "\
 - Archon adds the review as the last line of your summary: write no `REVIEW:` line \
 yourself.\n";
 
@@ -1012,15 +1021,34 @@ const VERDICT_RULES: &str = "\n## Verdict\n\n\
 - Put this in `complete_task`'s `structured` data, beside any other keys:\n\n\
 ```json\n\
 {\"verdict\": \"pass\" | \"fail\",\n \
-\"findings\": [{\"severity\": \"critical|high|medium|low\", \"title\": \"…\", \
-\"detail\": \"…\", \"path\": \"relative/path:line\"}]}\n\
+\"findings\": [{\"severity\": \"critical|high|medium|low\", \"blocking\": true | false, \
+\"title\": \"…\", \"detail\": \"…\", \"path\": \"relative/path:line\"}]}\n\
 ```\n\n\
 - The `verdict` is exactly `\"pass\"` or `\"fail\"`, no other word. The stage prompt \
 defines which findings make it `fail`; apply its rule exactly. A `fail` lists a \
 finding and always fails; a review with only advice is a `pass`.\n\
+- Mark each finding `\"blocking\": true` when that rule makes it fail the verdict, \
+else `false`: a pass beside a blocking finding counts as a fail, and an unmarked \
+finding blocks when its severity is critical or high.\n\
 - End the `summary` with a final line that is exactly `VERDICT: PASS` or \
 `VERDICT: FAIL`, matching the structured verdict. A missing or unreadable verdict \
 counts as a fail.\n";
+
+/// The verdict of a review-only run's lead: the review is the run's whole
+/// outcome, so a fail is recorded, not reported as a stage failure.
+const LEAD_VERDICT_RULES: &str = "\n## Verdict\n\n\
+- The review is this run's whole outcome: record its verdict with `complete_task`, \
+a fail included. `fail_task` means only that the review could not be done.\n\
+- Put this in `structured`, beside the review record:\n\n\
+```json\n\
+{\"verdict\": \"pass\" | \"fail\",\n \
+\"findings\": [{\"severity\": \"critical|high|medium|low\", \"blocking\": true | false, \
+\"title\": \"…\", \"detail\": \"issue, impact, remedy\", \"path\": \"relative/path:line\"}]}\n\
+```\n\n\
+- A blocking finding or a failed check makes it `fail`, which never merges. Mark each \
+finding `\"blocking\"`; an unmarked one blocks when its severity is critical or high.\n\
+- End the `summary` with a final line that is exactly `VERDICT: PASS` or \
+`VERDICT: FAIL`, matching the structured verdict.\n";
 
 const STRICT_SCENARIO_RULES: &str = "\n## Strict scenario gate\n\n\
 - Each scenario lists `required_steps` ids and `steps` {id,required,status}; \
@@ -1152,6 +1180,8 @@ mod tests {
             assert!(text.contains("stage prompt defines which findings"));
             assert!(text.contains("exactly `\"pass\"` or `\"fail\"`, no other word"));
             assert!(text.contains("a review with only advice is a `pass`"));
+            assert!(text.contains("\"blocking\": true | false"), "{kind:?}");
+            assert!(text.contains("finding blocks when its severity is critical or high"));
         }
         let work = instructions(
             &stage(StageKind::Work, Gate::None, 1),
@@ -1731,9 +1761,32 @@ mod tests {
             review: Some(ReviewDuty {
                 reviewers,
                 may_skip,
+                records_verdict: false,
             }),
             ship_record: false,
         }
+    }
+
+    /// A review-only lead records its verdict, a fail included, with
+    /// `complete_task`; a lead that builds the change keeps `fail_task`.
+    #[test]
+    fn only_a_review_only_lead_records_a_fail_with_complete_task() {
+        let mut lead = owing(1, false);
+        lead.review = lead.review.map(|duty| ReviewDuty {
+            records_verdict: true,
+            ..duty
+        });
+        let reviewing = work_contract(lead);
+        assert!(reviewing.contains("record its verdict with `complete_task`, a fail included"));
+        assert!(reviewing.contains("\"blocking\": true | false"));
+        assert!(reviewing.contains("VERDICT: FAIL"));
+        assert!(reviewing.contains("with a blocking finding open, record `fail`"));
+        assert!(!reviewing.contains("call `fail_task` and say which"));
+        assert_eq!(reviewing.matches("## Verdict").count(), 1);
+        let building = work_contract(owing(1, false));
+        assert!(building.contains("with a blocking finding open, call `fail_task` and say which."));
+        assert!(!building.contains("## Verdict"));
+        assert!(building.ends_with("write no `REVIEW:` line yourself.\n"));
     }
 
     fn work_contract(owed: Owed) -> String {

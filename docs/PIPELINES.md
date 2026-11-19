@@ -959,8 +959,12 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   and with `ESCALATE:` when the task does not fit the pipeline.
 - **Review and test stages, and any gated stage.** The result carries
   `structured` data `{"verdict": "pass"|"fail", "findings": [{"severity",
-  "title", "detail", "path"}]}`, and the summary ends with `VERDICT: PASS` or
-  `VERDICT: FAIL`. Archon reads a structured `verdict` key first, whatever
+  "blocking", "title", "detail", "path"}]}`, and the summary ends with `VERDICT: PASS` or
+  `VERDICT: FAIL`. Each finding is marked `"blocking": true` when the stage
+  prompt's rule makes it fail the verdict, else `false`; an unmarked finding
+  blocks when its severity is `blocking`, `blocker`, `critical` or `high`.
+  Archon stores why a verdict reads as unknown beside it (`verdict_note`:
+  `disputed_pass`, `missing_verdict_line` or `hedged_verdict`). Archon reads a structured `verdict` key first, whatever
   it holds, then a structured `result` or `status` that opens with a
   verdict word or a `VERDICT:` label (decisive even when unreadable), then
   the summary's last `VERDICT:` line that starts at column 0 outside block quotes and fences (an indented
@@ -1005,6 +1009,13 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   list indentation and fences, and reads other constructs as plain lines;
   a verdict it cannot settle counts as fail, never as pass, so write a
   plain `VERDICT:` line at column 0.
+- **A review-only run's lead** (the stage holding the review of a pipeline
+  that delivers nothing, such as `review`). The review is the run's whole
+  outcome, so its verdict is recorded with `complete_task`, a fail included,
+  in the same `structured` `verdict` and `findings` beside the review record;
+  `fail_task` means only that the review could not be done. A result stating
+  no verdict of its own is read by its review record's. The run fails on any
+  verdict but pass, which never merges.
 - **The stage `[pipeline.ship]` names.** `## Ship record`: commit with the
   repository's git identity, leave a clean tree, do not push, and return
   `commit`, `tree`, `checks` and `pr` in `structured` (see "Shipping").

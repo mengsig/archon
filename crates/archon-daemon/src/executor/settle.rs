@@ -533,7 +533,13 @@ pub(super) fn settled_stage(
             summary,
             structured,
         } => {
-            stage.verdict = Some(Verdict::extract(&summary, structured.as_ref()));
+            // A review-only lead's review record states its verdict when its result states none.
+            let (verdict, note) = match stage.only_reviews {
+                Some(true) => Verdict::read_review_lead(&summary, structured.as_ref()),
+                _ => Verdict::read(&summary, structured.as_ref()),
+            };
+            stage.verdict = Some(verdict);
+            stage.verdict_note = note;
             stage.summary = Some(summary);
             stage.structured = structured;
             StageState::Completed

@@ -2,7 +2,7 @@
 //! gate pass, and if not, what feedback goes back to the looped-to stage.
 
 use archon_core::catalog::{Gate, StageKind};
-use archon_core::run::{RecordRepair, StageOutcome, StageRun, StageState, Verdict};
+use archon_core::run::{RecordRepair, StageOutcome, StageRun, StageState, Verdict, VerdictNote};
 
 use crate::review::Evidence;
 use crate::ship::ShipRecord;
@@ -14,6 +14,8 @@ pub const MAX_FEEDBACK_CHARS: usize = 32_000;
 
 const SHIP_REFUSAL: &str = "the ship record archond delivers is not on record";
 const REVIEW_REFUSAL: &str = archon_core::run::REVIEW_NOT_ON_RECORD;
+/// The headline a review-only lead's verdict other than pass fails its run with.
+const REVIEW_VERDICT_REFUSAL: &str = "the review's verdict is";
 /// Most characters of an unreadable verdict quoted in a gate's refusal.
 const MAX_QUOTED_VERDICT_CHARS: usize = 160;
 
@@ -154,6 +156,16 @@ fn recorded(stage: &StageSpec, attempt: u32, members: &[&StageRun], owed: Owed) 
         let report = clip(&report, MAX_FEEDBACK_CHARS);
         return GroupResult::Fail { headline, report };
     }
+    // A review-only lead's verdict is the run's: anything but pass never merges.
+    if let Some(note) = unpassed_review(member, owed) {
+        let headline = format!("{REVIEW_VERDICT_REFUSAL} {note}");
+        let report = format!(
+            "**Stage `{}` attempt {attempt}: {headline}**\n\n{summary}\n",
+            stage.id
+        );
+        let report = clip(&report, MAX_FEEDBACK_CHARS);
+        return GroupResult::Fail { headline, report };
+    }
     let broken = repairable(stage, members, owed);
     let refused = |headline: String, unrecorded: bool| {
         let report = format!(
@@ -184,6 +196,31 @@ fn recorded(stage: &StageSpec, attempt: u32, members: &[&StageRun], owed: Owed) 
             summary: format!("{summary}\n\n{}", evidence.line()),
         },
         Err(why) => refused(format!("{REVIEW_REFUSAL}: {why}"), broken),
+    }
+}
+
+/// Why a review-only lead's recorded verdict is not a pass, worded from its
+/// note; `None` for a pass, another stage, or a lead recorded before 1.6.4.
+fn unpassed_review(member: &StageRun, owed: Owed) -> Option<&'static str> {
+    let records = owed.review.is_some_and(|duty| duty.records_verdict);
+    if !records || member.only_reviews != Some(true) {
+        return None;
+    }
+    let verdict = member.verdict?;
+    assert!(
+        member.verdict_note.is_none() || verdict == Verdict::Unknown,
+        "a note explains only an unknown verdict"
+    );
+    match (verdict, member.verdict_note) {
+        (Verdict::Pass, _) => None,
+        (Verdict::Fail, _) => Some("fail"),
+        (Verdict::Unknown, Some(VerdictNote::DisputedPass)) => {
+            Some("a pass beside a blocking finding (counts as fail)")
+        }
+        (Verdict::Unknown, Some(VerdictNote::MissingVerdictLine)) => {
+            Some("missing (counts as fail)")
+        }
+        (Verdict::Unknown, _) => Some("unreadable as pass or fail (counts as fail)"),
     }
 }
 

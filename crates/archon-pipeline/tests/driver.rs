@@ -2711,3 +2711,65 @@ fn a_swarm_integrator_ships_its_reviewed_change() {
     let done = sim.ship_pr(PR);
     assert!(succeeded(&done).contains(&format!("SHIPPED: {PR}")));
 }
+
+/// A review-only lead records a fail with `complete_task`: the stage
+/// completes with its verdict, and the run fails on it with nothing shipped.
+#[test]
+fn a_recorded_review_fail_completes_the_lead_and_fails_the_run() {
+    let mut sim = sim("review");
+    sim.start();
+    let actions = sim.settle("review", 0, Agent::Fail("unchecked overflow"));
+    let (stage, error) = failed(&actions);
+    assert_eq!(stage, "review");
+    assert!(error.contains(archon_core::run::STATED_FAILURE), "{error}");
+    assert!(
+        error.contains("unchecked overflow"),
+        "the findings reach the item: {error}"
+    );
+    assert!(ship_plans(&actions).is_empty(), "a fail never ships");
+    let lead = sim.stages.last().expect("the lead ran");
+    assert_eq!(lead.state, StageState::Completed);
+    assert_eq!(lead.verdict, Some(archon_core::run::Verdict::Fail));
+    assert_eq!(lead.only_reviews, Some(true));
+}
+
+/// A review-only lead's pass that its own findings dispute is no pass: the run
+/// fails though its review record passes, so nothing can merge on it.
+#[test]
+fn a_review_lead_s_disputed_pass_fails_the_run() {
+    let disputed = {
+        let mut result = reviewed_by("codex/astra");
+        result["findings"] = serde_json::json!([{"severity": "high", "title": "leak"}]);
+        result
+    };
+    let mut sim = sim("review");
+    sim.start();
+    let actions = sim.settle(
+        "review",
+        0,
+        Agent::Recorded("Reviewed the head.\nVERDICT: PASS", disputed.clone()),
+    );
+    let (_, error) = failed(&actions);
+    assert!(
+        error.contains("the review's verdict is a pass beside a blocking finding"),
+        "{error}"
+    );
+    let lead = sim.stages.last().expect("the lead ran");
+    assert_eq!(
+        lead.verdict_note,
+        Some(archon_core::run::VerdictNote::DisputedPass)
+    );
+
+    let mut marked = disputed;
+    marked["findings"][0]["blocking"] = serde_json::Value::Bool(false);
+    let mut passed = self::sim("review");
+    passed.start();
+    let actions = passed.settle("review", 0, Agent::Recorded("Reviewed the head.", marked));
+    succeeded(&actions);
+    let lead = passed.stages.last().expect("the lead ran");
+    assert_eq!(
+        lead.verdict,
+        Some(archon_core::run::Verdict::Pass),
+        "read by its review record"
+    );
+}

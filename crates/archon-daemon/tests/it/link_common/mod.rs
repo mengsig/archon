@@ -451,6 +451,7 @@ fn stage_run(run: &PipelineRunId, state: StageState) -> StageRun {
         aether_task: None,
         state,
         verdict: None,
+        verdict_note: None,
         summary: None,
         structured: None,
         cost_usd: 0.0,

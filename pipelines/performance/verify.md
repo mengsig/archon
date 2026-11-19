@@ -53,6 +53,8 @@ meets the predefined target, no other measured path regresses beyond noise,
 the full test suite and applicable checks pass, behavior is preserved and
 the working tree is clean. **fail** if any condition is unmet or cannot be
 verified, including inconclusive measurements or unavailable full tests.
+Mark each finding that fails the verdict `"blocking": true` and any caveat
+`"blocking": false`.
 
 Call `complete_task` with the structured verdict and actionable findings.
 The summary includes exact commands and outcomes, baseline and new numbers

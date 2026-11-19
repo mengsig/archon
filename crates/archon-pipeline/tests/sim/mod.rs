@@ -30,6 +30,9 @@ pub enum Agent {
     Done(&'static str),
     /// Completed with a summary and structured data, without a verdict.
     DoneStructured(&'static str, serde_json::Value),
+    /// Completed with a summary and structured data, its verdict persisted
+    /// as archond reads it.
+    Recorded(&'static str, serde_json::Value),
     /// Completed with a structured `pass`.
     Pass,
     /// Completed with a structured `fail` carrying one finding titled so.
@@ -579,7 +582,7 @@ impl Sim {
         let id = StageRunId::new();
         self.plans.insert(id.clone(), plan.clone());
         self.stages.push(StageRun {
-            only_reviews: None,
+            only_reviews: Some(plan.only_reviews),
             id,
             run: self.run.id.clone(),
             stage_id: plan.stage_id.clone(),
@@ -595,6 +598,7 @@ impl Sim {
             aether_task: None,
             state: StageState::Running,
             verdict: None,
+            verdict_note: None,
             summary: None,
             structured: None,
             cost_usd: 0.0,
@@ -659,8 +663,14 @@ fn gang_admit(plans: &[SpawnPlan], free: usize) -> usize {
 }
 
 fn apply_agent(stage: &mut StageRun, agent: &Agent, at: Timestamp) {
+    // Persisted as the daemon reads it: a review-only lead by its review record too.
+    let lead = stage.only_reviews == Some(true);
     let completed = |summary: String, structured: Option<serde_json::Value>, persist: bool| {
-        let verdict = persist.then(|| Verdict::extract(&summary, structured.as_ref()));
+        let read = match lead {
+            true => Verdict::read_review_lead(&summary, structured.as_ref()),
+            false => Verdict::read(&summary, structured.as_ref()),
+        };
+        let verdict = persist.then_some(read);
         (StageState::Completed, Some(summary), structured, verdict)
     };
     let (state, summary, structured, verdict) = match agent {
@@ -668,6 +678,7 @@ fn apply_agent(stage: &mut StageRun, agent: &Agent, at: Timestamp) {
         Agent::DoneStructured(text, data) => {
             completed((*text).to_owned(), Some(data.clone()), false)
         }
+        Agent::Recorded(text, data) => completed((*text).to_owned(), Some(data.clone()), true),
         Agent::Pass => completed(
             "Looks correct and well tested.\nVERDICT: PASS".into(),
             Some(serde_json::json!({"verdict": "pass", "findings": []})),
@@ -704,7 +715,8 @@ fn apply_agent(stage: &mut StageRun, agent: &Agent, at: Timestamp) {
     stage.state = state;
     stage.summary = summary;
     stage.structured = structured;
-    stage.verdict = verdict;
+    stage.verdict = verdict.map(|(verdict, _)| verdict);
+    stage.verdict_note = verdict.and_then(|(_, note)| note);
     stage.finished_at = Some(at);
 }
 

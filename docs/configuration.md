@@ -167,6 +167,11 @@ Three rules decide what a cap lowered later does to a stored effort:
 3. A pinned effort above `max_effort` is refused, as in 1.6.3, in every case.
    A pin is never lowered silently.
 
+In the same two places a sized `x_high` whose model has since moved to a
+provider that runs none (a tier resolved again at dispatch, a model a steer
+named) is lowered to `high`, and the reason says which provider. An effort
+the plan pins is left as it is there too.
+
 `auto_repair` (default `true`) covers a run that fails only because the gate
 refused the review or the ship record it owes (a delta read not anchored, a
 mistyped reviewer id, no review object, an unreadable verdict, an invalid ship

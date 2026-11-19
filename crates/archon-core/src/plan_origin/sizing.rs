@@ -209,28 +209,26 @@ impl PlanWriter {
         }
     }
 
-    /// Lower every effort the daemon sized or escalated above `cap` to it,
-    /// with the reason. A pin is never clipped: the policy check refuses it.
+    /// Lower every effort the daemon sized or escalated to `cap` and to what
+    /// its model's engine runs, with the reason. A pin is never lowered: the
+    /// policy check refuses it.
     fn clip(&mut self, cap: Option<Effort>) -> bool {
-        let Some(cap) = cap else { return false };
         let mut clipped = false;
         for (key, choices) in self.plan.0.iter_mut() {
             let slots = self.entries.get_mut(key).expect("an origin per entry");
             assert_eq!(slots.len(), choices.len(), "origins fit the plan");
             for (slot, (choice, origin)) in choices.iter_mut().zip(slots).enumerate() {
-                let sized = matches!(
-                    origin.effort.source,
-                    PlanSource::Sizer | PlanSource::Escalation
-                );
-                if !sized || origin.effort.is_pin() || choice.effort <= cap {
+                let source = origin.effort.source;
+                let sized = matches!(source, PlanSource::Sizer | PlanSource::Escalation);
+                if !sized || origin.effort.is_pin() {
                     continue;
                 }
-                let was = choice.effort;
-                let note = format!("clipped from {was} to the cap {cap}");
+                let Some((effort, note)) = lowered(choice, cap) else {
+                    continue;
+                };
                 self.sizing.note(key, slot, &note);
-                let source = origin.effort.source;
                 origin.effort = FieldOrigin::chosen(source, Authority::Daemon, self.at, Some(note));
-                choice.effort = cap;
+                choice.effort = effort;
                 clipped = true;
             }
         }
@@ -260,6 +258,26 @@ impl PlanWriter {
         }
         sized.risk_class = Some(risk.0.class);
     }
+}
+
+/// What a sized effort of `choice` is lowered to, and why: the `cap`, then
+/// `high` on an engine that runs no `x_high`. `None` when the effort stands.
+fn lowered(choice: &ModelChoice, cap: Option<Effort>) -> Option<(Effort, String)> {
+    let was = choice.effort;
+    let mut effort = was;
+    let mut notes = Vec::new();
+    if let Some(cap) = cap.filter(|cap| was > *cap) {
+        effort = cap;
+        notes.push(format!("clipped from {was} to the cap {cap}"));
+    }
+    if effort == Effort::XHigh && !effort_sizing::supports_x_high(&choice.model) {
+        effort = Effort::High;
+        let engine = &choice.model.provider;
+        notes.push(format!("{engine} runs no more than high, so high"));
+    }
+    assert!(effort <= was, "a sized effort is only ever lowered");
+    assert_eq!(notes.is_empty(), effort == was, "a lowered effort says why");
+    (effort < was).then(|| (effort, notes.join("; ")))
 }
 
 /// The note of an effort the sizer just set: what its writer said of it (a
@@ -381,18 +399,12 @@ impl PlannedPlan {
         true
     }
 
-    /// Lower every effort the daemon sized above `cap` to it, with the
-    /// reason; pins are left for the policy check to refuse. `true` when
-    /// one was lowered.
+    /// Lower every effort the daemon sized to `cap` and to what its model's
+    /// engine runs, with the reason; pins are left for the policy check to
+    /// refuse. `true` when one was lowered.
     pub fn clip_sized(&mut self, item: &QueueItemId, cap: Option<Effort>, at: Timestamp) -> bool {
-        let Some(limit) = cap else { return false };
-        if self
-            .model_plan
-            .0
-            .values()
-            .flatten()
-            .all(|c| c.effort <= limit)
-        {
+        let stands = |choice: &ModelChoice| lowered(choice, cap).is_none();
+        if self.model_plan.0.values().flatten().all(stands) {
             return false;
         }
         let mut writer = PlanWriter::editing(self, item, at);
@@ -400,7 +412,19 @@ impl PlannedPlan {
             return false;
         }
         *self = writer.seal();
+        assert!(cap.is_none_or(|cap| self.sized_within(item, cap)));
         true
+    }
+
+    /// Whether every effort the daemon sized is at or below `cap`.
+    fn sized_within(&self, item: &QueueItemId, cap: Effort) -> bool {
+        let within = |(key, choices): (&String, &Vec<ModelChoice>)| {
+            choices.iter().enumerate().all(|(slot, choice)| {
+                let origin = self.origin(item, key, slot).effort;
+                choice.effort <= cap || origin.is_pin() || origin.source != PlanSource::Sizer
+            })
+        };
+        self.model_plan.0.iter().all(within)
     }
 
     /// How choice `slot` of `key` got its effort, when the sizer decided the key.

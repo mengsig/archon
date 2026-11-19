@@ -333,6 +333,43 @@ fn a_carried_sized_effort_is_clipped_to_the_cap_and_a_pin_is_not() {
     );
 }
 
+/// A sized `x_high` whose model moved to an engine that runs none is held to
+/// `high` wherever a plan is clipped, with or without a cap; a pin is not.
+#[test]
+fn a_sized_x_high_moved_to_another_engine_is_lowered_to_high_with_the_reason() {
+    let item = QueueItemId::new();
+    let other: crate::model::ModelRef = "openrouter/some-model".parse().unwrap();
+    let by = (Authority::Operator, crate::now());
+    let mut moved = critical_build(&item);
+    moved.steer(&item, "build", (Some(&other), None), by);
+    assert_eq!(
+        effort(&moved, "build"),
+        Effort::XHigh,
+        "the steer names no effort"
+    );
+    let why = "sizer: critical -> x_high; openrouter runs no more than high, so high";
+    let mut stored = moved.clone();
+    assert!(stored.clip_sized(&item, None, crate::now()));
+    assert_eq!(effort(&stored, "build"), Effort::High);
+    assert_eq!(reason(&stored, &item, "build"), why);
+    assert!(
+        !stored.clip_sized(&item, None, crate::now()),
+        "lowered once"
+    );
+    let mut retry = PlanWriter::new(&item, crate::now());
+    retry.carry(&moved, &item, |_| Some(usize::MAX));
+    let carried = retry.finish(Sizing::Off { policy_cap: None });
+    assert_eq!(effort(&carried, "build"), Effort::High);
+    assert_eq!(reason(&carried, &item, "build"), why);
+    let mut pinned = critical_build(&item);
+    pinned.steer(&item, "build", (Some(&other), Some(Effort::XHigh)), by);
+    assert!(
+        !pinned.clip_sized(&item, None, crate::now()),
+        "a pin is the operator's"
+    );
+    assert_eq!(effort(&pinned, "build"), Effort::XHigh);
+}
+
 #[test]
 fn clipping_a_stored_plan_lowers_only_sized_efforts_and_records_why() {
     let item = QueueItemId::new();

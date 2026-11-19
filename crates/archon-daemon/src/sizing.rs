@@ -90,12 +90,13 @@ pub(crate) fn resize(
 }
 
 /// Hold every effort the daemon sized for `item` to the policy's cap as it
-/// is now, with the reason; a pinned effort over it is left for the policy
-/// check to refuse. `true` when one was lowered.
+/// is now and to what its model's engine runs, with the reason; a pinned
+/// effort over the cap is left for the policy check to refuse. `true` when
+/// one was lowered.
 pub(crate) fn clip_to_policy(policy: &ModelPolicy, item: &mut QueueItem) -> bool {
     let at = archon_core::now();
     let clipped = item.model_plan.clip_sized(&item.id, policy.max_effort, at);
-    debug_assert!(!clipped || policy.max_effort.is_some(), "a cap clips");
+    debug_assert!(item.model_plan.fault(&item.id).is_none());
     clipped
 }
 

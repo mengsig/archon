@@ -238,7 +238,7 @@ by either route. It says to:
 - choose each child's model and effort within the model policy that
   applies to the item, which the section states in words. The watchdog
   cancels a child outside it;
-- with `[models] effort_sizing = true` only, size each child's effort to its
+- unless `[models] effort_sizing = false`, size each child's effort to its
   own task by the effort rubric, from `low` for lookups and mechanical edits
   up to `x_high` for hard reasoning, the cheapest that fits;
 - wait for every child or cancel it before finishing;
@@ -1369,8 +1369,8 @@ verifies and fixes the change. Its prompt has it spend where spending pays:
   the known risks, not the conversation. Its effort is the lead's choice,
   never below the effort its contract names: medium for ordinary risk,
   high where the risk is medium or more, or security or an invariant is at
-  stake. With `[models] effort_sizing = true` the contract's effort is a
-  default instead and its effort rubric decides, the lead stating the reason
+  stake, when `[models] effort_sizing = false`. By default the contract's
+  effort is a default instead and its effort rubric decides, the lead stating the reason
   for a move in one line in its result.
 - **Fixes.** Blocking findings are fixed in new commits and the affected
   checks rerun; the full suite runs again only for a fix with broad impact

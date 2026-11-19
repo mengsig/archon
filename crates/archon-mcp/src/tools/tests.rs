@@ -1441,8 +1441,13 @@ fn the_tool_list_stays_within_its_budget() {
     const FROM_1_0_BUDGET_BYTES: usize = 20_000 + INTENT_BINDING_BYTES;
     // `submit_verdict`, which every verdict-holding stage calls before it completes.
     const VERDICT_CHECK_BYTES: usize = 512;
-    const BUDGET_BYTES: usize =
-        33 * 1024 + INTENT_BINDING_BYTES + INTENT_RECORD_BYTES + VERDICT_CHECK_BYTES;
+    // Each effort's note that `max` needs `[models] max_effort` (1.6.4).
+    const EFFORT_CAP_NOTE_BYTES: usize = 256;
+    const BUDGET_BYTES: usize = 33 * 1024
+        + INTENT_BINDING_BYTES
+        + INTENT_RECORD_BYTES
+        + VERDICT_CHECK_BYTES
+        + EFFORT_CAP_NOTE_BYTES;
     let definitions = definitions();
     assert_eq!(definitions[FROM_1_0 - 1].name, "message_orchestrator");
     let carried: usize = definitions[..FROM_1_0].iter().map(shown_bytes).sum();
@@ -1468,6 +1473,41 @@ fn the_tool_list_stays_within_its_budget() {
         "submit_verdict exceeds its allocation at {verdict_check} bytes"
     );
     assert!(all <= BUDGET_BYTES, "the tool list grew to {all} bytes");
+}
+
+/// Every effort a tool takes says that `max` needs the operator's cap: the
+/// orchestrator otherwise learns it only from a refusal.
+#[test]
+fn every_effort_says_max_needs_the_operator_s_cap() {
+    fn efforts<'a>(schema: &'a Value, found: &mut Vec<&'a Value>) {
+        match schema {
+            Value::Object(map) => {
+                let is_effort = map.get("enum").and_then(Value::as_array).is_some_and(|e| {
+                    e.iter().any(|v| v == "x_high") && e.iter().any(|v| v == "max")
+                });
+                if is_effort {
+                    found.push(schema);
+                }
+                map.values().for_each(|v| efforts(v, found));
+            }
+            Value::Array(items) => items.iter().for_each(|v| efforts(v, found)),
+            _ => {}
+        }
+    }
+    let definitions = definitions();
+    let mut found = Vec::new();
+    for definition in &definitions {
+        efforts(&definition.input_schema, &mut found);
+    }
+    assert!(
+        found.len() >= 2,
+        "a plan's and steer_item's efforts: {}",
+        found.len()
+    );
+    for effort in found {
+        let said = effort["description"].as_str().unwrap_or_default();
+        assert!(said.contains("`[models] max_effort"), "{effort}");
+    }
 }
 
 /// What a tool's description must say, since the prompt leaves it to the tool.

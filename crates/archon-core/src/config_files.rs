@@ -34,13 +34,13 @@ pub const STARTER_CONFIG: &str = r#"# Archon's configuration. Every key is optio
 # provider_weights = { "claude-code" = 7, codex = 3 }   # share of tier-only items
 # reserve_percent = { orchestrator = 15, interactive = 10 }   # quota stages never spend
 # interactive_providers = ["claude-code"]   # providers also used by hand
-# effort_sizing = false   # true: size every agent's effort by the effort rubric
+# effort_sizing = true    # false: 1.6.3's effort rules and reviewer floors (rollback)
 
 # Reviewers without an explicit <stage>.review model plan. The tier is a
 # preference: with no permitted model at it, the best permitted one is used.
 # [review]
 # default_tier = "balanced"
-# default_effort = "low"
+# default_effort = "medium"   # a default the lead may lower to low for a small low-risk diff
 # prefer_other_provider = true
 # auto_repair = true   # one automatic retry when the review, ship record or requirement results are refused
 # independent_acceptance = false   # true: refuse intent acceptance with no vision model apart from every builder

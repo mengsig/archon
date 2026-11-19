@@ -124,3 +124,41 @@ fn learning_empty_states_and_proposals_do_not_start_a_daemon() {
         assert!(!home.path().join("data").exists());
     }
 }
+
+/// The stage nudges `archon --json pipelines list` prints, by pipeline and stage.
+fn listed_nudges(home: &Path) -> Vec<(String, String, Option<String>)> {
+    let out = archon(home, &["--json", "pipelines", "list"]);
+    assert!(out.status.success(), "{out:?}");
+    let listing: archon_core::catalog::CatalogListing =
+        serde_json::from_slice(&out.stdout).expect("a catalog listing");
+    nudges(&listing)
+}
+
+fn nudges(listing: &archon_core::catalog::CatalogListing) -> Vec<(String, String, Option<String>)> {
+    let mut all = Vec::new();
+    for pipeline in &listing.pipelines {
+        for stage in &pipeline.stages {
+            all.push((pipeline.name.clone(), stage.id.clone(), stage.nudge.clone()));
+        }
+    }
+    assert!(!all.is_empty(), "the built-ins have stages");
+    all
+}
+
+/// Offline, the catalog's nudges are archond's: worded by the effort rubric
+/// by default, and as written (1.6.3's) with `effort_sizing = false`.
+#[test]
+fn the_local_catalog_words_its_nudges_as_archond_serves_them() {
+    let written = archon_pipeline::Catalog::builtin().listing();
+    let mut sized = written.clone();
+    archon_pipeline::sized_nudges::sized_nudges(&mut sized);
+    assert_ne!(nudges(&sized), nudges(&written), "the rubric rewords some");
+
+    let home = tempfile::tempdir().unwrap();
+    assert_eq!(listed_nudges(home.path()), nudges(&sized), "on by default");
+    write(
+        &home.path().join("config/config.toml"),
+        "[models]\neffort_sizing = false\n",
+    );
+    assert_eq!(listed_nudges(home.path()), nudges(&written), "rolled back");
+}

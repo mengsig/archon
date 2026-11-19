@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use archon_core::catalog::{Gate, StageKind, WorkspaceMode};
-use archon_core::model::{EFFORT_RUBRIC, Effort, ModelChoice, ModelRef};
+use archon_core::model::{EFFORT_RUBRIC, Effort, EffortContract, ModelChoice, ModelRef};
 use archon_core::policy::ModelPolicy;
 use archon_core::run::StageOutcome;
 use serde::Serialize;
@@ -154,9 +154,7 @@ pub fn delegation_rules(
     let depth = depth_rule(depth);
     let bounds = review_bounds(experiments);
     let sizing = match effort_sizing {
-        true => format!(
-            "- Size each child's effort to its own task, whatever yours is: {EFFORT_RUBRIC}\n"
-        ),
+        true => format!("- {SIZED_CHILDREN}, whatever yours is: {EFFORT_RUBRIC}\n"),
         false => String::new(),
     };
     format!(
@@ -602,7 +600,7 @@ fn floored_reviewer_rules(choices: &[ModelChoice], cap: Option<Effort>) -> Strin
         .collect();
     let rules = format!(
         "- Delegate every reviewer with role `reviewer`, each on one of these models, \
-         taken in turn: {}. Each effort is a floor, never a ceiling: Archon cancels a \
+         taken in turn: {}. {FLOORED_REVIEWERS}: Archon cancels a \
          child labelled `reviewer` on any other model, or below its model's effort, as it \
          spawns.\n",
         models.join("; ")
@@ -638,10 +636,11 @@ pub(crate) fn unnamed_reviewer_effort(floor: Effort, cap: Option<Effort>) -> Str
     )
 }
 
-/// The rubric's efforts for a review, cheapest first, with the diff each fits.
+/// The rubric's efforts for a review, cheapest first, with the diff each fits:
+/// [`EFFORT_RUBRIC`]'s reviews, level for level.
 const REVIEW_EFFORTS: [(Effort, &str); 4] = [
-    (Effort::Low, "for a trivial diff"),
-    (Effort::Medium, "for a small or low-risk diff"),
+    (Effort::Low, "for a trivial or small low-risk diff"),
+    (Effort::Medium, "for an ordinary diff"),
     (Effort::High, "for a risky diff or shared code"),
     (Effort::XHigh, "for concurrency or security analysis"),
 ];
@@ -660,7 +659,7 @@ pub(crate) fn reviewer_effort_rule(cap: Option<Effort>) -> String {
         _ => String::new(),
     };
     let rule = format!(
-        "That effort is the default, for a diff the rubric leaves open; otherwise the \
+        "{SIZED_REVIEWERS}; otherwise the \
          rubric decides: {}{ceiling}. This replaces any effort floor the stage prompt \
          names. {REASON_RULE}",
         levels.join(", ")
@@ -670,6 +669,101 @@ pub(crate) fn reviewer_effort_rule(cap: Option<Effort>) -> String {
         "every cap leaves the cheapest level"
     );
     rule
+}
+
+/// The words that tell a contract's effort rule apart. A lead's contract is
+/// stored with its spawn: one stored before its mode was recorded is read by them.
+const SIZED_CHILDREN: &str = "Size each child's effort to its own task";
+const SIZED_REVIEWERS: &str = "That effort is the default, for a diff the rubric leaves open";
+const FLOORED_REVIEWERS: &str = "Each effort is a floor, never a ceiling";
+/// Where those words sit in a rendered contract, and the rule lines they open.
+const REVIEWER_RULE: &str = "- Delegate every reviewer with role `reviewer`";
+const NAMED_REVIEWERS: &str = ", each on one of these models, taken in turn: ";
+const PROFILE_REVIEWERS: &str = ", on ";
+const DEADLINE_HEADING: &str = "\n## Deadline\n";
+const DELEGATION_HEADING: &str = "\n## Delegation\n";
+
+/// The effort rule contract `instructions` states, as rendered here: `None`
+/// when it states none, such as a contract that names no reviewer or child.
+/// Only its own rule lines tell, never text it quotes: the reviewer rule
+/// precedes the deadline and every quoting section, and the children's rule
+/// opens a line of the last section, the delegation rules.
+pub fn stated_effort_contract(instructions: &str) -> Option<EffortContract> {
+    let delegation = instructions
+        .rsplit_once(DELEGATION_HEADING)
+        .map_or("", |(_, own)| own);
+    let reviewer_rules = || own_reviewer_rules(instructions);
+    let floored = reviewer_rules().any(floored_reviewer_rule);
+    let sized_reviewers = reviewer_rules().any(|line| {
+        line.contains(&format!(
+            "{SIZED_REVIEWERS}; otherwise the rubric decides: "
+        ))
+    });
+    let sized_children = delegation
+        .lines()
+        .any(|line| line.starts_with(&format!("- {SIZED_CHILDREN}, whatever yours is: ")));
+    match (sized_reviewers || sized_children, floored) {
+        (true, false) => Some(EffortContract::Rubric),
+        (false, true) => Some(EffortContract::Floor),
+        // Both is no contract rendered here: the reader holds it to neither.
+        (true, true) | (false, false) => None,
+    }
+}
+
+/// Whether reviewer rule `line` holds its reviewers to 1.6.3's floors: the
+/// plan's named floor, or the profile's effort stated with no rubric beside it.
+fn floored_reviewer_rule(line: &str) -> bool {
+    assert!(line.starts_with(REVIEWER_RULE), "a reviewer rule line");
+    if line.contains(&format!(". {FLOORED_REVIEWERS}: Archon cancels a ")) {
+        return true;
+    }
+    let Some(profile) = line[REVIEWER_RULE.len()..].strip_prefix(PROFILE_REVIEWERS) else {
+        return false;
+    };
+    let states_effort = [" at effort ", " and effort "]
+        .iter()
+        .any(|words| profile.contains(words));
+    states_effort && !profile.contains(SIZED_REVIEWERS)
+}
+
+/// The reviewer rule lines of contract `instructions`: those before the
+/// deadline, which every section that quotes text follows.
+fn own_reviewer_rules(instructions: &str) -> impl Iterator<Item = &str> {
+    let before_quotes = instructions
+        .split_once(DEADLINE_HEADING)
+        .map_or(instructions, |(own, _)| own);
+    before_quotes
+        .lines()
+        .filter(|line| line.starts_with(REVIEWER_RULE))
+}
+
+/// The reviewers contract `instructions` names, as rendered here, each at
+/// its stated effort: empty when its rule leaves them to the model policy,
+/// `None` when it states no reviewer rule or one this cannot read.
+pub fn stated_reviewers(instructions: &str) -> Option<Vec<ModelChoice>> {
+    // The reviewer section is the last before the deadline.
+    let rule = own_reviewer_rules(instructions).last()?;
+    let after_role = rule.strip_prefix(REVIEWER_RULE)?;
+    let Some(listed) = after_role.strip_prefix(NAMED_REVIEWERS) else {
+        return Some(Vec::new());
+    };
+    let (listed, _) = listed.split_once(". ")?;
+    let named: Option<Vec<ModelChoice>> = listed.split("; ").map(stated_reviewer).collect();
+    assert!(
+        named.as_ref().is_none_or(|named| !named.is_empty()),
+        "a split yields at least one item"
+    );
+    named
+}
+
+/// One `{model} at effort {floor}[ up to {cap}| or higher]` of a reviewer rule.
+fn stated_reviewer(item: &str) -> Option<ModelChoice> {
+    let (model, efforts) = item.rsplit_once(" at effort ")?;
+    let floor = efforts.split(' ').next()?;
+    Some(ModelChoice::pinned(
+        model.parse().ok()?,
+        floor.parse().ok()?,
+    ))
 }
 
 /// What a lead owes whenever it moves a reviewer off the plan's effort.
@@ -1997,11 +2091,123 @@ mod tests {
         let capped = ModelPolicy::from_lists(&[], &[], Some(archon_core::model::Effort::Medium));
         let rules = reviewer_model_rules(Some(&named), &own, &capped, true);
         assert!(rules.contains("opus at effort medium; claude-code/haiku at effort low."));
-        assert!(rules.contains("`medium` for a small or low-risk diff; never above medium"));
+        assert!(rules.contains("`medium` for an ordinary diff; never above medium"));
         assert!(
             !rules.contains("x_high"),
             "the cap rules x_high out: {rules}"
         );
+    }
+
+    /// A contract stored before its mode was recorded is read by its words:
+    /// floors, the rubric, or neither, whichever rule rendered it.
+    #[test]
+    fn a_stored_contract_states_the_effort_rule_it_was_rendered_with() {
+        use archon_core::model::Effort::Medium;
+        let named = [ModelChoice {
+            model: "codex/m".parse().unwrap(),
+            effort: Medium,
+            tier: None,
+        }];
+        let own = model("claude-code/opus");
+        let open = ModelPolicy::default();
+        for sizing in [false, true] {
+            let reviewers = reviewer_model_rules(Some(&named), &own, &open, sizing);
+            let children = delegation_rules(WorkspaceMode::Worktree, "a/one", 2, None, sizing);
+            let expected = Some(EffortContract::of(sizing));
+            assert_eq!(stated_effort_contract(&reviewers), expected, "{reviewers}");
+            let whole = format!("{reviewers}{children}");
+            assert_eq!(stated_effort_contract(&whole), expected, "{whole}");
+        }
+        let children = delegation_rules(WorkspaceMode::Worktree, "a/one", 2, None, true);
+        assert_eq!(
+            stated_effort_contract(&children),
+            Some(EffortContract::Rubric)
+        );
+        let plain = delegation_rules(WorkspaceMode::Worktree, "a/one", 2, None, false);
+        assert_eq!(stated_effort_contract(&plain), None, "it names no rule");
+        let unnamed = reviewer_model_rules(None, &own, &open, false);
+        assert_eq!(stated_effort_contract(&unnamed), None, "{unnamed}");
+    }
+
+    /// Words a contract quotes (a dependency's summary, a lesson, a pipeline
+    /// note) tell nothing: only the contract's own rule lines, where it renders them.
+    #[test]
+    fn quoted_rule_words_never_tell_a_contract_s_effort_rule() {
+        use archon_core::model::Effort::Medium;
+        let named = [ModelChoice {
+            model: "codex/m".parse().unwrap(),
+            effort: Medium,
+            tier: None,
+        }];
+        let own = model("claude-code/opus");
+        let open = ModelPolicy::default();
+        let deadline = "\n## Deadline\n\n- Archon stops you at noon.\n";
+        for sizing in [false, true] {
+            let reviewers = reviewer_model_rules(Some(&named), &own, &open, sizing);
+            let other = reviewer_model_rules(Some(&named), &own, &open, !sizing);
+            let children = delegation_rules(WorkspaceMode::Worktree, "a/one", 2, None, sizing);
+            let quoted = format!("\n## Dependencies\n\n> {other}\n{other}");
+            let whole = format!("contract\n{reviewers}{deadline}{quoted}{children}");
+            let expected = Some(EffortContract::of(sizing));
+            assert_eq!(stated_effort_contract(&whole), expected, "{whole}");
+        }
+        let floored = reviewer_model_rules(Some(&named), &own, &open, false);
+        let sized = delegation_rules(WorkspaceMode::Worktree, "a/one", 2, None, true);
+        let quoting = format!("contract\n{deadline}\n## Lessons\n\n{floored}{sized}");
+        let plain = delegation_rules(WorkspaceMode::Worktree, "a/one", 2, None, false);
+        assert_eq!(
+            stated_effort_contract(&format!("{quoting}{plain}")),
+            None,
+            "the words sit only in quoting sections"
+        );
+    }
+
+    /// A contract's reviewers read back from its own rule, as either effort
+    /// rule renders them under any cap, never from a section that quotes one.
+    #[test]
+    fn a_contract_states_the_reviewers_it_names() {
+        use archon_core::model::Effort::{High, Medium, XHigh};
+        let named = [
+            ModelChoice::pinned("codex/gpt-5.5".parse().unwrap(), Medium),
+            ModelChoice::pinned("claude-code/opus".parse().unwrap(), High),
+        ];
+        let own = model("claude-code/opus");
+        let deadline = "\n## Deadline\n\n- Archon stops you at noon.\n";
+        for cap in [None, Some(High), Some(XHigh)] {
+            let policy = ModelPolicy {
+                max_effort: cap,
+                ..ModelPolicy::default()
+            };
+            for sizing in [false, true] {
+                let rules = reviewer_model_rules(Some(&named), &own, &policy, sizing);
+                let whole = format!("contract\n{rules}{deadline}");
+                assert_eq!(stated_reviewers(&whole), Some(named.to_vec()), "{whole}");
+            }
+        }
+        let open = ModelPolicy::default();
+        let fallback = reviewer_model_rules(None, &own, &open, false);
+        let left = format!("contract\n{fallback}{deadline}");
+        assert_eq!(
+            stated_reviewers(&left),
+            Some(Vec::new()),
+            "the policy bounds them"
+        );
+        let quoted = reviewer_model_rules(Some(&named), &own, &open, false);
+        let quoting = format!("contract\n{deadline}\n## Lessons\n\n{quoted}");
+        assert_eq!(stated_reviewers(&quoting), None, "quoted words never tell");
+        let mangled = "- Delegate every reviewer with role `reviewer`, each on one of these \
+                       models, taken in turn: codex at effort lowish. Each effort is a floor\n";
+        assert_eq!(
+            stated_reviewers(mangled),
+            None,
+            "an unreadable rule tells nothing"
+        );
+        let a_1_6_3_line = "- Delegate every reviewer with role `reviewer`, each on one of \
+             these models, taken in turn: codex/gpt-5 at effort medium up to x_high. Each \
+             effort is a floor, never a ceiling: Archon cancels a child labelled `reviewer` \
+             on any other model, or below its model's effort, as it spawns.\n";
+        let floor = ModelChoice::pinned("codex/gpt-5".parse().unwrap(), Medium);
+        assert_eq!(stated_reviewers(a_1_6_3_line), Some(vec![floor]));
     }
 
     /// The rubric sets a reviewer's effort from the diff, lower or higher than
@@ -2013,8 +2219,8 @@ mod tests {
         assert_eq!(
             open,
             "That effort is the default, for a diff the rubric leaves open; otherwise the \
-             rubric decides: `low` for a trivial diff, `medium` for a small or low-risk diff, \
-             `high` for a risky diff or shared code, `x_high` for concurrency or security \
+             rubric decides: `low` for a trivial or small low-risk diff, `medium` for an \
+             ordinary diff, `high` for a risky diff or shared code, `x_high` for concurrency or security \
              analysis. This replaces any \
              effort floor the stage prompt names. Off the default, lower or higher, state the \
              reason in one line in your result."
@@ -2025,12 +2231,13 @@ mod tests {
         assert!(!below_max.contains("`max`"), "{below_max}");
         let capped = reviewer_effort_rule(Some(Medium));
         assert!(
-            capped.contains("`medium` for a small or low-risk diff; never above medium"),
+            capped.contains("`medium` for an ordinary diff; never above medium"),
             "{capped}"
         );
         assert!(!capped.contains("`high`"), "{capped}");
         assert!(
-            reviewer_effort_rule(Some(Low)).contains("`low` for a trivial diff; never above low")
+            reviewer_effort_rule(Some(Low))
+                .contains("`low` for a trivial or small low-risk diff; never above low")
         );
         let choice = |effort| ModelChoice {
             model: "codex/m".parse().unwrap(),
@@ -2043,7 +2250,10 @@ mod tests {
             assert!(rules.contains(&format!(
                 "codex/m at effort {effort}. That effort is the default"
             )));
-            assert!(rules.contains("`low` for a trivial diff"), "{rules}");
+            assert!(
+                rules.contains("`low` for a trivial or small low-risk diff"),
+                "{rules}"
+            );
             assert!(rules.contains(REASON_RULE), "{rules}");
             assert!(!rules.contains(&format!("{effort} or higher")), "{rules}");
         }

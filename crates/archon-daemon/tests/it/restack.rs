@@ -229,6 +229,38 @@ async fn a_moved_parent_is_merged_forward_and_pushed_without_rewriting_child() {
     );
 }
 
+/// A restack fix is a lead of its own: it is issued the effort rule in force
+/// as its spawn is reserved, never the one the item it fixes was issued.
+#[tokio::test]
+async fn a_restack_fix_is_issued_its_own_effort_rule() {
+    let mut config = Config::default();
+    config.models.effort_sizing = Some(false);
+    let (mut h, parent, child) = stack_pair_with(config).await;
+    let requests = h.backend.requests();
+    let of_child = requests
+        .iter()
+        .rfind(|r| r.labels["archon.item"] == child.id.to_string());
+    let of_child = of_child.expect("the child's lead was spawned").clone();
+    assert_eq!(h.issued_effort_contract(&of_child).await, "floor");
+    let parent_run = h.run(&parent.id).await;
+    let child_run = h.run(&child.id).await;
+    commit(&child_run.workspace, "parent.txt", "child edits\n");
+    finish_item(&h, &child.id).await;
+    advance_branch(&h, &parent_run.branch, "parent.txt", "parent edits\n");
+    let mut sized = h.ctx.config.clone();
+    sized.models.effort_sizing = None;
+    h.restart_with(sized);
+    archon_daemon::executor::recover(&h.ctx).await.unwrap();
+    h.dispatch().await;
+    let fixes = restack_fixes(&h, &child.id).await;
+    assert_eq!(fixes.len(), 1, "{fixes:?}");
+    let fix = fixes[0].1.clone();
+    let requests = h.backend.requests();
+    let of_fix = requests.iter().rfind(|r| r.labels["archon.item"] == fix);
+    let of_fix = of_fix.expect("the fix's lead was spawned");
+    assert_eq!(h.issued_effort_contract(of_fix).await, "rubric", "its own");
+}
+
 #[tokio::test]
 async fn a_merge_conflict_enqueues_one_fix_on_the_child_branch_and_survives_restart() {
     let (mut h, parent, child) = stack_pair().await;

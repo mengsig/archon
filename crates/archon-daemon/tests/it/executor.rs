@@ -2604,7 +2604,7 @@ async fn a_policy_narrowed_mid_run_bounds_the_next_lead_s_reviewers() {
     h.dispatch().await;
     let build = h.backend.requests().last().unwrap().clone();
     assert_eq!(build.labels["archon.stage"], "build");
-    let own = format!("on {MODEL} at tier balanced and effort medium up to x_high");
+    let own = format!("on {MODEL} at tier balanced and effort medium. That effort is the default");
     assert!(build.instructions.contains(&own), "{}", build.instructions);
     let named = build.instructions.matches(REVIEW_MODEL).count();
     assert_eq!(named, 0, "{}", build.instructions);
@@ -2670,6 +2670,7 @@ async fn adaptive_guarded_build_delegates_within_the_stated_policy_and_archond_s
     let mut config = Config::default();
     config.models.allow = vec![MODEL.parse().unwrap(), REVIEW_MODEL.parse().unwrap()];
     config.models.max_effort = Some(Effort::High);
+    config.models.effort_sizing = Some(false);
     let h = Harness::with_config(config).await;
     seed_review_catalog(&h).await;
     let gh = FakeGh::install(&h);
@@ -2696,7 +2697,7 @@ async fn adaptive_guarded_build_delegates_within_the_stated_policy_and_archond_s
     assert!(
         !build.instructions.contains("the rubric decides")
             && !build.instructions.contains("`x_high` for hard reasoning"),
-        "no effort sizing by default"
+        "no effort sizing when rolled back"
     );
 
     let (built, reviewer) = reviewed_by_one(&h, "Verified; one reviewer passed it").await;
@@ -2711,14 +2712,13 @@ async fn adaptive_guarded_build_delegates_within_the_stated_policy_and_archond_s
     assert!(body.contains(&review), "{body}");
 }
 
-/// `[models] effort_sizing` reaches the lead's contract: its children and its
-/// reviewers are sized by the effort rubric, within the policy's cap.
+/// By default the lead's contract sizes its children and its reviewers by
+/// the effort rubric, within the policy's cap, and its spawn records that.
 #[tokio::test]
-async fn an_opted_in_lead_sizes_its_children_and_reviewers_by_the_rubric() {
+async fn a_lead_sizes_its_children_and_reviewers_by_the_rubric_by_default() {
     let mut config = Config::default();
     config.models.allow = vec![MODEL.parse().unwrap(), REVIEW_MODEL.parse().unwrap()];
     config.models.max_effort = Some(Effort::High);
-    config.models.effort_sizing = true;
     let h = Harness::with_config(config).await;
     seed_review_catalog(&h).await;
     h.repo_config(&format!("[models]\ndeny = [\"{REVIEW_MODEL}\"]\n"));
@@ -2733,11 +2733,14 @@ async fn an_opted_in_lead_sizes_its_children_and_reviewers_by_the_rubric() {
     assert!(rules.contains(&sizing), "{rules}");
     let own = format!(
         "on {MODEL} at tier balanced and effort medium. That effort is the default, for a diff \
-         the rubric leaves open; otherwise the rubric decides: `low` for a trivial diff, \
-         `medium` for a small or low-risk diff, `high` for a risky diff or shared code; never \
-         above high, the model policy's cap."
+         the rubric leaves open; otherwise the rubric decides: `low` for a trivial or small \
+         low-risk diff, `medium` for an ordinary diff, `high` for a risky diff or shared code; \
+         never above high, the model policy's cap."
     );
     assert!(build.instructions.contains(&own), "{}", build.instructions);
+    assert_eq!(h.issued_effort_contract(&build).await, "rubric");
+    let reviewers = &h.stored_spawn(&build).await["issued_reviewers"];
+    assert_eq!(*reviewers, serde_json::json!([]), "left to the policy");
 }
 
 /// A pass is the lead's word until Aether shows the reviewer: an agent it

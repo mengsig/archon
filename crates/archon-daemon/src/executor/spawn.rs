@@ -16,6 +16,7 @@ use archon_core::delegation::Narrowed;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
 use archon_core::lesson::CONTRACT_LESSONS;
+use archon_core::model::{EffortContract, ModelChoice};
 use archon_core::policy::ModelPolicy;
 use archon_core::ports::{SpawnRequest, SpawnedAgent};
 use archon_core::queue::QueueItem;
@@ -91,6 +92,78 @@ pub(crate) struct StoredSpawn {
     /// The agent was told its stage deadline nears; it is told once.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deadline_warned: bool,
+    /// The effort rule `request.instructions` were rendered with, decided as
+    /// the spawn was reserved. `None` on a spawn stored by 1.6.3, which its
+    /// instructions tell instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort_contract: Option<EffortContract>,
+    /// The reviewers `request.instructions` named (`SpawnPlan::reviewers`):
+    /// empty when bounded by policy, `None` when the agent owed none or 1.6.3
+    /// stored the spawn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issued_reviewers: Option<Vec<ModelChoice>>,
+}
+
+impl StoredSpawn {
+    /// The effort rule `request` was rendered with; `None` when nothing
+    /// recorded tells, which the watchdog reads as permissive. Only the
+    /// [`issuing_spawn`] of an agent tells the rule that agent holds.
+    pub(crate) fn issued_effort_contract(&self) -> Option<EffortContract> {
+        // What was recorded wins: a brief may quote a rule's words.
+        self.effort_contract
+            .or_else(|| contract::stated_effort_contract(&self.request.instructions))
+    }
+
+    /// The reviewers `request` named, each at the effort it stated; `None`
+    /// when it left them to the model policy or nothing recorded tells.
+    pub(crate) fn named_reviewers(&self) -> Option<Vec<ModelChoice>> {
+        let named = match &self.issued_reviewers {
+            Some(recorded) => recorded.clone(),
+            None => contract::stated_reviewers(&self.request.instructions)?,
+        };
+        Some(named).filter(|named| !named.is_empty())
+    }
+}
+
+/// The spawn whose request created the agent stage run `id` holds: its own,
+/// or for a resumed or woken agent that of the earlier stage run of the same
+/// run that bound it first. `None` when a spawn on the way is gone.
+pub(crate) fn issuing_spawn(
+    store: &Store,
+    id: &StageRunId,
+) -> Result<Option<StoredSpawn>, ArchonError> {
+    let mut spawn = match load_spawn(store, id) {
+        Ok(spawn) => spawn,
+        Err(ArchonError::NotFound(_)) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if spawn.resume.is_none() {
+        return Ok(Some(spawn));
+    }
+    let mut stage = store.stage_run(id)?;
+    let stages = store.stage_runs(&stage.run)?;
+    // Each step goes strictly earlier, so the walk ends within the run.
+    for _ in 0..stages.len() {
+        let Some(kept) = &spawn.resume else {
+            return Ok(Some(spawn));
+        };
+        let holder = stages
+            .iter()
+            .filter(|s| s.started_at < stage.started_at)
+            .filter(|s| s.aether_agent.as_ref() == Some(&kept.agent))
+            .max_by_key(|s| s.started_at);
+        let Some(holder) = holder else {
+            return Ok(None);
+        };
+        assert_eq!(holder.run, stage.run, "a kept agent stays in its run");
+        spawn = match load_spawn(store, &holder.id) {
+            Ok(spawn) => spawn,
+            Err(ArchonError::NotFound(_)) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        stage = holder.clone();
+    }
+    Ok(spawn.resume.is_none().then_some(spawn))
 }
 
 /// The agent kept from the slot's previous attempt, and what it is told to
@@ -665,12 +738,12 @@ impl Target<'_> {
         &self,
         plan: &SpawnPlan,
         until: Timestamp,
-        workers: Option<&Narrowed>,
+        (workers, effort): (Option<&Narrowed>, EffortContract),
     ) -> String {
         assert!(!plan.instructions.is_empty(), "every stage has a contract");
         // An unreadable policy refuses this spawn when it is issued (`claim`).
         let policy = RepoEnv::new(self.repo.cloned()).map(|env| env.policy(self.config));
-        let reviewers = reviewer_rules(plan, &policy, self);
+        let reviewers = reviewer_rules(plan, &policy, self, effort);
         let minutes = self.timeout_minutes(plan);
         let deadline = contract::deadline_rule(plan.kind, plan.workspace, minutes, until);
         let contract = format!(
@@ -690,7 +763,7 @@ impl Target<'_> {
             &models,
             depth,
             Some(self.experiments),
-            self.config.models.effort_sizing,
+            effort.sized(),
         );
         let workers = workers.map(contract::worker_rule).unwrap_or_default();
         format!("{contract}{rules}{workers}")
@@ -703,6 +776,7 @@ fn reviewer_rules(
     plan: &SpawnPlan,
     policy: &Result<ModelPolicy, ArchonError>,
     target: &Target<'_>,
+    effort: EffortContract,
 ) -> String {
     let Some(named) = plan.reviewers.as_deref() else {
         return String::new();
@@ -718,7 +792,7 @@ fn reviewer_rules(
             policy,
             (&target.config.review, target.catalog),
             target.governed,
-            target.config.models.effort_sizing,
+            effort.sized(),
         ),
         Err(error) => format!(
             "- Delegate no reviewer: the repository's model policy cannot be read ({error}).\n"
@@ -745,7 +819,10 @@ fn reserve_one(
     let id = StageRunId::new();
     let nth = retry.as_ref().map(|r| r.nth);
     let workers = delegation_policy(target, plan);
-    let mut request = build_request(target, plan, (&id, workers.as_ref()), budget, now, nth);
+    // Decided once, here: the request's words and the record of them agree.
+    let effort = EffortContract::of(target.config.models.effort_sizing());
+    let issued = (&id, workers.as_ref(), effort);
+    let mut request = build_request(target, plan, issued, budget, now, nth);
     let observes = super::acceptance::observes_requirements(store, target.run, &plan.stage_id)?;
     let intent = (target.references, plan.reports_requirements || observes);
     super::acceptance::attach(store, target.item, &mut request, intent)?;
@@ -801,6 +878,8 @@ fn reserve_one(
         not_before,
         deadline_wake: extension.is_some(),
         deadline_warned: false,
+        effort_contract: Some(effort),
+        issued_reviewers: plan.reviewers.clone(),
     };
     save_spawn(store, &id, &spawn)?;
     let stage = StageRun {
@@ -858,7 +937,7 @@ fn slot_budget(budget: Option<f64>, plan: &SpawnPlan) -> Option<f64> {
 fn build_request(
     target: &Target<'_>,
     plan: &SpawnPlan,
-    (id, workers): (&StageRunId, Option<&Narrowed>),
+    (id, workers, effort): (&StageRunId, Option<&Narrowed>, EffortContract),
     budget: Option<f64>,
     now: Timestamp,
     retry: Option<usize>,
@@ -884,7 +963,7 @@ fn build_request(
         // Every reserved spawn is bound to the run's node before it is sent.
         name: naming::stage_agent_name(naming::Placement::UnderRunNode, plan, retry),
         objective: plan.prompt.clone(),
-        instructions: target.instructions(plan, until, workers),
+        instructions: target.instructions(plan, until, (workers, effort)),
         choice: plan.choice.clone(),
         workspace,
         repository: target.repo.map(|repo| repo.name.clone()),
@@ -1652,4 +1731,101 @@ async fn spawned_ok(
         roster: vec![run.id],
         ..FollowUp::default()
     })
+}
+
+#[cfg(test)]
+mod effort_contract_tests {
+    use super::*;
+    use serde_json::{Value, json};
+
+    const FLOORED: &str = "- Delegate every reviewer with role `reviewer`, each on one of \
+        these models, taken in turn: m at effort medium. Each effort is a floor, never a \
+        ceiling: Archon cancels a child labelled `reviewer` on any other model.\n";
+    const SIZED: &str = "- Delegate every reviewer with role `reviewer`, on m at effort \
+        medium. That effort is the default, for a diff the rubric leaves open; otherwise the \
+        rubric decides: `low` for a trivial diff.\n";
+
+    /// A spawn as 1.6.3 stored it: no recorded rule, its contract `instructions`.
+    fn stored_by_1_6_3(instructions: &str) -> Value {
+        let request = json!({
+            "idempotency_key": "stage", "role": "archon-stage:adaptive/build", "name": "build",
+            "objective": "do it", "instructions": instructions,
+            "choice": {"model": "claude-code/claude-opus-5-5", "effort": "medium"},
+            "workspace": "/w", "repository": null, "labels": {}, "hidden_tools": [],
+            "leaf": false, "cost_budget_usd": null, "deadline": null, "attach_run": null,
+        });
+        json!({"request": request, "timeout_minutes": 30, "parent": "bound"})
+    }
+
+    fn issued(spawn: Value) -> Option<EffortContract> {
+        let spawn: StoredSpawn = serde_json::from_value(spawn).expect("a stored spawn");
+        spawn.issued_effort_contract()
+    }
+
+    /// 1.6.3 recorded no rule: its contract's words tell, and a spawn read
+    /// back unchanged is written as 1.6.3 wrote it.
+    #[test]
+    fn a_1_6_3_spawn_states_its_rule_in_its_words() {
+        assert_eq!(
+            issued(stored_by_1_6_3(FLOORED)),
+            Some(EffortContract::Floor)
+        );
+        assert_eq!(issued(stored_by_1_6_3(SIZED)), Some(EffortContract::Rubric));
+        assert_eq!(issued(stored_by_1_6_3("contract")), None, "nothing tells");
+        let both = format!("{FLOORED}{SIZED}");
+        assert_eq!(
+            issued(stored_by_1_6_3(&both)),
+            None,
+            "words that contradict"
+        );
+        let old = stored_by_1_6_3(FLOORED);
+        let read: StoredSpawn = serde_json::from_value(old.clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(&read).unwrap()["effort_contract"],
+            Value::Null
+        );
+        assert!(read.effort_contract.is_none());
+    }
+
+    /// The contracts 1.6.3's own code rendered with sizing off (the rollback
+    /// test's golden files) read as floors, the profile's as the plan's.
+    #[test]
+    fn contracts_1_6_3_rendered_read_as_the_floors_they_issued() {
+        for contract in [
+            include_str!("../../tests/it/effort_rollback/contract-named.txt"),
+            include_str!("../../tests/it/effort_rollback/contract-profile.txt"),
+        ] {
+            assert!(contract.contains("- Delegate every reviewer with role `reviewer`"));
+            let issued = issued(stored_by_1_6_3(contract));
+            assert_eq!(issued, Some(EffortContract::Floor), "{contract}");
+        }
+    }
+
+    /// The rule recorded as the spawn was reserved wins over any words.
+    #[test]
+    fn a_recorded_rule_wins_over_the_words() {
+        let mut spawn = stored_by_1_6_3(FLOORED);
+        spawn["effort_contract"] = json!("rubric");
+        assert_eq!(issued(spawn.clone()), Some(EffortContract::Rubric));
+        spawn["request"]["instructions"] = json!("contract");
+        spawn["effort_contract"] = json!("floor");
+        assert_eq!(issued(spawn), Some(EffortContract::Floor));
+    }
+
+    /// 1.6.3 stored no reviewers; a recorded list reads back as written.
+    #[test]
+    fn issued_reviewers_are_optional_on_a_stored_spawn() {
+        let mut spawn = stored_by_1_6_3(FLOORED);
+        let read: StoredSpawn = serde_json::from_value(spawn.clone()).unwrap();
+        assert_eq!(read.issued_reviewers, None);
+        assert!(
+            serde_json::to_value(&read)
+                .unwrap()
+                .get("issued_reviewers")
+                .is_none()
+        );
+        spawn["issued_reviewers"] = json!([]);
+        let read: StoredSpawn = serde_json::from_value(spawn).unwrap();
+        assert_eq!(read.issued_reviewers, Some(Vec::new()), "bounded by policy");
+    }
 }

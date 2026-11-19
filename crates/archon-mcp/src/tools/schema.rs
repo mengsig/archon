@@ -329,6 +329,15 @@ fn model_plan(what: &str) -> Value {
     ))
 }
 
+/// An effort; `max` is refused unless the operator raised the cap to it.
+fn effort() -> Value {
+    json!({
+        "type": "string",
+        "enum": ["low", "medium", "high", "x_high", "xhigh", "max"],
+        "description": "`max` needs `[models] max_effort = \"max\"`.",
+    })
+}
+
 /// The shape of a model plan, with `description` as the whole of its text.
 fn described_model_plan(description: &str) -> Value {
     let choice = json!({
@@ -337,7 +346,7 @@ fn described_model_plan(description: &str) -> Value {
             "model": model_ref(),
             "tier": {"type": "string", "enum": ["fast", "balanced", "strong", "frontier", "strongest"]},
             "provider": {"type": "string", "minLength": 1},
-            "effort": {"type": "string", "enum": ["low", "medium", "high", "x_high", "xhigh", "max"]},
+            "effort": effort(),
         },
         "anyOf": [{"required": ["model"]}, {"required": ["tier"]}],
         "additionalProperties": false,

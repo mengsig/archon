@@ -870,8 +870,8 @@ fn adaptive_prices_what_it_delegates_and_records_what_ships() {
 /// The four levels a review may take, as every reviewer-delegating prompt
 /// and contract words them, and the one-line reason a move off the default owes.
 const REVIEW_LEVELS: [&str; 4] = [
-    "`low` for a trivial diff",
-    "`medium` for a small or low-risk",
+    "`low` for a trivial or small low-risk diff",
+    "`medium` for an ordinary diff",
     "`high` for a risky diff",
     "`x_high` for concurrency or security analysis",
 ];

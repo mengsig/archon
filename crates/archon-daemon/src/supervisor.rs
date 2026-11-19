@@ -160,7 +160,7 @@ pub fn orchestrator_instructions(
     );
     let user_pipelines = archon_core::paths::config_dir().join("pipelines");
     let prompt = builtin_prompt(github, config.orchestrator.validate_before_handoff);
-    let mut text = sized_efforts(prompt, config.models.effort_sizing);
+    let mut text = sized_efforts(prompt, config.models.effort_sizing());
     let depth = config.limits.max_delegation_depth;
     text.push_str(&installation(workspace, &user_pipelines, depth));
     if let Some(path) = &config.orchestrator.instructions_file {
@@ -1982,19 +1982,19 @@ mod tests {
             assert!(prompt.contains(said), "missing {said:?}");
         }
         let rubric = archon_core::model::EFFORT_RUBRIC;
-        assert!(!prompt.contains("`max`"), "default prompt: {prompt}");
-        assert!(
-            prompt.contains("`x_high` only for a named reasoning problem inspection left open."),
-            "1.4.12's effort rule unless `[models] effort_sizing` opts in"
-        );
-        assert!(
-            !prompt.contains("Size each stage's effort"),
-            "no sizing by default"
-        );
         let mut config = Config::default();
-        config.models.effort_sizing = true;
-        let sized = orchestrator_instructions(&config, Path::new("/data/orchestrator"), true);
-        let prompt = unwrapped(&sized.unwrap());
+        config.models.effort_sizing = Some(false);
+        let rolled = orchestrator_instructions(&config, Path::new("/data/orchestrator"), true);
+        let rolled = unwrapped(&rolled.unwrap());
+        assert!(!rolled.contains("`max`"), "rolled back prompt: {rolled}");
+        assert!(
+            rolled.contains("`x_high` only for a named reasoning problem inspection left open."),
+            "1.4.12's effort rule when `[models] effort_sizing = false` rolls back"
+        );
+        assert!(
+            !rolled.contains("Size each stage's effort"),
+            "no sizing when rolled back"
+        );
         assert!(!prompt.contains("`max`"), "sized prompt: {prompt}");
         assert!(
             prompt.contains(&format!("Size each stage's effort to its task: {rubric}")),

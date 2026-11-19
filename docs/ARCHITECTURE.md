@@ -2207,17 +2207,26 @@ The orchestrator chooses independently for each stage, following operator
 provider preferences and exact model requests first. Pipeline nudges are
 advice, not routing rules. Its prompt asks what reasoning and ambiguity remain,
 what a wrong result would break and how tests or review would catch it, and
-which available model and effort are the cheapest plausible choices. The
-highest effort (`x_high`) is for a reasoning problem it can name that
-inspecting the work left unresolved; that the operator prefers strong models is
-not one. With `[models] effort_sizing = true` (off by default) one effort
-rubric (`archon_core::model::EFFORT_RUBRIC`) sizes every effort Archon asks an
-agent to choose instead, word for word in the orchestrator prompt and in every
-stage contract that may delegate: `low` for lookups, listing, formatting and
-mechanical edits; `medium` for routine changes and reviews of small or low-risk
-diffs; `high` for non-trivial design, risky diffs and reviews of shared code;
+which available model and effort are the cheapest plausible choices. With
+`[models] effort_sizing` (on unless the global config sets it `false`) one
+effort rubric (`archon_core::model::EFFORT_RUBRIC`) sizes every effort Archon
+asks an agent to choose, word for word in the orchestrator prompt and in every
+stage contract that may delegate: `low` for lookups, listing, formatting,
+mechanical edits and reviews of trivial or small low-risk diffs; `medium` for
+routine changes and reviews of ordinary diffs; `high` for non-trivial design, risky diffs and reviews of shared code;
 `x_high` for hard reasoning, such as root-causing a regression, concurrency or
 security analysis, or a fix that failed twice. Take the cheapest that fits.
+With it off (1.6.3's rules), the highest effort (`x_high`) is for a reasoning
+problem the orchestrator can name that inspecting the work left unresolved;
+that the operator prefers strong models is not one. Each spawn records which
+rule its contract was rendered with (`effort_contract`) and the reviewers it
+named (`issued_reviewers`), and the watchdog holds a lead's reviewers to that
+record, never to the config in force or the item's plan as edited since. A
+resumed or woken lead is held to the spawn that created its agent, found
+through its run's stage runs. A spawn stored by 1.6.3 is read by its own
+reviewer and delegation rule lines, never text its contract quotes, for its
+rule and the reviewers it named; one that tells nothing holds no reviewer to
+a floor or a plan's models, only to the model policy.
 Reviewers need independent discovery: another provider at the same tier counts, and several fast-tier reviewers, or a fast-tier team checked by
 one stronger-tier judge at low effort, can beat one balanced reviewer for far
 less. A failed stage prompts reconsideration through `retry_item`'s
@@ -2332,11 +2341,11 @@ The stage contract tells the lead to delegate reviewers with role `reviewer` on
 those models, each effort a floor and the model policy's `max_effort` the
 only ceiling: the delegation watchdog (§7.4) cancels a child with such a role
 on another model or below its model's effort as it spawns, before it does
-any work, and the contract states the floor so the lead delegates at it. With
-`[models] effort_sizing = true` each effort is instead the default for its
-reviewer, kept where the rubric leaves the diff open. Otherwise the rubric
-decides the review's level (`low` for a trivial diff, `medium` for a small or
-low-risk one, `high` for a risky diff or shared code, `x_high` for concurrency
+any work, and the contract states the floor so the lead delegates at it, when
+the lead was issued 1.6.3's rule (`effort_sizing = false`). Under the rubric,
+the default, each effort is instead the default for its reviewer, kept where the rubric leaves the diff open. Otherwise the rubric
+decides the review's level (`low` for a trivial or small low-risk diff,
+`medium` for an ordinary one, `high` for a risky diff or shared code, `x_high` for concurrency
 or security analysis), and the lead states the reason in one line in its result,
 lower or higher; the watchdog then cancels only a reviewer on another model. This check relies on the lead using
 the required reviewer role; children with other roles follow the general model
@@ -2349,8 +2358,8 @@ lead's, or the lead's own when the policy allows no other, and the watchdog hold
 reviewers only to the model policy. The `[review]` profile's contract asks such
 reviewers for at least medium effort, and at least high when the lead rates the
 change's risk medium or high, within the policy's `max_effort`. With effort
-sizing on it names its `default_effort`, raised to medium, as such a reviewer's
-default, sized to the diff the same way.
+sizing on it names its `default_effort` (default `medium`; `low` is honoured)
+as such a reviewer's default, sized to the diff the same way.
 
 **Stage timeouts.** `enqueue`, `update_item` and `steer_item` take `stage_timeouts`, a
 `{"<stage-id>": minutes}` map for the item: each stage it names runs with that
@@ -3413,7 +3422,7 @@ provider_weights = {}          # e.g. { "claude-code" = 7, codex = 3 }; {} = orc
 # default_provider_weight = 1  # a provider the table omits; 0 never routes to it
 # reserve_percent = { orchestrator = 15, interactive = 10 }   # quota stages leave; global only
 interactive_providers = []     # providers also used by hand; they keep the interactive reserve
-effort_sizing = false          # true: size every agent's effort by the effort rubric; global only
+effort_sizing = true           # false: 1.6.3's effort rules and reviewer floors; global only
 
 [limits]
 budgets_enabled = true         # false: no dollar budget is enforced; spend still recorded

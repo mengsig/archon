@@ -2225,6 +2225,37 @@ async fn a_reviewer_off_the_contract_s_named_models_is_cancelled() {
     assert!(reason.contains(&named), "{reason}");
 }
 
+/// A resumed lead whose creating spawn is gone was sent no policy Archon
+/// knows: the resuming spawn's named reviewers never reached it, so a
+/// reviewer on another model runs.
+#[tokio::test]
+async fn a_resumed_lead_is_not_held_to_its_resume_spawn_s_reviewers() {
+    use archon_core::delegation::{WorkerChoice, WorkerPolicy};
+    use archon_core::model_tier::Tier;
+    const RESUMED_WITH: (&str, &str) = ("claude-code", "claude-fable-5-2");
+    let harness = Harness::new().await;
+    let repo = tempfile::tempdir().unwrap();
+    let first = running_stage(&harness.ctx, repo.path(), STAGE, STAGE_TASK).await;
+    let resumed = link_common::resumed_stage(&harness.ctx, &first, "contract").await;
+    let workers = vec![WorkerChoice::of_tier(Tier::Balanced, Effort::Medium)];
+    let policy = WorkerPolicy::new(workers, Some(Tier::Balanced), Some(2))
+        .unwrap()
+        .with_reviewers(vec![ModelRef::new(RESUMED_WITH.0, RESUMED_WITH.1)]);
+    link_common::amend_spawn_request(&harness.ctx, &resumed, "delegation_policy", json!(policy))
+        .await;
+    let (agents, pump) = running_pump(&harness).await;
+    harness.fake.set_default("cancel", Scripted::ok());
+    let mut agent = agents.set(CHILD, "running");
+    agent["role"] = json!("reviewer");
+    agent["config"] = json!({"effort": "high"});
+    agents.0.lock().unwrap().insert(CHILD.to_owned(), agent);
+    push(&harness, created(CHILD, STAGE, ALLOWED), keys::CURSOR_FLEET).await;
+    pump.abort();
+
+    let cancels = harness.fake.received_named("cancel");
+    assert_eq!(cancels, Vec::<Value>::new(), "no sent policy is permissive");
+}
+
 /// A lead the model policy left no permitted worker is sent `workers = []`,
 /// which Aether reads as its tier rule: Archon cancels any child of it but a
 /// reviewer, so the lead works alone and its review still runs, whether or

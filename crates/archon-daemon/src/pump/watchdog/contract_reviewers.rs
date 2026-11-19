@@ -105,8 +105,9 @@ async fn named_models(
     Ok(models.filter(|models| !models.is_empty()))
 }
 
-/// The delegation policy stage agent `parent` was sent; `None` when it is
-/// no stage agent, its request is gone, or it was sent none.
+/// The delegation policy stage agent `parent` was sent by the spawn that
+/// created it; `None` when it is no stage agent, that spawn is gone (a
+/// resuming spawn's policy was never sent to it), or it was sent none.
 async fn sent_policy(
     ctx: &DaemonContext,
     parent: &AetherAgentId,
@@ -115,17 +116,8 @@ async fn sent_policy(
         return Ok(None);
     };
     let store = ctx.store.lock().await;
-    // A resumed or woken agent holds the policy it was created with.
-    if let Some(issuing) = executor::issuing_spawn(&store, &stage_run)? {
-        return Ok(issuing.request.delegation_policy);
-    }
-    let spawn = match executor::load_spawn(&store, &stage_run) {
-        Ok(spawn) => spawn,
-        // Pruned once its stage settled: no live lead delegates from it.
-        Err(ArchonError::NotFound(_)) => return Ok(None),
-        Err(error) => return Err(error),
-    };
-    Ok(spawn.request.delegation_policy)
+    let issuing = executor::issuing_spawn(&store, &stage_run)?;
+    Ok(issuing.and_then(|spawn| spawn.request.delegation_policy))
 }
 
 /// The spawn that issued the contract of the stage agent above `parent`

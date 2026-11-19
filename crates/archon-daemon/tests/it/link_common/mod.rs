@@ -404,6 +404,25 @@ pub async fn amend_spawn(
     store.kv_set(&key, &spawn.to_string()).unwrap();
 }
 
+/// `stage`'s stored spawn with its request's `field` set to `value`.
+pub async fn amend_spawn_request(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    field: &str,
+    value: serde_json::Value,
+) {
+    let mut store = ctx.store.lock().await;
+    let key = format!("spawn_request:{}", stage.id);
+    let raw = store.kv_get(&key).unwrap().expect("a stored spawn");
+    let mut spawn: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    let request = spawn
+        .get_mut("request")
+        .expect("a stored spawn holds its request");
+    assert!(request.get(field).is_some(), "the request has {field}");
+    request[field] = value;
+    store.kv_set(&key, &spawn.to_string()).unwrap();
+}
+
 /// `earlier`'s agent kept for its next attempt: `earlier` failed, and the
 /// running attempt that resumes the agent stored a spawn whose `resume`
 /// holds it, rendered with `instructions` and recording no rule, as 1.6.3 did.

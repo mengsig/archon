@@ -2718,13 +2718,18 @@ fn a_swarm_integrator_ships_its_reviewed_change() {
 fn a_recorded_review_fail_completes_the_lead_and_fails_the_run() {
     let mut sim = sim("review");
     sim.start();
-    let actions = sim.settle("review", 0, Agent::Fail("unchecked overflow"));
+    let mut result = reviewed_by("codex/astra");
+    result["verdict"] = "fail".into();
+    result["findings"] = serde_json::json!([{"severity": "high", "blocking": true,
+        "title": "unchecked overflow", "detail": "saturate the add", "path": "src/lib.rs:1"}]);
+    let summary = "Reviewed the head: one blocking finding.\nVERDICT: FAIL";
+    let actions = sim.settle("review", 0, Agent::Recorded(summary, result));
     let (stage, error) = failed(&actions);
     assert_eq!(stage, "review");
     assert!(error.contains(archon_core::run::STATED_FAILURE), "{error}");
     assert!(
-        error.contains("unchecked overflow"),
-        "the findings reach the item: {error}"
+        error.contains("unchecked overflow (src/lib.rs:1)") && error.contains("saturate the add"),
+        "the structured findings reach the item: {error}"
     );
     assert!(ship_plans(&actions).is_empty(), "a fail never ships");
     let lead = sim.stages.last().expect("the lead ran");
@@ -2772,4 +2777,28 @@ fn a_review_lead_s_disputed_pass_fails_the_run() {
         Some(archon_core::run::Verdict::Pass),
         "read by its review record"
     );
+}
+
+/// A review-only lead recorded before verdict notes, whose result stated no
+/// verdict beside its passing review record, is read by that record: it passes.
+#[test]
+fn a_review_lead_recorded_before_notes_is_read_by_its_review_record() {
+    let mut sim = sim("review");
+    sim.start();
+    let mut result = reviewed_by("codex/astra");
+    result.as_object_mut().unwrap().remove("verdict");
+    result["status"] = "done".into();
+    let actions = sim.settle(
+        "review",
+        0,
+        Agent::RecordedBeforeNotes("Reviewed the head.", result),
+    );
+    succeeded(&actions);
+    let lead = sim.stages.last().expect("the lead ran");
+    assert_eq!(
+        lead.verdict,
+        Some(archon_core::run::Verdict::Unknown),
+        "as stored then"
+    );
+    assert_eq!(lead.verdict_note, None);
 }

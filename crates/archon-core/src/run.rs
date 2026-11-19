@@ -108,12 +108,10 @@ impl Verdict {
     }
 
     /// Whether the summary's last `VERDICT:` line or its JSON's verdict,
-    /// `result` or `status` reads as anything but pass.
+    /// `result` or `status` reads as anything but pass, in words: the JSON's
+    /// findings are [`Self::findings_dispute`]'s to judge.
     fn summary_disagrees(summary: &str, json: Option<&serde_json::Value>) -> bool {
-        let said = [
-            Self::from_summary(summary),
-            json.and_then(Self::from_structured),
-        ];
+        let said = [Self::from_summary(summary), json.and_then(Self::as_worded)];
         said.into_iter().flatten().any(|said| said != Self::Pass)
     }
 

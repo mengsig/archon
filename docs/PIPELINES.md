@@ -1013,9 +1013,11 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   that delivers nothing, such as `review`). The review is the run's whole
   outcome, so its verdict is recorded with `complete_task`, a fail included,
   in the same `structured` `verdict` and `findings` beside the review record;
-  `fail_task` means only that the review could not be done. A result stating
-  no verdict of its own is read by its review record's. The run fails on any
-  verdict but pass, which never merges.
+  `fail_task` means only that the review could not be done. The lead fixes
+  and commits nothing: blocking findings make its verdict `fail`, and the
+  item's error lists them. A result stating no verdict of its own (metadata
+  such as `"status": "done"` states none) is read by its review record's. The
+  run fails on any verdict but pass, which never merges.
 - **The stage `[pipeline.ship]` names.** `## Ship record`: commit with the
   repository's git identity, leave a clean tree, do not push, and return
   `commit`, `tree`, `checks` and `pr` in `structured` (see "Shipping").

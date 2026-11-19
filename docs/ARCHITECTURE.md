@@ -2358,10 +2358,11 @@ uncompleted groups last within a stage. Each line shows attempts, completed
 attempts, median and nearest-rank p90 cost per completed attempt, median minutes
 of completed attempts with finish times, and review/test recorded verdict pass
 share (unknown verdicts do not pass). A review-only run's lead counts as a
-verdict stage once it records its verdict (1.6.4 on); its attempts from before
-record none and stay out of the share. A pass its own findings dispute
+verdict stage once it is spawned as one (`only_reviews`); its attempts from
+before stay out of the share. A pass its own findings dispute
 (`verdict_note = disputed_pass`) is shown as `disputed=` and left out of the
-share: a format clash, not a fail of the model. Costs are API-equivalent totals from the
+share: a format clash, not a fail of the model. An unknown verdict stored
+before notes is read again from its stored result, a lead's by its review record. Costs are API-equivalent totals from the
 latest agent ledger totals, whatever the budgets count, falling back to stored stage cost when there is
 no ledger row. Completed n below five is marked as a small sample. Output is
 limited to 60 groups and states the omitted count. This evidence recommends

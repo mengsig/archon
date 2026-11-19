@@ -33,6 +33,9 @@ pub enum Agent {
     /// Completed with a summary and structured data, its verdict persisted
     /// as archond reads it.
     Recorded(&'static str, serde_json::Value),
+    /// As `Recorded`, persisted as archond did before it kept a verdict's note
+    /// or read a review-only lead by its review record.
+    RecordedBeforeNotes(&'static str, serde_json::Value),
     /// Completed with a structured `pass`.
     Pass,
     /// Completed with a structured `fail` carrying one finding titled so.
@@ -679,6 +682,11 @@ fn apply_agent(stage: &mut StageRun, agent: &Agent, at: Timestamp) {
             completed((*text).to_owned(), Some(data.clone()), false)
         }
         Agent::Recorded(text, data) => completed((*text).to_owned(), Some(data.clone()), true),
+        Agent::RecordedBeforeNotes(text, data) => {
+            let verdict = Verdict::extract(text, Some(data));
+            let state = (StageState::Completed, Some((*text).to_owned()));
+            (state.0, state.1, Some(data.clone()), Some((verdict, None)))
+        }
         Agent::Pass => completed(
             "Looks correct and well tested.\nVERDICT: PASS".into(),
             Some(serde_json::json!({"verdict": "pass", "findings": []})),

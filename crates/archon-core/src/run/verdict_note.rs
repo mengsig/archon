@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{VERDICT_KEYS, Verdict};
+use super::{StageRun, VERDICT_KEYS, Verdict};
 
 /// Why a stage's verdict is `Unknown`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -40,7 +40,7 @@ impl Verdict {
         summary: &str,
         structured: Option<&Value>,
     ) -> (Self, Option<VerdictNote>) {
-        let states_none = Self::stated(summary, structured).is_none();
+        let states_none = !Self::states_verdict(summary, structured);
         let recorded = structured
             .filter(|_| states_none)
             .and_then(with_recorded_verdict);
@@ -48,10 +48,17 @@ impl Verdict {
         Self::read(summary, recorded.as_ref().or(structured))
     }
 
+    /// Whether a result gives a verdict, readable or not, where [`Self::extract`]
+    /// reads one: a `structured` field or a `VERDICT:` line. Metadata such as
+    /// `"status": "done"` is none.
+    fn states_verdict(summary: &str, structured: Option<&Value>) -> bool {
+        structured.and_then(Self::as_worded).is_some() || Self::from_summary(summary).is_some()
+    }
+
     /// Why a result whose verdict reads `Unknown` gives no readable one.
     fn why_unknown(summary: &str, structured: Option<&Value>) -> VerdictNote {
         debug_assert_eq!(Self::extract(summary, structured), Self::Unknown);
-        if Self::stated(summary, structured).is_none() {
+        if !Self::states_verdict(summary, structured) {
             return VerdictNote::MissingVerdictLine;
         }
         let worded = structured
@@ -63,6 +70,32 @@ impl Verdict {
             true => VerdictNote::DisputedPass,
             false => VerdictNote::HedgedVerdict,
         }
+    }
+}
+
+impl StageRun {
+    /// Its verdict and note as recorded; a run's `Unknown` recorded before notes
+    /// is read again from its result, a review-only lead's by its review record.
+    pub fn verdict_reading(&self) -> Option<(Verdict, Option<VerdictNote>)> {
+        let verdict = self.verdict?;
+        if verdict != Verdict::Unknown || self.verdict_note.is_some() {
+            return Some((verdict, self.verdict_note));
+        }
+        let summary = self.summary.as_deref().unwrap_or_default();
+        let structured = self.structured.as_ref();
+        let lead = self.only_reviews == Some(true);
+        let read = match lead {
+            true => Verdict::read_review_lead(summary, structured),
+            false => Verdict::read(summary, structured),
+        };
+        // Only a lead's verdict may change (its record was not read then); another's stays unknown.
+        let reading = match read {
+            (Verdict::Unknown, _) => read,
+            _ if lead => read,
+            _ => (Verdict::Unknown, None),
+        };
+        assert!(reading.1.is_none() || reading.0 == Verdict::Unknown);
+        Some(reading)
     }
 }
 
@@ -162,6 +195,103 @@ mod tests {
         assert_eq!(
             Verdict::read_review_lead("Reviewed.", Some(&disputed)),
             (Verdict::Unknown, Some(VerdictNote::DisputedPass))
+        );
+    }
+
+    #[test]
+    fn status_metadata_states_no_verdict_but_an_unreadable_verdict_does() {
+        let done = json!({"status": "done", "review": {"verdict": "pass"}});
+        assert_eq!(
+            Verdict::read_review_lead("Reviewed.", Some(&done)),
+            (Verdict::Pass, None)
+        );
+        assert_eq!(
+            note("Reviewed.", Some(done)),
+            Some(VerdictNote::MissingVerdictLine)
+        );
+        let unreadable = json!({"verdict": null, "review": {"verdict": "pass"}});
+        assert_eq!(
+            Verdict::read_review_lead("Reviewed.", Some(&unreadable)),
+            (Verdict::Unknown, Some(VerdictNote::HedgedVerdict))
+        );
+    }
+
+    #[test]
+    fn a_blocking_finding_repeated_in_summary_json_is_a_disputed_pass() {
+        let pass = json!({"verdict": "pass"});
+        let finding = r#"{"verdict": "pass", "findings": [{"blocking": true}]}"#;
+        let wrapped = json!({"summary": format!("{finding}\nVERDICT: PASS"), "structured": pass});
+        let summaries = [
+            finding.to_owned(),
+            format!("{finding}\nVERDICT: PASS"),
+            wrapped.to_string(),
+        ];
+        for summary in summaries {
+            assert_eq!(
+                Verdict::read(&summary, Some(&pass)),
+                (Verdict::Unknown, Some(VerdictNote::DisputedPass)),
+                "{summary}"
+            );
+        }
+    }
+
+    /// A completed stage as archond stored it before verdict notes.
+    fn stored_before_notes(lead: bool, summary: &str, structured: Value) -> StageRun {
+        use crate::id::{PipelineRunId, StageRunId};
+        use crate::model::{Effort, ModelChoice};
+        StageRun {
+            only_reviews: lead.then_some(true),
+            id: StageRunId::new(),
+            run: PipelineRunId::new(),
+            stage_id: "review".into(),
+            kind: None,
+            attempt: 1,
+            fan_index: 0,
+            model_segments: Vec::new(),
+            infrastructure_failure: false,
+            record_repair: None,
+            host_context: Default::default(),
+            choice: ModelChoice {
+                model: "codex/astra".parse().unwrap(),
+                effort: Effort::Medium,
+                tier: None,
+            },
+            aether_agent: None,
+            aether_task: None,
+            state: super::super::StageState::Completed,
+            verdict: Some(Verdict::extract(summary, Some(&structured))),
+            verdict_note: None,
+            summary: Some(summary.to_owned()),
+            structured: Some(structured),
+            cost_usd: 0.0,
+            started_at: crate::now(),
+            finished_at: None,
+        }
+    }
+
+    #[test]
+    fn an_unknown_stored_before_notes_is_read_again_from_its_result() {
+        let record = json!({"status": "done", "review": {"verdict": "pass"}});
+        let lead = stored_before_notes(true, "Reviewed.", record.clone());
+        assert_eq!(lead.verdict, Some(Verdict::Unknown), "as stored then");
+        assert_eq!(lead.verdict_reading(), Some((Verdict::Pass, None)));
+        let other = stored_before_notes(false, "Reviewed.", record);
+        assert_eq!(
+            other.verdict_reading(),
+            Some((Verdict::Unknown, Some(VerdictNote::MissingVerdictLine)))
+        );
+        let high = json!({"verdict": "pass", "findings": [{"severity": "high"}]});
+        let disputed = stored_before_notes(false, "VERDICT: PASS", high);
+        assert_eq!(
+            disputed.verdict_reading(),
+            Some((Verdict::Unknown, Some(VerdictNote::DisputedPass)))
+        );
+        let mut noted = disputed.clone();
+        noted.verdict_note = Some(VerdictNote::HedgedVerdict);
+        assert_eq!(
+            noted.verdict_reading().unwrap().1,
+            Some(VerdictNote::HedgedVerdict),
+            "a note stands"
         );
     }
 }

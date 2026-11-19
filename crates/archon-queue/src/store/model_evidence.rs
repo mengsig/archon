@@ -329,7 +329,9 @@ fn sample(
         None => None,
     };
     let verdict = match is_verdict_stage(&attempt.item, stage)? {
-        true => stage.verdict.map(|v| Scored::of(v, stage.verdict_note)),
+        true => stage
+            .verdict_reading()
+            .map(|(verdict, note)| Scored::of(verdict, note)),
         false => None,
     };
     Ok(Sample {

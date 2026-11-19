@@ -504,21 +504,27 @@ fn review_rules(duty: ReviewDuty) -> String {
         true => REVIEW_SKIP_RULE,
         false => "",
     };
-    let open = match duty.records_verdict {
-        true => "with a blocking finding open, record `fail` as the Verdict section says.",
-        false => "with a blocking finding open, call `fail_task` and say which.",
+    // A review-only lead changes nothing: its findings are its verdict, never fixed.
+    let (follow_ups, fixed, rounds, open) = match duty.records_verdict {
+        true => (".\n", "", REVIEW_ONLY_ROUNDS_RULE, REVIEW_ONLY_OPEN_RULE),
+        false => (
+            " and `pr.body`.\n",
+            " whose findings you fixed",
+            REVIEW_ROUNDS_RULE,
+            "with a blocking finding open, call `fail_task` and say which.",
+        ),
     };
     let rules = format!(
         "\n## Review on record\n\n\
          - Your stage holds this run's review: the change as it finally stands is reviewed \
          by {who}.\n\
-         {REVIEWER_VERDICT_RULES}\
+         {REVIEWER_VERDICT_RULES}{follow_ups}\
          - Record it in `complete_task`'s `structured` data, beside any other keys, naming \
          the agent id `delegate` returned for each reviewer the pass rests on, a failed \
-         one whose findings you fixed included:\n\n\
+         one{fixed} included:\n\n\
          ```json\n{{\"review\": {{\"verdict\": \"pass\", \"reviewers\": [{named}]}}}}\n```\n\n\
          {skip}\
-         {REVIEW_CHECK_RULES}{open}\n\
+         {rounds}{REVIEW_COVERAGE_RULE}{open}\n\
          {REVIEW_LINE_RULE}"
     );
     debug_assert!(rules.ends_with('\n'), "sections end with a newline");
@@ -721,8 +727,7 @@ before or after it.\n\n\
 - Blocking findings are correctness bugs, security or safety issues, failing or missing \
 tests for changed behaviour, and broken documented behaviour, as the brief narrows or \
 extends them. Tell reviewers so, and to mark every finding `\"blocking\": true` or \
-`false`: only blocking ones fail. List the rest as follow-ups in your summary and \
-`pr.body`.\n";
+`false`: only blocking ones fail. List the rest as follow-ups in your summary";
 
 /// Failing review rounds of one stage attempt after which Archon stops the stage.
 /// A round is one commit that at least one of the lead's reviewers failed with a
@@ -731,7 +736,7 @@ extends them. Tell reviewers so, and to mark every finding `\"blocking\": true` 
 /// which ends the run and hands the item to the orchestrator.
 pub const REVIEW_ROUND_CAP: usize = 3;
 
-const REVIEW_CHECK_RULES: &str = "\
+const REVIEW_ROUNDS_RULE: &str = "\
 - Delegate with `wait: false`, then use `wait_for`. On a blocking fail, edit nothing \
 until the reviewers still reading finish (they share your workspace); one you cancel \
 counts for nothing and needs a whole-change replacement. Fix every blocking finding \
@@ -740,7 +745,18 @@ asked again, so delegate a new one with `base` at the head the failed review rea
 given the fix commits and the open findings, to verify each is fixed and the fix \
 regresses nothing. No new whole-change read is needed. A commit after passes needs \
 only a delta read from the head they passed; an amend or rebase needs whole-change \
-reads. After 3 failed rounds Archon stops the stage and escalates.\n\
+reads. After 3 failed rounds Archon stops the stage and escalates.\n";
+
+/// A review-only lead's rounds: one, whose findings it records rather than fixes.
+const REVIEW_ONLY_ROUNDS_RULE: &str = "\
+- Delegate with `wait: false`, then use `wait_for`. This run changes nothing: on a \
+blocking fail, fix and commit nothing, and wait for the reviewers still reading (one \
+you cancel counts for nothing). Their blocking findings make your verdict `fail`.\n";
+
+const REVIEW_ONLY_OPEN_RULE: &str =
+    "with a blocking finding open, record `fail` as the Verdict section says.";
+
+const REVIEW_COVERAGE_RULE: &str = "\
 - Archon checks a pass against Aether and the branch. Each agent named must be a \
 different one you delegated to yourself that completed with that verdict. As many as \
 the review asks must have read the whole change, passing or with findings fixed, and \
@@ -1782,9 +1798,14 @@ mod tests {
         assert!(reviewing.contains("VERDICT: FAIL"));
         assert!(reviewing.contains("with a blocking finding open, record `fail`"));
         assert!(!reviewing.contains("call `fail_task` and say which"));
+        assert!(reviewing.contains("fix and commit nothing"));
+        assert!(!reviewing.contains("Fix every blocking finding"));
+        assert!(!reviewing.contains("pr.body") && !reviewing.contains("findings you fixed"));
         assert_eq!(reviewing.matches("## Verdict").count(), 1);
         let building = work_contract(owing(1, false));
         assert!(building.contains("with a blocking finding open, call `fail_task` and say which."));
+        assert!(building.contains("Fix every blocking finding and commit"));
+        assert!(building.contains("follow-ups in your summary and `pr.body`.\n"));
         assert!(!building.contains("## Verdict"));
         assert!(building.ends_with("write no `REVIEW:` line yourself.\n"));
     }

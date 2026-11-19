@@ -146,25 +146,26 @@ fn recorded(stage: &StageSpec, attempt: u32, members: &[&StageRun], owed: Owed) 
     assert_eq!(member.state, StageState::Completed, "it passed its gate");
     let summary = joined_summary(stage, members);
     let structured = member.structured.as_ref();
-    // A stated failure is refused on its merits, whatever its gate or record.
-    if decided_since_repairs(member) && states_failure(member) {
-        let headline = archon_core::run::STATED_FAILURE.to_owned();
+    // A review-only lead's findings are its verdict's reasons: its fail reports them.
+    let findings = match owed.review.is_some_and(|duty| duty.records_verdict) {
+        true => findings_text(structured),
+        false => String::new(),
+    };
+    let failed = |headline: String| {
         let report = format!(
-            "**Stage `{}` attempt {attempt}: {headline}**\n\n{summary}\n",
+            "**Stage `{}` attempt {attempt}: {headline}**\n\n{summary}\n{findings}",
             stage.id
         );
         let report = clip(&report, MAX_FEEDBACK_CHARS);
-        return GroupResult::Fail { headline, report };
+        GroupResult::Fail { headline, report }
+    };
+    // A stated failure is refused on its merits, whatever its gate or record.
+    if decided_since_repairs(member) && states_failure(member) {
+        return failed(archon_core::run::STATED_FAILURE.to_owned());
     }
     // A review-only lead's verdict is the run's: anything but pass never merges.
     if let Some(note) = unpassed_review(member, owed) {
-        let headline = format!("{REVIEW_VERDICT_REFUSAL} {note}");
-        let report = format!(
-            "**Stage `{}` attempt {attempt}: {headline}**\n\n{summary}\n",
-            stage.id
-        );
-        let report = clip(&report, MAX_FEEDBACK_CHARS);
-        return GroupResult::Fail { headline, report };
+        return failed(format!("{REVIEW_VERDICT_REFUSAL} {note}"));
     }
     let broken = repairable(stage, members, owed);
     let refused = |headline: String, unrecorded: bool| {
@@ -200,18 +201,18 @@ fn recorded(stage: &StageSpec, attempt: u32, members: &[&StageRun], owed: Owed) 
 }
 
 /// Why a review-only lead's recorded verdict is not a pass, worded from its
-/// note; `None` for a pass, another stage, or a lead recorded before 1.6.4.
+/// note; `None` for a pass, another stage, or a lead spawned before review-only plans.
 fn unpassed_review(member: &StageRun, owed: Owed) -> Option<&'static str> {
     let records = owed.review.is_some_and(|duty| duty.records_verdict);
     if !records || member.only_reviews != Some(true) {
         return None;
     }
-    let verdict = member.verdict?;
+    let (verdict, note) = member.verdict_reading()?;
     assert!(
-        member.verdict_note.is_none() || verdict == Verdict::Unknown,
+        note.is_none() || verdict == Verdict::Unknown,
         "a note explains only an unknown verdict"
     );
-    match (verdict, member.verdict_note) {
+    match (verdict, note) {
         (Verdict::Pass, _) => None,
         (Verdict::Fail, _) => Some("fail"),
         (Verdict::Unknown, Some(VerdictNote::DisputedPass)) => {

@@ -574,3 +574,32 @@ fn a_disputed_pass_is_counted_apart_from_the_pass_share() {
     let text = report.text();
     assert!(text.contains("pass=1/4 (25%) disputed=2"), "{text}");
 }
+
+/// The nine F1 results, stored before verdict notes as `Unknown` with no note,
+/// are read again from their results: disputed passes, not fails of the model.
+#[test]
+fn disputed_passes_stored_before_notes_are_counted_apart() {
+    const F1: &str = include_str!("../../archon-core/tests/fixtures/f1_astra_e2e.json");
+    let results: Vec<serde_json::Value> = serde_json::from_str(F1).unwrap();
+    assert_eq!(results.len(), 9);
+    let mut store = store();
+    let item = store.insert_item(&item(None, "fixture"), None).unwrap();
+    let run = start(&mut store, &item.id);
+    for (n, result) in results.iter().enumerate() {
+        let mut stage = running_stage(&run, n as u32, n as u32);
+        stage.stage_id = "test".into();
+        stage.state = StageState::Completed;
+        stage.finished_at = Some(t(160));
+        stage.summary = Some(result["summary"].as_str().unwrap().to_owned());
+        stage.structured = Some(result["structured"].clone());
+        stage.verdict = Some(Verdict::Unknown);
+        assert_eq!(stage.verdict_note, None, "stored before notes");
+        store.upsert_stage_run(&stage).unwrap();
+    }
+    let report = report(&store, Default::default(), range(0, 0));
+    let row = &report.rows[0];
+    assert_eq!(
+        (row.completed, row.passed, row.verdicts, row.disputed),
+        (9, 0, 0, 9)
+    );
+}

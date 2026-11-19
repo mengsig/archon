@@ -1865,6 +1865,33 @@ async fn a_possibly_sent_generation_replays_though_its_alias_is_retired() {
     );
 }
 
+/// A key an older build may have sent froze no model, and `[orchestrator]`
+/// now names one `[models]` does not allow: nothing is replayed on it.
+#[tokio::test]
+async fn a_possibly_sent_generation_is_not_replayed_on_a_disallowed_model() {
+    let mut config = Config::default();
+    config.models.allow = vec!["codex/allowed".parse().unwrap()];
+    config.orchestrator.model = "codex/denied".parse().unwrap();
+    config.validate().expect("its provider is allowed");
+    let h = Harness::with(config, None).await;
+    let listed = json!([
+        {"model": "codex/allowed", "configured": true},
+        {"model": "codex/denied", "configured": true},
+    ]);
+    h.fake
+        .set_default("list_models", Scripted::reply("models", listed));
+    h.connect().await;
+    h.set_kv("orchestrator_generation", "3").await;
+    assert!(h.kv("orchestrator_unsent_generation").await.is_none());
+    let refused = supervisor::ensure_orchestrator(&h.ctx).await.unwrap_err();
+    assert!(matches!(refused, ArchonError::Policy(_)), "{refused:?}");
+    assert!(
+        h.fake.received_named("create_agent").is_empty(),
+        "no create on a model outside [models]"
+    );
+    assert!(h.kv("orchestrator_model").await.is_none(), "nothing frozen");
+}
+
 /// A request that fails before the freeze leaves the key unsent: the retry
 /// checks the model again rather than replaying one Aether never received.
 #[tokio::test]

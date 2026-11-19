@@ -170,7 +170,8 @@ async fn repair_claimed(
         Err(error) => {
             tracing::info!(item = %id, %error, "item waits for a usable model");
             store.release_dispatching(id, archon_core::now())?;
-            if let Some(reason) = crate::dispatcher::invalid_pin(&item, catalog) {
+            let when = archon_core::plan_origin::TierMove::Dispatch;
+            if let Some(reason) = crate::dispatcher::invalid_pin(&item, catalog, when) {
                 let blocked =
                     QueueState::model_pin_block(&format!("{reason}; re-plan this item and retry"));
                 store.transition_item(id, blocked, archon_core::now())?;
@@ -219,7 +220,8 @@ async fn prepare(
             item.pipeline
         )));
     }
-    env.resolved_policy(ctx).check_plan(&item.model_plan)?;
+    env.policy_in(&ctx.config, &catalog.aliases())
+        .check_plan(&item.model_plan)?;
     let team = spec.file.stages.iter().any(|s| s.kind == StageKind::Team);
     let workspace = workspace(ctx, &env, item, header.workspace, team).await?;
     let added = workspace.added.clone();
@@ -264,7 +266,7 @@ async fn tiers_at_dispatch(
     if !tiered {
         return Ok(item.clone());
     }
-    let policy = env.resolved_policy(ctx);
+    let policy = env.policy_in(&ctx.config, &catalog.aliases());
     let weights = env.provider_weights(&ctx.config);
     let quota = crate::quota::current(ctx, weights.as_ref()).await;
     let routing = (weights.as_ref(), quota.as_ref());

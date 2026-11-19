@@ -877,6 +877,42 @@ async fn distillation_rechecks_a_saved_draft_and_waits_for_a_listed_model() {
     assert_eq!(errand_models(&items), ["codex/listed"]);
 }
 
+/// An errand whose insert committed before its cursor did is kept, not drafted
+/// again: a model that left the catalog since cannot strand the cursor.
+#[tokio::test]
+async fn a_committed_distillation_is_kept_after_its_model_left_the_catalog() {
+    let mut config = archon_core::config::Config::default();
+    config.learning.distill_every = 2;
+    config.learning.distill_daily_budget_usd = 10.0;
+    let h = Harness::with_config(config).await;
+    samples(&h, "codex/cheap", 0.1, 2).await;
+    h.set_learning_models(vec!["codex/listed".parse().unwrap()])
+        .await;
+    archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    let items = h.ctx.store.lock().await.items(&Default::default()).unwrap();
+    assert_eq!(errand_models(&items), ["codex/listed"]);
+    let errand = items.iter().find(|i| i.pipeline == "errand").unwrap();
+    let repo = errand.repo.as_ref().unwrap();
+    let cursor_key = format!("learning/distilled-v2/{repo}");
+    {
+        // The daemon stopped between the insert and its cursor; the errand ended.
+        let mut store = h.ctx.store.lock().await;
+        assert_eq!(store.kv_get(&cursor_key).unwrap().as_deref(), Some("2"));
+        store.kv_set(&cursor_key, "0").unwrap();
+        let cancelled = QueueState::Cancelled { reason: None };
+        store
+            .transition_item(&errand.id, cancelled, archon_core::now())
+            .unwrap();
+    }
+    h.set_learning_models(vec!["codex/next".parse().unwrap()])
+        .await;
+    archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    let store = h.ctx.store.lock().await;
+    assert_eq!(store.kv_get(&cursor_key).unwrap().as_deref(), Some("2"));
+    let items = store.items(&Default::default()).unwrap();
+    assert_eq!(errand_models(&items), ["codex/listed"], "no second errand");
+}
+
 #[tokio::test]
 async fn a_learned_model_removed_from_the_catalog_cannot_be_chosen_again() {
     let mut config = archon_core::config::Config::default();

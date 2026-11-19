@@ -270,6 +270,7 @@ async fn a_checked_create_goes_out_only_on_its_connection() {
     let on = |connection| CheckedOn {
         connection,
         network_default: NetworkPolicy::Allowed,
+        aliases: Default::default(),
     };
     let legacy = || SpawnRequest {
         aether_cost_budget: Some(true),
@@ -283,7 +284,7 @@ async fn a_checked_create_goes_out_only_on_its_connection() {
         "{refused:?}"
     );
     let current = on(link.generation().unwrap());
-    let unpriced = backend.spawn_on(spawn_request(), current).await;
+    let unpriced = backend.spawn_on(spawn_request(), current.clone()).await;
     assert!(
         matches!(unpriced, Err(ArchonError::Invalid(_))),
         "{unpriced:?}"
@@ -820,6 +821,40 @@ async fn a_resumed_agent_that_failed_keeps_its_error() {
     assert!(
         error.ends_with("Aether holds it as failed: Auth: not logged in"),
         "{error}"
+    );
+}
+
+/// A node request frozen before generations were labelled shares its labels
+/// with its run's earlier nodes: only the create that landed is its own.
+#[tokio::test]
+async fn a_legacy_node_lookup_leaves_out_the_runs_earlier_nodes() {
+    let (_dir, fake) = fake_aether().await;
+    let request = node_request();
+    let node = |id: &str, state: &str| {
+        let mut agent = fake::agent(id, None);
+        agent["role"] = json!(request.role);
+        agent["scope"] = json!({"labels": request.labels});
+        agent["status"] = json!({"state": state});
+        agent
+    };
+    let (dead, landed) = (node(NODE, "cancelled"), node(AGENT, "ready"));
+    let backend = backend(&fake, any_model()).await;
+    let earlier = [AetherAgentId::parse(NODE).unwrap()];
+
+    fake.script("list_agents", Scripted::reply("agents", json!([dead])));
+    let unsent = backend.find_run_node(&request, &earlier).await.unwrap();
+    assert_eq!(unsent, None, "the earlier node is not this create's");
+
+    let both = json!([dead, landed]);
+    fake.script("list_agents", Scripted::reply("agents", both.clone()));
+    let found = backend.find_run_node(&request, &earlier).await.unwrap();
+    assert_eq!(found.unwrap().agent.as_str(), AGENT);
+
+    fake.script("list_agents", Scripted::reply("agents", both));
+    let ambiguous = backend.find_run_node(&request, &[]).await;
+    assert!(
+        matches!(ambiguous, Err(ArchonError::Unavailable(_))),
+        "{ambiguous:?}"
     );
 }
 

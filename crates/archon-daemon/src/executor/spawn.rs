@@ -1497,6 +1497,7 @@ async fn spawn_bound(
     let checked = CheckedOn {
         connection,
         network_default,
+        aliases: checked.aliases(),
     };
     ctx.backend.spawn_on(spawn.request, checked).await
 }
@@ -1654,15 +1655,16 @@ async fn claim(ctx: &DaemonContext, id: &StageRunId) -> Result<Claimed, ArchonEr
 }
 
 /// The policy decision a claim can make: the effort always, the model only
-/// against a `ready` catalog, as canonical ids on both sides. With none ready
-/// the model waits for `check_frozen_request`'s read, never refused here.
+/// when a `ready` catalog lists it, as canonical ids on both sides. Any other
+/// model is `check_frozen_request`'s: it recovers, holds or replaces it.
 fn claim_policy_check(
     config: &Config,
     env: &RepoEnv,
     ready: Option<&archon_core::model_tier::ModelCatalog>,
     choice: &archon_core::model::ModelChoice,
 ) -> Result<(), ArchonError> {
-    let Some(catalog) = ready else {
+    let listed = ready.and_then(|catalog| Some((catalog, catalog.check(&choice.model).ok()?)));
+    let Some((catalog, model)) = listed else {
         let unresolved = BTreeMap::new();
         return env
             .policy_in(config, &unresolved)
@@ -1673,7 +1675,7 @@ fn claim_policy_check(
         "only a ready catalog decides a model's policy"
     );
     let canonical = archon_core::model::ModelChoice {
-        model: catalog.canonical_alias(&choice.model).clone(),
+        model,
         ..choice.clone()
     };
     assert_eq!(
@@ -1962,5 +1964,24 @@ mod tests {
         let other = ModelChoice::pinned(model(OTHER), Effort::Medium);
         let refused = claim_policy_check(&config, &env, Some(&catalog), &other).unwrap_err();
         assert!(matches!(refused, ArchonError::Policy(_)), "{refused}");
+    }
+
+    /// A reserved model the catalog retired, its allowed alias moved on, is
+    /// no policy refusal: the frozen request's check recovers or replaces it.
+    #[test]
+    fn a_claim_leaves_a_retired_or_unlisted_model_to_the_catalog_check() {
+        let (config, mut catalog) = alias_allowlist();
+        let env = RepoEnv::new(None).unwrap();
+        catalog.add_retired(model(HAIKU), Some(model(OTHER)));
+        catalog.add_alias(model("claude-code/haiku"), model(OTHER));
+        for id in [HAIKU, "claude-code/gone"] {
+            assert!(catalog.check(&model(id)).is_err(), "{id} is not listed");
+            let choice = ModelChoice::pinned(model(id), Effort::Medium);
+            claim_policy_check(&config, &env, Some(&catalog), &choice)
+                .expect("a model the catalog refuses is not the policy's to refuse");
+            let over = ModelChoice::pinned(model(id), Effort::Max);
+            let refused = claim_policy_check(&config, &env, Some(&catalog), &over).unwrap_err();
+            assert!(matches!(refused, ArchonError::Policy(_)), "{refused}");
+        }
     }
 }

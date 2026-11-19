@@ -8,6 +8,7 @@ use archon_core::config::Config;
 use archon_core::error::ArchonError;
 use archon_core::id::{QueueItemId, RepoId};
 use archon_core::model_tier::ModelCatalog;
+use archon_core::plan_origin::TierMove;
 use archon_core::queue::{Caps, QueueItem};
 use archon_core::quota::QuotaView;
 use archon_core::repo::Repo;
@@ -131,7 +132,7 @@ impl ModelReads<'_> {
         };
         let projected = self.as_run_reads(stored)?;
         let item = projected.as_ref().unwrap_or(stored);
-        if let Some(reason) = invalid_pin(item, self.catalog) {
+        if let Some(reason) = invalid_pin(item, self.catalog, TierMove::Dispatch) {
             return Ok(Some(ModelHold {
                 reason,
                 kind: ModelHoldKind::InvalidPin,
@@ -145,7 +146,7 @@ impl ModelReads<'_> {
             return Ok(None);
         };
         hold_error(
-            item,
+            (item, TierMove::Dispatch),
             self.catalog,
             crate::executor::model_catalog::repair_item(
                 self.ctx,
@@ -219,7 +220,7 @@ impl ModelReads<'_> {
             return Ok(None);
         };
         hold_error(
-            item,
+            (item, TierMove::InRun),
             self.catalog,
             crate::executor::model_catalog::repair_pending(
                 self.ctx,
@@ -235,7 +236,7 @@ impl ModelReads<'_> {
 }
 
 fn hold_error<T>(
-    item: &QueueItem,
+    (item, when): (&QueueItem, TierMove),
     catalog: &ModelCatalog,
     result: Result<T, ArchonError>,
 ) -> Result<Option<ModelHold>, ArchonError> {
@@ -245,7 +246,7 @@ fn hold_error<T>(
         Err(error) => {
             let kind = if catalog.not_ready_reason().is_some() {
                 ModelHoldKind::CatalogUnavailable
-            } else if invalid_pin(item, catalog).is_some() {
+            } else if invalid_pin(item, catalog, when).is_some() {
                 ModelHoldKind::InvalidPin
             } else {
                 ModelHoldKind::NoReplacement
@@ -258,7 +259,13 @@ fn hold_error<T>(
     }
 }
 
-pub(crate) fn invalid_pin(item: &QueueItem, catalog: &ModelCatalog) -> Option<String> {
+/// The first choice of `item` the catalog refuses that the daemon may not
+/// replace at `when`: at dispatch a pinned tier's model resolves again.
+pub(crate) fn invalid_pin(
+    item: &QueueItem,
+    catalog: &ModelCatalog,
+    when: TierMove,
+) -> Option<String> {
     if catalog.not_ready_reason().is_some() {
         return None;
     }
@@ -267,7 +274,7 @@ pub(crate) fn invalid_pin(item: &QueueItem, catalog: &ModelCatalog) -> Option<St
         let slots = &origins[key];
         assert_eq!(choices.len(), slots.len(), "an origin per choice");
         for (choice, origin) in choices.iter().zip(slots) {
-            if !origin.model.is_movable()
+            if !origin.may_replace(when)
                 && let Err(error) = catalog.check(&choice.model)
             {
                 return Some(format!("{key}: {error}"));

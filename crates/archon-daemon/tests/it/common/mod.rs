@@ -838,6 +838,8 @@ struct FakeState {
     recorded: BTreeMap<String, SpawnRequest>,
     /// Every `create_run_node` call, including repeats.
     node_requests: Vec<RunNodeRequest>,
+    /// The earlier nodes each run-node lookup was told to leave out.
+    node_lookups: Vec<Vec<AetherAgentId>>,
     node_by_key: BTreeMap<String, CreatedNode>,
     node_recorded: BTreeMap<String, RunNodeRequest>,
     node_failures: VecDeque<ArchonError>,
@@ -1154,6 +1156,11 @@ impl FakeBackend {
         self.state().node_requests.clone()
     }
 
+    /// The earlier nodes each run-node lookup left out, oldest lookup first.
+    pub fn node_lookups(&self) -> Vec<Vec<AetherAgentId>> {
+        self.state().node_lookups.clone()
+    }
+
     /// Distinct run nodes created (one per idempotency key).
     pub fn nodes_created(&self) -> usize {
         self.state().node_by_key.len()
@@ -1462,12 +1469,11 @@ impl AgentBackend for FakeBackend {
     async fn find_run_node(
         &self,
         request: &RunNodeRequest,
+        earlier: &[AetherAgentId],
     ) -> Result<Option<CreatedNode>, ArchonError> {
-        Ok(self
-            .state()
-            .node_by_key
-            .get(&request.idempotency_key)
-            .cloned())
+        let mut state = self.state();
+        state.node_lookups.push(earlier.to_vec());
+        Ok(state.node_by_key.get(&request.idempotency_key).cloned())
     }
 
     async fn host_context(

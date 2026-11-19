@@ -1230,8 +1230,8 @@ async fn create_generation(
 
 /// The model the stored generation's creation sends. A key that may have been
 /// sent repeats its frozen model, else the raw configured one an older build
-/// sent, without the catalog refusal, so the replay reaches Aether. A first
-/// send is checked against the catalog and the model policy (§7.4, point 3).
+/// sent: no catalog refusal, so the replay reaches Aether, but the model policy
+/// still holds. A first send is checked against both (§7.4, point 3).
 async fn creation_model(ctx: &DaemonContext, store_id: &StoreId) -> Result<ModelRef, ArchonError> {
     let configured = ctx.config.orchestrator.model.clone();
     assert!(!configured.model.is_empty(), "the config was validated");
@@ -1246,6 +1246,9 @@ async fn creation_model(ctx: &DaemonContext, store_id: &StoreId) -> Result<Model
         Creation { key, first }
     };
     if !creation.first {
+        let aliases = crate::learned::catalog(ctx).await?.aliases();
+        let named = aliases.get(&configured).unwrap_or(&configured);
+        check_policy(ctx, named, &aliases).await?;
         return Ok(configured);
     }
     checked_model(ctx, &configured).await
@@ -1272,22 +1275,32 @@ async fn checked_model(
     if let Some(successor) = catalog.superseded_by(&model) {
         tracing::warn!(%model, %successor, "configured orchestrator model is superseded");
     }
+    check_policy(ctx, &model, &catalog.aliases()).await?;
+    Ok(model)
+}
+
+/// Refuse an orchestrator `model` outside `[models]`, both read in `aliases`;
+/// a refusal leaves a blocker and is returned.
+async fn check_policy(
+    ctx: &DaemonContext,
+    model: &ModelRef,
+    aliases: &std::collections::BTreeMap<ModelRef, ModelRef>,
+) -> Result<(), ArchonError> {
+    assert!(
+        !model.provider.is_empty() && !model.model.is_empty(),
+        "the orchestrator names a provider's model"
+    );
     let choice = ModelChoice {
         model: model.clone(),
         effort: ctx.config.orchestrator.effort,
         tier: None,
     };
-    if let Err(refusal) = ctx
-        .config
-        .models
-        .policy()
-        .canonicalized(&catalog.aliases())
-        .check(&choice)
-    {
-        blocker_once(ctx, &format!("Archon will not start the orchestrator: {refusal}. Change [orchestrator] model or [models] in the config.")).await?;
-        return Err(refusal);
-    }
-    Ok(model)
+    let policy = ctx.config.models.policy().canonicalized(aliases);
+    let Err(refusal) = policy.check(&choice) else {
+        return Ok(());
+    };
+    blocker_once(ctx, &format!("Archon will not start the orchestrator: {refusal}. Change [orchestrator] model or [models] in the config.")).await?;
+    Err(refusal)
 }
 
 /// Settle, under one store lock and before any request, what the stored

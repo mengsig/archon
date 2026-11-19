@@ -339,7 +339,8 @@ async fn block_invalid_models(
             {
                 continue;
             }
-            let Some(reason) = snapshot::invalid_pin(&item, catalog) else {
+            let when = archon_core::plan_origin::TierMove::Dispatch;
+            let Some(reason) = snapshot::invalid_pin(&item, catalog, when) else {
                 continue;
             };
             let reason = format!("{reason}; re-plan this item and retry");

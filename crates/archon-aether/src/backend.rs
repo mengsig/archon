@@ -48,19 +48,29 @@ impl AetherBackend {
     /// Check a choice on canonical IDs when the link holds catalog aliases;
     /// without them the configured policy applies unchanged.
     fn check_choice(&self, choice: &ModelChoice) -> Result<(), ArchonError> {
-        let aliases = self.link.aliases();
+        self.check_choice_in(choice, &self.link.aliases())
+    }
+
+    /// Check a choice with both sides of the policy read in `aliases`.
+    fn check_choice_in(
+        &self,
+        choice: &ModelChoice,
+        aliases: &std::collections::BTreeMap<ModelRef, ModelRef>,
+    ) -> Result<(), ArchonError> {
         let mut resolved = choice.clone();
         if let Some(canonical) = aliases.get(&choice.model) {
             resolved.model = canonical.clone();
         }
-        self.policy.canonicalized(&aliases).check(&resolved)
+        self.policy.canonicalized(aliases).check(&resolved)
     }
 
+    /// The one agent a frozen create left: of `role` under `parent`, carrying
+    /// every one of `labels`, and none of the `earlier` creates' agents.
     async fn find_creation(
         client: &AetherClient,
         labels: &BTreeMap<String, String>,
-        role: &str,
-        parent: Option<&AetherAgentId>,
+        (role, parent): (&str, Option<&AetherAgentId>),
+        earlier: &[AetherAgentId],
     ) -> Result<Option<Agent>, ArchonError> {
         if labels.is_empty() {
             return Err(ArchonError::Unavailable(
@@ -78,6 +88,7 @@ impl AetherBackend {
         let mut matches = agents.into_iter().filter(|agent| {
             agent.role == role
                 && agent.parent.as_ref() == parent
+                && !earlier.contains(&agent.id)
                 && agent
                     .scope
                     .as_ref()
@@ -620,7 +631,8 @@ impl AgentBackend for AetherBackend {
         request: SpawnRequest,
         checked: CheckedOn,
     ) -> Result<SpawnedAgent, ArchonError> {
-        self.check_choice(&request.choice)?;
+        // The link's own aliases may be gone since the caller's check.
+        self.check_choice_in(&request.choice, &checked.aliases)?;
         // Resolving it would await Aether after the caller's check.
         if request.cost_budget_usd.is_some() && request.aether_cost_budget.is_none() {
             return Err(ArchonError::Invalid(
@@ -637,13 +649,8 @@ impl AgentBackend for AetherBackend {
         request: &SpawnRequest,
     ) -> Result<Option<SpawnedAgent>, ArchonError> {
         let client = self.link.client()?;
-        let agent = Self::find_creation(
-            &client,
-            &request.labels,
-            &request.role,
-            request.parent.as_ref(),
-        )
-        .await?;
+        let under = (request.role.as_str(), request.parent.as_ref());
+        let agent = Self::find_creation(&client, &request.labels, under, &[]).await?;
         match agent {
             Some(agent) => spawned_from(&client, agent, &request.idempotency_key)
                 .await
@@ -660,9 +667,11 @@ impl AgentBackend for AetherBackend {
     async fn find_run_node(
         &self,
         request: &RunNodeRequest,
+        earlier: &[AetherAgentId],
     ) -> Result<Option<CreatedNode>, ArchonError> {
         let client = self.link.client()?;
-        Self::find_creation(&client, &request.labels, &request.role, None)
+        let root = (request.role.as_str(), None);
+        Self::find_creation(&client, &request.labels, root, earlier)
             .await?
             .map(|agent| node_from(agent, &request.idempotency_key))
             .transpose()

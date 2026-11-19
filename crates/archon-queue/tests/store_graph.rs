@@ -149,6 +149,58 @@ fn a_fingerprint_of_the_filled_plan_still_matches_a_retry_filled_alike() {
     assert_eq!(count(&store), 1);
 }
 
+/// A store from before canonical ids kept a named alias as asked: the same
+/// request, whose plan now holds the alias's canonical id, still replays.
+#[test]
+fn a_fingerprint_of_a_named_alias_matches_its_retry_resolved_to_a_canonical_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.db");
+    let mut store = Store::open(&path).unwrap();
+    let repo = common::repo("alpha");
+    store.insert_repo(&repo).unwrap();
+    let alias = ModelChoice {
+        model: "claude-code/opus".parse().unwrap(),
+        ..choice()
+    };
+    let mut first = item(Some(&repo), "fix");
+    let plan = first.model_plan.legacy_mut();
+    plan.0.insert("implement".into(), vec![alias.clone()]);
+    let named = Asked {
+        model_plan: ModelPlanDraft::from(first.model_plan.plan().clone()),
+        ..Asked::default()
+    };
+    store.insert_enqueued(&first, Some("old"), &named).unwrap();
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let plan = serde_json::to_string(first.model_plan.plan()).unwrap();
+    let changed = conn.execute(
+        "UPDATE items SET request = json_set(json_remove(request, '$.asked_plan'),
+                                             '$.model_plan', json(?1))",
+        [plan],
+    );
+    assert_eq!(changed.unwrap(), 1);
+    let canonical = ModelChoice {
+        model: "claude-code/claude-opus-5-5".parse().unwrap(),
+        ..alias
+    };
+    let mut retry = QueueItem {
+        intent: None,
+        id: QueueItemId::new(),
+        ..first.clone()
+    };
+    let plan = retry.model_plan.legacy_mut();
+    plan.0.insert("implement".into(), vec![canonical]);
+    let again = store.insert_enqueued(&retry, Some("old"), &named);
+    assert_eq!(again.unwrap().id, first.id);
+    // Another model under the key is another request, named or filled.
+    let other = Asked {
+        model_plan: ModelPlanDraft::from(rerouted(&first).model_plan.plan().clone()),
+        ..Asked::default()
+    };
+    let err = store.insert_enqueued(&rerouted(&first), Some("old"), &other);
+    assert!(matches!(err, Err(ArchonError::Invalid(_))), "{err:?}");
+    assert_eq!(count(&store), 1);
+}
+
 fn thread() -> GithubThread {
     serde_json::from_value(serde_json::json!({"repository": "o/r", "number": 7})).unwrap()
 }

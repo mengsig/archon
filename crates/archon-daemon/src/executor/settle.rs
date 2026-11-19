@@ -730,21 +730,41 @@ pub(super) async fn deadline_stopped(
         return Ok(FollowUp::default());
     }
     assert_eq!(stage.run, run.id, "a stage settles into its own run");
-    if outcome == StageOutcome::TimedOut {
-        let woken = respawn(
-            ctx,
-            &mut table,
-            (&stage, &run, &all),
-            &outcome,
-            DEADLINE_PASSED,
-            RetryKind::Timeout,
-        )
-        .await?;
-        if let Some(follow) = woken {
-            return Ok(follow);
-        }
+    if outcome == StageOutcome::TimedOut
+        && let Some(follow) = deadline_wake(ctx, &mut table, (&stage, &run, &all)).await?
+    {
+        return Ok(follow);
     }
     settle_locked(ctx, &mut table, id, outcome).await
+}
+
+/// The wake of `stage`, stopped at its deadline. A model the catalog cannot
+/// check wakes nothing: the stage times out and the fleet's events go on.
+async fn deadline_wake(
+    ctx: &DaemonContext,
+    table: &mut RunTable,
+    (stage, run, all): (&StageRun, &PipelineRun, &[StageRun]),
+) -> Result<Option<FollowUp>, ArchonError> {
+    assert!(!stage.state.is_terminal(), "only a live stage is woken");
+    assert_eq!(stage.run, run.id, "a stage is woken in its own run");
+    let outcome = StageOutcome::TimedOut;
+    let slot = (stage, run, all);
+    match respawn(
+        ctx,
+        table,
+        slot,
+        &outcome,
+        DEADLINE_PASSED,
+        RetryKind::Timeout,
+    )
+    .await
+    {
+        Err(ArchonError::Unavailable(why)) if why.starts_with(super::model_catalog::RETRY_WAIT) => {
+            tracing::warn!(stage = %stage.id, %why, "no deadline wake: the stage times out");
+            Ok(None)
+        }
+        woken => woken,
+    }
 }
 
 /// Reserve the replacement of `stage`'s slot, which ended with `outcome` on

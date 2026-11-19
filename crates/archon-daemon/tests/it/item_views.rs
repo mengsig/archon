@@ -1090,6 +1090,81 @@ async fn a_pin_retired_while_its_create_is_prepared_is_never_sent() {
     assert!(matches!(state, QueueState::Running { .. }), "{state:?}");
 }
 
+#[tokio::test]
+async fn a_pin_retired_while_its_run_node_is_prepared_holds_the_stage() {
+    // The node's two host-context lookups come before its create is sent.
+    for lookup in [0, 1] {
+        let h = Harness::new().await;
+        let mut plan = common::plan();
+        plan.0.insert(
+            "implement".into(),
+            vec![common::choice(HAIKU, archon_core::model::Effort::Medium)],
+        );
+        let item = h.enqueue_with("retire a pin mid-node", plan).await.unwrap();
+        let retired = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        serve_until_retired(&h, retired.clone());
+        let ctx = h.ctx.clone();
+        h.backend.on_host_context(lookup, move || {
+            retired.store(true, std::sync::atomic::Ordering::SeqCst);
+            ctx.store
+                .try_lock()
+                .expect("no store lock is held while a node is prepared")
+                .invalidate_model_catalog("catalog changed".into());
+        });
+        h.dispatch().await;
+        assert!(h.backend.node_requests().is_empty(), "no node on that pin");
+        assert!(h.backend.requests().is_empty(), "no create on that pin");
+        let stages = h.live_stages().await;
+        assert_eq!(stages.len(), 1, "the stage stays reserved for a new check");
+        assert_eq!(stages[0].state, archon_core::run::StageState::Spawning);
+        let state = h.item(&item.id).await.state;
+        assert!(matches!(state, QueueState::Running { .. }), "{state:?}");
+    }
+}
+
+/// The run's node entry as a daemon from before generations were labelled
+/// left it: generation two pending on `model`, its create never sent.
+async fn legacy_pending_node(h: &Harness, run: &archon_core::id::PipelineRunId, model: &str) {
+    let key = format!("run_node:{run}");
+    let mut store = h.ctx.store.lock().await;
+    let raw = store.kv_get(&key).expect("kv").expect("a stored node");
+    let mut node: serde_json::Value = serde_json::from_str(&raw).expect("json");
+    assert!(node["agent"].is_string(), "generation one was recorded");
+    node["agent"] = serde_json::Value::Null;
+    node["generation"] = serde_json::json!(2);
+    let model: archon_core::model::ModelRef = model.parse().expect("a model id");
+    let request = node["request"].as_object_mut().expect("a stored request");
+    request["idempotency_key"] = serde_json::json!(format!("{run}:node:2"));
+    request["model"] = serde_json::to_value(model).expect("json");
+    let labels = request["labels"].as_object_mut().expect("labels");
+    assert!(labels.remove("archon.node_generation").is_some());
+    store.kv_set(&key, &node.to_string()).expect("kv set");
+}
+
+#[tokio::test]
+async fn a_legacy_pending_node_on_a_retired_model_is_told_from_the_runs_earlier_node() {
+    let h = Harness::new().await;
+    let item = h.enqueue("replace a legacy node").await;
+    h.dispatch().await;
+    let first = h.backend.node_ids()[0].clone();
+    legacy_pending_node(&h, &h.run(&item.id).await.id, HAIKU).await;
+    serve_catalog_without(&h, HAIKU).await;
+    h.settle_running(passing).await;
+    h.dispatch().await;
+    assert_eq!(
+        h.backend.node_lookups(),
+        vec![vec![first]],
+        "the lookup leaves out the node generation one recorded"
+    );
+    let nodes = h.backend.node_requests();
+    assert_eq!(nodes.len(), 2, "the retired generation is never sent");
+    assert!(nodes[1].idempotency_key.ends_with(":node:3"), "{nodes:?}");
+    assert_eq!(nodes[1].model.to_string(), common::REVIEW_MODEL);
+    let running = h.running().await;
+    assert!(!running.is_empty(), "the next stage starts under the node");
+    assert!(running.iter().all(|stage| stage.stage_id == "review"));
+}
+
 /// Lists the default catalog, without `HAIKU` once `retired` is set.
 fn serve_until_retired(h: &Harness, retired: std::sync::Arc<std::sync::atomic::AtomicBool>) {
     let rows = |without: Option<&str>| {

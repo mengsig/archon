@@ -1414,6 +1414,39 @@ async fn a_reserved_create_under_an_alias_allowlist_waits_through_an_outage() {
     assert_eq!(h.stages(&item.id).await[0].state, StageState::Running);
 }
 
+/// An alias allowlist is read in the catalog the item was admitted on: aliases
+/// the link lost since, to a reconnect or a failed read, fail no canonical plan.
+#[tokio::test]
+async fn an_alias_allowed_item_starts_while_the_link_holds_no_aliases() {
+    const HAIKU: &str = "claude-code/claude-haiku-5-5";
+    let dir = tempfile::tempdir().unwrap();
+    let aether = start_aether(dir.path()).await;
+    let _fleet = script_fleet(&aether);
+    alias_catalog(&aether);
+    let mut config = Config::default();
+    config.models.allow = vec!["claude-code/haiku".parse().unwrap()];
+    let h = harness_with_config(&aether, ClientOptions::default(), config).await;
+    let mut plan = common::plan();
+    for choice in plan.0.values_mut().flatten() {
+        choice.model = HAIKU.parse().unwrap();
+    }
+    let item = h.enqueue_with("an alias allowlist", plan).await.unwrap();
+    let link = &h.ctx.aether;
+    assert!(!link.aliases().is_empty(), "the enqueue read the catalog");
+    link.clear_aliases(link.generation().unwrap());
+    assert!(link.aliases().is_empty());
+    h.dispatch().await;
+
+    let state = h.state(&item.id).await;
+    assert!(
+        matches!(state, archon_core::queue::QueueState::Running { .. }),
+        "{state:?}"
+    );
+    let stages = h.stages(&item.id).await;
+    assert_eq!(stages.len(), 1, "the first stage is reserved: {stages:?}");
+    assert_eq!(stages[0].choice.model.to_string(), HAIKU);
+}
+
 async fn waiting_reason(
     h: &Harness,
     item: &archon_core::id::QueueItemId,

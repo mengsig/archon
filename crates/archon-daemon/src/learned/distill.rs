@@ -95,16 +95,23 @@ async fn queue(ctx: &DaemonContext, repo: &RepoId) -> Result<(), ArchonError> {
     }
     assert!(count > 0);
     let draft_key = format!("learning/distill-draft/{repo}/{consumed}");
-    let item = current_draft(
-        &store,
-        &draft_key,
-        repo,
-        &window,
-        (&policy, &catalog),
-        &ctx.config.orchestrator.model,
-    )?;
+    let enqueue_key = format!("learning:{repo}:{consumed}");
+    // An errand inserted before its cursor moved is kept, never drafted again.
+    let item = match store.item_by_key(&enqueue_key)? {
+        Some(committed) => committed,
+        None => {
+            let orchestrator = &ctx.config.orchestrator.model;
+            let checks = (&policy, &catalog);
+            let draft = current_draft(&store, &draft_key, repo, &window, checks, orchestrator)?;
+            store.insert_item(&draft, Some(&enqueue_key))?
+        }
+    };
     assert!(item.budget_usd.is_some_and(|b| b <= 1.0));
-    let item = store.insert_item(&item, Some(&format!("learning:{repo}:{consumed}")))?;
+    assert_eq!(
+        item.repo.as_ref(),
+        Some(repo),
+        "an errand of its repository"
+    );
     store.save_learning_value(&format!("learning/distillation/{}", item.id), repo.as_str())?;
     store.save_learning_value(&key, &(consumed + count).to_string())?;
     store.save_learning_value(

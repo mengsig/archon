@@ -847,6 +847,44 @@ async fn a_queued_item_with_pinned_tiers_waits_for_quota_like_any_tier() {
     }
 }
 
+/// A queued pinned tier whose saved resolution left the catalog is no invalid
+/// pin: the tier was asked for, and dispatch resolves it on a listed model.
+#[tokio::test]
+async fn a_queued_pinned_tier_whose_model_left_the_catalog_resolves_again() {
+    for source in PINS {
+        let h = harness(Config::default()).await;
+        let item = enqueue(&h, ROUTED, "queued with a stale tier", tier_plan()).await;
+        let plan = pinned(&h, &item, source).await;
+        let gone = plan.choices_for("implement").unwrap()[0].model.clone();
+        let next: archon_core::model::ModelRef =
+            format!("{}/next-strong", gone.provider).parse().unwrap();
+        let mut listed: Vec<CatalogModel> = catalog().models().to_vec();
+        listed.retain(|entry| entry.model != gone);
+        listed.push(CatalogModel {
+            model: next.clone(),
+            tier: Some(Tier::Strong),
+            is_default: false,
+        });
+        h.set_catalog(ModelCatalog::new(listed)).await;
+        h.dispatch().await;
+
+        let state = h.state(&item.id).await;
+        assert!(
+            matches!(state, QueueState::Running { .. }),
+            "{source:?}: {state:?}"
+        );
+        let running = h.running().await;
+        assert_eq!(running.len(), 1, "{source:?}: the implementer runs");
+        assert_eq!(running[0].choice.model, next, "{source:?}");
+        let tier = running[0].choice.tier.as_ref().expect("still a tier");
+        assert_eq!(
+            tier.requested,
+            Tier::Strong,
+            "{source:?}: the tier asked for"
+        );
+    }
+}
+
 #[tokio::test]
 async fn a_stage_waiting_for_quota_takes_no_agent_slot_from_other_work() {
     let mut config = weighted(&[("claude-code", 1), ("codex", 1)]);

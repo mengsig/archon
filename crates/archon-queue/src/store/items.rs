@@ -6,7 +6,7 @@ use archon_core::Timestamp;
 use archon_core::autonomy::AutonomyPatch;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId, RepoId};
-use archon_core::model::ModelPlanDraft;
+use archon_core::model::{ModelPlan, ModelPlanDraft};
 use archon_core::protocol::ItemQuery;
 use archon_core::pull_request::OntoTarget;
 use archon_core::queue::{QueueItem, QueueState};
@@ -299,7 +299,10 @@ fn check_replay(
     (first, stored): (&QueueItemId, &serde_json::Value),
     item: &QueueItem,
     mut request: serde_json::Value,
-    asked: &AutonomyPatch,
+    Asked {
+        autonomy: asked,
+        model_plan: asked_plan,
+    }: &Asked,
 ) -> Result<(), ArchonError> {
     let Some(stored_fields) = stored.as_object() else {
         return Err(ArchonError::Store(format!(
@@ -309,15 +312,18 @@ fn check_replay(
     let fields = request
         .as_object_mut()
         .expect("request_value builds an object");
-    if stored_fields.contains_key("model_plan") {
+    if let Some(stored_plan) = stored_fields.get("model_plan") {
         assert!(
             fields.remove("asked_plan").is_some(),
             "request_value has asked_plan"
         );
-        fields.insert(
-            "model_plan".into(),
-            serde_json::json!(item.model_plan.plan()),
-        );
+        // That store kept a named model as asked; the plan now holds its canonical id.
+        let as_asked = serde_json::json!(plan_as_asked(item.model_plan.plan(), asked_plan));
+        let filled = match *stored_plan == as_asked {
+            true => as_asked,
+            false => serde_json::json!(item.model_plan.plan()),
+        };
+        fields.insert("model_plan".into(), filled);
     }
     let legacy = !stored_fields.contains_key("autonomy");
     if legacy {
@@ -339,6 +345,25 @@ fn check_replay(
         )));
     }
     Ok(())
+}
+
+/// `plan` with each model the request named put back as it was `asked`: the
+/// plan a store from before canonical ids filled for the same request.
+fn plan_as_asked(plan: &ModelPlan, asked: &ModelPlanDraft) -> ModelPlan {
+    let mut named = plan.clone();
+    for (key, drafts) in &asked.0 {
+        let Some(choices) = named.0.get_mut(key) else {
+            continue;
+        };
+        for (choice, draft) in choices.iter_mut().zip(drafts) {
+            if let Some(model) = &draft.model {
+                choice.model = model.clone();
+            }
+        }
+    }
+    assert_eq!(named.0.len(), plan.0.len(), "only models are put back");
+    assert!(named.0.keys().eq(plan.0.keys()), "no key is added or lost");
+    named
 }
 
 /// The item an earlier enqueue stored under `key` when `item` asks for the
@@ -367,7 +392,7 @@ pub(super) fn replayed(
         );
         request["onto"] = serde_json::json!(target);
     }
-    check_replay(key, (&first, &stored), item, request, &asked.autonomy)?;
+    check_replay(key, (&first, &stored), item, request, asked)?;
     load(conn, &first).map(Some)
 }
 
@@ -426,7 +451,7 @@ fn insert_requested_in(
         && let Some((first, stored)) = find_by_key(tx, key)?
     {
         let stored: serde_json::Value = from_json(&stored, "enqueue request")?;
-        check_replay(key, (&first, &stored), item, request, &asked.autonomy)?;
+        check_replay(key, (&first, &stored), item, request, asked)?;
         return load(tx, &first);
     }
     if exists(tx, &item.id)? {

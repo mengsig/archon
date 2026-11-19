@@ -1,10 +1,12 @@
 use archon_core::error::ArchonError;
 use archon_core::model::ModelPlan;
 use archon_core::model_tier::ModelCatalog;
+use archon_core::plan_origin::TierMove;
 use archon_core::queue::QueueItem;
 use archon_pipeline::SpawnPlan;
 
-/// Repair an item's plan using its current pipeline, policy and learned defaults.
+/// Repair an item's plan using its current pipeline, policy and learned
+/// defaults, as dispatch reads it: a pinned tier's model resolves again.
 pub(crate) fn repair_item(
     ctx: &crate::context::DaemonContext,
     store: &archon_queue::Store,
@@ -13,19 +15,37 @@ pub(crate) fn repair_item(
     env: &crate::resolve::RepoEnv,
     spec: &archon_pipeline::PipelineSpec,
 ) -> Result<QueueItem, ArchonError> {
-    repair_item_in(ctx, store, item, catalog, env, (spec, &|_| true))
+    let whole = RepairScope {
+        spec,
+        when: TierMove::Dispatch,
+        in_scope: &|_| true,
+    };
+    repair_item_in(ctx, store, item, catalog, env, whole)
 }
 
-/// [`repair_item`] for the plan keys `in_scope` accepts; the rest are kept as stored.
+/// What a repair covers: its pipeline, when it runs, and the plan keys it
+/// reads; the other keys are kept as stored.
+struct RepairScope<'a> {
+    spec: &'a archon_pipeline::PipelineSpec,
+    when: TierMove,
+    in_scope: &'a dyn Fn(&str) -> bool,
+}
+
+/// [`repair_item`] within `scope`.
 fn repair_item_in(
     ctx: &crate::context::DaemonContext,
     store: &archon_queue::Store,
     item: &QueueItem,
     catalog: &ModelCatalog,
     env: &crate::resolve::RepoEnv,
-    (spec, in_scope): (&archon_pipeline::PipelineSpec, &dyn Fn(&str) -> bool),
+    RepairScope {
+        spec,
+        when,
+        in_scope,
+    }: RepairScope<'_>,
 ) -> Result<QueueItem, ArchonError> {
-    let policy = env.resolved_policy(ctx);
+    // Both sides of the policy read `catalog`: the plan's ids and the lists'.
+    let policy = env.policy_in(&ctx.config, &catalog.aliases());
     let max_tier = env.max_default_tier(&ctx.config);
     let tiers = crate::knobs::TierScope::new(&ctx.config, &policy, catalog);
     if !item.model_plan.needs_catalog_repair(&item.id, catalog) {
@@ -52,7 +72,7 @@ fn repair_item_in(
     repaired.model_plan.repair_catalog_in(
         &item.id,
         catalog,
-        (archon_core::now(), in_scope),
+        (archon_core::now(), when, in_scope),
         |key, slot, choice, _| selection.choose(key, slot, choice),
     )?;
     assert_eq!(repaired.id, item.id);
@@ -135,7 +155,12 @@ pub(crate) fn repair_pending(
     let in_scope = |key: &str| {
         keys.contains(key) || (reviews && key.ends_with(archon_core::model::REVIEWERS_KEY_SUFFIX))
     };
-    let repaired = repair_item_in(ctx, store, item, catalog, env, (spec, &in_scope))?;
+    let pending = RepairScope {
+        spec,
+        when: TierMove::InRun,
+        in_scope: &in_scope,
+    };
+    let repaired = repair_item_in(ctx, store, item, catalog, env, pending)?;
     let before = item.model_plan.plan();
     let after = repaired.model_plan.plan();
     let mut pending = plans.to_vec();

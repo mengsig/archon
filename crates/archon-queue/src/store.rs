@@ -363,7 +363,7 @@ impl Store {
         items::insert(&mut self.conn, item, idempotency_key, asked)
     }
     /// The stored item when `item` replays idempotency `key` (see
-    /// [`items::replayed`]); a different request under the key is refused.
+    /// `items::replayed`); a different request under the key is refused.
     pub fn replayed_enqueue(
         &self,
         item: &QueueItem,

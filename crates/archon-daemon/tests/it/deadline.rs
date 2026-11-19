@@ -160,6 +160,41 @@ async fn a_refused_deadline_wake_times_out_without_a_fresh_agent() {
     assert!(matches!(h.state(&item.id).await, QueueState::Failed { .. }));
 }
 
+/// A deadline wake is a stage attempt on the stage's model: a pin the catalog
+/// retired wakes nothing and times out, and the fleet event is handled.
+#[tokio::test]
+async fn a_retired_pin_is_not_woken_at_its_deadline_and_holds_no_fleet_event() {
+    const HAIKU: &str = "claude-code/claude-haiku-5-5";
+    let h = Harness::new().await;
+    let mut plan = common::plan();
+    let pin = common::choice(HAIKU, archon_core::model::Effort::Medium);
+    plan.0.insert("implement".into(), vec![pin]);
+    let item = h
+        .enqueue_with("retired at its deadline", plan)
+        .await
+        .unwrap();
+    h.dispatch().await;
+    let first = h.running().await.remove(0);
+    assert_eq!(first.choice.model.to_string(), HAIKU);
+    let listed = common::catalog::default_models();
+    let listed = listed.models().iter().map(|entry| entry.model.clone());
+    let kept = listed.filter(|model| model.to_string() != HAIKU);
+    common::catalog::answer(&h.catalog_server, &common::catalog::untiered(kept));
+    let store = h.ctx.store.lock().await;
+    store.invalidate_model_catalog("catalog changed".into());
+    drop(store);
+    stop_at_deadline(&h, &first, true).await;
+
+    assert!(h.backend.woken().is_empty(), "a retired pin is not woken");
+    assert_eq!(h.backend.requests().len(), 1, "no fresh agent");
+    let stages = h.stages(&item.id).await;
+    assert!(
+        stages.iter().all(|s| s.state == StageState::TimedOut),
+        "{stages:?}"
+    );
+    assert!(matches!(h.state(&item.id).await, QueueState::Failed { .. }));
+}
+
 async fn sweep(h: &Harness) {
     dispatcher::dispatch_once(&h.ctx)
         .await

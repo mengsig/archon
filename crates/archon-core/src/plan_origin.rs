@@ -215,6 +215,12 @@ impl EntryOrigin {
         }
     }
 
+    /// Whether the daemon may replace this entry's model at `when`: one it
+    /// chose itself, or one it may resolve again in its tier.
+    pub fn may_replace(&self, when: TierMove) -> bool {
+        self.model.is_movable() || self.may_move(when)
+    }
+
     fn fields(&self) -> impl Iterator<Item = &FieldOrigin> {
         [&self.model, &self.effort].into_iter().chain(&self.tier)
     }
@@ -610,16 +616,18 @@ impl PlannedPlan {
             &EntryOrigin,
         ) -> Result<Option<CatalogReplacement>, ArchonError>,
     ) -> Result<(), ArchonError> {
-        self.repair_catalog_in(item, catalog, (at, |_: &str| true), replacement)
+        let all = (at, TierMove::InRun, |_: &str| true);
+        self.repair_catalog_in(item, catalog, all, replacement)
     }
 
     /// [`Self::repair_catalog_with`] for the keys `in_scope` accepts alone; the
-    /// others, such as a finished stage's pins, are kept unchecked.
+    /// others, such as a finished stage's pins, are kept unchecked. At `when`
+    /// a pinned tier's model is the daemon's to replace as its own choice is.
     pub fn repair_catalog_in(
         &mut self,
         item: &QueueItemId,
         catalog: &crate::model_tier::ModelCatalog,
-        (at, in_scope): (Timestamp, impl Fn(&str) -> bool),
+        (at, when, in_scope): (Timestamp, TierMove, impl Fn(&str) -> bool),
         mut replacement: impl FnMut(
             &str,
             usize,
@@ -643,19 +651,9 @@ impl PlannedPlan {
             let slots = writer.entries.get_mut(key).expect("an origin per entry");
             assert_eq!(choices.len(), slots.len(), "origins fit the plan");
             for (slot, (choice, origin)) in choices.iter_mut().zip(slots).enumerate() {
-                let listed = catalog.check(&choice.model).and_then(|model| {
-                    if origin.model.is_movable()
-                        && let Some(next) = catalog.superseded_by(&model)
-                    {
-                        return Err(ArchonError::Invalid(format!(
-                            "{model} is superseded by {next}"
-                        )));
-                    }
-                    Ok(model)
-                });
-                let model = match listed {
+                let model = match still_listed(catalog, &choice.model, origin) {
                     Ok(model) => model,
-                    Err(error) if origin.model.is_movable() => {
+                    Err(error) if origin.may_replace(when) => {
                         let Some((model, tier)) = replacement(key, slot, choice, origin)? else {
                             return Err(error);
                         };
@@ -719,6 +717,24 @@ impl PlannedPlan {
         *self = writer.finish();
         Ok(())
     }
+}
+
+/// `model` as `catalog` lists it; a choice the daemon made is listed no longer
+/// once the catalog names its successor.
+fn still_listed(
+    catalog: &crate::model_tier::ModelCatalog,
+    model: &crate::model::ModelRef,
+    origin: &EntryOrigin,
+) -> Result<crate::model::ModelRef, ArchonError> {
+    let listed = catalog.check(model)?;
+    if origin.model.is_movable()
+        && let Some(next) = catalog.superseded_by(&listed)
+    {
+        return Err(ArchonError::Invalid(format!(
+            "{listed} is superseded by {next}"
+        )));
+    }
+    Ok(listed)
 }
 
 /// `source` for every field of `plan`.

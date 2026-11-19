@@ -440,7 +440,8 @@ fn reserved_hold(
     let Some(refused) = models.iter().find_map(|m| catalog.check(m).err()) else {
         return Ok(None);
     };
-    Ok(Some(match dispatcher::invalid_pin(item, catalog) {
+    let when = archon_core::plan_origin::TierMove::InRun;
+    Ok(Some(match dispatcher::invalid_pin(item, catalog, when) {
         Some(pin) => (ModelHoldKind::InvalidPin, pin),
         None => (ModelHoldKind::NoReplacement, refused.to_string()),
     }))

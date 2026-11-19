@@ -1301,12 +1301,16 @@ impl RepoConfig {
         if config.models.reserve_percent.is_some()
             || !config.models.interactive_providers.is_empty()
             || config.models.effort_sizing == Some(true)
-            || config.models.sizer_max_effort.is_some()
         {
             return Err(ArchonError::Config(format!(
-                "{}: models.reserve_percent, models.interactive_providers, \
-                 models.effort_sizing and models.sizer_max_effort are set in \
-                 Archon's global config only",
+                "{}: models.reserve_percent, models.interactive_providers and \
+                 models.effort_sizing are set in Archon's global config only",
+                path.display()
+            )));
+        }
+        if config.models.sizer_max_effort.is_some() {
+            return Err(ArchonError::Config(format!(
+                "{}: models.sizer_max_effort is set in Archon's global config only",
                 path.display()
             )));
         }
@@ -1617,7 +1621,10 @@ mod tests {
         RepoConfig::load(dir.path()).expect("a repository that leaves it unset loads");
         std::fs::write(&file, "[models]\neffort_sizing = true\n").unwrap();
         let refused = RepoConfig::load(dir.path()).unwrap_err().to_string();
-        assert!(refused.contains("global config only"), "{refused}");
+        // 1.6.3's refusal of its own global-only keys reads as it did.
+        let why = "models.reserve_percent, models.interactive_providers and \
+                   models.effort_sizing are set in Archon's global config only";
+        assert!(refused.ends_with(why), "{refused}");
         // 1.6.3 loaded a repository's `false`; it stays loadable and inert.
         std::fs::write(&file, "[models]\neffort_sizing = false\n").unwrap();
         let inert = RepoConfig::load(dir.path()).expect("a repository's false still loads");
@@ -1637,7 +1644,8 @@ mod tests {
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(&file, "[models]\nsizer_max_effort = \"high\"\n").unwrap();
         let refused = RepoConfig::load(dir.path()).unwrap_err().to_string();
-        assert!(refused.contains("global config only"), "{refused}");
+        let why = "models.sizer_max_effort is set in Archon's global config only";
+        assert!(refused.ends_with(why), "{refused}");
     }
 
     #[test]

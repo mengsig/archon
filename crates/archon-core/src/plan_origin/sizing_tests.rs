@@ -631,3 +631,26 @@ fn a_carried_sized_effort_is_within_the_cap_before_any_fill_step_reads_it() {
     let why = "sizer: critical -> x_high; clipped from x_high to the cap high";
     assert_eq!(reason(&grown, &item, "build"), why, "said once");
 }
+
+/// An empty key (`implement.workers: []`, which 1.6.3 accepts) is never
+/// recorded for sizing, so settling and carrying the plan never trip on it.
+#[test]
+fn an_empty_key_is_left_unsized_through_settle_and_carry() {
+    let item = QueueItemId::new();
+    let mut writer = filled(&item, &["build"], Effort::Medium, PlanSource::Fallback);
+    let mut plan = writer.plan().clone();
+    plan.0.insert("extra".to_owned(), Vec::new());
+    writer.filled(plan, (PlanSource::Fallback, PlanSource::Fallback));
+    let mut planned = writer.finish(on(Effort::XHigh));
+    assert!(planned.settle(&item, input("Fix the mutex", &[]), crate::now()));
+    assert!(planned.slot_sizing(&item, "build", 0).is_some(), "sized");
+    assert!(
+        planned.slot_sizing(&item, "extra", 0).is_none(),
+        "nothing to size"
+    );
+    let mut retry = PlanWriter::new(&item, crate::now());
+    retry.carry(&planned, &item, Some(Effort::High), |_| Some(usize::MAX));
+    let carried = retry.finish(on(Effort::High));
+    assert_eq!(carried.choices_for("extra"), Some(&[][..]));
+    assert!(!carried.has_unsized(), "the empty key was never recorded");
+}

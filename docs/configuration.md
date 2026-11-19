@@ -165,15 +165,17 @@ routing never reads the grouping.
 Three rules decide what a cap lowered later does to a stored effort:
 
 1. At dispatch, with no new plan, only the policy's `max_effort` lowers an
-   effort the sizer set, and the attempt records the reason (`; this attempt:
-   clipped from x_high to the cap high`); the item's stored plan keeps what
-   it holds. A lower `sizer_max_effort` alone leaves it as it is. Recovery of
-   a live run reads its stored plan unchanged and loads no repository config;
-   each later stage of the run is held to the policy's cap as it is when that
-   stage's agent is reserved. An agent already reserved or sent is issued as
-   it was stored, and an agent woken in place after an infrastructure failure
-   is requested and recorded at the effort it runs; a cap below that refuses
-   the wake, as in 1.6.3.
+   effort the sizer set. When a run starts, the lowered effort is stored in
+   the plan with its reason, so a recovered run reads the same plan; a later
+   stage of a running run is held to the policy's cap as it is when that
+   stage's agent is reserved, and its attempt records the reason (`; this
+   attempt: clipped from x_high to the cap high`) while the stored plan keeps
+   what it holds. A lower `sizer_max_effort` alone leaves the plan as it is.
+   Recovery of a live run reads its stored plan unchanged and loads no
+   repository config. An agent already reserved or sent is issued as it was
+   stored, and an agent woken in place after an infrastructure failure is
+   requested and recorded with the model and effort it runs; a cap below that
+   refuses the wake, as in 1.6.3.
 2. When a retry, a revision or a re-shape writes the plan again with carried
    entries, each carried effort the sizer set is lowered to the lower of
    `max_effort` and `sizer_max_effort`, with the same recorded reason. With

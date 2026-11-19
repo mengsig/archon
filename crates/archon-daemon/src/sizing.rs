@@ -205,14 +205,15 @@ pub(crate) fn hold_to_policy(item: &QueueItem, cap: Option<Effort>, plan: &mut S
 }
 
 /// A wake of `plan`'s slot keeps the agent, so a slot the daemon sized is
-/// requested at the effort the agent runs (`ran`), not the driver's copy.
-/// Any other slot keeps its plan, as in 1.6.3.
+/// requested and recorded as the agent runs (`ran`): its model may have moved
+/// since the driver read it (a quota move, an acceptance judge). Any other slot
+/// keeps its plan, as in 1.6.3.
 pub(crate) fn hold_to_woken(item: &QueueItem, ran: &ModelChoice, plan: &mut SpawnPlan) {
     let slot = (plan.stage_id.as_str(), plan.fan_index);
-    if ran.model != plan.choice.model || daemon_sized(item, slot).is_none() {
+    if daemon_sized(item, slot).is_none() {
         return;
     }
-    plan.choice.effort = ran.effort;
+    plan.choice = ran.clone();
 }
 
 /// How the effort `plan`'s slot runs at was chosen, read from the item's

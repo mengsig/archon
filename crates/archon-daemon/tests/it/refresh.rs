@@ -1647,6 +1647,7 @@ async fn a_learned_model_is_taken_under_a_cap_below_its_advised_effort_only_with
         let mut capped = h.ctx.config.clone();
         capped.models.max_effort = Some(High);
         capped.models.effort_sizing = Some(sizing);
+        capped.learning.explore_rate = 0.0;
         h.restart_with(capped);
         learn_implement_route_at(&h, ("codex/cheap", XHigh), 0.2, 5).await;
         let fresh = enqueue(&h, "learned").await;
@@ -1668,6 +1669,8 @@ async fn a_refresh_with_sizing_off_makes_one_routing_decision_and_applies_no_lea
     settle_reviewed(&h, None).await;
     let mut rolled_back = h.ctx.config.clone();
     rolled_back.models.effort_sizing = Some(false);
+    // No exploration, so the fresh control takes the learned route every time.
+    rolled_back.learning.explore_rate = 0.0;
     h.restart_with(rolled_back);
     executor::recover(&h.ctx).await.unwrap();
     let own = owner.model_plan.0["implement"][0].clone();
@@ -1711,7 +1714,10 @@ async fn a_refresh_with_sizing_off_makes_one_routing_decision_and_applies_no_lea
 #[tokio::test]
 async fn a_retry_applies_no_route_learned_since_its_plan_was_frozen() {
     use crate::effort_sizing::{cancel, retry};
-    let (h, _gh) = delivering().await;
+    let (mut h, _gh) = delivering().await;
+    let mut steady = h.ctx.config.clone();
+    steady.learning.explore_rate = 0.0;
+    h.restart_with(steady);
     let owner = enqueue(&h, "the change").await;
     let own = owner.model_plan.0["implement"][0].clone();
     let origin = owner.model_plan.origin(&owner.id, "implement", 0);

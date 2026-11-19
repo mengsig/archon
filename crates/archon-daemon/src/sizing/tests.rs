@@ -290,3 +290,33 @@ fn a_pinned_x_high_is_left_alone_on_any_engine() {
     hold_all(&unsized_item, &mut plans);
     assert_eq!(plans[0].choice.effort, Effort::XHigh, "never sized");
 }
+
+/// A woken agent of a sized slot is requested and recorded as it runs, even
+/// when its model moved after the driver read the plan (a quota move, an
+/// acceptance judge); an unsized slot keeps the driver's choice, as in 1.6.3.
+#[test]
+fn a_woken_sized_slot_is_recorded_as_its_agent_runs_on_any_model() {
+    let direct = spec("direct");
+    let mut item = critical_item();
+    let (on, open) = (Config::default(), ModelPolicy::default());
+    let writer = written(&item, &direct);
+    item.model_plan = finish((&on, &open), &direct, || Ok(None), writer).unwrap();
+    item.settle_sizing(archon_core::now());
+    let ran = ModelChoice::pinned("gemini/gemini-pro".parse().unwrap(), Effort::High);
+    let mut woken = spawn_of("claude-code/claude-opus-5-5", Effort::XHigh);
+    hold_to_woken(&item, &ran, &mut woken);
+    assert_eq!(woken.choice, ran, "the agent's model and effort");
+    let sized = attempt(&item, &woken);
+    let why = "sizer: critical -> x_high; this attempt: gemini runs no more than high, so high";
+    assert_eq!(sized.effort_reasons.as_deref(), Some(why));
+
+    let mut unsized_item = critical_item();
+    unsized_item.model_plan = written(&item, &direct).finish(Sizing::Off { policy_cap: None });
+    let driver = spawn_of("claude-code/claude-opus-5-5", Effort::XHigh);
+    let mut kept = driver.clone();
+    hold_to_woken(&unsized_item, &ran, &mut kept);
+    assert_eq!(
+        kept.choice, driver.choice,
+        "never sized: the driver's choice"
+    );
+}

@@ -82,10 +82,9 @@ impl PlanSizing {
     /// the class and size `kept` froze when this record has none yet.
     pub(super) fn carry(&mut self, kept: Option<&Self>, key: &str, choices: usize) {
         let Some(kept) = kept else { return };
-        let Some(sized) = kept.keys.get(key) else {
+        let Some(sized) = kept.keys.get(key).filter(|_| choices >= 1) else {
             return;
         };
-        assert!(choices >= 1, "a carried key keeps a choice");
         if self.keys.is_empty() {
             self.risk_class = kept.risk_class;
             self.risk_signals.clone_from(&kept.risk_signals);
@@ -204,7 +203,11 @@ impl PlanWriter {
             self.sizing.size = sizer.size;
         }
         for key in &self.fresh {
-            assert!(self.plan.0.contains_key(key), "a new key is of the plan");
+            let choices = self.plan.0.get(key).expect("a new key is of the plan");
+            // An empty key (`workers: []`, which 1.6.3 accepts) has nothing to size.
+            if choices.is_empty() {
+                continue;
+            }
             let Some(facts) = (sizer.facts)(key) else {
                 continue;
             };

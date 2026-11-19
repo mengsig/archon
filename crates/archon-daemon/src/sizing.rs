@@ -186,6 +186,24 @@ pub(crate) fn hold_to_plan(item: &QueueItem, plan: &mut SpawnPlan) {
     );
 }
 
+/// Ruling (a): hold a spawn of a slot the daemon sized to `cap`, the policy's
+/// as it is now; the item's stored plan is kept. A pin is left for the policy
+/// check to refuse, as in 1.6.3.
+pub(crate) fn hold_to_policy(item: &QueueItem, cap: Option<Effort>, plan: &mut SpawnPlan) {
+    let slot = (plan.stage_id.as_str(), plan.fan_index);
+    let Some(cap) = cap.filter(|cap| plan.choice.effort > *cap) else {
+        return;
+    };
+    let Some((stored, _)) = daemon_sized(item, slot) else {
+        return;
+    };
+    assert!(
+        plan.choice.effort <= stored,
+        "held to the stored plan first"
+    );
+    plan.choice.effort = cap;
+}
+
 /// How the effort `plan`'s slot runs at was chosen, read from the item's
 /// stored plan: nothing when the sizer never decided the stage's key. A slot
 /// the daemon sized that runs lower than its plan holds says why.

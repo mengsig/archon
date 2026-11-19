@@ -10,8 +10,9 @@ use archon_core::id::QueueItemId;
 use archon_core::model::Effort::{self, High, XHigh};
 use archon_core::plan_origin::PlanSource;
 use archon_core::protocol::ItemPatch;
+use archon_core::protocol::Request;
 use archon_core::queue::QueueItem;
-use archon_core::run::StageRun;
+use archon_core::run::{StageRun, StageState};
 use archon_daemon::executor;
 
 const WHY: &str = "sizer: critical -> x_high; clipped from x_high to the cap high";
@@ -80,34 +81,91 @@ async fn recovery_reads_a_live_run_s_stored_plan_unchanged_under_a_lowered_cap()
     }
 }
 
-/// Ruling (a) after recovery: the recovered driver runs the stored plan as
-/// it is, so the run's next stage starts at the frozen x_high with its reason
-/// under a lowered sizer cap, policy cap or repository cap (as 1.6.3 runs a pin).
+/// The request Aether received for item `id`'s stage `stage`, which runs.
+async fn issued(h: &Harness, id: &QueueItemId, stage: &str) -> (StageRun, Effort) {
+    let attempt = attempt(h, id, stage).await;
+    assert_eq!(attempt.state, StageState::Running, "{stage} started");
+    let key = attempt.id.as_str();
+    let sent = h.backend.requests();
+    let sent = sent.iter().rfind(|r| r.idempotency_key == key);
+    let effort = sent.expect("sent to Aether").choice.effort;
+    assert_eq!(
+        effort, attempt.choice.effort,
+        "the attempt records what was sent"
+    );
+    (attempt, effort)
+}
+
+/// Ruling (a) after recovery: the recovered driver reads the stored plan as it
+/// is. The run's next stage, sent after the restart, is held to the policy's
+/// cap (global or the repository's) with the reason; a lowered sizer cap
+/// alone leaves it at the frozen x_high. The item's stored plan is never rewritten.
 #[tokio::test]
-async fn a_recovered_run_s_next_stage_runs_its_stored_effort_under_a_lowered_cap() {
-    for config in [sizer_max(High), policy_cap(High)] {
+async fn a_recovered_run_s_next_stage_is_held_to_the_policy_s_cap_alone() {
+    const CLIPPED: &str =
+        "sizer: critical -> x_high; this attempt: clipped from x_high to the cap high";
+    let cases = [
+        (sizer_max(High), None, XHigh, "sizer: critical -> x_high"),
+        (policy_cap(High), None, High, CLIPPED),
+        (
+            Config::default(),
+            Some("[models]\nmax_effort = \"high\"\n"),
+            High,
+            CLIPPED,
+        ),
+    ];
+    for (config, repo_cap, runs, why) in cases {
         let mut h = harness(Config::default()).await;
         let queued = enqueue(&h, "Add a button", &["risk:critical"]).await;
         h.dispatch().await;
-        h.repo_config("[models]\nmax_effort = \"high\"\n");
+        if let Some(toml) = repo_cap {
+            h.repo_config(toml);
+        }
         h.restart_with(config);
         executor::recover(&h.ctx).await.expect("recover");
         h.settle_running(|_| completed("implemented")).await;
         h.dispatch().await;
-        let review = attempt(&h, &queued.id, "review").await;
-        assert_eq!(review.choice.effort, XHigh, "the stored plan's");
+        let (review, sent) = issued(&h, &queued.id, "review").await;
+        assert_eq!(sent, runs, "{why}");
         let (class, source, reason) = recorded(&review);
         assert_eq!(
             (class, source),
             (Some(RiskClass::Critical), Some(PlanSource::Sizer))
         );
-        assert_eq!(reason, "sizer: critical -> x_high");
+        assert_eq!(reason, why);
         assert_eq!(
             efforts(&h.item(&queued.id).await),
             ALL_XHIGH,
-            "never clipped"
+            "the stored plan is never rewritten"
         );
     }
+}
+
+/// Ruling (c) at dispatch: a pinned effort over a policy cap lowered after it
+/// was admitted is refused as 1.6.3 refuses it, never clipped.
+#[tokio::test]
+async fn a_pin_over_a_lowered_policy_cap_is_refused_when_its_stage_is_sent() {
+    let mut h = harness(Config::default()).await;
+    let mut asked = request("Add a button", &[], pinned("review", XHigh));
+    asked.model_reasons = Some([("review".to_owned(), "a hard review".to_owned())].into());
+    let queued = item(h.cli(Request::Enqueue(asked)).await).await;
+    h.dispatch().await;
+    h.restart_with(policy_cap(High));
+    executor::recover(&h.ctx).await.expect("recover");
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    let review = attempt(&h, &queued.id, "review").await;
+    assert_eq!(review.choice.effort, XHigh, "a pin is never clipped");
+    assert!(
+        matches!(review.state, StageState::Failed { .. }),
+        "{:?}",
+        review.state
+    );
+    let key = review.id.as_str();
+    assert!(
+        h.backend.created_for(key).is_none(),
+        "refused before Aether"
+    );
 }
 
 /// Ruling (b) on an autonomy revision that restages a queued item: the carried

@@ -819,6 +819,11 @@ fn reserve_one(
     // Fresh or a replacement, a driver's effort is held to the stored plan as it is now.
     let mut held = plan.clone();
     crate::sizing::hold_to_plan(target.item, &mut held);
+    // An unreadable repository policy is refused when the spawn is claimed.
+    if let Ok(env) = RepoEnv::new(target.repo.cloned()) {
+        let cap = env.policy(target.config).max_effort;
+        crate::sizing::hold_to_policy(target.item, cap, &mut held);
+    }
     let plan = &held;
     let id = StageRunId::new();
     let nth = retry.as_ref().map(|r| r.nth);

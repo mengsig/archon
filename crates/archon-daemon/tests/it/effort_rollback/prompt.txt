@@ -97,10 +97,8 @@ what is left. A change answered `pending: req_…` may still apply: ask
 **Steering.** `steer_item` blames no model; once a run delivers, only its
 `note` reaches it. One failed with `ESCALATE:` does not fit its
 pipeline: do not retry it; `switch_pipeline` or `insert_stage` revives it on
-its branch. One the review-round cap stopped is yours to decide: `retry_item`
-continues it, and its new lead delta-reviews only the new commits; a
-`brief_append` moving the open findings to follow-ups accepts its head;
-`cancel_item` stops it.
+its branch. A stop at the review-round cap is the exception: its error lists
+your choices.
 
 **Stacking.** An item that `depends_on` an unmerged one of its repository
 stacks on its branch and pull request. Queue a chain at once; wait for no

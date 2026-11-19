@@ -2059,9 +2059,7 @@ mod tests {
             "`steer_item` blames no model; once a run delivers, only its `note` reaches it.",
             "One failed with `ESCALATE:` does not fit its pipeline: do not retry it; \
              `switch_pipeline` or `insert_stage` revives it on its branch.",
-            "One the review-round cap stopped is yours to decide: `retry_item` continues it, \
-             and its new lead delta-reviews only the new commits; a `brief_append` moving the \
-             open findings to follow-ups accepts its head; `cancel_item` stops it.",
+            "A stop at the review-round cap is the exception: its error lists your choices.",
             "An item that `depends_on` an unmerged one of its repository stacks on its branch \
              and pull request.",
             "Queue a chain at once; wait for no merge.",
@@ -2375,9 +2373,9 @@ mod tests {
 
     /// The prompt is paid for on every turn; the tools describe themselves.
     /// Includes 1 KiB for approved-intent and clarification guidance, 128 B
-    /// for routing risky work to `adaptive`, and 64 B for the rule against
-    /// polling GitHub from a schedule.
-    const BUDGET_BYTES: usize = 14 * 1024 + 768 + 128 + 64;
+    /// for routing risky work to `adaptive`, 64 B for the rule against
+    /// polling GitHub from a schedule, and 64 B for the review-cap exception.
+    const BUDGET_BYTES: usize = 14 * 1024 + 768 + 128 + 64 + 64;
 
     #[test]
     fn builtin_prompt_stays_within_its_budget() {

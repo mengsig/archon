@@ -155,20 +155,7 @@ fn place_unnamed(
             Err(why) => tracing::debug!(%agent, %why, "an earlier reviewer anchors nothing"),
         }
     }
-    for (agent, verdict) in carried {
-        // A read of commits the branch no longer holds counts for nothing in a later run.
-        match place_one(history, head, forks, agent, verdict)? {
-            Ok(read) if !read.superseded => placed.push(Placed {
-                named: false,
-                carried: true,
-                ..read
-            }),
-            Ok(_) => {
-                tracing::debug!(%agent, "an earlier run's read of a rewritten history is dropped")
-            }
-            Err(why) => tracing::debug!(%agent, %why, "an earlier run's read anchors nothing"),
-        }
-    }
+    place_carried(history, (head, forks), carried, placed)?;
     for (agent, verdict) in left_out {
         assert!(!verdict.pass, "only a fail is left out");
         match place_one(history, head, forks, agent, verdict)? {
@@ -190,6 +177,39 @@ fn place_unnamed(
         }
     }
     Ok(Ok(()))
+}
+
+/// Place the reads of earlier runs' reviewers that the branch at `head` still holds.
+fn place_carried(
+    history: &mut History,
+    (head, forks): (&str, &[String]),
+    carried: &[(String, Verdict)],
+    placed: &mut Vec<Placed>,
+) -> Result<(), ArchonError> {
+    let before = placed.len();
+    for (agent, verdict) in carried {
+        assert!(
+            !placed.iter().any(|p| p.agent == *agent),
+            "a carried reviewer is read once"
+        );
+        // A read of commits the branch no longer holds counts for nothing in a later run.
+        match place_one(history, head, forks, agent, verdict)? {
+            Ok(read) if !read.superseded => placed.push(Placed {
+                named: false,
+                carried: true,
+                ..read
+            }),
+            Ok(_) => {
+                tracing::debug!(%agent, "an earlier run's read of a rewritten history is dropped")
+            }
+            Err(why) => tracing::debug!(%agent, %why, "an earlier run's read anchors nothing"),
+        }
+    }
+    assert!(
+        placed.len() - before <= carried.len(),
+        "each carried read is placed at most once"
+    );
+    Ok(())
 }
 
 /// Whether the branch at `head`, which the verdicts are held to, holds the
@@ -897,6 +917,38 @@ mod tests {
             named: false,
             ..read(agent, pass, head, base)
         }
+    }
+
+    /// A read by a reviewer of an earlier run's lead on this branch.
+    fn carried(agent: &str, pass: bool, head: &str) -> Placed {
+        Placed {
+            carried: true,
+            ..earlier(agent, pass, head, None)
+        }
+    }
+
+    /// A strict review carried from a capped run: three whole reads of c3, one
+    /// failed, and the new lead's one delta pass of its fix from c3.
+    #[test]
+    fn an_earlier_runs_whole_reads_count_toward_the_level_with_one_named_delta() {
+        let continued = [
+            read("agt_d", true, "c4", Some("c3")),
+            carried("agt_x", false, "c3"),
+            carried("agt_y", true, "c3"),
+            carried("agt_z", true, "c3"),
+        ];
+        let held = held(&continued, "c4", 3).unwrap();
+        assert_eq!(held.passes, [0]);
+        assert_eq!(held.carried, ["agt_x", "agt_y", "agt_z"]);
+        assert!(held.implicit.is_empty(), "{:?}", held.implicit);
+        let unnamed = continued.clone().map(|read| Placed {
+            carried: false,
+            ..read
+        });
+        let refused = count(&unnamed, "c4", 3).unwrap_err();
+        assert!(refused.contains("review level needs 3"), "{refused}");
+        let unread = count(&continued[..2], "c5", 3).unwrap_err();
+        assert!(unread.contains("passed the branch head c5"), "{unread}");
     }
 
     /// The verdicts of reviewers the lead named, and no other.

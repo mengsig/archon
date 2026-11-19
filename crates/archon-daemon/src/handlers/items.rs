@@ -1122,21 +1122,30 @@ pub(super) async fn retry(
     };
     // Queued under the table: dispatch starts it once the mark goes.
     drop(reserved);
-    if let Some(note) = &fresh_note {
-        post_note(ctx, id, note).await;
-    }
-    if continued {
-        post_note(ctx, id, CONTINUED_NOTE).await;
-    }
-    if let Some(text) = &retry.brief_append {
-        note_amendment(ctx, id, text, "retry_item").await;
-    }
+    let continued = continued.then_some(CONTINUED_NOTE);
+    let notes = fresh_note.as_deref().into_iter().chain(continued);
+    post_retry_notes(ctx, id, notes, retry.brief_append.as_deref()).await;
     ctx.dispatch.notify_one();
     Ok(Reply::Item(item))
 }
 
 const CONTINUED_NOTE: &str = "The retry continues the capped review: its brief repeats the \
     escalation, and earlier runs' reviews of the branch still count";
+
+/// Post a queued retry's `notes` and its brief amendment `append` to the item's progress.
+async fn post_retry_notes<'a>(
+    ctx: &DaemonContext,
+    id: &QueueItemId,
+    notes: impl Iterator<Item = &'a str>,
+    append: Option<&str>,
+) {
+    for note in notes {
+        post_note(ctx, id, note).await;
+    }
+    if let Some(text) = append {
+        note_amendment(ctx, id, text, "retry_item").await;
+    }
+}
 
 /// Add a retry's amendments to `item`'s brief: unless the retry is `fresh`, the continuation
 /// of a review the round cap stopped, then `append`. Whether a continuation was added.

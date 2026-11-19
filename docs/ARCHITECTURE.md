@@ -2645,7 +2645,35 @@ review rounds of `executor/review/rounds.rs` count only blocking fails: at
 `REVIEW_ROUND_CAP` (three) the stage is cancelled and fails with an
 `ESCALATE:` error, marked first like a stall (§16) so its cancel does not
 settle it as cancelled, and retried by the next sweep when the cancel goes
-unanswered. A child of a live, owing lead delegated with role `reviewer` that
+unanswered. The error names the last failed head and the orchestrator's three
+choices: continue with a non-fresh `retry_item`, accept the head with a
+`retry_item` whose `brief_append` moves the open findings to follow-ups, or
+stop with `cancel_item`. The cap is per stage attempt, so the retry's run gets
+three rounds of its own.
+
+Reviews carry across runs on one branch. When it checks a stage, archond also
+reads the completed direct children of the same stage's leads in the item's
+earlier runs with the same branch and worktree (`carried_reads`), and places
+their verdicts like the lead's own. A carried read whose head the branch no
+longer holds, after an amend or rebase, is dropped; a fresh retry is on a new
+branch and carries nothing; a `review` item's frozen head carries nothing. A
+carried read anchors the lead's deltas, and every carried whole-change read
+counts toward the level, so a lead with carried reads owes one named
+reviewer: a delta of its own commits from the last reviewed head. A carried
+fail stands only where a named reviewer's read does not pass past it. The
+record lists the carried reviewers after the named ones. Aether 1.4.1 and 1.4.2
+cannot wake a lead whose run ended (`wake` and `restart` need a live parent,
+and the run node is retired with the run), so a retry never resumes the
+escalated lead. Instead a non-fresh `retry_item` after the cap amends the brief
+(`capped_continuation`) with the escalation, the head the last round failed,
+and the rule that the new lead delta-reviews only the commits after it and does
+not re-review or re-read the whole change. Each delta reviewer is told to fail
+only on a defect in its commits or an open finding left unfixed; a new finding
+in code a pass already read is advisory, `"blocking": false`, and goes to the
+orchestrator as a follow-up. The verdict carries no finding locations, so the
+round tally counts the reviewer's own blocking marks.
+
+A child of a live, owing lead delegated with role `reviewer` that
 completes with no verdict the gate reads (`executor/review/restate.rs`) is
 told to the lead at once: archond records the reviewer under
 `review_restate:<stage run>`, interrupts the lead's turn (a Luna lead calls

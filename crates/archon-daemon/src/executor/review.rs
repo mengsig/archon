@@ -267,7 +267,7 @@ async fn check_chosen(
     };
     let check = |earlier: Option<Vec<Read>>| {
         let read = (verdicts.clone(), left_out.clone(), earlier);
-        holding(ctx, run, (read, &carried.reads), owed, shipped.clone())
+        holding(ctx, run, read, &carried.reads, owed, shipped.clone())
     };
     Ok(match check(None).await? {
         Checked::Unanchored(stray) => match earlier_reads(ctx, stage, lead, beneath, picked).await?
@@ -307,9 +307,8 @@ async fn earlier_reads(
     earlier_verdicts(ctx, &earlier).await
 }
 
-/// The verdicts of the reviewers that `stage`'s earlier leads, other than `lead`,
-/// delegated to in any stage run of this stage of the item on `run`'s branch. A
-/// `fresh` retry works on a new branch, so it carries none.
+/// The verdicts of the reviewers that this stage's leads in the item's earlier runs on
+/// `run`'s branch delegated to. A `fresh` retry works on a new branch, so it carries none.
 async fn carried_reads(
     ctx: &DaemonContext,
     run: &PipelineRun,
@@ -864,7 +863,8 @@ fn verdict_in(outcome: StageOutcome) -> Result<Verdict, String> {
 async fn holding(
     ctx: &DaemonContext,
     run: &PipelineRun,
-    ((verdicts, left_out, earlier), carried): ((Vec<Read>, Vec<Read>, Option<Vec<Read>>), &[Read]),
+    (verdicts, left_out, earlier): (Vec<Read>, Vec<Read>, Option<Vec<Read>>),
+    carried: &[Read],
     owed: u32,
     shipped: Option<String>,
 ) -> Result<Checked, ArchonError> {
@@ -895,15 +895,14 @@ async fn holding(
     {
         return Ok(Checked::Refused(why));
     }
-    // A review item reads a frozen pull request whole: nothing it read earlier carries over.
-    let carried: Vec<Read> = match &reviewed_pr {
-        Some(_) => Vec::new(),
-        None => carried.to_vec(),
-    };
+    // A review item reads a frozen pull request whole: `earlier_leads` carries it nothing.
+    assert!(
+        reviewed_pr.is_none() || carried.is_empty(),
+        "a review item carries nothing"
+    );
+    let carried = carried.to_vec();
     let workspace = run.workspace.clone();
     let checked = tokio::task::spawn_blocking(move || {
-        let mut history = History::new(&workspace);
-        let read = earlier.as_deref().unwrap_or_default();
         let base = Base {
             branch: &base_branch,
             onto_head: onto_head.as_deref(),
@@ -911,38 +910,71 @@ async fn holding(
         };
         let read = Verdicts {
             named: &verdicts,
-            earlier: read,
+            earlier: earlier.as_deref().unwrap_or_default(),
             left_out: &left_out,
             carried: &carried,
         };
-        let placed = coverage::place(&mut history, base, read)?;
-        let (head, placed) = match placed {
-            Ok(placed) => placed,
-            Err(why) => return Ok(Checked::Refused(why)),
+        let expect = Expected {
+            shipped: shipped.as_deref(),
+            reviewed_pr: reviewed_pr.as_ref(),
+            owed,
+            anchors_named: earlier.is_none(),
         };
-        if let Some(tree) = &shipped
-            && let Err(why) = coverage::holds_tree(&workspace, &head, tree)?
-        {
-            return Ok(Checked::Refused(why));
-        }
-        if let Some(why) = moved_off(reviewed_pr.as_ref(), &head) {
-            return Ok(Checked::Refused(why));
-        }
-        if earlier.is_none()
-            && let Some(stray) = coverage::unanchored_named(&mut history, &placed)?
-        {
-            return Ok(Checked::Unanchored(stray));
-        }
-        Ok(
-            match coverage::counted(&mut history, &placed, &head, owed)? {
-                Ok(held) => Checked::Held(held, head, fork),
-                Err(why) => Checked::Refused(why),
-            },
-        )
+        let checked = on_branch(&workspace, base, read, expect)?;
+        Ok(match checked {
+            Checked::Held(held, head, None) => Checked::Held(held, head, fork),
+            other => other,
+        })
     });
     checked
         .await
         .map_err(|e| ArchonError::io("reviewed commits task", std::io::Error::other(e)))?
+}
+
+/// What [`on_branch`] holds the placed verdicts to.
+struct Expected<'a> {
+    /// The tree the ship record names, which the head must hold.
+    shipped: Option<&'a str>,
+    reviewed_pr: Option<&'a OntoPullRequest>,
+    owed: u32,
+    /// Whether a named delta nothing named anchors is refused as unanchored, to be
+    /// checked again with the lead's earlier reviewers.
+    anchors_named: bool,
+}
+
+/// The verdicts `read`, placed on the branch in `workspace` and judged there.
+fn on_branch(
+    workspace: &std::path::Path,
+    base: Base<'_>,
+    read: Verdicts<'_>,
+    expect: Expected<'_>,
+) -> Result<Checked, ArchonError> {
+    assert!(!read.named.is_empty(), "a named reviewer was read");
+    assert!(expect.owed >= 1, "only an owed review is checked");
+    let mut history = History::new(workspace);
+    let (head, placed) = match coverage::place(&mut history, base, read)? {
+        Ok(placed) => placed,
+        Err(why) => return Ok(Checked::Refused(why)),
+    };
+    if let Some(tree) = expect.shipped
+        && let Err(why) = coverage::holds_tree(workspace, &head, tree)?
+    {
+        return Ok(Checked::Refused(why));
+    }
+    if let Some(why) = moved_off(expect.reviewed_pr, &head) {
+        return Ok(Checked::Refused(why));
+    }
+    if expect.anchors_named
+        && let Some(stray) = coverage::unanchored_named(&mut history, &placed)?
+    {
+        return Ok(Checked::Unanchored(stray));
+    }
+    Ok(
+        match coverage::counted(&mut history, &placed, &head, expect.owed)? {
+            Ok(held) => Checked::Held(held, head, None),
+            Err(why) => Checked::Refused(why),
+        },
+    )
 }
 
 /// Where the change a run's reviewers read starts.

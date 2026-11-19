@@ -514,6 +514,10 @@ pub(crate) fn capped_continuation(
         .into_iter()
         .filter(|s| s.stage_id == *stage_id)
         .max_by_key(|s| s.attempt);
+    assert!(
+        capped.as_ref().is_none_or(|s| s.run == *run),
+        "a stage of the failed run"
+    );
     let head = match &capped {
         Some(stage) => last_failed_head(store, &stage.id)?,
         None => None,

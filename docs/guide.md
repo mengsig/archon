@@ -629,8 +629,12 @@ every outcome to the feed itself and wakes the orchestrator for:
 - an item a GitHub thread asked for, to post the result there;
 - a review-fix loop that has failed three rounds (commits a reviewer failed
   with a blocking finding) in one stage attempt: Archon stops the stage with an
-  `ESCALATE:` failure that lists the open blocking findings, which ends the run,
-  so the orchestrator reshapes the work or retries the item with a steer note;
+  `ESCALATE:` failure that lists the open blocking findings and the last failed
+  head, which ends the run. The orchestrator decides: it continues with
+  `retry_item`, accepts the head with a `brief_append` that moves the open
+  findings to follow-ups, or cancels the item. A retry on the branch keeps the
+  earlier reviews, so its new lead reviews only the new commits. Aether cannot
+  resume the lead that escalated, so the new lead's brief repeats the escalation;
 - a stage agent's relay, escalation or question, a gate that opened, your
   answer to its question, feedback on a report, a budget that was reached, a
   cancelled helper.

@@ -49,7 +49,8 @@ pub(super) async fn steer(
     }
     let item = ctx.store.lock().await.item(id)?;
     revise::prepare(ctx, &item, &knobs, Ceiling::Enforced).await?;
-    if matches!(item.state, QueueState::Running { .. }) {
+    // With sizing off, the steer is delivered before the update is stored, as in 1.6.3.
+    if ctx.config.models.effort_sizing() && matches!(item.state, QueueState::Running { .. }) {
         // Boxed: the handlers' dispatch future holds this one inline.
         let both = Box::pin(steer_running_then_update(
             ctx,
@@ -220,13 +221,19 @@ pub(super) async fn update(
         plan: running_plan(ctx, (&env, by), run, &mut patch).await?,
     };
     assert!(patch.brief_append.is_none() && patch.model_plan.is_none());
-    // Boxed: the handlers' dispatch future holds this one inline.
-    let Some((_, revised)) = Box::pin(steer_and_update(ctx, &asked, id, patch)).await? else {
-        return Err(ArchonError::Unavailable(format!(
+    let ended = || {
+        ArchonError::Unavailable(format!(
             "item {id} ended its run while it was updated; send the update again"
-        )));
+        ))
     };
-    Ok(revised)
+    if !ctx.config.models.effort_sizing() {
+        // As 1.6.3: the note is delivered before the rest of the patch is stored.
+        live::steer_run(ctx, &asked, id).await?.ok_or_else(ended)?;
+        return items::update(ctx, id, patch, by.into()).await;
+    }
+    // Boxed: the handlers' dispatch future holds this one inline.
+    let both = Box::pin(steer_and_update(ctx, &asked, id, patch)).await?;
+    Ok(both.ok_or_else(ended)?.1)
 }
 
 /// The model plan `patch` gives a running item, taken out of the patch with

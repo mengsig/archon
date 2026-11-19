@@ -150,6 +150,32 @@ async fn a_running_update_stores_its_note_and_tags_at_once_before_it_delivers_th
     assert_eq!(recorded(&review).0, Some(RiskClass::Critical));
 }
 
+/// Check 7: with sizing off, a running update delivers its note before it
+/// stores the rest of its patch, as 1.6.3 does.
+#[tokio::test]
+async fn with_sizing_off_a_running_update_delivers_its_note_before_it_stores_its_tags() {
+    let h = harness(sizing_off()).await;
+    let queued = enqueue(&h, "Add a button", &[]).await;
+    h.dispatch().await;
+    let gate = h
+        .backend
+        .hold_next_message(&agent_of(&h, &queued.id, "implement").await);
+    let patch = ItemPatch {
+        brief_append: Some("Keep the old layout.".into()),
+        tags: Some(vec!["risk:critical".into()]),
+        ..ItemPatch::default()
+    };
+    let updating = update_in_background(&h, &queued.id, patch);
+    until("the note's delivery", || h.backend.messages_held() == 1).await;
+    let during = h.item(&queued.id).await;
+    assert!(during.tags.is_empty(), "the tags wait for the note");
+    gate.add_permits(1);
+    let reply = tokio::time::timeout(Duration::from_secs(10), updating).await;
+    let updated = item(reply.expect("in time").expect("joined")).await;
+    assert_eq!(updated.tags, ["risk:critical"]);
+    assert_eq!(class(&updated), None, "nothing is sized");
+}
+
 /// A tags update of a plan a 1.6.3 daemon stored sizes nothing, so it is
 /// not refused while the run's roles merge, as 1.6.3 does not refuse it.
 #[tokio::test]

@@ -1494,7 +1494,7 @@ async fn a_waived_refresh_is_sized_for_the_review_it_gets() {
         let origin = fix.model_plan.origin(&fix.id, key, 0).effort;
         assert_eq!(
             (origin.source, origin.by),
-            (PlanSource::Fallback, Authority::Daemon)
+            (PlanSource::Sizer, Authority::Daemon)
         );
     }
     assert_eq!(

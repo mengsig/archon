@@ -43,7 +43,11 @@ fn stage_of(key: &str) -> &str {
 /// The most the sizer sets now: the lower of the policy's cap and
 /// `[models] sizer_max_effort`.
 fn cap(config: &Config, policy: &ModelPolicy) -> Effort {
-    effort_sizing::sizer_cap(policy.max_effort, config.models.sizer_max_effort())
+    let ceiling = match config.models.sizer_raises() {
+        true => config.models.sizer_max_effort(),
+        false => Effort::Max,
+    };
+    effort_sizing::sizer_cap(policy.max_effort, ceiling)
 }
 
 /// The cap an effort the daemon sized is held to as a re-plan carries it:

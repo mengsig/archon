@@ -190,8 +190,8 @@ fn a_learned_route_supplies_the_model_and_its_effort_stays() {
         PlanSource::Learned,
         "the route's model"
     );
-    assert_eq!(origin.effort.source, PlanSource::Learned);
-    let why = "sizer: ordinary -> medium; unchanged: not the stage default";
+    assert_eq!(origin.effort.source, PlanSource::Sizer);
+    let why = "sizer: ordinary -> medium; unchanged: the learned route's effort";
     assert_eq!(reason(&planned, &item, "build"), why);
 }
 
@@ -584,10 +584,7 @@ fn sizing_a_new_key_hides_no_moved_signal_from_the_keys_sized_before() {
     let now = (Effort::XHigh, true, crate::now());
     assert!(grown.resize(&item, plain, now, &|_| false));
     assert_eq!(effort(&grown, "build"), Effort::Medium, "no longer small");
-    assert_eq!(
-        reason(&grown, &item, "build"),
-        "sizer: ordinary -> medium; unchanged"
-    );
+    assert_eq!(reason(&grown, &item, "build"), "sizer: ordinary -> medium");
     assert!(!grown.resize(&item, plain, now, &|_| false), "all current");
 }
 
@@ -721,7 +718,7 @@ fn a_default_effort_is_lowered_when_mechanical_and_raised_only_with_the_opt_in()
     assert_eq!(effort(&held, "build"), Effort::Medium);
     assert_eq!(
         held.origin(&item, "build", 0).effort.source,
-        PlanSource::Fallback
+        PlanSource::Sizer
     );
     assert!(reason(&held, &item, "build").ends_with("unchanged"));
     let raised = build(on(Effort::XHigh), "x", &tagged);

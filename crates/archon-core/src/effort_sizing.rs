@@ -254,7 +254,7 @@ fn class_target(facts: StageFacts, risk: &ItemRisk, review: ReviewLevel) -> Effo
         RiskClass::Mechanical => Effort::Low,
         RiskClass::Ordinary => facts.base,
         RiskClass::Elevated => facts.base.max(Effort::High),
-        RiskClass::Critical => Effort::XHigh,
+        RiskClass::Critical => facts.base.max(Effort::XHigh),
     }
 }
 

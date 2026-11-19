@@ -319,6 +319,16 @@ fn without_the_opt_in_no_class_goes_above_the_stage_default() {
 }
 
 #[test]
+fn a_critical_item_keeps_a_max_default_and_the_opt_in_reaches_the_cap() {
+    let critical = risk("Fix the mutex", &[], ReviewLevel::Strict, None);
+    let kept = key_cap(Effort::Max, false, Effort::Max);
+    assert_eq!(
+        sized(Effort::Max, &critical, kept, CLAUDE).effort,
+        Effort::Max
+    );
+}
+
+#[test]
 fn the_opt_in_lets_a_critical_default_reach_the_cap() {
     let critical = risk("Fix the mutex", &[], ReviewLevel::Strict, None);
     let off = key_cap(Effort::XHigh, false, Effort::Medium);

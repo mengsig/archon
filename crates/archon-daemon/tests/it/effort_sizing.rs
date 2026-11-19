@@ -286,7 +286,7 @@ async fn an_enqueue_sizes_each_stage_from_its_own_default_and_the_item_s_class()
         reason(&ordinary, "ship"),
         "sizer: ordinary -> low; unchanged"
     );
-    assert_eq!(effort_source(&ordinary, "implement"), PlanSource::Fallback);
+    assert_eq!(effort_source(&ordinary, "implement"), PlanSource::Sizer);
 
     let elevated = enqueue(&h, "Fix the deadlock in the pump", &[]).await;
     assert_eq!(class(&elevated), Some(RiskClass::Elevated));

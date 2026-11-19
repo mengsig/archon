@@ -163,8 +163,8 @@ pub struct SlotSizing {
 }
 
 /// The one decision of a choice's effort: only an effort the stage default
-/// gave (a fill, or one the sizer set before) is sized; a pin, a learned or an
-/// escalated effort is left alone. `None` keeps the effort, and the reason says
+/// gave (a fill, or one the sizer set before) is sized; a pin or an escalated
+/// effort is left alone and a learned one is kept. `None` keeps the effort, and the reason says
 /// which rule applied: unchanged or default-lowered (a raise shows in the target).
 fn decide(
     (choice, origin): (&ModelChoice, &FieldOrigin),
@@ -173,24 +173,21 @@ fn decide(
 ) -> (Option<Effort>, String) {
     let sized = effort_sizing::size_effort(facts, risk, cap, &choice.model);
     assert!(sized.effort <= cap, "the sizer stays within its cap");
-    let sizable = matches!(
-        origin.source,
-        PlanSource::Fallback | PlanSource::Tier | PlanSource::Sizer
-    );
     if origin.is_pin() {
         return (None, sized.reason);
     }
-    if !sizable {
-        return (
-            None,
-            format!("{}; unchanged: not the stage default", sized.reason),
-        );
+    // A learned effort is kept as it is; the sizer origin lets dispatch clip it to the policy.
+    if origin.source == PlanSource::Learned {
+        let kept = format!("{}; unchanged: the learned route's effort", sized.reason);
+        return (Some(choice.effort), kept);
     }
-    if sized.effort == choice.effort && origin.source != PlanSource::Sizer {
-        return (None, format!("{}; unchanged", sized.reason));
+    if origin.source == PlanSource::Escalation {
+        return (None, sized.reason);
     }
     let mut reason = sized.reason;
-    if sized.effort < facts.base {
+    if sized.effort == choice.effort && origin.source != PlanSource::Sizer {
+        reason.push_str("; unchanged");
+    } else if sized.effort < facts.base {
         reason.push_str("; default-lowered");
     }
     (Some(sized.effort), reason)

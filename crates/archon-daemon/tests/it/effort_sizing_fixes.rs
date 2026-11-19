@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use crate::effort_sizing::*;
 use archon_core::aether_ids::AetherAgentId;
-use archon_core::config::Config;
 use archon_core::effort_sizing::RiskClass;
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;

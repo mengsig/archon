@@ -16,6 +16,8 @@ use crate::common::{Harness, completed};
 
 /// Longer than any refusal takes, shorter than the wait for a binding.
 const AT_ONCE: Duration = Duration::from_secs(2);
+/// Longer than the wait for a binding.
+const PAST_THE_WAIT: Duration = Duration::from_secs(6);
 
 /// An `e2e` stage run still spawning and the agent Aether created for it,
 /// its reply lost on the way to Archon; with the agent `setup` finished with.
@@ -101,6 +103,46 @@ async fn a_spawn_recorded_right_after_the_call_looked_is_not_refused() {
 
     let asked = submitting.await;
     let asked = asked.expect("its stage was bound right after it looked");
+    assert_eq!(asked.decision, CheckDecision::Restate);
+    assert!(kept(&h, &bound).await.is_some(), "the ask is kept");
+}
+
+/// A look begun within the wait and kept from the store past its end must not
+/// be the one that refuses: a binding recorded in time could be missed by it.
+#[tokio::test]
+async fn only_a_look_begun_past_the_wait_refuses() {
+    let h = Harness::new().await;
+    let (spawning, agent, _) = e2e_awaiting_its_record(&h).await;
+    let request = call(Some(&agent), PASS, disputed(), false);
+    let mut submitting = pin!(forwarded(&h, &agent, request));
+
+    // The call begins its look in time, and the wait runs out while it queues.
+    let table = h.ctx.runs.lock().await;
+    assert!(step(&mut submitting).await.is_pending());
+    tokio::time::pause();
+    tokio::time::advance(PAST_THE_WAIT).await;
+    tokio::time::resume();
+    let store = h.ctx.store.lock().await;
+    drop(table);
+    assert!(step(&mut submitting).await.is_pending());
+    let mut next = pin!(h.ctx.store.lock());
+    assert!(step(&mut next).await.is_pending());
+    drop(store);
+    let looked = step(&mut submitting).await;
+    assert!(looked.is_pending(), "that look began in time: {looked:?}");
+
+    let mut store = next.await;
+    let mut bound = spawning.clone();
+    bound.state = StageState::Running;
+    bound.aether_agent = Some(agent.clone());
+    bound.aether_task = Some(AetherTaskId::parse("tsk_recorded").expect("a task id"));
+    store
+        .upsert_stage_run(&bound)
+        .expect("the spawn is recorded");
+    drop(store);
+
+    let asked = submitting.await;
+    let asked = asked.expect("it looked once more, past the wait");
     assert_eq!(asked.decision, CheckDecision::Restate);
     assert!(kept(&h, &bound).await.is_some(), "the ask is kept");
 }

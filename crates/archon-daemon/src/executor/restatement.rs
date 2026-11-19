@@ -65,15 +65,17 @@ pub(crate) async fn submit(
         let recorded = ctx.spawn_recorded.notified();
         tokio::pin!(recorded);
         recorded.as_mut().enable();
+        // The clock is read before the look, so the look that refuses began past
+        // the deadline: it sees every binding recorded within the wait.
+        let began = tokio::time::Instant::now();
         let standing = {
             let table = ctx.runs.lock().await;
             let mut store = ctx.store.lock().await;
             standing(&table, &mut store, agent, &sent)?
         };
-        let now = tokio::time::Instant::now();
         match standing {
             Standing::Checked(check) => return Ok(Reply::VerdictCheck(check)),
-            Standing::Unbound if now < deadline => {}
+            Standing::Unbound if began < deadline => {}
             Standing::Unbound | Standing::Refused => {
                 return Err(ArchonError::Forbidden(format!(
                     "submit_verdict is for a stage agent while its stage runs, and Archon has \
@@ -83,7 +85,7 @@ pub(crate) async fn submit(
         }
         tokio::select! {
             () = &mut recorded => {}
-            () = tokio::time::sleep_until(deadline.min(now + BINDING_RECHECK)) => {}
+            () = tokio::time::sleep_until(deadline.min(began + BINDING_RECHECK)) => {}
         }
     }
 }

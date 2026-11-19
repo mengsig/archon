@@ -320,6 +320,58 @@ pub struct OrchestratorConfig {
     /// Have the orchestrator queue an independent validation item before it
     /// calls a user-facing build ready; off, it relays the success as is.
     pub validate_before_handoff: bool,
+    /// Context size at which the orchestrator compacts, sent to an aetherd
+    /// that serves it; 0 keeps the model's own threshold.
+    pub compaction_tokens: u32,
+    /// Minutes idle, above half the threshold, after which Archon has the
+    /// orchestrator compacted before its prompt cache expires; 0 never.
+    pub idle_compact_after_minutes: u32,
+    /// Stage `info` messages ride with the next wake, at most
+    /// [`QUIET_INFO_MAX_WAIT_MINUTES`] late, instead of waking it.
+    pub quiet_info: bool,
+}
+
+/// The smallest `compaction_tokens` Aether accepts.
+pub const MIN_COMPACTION_TOKENS: u32 = 100_000;
+/// The largest `compaction_tokens`: within every orchestrator model's
+/// window, so Aether applies it as sent and the idle rule can halve it.
+pub const MAX_COMPACTION_TOKENS: u32 = 200_000;
+/// `compaction_tokens` by default, and the threshold the idle rule halves
+/// when `compaction_tokens` is 0.
+pub const DEFAULT_COMPACTION_TOKENS: u32 = 160_000;
+/// The longest a quiet `info` message waits for the orchestrator's next wake.
+pub const QUIET_INFO_MAX_WAIT_MINUTES: i64 = 30;
+/// The prompt cache lasts an hour; idle compaction must come before it
+/// ends, with minutes to spare for the once-a-minute check.
+const IDLE_COMPACT_MAX_MINUTES: u32 = 55;
+
+impl OrchestratorConfig {
+    fn validate(&self) -> Result<(), ArchonError> {
+        let tokens = self.compaction_tokens;
+        if tokens != 0 && !(MIN_COMPACTION_TOKENS..=MAX_COMPACTION_TOKENS).contains(&tokens) {
+            return Err(ArchonError::Config(format!(
+                "orchestrator.compaction_tokens {tokens} must be 0 or from \
+                 {MIN_COMPACTION_TOKENS} to {MAX_COMPACTION_TOKENS}"
+            )));
+        }
+        if self.idle_compact_after_minutes > IDLE_COMPACT_MAX_MINUTES {
+            return Err(ArchonError::Config(format!(
+                "orchestrator.idle_compact_after_minutes {} must be at most {IDLE_COMPACT_MAX_MINUTES}: \
+                 the prompt cache expires after an hour",
+                self.idle_compact_after_minutes
+            )));
+        }
+        Ok(())
+    }
+
+    /// The context size above which an idle orchestrator is compacted.
+    pub fn idle_compact_floor(&self) -> u64 {
+        let threshold = match self.compaction_tokens {
+            0 => DEFAULT_COMPACTION_TOKENS,
+            tokens => tokens,
+        };
+        u64::from(threshold / 2)
+    }
 }
 
 impl Default for OrchestratorConfig {
@@ -332,6 +384,9 @@ impl Default for OrchestratorConfig {
             trigger_coalesce_ms: 2000,
             wake_on_success: true,
             validate_before_handoff: true,
+            compaction_tokens: DEFAULT_COMPACTION_TOKENS,
+            idle_compact_after_minutes: 50,
+            quiet_info: true,
         }
     }
 }
@@ -1200,6 +1255,7 @@ impl Config {
             ));
         }
         self.limits.validate()?;
+        self.orchestrator.validate()?;
         self.autonomy.validate()?;
         self.worktrees.validate()?;
         self.artifacts.validate()?;
@@ -1385,6 +1441,38 @@ mod tests {
         assert_eq!(config.limits.caps().max_parallel_agents, 8);
         assert!(config.orchestrator.wake_on_success);
         assert!(config.orchestrator.validate_before_handoff);
+        assert_eq!(config.orchestrator.compaction_tokens, 160_000);
+        assert_eq!(config.orchestrator.idle_compact_after_minutes, 50);
+        assert!(config.orchestrator.quiet_info);
+    }
+
+    #[test]
+    fn orchestrator_economy_settings_switch_off_with_zero_and_refuse_unsafe_values() {
+        let off: Config = toml::from_str(
+            "[orchestrator]\ncompaction_tokens = 0\nidle_compact_after_minutes = 0\nquiet_info = false",
+        )
+        .unwrap();
+        off.validate().unwrap();
+        assert_eq!(off.orchestrator.idle_compact_floor(), 80_000);
+        assert!(!off.orchestrator.quiet_info);
+        for refused in [50_000, 200_001] {
+            let raw = format!("[orchestrator]\ncompaction_tokens = {refused}");
+            let error = toml::from_str::<Config>(&raw)
+                .unwrap()
+                .validate()
+                .unwrap_err();
+            assert!(
+                error.to_string().contains("orchestrator.compaction_tokens"),
+                "{error}"
+            );
+        }
+        let late: Config =
+            toml::from_str("[orchestrator]\nidle_compact_after_minutes = 56").unwrap();
+        let error = late.validate().unwrap_err().to_string();
+        assert!(error.contains("idle_compact_after_minutes"), "{error}");
+        let set: Config = toml::from_str("[orchestrator]\ncompaction_tokens = 200000").unwrap();
+        set.validate().unwrap();
+        assert_eq!(set.orchestrator.idle_compact_floor(), 100_000);
     }
 
     #[test]

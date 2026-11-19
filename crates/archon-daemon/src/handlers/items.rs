@@ -1226,12 +1226,16 @@ pub(super) async fn filled_plan(
     let tiers = knobs::TierScope::new(&ctx.config, &policy, &catalog).routed(route);
     let max_tier = env.max_default_tier(&ctx.config);
     let fallback = knobs::default_choice(&ctx.config, tiers, max_tier, spec);
+    let fallback = (
+        fallback.as_ref(),
+        knobs::EffortFill::of(&ctx.config, &policy),
+    );
     let store = ctx.store.lock().await;
     store.configure_learning(&ctx.config.learning)?;
     let repo = env.repo.as_ref().map(|repo| &repo.id);
     // What an enqueue naming no model runs with nothing learned: savings are measured against it.
     let unnamed = knobs::fill_stage_tiers(tiers, max_tier, spec, ModelPlan::default());
-    let baseline = knobs::fill_static_stages(base, spec, unnamed, fallback.as_ref())?;
+    let baseline = knobs::fill_static_stages(base, spec, unnamed, fallback)?;
     store.record_static_plan(repo, spec.name(), &baseline)?;
     let asked = writer.plan();
     let learned = learned::plan_for_item(&store, id, repo, spec, (&policy, max_tier), asked)?;
@@ -1240,7 +1244,7 @@ pub(super) async fn filled_plan(
     writer.filled(plan, (PlanSource::Learned, PlanSource::Learned));
     let tiered = knobs::fill_stage_tiers(tiers, max_tier, spec, writer.plan().clone());
     writer.filled(tiered, (PlanSource::Tier, PlanSource::Fallback));
-    let fallen = knobs::fill_static_stages(base, spec, writer.plan().clone(), fallback.as_ref())?;
+    let fallen = knobs::fill_static_stages(base, spec, writer.plan().clone(), fallback)?;
     writer.filled(fallen, (PlanSource::Fallback, PlanSource::Fallback));
     writer.finish().checked_request_catalog(&catalog, carried)
 }

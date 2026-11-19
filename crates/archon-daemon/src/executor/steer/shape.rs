@@ -172,6 +172,7 @@ pub(crate) fn reshape(
         repo,
         policy: &policy,
         max_tier: env.max_default_tier(&ctx.config),
+        fill: knobs::EffortFill::of(&ctx.config, &policy),
     };
     let plan = projected_plan(&learning, spec, &reshaped, item)?
         .checked_request_catalog(&store.model_catalog(), Some(item.model_plan.plan()))?;
@@ -244,10 +245,13 @@ struct Learning<'a> {
     repo: Option<&'a archon_core::id::RepoId>,
     policy: &'a ModelPolicy,
     max_tier: archon_core::model_tier::Tier,
+    /// The effort a stage the plan leaves out takes from the choice it borrows.
+    fill: knobs::EffortFill,
 }
 
 /// `item`'s plan for the stages of `new`: the choices of the stages it keeps,
-/// then what was learned for the repository, then the first choice it had.
+/// then what was learned for the repository, then the first choice it had
+/// (at each stage's own effort under the effort rubric).
 fn projected_plan(
     learning: &Learning<'_>,
     old: &PipelineSpec,
@@ -271,6 +275,7 @@ fn projected_plan(
         repo,
         policy,
         max_tier,
+        fill,
     } = *learning;
     let bounds = (policy, max_tier);
     knobs::fill_plan(
@@ -279,7 +284,7 @@ fn projected_plan(
         (new, new),
         &mut kept,
         bounds,
-        fallback.as_ref(),
+        (fallback.as_ref(), fill),
     )?;
     let filled = kept.finish();
     let unfilled = new.file.stages.iter();

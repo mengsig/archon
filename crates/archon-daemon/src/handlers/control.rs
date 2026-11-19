@@ -440,6 +440,9 @@ pub(super) async fn list_pipelines(
 ) -> Result<Reply, ArchonError> {
     let env = repo_env(ctx, repo).await?;
     let mut listing = env.catalog()?.listing();
+    if ctx.config.models.effort_sizing() {
+        archon_pipeline::sized_nudges::sized_nudges(&mut listing);
+    }
     let Some(name) = pipeline else {
         return Ok(Reply::Catalog(listing));
     };

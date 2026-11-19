@@ -24,7 +24,7 @@ pub(super) fn steer_item() -> ToolDefinition {
                 "note": {"type": "string", "minLength": 1, "description": "Appended to the brief; sent to live agents."},
                 "stage": {"type": "string", "minLength": 1, "description": "Stage that model, effort and abort_stage are about; the running one when omitted."},
                 "model": model_ref(),
-                "effort": {"type": "string", "enum": ["low", "medium", "high", "x_high", "xhigh", "max"]},
+                "effort": super::effort(),
                 "budget_usd": {"type": "number", "exclusiveMinimum": 0, "description": "The item's new dollar cap."},
                 "stage_timeouts": super::stage_timeouts(),
                 "extend_minutes": {"type": "integer", "minimum": 1, "maximum": MAX_EXTEND_MINUTES, "description": "Minutes added to the running stage's deadline."},

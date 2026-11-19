@@ -1492,3 +1492,35 @@ async fn a_refresh_item_waits_through_a_catalog_outage_with_no_attempt() {
     assert!(h.state(&fix.id).await.is_active());
     assert_eq!(h.backend.created(), created + 1);
 }
+
+/// A refresh is a lead of its own: it is issued the effort rule in force as
+/// its spawn is reserved, never the one its owner was issued.
+#[tokio::test]
+async fn a_refresh_is_issued_the_effort_rule_in_force_not_its_owner_s() {
+    let (mut h, _gh) = delivering().await;
+    let owner = enqueue(&h, "the change").await;
+    h.dispatch().await;
+    let lead = h.backend.requests()[0].clone();
+    assert_eq!(lead.labels["archon.item"], owner.id.to_string());
+    assert_eq!(
+        h.issued_effort_contract(&lead).await,
+        "rubric",
+        "the default"
+    );
+    settle_reviewed(&h, None).await;
+    let state = h.state(&owner.id).await;
+    assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+    let mut rolled_back = h.ctx.config.clone();
+    rolled_back.models.effort_sizing = Some(false);
+    h.restart_with(rolled_back);
+    executor::recover(&h.ctx).await.unwrap();
+    advance_origin(&h, "upstream.txt", "elsewhere\n");
+    let fix = refresh(&h, &owner).await.expect("queued");
+    h.dispatch().await;
+    let requests = h.backend.requests();
+    let of_fix = requests
+        .iter()
+        .rfind(|r| r.labels["archon.item"] == fix.id.to_string());
+    let of_fix = of_fix.expect("the refresh's lead was spawned");
+    assert_eq!(h.issued_effort_contract(of_fix).await, "floor", "its own");
+}

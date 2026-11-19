@@ -1650,11 +1650,84 @@ async fn a_refresh_with_sizing_off_makes_one_routing_decision_and_applies_no_lea
     );
 
     advance_origin(&h, "upstream.txt", "elsewhere\n");
+    // As if the owner was enqueued with learning off: a routing pass under
+    // either id would now leave what it chose.
+    forget_routing(&h, &owner.id).await;
     let fix = refresh(&h, &owner).await.expect("queued");
+    assert_ne!(fix.id, owner.id, "a refresh is an item of its own");
+    assert_eq!(
+        routing_kept(&h, &owner.id).await,
+        [None, None],
+        "not routed"
+    );
+    assert_eq!(routing_kept(&h, &fix.id).await, [None, None], "not routed");
     assert_eq!(fix.model_plan.0["implement"][0].model, own.model);
     assert!(fix.model_plan.sizing().is_none(), "not sized");
     for key in fix.model_plan.0.keys() {
         let origin = fix.model_plan.origin(&fix.id, key, 0);
         assert_ne!(origin.model.source, PlanSource::Learned, "{key}");
     }
+    let [choices, evidence] = routing_kept(&h, &fresh.id).await;
+    assert!(
+        choices.is_some() && evidence.is_some(),
+        "routing keeps its choice"
+    );
+}
+
+/// A11 check 2: a retry keeps its frozen plan whole. A route learned since
+/// the item was planned, which a fresh enqueue takes, is not applied to the
+/// slot the retried item's plan filled by default, nor does it move the sizing.
+#[tokio::test]
+async fn a_retry_applies_no_route_learned_since_its_plan_was_frozen() {
+    use crate::effort_sizing::{cancel, retry};
+    let (h, _gh) = delivering().await;
+    let owner = enqueue(&h, "the change").await;
+    let own = owner.model_plan.0["implement"][0].clone();
+    let origin = owner.model_plan.origin(&owner.id, "implement", 0);
+    assert_ne!(
+        origin.model.source,
+        PlanSource::Explicit,
+        "a defaulted slot"
+    );
+    assert!(owner.model_plan.sizing().is_some(), "sized");
+    cancel(&h, &owner.id).await;
+    learn_implement_route(&h, &own.model.to_string(), 2.0, 5).await;
+    learn_implement_route(&h, "codex/cheap", 0.2, 5).await;
+    let fresh = enqueue(&h, "learned").await;
+    let learned = fresh.model_plan.0["implement"][0].model.to_string();
+    assert_eq!(learned, "codex/cheap", "eligible: a fresh plan takes it");
+    // As if planned with learning off, so routing chooses for it afresh.
+    forget_routing(&h, &owner.id).await;
+    let retried = retry(&h, &owner.id).await.expect("retried");
+    let [offered, _] = routing_kept(&h, &owner.id).await;
+    let offered = offered.expect("a retry routes its unnamed slots, as 1.6.3 does");
+    assert!(
+        offered.contains("cheap"),
+        "the route was offered: {offered}"
+    );
+    assert_eq!(
+        retried.model_plan, owner.model_plan,
+        "models, origins and sizing"
+    );
+    assert_eq!(
+        retried.model_plan.0["implement"][0], own,
+        "the frozen choice"
+    );
+}
+
+async fn forget_routing(h: &Harness, id: &archon_core::id::QueueItemId) {
+    let mut store = h.ctx.store.lock().await;
+    for what in ["choices", "routing"] {
+        store.kv_delete(&format!("learning/{what}/{id}")).unwrap();
+    }
+    drop(store);
+    assert_eq!(routing_kept(h, id).await, [None, None]);
+}
+
+/// What learned routing kept for item `id`: its choices and their evidence,
+/// written whenever it routes the item.
+async fn routing_kept(h: &Harness, id: &archon_core::id::QueueItemId) -> [Option<String>; 2] {
+    let store = h.ctx.store.lock().await;
+    let kept = |what: &str| store.kv_get(&format!("learning/{what}/{id}")).unwrap();
+    [kept("choices"), kept("routing")]
 }

@@ -5,6 +5,7 @@
 use crate::effort_sizing::*;
 use archon_core::autonomy::{AutonomyPatch, ProposalMode};
 use archon_core::config::Config;
+use archon_core::effort_sizing::RiskClass;
 use archon_core::id::QueueItemId;
 use archon_core::model::Effort::{self, High, XHigh};
 use archon_core::plan_origin::PlanSource;
@@ -76,6 +77,36 @@ async fn recovery_reads_a_live_run_s_stored_plan_unchanged_under_a_lowered_cap()
         assert_eq!(after.1.choice, before.1.choice);
         assert_eq!(after.1.sizing, before.1.sizing);
         assert_eq!(h.stages(&queued.id).await.len(), 1, "no new attempt");
+    }
+}
+
+/// Ruling (a) after recovery: the recovered driver runs the stored plan as
+/// it is, so the run's next stage starts at the frozen x_high with its reason
+/// under a lowered sizer cap, policy cap or repository cap (as 1.6.3 runs a pin).
+#[tokio::test]
+async fn a_recovered_run_s_next_stage_runs_its_stored_effort_under_a_lowered_cap() {
+    for config in [sizer_max(High), policy_cap(High)] {
+        let mut h = harness(Config::default()).await;
+        let queued = enqueue(&h, "Add a button", &["risk:critical"]).await;
+        h.dispatch().await;
+        h.repo_config("[models]\nmax_effort = \"high\"\n");
+        h.restart_with(config);
+        executor::recover(&h.ctx).await.expect("recover");
+        h.settle_running(|_| completed("implemented")).await;
+        h.dispatch().await;
+        let review = attempt(&h, &queued.id, "review").await;
+        assert_eq!(review.choice.effort, XHigh, "the stored plan's");
+        let (class, source, reason) = recorded(&review);
+        assert_eq!(
+            (class, source),
+            (Some(RiskClass::Critical), Some(PlanSource::Sizer))
+        );
+        assert_eq!(reason, "sizer: critical -> x_high");
+        assert_eq!(
+            efforts(&h.item(&queued.id).await),
+            ALL_XHIGH,
+            "never clipped"
+        );
     }
 }
 

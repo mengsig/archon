@@ -1378,3 +1378,114 @@ async fn an_extension_after_an_effort_waiting_for_the_catalog_is_sent_at_once() 
         "Aether holds the extended deadline"
     );
 }
+
+/// Aether stops answering `list_models` and archond drops its catalog.
+async fn catalog_offline(h: &Harness) {
+    h.catalog_server.set_default(
+        "list_models",
+        archon_aether::fake::Scripted::refuse("unavailable", "catalog offline"),
+    );
+    let store = h.ctx.store.lock().await;
+    store.invalidate_model_catalog("catalog offline".into());
+}
+
+/// Each extension sent while a model step waits for the catalog reaches a
+/// helper Aether cannot raise with its lead: a second is never taken for a repeat.
+#[tokio::test]
+async fn a_second_extension_reaches_a_helper_while_an_effort_waits_for_the_catalog() {
+    let h = harness().await;
+    let (item, working) = implementing(&h, "with a helper").await;
+    let helper = h.backend.delegate(&agent(&working), MODEL);
+    let soon = archon_core::now() + chrono::Duration::minutes(5);
+    h.backend.limit_delegated(&helper, soon);
+    catalog_offline(&h).await;
+
+    let effort = Steer {
+        effort: Some(Effort::Low),
+        ..Steer::default()
+    };
+    steer(&h, &item.id, effort).await.expect("steered");
+    for minutes in [30, 60] {
+        let more_time = Steer {
+            extend_minutes: Some(minutes),
+            ..Steer::default()
+        };
+        steer(&h, &item.id, more_time).await.expect("steered");
+    }
+
+    let stored = common::stored_deadline(&h, &working)
+        .await
+        .expect("a deadline");
+    let raised: Vec<_> = h
+        .backend
+        .updates()
+        .into_iter()
+        .filter(|(to, _)| *to == helper)
+        .filter_map(|(_, update)| update.deadline)
+        .collect();
+    assert_eq!(raised.len(), 2, "one raise per extension: {raised:?}");
+    assert_eq!(raised.last(), Some(&stored), "the helper holds the second");
+}
+
+/// A model step that waited for the catalog carries the budget stored now
+/// when it goes on: a later, larger grant is never replaced by its own.
+#[tokio::test]
+async fn a_replayed_effort_never_sends_a_budget_a_later_steer_replaced() {
+    let h = harness().await;
+    let item = h.enqueue("capped").await;
+    let capped = Request::UpdateItem {
+        item: item.id.clone(),
+        patch: ItemPatch {
+            budget_usd: Some(10.0),
+            ..ItemPatch::default()
+        },
+    };
+    h.cli(capped).await.expect("a budget before the run");
+    h.dispatch().await;
+    let working = running(&h, "implement").await.remove(0);
+    enforce_budget(&h, &working).await;
+    catalog_offline(&h).await;
+
+    let effort_and_budget = Steer {
+        effort: Some(Effort::Low),
+        budget_usd: Some(25.0),
+        ..Steer::default()
+    };
+    steer(&h, &item.id, effort_and_budget)
+        .await
+        .expect("steered");
+    let more = Steer {
+        budget_usd: Some(40.0),
+        ..Steer::default()
+    };
+    steer(&h, &item.id, more).await.expect("steered");
+    common::catalog::answer(&h.catalog_server, &common::catalog::default_models());
+    h.dispatch().await;
+
+    let updates = h.backend.updates();
+    assert!(
+        updates.iter().any(|(_, u)| u.choice.is_some()),
+        "the effort goes on once the catalog answers: {updates:?}"
+    );
+    let budgets: Vec<f64> = updates
+        .iter()
+        .filter_map(|(_, u)| u.cost_budget_usd)
+        .collect();
+    let newest = budgets.iter().position(|usd| *usd == 40.0);
+    let newest = newest.expect("the newest budget is sent");
+    assert!(
+        budgets[newest..].iter().all(|usd| *usd == 40.0),
+        "no earlier budget after the newest: {budgets:?}"
+    );
+}
+
+/// As when Aether enforces the cost budget `stage` was sent.
+async fn enforce_budget(h: &Harness, stage: &StageRun) {
+    let key = format!("spawn_request:{}", stage.id);
+    let raw = h.kv(&key).await.expect("a stored spawn");
+    let mut spawn: serde_json::Value = serde_json::from_str(&raw).expect("json");
+    assert!(spawn["request"]["cost_budget_usd"].is_number(), "{spawn}");
+    spawn["request"]["aether_cost_budget"] = true.into();
+    let mut store = h.ctx.store.lock().await;
+    store.kv_set(&key, &spawn.to_string()).expect("kv");
+}

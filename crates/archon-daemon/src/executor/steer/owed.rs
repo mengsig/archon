@@ -228,7 +228,7 @@ async fn update_choice(
 ) -> Result<(), ArchonError> {
     assert_eq!(stage.aether_agent.as_ref(), Some(agent));
     assert!(!stage.state.is_terminal());
-    let mut delivery = no_earlier(&*ctx.store.lock().await, &stage.id, delivery)?;
+    let mut delivery = current_limits(&*ctx.store.lock().await, &stage.id, delivery)?;
     if let Some(choice) = &mut delivery.choice
         && let Err(error) = check_choice(ctx, stage, choice).await
     {
@@ -255,25 +255,38 @@ async fn update_choice(
     Ok(())
 }
 
-/// `delivery` with a deadline no earlier than the one stored for `stage`,
-/// which a held stage's sweep may have moved past it since the steer (§6.3).
-fn no_earlier(
+/// `delivery` carrying the deadline and budget stored for `stage` now: a later
+/// steer or a held stage's sweep may have moved them since it was owed (§6.3).
+fn current_limits(
     store: &Store,
     stage: &StageRunId,
     delivery: &Delivery,
 ) -> Result<Delivery, ArchonError> {
-    let Some(deadline) = delivery.deadline else {
+    if delivery.deadline.is_none() && delivery.cost_budget_usd.is_none() {
         return Ok(delivery.clone());
-    };
+    }
     let stored = match crate::executor::load_spawn(store, stage) {
-        Ok(spawn) => spawn.request.deadline,
-        Err(ArchonError::NotFound(_)) => None,
+        Ok(spawn) => spawn.request,
+        Err(ArchonError::NotFound(_)) => return Ok(delivery.clone()),
         Err(error) => return Err(error),
     };
-    let later = stored.map_or(deadline, |stored| stored.max(deadline));
-    assert!(later >= deadline, "a steer's deadline is only ever raised");
+    let deadline = delivery
+        .deadline
+        .map(|asked| stored.deadline.map_or(asked, |now| now.max(asked)));
+    let cost_budget_usd = delivery
+        .cost_budget_usd
+        .map(|asked| stored.cost_budget_usd.unwrap_or(asked));
+    assert!(
+        deadline >= delivery.deadline,
+        "a deadline is only ever raised"
+    );
+    assert_eq!(
+        cost_budget_usd.is_some(),
+        delivery.cost_budget_usd.is_some()
+    );
     Ok(Delivery {
-        deadline: Some(later),
+        deadline,
+        cost_budget_usd,
         ..delivery.clone()
     })
 }
@@ -298,8 +311,8 @@ async fn check_choice(
     env.resolved_policy(ctx).check(choice)
 }
 
-/// While model step `delivery` waits, send the newest deadline and budget of
-/// every step `stage` is owed; each step still goes on in order once it can.
+/// While model step `delivery` waits, send the stored deadline and budget
+/// any step `stage` is owed asks for; each step still goes on in order.
 async fn send_limits(
     ctx: &DaemonContext,
     stage: &StageRun,
@@ -307,22 +320,20 @@ async fn send_limits(
     delivery: &Delivery,
 ) -> Result<(), ArchonError> {
     assert!(delivery.choice.is_some(), "only a model step is split");
-    let owed = load(&*ctx.store.lock().await, &stage.id)?;
-    let mut limits = Delivery {
+    let store = ctx.store.lock().await;
+    let owed = load(&store, &stage.id)?;
+    let for_lead: Vec<&Delivery> = owed.iter().filter(|s| s.helpers.is_none()).collect();
+    let asked = Delivery {
         key: delivery.key.clone(),
-        deadline: delivery.deadline,
-        cost_budget_usd: delivery.cost_budget_usd,
+        deadline: for_lead.iter().filter_map(|s| s.deadline).max(),
+        cost_budget_usd: for_lead.iter().find_map(|s| s.cost_budget_usd),
         ..Delivery::default()
     };
-    // Owed steps are kept oldest first: the last budget asked for is the newest.
-    for step in owed.iter().filter(|step| step.helpers.is_none()) {
-        limits.deadline = limits.deadline.max(step.deadline);
-        limits.cost_budget_usd = step.cost_budget_usd.or(limits.cost_budget_usd);
-    }
-    if limits.patch().is_empty() {
+    if asked.patch().is_empty() {
         return Ok(());
     }
-    let limits = no_earlier(&*ctx.store.lock().await, &stage.id, &limits)?;
+    let limits = current_limits(&store, &stage.id, &asked)?;
+    drop(store);
     assert!(limits.choice.is_none() && limits.lead.is_none());
     patch_lead(ctx, lead, &limits).await
 }
@@ -369,7 +380,7 @@ async fn raise_helpers(
         if raise.is_empty() {
             continue;
         }
-        let key = format!("{}:{}", delivery.key, helper.agent);
+        let key = limit_key(&helper.agent, &raise);
         match ctx
             .backend
             .update_agent_keyed(&helper.agent, raise, &key)
@@ -383,6 +394,19 @@ async fn raise_helpers(
         }
     }
     Ok(())
+}
+
+/// Keys a helper's raise by the limits it applies: a repeat is made once, and
+/// a later raise is never taken for a repeat of an earlier one.
+fn limit_key(helper: &AetherAgentId, raise: &AgentUpdate) -> String {
+    assert!(raise.choice.is_none(), "a helper is only raised");
+    let deadline = raise
+        .deadline
+        .map_or_else(|| "-".to_owned(), |at| at.timestamp_millis().to_string());
+    let budget = raise
+        .cost_budget_usd
+        .map_or_else(|| "-".to_owned(), |usd| usd.to_string());
+    format!("limit:{helper}:{deadline}:{budget}")
 }
 
 /// `target` where it lifts `current`; a helper with no limit keeps none.

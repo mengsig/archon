@@ -148,12 +148,14 @@ fn attach_references(
 /// Place the acceptance stage of `plans` on the model that judges the ledger:
 /// independent of every builder where one is permitted and connected, else,
 /// unless `[review] independent_acceptance` holds, the strongest one, labelled.
+/// A `woken` judge the catalog and policy still accept keeps judging.
 pub(in crate::executor) fn select_model(
     ctx: &DaemonContext,
     store: &mut Store,
     item: &QueueItem,
     run: &PipelineRun,
     plans: &mut [SpawnPlan],
+    woken: Option<&ModelRef>,
 ) -> Result<(), ArchonError> {
     if !plans.iter().any(|p| p.stage_id == STAGE) {
         return Ok(());
@@ -173,12 +175,20 @@ pub(in crate::executor) fn select_model(
         .candidates()
         .filter(|m| policy.permits_model(&m.model) && (!visual || vision.contains(&m.model)))
         .collect();
-    let model = judge_model(
-        &permitted,
-        &builders,
-        visual,
-        ctx.config.review.independent_acceptance,
-    )?;
+    let still_judges = |judge: &&ModelRef| {
+        catalog.check(judge).is_ok_and(|listed| listed == **judge)
+            && policy.permits_model(judge)
+            && (!visual || vision.contains(judge))
+    };
+    let model = match woken.filter(still_judges) {
+        Some(judge) => judge.clone(),
+        None => judge_model(
+            &permitted,
+            &builders,
+            visual,
+            ctx.config.review.independent_acceptance,
+        )?,
+    };
     for plan in plans.iter_mut().filter(|p| p.stage_id == STAGE) {
         plan.choice.model = model.clone();
         if let Some(cap) = policy.max_effort {

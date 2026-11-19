@@ -764,3 +764,48 @@ async fn a_retired_acceptance_placeholder_still_reaches_its_listed_judge() {
         .collect();
     assert_eq!(rejudging, judging, "the retry runs on the selected judge");
 }
+
+/// A judge lost to the machine keeps its wake, and so its model, while the
+/// catalog and policy still accept it, though a fresh selection would differ.
+#[tokio::test]
+async fn a_lost_judge_still_eligible_is_woken_not_replaced() {
+    const JUDGE: &str = "codex/sol";
+    const NEWER: &str = "codex/aurora";
+    let mut config = archon_core::config::Config::default();
+    config.review.auto_repair = false;
+    let (h, fake, item) = fixture_on(config, false, &[common::MODEL, JUDGE]).await;
+    settle(&h, evidence(&h, &item, "implemented").await).await;
+    settle(&h, json!({"verdict":"pass","findings":[]})).await;
+    h.dispatch().await;
+    let judging = h.running().await;
+    assert_eq!(judging.len(), 1, "{judging:?}");
+    assert_eq!(judging[0].choice.model.to_string(), JUDGE);
+
+    // A judge a fresh selection prefers is listed before the lost one.
+    let models: Vec<Value> = [NEWER, common::MODEL, JUDGE]
+        .iter()
+        .map(|model| {
+            json!({"model": model, "configured": true, "tier": "strong",
+               "capabilities": {"vision": true}})
+        })
+        .collect();
+    fake.set_default("list_models", Scripted::reply("models", json!(models)));
+    let store = h.ctx.store.lock().await;
+    store.invalidate_model_catalog("catalog changed".into());
+    drop(store);
+    h.settle_running(|_| StageOutcome::Failed {
+        error: "aetherd lost the agent".into(),
+        infra: true,
+    })
+    .await;
+    h.dispatch().await;
+
+    let rejudging = h.running().await;
+    assert_eq!(rejudging.len(), 1, "{rejudging:?}");
+    assert_ne!(rejudging[0].id, judging[0].id, "a replacement runs");
+    assert_eq!(
+        rejudging[0].choice.model.to_string(),
+        JUDGE,
+        "the wake keeps the lost judge"
+    );
+}

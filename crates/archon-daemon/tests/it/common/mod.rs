@@ -843,6 +843,8 @@ struct FakeState {
     /// Every accepted `update_agent`, in order.
     updates: Vec<(AetherAgentId, AgentUpdate)>,
     update_failures: VecDeque<ArchonError>,
+    /// The key of every accepted keyed update: Aether makes a repeat once.
+    update_keys: BTreeSet<String>,
     /// Every `interrupt` call, in order.
     interrupts: Vec<AetherAgentId>,
     next: u32,
@@ -1789,7 +1791,12 @@ impl AgentBackend for FakeBackend {
         key: &str,
     ) -> Result<(), ArchonError> {
         assert!(!key.is_empty(), "a keyed update has a key");
-        self.update_agent(agent, update).await
+        if self.state().update_keys.contains(key) {
+            return Ok(());
+        }
+        self.update_agent(agent, update).await?;
+        self.state().update_keys.insert(key.to_owned());
+        Ok(())
     }
 
     /// Ends a held turn, as Aether's interrupt does.

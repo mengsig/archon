@@ -1002,9 +1002,10 @@ async fn replace(
         let chosen = plan.clone();
         plan =
             super::model_catalog::retry_plan(ctx, &mut store, table, run, chosen, &catalog, &spec)?;
-        retry_judge(ctx, &mut store, run, &mut plan)?;
         // The agent a wake keeps runs the model it was last steered to.
         let kept = catalog.canonical_alias(&failed.current_choice().model);
+        let woken = retry.wake.is_some().then_some(kept);
+        retry_judge(ctx, &mut store, run, &mut plan, woken)?;
         if plan.choice.model != *kept {
             retry.wake = None;
         }
@@ -1023,20 +1024,21 @@ async fn replace(
     Ok(Some(id))
 }
 
-/// A fresh acceptance retry is judged by a model selected again, as its first
-/// attempt was, never by the plan's placeholder.
+/// An acceptance retry is judged by the `woken` judge while it is still
+/// eligible, else by one selected as its first attempt was, never the placeholder.
 fn retry_judge(
     ctx: &DaemonContext,
     store: &mut archon_queue::Store,
     run: &PipelineRun,
     plan: &mut SpawnPlan,
+    woken: Option<&archon_core::model::ModelRef>,
 ) -> Result<(), ArchonError> {
     if plan.stage_id != archon_pipeline::acceptance::STAGE {
         return Ok(());
     }
     let item = store.item(&run.item)?;
-    let selected =
-        super::acceptance::select_model(ctx, store, &item, run, std::slice::from_mut(plan));
+    let plans = std::slice::from_mut(plan);
+    let selected = super::acceptance::select_model(ctx, store, &item, run, plans, woken);
     match selected {
         Ok(()) => {
             assert_eq!(plan.choice.tier, None, "a judge is selected, never tiered");

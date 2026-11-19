@@ -173,9 +173,12 @@ Three rules decide what a cap lowered later does to a stored effort:
    what it holds. A lower `sizer_max_effort` alone leaves the plan as it is.
    Recovery of a live run reads its stored plan unchanged and loads no
    repository config. An agent already reserved or sent is issued as it was
-   stored, and an agent woken in place after an infrastructure failure is
-   requested and recorded with the model and effort it runs; a cap below that
-   refuses the wake, as in 1.6.3.
+   stored. An agent woken in place after an infrastructure failure starts
+   from the model and effort it runs and, where the sizer set its effort, is
+   held like a new agent of its slot to the stored plan and the policy's cap:
+   it is retuned to that before it goes on, a fresh agent that replaces a
+   refused wake gets the same, and the attempt records it. A pinned effort
+   over the cap still refuses the wake, as in 1.6.3.
 2. When a retry, a revision or a re-shape writes the plan again with carried
    entries, each carried effort the sizer set is lowered to the lower of
    `max_effort` and `sizer_max_effort`, with the same recorded reason. With

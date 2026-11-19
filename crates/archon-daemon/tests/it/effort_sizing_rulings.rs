@@ -141,6 +141,31 @@ async fn a_recovered_run_s_next_stage_is_held_to_the_policy_s_cap_alone() {
     }
 }
 
+/// Ruling (a) beside an in-place wake: a recovered x_high agent that fails
+/// for infrastructure under a lowered policy cap is not woken recorded at
+/// `high` while it runs x_high. Its wake is refused as 1.6.3 refuses it.
+#[tokio::test]
+async fn a_woken_agent_is_never_recorded_below_the_effort_it_runs() {
+    let mut h = harness(Config::default()).await;
+    let queued = enqueue(&h, "Add a button", &["risk:critical"]).await;
+    h.dispatch().await;
+    let first = attempt(&h, &queued.id, "implement").await;
+    let agent = first.aether_agent.clone().expect("spawned");
+    h.restart_with(policy_cap(High));
+    executor::recover(&h.ctx).await.expect("recover");
+    h.backend.fail_agent(&agent);
+    h.settle_running(|_| archon_core::run::StageOutcome::Failed {
+        error: "engine died".into(),
+        infra: true,
+    })
+    .await;
+    h.dispatch().await;
+    let replacement = attempt(&h, &queued.id, "implement").await;
+    assert_ne!(replacement.id, first.id, "a replacement was reserved");
+    assert_eq!(replacement.choice.effort, XHigh, "what the agent runs");
+    assert!(h.backend.woken().is_empty(), "not woken past the cap");
+}
+
 /// Ruling (c) at dispatch: a pinned effort over a policy cap lowered after it
 /// was admitted is refused as 1.6.3 refuses it, never clipped.
 #[tokio::test]

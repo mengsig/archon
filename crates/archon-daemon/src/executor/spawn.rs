@@ -805,6 +805,17 @@ fn reviewer_rules(
     rules
 }
 
+/// Hold a new agent's effort, fresh or a replacement, to its item's stored
+/// plan as it is now and, ruling (a), to the policy's cap if the daemon sized it.
+fn hold_new_agent(target: &Target<'_>, plan: &mut SpawnPlan) {
+    crate::sizing::hold_to_plan(target.item, plan);
+    // An unreadable repository policy is refused when the spawn is claimed.
+    if let Ok(env) = RepoEnv::new(target.repo.cloned()) {
+        let cap = env.policy(target.config).max_effort;
+        crate::sizing::hold_to_policy(target.item, cap, plan);
+    }
+}
+
 /// Persist the exact request, then the `spawning` stage run that owns it,
 /// with the slot's `budget`. `retry` numbers an infrastructure replacement
 /// of the slot.
@@ -816,14 +827,13 @@ fn reserve_one(
     now: Timestamp,
     retry: Option<Retry>,
 ) -> Result<StageRunId, ArchonError> {
-    // Fresh or a replacement, a driver's effort is held to the stored plan as it is now.
     let mut held = plan.clone();
-    crate::sizing::hold_to_plan(target.item, &mut held);
-    // An unreadable repository policy is refused when the spawn is claimed.
-    if let Ok(env) = RepoEnv::new(target.repo.cloned()) {
-        let cap = env.policy(target.config).max_effort;
-        crate::sizing::hold_to_policy(target.item, cap, &mut held);
+    // A woken agent runs on at the effort it has, so its request stays as planned, as in 1.6.3.
+    let wakes = retry.as_ref().is_some_and(|r| r.wake.is_some());
+    if !wakes {
+        hold_new_agent(target, &mut held);
     }
+    assert!(wakes || held.choice.effort <= plan.choice.effort);
     let plan = &held;
     let id = StageRunId::new();
     let nth = retry.as_ref().map(|r| r.nth);

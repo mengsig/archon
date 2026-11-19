@@ -457,8 +457,13 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
     /// Simulate a crash and restart: a fresh context (empty run table) over
     /// the same store and directories, sharing the backend.
     pub fn restart(&mut self) {
-        let root = self.dir.path().canonicalize().expect("canonical tempdir");
         let config = self.ctx.config.clone();
+        self.restart_with(config);
+    }
+
+    /// [`Self::restart`] with `config` edited, as an operator restarts on.
+    pub fn restart_with(&mut self, config: Config) {
+        let root = self.dir.path().canonicalize().expect("canonical tempdir");
         let backend = self.ctx.backend.clone();
         assert_eq!(
             Arc::strong_count(&self.ctx),
@@ -470,6 +475,22 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
         let link = Arc::new(AetherLink::new());
         let ctx = context(&root, config, link, backend, lavish, disk, &self.ops);
         self.ctx = Arc::new(ctx);
+    }
+
+    /// The effort rule `request`'s stored spawn records as issued.
+    pub async fn issued_effort_contract(
+        &self,
+        request: &archon_core::ports::SpawnRequest,
+    ) -> serde_json::Value {
+        let store = self.ctx.store.lock().await;
+        let key = format!("spawn_request:{}", request.idempotency_key);
+        let raw = store.kv_get(&key).expect("kv").expect("a stored spawn");
+        let spawn: serde_json::Value = serde_json::from_str(&raw).expect("json");
+        assert_eq!(
+            spawn["request"]["idempotency_key"],
+            request.idempotency_key.as_str()
+        );
+        spawn["effort_contract"].clone()
     }
 
     /// Set what the fake disk has free.

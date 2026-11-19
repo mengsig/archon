@@ -9,7 +9,7 @@ use archon_core::aether_ids::AetherAgentId;
 use archon_core::delegation::WorkerPolicy;
 use archon_core::error::ArchonError;
 use archon_core::id::StageRunId;
-use archon_core::model::ModelRef;
+use archon_core::model::{EffortContract, ModelRef};
 use serde_json::Value;
 
 use crate::context::DaemonContext;
@@ -122,6 +122,52 @@ async fn sent_policy(
         Err(error) => return Err(error),
     };
     Ok(spawn.request.delegation_policy)
+}
+
+/// The effort rule the stage agent above `parent` (itself, or the lead it
+/// was delegated below) was issued, as its stored spawn records it; `None`
+/// when no stage agent or spawn is found, or the spawn tells no rule.
+pub(super) async fn issued_effort_contract(
+    ctx: &DaemonContext,
+    parent: &AetherAgentId,
+) -> Result<Option<EffortContract>, ArchonError> {
+    let Some(stage_run) = lead_stage_run(ctx, parent).await? else {
+        return Ok(None);
+    };
+    let store = ctx.store.lock().await;
+    match executor::load_spawn(&store, &stage_run) {
+        Ok(spawn) => Ok(spawn.issued_effort_contract()),
+        // Pruned once its stage settled: nothing tells, so nothing is held stricter.
+        Err(ArchonError::NotFound(_)) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// The stage run of the stage agent `agent` works for: its own, or that of
+/// the nearest agent above it with one, walking up the recorded delegations.
+async fn lead_stage_run(
+    ctx: &DaemonContext,
+    agent: &AetherAgentId,
+) -> Result<Option<StageRunId>, ArchonError> {
+    let most = ctx.config.limits.max_delegation_depth;
+    let mut at = agent.clone();
+    for _ in 0..=most {
+        let up = {
+            let store = ctx.store.lock().await;
+            if let Some(stage) = store.stage_run_by_agent(&at)? {
+                assert_eq!(stage.aether_agent.as_ref(), Some(&at), "bound to it");
+                return Ok(Some(stage.id));
+            }
+            store.delegated_parent(&at)?
+        };
+        let Some(up) = up else {
+            // The top agent: a stage agent whose spawn reply is not recorded yet.
+            return stage_run_of(ctx, &at).await;
+        };
+        assert_ne!(up, at, "an agent is not its own parent");
+        at = up;
+    }
+    Ok(None)
 }
 
 /// The stage run `parent` works for: as Archon recorded it, else by the

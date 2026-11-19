@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use archon_core::catalog::{Gate, StageKind, WorkspaceMode};
-use archon_core::model::{EFFORT_RUBRIC, Effort, ModelChoice, ModelRef};
+use archon_core::model::{EFFORT_RUBRIC, Effort, EffortContract, ModelChoice, ModelRef};
 use archon_core::policy::ModelPolicy;
 use archon_core::run::StageOutcome;
 use serde::Serialize;
@@ -146,9 +146,7 @@ pub fn delegation_rules(
     let depth = depth_rule(depth);
     let bounds = review_bounds(experiments);
     let sizing = match effort_sizing {
-        true => format!(
-            "- Size each child's effort to its own task, whatever yours is: {EFFORT_RUBRIC}\n"
-        ),
+        true => format!("- {SIZED_CHILDREN}, whatever yours is: {EFFORT_RUBRIC}\n"),
         false => String::new(),
     };
     format!(
@@ -571,7 +569,7 @@ fn floored_reviewer_rules(choices: &[ModelChoice], cap: Option<Effort>) -> Strin
         .collect();
     let rules = format!(
         "- Delegate every reviewer with role `reviewer`, each on one of these models, \
-         taken in turn: {}. Each effort is a floor, never a ceiling: Archon cancels a \
+         taken in turn: {}. {FLOORED_REVIEWERS}: Archon cancels a \
          child labelled `reviewer` on any other model, or below its model's effort, as it \
          spawns.\n",
         models.join("; ")
@@ -629,7 +627,7 @@ pub(crate) fn reviewer_effort_rule(cap: Option<Effort>) -> String {
         _ => String::new(),
     };
     let rule = format!(
-        "That effort is the default, for a diff the rubric leaves open; otherwise the \
+        "{SIZED_REVIEWERS}; otherwise the \
          rubric decides: {}{ceiling}. This replaces any effort floor the stage prompt \
          names. {REASON_RULE}",
         levels.join(", ")
@@ -639,6 +637,25 @@ pub(crate) fn reviewer_effort_rule(cap: Option<Effort>) -> String {
         "every cap leaves the cheapest level"
     );
     rule
+}
+
+/// The words that tell a contract's effort rule apart. A lead's contract is
+/// stored with its spawn: one stored before its mode was recorded is read by them.
+const SIZED_CHILDREN: &str = "Size each child's effort to its own task";
+const SIZED_REVIEWERS: &str = "That effort is the default, for a diff the rubric leaves open";
+const FLOORED_REVIEWERS: &str = "Each effort is a floor, never a ceiling";
+
+/// The effort rule contract `instructions` states, as rendered here: `None`
+/// when it states none, such as a contract that names no reviewer or child.
+pub fn stated_effort_contract(instructions: &str) -> Option<EffortContract> {
+    let sized = instructions.contains(SIZED_REVIEWERS) || instructions.contains(SIZED_CHILDREN);
+    let floored = instructions.contains(FLOORED_REVIEWERS);
+    match (sized, floored) {
+        (true, false) => Some(EffortContract::Rubric),
+        (false, true) => Some(EffortContract::Floor),
+        // Both is no contract rendered here: the reader holds it to neither.
+        (true, true) | (false, false) => None,
+    }
 }
 
 /// What a lead owes whenever it moves a reviewer off the plan's effort.
@@ -1828,6 +1845,37 @@ mod tests {
             !rules.contains("x_high"),
             "the cap rules x_high out: {rules}"
         );
+    }
+
+    /// A contract stored before its mode was recorded is read by its words:
+    /// floors, the rubric, or neither, whichever rule rendered it.
+    #[test]
+    fn a_stored_contract_states_the_effort_rule_it_was_rendered_with() {
+        use archon_core::model::Effort::Medium;
+        let named = [ModelChoice {
+            model: "codex/m".parse().unwrap(),
+            effort: Medium,
+            tier: None,
+        }];
+        let own = model("claude-code/opus");
+        let open = ModelPolicy::default();
+        for sizing in [false, true] {
+            let reviewers = reviewer_model_rules(Some(&named), &own, &open, sizing);
+            let children = delegation_rules(WorkspaceMode::Worktree, "a/one", 2, None, sizing);
+            let expected = Some(EffortContract::of(sizing));
+            assert_eq!(stated_effort_contract(&reviewers), expected, "{reviewers}");
+            let whole = format!("{reviewers}{children}");
+            assert_eq!(stated_effort_contract(&whole), expected, "{whole}");
+        }
+        let children = delegation_rules(WorkspaceMode::Worktree, "a/one", 2, None, true);
+        assert_eq!(
+            stated_effort_contract(&children),
+            Some(EffortContract::Rubric)
+        );
+        let plain = delegation_rules(WorkspaceMode::Worktree, "a/one", 2, None, false);
+        assert_eq!(stated_effort_contract(&plain), None, "it names no rule");
+        let unnamed = reviewer_model_rules(None, &own, &open, false);
+        assert_eq!(stated_effort_contract(&unnamed), None, "{unnamed}");
     }
 
     /// The rubric sets a reviewer's effort from the diff, lower or higher than

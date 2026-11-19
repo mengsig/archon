@@ -27,6 +27,7 @@ mod repo_watch;
 mod repos;
 mod revise;
 mod settings;
+mod sized_nudges;
 mod stages;
 mod steer;
 mod waiting;

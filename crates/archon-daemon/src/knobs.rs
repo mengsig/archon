@@ -471,6 +471,54 @@ pub(crate) fn default_choice(
     Some(choice)
 }
 
+/// What a pipeline's own stage gets when nothing names one: `choice`'s model,
+/// at `choice`'s effort (1.6.3) or, under the effort rubric, the stage's own.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Fallback<'a> {
+    /// Every stage at `choice`'s effort: the pipeline tier's, or a kept choice's.
+    Nudged(&'a ModelChoice),
+    /// Each stage at its own effort within `cap`, the policy's.
+    Sized {
+        choice: &'a ModelChoice,
+        cap: Option<Effort>,
+    },
+}
+
+impl<'a> Fallback<'a> {
+    /// [`default_choice`]'s `choice` as `config` and `policy` apply it.
+    pub(crate) fn of(choice: &'a ModelChoice, config: &Config, policy: &ModelPolicy) -> Self {
+        assert!(
+            policy.max_effort.is_none_or(|cap| choice.effort <= cap),
+            "a default choice is within the policy's effort cap"
+        );
+        match config.models.effort_sizing() {
+            true => Self::Sized {
+                choice,
+                cap: policy.max_effort,
+            },
+            false => Self::Nudged(choice),
+        }
+    }
+
+    fn for_stage(self, stage: &archon_pipeline::spec::StageSpec) -> ModelChoice {
+        let (choice, effort) = match self {
+            Self::Nudged(choice) => (choice, choice.effort),
+            Self::Sized { choice, cap } => (
+                choice,
+                cap.map_or(stage.effort, |cap| stage.effort.min(cap)),
+            ),
+        };
+        debug_assert!(
+            !matches!(self, Self::Sized { .. }) || effort <= stage.effort,
+            "a sized fallback never thinks more than its stage asks"
+        );
+        ModelChoice {
+            effort,
+            ..choice.clone()
+        }
+    }
+}
+
 /// `plan` with each stage it leaves out that names a `tier` given the best
 /// permitted model up to that tier (and `max_tier`), at the stage's effort
 /// within the policy's cap. A stage whose tier resolves to nothing is left out.
@@ -519,7 +567,7 @@ pub(crate) fn fill_plan(
     (base, spec): (&PipelineSpec, &PipelineSpec),
     writer: &mut PlanWriter,
     (policy, max_tier): (&ModelPolicy, Tier),
-    fallback: Option<&ModelChoice>,
+    fallback: Option<Fallback<'_>>,
 ) -> Result<(), ArchonError> {
     let mut plan = writer.plan().clone();
     let learned = learned::default_plan(store, repo, spec, policy, max_tier)?;
@@ -543,7 +591,7 @@ pub(crate) fn fill_static_stages(
     base: &PipelineSpec,
     spec: &PipelineSpec,
     mut plan: ModelPlan,
-    fallback: Option<&ModelChoice>,
+    fallback: Option<Fallback<'_>>,
 ) -> Result<ModelPlan, ArchonError> {
     for stage in base
         .file
@@ -551,8 +599,9 @@ pub(crate) fn fill_static_stages(
         .iter()
         .filter(|s| spec.stage(&s.id).is_some())
     {
-        if let (None, Some(choice)) = (plan.choices_for(&stage.id), fallback) {
-            plan.0.insert(stage.id.clone(), vec![choice.clone()]);
+        if let (None, Some(fallback)) = (plan.choices_for(&stage.id), fallback) {
+            plan.0
+                .insert(stage.id.clone(), vec![fallback.for_stage(stage)]);
         }
     }
     let Some(first) = base.file.stages.first() else {
@@ -719,7 +768,8 @@ mod tests {
             ..Autonomy::default()
         };
         let spec = augment(&base, &knobs).unwrap();
-        let config = Config::default();
+        let mut config = Config::default();
+        config.models.effort_sizing = Some(false);
         let (open, none) = (ModelPolicy::default(), ModelCatalog::default());
         let tiers = TierScope::new(&config, &open, &none);
         let default = default_choice(&config, tiers, Tier::Strong, &spec).unwrap();
@@ -743,7 +793,7 @@ mod tests {
             (&base, &spec),
             &mut writer,
             bounds,
-            Some(&default),
+            Some(Fallback::of(&default, &config, &policy)),
         )
         .unwrap();
         let filled = writer.finish();
@@ -754,6 +804,39 @@ mod tests {
             assert_eq!(filled.choices_for(stage), Some(&[default.clone()][..]));
         }
         assert_eq!(filled.0.len(), spec.file.stages.len());
+    }
+
+    /// Under the effort rubric a stage nothing names keeps the fallback's
+    /// model at its own effort, within the policy's cap; off, the tier's.
+    #[test]
+    fn a_sized_fallback_takes_each_stage_s_effort() {
+        let none = ModelCatalog::default();
+        let filled = |sizing: bool, policy: &ModelPolicy, pipeline: &str| {
+            let spec = builtin(pipeline);
+            let mut config = Config::default();
+            config.models.effort_sizing = Some(sizing);
+            let tiers = TierScope::new(&config, policy, &none);
+            let choice = default_choice(&config, tiers, Tier::Strong, &spec).unwrap();
+            let fallback = Fallback::of(&choice, &config, policy);
+            let plan = fill_static_stages(&spec, &spec, ModelPlan::default(), Some(fallback));
+            let plan = plan.unwrap();
+            let effort = |stage: &str| plan.choices_for(stage).unwrap()[0].effort;
+            let models = plan.0.values().map(|c| c[0].model.clone());
+            assert!(models.into_iter().all(|m| m == choice.model), "one model");
+            spec.file
+                .stages
+                .iter()
+                .map(|s| effort(&s.id))
+                .collect::<Vec<_>>()
+        };
+        let open = ModelPolicy::default();
+        use Effort::{High, Low, Medium};
+        assert_eq!(filled(true, &open, "refactor"), [High, High, High, Medium]);
+        assert_eq!(filled(false, &open, "refactor"), [Medium; 4], "the tier's");
+        assert_eq!(filled(true, &open, "code-audit"), [Medium, High, Medium]);
+        assert_eq!(filled(false, &open, "code-audit"), [High; 3], "the tier's");
+        let capped = ModelPolicy::from_lists(&[], &[], Some(Low));
+        assert_eq!(filled(true, &capped, "refactor"), [Low; 4], "the cap");
     }
 
     #[test]

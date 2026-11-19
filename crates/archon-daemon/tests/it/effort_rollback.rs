@@ -15,7 +15,7 @@ use archon_core::queue::QueueItem;
 fn rolled_back() -> Config {
     let mut config = Config::default();
     config.review.auto_repair = false;
-    config.models.effort_sizing = false;
+    config.models.effort_sizing = Some(false);
     config
 }
 
@@ -34,8 +34,8 @@ fn same_as_1_6_3(name: &str, actual: &str) {
         std::fs::write(&path, actual).unwrap();
         return;
     }
-    let expected = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    let expected =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     assert!(
         actual == expected,
         "{name} differs from what 1.6.3 issued:\n--- 1.6.3\n{expected}\n--- now\n{actual}"
@@ -124,6 +124,50 @@ async fn the_served_catalog_is_1_6_3_s_with_sizing_off() {
     assert!(listing.pipelines.iter().any(|p| p.name == "adaptive"));
     let text = serde_json::to_string_pretty(&listing).unwrap();
     same_as_1_6_3("catalog.json", &stable(&h, &text, None));
+}
+
+/// On, as by default, the catalog is 1.6.3's but for the stage nudges the
+/// rubric rewords, so none contradicts it.
+#[tokio::test]
+async fn the_served_catalog_differs_from_1_6_3_s_only_by_reworded_nudges() {
+    let mut config = Config::default();
+    config.review.auto_repair = false;
+    let h = Harness::with_config(config).await;
+    let listed = h
+        .orchestrator(Request::ListPipelines {
+            repo: None,
+            pipeline: None,
+        })
+        .await
+        .unwrap();
+    let Reply::Catalog(listing) = listed else {
+        panic!("a catalog: {listed:?}");
+    };
+    let text = stable(&h, &serde_json::to_string_pretty(&listing).unwrap(), None);
+    let mut served: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let written = std::fs::read_to_string(fixture("catalog.json")).unwrap();
+    let written: serde_json::Value = serde_json::from_str(&written).unwrap();
+    let mut reworded = Vec::new();
+    let pipelines = served["pipelines"].as_array_mut().unwrap();
+    for (pipeline, was) in pipelines
+        .iter_mut()
+        .zip(written["pipelines"].as_array().unwrap())
+    {
+        assert_eq!(pipeline["name"], was["name"], "the same pipelines in order");
+        let name = pipeline["name"].as_str().unwrap().to_owned();
+        let stages = pipeline["stages"].as_array_mut().unwrap();
+        for (stage, had) in stages.iter_mut().zip(was["stages"].as_array().unwrap()) {
+            if stage["nudge"] != had["nudge"] {
+                reworded.push(format!("{name}.{}", stage["id"].as_str().unwrap()));
+                stage["nudge"] = had["nudge"].clone();
+            }
+        }
+    }
+    assert_eq!(
+        reworded,
+        ["adaptive.build", "code-audit.audit", "direct.implement"]
+    );
+    assert_eq!(served, written, "nothing else differs");
 }
 
 /// What an enqueue naming no model stores for the built-in pipelines.

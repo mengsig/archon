@@ -29,6 +29,28 @@ with their switches instead: `quiet_info = false`, `compaction_tokens = 0`,
 `[orchestrator]`. A compaction threshold already sent stays with the running
 generation until `archon orchestrator restart`.
 
+### Effort sizing on by default
+
+From 1.6.4 `[models] effort_sizing` is on unless the global config turns it
+off ([configuration](configuration.md)). The orchestrator and every
+delegating lead size each effort by one rubric, `low` included; a reviewer's
+effort, from `[review] default_effort` (now `medium`) or a `<stage>.review`
+plan, is a default the lead may lower for a small, low-risk diff rather than a
+floor; a stage the plan leaves out takes its own effort rather than the
+pipeline tier's; and the built-in stage nudges are served worded by the
+rubric. A config that already set `effort_sizing = true` sees no change.
+
+To keep 1.6.3's effort rules, set `effort_sizing = false` under the global
+`[models]` and restart archond; new spawns then get exactly what 1.6.3 issued.
+Each spawn records the rule it was issued, so in-flight spawns keep theirs
+across the switch: a lead spawned before it, and one resumed, woken or
+replayed after the restart, is held to its own rule, and a reviewer its rule
+allows is never cancelled. A spawn stored by 1.6.3 records no rule; archond
+reads it from that spawn's contract, and where the contract tells nothing it
+cancels no reviewer for its effort. Nothing here migrates the store, but going
+back to a 1.6.3 binary is not supported once any release's store migration has
+run: use the switch instead.
+
 ### Plan origins
 
 Each item now keeps `model_origins` beside `model_plan`: where every model
@@ -125,6 +147,7 @@ configuration switches, not an older binary.
 
 ## Contents
 
+- [Effort sizing on by default](#effort-sizing-on-by-default)
 - [Store migration V24](#store-migration-v24)
 - [From 1.4.x to 1.5.0](#from-14x-to-150)
   - [What changes](#what-changes)
@@ -148,7 +171,7 @@ configuration switches, not an older binary.
 | `remote.json` | format 1 | format 1 while every device is an operator; format 2 once an observer is paired |
 | Remote access | archond served its own web app over `tailscale serve` or your proxy | the same app, now reached through Aether's listener at `https://<address>/archon/` (archond is mounted at `/archon`) |
 | A hung orchestrator turn | archond nudged it and told you after 30 silent minutes; your messages waited until you pressed Esc | the same notice, after 10 minutes once your message waits, then archond interrupts the turn 5 minutes later, as Esc would, so your messages reach a fresh turn ([troubleshooting](troubleshooting.md#the-orchestrator-or-aether-is-down)) |
-| Effort sizing | agents chose efforts by 1.4.x's rules; a reviewer plan's effort was a floor | the same by default; `[models] effort_sizing = true` opts in to sizing every effort by one rubric, a reviewer plan's effort then its default rather than a floor |
+| Effort sizing | agents chose efforts by 1.4.x's rules; a reviewer plan's effort was a floor | the same by default; `[models] effort_sizing = true` opts in to sizing every effort by one rubric, a reviewer plan's effort then its default rather than a floor. On by default from 1.6.4: [Effort sizing on by default](#effort-sizing-on-by-default) |
 | Default effort cap | no cap | `x_high`; set global `[models] max_effort = "max"` to allow existing `max` choices |
 | `config.toml` | | new keys `[remote] mounted_at`, `[remote] trusted_origins` and `[learning] holdout_rate` |
 

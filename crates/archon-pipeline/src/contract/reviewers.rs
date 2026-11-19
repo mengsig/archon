@@ -47,18 +47,7 @@ pub fn governed_reviewer_rules(
         catalog
     };
     let tier = profile.default_tier;
-    let floor = profile.default_effort.max(Effort::Medium);
-    let floor = policy.max_effort.map_or(floor, |cap| cap.min(floor));
-    let (effort, sizing) = match effort_sizing {
-        true => (
-            floor.to_string(),
-            format!(" {}", super::reviewer_effort_rule(policy.max_effort)),
-        ),
-        false => (
-            super::unnamed_reviewer_effort(floor, policy.max_effort),
-            String::new(),
-        ),
-    };
+    let (effort, sizing) = profile_effort(profile.default_effort, policy.max_effort, effort_sizing);
     if let Some((model, resolved)) = resolve_default(tier, own, policy, profile, catalog) {
         assert!(
             policy.permits_model(&model),
@@ -78,6 +67,32 @@ pub fn governed_reviewer_rules(
         );
     }
     unplaced_rules(own, policy, (&effort, &sizing), governed)
+}
+
+/// The unnamed reviewers' effort from `[review] default_effort`, within `cap`,
+/// and the rule that sizes it. With the rubric it is the default as configured,
+/// `low` included; in 1.6.3's floors it is raised to at least medium.
+fn profile_effort(
+    configured: Effort,
+    cap: Option<Effort>,
+    effort_sizing: bool,
+) -> (String, String) {
+    let capped = |effort: Effort| cap.map_or(effort, |cap| cap.min(effort));
+    if effort_sizing {
+        let effort = capped(configured);
+        assert!(
+            cap.is_none_or(|cap| effort <= cap),
+            "the default respects the cap"
+        );
+        let rule = super::reviewer_effort_rule(cap);
+        return (effort.to_string(), format!(" {rule}"));
+    }
+    let floor = capped(configured.max(Effort::Medium));
+    assert!(
+        floor >= Effort::Medium || cap.is_some(),
+        "only a cap lowers the floor"
+    );
+    (super::unnamed_reviewer_effort(floor, cap), String::new())
 }
 
 /// The models [`governed_reviewer_rules`] names for the reviewers, so the
@@ -417,6 +432,40 @@ mod tests {
         assert!(at(false).contains("claude-code/sonnet at effort high up to x_high"));
         assert!(at(false).contains("Each effort is a floor, never a ceiling"));
         assert!(at(true).contains("claude-code/sonnet at effort high. That effort is the default"));
+    }
+
+    /// `[review] default_effort = "low"` is the unnamed reviewers' default
+    /// under the rubric; 1.6.3's floors still raise it to medium, and a cap
+    /// below the configured effort lowers it either way.
+    #[test]
+    fn a_low_review_default_is_honoured_only_under_the_rubric() {
+        let own: ModelRef = "claude-code/sonnet".parse().unwrap();
+        let config = ReviewConfig {
+            default_effort: Effort::Low,
+            ..ReviewConfig::default()
+        };
+        let rules = |policy: &ModelPolicy, sizing| {
+            governed_reviewer_rules(None, &own, policy, (&config, &catalog()), false, sizing)
+        };
+        let open = ModelPolicy::default();
+        let sized = rules(&open, true);
+        assert!(
+            sized.contains("at tier balanced and effort low. That effort is the default"),
+            "{sized}"
+        );
+        let floored = rules(&open, false);
+        assert!(
+            floored.contains("effort medium up to x_high, and high up to x_high"),
+            "{floored}"
+        );
+        assert!(!floored.contains("effort low"), "{floored}");
+        let high = ReviewConfig {
+            default_effort: Effort::High,
+            ..ReviewConfig::default()
+        };
+        let capped = ModelPolicy::from_lists(&[], &[], Some(Effort::Medium));
+        let sized = governed_reviewer_rules(None, &own, &capped, (&high, &catalog()), false, true);
+        assert!(sized.contains("effort medium. That effort is"), "{sized}");
     }
 
     fn assert_no_lookup_instruction(rules: &str) {

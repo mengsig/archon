@@ -278,7 +278,7 @@ fn projected_plan(
         (new, new),
         &mut kept,
         bounds,
-        fallback.as_ref(),
+        fallback.as_ref().map(knobs::Fallback::Nudged),
     )?;
     let filled = kept.finish();
     let unfilled = new.file.stages.iter();

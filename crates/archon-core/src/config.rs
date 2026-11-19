@@ -151,7 +151,7 @@ impl Default for ReviewConfig {
     fn default() -> Self {
         Self {
             default_tier: Tier::Balanced,
-            default_effort: Effort::Low,
+            default_effort: Effort::Medium,
             prefer_other_provider: true,
             auto_repair: true,
             independent_acceptance: false,
@@ -416,9 +416,9 @@ pub struct ModelsConfig {
     /// Providers the operator also uses by hand, which keep the
     /// `interactive` reserve; global only.
     pub interactive_providers: Vec<String>,
-    /// Opt in to sizing every agent's effort by the effort rubric; off, the
-    /// prompts and reviewer floors are 1.4.12's. Global only.
-    pub effort_sizing: bool,
+    /// Size every agent's effort by the effort rubric (unset: on, since
+    /// 1.6.4); `false` restores 1.6.3's prompts and reviewer floors. Global only.
+    pub effort_sizing: Option<bool>,
 }
 
 /// Percent of each quota window held back from tier-only stage routing.
@@ -444,6 +444,11 @@ impl Default for ReservePercent {
 pub const DEFAULT_MAX_TIER: Tier = Tier::Strong;
 
 impl ModelsConfig {
+    /// Whether agents size efforts by the rubric: on unless set to `false`.
+    pub fn effort_sizing(&self) -> bool {
+        self.effort_sizing.unwrap_or(true)
+    }
+
     pub fn policy(&self) -> ModelPolicy {
         ModelPolicy::from_lists(&self.allow, &self.deny, self.max_effort)
     }
@@ -1287,7 +1292,7 @@ impl RepoConfig {
         config.models.check_weights()?;
         if config.models.reserve_percent.is_some()
             || !config.models.interactive_providers.is_empty()
-            || config.models.effort_sizing
+            || config.models.effort_sizing.is_some()
         {
             return Err(ArchonError::Config(format!(
                 "{}: models.reserve_percent, models.interactive_providers and \
@@ -1391,14 +1396,15 @@ mod tests {
     fn review_defaults_and_overrides_are_validated() {
         let default: Config = toml::from_str("").unwrap();
         assert_eq!(default.review.default_tier, Tier::Balanced);
-        assert_eq!(default.review.default_effort, Effort::Low);
+        // Medium: 1.6.3 raised its `low` to medium, and the rubric now honours `low`.
+        assert_eq!(default.review.default_effort, Effort::Medium);
         assert!(default.review.prefer_other_provider);
         assert!(default.review.auto_repair);
         let configured: Config = toml::from_str(
-            "[review]\ndefault_tier = 'strong'\ndefault_effort = 'medium'\nprefer_other_provider = false\nauto_repair = false",
+            "[review]\ndefault_tier = 'strong'\ndefault_effort = 'low'\nprefer_other_provider = false\nauto_repair = false",
         ).unwrap();
         assert_eq!(configured.review.default_tier, Tier::Strong);
-        assert_eq!(configured.review.default_effort, Effort::Medium);
+        assert_eq!(configured.review.default_effort, Effort::Low);
         assert!(!configured.review.prefer_other_provider);
         assert!(!configured.review.auto_repair);
         for invalid in [
@@ -1584,24 +1590,26 @@ mod tests {
         assert!(refused.contains("must name a provider"), "{refused}");
     }
 
-    /// Effort sizing is an opt-in: off, stage agents see 1.4.12's effort rules.
+    /// Effort sizing is on unless the global config sets it to `false`, the
+    /// rollback to 1.6.3; a repository may not set it either way.
     #[test]
-    fn effort_sizing_is_off_unless_the_global_config_opts_in() {
-        assert!(!Config::default().models.effort_sizing);
+    fn effort_sizing_is_on_unless_the_global_config_turns_it_off() {
+        assert!(Config::default().models.effort_sizing());
         let blank: Config = toml::from_str("[models]\nmax_effort = 'x_high'").unwrap();
-        assert!(
-            !blank.models.effort_sizing,
-            "naming [models] opts in to nothing"
-        );
-        let opted: Config = toml::from_str("[models]\neffort_sizing = true").unwrap();
-        opted.validate().unwrap();
-        assert!(opted.models.effort_sizing);
+        assert_eq!(blank.models.effort_sizing, None);
+        assert!(blank.models.effort_sizing(), "unset is on");
+        let off: Config = toml::from_str("[models]\neffort_sizing = false").unwrap();
+        off.validate().unwrap();
+        assert!(!off.models.effort_sizing());
         let dir = tempfile::tempdir().unwrap();
         let file = crate::paths::repo_archon_dir(dir.path()).join(CONFIG_FILE_NAME);
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-        std::fs::write(&file, "[models]\neffort_sizing = true\n").unwrap();
-        let refused = RepoConfig::load(dir.path()).unwrap_err().to_string();
-        assert!(refused.contains("global config only"), "{refused}");
+        RepoConfig::load(dir.path()).expect("a repository that leaves it unset loads");
+        for set in ["true", "false"] {
+            std::fs::write(&file, format!("[models]\neffort_sizing = {set}\n")).unwrap();
+            let refused = RepoConfig::load(dir.path()).unwrap_err().to_string();
+            assert!(refused.contains("global config only"), "{refused}");
+        }
     }
 
     #[test]

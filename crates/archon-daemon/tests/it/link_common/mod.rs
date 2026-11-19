@@ -359,6 +359,28 @@ pub async fn sent_policy(
         .unwrap();
 }
 
+/// `stage`'s spawn as it was stored: its contract `instructions` and the
+/// effort contract recorded with it, absent as 1.6.3 stored none.
+pub async fn issued_spawn(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    instructions: &str,
+    mode: Option<&str>,
+) {
+    let mut store = ctx.store.lock().await;
+    let run = store.run(&stage.run).unwrap();
+    let mut request = spawn_request(stage, &run.workspace, None);
+    request.instructions = instructions.to_owned();
+    let mut spawn =
+        serde_json::json!({"request": request, "timeout_minutes": 30, "parent": "bound"});
+    if let Some(mode) = mode {
+        spawn["effort_contract"] = serde_json::json!(mode);
+    }
+    store
+        .kv_set(&format!("spawn_request:{}", stage.id), &spawn.to_string())
+        .unwrap();
+}
+
 /// A queued item of the repository at `path`, registered unless it is.
 pub async fn queued_item(ctx: &DaemonContext, path: &Path) -> QueueItemId {
     let mut store = ctx.store.lock().await;

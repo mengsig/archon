@@ -68,6 +68,17 @@ pub struct ItemBudget {
     pub spent_usd: f64,
 }
 
+/// How every [`ItemBudget::used_up`] blocker opens: the daemon's own stop,
+/// classed as a budget failure whichever stage it was reported under.
+pub const BUDGET_USED_UP: &str = "BLOCKED: the item's budget is used up";
+
+/// How the blocker opens when Aether's usage cannot be priced against the cap.
+pub const BUDGET_UNENFORCEABLE: &str = "BLOCKED: cannot enforce the item's dollar budget";
+
+/// How archond's spawn preflight refuses a stage whose own dollar budget it
+/// cannot enforce, before any agent exists: a budget failure, not the model's.
+pub const STAGE_BUDGET_UNENFORCEABLE: &str = "cannot enforce the dollar budget for ";
+
 impl ItemBudget {
     pub fn left(self) -> f64 {
         self.cap_usd - self.spent_usd
@@ -79,7 +90,7 @@ impl ItemBudget {
         assert!(self.left() <= 0.0, "only a used-up budget blocks");
         assert!(self.cap_usd > 0.0, "a zero cap is no budget");
         format!(
-            "BLOCKED: the item's budget is used up: {} spent of its {} cap ({} over); raise \
+            "{BUDGET_USED_UP}: {} spent of its {} cap ({} over); raise \
              it with `archon queue steer {item} --budget-usd <USD>`, then `archon queue retry {item}`",
             format_usd_fine(self.spent_usd),
             format_usd_fine(self.cap_usd),

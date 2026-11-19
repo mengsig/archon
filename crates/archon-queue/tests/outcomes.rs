@@ -357,6 +357,7 @@ fn infrastructure_failure_does_not_become_negative_model_evidence() {
     stage.state = StageState::Failed {
         error: "Aether unavailable".into(),
     };
+    stage.infrastructure_failure = true;
     stage.finished_at = Some(t(30));
     store.upsert_stage_run(&stage).unwrap();
     settle_run(

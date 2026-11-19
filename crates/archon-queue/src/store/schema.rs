@@ -777,10 +777,24 @@ CREATE TABLE lesson_trials (
 CREATE INDEX lesson_trials_by_run ON lesson_trials (run);
 "#;
 
+/// Version 24 (1.6.4 A2): a failed run's class comes from its stage records.
+/// [`RECLASSIFY_VERSION`] recomputes stored rows after this SQL and freezes each
+/// reviewed pull request into its outcome; the class 1.6.3 gave a row stays in
+/// `failure_class_163` for one release.
+const V24: &str = r#"
+ALTER TABLE outcomes ADD COLUMN class_source TEXT
+    CHECK (class_source IN ('structure', 'recomputed', 'legacy_163'));
+ALTER TABLE outcomes ADD COLUMN failure_class_163 TEXT;
+"#;
+
+/// The migration after whose SQL stored failure classes are recomputed.
+const RECLASSIFY_VERSION: usize = 24;
+
 pub(super) const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23,
+    V22, V23, V24,
 ];
+const _: () = assert!(RECLASSIFY_VERSION == MIGRATIONS.len());
 
 /// Pragmas every connection needs. `on_disk` connections must end up in
 /// WAL mode; in-memory databases report `memory` and stay that way.
@@ -960,6 +974,10 @@ pub(super) fn migrate(conn: &mut Connection) -> Result<usize, ArchonError> {
         let version = index + 1;
         tx.execute_batch(sql)
             .ctx(&format!("apply migration {version}"))?;
+        if version == RECLASSIFY_VERSION {
+            super::outcomes::reclassify::reclassify(&tx)?;
+            super::outcomes::reclassify::freeze_review_prs(&tx)?;
+        }
         tx.execute(
             "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
             rusqlite::params![version as i64, now],
@@ -976,6 +994,14 @@ mod github_links_backfill;
 mod history_upgrade;
 #[cfg(test)]
 mod merge_upgrade;
+#[cfg(test)]
+mod outcome_classes;
+#[cfg(test)]
+mod outcome_kept;
+#[cfg(test)]
+mod outcome_lessons;
+#[cfg(test)]
+mod outcome_reviews;
 #[cfg(test)]
 mod pr_identity;
 #[cfg(test)]

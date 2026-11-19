@@ -1043,6 +1043,7 @@ mod tests {
 
     fn settled_stage(stage: &str, agent: &str, finished: Timestamp) -> StageRun {
         StageRun {
+            only_reviews: None,
             id: archon_core::id::StageRunId::new(),
             run: PipelineRunId::new(),
             stage_id: stage.to_owned(),

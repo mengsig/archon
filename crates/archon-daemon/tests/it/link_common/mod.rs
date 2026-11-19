@@ -435,6 +435,7 @@ fn run_in_repo(store: &mut Store, repo: &Repo) -> PipelineRun {
 
 fn stage_run(run: &PipelineRunId, state: StageState) -> StageRun {
     StageRun {
+        only_reviews: None,
         id: StageRunId::new(),
         run: run.clone(),
         stage_id: "implement".into(),

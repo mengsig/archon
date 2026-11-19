@@ -7,8 +7,7 @@ use archon_core::repo::Attribution;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// The stage id a failed delivery is reported under; no agent runs it.
-pub const SHIP_STEP: &str = "ship";
+pub use archon_core::run::SHIP_STEP;
 /// GitHub refuses a longer pull request title.
 pub const MAX_TITLE_CHARS: usize = 256;
 /// GitHub refuses a body of 65536 characters; archond's own lines fit above this.

@@ -173,7 +173,10 @@ Archon keeps outcomes and short lessons in its own store. `archon lessons stats`
 shows per-repository pipeline pass rates, correction rates, median cost and wall
 time, and learned model defaults with sample sizes. The existing
 `model_evidence` tool includes compact pipeline evidence for the
-orchestrator's pipeline selection. These are observations, not guarantees.
+orchestrator's pipeline selection, of the runs that finished in its range;
+a pipeline that reviews existing pull requests also shows the pull requests
+passed of those reviewed, each counted once, and the median scored runs a
+passed one took. These are observations, not guarantees.
 Estimated model savings compare median stage costs with the static default a
 plan would have had without learning, need at least five samples of that
 default, and are shown per planned run. Missing baseline evidence is reported
@@ -201,7 +204,12 @@ permissions. Duplicate text is merged; operator edits take precedence. Wins
 are successful runs without corrections; every other scored run is a loss.
 A run that a cancel, a budget cap, a timeout or an infrastructure failure
 stopped is not scored: it counts as neither a use nor a win, and `lessons
-stats` leaves it out of `pass=` (`scored=` says how many runs remain). Five or
+stats` leaves it out of `pass=` (`scored=` says how many runs remain). Its
+pipeline lines also leave out runs a stage ended with `BLOCKED:` or
+`ESCALATE:`, counted in `blocked=` and `escalated=` instead. A run's failure
+class comes from its stage records (the stage that ended it timed out, failed
+on infrastructure, hit a cost cap, or held a review that did not pass), never
+from words in its error. Five or
 more scored uses can retract a lesson whose raw Wilson lower bound (z = 1.96)
 drops below 0.3, and that bound is strict: 2 wins in 5 retract, and so do 3
 wins in 5 (bound 0.23); 4 wins in 5 (0.38) keep the lesson. For example, a

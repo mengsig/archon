@@ -679,6 +679,27 @@ fn direct_is_one_work_stage_that_archond_ships() {
     );
 }
 
+/// Outcome evidence reads a review-only run's lead as the review: it fails
+/// through `fail_task`, with no review on record to say so.
+#[test]
+fn only_the_review_only_lead_is_spawned_as_the_review() {
+    let catalog = Catalog::builtin();
+    let first_spawn = |pipeline: &str| {
+        let spec = Arc::new(catalog.get(pipeline).expect("built-in").clone());
+        let plan = support::plan_for(&spec, &["claude-code/opus"]);
+        let actions = Sim::new(spec, plan).start();
+        let plans = sim::spawn_plans(&actions);
+        assert_eq!(plans.len(), 1, "{pipeline}: {actions:#?}");
+        (plans[0].kind, plans[0].only_reviews)
+    };
+    assert_eq!(first_spawn("review"), (StageKind::Work, true));
+    assert_eq!(
+        first_spawn("direct"),
+        (StageKind::Work, false),
+        "implement holds a review but builds"
+    );
+}
+
 #[test]
 fn design_doc_researches_and_critiques_before_reporting_without_shipping() {
     let catalog = Catalog::builtin();

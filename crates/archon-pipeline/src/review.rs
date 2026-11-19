@@ -6,9 +6,6 @@ use serde_json::Value;
 
 use crate::spec::ReviewDuty;
 
-/// A reviewer's model or a skip reason is one line of a summary.
-const MAX_FIELD_CHARS: usize = 400;
-
 /// Most reviewers one record may name: more is a lead listing its tree.
 pub const MAX_NAMED_REVIEWERS: usize = 12;
 
@@ -713,12 +710,10 @@ pub fn record_implicit(structured: &mut Value, agents: &[String]) {
     review.insert(IMPLICIT_REVIEWER_AGENTS.into(), agents.to_vec().into());
 }
 
-/// `text` as one trimmed line of at most [`MAX_FIELD_CHARS`] characters.
+/// `text` as one trimmed line, capped as a summary's line is: the read the
+/// outcome store shares, so both take the same verdict from a review.
 fn one_line(text: &str) -> String {
-    let joined = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let line: String = joined.chars().take(MAX_FIELD_CHARS).collect();
-    debug_assert!(!line.contains('\n') && line.chars().count() <= MAX_FIELD_CHARS);
-    line
+    archon_core::run::review_field(text)
 }
 
 #[cfg(test)]
@@ -1908,6 +1903,7 @@ mod tests {
         let skipped = read(json!({"review": {"verdict": "skipped", "reason": reason}})).unwrap();
         let line = skipped.line();
         assert!(!line.contains('\n'), "{line}");
-        assert!(line.chars().count() <= MAX_FIELD_CHARS + "REVIEW: skipped: ".len());
+        let cap = archon_core::run::MAX_REVIEW_FIELD_CHARS;
+        assert!(line.chars().count() <= cap + "REVIEW: skipped: ".len());
     }
 }

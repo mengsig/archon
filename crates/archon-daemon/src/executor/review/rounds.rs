@@ -12,7 +12,7 @@ use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::id::StageRunId;
 use archon_core::ports::{Descendant, DescendantState};
-use archon_core::run::{StageOutcome, StageRun};
+use archon_core::run::{StageOutcome, StageRun, review_tally_key};
 use archon_pipeline::contract::REVIEW_ROUND_CAP;
 use archon_pipeline::review::Verdict;
 use serde::{Deserialize, Serialize};
@@ -350,12 +350,8 @@ impl Tally {
     }
 }
 
-fn tally_key(stage: &StageRunId) -> String {
-    format!("review_rounds:{stage}")
-}
-
 async fn load(ctx: &DaemonContext, stage: &StageRunId) -> Result<Tally, ArchonError> {
-    let key = tally_key(stage);
+    let key = review_tally_key(stage);
     let Some(raw) = ctx.store.lock().await.kv_get(&key)? else {
         return Ok(Tally {
             every_fail_kept: true,
@@ -367,7 +363,10 @@ async fn load(ctx: &DaemonContext, stage: &StageRunId) -> Result<Tally, ArchonEr
 
 async fn save(ctx: &DaemonContext, stage: &StageRunId, tally: &Tally) -> Result<(), ArchonError> {
     let raw = serde_json::to_string(tally)?;
-    ctx.store.lock().await.kv_set(&tally_key(stage), &raw)
+    ctx.store
+        .lock()
+        .await
+        .kv_set(&review_tally_key(stage), &raw)
 }
 
 /// Whether two commit ids, each possibly abbreviated, can name one commit.
@@ -585,9 +584,35 @@ mod tests {
     }
 
     #[test]
+    fn a_stored_tally_lists_each_fail_where_the_outcome_store_reads_it() {
+        // Aether names an agent `agt_` and a ULID; a tally holds those names.
+        let agent = |n: u8| format!("agt_01JB00000000000000000000{n:02}");
+        let failed = Fail {
+            agent: agent(1),
+            ..fail("aaaaaaa1", &["a"])
+        };
+        let tally = Tally {
+            fails: vec![failed],
+            read: vec![agent(1), agent(2)],
+            earlier: Some(vec![agent(9)]),
+            other_fails: vec![(agent(2), "bbbbbbb1".into())],
+            every_fail_kept: true,
+            reread: vec![agent(2)],
+        };
+        let stored = serde_json::to_string(&tally).unwrap();
+        let read: archon_core::run::TalliedFails = serde_json::from_str(&stored).unwrap();
+        assert_eq!(read.reviewers(), 2, "{stored}");
+        let none = serde_json::to_string(&Tally::default()).unwrap();
+        let read: archon_core::run::TalliedFails = serde_json::from_str(&none).unwrap();
+        assert_eq!(read.reviewers(), 0, "a tally lists no pass: {none}");
+    }
+
+    #[test]
     fn a_tally_written_with_titles_still_reads() {
-        let old = r#"{"fails":[{"agent":"agt_a","head":"aaaaaaa1","titles":["t"]}]}"#;
+        let old = r#"{"fails":[{"agent":"agt_01JB0000000000000000000001","head":"aaaaaaa1","titles":["t"]}],"told":true}"#;
         let tally: Tally = serde_json::from_str(old).unwrap();
         assert_eq!(tally.fails[0].findings, ["t"]);
+        let read: archon_core::run::TalliedFails = serde_json::from_str(old).unwrap();
+        assert_eq!(read.reviewers(), 1, "the outcome store reads it too");
     }
 }

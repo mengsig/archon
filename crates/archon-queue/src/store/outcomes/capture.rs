@@ -3,8 +3,12 @@
 use super::super::Store;
 use super::super::codec::SqlContext;
 use archon_core::error::ArchonError;
-use archon_core::outcome::{DiffStat, FailureClass, Outcome, OutcomeResult, OutcomeStage};
-use archon_core::run::{PipelineRun, RunState, StageOutcome, StageRun, Verdict};
+use archon_core::id::StageRunId;
+use archon_core::outcome::{
+    ClassSource, DiffStat, FailureClass, Outcome, OutcomeResult, OutcomeStage,
+};
+use archon_core::queue::QueueItem;
+use archon_core::run::{PipelineRun, RunState, StageRun, Verdict};
 use rusqlite::OptionalExtension;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -30,10 +34,12 @@ impl Store {
             .finished_at
             .ok_or_else(|| ArchonError::Invalid("outcome requires a finished run".into()))?;
         let stages = self.stage_runs(&run.id)?;
-        let (result, failure) = result(&run.state)?;
+        let failed_reviews = super::class::failed_reviews(&self.conn, &stages)?;
+        let (result, failure) = result(run, &stages, &failed_reviews)?;
         assert!(run.state.is_terminal());
         assert_eq!(item.id, run.item);
         let observations = stage_observations(self, &stages, estimates)?;
+        let review_pr = reviewed_pr(&item, &stages, &failed_reviews);
         let total = self
             .spend_for_run(&run.id, estimates)?
             .max(run.cost_usd)
@@ -53,6 +59,8 @@ impl Store {
             stages: observations,
             result,
             failure,
+            failure_source: failure.map(|_| ClassSource::Structure),
+            review_pr,
             corrections: historical_corrections(self, run)?,
             feedback: Vec::new(),
             context: None,
@@ -132,42 +140,39 @@ fn elapsed(start: archon_core::Timestamp, end: archon_core::Timestamp) -> Result
         .map_err(|_| ArchonError::Store("outcome finishes before it starts".into()))
 }
 
-fn result(state: &RunState) -> Result<(OutcomeResult, Option<FailureClass>), ArchonError> {
-    match state {
+fn result(
+    run: &PipelineRun,
+    stages: &[StageRun],
+    failed_reviews: &BTreeSet<StageRunId>,
+) -> Result<(OutcomeResult, Option<FailureClass>), ArchonError> {
+    match &run.state {
         RunState::Succeeded { .. } => Ok((OutcomeResult::Succeeded, None)),
         RunState::Cancelled { .. } => Ok((OutcomeResult::Cancelled, None)),
-        RunState::Failed { stage_id, error } => {
-            Ok((OutcomeResult::Failed, Some(failure_class(stage_id, error))))
-        }
+        RunState::Failed { .. } => Ok((
+            OutcomeResult::Failed,
+            Some(super::class::failure_class(run, stages, failed_reviews)),
+        )),
         _ => Err(ArchonError::Invalid("a live run has no outcome".into())),
     }
 }
 
-/// What a failed run's error says of the failure. A stage's own word that
-/// the task is in the wrong pipeline or needs the operator comes first.
-fn failure_class(stage_id: &str, error: &str) -> FailureClass {
-    if error.starts_with(StageOutcome::ESCALATE_PREFIX) {
-        return FailureClass::Escalated;
-    }
-    if error.starts_with(StageOutcome::BLOCKED_PREFIX) {
-        return FailureClass::Blocked;
-    }
-    let text = error.to_lowercase();
-    if text.contains("budget") {
-        FailureClass::Budget
-    } else if text.contains("timed out") || text.contains("timeout") {
-        FailureClass::Timeout
-    } else if text.contains("aether") || text.contains("disk") {
-        FailureClass::Infrastructure
-    } else if stage_id.contains("review") {
-        FailureClass::Review
-    } else if stage_id.contains("test") {
-        FailureClass::Verification
-    } else if stage_id.contains("ship") {
-        FailureClass::Ship
-    } else {
-        FailureClass::Other
-    }
+/// The pull request the run reviewed: its item's target when the item pushes
+/// nothing and a reviewer's verdict is on record for one of the run's stages.
+/// The target alone, or a stage assigned the review, is no review.
+fn reviewed_pr(
+    item: &QueueItem,
+    stages: &[StageRun],
+    failed_reviews: &BTreeSet<StageRunId>,
+) -> Option<String> {
+    let onto = item.onto.as_ref().filter(|onto| onto.review_only)?;
+    assert!(
+        failed_reviews
+            .iter()
+            .all(|id| stages.iter().any(|s| &s.id == id)),
+        "a tally is of one of the run's stages"
+    );
+    let reviewed = |stage: &StageRun| super::class::review_on_record(stage, failed_reviews);
+    stages.iter().any(reviewed).then(|| onto.pr.url())
 }
 
 fn reported_diff(stages: &[StageRun]) -> Option<DiffStat> {

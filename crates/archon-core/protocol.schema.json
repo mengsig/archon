@@ -9517,9 +9517,22 @@
     },
     "PipelineEvidence": {
       "properties": {
+        "blocked": {
+          "default": 0,
+          "description": "Runs a stage ended with `BLOCKED:` or `ESCALATE:`: no loss, as routing\nreads them, and never scored.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "correction_rate": {
           "format": "double",
           "type": "number"
+        },
+        "escalated": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         },
         "estimated_saving_usd": {
           "format": "double",
@@ -9552,6 +9565,17 @@
               "type": "null"
             }
           ]
+        },
+        "review_prs": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReviewPrs"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "For a pipeline that reviews existing pull requests: each one counted once."
         },
         "runs": {
           "format": "uint64",
@@ -14862,6 +14886,35 @@
       ],
       "type": "string"
     },
+    "ReviewPrs": {
+      "description": "The pull requests a review pipeline's scored runs judged, each counted\nonce however many heads it was reviewed at.",
+      "properties": {
+        "median_rounds_to_pass": {
+          "description": "Over the passed ones: scored runs up to and including the first pass.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "passed": {
+          "description": "Pull requests with a passing run.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reviewed": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "reviewed",
+        "passed"
+      ],
+      "type": "object"
+    },
     "RiskLevel": {
       "description": "How much human attention a pull request asks for before it merges.\nOrdered: `Low < Medium < High`, so the higher of two calls is their `max`.",
       "enum": [
@@ -15455,6 +15508,13 @@
             "$ref": "#/$defs/ModelSegment"
           },
           "type": "array"
+        },
+        "only_reviews": {
+          "description": "Whether the stage's work is only the review its pipeline declares (a\nreview-only run's lead); `None` on stage runs recorded before Archon kept it.",
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "record_repair": {
           "anyOf": [

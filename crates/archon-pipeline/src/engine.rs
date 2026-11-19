@@ -62,6 +62,8 @@ pub struct SpawnPlan {
     pub stage_id: String,
     /// The stage's kind, recorded on its stage run for later attribution.
     pub kind: StageKind,
+    /// The stage's work is only the review its pipeline declares.
+    pub only_reviews: bool,
     pub attempt: u32,
     /// 0-based slot within the stage's `fan_out`.
     pub fan_index: u32,
@@ -113,7 +115,7 @@ pub struct ApprovedProposal {
 
 /// Errors carried into `RunState::Failed` are capped; the full feedback
 /// stays in the stage runs.
-pub const MAX_ERROR_CHARS: usize = 8_000;
+pub const MAX_ERROR_CHARS: usize = archon_core::run::MAX_RUN_ERROR_CHARS;
 
 /// Operator revisions per gate stage and run, like `on_fail.max_loops`.
 pub const MAX_REVISIONS: u32 = 5;
@@ -1353,6 +1355,7 @@ impl RunDriver {
                 EngineAction::Spawn(SpawnPlan {
                     stage_id: stage.id.clone(),
                     kind: stage.kind,
+                    only_reviews: self.spec.reviews_only() && self.spec.holds_review(stage),
                     attempt: at.attempt,
                     fan_index: fan,
                     fan_count: stage.fan_out,
@@ -1662,7 +1665,7 @@ fn passed_record(members: &[&StageRun], duty: Option<ReviewDuty>) -> Recorded {
 fn blocked_stop(stage: &StageSpec, group: &[Option<&StageRun>]) -> Option<Replay> {
     let error = group.iter().flatten().find_map(|m| match &m.state {
         StageState::Failed { error } if StageOutcome::ends_run(error) => {
-            Some(error.trim().to_owned())
+            Some(StageOutcome::run_stop_error(error))
         }
         _ => None,
     })?;
@@ -1676,7 +1679,7 @@ fn blocked_stop(stage: &StageSpec, group: &[Option<&StageRun>]) -> Option<Replay
         cancel,
         state: RunState::Failed {
             stage_id: stage.id.clone(),
-            error: gate::clip(&error, MAX_ERROR_CHARS),
+            error,
         },
     })
 }

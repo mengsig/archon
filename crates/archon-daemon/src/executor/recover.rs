@@ -376,12 +376,19 @@ fn quarantine_run(ctx: &DaemonContext, run: &PipelineRun, error: &ArchonError) {
     }
 }
 
+/// The blocker of a run recovery could not resume; it opens with
+/// [`archon_core::run::UNRESUMABLE_RUN`], which the failure class reads.
 fn unresumable_message(run: &PipelineRun, error: &ArchonError) -> String {
-    format!(
+    let message = format!(
         "cannot resume the run: {error}. `archon queue retry {item}` runs it again once \
          fixed; `archon queue cancel {item}` gives it up",
         item = run.item
-    )
+    );
+    assert!(
+        message.starts_with(archon_core::run::UNRESUMABLE_RUN),
+        "the class reads the opening"
+    );
+    message
 }
 
 /// [`resume_run`] for one run whose stored state may be unusable: a failure

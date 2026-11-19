@@ -791,6 +791,7 @@ mod tests {
     /// A completed stage of a run, its result naming `commit` as a ship record.
     fn recorded(commit: &str) -> archon_core::run::StageRun {
         archon_core::run::StageRun {
+            only_reviews: None,
             id: archon_core::id::StageRunId::new(),
             run: archon_core::id::PipelineRunId::new(),
             stage_id: "build".into(),

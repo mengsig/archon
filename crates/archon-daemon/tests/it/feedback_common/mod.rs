@@ -78,6 +78,7 @@ async fn recorded_sample(
     for (n, (stage, choice)) in attempts.iter().enumerate() {
         let attempt = attempts[..n].iter().filter(|(s, _)| s == stage).count() as u32 + 1;
         let stage_run = StageRun {
+            only_reviews: None,
             id: StageRunId::new(),
             run: run.id.clone(),
             stage_id: (*stage).into(),
@@ -187,6 +188,8 @@ fn outcome(
         review_rounds: 0,
         result: OutcomeResult::Succeeded,
         failure: None,
+        failure_source: None,
+        review_pr: None,
         corrections: Vec::new(),
         feedback: Vec::new(),
         context: None,

@@ -172,6 +172,7 @@ pub fn settle_run(
 
 pub fn stage(run: &PipelineRun, fan_index: u32) -> StageRun {
     StageRun {
+        only_reviews: None,
         id: StageRunId::new(),
         run: run.id.clone(),
         stage_id: "implement".into(),

@@ -49,7 +49,7 @@ const MAX_TRANSPORT_ERRORS: u32 = 5;
 const MAX_DISK_FULL_SPAWNS: u32 = 5;
 
 /// How a stage whose workspace is gone fails, before the path.
-pub(super) const WORKSPACE_MISSING: &str = "workspace missing:";
+pub(super) const WORKSPACE_MISSING: &str = StageOutcome::WORKSPACE_MISSING;
 
 /// The persisted spawn of one stage run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -808,6 +808,7 @@ fn reserve_one(
         run: target.run.id.clone(),
         stage_id: plan.stage_id.clone(),
         kind: Some(plan.kind),
+        only_reviews: Some(plan.only_reviews),
         attempt: plan.attempt,
         fan_index: plan.fan_index,
         model_segments: Vec::new(),
@@ -1466,17 +1467,18 @@ async fn record(
             disk_full(ctx, table, stage, error).await
         }
         ArchonError::Protocol(_) | ArchonError::Io { .. } => {
-            retry_or_refuse(ctx, table, stage, error).await
+            retry_or_fail(ctx, table, stage, error).await
         }
-        error if wire::is_internal(&error) => retry_or_refuse(ctx, table, stage, error).await,
+        error if wire::is_internal(&error) => retry_or_fail(ctx, table, stage, error).await,
         ArchonError::Policy(_) => policy_refusal(ctx, table, stage, error).await,
         other => refuse(ctx, table, stage, format!("cannot create agent: {other}")).await,
     }
 }
 
 /// A transport failure, or a failure inside Aether (`internal`): retried
-/// under the same key up to [`MAX_TRANSPORT_ERRORS`] times, then refused.
-async fn retry_or_refuse(
+/// under the same key up to [`MAX_TRANSPORT_ERRORS`] times, then the stage
+/// fails on infrastructure.
+async fn retry_or_fail(
     ctx: &DaemonContext,
     table: &mut RunTable,
     stage: &StageRun,
@@ -1491,13 +1493,11 @@ async fn retry_or_refuse(
         return Ok(FollowUp::default());
     }
     table.spawn_errors.remove(&stage.id);
-    refuse(
-        ctx,
-        table,
-        stage,
-        format!("create_agent kept failing: {error}"),
-    )
-    .await
+    let error = format!("{}{error}", StageOutcome::SPAWN_KEPT_FAILING);
+    tracing::warn!(stage = %stage.id, %error, "stage spawn gave up");
+    // Aether or the way to it failed, not the model: the slot's retries are infrastructure's.
+    let outcome = StageOutcome::Failed { error, infra: true };
+    settle::settle_locked(ctx, table, &stage.id, outcome).await
 }
 
 /// `create_agent` failed on a full disk: dispatch holds until space is
@@ -1534,7 +1534,8 @@ async fn disk_full(
          had room each time it retried, so the full disk is likely Aether's: free space \
          there, then retry the item"
     );
-    fail_stage_and_run(ctx, table, stage, message).await
+    assert!(message.starts_with(StageOutcome::DISK_FULL_SPAWN));
+    fail_stage_and_run(ctx, table, stage, message, true).await
 }
 
 /// A refused spawn fails the stage; the driver decides what that means.
@@ -1562,17 +1563,23 @@ async fn policy_refusal(
 ) -> Result<FollowUp, ArchonError> {
     assert!(matches!(error, ArchonError::Policy(_)));
     let message = format!("stage {} refused at spawn: {error}", stage.stage_id);
-    fail_stage_and_run(ctx, table, stage, message).await
+    // The failure class reads a budget refusal by this opening.
+    assert_eq!(
+        message,
+        archon_core::run::refused_at_spawn(&stage.stage_id, &error)
+    );
+    fail_stage_and_run(ctx, table, stage, message, false).await
 }
 
 /// Fail a spawning stage and its run with a `Blocker`, as only the operator
-/// can resolve why its agent cannot be created. A run already finished is
-/// stopped instead, which retires it once no stage is left.
+/// can resolve why its agent cannot be created; `infra` marks the machine,
+/// not the model, as the cause. A finished run is stopped instead.
 async fn fail_stage_and_run(
     ctx: &DaemonContext,
     table: &mut RunTable,
     stage: &StageRun,
     message: String,
+    infra: bool,
 ) -> Result<FollowUp, ArchonError> {
     assert!(!message.trim().is_empty(), "a failed stage says why");
     let run = {
@@ -1584,6 +1591,7 @@ async fn fail_stage_and_run(
         failed.state = StageState::Failed {
             error: message.clone(),
         };
+        failed.infrastructure_failure = infra;
         failed.finished_at = Some(archon_core::now());
         store.upsert_stage_run(&failed)?;
         store.run(&stage.run)?

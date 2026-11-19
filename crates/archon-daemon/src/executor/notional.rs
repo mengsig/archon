@@ -10,9 +10,6 @@ use archon_queue::Store;
 
 use super::spawn;
 
-/// What Aether's error says of an agent it stopped at its cost budget.
-const COST_BUDGET_STOP: &str = "cost budget of $";
-
 /// `outcome`, its failure labelled notional cost when Aether stopped stage
 /// `id` at a dollar cap whose billing is unknown.
 pub(super) fn label(
@@ -23,7 +20,7 @@ pub(super) fn label(
     let StageOutcome::Failed { error, infra } = outcome else {
         return Ok(outcome);
     };
-    if !error.contains(COST_BUDGET_STOP) {
+    if !StageOutcome::is_cost_budget_stop(&error) {
         return Ok(StageOutcome::Failed { error, infra });
     }
     let billing = match spawn::load_spawn(store, id) {
@@ -40,14 +37,10 @@ pub(super) fn label(
 
 fn labelled(error: &str) -> String {
     assert!(
-        error.contains(COST_BUDGET_STOP),
+        StageOutcome::is_cost_budget_stop(error),
         "only a cost stop is labelled"
     );
-    let text = format!(
-        "{error} (notional cost: Claude Code reports list-price dollars whether or not its \
-         login bills them, and Aether showed no fresh subscription usage window with headroom for it, so the \
-         budget was enforced; under a subscription, raise or unset the item's budget)"
-    );
+    let text = format!("{error}{}", StageOutcome::NOTIONAL_COST_LABEL);
     assert!(text.starts_with(error), "Aether's words come first");
     text
 }
@@ -58,11 +51,20 @@ mod tests {
 
     #[test]
     fn only_a_cost_stop_is_labelled_and_aethers_words_stay_first() {
-        let stop = "cost budget of $1.50: $1.52 spent";
+        let stop = "cost budget of $1.5: $1.5200 spent";
         let text = labelled(stop);
         assert!(
             text.starts_with(stop) && text.contains("notional cost"),
             "{text}"
+        );
+        assert!(
+            StageOutcome::is_cost_budget_stop(&text),
+            "a labelled stop is still one"
+        );
+        let quoted = "cost budget of $5 is too small for this job";
+        assert!(
+            !StageOutcome::is_cost_budget_stop(quoted),
+            "a task's own words are no stop to label"
         );
     }
 

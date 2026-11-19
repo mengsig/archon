@@ -13,7 +13,7 @@ use crate::spec::{Owed, Scenarios, StageSpec};
 pub const MAX_FEEDBACK_CHARS: usize = 32_000;
 
 const SHIP_REFUSAL: &str = "the ship record archond delivers is not on record";
-const REVIEW_REFUSAL: &str = "the review this pipeline declares is not on record";
+const REVIEW_REFUSAL: &str = archon_core::run::REVIEW_NOT_ON_RECORD;
 /// Most characters of an unreadable verdict quoted in a gate's refusal.
 const MAX_QUOTED_VERDICT_CHARS: usize = 160;
 
@@ -146,7 +146,7 @@ fn recorded(stage: &StageSpec, attempt: u32, members: &[&StageRun], owed: Owed) 
     let structured = member.structured.as_ref();
     // A stated failure is refused on its merits, whatever its gate or record.
     if decided_since_repairs(member) && states_failure(member) {
-        let headline = "its agent stated a failure".to_owned();
+        let headline = archon_core::run::STATED_FAILURE.to_owned();
         let report = format!(
             "**Stage `{}` attempt {attempt}: {headline}**\n\n{summary}\n",
             stage.id
@@ -414,13 +414,7 @@ fn or_dash(text: &str) -> &str {
     if text.is_empty() { "-" } else { text }
 }
 
-/// At most `max` characters, cut on a char boundary with a visible marker.
-pub(crate) fn clip(text: &str, max: usize) -> String {
-    match text.char_indices().nth(max) {
-        None => text.to_owned(),
-        Some((cut, _)) => format!("{}\n\n[… truncated by Archon]", &text[..cut]),
-    }
-}
+pub(crate) use archon_core::run::clip;
 
 #[cfg(test)]
 mod tests {

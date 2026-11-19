@@ -979,7 +979,6 @@ fn apply_patch(
         return Err(onto_with_dependencies());
     }
     if let Some(text) = &patch.brief_append {
-        executor::check_amendment(text)?;
         item.amend_brief(text, archon_core::now())?;
     }
     if let Some(title) = patch.title {
@@ -1106,7 +1105,7 @@ pub(super) async fn retry(
         }
         spec.drop_retired_ship(&mut item.model_plan, item.model_reasons.as_mut());
         let append = retry.brief_append.as_deref();
-        let continued = amend_retry(&*ctx.store.lock().await, &mut item, retry.fresh, append)?;
+        let continued = amend_retry(&mut *ctx.store.lock().await, &mut item, retry.fresh, append)?;
         // Git runs under the run table on purpose, so run starts and gc passes wait for this one
         // move; without it a gc pass could remove the worktree mid-move, or a second retry move it.
         let fresh = match &reserved {
@@ -1152,24 +1151,24 @@ async fn post_retry_notes<'a>(
 /// of a review the round cap stopped, then `append`. A fresh retry or a new continuation
 /// drops the notes earlier ones added, which no longer hold. Whether a continuation was added.
 fn amend_retry(
-    store: &archon_queue::Store,
+    store: &mut archon_queue::Store,
     item: &mut QueueItem,
     fresh: bool,
     append: Option<&str>,
 ) -> Result<bool, ArchonError> {
     assert!(item.state.is_terminal(), "only a finished item is retried");
-    if let Some(text) = append {
-        executor::check_amendment(text)?;
-    }
     // A fresh retry starts over on a new branch, and owes the whole review again.
     let continued = match fresh {
         true => None,
         false => executor::capped_continuation(store, item)?,
     };
     if fresh || continued.is_some() {
-        item.brief = executor::without_continuations(&item.brief);
+        executor::drop_continuations(store, item)?;
     }
-    for text in continued.iter().map(String::as_str).chain(append) {
+    if let Some(note) = &continued {
+        executor::add_continuation(store, item, note)?;
+    }
+    if let Some(text) = append {
         item.amend_brief(text, archon_core::now())?;
     }
     assert!(

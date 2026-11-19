@@ -60,6 +60,24 @@ struct FirstRun {
 /// it with a blocking finding, and a worker whose own check passed it; then the
 /// lead escalates. Any failure ends a run alike; the cap's own is in `executor`.
 async fn first_run_escalates(h: &Harness, item: &QueueItem) -> FirstRun {
+    let first = first_run_reviews(h).await;
+    escalate(h, item).await;
+    first
+}
+
+/// The lead of the first run escalates, which ends its run.
+async fn escalate(h: &Harness, item: &QueueItem) {
+    h.settle_running(|_| StageOutcome::Failed {
+        error: "ESCALATE: the fix needs a decision".into(),
+        infra: false,
+    })
+    .await;
+    h.dispatch().await;
+    assert!(matches!(h.state(&item.id).await, QueueState::Failed { .. }));
+}
+
+/// The first run's whole-change reviews, as [`first_run_escalates`] describes, before it escalates.
+async fn first_run_reviews(h: &Harness) -> FirstRun {
     let lead = h.running().await.remove(0);
     let agent = lead_agent(&lead);
     let reviewers: Vec<AetherAgentId> = (0..3)
@@ -76,13 +94,6 @@ async fn first_run_escalates(h: &Harness, item: &QueueItem) -> FirstRun {
         h.backend
             .complete_delegated(passing, verdict_on(&read, "pass"));
     }
-    h.settle_running(|_| StageOutcome::Failed {
-        error: "ESCALATE: the fix needs a decision".into(),
-        infra: false,
-    })
-    .await;
-    h.dispatch().await;
-    assert!(matches!(h.state(&item.id).await, QueueState::Failed { .. }));
     FirstRun {
         lead: agent,
         reviewers,
@@ -199,6 +210,40 @@ async fn a_rewritten_history_drops_the_earlier_runs_reviews() {
     one_delta_pass(&h, &lead, &fork).await;
     let error = refused(&h, &item).await;
     assert!(error.contains("1 of the reviewers"), "{error}");
+}
+
+/// The first run's fix of its whole reads failed as a delta, and the new lead amended
+/// only that fix: the history is rewritten though the whole reads' head stands, so
+/// one delta pass from that head is no review.
+#[tokio::test]
+async fn amending_only_the_failed_fix_drops_the_earlier_runs_reviews() {
+    let h = Harness::new().await;
+    let item = strict_item(&h).await;
+    let first = first_run_reviews(&h).await;
+    let lead = h.running().await.remove(0);
+    let delta = h.backend.delegate(&lead_agent(&lead), REVIEW_MODEL);
+    let fix = shipped_by(&h, &lead, "a fix", json!({})).await;
+    let mut failing = verdict_on(&fix, "fail");
+    failing["base"] = first.head.clone();
+    failing["findings"] = json!([{"title": "still drops the tail", "blocking": true}]);
+    h.backend.complete_delegated(&delta, failing);
+    escalate(&h, &item).await;
+    let lead = retried(&h, &item, false).await;
+    let workspace = h.ctx.store.lock().await.run(&lead.run).unwrap().workspace;
+    let amend = [
+        "commit",
+        "--quiet",
+        "--amend",
+        "--allow-empty",
+        "-m",
+        "Fix again",
+    ];
+    git(&workspace, &amend);
+    assert_eq!(json!(git(&workspace, &["rev-parse", "HEAD~1"])), first.head);
+    one_delta_pass(&h, &lead, &first.head).await;
+    let error = refused(&h, &item).await;
+    let from = &first.head.as_str().unwrap()[..12];
+    assert!(error.contains(&format!("read only from {from}")), "{error}");
 }
 
 /// The first run's fail is no waiver: a new pass of the head it failed reads

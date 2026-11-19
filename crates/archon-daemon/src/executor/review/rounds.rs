@@ -10,7 +10,7 @@
 
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
-use archon_core::id::StageRunId;
+use archon_core::id::{QueueItemId, StageRunId};
 use archon_core::ports::{Descendant, DescendantState};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::run::{RunState, StageOutcome, StageRun, review_tally_key};
@@ -27,8 +27,8 @@ const MAX_LISTED: usize = 20;
 /// The words that mark a stage the round cap stopped, in its escalation.
 const CAP_STOP: &str = "so Archon stopped it instead of another round";
 
-/// How a continuation note begins, so a later retry can find and replace it. No
-/// amendment of the operator's may hold it ([`check_amendment`]), so none is taken for one.
+/// How a continuation note begins, so a lead knows Archon wrote it. A later retry finds
+/// the note by the section [`add_continuation`] recorded, never by these words.
 const CONTINUES: &str = "[Archon review-cap continuation] This run continues stage `";
 
 /// How much of the cap's escalation a continuing run's brief repeats.
@@ -550,38 +550,66 @@ pub(crate) fn capped_continuation(
     Ok(Some(note.split_whitespace().collect::<Vec<_>>().join(" ")))
 }
 
-/// `brief` without the continuation notes earlier retries added, each a dated amendment.
-pub(crate) fn without_continuations(brief: &str) -> String {
-    const HEADING: &str = "\n\n## Amendment (";
-    let parts: Vec<&str> = brief.split(HEADING).collect();
-    let note = |part: &&str| {
-        part.split_once(")\n\n")
-            .is_some_and(|(_, text)| text.starts_with(CONTINUES))
-    };
-    let kept: Vec<&str> = std::iter::once(parts[0])
-        .chain(parts[1..].iter().copied().filter(|part| !note(part)))
-        .collect();
-    let cleaned = kept.join(HEADING);
-    assert!(cleaned.len() <= brief.len(), "only notes are taken out");
-    assert!(cleaned.starts_with(parts[0]), "the brief itself is kept");
-    cleaned
+/// The kv key of the brief sections continuation notes added to `item`, as a JSON list.
+fn continuations_key(item: &QueueItemId) -> String {
+    format!("review_continuations:{item}")
 }
 
-/// Refuse an amendment `text` that holds a continuation note's opening words, which
-/// [`without_continuations`] would later take for Archon's own and drop.
-pub(crate) fn check_amendment(text: &str) -> Result<(), ArchonError> {
-    let end = CONTINUES.find(']').expect("the mark leads");
-    let mark = &CONTINUES[..=end];
-    assert!(
-        mark.starts_with('[') && mark.ends_with(']'),
-        "a bracketed mark"
-    );
-    if text.contains(mark) {
-        return Err(ArchonError::Invalid(format!(
-            "brief_append may not contain `{mark}`: Archon marks its own review-cap notes so"
-        )));
-    }
+/// The brief sections continuation notes added to `item`, oldest first.
+fn recorded_continuations(
+    store: &archon_queue::Store,
+    item: &QueueItemId,
+) -> Result<Vec<String>, ArchonError> {
+    let key = continuations_key(item);
+    let Some(raw) = store.kv_get(&key)? else {
+        return Ok(Vec::new());
+    };
+    serde_json::from_str(&raw).map_err(|e| ArchonError::Corrupt(format!("kv {key} = {raw:?}: {e}")))
+}
+
+/// Take out of `item`'s brief the continuation notes earlier retries added. Only the exact
+/// sections Archon recorded go, so no text of the operator's is taken for one.
+pub(crate) fn drop_continuations(
+    store: &archon_queue::Store,
+    item: &mut QueueItem,
+) -> Result<(), ArchonError> {
+    let added = recorded_continuations(store, &item.id)?;
+    item.brief = without_sections(&item.brief, &added);
     Ok(())
+}
+
+/// Add `note` to `item`'s brief as a dated amendment, and record its section so a later
+/// retry can take it out again. Recorded before the item is saved: a section the saved
+/// brief never held matches nothing.
+pub(crate) fn add_continuation(
+    store: &mut archon_queue::Store,
+    item: &mut QueueItem,
+    note: &str,
+) -> Result<(), ArchonError> {
+    let start = item.brief.trim_end().len();
+    item.amend_brief(note, archon_core::now())?;
+    let section = item.brief[start..].trim_end().to_owned();
+    assert!(section.ends_with(note.trim()), "the section is the note's");
+    let mut added = recorded_continuations(store, &item.id)?;
+    added.push(section);
+    let value = serde_json::to_string(&added).expect("a list of strings serializes");
+    store.kv_set(&continuations_key(&item.id), &value)
+}
+
+/// `brief` without each of the recorded `sections` it holds.
+fn without_sections(brief: &str, sections: &[String]) -> String {
+    let mut cleaned = brief.to_owned();
+    for section in sections {
+        assert!(
+            !section.trim().is_empty(),
+            "a recorded section holds a note"
+        );
+        if let Some(at) = cleaned.find(section.as_str()) {
+            cleaned.replace_range(at..at + section.len(), "");
+        }
+    }
+    assert!(cleaned.len() <= brief.len(), "only notes are taken out");
+    cleaned
 }
 
 /// The head of the last blocking fail of `stage`'s tally, once that tally reached the cap.

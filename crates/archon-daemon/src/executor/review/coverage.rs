@@ -8,7 +8,7 @@
 //! one anchors may rest on the lead's earlier reviewers, which Archon adds itself.
 //! A fail of the attempt the record leaves out stands as a named one would.
 //! Reads carried from earlier stage runs of the item on this branch anchor and
-//! count as whole-change reviewers while the branch still holds their commits;
+//! count as whole-change reviewers while the branch holds every head they read;
 //! a carried fail, anchored or not, stands as one of this attempt would.
 
 use std::collections::BTreeMap;
@@ -180,36 +180,45 @@ fn place_unnamed(
     Ok(Ok(()))
 }
 
-/// Place the reads of earlier runs' reviewers that the branch at `head` still holds.
+/// Place the reads of earlier runs' reviewers, while the branch at `head` holds every
+/// commit they read. Once one was rewritten away, the history is rewritten: none is carried.
 fn place_carried(
     history: &mut History,
     (head, forks): (&str, &[String]),
     carried: &[(String, Verdict)],
     placed: &mut Vec<Placed>,
 ) -> Result<(), ArchonError> {
-    let before = placed.len();
+    let mut reads = Vec::with_capacity(carried.len());
     for (agent, verdict) in carried {
         assert!(
             !placed.iter().any(|p| p.agent == *agent),
             "a carried reviewer is read once"
         );
-        // A read of commits the branch no longer holds counts for nothing in a later run.
+        let gone = worktree::commit_id(history.dir, &verdict.head)?.is_none();
         match place_one(history, head, forks, agent, verdict)? {
-            Ok(read) if !read.superseded => placed.push(Placed {
+            Ok(read) if !read.superseded && !gone => reads.push(Placed {
                 named: false,
                 carried: true,
                 ..read
             }),
-            Ok(_) => {
-                tracing::debug!(%agent, "an earlier run's read of a rewritten history is dropped")
+            Err(why) if !gone => {
+                tracing::debug!(%agent, %why, "an earlier run's read anchors nothing")
             }
-            Err(why) => tracing::debug!(%agent, %why, "an earlier run's read anchors nothing"),
+            _ => {
+                tracing::info!(%agent, "an earlier run's read is of a rewritten history: none is carried");
+                return Ok(());
+            }
         }
     }
     assert!(
-        placed.len() - before <= carried.len(),
+        reads.len() <= carried.len(),
         "each carried read is placed at most once"
     );
+    assert!(
+        reads.iter().all(|r| r.carried && !r.named),
+        "only carried reads are added"
+    );
+    placed.extend(reads);
     Ok(())
 }
 

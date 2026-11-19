@@ -434,8 +434,8 @@ fn delete_chosen(
     Ok(())
 }
 
-/// The per-item `kv` families: an item's steers, steered stages and restack
-/// index entries, a run's applied mark, review, plan and leftover verdict
+/// The per-item `kv` families: an item's steers, steered stages, review-cap notes and
+/// restack index entries, a run's applied mark, review, plan and leftover verdict
 /// restatements, and how a pull request only pruned runs delivered to ended. A reshaped run's outcome keeps saying so
 /// once its run edits are gone, as learning leaves reshaped runs out.
 fn prune_item_kv(tx: &Transaction<'_>) -> Result<usize, ArchonError> {
@@ -450,6 +450,7 @@ fn prune_item_kv(tx: &Transaction<'_>) -> Result<usize, ArchonError> {
         .execute(
             "DELETE FROM kv WHERE key IN (SELECT 'steers:' || id FROM temp.prune_items
                                           UNION SELECT 'shape:' || id FROM temp.prune_items
+                                          UNION SELECT 'review_continuations:' || id FROM temp.prune_items
                                           UNION SELECT 'learning/applied/' || id FROM temp.prune_runs
                                           UNION SELECT 'run_review:' || id FROM temp.prune_runs
                                           UNION SELECT ?1 || id FROM temp.prune_runs)",

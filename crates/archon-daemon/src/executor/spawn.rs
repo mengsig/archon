@@ -1396,16 +1396,14 @@ async fn resume_or_spawn(
 ) -> Result<Issued, ArchonError> {
     let checked = match check_frozen_request(ctx, &spawn.request, stage).await {
         Ok(catalog) => catalog,
-        Err(ArchonError::Invalid(reason)) => {
-            if spawn.parent == ParentBinding::Bound
-                && let Some(agent) = ctx.backend.find_spawn(&spawn.request).await?
-            {
-                return Ok(Issued::Spawned(agent));
-            }
-            return Ok(Issued::CatalogRefused(reason));
-        }
+        // A wake goes on in its own agent or not at all: no other model takes it.
+        Err(ArchonError::Invalid(_)) if spawn.deadline_wake => return Ok(Issued::NotWoken),
+        Err(ArchonError::Invalid(reason)) => return landed_or_refused(ctx, &spawn, reason).await,
         Err(error) => return Err(error),
     };
+    if spawn.deadline_wake && !spawn.wake_asked {
+        restart_wake_clock(ctx, stage, &mut spawn).await?;
+    }
     // A grant reserved while budgets were on is dropped once they are off.
     let granted = spawn.request.cost_budget_usd.is_some();
     let repo = {
@@ -1435,6 +1433,9 @@ async fn resume_or_spawn(
         }
         save_spawn(&mut *ctx.store.lock().await, &stage.id, &spawn)?;
     }
+    if let Some(reason) = superseded_pick(ctx, stage, &spawn.request, &checked).await? {
+        return landed_or_refused(ctx, &spawn, reason).await;
+    }
     if let Some(agent) = spawn.replaces.take() {
         resume::replace(ctx, &agent).await?;
         save_spawn(&mut *ctx.store.lock().await, &stage.id, &spawn)?;
@@ -1442,6 +1443,74 @@ async fn resume_or_spawn(
     spawn_bound(ctx, stage, spawn, &checked)
         .await
         .map(Issued::Spawned)
+}
+
+/// What becomes of a frozen create the catalog refuses for `reason`: the agent
+/// it left if it was sent and landed, else the refusal its replacement follows.
+async fn landed_or_refused(
+    ctx: &DaemonContext,
+    spawn: &StoredSpawn,
+    reason: String,
+) -> Result<Issued, ArchonError> {
+    assert!(!reason.trim().is_empty(), "a refusal names its reason");
+    assert!(!spawn.deadline_wake, "a wake sends no create");
+    if spawn.parent == ParentBinding::Bound
+        && let Some(agent) = ctx.backend.find_spawn(&spawn.request).await?
+    {
+        return Ok(Issued::Spawned(agent));
+    }
+    Ok(Issued::CatalogRefused(reason))
+}
+
+/// Why the create `request` freezes for `stage` is not sent though `catalog`
+/// lists its model: that model has a successor, and the plan names it for the
+/// stage's slot no longer, or as the daemon's own pick. A listed pin replays.
+async fn superseded_pick(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    request: &SpawnRequest,
+    catalog: &archon_core::model_tier::ModelCatalog,
+) -> Result<Option<String>, ArchonError> {
+    assert_eq!(stage.state, StageState::Spawning, "a reserved attempt");
+    let model = catalog.canonical_alias(&request.choice.model);
+    let Some(successor) = catalog.superseded_by(model) else {
+        return Ok(None);
+    };
+    assert_ne!(model, successor, "a successor is another model");
+    let store = ctx.store.lock().await;
+    let run = store.run(&stage.run)?;
+    let item = store.item(&run.item)?;
+    let planned = item.model_plan.plan().choices_for(&stage.stage_id);
+    let Some(planned) = planned.filter(|choices| !choices.is_empty()) else {
+        return Ok(None);
+    };
+    let slot = stage.fan_index as usize % planned.len();
+    let origin = item.model_plan.origin(&item.id, &stage.stage_id, slot);
+    let pinned = catalog.canonical_alias(&planned[slot].model) == model && origin.model.is_pin();
+    Ok((!pinned).then(|| format!("model {model} is superseded by {successor}")))
+}
+
+/// Count a deadline wake's minutes from now when it waited to be asked, as for
+/// a catalog that lists its model: its agent is told the deadline it gets.
+async fn restart_wake_clock(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    spawn: &mut StoredSpawn,
+) -> Result<(), ArchonError> {
+    assert!(spawn.deadline_wake && !spawn.wake_asked, "a wake not yet asked");
+    let fresh = archon_core::now() + chrono::Duration::minutes(settle::DEADLINE_WAKE_MINUTES);
+    // The told deadline is exact to the minute: a shorter wait moves nothing.
+    let waited = |told: &Timestamp| fresh - *told >= chrono::Duration::minutes(1);
+    let Some(told) = spawn.request.deadline.filter(waited) else {
+        return Ok(());
+    };
+    assert!(fresh > told, "a waiting wake's deadline only moves later");
+    spawn.request.deadline = Some(fresh);
+    spawn.resume = spawn
+        .resume
+        .take()
+        .map(|kept| resume::with_moved_deadline(kept, fresh));
+    save_spawn(&mut *ctx.store.lock().await, &stage.id, spawn)
 }
 
 async fn check_frozen_request(

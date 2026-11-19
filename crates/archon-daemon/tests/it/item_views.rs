@@ -1029,6 +1029,44 @@ async fn a_finished_stages_retired_pin_holds_no_later_stage() {
     assert!(detail(&h, &item.id).await.waiting_reason.is_none());
 }
 
+/// A fanned stage's finished slot keeps its retired pin unchecked: the retry
+/// of its other slot runs on that slot's own model.
+#[tokio::test]
+async fn a_finished_slots_retired_pin_holds_no_retry_of_another_slot() {
+    use archon_core::model::Effort;
+    let h = Harness::new().await;
+    let mut plan = common::plan();
+    let review = vec![
+        common::choice(HAIKU, Effort::Medium),
+        common::choice(common::MODEL, Effort::Low),
+    ];
+    plan.0.insert("review".into(), review);
+    let item = h.enqueue_with("retire a finished slot's pin", plan).await.unwrap();
+    h.dispatch().await;
+    h.settle_running(passing).await;
+    h.dispatch().await;
+    let slots: Vec<_> = (h.running().await.into_iter())
+        .map(|s| (s.fan_index, s.choice.model.to_string()))
+        .collect();
+    assert_eq!(slots, [(0, HAIKU.into()), (1, common::MODEL.into())]);
+
+    serve_catalog_without(&h, HAIKU).await;
+    h.settle_running(|s| match s.fan_index {
+        0 => common::verdict(true),
+        _ => archon_core::run::StageOutcome::Failed {
+            error: "engine died".into(),
+            infra: true,
+        },
+    })
+    .await;
+    h.dispatch().await;
+    let retried: Vec<_> = (h.running().await.into_iter())
+        .map(|s| (s.stage_id, s.fan_index, s.choice.model.to_string()))
+        .collect();
+    assert_eq!(retried, [("review".into(), 1, common::MODEL.into())]);
+    assert!(detail(&h, &item.id).await.waiting_reason.is_none());
+}
+
 #[tokio::test]
 async fn a_running_items_next_stage_names_its_retired_pin() {
     let h = Harness::new().await;

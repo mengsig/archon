@@ -195,6 +195,39 @@ async fn a_retired_pin_is_not_woken_at_its_deadline_and_holds_no_fleet_event() {
     assert!(matches!(h.state(&item.id).await, QueueState::Failed { .. }));
 }
 
+/// A deadline wake through a catalog outage waits for the catalog, then wakes
+/// the same agent with its full extension: the outage never times it out.
+#[tokio::test]
+async fn a_deadline_wake_through_a_catalog_outage_wakes_once_the_catalog_answers() {
+    let h = Harness::new().await;
+    let item = h.enqueue("ran out of time in an outage").await;
+    h.dispatch().await;
+    let first = h.running().await.remove(0);
+    let agent = first.aether_agent.clone().expect("an agent");
+    crate::refresh::catalog_outage(&h).await;
+    stop_at_deadline(&h, &first, true).await;
+
+    assert!(h.backend.woken().is_empty(), "no wake without a catalog");
+    assert!(h.state(&item.id).await.is_active(), "the item waits");
+    let waiting = h.live_stages().await.remove(0);
+    assert_eq!(waiting.state, StageState::Spawning, "a reserved wake");
+    let told_before = archon_core::now() - chrono::Duration::minutes(5);
+    common::set_deadline(&h, &waiting, told_before).await;
+
+    crate::refresh::catalog_back(&h);
+    h.dispatch().await;
+    assert_eq!(h.backend.woken(), [agent], "its own agent is woken");
+    assert_eq!(h.backend.requests().len(), 1, "no fresh agent");
+    let woken = h.ctx.store.lock().await.stage_run(&waiting.id).unwrap();
+    assert_eq!(woken.state, StageState::Running);
+    let until = common::stored_deadline(&h, &woken).await.expect("a deadline");
+    let left = until - archon_core::now();
+    assert!(left > chrono::Duration::minutes(9), "a full extension: {left}");
+    let told = h.backend.resumed_with(&woken);
+    let at = until.format("%Y-%m-%d %H:%M UTC").to_string();
+    assert!(told.contains(&at), "told the restarted deadline {at}: {told}");
+}
+
 async fn sweep(h: &Harness) {
     dispatcher::dispatch_once(&h.ctx)
         .await

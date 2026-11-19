@@ -21,17 +21,17 @@ pub(crate) fn repair_item(
     let whole = RepairScope {
         spec,
         when: TierMove::Dispatch,
-        in_scope: &|_| true,
+        in_scope: &|_, _| true,
     };
     repair_item_in(ctx, store, item, catalog, env, whole)
 }
 
-/// What a repair covers: its pipeline, when it runs, and the plan keys it
-/// reads; the other keys are kept as stored.
+/// What a repair covers: its pipeline, when it runs, and the slots of each
+/// plan key it reads; the others are kept as stored.
 struct RepairScope<'a> {
     spec: &'a archon_pipeline::PipelineSpec,
     when: TierMove,
-    in_scope: &'a dyn Fn(&str) -> bool,
+    in_scope: &'a dyn Fn(&str, usize) -> bool,
 }
 
 /// [`repair_item`] within `scope`.
@@ -151,20 +151,26 @@ pub(crate) fn repair_pending(
     env: &crate::resolve::RepoEnv,
     spec: &archon_pipeline::PipelineSpec,
 ) -> Result<(QueueItem, Vec<SpawnPlan>), ArchonError> {
-    let keys: std::collections::BTreeSet<String> = plans
+    let stored = item.model_plan.plan();
+    // A finished slot's pin no longer runs: of a stage's own choices only the
+    // pending plans' slots are repaired, beside the worker choices they use.
+    let own: std::collections::BTreeSet<(&str, usize)> = plans
         .iter()
-        .flat_map(|plan| {
-            [
-                plan.stage_id.clone(),
-                archon_core::model::workers_key(&plan.stage_id),
-            ]
+        .filter_map(|plan| {
+            let choices = stored.choices_for(&plan.stage_id)?.len().max(1);
+            Some((plan.stage_id.as_str(), plan.fan_index as usize % choices))
         })
         .collect();
-    // A finished stage's pins no longer run: only the pending stages' keys are
-    // repaired, and the review key only while a pending stage names reviewers.
+    let workers: std::collections::BTreeSet<String> = plans
+        .iter()
+        .map(|plan| archon_core::model::workers_key(&plan.stage_id))
+        .collect();
+    // The review key is repaired only while a pending stage names reviewers.
     let reviews = plans.iter().any(names_reviewers);
-    let in_scope = |key: &str| {
-        keys.contains(key) || (reviews && key.ends_with(archon_core::model::REVIEWERS_KEY_SUFFIX))
+    let in_scope = |key: &str, slot: usize| {
+        own.contains(&(key, slot))
+            || workers.contains(key)
+            || (reviews && key.ends_with(archon_core::model::REVIEWERS_KEY_SUFFIX))
     };
     let pending = RepairScope {
         spec,

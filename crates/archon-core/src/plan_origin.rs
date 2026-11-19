@@ -616,18 +616,18 @@ impl PlannedPlan {
             &EntryOrigin,
         ) -> Result<Option<CatalogReplacement>, ArchonError>,
     ) -> Result<(), ArchonError> {
-        let all = (at, TierMove::InRun, |_: &str| true);
+        let all = (at, TierMove::InRun, |_: &str, _: usize| true);
         self.repair_catalog_in(item, catalog, all, replacement)
     }
 
-    /// [`Self::repair_catalog_with`] for the keys `in_scope` accepts alone; the
-    /// others, such as a finished stage's pins, are kept unchecked. At `when`
+    /// [`Self::repair_catalog_with`] for the slots of each key `in_scope` accepts
+    /// alone; the others, such as a finished slot's pin, are kept unchecked. At `when`
     /// a pinned tier's model is the daemon's to replace as its own choice is.
     pub fn repair_catalog_in(
         &mut self,
         item: &QueueItemId,
         catalog: &crate::model_tier::ModelCatalog,
-        (at, when, in_scope): (Timestamp, TierMove, impl Fn(&str) -> bool),
+        (at, when, in_scope): (Timestamp, TierMove, impl Fn(&str, usize) -> bool),
         mut replacement: impl FnMut(
             &str,
             usize,
@@ -645,12 +645,12 @@ impl PlannedPlan {
         }
         let mut writer = PlanWriter::editing(self, item, at);
         for (key, choices) in &mut writer.plan.0 {
-            if !in_scope(key) {
-                continue;
-            }
             let slots = writer.entries.get_mut(key).expect("an origin per entry");
             assert_eq!(choices.len(), slots.len(), "origins fit the plan");
             for (slot, (choice, origin)) in choices.iter_mut().zip(slots).enumerate() {
+                if !in_scope(key, slot) {
+                    continue;
+                }
                 let model = match still_listed(catalog, &choice.model, origin) {
                     Ok(model) => model,
                     Err(error) if origin.may_replace(when) => {

@@ -1049,6 +1049,31 @@ async fn a_superseded_fallback_the_repair_moved_is_noted_as_the_catalog_s_move()
     assert_eq!(told, moved, "the only move, for the catalog's reason");
 }
 
+/// A reserved create of the daemon's own pick, superseded before it is sent,
+/// is never created on the old model: the repair moves it to the successor.
+#[tokio::test]
+async fn a_daemon_pick_superseded_before_its_reserved_create_is_sent_moves_on() {
+    let h = harness(untiered_fallback()).await;
+    let busy = archon_core::error::ArchonError::Unavailable("aetherd busy".into());
+    h.backend.fail_next(busy);
+    let (item, old) = with_untiered_fallback(&h, "implement").await;
+    h.dispatch().await;
+    let sent = |h: &Harness| -> Vec<String> {
+        let requests = h.backend.requests();
+        requests.iter().map(|r| r.choice.model.to_string()).collect()
+    };
+    assert_eq!(sent(&h), [old.as_str()], "the create that failed");
+    let next = format!("{old}-next");
+    list_beside(&h, (&old, &next), true).await;
+    h.dispatch().await;
+    h.dispatch().await;
+
+    assert_eq!(sent(&h), [old.as_str(), next.as_str()], "never sent again on {old}");
+    let running = h.running().await;
+    let models: Vec<_> = running.iter().map(|s| s.choice.model.to_string()).collect();
+    assert_eq!(models, [next.as_str()], "{:?}", h.state(&item.id).await);
+}
+
 /// A plan without any tier is repaired and noted too, though dispatch has no
 /// tier of it to resolve.
 #[tokio::test]

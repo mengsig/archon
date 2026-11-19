@@ -1157,6 +1157,35 @@ async fn a_catalog_repair_beside_a_tier_move_is_told_first_for_its_own_reason() 
     assert_eq!(stored.0["ship"][0].model.to_string(), successor);
 }
 
+/// A run's pending pinned tier whose provider lost its last model at the
+/// floor resolves on the other weighted provider, as dispatch routes it.
+#[tokio::test]
+async fn a_pending_pinned_tier_resolves_again_on_another_weighted_provider() {
+    for source in PINS {
+        let h = harness(codex_first()).await;
+        claude_then_codex(&h, 0, 80);
+        let item = enqueue(&h, ROUTED, "stale tier in a run", tier_plan()).await;
+        let plan = pinned(&h, &item, source).await;
+        let gone = plan.choices_for("review").unwrap()[0].model.clone();
+        assert_eq!(gone.to_string(), "codex/sol", "{source:?}: on Codex");
+        h.dispatch().await;
+        let mut listed: Vec<CatalogModel> = catalog().models().to_vec();
+        listed.retain(|entry| entry.model != gone);
+        h.set_catalog(ModelCatalog::new(listed)).await;
+        claude_then_codex(&h, 80, 80);
+        h.settle_running(|_| completed("implemented")).await;
+        h.dispatch().await;
+
+        let mut reviewers = spawned_on(&h, &item, "review").await;
+        reviewers.sort();
+        assert_eq!(reviewers, ["claude-code/opus", "codex/mini"], "{source:?}");
+        let told = changed_models(&h, &item).await;
+        let moved = "stage review moved from codex/sol to claude-code/opus: \
+            the model catalog no longer lists codex/sol";
+        assert!(told.starts_with(moved), "{source:?}: {told}");
+    }
+}
+
 /// A retry keeping such a plan is accepted on the other weighted provider.
 #[tokio::test]
 async fn a_retry_keeps_a_pinned_tier_that_resolves_on_another_weighted_provider() {
@@ -1188,6 +1217,13 @@ async fn a_retry_keeps_a_pinned_tier_that_resolves_on_another_weighted_provider(
             "claude-code/sonnet",
             "{source:?}"
         );
+        h.dispatch().await;
+        let told = changed_models(&h, &item).await;
+        let moved = "stage implement moved from codex/sol to claude-code/sonnet: \
+            the model catalog no longer lists codex/sol";
+        assert!(told.starts_with(moved), "{source:?}: {told}");
+        let implementers = spawned_on(&h, &item, "implement").await;
+        assert_eq!(implementers, ["claude-code/sonnet"], "{source:?}");
     }
 }
 

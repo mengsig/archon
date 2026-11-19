@@ -257,19 +257,6 @@ async fn prepare(
     }
 }
 
-/// The plan dispatch's model notice compares with: the one a catalog repair
-/// just `replaced`, while it still has the `stored` plan's shape.
-fn notice_baseline<'a>(replaced: Option<&'a ModelPlan>, stored: &'a ModelPlan) -> &'a ModelPlan {
-    let same_shape = |plan: &&ModelPlan| {
-        let entries = plan.0.iter().zip(&stored.0);
-        plan.0.len() == stored.0.len()
-            && entries
-                .into_iter()
-                .all(|(was, now)| was.0 == now.0 && was.1.len() == now.1.len())
-    };
-    replaced.filter(same_shape).unwrap_or(stored)
-}
-
 /// Note on `stored`, and in its feed, each model that moved since the plan a
 /// catalog repair `replaced`, or else since the `repaired` plan dispatch read:
 /// a slot that repair changed moved for the catalog's reason, never a tier's.
@@ -283,7 +270,7 @@ fn note_moves(
         Option<&archon_core::quota::QuotaView>,
     ),
 ) -> Result<(), ArchonError> {
-    let before = notice_baseline(replaced, repaired);
+    let before = crate::quota::notice_baseline(replaced, repaired);
     let now = stored.model_plan.plan();
     let dropped = crate::quota::catalog_moves((before, repaired), now, catalog);
     assert!(

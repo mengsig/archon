@@ -63,13 +63,14 @@ fn reset_text(at: Option<archon_core::Timestamp>) -> String {
 }
 
 /// Route `plans` of `item`'s run in `spec` by quota before they are reserved,
-/// storing the item when its provider, plan or note changed.
+/// storing the item when its provider, plan or note changed. A catalog repair
+/// that `replaced` the stored plan just before is noted with these moves.
 pub(crate) fn reroute_spawns(
     ctx: &DaemonContext,
     store: &mut Store,
     (item, spec): (&mut QueueItem, &PipelineSpec),
     plans: &mut [SpawnPlan],
-    repo: Option<&Repo>,
+    (repo, replaced): (Option<&Repo>, Option<&ModelPlan>),
 ) -> Result<Reserve, ArchonError> {
     assert!(!plans.is_empty(), "only pending spawns are routed");
     assert!(
@@ -77,20 +78,14 @@ pub(crate) fn reroute_spawns(
         "the plans are stages of the run's pipeline"
     );
     let view = super::view(ctx);
-    let spent = view.as_ref().is_some_and(QuotaView::any_exhausted);
-    if !spent && item.provider_switch.is_none() {
-        return Ok(Reserve::Go);
-    }
-    let Some((weights, policy)) = routing(ctx, item, repo) else {
-        return Ok(Reserve::Go);
+    let Some((weights, policy, catalog)) = quota_routing(ctx, store, item, repo, view.as_ref())
+    else {
+        return note_repair(ctx, store, item, replaced, view.as_ref()).map(|()| Reserve::Go);
     };
-    let catalog = store.model_catalog();
-    if catalog.is_empty() {
-        return Ok(Reserve::Go);
-    }
     if let Some(spent) = view.as_ref().filter(|v| v.any_exhausted())
         && let Some(hold) = first_hold(item, (spec, plans), (&weights, &policy), (&catalog, spent))
     {
+        note_repair(ctx, store, item, replaced, view.as_ref())?;
         record_wait(store, item, &hold)?;
         return Ok(Reserve::Wait);
     }
@@ -106,15 +101,92 @@ pub(crate) fn reroute_spawns(
     let tiers = TierScope::new(&ctx.config, &policy, &catalog).routed(Some(route));
     let moved = move_plans(plans, (spec, tiers), (held.as_deref(), view.as_ref()));
     if moved.is_empty() && item.routed_provider == held {
-        return Ok(Reserve::Go);
+        return note_repair(ctx, store, item, replaced, view.as_ref()).map(|()| Reserve::Go);
     }
     item.routed_provider = held.clone();
     let stored = item.model_plan.plan().clone();
     follow_plan(item, spec, tiers);
-    record_moves(ctx, store, item, (&moved, &stored), view.as_ref())?;
+    let before = notice_baseline(replaced, &stored);
+    let mut moves = repair_moves((before, &stored), item.model_plan.plan(), &catalog);
+    moves.extend(moved);
+    record_moves(ctx, store, item, (&moves, before), view.as_ref())?;
     item.updated_at = archon_core::now();
     store.update_item(item)?;
     Ok(Reserve::Go)
+}
+
+/// The weights, policy and catalog `item`'s stages are routed by quota with;
+/// `None` while nothing is spent and nothing moved, or nothing routes them.
+fn quota_routing(
+    ctx: &DaemonContext,
+    store: &Store,
+    item: &QueueItem,
+    repo: Option<&Repo>,
+    view: Option<&QuotaView>,
+) -> Option<(ProviderWeights, ModelPolicy, ModelCatalog)> {
+    let spent = view.is_some_and(QuotaView::any_exhausted);
+    if !spent && item.provider_switch.is_none() {
+        return None;
+    }
+    let (weights, policy) = routing(ctx, item, repo)?;
+    let catalog = store.model_catalog();
+    if catalog.is_empty() {
+        return None;
+    }
+    Some((weights, policy, catalog))
+}
+
+/// Note on `item`, and in its feed, the moves a catalog repair made from the
+/// plan it `replaced`, storing the item; nothing without such a repair.
+fn note_repair(
+    ctx: &DaemonContext,
+    store: &mut Store,
+    item: &mut QueueItem,
+    replaced: Option<&ModelPlan>,
+    view: Option<&QuotaView>,
+) -> Result<(), ArchonError> {
+    let Some(replaced) = replaced else {
+        return Ok(());
+    };
+    let now = item.model_plan.plan().clone();
+    let before = notice_baseline(Some(replaced), &now);
+    let dropped = repair_moves((before, &now), &now, &store.model_catalog());
+    if dropped.is_empty() {
+        return Ok(());
+    }
+    record_moves(ctx, store, item, (&dropped, before), view)?;
+    assert!(item.provider_switch.is_some(), "a move is noted");
+    item.updated_at = archon_core::now();
+    store.update_item(item)
+}
+
+/// [`catalog_moves`] of a repair that may not have run: none when `replaced`
+/// is the plan it would have repaired.
+fn repair_moves(
+    (replaced, repaired): (&ModelPlan, &ModelPlan),
+    now: &ModelPlan,
+    catalog: &ModelCatalog,
+) -> Vec<Moved> {
+    if replaced == repaired {
+        return Vec::new();
+    }
+    catalog_moves((replaced, repaired), now, catalog)
+}
+
+/// The plan a model notice compares with: the one a catalog repair just
+/// `replaced`, while it still has the `stored` plan's shape.
+pub(crate) fn notice_baseline<'a>(
+    replaced: Option<&'a ModelPlan>,
+    stored: &'a ModelPlan,
+) -> &'a ModelPlan {
+    let same_shape = |plan: &&ModelPlan| {
+        let entries = plan.0.iter().zip(&stored.0);
+        plan.0.len() == stored.0.len()
+            && entries
+                .into_iter()
+                .all(|(was, now)| was.0 == now.0 && was.1.len() == now.1.len())
+    };
+    replaced.filter(same_shape).unwrap_or(stored)
 }
 
 /// One stage slot a reroute moved from model `from` to model `to`; `dropped`

@@ -498,7 +498,10 @@ fn reserve_plans(
             return Ok(Reserved::Waiting(plans));
         }
     };
+    // The plan the repair replaced: its moves are noted with the reroute's.
+    let mut replaced = None;
     if repaired.model_plan != item.model_plan {
+        replaced = Some(item.model_plan.plan().clone());
         item = repaired;
         item.updated_at = archon_core::now().max(item.updated_at);
         store.update_item(&item)?;
@@ -506,7 +509,8 @@ fn reserve_plans(
     plans = pending;
     {
         let target = (&mut item, spec);
-        let routed = crate::quota::reroute_spawns(ctx, store, target, &mut plans, repo.as_ref())?;
+        let read = (repo.as_ref(), replaced.as_ref());
+        let routed = crate::quota::reroute_spawns(ctx, store, target, &mut plans, read)?;
         if routed == crate::quota::Reserve::Wait {
             return Ok(Reserved::Waiting(plans));
         }

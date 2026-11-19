@@ -58,13 +58,11 @@ fn repair_item_in(
             .repair_catalog(&item.id, catalog, archon_core::now())?;
         return Ok(repaired);
     }
-    // Dispatch routes a tier across the weighted providers; a run keeps its own.
+    // A tier resolves as dispatch routes it: on the item's held provider while
+    // that meets its floor, else on another weighted one; a bound provider stays.
     let weights = env.provider_weights(&ctx.config);
     let quota = weights.as_ref().and_then(|_| crate::quota::view(ctx));
-    let route = match when {
-        TierMove::Dispatch => ItemRoute::new(item).by(weights.as_ref(), quota.as_ref()),
-        TierMove::InRun => None,
-    };
+    let route = ItemRoute::new(item).by(weights.as_ref(), quota.as_ref());
     let tiers = unrouted.routed(route);
     let learned = if catalog.not_ready_reason().is_none() {
         crate::learned::default_plan(store, item.repo.as_ref(), spec, &policy, max_tier)?

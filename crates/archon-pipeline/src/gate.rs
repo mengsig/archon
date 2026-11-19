@@ -12,6 +12,12 @@ use crate::spec::{Owed, Scenarios, StageSpec};
 /// cannot blow up the next agent's objective.
 pub const MAX_FEEDBACK_CHARS: usize = 32_000;
 
+/// How much of a final restatement is kept for the failure report.
+const MAX_RESTATED_CHARS: usize = 8_000;
+/// Introduces the result of a stage whose final restatement stands over it.
+const FINISHED_OTHERWISE: &str =
+    "It then finished with this result, which does not change that verdict:";
+
 const SHIP_REFUSAL: &str = "the ship record archond delivers is not on record";
 const REVIEW_REFUSAL: &str = archon_core::run::REVIEW_NOT_ON_RECORD;
 /// The headline a review-only lead's verdict other than pass fails its run with.
@@ -153,10 +159,16 @@ fn recorded(stage: &StageSpec, attempt: u32, members: &[&StageRun], owed: Owed) 
         false => String::new(),
     };
     let failed = |headline: String| {
-        let report = format!(
-            "**Stage `{}` attempt {attempt}: {headline}**\n{findings}\n{summary}\n",
-            stage.id
-        );
+        let opening = format!("**Stage `{}` attempt {attempt}: {headline}**", stage.id);
+        let result = format!("{findings}\n{summary}\n");
+        // A final restatement that stands is the verdict's reason: it comes first.
+        let report = match member.restated_said() {
+            Some(said) => format!(
+                "{opening}\n\n{}\n\n{FINISHED_OTHERWISE}\n{result}",
+                said.trim()
+            ),
+            None => format!("{opening}\n{result}"),
+        };
         let report = clip(&report, MAX_FEEDBACK_CHARS);
         GroupResult::Fail { headline, report }
     };
@@ -372,7 +384,14 @@ fn member_report(stage: &StageSpec, member: &StageRun) -> String {
                 (None, _) => unreadable_verdict(member),
             };
             let findings = findings_text(member.structured.as_ref());
-            format!("{label}: verdict {verdict}**\n\n{summary}\n{findings}")
+            let result = format!("{summary}\n{findings}");
+            match member.restated_said() {
+                Some(said) => format!(
+                    "{label}: verdict {verdict}**\n\n{}\n\n{FINISHED_OTHERWISE}\n\n{result}",
+                    said.trim()
+                ),
+                None => format!("{label}: verdict {verdict}**\n\n{result}"),
+            }
         }
         StageState::Failed { error } => format!("{label}: failed**\n\n{}\n", error.trim()),
         StageState::TimedOut => format!("{label}: timed out after {}**\n", ran_for(member)),
@@ -395,6 +414,19 @@ fn restated_over(member: &StageRun) -> Option<&'static str> {
         Verdict::Fail => "fail, as it restated before completing (final)",
         _ => "unreadable as pass or fail, as it restated before completing (final; counts as fail)",
     })
+}
+
+/// A submission's summary and findings as a failure report shows them, each
+/// clipped: what `submit_verdict` keeps of a final restatement that is no pass.
+pub fn submission_text(summary: &str, structured: Option<&serde_json::Value>) -> String {
+    let share = MAX_RESTATED_CHARS / 2;
+    let findings = findings_text(structured);
+    let text = format!(
+        "{}\n{}",
+        clip(summary.trim(), share),
+        clip(&findings, share)
+    );
+    text.trim_end().to_owned()
 }
 
 /// Why a completed member's verdict counts as fail, quoting what it said:

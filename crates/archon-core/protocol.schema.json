@@ -14981,6 +14981,13 @@
             }
           ],
           "description": "What the restated submission read as, which is final; `None` while it is owed."
+        },
+        "said": {
+          "description": "The summary and findings of a restated submission that is no pass, clipped:\na failure report shows them where it stands over the stage's result.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

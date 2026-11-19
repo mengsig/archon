@@ -5,20 +5,30 @@
 //! attempt, so neither a restarted archond nor a replacement of the attempt's
 //! stage run asks for a second one. A stage that never calls it settles as before.
 
+use std::time::Duration;
+
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::id::PipelineRunId;
 use archon_core::protocol::Reply;
 use archon_core::run::{
-    Restatement, StageRun, StageState, Submission, Verdict, VerdictReading, names_environment,
+    Restatement, StageRun, StageState, Submission, Verdict, VerdictCheck, VerdictReading,
+    names_environment,
 };
 use archon_queue::Store;
 
 use super::RunTable;
+use super::spawn::{self, ParentBinding};
 use crate::context::DaemonContext;
 
 /// The store key prefix of a live stage attempt's restatement.
 const KEY_PREFIX: &str = "verdict_restatement:";
+
+/// How long a caller whose spawn or wake may not be on record yet waits for it.
+const BINDING_GRACE: Duration = Duration::from_secs(5);
+/// How often that wait re-reads the store, should a record's signal be missed.
+const BINDING_RECHECK: Duration = Duration::from_secs(1);
+const _: () = assert!(BINDING_RECHECK.as_millis() <= BINDING_GRACE.as_millis());
 
 /// The result a stage agent submits before it finishes with it.
 pub(crate) struct Submitted<'a> {
@@ -48,17 +58,53 @@ pub(crate) async fn submit(
             "submit_verdict: `structured` must be an object, as `complete_task` takes it".into(),
         ));
     }
+    let deadline = tokio::time::Instant::now() + BINDING_GRACE;
+    loop {
+        // Listening before the store is read: a binding recorded between the
+        // read and the wait still ends the wait. No lock is held while waiting.
+        let recorded = ctx.spawn_recorded.notified();
+        tokio::pin!(recorded);
+        recorded.as_mut().enable();
+        if let Some(check) = submit_for_held_stage(ctx, agent, &sent).await? {
+            return Ok(Reply::VerdictCheck(check));
+        }
+        let now = tokio::time::Instant::now();
+        let pending = now < deadline && binding_pending(&*ctx.store.lock().await, agent)?;
+        if !pending {
+            return Err(ArchonError::Forbidden(format!(
+                "submit_verdict is for a stage agent while its stage runs, and Archon has none \
+                 on record for {agent}. Finish as your instructions say"
+            )));
+        }
+        tokio::select! {
+            () = &mut recorded => {}
+            () = tokio::time::sleep_until(deadline.min(now + BINDING_RECHECK)) => {}
+        }
+    }
+}
+
+/// The check of `sent` for the stage `agent` runs now, recorded with its
+/// attempt; `None` when the agent holds no running stage.
+async fn submit_for_held_stage(
+    ctx: &DaemonContext,
+    agent: &AetherAgentId,
+    sent: &Submitted<'_>,
+) -> Result<Option<VerdictCheck>, ArchonError> {
     let table = ctx.runs.lock().await;
     let mut store = ctx.store.lock().await;
-    let stage = submitting_stage(&table, &store, agent)?;
+    let Some(stage) = held_stage(&store, agent)? else {
+        return Ok(None);
+    };
+    holds_verdict(&table, &stage)?;
     let submission = Submission {
         reading: read(&stage, sent.summary, sent.structured),
         restating: sent.restating,
         environment: sent.structured.is_some_and(names_environment),
+        said: archon_pipeline::submission_text(sent.summary, sent.structured),
     };
     let key = key(&stage);
     let state = load(&store, &key)?;
-    let (next, check) = Restatement::submit(state, submission);
+    let (next, check) = Restatement::submit(state.as_ref(), submission);
     if next != state {
         let next = next.expect("a submission never forgets an ask");
         store.kv_set(&key, &serde_json::to_string(&next)?)?;
@@ -67,29 +113,67 @@ pub(crate) async fn submit(
         stage = %stage.id, %agent, decision = ?check.decision, verdict = ?check.reading.verdict,
         note = ?check.reading.note, "verdict submitted before completion"
     );
-    Ok(Reply::VerdictCheck(check))
+    Ok(Some(check))
 }
 
-/// The running stage `agent` submits for, which holds its run's verdict.
-fn submitting_stage(
-    table: &RunTable,
-    store: &Store,
-    agent: &AetherAgentId,
-) -> Result<StageRun, ArchonError> {
-    let stage = store
-        .stage_run_by_agent(agent)?
-        .filter(|stage| !stage.state.is_terminal())
-        .ok_or_else(|| {
-            ArchonError::Forbidden(format!(
-                "submit_verdict is for a stage agent while its stage runs, and Archon has none \
-                 on record for {agent}. Finish as your instructions say"
-            ))
-        })?;
+/// The running stage run `agent` holds, when it is its attempt's current one: after a
+/// crash mid-replacement the superseded one is still live, and its agent is not answered.
+fn held_stage(store: &Store, agent: &AetherAgentId) -> Result<Option<StageRun>, ArchonError> {
+    let Some(stage) = store.stage_run_by_agent(agent)? else {
+        return Ok(None);
+    };
     assert_eq!(
         stage.aether_agent.as_ref(),
         Some(agent),
         "found by its agent"
     );
+    if stage.state.is_terminal() {
+        return Ok(None);
+    }
+    let attempt = Attempt::of(&stage);
+    let stages = store.stage_runs(&stage.run)?;
+    // Newest as the engine picks a slot's stage run: by start time, then id.
+    let newest = stages
+        .iter()
+        .filter(|other| attempt.holds(other))
+        .max_by_key(|other| (other.started_at, &other.id))
+        .expect("the attempt holds the stage run found");
+    if newest.id != stage.id {
+        tracing::warn!(
+            stage = %stage.id, replacement = %newest.id, %agent,
+            "a superseded stage run's agent submitted a verdict"
+        );
+        return Ok(None);
+    }
+    Ok(Some(stage))
+}
+
+/// Whether a `spawning` stage may yet be bound to `agent`: one that resumes
+/// it, or, when no stage run holds it, one whose create may have reached Aether.
+fn binding_pending(store: &Store, agent: &AetherAgentId) -> Result<bool, ArchonError> {
+    let unheld = store.stage_run_by_agent(agent)?.is_none();
+    for stage in store.live_stage_runs()? {
+        if stage.state != StageState::Spawning {
+            continue;
+        }
+        let stored = match spawn::load_spawn(store, &stage.id) {
+            Ok(stored) => stored,
+            // `claim` fails such a stage before anything is sent.
+            Err(ArchonError::NotFound(_)) => continue,
+            Err(e) => return Err(e),
+        };
+        let resumes = stored.resume.is_some_and(|kept| kept.agent == *agent);
+        if resumes || (unheld && stored.parent != ParentBinding::Pending) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Refuse a stage whose verdict Archon does not read: its run is not driven
+/// right now, or its contract has no Verdict section.
+fn holds_verdict(table: &RunTable, stage: &StageRun) -> Result<(), ArchonError> {
+    assert!(!stage.state.is_terminal(), "only a running stage submits");
     let driver = table.drivers.get(&stage.run).ok_or_else(|| {
         ArchonError::Unavailable(format!(
             "Archon is not driving stage `{}`'s run right now, so its verdict is read when you \
@@ -104,7 +188,7 @@ fn submitting_stage(
             stage.stage_id
         )));
     }
-    Ok(stage)
+    Ok(())
 }
 
 /// A result's verdict as settlement reads it for `stage`.
@@ -123,13 +207,14 @@ pub(super) fn bound(store: &Store, mut settled: StageRun) -> Result<StageRun, Ar
     let Some(restatement) = load(store, &key(&settled))? else {
         return Ok(settled);
     };
-    settled.restatement = Some(restatement);
     if settled.state != StageState::Completed {
+        settled.restatement = Some(restatement);
         return Ok(settled);
     }
     let verdict = settled.verdict.expect("a completed stage has a verdict");
     let terminal = VerdictReading::new((verdict, settled.verdict_note));
     let stands = restatement.bind(terminal);
+    settled.restatement = Some(restatement);
     if stands != terminal {
         tracing::info!(
             stage = %settled.id, result = ?terminal.verdict, restated = ?stands.verdict,
@@ -159,10 +244,16 @@ pub(super) fn forget(store: &mut Store, settled: &StageRun) -> Result<(), Archon
     store.kv_delete(&key)
 }
 
-/// Delete the restatements of stage attempts none of whose stage runs is live.
+/// Delete the restatements of stage attempts none of whose stage runs is
+/// live, and those whose run history pruning has since deleted.
 pub(super) fn forget_ended(store: &mut Store) -> Result<(), ArchonError> {
     for (key, _) in store.kv_prefix(KEY_PREFIX)? {
-        if !Attempt::of_key(&key)?.lives_beside(store, None)? {
+        let live = match Attempt::of_key(&key)?.lives_beside(store, None) {
+            Ok(live) => live,
+            Err(ArchonError::NotFound(_)) => false,
+            Err(e) => return Err(e),
+        };
+        if !live {
             store.kv_delete(&key)?;
         }
     }

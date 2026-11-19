@@ -5,7 +5,9 @@
 //! that never calls the tool settles as it did before.
 
 use crate::common;
+mod bindings;
 mod callers;
+mod cleanup;
 mod replaced;
 
 use std::collections::BTreeMap;
@@ -420,6 +422,9 @@ async fn a_restated_verdict_is_routed_by_the_findings_restated_with_it() {
     settle(&h, PASS, noted).await;
     let error = failure(&h, &product).await;
     assert!(error.contains("`setup` was not re-run"), "{error}");
+    // The failure tells what the restated fail said, ahead of the later pass.
+    let (said, finished) = (error.find("the run stopped"), error.find("slow start"));
+    assert!(said.is_some() && said < finished, "{error}");
     assert_eq!(setup_runs(&h, &product).await, 1);
 
     let (environment, e2e) = at_e2e(&h).await;
@@ -434,6 +439,11 @@ async fn a_restated_verdict_is_routed_by_the_findings_restated_with_it() {
         again.attempt, 2,
         "the restated environment fail re-runs setup"
     );
+    // Setup is told the restated finding, which the result it settled with lost.
+    let told = h.backend.resumed_with(&again);
+    let (said, finished) = (told.find(FAIL), told.find(PASS));
+    assert!(said.is_some() && said < finished, "{told}");
+    assert!(told.contains("the run stopped"), "{told}");
 
     restarted(&mut h).await;
     h.dispatch().await;

@@ -139,8 +139,15 @@ fn asked_then(restated: (Verdict, Option<VerdictNote>), environment: bool) -> Re
         asked: VerdictNote::DisputedPass,
         restated: Some(VerdictReading::new(restated)),
         environment,
+        // As `submit_verdict` keeps it: only of a restatement that is no pass.
+        said: (restated.0 != Verdict::Pass).then(|| RESTATED.to_owned()),
     }
 }
+
+/// What the agent restated, as `submit_verdict` keeps it for the report.
+const RESTATED: &str = "Xvfb never bound display :99.\nVERDICT: FAIL\n- [high] no display";
+/// The result the agent then finished with instead.
+const FINISHED: &str = "All fine after all.\nVERDICT: PASS";
 
 fn e2e_run(sim: &Sim) -> &archon_core::run::StageRun {
     let e2e = sim.stages.iter().find(|s| s.stage_id == "e2e");
@@ -171,11 +178,7 @@ fn a_restated_fail_fails_whatever_the_stage_completed_with() {
     let pass = json!({"verdict": "pass", "findings": [
         {"severity": "low", "blocking": false, "fault": "environment", "title": "slow start"}
     ]});
-    let ending = Agent::Restated(
-        "All fine after all.\nVERDICT: PASS",
-        pass,
-        asked_then((Verdict::Fail, None), false),
-    );
+    let ending = Agent::Restated(FINISHED, pass, asked_then((Verdict::Fail, None), false));
     let done = sim.settle("e2e", 0, ending);
     let (stage, error) = failed(&done);
     assert_eq!(stage, "e2e");
@@ -184,6 +187,9 @@ fn a_restated_fail_fails_whatever_the_stage_completed_with() {
         error.contains("verdict fail, as it restated before completing (final)"),
         "{error}"
     );
+    // The failure tells what the restated fail said, ahead of the later pass.
+    let (said, finished) = (error.find(RESTATED), error.find(FINISHED));
+    assert!(said.is_some() && said < finished, "{error}");
     assert_eq!(e2e_run(&sim).verdict, Some(Verdict::Fail));
     assert_eq!(setup_runs(&sim), 1, "its own findings named no environment");
 }
@@ -192,14 +198,14 @@ fn a_restated_fail_fails_whatever_the_stage_completed_with() {
 fn a_restated_environment_fail_re_runs_setup_though_the_result_lost_the_finding() {
     let mut sim = at_e2e();
     let pass = json!({"verdict": "pass", "findings": []});
-    let ending = Agent::Restated(
-        "All fine after all.\nVERDICT: PASS",
-        pass,
-        asked_then((Verdict::Fail, None), true),
-    );
+    let ending = Agent::Restated(FINISHED, pass, asked_then((Verdict::Fail, None), true));
     let back = sim.settle("e2e", 0, ending);
     assert_eq!(spawned(&back), slots(&[("setup", 2, 0)]));
     assert_eq!(e2e_run(&sim).verdict, Some(Verdict::Fail));
+    // The re-run of setup is told the restated finding, not only the later pass.
+    let prompt = &spawn_plans(&back)[0].prompt;
+    let (said, finished) = (prompt.find(RESTATED), prompt.find(FINISHED));
+    assert!(said.is_some() && said < finished, "{prompt}");
 }
 
 #[test]

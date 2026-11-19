@@ -65,7 +65,7 @@ impl VerdictReading {
 }
 
 /// What a stage attempt's one restatement stands at.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Restatement {
     /// Why the first unreadable submission read as no verdict.
     pub asked: VerdictNote,
@@ -75,16 +75,22 @@ pub struct Restatement {
     /// Whether the restated submission's findings name the environment as at fault.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub environment: bool,
+    /// The summary and findings of a restated submission that is no pass, clipped:
+    /// a failure report shows them where it stands over the stage's result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub said: Option<String>,
 }
 
 /// One `submit_verdict` call as Archon read it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Submission {
     pub reading: VerdictReading,
     /// Sent as the restatement an earlier answer asked for.
     pub restating: bool,
     /// Whether its findings name the environment as at fault.
     pub environment: bool,
+    /// Its summary and findings as a failure report shows them, clipped.
+    pub said: String,
 }
 
 /// What `submit_verdict` did with a submission.
@@ -112,43 +118,49 @@ impl Restatement {
     /// one is asked back, and again while it is not sent as the restatement:
     /// the first answer may never have arrived. The restatement, or a verdict
     /// that reads after the ask, is final, and every later answer repeats it.
-    pub fn submit(state: Option<Self>, sent: Submission) -> (Option<Self>, VerdictCheck) {
+    pub fn submit(state: Option<&Self>, sent: Submission) -> (Option<Self>, VerdictCheck) {
         let answer = |decision, reading| VerdictCheck { decision, reading };
         let unreadable = sent.reading.note.is_some();
+        let reading = sent.reading;
         let (next, check) = match state {
-            None => match sent.reading.note {
-                None => (None, answer(CheckDecision::Accepted, sent.reading)),
+            None => match reading.note {
+                None => (None, answer(CheckDecision::Accepted, reading)),
                 Some(asked) => {
                     let asked = Self {
                         asked,
                         restated: None,
                         environment: false,
+                        said: None,
                     };
-                    (Some(asked), answer(CheckDecision::Restate, sent.reading))
+                    (Some(asked), answer(CheckDecision::Restate, reading))
                 }
             },
             Some(Self {
                 restated: Some(stands),
                 ..
-            }) => (state, answer(CheckDecision::Final, stands)),
+            }) => (state.cloned(), answer(CheckDecision::Final, *stands)),
             Some(_) if unreadable && !sent.restating => {
-                (state, answer(CheckDecision::Restate, sent.reading))
+                (state.cloned(), answer(CheckDecision::Restate, reading))
             }
             Some(asked) => {
                 let restated = Self {
-                    restated: Some(sent.reading),
+                    asked: asked.asked,
+                    restated: Some(reading),
                     environment: sent.environment,
-                    ..asked
+                    // A pass is read from the result itself, so nothing of it is kept.
+                    said: (reading.verdict != Verdict::Pass).then_some(sent.said),
                 };
-                (Some(restated), answer(CheckDecision::Final, sent.reading))
+                (Some(restated), answer(CheckDecision::Final, reading))
             }
         };
         assert!(
-            state.is_none_or(|before| next.is_some_and(|after| after.asked == before.asked)),
+            state.is_none_or(|before| next
+                .as_ref()
+                .is_some_and(|after| after.asked == before.asked)),
             "a submission never forgets what was asked"
         );
         assert!(
-            state.is_none_or(|before| before.restated.is_none() || next == state),
+            state.is_none_or(|before| before.restated.is_none() || next.as_ref() == state),
             "a final restatement never changes"
         );
         assert!(
@@ -161,7 +173,7 @@ impl Restatement {
     /// The verdict of a stage that completed with a result reading as
     /// `terminal`: a final restatement that is no pass stands, and a pass is
     /// only ever the result's own.
-    pub fn bind(self, terminal: VerdictReading) -> VerdictReading {
+    pub fn bind(&self, terminal: VerdictReading) -> VerdictReading {
         match self.restated {
             Some(restated) => VerdictReading::weaker(restated, terminal),
             None => terminal,
@@ -220,7 +232,7 @@ impl StageRun {
     /// The final restated verdict that is no pass, which stands whatever the
     /// stage completed with; `None` without one.
     pub fn standing_restatement(&self) -> Option<VerdictReading> {
-        let restated = self.restatement?.restated?;
+        let restated = self.restatement.as_ref()?.restated?;
         (restated.verdict != Verdict::Pass).then_some(restated)
     }
 
@@ -244,10 +256,19 @@ impl StageRun {
     /// Whether the findings behind the verdict on record name the environment
     /// as at fault: the final restatement's when it stands, else the result's.
     pub fn verdict_names_environment(&self) -> bool {
-        match (self.restated_over(), self.restatement) {
+        match (self.restated_over(), &self.restatement) {
             (Some(_), Some(restatement)) => restatement.environment,
             _ => self.structured.as_ref().is_some_and(names_environment),
         }
+    }
+
+    /// What the final restatement said, when it is the verdict on record
+    /// rather than the result this stage finished with; `None` otherwise.
+    pub fn restated_said(&self) -> Option<&str> {
+        self.restated_over()?;
+        let restatement = self.restatement.as_ref()?;
+        assert!(restatement.restated.is_some(), "only a final one stands");
+        restatement.said.as_deref()
     }
 }
 
@@ -264,6 +285,9 @@ mod tests {
         note: None,
     };
 
+    /// What every test submission says.
+    const SAID: &str = "No display.\nVERDICT: FAIL\n\nFindings:\n- [high] no display\n";
+
     fn unknown(note: VerdictNote) -> VerdictReading {
         VerdictReading::new((Verdict::Unknown, Some(note)))
     }
@@ -274,6 +298,7 @@ mod tests {
             reading,
             restating: false,
             environment: false,
+            said: SAID.to_owned(),
         }
     }
 
@@ -335,7 +360,7 @@ mod tests {
             unknown(VerdictNote::MissingVerdictLine),
         ];
         for repeat in repeats {
-            let (state, check) = Restatement::submit(asked, first(repeat));
+            let (state, check) = Restatement::submit(asked.as_ref(), first(repeat));
             assert_eq!(state, asked, "the ask stands as it was");
             assert_eq!(check.decision, CheckDecision::Restate);
             assert_eq!(check.reading, repeat);
@@ -347,7 +372,7 @@ mod tests {
         let asked = asked_for(VerdictNote::DisputedPass);
         let still = unknown(VerdictNote::DisputedPass);
         for restated in [PASS, FAIL, still] {
-            let (state, check) = Restatement::submit(asked, restating(restated));
+            let (state, check) = Restatement::submit(asked.as_ref(), restating(restated));
             assert_eq!(check.decision, CheckDecision::Final);
             assert_eq!(check.reading, restated);
             assert_eq!(state.unwrap().restated, Some(restated));
@@ -361,7 +386,7 @@ mod tests {
     fn a_verdict_that_reads_after_the_ask_is_the_restatement_unmarked() {
         let asked = asked_for(VerdictNote::MissingVerdictLine);
         for readable in [PASS, FAIL] {
-            let (state, check) = Restatement::submit(asked, first(readable));
+            let (state, check) = Restatement::submit(asked.as_ref(), first(readable));
             assert_eq!(check.decision, CheckDecision::Final);
             assert_eq!(state.unwrap().restated, Some(readable));
         }
@@ -375,27 +400,42 @@ mod tests {
                 environment,
                 ..restating(FAIL)
             };
-            let (state, _) = Restatement::submit(asked, sent);
+            let (state, _) = Restatement::submit(asked.as_ref(), sent);
             assert_eq!(state.unwrap().environment, environment);
         }
         let unanswered = Submission {
             environment: true,
             ..first(unknown(VerdictNote::DisputedPass))
         };
-        let (state, _) = Restatement::submit(asked, unanswered);
+        let (state, _) = Restatement::submit(asked.as_ref(), unanswered);
         assert!(!state.unwrap().environment, "only the final one's counts");
+    }
+
+    #[test]
+    fn only_a_final_restatement_that_is_no_pass_keeps_what_it_said() {
+        let asked = asked_for(VerdictNote::DisputedPass);
+        assert_eq!(asked.as_ref().unwrap().said, None, "an ask keeps nothing");
+        let still = unknown(VerdictNote::DisputedPass);
+        for restated in [FAIL, still] {
+            let (state, _) = Restatement::submit(asked.as_ref(), restating(restated));
+            assert_eq!(state.unwrap().said.as_deref(), Some(SAID));
+        }
+        let (passed, _) = Restatement::submit(asked.as_ref(), restating(PASS));
+        assert_eq!(passed.unwrap().said, None, "a pass is the result's own");
+        let (repeated, _) = Restatement::submit(asked.as_ref(), first(still));
+        assert_eq!(repeated.unwrap().said, None, "a repeat restates nothing");
     }
 
     #[test]
     fn a_submission_after_the_final_one_changes_nothing() {
         let asked = asked_for(VerdictNote::HedgedVerdict);
-        let (done, _) = Restatement::submit(asked, restating(FAIL));
+        let (done, _) = Restatement::submit(asked.as_ref(), restating(FAIL));
         let named = Submission {
             environment: true,
             ..restating(PASS)
         };
         for later in [first(PASS), named] {
-            let (after, check) = Restatement::submit(done, later);
+            let (after, check) = Restatement::submit(done.as_ref(), later.clone());
             assert_eq!(after, done, "the final restatement stands");
             assert_eq!(check.decision, CheckDecision::Final);
             assert_eq!(check.reading, FAIL, "the later pass is not read");
@@ -410,6 +450,7 @@ mod tests {
                 asked: VerdictNote::DisputedPass,
                 restated: Some(restated),
                 environment: false,
+                said: None,
             };
             state.bind(terminal)
         };
@@ -427,6 +468,7 @@ mod tests {
             asked: VerdictNote::DisputedPass,
             restated: Some(PASS),
             environment: false,
+            said: None,
         };
         let disputed = unknown(VerdictNote::DisputedPass);
         assert_eq!(state.bind(disputed), disputed);
@@ -439,6 +481,7 @@ mod tests {
             asked: VerdictNote::MissingVerdictLine,
             restated: None,
             environment: false,
+            said: None,
         };
         for terminal in [PASS, FAIL, unknown(VerdictNote::MissingVerdictLine)] {
             assert_eq!(state.bind(terminal), terminal);

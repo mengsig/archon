@@ -5,6 +5,7 @@
 
 use archon_aether::AetherEvent;
 use archon_aether::events::EventKind;
+use archon_core::error::ArchonError;
 use archon_core::protocol::Request;
 use archon_core::queue::QueueState;
 use archon_core::run::{CheckDecision, StageOutcome, StageRun, StageState, Verdict, VerdictNote};
@@ -12,14 +13,14 @@ use archon_core::steer::{Steer, Then};
 use archon_daemon::{executor, pump};
 
 use super::{
-    FAIL, PASS, at_e2e, disputed, failing, failure, kept, key, marked, only_running, restarted,
-    restate, result, setup_runs, stored, submit,
+    FAIL, PASS, at_e2e, call, disputed, failing, failure, forwarded, kept, key, marked,
+    only_running, restarted, restate, result, setup_runs, stored, submit,
 };
 use crate::common::{self, Harness, completed};
 
 /// Aether stops `stage`'s agent at its deadline and Archon wakes it once;
 /// returns the stage run the woken agent now runs.
-async fn woken_at_deadline(h: &Harness, stage: &StageRun) -> StageRun {
+pub(super) async fn woken_at_deadline(h: &Harness, stage: &StageRun) -> StageRun {
     let deadline = archon_core::now();
     assert!(
         deadline > stage.started_at,
@@ -85,7 +86,7 @@ async fn a_pending_ask_follows_its_agent_through_a_deadline_wake() {
     assert_eq!(key(&woken), key(&e2e), "one attempt, one key");
     assert_eq!(
         kept(&h, &woken).await,
-        Some(ask),
+        Some(ask.clone()),
         "the ask outlives the stop"
     );
     let timed_out = stored(&h, &item, &e2e).await;
@@ -272,7 +273,7 @@ async fn a_superseded_stage_run_settling_late_leaves_its_replacement_bound() {
     assert_eq!(key(&fresh), key(&e2e), "in the superseded run's attempt");
     assert_eq!(
         kept(&h, &fresh).await,
-        Some(restated),
+        Some(restated.clone()),
         "kept while it lives"
     );
     let superseded = stored(&h, &item, &e2e).await;
@@ -291,6 +292,74 @@ async fn a_superseded_stage_run_settling_late_leaves_its_replacement_bound() {
     assert!(failure(&h, &item).await.contains("stage `e2e` failed"));
     assert_eq!(setup_runs(&h, &item).await, 1);
     assert_eq!(kept(&h, &fresh).await, None, "forgotten with the attempt");
+}
+
+/// After a crash mid-replacement the superseded stage run's agent may still
+/// call: it no longer speaks for the attempt its replacement now runs.
+#[tokio::test]
+async fn a_superseded_stage_run_s_agent_cannot_restate_for_its_replacement() {
+    let mut h = Harness::new().await;
+    let (item, e2e) = at_e2e(&h).await;
+    submit(&h, &e2e, PASS, disputed()).await;
+    let ask = kept(&h, &e2e).await.expect("the ask is kept");
+    crate::recovery::reserve_replacement_by_hand(&h, &e2e).await;
+    restarted(&mut h).await;
+    h.dispatch().await;
+    let running = h.running().await;
+    let [superseded, fresh] = running.as_slice() else {
+        panic!("the superseded run and its replacement: {running:?}");
+    };
+    assert_eq!((&superseded.id, key(fresh)), (&e2e.id, key(&e2e)));
+
+    let agent = e2e.aether_agent.clone().expect("an agent");
+    let late = call(Some(&agent), PASS, marked(), true);
+    let refused = forwarded(&h, &agent, late).await;
+    assert!(
+        matches!(&refused, Err(ArchonError::Forbidden(text)) if text.contains("none on record")),
+        "{refused:?}"
+    );
+    assert_eq!(kept(&h, fresh).await, Some(ask), "the ask is still owed");
+
+    let restated = restate(&h, fresh, FAIL, failing("product")).await;
+    assert_eq!(restated.decision, CheckDecision::Final);
+    let fresh_agent = fresh.aether_agent.clone().expect("an agent");
+    let done = result(PASS, marked());
+    executor::stage_settled(&h.ctx, &fresh_agent, done)
+        .await
+        .expect("the replacement settles");
+    h.dispatch().await;
+    assert_eq!(stored(&h, &item, fresh).await.verdict, Some(Verdict::Fail));
+    assert!(failure(&h, &item).await.contains("stage `e2e` failed"));
+}
+
+/// A replacement Archon cannot create ends the attempt: the stage run that
+/// failed at spawn keeps the restatement, and the attempt's record is forgotten.
+#[tokio::test]
+async fn a_replacement_refused_at_spawn_keeps_the_restatement_and_ends_the_attempt() {
+    let h = Harness::new().await;
+    let (item, e2e) = at_e2e(&h).await;
+    submit(&h, &e2e, PASS, disputed()).await;
+    restate(&h, &e2e, FAIL, failing("product")).await;
+    let restated = kept(&h, &e2e).await.expect("the final restatement");
+    h.repo_config(&format!("[models]\ndeny = [\"{}\"]\n", common::MODEL));
+    let lost = |_: &StageRun| StageOutcome::Failed {
+        error: "the engine died".into(),
+        infra: true,
+    };
+    assert_eq!(h.settle_running(lost).await.len(), 1);
+    h.dispatch().await;
+
+    let error = failure(&h, &item).await;
+    assert!(error.contains("refused at spawn"), "{error}");
+    let stages = h.stages(&item.id).await;
+    let mut runs = stages.iter().filter(|s| key(s) == key(&e2e));
+    let (first, refused) = (runs.next(), runs.next());
+    let refused = refused.expect("the replacement was reserved");
+    assert_eq!(first.map(|s| &s.id), Some(&e2e.id));
+    assert!(matches!(refused.state, StageState::Failed { .. }));
+    assert_eq!(refused.aether_agent, None, "it never had an agent");
+    assert_eq!(refused.restatement, Some(restated), "kept on record");
+    assert_eq!(kept(&h, &e2e).await, None, "forgotten with the attempt");
 }
 
 /// A crash between storing an outcome and forgetting its attempt's record

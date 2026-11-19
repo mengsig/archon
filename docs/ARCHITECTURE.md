@@ -2837,7 +2837,16 @@ answers only the agent of a live stage run whose driver says it holds a
 verdict, refuses a `structured` that is no object before anything is
 stored, reads the submission as settlement will (`Verdict::read`, or
 `read_review_lead`) and applies `Restatement::submit`
-(`archon_core::run::restatement`):
+(`archon_core::run::restatement`). The stage run must be its attempt's
+current one, the newest of its slot as the engine picks it (§6.4): after a
+crash mid-replacement the superseded stage run is still live, and its agent
+is refused rather than restating for the replacement. An agent can call
+before Archon recorded that it is its stage's (a spawn whose reply is on
+its way, a wake not yet bound to the replacement stage run). When a
+`spawning` stage resumes the caller, or no stage run holds the caller and
+a create was sent, the call waits up to 5 s for the record
+(`spawn_recorded`, no lock held) and is then read again; any other caller
+is refused at once.
 
 - With nothing asked, a pass or a fail is `accepted` and keeps no state. An
   `Unknown` is `restate`: its `VerdictNote` is stored and the answer says
@@ -2846,8 +2855,10 @@ stored, reads the submission as settlement will (`Verdict::read`, or
   it gets the same ask again and changes no state, so an answer lost
   between the kv write and the agent (an archond crash, a dropped reply)
   spends nothing. A submission marked `restating`, or one that reads as a
-  pass or a fail, is the restatement: `final`, stored with its reading and
-  with whether its findings name the environment (`environment`).
+  pass or a fail, is the restatement: `final`, stored with its reading,
+  with whether its findings name the environment (`environment`) and, when
+  it is no pass, with its summary and findings as a report shows them,
+  clipped to 8,000 characters (`said`).
 - After that every submission answers the stored final reading unread.
 
 The record is keyed by stage attempt, `kv.verdict_restatement:<run>:
@@ -2866,14 +2877,19 @@ exactly as an unreadable result does, and a pass is only ever the finished
 result's own: the tool never turns a result the gate would refuse into a
 pass. When the restatement stands over the result
 (`StageRun::restated_over`), the loop of §6.4 reads the restatement's
-`environment`, never the result's findings, so the verdict and the
-evidence that routes it come from one submission. An ask never answered,
+`environment`, never the result's findings, and the failure report, which
+is the `{{feedback}}` a loop passes on, shows what the restatement said
+(`StageRun::restated_said`) ahead of the result the agent finished with.
+The verdict, the evidence that routes it and the reason the next agent
+reads come from one submission. An ask never answered,
 and a stage that never calls the tool, leave the result's reading as it
 is. The record is deleted when a stage run of the attempt ends and no other
 one is live (`restatement::forget`): a stage run a replacement follows keeps
 it, and so does a superseded one that settles late after a crash between
 reserving its replacement and recording its own end (§6.4). The stall sweep
-deletes any whose attempt has no live stage run (`forget_ended`). The tool is one of
+deletes any whose attempt has no live stage run, or whose run is gone
+(`forget_ended`), and history pruning takes a run's leftover records with
+the run (§16). The tool is one of
 `STAGE_TOOLS`, so stage agents keep it in every `tools` mode; an Aether
 whose `archon` server entry has no class for it treats it as `external`,
 which a headless stage agent's approval policy does not gate, so no Aether
@@ -5243,7 +5259,8 @@ whichever is longest: feed rows the feed never shows, and settled items with
 their runs, stage runs, gates, run edits, pull request links, merge
 requests, stacks, dependencies, spend and the per-item `kv` families
 (`steers:`, `shape:`, `restack_fix:`, `restack_target:`,
-`learning/applied/<run>`, `run_review:<run>`, a `pr_settled:` no kept
+`learning/applied/<run>`, `run_review:<run>`, a `verdict_restatement:<run>:…`
+a crash left behind (§8.6), a `pr_settled:` no kept
 run shares, `authority_confirmation:` of a closed question). Outcomes and lesson uses
 stay for learning (store schema 18 dropped their keys to runs and items; a
 reshaped run's outcome keeps a `learning/reshaped/<run>` mark). An item

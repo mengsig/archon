@@ -1045,8 +1045,14 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   gets a second one, and a later attempt has its own. A final restatement
   that is a fail, or still unreadable, is the stage's verdict even if the
   agent then finishes with a pass, and its findings, not the result's, say
-  whether it names the environment. A pass is only ever read from the
+  whether it names the environment. The failure report, and the feedback a
+  loop passes on, then show what that restatement said (its summary and
+  findings, up to 8,000 characters) ahead of the result the agent finished
+  with. A pass is only ever read from the
   finished result itself, so the tool cannot pass what the gate would not.
+  Only the agent of the attempt's current stage run is answered: one whose
+  stage run a replacement superseded is refused, and one that calls before
+  Archon recorded its spawn or wake waits a few seconds for the record.
   A stage whose agent never calls the tool, or was asked and never
   answered, is read from its result as before. Every stage run of the
   attempt that ends keeps the ask and the restated reading as

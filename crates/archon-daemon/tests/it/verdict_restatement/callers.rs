@@ -152,18 +152,26 @@ async fn a_review_only_lead_s_recorded_verdict_is_read_as_settlement_reads_it() 
     let asked = submit(&h, &lead, "Reviewed.", json!({})).await;
     assert_eq!(asked.decision, CheckDecision::Restate);
     assert_eq!(asked.reading.note, Some(VerdictNote::MissingVerdictLine));
-    let restated = restate(&h, &lead, "Reviewed.", recorded("fail")).await;
+    let mut found = recorded("fail");
+    found["findings"] = json!([{"severity": "high", "title": "the migration drops a column"}]);
+    let restated = restate(&h, &lead, "Reviewed: it loses data.", found).await;
     assert_eq!(restated.decision, CheckDecision::Final);
     assert_eq!(restated.reading.verdict, Verdict::Fail);
-    settle(&h, "Reviewed.", recorded("pass")).await;
+    settle(&h, "Reviewed, all fine.", recorded("pass")).await;
     let settled = stored(&h, &failing, &lead).await;
     assert_eq!(
         settled.verdict,
         Some(Verdict::Fail),
         "the restated fail binds"
     );
-    assert!(matches!(
-        h.state(&failing.id).await,
-        QueueState::Failed { .. }
-    ));
+    let QueueState::Failed { error, .. } = h.state(&failing.id).await else {
+        panic!("the restated fail fails the run");
+    };
+    // The failure tells what the restated fail said, ahead of the later pass.
+    let said = error.find("Reviewed: it loses data.");
+    assert!(
+        said.is_some() && said < error.find("Reviewed, all fine."),
+        "{error}"
+    );
+    assert!(error.contains("the migration drops a column"), "{error}");
 }

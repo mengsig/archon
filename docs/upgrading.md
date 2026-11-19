@@ -41,9 +41,9 @@ stage whose agent does not have the tool finishes as before. The built-in
 `e2e-testing`, `e2e-strict` and `release-journey` now go back to `setup`
 only for a verdict that reads as `fail` with a finding whose `"fault"` is
 `"environment"`. A test stage that failed its gate any other way (a `fail`
-naming only the product, a verdict Archon could not read) fails the run
-there, where 1.6.3 re-ran setup once first; a timeout or a crash ended the
-run in 1.6.3 too. A pipeline of your own
+naming only the product, a verdict Archon could not read, a timeout, an
+agent that failed) fails the run there, where 1.6.3 re-ran setup once
+first. A pipeline of your own
 keeps its loop unless it sets `on_fail.when`; a copy of a built-in in
 `.archon/pipelines` keeps its old loop until you add
 `when = "environment_finding"`. This adds no store migration either: stored

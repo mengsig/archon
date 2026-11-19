@@ -719,7 +719,7 @@ fn apply_agent(stage: &mut StageRun, agent: &Agent, at: Timestamp) {
                 completed((*text).to_owned(), Some(data.clone()), true);
             let read = VerdictReading::new(read.expect("persisted"));
             let stands = restatement.bind(read);
-            stage.restatement = Some(*restatement);
+            stage.restatement = Some(restatement.clone());
             (
                 state,
                 summary,

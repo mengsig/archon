@@ -842,6 +842,13 @@ impl StageOutcome {
     /// through every spawn retry: an infrastructure stop, also on 1.6.3 records.
     pub const SPAWN_KEPT_FAILING: &'static str = "create_agent kept failing: ";
 
+    /// How the daemon's error opens when a failed stage's workspace is gone.
+    pub const WORKSPACE_MISSING: &'static str = "workspace missing:";
+
+    /// What follows the missing workspace's path when the daemon wraps the
+    /// stage's own error: `workspace missing: <path>; the engine said: <error>`.
+    pub const ENGINE_SAID: &'static str = "; the engine said: ";
+
     /// Whether `error` is exactly Aether's cost-budget stop: its bare reason or
     /// its whole budget message, with nothing after but Archon's notional label.
     pub fn is_cost_budget_stop(error: &str) -> bool {

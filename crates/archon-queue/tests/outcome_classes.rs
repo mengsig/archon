@@ -1130,3 +1130,133 @@ fn a_tally_archond_cannot_have_stored_is_no_review() {
     );
     assert_eq!(other.unwrap(), Some(FailureClass::Review));
 }
+
+/// The daemon ends a run in a slot's own words where it gave up on that slot,
+/// as on a model-policy refusal: a sibling that timed out did not end it.
+#[test]
+fn a_sibling_stop_never_outranks_the_slot_whose_words_ended_the_run() {
+    const REFUSED: &str = "model codex/gpt is outside this item's model policy";
+    let refused = failed_with("test", REFUSED, |run| {
+        let mut timed_out = settled(run, "test", StageKind::Test, StageState::TimedOut);
+        timed_out.fan_index = 1;
+        vec![slot(run, 0, REFUSED, false), timed_out]
+    });
+    assert_eq!(refused.failure, Some(FailureClass::Verification));
+    assert!(refused.is_scored(), "the policy refusal ended the run");
+    let unquoted = failed_with(
+        "test",
+        "stage `test` failed: 1 of 2 agent(s) timed out",
+        |run| {
+            let mut timed_out = settled(run, "test", StageKind::Test, StageState::TimedOut);
+            timed_out.fan_index = 1;
+            vec![slot(run, 0, REFUSED, false), timed_out]
+        },
+    );
+    assert_eq!(
+        unquoted.failure,
+        Some(FailureClass::Timeout),
+        "the gate's word"
+    );
+}
+
+/// The gate's reason is read only where the driver writes it, right after
+/// `stage `id` failed[ after N of M fix loop(s)]: `; an agent's words that
+/// carry the same reason further in are no gate reason.
+#[test]
+fn a_gate_reason_is_read_only_where_the_driver_writes_it() {
+    let review = archon_core::run::REVIEW_NOT_ON_RECORD;
+    let stated = archon_core::run::STATED_FAILURE;
+    let e2e = |error: String| {
+        failed_with("e2e", &error, |run| {
+            let mut test = settled(run, "e2e", StageKind::Test, StageState::Completed);
+            test.verdict = Some(Verdict::Pass);
+            test.summary = Some("ESCALATE: not mine".into());
+            vec![test]
+        })
+    };
+    for reason in [review, stated] {
+        let impersonated = e2e(format!(
+            "stage `e2e` failed: strict scenario gate failed: scenario import: {reason}: \
+             a step has no id\n\nreport"
+        ));
+        assert_eq!(
+            impersonated.failure,
+            Some(FailureClass::Verification),
+            "{reason}"
+        );
+    }
+    let looped = failed_with(
+        "implement",
+        &format!("stage `implement` failed after 2 of 2 fix loop(s): {review}: no review\n\nr"),
+        |run| {
+            vec![settled(
+                run,
+                "implement",
+                StageKind::Work,
+                StageState::Completed,
+            )]
+        },
+    );
+    assert_eq!(
+        looped.failure,
+        Some(FailureClass::Review),
+        "after fix loops"
+    );
+    let other_stage = failed_with(
+        "implement",
+        &format!("stage `review` failed: {review}: no review"),
+        |run| {
+            vec![settled(
+                run,
+                "implement",
+                StageKind::Work,
+                StageState::Completed,
+            )]
+        },
+    );
+    assert_eq!(
+        other_stage.failure,
+        Some(FailureClass::Other),
+        "another stage's header"
+    );
+}
+
+/// 1.6.3 wrapped a spawn it gave up on in its missing-workspace error and
+/// flagged nothing: with no agent, that is still the daemon's spawn failure.
+#[test]
+fn a_spawn_failure_wrapped_by_a_missing_workspace_is_the_daemons() {
+    const WRAPPED: &str = "workspace missing: /wt/x; the engine said: \
+        create_agent kept failing: aether: internal: storage temporarily unavailable";
+    let spawn = |attached: bool| {
+        failed_with("implement", WRAPPED, move |run| {
+            let error = WRAPPED.into();
+            let mut stage = settled(
+                run,
+                "implement",
+                StageKind::Work,
+                StageState::Failed { error },
+            );
+            stage.aether_agent = attached.then(|| agent(7));
+            vec![stage]
+        })
+    };
+    let unspawned = spawn(false);
+    assert_eq!(unspawned.failure, Some(FailureClass::Infrastructure));
+    assert!(!unspawned.is_scored(), "no agent judged the work");
+    let attached = spawn(true);
+    assert_eq!(attached.failure, Some(FailureClass::Other), "an agent ran");
+    let gone = failed_with("implement", "workspace missing: /wt/x", |run| {
+        let error = "workspace missing: /wt/x; the engine said: tests failed".into();
+        vec![settled(
+            run,
+            "implement",
+            StageKind::Work,
+            StageState::Failed { error },
+        )]
+    });
+    assert_eq!(
+        gone.failure,
+        Some(FailureClass::Other),
+        "the engine's own failure"
+    );
+}

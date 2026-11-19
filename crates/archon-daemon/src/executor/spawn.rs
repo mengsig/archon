@@ -49,7 +49,7 @@ const MAX_TRANSPORT_ERRORS: u32 = 5;
 const MAX_DISK_FULL_SPAWNS: u32 = 5;
 
 /// How a stage whose workspace is gone fails, before the path.
-pub(super) const WORKSPACE_MISSING: &str = "workspace missing:";
+pub(super) const WORKSPACE_MISSING: &str = StageOutcome::WORKSPACE_MISSING;
 
 /// The persisted spawn of one stage run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

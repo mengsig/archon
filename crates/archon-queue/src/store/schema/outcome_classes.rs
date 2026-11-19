@@ -883,3 +883,45 @@ fn v24_keeps_the_class_and_lesson_scores_of_a_kept_run_missing_stage_rows() {
     );
     assert_eq!(lesson_score(&conn, &whole), (Some(false), 1));
 }
+
+/// A 1.6.3 row of a spawn given up on in a workspace gone missing, flagged
+/// nothing and holding no agent, stays the infrastructure failure it was.
+#[test]
+fn v24_reads_a_spawn_failure_wrapped_by_a_missing_workspace() {
+    let mut conn = v23_store();
+    let error = "workspace missing: /wt/x; the engine said: \
+        create_agent kept failing: aether: internal: storage temporarily unavailable";
+    let wrapped = failed_run("implement", error);
+    let gave_up = failed_stage(&wrapped, StageKind::Work, error, false);
+    seed(
+        &conn,
+        &wrapped,
+        &[gave_up],
+        Some(FailureClass::Infrastructure),
+        false,
+    );
+    let scenario = format!(
+        "stage `e2e` failed: strict scenario gate failed: scenario import: {}: a step has no id",
+        archon_core::run::REVIEW_NOT_ON_RECORD
+    );
+    let strict = failed_run("e2e", &scenario);
+    let mut test = stage(&strict, "e2e", StageKind::Test, StageState::Completed);
+    test.verdict = Some(Verdict::Pass);
+    seed(&conn, &strict, &[test], Some(FailureClass::Other), false);
+
+    assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+
+    assert_eq!(
+        columns(&conn, &wrapped),
+        (
+            some("infrastructure"),
+            some("recomputed"),
+            some("infrastructure")
+        )
+    );
+    assert_eq!(
+        columns(&conn, &strict).0,
+        some("verification"),
+        "a scenario's id is no gate reason"
+    );
+}

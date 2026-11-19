@@ -420,9 +420,10 @@ fn blame_missing_workspace(
         return Ok(outcome);
     }
     let error = format!(
-        "{} {}; the engine said: {error}",
+        "{} {}{}{error}",
         spawn::WORKSPACE_MISSING,
-        workspace.display()
+        workspace.display(),
+        StageOutcome::ENGINE_SAID,
     );
     Ok(StageOutcome::Failed {
         error,

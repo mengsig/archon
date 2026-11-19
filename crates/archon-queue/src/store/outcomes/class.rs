@@ -38,20 +38,23 @@ pub(in crate::store) fn failure_class(
     if ship_step_failed(stage_id, error, &ending) {
         return daemon_prefixed_class(error).unwrap_or(FailureClass::Ship);
     }
-    let recorded = ended_by(error, &ending)
-        .and_then(own_stop)
-        .or_else(|| driver_stop(&ending).and_then(own_stop))
-        .or_else(|| stopped_class(&ending));
+    let recorded = match ended_by(error, &ending) {
+        // The run ended in these slots' words: a sibling's stop did not end it.
+        Some(stage) => own_stop(stage).or_else(|| stopped_class(&in_words(error, &ending))),
+        None => driver_stop(&ending)
+            .and_then(own_stop)
+            .or_else(|| stopped_class(&ending)),
+    };
     if let Some(class) = recorded.or_else(|| daemon_prefixed_class(error)) {
         return class;
     }
     if ending.is_empty() {
         return FailureClass::Other;
     }
-    if let Some(class) = stated_stop(error, &ending) {
+    if let Some(class) = stated_stop(stage_id, error, &ending) {
         return class;
     }
-    if gate_said(error, REVIEW_NOT_ON_RECORD) {
+    if gate_said(error, stage_id, REVIEW_NOT_ON_RECORD) {
         return FailureClass::Review;
     }
     judged_class(stage_id, &ending, failed_reviews)
@@ -110,8 +113,8 @@ fn driver_names_stage(error: &str, stage_id: &str) -> bool {
 
 /// The stop a completed stage run stated in the result the gate failed it
 /// for ([`STATED_FAILURE`]): a blocker or an escalation, in its agent's words.
-fn stated_stop(error: &str, ending: &[&StageRun]) -> Option<FailureClass> {
-    if !gate_said(error, STATED_FAILURE) {
+fn stated_stop(stage_id: &str, error: &str, ending: &[&StageRun]) -> Option<FailureClass> {
+    if !gate_said(error, stage_id, STATED_FAILURE) {
         return None;
     }
     let stated = |s: &&StageRun| match (&s.state, &s.summary) {
@@ -126,6 +129,21 @@ fn stated_stop(error: &str, ending: &[&StageRun]) -> Option<FailureClass> {
 /// whatever its siblings recorded. The driver read the lowest slot first.
 fn ended_by<'a>(error: &str, ending: &[&'a StageRun]) -> Option<&'a StageRun> {
     ending.iter().copied().find(|s| failed_in_words(s, error))
+}
+
+/// The stage runs of the `ending` attempt that failed in the run's words.
+fn in_words<'a>(error: &str, ending: &[&'a StageRun]) -> Vec<&'a StageRun> {
+    let said: Vec<&StageRun> = ending
+        .iter()
+        .copied()
+        .filter(|s| failed_in_words(s, error))
+        .collect();
+    assert!(
+        !said.is_empty(),
+        "read only for a run that ended in a slot's words"
+    );
+    assert!(said.len() <= ending.len());
+    said
 }
 
 /// Whether the stage run failed in the words the run failed in (`error`),
@@ -192,15 +210,35 @@ pub(in crate::store) fn classed_without_its_stage(stage_id: &str, error: &str) -
     ship_step_failed(stage_id, error, &[]) || daemon_prefixed_class(error).is_some()
 }
 
-/// Whether the gate failed the stage under a headline opening with `said`, as
-/// the driver writes it into the run: `stage `id` failed[..]: {said}`.
-fn gate_said(error: &str, said: &str) -> bool {
-    let headline = error.split("\n\n").next().unwrap_or(error);
-    let Some(at) = headline.find(said) else {
+/// Whether the gate failed the stage `stage_id` under a headline opening with
+/// `said`, as the driver writes it: `stage `id` failed[ after N of M fix loop(s)]: {said}`.
+fn gate_said(error: &str, stage_id: &str, said: &str) -> bool {
+    assert!(!said.is_empty(), "the gate's reason has words");
+    let Some(rest) = error
+        .strip_prefix("stage `")
+        .and_then(|rest| rest.strip_prefix(stage_id))
+        .and_then(|rest| rest.strip_prefix("` failed"))
+    else {
         return false;
     };
-    let prefix = &headline[..at];
-    prefix.starts_with("stage `") && prefix.contains("` failed") && prefix.ends_with(": ")
+    let rest = fix_loops_spent(rest).unwrap_or(rest);
+    rest.strip_prefix(": ")
+        .is_some_and(|headline| headline.starts_with(said))
+}
+
+/// `rest` past the driver's ` after N of M fix loop(s)`, if it opens with it.
+fn fix_loops_spent(rest: &str) -> Option<&str> {
+    let rest = past_digits(rest.strip_prefix(" after ")?)?;
+    let rest = past_digits(rest.strip_prefix(" of ")?)?;
+    rest.strip_prefix(" fix loop(s)")
+}
+
+/// `text` past the whole number it opens with, if it opens with one.
+fn past_digits(text: &str) -> Option<&str> {
+    let end = text
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(text.len());
+    (end > 0).then_some(&text[end..])
 }
 
 /// The newest stage run of each slot of the stage's last attempt, lowest slot
@@ -261,16 +299,26 @@ fn stop_of(stage: &StageRun) -> Option<FailureClass> {
 
 /// A stage run from before the daemon flagged its own spawn failures (1.6.3):
 /// it has no agent, so the error is the daemon's, and opens as the daemon
-/// opens the spawn it gave up on.
+/// opens the spawn it gave up on, bare or wrapped by a workspace gone missing.
 fn never_spawned(stage: &StageRun) -> bool {
     let StageState::Failed { error } = &stage.state else {
         return false;
     };
+    if stage.aether_agent.is_some() {
+        return false;
+    }
+    // A workspace gone by then wrapped the spawn's error: `workspace missing: <path>; the engine said: …`.
+    let engine_said = error
+        .strip_prefix(StageOutcome::WORKSPACE_MISSING)
+        .and_then(|rest| rest.split_once(StageOutcome::ENGINE_SAID))
+        .map_or(error.as_str(), |(_, said)| said);
     let gave_up = [
         StageOutcome::DISK_FULL_SPAWN,
         StageOutcome::SPAWN_KEPT_FAILING,
     ];
-    stage.aether_agent.is_none() && gave_up.iter().any(|opening| error.starts_with(opening))
+    gave_up
+        .iter()
+        .any(|opening| engine_said.starts_with(opening))
 }
 
 /// What the stage that ended the run was for. A review that passed did not

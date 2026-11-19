@@ -49,8 +49,12 @@ pub(super) async fn steer(
     }
     let item = ctx.store.lock().await.item(id)?;
     revise::prepare(ctx, &item, &knobs, Ceiling::Enforced).await?;
-    let steered = steer_run_or_waiting(ctx, by, id, steer).await?;
-    let revised = items::update(ctx, id, patch, by.into()).await?;
+    let both = async {
+        let steered = steer_run_or_waiting(ctx, by, id, steer).await?;
+        Ok((steered, items::update(ctx, id, patch, by.into()).await?))
+    };
+    // Boxed: the handlers' dispatch future holds this one inline.
+    let (steered, revised) = Box::pin(live::holding(ctx, id, both)).await?;
     Ok(match (steered, revised) {
         (Reply::ItemBudgetsOff(_), Reply::Item(item)) => Reply::ItemBudgetsOff(item),
         (_, revised) => revised,
@@ -138,12 +142,16 @@ pub(super) async fn update(
         plan: running_plan(ctx, (&env, by), run, &mut patch).await?,
     };
     assert!(patch.brief_append.is_none() && patch.model_plan.is_none());
-    if live::steer_run(ctx, &asked, id).await?.is_none() {
-        return Err(ArchonError::Unavailable(format!(
-            "item {id} ended its run while it was updated; send the update again"
-        )));
-    }
-    items::update(ctx, id, patch, by.into()).await
+    let steered = async {
+        if live::steer_run(ctx, &asked, id).await?.is_none() {
+            return Err(ArchonError::Unavailable(format!(
+                "item {id} ended its run while it was updated; send the update again"
+            )));
+        }
+        items::update(ctx, id, patch, by.into()).await
+    };
+    // Boxed: the handlers' dispatch future holds this one inline.
+    Box::pin(live::holding(ctx, id, steered)).await
 }
 
 /// The model plan `patch` gives a running item, taken out of the patch with
@@ -290,7 +298,13 @@ async fn changed_item(
     what.extend(retune(steer, stages, (&mut item, asked.by))?);
     // Nothing of a waiting item has started: every sized stage follows its new class.
     let policy = asked.env.policy(&ctx.config);
-    if sizing::resize((&ctx.config, &policy), &mut item, &Default::default()) {
+    let before = sizing::Inputs::of(loaded);
+    if sizing::resize(
+        (&ctx.config, &policy),
+        &mut item,
+        &Default::default(),
+        &before,
+    ) {
         what.push(sizing::RESIZED.to_owned());
     }
     items::check_plan(ctx, asked.env, stages, &item.model_plan)?;
@@ -352,11 +366,13 @@ async fn store_steer(
         if let QueueState::Failed { run, .. } = &loaded.state {
             revive = true;
             if let Some(run) = run {
+                let before = sizing::Inputs::of(&item);
                 item = revived(&store.run(run)?, edit, item)?;
                 // Its brief now names the failure, and is what the sizer reads as it is stored.
                 let policy = asked.env.policy(&ctx.config);
+                let unstarted = Default::default();
                 let resized =
-                    sizing::resize((&ctx.config, &policy), &mut item, &Default::default());
+                    sizing::resize((&ctx.config, &policy), &mut item, &unstarted, &before);
                 if resized && !what.iter().any(|done| done == sizing::RESIZED) {
                     what.push(sizing::RESIZED.to_owned());
                 }

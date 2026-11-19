@@ -422,6 +422,9 @@ pub(super) async fn reserve(
     slots: u32,
 ) -> Result<FollowUp, ArchonError> {
     assert!(slots > 0, "the planner grants at least one slot");
+    if table.is_held(run) {
+        return Ok(FollowUp::default());
+    }
     let Some(queue) = table.pending.get_mut(run) else {
         return Ok(FollowUp::default());
     };
@@ -492,7 +495,6 @@ fn reserve_plans(
             error: error.to_string(),
         }));
     }
-    crate::sizing::hold_to_engine(&item, &mut plans);
     let estimates = ctx.config.limits.count_estimated_cost;
     let budget = item_budget(ctx, store, &item, estimates)?;
     if let Some(used_up) = budget.filter(|budget| budget.left() <= 0.0) {
@@ -817,6 +819,10 @@ fn reserve_one(
     now: Timestamp,
     retry: Option<Retry>,
 ) -> Result<StageRunId, ArchonError> {
+    // Fresh or a replacement, a driver's effort is held to the stored plan as it is now.
+    let mut held = plan.clone();
+    crate::sizing::hold_to_plan(target.item, &mut held);
+    let plan = &held;
     let id = StageRunId::new();
     let nth = retry.as_ref().map(|r| r.nth);
     let workers = delegation_policy(target, plan);

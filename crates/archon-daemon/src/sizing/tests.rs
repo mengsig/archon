@@ -166,6 +166,70 @@ fn spawn_of(model: &str, effort: Effort) -> SpawnPlan {
     }
 }
 
+fn hold_all(item: &QueueItem, plans: &mut [SpawnPlan]) {
+    for plan in plans.iter_mut() {
+        hold_to_plan(item, plan);
+    }
+}
+
+/// A slot moved to an engine with no x_high and back (a quota round trip)
+/// is stored at high; a driver that read x_high before runs high, as a
+/// recovered one would, and its attempt keeps the class and the reason.
+#[test]
+fn a_spawn_never_runs_above_the_effort_its_stored_plan_holds_now() {
+    let direct = spec("direct");
+    let mut item = critical_item();
+    let (on, open) = (Config::default(), ModelPolicy::default());
+    let writer = written(&item, &direct);
+    item.model_plan = finish((&on, &open), &direct, || Ok(None), writer).unwrap();
+    item.settle_sizing(archon_core::now());
+    let read_by_driver = spawn_of("codex/gpt-6.2-sol", Effort::XHigh);
+    let by = (
+        archon_core::plan_origin::Authority::Operator,
+        archon_core::now(),
+    );
+    for model in ["gemini/gemini-pro", "codex/gpt-6.2-sol"] {
+        let model: archon_core::model::ModelRef = model.parse().unwrap();
+        item.model_plan
+            .steer(&item.id, "implement", (Some(&model), None), by);
+    }
+    assert_eq!(
+        item.model_plan.choices_for("implement").unwrap()[0].effort,
+        Effort::High
+    );
+    let mut plans = vec![read_by_driver.clone()];
+    hold_all(&item, &mut plans);
+    assert_eq!(
+        plans[0].choice.effort,
+        Effort::High,
+        "the stored plan, not the driver"
+    );
+    let sized = attempt(&item, &plans[0]);
+    assert_eq!(sized.risk_class, Some(effort_sizing::RiskClass::Critical));
+    assert_eq!(sized.effort_source, Some(PlanSource::Sizer));
+    assert!(
+        sized
+            .effort_reasons
+            .unwrap()
+            .starts_with("sizer: critical -> x_high")
+    );
+
+    // A pinned slot is the operator's: the driver's effort stands.
+    let pin = (None, Some(Effort::XHigh));
+    let operator = (
+        archon_core::plan_origin::Authority::Operator,
+        archon_core::now(),
+    );
+    item.model_plan.steer(&item.id, "implement", pin, operator);
+    let mut plans = vec![spawn_of("codex/gpt-6.2-sol", Effort::Max)];
+    hold_all(&item, &mut plans);
+    assert_eq!(
+        plans[0].choice.effort,
+        Effort::Max,
+        "never lowered for a pin"
+    );
+}
+
 /// A spawn whose model moved after its plan was read runs what the new
 /// engine runs when the daemon sized its slot, and its attempt says why.
 #[test]
@@ -180,7 +244,7 @@ fn a_sized_spawn_moved_to_an_engine_without_x_high_runs_high_and_says_why() {
         spawn_of("claude-code/claude-opus-5-5", Effort::XHigh),
         spawn_of("gemini/gemini-pro", Effort::XHigh),
     ];
-    hold_to_engine(&item, &mut plans);
+    hold_all(&item, &mut plans);
     let ran: Vec<Effort> = plans.iter().map(|plan| plan.choice.effort).collect();
     assert_eq!(ran, [Effort::XHigh, Effort::High]);
     let as_planned = attempt(&item, &plans[0]);
@@ -217,12 +281,12 @@ fn a_pinned_x_high_is_left_alone_on_any_engine() {
     let pin = (None, Some(Effort::XHigh));
     item.model_plan.steer(&item.id, "implement", pin, by);
     let mut plans = vec![spawn_of("gemini/gemini-pro", Effort::XHigh)];
-    hold_to_engine(&item, &mut plans);
+    hold_all(&item, &mut plans);
     assert_eq!(plans[0].choice.effort, Effort::XHigh);
     let slot = ("implement", 0);
     assert_eq!(engine_effort(&item, slot, &plans[0].choice), Effort::XHigh);
     let mut unsized_item = critical_item();
     unsized_item.model_plan = written(&item, &direct).finish(Sizing::Off { policy_cap: None });
-    hold_to_engine(&unsized_item, &mut plans);
+    hold_all(&unsized_item, &mut plans);
     assert_eq!(plans[0].choice.effort, Effort::XHigh, "never sized");
 }

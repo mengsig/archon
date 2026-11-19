@@ -128,6 +128,7 @@ pub(super) async fn plan(
         delivering,
     };
     let mut change = Change::of(recover::blueprint(ctx, run).await?);
+    let before = crate::sizing::Inputs::of(&change.blueprint.item);
     amend(&mut change, asked.steer, &at)?;
     replan(&mut change, asked, &at);
     reshape_run(ctx, asked, &mut change, &at).await?;
@@ -151,20 +152,30 @@ pub(super) async fn plan(
     rebudget(&mut change, asked.steer, &at, per_item_cap);
     extend(&mut change, asked.steer, &at)?;
     abort(ctx, asked, &mut change, &at)?;
-    resize(ctx, &asked.env.policy(&ctx.config), &mut change, &at);
+    resize(
+        ctx,
+        &asked.env.policy(&ctx.config),
+        &mut change,
+        (&at, &before),
+    );
     let dry = recover::driver_of(ctx, run, change.blueprint.clone()).await;
     dry.map_err(not_runnable)?;
     assert!(!change.what.is_empty(), "a checked steer changes something");
     Ok(change)
 }
 
-/// The steer may have changed what the sizer reads of the item (a note
-/// amends its brief; a removed review changes its level): the stages not
-/// yet started are sized again, the started ones keep the effort they have.
-fn resize(ctx: &DaemonContext, policy: &ModelPolicy, change: &mut Change, at: &At<'_>) {
+/// The steer may have changed what the sizer reads of the item from
+/// `before` (a note amends its brief; a removed review changes its level):
+/// the stages not yet started are sized again, the started ones keep theirs.
+fn resize(
+    ctx: &DaemonContext,
+    policy: &ModelPolicy,
+    change: &mut Change,
+    (at, before): (&At<'_>, &crate::sizing::Inputs),
+) {
     let started = started_stages(at.stages);
     let item = &mut change.blueprint.item;
-    if crate::sizing::resize((&ctx.config, policy), item, &started) {
+    if crate::sizing::resize((&ctx.config, policy), item, &started, before) {
         change.what.push(crate::sizing::RESIZED.to_owned());
         change.rebuild = true;
     }

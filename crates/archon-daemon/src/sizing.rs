@@ -4,6 +4,7 @@
 
 use std::collections::BTreeSet;
 
+use archon_core::autonomy::ReviewLevel;
 use archon_core::config::Config;
 use archon_core::effort_sizing::{self, StageFacts};
 use archon_core::error::ArchonError;
@@ -86,13 +87,36 @@ pub(crate) fn finish(
 /// What an item's history says when a steer sized its efforts again.
 pub(crate) const RESIZED: &str = "sized the efforts of the stages still to run again";
 
-/// Size `item` again after a steer changed its title, brief, tags or review
-/// level: only the keys of stages not in `started`, and only while sizing is
-/// on. Keys the steer added are sized first. `true` when a key was sized again.
+/// What the sizer reads of an item, kept before an operation changes it, so
+/// only an operation that moves it sizes stages again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Inputs {
+    title: String,
+    brief: String,
+    tags: Vec<String>,
+    review: ReviewLevel,
+}
+
+impl Inputs {
+    pub(crate) fn of(item: &QueueItem) -> Self {
+        Self {
+            title: item.title.clone(),
+            brief: item.brief.clone(),
+            tags: item.tags.clone(),
+            review: item.autonomy.review,
+        }
+    }
+}
+
+/// Size `item` again after an operation changed its title, brief, tags or
+/// review level from `before`: only the keys of stages not in `started`, and
+/// only while sizing is on. Keys the operation added are sized first, moved
+/// or not. `true` when a key was sized again.
 pub(crate) fn resize(
     (config, policy): (&Config, &ModelPolicy),
     item: &mut QueueItem,
     started: &BTreeSet<String>,
+    before: &Inputs,
 ) -> bool {
     let at = archon_core::now();
     item.settle_sizing(at);
@@ -100,7 +124,8 @@ pub(crate) fn resize(
         !item.model_plan.has_unsized(),
         "every recorded key is sized"
     );
-    if !config.models.effort_sizing() {
+    // A carried plan stays as frozen until its item's own inputs move (a retry's amendment does not).
+    if !config.models.effort_sizing() || Inputs::of(item) == *before {
         return false;
     }
     let is_started = |key: &str| started.contains(stage_of(key));
@@ -145,13 +170,20 @@ pub(crate) fn engine_effort(item: &QueueItem, slot: (&str, u32), choice: &ModelC
     Effort::High
 }
 
-/// Spawns moved to another model after their plan was read (a quota reroute,
-/// the acceptance judge) are held to what the new engine runs.
-pub(crate) fn hold_to_engine(item: &QueueItem, plans: &mut [SpawnPlan]) {
-    for plan in plans.iter_mut() {
-        let slot = (plan.stage_id.as_str(), plan.fan_index);
-        plan.choice.effort = engine_effort(item, slot, &plan.choice);
+/// Hold a spawn of a slot the daemon sized to what the item's stored plan
+/// holds for it now, which a quota move may have lowered since its driver
+/// read it, and to what its engine runs. A pin or a key never sized is kept.
+pub(crate) fn hold_to_plan(item: &QueueItem, plan: &mut SpawnPlan) {
+    let slot = (plan.stage_id.as_str(), plan.fan_index);
+    let stored = daemon_sized(item, slot).map(|(stored, _)| stored);
+    if let Some(stored) = stored {
+        plan.choice.effort = plan.choice.effort.min(stored);
     }
+    plan.choice.effort = engine_effort(item, slot, &plan.choice);
+    assert!(
+        stored.is_none_or(|stored| plan.choice.effort <= stored),
+        "a sized slot never runs above its stored plan"
+    );
 }
 
 /// How the effort `plan`'s slot runs at was chosen, read from the item's

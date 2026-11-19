@@ -92,6 +92,25 @@ pub(crate) async fn steer_run(
     Ok(Some(item))
 }
 
+/// Do `work`, a request that changes item `id` in two steps (a steer, then
+/// an update), with no new spawn of its live run reserved between them: the
+/// stages it has not started are sized once, for both.
+pub(crate) async fn holding<T>(
+    ctx: &DaemonContext,
+    id: &QueueItemId,
+    work: impl std::future::Future<Output = Result<T, ArchonError>>,
+) -> Result<T, ArchonError> {
+    let QueueState::Running { run } = ctx.store.lock().await.item(id)?.state else {
+        return work.await;
+    };
+    ctx.runs.lock().await.hold(&run);
+    let done = work.await;
+    ctx.runs.lock().await.release(&run);
+    // Its spawns waited for this request alone.
+    ctx.dispatch.notify_one();
+    done
+}
+
 /// The live run of item `id` whose later stages an update may size again,
 /// checked before the update stores anything; `None` when no run is live.
 /// Refused while its roles merge or when its driver cannot be rebuilt.

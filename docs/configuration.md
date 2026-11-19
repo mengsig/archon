@@ -146,7 +146,11 @@ routing never reads the grouping.
   diff size or a route learned since.
 - A steer or an update that changes the title, the brief (a steer note
   included), the tags or the review level sizes again only the stages that
-  have not started. A stage that ran keeps its effort and its reason.
+  have not started. A stage that ran keeps its effort and its reason. A
+  request that changes none of them sizes nothing again, so a retry's
+  `brief_append` leaves the carried sizing as it is until one does. An
+  update of a running item that steers a note or a plan and changes its tags
+  or review level holds the run's next spawn until both parts are stored.
 - A plan written while sizing was off, or by 1.6.3, has no sizing and gets
   none when it is carried whole, as a restack fix carries its item's plan.
 - Changing `effort_sizing` or `sizer_max_effort` and restarting affects only
@@ -170,7 +174,10 @@ Three rules decide what a cap lowered later does to a stored effort:
 In the same two places a sized `x_high` whose model has since moved to a
 provider that runs none (a tier resolved again at dispatch, a model a steer
 named) is lowered to `high`, and the reason says which provider. An effort
-the plan pins is left as it is there too.
+the plan pins is left as it is there too. A new agent, or a replacement of a
+lost one, never runs a sized effort above what its item's stored plan holds
+for its slot when it is reserved, so a quota move that lowered the plan
+holds in a running daemon as it does after a restart.
 
 `auto_repair` (default `true`) covers a run that fails only because the gate
 refused the review or the ship record it owes (a delta read not anchored, a

@@ -664,6 +664,7 @@ fn write_update(
         let tags = update.patch.tags.as_deref();
         check_sized_while_starting((&ctx.config, policy), &item, tags)?;
     }
+    let before = sizing::Inputs::of(&item);
     if let Some(revision) = update.revision {
         revise::apply(store, table, &mut item, revision)?;
     }
@@ -678,7 +679,9 @@ fn write_update(
         _ => Some(Default::default()),
     };
     let resized = match (&sizer, &started) {
-        (Some(policy), Some(started)) => sizing::resize((&ctx.config, policy), &mut item, started),
+        (Some(policy), Some(started)) => {
+            sizing::resize((&ctx.config, policy), &mut item, started, &before)
+        }
         _ => false,
     };
     item.updated_at = archon_core::now().max(item.updated_at);
@@ -716,7 +719,8 @@ async fn resizing_env(
     if !words && review == current.autonomy.review {
         return Ok(None);
     }
-    if !ctx.config.models.effort_sizing() || current.model_plan.sizing().is_none() {
+    // Not on `current`'s plan: a plan sized meanwhile is re-read under the run table.
+    if !ctx.config.models.effort_sizing() {
         return Ok(None);
     }
     let env = RepoEnv::load(ctx, current.repo.as_ref()).await?;
@@ -742,7 +746,8 @@ fn check_sized_while_starting(
     };
     let mut probe = item.clone();
     probe.tags = tags.to_vec();
-    if !sizing::resize(sizer, &mut probe, &Default::default()) {
+    let before = sizing::Inputs::of(item);
+    if !sizing::resize(sizer, &mut probe, &Default::default(), &before) {
         return Ok(());
     }
     assert_ne!(probe.model_plan.sizing(), item.model_plan.sizing());

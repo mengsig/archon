@@ -155,7 +155,7 @@ fn pending_spawns(
 ) -> Result<Vec<PendingSpawn>, ArchonError> {
     let mut out = Vec::with_capacity(table.pending.len());
     for (run_id, plans) in &table.pending {
-        if plans.is_empty() {
+        if plans.is_empty() || table.is_held(run_id) {
             continue;
         }
         let run = store.run(run_id)?;

@@ -60,7 +60,7 @@ struct Asking {
 }
 
 /// Who asks Aether: routing retries a failed ask on its next pass, as it
-/// always has; the pace poll asks at most every [`REFRESH_EVERY`].
+/// always has; the pace poll asks at most every 30 seconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Asker {
     Routing,
@@ -108,7 +108,8 @@ impl Drop for InFlight<'_> {
 /// One ask runs at a time; a caller arriving while one is in flight takes
 /// that ask's outcome, so a silent aetherd costs a pass at most one timeout.
 pub async fn refresh(ctx: &DaemonContext, asker: Asker) -> Result<(), ArchonError> {
-    match join_or_start(ctx, asker) {
+    let connected = ctx.aether.is_connected();
+    match join_or_start(&ctx.quota, asker, connected, archon_core::now()) {
         Turn::Skip => Ok(()),
         Turn::Join(outcome) => joined(outcome).await,
         Turn::Ask(done) => {
@@ -130,18 +131,14 @@ enum Turn {
 }
 
 /// Under one lock: join the ask in flight, skip, or install a new one.
-fn join_or_start(ctx: &DaemonContext, asker: Asker) -> Turn {
-    let mut asking = ctx.quota.asking();
+fn join_or_start(cache: &QuotaCache, asker: Asker, connected: bool, now: Timestamp) -> Turn {
+    let mut asking = cache.asking();
     if let Some(current) = &asking.current {
         return Turn::Join(current.clone());
     }
-    let now = archon_core::now();
-    let recent = ctx
-        .quota
-        .reading()
-        .is_some_and(|r| now - r.read_at < REFRESH_EVERY);
+    let recent = (cache.reading()).is_some_and(|r| now - r.read_at < REFRESH_EVERY);
     let polled_recently = (asking.polled).is_some_and(|at| now >= at && now - at < REFRESH_EVERY);
-    if recent || !ctx.aether.is_connected() || (asker == Asker::PacePoll && polled_recently) {
+    if recent || !connected || (asker == Asker::PacePoll && polled_recently) {
         return Turn::Skip;
     }
     if asker == Asker::PacePoll {
@@ -343,4 +340,46 @@ pub(crate) fn status(ctx: &DaemonContext) -> Option<QuotaStatus> {
         as_of: reading.read_at,
         providers,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn start(cache: &QuotaCache) -> Turn {
+        join_or_start(cache, Asker::Routing, true, archon_core::now())
+    }
+
+    #[tokio::test]
+    async fn a_joiner_takes_the_failure_of_the_ask_it_joined_not_a_newer_one() {
+        let cache = QuotaCache::default();
+        let Turn::Ask(first) = start(&cache) else {
+            panic!("an idle cache starts an ask");
+        };
+        let Turn::Join(paused) = start(&cache) else {
+            panic!("a second caller joins the ask in flight");
+        };
+        let mut owner = Owned {
+            cache: &cache,
+            done: Some(first),
+        };
+        owner.finish(Err("first failed".to_owned()));
+        let Turn::Ask(second) = start(&cache) else {
+            panic!("after a failure the next caller asks again");
+        };
+        let why = joined(paused).await.expect_err("the first ask failed");
+        assert!(why.to_string().contains("first failed"), "{why}");
+        assert!(
+            cache.asking().current.is_some(),
+            "the second is still in flight"
+        );
+        drop(Owned {
+            cache: &cache,
+            done: Some(second),
+        });
+        assert!(
+            cache.asking().current.is_none(),
+            "a dropped ask clears itself"
+        );
+    }
 }

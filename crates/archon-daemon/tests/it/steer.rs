@@ -1353,8 +1353,22 @@ async fn an_extension_after_an_effort_waiting_for_the_catalog_is_sent_at_once() 
         effort: Some(Effort::Low),
         ..Steer::default()
     };
-    steer(&h, &item.id, effort).await.expect("steered");
+    let replied = steer(&h, &item.id, effort).await.expect("steered");
     assert!(h.backend.updates().is_empty(), "the effort waits");
+    let deferred = replied
+        .model_plan
+        .catalog_check
+        .as_ref()
+        .expect("the reply says it waits");
+    assert!(
+        deferred.to_string().contains("catalog offline"),
+        "{deferred}"
+    );
+    assert_eq!(
+        h.item(&item.id).await.model_plan.catalog_check.as_ref(),
+        Some(deferred),
+        "queue show says it waits"
+    );
     let more_time = Steer {
         extend_minutes: Some(45),
         ..Steer::default()

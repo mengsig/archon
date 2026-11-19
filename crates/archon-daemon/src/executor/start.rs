@@ -349,10 +349,29 @@ async fn tiers_at_dispatch(
     };
     let tiers =
         knobs::TierScope::new(&ctx.config, &policy, catalog).routed(route.by(routing.0, routing.1));
+    let kept = unchanged.model_plan.plan();
     let resolve = |key: &str, asked: &archon_core::model_tier::TierChoice| {
         let floor = spec.tier_floor(key, asked.requested);
         let provider = asked.provider.as_deref();
-        tiers.resolve((asked.requested, floor), provider).map(Some)
+        let found = tiers.resolve((asked.requested, floor), provider);
+        // A superseded model is no tier candidate; one already resolved runs
+        // on rather than fail or fall to a lower tier (A9).
+        let worse = found
+            .as_ref()
+            .map_or(true, |(_, t)| t.resolved < asked.resolved);
+        let runs_on = || {
+            keeps_resolution(
+                kept,
+                (key, asked, floor),
+                held.as_deref(),
+                (catalog, &policy),
+            )
+        };
+        if worse && runs_on() {
+            tracing::info!(item = %item.id, stage = key, "kept a listed tier resolution no candidate matches");
+            return Ok(None);
+        }
+        found.map(Some)
     };
     let id = stored.id.clone();
     stored.model_plan.retier(
@@ -389,6 +408,45 @@ async fn tiers_at_dispatch(
         provider_switch: stored.provider_switch,
         ..item.clone()
     })
+}
+
+/// Whether every slot of `key` resolved for `asked` already runs a model the
+/// catalog lists and `policy` permits, at or above `floor`, on the routed
+/// provider: a superseded model is no tier candidate, yet it still runs (A9).
+fn keeps_resolution(
+    plan: &ModelPlan,
+    (key, asked, floor): (
+        &str,
+        &archon_core::model_tier::TierChoice,
+        archon_core::model_tier::Tier,
+    ),
+    held: Option<&str>,
+    (catalog, policy): (
+        &archon_core::model_tier::ModelCatalog,
+        &archon_core::policy::ModelPolicy,
+    ),
+) -> bool {
+    assert!(
+        catalog.not_ready_reason().is_none(),
+        "dispatch resolves tiers in a ready catalog"
+    );
+    let Some(choices) = plan.choices_for(key) else {
+        return false;
+    };
+    let mut matching = choices
+        .iter()
+        .filter(|choice| choice.tier.as_ref() == Some(asked))
+        .peekable();
+    let provider = asked.provider.as_deref().or(held);
+    matching.peek().is_some()
+        && asked.resolved >= floor
+        && matching.all(|choice| {
+            provider.is_none_or(|p| choice.model.provider == p)
+                && catalog
+                    .check(&choice.model)
+                    .is_ok_and(|m| policy.permits_model(&m))
+                && policy.check_effort(choice.effort).is_ok()
+        })
 }
 
 /// `item` with every effort the daemon sized held to the policy's cap as it

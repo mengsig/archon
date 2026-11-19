@@ -2308,6 +2308,49 @@ async fn a_superseded_daemon_choice_with_no_successor_allowed_runs() {
     assert_eq!(created[0].choice.model.to_string(), old);
 }
 
+/// A queued tier resolution the catalog then supersedes, its successor not
+/// allowed, still dispatches on it: no tier candidate replaces a listed model.
+#[tokio::test]
+async fn a_queued_tier_resolution_superseded_with_no_allowed_successor_runs() {
+    let mut config = Config::default();
+    config.models.deny = vec!["claude-code/sonnet-next".parse().unwrap()];
+    let h = harness(config).await;
+    let plan = serde_json::json!({
+        "implement": [{"tier": "strong", "provider": "claude-code"}],
+        "review": [{"model": "claude-code/opus"}, {"model": "claude-code/haiku"}],
+        "ship": [{"model": "claude-code/haiku"}],
+    });
+    let item = enqueue(
+        &h,
+        ROUTED,
+        "a superseded resolution",
+        serde_json::from_value(plan).unwrap(),
+    )
+    .await;
+    assert_eq!(
+        item.model_plan.0["implement"][0].model.to_string(),
+        "claude-code/sonnet"
+    );
+    list_beside(
+        &h,
+        ("claude-code/sonnet", "claude-code/sonnet-next"),
+        Beside::Superseded,
+    )
+    .await;
+    h.dispatch().await;
+
+    let stored = h.item(&item.id).await;
+    assert!(
+        !matches!(stored.state, QueueState::Failed { .. }),
+        "{:?}",
+        stored.state
+    );
+    assert_eq!(
+        spawned_on(&h, &item, "implement").await,
+        ["claude-code/sonnet"]
+    );
+}
+
 /// A fresh retry is routed by quota as a fresh stage is: once the provider a
 /// move took a reviewer to is spent, its cold retry goes where quota is.
 #[tokio::test]

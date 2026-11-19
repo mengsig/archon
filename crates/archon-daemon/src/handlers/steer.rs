@@ -145,12 +145,15 @@ async fn steer_and_update(
 
 /// The catalog a steer that changes the plan is checked in, its named model
 /// put by its canonical id once the catalog is ready; `None` for any other steer.
+/// An effort-only steer counts: its agent update waits on the catalog too.
 async fn steer_catalog(
     ctx: &DaemonContext,
     steer: &mut Steer,
 ) -> Result<Option<archon_core::model_tier::ModelCatalog>, ArchonError> {
-    let changes_plan =
-        steer.model.is_some() || steer.switch_pipeline.is_some() || steer.insert_stage.is_some();
+    let changes_plan = steer.model.is_some()
+        || steer.effort.is_some()
+        || steer.switch_pipeline.is_some()
+        || steer.insert_stage.is_some();
     if !changes_plan {
         return Ok(None);
     }

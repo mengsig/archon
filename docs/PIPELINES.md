@@ -146,6 +146,13 @@ the field:
 
 - `name` equals the directory name and matches `[a-z0-9-]+`. `version` is 1.
 - There are 1 to 32 stages. Stage ids are unique and match `[a-z0-9-]+`.
+- No stage takes a reserved id: `budget`, `ship` or `recovery`. Archon fails
+  a run under these ids for its own stops (the item's dollar budget, the
+  delivery of a `[pipeline.ship]` record, and a run it could not resume), so a
+  stage of the same id would blur its own failure with that stop. The one
+  exception is a `ship` stage of kind `ship`, the pipeline's own ship agent.
+  Rename any other stage, for example `budget` to `budget-stage`. `archon doctor` lists a user pipeline
+  that breaks this rule, and its name stays unavailable until it is renamed.
 - Each `prompt` is a plain file name (no `/`, no leading `.`) that exists in
   the directory. Symlinks are followed only while they stay inside the
   pipeline directory. Files are limited to 256 KiB.

@@ -166,7 +166,7 @@ fn recomputed(conn: &Connection, run: &str) -> Result<Option<FailureClass>, Arch
         return Ok(None);
     }
     let recorded = stages.iter().any(|s| &s.stage_id == stage_id);
-    if !recorded && !classed_without_its_stage(stage_id, error) {
+    if !recorded && !classed_without_its_stage(stage_id, error, &stages) {
         tracing::warn!(
             run,
             stage = stage_id.as_str(),

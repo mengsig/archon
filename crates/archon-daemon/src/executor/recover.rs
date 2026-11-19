@@ -7,7 +7,7 @@ use std::sync::Arc;
 use archon_core::error::ArchonError;
 use archon_core::id::PipelineRunId;
 use archon_core::queue::{QueueItem, QueueState};
-use archon_core::run::{PipelineRun, StageRun};
+use archon_core::run::{PipelineRun, RECOVERY_STAGE, StageRun};
 use archon_core::steer::{RunEdit, Then};
 use archon_pipeline::autonomy::OperatorGates;
 use archon_pipeline::{PipelineSpec, RunDriver};
@@ -408,7 +408,7 @@ async fn resume_isolated(
         other => return other,
     };
     quarantine_run(ctx, &run, &error);
-    let stage = run.state.live_stage().unwrap_or("recovery").to_owned();
+    let stage = run.state.live_stage().unwrap_or(RECOVERY_STAGE).to_owned();
     let message = unresumable_message(&run, &error);
     let failed = finish::fail_run(ctx, table, run, stage, message, true);
     settled(
@@ -446,7 +446,7 @@ async fn fail_unreadable(
     for (id, data) in &dropped {
         tracing::error!(run = %run.id, stage_run = %id, bytes = data.len(), "unreadable stage row removed; saved under quarantine-rows");
     }
-    let stage = run.state.live_stage().unwrap_or("recovery").to_owned();
+    let stage = run.state.live_stage().unwrap_or(RECOVERY_STAGE).to_owned();
     let message = unresumable_message(&run, &error);
     let failed = finish::fail_run(ctx, table, run.clone(), stage, message, true);
     let subject = format!("run {}", run.id);
@@ -469,7 +469,7 @@ pub(super) async fn resume_run(
     let mut driver = match build_driver(ctx, &run).await {
         Ok(driver) => driver,
         Err(error) => {
-            let stage = run.state.live_stage().unwrap_or("recovery").to_owned();
+            let stage = run.state.live_stage().unwrap_or(RECOVERY_STAGE).to_owned();
             quarantine_run(ctx, &run, &error);
             let message = unresumable_message(&run, &error);
             return finish::fail_run(ctx, table, run, stage, message, true).await;

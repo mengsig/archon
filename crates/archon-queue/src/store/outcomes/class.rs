@@ -43,7 +43,7 @@ pub(in crate::store) fn failure_class(
     let stages = flag_wrapped_spawns(run, stages);
     let ending = ending_attempt(stage_id, &stages);
     // The ship step ends a run past every stage: one named `ship` explains nothing.
-    if ship_step_failed(stage_id, error, &ending) {
+    if ship_step_failed(stage_id, error, &ending, !stages.is_empty()) {
         return daemon_prefixed_class(error).unwrap_or(FailureClass::Ship);
     }
     let recorded = match ended_by(error, &ending) {
@@ -72,8 +72,9 @@ pub(in crate::store) fn failure_class(
 /// another kind named `ship` too recorded (`ending`): unless the run failed in
 /// that stage's own words, or in the driver's word on it, the failure is the
 /// delivery's. A ship stage of that name is read by its records, as any stage.
-fn ship_step_failed(stage_id: &str, error: &str, ending: &[&StageRun]) -> bool {
-    if stage_id != SHIP_STEP {
+/// The ship step runs past the stages: a run with none (`ran_a_stage`) never reached it.
+fn ship_step_failed(stage_id: &str, error: &str, ending: &[&StageRun], ran_a_stage: bool) -> bool {
+    if stage_id != SHIP_STEP || !ran_a_stage {
         return false;
     }
     assert!(
@@ -219,9 +220,15 @@ fn ends_run_class(error: &str) -> Option<FailureClass> {
 }
 
 /// Whether a run that failed under `stage_id` with `error` can be classed
-/// without a record of that stage: the ship step, or a stop its prefix names.
-pub(in crate::store) fn classed_without_its_stage(stage_id: &str, error: &str) -> bool {
-    ship_step_failed(stage_id, error, &[]) || daemon_prefixed_class(error).is_some()
+/// without a record of that stage: the ship step past the run's `stages`, or
+/// a stop its prefix names.
+pub(in crate::store) fn classed_without_its_stage(
+    stage_id: &str,
+    error: &str,
+    stages: &[StageRun],
+) -> bool {
+    ship_step_failed(stage_id, error, &[], !stages.is_empty())
+        || daemon_prefixed_class(error).is_some()
 }
 
 /// Whether the gate failed the stage `stage_id` under a headline opening with

@@ -90,7 +90,7 @@ pub(crate) fn reroute_spawns(
         return Ok(Reserve::Wait);
     }
     let read = (&routing, replaced, view.as_ref());
-    let unmoved = route_plans(ctx, store, (item, spec), plans, read)?;
+    let unmoved = route_plans(ctx, store, (item, spec), plans, (read, None))?;
     // These plans passed the quota hold above; a replacement skips it, so never ends a wait.
     if unmoved {
         note_started(store, item, plans)?;
@@ -130,22 +130,19 @@ pub(crate) fn route_replacement(
         store,
         (item, spec),
         plans,
-        (&routing, None, view.as_ref()),
+        ((&routing, None, view.as_ref()), waiting.as_deref()),
     )?;
     assert_eq!(
         fresh.choice.effort, plan.choice.effort,
         "routing moves no effort"
     );
     plan.choice = fresh.choice;
-    let Some(waiting) = waiting.filter(|note| item.provider_switch.as_ref() != Some(note)) else {
-        return Ok(());
-    };
-    item.provider_switch = Some(waiting);
-    store.update_item(item)
+    Ok(())
 }
 
 /// Move `plans` off spent providers or onto the item's held one, follow the
-/// stored plan with them, and note every move with any catalog repair that
+/// stored plan with them, and note every move (the note `keep` stands in the
+/// same write) with any catalog repair that
 /// `replaced` the stored plan; with nothing moved, only that repair is noted
 /// and `true` is returned.
 fn route_plans(
@@ -153,10 +150,13 @@ fn route_plans(
     store: &mut Store,
     (item, spec): (&mut QueueItem, &PipelineSpec),
     plans: &mut [SpawnPlan],
-    ((weights, policy, catalog), replaced, view): (
-        &(ProviderWeights, ModelPolicy, ModelCatalog),
-        Option<&ModelPlan>,
-        Option<&QuotaView>,
+    (((weights, policy, catalog), replaced, view), keep): (
+        (
+            &(ProviderWeights, ModelPolicy, ModelCatalog),
+            Option<&ModelPlan>,
+            Option<&QuotaView>,
+        ),
+        Option<&str>,
     ),
 ) -> Result<bool, ArchonError> {
     let quota = (Some(weights), view);
@@ -181,6 +181,9 @@ fn route_plans(
     let mut moves = repair_moves((before, &stored), item.model_plan.plan(), catalog);
     moves.extend(moved);
     record_moves(ctx, store, item, (&moves, before), view)?;
+    if let Some(wait) = keep {
+        item.provider_switch = Some(wait.to_string());
+    }
     item.updated_at = archon_core::now();
     store.update_item(item)?;
     Ok(false)

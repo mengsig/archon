@@ -22,6 +22,7 @@ pub mod risk;
 mod scenarios;
 mod sections;
 pub mod ship;
+pub mod sized_nudges;
 pub mod spec;
 pub mod swarm;
 pub mod team;

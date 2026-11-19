@@ -67,28 +67,44 @@ preference, not a floor: Archon picks the best model the effective model policy
 from the lead when `prefer_other_provider` is set and a permitted model of
 another provider exists. If no permitted model reaches the tier, the contract
 names the best permitted one, or the lead's own model, and says so; the agent is
-never sent to look for a model the policy would refuse. `default_effort` is a
-floor raised to at least medium: the contract asks for that effort or higher,
-and for at least high when the lead rates the change's risk medium or high. The
-model policy's effort cap still applies. In an explicit `<stage>.review` plan
-each effort is a floor too: a reviewer below it is cancelled as it spawns, and
-one above it runs, up to the policy's cap.
+never sent to look for a model the policy would refuse. `default_effort`
+(default `medium`) is each reviewer's default, which the lead may lower to
+`low` for a small, low-risk diff or raise by the effort rubric below. In an
+explicit `<stage>.review` plan each effort is a default too: archond cancels a
+reviewer only on a model the plan does not name, or above the policy's cap.
 
-`[models] effort_sizing = true` (default `false`, global only) opts in to
-sizing every effort by one rubric instead. The orchestrator then sizes each
-stage's effort, and every delegating contract each child's: `low` for lookups,
-listing, formatting and mechanical edits; `medium` for routine changes and
-reviews of small or low-risk diffs; `high` for non-trivial design, risky diffs
-and reviews of shared code; `x_high` for hard reasoning, such as root-causing a
-regression, concurrency or security analysis, or a fix that failed twice. A reviewer's `default_effort`, or
-its effort in a `<stage>.review` plan, becomes its default rather than a floor:
-the rubric moves it, from `low` for a trivial diff to `x_high` for concurrency
-or security analysis, the lead states the reason in one line, and archond
-cancels only a reviewer on a model the plan does not name. The stage prompts
-keep 1.4.12's wording, effort floors included; under the opt-in the contract's
-reviewer rule says it replaces any floor a stage prompt names. Off, agents see
-the effort rules of 1.4.12, and `max_effort` caps both. The default cap is
-`x_high`; set global `[models] max_effort = "max"` explicitly to allow `max`.
+`[models] effort_sizing` (default `true` since 1.6.4, global only) sizes every
+effort by one rubric. The orchestrator sizes each stage's effort, and every
+delegating contract each child's: `low` for lookups, listing, formatting,
+mechanical edits and reviews of trivial or small low-risk diffs; `medium` for
+routine changes and reviews of ordinary diffs; `high` for non-trivial design,
+risky diffs and reviews of shared code; `x_high` for hard reasoning, such as root-causing a regression,
+concurrency or security analysis, or a fix that failed twice. A reviewer's
+effort moves with it, and the lead states the reason in one line. A stage the
+plan leaves out, or that a knob or a steer inserts, takes its own effort from
+its pipeline, within the policy's cap, rather than the pipeline tier's or the
+first stage's, and the built-in stage nudges are served (by `list_pipelines`
+and `archon pipelines list`) worded by the rubric. The stage prompts keep 1.4.12's wording, effort floors
+included; the contract's reviewer rule says it replaces any floor a stage
+prompt names.
+
+To roll back, set `effort_sizing = false` in the global `[models]` and restart
+archond (and `archon orchestrator restart`, as a running orchestrator keeps
+its prompt across a restart of the same build). New spawns then get 1.6.3's
+effort rules, byte for byte: agents see
+1.4.12's effort wording, `default_effort` is a floor raised to at least medium
+(at least high when the lead rates the change's risk medium or high), and a
+`<stage>.review` plan's effort is a floor, so a reviewer below it is cancelled
+as it spawns. In-flight spawns keep the rule they were issued: archond records
+it with each spawn, so a lead spawned before the switch, and one resumed,
+woken or replayed after the restart, is held to its own rule, never the one in
+force now, and to the reviewers its contract named, not the item's plan as
+edited since. A spawn stored by 1.6.3 is read by its own reviewer and
+delegation rule lines, reviewers included; where they tell nothing, no
+reviewer is cancelled for its effort or held to a plan's models. A model
+policy change the operator makes (`max_effort`, allow or deny lists) still
+applies to running leads. `max_effort` caps every effort either way. The default cap is `x_high`; set global
+`[models] max_effort = "max"` explicitly to allow `max`.
 A repository may only narrow the global cap.
 
 `auto_repair` (default `true`) covers a run that fails only because the gate
@@ -122,7 +138,7 @@ On, the run is refused instead.
 ```toml
 [review]                       # reviewers with no explicit <stage>.review plan
 default_tier = "balanced"
-default_effort = "low"         # raised to medium, or high for a riskier change
+default_effort = "medium"      # the default; the lead may lower it to low for a small, low-risk diff
 prefer_other_provider = true
 auto_repair = true             # one automatic retry when the review, ship record, requirement results or a fixable delivery is refused
 independent_acceptance = false # true: refuse intent acceptance with no model apart from every builder
@@ -135,7 +151,7 @@ max_effort = "high"            # default x_high; max must be explicitly allowed
 # default_provider_weight = 1  # a provider the table leaves out (the default; 0 = never)
 # reserve_percent = { orchestrator = 15, interactive = 10 }   # quota stages leave (the defaults)
 # interactive_providers = ["claude-code"]   # providers someone uses by hand; global only
-# effort_sizing = false        # true: size every agent's effort by the effort rubric; global only
+# effort_sizing = true         # the default; false: 1.6.3's effort rules and reviewer floors; global only
 
 [limits]
 max_parallel_agents = 8        # running stage agents (default 8); 0 = unlimited

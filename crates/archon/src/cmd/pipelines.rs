@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::Context as _;
-use archon_core::config::RepoConfig;
+use archon_core::catalog::CatalogListing;
+use archon_core::config::{Config, RepoConfig};
 use archon_pipeline::{Catalog, CatalogSources};
 
 use super::{emit, to_json};
@@ -41,17 +42,19 @@ pub async fn run(command: PipelineCommand, json: bool) -> anyhow::Result<ExitCod
         Some(repo) => Some(resolve_repo(&repo).await?),
         None => None,
     };
-    let listing = load(repo_root.as_deref())?.listing();
+    let catalog = load(repo_root.as_deref())?;
+    if !check {
+        let listing = served(catalog, &Config::load_default()?);
+        emit(json, || to_json(&listing), &format::catalog(&listing))?;
+        return Ok(ExitCode::SUCCESS);
+    }
+    let listing = catalog.listing();
     let problems = format::problems(&listing);
     assert_eq!(
         problems.len(),
         listing.problems.len(),
         "one line per problem"
     );
-    if !check {
-        emit(json, || to_json(&listing), &format::catalog(&listing))?;
-        return Ok(ExitCode::SUCCESS);
-    }
     let summary = match problems.len() {
         0 => format!("All {} pipelines are valid.", listing.pipelines.len()),
         n => format!("{}\n{n} broken pipeline(s).", problems.join("\n")),
@@ -64,6 +67,22 @@ pub async fn run(command: PipelineCommand, json: bool) -> anyhow::Result<ExitCod
     } else {
         ExitCode::FAILURE
     })
+}
+
+/// `catalog` listed as archond serves it under `config`: with the built-in
+/// nudges worded by the effort rubric unless `[models] effort_sizing = false`.
+fn served(catalog: Catalog, config: &Config) -> CatalogListing {
+    let mut listing = catalog.listing();
+    let problems = format::problems(&listing);
+    assert_eq!(
+        problems.len(),
+        listing.problems.len(),
+        "one line per problem"
+    );
+    if config.models.effort_sizing() {
+        archon_pipeline::sized_nudges::sized_nudges(&mut listing);
+    }
+    listing
 }
 
 /// Built-in, user and (with a repo) repository pipelines, minus the

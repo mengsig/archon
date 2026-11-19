@@ -244,6 +244,10 @@ fn refresh_owner(
     let tiers = knobs::TierScope::new(&ctx.config, &policy, catalog).routed(route);
     let max_tier = env.max_default_tier(&ctx.config);
     let fallback = knobs::default_choice(&ctx.config, tiers, max_tier, &spec);
+    let fallback = (
+        fallback.as_ref(),
+        knobs::EffortFill::of(&ctx.config, &policy),
+    );
     // Built fresh from the request and the refresh's own fill, never from the owner's origins.
     let mut writer = PlanWriter::new(&owner.id, archon_core::now());
     if let Some(draft) = asked.model_plan.filter(|draft| !draft.0.is_empty()) {
@@ -253,7 +257,7 @@ fn refresh_owner(
     }
     let tiered = knobs::fill_stage_tiers(tiers, max_tier, &spec, writer.plan().clone());
     writer.filled(tiered, (PlanSource::Tier, PlanSource::Fallback));
-    let fallen = knobs::fill_static_stages(&base, &spec, writer.plan().clone(), fallback.as_ref())?;
+    let fallen = knobs::fill_static_stages(&base, &spec, writer.plan().clone(), fallback)?;
     writer.filled(fallen, (PlanSource::Fallback, PlanSource::Fallback));
     item.model_plan = writer.finish();
     item.model_reasons = asked.model_reasons;

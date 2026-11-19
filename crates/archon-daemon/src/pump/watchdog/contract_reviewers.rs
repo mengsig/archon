@@ -13,7 +13,7 @@ use archon_core::model::ModelRef;
 use serde_json::Value;
 
 use crate::context::DaemonContext;
-use crate::executor;
+use crate::executor::{self, StoredSpawn};
 
 /// Why a child with role `reviewer` of stage agent `parent` breaks the
 /// reviewer models its contract named; `None` for any other child, or when
@@ -105,8 +105,9 @@ async fn named_models(
     Ok(models.filter(|models| !models.is_empty()))
 }
 
-/// The delegation policy stage agent `parent` was sent; `None` when it is
-/// no stage agent, its request is gone, or it was sent none.
+/// The delegation policy stage agent `parent` was sent by the spawn that
+/// created it; `None` when it is no stage agent, that spawn is gone (a
+/// resuming spawn's policy was never sent to it), or it was sent none.
 async fn sent_policy(
     ctx: &DaemonContext,
     parent: &AetherAgentId,
@@ -115,13 +116,49 @@ async fn sent_policy(
         return Ok(None);
     };
     let store = ctx.store.lock().await;
-    let spawn = match executor::load_spawn(&store, &stage_run) {
-        Ok(spawn) => spawn,
-        // Pruned once its stage settled: no live lead delegates from it.
-        Err(ArchonError::NotFound(_)) => return Ok(None),
-        Err(error) => return Err(error),
+    let issuing = executor::issuing_spawn(&store, &stage_run)?;
+    Ok(issuing.and_then(|spawn| spawn.request.delegation_policy))
+}
+
+/// The spawn that issued the contract of the stage agent above `parent`
+/// (itself, or the lead it was delegated below); `None` when no stage agent
+/// or spawn is found, as once a settled stage's spawn is pruned.
+pub(super) async fn lead_spawn(
+    ctx: &DaemonContext,
+    parent: &AetherAgentId,
+) -> Result<Option<StoredSpawn>, ArchonError> {
+    let Some(stage_run) = lead_stage_run(ctx, parent).await? else {
+        return Ok(None);
     };
-    Ok(spawn.request.delegation_policy)
+    let store = ctx.store.lock().await;
+    executor::issuing_spawn(&store, &stage_run)
+}
+
+/// The stage run of the stage agent `agent` works for: its own, or that of
+/// the nearest agent above it with one, walking up the recorded delegations.
+async fn lead_stage_run(
+    ctx: &DaemonContext,
+    agent: &AetherAgentId,
+) -> Result<Option<StageRunId>, ArchonError> {
+    let most = ctx.config.limits.max_delegation_depth;
+    let mut at = agent.clone();
+    for _ in 0..=most {
+        let up = {
+            let store = ctx.store.lock().await;
+            if let Some(stage) = store.stage_run_by_agent(&at)? {
+                assert_eq!(stage.aether_agent.as_ref(), Some(&at), "bound to it");
+                return Ok(Some(stage.id));
+            }
+            store.delegated_parent(&at)?
+        };
+        let Some(up) = up else {
+            // The top agent: a stage agent whose spawn reply is not recorded yet.
+            return stage_run_of(ctx, &at).await;
+        };
+        assert_ne!(up, at, "an agent is not its own parent");
+        at = up;
+    }
+    Ok(None)
 }
 
 /// The stage run `parent` works for: as Archon recorded it, else by the

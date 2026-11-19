@@ -1,0 +1,597 @@
+{
+  "pipelines": [
+    {
+      "name": "adaptive",
+      "description": "One lead sizes, builds, integrates and reviews the change before shipping",
+      "source": "builtin",
+      "path": null,
+      "workspace": "worktree",
+      "requires_repo": true,
+      "nudges": {
+        "tier": "balanced",
+        "independent_reviewers": true,
+        "notes": "For a repository change where one lead that keeps its context through fixes, or integrates parts that split, saves restarts. A change one author can make and check belongs in direct, and unrelated changes are never bundled to fit here. The item's review level sets how many independent reviewers the lead owes: none, standard (one) or strict (three)."
+      },
+      "stages": [
+        {
+          "id": "build",
+          "kind": "work",
+          "fan_out": 1,
+          "gate": "none",
+          "timeout_minutes": 180,
+          "effort": "medium",
+          "nudge": "The strong tier at medium effort (the default); high for hard multi-file work. x_high only for a reasoning problem you can name that inspecting the code left unresolved: that the operator prefers strong models is not one. The lead chooses its reviewer at runtime within model policy. Its workers run on the balanced tier at medium, at most 2 at once ([pipeline.workers]), not on the lead's model: give `build.workers` only when the parts need another model or effort.",
+          "loops_to": null,
+          "max_loops": 0,
+          "delegates_reviewers": true
+        }
+      ]
+    },
+    {
+      "name": "agent-testing",
+      "description": "Agents exercise the product as users would and report defects with evidence",
+      "source": "builtin",
+      "path": null,
+      "workspace": "worktree",
+      "requires_repo": true,
+      "nudges": {
+        "tier": "balanced",
+        "independent_reviewers": true,
+        "notes": "Exploratory QA of a CLI, API or UI, before or after a change. Testers find and report defects; nothing is fixed or shipped."
+      },
+      "stages": [
+        {
+          "id": "plan",
+          "kind": "work",
+          "fan_out": 1,
+          "gate": "none",
+          "timeout_minutes": 90,
+          "effort": "medium",
+          "nudge": null,
+          "loops_to": null,
+          "max_loops": 0
+        },
+        {
+          "id": "exercise",
+          "kind": "report",
+          "fan_out": 2,
+          "gate": "none",
+          "timeout_minutes": 120,
+          "effort": "medium",
+          "nudge": "Two testers on different charters; independent discovery (another provider at the same tier helps) finds more distinct defects.",
+          "loops_to": null,
+          "max_loops": 0
+        },
+        {
+          "id": "report",
+          "kind": "report",
+          "fan_out": 1,
+          "gate": "none",
+          "timeout_minutes": 45,
+          "effort": "medium",
+          "nudge": null,
+          "loops_to": null,
+          "max_loops": 0
+        }
+      ]
+    },
+    {
+      "name": "ask",
+      "description": "Answer a question about a repository (or in general) without changing anything",
+      "source": "builtin",
+      "path": null,
+      "workspace": "repo-readonly",
+      "requires_repo": false,
+      "nudges": {
+        "tier": "balanced",
+        "independent_reviewers": false,
+        "notes": "Read-only research; step up to the strong tier for deep architectural questions."
+      },
+      "stages": [
+        {
+          "id": "answer",
+          "kind": "work",
+          "fan_out": 1,
+          "gate": "none",
+          "timeout_minutes": 45,
+          "effort": "medium",
+          "nudge": null,
+          "loops_to": null,
+          "max_loops": 0
+        }
+      ]
+    },
+    {
+      "name": "code-audit",
+      "description": "Audit a module or repository through three code-reading lenses and produce an HTML report; use ask for a single question",
+      "source": "builtin",
+      "path": null,
+      "workspace": "worktree",
+      "requires_repo": true,
+      "nudges": {
+        "tier": "strong",
+        "independent_reviewers": true,
+        "notes": "Read-and-report only; findings become follow-up items. Pick this for a security, reliability or maintainability audit. Use ask for a single question, or agent-testing to exercise the running product."
+      },
+      "stages": [
+        {
+          "id": "scope",
+          "kind": "work",
+          "fan_out": 1,
+          "gate": "none",
+          "timeout_minutes": 90,
+          "effort": "medium",
+          "nudge": null,
+          "loops_to": null,
+          "max_loops": 0
+        },
+        {
+          "id": "audit",
+          "kind": "report",
+          "fan_out": 3,
+          "gate": "none",
+          "timeout_minutes": 120,
+          "effort": "high",
+          "nudge": "Strong tier, high effort. Independent auditors, each with its own lens; another provider at the same tier adds independence where the allowlist permits.",
+          "loops_to": null,
+          "max_loops": 0
+        },
+        {
+          "id": "report",
+          "kind": "report",
+          "fan_out": 1,
+          "gate": "none",
+          "timeout_minutes": 45,
+          "effort": "medium",
+          "nudge": null,
+          "loops_to": null,
+          "max_loops": 0
+        }
+      ]
+    },
+    {
+      "name": "design-doc",
+      "description": "Design/RFC before a large or ambiguous change, with independent critique and an HTML report; use proposal: lavish for design and implementation in one item",
+      "source": "builtin",
+      "path": null,
+      "workspace": "worktree",
+      "requires_repo": true,
+      "nudges": {
+        "tier": "strong",
+        "independent_reviewers": true,
+        "notes": "Design/RFC before a large or ambiguous change. No product-code changes or shipping. Use the proposal: lavish knob instead when you want the design and the implementation in one item."
+      },
+      "stages": [
+        {
+          "id": "research",
+          "kind": "work",
+          "fan_out": 1,
+          "gate": "none",
+          "timeout_minutes": 120,
+          "effort": "high",
+          "nudge": "Prefer the strong tier at high effort for repository research and architectural trade-offs.",
+          "loops_to": null,
+          "max_loops": 0
+        },
+        {
+          "id": "critique",
+          "kind": "review",
+          "fan_out": 1,
+          "gate": "all_pass",
+          "timeout_minutes": 60,
+          "effort": "medium",
+          "nudge": "Use an independent critic that discovers on its own; another provider at the same tier counts.",
+          "loops_to": "research",
+          "max_loops": 2
+        },
+        {
+          "id": "report",
+          "kind": "report",
+          "fan_out": 1,
+          "gate": "none",
+          "timeout_minutes": 45,
+          "effort": "medium",
+          "nudge": null,
+          "loops_to": null,
+          "max_loops": 0
+        }
+      ]
+    },
+    {
+      "name": "direct",
+      "description": "One agent makes, checks and commits a change one author can own; Archon ships it",
+      "source": "builtin",
+      "path": null,
+      "workspace": "worktree",
+      "requires_repo": true,
+      "nudges": {
+        "tier": "balanced",
+        "independent_reviewers": false,
+        "notes": "The cheapest path to a shipped change: one agent, and no review unless the item's review level asks for one. For any change one author can make and check, whatever its size: a fix, a feature, tests, docs, a dependency upgrade, a mechanical sweep. Raise the review level by risk; use adaptive when parts must be integrated, and for work that names concurrency, locking, security or a migration."
+      },
+      "stages": [
+        {
+          "id": "implement",
+          "kind": "work",
+          "fan_out": 1,
+          "gate": "none",
+          "timeout_minutes": 180,
+          "effort": "medium",
+          "nudge": "The balanced tier at medium effort, high for a larger or subtle change; low only for docs, config or another trivial edit. The agent escalates a change that turns out risky: concurrency, locking, security or a migration; re-queue that on adaptive.",
+          "loops_to": null,
+          "max_loops": 0,
+          "delegates_reviewers": true
+        }
+      ]
+    },
+    {
+      "name": "e2e-strict",
+      "description": "Set up the product, run end-to-end scenarios from a fixed manifest, and fail on any scenario that does not pass",
+      "source": "builtin",
+      "path": null,
+      "workspace": "worktree",
+      "requires_repo": true,
+      "nudges": {
+        "tier": "balanced",
+        "independent_reviewers": false,
+        "notes": "e2e-testing as a ship gate: archond fails the run on any failed, skipped or missing scenario, or an empty list, naming each in the stage result. Environment faults loop back to setup once; product defects fail at once. Use it for release validation, e2e-testing for exploratory reports."
+      },
+      "stages": [
+        {
+          "id": "setup",
+          "kind": "work",
+          "fan_out": 1,
+          "gate": "none",
+          "timeout_minutes": 120,
+          "effort": "medium",
+          "nudge": null,
+          "loops_to": null,
+          "max_loops": 0
+        },
+        {
+          "id": "e2e",
+          "kind": "test",
+          "fan_out": 1,
+          "gate": "all_pass",
+          "timeout_minutes": 120,
+          "effort": "medium",
+          "nudge": null,
+          "loops_to": "setup",
+          "max_loops": 1
+        },
+        {
+          "id": "report",
+          "kind": "report",
+          "fan_out": 1,
+          "gate": "none",
+          "timeout_minutes": 45,
+          "effort": "medium",
+          "nudge": "Write HTML plus screenshots under .archon/reports/ and list them in structured.reports.",
+          "loops_to": null,
+          "max_loops": 0
+        }
+      ]
+    },
+    {
+      "name": "e2e-testing",
+      "description": "Set up the product, run end-to-end scenarios, and publish a report with screenshots",
+      "source": "builtin",
+      "path": null,
+      "workspace": "worktree",
+      "requires_repo": true,
+      "nudges": {
+        "tier": "balanced",
+        "independent_reviewers": false,
+        "notes": "Scripted end-to-end journeys with screenshots. The e2e gate fails only on environment faults, which loop back to setup once; product defects pass the gate and land in the report, so a succeeded run can still list failed scenarios."
+      },
+      "stages": [
+        {
+          "id": "setup",
+          "kind": "work",
+          "fan_out": 1,
+          "gate": "none",
+          "timeout_minutes": 120,
+          "effort": "medium",
+          "nudge": null,
+          "loops_to": null,
+          "max_loops": 0
+        },
+        {
+          "id": "e2e",
+          "kind": "test",
+          "fan_out": 1,
+          "gate": "all_pass",
+          "timeout_minutes": 120,
+          "effort": "medium",
+          "nudge": null,
+          "loops_to": "setup",
+          "max_loops": 1
+        },
+        {
+          "id": "report",
+          "kind": "report",
+          "fan_out": 1,
+          "gate": "none",
+          "timeout_minutes": 45,
+          "effort": "medium",
+          "nudge": "Write HTML plus screenshots under .archon/reports/ and list them in structured.reports.",
+          "loops_to": null,
+          "max_loops": 0
+        }
+      ]
+    },
+    {
+      "name": "errand",
+      "description": "Do a small job that changes no repository, answered in text or as a Lavish page; use ask for repository questions in text and a shipping pipeline for changes",
+      "source": "builtin",
+      "path": null,
+      "workspace": "scratch",
+      "requires_repo": false,
+      "nudges": {
+        "tier": "balanced",
+        "independent_reviewers": false,
+        "notes": "A small self-contained job: research, compare, summarize, check, draft or explain, answered in text or as an HTML page published in Lavish. No repository changes or outward side effects (pushes, PR or issue comments, merges, messages, purchases or paid API calls); those stay with the orchestrator. Use ask for a repository question answered in text, and direct or another shipping pipeline for any change."
+      },
+      "stages": [
+        {
+          "id": "errand",
+          "kind": "report",
+          "fan_out": 1,
+          "gate": "none",
+          "timeout_minutes": 45,
+          "effort": "medium",
+          "nudge": null,
+          "loops_to": null,
+          "max_loops": 0
+        }
+      ]
+    },
+    {
+      "name": "performance",
+      "description": "Measure and optimize a specific slow path with a measurable goal, verify the gain, review, then ship; use direct for ordinary changes, not speculative micro-optimization",
+      "source": "builtin",
+      "path": null,
+      "workspace": "worktree",
+      "requires_repo": true,
+      "nudges": {
+        "tier": "strong",
+        "independent_reviewers": true,
+        "notes": "For a specific slow path with a measurable goal, not speculative micro-optimization. Prefer direct for ordinary features and fixes without a performance target."
+      },
+      "stages": [
+        {
+          "id": "measure",
+          "kind": "work",
+          "fan_out": 1,
+          "gate": "none",
+          "timeout_minutes": 120,
+          "effort": "high",
+          "nudge": "Strong tier, high effort; establish a reproducible baseline and profile the actual hotspot.",
+          "loops_to": null,
+          "max_loops": 0
+        },
+        {
+          "id": "optimize",
+          "kind": "work",
+          "fan_out": 1,
+          "gate": "none",
+          "timeout_minutes": 180,
+          "effort": "high",
+          "nudge": "Strong tier, high effort; preserve behavior while changing only the measured hotspot.",
+          "loops_to": null,
+          "max_loops": 0
+        },
+        {
+          "id": "verify",
+          "kind": "test",
+          "fan_out": 1,
+          "gate": "all_pass",
+          "timeout_minutes": 120,
+          "effort": "high",
+          "nudge": "Strong tier, high effort; independently reproduce the measurements and run the full test suite.",
+          "loops_to": "optimize",
+          "max_loops": 3
+        },
+        {
+          "id": "review",
+          "kind": "review",
+          "fan_out": 1,
+          "gate": "all_pass",
+          "timeout_minutes": 90,
+          "effort": "medium",
+          "nudge": "Strong tier; a reviewer that discovers independently of the optimizer, on another provider where the allowlist permits.",
+          "loops_to": "optimize",
+          "max_loops": 2
+        }
+      ]
+    },
+    {
+      "name": "refactor",
+      "description": "Characterize, refactor structure without changing behaviour, verify, review, then ship; use direct for behaviour changes",
+      "source": "builtin",
+      "path": null,
+      "workspace": "worktree",
+      "requires_repo": true,
+      "nudges": {
+        "tier": "balanced",
+        "independent_reviewers": true,
+        "notes": "Structure-only change (rename, extract, split module, replace pattern), with behaviour-preservation checks. Not for changes that also alter behaviour: use direct."
+      },
+      "stages": [
+        {
+          "id": "baseline",
+          "kind": "work",
+          "fan_out": 1,
+          "gate": "none",
+          "timeout_minutes": 120,
+          "effort": "high",
+          "nudge": "The strong tier at high effort; characterize current behaviour before changing structure.",
+          "loops_to": null,
+          "max_loops": 0
+        },
+        {
+          "id": "refactor",
+          "kind": "work",
+          "fan_out": 1,
+          "gate": "none",
+          "timeout_minutes": 120,
+          "effort": "high",
+          "nudge": "The strong tier at high effort; keep changes small and behaviour intact.",
+          "loops_to": null,
+          "max_loops": 0
+        },
+        {
+          "id": "verify",
+          "kind": "test",
+          "fan_out": 1,
+          "gate": "all_pass",
+          "timeout_minutes": 90,
+          "effort": "high",
+          "nudge": "The balanced tier at high effort; independently check behaviour and public-surface preservation.",
+          "loops_to": "refactor",
+          "max_loops": 3
+        },
+        {
+          "id": "review",
+          "kind": "review",
+          "fan_out": 1,
+          "gate": "all_pass",
+          "timeout_minutes": 90,
+          "effort": "medium",
+          "nudge": "Prefer a strong-tier reviewer that discovers independently of the refactorer.",
+          "loops_to": "refactor",
+          "max_loops": 2
+        }
+      ]
+    },
+    {
+      "name": "release-journey",
+      "description": "Build the shipped artifact in a private stack and run the repository's product journeys with real engines; any journey that does not pass fails the run",
+      "source": "builtin",
+      "path": null,
+      "workspace": "worktree",
+      "requires_repo": true,
+      "nudges": {
+        "tier": "balanced",
+        "independent_reviewers": false,
+        "notes": "The product-journey gate for release preparation and user-facing changes. Needs .archon/journeys.toml in the repository. Runs every journey on an empty and a populated install with real engines; archond fails the run on any failed, skipped or missing journey run. Environment faults loop back to setup once."
+      },
+      "stages": [
+        {
+          "id": "setup",
+          "kind": "work",
+          "fan_out": 1,
+          "gate": "none",
+          "timeout_minutes": 120,
+          "effort": "medium",
+          "nudge": null,
+          "loops_to": null,
+          "max_loops": 0
+        },
+        {
+          "id": "journeys",
+          "kind": "test",
+          "fan_out": 1,
+          "gate": "all_pass",
+          "timeout_minutes": 180,
+          "effort": "medium",
+          "nudge": null,
+          "loops_to": "setup",
+          "max_loops": 1
+        },
+        {
+          "id": "report",
+          "kind": "report",
+          "fan_out": 1,
+          "gate": "none",
+          "timeout_minutes": 45,
+          "effort": "medium",
+          "nudge": "Write HTML plus screenshots under .archon/reports/ and list them in structured.reports.",
+          "loops_to": null,
+          "max_loops": 0
+        }
+      ]
+    },
+    {
+      "name": "review",
+      "description": "Review an existing pull request, a contributor's fork included, at its frozen head without changing or pushing anything",
+      "source": "builtin",
+      "path": null,
+      "workspace": "worktree",
+      "requires_repo": true,
+      "nudges": {
+        "tier": "balanced",
+        "independent_reviewers": true,
+        "notes": "Queue it `onto` the pull request (`onto: {pr: <n>}`), a fork's included: it pushes nothing. A pass records the head its reviewers passed; `request_merge` of this item then merges that pull request only while its head is still there. An item that `depends_on` it starts from that head and ships those commits unchanged beneath its own. The item's review level sets the reviewers: standard (one) by default, strict (three) for risky changes; none records no review and so allows no merge."
+      },
+      "stages": [
+        {
+          "id": "review",
+          "kind": "work",
+          "fan_out": 1,
+          "gate": "none",
+          "timeout_minutes": 90,
+          "effort": "medium",
+          "nudge": "The balanced tier at medium effort leads; the reviewers carry the depth. The lead chooses its reviewers' models and efforts within model policy; any other worker runs on the balanced tier at medium, at most 2 at once, unless `review.workers` names others.",
+          "loops_to": null,
+          "max_loops": 0,
+          "delegates_reviewers": true
+        }
+      ]
+    },
+    {
+      "name": "swarm",
+      "description": "A strong planner splits the change into 2 to 8 tasks, cheap workers build them in parallel, one lead integrates, has it reviewed and Archon ships it",
+      "source": "builtin",
+      "path": null,
+      "workspace": "worktree",
+      "requires_repo": true,
+      "nudges": {
+        "tier": "balanced",
+        "independent_reviewers": true,
+        "notes": "For a change that splits into 3 or more independent parts with disjoint files and interfaces a planner can state exactly: a strong planner writes the plan, one cheap worker per task builds it in parallel, and a strong lead integrates, re-dispatches failed tasks at most twice and owes the item's review. A change one author can make, or parts too coupled to split, belongs in direct or adaptive."
+      },
+      "stages": [
+        {
+          "id": "plan",
+          "kind": "work",
+          "fan_out": 1,
+          "gate": "none",
+          "timeout_minutes": 120,
+          "effort": "medium",
+          "nudge": "The strong tier at medium effort (the default): it researches the change and writes the plan the workers build from, no product code.",
+          "loops_to": null,
+          "max_loops": 0,
+          "tier": "strong"
+        },
+        {
+          "id": "build",
+          "kind": "team",
+          "fan_out": 8,
+          "gate": "none",
+          "timeout_minutes": 90,
+          "effort": "medium",
+          "nudge": "The fast tier at medium effort (the default): one worker per task of the plan, each in its own worktree and branch. List up to 8 choices to vary engines; tasks take them in turn.",
+          "loops_to": null,
+          "max_loops": 0,
+          "roles_from": "plan",
+          "tier": "fast"
+        },
+        {
+          "id": "integrate",
+          "kind": "work",
+          "fan_out": 1,
+          "gate": "none",
+          "timeout_minutes": 150,
+          "effort": "medium",
+          "nudge": "The strong tier at medium effort (the default): it checks the merged tasks, sends failed ones back to the workers at most twice, fixes the glue no task owns and owes the item's review.",
+          "loops_to": "build",
+          "max_loops": 2,
+          "tier": "strong",
+          "delegates_reviewers": true
+        }
+      ]
+    }
+  ],
+  "problems": []
+}

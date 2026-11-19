@@ -471,6 +471,52 @@ pub(crate) fn default_choice(
     Some(choice)
 }
 
+/// How a stage nothing names takes its effort from the choice it falls back
+/// to: that choice's (1.6.3), or under the effort rubric the stage's own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EffortFill {
+    /// The choice's effort: the pipeline tier's, a kept choice's, or the first stage's.
+    Nudged,
+    /// The stage's own effort within `cap`, the model policy's.
+    Sized { cap: Option<Effort> },
+}
+
+impl EffortFill {
+    /// The fill `[models] effort_sizing` asks for, within `policy`'s cap.
+    pub(crate) fn of(config: &Config, policy: &ModelPolicy) -> Self {
+        match config.models.effort_sizing() {
+            true => Self::Sized {
+                cap: policy.max_effort,
+            },
+            false => Self::Nudged,
+        }
+    }
+
+    /// `choice` as stage `stage`, which names none, runs it.
+    fn for_stage(
+        self,
+        choice: &ModelChoice,
+        stage: &archon_pipeline::spec::StageSpec,
+    ) -> ModelChoice {
+        let Self::Sized { cap } = self else {
+            return choice.clone();
+        };
+        let effort = cap.map_or(stage.effort, |cap| stage.effort.min(cap));
+        assert!(
+            effort <= stage.effort,
+            "a sized fill never thinks more than its stage asks"
+        );
+        assert!(
+            cap.is_none_or(|cap| effort <= cap),
+            "a sized fill stays within the cap"
+        );
+        ModelChoice {
+            effort,
+            ..choice.clone()
+        }
+    }
+}
+
 /// `plan` with each stage it leaves out that names a `tier` given the best
 /// permitted model up to that tier (and `max_tier`), at the stage's effort
 /// within the policy's cap. A stage whose tier resolves to nothing is left out.
@@ -519,7 +565,7 @@ pub(crate) fn fill_plan(
     (base, spec): (&PipelineSpec, &PipelineSpec),
     writer: &mut PlanWriter,
     (policy, max_tier): (&ModelPolicy, Tier),
-    fallback: Option<&ModelChoice>,
+    (fallback, fill): (Option<&ModelChoice>, EffortFill),
 ) -> Result<(), ArchonError> {
     let mut plan = writer.plan().clone();
     let learned = learned::default_plan(store, repo, spec, policy, max_tier)?;
@@ -532,18 +578,19 @@ pub(crate) fn fill_plan(
         plan.0.entry(stage).or_insert(choices);
     }
     writer.filled(plan, (PlanSource::Learned, PlanSource::Learned));
-    let fallen = fill_static_stages(base, spec, writer.plan().clone(), fallback)?;
+    let fallen = fill_static_stages(base, spec, writer.plan().clone(), (fallback, fill))?;
     writer.filled(fallen, (PlanSource::Fallback, PlanSource::Fallback));
     Ok(())
 }
 
 /// `plan` completed without learning: `fallback` for the pipeline's own
-/// stages, its first stage's first choice for those the knobs inserted.
+/// stages, its first stage's first choice for those the knobs inserted, each
+/// at the effort `fill` gives the stage.
 pub(crate) fn fill_static_stages(
     base: &PipelineSpec,
     spec: &PipelineSpec,
     mut plan: ModelPlan,
-    fallback: Option<&ModelChoice>,
+    (fallback, fill): (Option<&ModelChoice>, EffortFill),
 ) -> Result<ModelPlan, ArchonError> {
     for stage in base
         .file
@@ -552,7 +599,8 @@ pub(crate) fn fill_static_stages(
         .filter(|s| spec.stage(&s.id).is_some())
     {
         if let (None, Some(choice)) = (plan.choices_for(&stage.id), fallback) {
-            plan.0.insert(stage.id.clone(), vec![choice.clone()]);
+            plan.0
+                .insert(stage.id.clone(), vec![fill.for_stage(choice, stage)]);
         }
     }
     let Some(first) = base.file.stages.first() else {
@@ -563,7 +611,8 @@ pub(crate) fn fill_static_stages(
     };
     for stage in &spec.file.stages {
         if base.stage(&stage.id).is_none() && plan.choices_for(&stage.id).is_none() {
-            plan.0.insert(stage.id.clone(), vec![choice.clone()]);
+            plan.0
+                .insert(stage.id.clone(), vec![fill.for_stage(&choice, stage)]);
         }
     }
     Ok(plan)
@@ -703,11 +752,50 @@ mod tests {
         let mut writer = PlanWriter::new(&QueueItemId::new(), archon_core::now());
         writer.filled(plan.clone(), (PlanSource::Learned, PlanSource::Learned));
         let bounds = (&policy, Tier::Strong);
-        fill_plan(&store, None, (&base, &spec), &mut writer, bounds, None).unwrap();
+        let nudged = (None, EffortFill::Nudged);
+        fill_plan(&store, None, (&base, &spec), &mut writer, bounds, nudged).unwrap();
         let filled = writer.finish();
         assert_eq!(filled.choices_for("propose"), Some(&[choice.clone()][..]));
         assert_eq!(filled.choices_for("report"), Some(&[choice][..]));
         assert_eq!(filled.0.len(), plan.0.len() + 2);
+    }
+
+    /// Under the effort rubric a stage the knobs inserted borrows the first
+    /// stage's model at its own effort, within the policy's cap.
+    #[test]
+    fn a_sized_inserted_stage_takes_its_own_effort() {
+        let base = builtin("refactor");
+        let knobs = Autonomy {
+            proposal: ProposalMode::Lavish,
+            report: ReportMode::WithPr,
+            ..Autonomy::default()
+        };
+        let spec = augment(&base, &knobs).unwrap();
+        let choice = archon_core::model::ModelChoice {
+            model: "claude-code/claude-opus-5-5".parse().unwrap(),
+            effort: Effort::XHigh,
+            tier: None,
+        };
+        let mut plan = ModelPlan::default();
+        for stage in &base.file.stages {
+            plan.0.insert(stage.id.clone(), vec![choice.clone()]);
+        }
+        let inserted = |cap: Option<Effort>| {
+            let fill = EffortFill::Sized { cap };
+            let filled = fill_static_stages(&base, &spec, plan.clone(), (None, fill)).unwrap();
+            ["propose", "report"].map(|id| {
+                let held = &filled.choices_for(id).unwrap()[0];
+                assert_eq!(held.model, choice.model, "the first stage's model");
+                (held.effort, spec.stage(id).unwrap().effort)
+            })
+        };
+        for (effort, own) in inserted(None) {
+            assert_eq!(effort, own, "its own effort, not the first stage's");
+            assert!(effort < Effort::XHigh);
+        }
+        for (effort, own) in inserted(Some(Effort::Low)) {
+            assert_eq!(effort, own.min(Effort::Low), "within the cap");
+        }
     }
 
     /// An enqueue may leave the whole plan out: every stage gets the default.
@@ -719,7 +807,8 @@ mod tests {
             ..Autonomy::default()
         };
         let spec = augment(&base, &knobs).unwrap();
-        let config = Config::default();
+        let mut config = Config::default();
+        config.models.effort_sizing = Some(false);
         let (open, none) = (ModelPolicy::default(), ModelCatalog::default());
         let tiers = TierScope::new(&config, &open, &none);
         let default = default_choice(&config, tiers, Tier::Strong, &spec).unwrap();
@@ -743,7 +832,7 @@ mod tests {
             (&base, &spec),
             &mut writer,
             bounds,
-            Some(&default),
+            (Some(&default), EffortFill::of(&config, &policy)),
         )
         .unwrap();
         let filled = writer.finish();
@@ -754,6 +843,40 @@ mod tests {
             assert_eq!(filled.choices_for(stage), Some(&[default.clone()][..]));
         }
         assert_eq!(filled.0.len(), spec.file.stages.len());
+    }
+
+    /// Under the effort rubric a stage nothing names keeps the fallback's
+    /// model at its own effort, within the policy's cap; off, the tier's.
+    #[test]
+    fn a_sized_fallback_takes_each_stage_s_effort() {
+        let none = ModelCatalog::default();
+        let filled = |sizing: bool, policy: &ModelPolicy, pipeline: &str| {
+            let spec = builtin(pipeline);
+            let mut config = Config::default();
+            config.models.effort_sizing = Some(sizing);
+            let tiers = TierScope::new(&config, policy, &none);
+            let choice = default_choice(&config, tiers, Tier::Strong, &spec).unwrap();
+            let fill = EffortFill::of(&config, policy);
+            let plan =
+                fill_static_stages(&spec, &spec, ModelPlan::default(), (Some(&choice), fill));
+            let plan = plan.unwrap();
+            let effort = |stage: &str| plan.choices_for(stage).unwrap()[0].effort;
+            let models = plan.0.values().map(|c| c[0].model.clone());
+            assert!(models.into_iter().all(|m| m == choice.model), "one model");
+            spec.file
+                .stages
+                .iter()
+                .map(|s| effort(&s.id))
+                .collect::<Vec<_>>()
+        };
+        let open = ModelPolicy::default();
+        use Effort::{High, Low, Medium};
+        assert_eq!(filled(true, &open, "refactor"), [High, High, High, Medium]);
+        assert_eq!(filled(false, &open, "refactor"), [Medium; 4], "the tier's");
+        assert_eq!(filled(true, &open, "code-audit"), [Medium, High, Medium]);
+        assert_eq!(filled(false, &open, "code-audit"), [High; 3], "the tier's");
+        let capped = ModelPolicy::from_lists(&[], &[], Some(Low));
+        assert_eq!(filled(true, &capped, "refactor"), [Low; 4], "the cap");
     }
 
     #[test]

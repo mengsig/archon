@@ -141,6 +141,12 @@ fn all_other_event_types_have_human_labels() {
             "policy violation: agt_test (model) — cancelled".into(),
         ),
         (
+            json!({"type": "quota_pace", "provider": "codex", "window": "7d", "window_minutes": 10080,
+                   "used_percent": 78, "elapsed_percent": 30, "resets_at": "2026-11-26T00:00:00Z",
+                   "empty_at": null, "short": true, "note": "choose"}),
+            "quota pace: codex 7d 78% used at 30% elapsed".into(),
+        ),
+        (
             json!({"type": "news_digest", "dropped": {"budget": 2, "item_finished": 3}, "note": "see list_queue"}),
             "news digest: 5 older events omitted".into(),
         ),

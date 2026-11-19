@@ -219,6 +219,15 @@ pub enum TriggerEvent {
     DirectivesRestated {
         reason: String,
     },
+    /// A provider's quota window is projected to run out before it resets;
+    /// told once per window. The orchestrator chooses what runs.
+    QuotaPace {
+        provider: String,
+        #[serde(flatten)]
+        pace: archon_core::quota::pace::WindowPace,
+        /// What the orchestrator may do about it.
+        note: String,
+    },
     /// A watched repository's open pull requests changed (A18). News only:
     /// `operator` is always false, and `trust` says why.
     GithubWatch {
@@ -296,6 +305,7 @@ impl TriggerEvent {
             Self::DirectivesRestated { .. } => "directives_restated",
             Self::PrChecks { .. } => "pr_checks",
             Self::GithubWatch { .. } => "github_watch",
+            Self::QuotaPace { .. } => "quota_pace",
         }
     }
 
@@ -327,6 +337,7 @@ impl TriggerEvent {
             | Self::Mirror { .. }
             | Self::PrChecks { .. }
             | Self::GithubWatch { .. }
+            | Self::QuotaPace { .. }
             | Self::DirectivesRestated { .. } => false,
         }
     }

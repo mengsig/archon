@@ -176,11 +176,10 @@ struct Admission {
 async fn admit(ctx: &DaemonContext) -> Result<Admission, ArchonError> {
     let caps = resolve::caps(ctx).await;
     let envs = snapshot::Envs::prefetch(ctx, ReadOn::Writer).await?;
-    if envs.weighted(&ctx.config)
-        && let Err(error) = crate::quota::refresh(ctx).await
-    {
+    if let Err(error) = crate::quota::refresh(ctx).await {
         tracing::warn!(%error, "provider quota refresh failed; using the last reading");
     }
+    crate::quota::warn_short(ctx).await?;
     ctx.host.check(ctx.config.limits.host_limits());
     let mut table = ctx.runs.lock().await;
     let snapshot = snapshot::build(ctx, ReadOn::Writer, &table, caps.clone(), envs).await?;

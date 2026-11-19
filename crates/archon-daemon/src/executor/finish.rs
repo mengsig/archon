@@ -15,6 +15,7 @@ use archon_core::run::{PipelineRun, RunState, StageOutcome, StageRun, StageState
 use archon_queue::Store;
 use chrono::TimeDelta;
 
+use super::failure_class::{self, FailureClass};
 use super::repair::{self, Decision, Repair};
 use super::{Cleanup, FollowUp, ItemBuild, RunTable, Teardown, clip, frozen};
 use crate::context::DaemonContext;
@@ -28,6 +29,8 @@ const MAX_NOTICE_CHARS: usize = 2_000;
 /// An `item_finished` summary is clipped to this. A batch holds at most
 /// `compact::MAX_BATCH_EVENTS` news events, besides pinned ones.
 const MAX_FINISHED_CHARS: usize = 4_000;
+/// A failure's advice line, appended after that clip.
+const MAX_ADVICE_CHARS: usize = 400;
 /// Longest a routine success waits for the rest of the work in flight before
 /// it wakes the orchestrator; the feed shows the outcome at once.
 const MAX_SUCCESS_DEFER: TimeDelta = TimeDelta::minutes(5);
@@ -434,17 +437,20 @@ pub(super) async fn announce(
     } else {
         outcome_text(item)
     };
-    let notice = if matches!(item.state, QueueState::Failed { .. }) {
-        let stages = match run {
-            Some(run) => match ctx.store.lock().await.stage_runs(&run.id) {
+    let stages = match run {
+        Some(run) if !matches!(item.state, QueueState::Succeeded { .. }) => {
+            match ctx.store.lock().await.stage_runs(&run.id) {
                 Err(error) if !error.is_store() => {
                     tracing::warn!(run = %run.id, %error, "stage rows unreadable; notice without them");
                     Vec::new()
                 }
                 other => other?,
-            },
-            None => Vec::new(),
-        };
+            }
+        }
+        _ => Vec::new(),
+    };
+    let advice = failure_advice(item, run, &stages);
+    let notice = if matches!(item.state, QueueState::Failed { .. }) {
         failure_notice(item, run, &stages)
     } else {
         let clipped = clip(&summary, MAX_NOTICE_CHARS);
@@ -477,7 +483,7 @@ pub(super) async fn announce(
         item: item.id.clone(),
         title: item.title.clone(),
         state: item.state.kind().to_owned(),
-        summary: finished_summary(&summary, item),
+        summary: with_advice(finished_summary(&summary, item), advice.as_deref()),
         pr_url,
         cost_usd,
         origin: item.origin.clone(),
@@ -556,6 +562,89 @@ fn wakes_orchestrator(item: &QueueItem, wake_on_success: bool) -> bool {
     failed || (succeeded && wake_on_success) || item.origin.is_some() || item.wants_notice()
 }
 
+/// The stage `run` failed on, or `startup`, with the error the run recorded,
+/// and the stage run of its last attempt that holds the cause, if any.
+fn failing_stage<'a>(
+    run: Option<&'a PipelineRun>,
+    stages: &'a [StageRun],
+) -> (&'a str, Option<&'a str>, Option<&'a StageRun>) {
+    let (stage, fallback) = match run.map(|r| &r.state) {
+        Some(RunState::Failed { stage_id, error }) => (stage_id.as_str(), Some(error.as_str())),
+        _ => ("startup", None),
+    };
+    let attempt = stages
+        .iter()
+        .filter(|s| s.stage_id == stage)
+        .map(|s| s.attempt)
+        .max();
+    let mut slots = BTreeSet::new();
+    let last: Vec<&StageRun> = stages
+        .iter()
+        .rev()
+        .filter(|s| s.stage_id == stage && Some(s.attempt) == attempt)
+        // Infrastructure retries replace a slot within the same attempt.
+        .filter(|s| slots.insert(s.fan_index))
+        .collect();
+    // A slot that says why it failed explains the stage better than a cancelled one.
+    let failed = last
+        .iter()
+        .find(|s| stage_cause(s).is_some())
+        .or_else(|| last.iter().find(|s| failure_class::of_stage(s).is_some()))
+        .copied();
+    assert!(
+        failed.is_none_or(|s| s.stage_id == stage),
+        "the cause is the failing stage's"
+    );
+    (stage, fallback, failed)
+}
+
+/// What a stage run that failed says of why, as its notice words it.
+fn stage_cause(stage: &StageRun) -> Option<&str> {
+    match &stage.state {
+        StageState::Failed { error } => Some(error.as_str()),
+        StageState::TimedOut => Some("The stage timed out."),
+        StageState::Completed if stage.verdict == Some(Verdict::Fail) => stage
+            .structured
+            .as_ref()
+            .and_then(|v| v.get("findings"))
+            .and_then(|v| v.as_array())
+            .and_then(|v| v.first())
+            .and_then(|v| v.get("title"))
+            .and_then(|v| v.as_str())
+            .or(stage.summary.as_deref()),
+        _ => None,
+    }
+}
+
+/// The failure class of a finished `item` and its suggested next attempt,
+/// read from its failing stage (A12); `None` for an item that did not fail.
+fn failure_advice(
+    item: &QueueItem,
+    run: Option<&PipelineRun>,
+    stages: &[StageRun],
+) -> Option<String> {
+    let error = match &item.state {
+        QueueState::Failed { error, .. } => error.as_str(),
+        QueueState::Cancelled { .. } => {
+            return Some(failure_class::advice(FailureClass::External, None));
+        }
+        _ => return None,
+    };
+    let (_, fallback, failed) = failing_stage(run, stages);
+    let line = match failed {
+        Some(stage) => {
+            let class = failure_class::of_stage(stage).expect("a failing stage has a class");
+            failure_class::advice(class, Some(&stage.choice))
+        }
+        None => failure_class::advice(failure_class::of_error(fallback.unwrap_or(error)), None),
+    };
+    assert!(
+        line.starts_with("Failure class:"),
+        "the advice says its class"
+    );
+    Some(line)
+}
+
 /// Keep the notification small; the queue, stages and orchestrator retain the
 /// full error. Read the failing member instead of the engine's nested report.
 fn failure_notice(item: &QueueItem, run: Option<&PipelineRun>, stages: &[StageRun]) -> String {
@@ -565,37 +654,11 @@ fn failure_notice(item: &QueueItem, run: Option<&PipelineRun>, stages: &[StageRu
             item.title, item.id
         );
     };
-    let (stage, fallback) = match run.map(|r| &r.state) {
-        Some(RunState::Failed { stage_id, error }) => (stage_id.as_str(), error.as_str()),
-        _ => ("startup", error.as_str()),
-    };
-    let attempt = stages
-        .iter()
-        .filter(|s| s.stage_id == stage)
-        .map(|s| s.attempt)
-        .max();
-    let mut slots = BTreeSet::new();
-    let cause = stages
-        .iter()
-        .rev()
-        .filter(|s| s.stage_id == stage && Some(s.attempt) == attempt)
-        // Infrastructure retries replace a slot within the same attempt.
-        .filter(|s| slots.insert(s.fan_index))
-        .find_map(|s| match &s.state {
-            StageState::Failed { error } => Some(error.as_str()),
-            StageState::TimedOut => Some("The stage timed out."),
-            StageState::Completed if s.verdict == Some(Verdict::Fail) => s
-                .structured
-                .as_ref()
-                .and_then(|v| v.get("findings"))
-                .and_then(|v| v.as_array())
-                .and_then(|v| v.first())
-                .and_then(|v| v.get("title"))
-                .and_then(|v| v.as_str())
-                .or(s.summary.as_deref()),
-            _ => None,
-        })
-        .unwrap_or(fallback);
+    let (stage, fallback, failed) = failing_stage(run, stages);
+    let cause = failed
+        .and_then(stage_cause)
+        .or(fallback)
+        .unwrap_or(error.as_str());
     let title = item.title.split_whitespace().collect::<Vec<_>>().join(" ");
     let cause = notice_sentence(cause);
     let punctuation = if cause.ends_with(['.', '!', '?', '…']) {
@@ -687,6 +750,18 @@ pub(super) fn finished_summary(text: &str, item: &QueueItem) -> String {
         Some(hint) => format!("{kept} [clipped: {total} chars in full; {hint}]"),
         None => format!("{kept} [clipped: {total} chars in full]"),
     }
+}
+
+/// The orchestrator's `summary` with a failure's class and suggested next
+/// step on a line of its own, kept whatever clipping `summary` had.
+fn with_advice(summary: String, advice: Option<&str>) -> String {
+    let Some(advice) = advice else {
+        return summary;
+    };
+    assert!(!advice.contains('\n'), "the advice is one line");
+    let line = clip(advice, MAX_ADVICE_CHARS);
+    assert!(!line.is_empty(), "advice says something");
+    format!("{summary}\n{line}")
 }
 
 /// Where a finished run's stages tell the whole story. A cancelled item's

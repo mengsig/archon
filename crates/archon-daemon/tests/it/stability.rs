@@ -152,6 +152,10 @@ async fn a_stage_that_lost_its_workspace_fails_with_workspace_missing() {
         1,
         "no infrastructure retry in a missing workspace"
     );
+    assert!(
+        stages[0].infrastructure_failure,
+        "the agent's infrastructure flag outlives the workspace's blame"
+    );
 }
 
 /// The next stages of a run whose worktree went are never sent to Aether:
@@ -180,6 +184,10 @@ async fn a_stage_is_not_spawned_into_a_missing_workspace() {
             panic!("the review fails: {review:?}");
         };
         assert_eq!(error, &missing);
+        assert!(
+            review.aether_agent.is_none() && review.infrastructure_failure,
+            "a workspace gone before any agent ran is the machine's: {review:?}"
+        );
     }
     assert_eq!(h.backend.created(), created, "no agent was created");
 }

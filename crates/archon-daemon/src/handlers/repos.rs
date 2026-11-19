@@ -182,6 +182,7 @@ pub(super) async fn remove(ctx: &DaemonContext, reference: &RepoRef) -> Result<R
     let repo = store.repo(reference)?;
     store.remove_repo(&repo.id)?;
     repo_identity::forget(&mut store, &repo.id)?;
+    crate::github_sync::watch::forget(&mut store, &repo.id)?;
     // Every pass forgets the mirrors of unregistered repositories.
     ctx.mirrors.request_repo(&repo.id);
     tracing::info!(repo = %repo.name, "repository removed");

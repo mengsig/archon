@@ -124,10 +124,11 @@ async fn after_an_upgrade_that_changes_the_prompt_status_says_so_until_a_restart
         assert_eq!(freshness.prompt_outdated, Some(true));
         assert!(!freshness.tools_outdated, "the tool set is this build's");
         let line = info.describe_freshness();
+        let owed = "generation 1, created by 0.0.1; upgrade refresh (prompt) delayed: it waits \
+                    until the orchestrator is idle with no news due";
         assert_eq!(
-            line,
-            "generation 1, created by 0.0.1; prompt outdated since upgrade; run `archon \
-             orchestrator restart`"
+            line, owed,
+            "Archon refreshes it: no bare \"prompt outdated\""
         );
     }
 

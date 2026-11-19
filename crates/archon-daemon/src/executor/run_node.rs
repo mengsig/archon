@@ -1058,6 +1058,7 @@ mod tests {
 
     fn settled_stage(stage: &str, agent: &str, finished: Timestamp) -> StageRun {
         StageRun {
+            only_reviews: None,
             id: archon_core::id::StageRunId::new(),
             run: PipelineRunId::new(),
             stage_id: stage.to_owned(),
@@ -1077,6 +1078,7 @@ mod tests {
             aether_task: None,
             state: archon_core::run::StageState::Completed,
             verdict: None,
+            verdict_note: None,
             summary: None,
             structured: None,
             cost_usd: 0.0,

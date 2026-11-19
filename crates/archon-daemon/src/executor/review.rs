@@ -943,7 +943,7 @@ fn moved_off(reviewed: Option<&OntoPullRequest>, head: &str) -> Option<String> {
     (reviewed.head_sha != head).then(|| {
         format!(
             "this item reviews {} at {}, but its branch is at {head}: a review item commits \
-             nothing, so reset the branch to {} and review that commit",
+             nothing, so reset the branch to {} or queue a new review item at {head}",
             reviewed.pr.url(),
             reviewed.head_sha,
             reviewed.head_sha
@@ -1060,6 +1060,7 @@ mod tests {
     /// Attempt `n` of `run`'s `build` stage, run by `agent_id`.
     fn attempt(run: &PipelineRunId, n: u32, agent_id: &str) -> StageRun {
         StageRun {
+            only_reviews: None,
             id: archon_core::id::StageRunId::new(),
             run: run.clone(),
             stage_id: "build".into(),
@@ -1079,6 +1080,7 @@ mod tests {
             aether_task: None,
             state: archon_core::run::StageState::Running,
             verdict: None,
+            verdict_note: None,
             summary: None,
             structured: None,
             cost_usd: 0.0,

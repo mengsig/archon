@@ -260,10 +260,8 @@ directory. Switch it off with `[update] check_on_launch = false`, or for one
 shell with `ARCHON_NO_UPDATE_CHECK=1`. Nothing is asked off a terminal.
 
 `archon status`, `archon doctor` and the orchestrator's `queue_status` say
-when the running orchestrator is behind: for example "generation 7, created
-by 1.2.3; 3 new lessons; prompt outdated since upgrade; run `archon
-orchestrator restart`". Nothing restarts it by itself: that restart catches
-it up.
+when the running orchestrator is behind: for example `generation 7, created
+by 1.2.3; prompt outdated; 3 new lessons`. A restart catches it up.
 
 Or let archond do all of it without interrupting work:
 

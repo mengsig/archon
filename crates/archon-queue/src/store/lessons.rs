@@ -12,7 +12,7 @@ use archon_core::id::{LessonId, RepoId};
 use archon_core::lesson::{Lesson, LessonPatch, LessonQuery, LessonSource, LessonState};
 pub(super) use holdout::lift as holdout_lift;
 use rusqlite::{Connection, OptionalExtension, params};
-pub(super) use scoring::score_run;
+pub(super) use scoring::{rescore_failed_runs, score_run};
 
 const MAX_SCOPE_LESSONS: usize = 100;
 

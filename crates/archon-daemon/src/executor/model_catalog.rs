@@ -385,6 +385,7 @@ mod tests {
             ),
             reports_requirements: false,
             record_repair: archon_core::run::RecordRepair::Open,
+            only_reviews: false,
         };
         repair_stage(&mut spawn, &before, &after);
         let expected: ModelRef = "p/new".parse().unwrap();
@@ -416,6 +417,7 @@ mod tests {
             workers: None,
             reports_requirements: false,
             record_repair: archon_core::run::RecordRepair::Open,
+            only_reviews: false,
         }
     }
 

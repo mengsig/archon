@@ -341,6 +341,85 @@ never edits it implicitly.**
   per interval (default 5 min, minimum 60 s), and backs off on rate-limit
   headers. It never writes to GitHub. PR observation for linked items is no
   longer cut off at 14 days; it stops once the PR is merged or closed.
+- **Repository watches (A18):** `watch_repo` has the same sync watch the open
+  pull requests of a registered repository with a github.com `origin`, as
+  that registration's login, at least 5 minutes apart. A watch is news only
+  and eventually consistent.
+  - *Walk.* Each pass lists the open pull requests newest first, 100 a page
+    and at most 10 pages, each page a `GET` conditional on its own ETag, and
+    builds a snapshot: number → head, `updated_at`, requested reviewers,
+    comment count and review count. A pull request that is new, or whose
+    `updated_at` moved, costs two more `GET`s for its counts. A page that
+    answers 304 keeps its stored rows. A walk of 304s is a completed walk
+    that writes its time and nothing else: no row, page or trigger. A 304 to
+    a page asked without an ETag fails the walk.
+  - *Diff.* A completed walk is compared with the stored snapshot and raises
+    at most one `github_watch` trigger (`operator: false`) naming the
+    differences: `new_pull_request`, `seen_pull_request`, `new_head`,
+    `review_requested`, `new_comment` or `new_review`. A pull request has
+    one change: its `change` is the first of those that applies and its
+    `also` names every other one that does, since the walk stores the row
+    whole and no later walk would tell them. The trigger tells the first 20
+    in full (title, author, URL) and names every other one in `rest`, change
+    kind → pull request numbers, a number under each of its kinds, so each
+    difference of a stored walk is in its one trigger. News compaction keeps
+    that trigger whole, however old or crowded, and a walk's news joins its
+    repository's watch news still held, so held watch news stays one bounded
+    event per repository however long delivery waits. Its `rest` and the
+    reviewers of its 20 full changes name at most 10,000 numbers and logins
+    together, the earliest held; past that it is `truncated`, with a note to
+    list the repository's open pull requests. A login or team slug is kept
+    as read when it is a plain name of at most 39 bytes, and otherwise as its
+    plain prefix and a digest within that, and a URL over 300 bytes is
+    dropped, so the count cap bounds the event's bytes, well under half a
+    batch. A trigger batch is keyed from
+    at most 1 MiB of held events (Aether refuses a payload over 2 MiB, and a
+    refused batch is dropped), so a larger backlog goes out in several
+    batches, in order. The first completed walk,
+    and the first after the record's format changed, is stored silently. A
+    stored record of the current format that no write would make is refused
+    as corrupt where it is read, by the pass and the tool; removing the
+    watch clears it.
+  - *Budget.* Watches take at most half of a pass's 50 `GET`s. A walk the
+    budget or a backoff cuts short stores nothing; it goes first five
+    minutes later, and the sync keeps in memory what it had counted. Counts
+    read before the cut are kept even if their pull request moved again, so
+    every resumption gets further: the walk stores the head and reviewers
+    it listed with those counts, tells every difference of that row, marks
+    the counts to be read again, and
+    drops the page's ETag, so the next walk is sent the page, counts the
+    pull request again and tells a comment or review made since. A stored
+    walk count with no room for one more fails the walk as corrupt rather
+    than overflowing. A restarted archond has forgotten when each
+    watch was asked, so it asks none in its first five minutes.
+  - *Page shifts.* A pull request missing from one completed walk keeps its
+    row, and is closed only when the next completed walk (one of 304s too)
+    misses it as well; listed again after that, it is first seen. One seen
+    for the first time is `new_pull_request` when it was created after the
+    previous completed walk began and `seen_pull_request` otherwise, told
+    once either way. So a shift can delay news by an interval, or tell a pull
+    request once as seen, and never loses news across two completed walks.
+  - *Authority.* Only the operator and the orchestrator set or remove a
+    watch; `watch_repo` is refused through GitHub-borne authority, and its
+    `remove` stops a watch whatever the repository's `origin` now is. Removing
+    the repository drops its watch whoever removes it: a GitHub operator's
+    confirmed `repo remove` of the thread's own repository, which predates
+    watches, does so too, as the stated consequence of the removal.
+  - *Accepted limits.* A `GET` in flight when a watch or registration is
+    removed finishes, and its result is discarded under the store lock. An
+    `origin` changed between the walk's last look at it and the write is
+    stored under the old name, and the next pass starts over. GitHub dates
+    to the second, so activity later in the second its counts were read in is
+    told with the pull request's next change. A page shift delays news by one
+    interval. A list of exactly k × 100 pull requests costs one more
+    conditional `GET`. A comment deleted and another made between two walks
+    cancel out, and a review the login itself began counts when started.
+    Open pull requests past the newest 1,000 (10 pages) are not watched, and
+    `repo_watches` marks a watch whose list fills those pages `truncated`
+    (at exactly 1,000 none is left out). A cut walk goes before the
+    other due watches, so it can delay them by the passes it needs: one for
+    about every 12 pull requests it has left to count, and for as long as a
+    repository keeps more than that moving every five minutes.
 - **Import (D2):** `import_issue{ref}` (operator change) creates an item
   whose brief is the issue body marked as untrusted. Its idempotency key is
   derived as `github:<host>/<owner>/<repo>#<number>`. A second import returns the

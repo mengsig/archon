@@ -263,7 +263,17 @@ async fn create_agent_on_a_disk_archon_cannot_see_fails_the_stage_after_five_tri
         "{:?}",
         stage.state
     );
+    assert!(
+        stage.infrastructure_failure,
+        "the machine failed, not the model"
+    );
     assert!(matches!(h.state(&item.id).await, QueueState::Failed { .. }));
+    let outcome = h.ctx.store.lock().await.outcome(&stage.run).unwrap();
+    let failure = outcome.expect("captured at finish").failure;
+    assert_eq!(
+        failure,
+        Some(archon_core::outcome::FailureClass::Infrastructure)
+    );
     let blockers = h.notices(NotificationKind::Blocker).await;
     assert_eq!(blockers.len(), 2, "{blockers:?}");
     assert!(blockers[1].contains("Aether's"), "{}", blockers[1]);
@@ -552,7 +562,7 @@ async fn low_disk_during_a_quiet_disk_full_hold_is_announced_once() {
 }
 
 #[tokio::test]
-async fn an_internal_aether_error_is_retried_under_the_same_key_then_refused() {
+async fn an_internal_aether_error_is_retried_under_the_same_key_then_fails_as_infrastructure() {
     let h = Harness::new().await;
     for _ in 0..4 {
         h.backend
@@ -568,15 +578,54 @@ async fn an_internal_aether_error_is_retried_under_the_same_key_then_refused() {
         h.backend
             .fail_next(ArchonError::Aether("internal: lock poisoned".into()));
     }
-    let refused = h.enqueue("aether keeps failing").await;
+    let gave_up = h.enqueue("aether keeps failing").await;
     for _ in 0..5 {
         h.dispatch().await;
     }
-    let stage = h.stages(&refused.id).await.remove(0);
+    let stage = h.stages(&gave_up.id).await.remove(0);
+    let opening = StageOutcome::SPAWN_KEPT_FAILING;
     assert!(
-        matches!(&stage.state, StageState::Failed { error } if error.contains("kept failing")),
+        matches!(&stage.state, StageState::Failed { error } if error.starts_with(opening)),
         "{:?}",
         stage.state
+    );
+    assert!(stage.aether_agent.is_none(), "no agent was created");
+    assert!(
+        stage.infrastructure_failure,
+        "Aether failed, not the model: the outcome store reads this flag"
+    );
+}
+
+/// The spawn that kept failing is Aether's failure wherever it is told: the
+/// workspace going meanwhile changes the words, never the flag the outcome reads.
+#[tokio::test]
+async fn a_spawn_that_kept_failing_stays_infrastructure_when_its_workspace_went() {
+    let h = Harness::new().await;
+    for _ in 0..5 {
+        h.backend
+            .fail_next(ArchonError::Aether("internal: lock poisoned".into()));
+    }
+    let item = h.enqueue("aether fails and the worktree goes").await;
+    h.dispatch().await;
+    let tree = h.run(&item.id).await.workspace;
+    std::fs::remove_dir_all(&tree).unwrap();
+    for _ in 0..5 {
+        h.dispatch().await;
+    }
+
+    let stages = h.stages(&item.id).await;
+    let [stage] = &stages[..] else {
+        panic!("no retry in a missing workspace: {stages:?}");
+    };
+    let StageState::Failed { error } = &stage.state else {
+        panic!("the spawn gave up: {:?}", stage.state);
+    };
+    assert!(error.starts_with("workspace missing:"), "{error}");
+    assert!(error.contains(StageOutcome::SPAWN_KEPT_FAILING), "{error}");
+    assert!(stage.aether_agent.is_none(), "no agent was created");
+    assert!(
+        stage.infrastructure_failure,
+        "Aether failed, not the model, whatever became of the workspace"
     );
 }
 

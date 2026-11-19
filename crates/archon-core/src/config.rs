@@ -329,6 +329,9 @@ pub struct OrchestratorConfig {
     /// Stage `info` messages ride with the next wake, at most
     /// [`QUIET_INFO_MAX_WAIT_MINUTES`] late, instead of waking it.
     pub quiet_info: bool,
+    /// After an upgrade that changed the orchestrator's prompt or tools,
+    /// start a fresh generation at its next idle moment.
+    pub refresh_on_upgrade: bool,
 }
 
 /// The smallest `compaction_tokens` Aether accepts.
@@ -387,6 +390,7 @@ impl Default for OrchestratorConfig {
             compaction_tokens: DEFAULT_COMPACTION_TOKENS,
             idle_compact_after_minutes: 50,
             quiet_info: true,
+            refresh_on_upgrade: true,
         }
     }
 }
@@ -1443,6 +1447,7 @@ mod tests {
         assert_eq!(config.orchestrator.compaction_tokens, 160_000);
         assert_eq!(config.orchestrator.idle_compact_after_minutes, 50);
         assert!(config.orchestrator.quiet_info);
+        assert!(config.orchestrator.refresh_on_upgrade);
     }
 
     #[test]

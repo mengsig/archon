@@ -167,6 +167,7 @@ fn linked_status() -> archon_core::protocol::DaemonStatus {
         started_at: archon_core::now(),
         aether,
         orchestrator: None,
+        orchestrator_refresh_delayed: None,
         caps: Caps::default(),
         pause: PauseState::default(),
         running_agents: 0,

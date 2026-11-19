@@ -172,6 +172,7 @@ pub fn settle_run(
 
 pub fn stage(run: &PipelineRun, fan_index: u32) -> StageRun {
     StageRun {
+        only_reviews: None,
         id: StageRunId::new(),
         run: run.id.clone(),
         stage_id: "implement".into(),
@@ -187,6 +188,7 @@ pub fn stage(run: &PipelineRun, fan_index: u32) -> StageRun {
         aether_task: None,
         state: StageState::Spawning,
         verdict: None,
+        verdict_note: None,
         summary: None,
         structured: None,
         cost_usd: 0.0,

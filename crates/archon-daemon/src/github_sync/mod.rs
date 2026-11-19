@@ -7,6 +7,10 @@
 mod fetch;
 pub mod import;
 mod pr_state;
+pub mod watch;
+pub(crate) mod watch_fold;
+mod watch_pass;
+mod watch_read;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -14,11 +18,13 @@ use std::time::Duration;
 
 use archon_core::error::ArchonError;
 use archon_core::github::GithubRepo;
+use archon_core::id::RepoId;
 use archon_core::protocol::{GithubKind, GithubObjectState, GithubRef};
 use archon_core::repo::{GH_HOST, Repo};
 use archon_queue::store::{CachedObject, SyncTarget};
 use tokio::time::Instant;
 
+pub use self::watch_pass::WatchPass;
 use crate::context::DaemonContext;
 
 /// How often one object is asked about, at most (ARCHITECTURE §f).
@@ -56,6 +62,8 @@ pub struct Pass {
     /// whose read failed, which keep what was cached.
     pub pr_states: usize,
     pub pr_states_failed: usize,
+    /// The repository watches' reads, within `requested`.
+    pub watch: WatchPass,
 }
 
 type Key = (String, String, u64);
@@ -71,6 +79,10 @@ pub struct GithubSync {
     interval: Duration,
     asked: HashMap<Key, Instant>,
     paused_until: Option<Instant>,
+    /// When each repository watch was last asked about, and a cut walk's progress.
+    watch_asked: HashMap<RepoId, watch_pass::Asked>,
+    /// When this sync began: a watch it has not asked yet waits the floor from here.
+    started: Instant,
     /// The registered repositories whose `origin` the last pass could not read.
     unreadable: Vec<String>,
 }
@@ -82,6 +94,8 @@ impl GithubSync {
             interval,
             asked: HashMap::new(),
             paused_until: None,
+            watch_asked: HashMap::new(),
+            started: Instant::now(),
             unreadable: Vec::new(),
         }
     }
@@ -123,7 +137,11 @@ impl GithubSync {
         }
         let targets = watched_targets(ctx).await?;
         let registry = registered(ctx).await?;
-        self.note_unreadable(registry.unreadable);
+        self.note_unreadable(registry.unreadable.clone());
+        self.read_watches(ctx, &registry, &mut pass).await?;
+        if pass.backoff.is_some() {
+            return Ok(pass);
+        }
         for target in self.due_in_order(targets, now) {
             let Some(repo) = registry
                 .by_origin
@@ -148,7 +166,8 @@ impl GithubSync {
         }
         assert!(pass.requested <= MAX_REQUESTS_PER_PASS, "bounded per pass");
         assert!(
-            pass.changed + pass.unchanged + pass.missing + pass.failed == pass.requested,
+            pass.changed + pass.unchanged + pass.missing + pass.failed + pass.watch.requested
+                == pass.requested,
             "each request has one outcome"
         );
         Ok(pass)
@@ -306,6 +325,10 @@ async fn read_pr_state(
 #[derive(Debug, Default)]
 pub(crate) struct Registry {
     pub by_origin: HashMap<String, Repo>,
+    /// Every repository with a github.com `origin`, by id, with that `owner/name`.
+    pub by_id: HashMap<RepoId, (String, Repo)>,
+    /// Every registered repository.
+    pub ids: HashSet<RepoId>,
     pub unreadable: Vec<String>,
 }
 
@@ -317,13 +340,14 @@ pub(crate) async fn registered(ctx: &DaemonContext) -> Result<Registry, ArchonEr
     let registry = tokio::task::spawn_blocking(move || {
         let mut registry = Registry::default();
         for repo in repos {
+            registry.ids.insert(repo.id.clone());
             match crate::worktree::stack::origin_url(&repo.path) {
                 Ok(origin) => {
                     if let Some(github) = origin.as_deref().and_then(GithubRepo::from_remote_url) {
-                        registry
-                            .by_origin
-                            .entry(github.as_str().to_owned())
-                            .or_insert(repo);
+                        let name = github.as_str().to_owned();
+                        let by_id = (name.clone(), repo.clone());
+                        registry.by_id.insert(repo.id.clone(), by_id);
+                        registry.by_origin.entry(name).or_insert(repo);
                     }
                 }
                 Err(error) => registry.unreadable.push(format!(
@@ -338,9 +362,10 @@ pub(crate) async fn registered(ctx: &DaemonContext) -> Result<Registry, ArchonEr
     .await
     .map_err(|e| ArchonError::io("reading repository origins", std::io::Error::other(e)))?;
     assert!(
-        registry.by_origin.len() + registry.unreadable.len() <= count,
+        registry.by_id.len() + registry.unreadable.len() <= count,
         "each repository counted once"
     );
+    assert_eq!(registry.ids.len(), count, "repository ids are unique");
     debug_assert!(
         registry
             .by_origin

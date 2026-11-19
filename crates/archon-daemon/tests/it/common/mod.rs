@@ -1328,7 +1328,8 @@ impl FakeBackend {
         let known = state.knows(parent) || state.delegated.iter().any(|d| d.agent == *parent);
         assert!(known, "only a created agent delegates: {parent}");
         let n = state.delegated.len() + 1;
-        let agent = AetherAgentId::parse(&format!("agt_child{n:04}")).expect("agent id");
+        // As Aether names an agent: `agt_` and the 26 characters of a ULID.
+        let agent = AetherAgentId::parse(&format!("agt_{n:026}")).expect("agent id");
         let task = AetherTaskId::parse(&format!("tsk_child{n:04}")).expect("task id");
         state.delegated.push(Descendant {
             agent: agent.clone(),

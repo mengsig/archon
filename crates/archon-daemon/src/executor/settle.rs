@@ -389,13 +389,15 @@ pub(super) async fn settle_locked(
         !matches!(outcome, StageOutcome::Completed { .. }),
         "completed outcomes must use unlocked verification"
     );
-    let (stage, run, all, outcome) = {
+    let (stage, run, all, outcome, flagged) = {
         let store = ctx.store.lock().await;
         let stage = store.stage_run(id)?;
         let run = store.run(&stage.run)?;
         let all = store.stage_runs(&run.id)?;
+        let flagged = matches!(outcome, StageOutcome::Failed { infra: true, .. });
+        let lost = stage.aether_agent.is_none() && lost_before_spawn(&run, &outcome);
         let outcome = blame_missing_workspace(&store, &stage, &run, outcome)?;
-        (stage, run, all, outcome)
+        (stage, run, all, outcome, flagged || lost)
     };
     if stage.state.is_terminal() {
         return Ok(FollowUp::default());
@@ -403,6 +405,7 @@ pub(super) async fn settle_locked(
     if let Some(follow) = infra_retry(ctx, table, &stage, &run, &all, &outcome, false).await? {
         return Ok(follow);
     }
+    let outcome = recorded(outcome, flagged);
     // Cancellation also polls settlement deep inside a request's follow-up chain.
     Box::pin(persist(ctx, table, stage, run, &all, outcome)).await
 }
@@ -431,14 +434,38 @@ fn blame_missing_workspace(
         return Ok(outcome);
     }
     let error = format!(
-        "{} {}; the engine said: {error}",
+        "{} {}{}{error}",
         spawn::WORKSPACE_MISSING,
-        workspace.display()
+        workspace.display(),
+        StageOutcome::ENGINE_SAID,
     );
     Ok(StageOutcome::Failed {
         error,
         infra: false,
     })
+}
+
+/// Whether a stage run's workspace was gone before its agent was created:
+/// the spawn's own refusal of it, or any failure once the run's tree is gone.
+/// A worker tree never made because preparing it was refused is not.
+fn lost_before_spawn(run: &PipelineRun, outcome: &StageOutcome) -> bool {
+    assert!(run.workspace.is_absolute(), "run workspaces are absolute");
+    let StageOutcome::Failed { error, .. } = outcome else {
+        return false;
+    };
+    error.starts_with(spawn::WORKSPACE_MISSING) || !run.workspace.is_dir()
+}
+
+/// `outcome` as it is recorded, after the retry decision read it: a failure
+/// the machine caused (`flagged`) stays so though its workspace went.
+fn recorded(outcome: StageOutcome, flagged: bool) -> StageOutcome {
+    match outcome {
+        StageOutcome::Failed { error, infra } => StageOutcome::Failed {
+            error,
+            infra: infra || flagged,
+        },
+        other => other,
+    }
 }
 
 /// Record a final outcome and apply the driver's resulting decision.
@@ -520,7 +547,13 @@ pub(super) fn settled_stage(
             summary,
             structured,
         } => {
-            stage.verdict = Some(Verdict::extract(&summary, structured.as_ref()));
+            // A review-only lead's review record states its verdict when its result states none.
+            let (verdict, note) = match stage.only_reviews {
+                Some(true) => Verdict::read_review_lead(&summary, structured.as_ref()),
+                _ => Verdict::read(&summary, structured.as_ref()),
+            };
+            stage.verdict = Some(verdict);
+            stage.verdict_note = note;
             stage.summary = Some(summary);
             stage.structured = structured;
             StageState::Completed
@@ -1010,7 +1043,8 @@ pub(super) async fn replace_refused_model(
             descendant_stops: vec![stage.id.clone()],
             ..FollowUp::default()
         }),
-        Ok(None) => spawn::fail_stage_and_run(ctx, table, stage, error).await,
+        // The model was refused, not the machine: no infrastructure failure.
+        Ok(None) => spawn::fail_stage_and_run(ctx, table, stage, error, false).await,
         Err(ArchonError::Unavailable(why)) => {
             let subject = format!("stage:{}", stage.id);
             let what = format!(

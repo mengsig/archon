@@ -52,6 +52,10 @@ pub(super) async fn status(ctx: &DaemonContext, query: StatusQuery) -> Result<Re
         pid: std::process::id(),
         started_at: ctx.started_at,
         aether: link_status(ctx),
+        orchestrator_refresh_delayed: match &aether.orchestrator {
+            Some(info) if info.freshness.is_some() => None,
+            _ => supervisor::unrecorded_refresh_delay(ctx).await?,
+        },
         orchestrator: aether.orchestrator,
         caps,
         pause: snapshot.pause,

@@ -456,3 +456,170 @@ async fn evidence_and_outcomes_count_codex_estimates_when_budgets_do_not() {
     assert_eq!((outcome.cost_usd, outcome.count_estimates), (0.75, true));
     assert_eq!(store.spend_for_item(&item.id, false).unwrap(), 0.0);
 }
+
+/// The report's pipeline lines cover its range and its pipeline filter, while
+/// learning keeps every run.
+#[tokio::test]
+async fn pipeline_lines_cover_the_report_s_range_and_pipeline() {
+    use archon_core::cost::DayBound;
+    let h = Harness::new().await;
+    let item = h.enqueue("a run in range").await;
+    h.dispatch().await;
+    h.settle_running(|_| completed("Applied supplied fix"))
+        .await;
+    h.dispatch().await;
+    h.settle_running(|_| completed("VERDICT: PASS")).await;
+    let cancel = Request::CancelItem {
+        item: item.id.clone(),
+        reason: Some("settle it in range".into()),
+    };
+    h.cli(cancel).await.unwrap();
+    assert!(h.state(&item.id).await.is_terminal());
+    retired_run(&h, &item).await;
+    let lines = |pipeline: Option<&str>, since: Option<DayBound>| {
+        let query = ModelEvidenceQuery {
+            pipeline: pipeline.map(Into::into),
+            since,
+            ..Default::default()
+        };
+        let h = &h;
+        async move {
+            let Reply::ModelEvidence(report) = h.cli(Request::ModelEvidence(query)).await.unwrap()
+            else {
+                panic!("evidence reply");
+            };
+            let names: Vec<String> = report
+                .pipelines
+                .iter()
+                .map(|l| l.pipeline.clone())
+                .collect();
+            names
+        }
+    };
+    assert_eq!(
+        lines(None, None).await,
+        [PIPELINE],
+        "no line without a run in range"
+    );
+    assert_eq!(
+        lines(None, Some(DayBound::Days(90))).await,
+        ["retired", PIPELINE]
+    );
+    let retired = lines(Some("retired"), Some(DayBound::Days(90))).await;
+    assert_eq!(retired, ["retired"], "the pipeline filter");
+    assert!(lines(Some("retired"), None).await.is_empty());
+    let stats = h.ctx.store.lock().await.learning_stats(None).unwrap();
+    assert_eq!(stats.pipelines.len(), 2, "learning keeps the lifetime");
+}
+
+/// Records a run of `like`'s item under the pipeline `retired`, finished 60
+/// days ago, with its outcome.
+async fn retired_run(h: &Harness, like: &archon_core::queue::QueueItem) {
+    use archon_core::queue::QueueState;
+    use archon_core::run::{PipelineRun, RunState};
+    let finished = archon_core::now() - chrono::Duration::days(60);
+    let mut store = h.ctx.store.lock().await;
+    let mut item = store.item(&like.id).unwrap();
+    item.id = archon_core::id::QueueItemId::new();
+    item.model_plan = item.model_plan.copy_for(&like.id, &item.id, None);
+    item.pipeline = "retired".into();
+    item.state = QueueState::Queued;
+    let item = store.insert_item(&item, None).unwrap();
+    store
+        .transition_item(&item.id, QueueState::Dispatching, finished)
+        .unwrap();
+    let template = store.runs_for_item(&like.id).unwrap().remove(0);
+    let run = PipelineRun {
+        id: archon_core::id::PipelineRunId::new(),
+        item: item.id.clone(),
+        pipeline: "retired".into(),
+        state: RunState::Running {
+            stage_id: "implement".into(),
+            attempt: 1,
+        },
+        started_at: finished - chrono::Duration::minutes(5),
+        finished_at: None,
+        ..template
+    };
+    store.insert_run(&run).unwrap();
+    let running = QueueState::Running {
+        run: run.id.clone(),
+    };
+    store.transition_item(&item.id, running, finished).unwrap();
+    let summary = "done".to_owned();
+    let done = PipelineRun {
+        state: RunState::Succeeded {
+            summary: summary.clone(),
+        },
+        finished_at: Some(finished),
+        ..run
+    };
+    let next = QueueState::Succeeded {
+        run: done.id.clone(),
+        summary,
+    };
+    store.finish_run(&done, next, finished).unwrap();
+    store
+        .capture_outcome(&store.run(&done.id).unwrap(), None, true)
+        .unwrap();
+    assert!(
+        store.outcome(&done.id).unwrap().is_some(),
+        "an outcome 60 days old"
+    );
+}
+
+/// A review-only run's lead records a fail with `complete_task`: the stage
+/// completes, the run and item fail, nothing ships, and evidence scores it.
+#[tokio::test]
+async fn a_review_only_lead_s_recorded_fail_fails_the_item_and_counts_as_a_verdict() {
+    use archon_core::model::{Effort, ModelPlan};
+    use archon_core::queue::QueueState;
+    use common::{MODEL, choice};
+    let h = Harness::new().await;
+    h.add_pipeline(
+        "review-only",
+        r#"[pipeline]
+name = "review-only"
+description = "review a change, ship nothing"
+version = 1
+workspace = "worktree"
+requires_repo = true
+[pipeline.review]
+level = "standard"
+stage = "review"
+[[stage]]
+id = "review"
+kind = "work"
+prompt = "implement.md"
+allow_delegation = true
+"#,
+    );
+    let plan = ModelPlan([("review".into(), vec![choice(MODEL, Effort::Low)])].into());
+    let item = h
+        .enqueue_in("review-only", "review it", plan)
+        .await
+        .unwrap();
+    h.dispatch().await;
+    let fail = archon_core::run::StageOutcome::Completed {
+        summary: "Reviewed.\nVERDICT: FAIL".into(),
+        structured: Some(serde_json::json!({
+            "verdict": "fail",
+            "findings": [{"severity": "high", "blocking": true, "title": "t", "detail": "d"}],
+        })),
+    };
+    assert_eq!(h.settle_running(|_| fail.clone()).await.len(), 1);
+    let lead = h.stages(&item.id).await.remove(0);
+    assert_eq!(lead.state, StageState::Completed);
+    assert_eq!(
+        (lead.verdict, lead.only_reviews),
+        (Some(Verdict::Fail), Some(true))
+    );
+    let QueueState::Failed { error, .. } = h.item(&item.id).await.state else {
+        panic!("a recorded fail fails the item");
+    };
+    assert!(error.contains("FAIL"), "{error}");
+    assert_eq!(h.stages(&item.id).await.len(), 1, "nothing ran after it");
+    let report = evidence(&h).await;
+    let row = report.rows.iter().find(|r| r.stage == "review").unwrap();
+    assert_eq!((row.completed, row.passed, row.verdicts), (1, 0, 1));
+}

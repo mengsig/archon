@@ -1,0 +1,976 @@
+[
+ {
+  "stage_run": "stg_01M6RPD3W6SV4RFDGKMN4ZSB29",
+  "model": "codex/gpt-6-astra",
+  "stored_verdict": "unknown",
+  "summary": "Product NOT READY. Independently drove unchanged packaged desktop 1.3.0 at Aether a995c38369c4a731dadc07d5227fece4f40bff24 and Archon 8feab04942fc476904262519da243554bdf9d9c5; verified all four build artifact hashes. Real Haiku and Luna lessons ran sequentially with allow_api=false, answered eight/four diagnostic questions including deliberate errors, reached teaching and extracted graph data. First visible content: Haiku 19.758 s; Luna 24.141 s, complete chunks rather than measured streamed tokens.\nScenario table: J1 First launch PASS; J2 Settings/providers/models FAIL; J3 Haiku lesson FAIL; J4 Luna lesson FAIL; J5 Persistence FAIL; J6 Billing truth FAIL; J7 Basic regression/all navigation PASS.\nSeven product findings: text model fields without readiness choices; missing answer grades; prober transcript replacement and historical question loss after reopening; stale open graph after extraction; Luna extraction yielded three nodes but no links; no per-lesson subscription attribution (generic dollar estimates do not prove API charges); no incremental streaming observed. Saved sessions/plans/open questions/graph/settings/usage survived restart exactly, and Luna continued to 1/2 plan steps done. Normal Haiku chat and all top-level screens worked. No journey renderer errors, failed requests, unhandled exceptions or daemon errors/panics. Retained original preload TypeError and setup plain-launch control supporting the CDP-timing exception.\nResults: .archon/reports/e2e/results.json; detailed findings.json and REPORT.txt; 47 steps, 86 screenshots, console/daemon logs and timing captures. Published directory e2e-validation-results for this item. Environment had no blocking problems; documented CDP/headless-Sway deviations and locator mistakes. Product source and branch unchanged. All 28 recorded process identities stopped, no build slot held; shutdown preceded the operator's run-lean amendment and no further processes will start. Only the report stage remains.\nVERDICT: PASS",
+  "structured": {
+   "all_started_processes_stopped": true,
+   "environment_blockers": [],
+   "findings": [
+    {
+     "detail": "J2 Settings, providers and models. Product at fault; environment was operational. Steps: 1. Open Sessions. 2. Click Settings. 3. Inspect Teaching model and Light model. Expected: Model dropdowns showing ready subscription models and unready API choices. Actual: Two free-text fields; no readiness list or resolved-model display. Wire readiness is correct. Command used for the failing observation: node .archon/reports/e2e/drive.mjs j2-learn-settings (click Settings; capture dialog). Relevant captured output: textbox \"Teaching model\": claude-code/claude-haiku-5-5; textbox \"Light model\": claude-code/claude-haiku-5-5 Suspected area: Packaged Learn settings renderer/model picker. Evidence: .archon/reports/e2e/assets/j2-learn-settings.txt:110.",
+     "path": ".archon/reports/e2e/assets/j2-learn-settings.txt:110",
+     "severity": "high",
+     "title": "J2: Learn model selectors are textboxes without model readiness"
+    },
+    {
+     "detail": "J3 Haiku and J4 Luna Learn lessons. Product at fault; environment was operational. Steps: 1. Start either lesson. 2. Submit a deliberately wrong answer. 3. Finish probing and inspect answered cards; also expand a teaching answer after restart. Expected: Visible answer result/grade, including the wrong answer, after processing completes. Actual: Every diagnostic card shows a result placeholder even after handoff; an expanded Luna teaching card does the same. Misconceptions are separately visible in My understanding; teacher prose later acknowledges a correct answer. Command used for the failing observation: node .archon/reports/e2e/drive.mjs j3-wrong-graded < .archon/reports/e2e/assets/j3-wrong-graded.action.js. Relevant captured output: paragraph: Answered. The result shows here once Noesis records it. Suspected area: Learn question result rendering / persisted grading-event mapping. Evidence: .archon/reports/e2e/assets/j3-wrong-graded.txt:74.",
+     "path": ".archon/reports/e2e/assets/j3-wrong-graded.txt:74",
+     "severity": "high",
+     "title": "J3/J4: Answered cards never show the recorded answer or grade"
+    },
+    {
+     "detail": "J3 Haiku, J4 Luna and J5 Persistence. Product at fault; environment was operational. Steps: 1. Finish diagnostic answers. 2. Enter plan/teaching. 3. Quit desktop and both daemons. 4. Restart and reopen both lessons. Expected: Full learner/teacher transcript, questions, answers and results remain available across phase changes and restart. Actual: Handoff removes prior prober teacher messages and inserts internal assessment JSON as You. Restart/reopen removes all eight Haiku and four Luna diagnostic question cards. Current teaching transcript, plan and open question survive. No claim of database deletion is made. Command used for the failing observation: node .archon/reports/e2e/drive.mjs j5-haiku-persisted < .archon/reports/e2e/assets/j5-haiku-persisted.action.js. Relevant captured output: Conversation begins \"You: Learning goal: How binary search works The Prober's assessment: { ... }\"; only the current Choose question remains. Before: eight diagnostic article cards plus the teaching card. Suspected area: Learn session transcript hydration / prober-to-teacher handoff. Evidence: .archon/reports/e2e/assets/j5-haiku-persisted.txt:68.",
+     "path": ".archon/reports/e2e/assets/j5-haiku-persisted.txt:68",
+     "severity": "high",
+     "title": "J3/J4/J5: Prober transcript replaced and historical questions disappear on reopening"
+    },
+    {
+     "detail": "J3 Haiku graph extraction. Product at fault; environment was operational. Steps: 1. In Haiku teaching click Add to knowledge graph. 2. Open Knowledge before extraction completes. 3. Observe completion through public noesis_graph and wait another 15 seconds. Expected: Open graph refreshes to show completed nodes and links, as queued status promises. Actual: Wire had five nodes and one chain at 15:15:34 UTC, but open UI stayed empty. A later normal navigation visit showed the stored graph without another extraction. Command used for the failing observation: node .archon/reports/e2e/drive.mjs j3-graph-complete < .archon/reports/e2e/assets/j3-graph-complete.action.js. Relevant captured output: locator.waitFor: Timeout 15000ms exceeded; region \"The graph is empty\" remained visible. noesis_graph returned nodes[5], chains[1]. Suspected area: Knowledge view refresh / extraction completion event handling. Evidence: .archon/reports/e2e/assets/j3-graph-complete.txt:74.",
+     "path": ".archon/reports/e2e/assets/j3-graph-complete.txt:74",
+     "severity": "medium",
+     "title": "J3: Open graph stays empty after successful extraction"
+    },
+    {
+     "detail": "J4 Luna graph extraction. Product at fault; environment was operational. Steps: 1. Reach Luna teaching after four diagnostic answers. 2. Click Add to knowledge graph. 3. Inspect completed graph filtered to this session. Expected: Luna lesson graph contains nodes and links, as required by the journey. Actual: Three nodes and zero chains. Combined UI has links only from the earlier Haiku session. Cause is unproven: this is a failed link-coverage acceptance check for this lesson, not proof that all Luna extraction is broken. Command used for the failing observation: python3 .archon/reports/e2e/probe.py j4-graph-wire '{\"cmd\":\"noesis_graph\",\"session\":\"ns_01M6RPXPERHN2M4FZNCVJKT1G1\"}'. Relevant captured output: \"nodes\": [three propositions], \"chains\": [], \"clusters\": [one Luna cluster] Suspected area: Noesis extraction output / chain generation for this lesson. Evidence: .archon/reports/e2e/logs/j4-graph-wire.json:113.",
+     "path": ".archon/reports/e2e/logs/j4-graph-wire.json:113",
+     "severity": "medium",
+     "title": "J4: Luna extraction produced nodes but no links"
+    },
+    {
+     "detail": "J6 Billing truth. Product at fault; environment was operational. Steps: 1. Run both subscription lessons with Allow API-billed models off. 2. Inspect lesson pages and Learn settings spend. Expected: Per-lesson usage explicitly identified as subscription, distinct from API dollar charges. Actual: No lesson-specific subscription usage label. Aggregate Spent today shows $0.02 teaching and $0.01 background, with generic text saying subscription use counts at its estimated price. Wire model billing is subscription. These figures do not prove actual API spending. Command used for the failing observation: node .archon/reports/e2e/drive.mjs j6-subscription-display < .archon/reports/e2e/assets/j6-subscription-display.action.js. Relevant captured output: heading \"Spent today\"; $0.02 of $5.00; $0.01 of $1.00; \"Subscription use counts at its estimated price.\" Suspected area: Learn usage/billing presentation. Evidence: .archon/reports/e2e/assets/j6-subscription-display.txt:90.",
+     "path": ".archon/reports/e2e/assets/j6-subscription-display.txt:90",
+     "severity": "medium",
+     "title": "J6: Lessons lack explicit subscription usage attribution"
+    },
+    {
+     "detail": "J3 Haiku and J4 Luna streaming. Product at fault; environment was operational. Steps: 1. Observe main DOM mutations immediately before Start session. 2. Start each engine lesson. 3. Compare successive visible text updates. Expected: Lesson text streams incrementally while the engine generates it. Actual: Haiku introduction/question first appeared together at 19.758 s; Luna first question appeared complete at 24.141 s. No incremental first-token stream was observed. Timings are first visible content, not true streamed-token latency. Command used for the failing observation: node .archon/reports/e2e/drive.mjs j4-observe </dev/null (MutationObserver installed by j4-start). Relevant captured output: DOM observations: 0.928 s user learning goal only; 24.141 s complete question/options. Haiku: 10.649 s user goal; 19.758 s complete introduction/question. Suspected area: Subscription engine delta delivery / Learn streaming presentation. Evidence: .archon/reports/e2e/assets/j4-observe.timing.json:22.",
+     "path": ".archon/reports/e2e/assets/j4-observe.timing.json:22",
+     "severity": "medium",
+     "title": "J3/J4: Content appears in complete chunks rather than incremental streaming"
+    }
+   ],
+   "product_verdict": "NOT READY",
+   "published_artifact": "e2e-validation-results",
+   "report_path": ".archon/reports/e2e/REPORT.txt",
+   "repository_unchanged": true,
+   "results_path": ".archon/reports/e2e/results.json",
+   "scenario_statuses": {
+    "J1": "pass",
+    "J2": "fail",
+    "J3": "fail",
+    "J4": "fail",
+    "J5": "fail",
+    "J6": "fail",
+    "J7": "pass"
+   },
+   "timings": {
+    "haiku_first_visible_content_seconds": 19.758,
+    "incremental_streaming_observed": false,
+    "luna_first_visible_content_seconds": 24.141
+   },
+   "verdict": "pass"
+  }
+ },
+ {
+  "stage_run": "stg_01M6S9P1TP1DMJ1BDEBEYYS61E",
+  "model": "codex/gpt-6-astra",
+  "stored_verdict": "unknown",
+  "summary": "Published **[ux-audit]( /home/operator/.local/share/archon/artifacts/qi_01M6RZ7CNBZMVC38EHVXMW7GD8/ux-audit/README.md)**: 54 product findings (**32 high, 22 medium**), 628 screenshots, and coverage of all 20 registered routes.\n\n**The product is not release-ready.** The test-stage verdict is **PASS** because the repaired environment produced trustworthy results. All owned processes are stopped; product code and branch remain unchanged.\n\n[Full findings](/home/operator/.local/share/archon/artifacts/qi_01M6RZ7CNBVC38EHVXMW7GD8/ux-audit/FINDINGS.md) include concrete fixes and the ten changes most likely to improve the experience. Interactive reauthentication, other operating systems, remote/mobile delivery, and full screen-reader testing remain unverified.",
+  "structured": {
+   "artifact": {
+    "full_findings": "ux-audit/FINDINGS.json",
+    "item": "qi_01M6RZ7CNBZMVC38EHVXMW7GD8",
+    "name": "ux-audit",
+    "results": "ux-audit/results.json",
+    "structured_result": "ux-audit/stage-result.json"
+   },
+   "findings": [
+    {
+     "detail": "Launch via the prepared start.sh and inspect with `node .archon/reports/e2e/drive.mjs`. Expected an actionable welcome/setup flow; renderer output is 'Pick a screen'. Fresh launch also leaves Archon MCP unregistered. Product fault.",
+     "path": ".archon/reports/e2e/screenshots/j01-01-first-launch.png",
+     "severity": "high",
+     "title": "J01 — First launch and settings lack a usable setup path"
+    },
+    {
+     "detail": "Using `node .archon/reports/e2e/drive.mjs`, send a follow-up from Steer twice. Expected continued conversation; both attempts report 'agent agt_01M6S521A6YA8PYAD2TJKR8SC3 is completed'. Product fault.",
+     "path": ".archon/reports/e2e/screenshots/j02-26-steer-completed-retry.png",
+     "severity": "high",
+     "title": "J02 — Completed agents reject conversational follow-up"
+    },
+    {
+     "detail": "Using `node .archon/reports/e2e/drive.mjs`, select two offered owners and submit. Expected valid assignment; both are rejected as already owning a task. The error recommends creating without an owner, while the form requires one. Product fault.",
+     "path": ".archon/reports/e2e/screenshots/j03-77-existing-task-retry.png",
+     "severity": "high",
+     "title": "J03 — Existing-agent task creation offers ineligible owners"
+    },
+    {
+     "detail": "Using `node .archon/reports/e2e/drive.mjs`, create and filter repository memory, then retry. Expected saved/filterable memory; output includes 'BridgeRefusal: memories: /query/scope/scope must be equal to constant'. Product fault.",
+     "path": ".archon/reports/e2e/screenshots/j04-30-memory-connection-state.png",
+     "severity": "high",
+     "title": "J04 — Repository memory requests fail through the desktop bridge"
+    },
+    {
+     "detail": "Using `node .archon/reports/e2e/drive.mjs`, submit Message Archon twice. Expected delivery; both attempts report 'BridgeRefusal: say is not open to the desktop app’s requests'. Product fault.",
+     "path": ".archon/reports/e2e/screenshots/j05-27-message-retry-failed.png",
+     "severity": "high",
+     "title": "J05 — Message Archon cannot send"
+    },
+    {
+     "detail": "Using `node .archon/reports/e2e/drive.mjs`, answer questions and reject a gate, including retries. Expected decisions to apply; output reports 'BridgeRefusal: answer is not open to the desktop app’s requests'. Product fault.",
+     "path": ".archon/reports/e2e/screenshots/j06-37-gate-reject-retry.png",
+     "severity": "high",
+     "title": "J06 — Archon questions and gate decisions cannot be answered"
+    },
+    {
+     "detail": "Using `node .archon/reports/e2e/drive.mjs`, click 'Open on GitHub' twice. Expected an external browser destination; the renderer remains unchanged with no window, navigation or feedback. Product fault.",
+     "path": ".archon/reports/e2e/screenshots/j07-05-github-open-retry.png",
+     "severity": "high",
+     "title": "J07 — Open on GitHub does nothing"
+    },
+    {
+     "detail": "Using `node .archon/reports/e2e/drive.mjs`, answer lesson/practice questions and reveal results. Expected grades and solutions; cards remain at 'Answered. The result shows here once Noesis records it.' Restart also loses question cards. Product fault.",
+     "path": ".archon/reports/e2e/screenshots/j08-31-recall-reveal-empty.png",
+     "severity": "high",
+     "title": "J08 — Learning answers never reveal their recorded results"
+    },
+    {
+     "detail": "Using `node .archon/reports/e2e/drive.mjs`, submit Aether and Archon pairing forms and retry. Expected pairing instructions; output is 'Pairing failed' and 'Unexpected end of JSON input'. Product fault.",
+     "path": ".archon/reports/e2e/screenshots/j09-07-pair-aether-retry.png",
+     "severity": "high",
+     "title": "J09 — Desktop pairing fails with a JSON parsing error"
+    },
+    {
+     "detail": "Using `node .archon/reports/e2e/drive.mjs`, open Start by keyboard and close with Escape twice. Expected focus on the invoking button; document.activeElement becomes BODY and the next Tab returns to Skip to content. Product fault.",
+     "path": ".archon/reports/e2e/screenshots/j10-17-focus-after-close-retry.png",
+     "severity": "high",
+     "title": "J10 — Closing the Start sheet loses keyboard focus"
+    }
+   ],
+   "findings_scope": "Representative failure per journey below; all 54 detailed findings are published.",
+   "product_findings": {
+    "high": 32,
+    "medium": 22,
+    "total": 54
+   },
+   "release_ready": false,
+   "summary": "Audited the unchanged packaged Linux app with real Haiku/Luna journeys, 628 screenshots, 20 registered routes and 101 source candidates. Repaired two harness gaps: seed.py omitted archon setup, and headless native input needed persistent virtual devices. Private setup plus restart loaded 40 Archon tools and the artifact retry passed. Fresh packaged onboarding independently reproduces missing MCP registration, recorded as HIGH UX-043. No unresolved environment blocker. All owned processes stopped; git clean and package/source hashes unchanged. Results: .archon/reports/e2e/results.json. Unverified boundaries are documented in the published report.\nScenario table: id | title | status\nJ01 | First launch and settings | fail\nJ02 | Haiku conversation | fail\nJ03 | Luna, controls and delegation | fail\nJ04 | Inbox, activity and memory | fail\nJ05 | Archon queue and history | fail\nJ06 | DAG, pipeline, initiatives and gates | fail\nJ07 | GitHub and learning from work | fail\nJ08 | Learn and knowledge graph | fail\nJ09 | Remote, pairing and native windows | fail\nJ10 | Accessibility, themes and recovery | fail\nVERDICT: PASS",
+   "verdict": "pass"
+  }
+ },
+ {
+  "stage_run": "stg_01M6Z0E1MK7EMXNQ5HHRBRSJT5",
+  "model": "codex/gpt-6-astra",
+  "stored_verdict": "unknown",
+  "summary": "NOT READY product; completed the independent e2e test stage with trustworthy corrected-environment results.\nHeads: Aether 0993a3832d6e67ad9aa88133057b9179f3cbcb99; Archon 1.5.0 b5f38dbab3be516fb6804caff840a6b7a1d5f19f; Archon 1.4.12 611aaa8b4994697e291c0765746b97c5a8d09d7e.\nJourney table: J1 First launch PASS; J2 Settings/models PASS; J3 Haiku Learn FAIL; J4 Luna Learn FAIL; J5 Learn from work PASS; J6 Budget/practice FAIL; J7 Persistence PASS; J8 Billing/token headers FAIL; J9 Archon 1.5 PASS; J10 1.4.12 compatibility PASS; J11 Native PASS; J12 Live restarts PASS; J13 Memory PASS; J14 Regression PASS; J15 Performance PASS.\nFive product findings: Haiku prober rejects plan-node tags; both teachers return a generic fallback requiring another reply; Luna practice attempts forbidden graph writes; chat headers omit available token usage; Sessions cards overlap the practice picker at 1440px. Corrected writable engine homes and secure private mount parents resolved the readonly/MCP environment failures; earlier runs are separately marked environment-tainted. No remaining environment blocker.\nWriting/first content: Haiku 0.316/4.251s, Luna 0.210/21.802s. Final external Aether/Archon stops 2.710/0.100s; desktop-managed stop 2.979s. Zero renderer errors/pageerrors, zero daemon ERROR/panic lines, zero slow Noesis reads. All 38 enforced performance rows pass; 18 local rows reported without enforcement.\nResults: .archon/reports/e2e/results.json; current-state HTML .archon/reports/e2e/index.html; text report and full-width screenshot archive alongside. Published evidence as validation-final-2-e2e. Packaged flows used Playwright CDP because the package disables Electron inspector attachment; native focus tested on X11, Wayland activation unverified. Every owned process stopped, sockets removed, slot free, tracked tree unchanged. Built app retained at /var/tmp/validate-final-2/desktop/aether-desktop.\nVERDICT: PASS",
+  "structured": {
+   "cleanup_complete": true,
+   "findings": [
+    {
+     "detail": "Packaged UI: start Haiku lesson, answer goal. Public aether events at 02:53:30.781, 02:53:37.804 and 02:53:46.117 UTC contain tool_result is_error=true: \"probe questions are not tagged with a plan node\". Reproduced with writable CLAUDE_CONFIG_DIR and the secure private mount root. Expected: A valid diagnostic question appears without tool refusals. Actual: Three refusals before recovery; learner sees the teacher explain the question did not go through. Fault: product. Screenshot: .archon/reports/e2e/assets/j03d-probe-result.png",
+     "path": ".archon/reports/e2e/assets/j03d-prober-tag-errors.jsonl:1",
+     "severity": "high",
+     "title": "J3 Learn on Haiku: prober rejects its plan-node tags"
+    },
+    {
+     "detail": "Packaged UI: Haiku plan Go -> \"Let's try that differently. Send any reply to carry on.\" Public assistant events: Haiku 03:06:34.490883556Z; Luna 03:13:18.355975175Z and 03:14:09.133479126Z. Luna remained at 1/2 steps instead of teaching the requested formula and diagram. Expected: Deliver the next lesson activity and progress without a manual nudge. Actual: Generic fallback replaces the next activity. Haiku recovered after Continue; Luna returned the same fallback after Continue. Fault: product. Screenshot: .archon/reports/e2e/assets/j04d-final-light.png",
+     "path": ".archon/reports/e2e/assets/teacher-fallback-errors.jsonl:1",
+     "severity": "high",
+     "title": "J3/J4 Learn teaching loses the next activity and asks for another reply"
+    },
+    {
+     "detail": "Packaged UI: send \"32 because eight groups of four contain thirty-two objects.\" Durable aetherd log at 03:20:36.190700Z: WARN aether_daemon::noesis::teaching: a Noesis teaching turn failed ... error.message=a practice session never writes to the graph. Further occurrences 03:22:29 and 03:23:11. Budget stall and Try again themselves passed. Expected: Grade and proceed without a Noesis turn failure. Actual: Answer is solved, but the teaching worker fails on a forbidden graph write; later corrected turns reproduce it. Fault: product. Screenshot: .archon/reports/e2e/assets/j06d-practice-current.png",
+     "path": ".archon/reports/e2e/assets/j06d-practice-errors.log:1",
+     "severity": "medium",
+     "title": "J6 Practice attempts a forbidden graph write and fails its turn"
+    },
+    {
+     "detail": "Packaged UI snapshot j14d-followup-result.txt lines 107, 115 and 138: \"claude-code/claude-haiku-5-5 · Usage not reported\". The same snapshot shows \"40k tokens\" in the agent summary. Public agent.usage_updated events for agt_01M6Z3AZ0XQDN0K23PB2TPR3JG contain nonzero turn_usage; see j08-secure-chat-usage.jsonl. Expected: Real token figures in each message header. Actual: Headers display Usage not reported while agent totals and turn usage are nonzero. Fault: product. Screenshot: .archon/reports/e2e/assets/j14d-followup-result.png",
+     "path": ".archon/reports/e2e/assets/j14d-followup-result.txt:107",
+     "severity": "medium",
+     "title": "J8 Chat message headers omit available token usage"
+    },
+    {
+     "detail": "Playwright action getByRole(\"radio\", {name:/Practise what I know/}).check() timed out because a session/recent-goal element intercepted pointer events. Full 1440×1000 renderer screenshot shows overlapping columns. This layout finding does not depend on engine credentials; at 1600px the later click succeeded. Expected: Session list and recent goals remain inside their columns; radio clickable. Actual: Cards extend over the form and intercept pointer input. Keyboard selection was needed. Fault: product. Screenshot: .archon/reports/e2e/assets/j06-practise-overlap.png",
+     "path": ".archon/reports/e2e/assets/j06-practise-overlap.png",
+     "severity": "medium",
+     "title": "J6 Sessions cards overlap the practice picker at 1440px"
+    }
+   ],
+   "heads": {
+    "aether": "0993a3832d6e67ad9aa88133057b9179f3cbcb99",
+    "archon_1412": "611aaa8b4994697e291c0765746b97c5a8d09d7e",
+    "archon_150": "b5f38dbab3be516fb6804caff840a6b7a1d5f19f"
+   },
+   "product_readiness": "NOT READY",
+   "published_artifact": "validation-final-2-e2e",
+   "report": ".archon/reports/e2e/index.html",
+   "results": ".archon/reports/e2e/results.json",
+   "scenarios": [
+    {
+     "id": "J1",
+     "status": "pass",
+     "title": "First launch"
+    },
+    {
+     "id": "J2",
+     "status": "pass",
+     "title": "Settings and models"
+    },
+    {
+     "id": "J3",
+     "status": "fail",
+     "title": "Learn on claude-code Haiku"
+    },
+    {
+     "id": "J4",
+     "status": "fail",
+     "title": "Learn on codex Luna"
+    },
+    {
+     "id": "J5",
+     "status": "pass",
+     "title": "Learn from work and resume"
+    },
+    {
+     "id": "J6",
+     "status": "fail",
+     "title": "Learn budget stall and recovery"
+    },
+    {
+     "id": "J7",
+     "status": "pass",
+     "title": "Persistence and queued practice"
+    },
+    {
+     "id": "J8",
+     "status": "fail",
+     "title": "Billing truth and message tokens"
+    },
+    {
+     "id": "J9",
+     "status": "pass",
+     "title": "Archon 1.5.0 from the desktop"
+    },
+    {
+     "id": "J10",
+     "status": "pass",
+     "title": "Archon 1.4.12 compatibility"
+    },
+    {
+     "id": "J11",
+     "status": "pass",
+     "title": "Desktop native and Devices"
+    },
+    {
+     "id": "J12",
+     "status": "pass",
+     "title": "Disconnect and restart with live agents"
+    },
+    {
+     "id": "J13",
+     "status": "pass",
+     "title": "Memory"
+    },
+    {
+     "id": "J14",
+     "status": "pass",
+     "title": "Regression sweep and packaged start sheet"
+    },
+    {
+     "id": "J15",
+     "status": "pass",
+     "title": "Size and speed"
+    }
+   ],
+   "verdict": "pass"
+  }
+ },
+ {
+  "stage_run": "stg_01M6Z6BHJMAZ9JTVMMQJ97Y40J",
+  "model": "codex/gpt-6-astra",
+  "stored_verdict": "unknown",
+  "summary": "Product NOT READY: 10 of 15 journeys passed; five failed with eight product findings. Stage PASS: the results are trustworthy, with no environment-blocked journeys. Tested packaged desktop with real private daemons and subscription engines using corrected writable credential homes; source remained unchanged.\n\nHeads: Aether 0993a3832d6e67ad9aa88133057b9179f3cbcb99; Archon 1.5.0 b5f38dbab3be516fb6804caff840a6b7a1d5f19f; Archon 1.4.12 611aaa8b4994697e291c0765746b97c5a8d09d7e.\n\nScenario table (id, title, status): J1 First launch PASS; J2 Settings/models PASS; J3 Haiku Learn FAIL; J4 Luna Learn FAIL; J5 Learn from work PASS; J6 Budget/practice FAIL; J7 Persistence PASS; J8 Billing/message tokens FAIL; J9 Archon 1.5.0 PASS; J10 Archon 1.4.12 PASS; J11 Desktop native/Devices PASS; J12 Live restarts PASS; J13 Memory PASS; J14 Regression sweep FAIL; J15 Size/speed PASS.\n\nProduct findings: prober plan-node refusals; teaching activity replaced by generic fallback; forbidden practice graph write; missing message token figures; practice-picker overlap; correct quarter-turn answer graded wrong with a contradictory key; invalid Luna Mermaid source; Overview badge/timestamp overlap. The last three are fresh findings. Earlier read-only environment runs are excluded from the product verdict. Reports explicitly distinguish fresh attempt-2 execution from retained corrected same-head evidence, including native features, performance and packaged start-sheet checks.\n\nZero observed renderer errors, daemon errors/panics or slow Noesis reads. All 38 enforced performance rows passed; all 56 rows retained. Fresh Luna writing/content: 167 ms/17.211 s. Haiku writing: 317 ms; fresh first text was not sampled, so prior valid 4.251 s is retained. Fresh external shutdowns: Aether 2.106 s; Archon 0.100 s. Prior desktop managed restart: 2.979 s.\n\nResults: .archon/reports/e2e/results.json; report.md and index.html beside it, with full-width screenshots, logs, timings and limitations. HTML validated with no missing links or overflow. Evidence published as validation-final-2-e2e-attempt-2. All recorded private processes stopped, ports closed and sockets removed; package retained under /var/tmp/validate-final-2/desktop/. This attempt held no heavy-job slot; an unrelated holder was left untouched. No product code or branch changed. No further testing remains for this stage; product fixes are needed before hand-off.\nVERDICT: PASS",
+  "structured": {
+   "cleanup_complete": true,
+   "environment_blockers": [],
+   "findings": [
+    {
+     "detail": "Product fault. Step: Answer the initial goal of the fresh fractions lesson Expected: A valid diagnostic question appears without tool refusals. Actual: Three refusals before recovery; learner sees the teacher explain the question did not go through. Packaged UI: start Haiku lesson, answer goal. Public aether events at 02:53:30.781, 02:53:37.804 and 02:53:46.117 UTC contain tool_result is_error=true: \"probe questions are not tagged with a plan node\". Reproduced with writable CLAUDE_CONFIG_DIR and the secure private mount root. Reproduction command/action: UI: Start session, then answer initial goal; public aether events contain tool_result is_error=true. Fresh attempt-2 angles lesson reproduced refusals at 03:44:48, 03:44:54, 03:45:06 and 03:45:25 UTC; see attempt-2/assets/j03-agent-events.jsonl. Screenshot: .archon/reports/e2e/assets/j03d-probe-result.png",
+     "path": ".archon/reports/e2e/assets/j03d-prober-tag-errors.jsonl:1",
+     "severity": "high",
+     "title": "J3 Learn on Haiku: prober rejects its plan-node tags"
+    },
+    {
+     "detail": "Product fault. Step: Agree Haiku plan; on Luna answer the first teaching check Expected: Deliver the next lesson activity and progress without a manual nudge. Actual: Generic fallback replaces the next activity. Haiku recovered after Continue; Luna returned the same fallback after Continue. Packaged UI: Haiku plan Go -> \"Let's try that differently. Send any reply to carry on.\" Public assistant events: Haiku 03:06:34.490883556Z; Luna 03:13:18.355975175Z and 03:14:09.133479126Z. Luna remained at 1/2 steps instead of teaching the requested formula and diagram. Reproduction command/action: UI: fill Message your teacher with Go/Continue and click Send; output is the generic carry-on fallback. Fresh Haiku lesson again returned the same fallback after the quarter-turn answer; see attempt-2/assets/j03-progress.txt. Screenshot: .archon/reports/e2e/assets/j04d-final-light.png",
+     "path": ".archon/reports/e2e/assets/teacher-fallback-errors.jsonl:1",
+     "severity": "high",
+     "title": "J3/J4 Learn teaching loses the next activity and asks for another reply"
+    },
+    {
+     "detail": "Product fault. Step: Answer 8×4 in the Luna practice session after environment correction Expected: Grade and proceed without a Noesis turn failure. Actual: Answer is solved, but the teaching worker fails on a forbidden graph write; later corrected turns reproduce it. Packaged UI: send \"32 because eight groups of four contain thirty-two objects.\" Durable aetherd log at 03:20:36.190700Z: WARN aether_daemon::noesis::teaching: a Noesis teaching turn failed ... error.message=a practice session never writes to the graph. Further occurrences 03:22:29 and 03:23:11. Budget stall and Try again themselves passed. Reproduction command/action: UI: fill the practice answer with 32 because eight groups of four contain thirty-two objects, then click Answer; aetherd logged the failed turn. Screenshot: .archon/reports/e2e/assets/j06d-practice-current.png",
+     "path": ".archon/reports/e2e/assets/j06d-practice-errors.log:1",
+     "severity": "medium",
+     "title": "J6 Practice attempts a forbidden graph write and fails its turn"
+    },
+    {
+     "detail": "Product fault. Step: Inspect completed secure-environment Haiku chat and follow-up Expected: Real token figures in each message header. Actual: Headers display Usage not reported while agent totals and turn usage are nonzero. Packaged UI snapshot j14d-followup-result.txt lines 107, 115 and 138: \"claude-code/claude-haiku-5-5 · Usage not reported\". The same snapshot shows \"40k tokens\" in the agent summary. Public agent.usage_updated events for agt_01M6Z3AZ0XQDN0K23PB2TPR3JG contain nonzero turn_usage; see j08-secure-chat-usage.jsonl. Reproduction command/action: UI: inspect completed chat message headers; each displays Usage not reported while public agent.usage_updated contains nonzero turn_usage. Fresh chat agt_01M6Z74G2DZWP4ZJ8XJZEHPNDP reproduced it; see attempt-2/assets/j14-chat-completed.txt and j14-chat-events.jsonl. Screenshot: .archon/reports/e2e/assets/j14d-followup-result.png",
+     "path": ".archon/reports/e2e/assets/j14d-followup-result.txt:107",
+     "severity": "medium",
+     "title": "J8 Chat message headers omit available token usage"
+    },
+    {
+     "detail": "Product fault. Step: Choose Practise what I know after creating sessions with long goals Expected: Session list and recent goals remain inside their columns; radio clickable. Actual: Cards extend over the form and intercept pointer input. Keyboard selection was needed. Playwright action getByRole(\"radio\", {name:/Practise what I know/}).check() timed out because a session/recent-goal element intercepted pointer events. Full 1440×1000 renderer screenshot shows overlapping columns. This layout finding does not depend on engine credentials; at 1600px the later click succeeded. Reproduction command/action: UI: getByRole(\"radio\", {name:/Practise what I know/}).check(); Playwright reported a session element intercepting pointer events. Screenshot: .archon/reports/e2e/assets/j06-practise-overlap.png",
+     "path": ".archon/reports/e2e/assets/j06-practise-overlap.png:1",
+     "severity": "medium",
+     "title": "J6 Sessions cards overlap the practice picker at 1440px"
+    },
+    {
+     "detail": "Product fault. Step: In the fresh Haiku angles lesson, answer the square-corner prediction with A quarter of a full turn. Expected: Correct grade: a square corner is 90 degrees, one quarter of a full turn. Actual: Not quite; Correct answer: A half of a full turn, followed by an explanation correctly saying quarter=90 degrees. Plan remains 0/4 and next reply is generic fallback. Packaged UI command: page.getByRole(\"radio\", {name:\"A quarter of a full turn\", exact:true}).check(); page.getByRole(\"button\", {name:\"Answer\", exact:true}).click(). Output: \"Your answer: A quarter of a full turn\" / \"Correct answer: A half of a full turn\". Public noesis.answer_recorded at 2026-11-09T03:48:45.065464306Z: question q_01M6Z6R3ASCN6AXXKCN4E84RES, answer_key [\"2\"], correct false; explanation says \"A right angle is a quarter of a full turn, which is 90°\". Both light and dark screenshots retained; not retried into a pass. Screenshot: .archon/reports/e2e/attempt-2/assets/j03-incorrect-grading-light.png",
+     "path": ".archon/reports/e2e/attempt-2/assets/j03-wrong-key-events.jsonl:3",
+     "severity": "high",
+     "title": "J3 Learn grades the correct quarter-turn answer as wrong"
+    },
+    {
+     "detail": "Product fault. Step: Agree to the perimeter-versus-area lesson plan and request its formula and diagram. Expected: A readable Mermaid image in the lesson. Actual: Raw diagram code and Diagram unavailable parse error are displayed instead of an image. Packaged UI command: fill Message your teacher with \"Yes, that plan works. Please include the formula and Mermaid diagram.\" and click Send. Output: \"Diagram unavailable: Error: Error: Parse error on line 6\" at \"P --> PF[P = 2(l + w); linear units]\", \"got PS\". Captured in j04-teaching.txt and both theme screenshots. The renderer handled the invalid generated source without a console error; this is a lesson-content/renderability failure, not evidence of the old sandbox renderer crash. The same parse failure recurred after a regular post-restart recall answer; see attempt-2/assets/j07-continuation-result.txt. Screenshot: .archon/reports/e2e/attempt-2/assets/j04-mermaid-invalid-light.png",
+     "path": ".archon/reports/e2e/attempt-2/assets/j04-teaching.txt:1",
+     "severity": "medium",
+     "title": "J4 Luna produces a Mermaid diagram that cannot render"
+    },
+    {
+     "detail": "Product fault. Step: Open Overview with several completed private items whose titles are long, at 1440 by 1000. Expected: Each recent outcome has separately readable title, state and timestamp. Actual: Succeeded/Cancelled badges draw on top of the relative timestamps in four of five rows. Also observed at the initial smaller window. Packaged UI command: click Primary > Aether; capture full window in light and dark. DOM bounds for Attempt 2 scratch calculator check: badge x=1225.47..1310.19; timestamp x=1291.97..1341, with overlapping y ranges, a horizontal overlap of 18.22px. Screenshot shows status and age painted together. No console exception is expected for this visual defect. Screenshot: .archon/reports/e2e/attempt-2/assets/j14-nav-aaether-light.png",
+     "path": ".archon/reports/e2e/attempt-2/assets/j14-overview-overlap.json:1",
+     "severity": "low",
+     "title": "J14 Overview outcome badges overlap their timestamps"
+    }
+   ],
+   "product_readiness": "NOT READY",
+   "published_artifact": "validation-final-2-e2e-attempt-2",
+   "report_path": ".archon/reports/e2e/index.html",
+   "results_path": ".archon/reports/e2e/results.json",
+   "scenarios": [
+    {
+     "id": "J1",
+     "status": "pass",
+     "title": "First launch"
+    },
+    {
+     "id": "J2",
+     "status": "pass",
+     "title": "Settings and models"
+    },
+    {
+     "id": "J3",
+     "status": "fail",
+     "title": "Learn on claude-code Haiku"
+    },
+    {
+     "id": "J4",
+     "status": "fail",
+     "title": "Learn on codex Luna"
+    },
+    {
+     "id": "J5",
+     "status": "pass",
+     "title": "Learn from work and resume"
+    },
+    {
+     "id": "J6",
+     "status": "fail",
+     "title": "Learn budget stall and recovery"
+    },
+    {
+     "id": "J7",
+     "status": "pass",
+     "title": "Persistence and queued practice"
+    },
+    {
+     "id": "J8",
+     "status": "fail",
+     "title": "Billing truth and message tokens"
+    },
+    {
+     "id": "J9",
+     "status": "pass",
+     "title": "Archon 1.5.0 from the desktop"
+    },
+    {
+     "id": "J10",
+     "status": "pass",
+     "title": "Archon 1.4.12 compatibility"
+    },
+    {
+     "id": "J11",
+     "status": "pass",
+     "title": "Desktop native and Devices"
+    },
+    {
+     "id": "J12",
+     "status": "pass",
+     "title": "Disconnect and restart with live agents"
+    },
+    {
+     "id": "J13",
+     "status": "pass",
+     "title": "Memory"
+    },
+    {
+     "id": "J14",
+     "status": "fail",
+     "title": "Regression sweep and packaged start sheet"
+    },
+    {
+     "id": "J15",
+     "status": "pass",
+     "title": "Size and speed"
+    }
+   ],
+   "verdict": "pass"
+  }
+ },
+ {
+  "stage_run": "stg_01M6ZGQPEGEHJ1HNHQZG350ZQA",
+  "model": "codex/gpt-6-astra",
+  "stored_verdict": "unknown",
+  "summary": "Completed the independent packaged vNext desktop check. Product verdict: NOT READY, 13/15 journeys passed. The test-stage verdict is PASS: the environment worked and the remaining failures are product defects. No tracked file or branch was changed.\n\nHeads tested: Aether 36dd48457ec18c1cb92c4cff642439c09279d7d8; Archon 1.5.0 b5f38dbab3be516fb6804caff840a6b7a1d5f19f; Archon 1.4.12 611aaa8b4994697e291c0765746b97c5a8d09d7e.\n\nScenario table:\n\nJ1 | First launch | PASS\n\nJ2 | Settings and models | PASS\n\nJ3 | Learn on claude-code Haiku | FAIL\n\nJ4 | Learn on codex Luna | FAIL\n\nJ5 | Learn from work and resume | PASS\n\nJ6 | Learn budget stall and recovery | PASS\n\nJ7 | Persistence and queued practice | PASS\n\nJ8 | Billing truth and message tokens | PASS\n\nJ9 | Archon 1.5.0 from the desktop | PASS\n\nJ10 | Archon 1.4.12 compatibility | PASS\n\nJ11 | Desktop native and Devices | PASS\n\nJ12 | Disconnect and restart with live agents | PASS\n\nJ13 | Memory | PASS\n\nJ14 | Regression sweep and packaged start sheet | PASS\n\nJ15 | Size and speed | PASS\n\nHigh product findings: J3 Haiku's agreed plan leaked its next check answer, triggering refusals and requiring an extra Ready reply before teaching progressed. J4 Luna passed prompt text instead of a question id to recall grading; three refusals left the correct 22-unit answer ungraded, progress 0/2, and a retry message instead of the next activity. First failures, screenshots and exact public-event/log excerpts are retained.\n\nOther direct regressions passed: opening probes without plan-tag refusals; correct/wrong choice grades; learner reasoning; Mermaid images; practice budget stop/Try again and queued-turn restart; numeric chat token headers; lifetime spend matching status; layouts at 1280/1440/1920; Devices live updates; export Scope all/download; native links, deep links and notification focus. All 38 enforced perf:ci rows passed, with all 56 rows retained. The 15-test native/memory suite passed twice; the second added console-only capture. No renderer error/pageerror or daemon ERROR/panic observed.\n\nTiming: Haiku writing 0.073s, first whole message 5.220s; Luna writing 0.163s, first whole message 16.746s. J12 Aether stop 2.108s and visible disconnection 0.076s; Archon stop 0.100s and disconnection 0.245s; desktop connect-and-restart old-process exit 2.666s, new listening socket 2.822s. No shutdown timeout or lost state.\n\nEvidence: .archon/reports/e2e/results.json, report.md, index.html, findings.json, log-audit.json, perf.csv and cleanup.json. Published this directory as item artifact validate-final-3-e2e on qi_01M6ZFNPPE0NT18EJ22BB7XV3P: 323 screenshots, approximately 45 MB. HTML has a current-state banner and large full-width evidence.\n\nNo unresolved environment blockers. Corrected native-dialog/locator, scratch registration and harness cleanup issues are documented separately. Playwright CDP drove the packaged executable because its inspector fuse prevents Electron attachment. Native notification activation was verified on X11, not Wayland; external opener handoff used an isolated recording fixture. Explicit graph extraction was verified; automatic extraction was not separately proved.\n\nAll private processes stopped; 90 recorded process identities audited, no private listeners or sockets left, heavy slot free. Built app retained at /var/tmp/validate-final-3/desktop/aether-desktop.\n\nVERDICT: PASS",
+  "structured": {
+   "cleanup_complete": true,
+   "counts": {
+    "fail": 2,
+    "not_verified": 0,
+    "pass": 13
+   },
+   "findings": [
+    {
+     "detail": "Failed UI operation: Packaged UI: fill Message your teacher with \"Go. Please include the Mermaid diagram and formula in these two steps.\" and click Send. Public events at 06:50:22.822 and 06:50:31.043 UTC: \"the plan gives away this question's answer or explanation; rewrite the plan or the question\" and \"noesis.ask: what your turn has shown gives away the answer; ask a different question\". Visible output: \"My earlier check questions were blocked because the plan's wording already gave the answer away\"; \"When you're ready, say so and I'll ask you a fresh check question.\"",
+     "path": ".archon/reports/e2e/assets/j03-teacher-blocked-by-plan.txt:189",
+     "severity": "high",
+     "title": "Haiku plan-to-teaching check is refused by answer-leak guards"
+    },
+    {
+     "detail": "Failed UI operation: Packaged UI: fill Your answer with \"22 units, because 8 + 3 + 8 + 3 = 2(8 + 3) = 22.\", choose 100%, click Answer. Public noesis_judge_recall at 06:59:42.572, 06:59:51.775 and 06:59:58.510 UTC rejects the prompt text used as question identifier: \"only the latest recall answer from this phase can be judged\". noesis_ask refuses: \"judge the answered recall question q_01M6ZHMHHG47N0NAQVSHKCA18K with noesis.judge_recall before moving on\". UI: \"I couldn't assess your recall answer. Please send a message to retry.\" Daemon log at 06:59:58.512085Z: WARN a Noesis teaching turn failed ... the teaching agent did not judge answered recall question ... after 3 attempts.",
+     "path": ".archon/reports/e2e/assets/j04-recall-failure-light.txt:177",
+     "severity": "high",
+     "title": "Luna cannot grade a correct recall answer or advance the lesson"
+    }
+   ],
+   "heads": {
+    "aether": "36dd48457ec18c1cb92c4cff642439c09279d7d8",
+    "archon_1412": "611aaa8b4994697e291c0765746b97c5a8d09d7e",
+    "archon_150": "b5f38dbab3be516fb6804caff840a6b7a1d5f19f"
+   },
+   "html_report": ".archon/reports/e2e/index.html",
+   "product_verdict": "NOT READY",
+   "published_artifact": {
+    "item": "qi_01M6ZFNPPE0NT18EJ22BB7XV3P",
+    "name": "validate-final-3-e2e"
+   },
+   "results_path": ".archon/reports/e2e/results.json",
+   "scenarios": [
+    {
+     "id": "J1",
+     "status": "pass",
+     "title": "First launch"
+    },
+    {
+     "id": "J2",
+     "status": "pass",
+     "title": "Settings and models"
+    },
+    {
+     "id": "J3",
+     "status": "fail",
+     "title": "Learn on claude-code Haiku"
+    },
+    {
+     "id": "J4",
+     "status": "fail",
+     "title": "Learn on codex Luna"
+    },
+    {
+     "id": "J5",
+     "status": "pass",
+     "title": "Learn from work and resume"
+    },
+    {
+     "id": "J6",
+     "status": "pass",
+     "title": "Learn budget stall and recovery"
+    },
+    {
+     "id": "J7",
+     "status": "pass",
+     "title": "Persistence and queued practice"
+    },
+    {
+     "id": "J8",
+     "status": "pass",
+     "title": "Billing truth and message tokens"
+    },
+    {
+     "id": "J9",
+     "status": "pass",
+     "title": "Archon 1.5.0 from the desktop"
+    },
+    {
+     "id": "J10",
+     "status": "pass",
+     "title": "Archon 1.4.12 compatibility"
+    },
+    {
+     "id": "J11",
+     "status": "pass",
+     "title": "Desktop native and Devices"
+    },
+    {
+     "id": "J12",
+     "status": "pass",
+     "title": "Disconnect and restart with live agents"
+    },
+    {
+     "id": "J13",
+     "status": "pass",
+     "title": "Memory"
+    },
+    {
+     "id": "J14",
+     "status": "pass",
+     "title": "Regression sweep and packaged start sheet"
+    },
+    {
+     "id": "J15",
+     "status": "pass",
+     "title": "Size and speed"
+    }
+   ],
+   "verdict": "pass"
+  }
+ },
+ {
+  "stage_run": "stg_01M702N2CAS8HSB0FGSGKZ37PG",
+  "model": "codex/gpt-6-astra",
+  "stored_verdict": "unknown",
+  "summary": "Product NOT READY; test-stage environment PASS. Tested the packaged executable at Aether ce366ef06a829e06e3b8bf78e8ce106e2ed666f9, Archon 1.5.0 b5f38dbab3be516fb6804caff840a6b7a1d5f19f, and Archon 1.4.12 611aaa8b4994697e291c0765746b97c5a8d09d7e. No tracked files or branch changed.\n\nScenario table: J1 First launch PASS; J2 Settings/models PASS; J3 Haiku Learn FAIL; J4 Luna Learn FAIL; J5 Learn from work PASS; J6 Budget stall/recovery PASS; J7 Persistence PASS; J8 Billing PASS; J9 Archon 1.5 desktop PASS; J10 Archon 1.4.12 compatibility PASS; J11 Native/devices PASS; J12 Live restarts PASS; J13 Memory PASS; J14 Regression/start sheet PASS; J15 Size/speed PASS.\n\nThe requested automatic first Haiku check and Luna recall-grading fixes passed naturally with plain Go and no nudges. Three taught checks were graded on each engine. Confirmed product findings: F1 Haiku prose/card questions disagree; F2 Haiku later stays writing over three minutes and blocks extraction/settings; F4 initial Luna creation reports a 20-second timeout although the session is created later. Recovery does not erase failures. F3 Devices timing observation is explicitly retracted as inconclusive; controlled live addition/revocation passed.\n\nNo renderer errors, unhandled page errors, daemon ERRORs/panics, or slow Noesis reads. All 38 enforced performance rows passed; all 56 rows retained, including seven non-enforced local-reference exceedances. Stop times: Aether 2.310 s, Archon 0.100 s, desktop restart 2.109 s. Writing/whole-content: Haiku 373/3307 ms; Luna Go 78/8575 ms.\n\nResults: .archon/reports/e2e/results.json, findings.json, report.md and full-width report.html; 269 screenshots plus logs. Published as validation-4-e2e on qi_01M701PVRVEGPRD1Z2H3GV1X9F. CDP drove the real package because of its inspector fuse. Native fixtures use deterministic agents; external browser handoff uses a recording shim; notification focus verified on X11, not Wayland. No natural lesson Mermaid was produced; real chat Mermaid passed. Initial Luna latency and automatic graph extraction alone are not established. No unresolved environment blockers.\n\nAll private processes/listeners/sockets stopped, including the desktop-owned replacement daemon and Lavish server; heavy slot free. Built app retained at /var/tmp/validate-final-4/desktop/aether-desktop. Report stage can use the published evidence.\nVERDICT: PASS",
+  "structured": {
+   "artifact_name": "validation-4-e2e",
+   "cleanup": {
+    "heavy_slot_free": true,
+    "listeners_remaining": 0,
+    "processes_stopped": true,
+    "sockets_remaining": 0
+   },
+   "environment_problems": [],
+   "findings": [
+    {
+     "detail": "Product fault. After plain Go, select the square-corner answer and click Answer. Expected the next prose and card to ask the same question. Actual prose says clock 12 to 6 while the card says 12 to 9 (answers two versus three). Public noesis_ask tool_result at 12:04:14.176482029Z: is_error=true, 'The check overlaps material already shown; ask a different question.' Replacement card leaves old prose. Screenshot .archon/reports/e2e/assets/j03-prose-card-mismatch.png. Suspected Noesis teaching recovery; no code fix made.",
+     "path": ".archon/reports/e2e/assets/j03-still-writing-no-engine.txt:236",
+     "severity": "medium",
+     "title": "J3 Haiku Learn: prose and active question disagree (F1)"
+    },
+    {
+     "detail": "Product symptom; root cause unproven. Select 180 degrees and click Answer at 12:05:22. Expected next activity or actionable recovery. Actual Correct/3 of 4, then 'Your teacher is writing…' for over three minutes; 60-second Answer-button wait failed. Settings: '1 Noesis turn(s) are in flight; change the settings once they finish'. After restart, log: noesis_extract ran_ms=244032; noesis_configure queued_ms=243128. Normal Haiku chat answered in 1.8 s during stall. Public engine_alive=false does not establish absence of a Noesis-internal engine; private engine metadata showed a pending API request. Evidence .archon/reports/e2e/assets/j03-stalled-light.png and logs/aetherd-persistent.log. Suspected teaching lifecycle/ordered mutation lane.",
+     "path": ".archon/reports/e2e/logs/aetherd-persistent.log:50",
+     "severity": "high",
+     "title": "J3 Haiku Learn: stalled progression blocks Noesis mutations (F2)"
+    },
+    {
+     "detail": "Product fault. Fill the plain perimeter/area goal and click Start session once after switching to Luna. Expected session opens with writing state. Actual UI: 'noesis_create_session got no answer in 20 s'; page.getByText(/teacher is writing/i).first().waitFor({timeout:30000}) timed out. Log 12:15:00.940930Z: command=noesis_create_session lane='ordered' queued_ms=0 ran_ms=24484 failed=false. Original session later appeared in list and was opened without retrying creation; subsequent three recall steps passed. Related to concurrent Haiku recovery/F2 plausibly, not proven. Screenshot .archon/reports/e2e/assets/j04-create-waiting.png; suspected Noesis routes/ordered lane.",
+     "path": ".archon/reports/e2e/assets/j04-create-waiting.txt:81",
+     "severity": "high",
+     "title": "J4 Luna Learn: initial session creation times out before later success (F4)"
+    }
+   ],
+   "heads": {
+    "aether": "ce366ef06a829e06e3b8bf78e8ce106e2ed666f9",
+    "archon_1412": "611aaa8b4994697e291c0765746b97c5a8d09d7e",
+    "archon_150": "b5f38dbab3be516fb6804caff840a6b7a1d5f19f"
+   },
+   "journeys": {
+    "fail": 2,
+    "not_verified": 0,
+    "pass": 13
+   },
+   "product_verdict": "NOT READY",
+   "report_path": ".archon/reports/e2e/report.html",
+   "results_path": ".archon/reports/e2e/results.json",
+   "verdict": "pass"
+  }
+ },
+ {
+  "stage_run": "stg_01M71C7WW4A9562TE9QWF9D9BP",
+  "model": "codex/gpt-6-astra",
+  "stored_verdict": "unknown",
+  "summary": "Product verdict: NOT READY. Completed the fifth independent packaged desktop validation on Aether 2ec8cc4ec7e302e4edaadaca62a4a2c9e348e4d7, Archon1.5.0 b5f38dbab3be516fb6804caff840a6b7a1d5f19f, and Archon1.4.12 611aaa8b4994697e291c0765746b97c5a8d09d7e. The environment supported trustworthy testing; no unresolved environment blocker remains.\n\nJourney results:\nJ1 | First launch | PASS\nJ2 | Settings and models | PASS\nJ3 | Learn on Haiku | FAIL\nJ4 | Learn on Luna | FAIL\nJ5 | Learn from work | FAIL\nJ6 | Learn budget stall | PASS\nJ7 | Persistence | FAIL\nJ8 | Billing truth | PASS\nJ9 | Archon 1.5.0 | PASS\nJ10 | Archon 1.4.12 compatibility | PASS\nJ11 | Desktop native | PASS\nJ12 | Disconnect and restart | PASS\nJ13 | Memory | PASS\nJ14 | Regression and fullscreen layout | FAIL\nJ15 | Size and speed | FAIL\n\nSix product findings: Haiku supplied a false angle answer with no valid option; plain Go repeatedly produced the carry-on fallback instead of teaching; interrupted teaching and practice required Try again after restart; source import waited34.917s behind Luna teaching; an unpaired browser retained its first-health discovery error after health recovered (paired control passed); and the known initial bundle budget failed at402778 bytes versus395319.1. Six additional polish observations include cramped1024px chat, ultrawide lesson alignment, duplicate plan prose, raw learner-answer JSON, premature completion messaging and restart misattribution.\n\nRecorded280 native full-window layout screenshots across light/dark, maximized sizes and true2560px fullscreen. Main journeys used real subscription engines;28 final supplemental packaged fixtures passed with retained logs. No captured packaged renderer errors/unhandled exceptions or daemon ERROR/panic lines; expected warnings and native-host diagnostics are classified separately. Settings save169ms and session creation242ms passed during teaching. First whole lesson content: Haiku6.396s, Luna18.118s; live indicators433ms/68ms. Live stop times: Aether2.106s, Archon0.100s, desktop-confirmed restart2.109s; no shutdown timeout. All56 perf rows are recorded;37of38 enforced rows passed.\n\nCoverage limits remain explicit: Haiku never reached a taught check; Luna completed three graded teaching activities over two plan nodes; the stochastic final-text/streamed-prefix mismatch was not reproduced. Corrected harness selector, input and log-retention failures remain documented with original outputs. No product code or tracked files changed.\n\nResults: .archon/reports/e2e/results.json. Aether-styled interactive HTML report: .archon/reports/e2e/evidence.html. Findings, full logs, timing records, screenshots, perf CSV and cleanup proof are alongside them. Published successfully as fifth-validation-e2e-evidence for item qi_01M71B6H7CGNSQEM0VXQXPRN92. Every private process is stopped, sockets removed, ports47991/47992/47993/47997 closed and no heavy-job slot held. The built app remains at /var/tmp/validate-final-5/desktop/aether-desktop. Report stage can proceed; product hand-off must remain blocked.\nVERDICT: PASS",
+  "structured": {
+   "cleanup": ".archon/reports/e2e/cleanup.json",
+   "coverage_limits": [
+    "All main journeys used the packaged executable; browser health used the real web build. Source-artifact import and proposal creation used documented public API/CLI where desktop controls did not expose them.",
+    "Native fixtures use deterministic engines and private external-opener/notification infrastructure; the main lessons, chats and Archon items used real subscription engines.",
+    "No natural final-text/streamed-prefix mismatch occurred in this sample. The precise automatic retry count for that stochastic case was not fault-injected; no claim is made that all such cases pass.",
+    "Haiku failed before any taught check. Luna completed three graded teaching activities over two plan nodes, not three distinct planned steps.",
+    "GitHub watcher is intentionally unavailable in the private shared-Aether configuration; no real operator repository or GitHub write was used.",
+    "Screenshots are full native windows for the layout matrix. Some deterministic fixture screenshots use their established1440px Playwright viewport. X11 notification activation was tested; no Wayland activation claim."
+   ],
+   "findings": [
+    {
+     "detail": "Packaged UI command: click I don't know. Visible output: Answer: A corner of a book page. The prompt asks smaller than a right angle. Suspected Noesis probe content/validation; root cause not established. Expected: At least one mathematically correct option and an accurate answer key. Actual: Options are an obtuse V, full circle, straight line, and book-page corner. Answer is shown as A corner of a book page, although a normal page corner is 90 degrees. Evidence: .archon/reports/e2e/assets/j03-no-valid-option.png, .archon/reports/e2e/assets/j03-no-valid-option-graded.png, .archon/reports/e2e/assets/haiku-public-events.json Fault: product.",
+     "path": ".archon/reports/e2e/findings.json:6",
+     "severity": "high",
+     "title": "F1 / J3: Haiku offers no correct option and teaches a false answer"
+    },
+    {
+     "detail": "CARGO_BUILD_JOBS=6 nice -n 10 sh scripts/ci_slot.sh sh -c 'cd web && npm run perf:ci' exited 1. Output: perf: bundle.initial_bytes is 402,778, over its limit 395,319.1 (budget 359,381 + 10%). Operator acknowledged this before validation. All other enforced rows passed. Expected: bundle.initial_bytes <= 395319.1 Actual: 402778 bytes Evidence: .archon/reports/e2e/assets/j15-perf-ci.log, .archon/reports/e2e/perf.csv Fault: product.",
+     "path": ".archon/reports/e2e/findings.json:23",
+     "severity": "medium",
+     "title": "F2 / J15: Known initial bundle budget failure"
+    },
+    {
+     "detail": "Packaged command: fill Message your teacher with Go; click Send. UI output: Let's try that differently. Send any reply to carry on. Suspected Noesis teaching/plan continuation. First failure retained; subsequent neutral reply is continuation of this failed journey, not a passing retry. Expected: The first teaching check appears without an extra learner reply. Actual: After about 30 seconds the teacher says Let's try that differently. Send any reply to carry on. Plan remains 0 of 5; no teaching check appears. One neutral Carry on reply produced the same message again; three taught steps could not be reached. Evidence: .archon/reports/e2e/assets/j03-go-writing.png, .archon/reports/e2e/assets/j03-extract-during-go.png, .archon/reports/e2e/assets/haiku-go-public-events.json, .archon/reports/e2e/assets/j03-nudge-result.png Fault: product.",
+     "path": ".archon/reports/e2e/findings.json:39",
+     "severity": "high",
+     "title": "F3 / J3: Haiku needs a learner nudge after plain Go"
+    },
+    {
+     "detail": "Command: python3 .archon/reports/e2e/stop-daemon.py aetherd; .archon/e2e/start.sh. aetherd log 2026-11-10T00:19:54.180040Z WARN a Noesis teaching turn failed: could not start codex: no process starts once its turn or the daemon has stopped. Public session stalled.reason=engine_stalled at 00:19:54.179Z remains after restart at 00:20:21. Suspected crates/aether-daemon/src/noesis/teaching.rs shutdown/start race; root cause not established. Expected: Persisted teaching turn resumes automatically after restart. Actual: Connection recovers, but lesson remains stalled with The teacher stopped responding. Try again to continue your lesson. It requires Try again. A second, independent full-stack restart during a practice answer preserved solved grading but also left engine_stalled. Evidence: .archon/reports/e2e/assets/j04-go-before-restart.png, .archon/reports/e2e/assets/j12-aether-offline.png, .archon/reports/e2e/assets/j12-after-restart-state.png, .archon/reports/e2e/assets/luna-after-restart.json, .archon/reports/e2e/shutdown.jsonl, .archon/reports/e2e/assets/j07-practice-answer-before-stop.png, .archon/reports/e2e/assets/j07-practice-after-restart.png, .archon/reports/e2e/assets/practice-after-restart.json Fault: product.",
+     "path": ".archon/reports/e2e/findings.json:57",
+     "severity": "high",
+     "title": "F4 / J4,J7: Teaching interrupted by daemon stop does not resume automatically"
+    },
+    {
+     "detail": "node .archon/reports/e2e/browser-health-extended.mjs: AssertionError successful health clears first failed discovery. Network refusal was deliberately injected only once at the public HTTP boundary; later requests were real. No desktop substitute. Fresh unpaired browser profile; pairing requirement is not itself a defect. Suspected browser boot/discovery state; root cause not established. Expected: Discovery recovers and clears the initial failure once health succeeds. Actual: Five health attempts and successful later responses, one document navigation, but main remains Connecting to Aether… / Could not discover Archon: Failed to fetch. Sidebar says Needs pairing. Control check: an already paired browser recovers to a working Overview after the same first-request refusal; a healthy unpaired baseline shows Connecting to Aether without the stale error. This defect is confined to the unpaired startup path. Evidence: .archon/reports/e2e/assets/audit-browser-health-extended-first.png, .archon/reports/e2e/assets/audit-browser-health-extended-recovered.png, .archon/reports/e2e/browser-health-extended.json, .archon/reports/e2e/assets/browser-health-extended.log, .archon/reports/e2e/assets/browser-health-paired-after-recovery.png, .archon/reports/e2e/browser-health-paired.json, .archon/reports/e2e/assets/browser-unpaired-healthy-baseline.png Fault: product.",
+     "path": ".archon/reports/e2e/findings.json:83",
+     "severity": "medium",
+     "title": "F5 / J14: Unpaired browser retains first-health discovery error after health recovers"
+    },
+    {
+     "detail": "python3 .archon/reports/e2e/request.py <noesis_import_source request> source-second-concurrent: TimeoutError: timed out. Daemon 2026-11-10T00:58:20.862348Z WARN slow request still running command=noesis_import_source ran_ms=2000; 00:58:53.779705Z WARN slow request ... ran_ms=34917 failed=false. Suspected Noesis source/import synchronization; root cause not established. Expected: Source import/extraction queues independently without waiting for the teaching turn. Actual: Client timed out after 20.26 seconds. Daemon completed the request only after 34.917 seconds, coinciding with the teacher final message; source job was queued then. Earlier shorter overlap also took 2.154 seconds. Evidence: .archon/reports/e2e/assets/audit-extraction-teacher-running.png, .archon/reports/e2e/source-second-timing.json, .archon/reports/e2e/source-second-correlated.json, .archon/reports/e2e/assets/noesis-jobs-after-concurrent.json Fault: product.",
+     "path": ".archon/reports/e2e/findings.json:108",
+     "severity": "high",
+     "title": "F6 / J4,J5: Source extraction waits for the active teaching turn"
+    }
+   ],
+   "heads": {
+    "55255d7c98b2bf8c28e5a8a0d9e1d0cfecfed58d_ancestor": true,
+    "aether": "2ec8cc4ec7e302e4edaadaca62a4a2c9e348e4d7",
+    "aether_tree": "3ef38ecfe18c89187da7ce0286df0dffcb5406f6",
+    "archon-1412": "611aaa8b4994697e291c0765746b97c5a8d09d7e",
+    "archon-150": "b5f38dbab3be516fb6804caff840a6b7a1d5f19f",
+    "c33a43c4_ancestor": true
+   },
+   "html_report": ".archon/reports/e2e/evidence.html",
+   "product_verdict": "NOT READY",
+   "published_artifact": {
+    "item": "qi_01M71B6H7CGNSQEM0VXQXPRN92",
+    "name": "fifth-validation-e2e-evidence",
+    "status": "applied"
+   },
+   "results": ".archon/reports/e2e/results.json",
+   "retained_app": "/var/tmp/validate-final-5/desktop/aether-desktop",
+   "scenarios": [
+    {
+     "id": "J1",
+     "status": "pass",
+     "title": "First launch"
+    },
+    {
+     "id": "J2",
+     "status": "pass",
+     "title": "Settings and models"
+    },
+    {
+     "id": "J3",
+     "status": "fail",
+     "title": "Learn on Haiku"
+    },
+    {
+     "id": "J4",
+     "status": "fail",
+     "title": "Learn on Luna"
+    },
+    {
+     "id": "J5",
+     "status": "fail",
+     "title": "Learn from work"
+    },
+    {
+     "id": "J6",
+     "status": "pass",
+     "title": "Learn budget stall"
+    },
+    {
+     "id": "J7",
+     "status": "fail",
+     "title": "Persistence"
+    },
+    {
+     "id": "J8",
+     "status": "pass",
+     "title": "Billing truth"
+    },
+    {
+     "id": "J9",
+     "status": "pass",
+     "title": "Archon 1.5.0"
+    },
+    {
+     "id": "J10",
+     "status": "pass",
+     "title": "Archon 1.4.12 compatibility"
+    },
+    {
+     "id": "J11",
+     "status": "pass",
+     "title": "Desktop native"
+    },
+    {
+     "id": "J12",
+     "status": "pass",
+     "title": "Disconnect and restart"
+    },
+    {
+     "id": "J13",
+     "status": "pass",
+     "title": "Memory"
+    },
+    {
+     "id": "J14",
+     "status": "fail",
+     "title": "Regression and fullscreen layout"
+    },
+    {
+     "id": "J15",
+     "status": "fail",
+     "title": "Size and speed"
+    }
+   ],
+   "verdict": "pass"
+  }
+ },
+ {
+  "stage_run": "stg_01M71H7R3C3RZJHN85YTYPHVG0",
+  "model": "codex/gpt-6-astra",
+  "stored_verdict": "unknown",
+  "summary": "NOT READY. Attempt 2 preserved completed first-attempt evidence on unchanged Aether 2ec8cc4ec7e302e4edaadaca62a4a2c9e348e4d7; Archon 1.5.0 b5f38dbab3be516fb6804caff840a6b7a1d5f19f; Archon 1.4.12 611aaa8b4994697e291c0765746b97c5a8d09d7e. Fresh packaged CDP checks confirmed startup, both connections, 27 persisted sessions and three scratch queue outcomes. Binary hashes match. No unresolved environment problem; no product failure retried or erased.\n\nJ1 | First launch | PASS\nJ2 | Settings and models | PASS\nJ3 | Learn on Haiku | FAIL\nJ4 | Learn on Luna | FAIL\nJ5 | Learn from work | FAIL\nJ6 | Learn budget stall | PASS\nJ7 | Persistence | FAIL\nJ8 | Billing truth | PASS\nJ9 | Archon 1.5.0 | PASS\nJ10 | Archon 1.4.12 compatibility | PASS\nJ11 | Desktop native | PASS\nJ12 | Disconnect and restart | PASS\nJ13 | Memory | PASS\nJ14 | Regression and fullscreen layout | FAIL\nJ15 | Size and speed | FAIL\n\nResults: .archon/reports/e2e/results.json; HTML: .archon/reports/e2e/evidence.html; published as validate-final-5-e2e. Six product defects: invalid Haiku answer, no teaching check after Go, interrupted Learn turns require Try again, source extraction blocks 34.917s, stale unpaired browser discovery, known bundle.initial_bytes 402778 > 395319.1. Six polish findings also retained. 280 layout screenshots, 28 passing retained packaged fixtures, 0 renderer errors and 0 daemon errors/panics in audited logs. First-content Haiku 6.396s / Luna 18.118s; save/create during teaching 169/242ms. Live Aether/Archon/desktop restart stop times 2.106/0.100/2.109s.\nCoverage limits: Haiku reached no taught checks; Luna three graded activities across two planned nodes, not three nodes; exact streamed-prefix mismatch was not observed. Native supplemental fixtures used deterministic engines. This attempt rechecked continuity, not all journeys again. No tracked edits. All recorded processes stopped, sockets removed, private ports free and slot released. Packaged executable retained at /var/tmp/validate-final-5/desktop/aether-desktop. Product NOT READY; stage passes because findings are product defects and the environment supported trustworthy testing.\nVERDICT: PASS",
+  "structured": {
+   "coverage_limits": [
+    "All main journeys used the packaged executable; browser health used the real web build. Source-artifact import and proposal creation used documented public API/CLI where desktop controls did not expose them.",
+    "Native fixtures use deterministic engines and private external-opener/notification infrastructure; the main lessons, chats and Archon items used real subscription engines.",
+    "No natural final-text/streamed-prefix mismatch occurred in this sample. The precise automatic retry count for that stochastic case was not fault-injected; no claim is made that all such cases pass.",
+    "Haiku failed before any taught check. Luna completed three graded teaching activities over two plan nodes, not three distinct planned steps.",
+    "GitHub watcher is intentionally unavailable in the private shared-Aether configuration; no real operator repository or GitHub write was used.",
+    "Screenshots are full native windows for the layout matrix. Some deterministic fixture screenshots use their established1440px Playwright viewport. X11 notification activation was tested; no Wayland activation claim."
+   ],
+   "environment_problems": [],
+   "findings": [
+    {
+     "detail": "Product fault. Plain goal: Understand right angles and quarter turns. Answer the goal and five probes; on Which of these angles is smaller than a right angle? inspect all options, then choose I do not know. Expected: At least one mathematically correct option and an accurate answer key. Actual: Options are an obtuse V, full circle, straight line, and book-page corner. Answer is shown as A corner of a book page, although a normal page corner is 90 degrees. Packaged UI command: click I don't know. Visible output: Answer: A corner of a book page. The prompt asks smaller than a right angle. Suspected Noesis probe content/validation; root cause not established. Evidence: [\"assets/j03-no-valid-option.png\",\"assets/j03-no-valid-option-graded.png\",\"assets/haiku-public-events.json\"].",
+     "path": ".archon/reports/e2e/findings.json",
+     "severity": "high",
+     "title": "J3 F1: Haiku offers no correct option and teaches a false answer"
+    },
+    {
+     "detail": "Product fault. Run the release web perf:ci command through the heavy-job slot with nice10 and CARGO_BUILD_JOBS=6. Expected: bundle.initial_bytes <= 395319.1 Actual: 402778 bytes CARGO_BUILD_JOBS=6 nice -n 10 sh scripts/ci_slot.sh sh -c 'cd web && npm run perf:ci' exited 1. Output: perf: bundle.initial_bytes is 402,778, over its limit 395,319.1 (budget 359,381 + 10%). Operator acknowledged this before validation. All other enforced rows passed. Evidence: [\"assets/j15-perf-ci.log\",\"perf.csv\"].",
+     "path": ".archon/reports/e2e/findings.json",
+     "severity": "medium",
+     "title": "J15 F2: Known initial bundle budget failure"
+    },
+    {
+     "detail": "Product fault. Finish natural opening assessment, then reply Go to the proposed plan. Expected: The first teaching check appears without an extra learner reply. Actual: After about 30 seconds the teacher says Let's try that differently. Send any reply to carry on. Plan remains 0 of 5; no teaching check appears. One neutral Carry on reply produced the same message again; three taught steps could not be reached. Packaged command: fill Message your teacher with Go; click Send. UI output: Let's try that differently. Send any reply to carry on. Suspected Noesis teaching/plan continuation. First failure retained; subsequent neutral reply is continuation of this failed journey, not a passing retry. Evidence: [\"assets/j03-go-writing.png\",\"assets/j03-extract-during-go.png\",\"assets/haiku-go-public-events.json\",\"assets/j03-nudge-result.png\"].",
+     "path": ".archon/reports/e2e/findings.json",
+     "severity": "high",
+     "title": "J3 F3: Haiku needs a learner nudge after plain Go"
+    },
+    {
+     "detail": "Product fault. Luna presents plan; send plain Go, wait for writing indicator, SIGTERM private aetherd 1.1 seconds later, restart daemon. Expected: Persisted teaching turn resumes automatically after restart. Actual: Connection recovers, but lesson remains stalled with The teacher stopped responding. Try again to continue your lesson. It requires Try again. A second, independent full-stack restart during a practice answer preserved solved grading but also left engine_stalled. Command: python3 .archon/reports/e2e/stop-daemon.py aetherd; .archon/e2e/start.sh. aetherd log 2026-11-10T00:19:54.180040Z WARN a Noesis teaching turn failed: could not start codex: no process starts once its turn or the daemon has stopped. Public session stalled.reason=engine_stalled at 00:19:54.179Z remains after restart at 00:20:21. Suspected crates/aether-daemon/src/noesis/teaching.rs shutdown/start race; root cause not established. Evidence: [\"assets/j04-go-before-restart.png\",\"assets/j12-aether-offline.png\",\"assets/j12-after-restart-state.png\",\"assets/luna-after-restart.json\",\"shutdown.jsonl\",\"assets/j07-practice-answer-before-stop.png\",\"assets/j07-practice-after-restart.png\",\"assets/practice-after-restart.json\"].",
+     "path": ".archon/reports/e2e/findings.json",
+     "severity": "high",
+     "title": "J4 F4: Teaching interrupted by daemon stop does not resume automatically"
+    },
+    {
+     "detail": "Product fault. Open web build in Chromium, refuse only first /api/health request, let later health requests reach the healthy private daemon, wait 10 seconds without reloading. Expected: Discovery recovers and clears the initial failure once health succeeds. Actual: Five health attempts and successful later responses, one document navigation, but main remains Connecting to Aether… / Could not discover Archon: Failed to fetch. Sidebar says Needs pairing. Control check: an already paired browser recovers to a working Overview after the same first-request refusal; a healthy unpaired baseline shows Connecting to Aether without the stale error. This defect is confined to the unpaired startup path. node .archon/reports/e2e/browser-health-extended.mjs: AssertionError successful health clears first failed discovery. Network refusal was deliberately injected only once at the public HTTP boundary; later requests were real. No desktop substitute. Fresh unpaired browser profile; pairing requirement is not itself a defect. Suspected browser boot/discovery state; root cause not established. Evidence: [\"assets/audit-browser-health-extended-first.png\",\"assets/audit-browser-health-extended-recovered.png\",\"browser-health-extended.json\",\"assets/browser-health-extended.log\",\"assets/browser-health-paired-after-recovery.png\",\"browser-health-paired.json\",\"assets/browser-unpaired-healthy-baseline.png\"].",
+     "path": ".archon/reports/e2e/findings.json",
+     "severity": "medium",
+     "title": "J14 F5: Unpaired browser retains first-health discovery error after health recovers"
+    },
+    {
+     "detail": "Product fault. While Luna is visibly writing a twelve-example unit-conversion explanation, call public noesis_import_source with a new private text artifact from another connection. Expected: Source import/extraction queues independently without waiting for the teaching turn. Actual: Client timed out after 20.26 seconds. Daemon completed the request only after 34.917 seconds, coinciding with the teacher final message; source job was queued then. Earlier shorter overlap also took 2.154 seconds. python3 .archon/reports/e2e/request.py <noesis_import_source request> source-second-concurrent: TimeoutError: timed out. Daemon 2026-11-10T00:58:20.862348Z WARN slow request still running command=noesis_import_source ran_ms=2000; 00:58:53.779705Z WARN slow request ... ran_ms=34917 failed=false. Suspected Noesis source/import synchronization; root cause not established. Evidence: [\"assets/audit-extraction-teacher-running.png\",\"source-second-timing.json\",\"source-second-correlated.json\",\"assets/noesis-jobs-after-concurrent.json\"].",
+     "path": ".archon/reports/e2e/findings.json",
+     "severity": "high",
+     "title": "J4 F6: Source extraction waits for the active teaching turn"
+    },
+    {
+     "detail": "Product fault. Submit a graded Learn answer and inspect the learner transcript. Expected: Learner answers read naturally, without protocol JSON. Actual: Readable answer cards are followed by a You paragraph containing The learner answered and serialized choices, confidence, dont_know, text and thinking fields. Readable answer cards are followed by a You paragraph containing The learner answered and serialized choices, confidence, dont_know, text and thinking fields. Evidence: \"assets/j03-probe3-graded.png\".",
+     "path": ".archon/reports/e2e/polish.json",
+     "severity": "low",
+     "title": "Polish P1: Learner answers displayed as raw JSON"
+    },
+    {
+     "detail": "Product fault. Complete the opening assessment and inspect the proposed plan before replying Go. Expected: One clear approval request per plan. Actual: Both engines produce two near-duplicate Teacher messages asking approval of the same plan. Haiku versions also describe dependency order differently. Both engines produce two near-duplicate Teacher messages asking approval of the same plan. Haiku versions also describe dependency order differently. Evidence: [\"assets/j03-first-plan.png\",\"assets/j04-after-probes.png\"].",
+     "path": ".archon/reports/e2e/polish.json",
+     "severity": "low",
+     "title": "Polish P2: Plan explanation appears twice before approval"
+    },
+    {
+     "detail": "Product fault. Complete Luna plan nodes and inspect its next unanswered recall card. Expected: Completion status agrees with the active required check. Actual: Luna marks 2 of 2 done and displays You finished this lesson / Done underneath a newly posed unanswered tabletop recall check. Answering it works, but the page gives conflicting completion signals. Luna marks 2 of 2 done and displays You finished this lesson / Done underneath a newly posed unanswered tabletop recall check. Answering it works, but the page gives conflicting completion signals. Evidence: \"assets/j04-finished-with-open-check.png\".",
+     "path": ".archon/reports/e2e/polish.json",
+     "severity": "medium",
+     "title": "Polish P3: Lesson completion shown while another unanswered check is active"
+    },
+    {
+     "detail": "Product fault. Start a long normal chat, confirm the desktop restart action while it runs, and inspect the resumed response. Expected: The resumed agent continues the requested work or accurately explains a system restart. Actual: After Connect Archon tools restarted the live turn, the agent says the interrupt came from you and asks whether to resume. The process resumed, but the requested tutorial did not continue without a reply. UI transcript: The 3,000-word decimal-versus-binary tutorial was interrupted before I wrote any of it, and the interrupt came from you. I have not restarted it... Do you want me to write it now? Evidence: [\"assets/polish-restart-misattribution.png\"].",
+     "path": ".archon/reports/e2e/polish.json",
+     "severity": "medium",
+     "title": "J12 P4: Normal chat misattributes desktop restart to a deliberate user interruption"
+    },
+    {
+     "detail": "Product fault. Open a long chat at a native maximized1024×768 window in both themes. Expected: A useful, readable transcript area without most height consumed by metadata. Actual: Agent metadata and controls occupy most of the short window. Only a few lines of the long conversation fit above the composer; the page also has an outer scrollbar. Focus mode is available as a workaround. Visual evidence in the linked full-window captures; no corresponding daemon error. Evidence: [\"assets/layout-chat-1024x768-maximized-light.png\",\"assets/layout-chat-1024x768-maximized-dark.png\"].",
+     "path": ".archon/reports/e2e/polish.json",
+     "severity": "medium",
+     "title": "J14 P5: Standard chat leaves only about 107 px for the transcript at 1024×768"
+    },
+    {
+     "detail": "Product fault. Open the diagram lesson at native maximized3440×1440 in both themes. Expected: Related lesson content and completion actions share an intentional alignment. Actual: At 3440×1440, teacher messages and the diagram are centered inside the broad lesson panel, but the completion card sits at its far left, leaving large inconsistent bands and weak visual alignment. Visual evidence in the linked full-window captures; no corresponding daemon error. Evidence: [\"assets/layout-lesson-diagram-3440x1440-maximized-light.png\",\"assets/layout-lesson-diagram-3440x1440-maximized-dark.png\"].",
+     "path": ".archon/reports/e2e/polish.json",
+     "severity": "low",
+     "title": "J14 P6: Ultrawide lesson completion card is detached from the centered conversation"
+    }
+   ],
+   "html_report": ".archon/reports/e2e/evidence.html",
+   "product_verdict": "NOT READY",
+   "published_artifact": "validate-final-5-e2e",
+   "results_path": ".archon/reports/e2e/results.json",
+   "verdict": "pass"
+  }
+ },
+ {
+  "stage_run": "stg_01M71YCGTW90XB259T3SYPAA7Z",
+  "model": "codex/gpt-6-astra",
+  "stored_verdict": "unknown",
+  "summary": "NOT READY. Completed all 15 packaged-app journeys against Aether 06454742, Archon 1.5.0 b5f38dba and 1.4.12 611aaa8b. Results are trustworthy: 12 pass, 3 fail, none environment-blocked.\n\nScenario table: J1 First launch PASS; J2 Settings/models PASS; J3 Haiku Learn FAIL; J4 Luna Learn PASS; J5 Learn from work PASS; J6 Budget stall PASS; J7 Persistence PASS; J8 Billing PASS; J9 Archon1.5 desktop PASS; J10 Archon1.4.12 PASS; J11 Native desktop PASS with documented substitutions; J12 Live-agent restarts PASS with diagnostic observation; J13 Memory PASS; J14 Regression sweep FAIL; J15 Size/speed FAIL (palette recovery).\n\nHaiku had an ambiguous choice, repeated completed material with mismatched feedback, and stalled before a third distinct taught step. An interrupted tool became Failed after reload. Palette Retry failed twice after the injected chunk fault was cleared. Luna completed four distinct graded steps. Both teaching/practice SIGTERM recovery and F6 concurrent operations passed; all38 enforced perf rows and21 tests passed. Captured216 native layout screenshots, measured1024px chat transcript393.98px high, and verified3440 completion alignment. Five primary defects, nine polish items and two lifecycle observations are documented.\n\nResults: .archon/reports/e2e/results.json. HTML: .archon/reports/e2e/report.html; Markdown: report.md; gallery: layout-gallery.html. Published durable bundle validate-final-6-e2e-evidence under item qi_01M71WX2CZ0B3ZMKSJ8YQJRCDN (about104MB). Xwayland startup race and inherited diagnostic listener were resolved without product edits. External opener was recorded, notification foreground option compensated for headless focus, and tailnet report variant was not separately verified; exact limits are in the report.\n\nAll owned processes/sockets stopped, ports and CI slot free, binary hashes unchanged, git clean, built app retained under /var/tmp/validate-final-6/. No product code or branch changed.\nVERDICT: PASS\n\nEnded 3 process(es) left under /home/operator/.local/share/archon/worktrees/aether/qi_01M71WX2CZ0B3ZMKSJ8YQJRCDN: 1606939 (bash), 1607086 (chrome_crashpad_handler), 1607088 (chrome_crashpad_handler).",
+  "structured": {
+   "artifact_item": "qi_01M71WX2CZ0B3ZMKSJ8YQJRCDN",
+   "artifact_name": "validate-final-6-e2e-evidence",
+   "cleanup": "All owned processes stopped; private ports/sockets clear; slot free; app retained.",
+   "findings": [
+    {
+     "detail": "Product fault. Expected: Exactly one unambiguous correct option and an explanation stated in learner terms. Actual: Door opened about halfway has no defined opening angle. Revealed explanation says it is roughly 90 degrees only by eye and this option is marked as a distractor for the sense of about. Playwright click Answer after choosing One slice of a pizza cut into 8 equal pieces. Visible output: A door opened about halfway is roughly 90 degrees only by eye ... this option is marked as a distractor ... Suspected Noesis question generation, not a proven implementation root cause. Evidence: .archon/reports/e2e/assets/j03-probe-1.png, .archon/reports/e2e/assets/j03-probe-2.png",
+     "path": ".archon/reports/e2e/findings.json:6",
+     "severity": "medium",
+     "title": "J3: Right-angle probe contains an ambiguous door distractor and exposes quiz-author wording"
+    },
+    {
+     "detail": "Product fault. Expected: Feedback addresses the answer just given and active plan step agrees with the teaching card. Actual: After half-turn answer South, teacher says Correct. Tilting a rectangle changes how it sits on the page. Repeated rotated-shape and half-turn checks appear while acute/obtuse is marked Now. Packaged UI: click Answer after selecting South. Output: Correct. Tilting a rectangle changes how it sits on the page ... A square is turned ... The plan shows Tell acute and obtuse angles from right angles Now. Public response records previous check plan_node=half-turn. Suspected Noesis teaching/evidence ordering; root cause not established. Evidence: .archon/reports/e2e/assets/j03-teach-3.png, .archon/reports/e2e/assets/j03-after-teach-3.png, .archon/reports/e2e/assets/haiku-three-checks.json",
+     "path": ".archon/reports/e2e/findings.json:29",
+     "severity": "high",
+     "title": "J3: Teaching revisits completed nodes with feedback for an earlier answer"
+    },
+    {
+     "detail": "Product fault. Expected: At least three distinct taught steps with graded checks and automatic continuation. Actual: After two completed nodes and repeated questions, lesson displays The teacher stopped responding. Try again to continue your lesson. Playwright click Answer for plus-sign 90 degrees. aetherd 2026-11-10T05:34:23.838069Z WARN a Noesis teaching turn failed ... the engine stalled: the teaching agent could not pose a fresh check. One explicit recovery attempt is recorded separately and cannot erase the initial failure. Evidence: .archon/reports/e2e/assets/j03-stalled-first-failure.png, .archon/reports/e2e/assets/haiku-stalled.json, .archon/reports/e2e/logs/aetherd.log",
+     "path": ".archon/reports/e2e/findings.json:45",
+     "severity": "high",
+     "title": "J3: Haiku stalls before the third distinct taught step"
+    },
+    {
+     "detail": "Product fault. Expected: The interrupted call retains its Interrupted label. Actual: The original Bash sleep call says Failed after reload. Successful reruns remain Done. Command: Playwright page.goto(chatURL), then scroll the Messages list to the original call. Earlier visible output: Bash … Interrupted. After reload: Bash … Failed. Call ID: call_01M721ATKESNHDHD9VD5E246K2. Suspected web conversation/tool-status rehydration; implementation root cause not established. Evidence: .archon/reports/e2e/assets/j12-external-resumed-answer.png, .archon/reports/e2e/assets/j14-interrupted-tool-reloaded-failed.png",
+     "path": ".archon/reports/e2e/findings.json:61",
+     "severity": "medium",
+     "title": "J14: Interrupted tool row becomes Failed after reload"
+    },
+    {
+     "detail": "Product fault. Expected: The load error is visible, Close/Escape dismiss it, and Retry loads the now-available chunk. Actual: Close and Escape work. Retry twice returns the same dynamic-import error. A full page reload restores the palette. Command: page.route(\"**/assets/entity-palette-*.js\", route => route.abort(\"failed\")); open Jump to; page.unroute(...); click Try again. Output: The palette failed; Failed to fetch dynamically imported module: app://aether/assets/entity-palette-BM8xmEpF.js. Repeated once with the same result. Initial fault was intentional; failed recovery after clearing it is product behavior. Suspected palette/lazy-import retry cache; implementation not inspected. Evidence: .archon/reports/e2e/assets/j15-palette-fault-injected.png, .archon/reports/e2e/assets/j15-palette-retry-still-failed.png, .archon/reports/e2e/assets/j15-palette-retry-second-failure.png, .archon/reports/e2e/assets/j15-reload-restores-palette.png, .archon/reports/e2e/palette-fault.jsonl, .archon/reports/e2e/palette-audit.jsonl",
+     "path": ".archon/reports/e2e/findings.json:76",
+     "severity": "medium",
+     "title": "J15: Command palette Retry does not recover after its chunk becomes available"
+    },
+    {
+     "detail": "After desktop Connect Archon tools and app shutdown, command ss -ltnp \"sport = :47993\" returned LISTEN with aether pid1550354 fd58 and archon-150 pid1550592 fd58. New app output: Cannot start http server for devtools. The recorded private daemon group was stopped and testing resumed. Product descriptor-lifecycle behavior under the CDP launch; normal-launch impact not established. Evidence: .archon/reports/e2e/assets/j12-inherited-cdp-listener.txt and j12-inherited-daemon-fds.txt. Intended live-agent resume passed.",
+     "path": ".archon/reports/e2e/assets/j12-inherited-cdp-listener.txt:2",
+     "severity": "medium",
+     "title": "J12 diagnostic observation: desktop-spawned daemon inherited CDP listener"
+    }
+   ],
+   "product_verdict": "NOT READY",
+   "report": ".archon/reports/e2e/report.html",
+   "results": ".archon/reports/e2e/results.json",
+   "scenarios": [
+    {
+     "id": "J1",
+     "status": "pass",
+     "title": "First launch"
+    },
+    {
+     "id": "J2",
+     "status": "pass",
+     "title": "Settings and models"
+    },
+    {
+     "id": "J3",
+     "status": "fail",
+     "title": "Learn on Haiku"
+    },
+    {
+     "id": "J4",
+     "status": "pass",
+     "title": "Learn on Luna"
+    },
+    {
+     "id": "J5",
+     "status": "pass",
+     "title": "Learn from work"
+    },
+    {
+     "id": "J6",
+     "status": "pass",
+     "title": "Learn budget stall"
+    },
+    {
+     "id": "J7",
+     "status": "pass",
+     "title": "Persistence"
+    },
+    {
+     "id": "J8",
+     "status": "pass",
+     "title": "Billing truth"
+    },
+    {
+     "id": "J9",
+     "status": "pass",
+     "title": "Archon 1.5.0 desktop"
+    },
+    {
+     "id": "J10",
+     "status": "pass",
+     "title": "Archon 1.4.12 compatibility"
+    },
+    {
+     "id": "J11",
+     "status": "pass",
+     "title": "Desktop native"
+    },
+    {
+     "id": "J12",
+     "status": "pass",
+     "title": "Disconnect and restart with live agents"
+    },
+    {
+     "id": "J13",
+     "status": "pass",
+     "title": "Memory"
+    },
+    {
+     "id": "J14",
+     "status": "fail",
+     "title": "Regression sweep"
+    },
+    {
+     "id": "J15",
+     "status": "fail",
+     "title": "Size and speed"
+    }
+   ],
+   "verdict": "pass"
+  }
+ }
+]

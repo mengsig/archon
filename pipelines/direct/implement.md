@@ -9,10 +9,11 @@ Attempt {{attempt}}: build on what the branch already holds.
 {{feedback}}
 
 1. Read the repository's contributor guidance and the code the change
-   touches. If it turns out risky (security, concurrency, a data migration,
+   touches. If it turns out risky (security, concurrency, locking, a data migration,
    a public API break) or reaches into code it depends on beyond the task,
-   commit nothing and escalate as your contract says. Size alone is no
-   risk: a large mechanical change can stay here.
+   commit nothing and escalate as your contract says. For concurrency,
+   locking, security or a migration, add "re-queue on adaptive" to the error. Size
+   alone is no risk: a large mechanical change can stay here.
 2. For a visible or measurable change, capture its `before` first, as
    your contract's Summary and evidence section says.
 3. Make the smallest change that fully does the task, in the surrounding

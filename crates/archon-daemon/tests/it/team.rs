@@ -313,11 +313,22 @@ async fn a_role_that_left_uncommitted_work_gets_its_next_attempt() {
 #[tokio::test]
 async fn an_uncommitted_run_worktree_loops_back_before_the_roles_start() {
     let h = Harness::new().await;
-    let (_, run) = start_plan(&h, "forgot to commit").await;
+    let (item, run) = start_plan(&h, "forgot to commit").await;
     std::fs::write(run.workspace.join("README.md"), "planned\n").expect("write");
     h.settle_running(|_| completed("planned")).await;
     h.dispatch().await;
     h.dispatch().await;
+    let refused: Vec<StageRun> = h.stages(&item.id).await;
+    let failed =
+        |s: &&StageRun| s.stage_id != "plan" && matches!(s.state, StageState::Failed { .. });
+    let refused: Vec<&StageRun> = refused.iter().filter(failed).collect();
+    assert!(!refused.is_empty(), "a role was refused");
+    for slot in refused {
+        assert!(
+            !slot.infrastructure_failure,
+            "a dirty run tree is the plan's, not the machine's: {slot:?}"
+        );
+    }
 
     let running = h.running().await;
     assert_eq!(running.len(), 1, "{running:?}");
@@ -342,6 +353,28 @@ async fn an_uncommitted_run_worktree_loops_back_before_the_roles_start() {
     for role in ["api", "ui"] {
         assert_eq!(head(&worker(&run, role)), head(&run.workspace));
     }
+}
+
+/// The run's tree went before the roles were prepared: no agent ran, and the
+/// failure is recorded as the machine's.
+#[tokio::test]
+async fn a_run_tree_gone_before_the_roles_start_is_infrastructure() {
+    let h = Harness::new().await;
+    let (item, run) = start_plan(&h, "tree deleted after the plan").await;
+    h.settle_running(|_| completed("planned")).await;
+    std::fs::remove_dir_all(&run.workspace).expect("remove the run tree");
+    h.dispatch().await;
+
+    let stages = h.stages(&item.id).await;
+    let failed =
+        |s: &&StageRun| s.stage_id != "plan" && matches!(s.state, StageState::Failed { .. });
+    let slots: Vec<&StageRun> = stages.iter().filter(failed).collect();
+    assert!(!slots.is_empty(), "a role was tried: {stages:?}");
+    for slot in slots {
+        assert!(slot.aether_agent.is_none(), "no agent ran: {slot:?}");
+        assert!(slot.infrastructure_failure, "the machine's: {slot:?}");
+    }
+    assert_eq!(h.backend.requests().len(), 1, "only the plan's agent");
 }
 
 /// A retried item runs again on the same run branch and directories: its

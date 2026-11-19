@@ -1,0 +1,328 @@
+//! V24 freezes a reviewed pull request into its outcome only on a recorded
+//! reviewer verdict, and reads a stage's kind before its id.
+
+use super::outcome_classes::*;
+use super::*;
+use archon_core::catalog::StageKind;
+use archon_core::outcome::{FailureClass, Outcome};
+use archon_core::run::{PipelineRun, StageRun, StageState, Verdict};
+
+const PR: &str = "https://github.com/o/r/pull/7";
+
+/// Makes the item of each run review [`PR`] and push nothing.
+fn target(conn: &Connection, runs: &[&PipelineRun], item: serde_json::Value) {
+    for run in runs {
+        conn.execute(
+            "UPDATE items SET data = ?2 WHERE id = ?1",
+            [run.item.as_str(), &item.to_string()],
+        )
+        .unwrap();
+    }
+}
+
+fn review_only() -> serde_json::Value {
+    serde_json::json!({"onto": {"review_only": true, "pr": PR}})
+}
+
+fn frozen(conn: &Connection, run: &PipelineRun) -> Option<String> {
+    let data: String = conn
+        .query_row(
+            "SELECT data FROM outcomes WHERE run = ?1",
+            [run.id.as_str()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let outcome: Outcome = serde_json::from_str(&data).expect("the outcome stays readable");
+    outcome.review_pr
+}
+
+fn class(conn: &Connection, run: &PipelineRun) -> Option<String> {
+    columns(conn, run).0
+}
+
+/// The bundled review pipeline's lead as 1.6.3 recorded a failed round: a
+/// work stage that failed its task, with no duty kept.
+fn failed_lead(run: &PipelineRun) -> StageRun {
+    let lead = failed_stage(run, StageKind::Work, "blocking issues", false);
+    assert!(lead.only_reviews.is_none(), "a 1.6.3 record");
+    lead
+}
+
+#[test]
+fn v24_freezes_a_pull_request_only_on_a_recorded_reviewer_verdict() {
+    let mut conn = v23_store();
+    let judged = failed_run("review", "x");
+    let mut review = stage(&judged, "review", StageKind::Review, StageState::Completed);
+    review.verdict = Some(Verdict::Fail);
+    seed(&conn, &judged, &[review], Some(FailureClass::Review), false);
+    let tallied = failed_run("review", "the review found blocking issues");
+    let lead = failed_lead(&tallied);
+    tally_a_fail(&conn, &lead);
+    seed(&conn, &tallied, &[lead], Some(FailureClass::Other), false);
+    let assigned = failed_run("review", "the checkout failed");
+    let lead = failed_lead(&assigned);
+    seed(&conn, &assigned, &[lead], Some(FailureClass::Other), false);
+    let carried = succeeded_run();
+    let mut lead = stage(&carried, "review", StageKind::Work, StageState::Completed);
+    lead.verdict = Some(Verdict::Pass);
+    lead.structured = Some(serde_json::json!({"review": {"verdict": "pass"}}));
+    seed(&conn, &carried, &[lead], None, false);
+    let unverified = succeeded_run();
+    let mut lead = stage(
+        &unverified,
+        "review",
+        StageKind::Work,
+        StageState::Completed,
+    );
+    lead.verdict = Some(Verdict::Pass);
+    lead.structured =
+        Some(serde_json::json!({"review": {"verdict": "pass", "unverified": "no reviewer ran"}}));
+    seed(&conn, &unverified, &[lead], None, false);
+    // A level-none read of the pull request: it succeeds with no review.
+    let unreviewed = succeeded_run();
+    let mut read = stage(
+        &unreviewed,
+        "review",
+        StageKind::Work,
+        StageState::Completed,
+    );
+    read.verdict = Some(Verdict::Pass);
+    seed(&conn, &unreviewed, &[read], None, false);
+    let every = [&judged, &tallied, &assigned, &carried, &unverified];
+    target(&conn, &every, review_only());
+    let mut none = review_only();
+    none["autonomy"] = serde_json::json!({"review": "none"});
+    target(&conn, &[&unreviewed], none);
+
+    assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+
+    assert_eq!(frozen(&conn, &judged), some(PR), "a review stage's verdict");
+    assert_eq!(
+        frozen(&conn, &tallied),
+        some(PR),
+        "a reviewer's tallied fail"
+    );
+    assert_eq!(class(&conn, &tallied), some("review"));
+    assert_eq!(
+        frozen(&conn, &assigned),
+        None,
+        "a lead that failed with no reviewer verdict reviewed nothing"
+    );
+    assert_eq!(class(&conn, &assigned), some("other"), "its kind is work");
+    assert_eq!(frozen(&conn, &carried), some(PR), "the review it carries");
+    assert_eq!(
+        frozen(&conn, &unverified),
+        None,
+        "Archon refused that review"
+    );
+    assert_eq!(
+        frozen(&conn, &unreviewed),
+        None,
+        "level none records no review"
+    );
+}
+
+/// A review-only run that succeeded on a lead carrying `verdict`.
+fn carried_run(conn: &Connection, verdict: &str) -> PipelineRun {
+    let run = succeeded_run();
+    let mut lead = stage(&run, "review", StageKind::Work, StageState::Completed);
+    lead.verdict = Some(Verdict::Pass);
+    lead.structured = Some(serde_json::json!({"review": {"verdict": verdict}}));
+    seed(conn, &run, &[lead], None, false);
+    run
+}
+
+/// A 1.6.3 review lead that failed its task, classed `other`, under `tally`.
+fn tallied_run(conn: &Connection, tally: &str) -> PipelineRun {
+    let run = failed_run("review", "the review found blocking issues");
+    let lead = failed_lead(&run);
+    let key = archon_core::run::review_tally_key(&lead.id);
+    conn.execute(
+        "INSERT INTO kv (key, value) VALUES (?1, ?2)",
+        [key, tally.to_owned()],
+    )
+    .unwrap();
+    seed(conn, &run, &[lead], Some(FailureClass::Other), false);
+    run
+}
+
+/// The gate reads a carried verdict as one line of at most 400 characters;
+/// archond's tally names the reviewer, head and findings of each fail, so a
+/// tally in another shape is no reviewer's verdict.
+#[test]
+fn v24_reads_a_carried_verdict_as_the_gate_does_and_a_tally_by_its_reviewers() {
+    let mut conn = v23_store();
+    let spaced = carried_run(&conn, "PASS\n");
+    let capped = carried_run(&conn, &format!("PASS{}x", "-".repeat(396)));
+    let overlong = carried_run(&conn, &format!("PASS{}x", "-".repeat(395)));
+    let unstorable = [
+        r#"[[{"agent":"agt_01JB000000000000000000000R","head":"abc1234","findings":["a bug"]}]]"#,
+        r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"abc1234","titles":[]}],"told":"yes"}"#,
+        r#"{"fails":[{"agent":"agt_not an agent","head":"abc1234","findings":["a bug"]}]}"#,
+        r#"{"fails":[],"other_fails":[["agt_not an agent","abc1234"]]}"#,
+        r#"{"fails":[null]}"#,
+        r#"{"fails":[{"agent":"not an agent"}]}"#,
+        r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"abc1234"}]}"#,
+        r#"{"fails":[{"agent":"not an agent","head":"abc1234","findings":["a bug"]}]}"#,
+        r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"the head","findings":["a bug"]}]}"#,
+        r#"{"fails":[],"other_fails":[["agt_01JB000000000000000000000R","HEAD"]]}"#,
+    ]
+    .map(|tally| tallied_run(&conn, tally));
+    let stored = tallied_run(
+        &conn,
+        r#"{"fails":[{"agent":"agt_01JB000000000000000000000R","head":"abc1234","titles":[]}],"told":true}"#,
+    );
+    let mut every = vec![&spaced, &capped, &overlong, &stored];
+    every.extend(&unstorable);
+    target(&conn, &every, review_only());
+
+    assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+
+    assert_eq!(frozen(&conn, &spaced), some(PR), "a pass on its own line");
+    assert_eq!(
+        frozen(&conn, &capped),
+        some(PR),
+        "the gate reads the first 400 characters, which say pass"
+    );
+    assert_eq!(
+        frozen(&conn, &overlong),
+        None,
+        "its first 400 characters name no verdict"
+    );
+    for run in &unstorable {
+        assert_eq!(frozen(&conn, run), None, "no reviewer's fail is stored");
+        assert_eq!(
+            columns(&conn, run),
+            (some("other"), some("legacy_163"), some("other")),
+            "a tally archond did not write keeps the run's class"
+        );
+    }
+    assert_eq!(
+        frozen(&conn, &stored),
+        some(PR),
+        "a fail as 1.4.3 stored it"
+    );
+    assert_eq!(
+        columns(&conn, &stored),
+        (some("review"), some("recomputed"), some("other"))
+    );
+}
+
+/// A recorded work kind stands unless a reviewer's verdict is on record: a
+/// carried review that states none makes no review of the stage.
+#[test]
+fn v24_keeps_a_work_stage_whose_carried_review_states_no_verdict() {
+    let mut conn = v23_store();
+    let judged = |review: serde_json::Value| {
+        let run = failed_run("review-input", "the input was malformed");
+        let mut work = stage(&run, "review-input", StageKind::Work, StageState::Completed);
+        assert!(work.only_reviews.is_none(), "a 1.6.3 record");
+        work.verdict = Some(Verdict::Fail);
+        work.structured = Some(serde_json::json!({ "review": review }));
+        seed(&conn, &run, &[work], Some(FailureClass::Review), false);
+        run
+    };
+    let empty = judged(serde_json::json!({}));
+    let unstated = judged(serde_json::json!({"verdict": "blocked"}));
+    let stated = judged(serde_json::json!({"verdict": "fail"}));
+    target(&conn, &[&empty, &unstated, &stated], review_only());
+
+    assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+
+    for run in [&empty, &unstated] {
+        assert_eq!(
+            columns(&conn, run),
+            (some("other"), some("recomputed"), some("review")),
+            "a work stage with no reviewer verdict stays work"
+        );
+        assert_eq!(frozen(&conn, run), None);
+    }
+    assert_eq!(class(&conn, &stated), some("review"), "a carried fail");
+    assert_eq!(frozen(&conn, &stated), some(PR));
+}
+
+#[test]
+fn v24_reads_a_recorded_kind_before_the_stage_id() {
+    let mut conn = v23_store();
+    let mut input = failed_run("review-input", "the input was malformed");
+    input.pipeline = "read".into();
+    let work = failed_stage(&input, StageKind::Work, "the input was malformed", false);
+    seed(&conn, &input, &[work], Some(FailureClass::Review), false);
+    let kindless = |stage_id: &str, verdict: Option<Verdict>| {
+        let run = failed_run(stage_id, "x");
+        let state = match verdict {
+            Some(_) => StageState::Completed,
+            None => StageState::Failed { error: "x".into() },
+        };
+        let mut old = stage(&run, stage_id, StageKind::Review, state);
+        old.kind = None;
+        old.verdict = verdict;
+        seed(&conn, &run, &[old], Some(FailureClass::Other), false);
+        run
+    };
+    let judged = kindless("code-review", Some(Verdict::Fail));
+    let unjudged = kindless("review-input", None);
+    let hedged = kindless("review", Some(Verdict::Unknown));
+    target(&conn, &[&input, &judged, &unjudged, &hedged], review_only());
+
+    assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+
+    assert_eq!(
+        class(&conn, &input),
+        some("other"),
+        "a work stage stays work"
+    );
+    assert_eq!(frozen(&conn, &input), None);
+    assert_eq!(
+        class(&conn, &judged),
+        some("review"),
+        "a kindless review with its verdict"
+    );
+    assert_eq!(frozen(&conn, &judged), some(PR));
+    for run in [&unjudged, &hedged] {
+        assert_eq!(
+            class(&conn, run),
+            some("other"),
+            "an id alone names no review: {}",
+            run_stage(run)
+        );
+        assert_eq!(frozen(&conn, run), None, "{}", run_stage(run));
+    }
+}
+
+#[test]
+fn v24_skips_a_pull_request_target_it_cannot_read() {
+    let mut conn = v23_store();
+    let reviewed = failed_run("review", "x");
+    let mut review = stage(
+        &reviewed,
+        "review",
+        StageKind::Review,
+        StageState::Completed,
+    );
+    review.verdict = Some(Verdict::Fail);
+    seed(
+        &conn,
+        &reviewed,
+        &[review],
+        Some(FailureClass::Review),
+        false,
+    );
+    let odd = serde_json::json!({"onto": {"review_only": true, "pr": 42}});
+    target(&conn, &[&reviewed], odd);
+    let torn = failed_run("review", "x");
+    let mut review = stage(&torn, "review", StageKind::Review, StageState::Completed);
+    review.verdict = Some(Verdict::Fail);
+    seed(&conn, &torn, &[review], Some(FailureClass::Review), false);
+    conn.execute(
+        "UPDATE stage_runs SET data = '{\"torn\": true}' WHERE run = ?1",
+        [torn.id.as_str()],
+    )
+    .unwrap();
+    target(&conn, &[&torn], review_only());
+
+    assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+
+    assert_eq!(frozen(&conn, &reviewed), None);
+    assert_eq!(frozen(&conn, &torn), None, "its stage runs cannot be read");
+}

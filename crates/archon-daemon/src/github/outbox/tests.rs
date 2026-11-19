@@ -351,15 +351,17 @@ fn found(sources: &[(PathBuf, String)], patterns: &[&str]) -> Vec<String> {
 fn only_the_outbox_creates_github_comments() {
     let sources = production_sources();
     let outbox = Path::new("archon-daemon/src/github/outbox.rs");
+    // A repository watch reads comments, with GETs `assert_read_only` guards.
+    let watch_reads = Path::new("archon-daemon/src/github_sync/watch_read.rs");
     let elsewhere: Vec<_> = sources
         .iter()
-        .filter(|(path, _)| !path.ends_with(outbox))
+        .filter(|(path, _)| !path.ends_with(outbox) && !path.ends_with(watch_reads))
         .cloned()
         .collect();
     assert_eq!(
-        elsewhere.len() + 1,
+        elsewhere.len() + 2,
         sources.len(),
-        "the outbox itself was found"
+        "the outbox and the watch's reads were found"
     );
     let comment_calls = [
         "/comments",

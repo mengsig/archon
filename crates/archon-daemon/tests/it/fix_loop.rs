@@ -959,7 +959,7 @@ async fn a_cost_stop_of_unknown_billing_is_labelled_notional_cost() {
         spawn["request"]["cost_billing"] = billing.into();
         let raw = spawn.to_string();
         h.ctx.store.lock().await.kv_set(&key, &raw).unwrap();
-        let stop = "cost budget of $10.00: $10.02 spent";
+        let stop = "cost budget of $10: $10.0200 spent";
         h.settle_running(|_| StageOutcome::Failed {
             error: stop.into(),
             infra: false,

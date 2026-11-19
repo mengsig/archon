@@ -133,13 +133,24 @@ fn stats_text(stats: &archon_core::lesson::LessonStats) -> String {
         stats.outcomes, stats.corrected, stats.active, stats.proposed, stats.retracted
     );
     for p in &stats.pipelines {
+        let prs = p.review_prs.as_ref().map_or(String::new(), |prs| {
+            let rounds = prs
+                .median_rounds_to_pass
+                .map_or("-".to_owned(), |r| format!("{r:.1}"));
+            format!(
+                " prs_passed={}/{} median_rounds_to_pass={rounds}",
+                prs.passed, prs.reviewed
+            )
+        });
         text.push_str(&format!(
-            "{} / {} n={} scored={} pass={:.0}% median=${:.3} wall={:.0}s corrections={:.0}% saving/run={}\n",
+            "{} / {} n={} scored={} pass={:.0}% blocked={} escalated={} median=${:.3} wall={:.0}s corrections={:.0}% saving/run={}{prs}\n",
             repo_name(stats, p.repo.as_ref()),
             p.pipeline,
             p.runs,
             p.scored,
             p.pass_rate * 100.0,
+            p.blocked,
+            p.escalated,
             p.median_cost_usd,
             p.median_wall_secs,
             p.correction_rate * 100.0,
@@ -351,6 +362,38 @@ mod proposed_tests {
     #[test]
     fn no_proposed_lessons_says_so_and_a_list_says_how_to_settle_them() {
         assert!(proposed_text(&[]).starts_with("No proposed lessons"));
+    }
+
+    #[test]
+    fn a_pipeline_line_shows_its_blocked_escalated_and_reviewed_prs() {
+        let line = archon_core::lesson::PipelineEvidence {
+            repo: None,
+            pipeline: "review".into(),
+            runs: 6,
+            scored: 3,
+            pass_rate: 2.0 / 3.0,
+            blocked: 2,
+            escalated: 1,
+            review_prs: Some(archon_core::lesson::ReviewPrs {
+                reviewed: 2,
+                passed: 1,
+                median_rounds_to_pass: Some(2.0),
+            }),
+            median_cost_usd: 0.5,
+            median_wall_secs: 60.0,
+            correction_rate: 0.0,
+            estimated_saving_usd: None,
+        };
+        let stats = archon_core::lesson::LessonStats {
+            pipelines: vec![line],
+            ..Default::default()
+        };
+        let text = stats_text(&stats);
+        assert!(text.contains("pass=67% blocked=2 escalated=1 "), "{text}");
+        assert!(
+            text.ends_with(" prs_passed=1/2 median_rounds_to_pass=2.0"),
+            "{text}"
+        );
     }
 
     #[test]

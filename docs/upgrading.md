@@ -15,15 +15,17 @@ Aether's normal update, without pinning it to an older release. Keep a backup be
 adds persistent requirement and clarification records. Existing queue items
 without intent keep their previous behavior.
 
-From 1.6.4 stage `info` messages no longer wake the orchestrator, and its
-context is compacted earlier ([configuration](configuration.md)). A running
-orchestrator whose prompt changed in the upgrade is not replaced by itself:
-`archon status` says "prompt outdated since upgrade; run `archon
-orchestrator restart`" until you restart it. None of this migrates the
-store. Going back to an older binary is not supported once a release's store
-migration has run, as an older archond refuses a newer store; undo these
-behaviours with their switches instead: `quiet_info = false`,
-`compaction_tokens = 0` and `idle_compact_after_minutes = 0` under
+From 1.6.4 a running orchestrator whose prompt or tools changed in the
+upgrade is replaced by a fresh generation at its next idle moment, with the
+same hand-off as `archon orchestrator restart`, so `archon status` stops
+showing "prompt outdated" without a manual restart; while the refresh waits
+or fails, it shows "upgrade refresh delayed" and why. Stage `info` messages
+no longer wake it, and its context is compacted earlier
+([configuration](configuration.md)). None of this migrates the store. Going
+back to an older binary is not supported once a release's store migration
+has run, as an older archond refuses a newer store; undo these behaviours
+with their switches instead: `quiet_info = false`, `compaction_tokens = 0`,
+`idle_compact_after_minutes = 0` and `refresh_on_upgrade = false` under
 `[orchestrator]`. A compaction threshold already sent stays with the running
 generation until `archon orchestrator restart`.
 
@@ -87,8 +89,58 @@ Downgrading the binary is not supported once a store migration of the
 release has run, because an older schema refuses a newer store. Restore the
 backup taken before the update instead.
 
+### Store migration V24
+
+The first start of an archond with migration V24 upgrades the store in place,
+in one write transaction. V24 adds `outcomes.class_source` and
+`outcomes.failure_class_163`. It then recomputes the failure class of every
+stored failed run from that run's stage records (the timed-out,
+infrastructure, budget and review rules of the [changelog](../CHANGELOG.md)),
+and keeps the old class in `failure_class_163` for one release. Only the
+class columns and fields change. A run whose stage records were pruned keeps
+its old class, marked `legacy_163`. So does a run whose records V24 cannot
+read, whose ending stage left no record, which recovery failed ("cannot resume
+the run: …", after dropping the stage rows it could not read), or whose outcome
+observed more runs of a stage than are still stored: it logs the run,
+recomputes nothing, rescores none of its lesson uses and leaves an unreadable
+outcome record as it was. A record it cannot read never stops the migration:
+that covers a run, stage run, observed-stage or review-tally row SQLite holds
+as something other than text, one that does not decode, a stage run naming no
+stage or attempt 0, a stage run the store would not write (settled with no
+finish time), a run or stage run whose row holds, in a column that repeats its
+record (id, stage, attempt, slot, state, start, item, pipeline, whether it
+ended) or in its agent claim, another value than the record's, an
+observed stage with no attempts, and a tally in any shape archond does not store (an object
+in which each fail names its reviewer's Aether agent id, `agt_` and a ULID, the
+commit that reviewer read and its findings).
+archond logs, per class, the old count, the new count and the rows left on the
+1.6.3 class. When a recomputed class changes whether a run is scored, V24
+rescores the run's lesson uses and holdout trials and recounts the lessons it
+used, so lesson confidence and holdout lift follow the new classes. A lesson
+V24 cannot recount (its row, its use or its epoch is unreadable, or it holds
+what no lesson holds) keeps its stored counts, and the lesson clusters stay as
+they were when any stored lesson is unfit to write back or holds the record of
+another lesson: neither stops the
+migration, and archond logs each. V24 also
+stores, in each outcome whose item is still stored and whose run holds a
+recorded reviewer verdict (a review stage's pass or fail, the pass or fail of
+the review a stage's result carries, read as the gate reads it, or a
+reviewer's fail in archond's review tally), the pull request it reviewed. Outcomes whose item was already pruned have no
+pull request, so the model evidence report leaves them out of its pull request
+counts.
+
+**Downgrading the binary is not supported after V24 has run.** The schema
+check of an older archond refuses a newer store ("store schema version 24 is
+newer than this archon supports (23); upgrade archon"), so no older daemon can
+read the upgraded store. Before the update, stop archond and copy `archon.db`
+and any `archon.db-wal`. Going back means stopping archond, installing the
+older release and restoring that copy. Everything recorded since the copy is
+lost. To roll back the behaviour of a release while keeping the store, use its
+configuration switches, not an older binary.
+
 ## Contents
 
+- [Store migration V24](#store-migration-v24)
 - [From 1.4.x to 1.5.0](#from-14x-to-150)
   - [What changes](#what-changes)
   - [Store migrations V19 to V23](#store-migrations-v19-to-v23)

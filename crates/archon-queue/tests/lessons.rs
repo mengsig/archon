@@ -7,6 +7,23 @@ use archon_core::outcome::Correction;
 use archon_core::queue::QueueState;
 use common::*;
 
+const TIMED_OUT: &str = "The stage timed out.";
+
+/// A timed-out ending leaves the timed-out stage run its class is read from.
+fn record_ending_stage(
+    store: &mut archon_queue::Store,
+    run: &archon_core::run::PipelineRun,
+    ending: Option<&str>,
+) {
+    if ending != Some(TIMED_OUT) {
+        return;
+    }
+    let mut timed_out = stage(run, 0);
+    timed_out.state = archon_core::run::StageState::TimedOut;
+    timed_out.finished_at = Some(t(25));
+    store.upsert_stage_run(&timed_out).unwrap();
+}
+
 fn advice(store: &archon_queue::Store, pinned: bool) -> Lesson {
     let lesson = Lesson::new(
         LessonScope::default(),
@@ -106,8 +123,8 @@ fn cancels_budget_caps_and_timeouts_neither_win_nor_lose_a_lesson() {
     let endings = [
         None,
         Some("cancel"),
-        Some("the item budget of $5.00 is reached"),
-        Some("The stage timed out."),
+        Some("BLOCKED: the item's budget is used up: $5.00 spent of its $5.00 cap ($0.00 over)"),
+        Some(TIMED_OUT),
         None,
     ];
     for (n, ending) in endings.into_iter().enumerate() {
@@ -122,6 +139,7 @@ fn cancels_budget_caps_and_timeouts_neither_win_nor_lose_a_lesson() {
                 .len(),
             1
         );
+        record_ending_stage(&mut store, &run, ending);
         let ending = match ending {
             None => QueueState::Succeeded {
                 run: run.id.clone(),
@@ -162,6 +180,7 @@ fn settle_use(store: &mut archon_queue::Store, n: usize, ending: Option<&str>) {
             .len(),
         1
     );
+    record_ending_stage(store, &run, ending);
     let ending = match ending {
         None => QueueState::Succeeded {
             run: run.id.clone(),
@@ -185,7 +204,7 @@ fn unscored_uses_a_1_4_6_store_scored_as_losses_no_longer_count() {
     let mut store = archon_queue::Store::open(&path).unwrap();
     let lesson = advice(&store, false);
     for n in 0..4 {
-        settle_use(&mut store, n, Some("The stage timed out."));
+        settle_use(&mut store, n, Some(TIMED_OUT));
     }
     // 1.4.6 stored each of those uses as a loss.
     let conn = rusqlite::Connection::open(&path).unwrap();
@@ -207,7 +226,7 @@ fn unpinning_a_lesson_with_1_4_6_losses_from_unscored_uses_does_not_retract_it()
     let mut store = archon_queue::Store::open(&path).unwrap();
     let lesson = advice(&store, true);
     for n in 0..5 {
-        settle_use(&mut store, n, Some("The stage timed out."));
+        settle_use(&mut store, n, Some(TIMED_OUT));
     }
     // 1.4.6 stored each of those uses as a loss and cached the counts.
     let conn = rusqlite::Connection::open(&path).unwrap();

@@ -23,6 +23,7 @@ pub use learning::memory_feedback::{
 mod lessons;
 mod model_evidence;
 mod operator;
+mod repo_watch;
 mod repos;
 mod revise;
 mod settings;
@@ -719,6 +720,12 @@ async fn handle_protocol_24(ctx: &DaemonContext, request: Request) -> Result<Rep
             pipeline,
             priority,
         } => github_links::import_issue(ctx, &reference, pipeline, priority).await,
+        Request::WatchRepo {
+            repo,
+            interval_minutes,
+            remove,
+        } => repo_watch::set(ctx, &repo, interval_minutes, remove).await,
+        Request::RepoWatches => repo_watch::list(ctx).await,
         request => handle_operator(ctx, request).await,
     }
 }

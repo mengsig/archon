@@ -2,7 +2,7 @@
 //! gate pass, and if not, what feedback goes back to the looped-to stage.
 
 use archon_core::catalog::{Gate, StageKind};
-use archon_core::run::{RecordRepair, StageOutcome, StageRun, StageState, Verdict};
+use archon_core::run::{RecordRepair, StageOutcome, StageRun, StageState, Verdict, VerdictNote};
 
 use crate::review::Evidence;
 use crate::ship::ShipRecord;
@@ -13,7 +13,9 @@ use crate::spec::{Owed, Scenarios, StageSpec};
 pub const MAX_FEEDBACK_CHARS: usize = 32_000;
 
 const SHIP_REFUSAL: &str = "the ship record archond delivers is not on record";
-const REVIEW_REFUSAL: &str = "the review this pipeline declares is not on record";
+const REVIEW_REFUSAL: &str = archon_core::run::REVIEW_NOT_ON_RECORD;
+/// The headline a review-only lead's verdict other than pass fails its run with.
+const REVIEW_VERDICT_REFUSAL: &str = "the review's verdict is";
 /// Most characters of an unreadable verdict quoted in a gate's refusal.
 const MAX_QUOTED_VERDICT_CHARS: usize = 160;
 
@@ -144,15 +146,27 @@ fn recorded(stage: &StageSpec, attempt: u32, members: &[&StageRun], owed: Owed) 
     assert_eq!(member.state, StageState::Completed, "it passed its gate");
     let summary = joined_summary(stage, members);
     let structured = member.structured.as_ref();
-    // A stated failure is refused on its merits, whatever its gate or record.
-    if decided_since_repairs(member) && states_failure(member) {
-        let headline = "its agent stated a failure".to_owned();
+    // A review-only lead's findings are its verdict's reasons: its fail reports them
+    // first, so a long summary cannot clip them away.
+    let findings = match owed.review.is_some_and(|duty| duty.records_verdict) {
+        true => findings_text(structured),
+        false => String::new(),
+    };
+    let failed = |headline: String| {
         let report = format!(
-            "**Stage `{}` attempt {attempt}: {headline}**\n\n{summary}\n",
+            "**Stage `{}` attempt {attempt}: {headline}**\n{findings}\n{summary}\n",
             stage.id
         );
         let report = clip(&report, MAX_FEEDBACK_CHARS);
-        return GroupResult::Fail { headline, report };
+        GroupResult::Fail { headline, report }
+    };
+    // A stated failure is refused on its merits, whatever its gate or record.
+    if decided_since_repairs(member) && states_failure(member) {
+        return failed(archon_core::run::STATED_FAILURE.to_owned());
+    }
+    // A review-only lead's verdict is the run's: anything but pass never merges.
+    if let Some(note) = unpassed_review(member, owed) {
+        return failed(format!("{REVIEW_VERDICT_REFUSAL} {note}"));
     }
     let broken = repairable(stage, members, owed);
     let refused = |headline: String, unrecorded: bool| {
@@ -184,6 +198,31 @@ fn recorded(stage: &StageSpec, attempt: u32, members: &[&StageRun], owed: Owed) 
             summary: format!("{summary}\n\n{}", evidence.line()),
         },
         Err(why) => refused(format!("{REVIEW_REFUSAL}: {why}"), broken),
+    }
+}
+
+/// Why a review-only lead's recorded verdict is not a pass, worded from its
+/// note; `None` for a pass, another stage, or a lead spawned before review-only plans.
+fn unpassed_review(member: &StageRun, owed: Owed) -> Option<&'static str> {
+    let records = owed.review.is_some_and(|duty| duty.records_verdict);
+    if !records || member.only_reviews != Some(true) {
+        return None;
+    }
+    let (verdict, note) = member.verdict_reading()?;
+    assert!(
+        note.is_none() || verdict == Verdict::Unknown,
+        "a note explains only an unknown verdict"
+    );
+    match (verdict, note) {
+        (Verdict::Pass, _) => None,
+        (Verdict::Fail, _) => Some("fail"),
+        (Verdict::Unknown, Some(VerdictNote::DisputedPass)) => {
+            Some("a pass beside a blocking finding (counts as fail)")
+        }
+        (Verdict::Unknown, Some(VerdictNote::MissingVerdictLine)) => {
+            Some("missing (counts as fail)")
+        }
+        (Verdict::Unknown, _) => Some("unreadable as pass or fail (counts as fail)"),
     }
 }
 
@@ -414,13 +453,7 @@ fn or_dash(text: &str) -> &str {
     if text.is_empty() { "-" } else { text }
 }
 
-/// At most `max` characters, cut on a char boundary with a visible marker.
-pub(crate) fn clip(text: &str, max: usize) -> String {
-    match text.char_indices().nth(max) {
-        None => text.to_owned(),
-        Some((cut, _)) => format!("{}\n\n[… truncated by Archon]", &text[..cut]),
-    }
-}
+pub(crate) use archon_core::run::clip;
 
 #[cfg(test)]
 mod tests {

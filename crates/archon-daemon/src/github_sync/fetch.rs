@@ -47,7 +47,7 @@ pub(crate) fn read_args(reference: &GithubRef, etag: Option<&str>) -> Vec<String
 
 /// Every `gh` call of the sync goes through here: anything but a plain `GET`
 /// is a bug, refused before it can reach GitHub.
-fn assert_read_only(args: &[String]) {
+pub(crate) fn assert_read_only(args: &[String]) {
     assert_eq!(args.first().map(String::as_str), Some("api"), "only gh api");
     let method = args
         .windows(2)

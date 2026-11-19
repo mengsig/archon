@@ -1166,7 +1166,8 @@ Aether's successor or waking the agent in place keeps its context, so
 neither forces compaction. Compaction:
 
 - always keeps every `operator_answer`, `agent_message`, `message_cap_reached`, `chat_answer`,
-  `chat_merge_refused` and `merge_finished`,
+  `chat_merge_refused`, `merge_finished` and `github_watch` (its walk stored
+  the baseline, so no later walk tells its news again),
   every `lavish_feedback` whose report is still `open` in Lavish, every
   `gate_opened` whose question is still open, and every current
   `item_finished` with an `origin`, whose GitHub thread awaits the outcome;
@@ -1190,6 +1191,14 @@ News held behind a stuck batch is also compacted by the same rules when a
 push takes it past 40 events, so the outbox stays bounded however long the
 batch in flight is retried. A later compaction folds that digest's counts
 into its own, so one batch never carries two digests.
+
+Aether refuses a trigger whose payload encodes to more than 2 MiB, and a
+batch it refuses is dropped with a `System` note. So a batch is keyed from at
+most 1 MiB of held events, the oldest that fit, the other half being room for
+its directives and wrapping. Held news larger than that stays pending in
+order and is keyed in the batches after it, on the same terms (compacted for
+a new generation, quiet news with a flush). An event over 1 MiB by itself
+goes alone.
 
 An `operator_answer` includes the stored question context, with `question_text`
 clipped to 512 characters (including an ellipsis). Its summary starts with
@@ -1439,7 +1448,9 @@ in a new worktree off the base branch (§13).
   - A transport error (`Protocol`, `Io`) or Aether's `internal` code: a
     failure inside the link or inside Aether, not a verdict on the request.
     It is re-issued the same way, and after 5 failures in a row the stage
-    run is `failed` with the last error.
+    run is `failed` with the last error (`create_agent kept failing: …`) as
+    an infrastructure failure: no agent ran, so the slot gets
+    `limits.infra_retries` and the run is not a scored loss.
   - A failure on a full disk (its text says `database or disk is full`,
     `No space left on device` or `ENOSPC`, whatever the code): the stage
     run stays `spawning`, and the disk hold (§7.3) engages. It is re-issued
@@ -2346,7 +2357,12 @@ sorted by stage then median completed cost, with model/effort tie breakers and
 uncompleted groups last within a stage. Each line shows attempts, completed
 attempts, median and nearest-rank p90 cost per completed attempt, median minutes
 of completed attempts with finish times, and review/test recorded verdict pass
-share (unknown verdicts do not pass). Costs are API-equivalent totals from the
+share (unknown verdicts do not pass). A review-only run's lead counts as a
+verdict stage once it is spawned as one (`only_reviews`); its attempts from
+before stay out of the share. A pass its own findings dispute
+(`verdict_note = disputed_pass`) is shown as `disputed=` and left out of the
+share: a format clash, not a fail of the model. An unknown verdict stored
+before notes is read again from its stored result, a lead's by its review record. Costs are API-equivalent totals from the
 latest agent ledger totals, whatever the budgets count, falling back to stored stage cost when there is
 no ledger row. Completed n below five is marked as a small sample. Output is
 limited to 60 groups and states the omitted count. This evidence recommends
@@ -2682,7 +2698,7 @@ its contract carries no delegation section.
 > an error starting `BLOCKED:`; if the task does not fit this pipeline, with
 > one starting `ESCALATE:`. When done, call `complete_task` with a concise
 > `summary`. Review and test stages must include structured
-> `{"verdict":"pass"|"fail","findings":[{"severity":"…","title":"…","detail":"…","path":"…"}]}`
+> `{"verdict":"pass"|"fail","findings":[{"severity":"…","blocking":true|false,"title":"…","detail":"…","path":"…"}]}`
 > and must end the summary with `VERDICT: PASS` or `VERDICT: FAIL`. Ship
 > stages include `{"pr_url":"…"}` or `{"commit":"…"}` in structured data, and
 > never amend, rebase, squash or reset the commits they are given: only a
@@ -3734,6 +3750,7 @@ can reach the socket (§5.5).
 | `autonomy_policy` | `{repo?}` | `Autonomy` |
 | `set_directive` | `{text, expires_in_hours?}` | `SetDirective` |
 | `clear_directive` | `{directive?, all?}` | `ClearDirective` |
+| `watch_repo` | `{repo, interval_minutes?, remove?}` | `WatchRepo` (a registered repository with a github.com `origin` only; the GitHub sync walks its open pull requests with one conditional `GET` per page of 100 per interval, at least 5 minutes, and two count `GET`s for each pull request that is new or moved, all within the pass's request budget; it compares the walk with the stored snapshot and raises a `github_watch` trigger, `operator: false`, only on a new or first-seen pull request, head, review request, comment or review; eventually consistent, with the limits in `docs/vnext/ARCHITECTURE.md` §f; it inherits the registration's trust, as registering stays the operator's (the orchestrator only on the operator's word, never GitHub's) and the watch never registers; refused through GitHub-borne authority; removing the repository drops it) |
 | `github_reply` | `{repository, number, body}` | `GithubReply` (Archon's watched repositories only; see `docs/github-watcher.md`) |
 | `record_lesson` | `{kind: routing\|practice\|pitfall\|pipeline, text, repo?, pipeline?, item?}` | `RecordLesson` (§19; active at once, advice only) |
 | `request_merge` | `{item, reason?}` | `RequestMerge` (the orchestrator only, for the operator's own request; archond asks the operator to confirm unless `grant_merge` covers it; §18.6) |
@@ -5816,6 +5833,136 @@ choice, time, delivery key and known spend checkpoint. Queue display uses the
 current segment; quality is credited only to completed segments, and earlier
 segments retain cost without being labeled failures. Late corrections to estimates
 can make segment cost allocation approximate; the run's ledger total remains current.
+
+**Failure class.** A failed run's class is read from structure, never from its
+error's words. The daemon's own `ship` step runs no stage and fails a run under
+the id `ship`: such a run is `ship`, or `budget`, `blocked` or `escalated` when
+the delivery's error opens with the daemon's own prefix for one. A pipeline may
+name a stage `ship` too. A ship stage of that name (by its recorded kind, or by
+its id for a 1.4.x stage run that kept none) is the pipeline's own ship agent,
+and its records are read by the rules below as any stage's. For a stage of
+another kind they are read instead only
+when that stage failed the run itself: the run failed in the very words of one
+of its stage runs that the daemon ends a run on (one that failed with a
+`BLOCKED:` or `ESCALATE:` prefix, or a spawn the daemon gave up on, which has no
+agent; an agent's plain task failure goes to the gate, which may pass it over),
+the error opens `BLOCKED:` or `ESCALATE:` and a slot of its
+last attempt failed with such a prefix, or the error is the driver's word on
+the stage, which opens with the stage's quoted id (`stage `ship` failed…`,
+`stage `ship` was aborted…`, `stage `ship`: the operator asked…`, `team stage
+`ship` has no roles…`). Otherwise that stage explains nothing, however it
+ended: completed, skipped by a steer, or with a failed slot its gate passed.
+One limit: archond's own failure of a live stage named `ship`, written in other
+words (a team merge that failed, say), is read as the ship step's, so it is
+`ship` whatever that stage's records would give. The records cannot tell the
+two apart; a pipeline with no stage named `ship` has no such case.
+
+For every other run the records come first: the newest stage run of each slot of
+the failing stage's last attempt, lowest slot first, as the driver reads
+them. When the run failed in the very words of one of them, whole or as the
+driver clips a long error (`StageOutcome::run_stop_error`), that stage run
+ended it and its own record is read first, whatever a sibling slot recorded;
+of slots that failed in the same words it is the lowest. Failing that, it is
+the lowest slot that failed with an `ESCALATE:` or `BLOCKED:` prefix, the one
+the driver stops a run on. Then
+every slot's record is read, in this order:
+- the stage run that ended the run, when it failed its own task with an
+  `ESCALATE:` or `BLOCKED:` prefix, gives `escalated` or `blocked` by its own
+  prefix, whatever the run's error opens with or shares with the daemon's
+  words. A failure flagged `infrastructure_failure` is the backend's, in the
+  backend's words, so it is read by its flag below;
+- a timeout gives `timeout`;
+- Aether's cost-cap stop gives `budget`, even though Aether also marks that
+  agent failed. Aether gives no structured signal for it, so its text is
+  matched exactly: `cost budget of $<limit>: <cost> spent`, alone or inside
+  Aether's whole budget message up to "Details are in the exhaustion.failed
+  event.", with the count of live descendants a whole number, followed by
+  nothing or Archon's whole notional-cost label. The amounts are the ones
+  Aether's formatters write for a stop: a positive limit exactly as
+  `format_usd` spells it (at most six decimals and no trailing zero, `$5` or
+  `$2.5`; an amount below that precision in its shortest form), and a spend
+  with exactly four decimals (`$5.0100`, or `≥ $5.0100 (<gap>)` with one of
+  Aether's gap labels) that can have reached the limit, as Aether stops an
+  agent at `spend >= limit`: at four decimals it reads no less than the least
+  amount Aether writes as that limit. Any other text is no budget stop and falls to the rules below:
+  `$9 spent`, `$5.00`, `$0.0000009` (which Aether writes `$0.000001`),
+  `$5: $4.9999 spent` and `not reported` among them;
+- `infrastructure_failure` gives `infrastructure`. So does a spawn the daemon
+  gave up on: the stage run has no agent and its error opens `create_agent
+  failed on a full disk` or `create_agent kept failing: `. archond flags both
+  itself; the words are read only for 1.6.3 records, and never on a stage run
+  that has an agent. Across the slots of one attempt a flagged slot outranks
+  the cost stop read in a sibling's words, unless the run failed in that
+  sibling's words. The flag also stays on a spawn that kept failing when its
+  workspace went meanwhile: the failure then opens `workspace missing:`.
+- archond's spawn preflight refusing an unflagged stage run with no agent
+  because it cannot enforce that stage's dollar budget (`stage <id> refused at
+  spawn: model policy: cannot enforce the dollar budget for …`, written by
+  `run::refused_at_spawn`) gives `budget`: no model ran, so it scores no loss.
+
+Only when no record names the stop is the run's error read, and only for the
+prefixes the daemon writes on purpose. The budget guards' blockers (`BLOCKED:
+the item's budget is used up`, `BLOCKED: cannot enforce the item's dollar
+budget`) give `budget`, whichever stage the daemon stopped the run under, and
+another `BLOCKED:` or `ESCALATE:` prefix gives `blocked` or `escalated`. So a
+recorded timeout or infrastructure failure of that stage's last attempt
+outranks the guard's words, and a stage that fails its own task in those words
+is `blocked`. Otherwise the same stage runs decide:
+- a completed stage run the gate failed for stating a failure (the gate's own
+  headline, `its agent stated a failure`) gives `escalated` or `blocked` when
+  its summary opens `ESCALATE:` or `BLOCKED:`, as the same words through
+  `fail_task` do; a stated fail verdict is read by the rules below;
+- a review-kind stage, a review-only run's lead (`only_reviews`), one whose
+  result holds a `review` whose verdict reads pass or fail, or one whose review
+  tally (kv `review_rounds:<stage run>`, kept by archond as reviewers settle)
+  holds a reviewer's fail, gives `review` unless every slot passed. A slot passes as the gate reads it: by its verdict,
+  by its nested `review.verdict`, and only if Archon did not refuse that review.
+  A gate failure that names the declared review as not on record (the gate's own
+  headline) also gives `review`;
+- a test stage gives `verification`, and a ship stage `ship`;
+- anything else is `other`.
+
+A run recovery could not resume (`cannot resume the run: `) is `infrastructure`:
+recovery removes the stage rows it cannot read before it fails the run, so the
+rows left do not say what stopped it.
+
+A recorded stage kind always wins over the stage id. Only a stage run from
+before Archon kept kinds (1.4.x) is read by its id, as a test or ship stage, and
+as a review only when it also holds a pass or fail verdict. A 1.6.3 work stage,
+which kept no `only_reviews`, is a review failure only by the pass or fail of
+its carried `review` or by its tally: a carried `review` that states neither
+leaves it a work stage. Each class records its source: `structure`, `recomputed` by
+migration V24, or `legacy_163`. A run is `legacy_163`, keeps its 1.6.3 class and
+has no lesson use rescored when it was pruned before V24, when V24 could not
+read its records, when its outcome observed more runs of a stage than are still
+stored, when recovery failed it (`cannot resume the run: `), or when the stage
+that ended it left no record (the `ship` step and prefixed stops excepted). A
+record V24 cannot read is any row of the run, its stage runs, its observed
+stages or its review tallies that SQLite holds as something other than text,
+that does not decode, that names no stage or attempt 0, or that observed a stage
+with no attempts; so is a stage run the store would not write (settled with no
+finish time), and a run or stage run whose row holds, in any column that
+repeats its record (a stage run's id, stage, attempt, slot, state and start,
+a run's item, pipeline and start, and whether either has ended), another
+value than the record or one SQLite cannot read, or an agent claim that is
+not the record's agent. V24 logs
+the run and goes on, and never stops the migration for one, nor for an outcome
+filed under an empty run key, which keeps its class. Nor for a lesson: one V24
+cannot recount (its row, its use or its epoch is unreadable, or it holds what
+no lesson holds) keeps its stored counts, and the lesson clusters stay as they
+were when any stored lesson is unfit to write back or holds the record of
+another lesson. An outcome also keeps the pull request it reviewed,
+`review_pr`, so pruning the item does not lose the report's pull request counts.
+It is kept only when a reviewer's verdict is on record for the run: a review
+stage's pass or fail, the pass or fail of the `review` a stage's result carries
+(unless Archon refused it), or a reviewer's fail in the tally. The carried
+verdict is read as the gate reads it: as one line, and no more than its first
+400 characters. A tally counts only in the shape archond stores: an object of
+the fields archond has kept, in which each fail names its reviewer's Aether
+agent id (`agt_` and a ULID), the commit that reviewer read (7 to 64 lowercase
+hexadecimal digits) and its findings (`titles` before they were described). A
+tally in any other shape is unreadable, so no reviewer's fail. A
+review-only target or assignment alone is no review.
 
 **Attribution.** Structured operator feedback is explicit:
 `correction {"item":"qi_…","stage":"implement","cause":"quality","reason":"…"}`.

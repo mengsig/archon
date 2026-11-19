@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use archon_core::aether_ids::{AetherAgentId, AetherTaskId};
+use archon_core::cost::STAGE_BUDGET_UNENFORCEABLE;
 use archon_core::error::ArchonError;
 use archon_core::model::ModelRef;
 use archon_core::model::{Effort, ModelChoice};
@@ -709,7 +710,7 @@ impl AgentBackend for AetherBackend {
         let accounted = hard_cap || billing == Some(CostBilling::Subscription);
         if !accounted && !count_estimated_cost {
             return Err(ArchonError::Policy(format!(
-                "cannot enforce the dollar budget for {}: Aether cost reporting is \
+                "{STAGE_BUDGET_UNENFORCEABLE}{}: Aether cost reporting is \
                  unavailable or unconfirmed and limits.count_estimated_cost is disabled; \
                  enable subscription estimates or choose a cost-reporting model",
                 request.choice.model

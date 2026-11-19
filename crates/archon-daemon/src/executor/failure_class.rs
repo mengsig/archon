@@ -51,24 +51,44 @@ pub(crate) fn of_stage(stage: &StageRun) -> Option<FailureClass> {
         StageState::Completed => {
             (stage.verdict == Some(Verdict::Fail)).then_some(FailureClass::Structural)
         }
-        StageState::Failed { .. } if stage.infrastructure_failure => {
-            Some(FailureClass::Environmental)
+        // A recorded marker names the cause better than the infrastructure flag.
+        StageState::Failed { error } => {
+            Some(marked(error).unwrap_or(if stage.infrastructure_failure {
+                FailureClass::Environmental
+            } else {
+                of_text(error)
+            }))
         }
-        StageState::Failed { error } => Some(of_error(error)),
         StageState::Spawning | StageState::Running => None,
     }
 }
 
 /// The class of a failure known only by its recorded `error` text.
 pub(crate) fn of_error(error: &str) -> FailureClass {
+    marked(error).unwrap_or_else(|| of_text(error))
+}
+
+/// The class a control prefix or daemon marker of `error` records: the
+/// review cap or a stage's escalation, an operator stop, a missing workspace.
+fn marked(error: &str) -> Option<FailureClass> {
+    let lead = error.trim_start();
+    if lead.starts_with(StageOutcome::ESCALATE_PREFIX)
+        || error.contains(StageOutcome::WORKSPACE_MISSING)
+    {
+        return Some(FailureClass::Structural);
+    }
+    lead.starts_with(StageOutcome::BLOCKED_PREFIX)
+        .then_some(FailureClass::External)
+}
+
+/// The class of unmarked `error` text: a provider or catalog word makes it
+/// environmental, anything else is the work's own failure.
+fn of_text(error: &str) -> FailureClass {
     let lower = error.to_ascii_lowercase();
-    if ENVIRONMENTAL_WORDS.iter().any(|word| lower.contains(word)) {
-        return FailureClass::Environmental;
+    match ENVIRONMENTAL_WORDS.iter().any(|word| lower.contains(word)) {
+        true => FailureClass::Environmental,
+        false => FailureClass::Structural,
     }
-    if error.contains(StageOutcome::BLOCKED_PREFIX) {
-        return FailureClass::External;
-    }
-    FailureClass::Structural
 }
 
 /// The orchestrator's line for a failure of `class` whose attempt ran
@@ -91,13 +111,10 @@ pub(crate) fn advice(class: FailureClass, ran: Option<&ModelChoice>) -> String {
         "Failure class: {class}. Suggested next attempt: {next}. Archon changes no model or \
          effort itself; a retry's model_plan chooses them."
     );
-    assert!(
-        line.contains(&class.to_string()),
-        "the line names its class"
-    );
-    line
+    // A model name is operator input: it must not break the line apart.
+    line.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 #[cfg(test)]
 #[path = "failure_class/tests.rs"]
-mod tests;
+pub(super) mod tests;

@@ -4,7 +4,7 @@ use archon_core::run::{StageRun, StageState, Verdict};
 
 use super::{FailureClass, advice, of_error, of_stage};
 
-fn stage(state: StageState, effort: Effort) -> StageRun {
+pub(crate) fn stage(state: StageState, effort: Effort) -> StageRun {
     StageRun {
         only_reviews: None,
         id: StageRunId::new(),
@@ -60,7 +60,7 @@ fn the_world_around_the_work_failing_is_environmental() {
     assert_eq!(of_stage(&crashed), Some(FailureClass::Environmental));
     for error in [
         "UsageLimit: you have hit your limit",
-        "BLOCKED: the provider quota is exhausted",
+        "the provider quota is exhausted",
         "model codex/x is not in the catalog",
         "RateLimit: slow down",
     ] {
@@ -72,7 +72,7 @@ fn the_world_around_the_work_failing_is_environmental() {
 fn a_stop_from_outside_is_external() {
     let cancelled = stage(StageState::Cancelled, Effort::Medium);
     assert_eq!(of_stage(&cancelled), Some(FailureClass::External));
-    let blocked = failed("BLOCKED: the repository needs a deploy key");
+    let blocked = failed("BLOCKED: the provider quota is exhausted; raise it");
     assert_eq!(of_stage(&blocked), Some(FailureClass::External));
 }
 
@@ -108,4 +108,26 @@ fn the_advice_names_what_ran_and_never_claims_a_change() {
         same.contains("Archon changes no model or effort itself"),
         "{same}"
     );
+}
+
+#[test]
+fn a_recorded_marker_outranks_the_flag_and_free_text() {
+    let mut lost = failed("workspace missing: /archon/worktrees/demo; the engine said: gone");
+    lost.infrastructure_failure = true;
+    assert_eq!(of_stage(&lost), Some(FailureClass::Structural));
+    let capped = failed(
+        "ESCALATE: the review failed 3 rounds. Open blocking findings: the catalog is stale; \
+         rate limit tests fail",
+    );
+    assert_eq!(of_stage(&capped), Some(FailureClass::Structural));
+    let quoting = failed("make ci failed: test expected `BLOCKED: x` in the reply");
+    assert_eq!(of_stage(&quoting), Some(FailureClass::Structural));
+}
+
+#[test]
+fn a_model_name_with_a_newline_keeps_the_advice_one_line() {
+    let odd = ModelChoice::pinned("a/wo\nrk".parse().unwrap(), Effort::Low);
+    let line = advice(FailureClass::Structural, Some(&odd));
+    assert!(!line.contains('\n'), "{line}");
+    assert!(line.contains("one effort step up from low"), "{line}");
 }

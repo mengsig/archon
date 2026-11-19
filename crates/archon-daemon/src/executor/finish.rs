@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 use archon_core::catalog::{StageKind, is_snapshot_of};
 use archon_core::error::ArchonError;
 use archon_core::id::{NotificationId, PipelineRunId, QueueItemId};
+use archon_core::model::ModelChoice;
 use archon_core::notify::{FeedEntry, Notification, NotificationKind};
 use archon_core::protocol::ItemQuery;
 use archon_core::protocol::gib;
@@ -585,10 +586,16 @@ fn failing_stage<'a>(
         // Infrastructure retries replace a slot within the same attempt.
         .filter(|s| slots.insert(s.fan_index))
         .collect();
-    // A slot that says why it failed explains the stage better than a cancelled one.
+    // The slot whose own error stopped the run comes first; then a slot that
+    // says why it failed explains the stage better than a cancelled one.
+    let stopped_it = |s: &&&StageRun| {
+        matches!(&s.state, StageState::Failed { error }
+            if !error.trim().is_empty() && fallback.is_some_and(|f| f.contains(error.as_str())))
+    };
     let failed = last
         .iter()
-        .find(|s| stage_cause(s).is_some())
+        .find(stopped_it)
+        .or_else(|| last.iter().find(|s| stage_cause(s).is_some()))
         .or_else(|| last.iter().find(|s| failure_class::of_stage(s).is_some()))
         .copied();
     assert!(
@@ -634,15 +641,33 @@ fn failure_advice(
     let line = match failed {
         Some(stage) => {
             let class = failure_class::of_stage(stage).expect("a failing stage has a class");
-            failure_class::advice(class, Some(&stage.choice))
+            failure_class::advice(class, ran_choice(stage, stages))
         }
         None => failure_class::advice(failure_class::of_error(fallback.unwrap_or(error)), None),
     };
-    assert!(
-        line.starts_with("Failure class:"),
-        "the advice says its class"
-    );
     Some(line)
+}
+
+/// The choice the last agent of `failed`'s slot ran with, retunes included:
+/// a reservation that never got an agent, as a refused wake leaves, ran nothing.
+fn ran_choice<'a>(failed: &'a StageRun, stages: &'a [StageRun]) -> Option<&'a ModelChoice> {
+    if failed.aether_agent.is_some() {
+        return Some(failed.current_choice());
+    }
+    let ran = stages
+        .iter()
+        .filter(|s| super::spawn::same_slot_as(s, failed) && s.aether_agent.is_some())
+        .filter(|s| s.started_at <= failed.started_at)
+        .max_by_key(|s| s.started_at)?;
+    assert!(
+        ran.id != failed.id,
+        "a reservation without an agent is not what ran"
+    );
+    assert!(
+        ran.stage_id == failed.stage_id,
+        "the agent ran in the failed slot"
+    );
+    Some(ran.current_choice())
 }
 
 /// Keep the notification small; the queue, stages and orchestrator retain the
@@ -758,8 +783,8 @@ fn with_advice(summary: String, advice: Option<&str>) -> String {
     let Some(advice) = advice else {
         return summary;
     };
-    assert!(!advice.contains('\n'), "the advice is one line");
     let line = clip(advice, MAX_ADVICE_CHARS);
+    assert!(!line.contains('\n'), "the advice is one line");
     assert!(!line.is_empty(), "advice says something");
     format!("{summary}\n{line}")
 }
@@ -838,4 +863,72 @@ pub(super) async fn cancel_item(
         .transition_item(id, next, archon_core::now())?;
     announce(ctx, &item, None, false, None).await?;
     Ok(FollowUp::poke())
+}
+
+#[cfg(test)]
+mod tests {
+    use archon_core::model::{Effort, ModelChoice};
+    use archon_core::run::{ModelSegment, PipelineRun, RunState, StageState};
+
+    use super::super::failure_class::tests::stage;
+    use super::{failing_stage, ran_choice};
+
+    fn failed(error: &str, fan_index: u32) -> archon_core::run::StageRun {
+        let error = error.to_owned();
+        let mut row = stage(StageState::Failed { error }, Effort::Medium);
+        row.fan_index = fan_index;
+        row
+    }
+
+    fn run_failed(of: &archon_core::run::StageRun, error: &str) -> PipelineRun {
+        PipelineRun {
+            id: of.run.clone(),
+            item: archon_core::id::QueueItemId::new(),
+            pipeline: "direct".into(),
+            shipped: false,
+            aether_run: None,
+            workspace: "/archon/worktrees/demo".into(),
+            team_root: None,
+            branch: String::new(),
+            state: RunState::Failed {
+                stage_id: of.stage_id.clone(),
+                error: error.to_owned(),
+            },
+            cost_usd: 0.0,
+            started_at: of.started_at,
+            finished_at: None,
+        }
+    }
+
+    #[test]
+    fn the_slot_that_stopped_the_run_is_the_failure_reported() {
+        let blocked = failed("BLOCKED: the deploy key is missing", 0);
+        let mut later = failed("make ci failed", 1);
+        later.run = blocked.run.clone();
+        later.started_at = blocked.started_at + chrono::Duration::seconds(5);
+        let run = run_failed(&blocked, "BLOCKED: the deploy key is missing");
+        let stages = vec![blocked.clone(), later];
+        let (_, _, picked) = failing_stage(Some(&run), &stages);
+        assert_eq!(picked.map(|s| &s.id), Some(&blocked.id));
+    }
+
+    #[test]
+    fn advice_names_the_retuned_choice_of_the_last_agent_that_ran() {
+        let mut ran = stage(StageState::TimedOut, Effort::Medium);
+        ran.aether_agent =
+            Some(archon_core::aether_ids::AetherAgentId::parse("agt_0001").expect("an agent id"));
+        let retuned = ModelChoice::pinned("b/strong".parse().unwrap(), Effort::High);
+        ran.model_segments.push(ModelSegment {
+            delivery: "steer".into(),
+            choice: retuned.clone(),
+            started_at: ran.started_at,
+            cost_before_usd: 0.0,
+        });
+        let mut reserved = stage(StageState::TimedOut, Effort::Low);
+        reserved.run = ran.run.clone();
+        reserved.started_at = ran.started_at + chrono::Duration::seconds(5);
+        let stages = vec![ran.clone(), reserved.clone()];
+        assert_eq!(ran_choice(&reserved, &stages), Some(&retuned));
+        assert_eq!(ran_choice(&ran, &stages), Some(&retuned));
+    }
 }

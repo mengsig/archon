@@ -68,6 +68,7 @@ pub(super) fn stage(
         choice: ModelChoice::pinned(ModelRef::new("codex", "gpt"), Effort::High),
         model_segments: Vec::new(),
         infrastructure_failure: false,
+        record_repair: None,
         host_context: Default::default(),
         aether_agent: None,
         aether_task: None,

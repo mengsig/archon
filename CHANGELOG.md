@@ -25,98 +25,75 @@
 
 ### Changed
 
+- A completed stage whose delivery record is broken gets one repair turn
+  before the run fails. A record is broken when the result has no
+  `structured`, or names no reviewer although a review is owed. The stage is
+  entered again with the refusal quoted, and a kept agent is resumed in
+  place. Reviewers are still checked against the agents the lead delegated
+  itself, so a repair cannot name one that never reviewed.
+  - One turn, marked. Each stage run now carries a persisted `record_repair`
+    marker, `open` or `spent`. The repair attempt and every later attempt of
+    its stage are `spent`: a broken record of one fails the run, with no fix
+    loop, and its kept agent is not asked for the record again. So does a
+    `spent` attempt whose `structured` still holds no valid ship record.
+  - A stated failure always wins in a stage that owes a delivery record (a
+    review or the ship record). A fail verdict in `structured` or in the
+    summary's last `VERDICT:` line, or a summary that opens with `ESCALATE:`
+    or `BLOCKED:`, fails the stage with the reply as its agent sent it,
+    whatever the stage's gate and even beside a valid record. It gets no
+    repair turn and no record request, and nothing of it ships. When a
+    resumed agent writes more after its record block, its whole reply is its
+    summary, so a failure stated there counts and an indented or fenced
+    example does not. A stage that owes no record is judged as before.
+  - Such a reply, and one with no `structured` at all, is recorded as sent
+    before archond checks anything else in it: the gate passes neither, and
+    the repaired reply is verified in full. Only the cap on review rounds is
+    still applied first. A reply with `structured` is verified as before,
+    whatever its record lacks.
+  - A record refused on its merits, such as one with too few reviewers, gets
+    no repair turn. A broken one is repaired before the stage's gate and
+    scenario checks read it.
+  - A stage run whose outcome was recorded before this release carries no
+    marker and replays as it was decided then: gate, scenarios, then the
+    record, with no repair turn. A stage run still going at the upgrade is
+    marked when its outcome is recorded, and gets its repair turn.
+  - A run that fails on a second broken record is a failed run like any
+    other: with `[review] auto_repair` on, the item's one automatic retry
+    may still follow it.
+- The stage contract states that Aether refuses a delegation with more than
+  16 `references`.
 - An initiative member's plan is checked as an enqueue's is: an effort above
   its stage's default needs a reason, given in the member's new
   `model_reasons`.
-- A failed run's failure class now comes from its stage records, not from
-  words in its error. The class is `timeout` when the stage that ended the run
-  timed out, `infrastructure` when Aether reported an infrastructure failure,
-  `budget` when the item's budget guard or Aether's cost cap stopped it, and
-  `review` when a review-holding stage did not pass, including the bundled
-  `review` pipeline's lead, which fails through `fail_task` (stage runs now
-  record `only_reviews`). A recorded stage kind always wins over the stage id:
-  a 1.6.3 work stage's failure is a `review` failure only when its result
-  carries a review whose verdict reads pass or fail, or archond's review tally
-  (`review_rounds:<stage run>`) holds a reviewer's fail, and a kindless 1.4.x
-  stage with `review` in its id only when it holds a pass or fail verdict. Before, a review FAIL whose
-  error named "aether", "timeout" or "budget" was left unscored, so review pass
-  rates of different repositories could not be compared. Only the prefixes
-  Archon writes itself are still read: `BLOCKED:`, `ESCALATE:`, the budget
-  guards' own blockers, Aether's cost stop (only in Aether's own grammar,
-  `cost budget of $<limit>: <cost> spent`, where the cost is `$<amount>` or
-  `≥ $<amount> (<gap>)` with one of Aether's own gap labels, and each amount
-  is one Aether's formatters write for a stop: a positive limit with no
-  trailing zero, and a spend with exactly four decimals that has reached the
-  limit, so `$9 spent`, `$5.00`, `$5: $4.9999 spent` and `not reported` are
-  none of its;
-  alone or inside Aether's whole budget message, matched exactly: nothing may
-  precede it, and nothing may follow but Archon's own whole notional-cost
-  label. Anything else, such as a task's words that open with the phrase, is
-  no budget stop and stays scored; the notional-cost label reads it the same
-  way) and the spawns the daemon gave up on. Those are `infrastructure` only on
-  a stage run that has no agent: an agent that fails its task in the daemon's
-  words judged its own work. The records of the attempt that ended the run are
-  read before any prefix on the run's error, slot by slot as the driver reads
-  them (the newest stage run of each slot, lowest slot first): the stage run
-  the run failed in the words of first (whole, or clipped as the driver clips
-  a long error), then the lowest slot's `BLOCKED:` or
-  `ESCALATE:` failure, on which the driver stops a run (by its own prefix, not
-  the run's, unless it is flagged), then a recorded timeout, infrastructure
-  flag or cost stop. So the budget guards' blockers are `budget` only when
-  the daemon wrote them and no stage run of that attempt recorded a stop; a
-  stage that fails its own task in those words is `blocked`, a failure
-  flagged infrastructure stays `infrastructure` whatever its words, and a
-  flagged slot outranks the cost stop read in a sibling slot's words. A spawn
-  that kept failing keeps its infrastructure flag when its workspace went
-  meanwhile, and a report of one repository no longer stops on an outcome
-  recorded again under another. A run recovery could not resume ("cannot resume the run: ") is
-  `infrastructure`, as recovery drops the stage rows it cannot read first.
-  A review is read as the gate reads it. A nested `review` that failed, one
-  Archon refused, or one the gate found missing (such as a skip the pipeline
-  does not allow) is a `review` failure. Migration V24 recomputes stored
-  rows whose runs are kept and logs, per class, the old and new counts and the
-  rows left on the 1.6.3 class. It also rescores the lesson uses and holdout
-  trials of those runs, and recounts the lessons they used. Runs already pruned
-  keep their old class, marked `legacy_163`, as do runs whose records it cannot
-  read, runs recovery failed, runs whose ending stage left no record, and kept
-  runs missing any stage run their outcome observed; none of these is
-  recomputed, and their lesson uses are not rescored. A row SQLite holds as
-  something other than text, one that does not decode, and a review tally in
-  any shape archond does not store (an object in which each fail names its
-  reviewer's Aether agent id, the commit that reviewer read and its findings)
-  are records it cannot read, as are an observed stage with no attempts and a
-  stage run the store would not write (settled with no finish time) and a run
-  or stage run whose row holds, in a column that repeats its record (id,
-  stage, attempt, slot, state, start, item, pipeline, whether it ended) or in
-  its agent claim, another value than the record's: V24 logs the run and goes on.
-  An outcome filed under an empty run key keeps its class too. A lesson it cannot recount (an unreadable row,
-  use or epoch) keeps its stored counts and never stops it either. For one release the old class stays in
-  `failure_class_163`.
-- When `create_agent` keeps failing on Aether's full disk, the stage is now
-  marked an infrastructure failure, as it was classed before. So is a stage
-  whose `create_agent` kept failing on a transport or internal Aether error
-  ("create_agent kept failing: …"): no agent ran, so the run is no longer a
-  scored loss, and the slot gets `limits.infra_retries` like any other
-  infrastructure failure.
-- The pipeline lines of `archon model-evidence` count only the runs that
-  finished in the report's range, so a pipeline with no run in it has no line.
-  Runs a stage ended with `BLOCKED:` or `ESCALATE:` are no longer losses: they
-  are counted in `blocked=` and `escalated=`, and routing already read them
-  that way. Pipelines that review existing pull requests add
-  `prs_passed=<passed>/<reviewed>` and `median_rounds_to_pass`, which count each
-  pull request once, however many heads were reviewed. A pull request counts
-  as reviewed only when a reviewer's verdict is on record for the run: a review
-  stage's pass or fail, the verdict of the review a stage's result carries
-  (unless Archon refused it), or a reviewer's fail in archond's review tally.
-  The carried verdict is read as the gate reads it, as one line of at most 400
-  characters, and a tally counts only in the shape archond stores it. A
-  review-only target or assignment alone is no review, so a level-`none`
-  read that records none reviews no pull request. Each outcome now keeps
-  the pull request it reviewed, so pruning the item does not lose it. V24 fills
-  it in for outcomes whose item is still stored. Outcomes whose item was already
-  pruned have no pull request and are left out of these two counts.
-  `archon lessons stats` scores BLOCKED and ESCALATED runs the same way and
-  shows the same columns.
+
+### Fixed
+
+- A child delegated after a stage's deadline was extended gets the extended
+  deadline, and so does a nested child. Before, a child created from the
+  lead's row before the move landed kept the old deadline and stopped early,
+  as did any agent it delegated in turn. The raise is one compare-and-raise
+  under the stage's steering lock, so it never lowers an extension made at
+  the same time.
+- A reviewer that Aether blocks as exhausted on a quota or usage limit is
+  cancelled after 3 minutes, and its lead is told to delegate the review on
+  another allowed provider or to fail the task so the orchestrator re-plans.
+  Before, it waited until the stage deadline, and a held stage's deadline
+  kept moving. The check runs on its own 30-second timer, apart from
+  dispatch. Every 30 seconds it starts a check of each running stage and
+  waits for none, so a slow stage delays no other; a stage whose last check
+  still runs is passed over. A check waits at most 10 seconds for each
+  request to Aether, and the cancel comes within 5 minutes of the block
+  first being seen. A wait recorded ahead of the clock, as after the
+  clock is set back, counts from now and is saved so. A quota restored within the 3 minutes stops nothing: the
+  block is read again, with one `get_agent`, right before the cancel. The
+  cancel carries the hint as its reason, and the lead is messaged after it.
+  Known limitation: a reviewer whose quota returns in the one Aether round
+  trip before the cancel is still cancelled, as Aether has no conditional
+  cancel.
+- Cost reports attribute recorded delegates to the stage they worked for and
+  use each delegate's model and effort. The CLI and MCP report lead and
+  delegated spend separately, and can group by effort. Archon now records
+  delegation links for the orchestrator's helpers too.
 
 ### Upgrading
 
@@ -127,22 +104,6 @@ Store migrations are one-way: back up `archon.db` before `archon update`.
 Downgrading the binary is not supported once a store migration of the release
 has run, because an older schema refuses a newer store. See
 [docs/upgrading.md](docs/upgrading.md#plan-origins).
-
-Store migration V24 is one-way. It adds `outcomes.class_source` and
-`outcomes.failure_class_163` and recomputes the failure class of every
-stored failed run. Downgrading the binary is not supported once it has run:
-an older archond refuses the store ("store schema version 24 is newer than
-this archon supports"), and no older daemon can read it. Stop archond and
-back up `archon.db` (with any `archon.db-wal`) before `archon update`; going
-back means restoring that copy, and losing what was recorded since. See
-[upgrading](docs/upgrading.md#store-migration-v24).
-
-### Fixed
-
-- Cost reports attribute recorded delegates to the stage they worked for and
-  use each delegate's model and effort. The CLI and MCP report lead and
-  delegated spend separately, and can group by effort. Archon now records
-  delegation links for the orchestrator's helpers too.
 
 ## 1.6.3
 

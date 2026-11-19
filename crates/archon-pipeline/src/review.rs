@@ -536,6 +536,23 @@ pub fn claimed_reviewers(structured: &Value) -> Option<Vec<String>> {
     Some(agents.collect())
 }
 
+/// Whether `structured` holds a review that names no reviewer: no `review`
+/// object, or one that neither fails, is skipped nor lists an agent.
+pub(crate) fn names_no_reviewer(structured: &Value) -> bool {
+    let Some(review) = structured.get("review") else {
+        return true;
+    };
+    let verdict = one_line(review.get("verdict").and_then(Value::as_str).unwrap_or(""));
+    let judged_without = verdict.eq_ignore_ascii_case("skipped")
+        || matches!(Said::of_phrase(&verdict), Some(Said::Fail));
+    if judged_without {
+        return false;
+    }
+    let named = review.get("reviewers").and_then(Value::as_array);
+    let mut agents = named.into_iter().flatten().filter_map(Value::as_str);
+    !agents.any(|agent| !one_line(agent).is_empty())
+}
+
 /// Put Archon's finding on a result's review, replacing whatever its agent
 /// wrote there: the reviewers it found, or why they do not make the pass.
 pub fn record_check(structured: &mut Value, found: Option<Result<Vec<Reviewer>, String>>) {

@@ -807,6 +807,13 @@ impl Store {
     ) -> Result<(), ArchonError> {
         delegated::record(&self.conn, agent, parent, model, effort)
     }
+    /// The agent that delegated to `agent`, as [`Self::record_delegated`] stored it.
+    pub fn delegated_parent(
+        &self,
+        agent: &AetherAgentId,
+    ) -> Result<Option<AetherAgentId>, ArchonError> {
+        delegated::parent_of(&self.conn, agent)
+    }
     /// Every agent beneath `agent`, at any depth, with what each was charged.
     pub fn delegated_beneath(
         &self,

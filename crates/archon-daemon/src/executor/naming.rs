@@ -131,6 +131,7 @@ mod tests {
             reviewers: None,
             workers: None,
             reports_requirements: false,
+            record_repair: archon_core::run::RecordRepair::Open,
         }
     }
 

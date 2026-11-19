@@ -12,7 +12,7 @@ use archon_core::autonomy::{Autonomy, ReviewLevel};
 use archon_core::catalog::{Gate, StageKind, Tier, WorkspaceMode};
 use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
 use archon_core::model::{Effort, ModelChoice, ModelPlan, reviewers_key};
-use archon_core::run::{RunState, StageRun, StageState};
+use archon_core::run::{RecordRepair, RunState, StageRun, StageState};
 use archon_pipeline::autonomy::augment;
 use archon_pipeline::review::Reviewer;
 use archon_pipeline::team::{MergeOutcome, worker_branch};
@@ -1772,14 +1772,17 @@ fn adaptive_fails_a_build_that_completed_without_a_review_on_record() {
         (
             Agent::Done("Integrated; checks pass; review PASS."),
             "no `review` object",
+            true,
         ),
         (
             Agent::DoneStructured("Done.", serde_json::json!({"review": {"verdict": "fail"}})),
             "verdict is `fail`",
+            false,
         ),
         (
             Agent::DoneStructured("Done.", serde_json::json!({"review": {"verdict": "pass"}})),
             "not checked its reviewers",
+            true,
         ),
         (
             Agent::DoneStructured(
@@ -1787,6 +1790,7 @@ fn adaptive_fails_a_build_that_completed_without_a_review_on_record() {
                 serde_json::json!({"review": {"verdict": "skipped"}}),
             ),
             "`review.reason`",
+            false,
         ),
         (
             Agent::DoneStructured(
@@ -1796,12 +1800,17 @@ fn adaptive_fails_a_build_that_completed_without_a_review_on_record() {
                     "unverified": "reviewer agt_1 failed the change"}}),
             ),
             "reviewer agt_1 failed the change",
+            false,
         ),
     ];
-    for (outcome, why) in unreviewed {
+    for (outcome, why, broken) in unreviewed {
         let mut sim = sim("adaptive");
         sim.start();
-        let done = sim.settle("build", 0, outcome.clone());
+        let mut done = sim.settle("build", 0, outcome.clone());
+        if broken {
+            assert_eq!(spawned(&done), slots(&[("build", 2, 0)]), "{outcome:?}");
+            done = sim.settle("build", 0, outcome.clone());
+        }
         assert!(spawned(&done).is_empty(), "{outcome:?} reached ship");
         let (stage, error) = failed(&done);
         assert_eq!(stage, "build");
@@ -1933,17 +1942,37 @@ fn direct_runs_one_agent_and_archond_ships_what_it_recorded() {
     assert!(agent.allow_delegation, "it delegates its one reviewer");
     assert!(agent.instructions.contains("## Review on record"));
     let unreviewed = reviewed.settle("implement", 0, Agent::Done("Fixed."));
+    assert_eq!(spawned(&unreviewed), slots(&[("implement", 2, 0)]));
+    let repair = &spawn_plans(&unreviewed)[0].prompt;
+    assert!(repair.contains("no `review` object"), "{repair}");
+    assert!(
+        repair.contains("checks every agent id against Aether"),
+        "{repair}"
+    );
+    let unreviewed = reviewed.settle("implement", 0, Agent::Done("Fixed."));
     assert!(failed(&unreviewed).1.contains("no `review` object"));
 }
 
 /// The record names what ships, so a record stage that leaves none has
-/// delivered nothing archond could check.
+/// delivered nothing archond could check: one repair turn, then the run fails.
 #[test]
-fn a_record_stage_without_its_ship_record_fails_the_run() {
+fn a_record_stage_without_its_ship_record_fails_the_run_after_one_repair_turn() {
     let mut sim = sim("direct");
     sim.writes_record = false;
     sim.start();
-    let done = sim.settle("implement", 0, Agent::Done("Fixed it."));
+    let repair = sim.settle("implement", 0, Agent::Done("Fixed it."));
+    assert_eq!(spawned(&repair), slots(&[("implement", 2, 0)]));
+    let prompt = &spawn_plans(&repair)[0].prompt;
+    assert!(
+        prompt.contains("Archon record repair: attempt 1"),
+        "{prompt}"
+    );
+    assert!(prompt.contains("no `structured` object"), "{prompt}");
+    assert!(
+        prompt.contains("Fixed it."),
+        "the repair quotes the summary"
+    );
+    let done = sim.settle("implement", 0, Agent::Done("Fixed it again."));
     assert!(ship_plans(&done).is_empty());
     let (stage, error) = failed(&done);
     assert_eq!(stage, "implement");
@@ -1952,6 +1981,450 @@ fn a_record_stage_without_its_ship_record_fails_the_run() {
         "{error}"
     );
     assert!(error.contains("no `structured` object"), "{error}");
+}
+
+/// A result without `structured` gets one repair turn, and a repaired record
+/// lets the run go on to ship what it names.
+#[test]
+fn a_result_without_structured_gets_one_repair_turn_and_the_run_continues() {
+    let mut sim = sim("direct");
+    sim.writes_record = false;
+    sim.start();
+    let repair = sim.settle("implement", 0, Agent::Done("Fixed it."));
+    assert_eq!(spawned(&repair), slots(&[("implement", 2, 0)]));
+    sim.writes_record = true;
+    let done = sim.settle("implement", 0, Agent::Done("Record handed in."));
+    let plan = shipping(&done);
+    assert_eq!(plan.record_stage, "implement");
+    assert!(succeeded(&sim.ship_pr(PR)).contains("Record handed in."));
+}
+
+/// A gated stage that holds the ship record and hands in no `structured`
+/// gets its repair turn before its gate reads an unknown verdict as a fail.
+#[test]
+fn a_gated_record_stage_without_structured_gets_one_repair_turn() {
+    let toml = r#"
+        [pipeline]
+        name = "checked"
+        description = "check, then ship"
+        version = 1
+        workspace = "worktree"
+        requires_repo = true
+        [pipeline.ship]
+        stage = "check"
+        [[stage]]
+        id = "check"
+        kind = "test"
+        prompt = "check.md"
+        gate = "all_pass"
+    "#;
+    let spec = Arc::new(support::spec_from(toml, &[]));
+    let plan = support::plan_for(&spec, &[]);
+    let mut sim = Sim::new(spec, plan);
+    sim.writes_record = false;
+    sim.start();
+    let repair = sim.settle("check", 0, Agent::NoVerdict);
+    assert_eq!(spawned(&repair), slots(&[("check", 2, 0)]), "{repair:#?}");
+    let prompt = &spawn_plans(&repair)[0].prompt;
+    assert!(prompt.contains("Archon record repair"), "{prompt}");
+    let again = sim.settle("check", 0, Agent::NoVerdict);
+    assert!(spawned(&again).is_empty(), "one repair turn only");
+    assert_eq!(failed(&again).0, "check");
+}
+
+/// A second broken record fails the run: the stage's fix loop back to its
+/// workers is not taken, as it cannot hand in the record either.
+#[test]
+fn a_second_broken_record_fails_the_run_without_a_fix_loop() {
+    let mut sim = swarm_sim();
+    assign_tasks(&mut sim, &["api", "cli"]);
+    sim.settle("plan", 0, Agent::Done("api, cli"));
+    sim.settle("build", 0, Agent::Done("api built"));
+    sim.settle("build", 1, Agent::Done("cli built"));
+    sim.merge(MergeOutcome::Merged);
+    let repair = sim.settle("integrate", 0, Agent::Done("Integrated."));
+    assert_eq!(spawned(&repair), slots(&[("integrate", 2, 0)]));
+    let done = sim.settle("integrate", 0, Agent::Done("Integrated again."));
+    assert!(spawned(&done).is_empty(), "no fix loop: {done:#?}");
+    let (stage, error) = failed(&done);
+    assert_eq!(stage, "integrate");
+    assert!(error.contains("no `review` object"), "{error}");
+    assert!(!error.contains("fix loop"), "{error}");
+}
+
+/// A gated record stage owing a review, whose `structured` names neither a
+/// verdict nor a reviewer.
+fn gated_reviewed_sim() -> Sim {
+    let toml = r#"
+        [pipeline]
+        name = "checked"
+        description = "check, then ship"
+        version = 1
+        workspace = "worktree"
+        requires_repo = true
+        [pipeline.review]
+        level = "standard"
+        stage = "check"
+        [pipeline.ship]
+        stage = "check"
+        [[stage]]
+        id = "check"
+        kind = "test"
+        prompt = "check.md"
+        gate = "all_pass"
+    "#;
+    let spec = Arc::new(support::spec_from(toml, &[]));
+    let plan = support::plan_for(&spec, &["claude-code/opus"]);
+    Sim::new(spec, plan)
+}
+
+/// The order is defined: a broken record that states no fail gets its
+/// repair turn before the gate, which could not read a verdict from it.
+#[test]
+fn a_broken_record_is_repaired_before_its_gate_fails() {
+    let mut sim = gated_reviewed_sim();
+    sim.start();
+    let nameless = serde_json::json!({"review": {"reviewers": []}});
+    let repair = sim.settle("check", 0, Agent::DoneStructured("Checked.", nameless));
+    assert_eq!(spawned(&repair), slots(&[("check", 2, 0)]), "{repair:#?}");
+    let prompt = &spawn_plans(&repair)[0].prompt;
+    assert!(prompt.contains("Archon record repair"), "{prompt}");
+}
+
+/// A stated fail is refused on its merits before its broken record.
+#[test]
+fn a_stated_fail_with_a_broken_record_gets_no_repair_turn() {
+    let mut sim = gated_reviewed_sim();
+    sim.start();
+    let done = sim.settle("check", 0, Agent::Fail("the checks fail"));
+    assert!(spawned(&done).is_empty(), "no repair turn: {done:#?}");
+    let (stage, error) = failed(&done);
+    assert_eq!(stage, "check");
+    assert!(error.contains("gate all_pass failed"), "{error}");
+}
+
+/// An ungated record stage that states a fail is refused on its merits too,
+/// though its gate passes every completed agent and its record is missing.
+#[test]
+fn an_ungated_stated_fail_without_structured_gets_no_repair_turn() {
+    let mut sim = sim("direct");
+    sim.writes_record = false;
+    sim.start();
+    let summary = "Could not fix it.\nVERDICT: FAIL";
+    let done = sim.settle("implement", 0, Agent::SummaryVerdict(summary));
+    assert!(spawned(&done).is_empty(), "no repair turn: {done:#?}");
+    assert_eq!(failed(&done).0, "implement");
+}
+
+/// The swarm of a release before repair turns, up to its integrator.
+fn swarm_before_repairs() -> Sim {
+    let mut sim = swarm_sim();
+    sim.before_repairs = true;
+    sim.stages.iter_mut().for_each(|s| s.record_repair = None);
+    assign_tasks(&mut sim, &["api", "cli"]);
+    sim.settle("plan", 0, Agent::Done("api, cli"));
+    sim.settle("build", 0, Agent::Done("api built"));
+    sim.settle("build", 1, Agent::Done("cli built"));
+    sim.merge(MergeOutcome::Merged);
+    sim
+}
+
+/// Stage runs persisted before repair turns existed carry no marker: the
+/// integrator that named no review looped back to its workers then, and
+/// every replay of those rows, `settle`'s resume included, decides the same.
+#[test]
+fn a_run_from_before_repair_turns_replays_its_fix_loop() {
+    let mut sim = swarm_before_repairs();
+    let back = sim.settle("integrate", 0, Agent::Done("Integrated."));
+    assert_eq!(spawned(&back), slots(&[("build", 2, 0), ("build", 2, 1)]));
+    assert!(sim.stages.iter().all(|s| s.record_repair.is_none()));
+    for worker in spawn_plans(&back) {
+        assert!(
+            !worker.prompt.contains("Archon record repair"),
+            "{}",
+            worker.prompt
+        );
+    }
+}
+
+/// An attempt started after the upgrade carries the marker, so its broken
+/// record gets the repair turn though an earlier one of its run got none.
+#[test]
+fn an_attempt_started_after_the_upgrade_gets_its_repair_turn() {
+    let mut sim = swarm_before_repairs();
+    sim.settle("integrate", 0, Agent::Done("Integrated."));
+    sim.before_repairs = false;
+    sim.settle("build", 0, Agent::Done("api rebuilt"));
+    sim.settle("build", 1, Agent::Done("cli rebuilt"));
+    sim.merge(MergeOutcome::Merged);
+    let repair = sim.settle("integrate", 0, Agent::Done("Integrated again."));
+    assert_eq!(spawned(&repair), slots(&[("integrate", 3, 0)]));
+    let done = sim.settle("integrate", 0, Agent::Done("And again."));
+    assert!(spawned(&done).is_empty(), "one repair turn: {done:#?}");
+    assert_eq!(failed(&done).0, "integrate");
+}
+
+/// A stage run started before the upgrade and settled after it has no
+/// earlier decision to keep: the daemon marks its outcome as it records it,
+/// so its broken record gets the repair turn.
+#[test]
+fn a_stage_run_in_flight_at_the_upgrade_gets_its_repair_turn() {
+    let mut sim = swarm_before_repairs();
+    let live = sim.stages.last().expect("the integrator runs");
+    assert_eq!(
+        (live.stage_id.as_str(), live.record_repair),
+        ("integrate", None)
+    );
+    sim.before_repairs = false;
+    let repair = sim.settle("integrate", 0, Agent::Done("Integrated."));
+    assert_eq!(
+        spawned(&repair),
+        slots(&[("integrate", 2, 0)]),
+        "{repair:#?}"
+    );
+    let prompt = &spawn_plans(&repair)[0].prompt;
+    assert!(prompt.contains("Archon record repair"), "{prompt}");
+    assert_eq!(spawn_plans(&repair)[0].record_repair, RecordRepair::Spent);
+}
+
+/// build → prove, a strict scenario test stage that also hands in the ship
+/// record and loops back to `build` when it fails.
+fn strict_record_sim() -> Sim {
+    let toml = r#"
+        [pipeline]
+        name = "proved"
+        description = "build, then prove and ship"
+        version = 1
+        workspace = "worktree"
+        requires_repo = true
+        [pipeline.ship]
+        stage = "prove"
+        [[stage]]
+        id = "build"
+        kind = "work"
+        prompt = "build.md"
+        [[stage]]
+        id = "prove"
+        kind = "test"
+        prompt = "prove.md"
+        gate = "all_pass"
+        scenarios = "strict"
+        on_fail = { goto = "build", max_loops = 1 }
+    "#;
+    let spec = Arc::new(support::spec_from(toml, &[]));
+    let plan = support::plan_for(&spec, &["claude-code/opus"]);
+    Sim::new(spec, plan)
+}
+
+/// An outcome from before repair turns keeps the order that decided it: a
+/// strict stage that passed with no `structured` was a scenario defect, which
+/// ended the run, and its replay neither repairs it nor takes `on_fail`.
+#[test]
+fn a_strict_stage_from_before_repair_turns_replays_its_defect() {
+    let mut sim = strict_record_sim();
+    sim.before_repairs = true;
+    sim.writes_record = false;
+    sim.start();
+    sim.settle("build", 0, Agent::Done("Built."));
+    let done = sim.settle(
+        "prove",
+        0,
+        Agent::SummaryVerdict("All good.\nVERDICT: PASS"),
+    );
+    assert!(sim.stages.iter().all(|s| s.record_repair.is_none()));
+    assert!(
+        spawned(&done).is_empty(),
+        "a defect ends the run: {done:#?}"
+    );
+    let (stage, error) = failed(&done);
+    assert_eq!(stage, "prove");
+    assert!(!error.contains("ship refused"), "{error}");
+}
+
+/// The same reply recorded now is a broken record first: it gets its repair
+/// turn before the scenarios that could not be read from it.
+#[test]
+fn a_strict_stage_without_structured_gets_its_repair_turn() {
+    let mut sim = strict_record_sim();
+    sim.writes_record = false;
+    sim.start();
+    sim.settle("build", 0, Agent::Done("Built."));
+    let repair = sim.settle(
+        "prove",
+        0,
+        Agent::SummaryVerdict("All good.\nVERDICT: PASS"),
+    );
+    assert_eq!(spawned(&repair), slots(&[("prove", 2, 0)]), "{repair:#?}");
+}
+
+/// A work stage that holds the ship record and loops back to `build` on a fail.
+fn looping_record_sim() -> Sim {
+    let toml = r#"
+        [pipeline]
+        name = "packed"
+        description = "build, then pack and ship"
+        version = 1
+        workspace = "worktree"
+        requires_repo = true
+        [pipeline.ship]
+        stage = "pack"
+        [[stage]]
+        id = "build"
+        kind = "work"
+        prompt = "build.md"
+        [[stage]]
+        id = "pack"
+        kind = "work"
+        prompt = "pack.md"
+        on_fail = { goto = "build", max_loops = 1 }
+    "#;
+    let spec = Arc::new(support::spec_from(toml, &[]));
+    let plan = support::plan_for(&spec, &["claude-code/opus"]);
+    let mut sim = Sim::new(spec, plan);
+    sim.writes_record = false;
+    sim
+}
+
+/// A repair attempt whose `structured` still holds no valid ship record has
+/// used its turn: the run fails, and the stage's fix loop is not taken.
+#[test]
+fn a_repair_without_a_valid_ship_record_fails_the_run_without_a_fix_loop() {
+    let mut sim = looping_record_sim();
+    sim.start();
+    sim.settle("build", 0, Agent::Done("Built."));
+    let repair = sim.settle("pack", 0, Agent::Done("Packed."));
+    assert_eq!(spawned(&repair), slots(&[("pack", 2, 0)]), "{repair:#?}");
+    let empty = Agent::DoneStructured("Packed again.", serde_json::json!({}));
+    let done = sim.settle("pack", 0, empty);
+    assert!(spawned(&done).is_empty(), "no fix loop: {done:#?}");
+    let (stage, error) = failed(&done);
+    assert_eq!(stage, "pack");
+    assert!(error.contains("ship record"), "{error}");
+    assert!(!error.contains("fix loop"), "{error}");
+}
+
+/// The same record on a first attempt is refused on its merits, not broken:
+/// it gets no repair turn and takes the stage's fix loop, as before.
+#[test]
+fn a_first_invalid_ship_record_takes_the_fix_loop() {
+    let mut sim = looping_record_sim();
+    sim.start();
+    sim.settle("build", 0, Agent::Done("Built."));
+    let empty = Agent::DoneStructured("Packed.", serde_json::json!({}));
+    let looped = sim.settle("pack", 0, empty);
+    assert_eq!(spawned(&looped), slots(&[("build", 2, 0)]), "{looped:#?}");
+    assert!(
+        sim.stages
+            .iter()
+            .all(|s| s.record_repair == Some(RecordRepair::Open))
+    );
+}
+
+/// A stated fail beside a valid record passed an ungated record stage before
+/// repair turns; replay of that outcome keeps the pass it was given.
+#[test]
+fn an_ungated_stated_fail_from_before_repair_turns_replays_its_pass() {
+    let mut sim = sim("direct");
+    sim.before_repairs = true;
+    sim.start();
+    let summary = "Could not finish.\nVERDICT: FAIL";
+    let done = sim.settle("implement", 0, Agent::SummaryVerdict(summary));
+    assert!(sim.stages.iter().all(|s| s.record_repair.is_none()));
+    assert!(finish_state(&done).is_none_or(|state| !matches!(state, RunState::Failed { .. })));
+}
+
+/// The repair attempt carries the persisted marker that its turn is spent,
+/// and so does every later attempt of its stage.
+#[test]
+fn a_record_repair_attempt_carries_its_marker() {
+    let mut sim = sim("direct");
+    sim.writes_record = false;
+    sim.start();
+    let repair = sim.settle("implement", 0, Agent::Done("Fixed it."));
+    assert_eq!(spawn_plans(&repair)[0].record_repair, RecordRepair::Spent);
+    let marks: Vec<Option<RecordRepair>> = sim.stages.iter().map(|s| s.record_repair).collect();
+    assert_eq!(
+        marks,
+        [Some(RecordRepair::Open), Some(RecordRepair::Spent)],
+        "{:#?}",
+        sim.stages
+    );
+    // A repair attempt replaced after an infrastructure failure stays one.
+    let again = sim.infra_respawn("implement", 0);
+    assert_eq!(again.record_repair, RecordRepair::Spent);
+}
+
+/// The decision is keyed on the marker alone: the same broken record gets
+/// a repair turn where its row says one is open, and fails where spent.
+#[test]
+fn a_broken_record_is_decided_by_its_persisted_marker() {
+    let mut sim = sim("direct");
+    sim.writes_record = false;
+    sim.start();
+    sim.stages[0].record_repair = Some(RecordRepair::Spent);
+    let done = sim.settle("implement", 0, Agent::Done("Fixed it."));
+    assert!(spawned(&done).is_empty(), "no repair turn: {done:#?}");
+    assert_eq!(failed(&done).0, "implement");
+}
+
+/// A summary that opens as an escalation states its failure: its broken
+/// record gets no repair turn, and a valid record beside it does not ship.
+#[test]
+fn a_completed_escalation_gets_no_repair_turn_and_does_not_ship() {
+    for writes_record in [false, true] {
+        let mut sim = sim("direct");
+        sim.writes_record = writes_record;
+        sim.start();
+        let summary = "ESCALATE: this needs a schema migration first";
+        let done = sim.settle("implement", 0, Agent::Done(summary));
+        assert!(spawned(&done).is_empty(), "no repair turn: {done:#?}");
+        assert!(ship_plans(&done).is_empty(), "nothing ships");
+        let (stage, error) = failed(&done);
+        assert_eq!(stage, "implement");
+        assert!(error.contains("stated a failure"), "{error}");
+        assert!(error.contains(summary), "its words are kept: {error}");
+    }
+}
+
+/// An ungated record stage whose agent states a fail beside a valid record
+/// is refused on its merits: nothing ships.
+#[test]
+fn an_ungated_stated_fail_with_a_valid_record_does_not_ship() {
+    let mut sim = sim("direct");
+    sim.start();
+    let summary = "Shipped what I had.\nVERDICT: FAIL";
+    let done = sim.settle("implement", 0, Agent::SummaryVerdict(summary));
+    assert!(spawned(&done).is_empty(), "no repair turn: {done:#?}");
+    let (stage, error) = failed(&done);
+    assert_eq!(stage, "implement");
+    assert!(error.contains("stated a failure"), "{error}");
+}
+
+/// A summary that states a fail disputes a structured pass; the broken
+/// record of that disputed result gets no repair turn.
+#[test]
+fn a_disputed_fail_with_a_broken_record_gets_no_repair_turn() {
+    let mut sim = gated_reviewed_sim();
+    sim.start();
+    let pass = serde_json::json!({"verdict": "pass", "review": {"reviewers": []}});
+    let done = sim.settle(
+        "check",
+        0,
+        Agent::DoneStructured("Nope.\nVERDICT: FAIL", pass),
+    );
+    assert!(spawned(&done).is_empty(), "no repair turn: {done:#?}");
+    assert_eq!(failed(&done).0, "check");
+}
+
+/// A record refused on its merits is not broken: no repair turn is given.
+#[test]
+fn a_record_with_too_few_reviewers_gets_no_repair_turn() {
+    let mut sim = sim_reviewed("adaptive", ReviewLevel::Strict);
+    sim.start();
+    let two = reviewed_by_all(&["a/1", "b/2"], &["agt_1", "agt_2"]);
+    let done = sim.settle("build", 0, Agent::DoneStructured("Built.", two));
+    assert!(spawned(&done).is_empty(), "no repair attempt");
+    assert_eq!(failed(&done).0, "build");
 }
 
 /// A task that needs no change succeeds honestly, with no review owed and
@@ -2193,7 +2666,12 @@ fn a_swarm_integrator_failing_without_redispatch_tells_workers_nothing_else() {
     sim.settle("build", 1, Agent::Done("cli built"));
     sim.merge(MergeOutcome::Merged);
     let unrecorded = "api: PRIVATE_API done; cli: PRIVATE_CLI done.";
-    let back = sim.settle("integrate", 0, Agent::Done(unrecorded));
+    let failed_review = serde_json::json!({"review": {"verdict": "fail"}});
+    let back = sim.settle(
+        "integrate",
+        0,
+        Agent::DoneStructured(unrecorded, failed_review),
+    );
     assert_eq!(spawned(&back), slots(&[("build", 2, 0), ("build", 2, 1)]));
     for worker in spawn_plans(&back) {
         assert!(!worker.prompt.contains("PRIVATE_"), "{}", worker.prompt);

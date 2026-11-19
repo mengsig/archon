@@ -620,6 +620,7 @@ mod tests {
             choice: ModelChoice::pinned("claude-code/opus".parse().unwrap(), Effort::High),
             model_segments: Vec::new(),
             infrastructure_failure: false,
+            record_repair: None,
             host_context: Default::default(),
             aether_agent: agent.map(|a| AetherAgentId::parse(a).unwrap()),
             aether_task: None,

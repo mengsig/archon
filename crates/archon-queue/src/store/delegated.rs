@@ -61,6 +61,28 @@ pub(super) fn record(
     Ok(())
 }
 
+/// The agent that delegated to `agent`; `None` for one never recorded.
+pub(super) fn parent_of(
+    conn: &Connection,
+    agent: &AetherAgentId,
+) -> Result<Option<AetherAgentId>, ArchonError> {
+    let parent: Option<String> = conn
+        .query_row(
+            "SELECT parent FROM delegated_agents WHERE agent = ?1",
+            [agent.as_str()],
+            |r| r.get(0),
+        )
+        .optional()
+        .ctx("read delegating parent")?;
+    let parent = parent.map(|raw| AetherAgentId::parse(&raw)).transpose();
+    let parent = parent.map_err(|e| ArchonError::Store(format!("delegated parent: {e}")))?;
+    assert!(
+        parent.as_ref() != Some(agent),
+        "an agent is not its own parent"
+    );
+    Ok(parent)
+}
+
 /// Every agent beneath `root` with what the ledger charged it, in the order
 /// they were first recorded.
 pub(super) fn beneath(

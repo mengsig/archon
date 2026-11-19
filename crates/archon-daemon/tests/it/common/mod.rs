@@ -797,6 +797,13 @@ struct FakeState {
     lost_replies: u32,
     outcomes: BTreeMap<AetherTaskId, StageOutcome>,
     cancelled: Vec<AetherAgentId>,
+    /// The reason each cancel call gave, refused ones included, in order.
+    cancel_reasons: Vec<(AetherAgentId, String)>,
+    /// Every agent whose own quota block was read, in order.
+    quota_reads: Vec<AetherAgentId>,
+    /// Agents about or to which every request (pulse, quota block,
+    /// descendants, cancel, message) is answered only after this long.
+    slow_answers: BTreeMap<AetherAgentId, std::time::Duration>,
     /// Every accepted `update_agent`, in order.
     updates: Vec<(AetherAgentId, AgentUpdate)>,
     update_failures: VecDeque<ArchonError>,
@@ -848,6 +855,8 @@ struct FakeState {
     stalls: Vec<(String, Arc<tokio::sync::Semaphore>)>,
     /// What `pulse` reports of an agent's tree; an empty pulse otherwise.
     pulses: BTreeMap<AetherAgentId, TreePulse>,
+    /// The pulse an agent reports once it was read this many more times.
+    pulses_after_reads: BTreeMap<AetherAgentId, (usize, TreePulse)>,
     /// What `open_tool_call` reports of an agent until its turn is interrupted.
     open_calls: BTreeMap<AetherAgentId, OpenToolCall>,
     /// Every `clear_inspection` that resumed a tree: its lead and the note.
@@ -995,6 +1004,20 @@ impl FakeBackend {
 
     pub fn cancelled(&self) -> Vec<AetherAgentId> {
         self.state().cancelled.clone()
+    }
+
+    pub fn cancel_reasons(&self) -> Vec<(AetherAgentId, String)> {
+        self.state().cancel_reasons.clone()
+    }
+
+    /// Every request about or to `agent` (its pulse, quota block or
+    /// descendants, its cancel, a message to it) answers only after `delay`.
+    pub fn slow_answers(&self, agent: &AetherAgentId, delay: std::time::Duration) {
+        self.state().slow_answers.insert(agent.clone(), delay);
+    }
+
+    pub fn quota_reads(&self) -> Vec<AetherAgentId> {
+        self.state().quota_reads.clone()
     }
 
     /// Every agent `archive` cleared from the view, in order, repeats included.
@@ -1182,6 +1205,16 @@ impl FakeBackend {
     /// `pulse` reports `pulse` for `agent`'s tree from now on.
     pub fn set_pulse(&self, agent: &AetherAgentId, pulse: TreePulse) {
         self.state().pulses.insert(agent.clone(), pulse);
+    }
+
+    /// `agent` reports `pulse` once its current pulse was read `reads` more
+    /// times, as when Aether changes its state between two reads.
+    pub fn set_pulse_after_reads(&self, agent: &AetherAgentId, reads: usize, pulse: TreePulse) {
+        assert!(reads >= 1, "the current pulse is read at least once");
+        let mut state = self.state();
+        state
+            .pulses_after_reads
+            .insert(agent.clone(), (reads, pulse));
     }
 
     /// `network_default` reports `network` from now on: Aether's
@@ -1544,8 +1577,15 @@ impl AgentBackend for FakeBackend {
         Ok(state.logged_out.get(provider).cloned())
     }
 
-    async fn cancel(&self, agent: &AetherAgentId, _reason: &str) -> Result<(), ArchonError> {
+    async fn cancel(&self, agent: &AetherAgentId, reason: &str) -> Result<(), ArchonError> {
+        let delay = self.state().slow_answers.get(agent).copied();
+        if let Some(delay) = delay {
+            tokio::time::sleep(delay).await;
+        }
         let mut state = self.state();
+        state
+            .cancel_reasons
+            .push((agent.clone(), reason.to_owned()));
         if let Some(error) = state.cancel_failures.pop_front() {
             return Err(error);
         }
@@ -1632,6 +1672,11 @@ impl AgentBackend for FakeBackend {
     }
 
     async fn descendants(&self, agent: &AetherAgentId) -> Result<Vec<Descendant>, ArchonError> {
+        let delay = self.state().slow_answers.get(agent).copied();
+        if let Some(delay) = delay {
+            // Two requests, as Aether answers them: the agent, then its run's.
+            tokio::time::sleep(delay * 2).await;
+        }
         let hold = {
             let mut state = self.state();
             state.descendant_checks.push(agent.clone());
@@ -1669,14 +1714,35 @@ impl AgentBackend for FakeBackend {
     }
 
     async fn pulse(&self, agent: &AetherAgentId) -> Result<Option<TreePulse>, ArchonError> {
+        let delay = self.state().slow_answers.get(agent).copied();
+        if let Some(delay) = delay {
+            tokio::time::sleep(delay).await;
+        }
         let mut state = self.state();
         if let Some(error) = state.pulse_failures.pop_front() {
             return Err(error);
         }
-        if !state.knows(agent) {
+        let delegated = state.delegated.iter().any(|d| d.agent == *agent);
+        if !state.knows(agent) && !delegated {
             return Ok(None);
         }
-        Ok(Some(state.pulses.get(agent).copied().unwrap_or_default()))
+        let read = state.pulses.get(agent).copied().unwrap_or_default();
+        if let Some((reads, next)) = state.pulses_after_reads.remove(agent) {
+            match reads {
+                0 | 1 => drop(state.pulses.insert(agent.clone(), next)),
+                more => drop(
+                    state
+                        .pulses_after_reads
+                        .insert(agent.clone(), (more - 1, next)),
+                ),
+            }
+        }
+        Ok(Some(read))
+    }
+
+    async fn quota_blocked(&self, agent: &AetherAgentId) -> Result<Option<bool>, ArchonError> {
+        self.state().quota_reads.push(agent.clone());
+        Ok(self.pulse(agent).await?.map(|pulse| pulse.quota_blocked))
     }
 
     async fn open_tool_call(
@@ -1756,6 +1822,10 @@ impl AgentBackend for FakeBackend {
     ) -> Result<(), ArchonError> {
         // A real call leaves the task, so deliveries to one stage interleave.
         tokio::task::yield_now().await;
+        let delay = self.state().slow_answers.get(to).copied();
+        if let Some(delay) = delay {
+            tokio::time::sleep(delay).await;
+        }
         let mut state = self.state();
         state.message_calls.push(idempotency_key.to_owned());
         if let Some(error) = state.message_failures.pop_front() {

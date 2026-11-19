@@ -143,10 +143,11 @@ pub fn resumed_reply_outcome(reply: &str) -> StageOutcome {
     }
 }
 
-/// The summary of `reply` and the object of its last fenced `json` block: a
-/// resumed agent's task is settled, so its message carries `structured`.
+/// The object of `reply`'s last fenced `json` block, and its summary: what
+/// comes before the block, or the whole reply when that is all or more follows.
 fn handed_in(reply: &str) -> (String, Option<serde_json::Value>) {
     const OPEN: &str = "```json";
+    const CLOSE: &str = "```";
     assert_eq!(reply, reply.trim(), "the reply comes trimmed");
     for (at, _) in reply.rmatch_indices(OPEN) {
         // A stream reads one value and leaves the closing fence unread.
@@ -155,8 +156,15 @@ fn handed_in(reply: &str) -> (String, Option<serde_json::Value>) {
         let Some(Ok(data @ serde_json::Value::Object(_))) = values.next() else {
             continue;
         };
+        // Without its closing fence the block runs to the reply's end.
+        let rest = &block[values.byte_offset()..];
+        let after = rest.split_once(CLOSE).map_or("", |(_, after)| after);
         let said = reply[..at].trim();
-        let summary = if said.is_empty() { reply } else { said };
+        // Text after the record is read where it stands in the reply's
+        // Markdown: cut out, an indented example would turn into a verdict.
+        let whole = said.is_empty() || !after.trim().is_empty();
+        let summary = if whole { reply } else { said };
+        assert!(!summary.is_empty(), "a reply has a summary");
         return (summary.to_owned(), Some(data));
     }
     (reply.to_owned(), None)
@@ -255,6 +263,9 @@ pub struct TreePulse {
     pub inspection: bool,
     /// Aether holds an agent of the tree `running`, so it owes events.
     pub running: bool,
+    /// The agent asked about, not its tree, is `blocked` on a spent quota or
+    /// usage limit; `false` from an Aether that names no exhaustion class.
+    pub quota_blocked: bool,
 }
 
 /// A tool call an agent's current turn started and has no outcome for.
@@ -403,6 +414,12 @@ pub trait AgentBackend: Send + Sync {
         Ok(Some(TreePulse::default()))
     }
 
+    /// Whether Aether blocks `agent` itself on a spent quota, read with as
+    /// few calls as the backend can; `None` when Aether no longer knows it.
+    async fn quota_blocked(&self, agent: &AetherAgentId) -> Result<Option<bool>, ArchonError> {
+        Ok(self.pulse(agent).await?.map(|pulse| pulse.quota_blocked))
+    }
+
     /// The tool call `agent`'s current turn left open; `None` when there is
     /// none, or the backend cannot tell.
     async fn open_tool_call(
@@ -501,8 +518,19 @@ mod tests {
         else {
             panic!("a reply with a record completes");
         };
-        assert_eq!(summary, "Fixed the null check.");
-        assert_eq!(structured, Some(record), "fences inside a string are text");
+        assert_eq!(summary, reply, "more follows the record: kept as sent");
+        assert_eq!(
+            structured,
+            Some(record.clone()),
+            "fences in a string are text"
+        );
+        let reply = format!("Fixed the null check.\n\n```json\n{record}\n```");
+        let outcome = resumed_reply_outcome(&reply);
+        assert!(
+            matches!(&outcome, StageOutcome::Completed { summary, structured }
+                if summary == "Fixed the null check." && structured.as_ref() == Some(&record)),
+            "{outcome:?}"
+        );
 
         for plain in [
             "Fixed it.",
@@ -520,6 +548,47 @@ mod tests {
         }
         let only = resumed_reply_outcome("```json\n{\"a\": 1}\n```");
         assert!(matches!(only, StageOutcome::Completed { ref summary, .. } if !summary.is_empty()));
+    }
+
+    /// A failure stated after the record is part of the reply as sent: the
+    /// summary keeps it, so no record beside it hides the stated fail.
+    #[test]
+    fn a_resumed_reply_keeps_a_failure_stated_after_its_record() {
+        use super::resumed_reply_outcome;
+        use crate::run::StageOutcome;
+        let record = serde_json::json!({"commit": "c0ffee"});
+        for reply in [
+            format!("Here is the record.\n```json\n{record}\n```\nVERDICT: FAIL"),
+            format!("```json\n{record}\n```\nVERDICT: FAIL"),
+        ] {
+            let StageOutcome::Completed {
+                summary,
+                structured,
+            } = resumed_reply_outcome(&reply)
+            else {
+                panic!("{reply} completes");
+            };
+            assert_eq!(structured.as_ref(), Some(&record));
+            assert!(summary.ends_with("VERDICT: FAIL"), "{summary}");
+            assert!(
+                StageOutcome::states_failure(&summary, structured.as_ref()),
+                "{summary}"
+            );
+        }
+        // An indented line is code in the reply as sent, and stays an example.
+        let quoted = format!("Done.\n```json\n{record}\n```\n\n    VERDICT: FAIL");
+        let StageOutcome::Completed {
+            summary,
+            structured,
+        } = resumed_reply_outcome(&quoted)
+        else {
+            panic!("{quoted} completes");
+        };
+        assert_eq!(structured.as_ref(), Some(&record));
+        assert!(
+            !StageOutcome::states_failure(&summary, structured.as_ref()),
+            "{summary}"
+        );
     }
 
     #[test]

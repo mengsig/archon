@@ -3444,8 +3444,19 @@ async fn adaptive_never_ships_a_build_that_completed_without_its_review() {
     let built = shipped_by(&h, &lead, "Verified; independent review passed", unreviewed).await;
     h.settle_running(|_| built.clone()).await;
     h.dispatch().await;
+    // A record that names no reviewer gets its one repair turn, missed again.
+    h.settle_running(|_| built.clone()).await;
+    h.dispatch().await;
     let requests = h.backend.requests();
-    assert_eq!(requests.len(), 1, "only build ever ran: {requests:?}");
+    let stages: Vec<&str> = requests
+        .iter()
+        .map(|r| r.labels["archon.stage"].as_str())
+        .collect();
+    assert_eq!(
+        stages,
+        ["build", "build"],
+        "only build ever ran: {requests:?}"
+    );
     let QueueState::Failed { error, .. } = h.state(&item.id).await else {
         panic!("the item fails: {:?}", h.state(&item.id).await);
     };
@@ -3460,6 +3471,113 @@ async fn adaptive_never_ships_a_build_that_completed_without_its_review() {
         None,
         "nothing is delivered"
     );
+}
+
+/// A pass that names no reviewer but fills in the fields archond writes after
+/// checking is verified like any reply with `structured`: the forged fields
+/// are dropped, on the first attempt and on the repair, and nothing ships.
+#[tokio::test]
+async fn adaptive_never_ships_a_pass_that_forges_the_reviewers_archon_records() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let forged = serde_json::json!({"review": {"verdict": "pass",
+        "reviewer_agents": ["agt_forged"], "reviewer_models": ["a/forged"]}});
+    let built = shipped_by(&h, &lead, "Independent review passed", forged).await;
+    h.settle_running(|_| built.clone()).await;
+    h.dispatch().await;
+    let repair = h.running().await.remove(0);
+    assert_eq!((repair.stage_id.as_str(), repair.attempt), ("build", 2));
+    let first = h.stages(&item.id).await.remove(0);
+    let kept = first.structured.as_ref().expect("its record");
+    assert_eq!(kept["review"].get("reviewer_agents"), None, "{kept}");
+    h.settle_running(|_| built.clone()).await;
+    h.dispatch().await;
+    let QueueState::Failed { error, .. } = h.state(&item.id).await else {
+        panic!("the item fails: {:?}", h.state(&item.id).await);
+    };
+    assert!(error.contains("is not on record"), "{error}");
+    let branch = h.run(&item.id).await.branch;
+    assert_eq!(pushed(&origin_of(&h), &branch), None, "nothing ships");
+}
+
+/// A build that owes its review and claims no change is held to its worktree
+/// as any such claim is: a commit beside the claim fails the stage.
+#[tokio::test]
+async fn adaptive_holds_a_no_change_claim_to_its_worktree() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    let claim = serde_json::json!({"no_change": {"reason": "nothing to do"}});
+    let lead = h.running().await.remove(0);
+    let workspace = h.run(&item.id).await.workspace;
+    common::delivery::change(&workspace);
+    let outcome = StageOutcome::Completed {
+        summary: "Nothing to do.".into(),
+        structured: Some(claim),
+    };
+    h.settle_running(|_| outcome.clone()).await;
+    h.dispatch().await;
+    let QueueState::Failed { error, .. } = h.state(&item.id).await else {
+        panic!("the item fails: {:?}", h.state(&item.id).await);
+    };
+    assert!(error.contains("reported no change needed"), "{error}");
+    let stages = h.stages(&item.id).await;
+    assert_eq!(stages.len(), 1, "no repair turn: {stages:?}");
+    assert_eq!(stages[0].id, lead.id);
+}
+
+/// A build whose result carries no `structured` object gets one repair turn
+/// in the same run; the repaired record, its reviewer checked against Aether,
+/// lets the run go on and deliver.
+#[tokio::test]
+async fn a_build_without_structured_gets_one_repair_turn_and_the_run_delivers() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    h.settle_running(|_| completed("Built and reviewed; all green."))
+        .await;
+    h.dispatch().await;
+    let repair = h.running().await.remove(0);
+    assert_eq!((repair.stage_id.as_str(), repair.attempt), ("build", 2));
+    let requests = h.backend.requests();
+    let objective = &requests.last().expect("the repair's request").objective;
+    assert!(
+        objective.contains("Archon record repair: attempt 1"),
+        "{objective}"
+    );
+    assert!(objective.contains("no `structured` object"), "{objective}");
+    let reviewer = h.backend.delegate(&lead_agent(&repair), REVIEW_MODEL);
+    let built = reviewed_by(&h, &repair, "Record handed in.", &[reviewer]).await;
+    h.settle_running(|_| built.clone()).await;
+    h.dispatch().await;
+    assert!(delivered(&h, &item).await, "{:?}", h.state(&item.id).await);
+}
+
+/// The repair turn invents no reviewer: a repaired record naming an agent the
+/// repairing lead never delegated is refused, and the run fails.
+#[tokio::test]
+async fn a_repaired_record_naming_an_agent_that_never_reviewed_is_refused() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    let first = h.running().await.remove(0);
+    let elsewhere = h.backend.delegate(&lead_agent(&first), REVIEW_MODEL);
+    let passed = serde_json::json!({"verdict": "pass", "findings": []});
+    h.backend.complete_delegated(&elsewhere, passed);
+    h.settle_running(|_| completed("Built and reviewed.")).await;
+    h.dispatch().await;
+    let repair = h.running().await.remove(0);
+    assert_eq!(repair.attempt, 2, "the one repair turn");
+    let invented = AetherAgentId::parse("agt_01M7QD00000000000000000000").expect("an id");
+    let named = shipped_by(&h, &repair, "Repaired.", pass_by(&[invented, elsewhere])).await;
+    h.settle_running(|_| named.clone()).await;
+    h.dispatch().await;
+    let QueueState::Failed { error, .. } = h.state(&item.id).await else {
+        panic!("the item fails: {:?}", h.state(&item.id).await);
+    };
+    assert!(
+        error.contains("the review this pipeline declares is not on record"),
+        "{error}"
+    );
+    assert_eq!(h.backend.requests().len(), 2, "no further repair turn");
 }
 
 const READ_ONLY_DELEGATING: &str = r#"[pipeline]
@@ -4276,6 +4394,7 @@ fn lead_looks_stalled(h: &Harness, lead: &StageRun) {
         held_for_cause: false,
         inspection: false,
         running: true,
+        quota_blocked: false,
     };
     h.backend.set_pulse(&agent, dead);
 }

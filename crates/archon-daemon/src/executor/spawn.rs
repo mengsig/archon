@@ -422,9 +422,6 @@ pub(super) async fn reserve(
     slots: u32,
 ) -> Result<FollowUp, ArchonError> {
     assert!(slots > 0, "the planner grants at least one slot");
-    if table.is_held(run) {
-        return Ok(FollowUp::default());
-    }
     let Some(queue) = table.pending.get_mut(run) else {
         return Ok(FollowUp::default());
     };

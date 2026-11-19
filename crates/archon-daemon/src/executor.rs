@@ -126,56 +126,6 @@ pub struct RunTable {
     pub settle_retries: BTreeMap<StageRunId, SettleRetry>,
     /// Per-stage verification claims, weak so cancelled attempts release them.
     pub settle_claims: BTreeMap<StageRunId, std::sync::Weak<tokio::sync::Mutex<()>>>,
-    /// Runs whose new spawns wait while a request changes them in two steps.
-    pub(crate) held: BTreeMap<PipelineRunId, Hold>,
-}
-
-/// How long a run's new spawns wait at most for a request to end: a request
-/// dropped between its steps stalls nothing for longer.
-const HOLD_LIMIT: std::time::Duration = std::time::Duration::from_secs(120);
-
-/// The requests holding a run's new spawns, and when the last one began.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Hold {
-    pub requests: u32,
-    pub since: std::time::Instant,
-}
-
-impl RunTable {
-    /// Whether the new spawns of `run` wait for a request between its steps.
-    pub fn is_held(&self, run: &PipelineRunId) -> bool {
-        let hold = self.held.get(run);
-        debug_assert!(hold.is_none_or(|hold| hold.requests > 0));
-        hold.is_some_and(|hold| hold.since.elapsed() < HOLD_LIMIT)
-    }
-
-    /// Hold the new spawns of `run` for one more request.
-    pub fn hold(&mut self, run: &PipelineRunId) {
-        let since = std::time::Instant::now();
-        // A lapsed hold was left by a request that never ended: it counts no more.
-        if !self.is_held(run) {
-            self.held.remove(run);
-        }
-        let hold = self
-            .held
-            .entry(run.clone())
-            .or_insert(Hold { requests: 0, since });
-        hold.requests += 1;
-        hold.since = since;
-        assert!(self.is_held(run), "a run just held is held");
-    }
-
-    /// End one request's hold of `run`; its spawns go once no request holds it.
-    pub fn release(&mut self, run: &PipelineRunId) {
-        let Some(hold) = self.held.get_mut(run) else {
-            return;
-        };
-        assert!(hold.requests > 0, "a held run has a request holding it");
-        hold.requests -= 1;
-        if hold.requests == 0 {
-            self.held.remove(run);
-        }
-    }
 }
 
 /// The failed verifications of one completed stage run.

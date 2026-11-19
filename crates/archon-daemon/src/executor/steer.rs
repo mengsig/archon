@@ -67,48 +67,54 @@ pub(crate) async fn steer_run(
     asked: &Asked<'_>,
     id: &QueueItemId,
 ) -> Result<Option<QueueItem>, ArchonError> {
-    let repo = ctx.store.lock().await.item(id)?.repo;
-    let per_item_cap = crate::resolve::item_caps(ctx, repo.as_ref()).budget_usd_per_item;
-    let (follow, item) = {
+    let stored = {
         let mut table = ctx.runs.lock().await;
-        let Some((run, stages)) = live_run(ctx, id).await? else {
-            return Ok(None);
-        };
-        if table.merging.contains(&run.id) {
-            return Err(ArchonError::Unavailable(format!(
-                "the roles of {id} are being merged right now; steer it again in a moment"
-            )));
-        }
-        let delivering = super::ship::delivering(&table, &*ctx.store.lock().await, &run.id)?;
-        let change = plan::plan(ctx, asked, &run, &stages, per_item_cap, delivering).await?;
-        let follow = apply(ctx, &mut table, run, change, asked.by).await?;
-        (follow, ctx.store.lock().await.item(id)?)
+        steer_stored(ctx, &mut table, asked, id).await?
     };
-    assert_eq!(&item.id, id, "the store returns the item asked for");
-    // Everything owed is stored, so the sweep repeats what fails here.
-    if let Err(error) = run_follow_up(ctx, follow).await {
-        tracing::warn!(item = %id, %error, "steer stored; the sweep repeats its follow-up work");
-    }
+    let Some((follow, item)) = stored else {
+        return Ok(None);
+    };
+    follow_steer(ctx, id, follow).await;
     Ok(Some(item))
 }
 
-/// Do `work`, a request that changes item `id` in two steps (a steer, then
-/// an update), with no new spawn of its live run reserved between them: the
-/// stages it has not started are sized once, for both.
-pub(crate) async fn holding<T>(
+/// Store the steer of item `id`'s live run with the caller's run table, and
+/// return the Aether work it owes; `None` when the item has no live run.
+pub(crate) async fn steer_stored(
     ctx: &DaemonContext,
+    table: &mut RunTable,
+    asked: &Asked<'_>,
     id: &QueueItemId,
-    work: impl std::future::Future<Output = Result<T, ArchonError>>,
-) -> Result<T, ArchonError> {
-    let QueueState::Running { run } = ctx.store.lock().await.item(id)?.state else {
-        return work.await;
+) -> Result<Option<(FollowUp, QueueItem)>, ArchonError> {
+    let repo = ctx.store.lock().await.item(id)?.repo;
+    let per_item_cap = crate::resolve::item_caps(ctx, repo.as_ref()).budget_usd_per_item;
+    let Some((run, stages)) = live_run(ctx, id).await? else {
+        return Ok(None);
     };
-    ctx.runs.lock().await.hold(&run);
-    let done = work.await;
-    ctx.runs.lock().await.release(&run);
-    // Its spawns waited for this request alone.
-    ctx.dispatch.notify_one();
-    done
+    if table.merging.contains(&run.id) {
+        return Err(ArchonError::Unavailable(format!(
+            "the roles of {id} are being merged right now; steer it again in a moment"
+        )));
+    }
+    let delivering = super::ship::delivering(table, &*ctx.store.lock().await, &run.id)?;
+    let change = plan::plan(ctx, asked, &run, &stages, per_item_cap, delivering).await?;
+    let follow = apply(ctx, table, run, change, asked.by).await?;
+    let item = ctx.store.lock().await.item(id)?;
+    assert_eq!(&item.id, id, "the store returns the item asked for");
+    Ok(Some((follow, item)))
+}
+
+/// A boxed future whose type nests too deep for the compiler to check it
+/// inline in the handlers' dispatch future.
+pub(crate) type Erased<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
+
+/// Do the Aether work a stored steer of item `id` owes.
+pub(crate) async fn follow_steer(ctx: &DaemonContext, id: &QueueItemId, follow: FollowUp) {
+    let work: Erased<'_, _> = Box::pin(run_follow_up(ctx, follow));
+    // Everything owed is stored, so the sweep repeats what fails here.
+    if let Err(error) = work.await {
+        tracing::warn!(item = %id, %error, "steer stored; the sweep repeats its follow-up work");
+    }
 }
 
 /// The live run of item `id` whose later stages an update may size again,
@@ -169,8 +175,9 @@ pub(crate) async fn rebuild_resized(
 
 /// Do the Aether work a stored re-sizing of item `id` owes.
 pub(crate) async fn follow_resized(ctx: &DaemonContext, id: &QueueItemId, follow: FollowUp) {
+    let work: Erased<'_, _> = Box::pin(run_follow_up(ctx, follow));
     // Everything owed is stored, so the sweep repeats what fails here.
-    if let Err(error) = run_follow_up(ctx, follow).await {
+    if let Err(error) = work.await {
         tracing::warn!(item = %id, %error, "sizing stored; the sweep repeats its follow-up work");
     }
 }

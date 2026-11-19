@@ -150,7 +150,10 @@ routing never reads the grouping.
   request that changes none of them sizes nothing again, so a retry's
   `brief_append` leaves the carried sizing as it is until one does. An
   update of a running item that steers a note or a plan and changes its tags
-  or review level holds the run's next spawn until both parts are stored.
+  or review level stores both parts at once, before the note is delivered,
+  so no stage starts sized for one part alone.
+- An update of a plan written by 1.6.3 or while sizing was off sizes
+  nothing, so it is taken as 1.6.3 takes it.
 - A plan written while sizing was off, or by 1.6.3, has no sizing and gets
   none when it is carried whole, as a restack fix carries its item's plan.
 - Changing `effort_sizing` or `sizer_max_effort` and restarting affects only
@@ -163,7 +166,8 @@ Three rules decide what a cap lowered later does to a stored effort:
    effort the sizer set, and the reason is recorded (`; clipped from x_high
    to the cap high`). A lower `sizer_max_effort` alone leaves a stored plan
    as it is. Recovery of a live run reads its stored plan unchanged and loads
-   no repository config: nothing is clipped there.
+   no repository config: nothing is clipped there, and the run's later
+   stages start at what the plan holds, as a pin does in 1.6.3.
 2. When a retry, a revision or a re-shape writes the plan again with carried
    entries, each carried effort the sizer set is lowered to the lower of
    `max_effort` and `sizer_max_effort`, with the same recorded reason. With

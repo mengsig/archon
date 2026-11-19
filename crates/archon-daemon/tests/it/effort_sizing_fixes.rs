@@ -3,11 +3,14 @@
 use std::time::Duration;
 
 use crate::effort_sizing::*;
+use archon_core::aether_ids::AetherAgentId;
 use archon_core::config::Config;
 use archon_core::effort_sizing::RiskClass;
+use archon_core::error::ArchonError;
+use archon_core::id::QueueItemId;
 use archon_core::model::Effort::{High, Medium, XHigh};
 use archon_core::plan_origin::{PlanSource, PlannedPlan};
-use archon_core::protocol::{ClientKind, ItemPatch, Request};
+use archon_core::protocol::{ClientKind, ItemPatch, Reply, Request};
 use archon_core::queue::QueueItem;
 use archon_core::steer::Steer;
 
@@ -63,28 +66,115 @@ async fn a_spawn_runs_the_stored_plan_s_effort_after_it_was_lowered_under_the_dr
     assert_eq!(efforts(&moved)[1], ("review", High));
 }
 
-/// A held run reserves no new spawn until the request holding it ends.
+/// Wait, a few seconds at most, until `done` holds.
+async fn until(what: &str, done: impl Fn() -> bool) {
+    for _ in 0..200 {
+        if done() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("waited too long for {what}");
+}
+
+/// `work`, which must end within a few seconds.
+async fn in_time<T>(what: &str, work: impl std::future::Future<Output = T>) -> T {
+    let ended = tokio::time::timeout(Duration::from_secs(5), work).await;
+    ended.unwrap_or_else(|_| panic!("{what} took too long"))
+}
+
+/// The Aether agent running item `id`'s stage `stage`.
+async fn agent_of(h: &Harness, id: &QueueItemId, stage: &str) -> AetherAgentId {
+    let stages = h.stages(id).await;
+    let run = stages
+        .iter()
+        .find(|run| run.stage_id == stage)
+        .expect("started");
+    run.aether_agent.clone().expect("spawned")
+}
+
+/// Send `patch` of item `id` as the CLI does, from a task of its own.
+fn update_in_background(
+    h: &Harness,
+    id: &QueueItemId,
+    patch: ItemPatch,
+) -> tokio::task::JoinHandle<Result<Reply, ArchonError>> {
+    let (ctx, id) = (h.ctx.clone(), id.clone());
+    tokio::spawn(async move {
+        let request = Request::UpdateItem { item: id, patch };
+        archon_daemon::handlers::handle(&ctx, ClientKind::ArchonCli, request).await
+    })
+}
+
+/// Check 1: a running update with a note and tags stores both, and sizes
+/// its run's later stages for both, before it delivers the note: no stage
+/// starting while the note is on its way is sized for the note alone.
 #[tokio::test]
-async fn a_held_run_reserves_nothing_until_it_is_released() {
+async fn a_running_update_stores_its_note_and_tags_at_once_before_it_delivers_the_note() {
     let h = harness(Config::default()).await;
     let queued = enqueue(&h, "Add a button", &[]).await;
     h.dispatch().await;
-    let run = h.run(&queued.id).await.id;
-    h.ctx.runs.lock().await.hold(&run);
-    h.settle_running(|_| completed("implemented")).await;
-    h.dispatch().await;
-    let started = |stages: Vec<archon_core::run::StageRun>| {
-        stages.iter().any(|stage| stage.stage_id == "review")
+    let gate = h
+        .backend
+        .hold_next_message(&agent_of(&h, &queued.id, "implement").await);
+    let patch = ItemPatch {
+        brief_append: Some("Keep the old layout.".into()),
+        tags: Some(vec!["risk:critical".into()]),
+        ..ItemPatch::default()
     };
-    assert!(!started(h.stages(&queued.id).await), "held");
-    h.ctx.runs.lock().await.release(&run);
-    assert!(!h.ctx.runs.lock().await.is_held(&run));
+    let updating = update_in_background(&h, &queued.id, patch);
+    until("the note's delivery", || h.backend.messages_held() == 1).await;
+    let stored = h.item(&queued.id).await;
+    assert!(stored.brief.contains("Keep the old layout."));
+    assert_eq!(stored.tags, ["risk:critical"], "stored with the note");
+    assert_eq!(class(&stored), Some(RiskClass::Critical));
+    assert_eq!(efforts(&stored)[1], ("review", XHigh));
+    in_time("settle", h.settle_running(|_| completed("implemented"))).await;
+    let run = h.run(&queued.id).await.id;
+    let pending = h.ctx.runs.lock().await.pending.get(&run).cloned();
+    let review = pending
+        .expect("review waits")
+        .into_iter()
+        .next()
+        .expect("one");
+    assert_eq!(
+        (review.stage_id.as_str(), review.choice.effort),
+        ("review", XHigh)
+    );
+    gate.add_permits(1);
+    let reply = tokio::time::timeout(Duration::from_secs(10), updating).await;
+    item(reply.expect("in time").expect("joined")).await;
     h.dispatch().await;
-    assert!(started(h.stages(&queued.id).await), "released");
+    let review = attempt(&h, &queued.id, "review").await;
+    assert_eq!(review.choice.effort, XHigh);
+    assert_eq!(recorded(&review).0, Some(RiskClass::Critical));
+}
+
+/// A tags update of a plan a 1.6.3 daemon stored sizes nothing, so it is
+/// not refused while the run's roles merge, as 1.6.3 does not refuse it.
+#[tokio::test]
+async fn a_tags_update_of_a_never_sized_running_plan_is_taken_while_roles_merge() {
+    let h = harness(Config::default()).await;
+    let queued = enqueue(&h, "Add a button", &[]).await;
+    h.dispatch().await;
+    let mut legacy = h.item(&queued.id).await;
+    legacy.model_plan = never_sized(&legacy);
+    store(&h, &legacy).await;
+    let run = h.run(&queued.id).await.id;
+    h.ctx.runs.lock().await.merging.insert(run.clone());
+    let patch = ItemPatch {
+        tags: Some(vec!["risk:critical".into()]),
+        ..ItemPatch::default()
+    };
+    let updated = update(&h, &queued.id, patch).await;
+    h.ctx.runs.lock().await.merging.remove(&run);
+    assert_eq!(updated.tags, ["risk:critical"]);
+    assert!(updated.model_plan.sizing().is_none(), "stays never sized");
+    assert_eq!(updated.model_plan.plan(), legacy.model_plan.plan());
 }
 
 /// Check 1: one update of a running item that amends its brief and sets its
-/// tags sizes the stages not yet started once, for both, and holds nothing after.
+/// tags sizes the stages not yet started once, for both.
 #[tokio::test]
 async fn a_running_update_with_a_note_and_tags_sizes_the_later_stages_for_both() {
     let h = harness(Config::default()).await;
@@ -100,8 +190,6 @@ async fn a_running_update_with_a_note_and_tags_sizes_the_later_stages_for_both()
         efforts(&updated),
         [("implement", Medium), ("review", XHigh), ("ship", XHigh)]
     );
-    let run = h.run(&queued.id).await.id;
-    assert!(!h.ctx.runs.lock().await.is_held(&run), "released");
     h.settle_running(|_| completed("implemented")).await;
     h.dispatch().await;
     let review = attempt(&h, &queued.id, "review").await;

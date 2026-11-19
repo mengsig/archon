@@ -55,6 +55,7 @@ mod link_briefing;
 mod link_command_notes;
 mod link_common;
 mod link_conversation;
+mod link_economy;
 mod link_freshness;
 mod link_github;
 mod link_images;

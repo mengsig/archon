@@ -111,6 +111,7 @@ pub(crate) async fn send(
                 kind,
                 text,
                 ctx.config.limits.max_agent_messages,
+                ctx.config.orchestrator.quiet_info,
             ) {
                 Ok(receipt) => receipt,
                 Err(refusal) => {
@@ -147,7 +148,8 @@ fn record_question(
         MessageKind::Question,
         record.describe(),
     )?;
-    let receipt = triggers::record_message(store, message, &[(&key, &raw)])?;
+    // A question always wakes the orchestrator, so the switch is moot.
+    let receipt = triggers::record_message(store, message, &[(&key, &raw)], false)?;
     Ok((receipt, record))
 }
 
@@ -158,6 +160,7 @@ fn record_counted(
     kind: MessageKind,
     text: String,
     most: u32,
+    quiet_info: bool,
 ) -> Result<FeedItem, Refusal> {
     assert_ne!(
         kind,
@@ -178,7 +181,12 @@ fn record_counted(
         }
     };
     let message = stage_message(store, agent, stage, kind, text)?;
-    Ok(triggers::record_message(store, message, &[(&key, &paid)])?)
+    Ok(triggers::record_message(
+        store,
+        message,
+        &[(&key, &paid)],
+        quiet_info,
+    )?)
 }
 
 /// `agent`'s message from `stage`, a relay credited to the operator only
@@ -288,7 +296,8 @@ pub(crate) async fn inbox(
             return grant_orchestrator_reply(&mut store, target, seq, incoming);
         };
         let most = ctx.config.limits.max_agent_messages;
-        admit(&mut store, target, run, seq, incoming, most)
+        let quiet_info = ctx.config.orchestrator.quiet_info;
+        admit(&mut store, target, run, seq, incoming, most, quiet_info)
     };
     match result {
         Ok(receipt) => publish(ctx, &receipt),
@@ -340,6 +349,7 @@ fn admit(
     seq: u64,
     incoming: &InboxMessage,
     most: u32,
+    quiet_info: bool,
 ) -> Result<FeedItem, Refusal> {
     check_text(&incoming.text)?;
     let (key, paid) = match &incoming.sender {
@@ -373,6 +383,7 @@ fn admit(
         store,
         message,
         &[(&key, &paid), (&cursor, &seq)],
+        quiet_info,
     )?)
 }
 

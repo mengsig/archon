@@ -1192,6 +1192,35 @@ async fn an_operator_message_is_keyed_by_its_feed_item() {
     assert_eq!(sent["to"], ORCH);
 }
 
+/// An orchestrator switch and an operator line never cross: the line waits
+/// out the switch and goes to the generation in charge after it.
+#[tokio::test]
+async fn an_operator_message_waits_out_a_switch_and_reaches_the_new_orchestrator() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    agent_table(&harness, &[(ORCH, "running"), (ORCH_2, "running")]);
+    harness
+        .fake
+        .set_default("send_message", Scripted::reply("message_sent", json!({})));
+    let switch = supervisor::hold_switch(&harness.ctx).await;
+    let ctx = harness.ctx.clone();
+    let say = tokio::spawn(async move {
+        supervisor::deliver_operator_message(&ctx, &FeedItemId::new(), "status?", &[]).await
+    });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        harness.fake.received_named("send_message").is_empty(),
+        "held by the switch"
+    );
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH_2).await;
+    drop(switch);
+    say.await.unwrap().unwrap();
+    let sent = harness.fake.received_named("send_message");
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0]["to"], ORCH_2, "the generation in charge now");
+}
+
 #[tokio::test]
 async fn a_refused_operator_message_does_not_leave_the_chat_waiting() {
     let harness = Harness::new().await;

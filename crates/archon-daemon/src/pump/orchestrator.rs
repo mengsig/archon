@@ -14,6 +14,8 @@ use crate::{operator_commands, supervisor, triggers};
 
 /// Aether's event type for an agent whose older context became a summary.
 const COMPACTION_COMPLETED: &str = "compaction.completed";
+/// Aether's event type for a fold the engine or provider made itself.
+const COMPACTION_NATIVE: &str = "compaction.native";
 
 pub(super) async fn handle(ctx: &DaemonContext, event: &AetherEvent) -> Result<(), ArchonError> {
     let Some(agent) = &event.agent else {
@@ -74,6 +76,10 @@ async fn apply(
         // What it was told of the directives may not be in its summary.
         EventKind::Other { type_name } if type_name == COMPACTION_COMPLETED => {
             triggers::restate_directives(ctx, "your context was compacted").await
+        }
+        // An engine's own fold, as an idle compaction asks of Claude Code.
+        EventKind::Other { type_name } if type_name == COMPACTION_NATIVE => {
+            triggers::restate_directives_later(ctx, "your context was compacted").await
         }
         _ => Ok(()),
     }

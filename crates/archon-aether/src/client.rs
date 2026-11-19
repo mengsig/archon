@@ -22,11 +22,11 @@ use crate::connection::{BoxRead, BoxWrite, EventSink, Router, Shared, WRITE_QUEU
 use crate::events::AetherEvent;
 use crate::github::{WatcherConfig, WatcherStatus};
 use crate::wire::{
-    Agent, AgentPatch, AgentQuery, ArchiveTarget, CLIENT_NAME, CONVERSATION_FEATURE, Command,
-    CreateAgent, DaemonDefaults, EventQuery, ExpiredSpan, HISTORY_EXPIRED_FEATURE, Hello,
-    IMAGES_PROTOCOL_VERSION, MIN_PROTOCOL_VERSION, ModelInfo, NOTE_LEVEL_PROTOCOL_VERSION,
-    NOTES_FEATURE, NOTES_PROTOCOL_VERSION, NoteLevel, PROTOCOL_VERSION, ProviderInfo, RawReply,
-    Subscribed, Task, Welcome,
+    Agent, AgentPatch, AgentQuery, ArchiveTarget, CLIENT_NAME, COMPACTION_TOKENS_FEATURE,
+    CONVERSATION_FEATURE, Command, CreateAgent, DaemonDefaults, EventQuery, ExpiredSpan,
+    HISTORY_EXPIRED_FEATURE, Hello, IMAGES_PROTOCOL_VERSION, MIN_PROTOCOL_VERSION, ModelInfo,
+    NOTE_LEVEL_PROTOCOL_VERSION, NOTES_FEATURE, NOTES_PROTOCOL_VERSION, NoteLevel,
+    PROTOCOL_VERSION, ProviderInfo, RawReply, Subscribed, Task, Welcome,
 };
 
 /// Events Aether replays to a subscription per page, each page checked
@@ -502,6 +502,12 @@ impl AetherClient {
         self.request(command, "note_appended").await.map(drop)
     }
 
+    /// Whether aetherd applies a per-agent `compaction_tokens` at creation.
+    pub fn serves_compaction_tokens(&self) -> bool {
+        let features = &self.welcome().features;
+        features.iter().any(|f| f == COMPACTION_TOKENS_FEATURE)
+    }
+
     /// Whether aetherd keeps important posts and serves `get_conversation`.
     pub fn serves_conversation(&self) -> bool {
         let features = &self.welcome().features;
@@ -746,6 +752,14 @@ impl AetherClient {
         let command = Command::Cancel {
             agent: agent.clone(),
             reason: Some(reason.to_owned()),
+        };
+        self.request(command, "ok").await.map(drop)
+    }
+
+    /// Have Aether compact `agent`'s context before its next turn.
+    pub async fn compact(&self, agent: &AetherAgentId) -> Result<(), ArchonError> {
+        let command = Command::Compact {
+            agent: agent.clone(),
         };
         self.request(command, "ok").await.map(drop)
     }

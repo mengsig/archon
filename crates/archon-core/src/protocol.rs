@@ -1859,8 +1859,8 @@ pub struct OrchestratorInfo {
 }
 
 impl OrchestratorInfo {
-    /// `generation 7, created by 1.2.3; prompt outdated; 3 new lessons`, as
-    /// `status`, `doctor` and `queue_status` show it.
+    /// `generation 7, created by 1.2.3; 3 new lessons; prompt outdated since
+    /// upgrade; run ...`, as `status`, `doctor` and `queue_status` show it.
     pub fn describe_freshness(&self) -> String {
         let Some(fresh) = &self.freshness else {
             return format!(
@@ -1877,10 +1877,8 @@ impl OrchestratorInfo {
             "generation {}, created by {}",
             self.generation, fresh.created_by
         );
-        match fresh.prompt_outdated {
-            Some(true) => line.push_str("; prompt outdated"),
-            Some(false) => {}
-            None => line.push_str("; prompt unknown (the instructions file cannot be read)"),
+        if fresh.prompt_outdated.is_none() {
+            line.push_str("; prompt unknown (the instructions file cannot be read)");
         }
         if fresh.tools_outdated {
             line.push_str("; tools outdated");
@@ -1898,6 +1896,9 @@ impl OrchestratorInfo {
             n => {
                 let _ = write!(line, "; {n} new lessons");
             }
+        }
+        if fresh.prompt_outdated == Some(true) {
+            line.push_str(fresh.prompt_restart_hint(env!("CARGO_PKG_VERSION")));
         }
         if !fresh.is_stale() {
             line.push_str("; up to date");
@@ -1933,6 +1934,19 @@ pub struct SettingsDrift {
 }
 
 impl OrchestratorFreshness {
+    /// What the status line says of an outdated prompt, last: nothing acts on
+    /// it, so the operator is told how. `running` is this build's version, and
+    /// another one in `created_by` means an upgrade outdated it.
+    fn prompt_restart_hint(&self, running: &str) -> &'static str {
+        assert!(!running.is_empty(), "this build has a version");
+        assert_eq!(self.prompt_outdated, Some(true), "only an outdated prompt");
+        if self.created_by == running {
+            "; prompt outdated; run `archon orchestrator restart`"
+        } else {
+            "; prompt outdated since upgrade; run `archon orchestrator restart`"
+        }
+    }
+
     /// Whether a restart is owed, or may be when the prompt is unknown.
     pub fn is_stale(&self) -> bool {
         self.prompt_outdated != Some(false)
@@ -2423,6 +2437,42 @@ impl From<&ArchonError> for ErrorReply {
 mod tests {
     use super::*;
     use crate::github::OperatorUsers;
+
+    /// Nothing replaces an outdated generation by itself: the line names the
+    /// upgrade when another version created it, and the restart either way.
+    #[test]
+    fn an_outdated_prompt_is_described_last_with_the_restart_that_fixes_it() {
+        let info = |created_by: &str, prompt_outdated: bool| -> OrchestratorInfo {
+            serde_json::from_value(serde_json::json!({
+                "agent": "agt_01M52R3JSXYHJJA0AZX2B6MCD7", "model": "claude-code/opus",
+                "effort": "high", "status": "ready", "restarts": 0, "generation": 7,
+                "freshness": {
+                    "created_by": created_by, "prompt_outdated": prompt_outdated,
+                    "tools_outdated": true, "new_lessons": 2,
+                },
+            }))
+            .unwrap()
+        };
+        assert_eq!(
+            info("0.0.1", true).describe_freshness(),
+            "generation 7, created by 0.0.1; tools outdated; 2 new lessons; prompt outdated \
+             since upgrade; run `archon orchestrator restart`"
+        );
+        let running = env!("CARGO_PKG_VERSION");
+        assert_eq!(
+            info(running, true).describe_freshness(),
+            format!(
+                "generation 7, created by {running}; tools outdated; 2 new lessons; prompt \
+                 outdated; run `archon orchestrator restart`"
+            ),
+            "an edited instructions file is no upgrade"
+        );
+        let current = info("0.0.1", false).describe_freshness();
+        assert_eq!(
+            current,
+            "generation 7, created by 0.0.1; tools outdated; 2 new lessons"
+        );
+    }
 
     #[test]
     fn client_frames_flatten_the_command_beside_req() {

@@ -19,6 +19,7 @@ mod device_authority;
 mod disk;
 mod e2e_fake_aether;
 mod effort_rollback;
+mod effort_sizing;
 mod engine_login;
 mod errand;
 mod executor;

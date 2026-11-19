@@ -574,7 +574,7 @@ pub(super) async fn update_within(
     }
     let amendment = patch.brief_append.clone();
     let set_budget = patch.budget_usd.is_some();
-    let resizing = resizing_policy(ctx, &current, &patch, review).await?;
+    let resizing = resizing_env(ctx, &current, &patch, review).await?;
     let item = {
         // Under the run table, so the dispatcher cannot start the item meanwhile.
         let table = ctx.runs.lock().await;
@@ -586,9 +586,11 @@ pub(super) async fn update_within(
             revise::apply(&mut store, &table, &mut item, revision)?;
         }
         apply_patch(&mut item, patch, plan)?;
-        // A running item is sized again by the steer that rebuilds its driver.
-        if let Some(policy) = resizing.as_ref().filter(|_| !item.state.is_active()) {
-            sizing::resize((&ctx.config, policy), &mut item, &Default::default());
+        item.settle_sizing(archon_core::now());
+        // Nothing of an item with no run has started; a running one is sized below.
+        if let Some(env) = resizing.as_ref().filter(|_| !item.state.is_active()) {
+            let policy = env.policy(&ctx.config);
+            sizing::resize((&ctx.config, &policy), &mut item, &Default::default());
         }
         item.updated_at = archon_core::now().max(item.updated_at);
         match &revision {
@@ -604,19 +606,36 @@ pub(super) async fn update_within(
         let text = format!("Autonomy of {id} changed: {}.", revision.describe());
         post_note(ctx, id, &text).await;
     }
+    let item = match resizing.filter(|_| matches!(item.state, QueueState::Running { .. })) {
+        Some(env) => executor::steer::resize_run(ctx, (&env, steered_by(by)), id).await?,
+        None => item,
+    };
     ctx.dispatch.notify_one();
     Ok(item_reply(ctx, item, set_budget).await)
 }
 
-/// The model policy `current` is sized again under when `patch` changes what
+/// Who an item's history names for an update by `by`.
+fn steered_by(by: Authority) -> archon_core::steer::SteeredBy {
+    use archon_core::steer::SteeredBy;
+    assert!(
+        matches!(by, Authority::Operator | Authority::Orchestrator),
+        "only a request updates an item"
+    );
+    match by {
+        Authority::Orchestrator => SteeredBy::Orchestrator,
+        _ => SteeredBy::Operator,
+    }
+}
+
+/// The repository `current` is sized again under when `patch` changes what
 /// the sizer reads of it: its title, tags, brief or review level (`review`
 /// is the level the patch leaves it with). `None` when nothing does.
-async fn resizing_policy(
+async fn resizing_env(
     ctx: &DaemonContext,
     current: &QueueItem,
     patch: &ItemPatch,
     review: archon_core::autonomy::ReviewLevel,
-) -> Result<Option<archon_core::policy::ModelPolicy>, ArchonError> {
+) -> Result<Option<RepoEnv>, ArchonError> {
     let words = patch.title.is_some() || patch.tags.is_some() || patch.brief_append.is_some();
     if !words && review == current.autonomy.review {
         return Ok(None);
@@ -625,7 +644,8 @@ async fn resizing_policy(
         return Ok(None);
     }
     let env = RepoEnv::load(ctx, current.repo.as_ref()).await?;
-    Ok(Some(env.policy(&ctx.config)))
+    assert_eq!(env.repo.as_ref().map(|repo| &repo.id), current.repo.as_ref());
+    Ok(Some(env))
 }
 
 /// A succeeded item takes an autonomy-only patch. `merge = auto` turns on

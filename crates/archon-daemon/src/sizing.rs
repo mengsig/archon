@@ -68,15 +68,16 @@ pub(crate) const RESIZED: &str = "sized the efforts of the stages still to run a
 
 /// Size `item` again after a steer changed its title, brief, tags or review
 /// level: only the keys of stages not in `started`, and only while sizing is
-/// on. `true` when a key was sized again.
+/// on. Keys the steer added are sized first. `true` when a key was sized again.
 pub(crate) fn resize(
     (config, policy): (&Config, &ModelPolicy),
     item: &mut QueueItem,
     started: &BTreeSet<String>,
 ) -> bool {
     let at = archon_core::now();
+    item.settle_sizing(at);
+    assert!(!item.model_plan.has_unsized(), "every recorded key is sized");
     if !config.models.effort_sizing() {
-        item.settle_sizing(at);
         return false;
     }
     let is_started = |key: &str| started.contains(stage_of(key));

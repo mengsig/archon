@@ -250,13 +250,31 @@ impl PlanWriter {
             let was = format!("was {}: {}", origin.effort.source, choice.effort);
             let moved = effort != choice.effort || origin.effort.source != PlanSource::Sizer;
             if moved {
+                let note = sized_note(origin.effort.note.as_deref(), &was);
                 let (source, by) = (PlanSource::Sizer, Authority::Daemon);
-                origin.effort = FieldOrigin::chosen(source, by, self.at, Some(was));
+                origin.effort = FieldOrigin::chosen(source, by, self.at, Some(note));
             }
             choice.effort = effort;
         }
         sized.risk_class = Some(risk.0.class);
     }
+}
+
+/// The note of an effort the sizer just set: what its writer said of it (a
+/// refresh names its owner), then what it `was`. An earlier "was" is dropped.
+fn sized_note(said: Option<&str>, was: &str) -> String {
+    const WAS: &str = "was ";
+    assert!(was.starts_with(WAS), "the sizer says what the effort was");
+    let said = said.unwrap_or_default();
+    let kept = match said.find("; was ") {
+        Some(end) => &said[..end],
+        None if said.starts_with(WAS) => "",
+        None => said,
+    };
+    if kept.is_empty() {
+        return was.to_owned();
+    }
+    format!("{kept}; {was}")
 }
 
 impl PlannedPlan {

@@ -9,6 +9,7 @@ use archon_core::cost::format_usd;
 use archon_core::error::ArchonError;
 use archon_core::id::StageRunId;
 use archon_core::model::ModelChoice;
+use archon_core::policy::ModelPolicy;
 use archon_core::run::{PipelineRun, RunState, StageRun};
 use archon_core::steer::{RunEdit, Steer, Then};
 use archon_pipeline::spec::StageSpec;
@@ -48,6 +49,22 @@ pub(super) struct Change {
     pub what: Vec<String>,
     /// The driver reads something the steer changed.
     pub rebuild: bool,
+}
+
+impl Change {
+    /// Nothing changed yet of the run `blueprint` describes.
+    fn of(blueprint: Blueprint) -> Self {
+        Self {
+            blueprint,
+            edits: Vec::new(),
+            reshaped: false,
+            cancel: Vec::new(),
+            live: BTreeMap::new(),
+            note: None,
+            what: Vec::new(),
+            rebuild: false,
+        }
+    }
 }
 
 /// Where the run is while it is steered.
@@ -110,16 +127,7 @@ pub(super) async fn plan(
         target,
         delivering,
     };
-    let mut change = Change {
-        blueprint: recover::blueprint(ctx, run).await?,
-        edits: Vec::new(),
-        reshaped: false,
-        cancel: Vec::new(),
-        live: BTreeMap::new(),
-        note: None,
-        what: Vec::new(),
-        rebuild: false,
-    };
+    let mut change = Change::of(recover::blueprint(ctx, run).await?);
     amend(&mut change, asked.steer, &at)?;
     replan(&mut change, asked, &at);
     reshape_run(ctx, asked, &mut change, &at).await?;
@@ -143,7 +151,7 @@ pub(super) async fn plan(
     rebudget(&mut change, asked.steer, &at, per_item_cap);
     extend(&mut change, asked.steer, &at)?;
     abort(ctx, asked, &mut change, &at)?;
-    resize(ctx, asked, &mut change, &at);
+    resize(ctx, &asked.env.policy(&ctx.config), &mut change, &at);
     let dry = recover::driver_of(ctx, run, change.blueprint.clone()).await;
     dry.map_err(not_runnable)?;
     assert!(!change.what.is_empty(), "a checked steer changes something");
@@ -153,19 +161,47 @@ pub(super) async fn plan(
 /// The steer may have changed what the sizer reads of the item (a note
 /// amends its brief; a removed review changes its level): the stages not
 /// yet started are sized again, the started ones keep the effort they have.
-fn resize(ctx: &DaemonContext, asked: &Asked<'_>, change: &mut Change, at: &At<'_>) {
+fn resize(ctx: &DaemonContext, policy: &ModelPolicy, change: &mut Change, at: &At<'_>) {
     let ran = at.stages.iter().map(|stage| stage.stage_id.as_str());
     let started: BTreeSet<String> = ran
         .chain(at.run.state.live_stage())
         .map(str::to_owned)
         .collect();
     assert!(!started.is_empty(), "a steered run is at a stage");
-    let policy = asked.env.policy(&ctx.config);
     let item = &mut change.blueprint.item;
-    if crate::sizing::resize((&ctx.config, &policy), item, &started) {
+    if crate::sizing::resize((&ctx.config, policy), item, &started) {
         change.what.push(crate::sizing::RESIZED.to_owned());
         change.rebuild = true;
     }
+}
+
+/// `run` with the stages it has not started sized again from its item as
+/// stored now, checked like a steer. `None` when no effort moves.
+pub(super) async fn resized(
+    ctx: &DaemonContext,
+    policy: &ModelPolicy,
+    run: &PipelineRun,
+    stages: &[StageRun],
+) -> Result<Option<Change>, ArchonError> {
+    assert!(stages.iter().all(|stage| stage.run == run.id));
+    let Some(target) = run.state.live_stage() else {
+        return Ok(None);
+    };
+    let at = At {
+        run,
+        stages,
+        target,
+        delivering: false,
+    };
+    let mut change = Change::of(recover::blueprint(ctx, run).await?);
+    resize(ctx, policy, &mut change, &at);
+    if change.what.is_empty() {
+        return Ok(None);
+    }
+    let dry = recover::driver_of(ctx, run, change.blueprint.clone()).await;
+    dry.map_err(not_runnable)?;
+    assert!(change.rebuild, "a sized plan is read by a rebuilt driver");
+    Ok(Some(change))
 }
 
 /// The note amends the brief every later prompt reads, and reaches the

@@ -92,9 +92,11 @@ async fn an_enqueue_naming_one_model_pins_it_and_the_daemon_fills_the_rest() {
     );
     assert_eq!(
         (implement.effort.source, implement.effort.by),
-        (PlanSource::Fallback, Authority::Daemon),
-        "the effort nobody named is the stage's default"
+        (PlanSource::Sizer, Authority::Daemon),
+        "the effort nobody named is sized from the stage's default"
     );
+    let was = implement.effort.note.as_deref().unwrap_or_default();
+    assert_eq!(was, "the stage's default effort; was fallback: medium");
     assert!(implement.model.at.is_some() && implement.effort.at.is_some());
     let filled = [PlanSource::Learned, PlanSource::Tier, PlanSource::Fallback];
     for (key, entries) in origins.iter().filter(|(key, _)| *key != "implement") {
@@ -252,7 +254,7 @@ async fn a_steer_naming_the_stored_effort_still_records_a_pin() {
     );
     assert_eq!(after.model, before.model, "the model was not named");
     let note = after.effort.note.as_deref().unwrap_or_default();
-    assert!(note.starts_with("was fallback"), "{note}");
+    assert!(note.starts_with("was sizer"), "{note}");
     assert_eq!(unattributed(&h).await, 0);
 }
 

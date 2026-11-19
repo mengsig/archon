@@ -1463,3 +1463,59 @@ async fn a_refresh_is_issued_the_effort_rule_in_force_not_its_owner_s() {
     let of_fix = of_fix.expect("the refresh's lead was spawned");
     assert_eq!(h.issued_effort_contract(of_fix).await, "floor", "its own");
 }
+
+/// A11 check 4: a refresh is sized as the item it is stored as. Its clean
+/// merge waives the review, so the owner's strict level no longer raises it.
+#[tokio::test]
+async fn a_waived_refresh_is_sized_for_the_review_it_gets() {
+    use archon_core::effort_sizing::RiskClass;
+    let (h, _gh) = delivering().await;
+    let (owner, _) = shipped(&h, "the change").await;
+    let mut stored = h.item(&owner.id).await;
+    stored.autonomy.review = ReviewLevel::Strict;
+    h.ctx.store.lock().await.update_item(&stored).unwrap();
+    advance_origin(&h, "upstream.txt", "elsewhere\n");
+    let fix = refresh(&h, &owner).await.expect("queued");
+    assert_eq!(fix.autonomy.review, ReviewLevel::None, "a clean merge");
+    let sizing = fix.model_plan.sizing().expect("a refresh is sized");
+    assert_eq!(sizing.risk_class, Some(RiskClass::Ordinary), "{:?}", sizing.risk_signals);
+    let spec = archon_pipeline::Catalog::builtin().get("direct").unwrap().clone();
+    for (key, choices) in &fix.model_plan.0 {
+        let own = spec.default_effort(key).expect("a key of direct");
+        assert_eq!(choices[0].effort, own, "{key}: its own stage default");
+        let origin = fix.model_plan.origin(&fix.id, key, 0).effort;
+        assert_eq!((origin.source, origin.by), (PlanSource::Sizer, Authority::Daemon));
+    }
+    assert_eq!(fix, h.item(&fix.id).await, "the reply is the refresh as stored");
+}
+
+/// A11 check 4: with sizing off a refresh's plan is the one routing decision
+/// origin/next makes, whatever its owner was sized to.
+#[tokio::test]
+async fn a_refresh_with_sizing_off_is_not_sized_and_borrows_nothing_of_its_owner() {
+    let (mut h, _gh) = delivering().await;
+    let owner = enqueue(&h, "the change").await;
+    let mut tagged = h.item(&owner.id).await;
+    tagged.tags = vec!["risk:critical".into()];
+    h.ctx.store.lock().await.update_item(&tagged).unwrap();
+    h.dispatch().await;
+    settle_reviewed(&h, None).await;
+    let state = h.state(&owner.id).await;
+    assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+    let defaults = owner.model_plan.plan().clone();
+    let mut rolled_back = h.ctx.config.clone();
+    rolled_back.models.effort_sizing = Some(false);
+    h.restart_with(rolled_back);
+    executor::recover(&h.ctx).await.unwrap();
+    advance_origin(&h, "upstream.txt", "elsewhere\n");
+    let fix = refresh(&h, &owner).await.expect("queued");
+    assert_eq!(fix.tags, ["risk:critical"], "the sizer would make it critical");
+    assert!(fix.model_plan.sizing().is_none(), "nothing is sized with sizing off");
+    assert_eq!(*fix.model_plan.plan(), defaults, "the stage defaults, as 1.6.3 fills them");
+    for key in fix.model_plan.0.keys() {
+        let origin = fix.model_plan.origin(&fix.id, key, 0).effort;
+        assert_eq!(origin.source, PlanSource::Fallback, "{key}");
+    }
+    let stored = serde_json::to_value(&fix).unwrap();
+    assert!(stored.get("effort_sizing").is_none(), "{stored}");
+}

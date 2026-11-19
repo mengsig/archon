@@ -371,6 +371,27 @@ fn a_copy_keeps_frozen_keys_and_sizes_pending_ones_for_its_own_item() {
     assert_eq!(effort(&copied, "build"), Effort::Low, "the copy's own title");
 }
 
+/// The sizer keeps what a key's writer said of it, and says what the effort
+/// was once however often the key is sized again.
+#[test]
+fn a_sized_effort_s_origin_keeps_its_writer_s_note_and_one_was() {
+    let (owner, copy) = (QueueItemId::new(), QueueItemId::new());
+    let pending = filled(&owner, &["build"], Effort::Medium, PlanSource::Fallback);
+    let said = Some("for the refresh");
+    let mut copied = pending.finish(on(Effort::XHigh)).copy_for(&owner, &copy, said);
+    let note = |planned: &PlannedPlan| planned.origin(&copy, "build", 0).effort.note.unwrap();
+    assert!(copied.settle(&copy, input("Fix the mutex", &[]), crate::now()));
+    assert_eq!(note(&copied), "for the refresh; was fallback: medium");
+    let risky = tags(&["risk:critical"]);
+    let now = (Effort::XHigh, crate::now());
+    assert!(copied.resize(&copy, input("Fix the mutex", &risky), now, &|_| false));
+    assert_eq!(note(&copied), "for the refresh; was sizer: high");
+    let mut plain = sized(&owner, &["build"], Effort::Medium, "Fix the mutex");
+    assert_eq!(plain.origin(&owner, "build", 0).effort.note.unwrap(), "was fallback: medium");
+    assert!(plain.resize(&owner, input("Fix the mutex", &risky), now, &|_| false));
+    assert_eq!(plain.origin(&owner, "build", 0).effort.note.unwrap(), "was sizer: high");
+}
+
 #[test]
 fn removing_a_key_drops_its_sizing_and_a_record_that_does_not_fit_reads_as_none() {
     let item = QueueItemId::new();

@@ -91,6 +91,42 @@ pub(crate) async fn steer_run(
     Ok(Some(item))
 }
 
+/// Size again the stages the live run of `id` has not started, after an
+/// update changed what the sizer reads of its item. Returns the item as it
+/// is stored then; nothing is stored when no effort moves or no run is live.
+pub(crate) async fn resize_run(
+    ctx: &DaemonContext,
+    (env, by): (&RepoEnv, SteeredBy),
+    id: &QueueItemId,
+) -> Result<QueueItem, ArchonError> {
+    let policy = env.policy(&ctx.config);
+    let follow = {
+        let mut table = ctx.runs.lock().await;
+        let Some((run, stages)) = live_run(ctx, id).await? else {
+            return ctx.store.lock().await.item(id);
+        };
+        if table.merging.contains(&run.id) {
+            return Err(ArchonError::Unavailable(format!(
+                "item {id} was updated, but its roles are being merged right now, so the efforts \
+                 of its later stages were not sized again; send the update again in a moment"
+            )));
+        }
+        match plan::resized(ctx, &policy, &run, &stages).await? {
+            Some(change) => Some(apply(ctx, &mut table, run, change, by).await?),
+            None => None,
+        }
+    };
+    // Everything owed is stored, so the sweep repeats what fails here.
+    if let Some(follow) = follow
+        && let Err(error) = run_follow_up(ctx, follow).await
+    {
+        tracing::warn!(item = %id, %error, "sizing stored; the sweep repeats its follow-up work");
+    }
+    let item = ctx.store.lock().await.item(id)?;
+    assert_eq!(&item.id, id, "the store returns the item asked for");
+    Ok(item)
+}
+
 /// The item's live run with its stage runs.
 async fn live_run(
     ctx: &DaemonContext,

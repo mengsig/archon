@@ -253,11 +253,14 @@ entries say.
   counts for learned routing and errand pricing
   ([#456](https://github.com/mengsig/archon/pull/456)).
 - A retry after a stage reached its review-round limit continues on its
-  branch ([#455](https://github.com/mengsig/archon/pull/455)): earlier runs'
-  reviews still count while the branch holds their commits, so only the new
-  commits need review, and a delta review fails only on its own commits or
-  an earlier finding left unfixed. The cap's error lists the choices:
-  continue, accept or stop.
+  branch ([#455](https://github.com/mengsig/archon/pull/455)). Unless the
+  retry is `fresh`, earlier runs' reviews still count while the branch holds
+  their commits. The new commits then need a delta review, plus any
+  whole-change reads the review level still lacks. A delta review fails only
+  on its own commits or an earlier finding left unfixed. Nothing carries
+  when the reviewed head was rewritten or an earlier recorded fail can no
+  longer be read. The cap's error lists the choices: continue, accept or
+  stop.
 
 ### Fixed
 

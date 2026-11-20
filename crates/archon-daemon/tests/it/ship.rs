@@ -1725,6 +1725,7 @@ async fn a_refused_review_is_repaired_by_one_automatic_retry_that_passes() {
     assert_eq!(gh.count("pr create"), 1, "{:?}", gh.calls());
 }
 
+/// The repair run keeps the first run's two reads, so it is refused for a fail it names.
 #[tokio::test]
 async fn a_second_refusal_fails_the_item_with_both_reasons() {
     let (h, _gh) = delivering_repairing(true).await;
@@ -1733,7 +1734,22 @@ async fn a_second_refusal_fails_the_item_with_both_reasons() {
         .unwrap();
     h.dispatch().await;
     refused_lead(&h, &item).await;
-    refused_lead(&h, &item).await;
+    assert_eq!(h.state(&item.id).await.kind(), "running");
+    let repair = h.running().await.remove(0);
+    let reviewer = h
+        .backend
+        .delegate(repair.aether_agent.as_ref().unwrap(), REVIEW_MODEL);
+    let built = shipped_by(
+        &h,
+        &repair,
+        "Built; reviewed",
+        pass_by(std::slice::from_ref(&reviewer)),
+    )
+    .await;
+    h.backend
+        .complete_delegated(&reviewer, verdict_on(&built, "fail"));
+    h.settle_running(|_| built.clone()).await;
+    h.dispatch().await;
 
     let error = failed(&h, &item).await;
     assert!(
@@ -1744,7 +1760,12 @@ async fn a_second_refusal_fails_the_item_with_both_reasons() {
         "The first refusal was: the review this pipeline declares is not on record: {TOO_FEW}"
     );
     assert!(error.contains(&first), "both reasons: {error}");
-    assert!(error.matches(TOO_FEW).count() >= 2, "both reasons: {error}");
+    let second = format!("{reviewer} failed");
+    assert!(
+        error.contains("0 of the reviewers named passed the branch head"),
+        "{error}"
+    );
+    assert!(error.contains(&second), "both reasons: {error}");
     let brief = brief_of(&h, &item).await;
     assert_eq!(brief.matches(REPAIR_OPENING).count(), 1, "repaired once");
     assert_eq!(

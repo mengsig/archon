@@ -4003,6 +4003,25 @@ async fn the_third_failing_review_round_stops_the_stage_and_escalates() {
         panic!("an escalation ends the run");
     };
     assert!(error.contains("failed 3 rounds"), "{error}");
+    let error = error.split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        "the last at head `0000003abcdef`",
+        "continue with `retry_item` (not `fresh`)",
+        "a `brief_append` that names this head and the open findings",
+        "delta-reviews only the commits after this head, since earlier reviews still count, \
+         adding only the whole-change reads they lack",
+        "accept this head with `retry_item` and a `brief_append` that moves the open findings \
+         to follow-ups, whose new lead has the head read whole again by as many reviewers as \
+         the review level needs",
+        "or stop by leaving the item failed",
+    ] {
+        assert!(error.contains(said), "missing {said:?} in {error}");
+    }
+    let choices = error.find("You decide").expect("the choices");
+    assert!(
+        choices < error.find("Open blocking findings").expect("the findings"),
+        "the choices lead, so a clipped summary keeps them: {error}"
+    );
 }
 
 /// An earlier archond read a `changes_requested` fail as no verdict and kept

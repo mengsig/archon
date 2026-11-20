@@ -388,6 +388,8 @@ fn rounds_of(fails: &[Fail]) -> usize {
 /// open, and those only earlier rounds listed, which its reviewers verified.
 #[derive(Debug, PartialEq, Eq)]
 struct Open<'a> {
+    /// The head the last round's reviewers failed.
+    head: &'a str,
     latest: Vec<&'a str>,
     earlier: Vec<&'a str>,
     /// The reviewers whose results hold every finding in full.
@@ -398,6 +400,7 @@ impl<'a> Open<'a> {
     fn of(fails: &'a [Fail]) -> Self {
         let Some(last) = fails.last() else {
             return Self {
+                head: "",
                 latest: Vec::new(),
                 earlier: Vec::new(),
                 reviewers: Vec::new(),
@@ -417,6 +420,7 @@ impl<'a> Open<'a> {
             "each finding listed once"
         );
         Self {
+            head: &last.head,
             latest,
             earlier,
             reviewers,
@@ -457,15 +461,22 @@ fn escalation(stage: &StageRun, rounds: usize, open: &Open) -> String {
             listed(lines, room)
         ),
     };
+    assert!(!open.head.is_empty(), "the last round failed a head");
+    // The choices lead, so a clipped summary of the failure still holds them.
     format!(
-        "{} the review of stage `{}` (attempt {}) failed {rounds} rounds, each a commit a \
-         reviewer failed with a blocking finding, so Archon stopped it instead of another \
-         round. {latest}{earlier} The reviewers' results ({}) hold every finding in full. \
-         Reshape the work, settle the disputed point in the brief, or retry the item with a \
-         steer note.",
+        "{} the review of stage `{}` (attempt {}) failed {rounds} rounds, the last at head \
+         `{}`, each a commit a reviewer failed with a blocking finding, so Archon stopped it instead of another round. You \
+         decide: continue with `retry_item` (not `fresh`) and a `brief_append` that names \
+         this head and the open findings, so its new lead fixes them and delta-reviews only \
+         the commits after this head, since earlier reviews still count, adding only the \
+         whole-change reads they lack; accept this head with `retry_item` and a `brief_append` that moves the \
+         open findings to follow-ups, whose new lead has the head read whole again by as many \
+         reviewers as the review level needs; or stop by leaving the item failed. {latest}{earlier} The \
+         reviewers' results ({}) hold every finding in full.",
         StageOutcome::ESCALATE_PREFIX,
         stage.stage_id,
         stage.attempt,
+        open.head,
         open.reviewers.join(", ")
     )
 }

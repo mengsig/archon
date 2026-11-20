@@ -3,13 +3,15 @@
 //! it delegated to whose own result passed the change as the branch holds it.
 //! A named delta read it left unanchored may rest on a fresh lead's settled
 //! earlier reviewers, which Archon finds, checks and records itself. A
-//! reviewer of the attempt that failed the change counts, named or not.
+//! reviewer of the attempt that failed the change counts, named or not. Reads
+//! from the item's earlier runs on the branch count while it still holds their heads.
 
 mod coverage;
 mod restate;
 mod rounds;
 
 use archon_core::aether_ids::AetherAgentId;
+use archon_core::delegation::REVIEWER_ROLE;
 use archon_core::error::ArchonError;
 use archon_core::ports::{Descendant, DescendantState};
 use archon_core::pull_request::OntoPullRequest;
@@ -60,6 +62,14 @@ type Finding = Result<Found, String>;
 
 /// A reviewer's agent id and the verdict its task returned.
 type Read = (String, Verdict);
+
+/// The verdicts of the reviewers earlier leads of a stage delegated to on its run's
+/// branch, each beside the reviewer it names, in the same order.
+#[derive(Debug, Default)]
+struct Carried {
+    reads: Vec<Read>,
+    reviewers: Vec<Reviewer>,
+}
 
 /// What checking the verdicts against the branch came to.
 enum Checked {
@@ -190,15 +200,26 @@ async fn reviewers(
             )));
         }
     };
-    let chosen = match choose(ctx, lead, &beneath, named, owed).await? {
+    let carried = carried_reads(ctx, run, stage, lead).await?;
+    // With earlier runs' reads on record, a delta reviewer may be all this run names.
+    let owed_named = if carried.reads.is_empty() { owed } else { 1 };
+    let chosen = match choose(ctx, lead, &beneath, named, owed_named).await? {
         Ok(chosen) => chosen,
         Err(why) => return Ok(Err(why)),
     };
     assert!(
-        chosen.picked.len() >= owed as usize,
+        chosen.picked.len() >= owed_named as usize,
         "the review level's reviewers were picked"
     );
-    let checked = check_chosen(ctx, (run, stage), &beneath, &chosen, owed, shipped).await?;
+    let checked = check_chosen(
+        ctx,
+        (run, stage),
+        &beneath,
+        &chosen,
+        (owed, &carried),
+        shipped,
+    );
+    let checked = checked.await?;
     let Chosen {
         picked,
         verdicts,
@@ -206,7 +227,7 @@ async fn reviewers(
     } = chosen;
     Ok(match checked {
         Checked::Held(held, head, fork) => {
-            let found = found(&picked, (held, head), verdicts, corrections);
+            let found = found((&picked, &carried), (held, head), verdicts, corrections);
             Ok(Found { fork, ..found })
         }
         Checked::Refused(why) if !corrections.is_empty() => {
@@ -224,7 +245,7 @@ async fn check_chosen(
     (run, stage): (&PipelineRun, &StageRun),
     beneath: &[Descendant],
     chosen: &Chosen<'_>,
-    owed: u32,
+    (owed, carried): (u32, &Carried),
     shipped: Option<String>,
 ) -> Result<Checked, ArchonError> {
     let lead = stage
@@ -243,10 +264,19 @@ async fn check_chosen(
         Ok(left_out) => left_out,
         Err(why) => return Ok(Checked::Refused(why)),
     };
-    let check = |earlier: Option<Vec<Read>>| {
+    let check_with = |earlier: Option<Vec<Read>>, carrying: bool| {
         let read = (verdicts.clone(), left_out.clone(), earlier);
-        holding(ctx, run, read, owed, shipped.clone())
+        let carried: &[Read] = if carrying { &carried.reads } else { &[] };
+        holding(ctx, run, read, carried, owed, shipped.clone())
     };
+    // A run whose own reads make the review judges the head afresh, as one carrying none would.
+    if !carried.reads.is_empty() && picked.len() >= owed as usize {
+        let alone = check_with(None, false).await?;
+        if matches!(alone, Checked::Held(..)) {
+            return Ok(alone);
+        }
+    }
+    let check = |earlier: Option<Vec<Read>>| check_with(earlier, true);
     Ok(match check(None).await? {
         Checked::Unanchored(stray) => match earlier_reads(ctx, stage, lead, beneath, picked).await?
         {
@@ -283,6 +313,140 @@ async fn earlier_reads(
         Err(why) => return Ok(Err(why)),
     };
     earlier_verdicts(ctx, &earlier).await
+}
+
+/// The verdicts of the `reviewer` children of this stage's leads in the item's earlier runs on
+/// `run`'s branch. A `fresh` retry works on a new branch, so it carries none.
+async fn carried_reads(
+    ctx: &DaemonContext,
+    run: &PipelineRun,
+    stage: &StageRun,
+    lead: &AetherAgentId,
+) -> Result<Carried, ArchonError> {
+    assert_eq!(stage.run, run.id, "a stage's own run");
+    let stages = earlier_stages(&*ctx.store.lock().await, run, stage, lead)?;
+    let mut leads: Vec<&AetherAgentId> = Vec::new();
+    for agent in stages.iter().filter_map(|s| s.aether_agent.as_ref()) {
+        if !leads.contains(&agent) {
+            leads.push(agent);
+        }
+    }
+    let mut carried = Carried::default();
+    // Listed children of another role, a worker say: their fails are no review to carry.
+    let mut not_reviewers: Vec<String> = Vec::new();
+    for &earlier in &leads {
+        let beneath = match ctx.backend.descendants(earlier).await {
+            Ok(beneath) => beneath,
+            Err(error) if transient(&error) => return Err(error),
+            Err(error) => {
+                tracing::warn!(%earlier, %error, "an earlier lead's reviewers are not carried");
+                continue;
+            }
+        };
+        let children = beneath.iter().filter(|d| d.parent == *earlier);
+        let (reviewers, others): (Vec<&Descendant>, Vec<&Descendant>) =
+            children.partition(|d| d.role.eq_ignore_ascii_case(REVIEWER_ROLE));
+        not_reviewers.extend(others.iter().map(|d| d.agent.to_string()));
+        let done = reviewers
+            .into_iter()
+            .filter(|d| d.state == DescendantState::Completed && d.task.is_some());
+        for child in done {
+            // What cannot be read carries nothing: the run needs its own review instead.
+            let verdict = match result_of(ctx, child).await?.and_then(verdict_in) {
+                Ok(verdict) => verdict,
+                Err(why) => {
+                    tracing::warn!(agent = %child.agent, %why, "an earlier run's review is not carried");
+                    continue;
+                }
+            };
+            carried.reads.push((child.agent.to_string(), verdict));
+            carried.reviewers.push(Reviewer {
+                model: child.model.to_string(),
+                agent: child.agent.to_string(),
+            });
+        }
+    }
+    assert_eq!(
+        carried.reads.len(),
+        carried.reviewers.len(),
+        "one reviewer per read"
+    );
+    if let Some(lost) = lost_fail(ctx, &stages, &carried.reads, &not_reviewers).await? {
+        tracing::warn!(stage = %stage.id, reviewer = %lost, "an earlier run's recorded fail is no longer readable, so nothing is carried");
+        return Ok(Carried::default());
+    }
+    if !carried.reads.is_empty() {
+        tracing::info!(stage = %stage.id, reads = carried.reads.len(), "carrying earlier runs' reviews");
+    }
+    Ok(carried)
+}
+
+/// A reviewer whose fail an earlier attempt in `stages` recorded but whose verdict is not
+/// among the `carried` reads: carrying the rest would let that fail go unanswered. A fail
+/// of a child Aether still lists in another role, `not_reviewers`, was never a review.
+async fn lost_fail(
+    ctx: &DaemonContext,
+    stages: &[StageRun],
+    carried: &[Read],
+    not_reviewers: &[String],
+) -> Result<Option<String>, ArchonError> {
+    assert!(
+        not_reviewers
+            .iter()
+            .all(|a| carried.iter().all(|(c, _)| c != a)),
+        "a child is carried as a reviewer or listed in another role, not both"
+    );
+    for earlier in stages {
+        let tallied = rounds::attempt_children(ctx, &earlier.id).await?;
+        let mut failed = tallied
+            .children
+            .into_iter()
+            .filter(|(_, head)| head.is_some());
+        let unread = |agent: &String| {
+            carried.iter().all(|(a, _)| a != agent) && !not_reviewers.contains(agent)
+        };
+        if let Some((agent, _)) = failed.find(|(agent, _)| unread(agent)) {
+            assert!(!agent.is_empty(), "a recorded fail names its reviewer");
+            return Ok(Some(agent));
+        }
+    }
+    Ok(None)
+}
+
+/// The attempts of `stage` in the item's earlier runs on `run`'s branch and in its worktree
+/// whose lead is not `lead`. A review item's frozen head carries none.
+fn earlier_stages(
+    store: &archon_queue::Store,
+    run: &PipelineRun,
+    stage: &StageRun,
+    lead: &AetherAgentId,
+) -> Result<Vec<StageRun>, ArchonError> {
+    assert_eq!(stage.run, run.id, "the stage is of the run");
+    if store
+        .item(&run.item)?
+        .onto
+        .is_some_and(|onto| onto.review_only)
+    {
+        return Ok(Vec::new());
+    }
+    let same_branch =
+        |r: &PipelineRun| r.id != run.id && r.branch == run.branch && r.workspace == run.workspace;
+    let mut stages = Vec::new();
+    for earlier in store
+        .runs_for_item(&run.item)?
+        .iter()
+        .filter(|r| same_branch(r))
+    {
+        let attempts = store.stage_runs(&earlier.id)?.into_iter();
+        stages.extend(attempts.filter(|s| {
+            s.stage_id == stage.stage_id && s.aether_agent.as_ref().is_some_and(|a| a != lead)
+        }));
+    }
+    assert!(
+        stages.iter().all(|s| s.run != run.id),
+        "the stage's own run is not carried"
+    );
+    Ok(stages)
 }
 
 /// The fails of `stage`'s attempt by its reviewers other than the `picked` ones, or why one
@@ -368,7 +532,7 @@ fn tallied_fail(head: String) -> Verdict {
 /// The `picked` reviewers `held` counts at `head` (its passes, and the
 /// whole-change fails they answered), and the earlier ones it added.
 fn found(
-    picked: &[&Descendant],
+    (picked, carried): (&[&Descendant], &Carried),
     (held, head): (Held, String),
     reads: Vec<Read>,
     corrections: Vec<String>,
@@ -382,12 +546,26 @@ fn found(
         counted.iter().all(|i| *i < picked.len()),
         "only a named read counts, by its index among those picked"
     );
-    let reviewers = counted.into_iter().map(|i| Reviewer {
+    let named = counted.into_iter().map(|i| Reviewer {
         model: picked[i].model.to_string(),
         agent: picked[i].agent.to_string(),
     });
+    let earlier_runs = held.carried.iter().map(|agent| {
+        let reviewer = carried.reviewers.iter().find(|r| r.agent == *agent);
+        reviewer
+            .cloned()
+            .expect("a counted carried read names its reviewer")
+    });
+    let reviewers: Vec<Reviewer> = named.chain(earlier_runs).collect();
+    assert!(
+        reviewers
+            .iter()
+            .enumerate()
+            .all(|(i, r)| reviewers[..i].iter().all(|o| o.agent != r.agent)),
+        "each reviewer is recorded once"
+    );
     Found {
-        reviewers: reviewers.collect(),
+        reviewers,
         head,
         fork: None,
         implicit: held.implicit,
@@ -738,72 +916,151 @@ async fn holding(
     ctx: &DaemonContext,
     run: &PipelineRun,
     (verdicts, left_out, earlier): (Vec<Read>, Vec<Read>, Option<Vec<Read>>),
+    carried: &[Read],
     owed: u32,
     shipped: Option<String>,
 ) -> Result<Checked, ArchonError> {
     assert!(!verdicts.is_empty(), "a named reviewer was read");
+    assert!(
+        carried
+            .iter()
+            .all(|(agent, _)| verdicts.iter().all(|(named, _)| named != agent)),
+        "a carried reviewer is another lead's, never named"
+    );
+    let resolved = match resolved_base(ctx, run).await? {
+        Ok(resolved) => resolved,
+        Err(why) => return Ok(Checked::Refused(why)),
+    };
+    if resolved.fork.is_some()
+        && let Some(why) = unbased_pass(&verdicts, earlier.as_deref())
+    {
+        return Ok(Checked::Refused(why));
+    }
+    // A review item reads a frozen pull request whole: `earlier_leads` carries it nothing.
+    assert!(
+        resolved.reviewed_pr.is_none() || carried.is_empty(),
+        "a review item carries nothing"
+    );
+    let carried = carried.to_vec();
+    let workspace = run.workspace.clone();
+    let checked = tokio::task::spawn_blocking(move || {
+        let base = Base {
+            branch: &resolved.branch,
+            onto_head: resolved.onto_head.as_deref(),
+            merged_from: resolved.merged_from.as_deref(),
+        };
+        let read = Verdicts {
+            named: &verdicts,
+            earlier: earlier.as_deref().unwrap_or_default(),
+            left_out: &left_out,
+            carried: &carried,
+        };
+        let expect = Expected {
+            shipped: shipped.as_deref(),
+            reviewed_pr: resolved.reviewed_pr.as_ref(),
+            owed,
+            anchors_named: earlier.is_none(),
+        };
+        let checked = on_branch(&workspace, base, read, expect)?;
+        Ok(match checked {
+            Checked::Held(held, head, None) => Checked::Held(held, head, resolved.fork.clone()),
+            other => other,
+        })
+    });
+    checked
+        .await
+        .map_err(|e| ArchonError::io("reviewed commits task", std::io::Error::other(e)))?
+}
+
+/// Where `run`'s review starts: its base branch, or a reviewed pull request's trusted fork.
+struct Resolved {
+    branch: String,
+    onto_head: Option<String>,
+    merged_from: Option<String>,
+    fork: Option<String>,
+    reviewed_pr: Option<OntoPullRequest>,
+}
+
+/// The base `run`'s review reads from, or why a reviewed pull request's fork is not trusted.
+async fn resolved_base(
+    ctx: &DaemonContext,
+    run: &PipelineRun,
+) -> Result<Result<Resolved, String>, ArchonError> {
     let ReviewBase {
-        branch: base_branch,
+        branch,
         onto_head,
         reviewed_pr,
         repo,
         merged_from,
     } = base_of(ctx, run).await?;
-    let (base_branch, onto_head, merged_from, fork) = match (&reviewed_pr, repo) {
-        (Some(reviewed), Some(repo)) => match trusted_fork(ctx, run, repo, reviewed).await? {
-            // No local ref names the start, nor a refresh's: only GitHub's base.
-            Ok(fork) => (String::new(), Some(fork.clone()), None, Some(fork)),
-            Err(why) => return Ok(Checked::Refused(why)),
-        },
-        _ => (base_branch, onto_head, merged_from, None),
+    let (Some(reviewed), Some(repo)) = (&reviewed_pr, repo) else {
+        return Ok(Ok(Resolved {
+            branch,
+            onto_head,
+            merged_from,
+            fork: None,
+            reviewed_pr,
+        }));
     };
-    if fork.is_some()
-        && let Some(why) = unbased_pass(&verdicts, earlier.as_deref())
+    // No local ref names the start, nor a refresh's: only GitHub's base.
+    let fork = match trusted_fork(ctx, run, repo, reviewed).await? {
+        Ok(fork) => fork,
+        Err(why) => return Ok(Err(why)),
+    };
+    assert!(!fork.is_empty(), "a trusted fork names its commit");
+    Ok(Ok(Resolved {
+        branch: String::new(),
+        onto_head: Some(fork.clone()),
+        merged_from: None,
+        fork: Some(fork),
+        reviewed_pr,
+    }))
+}
+
+/// What [`on_branch`] holds the placed verdicts to.
+struct Expected<'a> {
+    /// The tree the ship record names, which the head must hold.
+    shipped: Option<&'a str>,
+    reviewed_pr: Option<&'a OntoPullRequest>,
+    owed: u32,
+    /// Whether a named delta nothing named anchors is refused as unanchored, to be
+    /// checked again with the lead's earlier reviewers.
+    anchors_named: bool,
+}
+
+/// The verdicts `read`, placed on the branch in `workspace` and judged there.
+fn on_branch(
+    workspace: &std::path::Path,
+    base: Base<'_>,
+    read: Verdicts<'_>,
+    expect: Expected<'_>,
+) -> Result<Checked, ArchonError> {
+    assert!(!read.named.is_empty(), "a named reviewer was read");
+    assert!(expect.owed >= 1, "only an owed review is checked");
+    let mut history = History::new(workspace);
+    let (head, placed) = match coverage::place(&mut history, base, read)? {
+        Ok(placed) => placed,
+        Err(why) => return Ok(Checked::Refused(why)),
+    };
+    if let Some(tree) = expect.shipped
+        && let Err(why) = coverage::holds_tree(workspace, &head, tree)?
     {
         return Ok(Checked::Refused(why));
     }
-    let workspace = run.workspace.clone();
-    let checked = tokio::task::spawn_blocking(move || {
-        let mut history = History::new(&workspace);
-        let read = earlier.as_deref().unwrap_or_default();
-        let base = Base {
-            branch: &base_branch,
-            onto_head: onto_head.as_deref(),
-            merged_from: merged_from.as_deref(),
-        };
-        let read = Verdicts {
-            named: &verdicts,
-            earlier: read,
-            left_out: &left_out,
-        };
-        let placed = coverage::place(&mut history, base, read)?;
-        let (head, placed) = match placed {
-            Ok(placed) => placed,
-            Err(why) => return Ok(Checked::Refused(why)),
-        };
-        if let Some(tree) = &shipped
-            && let Err(why) = coverage::holds_tree(&workspace, &head, tree)?
-        {
-            return Ok(Checked::Refused(why));
-        }
-        if let Some(why) = moved_off(reviewed_pr.as_ref(), &head) {
-            return Ok(Checked::Refused(why));
-        }
-        if earlier.is_none()
-            && let Some(stray) = coverage::unanchored_named(&mut history, &placed)?
-        {
-            return Ok(Checked::Unanchored(stray));
-        }
-        Ok(
-            match coverage::counted(&mut history, &placed, &head, owed)? {
-                Ok(held) => Checked::Held(held, head, fork),
-                Err(why) => Checked::Refused(why),
-            },
-        )
-    });
-    checked
-        .await
-        .map_err(|e| ArchonError::io("reviewed commits task", std::io::Error::other(e)))?
+    if let Some(why) = moved_off(expect.reviewed_pr, &head) {
+        return Ok(Checked::Refused(why));
+    }
+    if expect.anchors_named
+        && let Some(stray) = coverage::unanchored_named(&mut history, &placed)?
+    {
+        return Ok(Checked::Unanchored(stray));
+    }
+    Ok(
+        match coverage::counted(&mut history, &placed, &head, expect.owed)? {
+            Ok(held) => Checked::Held(held, head, None),
+            Err(why) => Checked::Refused(why),
+        },
+    )
 }
 
 /// Where the change a run's reviewers read starts.

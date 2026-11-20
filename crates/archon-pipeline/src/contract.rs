@@ -488,6 +488,29 @@ project, and never kill by name or pattern;\n  \
 - read only, with no edits, commits, stashes or branch switches: for a reviewer \
 always, and for every child when your own workspace is READ-ONLY.\n";
 
+/// Who delegates the `many` reviewers a review asks for. A frozen review carries no
+/// earlier run's reads; a branch's earlier whole-change reads count toward `many`.
+fn delegate_all(many: u32, records_verdict: bool) -> String {
+    assert!(many > 1, "one reviewer needs no rule of all");
+    if records_verdict {
+        return format!(
+            "Delegate all {many} yourself, even in a repair: an earlier run's reviewers \
+             count for nothing, and naming fewer fails the run"
+        );
+    }
+    let rule = format!(
+        "Delegate all {many} yourself; naming fewer fails the run. Where earlier runs of \
+         this item reviewed this branch, each whole-change read they made still counts \
+         toward the {many}: delegate only the whole-change reviewers they lack, and one \
+         delta reviewer of the commits after their last reviewed head"
+    );
+    assert!(
+        rule.contains("only the whole-change reviewers they lack"),
+        "partial carry"
+    );
+    rule
+}
+
 /// What the stage holding its run's review does and records, for `duty`.
 fn review_rules(duty: ReviewDuty) -> String {
     assert!(
@@ -503,8 +526,8 @@ fn review_rules(duty: ReviewDuty) -> String {
         many => (
             format!(
                 "{many} agents you delegate to, each working alone and none of which \
-                 wrote any of it. Delegate all {many} yourself, even in a repair: an \
-                 earlier run's reviewers count for nothing, and naming fewer fails the run"
+                 wrote any of it. {}",
+                delegate_all(many, duty.records_verdict)
             ),
             format!("\"<agent id>\", … {many} or more"),
         ),
@@ -856,7 +879,8 @@ asked again, so delegate a new one with `base` at the head the failed review rea
 given the fix commits and the open findings, to verify each is fixed and the fix \
 regresses nothing. No new whole-change read is needed. A commit after passes needs \
 only a delta read from the head they passed; an amend or rebase needs whole-change \
-reads. After 3 failed rounds Archon stops the stage and escalates.\n";
+reads. Tell every delta reviewer to fail only on a defect in its commits or an open \
+finding unfixed: a new finding in code a pass already read is `\"blocking\": false`. After 3 failed rounds Archon stops the stage and escalates.\n";
 
 /// A review-only lead's rounds: one, whose findings it records rather than fixes.
 const REVIEW_ONLY_ROUNDS_RULE: &str = "\
@@ -879,10 +903,10 @@ const REVIEW_COVERAGE_RULE: &str = "\
 different one you delegated to yourself that completed with that verdict. As many as \
 the review asks must have read the whole change, passing or with findings fixed, and \
 one must have passed the branch head itself: whole, or as a delta whose `base` a \
-named reviewer read the change up to. A pass of an earlier head only \
+reviewer read the change up to. A pass of an earlier head only \
 anchors such a delta. A fail stands until a pass read past it, or after an amend or \
-rebase until a pass of the whole change. Name every reviewer that coverage rests on, \
-earlier whole-change reads included, passed or failed. Anything else fails the run, \
+rebase until a pass of the whole change. Name every reviewer of yours that \
+coverage rests on, earlier whole-change reads included, passed or failed. Anything else fails the run, \
 and nothing ships. \
 Never report `pass` for a review that did not run or did not pass: ";
 
@@ -1450,6 +1474,9 @@ mod tests {
                 "Fix every blocking finding and commit, then re-review only the fix with one reviewer",
                 "delegate a new one with `base` at the head the failed review read",
                 "given the fix commits and the open findings",
+                "Tell every delta reviewer to fail only on a defect in its commits or an open \
+                 finding unfixed",
+                "a new finding in code a pass already read is `\"blocking\": false`",
                 "No new whole-change read is needed",
                 "A commit after passes needs only a delta read from the head they passed",
                 "an amend or rebase needs whole-change reads",
@@ -2341,7 +2368,7 @@ mod tests {
             "no `complete_task` or YAML, nothing before or after it",
             "Each agent named must be a different one you delegated to yourself",
             "must have passed the branch head itself",
-            "Name every reviewer that coverage rests on, earlier whole-change reads included",
+            "Name every reviewer of yours that coverage rests on, earlier whole-change reads included",
             "Blocking findings are correctness bugs, security or safety issues",
             "mark every finding `\"blocking\": true` or `false`",
             "List the rest as follow-ups",
@@ -2388,12 +2415,32 @@ mod tests {
         for said in [
             "reviewed by 3 agents you delegate to, each working alone and none of which wrote any of it",
             "\"reviewers\": [\"<agent id>\", … 3 or more]",
-            // Repair leads after a refusal delegated one reviewer (1.4.11 re-gate).
-            "Delegate all 3 yourself, even in a repair: an earlier run's reviewers count for nothing",
-            "naming fewer fails the run",
+            "Delegate all 3 yourself; naming fewer fails the run",
+            // A run continuing a capped review owes the whole reads earlier runs lack, and a delta.
+            "each whole-change read they made still counts toward the 3: delegate only the \
+             whole-change reviewers they lack, and one delta reviewer of the commits after \
+             their last reviewed head",
         ] {
             assert!(strict.contains(said), "missing {said:?} in {strict}");
         }
+        // A frozen review carries nothing, so it owes all three whole reads again.
+        let mut frozen = owing(3, false);
+        frozen.review = frozen.review.map(|duty| ReviewDuty {
+            records_verdict: true,
+            ..duty
+        });
+        let frozen = work_contract(frozen);
+        assert!(
+            frozen.contains(
+                "Delegate all 3 yourself, even in a repair: an earlier run's \
+                             reviewers count for nothing"
+            ),
+            "{frozen}"
+        );
+        assert!(
+            !frozen.contains("whole-change reviewers they lack"),
+            "{frozen}"
+        );
         assert_eq!(strict.matches("skipped").count(), 0);
     }
 
